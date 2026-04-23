@@ -2522,9 +2522,13 @@ fn apply_python_config(
                 fn_names,
                 make_external_handler(h, external_handler_reentry_depth),
             );
+            // Passing python=True from Python is itself the explicit opt-in for
+            // in-process Python execution; propagate that to the builtin's env gate.
+            builder = builder.env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1");
         }
         (true, None) => {
             builder = builder.python();
+            builder = builder.env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1");
         }
         (false, _) => {}
     }
