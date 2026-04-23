@@ -64,11 +64,22 @@ pub(crate) fn parse_duration(s: &str) -> Option<Duration> {
         return None;
     }
 
-    let total_secs_f64 = seconds * multiplier as f64;
-    // Cap at max while preserving subsecond precision
     let max = Duration::from_secs(MAX_TIMEOUT_SECONDS);
-    let d = Duration::from_secs_f64(total_secs_f64);
-    Some(if d > max { max } else { d })
+    if !seconds.is_finite() {
+        return if seconds.is_sign_positive() {
+            Some(max)
+        } else {
+            None
+        };
+    }
+
+    let total_secs_f64 = seconds * multiplier as f64;
+    // Cap at max while preserving subsecond precision.
+    if !total_secs_f64.is_finite() || total_secs_f64 >= max.as_secs_f64() {
+        return Some(max);
+    }
+
+    Some(Duration::from_secs_f64(total_secs_f64))
 }
 
 /// Parse timeout arguments, returning (preserve_status, duration, cmd_name, cmd_args)
@@ -279,6 +290,14 @@ mod tests {
         assert_eq!(parse_duration(""), None);
         assert_eq!(parse_duration("abc"), None);
         assert_eq!(parse_duration("-5"), None);
+    }
+
+    #[test]
+    fn test_parse_duration_huge_value_caps_without_panic() {
+        assert_eq!(
+            parse_duration("1e309"),
+            Some(Duration::from_secs(MAX_TIMEOUT_SECONDS))
+        );
     }
 
     #[tokio::test]
