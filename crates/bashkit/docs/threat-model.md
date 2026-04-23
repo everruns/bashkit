@@ -109,6 +109,7 @@ through configurable limits.
 | Unbounded builtin output (TM-DOS-058) | `seq 1 1000000` produces 1M lines | Add `max_stdout_bytes` limit | **OPEN** |
 | Param expansion bomb (TM-DOS-059) | `${x//a/bigstring}` multiplicative amplification | `max_total_variable_bytes` + `max_stdout_bytes` | MITIGATED |
 | Sparse array huge-index (TM-DOS-060) | `arr[999999999]=x` | HashMap storage; `max_array_entries` | MITIGATED |
+| Snapshot restore bypasses function/parser limits (TM-DOS-061) | Crafted snapshot with oversized/deep function bodies | Re-parse restored function source under current limits; re-check function memory budget | MITIGATED |
 
 **Configuration:**
 ```rust
