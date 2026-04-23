@@ -11137,6 +11137,15 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_extglob_utf8_no_panic() {
+        let result =
+            run_script(r#"shopt -s extglob; v="é"; [[ "$v" == +(a) ]] && echo yes || echo no"#)
+                .await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "no");
+    }
+
+    #[tokio::test]
     async fn test_extglob_no_hang() {
         use std::time::{Duration, Instant};
         let start = Instant::now();

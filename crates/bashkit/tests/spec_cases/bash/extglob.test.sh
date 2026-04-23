@@ -116,3 +116,12 @@ case "@(foo)" in '@(foo)') echo "literal";; *) echo "no";; esac
 ### expect
 literal
 ### end
+
+### extglob_plus_utf8_no_panic
+# Regression: non-ASCII value must not panic while backtracking +(...)
+shopt -s extglob
+v="é"
+[[ "$v" == +(a) ]] && echo "yes" || echo "no"
+### expect
+no
+### end
