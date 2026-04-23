@@ -9866,16 +9866,16 @@ impl Interpreter {
                 } else {
                     1
                 };
-                let abs_step = step.unsigned_abs() as u8;
+                let abs_step = step.unsigned_abs();
 
                 let mut results = Vec::new();
-                let start_byte = start_char as u8;
-                let end_byte = end_char as u8;
+                let start_byte = u64::from(start_char as u8);
+                let end_byte = u64::from(end_char as u8);
 
                 if start_byte <= end_byte {
                     let mut b = start_byte;
                     while b <= end_byte {
-                        results.push((b as char).to_string());
+                        results.push(((b as u8) as char).to_string());
                         b = match b.checked_add(abs_step) {
                             Some(v) => v,
                             None => break,
@@ -9884,7 +9884,7 @@ impl Interpreter {
                 } else {
                     let mut b = start_byte;
                     while b >= end_byte {
-                        results.push((b as char).to_string());
+                        results.push(((b as u8) as char).to_string());
                         b = match b.checked_sub(abs_step) {
                             Some(v) => v,
                             None => break,
@@ -9934,6 +9934,20 @@ mod tests {
     use super::*;
     use crate::fs::InMemoryFs;
     use crate::parser::Parser;
+
+    #[test]
+    fn test_try_expand_range_alpha_large_step_does_not_loop() {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        let interp = Interpreter::new(Arc::clone(&fs));
+        assert_eq!(
+            interp.try_expand_range("a..z..256"),
+            Some(vec!["a".to_string()])
+        );
+        assert_eq!(
+            interp.try_expand_range("z..a..-256"),
+            Some(vec!["z".to_string()])
+        );
+    }
 
     /// Test timeout with paused time for deterministic behavior
     #[tokio::test(start_paused = true)]
