@@ -26,6 +26,12 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "0.10.0 -> 0.10.1"
 
+[[audits.rustls-webpki]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.103.12 -> 0.103.13"
+notes = "Reviewed delta: fixes BIT STRING/CRL parsing edge cases and preserves fail-closed URI constraint handling; no new unsafe code or ambient capability changes."
+
 [[audits.tokio]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
