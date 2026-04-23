@@ -80,3 +80,28 @@ async fn final_env_on_error_still_captured() {
         .expect("final_env should be Some even on error");
     assert_eq!(env.get("BEFORE_ERR").map(|s| s.as_str()), Some("yes"));
 }
+
+#[tokio::test]
+async fn final_env_hides_hidden_markers() {
+    let limits = ExecutionLimits::new().capture_final_env(true);
+    let mut bash = Bash::builder().limits(limits).build();
+    let result = bash.exec("_TTY_TEST=secret; VISIBLE=ok").await.unwrap();
+    let env = result.final_env.expect("final_env should be Some");
+    assert_eq!(env.get("VISIBLE").map(|s| s.as_str()), Some("ok"));
+    assert!(!env.contains_key("_TTY_TEST"));
+}
+
+#[tokio::test]
+async fn final_env_respects_output_byte_cap() {
+    let limits = ExecutionLimits::new()
+        .capture_final_env(true)
+        .max_stdout_bytes(4096);
+    let mut bash = Bash::builder().limits(limits).build();
+    let script = format!("SMALL=ok; BIG={}", "x".repeat(10_000));
+    let result = bash.exec(&script).await.unwrap();
+    let env = result.final_env.expect("final_env should be Some");
+    let total_bytes: usize = env.iter().map(|(k, v)| k.len() + v.len()).sum();
+    assert!(total_bytes <= 4096);
+    assert_eq!(env.get("SMALL").map(|s| s.as_str()), Some("ok"));
+    assert!(!env.contains_key("BIG"));
+}
