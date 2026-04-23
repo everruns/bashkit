@@ -989,7 +989,12 @@ mod tests {
             .request_with_timeouts(Method::Get, "https://example.com", None, &[], Some(1), None)
             .await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("operation timed out"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("operation timed out")
+        );
     }
 
     // Note: Integration tests that actually make network requests
