@@ -38,12 +38,25 @@ impl Builtin for Split {
             match ctx.args[i].as_str() {
                 "-l" => {
                     i += 1;
-                    lines_per_file =
-                        Some(ctx.args.get(i).and_then(|s| s.parse().ok()).unwrap_or(1000));
+                    let n = ctx.args.get(i).and_then(|s| s.parse().ok()).unwrap_or(1000);
+                    if n == 0 {
+                        return Ok(ExecResult::err(
+                            "split: invalid number of lines: 0\n".to_string(),
+                            1,
+                        ));
+                    }
+                    lines_per_file = Some(n);
                 }
                 "-b" => {
                     i += 1;
-                    bytes_per_file = ctx.args.get(i).and_then(|s| parse_size(s));
+                    let size = ctx.args.get(i).and_then(|s| parse_size(s));
+                    if size == Some(0) {
+                        return Ok(ExecResult::err(
+                            "split: invalid number of bytes: 0\n".to_string(),
+                            1,
+                        ));
+                    }
+                    bytes_per_file = size;
                 }
                 "-n" => {
                     i += 1;
@@ -253,6 +266,22 @@ mod tests {
         let fs = Arc::new(InMemoryFs::new()) as Arc<dyn FileSystem>;
         let result = run_split(&["-n", "0"], Some("data"), fs).await;
         assert_eq!(result.exit_code, 1);
+    }
+
+    #[tokio::test]
+    async fn test_split_zero_lines() {
+        let fs = Arc::new(InMemoryFs::new()) as Arc<dyn FileSystem>;
+        let result = run_split(&["-l", "0"], Some("data"), fs).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid number of lines"));
+    }
+
+    #[tokio::test]
+    async fn test_split_zero_bytes() {
+        let fs = Arc::new(InMemoryFs::new()) as Arc<dyn FileSystem>;
+        let result = run_split(&["-b", "0"], Some("data"), fs).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid number of bytes"));
     }
 
     #[tokio::test]
