@@ -114,6 +114,13 @@ fn split_fields(line: &str, delimiter: Option<char>) -> Vec<&str> {
 }
 
 /// Extract the sort key from a line based on field delimiter and key spec
+fn char_to_byte_idx(s: &str, char_idx: usize) -> usize {
+    s.char_indices()
+        .nth(char_idx)
+        .map(|(byte_idx, _)| byte_idx)
+        .unwrap_or(s.len())
+}
+
 fn extract_key_spec(line: &str, delimiter: Option<char>, key: &KeySpec) -> String {
     let fields = split_fields(line, delimiter);
     if fields.is_empty() || key.start_field == 0 {
@@ -137,20 +144,23 @@ fn extract_key_spec(line: &str, delimiter: Option<char>, key: &KeySpec) -> Strin
 
     if start_idx == end_idx {
         let field = fields[start_idx];
+        let field_char_len = field.chars().count();
         let start_c = if key.start_char > 0 {
-            (key.start_char - 1).min(field.len())
+            (key.start_char - 1).min(field_char_len)
         } else {
             0
         };
         let end_c = if key.end_char > 0 {
-            key.end_char.min(field.len())
+            key.end_char.min(field_char_len)
         } else {
-            field.len()
+            field_char_len
         };
         if start_c >= end_c {
             return String::new();
         }
-        return field[start_c..end_c].to_string();
+        let start_b = char_to_byte_idx(field, start_c);
+        let end_b = char_to_byte_idx(field, end_c);
+        return field[start_b..end_b].to_string();
     }
 
     // Multi-field key
@@ -160,11 +170,15 @@ fn extract_key_spec(line: &str, delimiter: Option<char>, key: &KeySpec) -> Strin
             result.push(delimiter.unwrap_or(' '));
         }
         if i == start_idx && key.start_char > 0 {
-            let sc = (key.start_char - 1).min(field.len());
-            result.push_str(&field[sc..]);
+            let field_char_len = field.chars().count();
+            let sc = (key.start_char - 1).min(field_char_len);
+            let start_b = char_to_byte_idx(field, sc);
+            result.push_str(&field[start_b..]);
         } else if i == end_idx && key.end_char > 0 {
-            let ec = key.end_char.min(field.len());
-            result.push_str(&field[..ec]);
+            let field_char_len = field.chars().count();
+            let ec = key.end_char.min(field_char_len);
+            let end_b = char_to_byte_idx(field, ec);
+            result.push_str(&field[..end_b]);
         } else {
             result.push_str(field);
         }
@@ -938,6 +952,12 @@ mod tests {
         assert_eq!(extract_key_spec("hello world", None, &key2), "world");
         let key5 = KeySpec::parse("5");
         assert_eq!(extract_key_spec("x", None, &key5), "");
+
+        let utf8_single_field = KeySpec::parse("1.2,1.2");
+        assert_eq!(extract_key_spec("éa", None, &utf8_single_field), "a");
+
+        let utf8_multi_field = KeySpec::parse("1.2,2.1");
+        assert_eq!(extract_key_spec("éx yz", None, &utf8_multi_field), "x y");
     }
 
     #[tokio::test]
