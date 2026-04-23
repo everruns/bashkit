@@ -127,7 +127,14 @@ impl Builtin for Unexpand {
                             1,
                         ));
                     }
-                    tab_stops = parse_tab_stops(&ctx.args[i]);
+                    let parsed_tab_stops = parse_tab_stops(&ctx.args[i]);
+                    if parsed_tab_stops.is_empty() {
+                        return Ok(ExecResult::err(
+                            format!("unexpand: invalid tab size: '{}'\n", ctx.args[i]),
+                            1,
+                        ));
+                    }
+                    tab_stops = parsed_tab_stops;
                     all = true; // -t implies -a
                 }
                 _ => files.push(&ctx.args[i]),
@@ -356,5 +363,19 @@ mod tests {
     async fn test_expand_empty() {
         let result = run_expand(&[], Some("")).await;
         assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_unexpand_invalid_zero_tab_stop() {
+        let result = run_unexpand(&["-t", "0"], Some("        hello")).await;
+        assert_eq!(result.exit_code, 1);
+        assert_eq!(result.stderr, "unexpand: invalid tab size: '0'\n");
+    }
+
+    #[tokio::test]
+    async fn test_unexpand_invalid_non_numeric_tab_stop() {
+        let result = run_unexpand(&["-t", "foo"], Some("        hello")).await;
+        assert_eq!(result.exit_code, 1);
+        assert_eq!(result.stderr, "unexpand: invalid tab size: 'foo'\n");
     }
 }
