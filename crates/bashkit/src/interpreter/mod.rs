@@ -1661,7 +1661,31 @@ impl Interpreter {
         }
 
         let final_env = if self.limits.capture_final_env {
-            Some(self.variables.clone())
+            // THREAT[TM-INF-031]: final_env is a user-visible output channel.
+            // Apply visibility filtering + output-byte cap to prevent marker leaks
+            // and bypass of stdout/stderr output limits.
+            let mut final_env = HashMap::new();
+            let mut remaining = self.limits.max_stdout_bytes;
+            let mut keys: Vec<&String> = self.variables.keys().collect();
+            keys.sort_unstable();
+            for key in keys {
+                if is_hidden_variable(key) {
+                    continue;
+                }
+                let Some(value) = self.variables.get(key) else {
+                    continue;
+                };
+                let entry_bytes = key.len().saturating_add(value.len());
+                if entry_bytes > remaining {
+                    continue;
+                }
+                final_env.insert(key.clone(), value.clone());
+                remaining = remaining.saturating_sub(entry_bytes);
+                if remaining == 0 {
+                    break;
+                }
+            }
+            Some(final_env)
         } else {
             None
         };
