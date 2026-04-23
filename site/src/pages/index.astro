@@ -7,11 +7,63 @@ import { Code } from "astro:components";
 // scrolling to stay readable.
 // Decision: bias the homepage toward product proof, source-backed claims, and
 // concrete next steps instead of generic positioning copy.
+// Decision: use a custom proof code card in the hero instead of syntax-token
+// highlighting because the default highlighted output reads as visual noise at
+// landing-page scale.
+
+const evalSnapshot = {
+  date: "2026-02-28",
+  href: "https://github.com/everruns/bashkit/blob/main/crates/bashkit-eval/README.md",
+};
 
 const heroStats = [
-  { label: "Built-in commands", value: "160" },
-  { label: "Threats mitigated", value: "250+" },
-  { label: "Haiku 4.5 eval", value: "97%" },
+  { label: "Built-in commands", value: "160", href: "/builtins" },
+  {
+    label: "Threats mitigated",
+    value: "250+",
+    href: "https://github.com/everruns/bashkit/blob/main/specs/threat-model.md",
+    external: true,
+  },
+  {
+    label: "Haiku 4.5 eval",
+    value: "97%",
+    href: evalSnapshot.href,
+    external: true,
+  },
+];
+
+const quickStarts = [
+  { label: "Rust", href: "#quickstart-rust" },
+  { label: "Python", href: "#quickstart-python" },
+  { label: "TypeScript", href: "#quickstart-typescript" },
+];
+
+const heroQuickLinks = [
+  {
+    title: "Rust docs",
+    detail: "docs.rs reference",
+    href: "https://docs.rs/bashkit",
+  },
+  {
+    title: "Examples",
+    detail: "Rust, Python, TS",
+    href: "https://github.com/everruns/bashkit/tree/main/examples",
+  },
+];
+
+const builtinPreview = [
+  "grep",
+  "sed",
+  "awk",
+  "jq",
+  "curl",
+  "find",
+  "xargs",
+  "tar",
+  "git",
+  "ssh",
+  "python",
+  "typescript",
 ];
 
 const signals = [
@@ -77,6 +129,7 @@ async fn main() -> anyhow::Result<()> {
 
 const languages = [
   {
+    slug: "rust",
     eyebrow: "Rust",
     title: "The core crate",
     install: "cargo add bashkit",
@@ -92,6 +145,7 @@ async fn main() -> anyhow::Result<()> {
 }`,
   },
   {
+    slug: "python",
     eyebrow: "Python",
     title: "PyO3 wheel with direct Bash API",
     install: "pip install bashkit",
@@ -106,6 +160,7 @@ bash.execute_sync("export APP_ENV=dev")
 print(bash.execute_sync("echo $APP_ENV").stdout)`,
   },
   {
+    slug: "typescript",
     eyebrow: "TypeScript",
     title: "NAPI-RS runtime for Node, Bun, Deno",
     install: "npm i @everruns/bashkit",
@@ -160,11 +215,6 @@ const evals = [
   { model: "GPT-5.3-Codex", score: "91%", passed: "51/58" },
   { model: "GPT-5.2", score: "77%", passed: "41/58" },
 ];
-
-const evalSnapshot = {
-  date: "2026-02-28",
-  href: "https://github.com/everruns/bashkit/blob/main/crates/bashkit-eval/README.md",
-};
 
 const resources = [
   {
@@ -232,59 +282,95 @@ async fn main() -> anyhow::Result<()> {
           interfaces for agent frameworks — all in-memory, all sandboxed.
         </p>
 
-        <div class="atlas-actions">
-          <a href="#install" class="btn btn-primary">Quick start</a>
-          <a
-            href="https://docs.rs/bashkit"
-            class="btn btn-secondary"
-            target="_blank"
-            rel="noopener noreferrer">Read the docs</a
-          >
-          <a
-            href="https://github.com/everruns/bashkit/blob/main/specs/threat-model.md"
-            class="btn btn-secondary"
-            target="_blank"
-            rel="noopener noreferrer">Threat model</a
-          >
+        <div class="atlas-quickstarts">
+          <span class="atlas-actions__label">Quick starts</span>
+          {
+            quickStarts.map((item) => (
+              <a href={item.href} class="btn btn-secondary atlas-quickstart-link">
+                {item.label}
+              </a>
+            ))
+          }
         </div>
 
-        <div class="atlas-proof-strip">
-          <div class="atlas-proof-strip__item">
-            <span class="atlas-proof-strip__label">Install</span>
-            <code>cargo add bashkit</code>
-          </div>
-          <div class="atlas-proof-strip__item">
-            <span class="atlas-proof-strip__label">Run</span>
-            <code>let out = bash.exec("echo hi").await?;</code>
-          </div>
-          <div class="atlas-proof-strip__item">
-            <span class="atlas-proof-strip__label">Docs</span>
-            <a href="#install">Rust, Python, TypeScript</a>
-          </div>
+        <div class="atlas-hero-guide">
+          <article class="atlas-hero-guide__card">
+            <span class="atlas-proof-strip__label">Start in Rust</span>
+            <p>Install the crate.</p>
+            <pre class="atlas-hero-command"><code>cargo add bashkit</code></pre>
+          </article>
+          <article class="atlas-hero-guide__card atlas-hero-guide__card--links">
+            <span class="atlas-proof-strip__label">Go deeper</span>
+            <div class="atlas-hero-links">
+              {
+                heroQuickLinks.map((link) => (
+                  <a
+                    href={link.href}
+                    class="atlas-hero-link"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    <span>{link.title}</span>
+                    <small>{link.detail}</small>
+                  </a>
+                ))
+              }
+            </div>
+          </article>
         </div>
 
         <div class="atlas-stats">
           {
             heroStats.map((stat) => (
-              <article class="atlas-stat">
+              <a
+                href={stat.href}
+                class="atlas-stat atlas-stat--link"
+                target={stat.external ? "_blank" : undefined}
+                rel={stat.external ? "noopener noreferrer" : undefined}
+              >
                 <span class="atlas-stat__label">{stat.label}</span>
                 <strong>{stat.value}</strong>
-              </article>
+              </a>
             ))
           }
         </div>
+
+        <article class="atlas-panel atlas-builtins-panel">
+          <div class="atlas-builtins-panel__copy">
+            <span class="atlas-eyebrow">Runtime surface</span>
+            <h3>Browse the builtins that make the sandbox usable.</h3>
+            <p>
+              Text processing, files, archives, network, Python, TypeScript,
+              and shell control all live in-process.
+            </p>
+          </div>
+          <div class="atlas-chip-list">
+            {
+              builtinPreview.map((name) => (
+                <span class="atlas-chip">{name}</span>
+              ))
+            }
+          </div>
+          <a href="/builtins" class="atlas-inline-link">See all 160 builtins</a>
+        </article>
       </div>
 
       <aside class="atlas-panel atlas-signal-panel">
         <div class="atlas-signal-panel__intro">
           <span class="atlas-eyebrow">Proof</span>
-          <h2>A runnable sample before the fold.</h2>
+          <h2>The core runtime, in context.</h2>
           <p>
             The core API is just `Bash`, plus virtual FS and limits. No sidecar
             process, no container bootstrap.
           </p>
         </div>
-        <Code code={heroSnippet} lang="rust" theme="github-dark" wrap={true} />
+        <div class="atlas-proof-code">
+          <div class="atlas-proof-code__header">
+            <span>Rust</span>
+            <span>In-process execution</span>
+          </div>
+          <pre><code>{heroSnippet}</code></pre>
+        </div>
         <div class="atlas-signal-list">
           {
             signals.map((item) => (
@@ -342,7 +428,7 @@ async fn main() -> anyhow::Result<()> {
       <div class="atlas-language-list">
         {
           languages.map((lang) => (
-            <article class="atlas-panel atlas-lang-row">
+            <article id={`quickstart-${lang.slug}`} class="atlas-panel atlas-lang-row">
               <div class="atlas-lang-row__meta">
                 <span class="atlas-eyebrow">{lang.eyebrow}</span>
                 <h3>{lang.title}</h3>
@@ -413,10 +499,10 @@ async fn main() -> anyhow::Result<()> {
       <div class="atlas-section-heading">
         <div>
           <span class="atlas-eyebrow">LLM evals</span>
-          <h2>How well do models use bashkit?</h2>
+          <h2>How well do LLMs use bashkit?</h2>
         </div>
         <p>
-          Bashkit ships with a 58-task eval harness across 15 agentic
+          Bashkit ships with a 58-task LLM eval harness across 15 agentic
           categories. Results below are from the
           <a href={evalSnapshot.href} target="_blank" rel="noopener noreferrer">
             {evalSnapshot.date}
@@ -483,8 +569,8 @@ async fn main() -> anyhow::Result<()> {
   .atlas-hero {
     position: relative;
     overflow: hidden;
-    padding-top: 5rem;
-    padding-bottom: 4rem;
+    padding-top: 4rem;
+    padding-bottom: 2rem;
     background: linear-gradient(
       180deg,
       #f8f6ef 0%,
@@ -511,7 +597,7 @@ async fn main() -> anyhow::Result<()> {
     display: grid;
     grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.85fr);
     gap: 1.5rem;
-    align-items: end;
+    align-items: start;
   }
   .atlas-hero__copy {
     display: grid;
@@ -554,23 +640,49 @@ async fn main() -> anyhow::Result<()> {
     font-size: 1.08rem;
     color: rgb(64 64 64 / 0.92);
   }
-  .atlas-actions {
+  .atlas-quickstarts {
     display: flex;
     flex-wrap: wrap;
+    align-items: center;
     gap: 0.85rem;
     padding-top: 0.2rem;
   }
-  .atlas-proof-strip {
+  .atlas-actions__label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-slate);
+  }
+  .atlas-quickstart-link {
+    min-height: 2.9rem;
+    background: rgb(255 255 255 / 0.76);
+    transition:
+      transform 0.12s ease,
+      border-color 0.12s ease,
+      background 0.12s ease;
+  }
+  .atlas-quickstart-link:hover {
+    text-decoration: none;
+    transform: translateY(-1px);
+    border-color: rgb(10 22 54 / 0.32);
+    background: rgb(255 255 255 / 0.92);
+  }
+  .atlas-hero-guide {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
     gap: 0.8rem;
   }
-  .atlas-proof-strip__item {
+  .atlas-hero-guide__card {
     display: grid;
-    gap: 0.35rem;
-    padding: 0.85rem 1rem;
+    gap: 0.55rem;
+    padding: 1rem;
     border: 1px solid rgb(10 22 54 / 0.12);
     background: rgb(255 255 255 / 0.72);
+  }
+  .atlas-hero-guide__card p {
+    font-size: 0.95rem;
+    color: rgb(64 64 64 / 0.92);
   }
   .atlas-proof-strip__label {
     font-size: 0.72rem;
@@ -579,12 +691,51 @@ async fn main() -> anyhow::Result<()> {
     text-transform: uppercase;
     color: var(--color-slate);
   }
-  .atlas-proof-strip code,
-  .atlas-proof-strip a {
-    font-size: 0.92rem;
-    background: transparent;
+  .atlas-hero-command {
+    margin: 0;
+    padding: 0.8rem 0.9rem;
+    border: 1px solid rgb(255 255 255 / 0.08);
+    background: #10151f;
+    color: #edf2fb;
+    overflow-x: auto;
+  }
+  .atlas-hero-command code,
+  .atlas-proof-code code {
+    display: block;
     padding: 0;
+    background: transparent;
+    color: inherit;
+    font-family: var(--font-mono);
+  }
+  .atlas-hero-command code {
+    font-size: 0.95rem;
+    white-space: pre-wrap;
     overflow-wrap: anywhere;
+  }
+  .atlas-hero-links {
+    display: grid;
+    gap: 0.55rem;
+  }
+  .atlas-hero-link {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding-bottom: 0.45rem;
+    border-bottom: 1px solid rgb(10 22 54 / 0.12);
+    color: var(--color-obsidian);
+  }
+  .atlas-hero-link:last-child {
+    padding-bottom: 0;
+    border-bottom: none;
+  }
+  .atlas-hero-link:hover {
+    text-decoration: none;
+  }
+  .atlas-hero-link small {
+    color: var(--color-slate);
+    font-size: 0.82rem;
+    text-align: right;
   }
   .atlas-stats {
     display: grid;
@@ -603,11 +754,69 @@ async fn main() -> anyhow::Result<()> {
     gap: 0.45rem;
     padding: 1rem;
   }
+  .atlas-stat--link {
+    color: inherit;
+    text-decoration: none;
+    transition:
+      transform 0.12s ease,
+      border-color 0.12s ease,
+      box-shadow 0.12s ease;
+  }
+  .atlas-stat--link:hover {
+    text-decoration: none;
+    transform: translateY(-1px);
+    border-color: rgb(10 22 54 / 0.24);
+    box-shadow: 0 20px 44px rgb(10 22 54 / 0.08);
+  }
   .atlas-stat strong {
     font-size: 1.4rem;
     line-height: 1.2;
     font-family: var(--font-mono);
     color: var(--color-obsidian);
+  }
+  .atlas-builtins-panel {
+    display: grid;
+    gap: 1rem;
+    padding: 1.15rem;
+  }
+  .atlas-builtins-panel__copy {
+    display: grid;
+    gap: 0.55rem;
+  }
+  .atlas-builtins-panel__copy h3 {
+    font-size: 1.3rem;
+    font-weight: 600;
+    line-height: 1.15;
+  }
+  .atlas-builtins-panel__copy p {
+    color: rgb(64 64 64 / 0.92);
+  }
+  .atlas-chip-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.55rem;
+  }
+  .atlas-chip {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2rem;
+    padding: 0.35rem 0.7rem;
+    background: #10151f;
+    color: #edf2fb;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    letter-spacing: 0.01em;
+  }
+  .atlas-inline-link {
+    display: inline-flex;
+    align-items: center;
+    width: fit-content;
+    color: var(--color-navy);
+    font-weight: 600;
+    text-decoration: none;
+  }
+  .atlas-inline-link:hover {
+    text-decoration: underline;
   }
   .atlas-signal-panel {
     display: grid;
@@ -615,6 +824,38 @@ async fn main() -> anyhow::Result<()> {
     padding: 1.35rem;
   }
   .atlas-signal-panel__intro { display: grid; gap: 0.7rem; }
+  .atlas-proof-code {
+    display: grid;
+    gap: 0;
+    border: 1px solid rgb(10 22 54 / 0.12);
+    background: linear-gradient(180deg, #111726 0%, #0b1020 100%);
+    color: #edf2fb;
+    overflow: hidden;
+  }
+  .atlas-proof-code__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.8rem 1rem;
+    border-bottom: 1px solid rgb(255 255 255 / 0.08);
+    background: rgb(255 255 255 / 0.03);
+    font-size: 0.76rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: rgb(237 242 251 / 0.72);
+  }
+  .atlas-proof-code pre {
+    margin: 0;
+    padding: 1rem;
+    overflow-x: auto;
+  }
+  .atlas-proof-code code {
+    font-size: 0.9rem;
+    line-height: 1.8;
+    white-space: pre;
+  }
   .atlas-signal-list { display: grid; gap: 0.9rem; }
   .atlas-signal-list__item {
     display: grid;
@@ -767,12 +1008,30 @@ async fn main() -> anyhow::Result<()> {
     .atlas-card-grid--resources {
       grid-template-columns: 1fr;
     }
-    .atlas-proof-strip { grid-template-columns: 1fr; }
+    .atlas-hero-guide { grid-template-columns: 1fr; }
     .atlas-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .atlas-lang-row { grid-template-columns: 1fr; }
   }
   @media (max-width: 560px) {
     .atlas-stats { grid-template-columns: 1fr; }
-    .atlas-actions .btn { justify-content: center; flex: 1 1 auto; }
+    .atlas-quickstarts {
+      align-items: stretch;
+    }
+    .atlas-actions__label {
+      width: 100%;
+    }
+    .atlas-quickstart-link {
+      justify-content: center;
+      flex: 1 1 auto;
+    }
+    .atlas-hero-link {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+    .atlas-hero-link small { text-align: left; }
+    .atlas-proof-code__header {
+      flex-direction: column;
+      align-items: flex-start;
+    }
   }
 </style>

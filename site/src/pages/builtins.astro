@@ -1,0 +1,327 @@
+---
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import BaseLayout from "../layouts/BaseLayout.astro";
+
+// Decision: build the public builtins index from specs/implementation-status.md
+// so the homepage and this page stay anchored to the canonical 160-command list.
+
+const implementationStatus = readFileSync(
+  resolve(process.cwd(), "../specs/implementation-status.md"),
+  "utf8",
+);
+
+const implementedSection = implementationStatus.match(
+  /### Implemented\s+[\s\S]*?\n\n([\s\S]*?)\n\n### Not Yet Implemented/,
+);
+
+const builtins = [
+  ...new Set(
+    Array.from(
+      implementedSection?.[1].matchAll(/`([^`]+)`/g) ?? [],
+      (match: RegExpMatchArray) => match[1],
+    ),
+  ),
+].sort((left, right) => left.localeCompare(right));
+
+const optInBuiltinGroups = [
+  {
+    label: "opt-in: jq",
+    tone: "gold",
+    names: new Set(["jq"]),
+  },
+  {
+    label: "opt-in: git",
+    tone: "mint",
+    names: new Set(["git"]),
+  },
+  {
+    label: "opt-in: ssh",
+    tone: "sky",
+    names: new Set(["ssh", "scp", "sftp"]),
+  },
+  {
+    label: "opt-in: python",
+    tone: "rose",
+    names: new Set(["python", "python3"]),
+  },
+  {
+    label: "opt-in: typescript",
+    tone: "violet",
+    names: new Set(["ts", "typescript", "node", "deno", "bun"]),
+  },
+];
+
+const optInBuiltinLookup = new Map(
+  optInBuiltinGroups.flatMap((group) =>
+    Array.from(
+      group.names,
+      (name) => [name, { tone: group.tone }] as const,
+    ),
+  ),
+);
+
+const groupedBuiltins = Object.entries(
+  builtins.reduce<Record<string, string[]>>((groups, builtin) => {
+    const first = builtin[0]?.toUpperCase() ?? "#";
+    const key = /[A-Z]/.test(first) ? first : "#";
+    groups[key] ??= [];
+    groups[key].push(builtin);
+    return groups;
+  }, {}),
+).sort(([left], [right]) => left.localeCompare(right));
+
+const builtinsSpecHref =
+  "https://github.com/everruns/bashkit/blob/main/specs/builtins.md";
+const implementationStatusHref =
+  "https://github.com/everruns/bashkit/blob/main/specs/implementation-status.md";
+---
+
+<BaseLayout
+  title="Bashkit builtins — 160 commands in the virtual runtime"
+  description="Browse the 160 builtins Bashkit exposes inside its in-process virtual shell runtime."
+>
+  <section class="builtins-hero section">
+    <div class="container builtins-hero__grid">
+      <div class="builtins-hero__copy">
+        <span class="builtins-eyebrow">Builtins index</span>
+        <h1>160+ builtin commands.</h1>
+        <p>
+          Bashkit reimplements the shell surface inside the runtime: text
+          processing, files, archives, network, shell control, plus optional
+          Python and TypeScript runtimes. This page mirrors the canonical
+          implemented list from the project specs.
+        </p>
+      </div>
+
+      <aside class="builtins-hero__panel">
+        <div>
+          <span class="builtins-eyebrow">Source of truth</span>
+          <h2>Tracked in specs, not guessed from source folders.</h2>
+        </div>
+        <p>
+          The count and command names here come from
+          <a href={implementationStatusHref} target="_blank" rel="noopener noreferrer"><code>specs/implementation-status.md</code></a>.
+        </p>
+        <div class="builtins-legend">
+          <span class="builtins-eyebrow">Legend</span>
+          {
+            optInBuiltinGroups.map((group) => (
+              <span class={`builtins-legend__item builtins-tone-${group.tone}`}>
+                {group.label}
+              </span>
+            ))
+          }
+        </div>
+        <div class="builtins-actions">
+          <a href={implementationStatusHref} target="_blank" rel="noopener noreferrer">
+            Implementation status
+          </a>
+          <a href={builtinsSpecHref} target="_blank" rel="noopener noreferrer">
+            Builtins spec
+          </a>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <section class="builtins-index section section-alt">
+    <div class="container">
+      <div class="builtins-index__jump">
+        {
+          groupedBuiltins.map(([letter]) => (
+            <a href={`#group-${letter}`}>{letter}</a>
+          ))
+        }
+      </div>
+
+      <div class="builtins-groups">
+        {
+          groupedBuiltins.map(([letter, names]) => (
+            <section id={`group-${letter}`} class="builtins-group">
+              <div class="builtins-group__heading">
+                <span class="builtins-eyebrow">Group</span>
+                <h2>{letter}</h2>
+                <p>{names.length} commands</p>
+              </div>
+              <div class="builtins-group__grid">
+                {
+                  names.map((name) => (
+                    <code
+                      class={`builtins-chip ${optInBuiltinLookup.has(name) ? `builtins-tone-${optInBuiltinLookup.get(name)?.tone}` : ""}`}
+                    >
+                      {name}
+                    </code>
+                  ))
+                }
+              </div>
+            </section>
+          ))
+        }
+      </div>
+    </div>
+  </section>
+</BaseLayout>
+
+<style>
+  .builtins-hero {
+    background: linear-gradient(180deg, #f8f6ef 0%, var(--color-white) 100%);
+  }
+  .builtins-hero__grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
+    gap: 1.25rem;
+    align-items: start;
+  }
+  .builtins-hero__copy,
+  .builtins-hero__panel,
+  .builtins-group,
+  .builtins-index__jump {
+    border: 1px solid rgb(10 22 54 / 0.12);
+    background: rgb(255 255 255 / 0.84);
+    box-shadow: 0 16px 40px rgb(10 22 54 / 0.04);
+  }
+  .builtins-hero__copy,
+  .builtins-hero__panel {
+    display: grid;
+    gap: 0.85rem;
+    padding: 1.35rem;
+  }
+  .builtins-eyebrow {
+    display: inline-flex;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-navy);
+  }
+  .builtins-hero h1,
+  .builtins-group__heading h2 {
+    font-size: clamp(2.2rem, 5vw, 4.4rem);
+    line-height: 0.98;
+    letter-spacing: -0.03em;
+  }
+  .builtins-hero h2 {
+    font-size: clamp(1.5rem, 2.6vw, 2rem);
+    line-height: 1.08;
+    letter-spacing: -0.02em;
+  }
+  .builtins-hero p,
+  .builtins-group__heading p {
+    color: rgb(64 64 64 / 0.92);
+    font-size: 1.02rem;
+  }
+  .builtins-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+  .builtins-legend > .builtins-eyebrow {
+    color: var(--color-slate);
+  }
+  .builtins-legend {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.55rem;
+  }
+  .builtins-legend__item {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2rem;
+    padding: 0.3rem 0.65rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .builtins-actions a,
+  .builtins-index__jump a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.7rem;
+    padding: 0.65rem 0.95rem;
+    border: 1px solid rgb(10 22 54 / 0.16);
+    background: rgb(255 255 255 / 0.72);
+    color: var(--color-obsidian);
+    font-weight: 500;
+    text-decoration: none;
+  }
+  .builtins-actions a:hover,
+  .builtins-index__jump a:hover {
+    text-decoration: none;
+    border-color: rgb(10 22 54 / 0.3);
+  }
+  .builtins-index__jump {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    padding: 1rem;
+    margin-bottom: 1rem;
+  }
+  .builtins-groups {
+    display: grid;
+    gap: 1rem;
+  }
+  .builtins-group {
+    display: grid;
+    grid-template-columns: minmax(0, 12rem) minmax(0, 1fr);
+    gap: 1rem;
+    padding: 1rem;
+  }
+  .builtins-group__heading {
+    display: grid;
+    gap: 0.45rem;
+    align-content: start;
+  }
+  .builtins-group__heading h2 {
+    font-size: clamp(2rem, 3vw, 2.75rem);
+  }
+  .builtins-group__grid {
+    display: flex;
+    flex-wrap: wrap;
+    align-content: start;
+    gap: 0.65rem;
+  }
+  .builtins-chip {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.2rem;
+    padding: 0.4rem 0.75rem;
+    background: #10151f;
+    color: #edf2fb;
+    font-family: var(--font-mono);
+    font-size: 0.84rem;
+  }
+  .builtins-tone-gold {
+    border: 1px solid rgb(212 164 58 / 0.28);
+    background: rgb(212 164 58 / 0.12);
+    color: #7a5200;
+  }
+  .builtins-tone-mint {
+    border: 1px solid rgb(24 125 89 / 0.24);
+    background: rgb(24 125 89 / 0.12);
+    color: #0d5b40;
+  }
+  .builtins-tone-sky {
+    border: 1px solid rgb(31 102 179 / 0.24);
+    background: rgb(31 102 179 / 0.12);
+    color: #0b4f97;
+  }
+  .builtins-tone-rose {
+    border: 1px solid rgb(176 62 108 / 0.24);
+    background: rgb(176 62 108 / 0.12);
+    color: #8c2350;
+  }
+  .builtins-tone-violet {
+    border: 1px solid rgb(106 76 201 / 0.24);
+    background: rgb(106 76 201 / 0.12);
+    color: #5b3db1;
+  }
+  @media (max-width: 900px) {
+    .builtins-hero__grid,
+    .builtins-group {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
