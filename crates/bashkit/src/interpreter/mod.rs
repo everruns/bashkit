@@ -9923,12 +9923,7 @@ mod tests {
             script.push_str(&format!("V{i}=x\n"));
         }
         script.push_str("export -p | grep -c '^declare -x V' || true\n");
-        let result = run_script_with_limits(
-            &script,
-            limits,
-            memory_limits,
-        )
-        .await;
+        let result = run_script_with_limits(&script, limits, memory_limits).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout.trim(), "4");
     }
