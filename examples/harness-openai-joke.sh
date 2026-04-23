@@ -13,6 +13,9 @@
 # Decision: pin harness to a reviewed commit. CI injects secrets for this example,
 # so never execute moving upstream HEAD.
 #
+# Decision: allow non-git HARNESS_DIR fixtures. Tests inject a minimal directory
+# tree instead of a cloned repo, so only repin when HARNESS_DIR is a git checkout.
+#
 # Prerequisites:
 #   - cargo build -p bashkit-cli --features realfs
 #   - OPENAI_API_KEY set in environment
@@ -41,8 +44,10 @@ if [[ ! -d "${HARNESS_DIR}" ]]; then
   echo "Cloning harness at ${HARNESS_REF}..."
   git clone --filter=blob:none https://github.com/wedow/harness "${HARNESS_DIR}"
 fi
-git -C "${HARNESS_DIR}" fetch --depth=1 origin "${HARNESS_REF}"
-git -C "${HARNESS_DIR}" checkout --detach "${HARNESS_REF}"
+if [[ -d "${HARNESS_DIR}/.git" ]]; then
+  git -C "${HARNESS_DIR}" fetch --depth=1 origin "${HARNESS_REF}"
+  git -C "${HARNESS_DIR}" checkout --detach "${HARNESS_REF}"
+fi
 
 mkdir -p "${HARNESS_HOME}/sessions" "${HARNESS_HOME}/providers"
 
