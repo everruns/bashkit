@@ -3174,17 +3174,52 @@ impl Interpreter {
             return Ok(ExecResult::ok(String::new()));
         };
 
+        if script_content.len() > self.limits.max_input_bytes {
+            return Ok(ExecResult::err(
+                format!(
+                    "{}: input exceeds maximum size ({} > {})\n",
+                    shell_name,
+                    script_content.len(),
+                    self.limits.max_input_bytes
+                ),
+                2,
+            ));
+        }
+
         // THREAT[TM-DOS-021]: Propagate interpreter's parser limits to child shell
-        let parser = Parser::with_limits(
-            &script_content,
-            self.limits.max_ast_depth,
-            self.limits.max_parser_operations,
-        );
-        let script = match parser.parse() {
-            Ok(s) => s,
-            Err(e) => {
+        let script_owned = script_content.clone();
+        let max_ast_depth = self.limits.max_ast_depth;
+        let max_parser_operations = self.limits.max_parser_operations;
+        let parse_result = tokio::time::timeout(self.limits.parser_timeout, async move {
+            tokio::task::spawn_blocking(move || {
+                let parser =
+                    Parser::with_limits(&script_owned, max_ast_depth, max_parser_operations);
+                parser.parse()
+            })
+            .await
+        })
+        .await;
+        let script = match parse_result {
+            Ok(Ok(Ok(s))) => s,
+            Ok(Ok(Err(e))) => {
                 return Ok(ExecResult::err(
                     format!("{}: syntax error: {}\n", shell_name, e),
+                    2,
+                ));
+            }
+            Ok(Err(e)) => {
+                return Ok(ExecResult::err(
+                    format!("{}: parser task failed: {}\n", shell_name, e),
+                    2,
+                ));
+            }
+            Err(_) => {
+                return Ok(ExecResult::err(
+                    format!(
+                        "{}: parser timeout after {}ms\n",
+                        shell_name,
+                        self.limits.parser_timeout.as_millis()
+                    ),
                     2,
                 ));
             }
@@ -10531,6 +10566,27 @@ mod tests {
         let result = run_script("bash -c 'for i in 1 2 3; do echo $i; done'").await;
         assert_eq!(result.exit_code, 0);
         // Loop executed successfully within limits
+    }
+
+    #[tokio::test]
+    async fn test_bash_script_file_enforces_max_input_bytes() {
+        let fs = Arc::new(InMemoryFs::new());
+        let large_script = "echo x\n".repeat(64);
+        fs.write_file(
+            std::path::Path::new("/tmp/large.sh"),
+            large_script.as_bytes(),
+        )
+        .await
+        .unwrap();
+
+        let limits = ExecutionLimits::new().max_input_bytes(64);
+        let mut interpreter = Interpreter::new(fs.clone());
+        interpreter.set_limits(limits);
+        let ast = Parser::new("bash /tmp/large.sh").parse().unwrap();
+        let result = interpreter.execute(&ast).await.unwrap();
+
+        assert_eq!(result.exit_code, 2);
+        assert!(result.stderr.contains("input exceeds maximum size"));
     }
 
     #[tokio::test]
