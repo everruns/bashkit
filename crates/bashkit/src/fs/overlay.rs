@@ -321,10 +321,8 @@ impl OverlayFs {
                 }
                 if let Ok(meta) = self.lower.stat(&child).await {
                     match meta.file_type {
-                        FileType::File => {
-                            if !self.upper.exists(&child).await.unwrap_or(false) {
-                                self.hide_lower_file(meta.size);
-                            }
+                        FileType::File if !self.upper.exists(&child).await.unwrap_or(false) => {
+                            self.hide_lower_file(meta.size);
                         }
                         FileType::Directory => {
                             self.hide_lower_dir();
