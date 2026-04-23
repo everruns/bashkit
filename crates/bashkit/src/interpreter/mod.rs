@@ -9048,16 +9048,20 @@ impl Interpreter {
                     .saturating_add(value.len())
                     .saturating_sub(old_val_len);
                 if allexport {
-                    self.env.insert(resolved, value.clone());
+                    let env_key = resolved.clone();
+                    let env_value = value.clone();
+                    e.insert(value);
+                    self.insert_env_checked(env_key, env_value);
+                    return;
                 }
                 e.insert(value);
                 return;
             }
         }
-        if allexport {
-            self.env.insert(resolved.clone(), value.clone());
+        self.insert_variable_checked(resolved.clone(), value.clone());
+        if allexport && self.variables.contains_key(&resolved) {
+            self.insert_env_checked(resolved, value);
         }
-        self.insert_variable_checked(resolved, value);
     }
 
     /// Insert a variable into the global variables map with memory budget checking.
@@ -9095,6 +9099,26 @@ impl Interpreter {
             );
         }
         self.variables.insert(key, value);
+    }
+
+    /// Insert/update an environment variable with memory limit checks.
+    /// Uses the variable limits to bound environment growth.
+    fn insert_env_checked(&mut self, key: String, value: String) {
+        let is_new = !self.env.contains_key(&key);
+        if is_new && self.env.len() >= self.memory_limits.max_variable_count {
+            return;
+        }
+
+        let old_value_len = self.env.get(&key).map_or(0, |v| v.len());
+        let old_key_len = if is_new { 0 } else { key.len() };
+        let current_env_bytes: usize = self.env.iter().map(|(k, v)| k.len() + v.len()).sum();
+        let new_env_bytes = (current_env_bytes + key.len() + value.len())
+            .saturating_sub(old_key_len + old_value_len);
+        if new_env_bytes > self.memory_limits.max_total_variable_bytes {
+            return;
+        }
+
+        self.env.insert(key, value);
     }
 
     /// Insert an array with memory budget checking.
@@ -9841,6 +9865,21 @@ mod tests {
         interp.execute(&ast).await.unwrap()
     }
 
+    /// Helper to run a script with custom limits and return result.
+    async fn run_script_with_limits(
+        script: &str,
+        limits: ExecutionLimits,
+        memory_limits: crate::limits::MemoryLimits,
+    ) -> ExecResult {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        let mut interp = Interpreter::new(Arc::clone(&fs));
+        interp.set_limits(limits);
+        interp.set_memory_limits(memory_limits);
+        let parser = Parser::new(script);
+        let ast = parser.parse().unwrap();
+        interp.execute(&ast).await.unwrap()
+    }
+
     #[tokio::test]
     async fn test_colon_null_utility() {
         // POSIX : (colon) - null utility, should return success
@@ -9873,6 +9912,25 @@ mod tests {
         let result = run_script("times").await;
         assert_eq!(result.exit_code, 0);
         assert!(result.stdout.contains("0m0.000s"));
+    }
+
+    #[tokio::test]
+    async fn test_allexport_respects_env_memory_limits() {
+        let limits = ExecutionLimits::new();
+        let memory_limits = crate::limits::MemoryLimits::new().max_variable_count(5);
+        let mut script = String::from("set -a\n");
+        for i in 0..20 {
+            script.push_str(&format!("V{i}=x\n"));
+        }
+        script.push_str("export -p | grep -c '^declare -x V' || true\n");
+        let result = run_script_with_limits(
+            &script,
+            limits,
+            memory_limits,
+        )
+        .await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "4");
     }
 
     #[tokio::test]
