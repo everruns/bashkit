@@ -490,7 +490,17 @@ fn parse_address(s: &str) -> Result<(Option<Address>, &str)> {
     Ok((None, s))
 }
 
+const MAX_GROUP_NESTING_DEPTH: usize = 128;
+
 fn parse_sed_command(s: &str, extended_regex: bool) -> Result<(Option<Address>, bool, SedCommand)> {
+    parse_sed_command_with_depth(s, extended_regex, 0)
+}
+
+fn parse_sed_command_with_depth(
+    s: &str,
+    extended_regex: bool,
+    depth: usize,
+) -> Result<(Option<Address>, bool, SedCommand)> {
     let (address, rest) = parse_address(s)?;
 
     if rest.is_empty() {
@@ -672,6 +682,12 @@ fn parse_sed_command(s: &str, extended_regex: bool) -> Result<(Option<Address>, 
             Ok((address, negate, SedCommand::BranchIfSub(label)))
         }
         '{' => {
+            if depth >= MAX_GROUP_NESTING_DEPTH {
+                return Err(Error::Execution(format!(
+                    "sed: grouped command nesting exceeds max depth {}",
+                    MAX_GROUP_NESTING_DEPTH
+                )));
+            }
             // Grouped commands: { cmd1; cmd2; ... }
             // Find matching closing brace
             let inner = rest[1..].trim();
@@ -680,7 +696,8 @@ fn parse_sed_command(s: &str, extended_regex: bool) -> Result<(Option<Address>, 
             for cmd_str in split_sed_commands(inner) {
                 let trimmed = cmd_str.trim();
                 if !trimmed.is_empty() {
-                    let (a, n, c) = parse_sed_command(trimmed, extended_regex)?;
+                    let (a, n, c) =
+                        parse_sed_command_with_depth(trimmed, extended_regex, depth + 1)?;
                     group_cmds.push((a, n, c));
                 }
             }
@@ -751,6 +768,16 @@ struct LineState {
 /// Execute a single sed command against the current line state.
 /// Returns true if the command was applied (for branching logic).
 fn exec_sed_cmd(cmd: &SedCommand, state: &mut LineState, _line_num: usize, _total_lines: usize) {
+    exec_sed_cmd_with_depth(cmd, state, _line_num, _total_lines, 0);
+}
+
+fn exec_sed_cmd_with_depth(
+    cmd: &SedCommand,
+    state: &mut LineState,
+    _line_num: usize,
+    _total_lines: usize,
+    depth: usize,
+) {
     match cmd {
         SedCommand::Substitute {
             pattern,
@@ -818,8 +845,11 @@ fn exec_sed_cmd(cmd: &SedCommand, state: &mut LineState, _line_num: usize, _tota
             std::mem::swap(&mut state.current_line, &mut state.hold_space);
         }
         SedCommand::Group(cmds) => {
+            if depth >= MAX_GROUP_NESTING_DEPTH {
+                return;
+            }
             for (_addr, _negate, sub_cmd) in cmds {
-                exec_sed_cmd(sub_cmd, state, _line_num, _total_lines);
+                exec_sed_cmd_with_depth(sub_cmd, state, _line_num, _total_lines, depth + 1);
                 if state.deleted || state.quit || state.quit_noprint {
                     break;
                 }
@@ -1160,6 +1190,21 @@ mod tests {
             .is_match("a".repeat(5_000).as_str())
             .expect_err("expected backtrack limit error");
         assert!(!err.to_string().is_empty());
+    }
+
+    #[test]
+    fn test_sed_grouped_command_nesting_depth_limit() {
+        let mut script = String::new();
+        for _ in 0..=MAX_GROUP_NESTING_DEPTH {
+            script.push('{');
+        }
+        script.push('p');
+        for _ in 0..=MAX_GROUP_NESTING_DEPTH {
+            script.push('}');
+        }
+
+        let err = parse_sed_command(&script, false).expect_err("expected nesting depth error");
+        assert!(err.to_string().contains("nesting exceeds max depth"));
     }
 
     #[tokio::test]
