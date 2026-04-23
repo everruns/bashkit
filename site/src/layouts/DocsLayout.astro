@@ -1,0 +1,224 @@
+---
+import BaseLayout from "./BaseLayout.astro";
+import { DOC_META, DOC_META_BY_SLUG } from "../pages/docs/_meta";
+
+interface Props {
+  slug: string;
+  title: string;
+  description?: string;
+}
+
+const { slug, title, description } = Astro.props;
+
+const meta = DOC_META_BY_SLUG[slug];
+const index = DOC_META.findIndex((doc) => doc.slug === slug);
+const prev = index > 0 ? DOC_META[index - 1] : null;
+const next = index >= 0 && index < DOC_META.length - 1 ? DOC_META[index + 1] : null;
+
+const editUrl = `https://github.com/everruns/bashkit/blob/main/docs/${slug}.md`;
+---
+
+<BaseLayout
+  title={`${title} — Bashkit docs`}
+  description={description ?? meta?.summary}
+>
+  <article class="doc section">
+    <div class="container doc__container">
+      <nav class="doc__breadcrumb" aria-label="Breadcrumb">
+        <a href="/docs">Docs</a>
+        <span aria-hidden="true">/</span>
+        <span>{meta?.section ?? title}</span>
+      </nav>
+
+      <div class="doc__body">
+        <slot />
+      </div>
+
+      <footer class="doc__foot">
+        <a class="doc__edit" href={editUrl} target="_blank" rel="noopener noreferrer">
+          Edit this page on GitHub
+        </a>
+        <div class="doc__nav">
+          {prev ? (
+            <a class="doc__nav-link doc__nav-link--prev" href={`/docs/${prev.slug}`}>
+              <span class="doc__nav-eyebrow">Previous</span>
+              <span class="doc__nav-title">{prev.title}</span>
+            </a>
+          ) : <span />}
+          {next ? (
+            <a class="doc__nav-link doc__nav-link--next" href={`/docs/${next.slug}`}>
+              <span class="doc__nav-eyebrow">Next</span>
+              <span class="doc__nav-title">{next.title}</span>
+            </a>
+          ) : <span />}
+        </div>
+      </footer>
+    </div>
+  </article>
+</BaseLayout>
+
+<style>
+  .doc {
+    padding: var(--space-xl) 0;
+  }
+  .doc__container {
+    max-width: 44rem;
+  }
+  .doc__breadcrumb {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    font-size: 0.85rem;
+    color: var(--color-slate);
+    margin-bottom: var(--space-md);
+  }
+  .doc__breadcrumb a {
+    color: var(--color-slate);
+  }
+  .doc__breadcrumb a:hover {
+    color: var(--color-obsidian);
+  }
+  .doc__body {
+    font-size: 1.02rem;
+    line-height: 1.7;
+    color: var(--color-charcoal);
+  }
+  .doc__body :global(h1) {
+    font-size: clamp(2rem, 3.6vw, 2.8rem);
+    letter-spacing: -0.02em;
+    margin-bottom: var(--space-md);
+    color: var(--color-obsidian);
+  }
+  .doc__body :global(h2) {
+    font-size: 1.5rem;
+    margin-top: var(--space-xl);
+    margin-bottom: var(--space-sm);
+    letter-spacing: -0.01em;
+    color: var(--color-obsidian);
+  }
+  .doc__body :global(h3) {
+    font-size: 1.15rem;
+    margin-top: var(--space-lg);
+    margin-bottom: var(--space-sm);
+    color: var(--color-obsidian);
+  }
+  .doc__body :global(p),
+  .doc__body :global(ul),
+  .doc__body :global(ol),
+  .doc__body :global(pre),
+  .doc__body :global(blockquote),
+  .doc__body :global(table) {
+    margin-bottom: var(--space-md);
+  }
+  .doc__body :global(ul),
+  .doc__body :global(ol) {
+    padding-left: 1.5rem;
+  }
+  .doc__body :global(li) {
+    margin-bottom: 0.35rem;
+  }
+  .doc__body :global(a) {
+    color: var(--color-navy);
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
+  }
+  .doc__body :global(code) {
+    font-size: 0.88em;
+  }
+  .doc__body :global(pre) {
+    padding: 1rem 1.1rem;
+    overflow-x: auto;
+    border: 1px solid rgb(10 22 54 / 0.1);
+    background: #fafaf7 !important;
+    font-size: 0.88rem;
+    line-height: 1.55;
+  }
+  .doc__body :global(pre) :global(code) {
+    background: transparent;
+    padding: 0;
+    font-size: inherit;
+  }
+  .doc__body :global(blockquote) {
+    border-left: 3px solid var(--color-gold);
+    padding: 0.25rem 0 0.25rem 1rem;
+    color: var(--color-slate);
+    font-style: italic;
+  }
+  .doc__body :global(table) {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.95rem;
+  }
+  .doc__body :global(th),
+  .doc__body :global(td) {
+    text-align: left;
+    padding: 0.55rem 0.75rem;
+    border: 1px solid rgb(10 22 54 / 0.12);
+    vertical-align: top;
+  }
+  .doc__body :global(th) {
+    background: var(--color-smoke);
+    font-weight: 600;
+  }
+  .doc__body :global(hr) {
+    border: none;
+    border-top: 1px solid rgb(10 22 54 / 0.12);
+    margin: var(--space-lg) 0;
+  }
+
+  .doc__foot {
+    margin-top: var(--space-xl);
+    padding-top: var(--space-lg);
+    border-top: 1px solid rgb(10 22 54 / 0.12);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-lg);
+  }
+  .doc__edit {
+    color: var(--color-slate);
+    font-size: 0.9rem;
+  }
+  .doc__edit:hover {
+    color: var(--color-obsidian);
+  }
+  .doc__nav {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-md);
+  }
+  .doc__nav-link {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    padding: 0.85rem 1rem;
+    border: 1px solid rgb(10 22 54 / 0.12);
+    color: var(--color-obsidian);
+    text-decoration: none;
+  }
+  .doc__nav-link:hover {
+    border-color: rgb(10 22 54 / 0.3);
+    text-decoration: none;
+  }
+  .doc__nav-link--next {
+    text-align: right;
+  }
+  .doc__nav-eyebrow {
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-slate);
+  }
+  .doc__nav-title {
+    font-weight: 600;
+  }
+  @media (max-width: 640px) {
+    .doc__nav {
+      grid-template-columns: 1fr;
+    }
+    .doc__nav-link--next {
+      text-align: left;
+    }
+  }
+</style>

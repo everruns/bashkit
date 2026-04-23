@@ -1,0 +1,128 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import { DOC_META } from "./_meta";
+
+const sectionOrder = ["Getting started", "Features", "Operations"];
+const bySection = sectionOrder
+  .map((section) => ({
+    section,
+    docs: DOC_META.filter((doc) => doc.section === section),
+  }))
+  .filter((group) => group.docs.length > 0);
+---
+
+<BaseLayout
+  title="Bashkit docs — guides for the virtual bash sandbox"
+  description="User-facing guides for the bashkit CLI, security model, snapshotting, and embedded runtimes."
+>
+  <section class="docs-hero section">
+    <div class="container">
+      <span class="docs-eyebrow">Docs</span>
+      <h1>Guides for running bashkit.</h1>
+      <p class="docs-lede">
+        Short, focused articles for the bashkit CLI, security model, and
+        embedded runtimes. For the Rust API, see the
+        <a href="https://docs.rs/bashkit" target="_blank" rel="noopener noreferrer">rustdoc</a>.
+      </p>
+    </div>
+  </section>
+
+  <section class="docs-index section section-alt">
+    <div class="container docs-index__sections">
+      {
+        bySection.map((group) => (
+          <div class="docs-section">
+            <h2 class="docs-section__title">{group.section}</h2>
+            <ul class="docs-cards">
+              {group.docs.map((doc) => (
+                <li>
+                  <a class="docs-card" href={`/docs/${doc.slug}`}>
+                    <span class="docs-card__title">{doc.title}</span>
+                    <span class="docs-card__summary">{doc.summary}</span>
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))
+      }
+    </div>
+  </section>
+</BaseLayout>
+
+<style>
+  .docs-hero {
+    padding-top: var(--space-xl);
+    padding-bottom: var(--space-lg);
+  }
+  .docs-eyebrow {
+    display: inline-flex;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-navy);
+    margin-bottom: var(--space-sm);
+  }
+  .docs-hero h1 {
+    font-size: clamp(2.2rem, 5vw, 3.6rem);
+    letter-spacing: -0.03em;
+    line-height: 1.02;
+    margin-bottom: var(--space-md);
+  }
+  .docs-lede {
+    max-width: 40rem;
+    font-size: 1.1rem;
+    color: var(--color-slate);
+  }
+
+  .docs-index__sections {
+    display: grid;
+    gap: var(--space-lg);
+  }
+  .docs-section {
+    display: grid;
+    gap: var(--space-md);
+  }
+  .docs-section__title {
+    font-size: 0.85rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-navy);
+  }
+  .docs-cards {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+    gap: var(--space-md);
+  }
+  .docs-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding: 1.1rem 1.2rem;
+    border: 1px solid rgb(10 22 54 / 0.12);
+    background: var(--color-white);
+    color: var(--color-obsidian);
+    text-decoration: none;
+    transition: border-color 0.15s, box-shadow 0.15s, transform 0.1s;
+  }
+  .docs-card:hover {
+    border-color: rgb(10 22 54 / 0.35);
+    box-shadow: 0 6px 20px rgb(10 22 54 / 0.06);
+    text-decoration: none;
+    transform: translateY(-1px);
+  }
+  .docs-card__title {
+    font-weight: 600;
+    font-size: 1.1rem;
+  }
+  .docs-card__summary {
+    color: var(--color-slate);
+    font-size: 0.95rem;
+    line-height: 1.5;
+  }
+</style>
