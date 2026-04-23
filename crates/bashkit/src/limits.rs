@@ -330,8 +330,8 @@ pub struct ExecutionCounters {
     /// Current function call depth
     pub function_depth: usize,
 
-    /// Number of iterations in current loop (reset per-loop)
-    pub loop_iterations: usize,
+    /// Per-loop iteration counters by nesting depth (top = current loop)
+    pub loop_iterations: Vec<usize>,
 
     // THREAT[TM-DOS-018]: Nested loop multiplication
     // This counter never resets, tracking total iterations across all loops.
@@ -361,7 +361,7 @@ impl ExecutionCounters {
     /// This prevents a prior exec() from permanently poisoning the session.
     pub fn reset_for_execution(&mut self) {
         self.commands = 0;
-        self.loop_iterations = 0;
+        self.loop_iterations.clear();
         self.total_loop_iterations = 0;
         // function_depth and subst_depth should already be 0 between exec() calls,
         // but reset defensively to avoid stuck state
@@ -445,9 +445,17 @@ impl ExecutionCounters {
             Ok(())
         });
 
-        self.loop_iterations += 1;
+        if self.loop_iterations.is_empty() {
+            // Defensive fallback for direct tick_loop() calls outside loop helpers.
+            self.loop_iterations.push(0);
+        }
+        let current = self
+            .loop_iterations
+            .last_mut()
+            .expect("loop stack initialized above");
+        *current += 1;
         self.total_loop_iterations += 1;
-        if self.loop_iterations > limits.max_loop_iterations {
+        if *current > limits.max_loop_iterations {
             return Err(LimitExceeded::MaxLoopIterations(limits.max_loop_iterations));
         }
         // THREAT[TM-DOS-018]: Check global cap to prevent nested loop multiplication
@@ -459,9 +467,14 @@ impl ExecutionCounters {
         Ok(())
     }
 
-    /// Reset loop iteration counter (called when entering a new loop)
-    pub fn reset_loop(&mut self) {
-        self.loop_iterations = 0;
+    /// Enter a new loop scope.
+    pub fn enter_loop(&mut self) {
+        self.loop_iterations.push(0);
+    }
+
+    /// Exit the current loop scope.
+    pub fn exit_loop(&mut self) {
+        self.loop_iterations.pop();
     }
 
     /// Push function call, returns error if depth exceeded
@@ -892,6 +905,7 @@ mod tests {
     fn test_loop_counter() {
         let limits = ExecutionLimits::new().max_loop_iterations(3);
         let mut counters = ExecutionCounters::new();
+        counters.enter_loop();
 
         for _ in 0..3 {
             assert!(counters.tick_loop(&limits).is_ok());
@@ -903,8 +917,9 @@ mod tests {
             Err(LimitExceeded::MaxLoopIterations(3))
         ));
 
-        // Reset and try again
-        counters.reset_loop();
+        // New loop scope should reset current-loop count
+        counters.exit_loop();
+        counters.enter_loop();
         assert!(counters.tick_loop(&limits).is_ok());
     }
 
@@ -914,6 +929,7 @@ mod tests {
             .max_loop_iterations(5)
             .max_total_loop_iterations(8);
         let mut counters = ExecutionCounters::new();
+        counters.enter_loop();
 
         // First loop: 5 iterations (per-loop limit)
         for _ in 0..5 {
@@ -921,9 +937,10 @@ mod tests {
         }
         assert_eq!(counters.total_loop_iterations, 5);
 
-        // Reset per-loop counter (entering new loop)
-        counters.reset_loop();
-        assert_eq!(counters.loop_iterations, 0);
+        // New loop should reset current-loop counter
+        counters.exit_loop();
+        counters.enter_loop();
+        assert_eq!(counters.loop_iterations.last().copied(), Some(0));
         // total_loop_iterations should NOT reset
         assert_eq!(counters.total_loop_iterations, 5);
 
@@ -937,6 +954,26 @@ mod tests {
             counters.tick_loop(&limits),
             Err(LimitExceeded::MaxTotalLoopIterations(8))
         ));
+    }
+
+    #[test]
+    fn test_nested_loops_track_independently() {
+        let limits = ExecutionLimits::new().max_loop_iterations(2);
+        let mut counters = ExecutionCounters::new();
+
+        counters.enter_loop();
+        assert!(counters.tick_loop(&limits).is_ok()); // outer=1
+
+        counters.enter_loop();
+        assert!(counters.tick_loop(&limits).is_ok()); // inner=1
+        assert!(counters.tick_loop(&limits).is_ok()); // inner=2
+        counters.exit_loop();
+
+        assert!(counters.tick_loop(&limits).is_ok()); // outer=2 (still tracked)
+        assert!(matches!(
+            counters.tick_loop(&limits),
+            Err(LimitExceeded::MaxLoopIterations(2))
+        )); // outer=3 -> fail
     }
 
     #[test]
@@ -970,14 +1007,14 @@ mod tests {
         assert!(counters.tick_command(&limits).is_err());
 
         // Also accumulate some loop/function state
-        counters.loop_iterations = 42;
+        counters.loop_iterations = vec![42];
         counters.total_loop_iterations = 999;
         counters.function_depth = 3;
 
         // Reset should restore all counters
         counters.reset_for_execution();
         assert_eq!(counters.commands, 0);
-        assert_eq!(counters.loop_iterations, 0);
+        assert!(counters.loop_iterations.is_empty());
         assert_eq!(counters.total_loop_iterations, 0);
         assert_eq!(counters.function_depth, 0);
 
