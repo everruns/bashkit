@@ -12,6 +12,8 @@ use crate::interpreter::ExecResult;
 /// Maximum output size to prevent memory exhaustion.
 /// THREAT[TM-DOS-059]: Bound numfmt output
 const MAX_OUTPUT_BYTES: usize = 1_048_576;
+const MAX_PADDING_WIDTH: usize = MAX_OUTPUT_BYTES;
+const MAX_FORMAT_PRECISION: usize = MAX_OUTPUT_BYTES;
 
 pub struct Numfmt;
 
@@ -259,6 +261,9 @@ fn format_scaled_value(val: f64, round: RoundMode) -> String {
 
 fn apply_padding(s: &str, padding: i32) -> String {
     let width = padding.unsigned_abs() as usize;
+    if width > MAX_PADDING_WIDTH {
+        return s.to_string();
+    }
     if width <= s.len() {
         return s.to_string();
     }
@@ -269,6 +274,16 @@ fn apply_padding(s: &str, padding: i32) -> String {
         // Left-align (pad with spaces on right)
         format!("{:<width$}", s, width = width)
     }
+}
+
+fn parse_padding(val: &str) -> std::result::Result<i32, String> {
+    let padding: i32 = val
+        .parse()
+        .map_err(|_| format!("numfmt: invalid padding value: '{}'\n", val))?;
+    if padding.unsigned_abs() as usize > MAX_PADDING_WIDTH {
+        return Err(format!("numfmt: padding too large: '{}'\n", val));
+    }
+    Ok(padding)
 }
 
 fn parse_options(args: &[String]) -> std::result::Result<(Options, Vec<String>), String> {
@@ -306,17 +321,13 @@ fn parse_options(args: &[String]) -> std::result::Result<(Options, Vec<String>),
             }
             opts.suffix = args[i].clone();
         } else if let Some(val) = arg.strip_prefix("--padding=") {
-            opts.padding = val
-                .parse()
-                .map_err(|_| format!("numfmt: invalid padding value: '{}'\n", val))?;
+            opts.padding = parse_padding(val)?;
         } else if arg == "--padding" {
             i += 1;
             if i >= args.len() {
                 return Err("numfmt: missing argument for --padding\n".to_string());
             }
-            opts.padding = args[i]
-                .parse()
-                .map_err(|_| format!("numfmt: invalid padding value: '{}'\n", &args[i]))?;
+            opts.padding = parse_padding(&args[i])?;
         } else if let Some(val) = arg.strip_prefix("--round=") {
             opts.round = parse_round(val)?;
         } else if arg == "--round" {
@@ -456,6 +467,9 @@ fn apply_printf_format(
                 let precision: usize = spec[dot_pos + 1..]
                     .parse()
                     .map_err(|_| format!("numfmt: invalid format '{}'\n", fmt))?;
+                if precision > MAX_FORMAT_PRECISION {
+                    return Err(format!("numfmt: format precision too large: '{}'\n", fmt));
+                }
                 format!("{:.prec$}", val, prec = precision)
             } else {
                 format!("{:.6}", val)
@@ -589,5 +603,20 @@ mod tests {
     fn test_invalid_number() {
         assert!(parse_number("abc", Scale::None).is_err());
         assert!(parse_number("", Scale::None).is_err());
+    }
+
+    #[test]
+    fn test_parse_options_rejects_oversized_padding() {
+        let args = vec!["--padding=2000000".to_string(), "1".to_string()];
+        match parse_options(&args) {
+            Ok(_) => panic!("expected parse_options to fail for oversized padding"),
+            Err(err) => assert!(err.contains("padding too large")),
+        }
+    }
+
+    #[test]
+    fn test_apply_printf_format_rejects_oversized_precision() {
+        let err = apply_printf_format(1.0, "%.2000000f", "", 0).unwrap_err();
+        assert!(err.contains("format precision too large"));
     }
 }
