@@ -30,7 +30,10 @@ Python builtins are **not** auto-registered. Enable via builder:
 use bashkit::Bash;
 
 // Default limits
-let bash = Bash::builder().python().build();
+let bash = Bash::builder()
+    .python()
+    .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
+    .build();
 
 // Custom limits
 use bashkit::PythonLimits;
@@ -202,13 +205,20 @@ stack overflow from deeply nested expressions.
 use bashkit::{Bash, PythonLimits};
 
 // Default limits
-let bash = Bash::builder().python().build();
+let bash = Bash::builder()
+    .python()
+    .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
+    .build();
 
 // Custom limits
 let bash = Bash::builder()
     .python_with_limits(PythonLimits::default().max_duration(Duration::from_secs(5)))
+    .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
     .build();
 ```
+
+For security, `python`/`python3` execution is runtime-gated and requires
+`BASHKIT_ALLOW_INPROCESS_PYTHON=1` (builder `.env(...)` or `export`).
 
 ### External Functions
 

@@ -1582,6 +1582,10 @@ impl BashBuilder {
     /// Monty runs directly in the host process with resource limits enforced
     /// by Monty's runtime (memory, allocations, time, recursion).
     ///
+    /// For security, execution is runtime-gated: set
+    /// `BASHKIT_ALLOW_INPROCESS_PYTHON=1` (builder `.env(...)` or `export`)
+    /// before invoking `python`/`python3`.
+    ///
     /// Requires the `python` feature flag. Python `pathlib.Path` operations are
     /// bridged to the virtual filesystem.
     ///

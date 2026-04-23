@@ -42,6 +42,19 @@ const DEFAULT_MAX_RECURSION: usize = 200;
 // interpreter budget checks, so disable regex stdlib module in untrusted code.
 const DISABLED_STDLIB_MODULES: &[&str] = &["re"];
 
+const PYTHON_INPROCESS_OPT_IN_ENV: &str = "BASHKIT_ALLOW_INPROCESS_PYTHON";
+
+fn python_inprocess_enabled(ctx: &Context<'_>) -> bool {
+    let is_enabled = |v: &str| matches!(v, "1" | "true" | "TRUE" | "yes" | "YES");
+    ctx.env
+        .get(PYTHON_INPROCESS_OPT_IN_ENV)
+        .is_some_and(|v| is_enabled(v))
+        || ctx
+            .variables
+            .get(PYTHON_INPROCESS_OPT_IN_ENV)
+            .is_some_and(|v| is_enabled(v))
+}
+
 /// Resource limits for the embedded Python (Monty) interpreter.
 ///
 /// Use the builder pattern to customize, or `Default` for the standard virtual execution limits:
@@ -304,6 +317,16 @@ impl Builtin for Python {
                  -      : read code from stdin\n  \
                  -V     : print version\n"
                     .to_string(),
+            ));
+        }
+
+        if !python_inprocess_enabled(&ctx) {
+            return Ok(ExecResult::err(
+                format!(
+                    "python3: in-process Python disabled by default for security; set {}=1 to enable\n",
+                    PYTHON_INPROCESS_OPT_IN_ENV
+                ),
+                1,
             ));
         }
 

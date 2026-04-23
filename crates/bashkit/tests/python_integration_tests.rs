@@ -11,12 +11,18 @@ use std::time::Duration;
 
 /// Helper: create Bash with python builtins using default limits.
 fn bash_python() -> Bash {
-    Bash::builder().python().build()
+    Bash::builder()
+        .python()
+        .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
+        .build()
 }
 
 /// Helper: create Bash with custom python limits.
 fn bash_python_limits(limits: PythonLimits) -> Bash {
-    Bash::builder().python_with_limits(limits).build()
+    Bash::builder()
+        .python_with_limits(limits)
+        .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
+        .build()
 }
 
 // =============================================================================
