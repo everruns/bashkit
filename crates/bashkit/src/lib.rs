@@ -354,7 +354,8 @@
 //! ""#).await?;
 //! ```
 //!
-//! Stdlib modules: `math`, `re`, `pathlib`, `os` (getenv/environ), `sys`, `typing`.
+//! Stdlib modules: `math`, `pathlib`, `os` (getenv/environ), `sys`, `typing`.
+//! Security note: `re` is disabled due to regex backtracking DoS risk.
 //! Limitations: no `open()` (use `pathlib.Path`), no network, no classes,
 //! no third-party imports.
 //!
