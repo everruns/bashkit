@@ -9,10 +9,14 @@ use super::{Builtin, Context};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
+// Security decision: bound mutable `_DIRSTACK_SIZE` to avoid unbounded builtin loops.
+const MAX_DIRSTACK_SIZE: usize = 4096;
+
 fn get_stack_size(ctx: &Context<'_>) -> usize {
     ctx.variables
         .get("_DIRSTACK_SIZE")
         .and_then(|s| s.parse().ok())
+        .map(|size: usize| size.min(MAX_DIRSTACK_SIZE))
         .unwrap_or(0)
 }
 
@@ -456,6 +460,20 @@ mod tests {
         // Verbose format has numbered entries
         assert!(result.stdout.contains(" 0  "));
         assert!(result.stdout.contains(" 1  "));
+    }
+
+    #[tokio::test]
+    async fn dirs_limits_user_declared_size() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        variables.insert("_DIRSTACK_SIZE".to_string(), "999999999999".to_string());
+        variables.insert("_DIRSTACK_0".to_string(), "/tmp".to_string());
+
+        let args = vec!["-p".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Dirs.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "/home/user\n/tmp\n");
     }
 
     fn get_stack_size_from_vars(vars: &HashMap<String, String>) -> usize {
