@@ -9,7 +9,11 @@
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::io::{BufRead, Write};
+use std::io::{BufRead, Read, Write};
+
+/// Hard cap for one JSON-RPC request line (including trailing '\n').
+// THREAT[TM-DOS-037]: Bound request buffering to prevent stdin memory DoS.
+const MAX_REQUEST_LINE_BYTES: usize = 1024 * 1024; // 1 MiB
 
 /// JSON-RPC 2.0 request
 #[derive(Debug, Deserialize)]
@@ -178,10 +182,28 @@ impl McpServer {
     /// Run the server, reading JSON-RPC from stdin and writing responses to stdout.
     pub async fn run(&mut self) -> Result<()> {
         let stdin = std::io::stdin();
+        let mut stdin_lock = stdin.lock();
         let mut stdout = std::io::stdout();
+        let mut line_buf = Vec::new();
 
-        for line in stdin.lock().lines() {
-            let line = line.context("Failed to read line from stdin")?;
+        loop {
+            let read = read_bounded_request_line(&mut stdin_lock, &mut line_buf)
+                .context("Failed to read line from stdin")?;
+            let Some(read) = read else {
+                break;
+            };
+            if read == RequestLineRead::TooLarge {
+                let response = JsonRpcResponse::error(
+                    serde_json::Value::Null,
+                    -32600,
+                    "Invalid request: request line too large".to_string(),
+                );
+                writeln!(stdout, "{}", serde_json::to_string(&response)?)?;
+                stdout.flush()?;
+                continue;
+            }
+
+            let line = String::from_utf8_lossy(&line_buf);
             if line.trim().is_empty() {
                 continue;
             }
@@ -430,6 +452,48 @@ impl McpServer {
     }
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum RequestLineRead {
+    Complete,
+    TooLarge,
+}
+
+fn read_bounded_request_line<R: BufRead>(
+    reader: &mut R,
+    line_buf: &mut Vec<u8>,
+) -> Result<Option<RequestLineRead>> {
+    line_buf.clear();
+    let bytes_read = reader
+        .by_ref()
+        .take((MAX_REQUEST_LINE_BYTES + 1) as u64)
+        .read_until(b'\n', line_buf)?;
+    if bytes_read == 0 {
+        return Ok(None);
+    }
+    if bytes_read > MAX_REQUEST_LINE_BYTES {
+        if !line_buf.ends_with(b"\n") {
+            discard_until_newline(reader)?;
+        }
+        return Ok(Some(RequestLineRead::TooLarge));
+    }
+    Ok(Some(RequestLineRead::Complete))
+}
+
+fn discard_until_newline<R: BufRead>(reader: &mut R) -> Result<()> {
+    loop {
+        let available = reader.fill_buf()?;
+        if available.is_empty() {
+            return Ok(());
+        }
+        if let Some(pos) = available.iter().position(|&b| b == b'\n') {
+            reader.consume(pos + 1);
+            return Ok(());
+        }
+        let len = available.len();
+        reader.consume(len);
+    }
+}
+
 /// Run the MCP server with a factory that produces configured `Bash` instances.
 #[allow(dead_code)] // Public API; used by external callers / tests
 pub async fn run(bash_factory: impl Fn() -> bashkit::Bash + Send + 'static) -> Result<()> {
@@ -449,6 +513,7 @@ pub async fn run_with_rate_limit(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
 
     #[tokio::test]
     async fn test_initialize() {
@@ -912,6 +977,37 @@ mod tests {
         assert!(
             resp.error.is_none(),
             "tools/list should not be rate-limited"
+        );
+    }
+
+    #[test]
+    fn test_read_bounded_request_line_rejects_oversized_line() {
+        let oversized = vec![b'a'; MAX_REQUEST_LINE_BYTES + 64];
+        let mut input = Cursor::new(oversized);
+        let mut line_buf = Vec::new();
+
+        let read = read_bounded_request_line(&mut input, &mut line_buf).expect("read");
+        assert_eq!(read, Some(RequestLineRead::TooLarge));
+        assert!(line_buf.len() > MAX_REQUEST_LINE_BYTES);
+    }
+
+    #[test]
+    fn test_read_bounded_request_line_discards_until_newline_after_oversized_line() {
+        let mut payload = vec![b'a'; MAX_REQUEST_LINE_BYTES + 32];
+        payload.push(b'\n');
+        payload.extend_from_slice(br#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#);
+        payload.push(b'\n');
+        let mut input = Cursor::new(payload);
+        let mut line_buf = Vec::new();
+
+        let first = read_bounded_request_line(&mut input, &mut line_buf).expect("first read");
+        assert_eq!(first, Some(RequestLineRead::TooLarge));
+
+        let second = read_bounded_request_line(&mut input, &mut line_buf).expect("second read");
+        assert_eq!(second, Some(RequestLineRead::Complete));
+        assert_eq!(
+            std::str::from_utf8(&line_buf).expect("utf8"),
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}\n"
         );
     }
 }
