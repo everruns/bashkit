@@ -88,7 +88,9 @@ fn validate_format(format: &str) -> std::result::Result<(), String> {
 /// `--date="value"` passes literal quotes to the builtin).
 fn strip_surrounding_quotes(s: &str) -> &str {
     let s = s.trim();
-    if (s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')) {
+    if s.len() >= 2
+        && ((s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')))
+    {
         &s[1..s.len() - 1]
     } else {
         s
@@ -836,6 +838,20 @@ mod tests {
         assert_eq!(result.exit_code, 0);
         let date = result.stdout.trim();
         assert_eq!(date.len(), 10);
+    }
+
+    #[tokio::test]
+    async fn test_date_lone_single_quote_input_no_panic() {
+        let result = run_date(&["-d", "'", "+%Y-%m-%d"]).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid date"));
+    }
+
+    #[tokio::test]
+    async fn test_date_lone_double_quote_input_no_panic() {
+        let result = run_date(&["-d", "\"", "+%Y-%m-%d"]).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid date"));
     }
 
     // === --date with RFC 2822 input ===
