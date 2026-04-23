@@ -321,7 +321,7 @@ max_parser_operations: 100_000,         // Parser fuel (TM-DOS-024)
 |----|--------|--------------|------------|--------|
 | TM-ESC-001 | Path traversal | `cat ../../../etc/passwd` | Path normalization | **MITIGATED** |
 | TM-ESC-002 | Symlink escape | `ln -s /etc/passwd /tmp/x` | Symlinks not followed | **MITIGATED** |
-| TM-ESC-003 | Real FS access | Direct syscalls | No real FS by default | **MITIGATED** |
+| TM-ESC-003 | Real FS access | Direct syscalls | No real FS by default; `RealFs` canonicalizes existing paths and nearest existing ancestors before attaching missing suffixes | **MITIGATED** |
 | TM-ESC-004 | Mount escape | Mount real paths | MountableFs controlled | **MITIGATED** |
 | TM-ESC-016 | Symlink escape via overlay rename | `ln -s /etc/passwd x; mv x y` | Overlay rename/copy preserve symlinks as symlinks | **FIXED** |
 

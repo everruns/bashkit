@@ -1,6 +1,7 @@
 // Decision: RealFs is a FsBackend that delegates to the real host filesystem,
 // scoped to a root directory. It supports readonly and readwrite modes.
-// Security: path traversal is prevented by canonicalizing and checking the prefix.
+// Security: path traversal is prevented by canonicalizing the resolved path or
+// the nearest existing ancestor, then checking the root prefix before I/O.
 // This module is only available with the `realfs` feature flag.
 
 //! Real filesystem backend.
@@ -12,8 +13,9 @@
 //! # Security
 //!
 //! - All paths are resolved relative to a configured root directory.
-//! - Path traversal via `..` is blocked by canonicalizing and checking the
-//!   resolved path stays under the root.
+//! - Path traversal via `..` or symlink hops in missing path suffixes is
+//!   blocked by canonicalizing the resolved path or nearest existing ancestor
+//!   and checking it stays under the root.
 //! - Readonly mode rejects all write operations at the backend level.
 //!
 //! # Modes
@@ -128,8 +130,10 @@ impl RealFs {
     /// Resolve a virtual path to a real host path, ensuring it stays under root.
     ///
     /// Virtual paths are absolute (e.g. `/foo/bar`). We strip the leading `/`
-    /// and join onto the root. Then we canonicalize (for existing paths) or
-    /// check the parent (for new paths) to prevent traversal.
+    /// and join onto the root. Then we canonicalize the full path (for
+    /// existing paths) or the nearest existing ancestor (for new paths) to
+    /// prevent traversal and symlink escapes before attaching the missing
+    /// suffix.
     fn resolve(&self, vpath: &Path) -> std::io::Result<PathBuf> {
         let normalized = normalize_vpath(vpath);
         // Strip leading "/" to make it relative
@@ -154,45 +158,37 @@ impl RealFs {
             return Ok(canon);
         }
 
-        // Path doesn't exist yet - check that its parent is within root
-        if let Some(parent) = joined.parent()
-            && parent.exists()
-        {
-            let canon_parent = std::fs::canonicalize(parent)?;
-            if !canon_parent.starts_with(&self.root) {
-                return Err(IoError::new(
-                    ErrorKind::PermissionDenied,
-                    "path escapes realfs root",
-                ));
-            }
-            // Re-join the filename onto the canonicalized parent
-            if let Some(file_name) = joined.file_name() {
-                return Ok(canon_parent.join(file_name));
-            }
+        // THREAT[TM-ESC-003]: New host paths still need containment checks.
+        // Canonicalize the nearest existing ancestor first so symlink hops in
+        // any existing prefix cannot redirect creation outside the mount root.
+        let mut nearest_existing = joined.as_path();
+        while !nearest_existing.exists() {
+            nearest_existing = nearest_existing.parent().ok_or_else(|| {
+                IoError::new(ErrorKind::PermissionDenied, "path escapes realfs root")
+            })?;
         }
 
-        // SECURITY: Never return a raw path without traversal validation.
-        // The parent doesn't exist and can't be canonicalized, so we cannot
-        // verify containment with certainty. Returning the raw `joined` path
-        // here would skip all symlink/traversal checks, creating a TOCTOU
-        // window where an attacker could race to create a symlink between
-        // the exists() check above and actual file I/O. (issue #980)
-        //
-        // Defense-in-depth: normalize the host path logically and verify it
-        // stays under root. This catches any `..` that survived vpath
-        // normalization as well as any future changes to the normalization
-        // logic.
-        let normalized = normalize_host_path(&joined);
-        if !normalized.starts_with(&self.root) {
+        let canon_existing = std::fs::canonicalize(nearest_existing)?;
+        if !canon_existing.starts_with(&self.root) {
             return Err(IoError::new(
                 ErrorKind::PermissionDenied,
                 "path escapes realfs root",
             ));
         }
-        // Even with logical normalization, the path hasn't been verified on
-        // disk (no canonicalize). This is acceptable only because the parent
-        // truly doesn't exist — there's nothing on disk to symlink through.
-        Ok(normalized)
+
+        let suffix = joined
+            .strip_prefix(nearest_existing)
+            .map_err(|_| IoError::new(ErrorKind::PermissionDenied, "path escapes realfs root"))?;
+        let candidate = normalize_host_path(&canon_existing.join(suffix));
+
+        if !candidate.starts_with(&self.root) {
+            return Err(IoError::new(
+                ErrorKind::PermissionDenied,
+                "path escapes realfs root",
+            ));
+        }
+
+        Ok(candidate)
     }
 
     /// Check that the mode allows writes. Returns PermissionDenied if readonly.
@@ -797,6 +793,27 @@ mod tests {
             let expected = dir.path().join("deep/nested/dir/file.txt");
             assert!(expected.exists(), "file must be created under root");
         }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn security_write_rejects_symlink_escape_with_missing_parent() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        symlink(outside.path(), root.path().join("link")).unwrap();
+
+        let fs = RealFs::new(root.path(), RealFsMode::ReadWrite).unwrap();
+        let result = fs
+            .write(Path::new("/link/newdir/pwned.txt"), b"owned")
+            .await;
+
+        assert!(result.is_err(), "write through symlink escape must fail");
+        assert!(
+            !outside.path().join("newdir/pwned.txt").exists(),
+            "must not create file outside realfs root"
+        );
     }
 
     #[test]

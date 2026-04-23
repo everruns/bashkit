@@ -69,6 +69,8 @@ let mut bash = Bash::builder()
 - Direct access to a host directory as an `FsBackend`
 - Two modes: `ReadOnly` (safe) and `ReadWrite` (dangerous)
 - Path traversal prevented via canonicalization + root prefix check
+- New-path writes canonicalize the nearest existing ancestor before attaching a
+  missing suffix, blocking symlink escapes through non-existent subpaths
 
 ##### Builder Methods
 
