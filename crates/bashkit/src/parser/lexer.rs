@@ -1730,8 +1730,16 @@ impl<'a> Lexer<'a> {
         )
     }
 
-    /// Read here document content until the delimiter line is found
+    /// Read here document content until the delimiter line is found.
+    /// When `strip_tabs` is true (for `<<-`), leading tabs on the delimiter line
+    /// are stripped before comparing.
     pub fn read_heredoc(&mut self, delimiter: &str) -> String {
+        self.read_heredoc_with_strip(delimiter, false)
+    }
+
+    /// Read here document content with optional leading-tab stripping on the
+    /// delimiter match (for `<<-`).
+    pub fn read_heredoc_with_strip(&mut self, delimiter: &str, strip_tabs: bool) -> String {
         let mut content = String::new();
         let mut current_line = String::new();
 
@@ -1770,8 +1778,14 @@ impl<'a> Lexer<'a> {
             match self.peek_char() {
                 Some('\n') => {
                     self.advance();
-                    // Check if current line matches delimiter
-                    if current_line.trim() == delimiter {
+                    // Check if current line matches delimiter.
+                    // For `<<-`, strip leading tabs from the delimiter line.
+                    let line_for_match: &str = if strip_tabs {
+                        current_line.trim_start_matches('\t')
+                    } else {
+                        &current_line
+                    };
+                    if line_for_match == delimiter {
                         break;
                     }
                     content.push_str(&current_line);
@@ -1783,8 +1797,13 @@ impl<'a> Lexer<'a> {
                     self.advance();
                 }
                 None => {
-                    // End of input - check last line
-                    if current_line.trim() == delimiter {
+                    // End of input - check last line (strip tabs for `<<-`)
+                    let line_for_match: &str = if strip_tabs {
+                        current_line.trim_start_matches('\t')
+                    } else {
+                        &current_line
+                    };
+                    if line_for_match == delimiter {
                         break;
                     }
                     if !current_line.is_empty() {
@@ -1958,6 +1977,13 @@ mod tests {
             lexer.next_token(),
             Some(Token::Word("file.txt".to_string()))
         );
+    }
+
+    #[test]
+    fn test_read_heredoc_requires_exact_delimiter_match() {
+        let mut lexer = Lexer::new("\nhello\n EOF\nEOF\n");
+        let content = lexer.read_heredoc("EOF");
+        assert_eq!(content, "hello\n EOF\n");
     }
 
     #[test]

@@ -546,7 +546,7 @@ impl<'a> Parser<'a> {
                         | Some(tokens::Token::QuotedGlobWord(w)) => (w.clone(), true),
                         _ => break,
                     };
-                    let content = self.lexer.read_heredoc(&delimiter);
+                    let content = self.lexer.read_heredoc_with_strip(&delimiter, strip_tabs);
                     let content = if strip_tabs {
                         let had_trailing_newline = content.ends_with('\n');
                         let mut stripped: String = content
@@ -2159,7 +2159,7 @@ impl<'a> Parser<'a> {
             _ => return Err(Error::parse("expected delimiter after <<".to_string())),
         };
 
-        let content = self.lexer.read_heredoc(&delimiter);
+        let content = self.lexer.read_heredoc_with_strip(&delimiter, strip_tabs);
 
         // Strip leading tabs for <<-
         let content = if strip_tabs {
