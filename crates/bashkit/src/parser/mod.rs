@@ -198,8 +198,12 @@ impl<'a> Parser<'a> {
             if self.current_token.is_none() {
                 break;
             }
+            let start_offset = self.current_span.start.offset;
             if let Some(cmd) = self.parse_command_list()? {
                 commands.push(cmd);
+            } else if self.current_token.is_some() && self.current_span.start.offset == start_offset
+            {
+                return Err(self.error("unexpected token"));
             }
         }
 
@@ -3783,6 +3787,16 @@ mod tests {
         assert!(
             parser.parse().is_ok(),
             "assignment with nested subscript should parse"
+        );
+    }
+
+    #[test]
+    fn test_top_level_reserved_word_errors_immediately() {
+        let parser = Parser::with_fuel("fi", usize::MAX);
+        let err = parser.parse().unwrap_err();
+        assert!(
+            err.to_string().contains("unexpected token"),
+            "expected immediate syntax error, got: {err}"
         );
     }
 }

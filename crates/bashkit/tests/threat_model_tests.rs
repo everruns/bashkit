@@ -2045,8 +2045,11 @@ mod nesting_depth_security {
             Err(e) => {
                 let err = e.to_string();
                 assert!(
-                    err.contains("nesting") || err.contains("depth") || err.contains("fuel"),
-                    "Expected depth error, got: {}",
+                    err.contains("nesting")
+                        || err.contains("depth")
+                        || err.contains("fuel")
+                        || err.contains("unexpected token"),
+                    "Expected depth or syntax error, got: {}",
                     err
                 );
             }
