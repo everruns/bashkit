@@ -10,6 +10,9 @@
 # message while the surrounding bashkit invocation still exits 0, which hides
 # breakage in CI unless this script checks the output explicitly.
 #
+# Decision: skip known OpenAI quota exhaustion errors. This example depends on
+# external billing state in CI, so exhausted credits should not fail the repo.
+#
 # Decision: pin harness to a reviewed commit. CI injects secrets for this example,
 # so never execute moving upstream HEAD.
 #
@@ -63,6 +66,10 @@ chmod +x "${HARNESS_HOME}/providers/openai"
 output_file="$(mktemp)"
 trap 'rm -f "${output_file}"' EXIT
 
+is_openai_quota_error() {
+  grep -Eiq '^error: openai API error: .*(exceeded your current quota|billing details|insufficient_quota)' "${output_file}"
+}
+
 "$BASHKIT" \
   --mount-ro "${HARNESS_DIR}:/harness" \
   --mount-rw "${WORK_DIR}:/work" \
@@ -84,6 +91,11 @@ hs "tell me a short joke"
 ' | tee "${output_file}"
 
 status=${PIPESTATUS[0]}
+if is_openai_quota_error; then
+  echo "Skipping example: OpenAI credentials are out of quota."
+  exit 0
+fi
+
 if (( status != 0 )); then
   exit "${status}"
 fi
