@@ -11052,6 +11052,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_find_exec_preserves_literal_braces_in_path() {
+        // Matched path must not undergo brace expansion when substituted into -exec args.
+        let fs = Arc::new(InMemoryFs::new());
+        fs.mkdir(std::path::Path::new("/src"), true).await.unwrap();
+        fs.write_file(std::path::Path::new("/src/{a,b}.txt"), b"literal")
+            .await
+            .unwrap();
+        fs.write_file(std::path::Path::new("/src/a.txt"), b"a")
+            .await
+            .unwrap();
+        fs.write_file(std::path::Path::new("/src/b.txt"), b"b")
+            .await
+            .unwrap();
+
+        let mut interp = Interpreter::new(fs.clone());
+        interp.set_cwd(std::path::PathBuf::from("/"));
+
+        let script = r#"find /src -name "{a,b}.txt" -exec echo {} \;"#;
+        let parser = Parser::new(script);
+        let ast = parser.parse().unwrap();
+        let result = interp.execute(&ast).await.unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "/src/{a,b}.txt");
+    }
+
+    #[tokio::test]
     async fn test_star_join_with_ifs() {
         // "$*" joins with IFS first char; empty IFS = no separator
         let result = run_script("set -- x y z\nIFS=:\necho \"$*\"").await;
