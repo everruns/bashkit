@@ -28,7 +28,7 @@ BashBuilder::bot_auth(config)
 HttpClient::set_bot_auth(config)
     │
     ▼  (on every request, after allowlist check)
-BotAuthConfig::sign_request(authority)
+BotAuthConfig::sign_request(method, target_uri)
     │
     ▼
 Signature + Signature-Input + Signature-Agent headers
@@ -95,7 +95,7 @@ Consumer uses this to serve the well-known key directory endpoint.
 
 Per RFC 9421 with web-bot-auth tag:
 
-- **Covered components**: `@authority` (+ `signature-agent` when FQDN set)
+- **Covered components**: `@method`, `@target-uri` (+ `signature-agent` when FQDN set)
 - **Algorithm**: Ed25519 (`alg="ed25519"`)
 - **Key identity**: JWK Thumbprint (RFC 7638) as `keyid`
 - **Tag**: `"web-bot-auth"`
@@ -107,7 +107,7 @@ Per RFC 9421 with web-bot-auth tag:
 | Header | Value |
 |--------|-------|
 | `Signature` | `sig=:<base64url-encoded-signature>:` |
-| `Signature-Input` | `sig=("@authority");created=...;expires=...;keyid="...";alg="ed25519";nonce="...";tag="web-bot-auth"` |
+| `Signature-Input` | `sig=("@method" "@target-uri");created=...;expires=...;keyid="...";alg="ed25519";nonce="...";tag="web-bot-auth"` |
 | `Signature-Agent` | FQDN (only when `agent_fqdn` is set) |
 
 ## Consumer Wiring
