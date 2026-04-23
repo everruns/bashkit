@@ -590,8 +590,11 @@ impl Bash {
     pub async fn exec_with_extensions(
         &mut self,
         script: &str,
-        extensions: ExecutionExtensions,
+        mut extensions: ExecutionExtensions,
     ) -> Result<ExecResult> {
+        // Expose active execution limits to builtins that need to honor
+        // per-execution sandbox settings.
+        let _ = extensions.insert(self.interpreter.limits().clone());
         let _extensions_guard = self.interpreter.scoped_execution_extensions(extensions);
         self.exec_impl(script).await
     }
@@ -3749,6 +3752,28 @@ fn
             "Expected loop limit error, got: {}",
             err
         );
+    }
+
+    #[tokio::test]
+    async fn test_awk_respects_loop_iteration_limit() {
+        let limits = ExecutionLimits::new().max_loop_iterations(5);
+        let mut bash = Bash::builder().limits(limits).build();
+        let result = bash
+            .exec("awk 'BEGIN { i=0; while(1) { i++; if(i>999) break } print i }'")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout.trim(), "5");
+    }
+
+    #[tokio::test]
+    async fn test_awk_for_in_respects_loop_iteration_limit() {
+        let limits = ExecutionLimits::new().max_loop_iterations(3);
+        let mut bash = Bash::builder().limits(limits).build();
+        let result = bash
+            .exec("awk 'BEGIN { for(i=1;i<=10;i++) a[i]=i; c=0; for(k in a) c++; print c }'")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout.trim(), "3");
     }
 
     #[tokio::test]
