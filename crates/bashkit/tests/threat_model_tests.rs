@@ -3484,6 +3484,28 @@ echo ${#big2}
         assert!(!lines.is_empty(), "should have produced some output");
     }
 
+    /// TM-DOS-060: local builtin assignments must honor variable count budget.
+    #[tokio::test]
+    async fn tm_dos_060_local_assignment_respects_budget() {
+        let mem = MemoryLimits::new().max_variable_count(2);
+        let mut bash = Bash::builder()
+            .memory_limits(mem)
+            .session_limits(SessionLimits::unlimited())
+            .build();
+
+        let script = r#"
+local a=1 b=2 c=3
+printf "%s\n" "${a:-unset}" "${b:-unset}" "${c:-unset}"
+"#;
+        let result = bash.exec(script).await.unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        let lines: Vec<&str> = result.stdout.lines().collect();
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0], "1");
+        assert_eq!(lines[2], "unset");
+    }
+
     /// TM-DOS-060: Array entry bomb — indexed array with many entries.
     #[tokio::test]
     async fn tm_dos_060_array_entry_bomb() {
