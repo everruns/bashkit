@@ -1390,6 +1390,44 @@ impl Interpreter {
         );
     }
 
+    /// Validate restored shell state against configured memory limits.
+    ///
+    /// Used by snapshot restore paths before applying untrusted state.
+    pub(crate) fn validate_shell_state_restore_limits(&self, state: &ShellState) -> Result<()> {
+        let budget = crate::limits::MemoryBudget::recompute_from_state(
+            &state.variables,
+            &state.arrays,
+            &state.assoc_arrays,
+            0,
+            0,
+            Self::is_internal_variable,
+        );
+
+        if budget.variable_count > self.memory_limits.max_variable_count {
+            return Err(crate::limits::LimitExceeded::Memory(format!(
+                "variable count limit ({}) exceeded",
+                self.memory_limits.max_variable_count
+            ))
+            .into());
+        }
+        if budget.variable_bytes > self.memory_limits.max_total_variable_bytes {
+            return Err(crate::limits::LimitExceeded::Memory(format!(
+                "variable byte limit ({}) exceeded",
+                self.memory_limits.max_total_variable_bytes
+            ))
+            .into());
+        }
+        if budget.array_entries > self.memory_limits.max_array_entries {
+            return Err(crate::limits::LimitExceeded::Memory(format!(
+                "array entry limit ({}) exceeded",
+                self.memory_limits.max_array_entries
+            ))
+            .into());
+        }
+
+        Ok(())
+    }
+
     /// Get a reference to the current execution counters.
     pub fn counters(&self) -> &crate::limits::ExecutionCounters {
         &self.counters
