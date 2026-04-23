@@ -201,8 +201,7 @@ impl<'a> Parser<'a> {
             let start_offset = self.current_span.start.offset;
             if let Some(cmd) = self.parse_command_list()? {
                 commands.push(cmd);
-            } else if self.current_token.is_some()
-                && self.current_span.start.offset == start_offset
+            } else if self.current_token.is_some() && self.current_span.start.offset == start_offset
             {
                 return Err(self.error("unexpected token"));
             }
