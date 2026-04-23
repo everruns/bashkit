@@ -84,7 +84,9 @@ impl DiscoverTool {
     /// Reject commands that aren't `discover` or `help`.
     fn validate_commands(commands: &str) -> Result<(), String> {
         if Self::has_forbidden_shell_syntax(commands) {
-            return Err("discover tool commands cannot contain shell control characters".to_string());
+            return Err(
+                "discover tool commands cannot contain shell control characters".to_string(),
+            );
         }
         let first_word = commands.split_whitespace().next().unwrap_or("");
         if DISCOVER_ALLOWED_COMMANDS.contains(&first_word) {
@@ -997,7 +999,8 @@ mod tests {
         let args = serde_json::json!({ "query": "user; help get_user --json" });
         match tools[1].execution(args) {
             Err(e) => assert!(
-                e.to_string().contains("query contains unsupported shell control characters"),
+                e.to_string()
+                    .contains("query contains unsupported shell control characters"),
                 "unexpected error: {e}"
             ),
             Ok(_) => panic!("expected injection-like query to be rejected"),
