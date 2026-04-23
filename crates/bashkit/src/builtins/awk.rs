@@ -26,6 +26,7 @@ use super::{Builtin, Context, read_text_file};
 use crate::error::{Error, Result};
 use crate::fs::FileSystem;
 use crate::interpreter::ExecResult;
+use crate::limits::ExecutionLimits;
 
 /// awk command - pattern scanning and processing
 pub struct Awk;
@@ -2146,6 +2147,8 @@ struct AwkInterpreter {
     /// When start pattern matches, range becomes active. When end pattern
     /// matches, that line is included but range becomes inactive.
     range_active: HashMap<usize, bool>,
+    /// Max iterations for a single loop, inherited from execution limits.
+    max_loop_iterations: usize,
 }
 
 impl AwkInterpreter {
@@ -2164,6 +2167,7 @@ impl AwkInterpreter {
             fs: None,
             cwd: PathBuf::from("/"),
             range_active: HashMap::new(),
+            max_loop_iterations: ExecutionLimits::default().max_loop_iterations,
         }
     }
 
@@ -3079,9 +3083,6 @@ impl AwkInterpreter {
 
     /// Execute action. Returns flow control signal.
     fn exec_action(&mut self, action: &AwkAction) -> AwkFlow {
-        // Limit iterations to prevent infinite loops
-        const MAX_LOOP_ITERS: usize = 100_000;
-
         match action {
             AwkAction::Print(exprs, target) => {
                 let parts: Vec<String> = exprs
@@ -3142,7 +3143,7 @@ impl AwkInterpreter {
                 let mut iters = 0;
                 while self.eval_expr(cond).as_bool() {
                     iters += 1;
-                    if iters > MAX_LOOP_ITERS {
+                    if iters > self.max_loop_iterations {
                         break;
                     }
                     let mut do_break = false;
@@ -3167,7 +3168,7 @@ impl AwkInterpreter {
                 let mut iters = 0;
                 loop {
                     iters += 1;
-                    if iters > MAX_LOOP_ITERS {
+                    if iters > self.max_loop_iterations {
                         break;
                     }
                     let mut do_break = false;
@@ -3193,7 +3194,7 @@ impl AwkInterpreter {
                 let mut iters = 0;
                 while self.eval_expr(cond).as_bool() {
                     iters += 1;
-                    if iters > MAX_LOOP_ITERS {
+                    if iters > self.max_loop_iterations {
                         break;
                     }
                     let mut do_break = false;
@@ -3231,7 +3232,12 @@ impl AwkInterpreter {
                     _ => a.cmp(b),
                 });
 
+                let mut iters = 0;
                 for key in keys {
+                    iters += 1;
+                    if iters > self.max_loop_iterations {
+                        break;
+                    }
                     self.state.set_variable(var, AwkValue::String(key));
                     let mut do_break = false;
                     for action in actions {
@@ -3480,6 +3486,10 @@ impl Builtin for Awk {
         let program = parser.parse()?;
 
         let mut interp = AwkInterpreter::new();
+        interp.max_loop_iterations = ctx
+            .execution_extension::<ExecutionLimits>()
+            .map(|limits| limits.max_loop_iterations)
+            .unwrap_or_else(|| ExecutionLimits::default().max_loop_iterations);
         interp.functions = program.functions.clone();
         interp.state.fs = Self::process_escape_sequences(&field_sep);
         interp.fs = Some(ctx.fs.clone());
@@ -4134,7 +4144,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_awk_while_loop_limited() {
-        // Infinite while loop should terminate via MAX_LOOP_ITERS
+        // Infinite while loop should terminate via default max_loop_iterations
         let result = run_awk(
             &[r#"BEGIN { i=0; while(1) { i++; if(i>200000) break } print i }"#],
             Some(""),
@@ -4143,10 +4153,10 @@ mod tests {
         .unwrap();
         assert_eq!(result.exit_code, 0);
         let count: usize = result.stdout.trim().parse().unwrap();
-        // Should be capped at MAX_LOOP_ITERS (100_000), not 200_000
+        // Should be capped at default max_loop_iterations (10_000), not 200_000
         assert!(
-            count <= 100_001,
-            "loop ran {} times, expected <= 100001",
+            count <= 10_001,
+            "loop ran {} times, expected <= 10001",
             count
         );
     }
