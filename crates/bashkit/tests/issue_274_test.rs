@@ -29,3 +29,20 @@ async fn issue_274_pipeline_stdin_to_sourced_function() {
         .unwrap();
     assert_eq!(r.stdout.trim(), "HELLO WORLD");
 }
+
+#[tokio::test]
+async fn issue_274_pipeline_stdin_not_leaked_after_function_error() {
+    let limits = bashkit::ExecutionLimits::new().max_commands(3);
+    let mut bash = Bash::builder().limits(limits).build();
+
+    let first = bash
+        .exec("leak() { read x; echo $x; }\necho SECRET | leak")
+        .await;
+    assert!(
+        first.is_err(),
+        "expected first exec to fail due command limit"
+    );
+
+    let second = bash.exec("read x; echo ${x:-EMPTY}").await.unwrap();
+    assert_eq!(second.stdout.trim(), "EMPTY");
+}
