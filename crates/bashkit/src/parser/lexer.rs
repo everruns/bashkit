@@ -1771,7 +1771,7 @@ impl<'a> Lexer<'a> {
                 Some('\n') => {
                     self.advance();
                     // Check if current line matches delimiter
-                    if current_line.trim() == delimiter {
+                    if current_line == delimiter {
                         break;
                     }
                     content.push_str(&current_line);
@@ -1784,7 +1784,7 @@ impl<'a> Lexer<'a> {
                 }
                 None => {
                     // End of input - check last line
-                    if current_line.trim() == delimiter {
+                    if current_line == delimiter {
                         break;
                     }
                     if !current_line.is_empty() {
@@ -1958,6 +1958,13 @@ mod tests {
             lexer.next_token(),
             Some(Token::Word("file.txt".to_string()))
         );
+    }
+
+    #[test]
+    fn test_read_heredoc_requires_exact_delimiter_match() {
+        let mut lexer = Lexer::new("\nhello\n EOF\nEOF\n");
+        let content = lexer.read_heredoc("EOF");
+        assert_eq!(content, "hello\n EOF\n");
     }
 
     #[test]
