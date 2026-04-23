@@ -740,6 +740,11 @@ mod tests {
         assert_eq!(result.exit_code, 1);
         assert!(result.stderr.contains("invalid archive entry path"));
         assert!(!fs_trait.exists(Path::new("/escape.txt")).await.unwrap());
-        assert!(!fs_trait.exists(Path::new("/extract/escape.txt")).await.unwrap());
+        assert!(
+            !fs_trait
+                .exists(Path::new("/extract/escape.txt"))
+                .await
+                .unwrap()
+        );
     }
 }
