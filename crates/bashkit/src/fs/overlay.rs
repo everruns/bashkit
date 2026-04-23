@@ -1454,9 +1454,18 @@ mod tests {
     async fn test_recursive_delete_skips_already_hidden_children() {
         let lower = Arc::new(InMemoryFs::new());
         lower.mkdir(Path::new("/dir"), true).await.unwrap();
-        lower.write_file(Path::new("/dir/a"), &[b'a'; 10]).await.unwrap();
-        lower.write_file(Path::new("/dir/b"), &[b'b'; 20]).await.unwrap();
-        lower.write_file(Path::new("/keep"), &[b'k'; 50]).await.unwrap();
+        lower
+            .write_file(Path::new("/dir/a"), &[b'a'; 10])
+            .await
+            .unwrap();
+        lower
+            .write_file(Path::new("/dir/b"), &[b'b'; 20])
+            .await
+            .unwrap();
+        lower
+            .write_file(Path::new("/keep"), &[b'k'; 50])
+            .await
+            .unwrap();
 
         let probe = OverlayFs::new(lower.clone());
         let base = probe.usage();
