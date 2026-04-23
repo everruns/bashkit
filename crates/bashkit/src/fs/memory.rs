@@ -529,10 +529,19 @@ impl InMemoryFs {
         for (entry_path, entry) in entries.iter() {
             match entry {
                 FsEntry::File { content, .. } | FsEntry::Fifo { content, .. } => {
-                    current_total += content.len() as u64;
+                    let size = content.len() as u64;
+                    current_total += size;
                     current_file_count += 1;
                     if entry_path == path {
-                        old_file_size = content.len() as u64;
+                        old_file_size = size;
+                        is_new_file = false;
+                    }
+                }
+                FsEntry::LazyFile { metadata, .. } => {
+                    current_total += metadata.size;
+                    current_file_count += 1;
+                    if entry_path == path {
+                        old_file_size = metadata.size;
                         is_new_file = false;
                     }
                 }
@@ -911,6 +920,15 @@ impl InMemoryFs {
         }
 
         let mut entries = self.entries.write().unwrap();
+        let Ok(size_hint_usize) = usize::try_from(size_hint) else {
+            return;
+        };
+        if self
+            .check_write_limits(&entries, &path, size_hint_usize)
+            .is_err()
+        {
+            return;
+        }
 
         // Ensure parent directories exist
         if let Some(parent) = path.parent() {
@@ -1015,6 +1033,10 @@ impl FileSystem for InMemoryFs {
                 // Extract loader, call it, replace entry
                 if let Some(FsEntry::LazyFile { loader, metadata }) = entries.remove(&path) {
                     let content = loader();
+                    if let Err(err) = self.check_write_limits(&entries, &path, content.len()) {
+                        entries.insert(path, FsEntry::LazyFile { loader, metadata });
+                        return Err(err);
+                    }
                     let mut metadata = metadata;
                     metadata.size = content.len() as u64;
                     let result = content.clone();
@@ -2372,6 +2394,26 @@ mod tests {
             .iter()
             .any(|e| e.path == Path::new("/tmp/lazy.txt"));
         assert!(has_file);
+    }
+
+    #[tokio::test]
+    async fn test_add_lazy_file_respects_limits() {
+        let limits = FsLimits::new().max_total_bytes(100);
+        let fs = InMemoryFs::with_limits(limits);
+        fs.add_lazy_file("/tmp/too-big.txt", 101, 0o644, Arc::new(|| vec![0; 101]));
+
+        assert!(!fs.exists(Path::new("/tmp/too-big.txt")).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_lazy_file_materialization_respects_limits() {
+        let limits = FsLimits::new().max_file_size(5);
+        let fs = InMemoryFs::with_limits(limits);
+        fs.add_lazy_file("/tmp/lazy.txt", 1, 0o644, Arc::new(|| b"toolarge".to_vec()));
+
+        let result = fs.read_file(Path::new("/tmp/lazy.txt")).await;
+        assert!(result.is_err());
+        assert!(fs.exists(Path::new("/tmp/lazy.txt")).await.unwrap());
     }
 
     #[tokio::test]
