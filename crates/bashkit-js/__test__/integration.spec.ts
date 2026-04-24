@@ -237,6 +237,14 @@ test("integration: loop with accumulation in scripted tool", async (t) => {
   t.deepEqual(result.stdout.trim().split(/\s+/), ["2", "4", "6", "8", "10"]);
 });
 
+test("integration: scripted tool keeps callback references alive", (t) => {
+  const tool = new ScriptedTool({ name: "gc_guard" });
+  tool.addTool("one", "One", () => "1\n");
+  tool.addTool("two", "Two", () => "2\n");
+
+  t.is((tool as unknown as { callbackRefs: unknown[] }).callbackRefs.length, 2);
+});
+
 // ============================================================================
 // Reset behavior
 // ============================================================================
