@@ -11,12 +11,18 @@ use std::time::Duration;
 
 /// Helper: create Bash with python builtins using default limits.
 fn bash_python() -> Bash {
-    Bash::builder().python().build()
+    Bash::builder()
+        .python()
+        .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
+        .build()
 }
 
 /// Helper: create Bash with custom python limits.
 fn bash_python_limits(limits: PythonLimits) -> Bash {
-    Bash::builder().python_with_limits(limits).build()
+    Bash::builder()
+        .python_with_limits(limits)
+        .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
+        .build()
 }
 
 // =============================================================================
@@ -850,7 +856,11 @@ mod environment {
 
     #[tokio::test]
     async fn getenv_existing() {
-        let mut bash = Bash::builder().python().env("MY_VAR", "test_value").build();
+        let mut bash = Bash::builder()
+            .python()
+            .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
+            .env("MY_VAR", "test_value")
+            .build();
         let r = bash
             .exec("python3 -c \"import os\nprint(os.getenv('MY_VAR'))\"")
             .await
@@ -885,6 +895,7 @@ mod environment {
     async fn environ_dict() {
         let mut bash = Bash::builder()
             .python()
+            .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
             .env("FOO", "bar")
             .env("BAZ", "qux")
             .build();
@@ -900,7 +911,11 @@ mod environment {
     #[tokio::test]
     async fn builder_env_visible_to_python() {
         // Use builder .env() to set env vars visible to Python
-        let mut bash = Bash::builder().python().env("GREETING", "hello").build();
+        let mut bash = Bash::builder()
+            .python()
+            .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
+            .env("GREETING", "hello")
+            .build();
         let r = bash
             .exec("python3 -c \"import os\nprint(os.getenv('GREETING'))\"")
             .await

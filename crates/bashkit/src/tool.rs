@@ -540,6 +540,9 @@ impl BashToolBuilder {
     /// Requires the `python` feature flag. Python `pathlib.Path` operations are
     /// bridged to the virtual filesystem. Limitations (no `open()`, no HTTP) are
     /// automatically documented in `help()` and `system_prompt()`.
+    ///
+    /// For security, execution is runtime-gated: set
+    /// `BASHKIT_ALLOW_INPROCESS_PYTHON=1` before invoking `python`/`python3`.
     #[cfg(feature = "python")]
     pub fn python(self) -> Self {
         self.python_with_limits(crate::builtins::PythonLimits::default())

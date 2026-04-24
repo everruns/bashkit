@@ -205,7 +205,12 @@ async fn python_spec_tests() {
     }
 
     // Python tests need the python builtin registered via builder
-    let make_bash = || Bash::builder().python().build();
+    let make_bash = || {
+        Bash::builder()
+            .python()
+            .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
+            .build()
+    };
 
     let mut summary = TestSummary::default();
     let mut failures = Vec::new();
