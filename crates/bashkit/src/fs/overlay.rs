@@ -371,20 +371,38 @@ impl OverlayFs {
         Ok(())
     }
 
-    /// Check limits before creating a directory.
+    /// Check limits before creating directories.
     ///
     /// THREAT[TM-DOS-037]: Prevents unbounded directory creation via chmod CoW
     /// and other paths that create directories in the upper layer.
-    fn check_dir_limits(&self) -> Result<()> {
+    fn check_dir_limits(&self, dirs_to_create: u64) -> Result<()> {
         let usage = self.compute_usage();
-        if usage.dir_count >= self.limits.max_dir_count {
+        let new_total = usage.dir_count.saturating_add(dirs_to_create);
+        if new_total > self.limits.max_dir_count {
             return Err(IoError::other(format!(
-                "too many directories: {} directories at {} directory limit",
-                usage.dir_count, self.limits.max_dir_count
+                "too many directories: {} + {} would exceed {} directory limit",
+                usage.dir_count, dirs_to_create, self.limits.max_dir_count
             ))
             .into());
         }
         Ok(())
+    }
+
+    /// Count directories that would be created in upper for mkdir/chmod CoW.
+    async fn count_missing_upper_dirs(&self, path: &Path, recursive: bool) -> Result<u64> {
+        if !recursive {
+            return Ok((!self.upper.exists(path).await.unwrap_or(false)) as u64);
+        }
+
+        let mut current = PathBuf::from("/");
+        let mut missing = 0u64;
+        for component in path.components().skip(1) {
+            current.push(component);
+            if !self.upper.exists(&current).await.unwrap_or(false) {
+                missing = missing.saturating_add(1);
+            }
+        }
+        Ok(missing)
     }
 
     /// Normalize a path for consistent lookups
@@ -561,7 +579,8 @@ impl FileSystem for OverlayFs {
         let path = Self::normalize_path(path);
 
         // THREAT[TM-DOS-037]: Check directory count limits before creating
-        self.check_dir_limits()?;
+        let dirs_to_create = self.count_missing_upper_dirs(&path, recursive).await?;
+        self.check_dir_limits(dirs_to_create)?;
 
         // Remove any whiteout for this path
         self.remove_whiteout(&path);
@@ -849,7 +868,8 @@ impl FileSystem for OverlayFs {
                 self.hide_lower_file(stat.size);
             } else if stat.file_type == FileType::Directory {
                 // THREAT[TM-DOS-037]: Check directory limits before CoW mkdir
-                self.check_dir_limits()?;
+                let dirs_to_create = self.count_missing_upper_dirs(&path, true).await?;
+                self.check_dir_limits(dirs_to_create)?;
                 self.upper.mkdir(&path, true).await?;
                 self.hide_lower_dir();
             }
@@ -890,7 +910,8 @@ impl FileSystem for OverlayFs {
                     self.hide_lower_file(stat.size);
                 }
                 FileType::Directory => {
-                    self.check_dir_limits()?;
+                    let dirs_to_create = self.count_missing_upper_dirs(&path, true).await?;
+                    self.check_dir_limits(dirs_to_create)?;
                     self.upper.mkdir(&path, true).await?;
                     self.hide_lower_dir();
                 }
