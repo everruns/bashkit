@@ -16,16 +16,17 @@ otherwise REPL.
 
 ## Install
 
-From source:
+From crates.io:
 
 ```bash
-git clone https://github.com/everruns/bashkit
-cd bashkit
-cargo install --path crates/bashkit-cli
+cargo install bashkit-cli
 ```
 
-Prebuilt binaries via `cargo-binstall` (see releases page) or `cargo install
-bashkit-cli`.
+Prebuilt binary via [`cargo-binstall`](https://github.com/cargo-bins/cargo-binstall):
+
+```bash
+cargo binstall bashkit-cli
+```
 
 ### Build features
 
