@@ -60,7 +60,7 @@ impl RgOptions {
         let mut p = super::arg_parser::ArgParser::new(args);
 
         while !p.is_done() {
-            if let Ok(Some(val)) = p.flag_value("-m", "rg") {
+            if let Some(val) = p.flag_value("-m", "rg").map_err(Error::Execution)? {
                 opts.max_count = Some(
                     val.parse()
                         .map_err(|_| Error::Execution(format!("rg: invalid -m value: {val}")))?,
@@ -435,6 +435,16 @@ mod tests {
         assert_eq!(result.exit_code, 0);
         let lines: Vec<&str> = result.stdout.trim().lines().collect();
         assert_eq!(lines.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_rg_max_count_requires_value() {
+        let args: Vec<String> = vec!["hello".to_string(), "-m".to_string()];
+        let result = RgOptions::parse(&args);
+        assert!(matches!(
+            result,
+            Err(Error::Execution(msg)) if msg == "rg: -m requires an argument"
+        ));
     }
 
     #[tokio::test]
