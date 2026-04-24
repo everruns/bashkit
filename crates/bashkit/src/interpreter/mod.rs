@@ -9409,19 +9409,16 @@ impl Interpreter {
         s.to_string()
     }
 
-    /// Fully expand an associative array key, including command substitutions.
-    /// Falls back to `expand_variable_or_literal` for keys without `$(` or backtick.
+    /// Fully expand an associative array key using standard word expansion.
+    /// This preserves literal bare names (e.g. `x` -> `x`) while correctly
+    /// expanding embedded/multiple parameter references (e.g. `foo$bar`).
     async fn expand_assoc_key(&mut self, s: &str) -> Result<String> {
-        if s.contains("$(") || s.contains('`') {
-            let word = Parser::parse_word_string_with_limits(
-                s,
-                self.limits.max_ast_depth,
-                self.limits.max_parser_operations,
-            );
-            self.expand_word(&word).await
-        } else {
-            Ok(self.expand_variable_or_literal(s))
-        }
+        let word = Parser::parse_word_string_with_limits(
+            s,
+            self.limits.max_ast_depth,
+            self.limits.max_parser_operations,
+        );
+        self.expand_word(&word).await
     }
 
     /// THREAT[TM-INJ-009]: Check if a variable name is an internal marker.
