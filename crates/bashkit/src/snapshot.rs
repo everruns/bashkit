@@ -162,14 +162,18 @@ impl Snapshot {
     ///
     /// Rejects snapshots where the HMAC does not match, preventing forgery.
     pub fn from_bytes_keyed(data: &[u8], key: &[u8]) -> crate::Result<Self> {
+        use hmac::{Hmac, KeyInit, Mac};
+        type HmacSha256 = Hmac<Sha256>;
+
         if data.len() < DIGEST_LEN {
             return Err(crate::Error::Internal(
                 "snapshot too short: missing integrity digest".to_string(),
             ));
         }
         let (stored_digest, json) = data.split_at(DIGEST_LEN);
-        let expected = Self::compute_hmac(key, json);
-        if stored_digest != expected.as_slice() {
+        let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts any key length");
+        mac.update(json);
+        if mac.verify_slice(stored_digest).is_err() {
             return Err(crate::Error::Internal(
                 "snapshot integrity check failed: HMAC mismatch (wrong key or tampered data)"
                     .to_string(),
