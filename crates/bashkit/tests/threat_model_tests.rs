@@ -1235,6 +1235,7 @@ mod python_security {
     fn bash_with_python() -> Bash {
         Bash::builder()
             .python_with_limits(PythonLimits::default())
+            .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
             .build()
     }
 
@@ -1585,6 +1586,7 @@ mod python_security_regressions {
     fn bash_with_python() -> Bash {
         Bash::builder()
             .python_with_limits(PythonLimits::default())
+            .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
             .build()
     }
 

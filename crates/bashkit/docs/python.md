@@ -23,7 +23,10 @@ use bashkit::Bash;
 
 # #[tokio::main]
 # async fn main() -> bashkit::Result<()> {
-let mut bash = Bash::builder().python().build();
+let mut bash = Bash::builder()
+    .python()
+    .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
+    .build();
 
 let result = bash.exec("python3 -c \"print('hello from Monty')\"").await?;
 assert_eq!(result.stdout, "hello from Monty\n");

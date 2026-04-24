@@ -935,9 +935,15 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
+    fn opt_in_env() -> HashMap<String, String> {
+        let mut env = HashMap::new();
+        env.insert(PYTHON_INPROCESS_OPT_IN_ENV.to_string(), "1".to_string());
+        env
+    }
+
     async fn run(args: &[&str], stdin: Option<&str>) -> ExecResult {
         let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-        let env = HashMap::new();
+        let env = opt_in_env();
         let mut variables = HashMap::new();
         let mut cwd = PathBuf::from("/home/user");
         let fs = Arc::new(InMemoryFs::new());
@@ -947,7 +953,7 @@ mod tests {
 
     async fn run_with_file(args: &[&str], file_path: &str, content: &str) -> ExecResult {
         let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-        let env = HashMap::new();
+        let env = opt_in_env();
         let mut variables = HashMap::new();
         let mut cwd = PathBuf::from("/home/user");
         let fs = Arc::new(InMemoryFs::new());
@@ -965,10 +971,11 @@ mod tests {
         env_vars: &[(&str, &str)],
     ) -> ExecResult {
         let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-        let env: HashMap<String, String> = env_vars
+        let mut env: HashMap<String, String> = env_vars
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
+        env.insert(PYTHON_INPROCESS_OPT_IN_ENV.to_string(), "1".to_string());
         let mut variables = HashMap::new();
         let mut cwd = PathBuf::from("/home/user");
         let fs = Arc::new(InMemoryFs::new());
@@ -1308,7 +1315,7 @@ mod tests {
         let limits = PythonLimits::default().max_memory(1024);
         let py = Python::with_limits(limits);
         let args = vec!["-c".to_string(), "x = list(range(100000))".to_string()];
-        let env = HashMap::new();
+        let env = opt_in_env();
         let mut variables = HashMap::new();
         let mut cwd = PathBuf::from("/home/user");
         let fs = Arc::new(InMemoryFs::new());
@@ -1325,7 +1332,7 @@ mod tests {
             .max_memory(128 * 1024 * 1024);
         let py = Python::with_limits(limits);
         let args = vec!["-c".to_string(), "print(sum(range(100)))".to_string()];
-        let env = HashMap::new();
+        let env = opt_in_env();
         let mut variables = HashMap::new();
         let mut cwd = PathBuf::from("/home/user");
         let fs = Arc::new(InMemoryFs::new());
@@ -1366,7 +1373,7 @@ mod tests {
         handler: PythonExternalFnHandler,
     ) -> ExecResult {
         let args = vec!["-c".to_string(), code.to_string()];
-        let env = HashMap::new();
+        let env = opt_in_env();
         let mut variables = HashMap::new();
         let mut cwd = PathBuf::from("/home/user");
         let fs = Arc::new(InMemoryFs::new());
