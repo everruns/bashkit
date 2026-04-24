@@ -26,7 +26,7 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, RwLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::runtime::Runtime;
 use tokio::sync::{Mutex, oneshot};
 
@@ -229,6 +229,15 @@ fn parse_custom_builtins(
         )?);
     }
     Ok(builtins)
+}
+
+fn parse_timeout_seconds(timeout_seconds: f64) -> PyResult<Duration> {
+    if !timeout_seconds.is_finite() || timeout_seconds < 0.0 {
+        return Err(PyValueError::new_err(
+            "timeout_seconds must be a finite number >= 0",
+        ));
+    }
+    Ok(Duration::from_secs_f64(timeout_seconds))
 }
 
 fn clone_file_mounts(py: Python<'_>, mounts: &[PyFileMount]) -> Vec<PyFileMount> {
@@ -2446,7 +2455,7 @@ impl PyBash {
                 .max_loop_iterations(usize::try_from(max_loop_iterations).unwrap_or(usize::MAX));
         }
         if let Some(timeout_seconds) = self.timeout_seconds {
-            limits = limits.timeout(std::time::Duration::from_secs_f64(timeout_seconds));
+            limits = limits.timeout(parse_timeout_seconds(timeout_seconds)?);
         }
         builder = builder.limits(limits);
 
@@ -2522,7 +2531,7 @@ impl PyBash {
             limits = limits.max_loop_iterations(usize::try_from(mli).unwrap_or(usize::MAX));
         }
         if let Some(ts) = timeout_seconds {
-            limits = limits.timeout(std::time::Duration::from_secs_f64(ts));
+            limits = limits.timeout(parse_timeout_seconds(ts)?);
         }
         builder = builder.limits(limits);
 
@@ -3061,7 +3070,7 @@ impl BashTool {
                 .max_loop_iterations(usize::try_from(max_loop_iterations).unwrap_or(usize::MAX));
         }
         if let Some(timeout_seconds) = self.timeout_seconds {
-            limits = limits.timeout(std::time::Duration::from_secs_f64(timeout_seconds));
+            limits = limits.timeout(parse_timeout_seconds(timeout_seconds)?);
         }
         builder = builder.limits(limits);
 
@@ -3078,7 +3087,7 @@ impl BashTool {
         ))
     }
 
-    fn build_rust_tool(&self) -> RustBashTool {
+    fn build_rust_tool(&self) -> PyResult<RustBashTool> {
         let mut builder = RustBashTool::builder();
 
         if let Some(ref username) = self.username {
@@ -3096,7 +3105,7 @@ impl BashTool {
             limits = limits.max_loop_iterations(usize::try_from(mli).unwrap_or(usize::MAX));
         }
         if let Some(ts) = self.timeout_seconds {
-            limits = limits.timeout(std::time::Duration::from_secs_f64(ts));
+            limits = limits.timeout(parse_timeout_seconds(ts)?);
         }
 
         if !self.custom_builtins.is_empty() {
@@ -3108,7 +3117,7 @@ impl BashTool {
             }
         }
 
-        builder.limits(limits).build()
+        Ok(builder.limits(limits).build())
     }
 }
 
@@ -3156,7 +3165,7 @@ impl BashTool {
             limits = limits.max_loop_iterations(usize::try_from(mli).unwrap_or(usize::MAX));
         }
         if let Some(ts) = timeout_seconds {
-            limits = limits.timeout(std::time::Duration::from_secs_f64(ts));
+            limits = limits.timeout(parse_timeout_seconds(ts)?);
         }
         builder = builder.limits(limits);
 
@@ -3533,25 +3542,25 @@ impl BashTool {
     }
 
     fn description(&self) -> PyResult<String> {
-        Ok(self.build_rust_tool().description().to_string())
+        Ok(self.build_rust_tool()?.description().to_string())
     }
 
     fn help(&self) -> PyResult<String> {
-        Ok(self.build_rust_tool().help())
+        Ok(self.build_rust_tool()?.help())
     }
 
     fn system_prompt(&self) -> PyResult<String> {
-        Ok(self.build_rust_tool().system_prompt())
+        Ok(self.build_rust_tool()?.system_prompt())
     }
 
     fn input_schema(&self) -> PyResult<String> {
-        let schema = self.build_rust_tool().input_schema();
+        let schema = self.build_rust_tool()?.input_schema();
         serde_json::to_string_pretty(&schema)
             .map_err(|e| PyValueError::new_err(format!("Schema serialization failed: {}", e)))
     }
 
     fn output_schema(&self) -> PyResult<String> {
-        let schema = self.build_rust_tool().output_schema();
+        let schema = self.build_rust_tool()?.output_schema();
         serde_json::to_string_pretty(&schema)
             .map_err(|e| PyValueError::new_err(format!("Schema serialization failed: {}", e)))
     }

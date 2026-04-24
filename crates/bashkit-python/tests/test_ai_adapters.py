@@ -201,6 +201,18 @@ def test_bash_timeout_seconds_aborts_long_command():
     assert result.exit_code != 0
 
 
+@pytest.mark.parametrize("value", [-1.0, float("nan"), float("inf"), float("-inf")])
+def test_timeout_seconds_rejects_invalid_float_values(value):
+    """Bash/BashTool reject timeout_seconds values that cannot map to Duration."""
+    from bashkit import Bash, BashTool
+
+    with pytest.raises(ValueError, match="timeout_seconds must be a finite number >= 0"):
+        Bash(timeout_seconds=value)
+
+    with pytest.raises(ValueError, match="timeout_seconds must be a finite number >= 0"):
+        BashTool(timeout_seconds=value)
+
+
 def test_langchain_bashtool_accepts_timeout_seconds():
     """BashkitTool constructor accepts timeout_seconds param."""
     from bashkit.langchain import LANGCHAIN_AVAILABLE
