@@ -102,7 +102,19 @@ impl Builtin for ToolBuiltinAdapter {
                         };
                         match cb_result {
                             Ok(stdout) => ExecResult::ok(stdout),
-                            Err(msg) => ExecResult::err(msg, 1),
+                            Err(msg) => {
+                                if self.sanitize_errors {
+                                    #[cfg(feature = "tracing")]
+                                    tracing::debug!(
+                                        tool = %self.name,
+                                        error = %msg,
+                                        "tool dry-run callback error (sanitized)"
+                                    );
+                                    ExecResult::err(format!("{}: callback failed\n", self.name), 1)
+                                } else {
+                                    ExecResult::err(msg, 1)
+                                }
+                            }
                         }
                     } else {
                         // Default: return structured JSON validation result
