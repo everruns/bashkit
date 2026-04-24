@@ -1623,10 +1623,22 @@ impl Interpreter {
 
             // Stop on control flow (e.g. nounset error uses Return to abort)
             if result.control_flow != ControlFlow::None {
-                if fire_exit_hook && let ControlFlow::Exit(code) = result.control_flow {
-                    self.hooks.fire_on_exit(crate::hooks::ExitEvent { code });
+                if let ControlFlow::Exit(code) = result.control_flow {
+                    if fire_exit_hook {
+                        match self.hooks.fire_on_exit(crate::hooks::ExitEvent { code }) {
+                            Some(event) => {
+                                exit_code = event.code;
+                                self.last_exit_code = exit_code;
+                                break;
+                            }
+                            None => continue,
+                        }
+                    } else {
+                        break;
+                    }
+                } else {
+                    break;
                 }
-                break;
             }
 
             // Run ERR trap on non-zero exit (unless in conditional chain)

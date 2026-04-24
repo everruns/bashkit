@@ -6517,6 +6517,32 @@ echo missing fi"#,
     }
 
     #[tokio::test]
+    async fn test_on_exit_hook_cancel_prevents_exit() {
+        let mut bash = Bash::builder()
+            .on_exit(Box::new(|_event| {
+                hooks::HookAction::Cancel("blocked by policy".to_string())
+            }))
+            .build();
+
+        let result = bash.exec("echo before\nexit 5\necho after").await.unwrap();
+        assert_eq!(result.stdout.trim(), "before\nafter");
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_on_exit_hook_can_modify_exit_code() {
+        let mut bash = Bash::builder()
+            .on_exit(Box::new(|mut event| {
+                event.code = 17;
+                hooks::HookAction::Continue(event)
+            }))
+            .build();
+
+        let result = bash.exec("exit 5").await.unwrap();
+        assert_eq!(result.exit_code, 17);
+    }
+
+    #[tokio::test]
     async fn test_bash_versinfo_reports_bash_compatible_major() {
         let mut bash = Bash::new();
 
