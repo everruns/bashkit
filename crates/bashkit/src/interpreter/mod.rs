@@ -703,6 +703,9 @@ pub struct Interpreter {
     /// Fd3+ targets from compound redirect processing (e.g. `3>&1` maps fd3→Stdout).
     /// Populated during apply_redirections_fd_table redirect loop, consumed during routing.
     pending_fd_targets: Vec<(i32, FdTarget)>,
+    /// Depth counter for compound execution contexts that need fd3+ buffering.
+    /// Only when >0 should `1>&N` (N>=3) output be captured in pending_fd_output.
+    pending_fd_capture_depth: usize,
     /// Cancellation token: when set to `true`, execution aborts at the next
     /// command boundary with `Error::Cancelled`.
     cancelled: Arc<AtomicBool>,
@@ -1054,6 +1057,7 @@ impl Interpreter {
             exec_fd_table: HashMap::new(),
             pending_fd_output: HashMap::new(),
             pending_fd_targets: Vec::new(),
+            pending_fd_capture_depth: 0,
             cancelled: Arc::new(AtomicBool::new(false)),
             hooks: crate::hooks::Hooks::default(),
             in_trap: false,
@@ -1817,7 +1821,26 @@ impl Interpreter {
                         None
                     };
 
+                    let has_dup_output =
+                        redirects.iter().any(|r| r.kind == RedirectKind::DupOutput);
+                    let has_file_redirect = redirects.iter().any(|r| {
+                        matches!(
+                            r.kind,
+                            RedirectKind::Output
+                                | RedirectKind::Clobber
+                                | RedirectKind::Append
+                                | RedirectKind::OutputBoth
+                        )
+                    });
+                    let capture_pending_fd = has_dup_output && has_file_redirect;
+                    if capture_pending_fd {
+                        self.pending_fd_capture_depth += 1;
+                    }
                     let result = self.execute_compound(compound).await?;
+                    if capture_pending_fd {
+                        self.pending_fd_capture_depth =
+                            self.pending_fd_capture_depth.saturating_sub(1);
+                    }
 
                     // Restore callback before applying redirections
                     if let Some(cb) = saved_callback {
@@ -6651,18 +6674,20 @@ impl Interpreter {
                                 result.stdout = String::new();
                             }
                             (src, dst) if dst >= 3 => {
-                                // Move content to pending_fd_output for compound
-                                // redirect routing (e.g. `echo msg 1>&3` inside
-                                // `{ ... } 3>&1 >file`).
                                 let data = if src == 2 {
                                     std::mem::take(&mut result.stderr)
                                 } else {
                                     std::mem::take(&mut result.stdout)
                                 };
-                                self.pending_fd_output
-                                    .entry(dst)
-                                    .or_default()
-                                    .push_str(&data);
+                                if self.pending_fd_capture_depth > 0 {
+                                    // Move content to pending_fd_output for compound
+                                    // redirect routing (e.g. `echo msg 1>&3` inside
+                                    // `{ ... } 3>&1 >file`).
+                                    self.pending_fd_output
+                                        .entry(dst)
+                                        .or_default()
+                                        .push_str(&data);
+                                }
                             }
                             _ => {}
                         }
@@ -12264,6 +12289,19 @@ cat /tmp/test_fd.txt"#,
             vec!["progress", "file content"],
             "fd3 → stdout, fd1 → file"
         );
+    }
+
+    #[tokio::test]
+    async fn test_fd3_pending_output_not_leaked_across_commands() {
+        // Regression: pending fd3+ buffer must not leak into later unrelated mixed redirects.
+        let result = run_script(
+            r#"echo "secret" 1>&3
+echo "public" 2>&1 > /tmp/test_fd_leak.txt
+cat /tmp/test_fd_leak.txt"#,
+        )
+        .await;
+        let lines: Vec<&str> = result.stdout.lines().collect();
+        assert_eq!(lines, vec!["public"]);
     }
 
     // Regression: date +"$var" must not word-split format when var contains spaces
