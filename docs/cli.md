@@ -218,11 +218,9 @@ bashkit --max-commands 1000 --timeout 5 untrusted.sh
 
 Stack backtraces are suppressed. Panics emit a single sanitized line
 (`bashkit: internal error: …`) — no paths, line numbers, or dependency
-versions. THREAT `TM-INF-021`.
+versions.
 
 ## See also
 
 - [`docs/security.md`](security.md) — threat model and mitigations
-- [`specs/interactive-shell.md`](../specs/interactive-shell.md) — REPL design
-- [`specs/threat-model.md`](../specs/threat-model.md) — full threat catalogue
 - [`README.md`](../README.md) — library usage and features
