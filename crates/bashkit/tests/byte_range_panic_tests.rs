@@ -53,3 +53,29 @@ async fn length_empty_array_name() {
     // Should not panic — error or empty is acceptable
     let _ = result;
 }
+
+/// Regression for #1414: `${arr[@]:offset:length}` with negative `length`
+/// cast to usize used to overflow `start + len_val` and panic in release.
+/// The fix uses `saturating_add().min(values.len())`, so slicing must
+/// complete without panicking regardless of the signed length value.
+#[tokio::test]
+async fn array_slice_negative_length_no_panic() {
+    let mut bash = Bash::builder().build();
+    let result = bash
+        .exec("arr=(a b c d e); echo \"${arr[@]:1:-1}\"")
+        .await
+        .expect("negative slice length must not panic");
+    assert_eq!(result.exit_code, 0);
+}
+
+/// Regression for #1414: ensure `start + len_val` near `usize::MAX` does
+/// not overflow — a very large length value must saturate, not wrap.
+#[tokio::test]
+async fn array_slice_huge_length_no_panic() {
+    let mut bash = Bash::builder().build();
+    let result = bash
+        .exec("arr=(a b c); echo \"${arr[@]:1:9999999999999999999}\"")
+        .await;
+    // Should not panic — either Ok with clamped slice or a graceful error.
+    let _ = result;
+}
