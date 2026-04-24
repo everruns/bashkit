@@ -10,6 +10,8 @@
 //! - **TM-GIT-010**: Push to unauthorized remote → remote URL allowlist (Phase 2)
 
 use std::collections::HashSet;
+#[cfg(feature = "git")]
+use url::Url;
 
 /// Default author name for commits in the virtual environment.
 pub const DEFAULT_AUTHOR_NAME: &str = "sandbox";
@@ -160,8 +162,16 @@ impl GitConfig {
     /// Also validates that the URL uses HTTPS (not SSH or git://).
     #[cfg(feature = "git")]
     pub(crate) fn is_url_allowed(&self, url: &str) -> Result<(), String> {
+        let parsed_url = Url::parse(url).map_err(|err| {
+            format!(
+                "error: invalid remote URL '{}': {}\n\
+                 hint: remote URLs must be valid absolute HTTPS URLs",
+                url, err
+            )
+        })?;
+
         // TM-GIT-012, TM-GIT-013: Only allow HTTPS
-        if !url.starts_with("https://") {
+        if parsed_url.scheme() != "https" {
             return Err(format!(
                 "error: only HTTPS URLs are allowed (got '{}')\n\
                  hint: SSH and git:// protocols are disabled for security",
@@ -180,21 +190,44 @@ impl GitConfig {
                 .to_string());
         }
 
-        // Check if URL starts with any allowed pattern
-        // THREAT[TM-GIT-014]: Boundary check prevents prefix confusion
-        // (e.g., allowing /myorg must NOT match /myorg-evil)
+        // Check parsed URL against allowlist patterns.
         for pattern in &self.remote_allowlist {
-            if url.starts_with(pattern) {
-                // Exact match or pattern already ends with separator
-                if url.len() == pattern.len() || pattern.ends_with('/') {
-                    return Ok(());
-                }
-                // Ensure match ends at a path boundary, not mid-component
-                let next = url.as_bytes()[pattern.len()];
-                if matches!(next, b'/' | b'?' | b'#' | b'.') {
-                    return Ok(());
+            let Ok(pattern_url) = Url::parse(pattern) else {
+                continue;
+            };
+            if pattern_url.scheme() != "https" {
+                continue;
+            }
+
+            if parsed_url.host_str() != pattern_url.host_str() {
+                continue;
+            }
+
+            if parsed_url.port_or_known_default() != pattern_url.port_or_known_default() {
+                continue;
+            }
+
+            let pattern_path = pattern_url.path();
+            let url_path = parsed_url.path();
+
+            if pattern_path == "/" || pattern_path.is_empty() {
+                return Ok(());
+            }
+
+            if !url_path.starts_with(pattern_path) {
+                continue;
+            }
+
+            if !pattern_path.ends_with('/') && url_path.len() > pattern_path.len() {
+                let Some(&next) = url_path.as_bytes().get(pattern_path.len()) else {
+                    continue;
+                };
+                if next != b'/' {
+                    continue;
                 }
             }
+
+            return Ok(());
         }
 
         Err(format!(
@@ -364,6 +397,23 @@ mod tests {
         assert!(
             config
                 .is_url_allowed("https://github.com/myorg-evil/repo.git")
+                .is_err()
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "git")]
+    fn test_url_allowlist_rejects_host_confusion_vectors() {
+        let config = GitConfig::new().allow_remote("https://github.com");
+
+        assert!(
+            config
+                .is_url_allowed("https://github.com@evil.com/org/repo.git")
+                .is_err()
+        );
+        assert!(
+            config
+                .is_url_allowed("https://github.com.evil.com/org/repo.git")
                 .is_err()
         );
     }
