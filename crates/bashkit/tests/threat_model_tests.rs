@@ -237,6 +237,25 @@ mod sandbox_escape {
         assert_eq!(result.exit_code, 127);
     }
 
+    /// Test exec argv is never re-parsed as shell source (quote injection safe).
+    #[tokio::test]
+    async fn threat_exec_argument_quote_injection_blocked() {
+        let mut bash = Bash::new();
+
+        let result = bash
+            .exec("exec echo \"foo' ; touch /tmp/exec_injected #\"")
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "foo' ; touch /tmp/exec_injected #");
+
+        let check = bash.exec("cat /tmp/exec_injected").await.unwrap();
+        assert_ne!(
+            check.exit_code, 0,
+            "injected touch must not execute through exec argv quoting"
+        );
+    }
+
     /// Test external command execution is blocked
     #[tokio::test]
     async fn threat_external_commands_blocked() {

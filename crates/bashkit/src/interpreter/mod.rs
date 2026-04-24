@@ -4390,36 +4390,20 @@ impl Interpreter {
         redirects: &[Redirect],
     ) -> Result<ExecResult> {
         if !args.is_empty() {
-            // exec cmd args... — execute command and exit with its exit code.
-            // In a real shell this replaces the process; in VFS we run + exit.
-            // Build the command as a script string and execute it.
-            // Single-quote each arg to prevent re-expansion.
-            let mut script_str = String::new();
-            for (i, arg) in args.iter().enumerate() {
-                if i > 0 {
-                    script_str.push(' ');
-                }
-                script_str.push('\'');
-                script_str.push_str(&arg.replace('\'', "'\\''"));
-                script_str.push('\'');
-            }
-
-            let parser = Parser::with_limits(
-                &script_str,
-                self.limits.max_ast_depth,
-                self.limits.max_parser_operations,
-            );
-            let script = match parser.parse() {
-                Ok(s) => s,
-                Err(_) => {
-                    return Ok(ExecResult::err(
-                        format!("-bash: exec: {}: command not found\n", args[0]),
-                        127,
-                    ));
-                }
+            // Security: never reconstruct shell source from argv.
+            // Execute argv directly to avoid quote/parse injection.
+            let target_name = args[0].clone();
+            let target_args = args[1..].to_vec();
+            let target_command = SimpleCommand {
+                name: Word::literal(target_name.clone()),
+                args: target_args.iter().cloned().map(Word::literal).collect(),
+                redirects: redirects.to_vec(),
+                assignments: Vec::new(),
+                span: Span::new(),
             };
-
-            let result = self.execute(&script).await?;
+            let result = self
+                .execute_dispatched_command(&target_name, target_args, &target_command, None)
+                .await?;
 
             // Signal exit so subsequent statements don't execute
             return Ok(ExecResult {
