@@ -2,10 +2,10 @@
 // Provide --no-http, --no-git, --no-python to disable individually.
 // Decision: keep one-shot CLI on a current-thread runtime; reserve multi-thread
 // runtime for MCP only so cold-start work stays off the common path.
-// Decision: CLI uses relaxed execution limits (ExecutionLimits::cli()) because
-// the user explicitly chose to run the script. Counting-based limits are
-// effectively unlimited; timeout is removed (user has Ctrl-C). Memory-guarding
-// limits (function depth, AST depth, parser fuel) are kept.
+// Decision: interactive mode uses relaxed execution limits (ExecutionLimits::cli())
+// because users have terminal control (Ctrl-C) and expect long-running sessions.
+// One-shot command/script mode uses sandboxed defaults unless explicitly overridden
+// by flags to avoid unbounded hangs for wrapper/automation usage.
 // MCP mode keeps the sandboxed defaults since requests come from LLM agents.
 // Decision: interactive mode uses rustyline for line editing — lightweight, MIT,
 // no heavy deps (no SQLite, no crossterm). Multiline via parse error detection.
@@ -158,11 +158,11 @@ fn configure_bash(args: &Args, mode: CliMode) -> bashkit::BashBuilder {
         builder = apply_real_mounts(builder, &args.mount_ro, &args.mount_rw);
     }
 
-    // CLI/script modes use relaxed limits; MCP keeps sandboxed defaults.
-    let mut limits = if mode == CliMode::Mcp {
-        bashkit::ExecutionLimits::new()
-    } else {
+    // Interactive mode uses relaxed limits; MCP/one-shot keep sandboxed defaults.
+    let mut limits = if mode == CliMode::Interactive {
         bashkit::ExecutionLimits::cli()
+    } else {
+        bashkit::ExecutionLimits::new()
     };
     if let Some(v) = args.max_commands {
         limits = limits.max_commands(v);
@@ -178,7 +178,7 @@ fn configure_bash(args: &Args, mode: CliMode) -> bashkit::BashBuilder {
     }
     builder = builder.limits(limits);
 
-    if mode != CliMode::Mcp {
+    if mode == CliMode::Interactive {
         builder = builder.session_limits(bashkit::SessionLimits::unlimited());
     }
 
@@ -582,5 +582,24 @@ mod tests {
         let payload = 42i32;
         let msg = format_panic_message(&payload as &dyn std::any::Any);
         assert_eq!(msg, "bashkit: internal error: unexpected error");
+    }
+
+    #[tokio::test]
+    async fn command_mode_enforces_default_loop_limit() {
+        let args = Args::parse_from(["bashkit", "-c", "while true; do :; done"]);
+        let mut bash = build_bash(&args, CliMode::Command);
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            bash.exec("while true; do :; done"),
+        )
+        .await
+        .expect("command mode should enforce bounded limits");
+        let err = result.expect_err("exec should fail with a resource limit");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("maximum command count")
+                || msg.contains("maximum loop iterations")
+                || msg.contains("maximum total loop iterations")
+        );
     }
 }
