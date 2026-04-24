@@ -2887,13 +2887,22 @@ impl Interpreter {
                 stdout.push_str(&r.stdout);
                 stderr.push_str(&r.stderr);
                 exit_code = r.exit_code;
+                if r.control_flow != ControlFlow::None {
+                    return Ok(ExecResult {
+                        stdout,
+                        stderr,
+                        exit_code,
+                        control_flow: r.control_flow,
+                        ..Default::default()
+                    });
+                }
                 match case_item.terminator {
                     CaseTerminator::Break => {
                         return Ok(ExecResult {
                             stdout,
                             stderr,
                             exit_code,
-                            control_flow: r.control_flow,
+                            control_flow: ControlFlow::None,
                             ..Default::default()
                         });
                     }
