@@ -668,8 +668,8 @@ impl FileSystem for OverlayFs {
             return Err(IoError::new(ErrorKind::NotFound, "not found").into());
         }
 
-        // Check if the path is a non-directory (file/symlink) — read_dir must fail
-        let is_dir_lower = if let Ok(meta) = self.lower.stat(&path).await {
+        // Overlay precedence: upper layer decides path type when present.
+        let is_dir_upper = if let Ok(meta) = self.upper.stat(&path).await {
             if !meta.file_type.is_dir() {
                 return Err(IoError::other("not a directory").into());
             }
@@ -677,11 +677,15 @@ impl FileSystem for OverlayFs {
         } else {
             false
         };
-        let is_dir_upper = if let Ok(meta) = self.upper.stat(&path).await {
+        let is_dir_lower = if let Ok(meta) = self.lower.stat(&path).await {
             if !meta.file_type.is_dir() {
-                return Err(IoError::other("not a directory").into());
+                if !is_dir_upper {
+                    return Err(IoError::other("not a directory").into());
+                }
+                false
+            } else {
+                true
             }
-            true
         } else {
             false
         };
@@ -1270,6 +1274,30 @@ mod tests {
         let overlay = OverlayFs::new(lower);
         let result = overlay.read_dir(Path::new("/tmp/file.txt")).await;
         assert!(result.is_err(), "read_dir on a file should return Err");
+    }
+
+    /// Regression: upper directory must override lower non-directory in read_dir.
+    #[tokio::test]
+    async fn test_read_dir_prefers_upper_directory_over_lower_file() {
+        let lower = Arc::new(InMemoryFs::new());
+        lower
+            .write_file(Path::new("/work"), b"lower-file")
+            .await
+            .unwrap();
+
+        let overlay = OverlayFs::new(lower);
+        overlay.mkdir(Path::new("/work"), false).await.unwrap();
+        overlay
+            .write_file(Path::new("/work/upper.txt"), b"upper")
+            .await
+            .unwrap();
+
+        let entries = overlay.read_dir(Path::new("/work")).await.unwrap();
+        let names: Vec<_> = entries.iter().map(|e| e.name.as_str()).collect();
+        assert!(
+            names.contains(&"upper.txt"),
+            "upper directory should remain readable when lower has file"
+        );
     }
 
     // Issue #418: usage should deduct whited-out files
