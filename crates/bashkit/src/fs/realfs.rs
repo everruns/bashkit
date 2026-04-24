@@ -414,7 +414,8 @@ impl FsBackend for RealFs {
     /// ReadWrite mode. The OS resolves symlink targets on the host filesystem,
     /// so we must validate that the effective target stays within the mount
     /// root on disk. Absolute targets are rejected. Relative targets are
-    /// normalized against the link's host-side parent directory.
+    /// resolved through the nearest existing host ancestor so existing symlink
+    /// components cannot redirect outside root.
     async fn symlink(&self, target: &Path, link: &Path) -> Result<()> {
         self.check_writable()?;
         let real_link = self.resolve(link)?;
@@ -428,10 +429,36 @@ impl FsBackend for RealFs {
             .into());
         }
 
-        // Relative targets: resolve against the link's host-side parent
-        // to verify the effective path stays within root
+        // Relative targets: resolve against the link's host-side parent.
+        // Canonicalize nearest existing ancestor of the effective path so
+        // existing symlink components in the target are enforced.
         let link_parent = real_link.parent().unwrap_or(&self.root);
-        let effective = normalize_host_path(&link_parent.join(target));
+        let joined = normalize_host_path(&link_parent.join(target));
+        let mut nearest_existing = joined.as_path();
+        while !nearest_existing.exists() {
+            nearest_existing = nearest_existing.parent().ok_or_else(|| {
+                IoError::new(
+                    ErrorKind::PermissionDenied,
+                    "symlink target escapes realfs root (sandbox security)",
+                )
+            })?;
+        }
+
+        let canon_existing = std::fs::canonicalize(nearest_existing)?;
+        if !canon_existing.starts_with(&self.root) {
+            return Err(IoError::new(
+                ErrorKind::PermissionDenied,
+                "symlink target escapes realfs root (sandbox security)",
+            )
+            .into());
+        }
+        let suffix = joined.strip_prefix(nearest_existing).map_err(|_| {
+            IoError::new(
+                ErrorKind::PermissionDenied,
+                "symlink target escapes realfs root (sandbox security)",
+            )
+        })?;
+        let effective = normalize_host_path(&canon_existing.join(suffix));
         if !effective.starts_with(&self.root) {
             return Err(IoError::new(
                 ErrorKind::PermissionDenied,
@@ -813,6 +840,30 @@ mod tests {
         assert!(
             !outside.path().join("newdir/pwned.txt").exists(),
             "must not create file outside realfs root"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn security_symlink_rejects_existing_symlink_component_escape() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        symlink(outside.path(), root.path().join("link")).unwrap();
+
+        let fs = RealFs::new(root.path(), RealFsMode::ReadWrite).unwrap();
+        let result = fs
+            .symlink(Path::new("link/secret.txt"), Path::new("/escape-link"))
+            .await;
+
+        assert!(
+            result.is_err(),
+            "symlink target traversing host symlink component must fail"
+        );
+        assert!(
+            !root.path().join("escape-link").exists(),
+            "must not create link when target escapes realfs root"
         );
     }
 
