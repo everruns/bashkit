@@ -144,3 +144,13 @@ echo /tmp/gs_on/**/*.txt
 ### expect
 /tmp/gs_on/sub/deep.txt /tmp/gs_on/top.txt
 ### end
+
+### globstar_dotglob_off_does_not_descend_hidden_dirs
+# With globstar enabled but dotglob off, ** should not traverse dot directories
+mkdir -p /tmp/gs_dot/sub /tmp/gs_dot/.hidden
+touch /tmp/gs_dot/sub/visible.txt /tmp/gs_dot/.hidden/secret.txt
+shopt -s globstar
+echo /tmp/gs_dot/**/*.txt
+### expect
+/tmp/gs_dot/sub/visible.txt
+### end
