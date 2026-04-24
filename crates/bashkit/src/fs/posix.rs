@@ -150,6 +150,9 @@ impl<B: FsBackend + 'static> FileSystem for PosixFs<B> {
 
     async fn append_file(&self, path: &Path, content: &[u8]) -> Result<()> {
         let path = Self::normalize(path);
+        // Check parent exists
+        self.check_parent_exists(&path).await?;
+
         // Check if path is a directory
         if let Ok(meta) = self.backend.stat(&path).await
             && meta.file_type.is_dir()
@@ -286,8 +289,106 @@ impl<B: FsBackend + 'static> From<PosixFs<B>> for Arc<dyn FileSystem> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::Result;
     use crate::fs::InMemoryFs;
-    use std::path::Path;
+    use crate::fs::{DirEntry, FileType, FsBackend};
+    use std::collections::HashSet;
+    use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
+
+    struct AppendCreatesFileBackend {
+        files: Mutex<HashSet<PathBuf>>,
+    }
+
+    impl AppendCreatesFileBackend {
+        fn new() -> Self {
+            let mut files = HashSet::new();
+            files.insert(PathBuf::from("/"));
+            files.insert(PathBuf::from("/tmp"));
+            Self {
+                files: Mutex::new(files),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl FsBackend for AppendCreatesFileBackend {
+        async fn read(&self, _path: &Path) -> Result<Vec<u8>> {
+            Ok(Vec::new())
+        }
+
+        async fn write(&self, path: &Path, _content: &[u8]) -> Result<()> {
+            self.files
+                .lock()
+                .expect("backend lock poisoned")
+                .insert(path.to_path_buf());
+            Ok(())
+        }
+
+        async fn append(&self, path: &Path, content: &[u8]) -> Result<()> {
+            self.write(path, content).await
+        }
+
+        async fn mkdir(&self, path: &Path, _recursive: bool) -> Result<()> {
+            self.files
+                .lock()
+                .expect("backend lock poisoned")
+                .insert(path.to_path_buf());
+            Ok(())
+        }
+
+        async fn remove(&self, _path: &Path, _recursive: bool) -> Result<()> {
+            Ok(())
+        }
+
+        async fn stat(&self, path: &Path) -> Result<Metadata> {
+            if self
+                .files
+                .lock()
+                .expect("backend lock poisoned")
+                .contains(path)
+            {
+                Ok(Metadata {
+                    file_type: FileType::File,
+                    ..Metadata::default()
+                })
+            } else {
+                Err(std::io::Error::from(std::io::ErrorKind::NotFound).into())
+            }
+        }
+
+        async fn read_dir(&self, _path: &Path) -> Result<Vec<DirEntry>> {
+            Ok(Vec::new())
+        }
+
+        async fn exists(&self, path: &Path) -> Result<bool> {
+            Ok(self
+                .files
+                .lock()
+                .expect("backend lock poisoned")
+                .contains(path))
+        }
+
+        async fn rename(&self, _from: &Path, _to: &Path) -> Result<()> {
+            Ok(())
+        }
+
+        async fn copy(&self, _from: &Path, _to: &Path) -> Result<()> {
+            Ok(())
+        }
+
+        async fn symlink(&self, _target: &Path, _link: &Path) -> Result<()> {
+            Ok(())
+        }
+
+        async fn read_link(&self, _path: &Path) -> Result<PathBuf> {
+            Err(std::io::Error::from(std::io::ErrorKind::NotFound).into())
+        }
+
+        async fn chmod(&self, _path: &Path, _mode: u32) -> Result<()> {
+            Ok(())
+        }
+    }
 
     #[tokio::test]
     async fn test_posix_write_to_directory_fails() {
@@ -368,5 +469,17 @@ mod tests {
             .write_file(Path::new("/tmp/nonexistent/./file.txt"), b"content")
             .await;
         assert!(result.is_err(), "should fail when parent doesn't exist");
+    }
+
+    #[tokio::test]
+    async fn test_posix_append_requires_parent_directory() {
+        let fs = PosixFs::new(AppendCreatesFileBackend::new());
+        let result = fs
+            .append_file(Path::new("/tmp/missing-parent/file.txt"), b"content")
+            .await;
+        assert!(
+            result.is_err(),
+            "append should fail when parent doesn't exist"
+        );
     }
 }
