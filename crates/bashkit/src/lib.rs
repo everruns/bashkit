@@ -603,6 +603,23 @@ impl Bash {
         // THREAT[TM-ISO-005/006/007]: Reset transient state between exec() calls
         self.interpreter.reset_transient_state();
 
+        // Check raw input size before hooks to avoid allocating/copying oversized
+        // untrusted scripts in hook payloads.
+        let input_len = script.len();
+        if input_len > self.max_input_bytes {
+            #[cfg(feature = "logging")]
+            tracing::error!(
+                target: "bashkit::session",
+                input_len = input_len,
+                max_bytes = self.max_input_bytes,
+                "Script exceeds maximum input size"
+            );
+            return Err(Error::ResourceLimit(LimitExceeded::InputTooLarge(
+                input_len,
+                self.max_input_bytes,
+            )));
+        }
+
         // THREAT[TM-LOG-001]: Sensitive data in logs
         // Mitigation: Use LogConfig to redact sensitive script content
         #[cfg(feature = "logging")]
@@ -627,7 +644,7 @@ impl Bash {
         };
         let script = script.as_ref();
 
-        // Check input size before parsing (V1 mitigation)
+        // Re-check size after hooks in case the hook rewrites to a larger script.
         let input_len = script.len();
         if input_len > self.max_input_bytes {
             #[cfg(feature = "logging")]
@@ -6297,6 +6314,28 @@ echo missing fi"#,
         let result = bash.exec("echo should-not-run").await.unwrap();
         assert_eq!(result.exit_code, 1);
         assert!(result.stdout.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_input_size_limit_rejects_before_before_exec_hook() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let called = Arc::new(AtomicBool::new(false));
+        let called_clone = called.clone();
+
+        let limits = ExecutionLimits::new().max_input_bytes(8);
+        let mut bash = Bash::builder()
+            .limits(limits)
+            .before_exec(Box::new(move |_input| {
+                called_clone.store(true, Ordering::Relaxed);
+                unreachable!("before_exec hook must not run for oversized input");
+            }))
+            .build();
+
+        let result = bash.exec("echo way-too-long").await;
+        assert!(result.is_err());
+        assert!(!called.load(Ordering::Relaxed));
     }
 
     #[tokio::test]
