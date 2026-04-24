@@ -10,8 +10,9 @@
 //!   awk '/pattern/{print}' file
 //!   awk 'NR==2{print}' file
 
-// AWK parser uses chars().nth().unwrap() after validating position.
-// This is safe because we check bounds before accessing.
+// Parser invariant: `pos` is always a byte offset on a UTF-8 char boundary.
+// Move across user-controlled text with `advance()`/`consume_while()`, and use
+// raw `pos += N` only for known ASCII tokens and delimiters.
 #![allow(clippy::unwrap_used)]
 
 use async_trait::async_trait;
@@ -467,6 +468,14 @@ struct AwkParser<'a> {
 }
 
 impl<'a> AwkParser<'a> {
+    fn is_identifier_start(c: char) -> bool {
+        c.is_alphabetic() || c == '_'
+    }
+
+    fn is_identifier_continue(c: char) -> bool {
+        c.is_alphanumeric() || c == '_'
+    }
+
     fn new(input: &'a str) -> Self {
         Self {
             input,
@@ -486,6 +495,17 @@ impl<'a> AwkParser<'a> {
     fn advance(&mut self) {
         if let Some(c) = self.current_char() {
             self.pos += c.len_utf8();
+        }
+    }
+
+    fn consume_while(&mut self, predicate: fn(char) -> bool) {
+        while self.pos < self.input.len() {
+            let c = self.current_char().unwrap();
+            if predicate(c) {
+                self.advance();
+            } else {
+                break;
+            }
         }
     }
 
@@ -611,14 +631,7 @@ impl<'a> AwkParser<'a> {
     /// Read an identifier (alphanumeric + underscore)
     fn read_identifier(&mut self) -> Result<String> {
         let start = self.pos;
-        while self.pos < self.input.len() {
-            let c = self.current_char().unwrap();
-            if c.is_alphanumeric() || c == '_' {
-                self.advance();
-            } else {
-                break;
-            }
-        }
+        self.consume_while(Self::is_identifier_continue);
         if self.pos == start {
             return Err(Error::Execution("awk: expected identifier".to_string()));
         }
@@ -1054,14 +1067,7 @@ impl<'a> AwkParser<'a> {
                 self.skip_whitespace();
                 // Parse array name
                 let start = self.pos;
-                while self.pos < self.input.len() {
-                    let c = self.current_char().unwrap();
-                    if c.is_alphanumeric() || c == '_' {
-                        self.pos += 1;
-                    } else {
-                        break;
-                    }
-                }
+                self.consume_while(Self::is_identifier_continue);
                 let arr_name = self.input[start..self.pos].to_string();
 
                 self.skip_whitespace();
@@ -1216,14 +1222,7 @@ impl<'a> AwkParser<'a> {
 
         // Parse array name
         let start = self.pos;
-        while self.pos < self.input.len() {
-            let c = self.current_char().unwrap();
-            if c.is_alphanumeric() || c == '_' {
-                self.pos += 1;
-            } else {
-                break;
-            }
-        }
+        self.consume_while(Self::is_identifier_continue);
         let arr_name = self.input[start..self.pos].to_string();
 
         self.skip_whitespace();
@@ -1261,16 +1260,10 @@ impl<'a> AwkParser<'a> {
         if self.pos < self.input.len() {
             let c = self.current_char().unwrap();
             // If next char is an identifier start (not '<', ';', '}', etc.), parse variable
-            if c.is_alphabetic() || c == '_' {
+            if Self::is_identifier_start(c) {
                 let start = self.pos;
-                while self.pos < self.input.len() {
-                    let ch = self.current_char().unwrap();
-                    if ch.is_alphanumeric() || ch == '_' {
-                        self.pos += 1;
-                    } else {
-                        break;
-                    }
-                }
+                self.advance();
+                self.consume_while(Self::is_identifier_continue);
                 var = Some(self.input[start..self.pos].to_string());
                 self.skip_whitespace();
             }
@@ -1299,16 +1292,10 @@ impl<'a> AwkParser<'a> {
 
         if self.pos < self.input.len() {
             let c = self.current_char().unwrap();
-            if c.is_alphabetic() || c == '_' {
+            if Self::is_identifier_start(c) {
                 let start = self.pos;
-                while self.pos < self.input.len() {
-                    let ch = self.current_char().unwrap();
-                    if ch.is_alphanumeric() || ch == '_' {
-                        self.pos += 1;
-                    } else {
-                        break;
-                    }
-                }
+                self.advance();
+                self.consume_while(Self::is_identifier_continue);
                 var = Some(self.input[start..self.pos].to_string());
                 self.skip_whitespace();
             }
@@ -1504,14 +1491,7 @@ impl<'a> AwkParser<'a> {
         if self.matches_keyword("in") {
             self.skip_whitespace();
             let start = self.pos;
-            while self.pos < self.input.len() {
-                let c = self.current_char().unwrap();
-                if c.is_alphanumeric() || c == '_' {
-                    self.pos += 1;
-                } else {
-                    break;
-                }
-            }
+            self.consume_while(Self::is_identifier_continue);
             let arr_name = self.input[start..self.pos].to_string();
             return Ok(AwkExpr::InArray(Box::new(left), arr_name));
         }
@@ -1571,7 +1551,7 @@ impl<'a> AwkParser<'a> {
 
             let c = self.current_char().unwrap();
             // Check if this could be the start of another value for concatenation
-            if c == '"' || c == '$' || c.is_alphabetic() || c == '(' {
+            if c == '"' || c == '$' || Self::is_identifier_start(c) || c == '(' {
                 // But not if it's a keyword or operator
                 let remaining = &self.input[self.pos..];
                 if !remaining.starts_with("||")
@@ -1909,16 +1889,10 @@ impl<'a> AwkParser<'a> {
         }
 
         // Variable or function call
-        if c.is_alphabetic() || c == '_' {
+        if Self::is_identifier_start(c) {
             let start = self.pos;
-            while self.pos < self.input.len() {
-                let c = self.current_char().unwrap();
-                if c.is_alphanumeric() || c == '_' {
-                    self.pos += 1;
-                } else {
-                    break;
-                }
-            }
+            self.advance();
+            self.consume_while(Self::is_identifier_continue);
             let name = self.input[start..self.pos].to_string();
 
             // getline [var] [< file] as expression (returns 1/0/-1)
@@ -3761,6 +3735,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.stdout, "10\n");
+    }
+
+    #[tokio::test]
+    async fn test_awk_unicode_identifier_no_panic() {
+        let result = run_awk(&["BEGIN{café=7; print café}"], None).await.unwrap();
+        assert_eq!(result.stdout, "7\n");
     }
 
     #[tokio::test]
