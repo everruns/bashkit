@@ -3253,6 +3253,16 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_prefix_assignment_duplicate_name_temporary() {
+        let mut bash = Bash::new();
+        // Duplicate prefix assignments should still restore original env.
+        let result = bash.exec("A=1 A=2 printenv A").await.unwrap();
+        assert_eq!(result.stdout, "2\n");
+        let result = bash.exec("echo ${A:-unset}").await.unwrap();
+        assert_eq!(result.stdout, "unset\n");
+    }
+
+    #[tokio::test]
     async fn test_prefix_assignment_does_not_clobber_existing_env() {
         let mut bash = Bash::new();
         // Set up existing env var
