@@ -1235,6 +1235,7 @@ mod python_security {
     fn bash_with_python() -> Bash {
         Bash::builder()
             .python_with_limits(PythonLimits::default())
+            .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
             .build()
     }
 
@@ -1433,7 +1434,11 @@ mod python_security {
     #[tokio::test]
     async fn threat_python_respects_bash_limits() {
         let limits = ExecutionLimits::new().max_commands(5);
-        let mut bash = Bash::builder().python().limits(limits).build();
+        let mut bash = Bash::builder()
+            .python()
+            .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
+            .limits(limits)
+            .build();
 
         // Each python3 invocation is 1 command; but with limit=5 we can still run some
         let result = bash.exec("python3 -c \"print('ok')\"").await.unwrap();
@@ -1581,6 +1586,7 @@ mod python_security_regressions {
     fn bash_with_python() -> Bash {
         Bash::builder()
             .python_with_limits(PythonLimits::default())
+            .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
             .build()
     }
 
@@ -1638,7 +1644,10 @@ mod python_security_regressions {
     #[tokio::test]
     async fn threat_python_pow_exhaustion() {
         let limits = PythonLimits::default().max_memory(1024 * 1024); // 1MB
-        let mut bash = Bash::builder().python_with_limits(limits).build();
+        let mut bash = Bash::builder()
+            .python_with_limits(limits)
+            .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
+            .build();
         // 2 ** 1_000_000 produces ~300KB number; with tight 1MB limit the
         // allocation check should reject it before completion.
         let result = bash

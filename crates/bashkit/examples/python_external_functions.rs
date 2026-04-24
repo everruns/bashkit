@@ -32,6 +32,7 @@ async fn main() -> Result<()> {
 
     let mut bash = Bash::builder()
         .python_with_external_handler(PythonLimits::default(), vec!["add".to_string()], handler)
+        .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
         .build();
 
     let result = bash.exec("python3 -c \"print(add(20, 22))\"").await?;

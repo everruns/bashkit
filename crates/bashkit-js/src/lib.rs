@@ -2087,7 +2087,8 @@ fn build_bash_from_state(state: &SharedState, files: Option<&HashMap<String, Str
         }
     }
 
-    // Enable Python/Monty
+    // Enable Python/Monty. Passing `python: true` from JS is the explicit
+    // opt-in that must also flip the in-process Python env gate.
     if state.python {
         if let Some(ref handler) = state.external_handler {
             let h = handler.clone();
@@ -2104,6 +2105,7 @@ fn build_bash_from_state(state: &SharedState, files: Option<&HashMap<String, Str
         } else {
             builder = builder.python();
         }
+        builder = builder.env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1");
     }
 
     builder.build()

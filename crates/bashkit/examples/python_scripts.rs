@@ -13,7 +13,10 @@ use bashkit::Bash;
 async fn main() -> anyhow::Result<()> {
     println!("=== BashKit Python Integration ===\n");
 
-    let mut bash = Bash::builder().python().build();
+    let mut bash = Bash::builder()
+        .python()
+        .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
+        .build();
 
     // --- 1. Inline expressions ---
     println!("--- Inline Expressions ---");

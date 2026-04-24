@@ -16,11 +16,17 @@ use bashkit::{Bash, ExecutionLimits, PythonLimits};
 use std::time::Duration;
 
 fn bash_python() -> Bash {
-    Bash::builder().python().build()
+    Bash::builder()
+        .python()
+        .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
+        .build()
 }
 
 fn bash_python_limits(limits: PythonLimits) -> Bash {
-    Bash::builder().python_with_limits(limits).build()
+    Bash::builder()
+        .python_with_limits(limits)
+        .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
+        .build()
 }
 
 fn bash_python_tight() -> Bash {
@@ -31,6 +37,19 @@ fn bash_python_tight() -> Bash {
             .max_allocations(100_000)
             .max_recursion(50),
     )
+}
+
+#[tokio::test]
+async fn python_requires_explicit_inprocess_opt_in() {
+    let mut bash = Bash::builder().python().build();
+    let r = bash.exec("python3 -c \"print('blocked')\"").await.unwrap();
+    assert_ne!(r.exit_code, 0);
+    assert!(
+        r.stderr
+            .contains("in-process Python disabled by default for security"),
+        "expected security gate message, got stderr={:?}",
+        r.stderr
+    );
 }
 
 // =============================================================================
@@ -1075,7 +1094,11 @@ mod whitebox_limit_interaction {
     #[tokio::test]
     async fn bash_max_commands_limits_python_invocations() {
         let limits = ExecutionLimits::new().max_commands(10);
-        let mut bash = Bash::builder().python().limits(limits).build();
+        let mut bash = Bash::builder()
+            .python()
+            .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
+            .limits(limits)
+            .build();
         // Each python3 invocation is a command; with limit=10 a few should work
         let r = bash
             .exec("python3 -c \"print(1)\"\npython3 -c \"print(2)\"")
