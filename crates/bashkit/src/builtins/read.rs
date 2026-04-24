@@ -151,14 +151,58 @@ impl Builtin for Read {
                     .filter(|s| !s.is_empty())
                     .collect()
             } else {
-                // Has non-whitespace delimiters: split on them, trim whitespace from each field
-                let mut fields: Vec<&str> = line.split(|c: char| ifs_non_ws.contains(&c)).collect();
-                // Trim IFS whitespace from each field
-                if !ifs_ws.is_empty() {
-                    fields = fields
-                        .into_iter()
-                        .map(|f| f.trim_matches(|c: char| ifs_ws.contains(&c)))
-                        .collect();
+                // Mixed IFS: split on all IFS chars, collapse whitespace runs,
+                // preserve empty fields for consecutive non-whitespace delimiters.
+                let mut fields: Vec<&str> = Vec::new();
+                let mut field_start = 0usize;
+                let mut i = 0usize;
+                let mut last_delim_was_non_ws = false;
+
+                while i < line.len() {
+                    let mut iter = line[i..].char_indices();
+                    let (_, ch) = iter.next().expect("valid char boundary");
+                    let ch_len = ch.len_utf8();
+                    if !ifs.contains(ch) {
+                        i += ch_len;
+                        last_delim_was_non_ws = false;
+                        continue;
+                    }
+
+                    if ifs_non_ws.contains(&ch) {
+                        fields.push(&line[field_start..i]);
+                        i += ch_len;
+                        while i < line.len() {
+                            let mut ws_iter = line[i..].char_indices();
+                            let (_, ws_ch) = ws_iter.next().expect("valid char boundary");
+                            if ifs_ws.contains(&ws_ch) {
+                                i += ws_ch.len_utf8();
+                            } else {
+                                break;
+                            }
+                        }
+                        field_start = i;
+                        last_delim_was_non_ws = true;
+                    } else {
+                        if field_start != i {
+                            fields.push(&line[field_start..i]);
+                        }
+                        i += ch_len;
+                        while i < line.len() {
+                            let mut ws_iter = line[i..].char_indices();
+                            let (_, ws_ch) = ws_iter.next().expect("valid char boundary");
+                            if ifs_ws.contains(&ws_ch) {
+                                i += ws_ch.len_utf8();
+                            } else {
+                                break;
+                            }
+                        }
+                        field_start = i;
+                        last_delim_was_non_ws = false;
+                    }
+                }
+
+                if field_start < line.len() || last_delim_was_non_ws {
+                    fields.push(&line[field_start..]);
                 }
                 fields
             }
@@ -591,6 +635,28 @@ mod tests {
         assert_eq!(vars.get("B").unwrap(), "");
         assert_eq!(vars.get("C").unwrap(), "three");
         assert_eq!(vars.get("D").unwrap(), "");
+    }
+
+    #[tokio::test]
+    async fn read_mixed_ifs_whitespace_and_non_ws() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let mut env = HashMap::new();
+        env.insert("IFS".to_string(), ": ".to_string());
+        let args = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+        let ctx = Context::new_for_test(
+            &args,
+            &env,
+            &mut variables,
+            &mut cwd,
+            fs.clone(),
+            Some("one two:three"),
+        );
+        let result = Read.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        let vars = extract_vars(&result);
+        assert_eq!(vars.get("A").unwrap(), "one");
+        assert_eq!(vars.get("B").unwrap(), "two");
+        assert_eq!(vars.get("C").unwrap(), "three");
     }
 
     #[tokio::test]
