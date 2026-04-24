@@ -1941,17 +1941,13 @@ impl<'a> Parser<'a> {
     /// Check if a word is an assignment (NAME=value, NAME+=value, or NAME[index]=value)
     /// Returns (name, optional_index, value, is_append)
     fn is_assignment(word: &str) -> Option<(&str, Option<&str>, &str, bool)> {
-        // Check for += append operator first
-        let (eq_pos, is_append) = if let Some(pos) = word.find("+=") {
-            (pos, true)
-        } else if let Some(pos) = word.find('=') {
-            (pos, false)
-        } else {
-            return None;
-        };
-
-        let lhs = &word[..eq_pos];
-        let value = &word[eq_pos + if is_append { 2 } else { 1 }..];
+        let eq_pos = word.find('=')?;
+        let mut lhs = &word[..eq_pos];
+        let is_append = lhs.ends_with('+');
+        if is_append {
+            lhs = &lhs[..lhs.len() - 1];
+        }
+        let value = &word[eq_pos + 1..];
 
         // Check for array subscript: name[index]
         if let Some(bracket_pos) = lhs.find('[') {
@@ -3859,6 +3855,23 @@ mod tests {
             assert_eq!(cmd.args[0].to_string(), "*.txt");
         } else {
             panic!("expected simple command");
+        }
+    }
+
+    #[test]
+    fn test_assignment_with_plus_equal_in_value_parses_as_assignment() {
+        let parser = Parser::new("VAR=a+=b");
+        let script = parser.parse().expect("script should parse");
+        let cmd = match &script.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got: {other:?}"),
+        };
+        assert_eq!(cmd.assignments.len(), 1);
+        assert_eq!(cmd.assignments[0].name, "VAR");
+        assert!(!cmd.assignments[0].append);
+        match &cmd.assignments[0].value {
+            AssignmentValue::Scalar(word) => assert_eq!(word.to_string(), "a+=b"),
+            AssignmentValue::Array(_) => panic!("expected scalar assignment"),
         }
     }
 
