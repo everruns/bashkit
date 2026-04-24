@@ -1332,6 +1332,38 @@ impl ExecResult {
     }
 }
 
+/// Shell-facing result returned by Python-backed custom builtins.
+#[pyclass(from_py_object)]
+#[derive(Clone)]
+pub struct BuiltinResult {
+    #[pyo3(get, set)]
+    pub stdout: String,
+    #[pyo3(get, set)]
+    pub stderr: String,
+    #[pyo3(get, set)]
+    pub exit_code: i32,
+}
+
+#[pymethods]
+impl BuiltinResult {
+    #[new]
+    #[pyo3(signature = (stdout=String::new(), stderr=String::new(), exit_code=0))]
+    fn new(stdout: String, stderr: String, exit_code: i32) -> Self {
+        Self {
+            stdout,
+            stderr,
+            exit_code,
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "BuiltinResult(stdout={:?}, stderr={:?}, exit_code={})",
+            self.stdout, self.stderr, self.exit_code
+        )
+    }
+}
+
 // ============================================================================
 // Bash — core interpreter
 // ============================================================================
@@ -2041,27 +2073,31 @@ fn make_py_tool_callback_args(py: Python<'_>, args: &ToolArgs) -> Result<Vec<Py<
     Ok(vec![params, stdin_arg])
 }
 
-fn call_python_string_callback_sync(
+fn python_type_name(obj: &Bound<'_, PyAny>) -> String {
+    obj.get_type()
+        .str()
+        .and_then(|ty| ty.extract::<String>())
+        .unwrap_or_else(|_| "unknown".to_string())
+}
+
+fn call_python_callback_sync(
     py: Python<'_>,
     session: &PyCallbackSession,
     callback_name: &str,
     callback: &Py<PyAny>,
     args: Vec<Py<PyAny>>,
-) -> Result<String, String> {
-    let result = session
+) -> Result<Py<PyAny>, String> {
+    session
         .invoke(py, callback, args)
-        .map_err(|e| format!("{callback_name}: {e}"))?;
-    result
-        .extract::<String>(py)
-        .map_err(|e| format!("{callback_name}: callback must return str, got {e}"))
+        .map_err(|e| format!("{callback_name}: {e}"))
 }
 
-async fn call_python_string_callback_async(
+async fn call_python_callback_async(
     session: Arc<PyCallbackSession>,
     callback_name: &str,
     callback: &Py<PyAny>,
     args: Vec<Py<PyAny>>,
-) -> Result<String, String> {
+) -> Result<Py<PyAny>, String> {
     let awaitable = Python::attach(|py| session.invoke(py, callback, args))
         .map_err(|e| format!("{callback_name}: {e}"))?;
 
@@ -2077,11 +2113,67 @@ async fn call_python_string_callback_async(
             .map_err(|e| format!("{callback_name}: {e}"))?
     };
 
-    Python::attach(|py| {
-        result
-            .extract::<String>(py)
-            .map_err(|e| format!("{callback_name}: callback must return str, got {e}"))
-    })
+    Ok(result)
+}
+
+fn extract_python_string_callback_result(
+    py: Python<'_>,
+    callback_name: &str,
+    result: &Py<PyAny>,
+) -> Result<String, String> {
+    result
+        .extract::<String>(py)
+        .map_err(|e| format!("{callback_name}: callback must return str, got {e}"))
+}
+
+// Decision: keep Python custom builtin returns shell-first and narrow.
+// Accept `str` for compatibility and `BuiltinResult` for explicit
+// stdout/stderr/exit-code control, but do not expose interpreter-internal
+// ExecResult fields through this callback surface.
+fn extract_custom_builtin_callback_result(
+    py: Python<'_>,
+    callback_name: &str,
+    result: &Py<PyAny>,
+) -> Result<RustExecResult, String> {
+    let result = result.bind(py);
+    if let Ok(stdout) = result.extract::<String>() {
+        return Ok(RustExecResult::ok(stdout));
+    }
+
+    if let Ok(shell_result) = result.extract::<PyRef<'_, BuiltinResult>>() {
+        return Ok(RustExecResult {
+            stdout: shell_result.stdout.clone(),
+            stderr: shell_result.stderr.clone(),
+            exit_code: shell_result.exit_code,
+            ..Default::default()
+        });
+    }
+
+    Err(format!(
+        "{callback_name}: callback must return str or BuiltinResult, got {}",
+        python_type_name(result)
+    ))
+}
+
+fn call_python_string_callback_sync(
+    py: Python<'_>,
+    session: &PyCallbackSession,
+    callback_name: &str,
+    callback: &Py<PyAny>,
+    args: Vec<Py<PyAny>>,
+) -> Result<String, String> {
+    let result = call_python_callback_sync(py, session, callback_name, callback, args)?;
+    extract_python_string_callback_result(py, callback_name, &result)
+}
+
+async fn call_python_string_callback_async(
+    session: Arc<PyCallbackSession>,
+    callback_name: &str,
+    callback: &Py<PyAny>,
+    args: Vec<Py<PyAny>>,
+) -> Result<String, String> {
+    let result = call_python_callback_async(session, callback_name, callback, args).await?;
+    Python::attach(|py| extract_python_string_callback_result(py, callback_name, &result))
 }
 
 struct PyCustomBuiltinAdapter {
@@ -2105,7 +2197,7 @@ impl Builtin for PyCustomBuiltinAdapter {
         let callback_result = match builtin_arg {
             Ok(builtin_arg) if self.is_async => match session {
                 Some(session) => {
-                    call_python_string_callback_async(
+                    call_python_callback_async(
                         session,
                         &self.name,
                         &self.callback,
@@ -2117,7 +2209,7 @@ impl Builtin for PyCustomBuiltinAdapter {
             },
             Ok(builtin_arg) => match session {
                 Some(session) => Python::attach(|py| {
-                    call_python_string_callback_sync(
+                    call_python_callback_sync(
                         py,
                         session.as_ref(),
                         &self.name,
@@ -2131,7 +2223,10 @@ impl Builtin for PyCustomBuiltinAdapter {
         };
 
         Ok(match callback_result {
-            Ok(stdout) => RustExecResult::ok(stdout),
+            Ok(result) => {
+                Python::attach(|py| extract_custom_builtin_callback_result(py, &self.name, &result))
+                    .unwrap_or_else(|msg| RustExecResult::err(msg, 1))
+            }
             Err(msg) => RustExecResult::err(msg, 1),
         })
     }
@@ -4018,6 +4113,7 @@ fn _bashkit(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<BashTool>()?;
     m.add_class::<ScriptedTool>()?;
     m.add_class::<ShellState>()?;
+    m.add_class::<BuiltinResult>()?;
     m.add_class::<ExecResult>()?;
     m.add_class::<PyBuiltinContext>()?;
     m.add_class::<PyFileSystem>()?;
