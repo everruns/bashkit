@@ -329,6 +329,24 @@ impl HttpClient {
         self.request_with_headers(method, url, body, &[]).await
     }
 
+    fn check_allowlist(&self, url: &str) -> Result<()> {
+        match self.allowlist.check(url) {
+            UrlMatch::Allowed => Ok(()),
+            UrlMatch::Blocked { reason } => {
+                Err(Error::Network(format!("access denied: {}", reason)))
+            }
+            UrlMatch::Invalid { reason } => Err(Error::Network(format!("invalid URL: {}", reason))),
+        }
+    }
+
+    async fn enforce_url_security(&self, url: &str) -> Result<()> {
+        self.check_allowlist(url)?;
+        if self.allowlist.is_blocking_private_ips() {
+            self.check_private_ip(url).await?;
+        }
+        Ok(())
+    }
+
     /// THREAT[TM-NET-002/004]: Pre-resolve DNS and block private IPs.
     async fn check_private_ip(&self, url: &str) -> Result<()> {
         let parsed = match url::Url::parse(url) {
@@ -379,22 +397,8 @@ impl HttpClient {
         body: Option<&[u8]>,
         headers: &[(String, String)],
     ) -> Result<Response> {
-        // Check allowlist BEFORE making any network request
-        match self.allowlist.check(url) {
-            UrlMatch::Allowed => {}
-            UrlMatch::Blocked { reason } => {
-                return Err(Error::Network(format!("access denied: {}", reason)));
-            }
-            UrlMatch::Invalid { reason } => {
-                return Err(Error::Network(format!("invalid URL: {}", reason)));
-            }
-        }
-
-        // THREAT[TM-NET-002/004]: Pre-resolve DNS and block private IPs
-        // to prevent SSRF via DNS rebinding.
-        if self.allowlist.is_blocking_private_ips() {
-            self.check_private_ip(url).await?;
-        }
+        // Check allowlist + private IP policy BEFORE making any network request.
+        self.enforce_url_security(url).await?;
 
         // Fire before_http hooks — may modify URL/headers or cancel the request.
         // Hooks fire AFTER the allowlist check so the security boundary stays in bashkit.
@@ -421,6 +425,8 @@ impl HttpClient {
         };
         let url: &str = &url;
         let headers: &[(String, String)] = &headers;
+        // Re-check security after hooks in case URL was rewritten.
+        self.enforce_url_security(url).await?;
 
         // Compute bot-auth signing headers (transparent, non-blocking)
         #[cfg(feature = "bot-auth")]
@@ -608,16 +614,8 @@ impl HttpClient {
         timeout_secs: Option<u64>,
         connect_timeout_secs: Option<u64>,
     ) -> Result<Response> {
-        // Check allowlist BEFORE making any network request
-        match self.allowlist.check(url) {
-            UrlMatch::Allowed => {}
-            UrlMatch::Blocked { reason } => {
-                return Err(Error::Network(format!("access denied: {}", reason)));
-            }
-            UrlMatch::Invalid { reason } => {
-                return Err(Error::Network(format!("invalid URL: {}", reason)));
-            }
-        }
+        // Check allowlist + private IP policy BEFORE making any network request.
+        self.enforce_url_security(url).await?;
 
         // Fire before_http hooks — may modify URL/headers or cancel the request
         let (url, headers) = if !self.before_http.is_empty() {
@@ -643,6 +641,8 @@ impl HttpClient {
         };
         let url: &str = &url;
         let headers: &[(String, String)] = &headers;
+        // Re-check security after hooks in case URL was rewritten.
+        self.enforce_url_security(url).await?;
 
         // Compute bot-auth signing headers (transparent, non-blocking)
         #[cfg(feature = "bot-auth")]
@@ -969,6 +969,52 @@ mod tests {
                 .to_string()
                 .contains("response too large")
         );
+    }
+
+    #[tokio::test]
+    async fn test_before_http_hook_cannot_bypass_allowlist_request_with_headers() {
+        let allowlist = NetworkAllowlist::new().allow("https://allowed.com");
+        let mut client = HttpClient::new(allowlist);
+        client.set_handler(Box::new(StaticHandler {
+            response: Response {
+                status: 200,
+                headers: vec![],
+                body: b"ok".to_vec(),
+            },
+        }));
+        client.set_before_http(vec![Box::new(|mut event| {
+            event.url = "https://blocked.com".to_string();
+            crate::hooks::HookAction::Continue(event)
+        })]);
+
+        let result = client
+            .request_with_headers(Method::Get, "https://allowed.com", None, &[])
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("access denied"));
+    }
+
+    #[tokio::test]
+    async fn test_before_http_hook_cannot_bypass_allowlist_request_with_timeouts() {
+        let allowlist = NetworkAllowlist::new().allow("https://allowed.com");
+        let mut client = HttpClient::new(allowlist);
+        client.set_handler(Box::new(StaticHandler {
+            response: Response {
+                status: 200,
+                headers: vec![],
+                body: b"ok".to_vec(),
+            },
+        }));
+        client.set_before_http(vec![Box::new(|mut event| {
+            event.url = "https://blocked.com".to_string();
+            crate::hooks::HookAction::Continue(event)
+        })]);
+
+        let result = client
+            .request_with_timeouts(Method::Get, "https://allowed.com", None, &[], Some(5), None)
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("access denied"));
     }
 
     #[tokio::test]
