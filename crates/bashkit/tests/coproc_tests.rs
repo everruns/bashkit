@@ -5,6 +5,7 @@
 //! named coprocs, and default COPROC name.
 
 use bashkit::Bash;
+use std::sync::{Arc, Mutex};
 
 /// Basic coproc: sets COPROC array and COPROC_PID
 #[tokio::test]
@@ -198,4 +199,35 @@ echo "$!"
     let pid = result.stdout.trim();
     assert!(!pid.is_empty());
     assert!(pid.parse::<i64>().is_ok());
+}
+
+/// Coproc stdout should not be emitted to streaming callbacks.
+#[tokio::test]
+async fn coproc_stdout_not_streamed() {
+    let streamed_stdout = Arc::new(Mutex::new(Vec::new()));
+    let cb_stdout = streamed_stdout.clone();
+    let mut bash = Bash::new();
+
+    let result = bash
+        .exec_streaming(
+            r#"
+coproc { echo hidden_value; }
+read -u ${COPROC[0]} line
+echo "visible:$line"
+"#,
+            Box::new(move |stdout, _stderr| {
+                if !stdout.is_empty() {
+                    cb_stdout.lock().unwrap().push(stdout.to_string());
+                }
+            }),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result.stdout.trim(), "visible:hidden_value");
+    assert_eq!(
+        streamed_stdout.lock().unwrap().as_slice(),
+        ["visible:hidden_value\n"],
+        "coproc body output must not be visible to streaming consumers",
+    );
 }
