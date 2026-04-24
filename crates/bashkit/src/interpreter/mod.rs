@@ -12122,6 +12122,16 @@ echo "count=$COUNT"
     }
 
     #[tokio::test]
+    async fn test_regex_single_quoted_pattern_is_literal() {
+        let mut bash = crate::Bash::new();
+        let result = bash
+            .exec(r#"re="200"; line="hello 200 world"; [[ $line =~ '$re' ]] && echo "match" || echo "no""#)
+            .await
+            .unwrap();
+        assert_eq!(result.stdout.trim(), "no");
+    }
+
+    #[tokio::test]
     async fn test_assoc_array_in_double_quotes() {
         let mut bash = crate::Bash::new();
         let result = bash
