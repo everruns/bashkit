@@ -94,6 +94,13 @@ export interface BashOptions {
    */
   mounts?: Array<{ path: string; root: string; writable?: boolean }>;
   /**
+   * Allowlist of host path prefixes permitted for real filesystem mounts.
+   *
+   * Required for `mounts` and runtime `mount()` APIs. Mount targets must
+   * resolve under one of these prefixes; otherwise the call is rejected.
+   */
+  allowedMountPaths?: string[];
+  /**
    * Enable embedded Python execution (`python`/`python3` builtins).
    *
    * When true, bash scripts can use `python -c '...'` or `python3 script.py`
@@ -302,6 +309,7 @@ function toNativeOptions(
       vfsPath: m.path,
       writable: m.writable,
     })),
+    allowedMountPaths: options?.allowedMountPaths,
     python: options?.python,
     externalFunctions: options?.externalFunctions,
   };

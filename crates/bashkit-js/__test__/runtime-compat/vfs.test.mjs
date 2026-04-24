@@ -123,7 +123,7 @@ describe("VFS API", () => {
   });
 
   it("mount and unmount", () => {
-    const bash = new Bash();
+    const bash = new Bash({ allowedMountPaths: ["/tmp"] });
     // Mount /tmp as a real filesystem at /host-tmp (read-only by default)
     bash.mount("/tmp", "/host-tmp");
     // The mount should be accessible
