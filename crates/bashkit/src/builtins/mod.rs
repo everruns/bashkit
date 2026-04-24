@@ -379,6 +379,15 @@ pub enum ExecutionPlan {
         /// Commands to execute in order.
         commands: Vec<SubCommand>,
     },
+    /// Run a sequence of commands, then merge builtin-generated stderr/exit semantics.
+    BatchWithStatus {
+        /// Commands to execute in order.
+        commands: Vec<SubCommand>,
+        /// Builtin-generated stderr to prepend to command stderr.
+        stderr_prefix: String,
+        /// Force non-zero exit (1) when command sequence would otherwise succeed.
+        force_error_exit: bool,
+    },
 }
 
 /// Resolve a path relative to the current working directory.

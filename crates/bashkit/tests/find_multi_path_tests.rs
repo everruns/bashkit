@@ -147,3 +147,29 @@ async fn find_multi_path_mixed_has_exit_one() {
         "Valid path results should still appear"
     );
 }
+
+#[tokio::test]
+async fn find_exec_with_missing_path_preserves_error_and_exec_output() {
+    let mut bash = Bash::builder().build();
+
+    bash.exec("mkdir -p /tmp/find_exec_ok && touch /tmp/find_exec_ok/y.txt")
+        .await
+        .unwrap();
+
+    let result = bash
+        .exec("find /tmp/find_exec_ok /tmp/find_exec_missing -name '*.txt' -exec echo {} \\;")
+        .await
+        .unwrap();
+
+    assert_eq!(result.exit_code, 1);
+    assert!(
+        result.stdout.contains("/tmp/find_exec_ok/y.txt"),
+        "Expected -exec output for valid path, got: {:?}",
+        result.stdout
+    );
+    assert!(
+        result.stderr.contains("No such file or directory"),
+        "Expected missing path error in stderr, got: {:?}",
+        result.stderr
+    );
+}
