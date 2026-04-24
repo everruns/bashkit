@@ -217,10 +217,12 @@ Returns dict with `name`, `description`, `args_schema` for LangChain integration
 ### custom_builtins and Async Callbacks
 
 `Bash` and `BashTool` accept `custom_builtins={"name": callback}` where each
-callback is `Callable[[BuiltinContext], str | Awaitable[str]]`.
+callback is
+`Callable[[BuiltinContext], str | BuiltinResult | Awaitable[str | BuiltinResult]]`.
 
 **Sync callbacks** are called directly under the session's captured `contextvars`
-snapshot and return a string.
+snapshot and may return either a stdout string or a `BuiltinResult` with
+explicit `stdout`, `stderr`, and `exit_code`.
 
 **Async callbacks** are driven to completion by one of two mechanisms depending
 on whether a running asyncio event loop is present on the calling thread:
@@ -243,7 +245,7 @@ invocation regardless of which mechanism is used.
 
 ```python
 import asyncio, contextvars
-from bashkit import Bash, BuiltinContext
+from bashkit import Bash, BuiltinContext, BuiltinResult
 
 trace_id = contextvars.ContextVar("trace_id")
 trace_id.set("req-42")
@@ -257,6 +259,15 @@ bash = Bash(custom_builtins={"fetch": fetch})
 # Works in plain Python, asyncio.run(), Jupyter, or any async framework:
 result = bash.execute_sync("fetch")   # "trace=req-42"
 result = await bash.execute("fetch")  # same, callback runs on caller loop
+```
+
+```python
+from bashkit import BuiltinResult
+
+def view_image(ctx: BuiltinContext) -> BuiltinResult:
+    if not ctx.argv:
+        return BuiltinResult(stderr="view-image: missing path\n", exit_code=1)
+    return BuiltinResult(stdout="")
 ```
 
 ## Optional Dependencies

@@ -10,7 +10,7 @@ import json
 
 import pytest
 
-from bashkit import Bash, BashTool
+from bashkit import Bash, BashTool, BuiltinResult
 
 request_id: contextvars.ContextVar[str] = contextvars.ContextVar("request_id")
 
@@ -92,6 +92,67 @@ def test_custom_builtins_support_async_callbacks(factory):
 
     assert result.exit_code == 0
     assert result.stdout.strip() == "hello Async"
+
+
+@pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
+def test_custom_builtins_str_returns_still_work(factory):
+    shell = build_shell(factory, {"ping": lambda ctx: "pong\n"})
+    result = shell.execute_sync("ping")
+
+    assert result.exit_code == 0
+    assert result.stdout == "pong\n"
+    assert result.stderr == ""
+
+
+@pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
+def test_custom_builtins_builtin_result_preserves_stdout_stderr_and_exit_code(factory):
+    def report(ctx):
+        return BuiltinResult(stdout="partial\n", stderr="problem\n", exit_code=7)
+
+    shell = build_shell(factory, {"report": report})
+    result = shell.execute_sync("report")
+
+    assert result.exit_code == 7
+    assert result.stdout == "partial\n"
+    assert result.stderr == "problem\n"
+
+
+@pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
+def test_custom_builtins_builtin_result_allows_nonzero_exit_without_stderr(factory):
+    def fail_without_stderr(ctx):
+        return BuiltinResult(exit_code=3)
+
+    shell = build_shell(factory, {"fail-without-stderr": fail_without_stderr})
+    result = shell.execute_sync("fail-without-stderr")
+
+    assert result.exit_code == 3
+    assert result.stdout == ""
+    assert result.stderr == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
+async def test_custom_builtins_async_callbacks_accept_builtin_result(factory):
+    async def greet(ctx):
+        await asyncio.sleep(0)
+        return BuiltinResult(stdout=f"hello {ctx.argv[0]}\n")
+
+    shell = build_shell(factory, {"greet": greet})
+    result = await shell.execute("greet Async")
+
+    assert result.exit_code == 0
+    assert result.stdout == "hello Async\n"
+    assert result.stderr == ""
+
+
+@pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
+def test_custom_builtins_invalid_return_type_is_a_type_error(factory):
+    shell = build_shell(factory, {"oops": lambda ctx: 123})
+    result = shell.execute_sync("oops")
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "oops: callback must return str or BuiltinResult" in result.stderr
 
 
 @pytest.mark.asyncio

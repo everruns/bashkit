@@ -298,10 +298,22 @@ print(result.stdout)  # widget
 ```
 
 Callbacks receive a `BuiltinContext` object with raw `argv` tokens, optional
-pipeline `stdin`, the current `cwd`, and visible `env`, and must return the
-builtin stdout string. Async callbacks are also supported. `BashTool` exposes
-the same `custom_builtins` constructor kwarg and includes registered command
-names in `help()` output for LLM-facing metadata.
+pipeline `stdin`, the current `cwd`, and visible `env`. They may return either
+the builtin stdout string directly or a `BuiltinResult(stdout=..., stderr=...,
+exit_code=...)` for explicit shell-shaped failures. Raise an exception for
+unexpected callback failures. Async callbacks support the same return shapes.
+`BashTool` exposes the same `custom_builtins` constructor kwarg and includes
+registered command names in `help()` output for LLM-facing metadata.
+
+```python
+from bashkit import BuiltinResult
+
+
+def view_image(ctx):
+    if not ctx.argv:
+        return BuiltinResult(stderr="view-image: missing path\n", exit_code=1)
+    return BuiltinResult(stdout="")
+```
 
 When you use `await bash.execute(...)` or `await bash_tool.execute(...)`,
 async callbacks are scheduled back onto the caller's active asyncio loop, so
