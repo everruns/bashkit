@@ -253,7 +253,7 @@ fn count_match(s: &str, pattern: &str) -> usize {
 /// Simple match returning the matched portion
 fn simple_match(s: &str, pattern: &str) -> String {
     let count = count_match(s, pattern);
-    s[..count].to_string()
+    s.chars().take(count).collect()
 }
 
 fn char_matches(c: char, pattern: char) -> bool {
@@ -678,5 +678,19 @@ mod tests {
             "日本",
             "should extract chars, not bytes"
         );
+    }
+
+    // Issue #434: match with capture groups should not slice on byte offsets
+    #[tokio::test]
+    async fn test_match_capture_group_multibyte_utf8() {
+        let fs = Arc::new(crate::fs::InMemoryFs::new());
+        let mut variables = HashMap::new();
+        let mut cwd = std::path::PathBuf::from("/");
+        let env = HashMap::new();
+        let args = vec!["match".to_string(), "é".to_string(), "\\(.*\\)".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let result = Expr.execute(ctx).await.unwrap();
+        assert_eq!(result.stdout.trim(), "é");
+        assert_eq!(result.exit_code, 0);
     }
 }
