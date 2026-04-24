@@ -540,7 +540,15 @@ async fn extract_tar(
         }
 
         // Parse size
-        let size = parse_octal(&header[124..136]);
+        let size = match parse_tar_size(&header[124..136]) {
+            Some(size) => size,
+            None => {
+                return Ok(ExecResult::err(
+                    format!("tar: {}: invalid size field\n", name),
+                    2,
+                ));
+            }
+        };
 
         // Parse type
         let type_flag = header[156];
@@ -574,8 +582,12 @@ async fn extract_tar(
             }
             b'0' | b'\0' => {
                 // Regular file
-                let content_blocks = size.div_ceil(TAR_BLOCK_SIZE);
-                let content_end = offset + content_blocks * TAR_BLOCK_SIZE;
+                let Some(content_end) = tar_content_end(offset, size) else {
+                    return Ok(ExecResult::err(
+                        format!("tar: {}: invalid size field\n", name),
+                        2,
+                    ));
+                };
 
                 if content_end > tar_data.len() {
                     return Ok(ExecResult::err(
@@ -606,22 +618,37 @@ async fn extract_tar(
                 verbose_output.push_str(&format!(
                     "tar: {name}: hard link skipped (not supported in VFS)\n"
                 ));
-                let content_blocks = size.div_ceil(TAR_BLOCK_SIZE);
-                offset += content_blocks * TAR_BLOCK_SIZE;
+                let Some(content_end) = tar_content_end(offset, size) else {
+                    return Ok(ExecResult::err(
+                        format!("tar: {}: invalid size field\n", name),
+                        2,
+                    ));
+                };
+                offset = content_end;
             }
             b'2' => {
                 // Symbolic link — not supported in VFS
                 verbose_output.push_str(&format!(
                     "tar: {name}: symbolic link skipped (not supported in VFS)\n"
                 ));
-                let content_blocks = size.div_ceil(TAR_BLOCK_SIZE);
-                offset += content_blocks * TAR_BLOCK_SIZE;
+                let Some(content_end) = tar_content_end(offset, size) else {
+                    return Ok(ExecResult::err(
+                        format!("tar: {}: invalid size field\n", name),
+                        2,
+                    ));
+                };
+                offset = content_end;
             }
             _ => {
                 // Other unsupported types (char/block device, FIFO, contiguous, etc.)
                 verbose_output.push_str(&format!("tar: {name}: unsupported entry type skipped\n"));
-                let content_blocks = size.div_ceil(TAR_BLOCK_SIZE);
-                offset += content_blocks * TAR_BLOCK_SIZE;
+                let Some(content_end) = tar_content_end(offset, size) else {
+                    return Ok(ExecResult::err(
+                        format!("tar: {}: invalid size field\n", name),
+                        2,
+                    ));
+                };
+                offset = content_end;
             }
         }
     }
@@ -692,7 +719,15 @@ async fn list_tar(
         }
 
         // Parse size
-        let size = parse_octal(&header[124..136]);
+        let size = match parse_tar_size(&header[124..136]) {
+            Some(size) => size,
+            None => {
+                return Ok(ExecResult::err(
+                    format!("tar: {}: invalid size field\n", name),
+                    2,
+                ));
+            }
+        };
 
         if verbose {
             // Parse mode
@@ -729,21 +764,49 @@ async fn list_tar(
         offset += TAR_BLOCK_SIZE;
 
         // Skip content blocks
-        let content_blocks = size.div_ceil(TAR_BLOCK_SIZE);
-        offset += content_blocks * TAR_BLOCK_SIZE;
+        let Some(content_end) = tar_content_end(offset, size) else {
+            return Ok(ExecResult::err(
+                format!("tar: {}: invalid size field\n", name),
+                2,
+            ));
+        };
+        offset = content_end;
     }
 
     Ok(ExecResult::ok(output))
 }
 
+fn tar_content_end(offset: usize, size: usize) -> Option<usize> {
+    let content_blocks = size.checked_add(TAR_BLOCK_SIZE - 1)? / TAR_BLOCK_SIZE;
+    let content_len = content_blocks.checked_mul(TAR_BLOCK_SIZE)?;
+    offset.checked_add(content_len)
+}
+
+fn parse_tar_size(buf: &[u8]) -> Option<usize> {
+    parse_octal_u64(buf).and_then(|value| usize::try_from(value).ok())
+}
+
+fn parse_octal_u64(buf: &[u8]) -> Option<u64> {
+    let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+    let trimmed = std::str::from_utf8(&buf[..end]).ok()?.trim();
+    if trimmed.is_empty() {
+        return Some(0);
+    }
+    if !trimmed
+        .as_bytes()
+        .iter()
+        .all(|byte| matches!(byte, b'0'..=b'7'))
+    {
+        return None;
+    }
+    u64::from_str_radix(trimmed, 8).ok()
+}
+
 /// Parse octal value from tar header field
 fn parse_octal(buf: &[u8]) -> usize {
-    let s: String = buf
-        .iter()
-        .take_while(|&&b| b != 0 && b != b' ')
-        .map(|&b| b as char)
-        .collect();
-    usize::from_str_radix(s.trim(), 8).unwrap_or(0)
+    parse_octal_u64(buf)
+        .and_then(|value| usize::try_from(value).ok())
+        .unwrap_or(0)
 }
 
 /// The gzip builtin - compress files.
@@ -1591,6 +1654,20 @@ mod tests {
     /// Build a minimal tar archive with a single file entry.
     /// Used to craft malicious archives for security testing.
     fn build_tar_with_entry(name: &str, content: &[u8]) -> Vec<u8> {
+        build_tar_with_fields(
+            name,
+            b'0',
+            &format!("{:011o}\0", content.len()).into_bytes(),
+            content,
+        )
+    }
+
+    fn build_tar_with_fields(
+        name: &str,
+        type_flag: u8,
+        size_field: &[u8],
+        content: &[u8],
+    ) -> Vec<u8> {
         let mut output = Vec::new();
         let mut header = [0u8; 512];
 
@@ -1608,8 +1685,8 @@ mod tests {
         header[116..124].copy_from_slice(b"0001000\0");
 
         // Size (octal)
-        let size_str = format!("{:011o}\0", content.len());
-        header[124..136].copy_from_slice(size_str.as_bytes());
+        let size_len = size_field.len().min(12);
+        header[124..124 + size_len].copy_from_slice(&size_field[..size_len]);
 
         // Mtime
         header[136..148].copy_from_slice(b"00000000000\0");
@@ -1618,7 +1695,7 @@ mod tests {
         header[148..156].copy_from_slice(b"        ");
 
         // Type flag: regular file
-        header[156] = b'0';
+        header[156] = type_flag;
 
         // Magic
         header[257..263].copy_from_slice(b"ustar ");
@@ -1743,6 +1820,45 @@ mod tests {
 
         let content = fs.read_file(&cwd.join("subdir/file.txt")).await.unwrap();
         assert_eq!(content, b"safe content");
+    }
+
+    #[tokio::test]
+    async fn test_tar_extract_rejects_invalid_size_field() {
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+
+        let invalid_tar = build_tar_with_fields("bad.txt", b'0', b"88888888888\0", b"payload");
+        fs.write_file(&cwd.join("invalid-size.tar"), &invalid_tar)
+            .await
+            .unwrap();
+
+        let args = vec!["-xf".to_string(), "invalid-size.tar".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+
+        let result = Tar.execute(ctx).await.unwrap();
+
+        assert_eq!(result.exit_code, 2);
+        assert!(result.stderr.contains("invalid size field"));
+        assert!(!fs.exists(&cwd.join("bad.txt")).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_tar_list_rejects_invalid_size_field() {
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+
+        let invalid_tar = build_tar_with_fields("bad.txt", b'0', b"99999999999\0", b"payload");
+        fs.write_file(&cwd.join("invalid-list.tar"), &invalid_tar)
+            .await
+            .unwrap();
+
+        let args = vec!["-tf".to_string(), "invalid-list.tar".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+
+        let result = Tar.execute(ctx).await.unwrap();
+
+        assert_eq!(result.exit_code, 2);
+        assert!(result.stderr.contains("invalid size field"));
     }
 
     /// Build a tar archive with a single entry of the given type flag.
