@@ -715,6 +715,9 @@ pub struct Interpreter {
     /// virtual file path, run these commands with the file content as stdin.
     /// Each entry is (virtual_path, commands_to_run).
     deferred_proc_subs: Vec<(String, Vec<Command>)>,
+    /// Process substitution paths created by this interpreter instance.
+    /// Used to avoid deleting paths owned by other sessions sharing the same VFS.
+    proc_sub_paths: HashSet<String>,
     /// PRNG state for $RANDOM (LCG seeded per-instance from OS entropy).
     /// NOT cryptographically secure — matches real bash behavior.
     /// Uses `AtomicU32` for interior mutability so $RANDOM can advance state
@@ -1053,6 +1056,7 @@ impl Interpreter {
             hooks: crate::hooks::Hooks::default(),
             in_trap: false,
             deferred_proc_subs: Vec::new(),
+            proc_sub_paths: HashSet::new(),
             random_state: AtomicU32::new(random_seed),
         }
     }
@@ -1547,14 +1551,10 @@ impl Interpreter {
     /// Clean up process substitution temp files (`/dev/fd/proc_sub_*`).
     /// Called from Bash::exec() after execute() returns, outside the
     /// recursive async call chain to avoid increasing stack frame size.
-    pub(crate) async fn cleanup_proc_sub_files(&self) {
-        if let Ok(entries) = self.fs.read_dir(Path::new("/dev/fd")).await {
-            for entry in entries {
-                if entry.name.starts_with("proc_sub_") {
-                    let p = format!("/dev/fd/{}", entry.name);
-                    let _ = self.fs.remove(Path::new(&p), false).await;
-                }
-            }
+    pub(crate) async fn cleanup_proc_sub_files(&mut self) {
+        let paths = std::mem::take(&mut self.proc_sub_paths);
+        for path in paths {
+            let _ = self.fs.remove(Path::new(&path), false).await;
         }
     }
 
@@ -6969,10 +6969,12 @@ impl Interpreter {
             if self.fs.write_file(path, stdout.as_bytes()).await.is_err() {
                 Ok(stdout)
             } else {
+                self.proc_sub_paths.insert(path_str.clone());
                 Ok(path_str)
             }
         } else {
             let _ = self.fs.write_file(path, b"").await;
+            self.proc_sub_paths.insert(path_str.clone());
             self.deferred_proc_subs
                 .push((path_str.clone(), commands.to_vec()));
             Ok(path_str)
@@ -12268,6 +12270,29 @@ cat /tmp/test_fd.txt"#,
                 leaked.iter().map(|e| &e.name).collect::<Vec<_>>()
             );
         }
+    }
+
+    /// Regression: cleanup must not remove process substitution paths owned by other sessions.
+    #[tokio::test]
+    async fn test_proc_sub_cleanup_does_not_delete_other_session_files() {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        let mut owner = Interpreter::new(Arc::clone(&fs));
+        let mut other = Interpreter::new(Arc::clone(&fs));
+
+        let parser = Parser::new(r#"echo <(echo "data")"#);
+        let ast = parser.parse().unwrap();
+        let result = owner.execute(&ast).await.unwrap();
+        let proc_sub_path = result.stdout.trim().to_string();
+        assert!(proc_sub_path.starts_with("/dev/fd/proc_sub_"));
+        assert!(fs.read_file(Path::new(&proc_sub_path)).await.is_ok());
+
+        other.cleanup_proc_sub_files().await;
+
+        assert!(
+            fs.read_file(Path::new(&proc_sub_path)).await.is_ok(),
+            "cleanup from another interpreter removed {}",
+            proc_sub_path
+        );
     }
 
     /// Regression: all known internal prefixes must be caught by is_internal_variable().
