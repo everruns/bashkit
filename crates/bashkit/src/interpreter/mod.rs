@@ -737,6 +737,8 @@ impl Interpreter {
         &s[..end]
     }
 
+    const OPERAND_QUOTE_MARK: char = '\u{1}';
+
     const MAX_GLOB_DEPTH: usize = 50;
 
     /// Create a new interpreter with the given filesystem.
@@ -7700,9 +7702,11 @@ impl Interpreter {
         if operand.is_empty() {
             return String::new();
         }
-        // Strip double/single quotes from operand before parsing.
-        // In patterns like ${var#./"$other"}, the quotes suppress globbing
-        // but should not appear as literal characters in the expanded result.
+        // Strip quotes from operand before parsing.
+        // For pattern-removal operators, quoted glob chars must stay literal.
+        // We preserve that by escaping glob metacharacters inside stripped
+        // double-quoted segments, so later pattern matching won't treat them as
+        // active wildcards/extglobs.
         let stripped = Self::strip_operand_quotes(operand);
         // THREAT[TM-DOS-050]: Propagate caller-configured limits to word parsing
         let word = Parser::parse_word_string_with_limits(
@@ -7746,13 +7750,15 @@ impl Interpreter {
                 _ => {}
             }
         }
-        result
+        Self::escape_marked_glob_literals(&result)
     }
 
     /// Strip unescaped double-quote pairs from operand strings.
     /// In patterns like `${var#./"$other"}`, the `"` around `$other` suppress
     /// globbing but should not appear as literal characters in the pattern.
     /// Escaped quotes (`\"`) and NUL-sentinel-marked chars (`\x00"`) are kept.
+    /// Glob metacharacters inside stripped double quotes are backslash-escaped
+    /// so quoted user input cannot become active glob/extglob syntax.
     fn strip_operand_quotes(operand: &str) -> String {
         let mut result = String::with_capacity(operand.len());
         let chars: Vec<char> = operand.chars().collect();
@@ -7770,6 +7776,7 @@ impl Interpreter {
                 i += 2;
             } else if chars[i] == '"' {
                 // Unescaped double quote: skip it (strip the quote character)
+                result.push(Self::OPERAND_QUOTE_MARK);
                 i += 1;
             } else {
                 result.push(chars[i]);
@@ -7777,6 +7784,79 @@ impl Interpreter {
             }
         }
         result
+    }
+
+    fn escape_marked_glob_literals(s: &str) -> String {
+        let mut out = String::with_capacity(s.len());
+        let mut in_marked = false;
+        for ch in s.chars() {
+            if ch == Self::OPERAND_QUOTE_MARK {
+                in_marked = !in_marked;
+                continue;
+            }
+            if in_marked
+                && matches!(
+                    ch,
+                    '*' | '?' | '[' | ']' | '(' | ')' | '|' | '+' | '@' | '!'
+                )
+            {
+                out.push('\\');
+            }
+            out.push(ch);
+        }
+        out
+    }
+
+    fn find_unescaped_char(pattern: &str, target: char) -> Option<usize> {
+        let mut escaped = false;
+        for (idx, ch) in pattern.char_indices() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == target {
+                return Some(idx);
+            }
+        }
+        None
+    }
+
+    fn has_unescaped_char(pattern: &str, target: char) -> bool {
+        Self::find_unescaped_char(pattern, target).is_some()
+    }
+
+    fn contains_unescaped_extglob(&self, pattern: &str) -> bool {
+        for op in ["@(", "*(", "?(", "+(", "!("] {
+            if let Some(pos) = pattern.find(op)
+                && !pattern[..pos].ends_with('\\')
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn unescape_pattern_literal(pattern: &str) -> String {
+        let mut out = String::with_capacity(pattern.len());
+        let mut escaped = false;
+        for ch in pattern.chars() {
+            if escaped {
+                out.push(ch);
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else {
+                out.push(ch);
+            }
+        }
+        if escaped {
+            out.push('\\');
+        }
+        out
     }
 
     /// Apply a parameter operator, handling per-element expansion for $@/$*/arr[@].
@@ -8057,9 +8137,11 @@ impl Interpreter {
         }
 
         // Use glob_match for patterns with bracket expressions or extglob
-        if pattern.contains('[') || self.contains_extglob(pattern) {
+        if Self::has_unescaped_char(pattern, '[') || self.contains_unescaped_extglob(pattern) {
             return self.remove_pattern_glob(value, pattern, prefix, longest);
         }
+
+        let literal_pattern = Self::unescape_pattern_literal(pattern);
 
         if prefix {
             // Remove from beginning
@@ -8074,26 +8156,28 @@ impl Interpreter {
             }
 
             // Check if pattern contains *
-            if let Some(star_pos) = pattern.find('*') {
+            if let Some(star_pos) = Self::find_unescaped_char(pattern, '*') {
                 let prefix_part = &pattern[..star_pos];
                 let suffix_part = &pattern[star_pos + 1..];
+                let prefix_part = Self::unescape_pattern_literal(prefix_part);
+                let suffix_part = Self::unescape_pattern_literal(suffix_part);
 
                 if prefix_part.is_empty() {
                     // Pattern is "*suffix" - find suffix and remove everything before it
                     if longest {
                         // Find last occurrence of suffix
-                        if let Some(pos) = value.rfind(suffix_part) {
+                        if let Some(pos) = value.rfind(&suffix_part) {
                             return value[pos + suffix_part.len()..].to_string();
                         }
                     } else {
                         // Find first occurrence of suffix
-                        if let Some(pos) = value.find(suffix_part) {
+                        if let Some(pos) = value.find(&suffix_part) {
                             return value[pos + suffix_part.len()..].to_string();
                         }
                     }
                 } else if suffix_part.is_empty() {
                     // Pattern is "prefix*" - match prefix and any chars after
-                    if let Some(rest) = value.strip_prefix(prefix_part) {
+                    if let Some(rest) = value.strip_prefix(&prefix_part) {
                         if longest {
                             return String::new();
                         } else {
@@ -8102,17 +8186,17 @@ impl Interpreter {
                     }
                 } else {
                     // Pattern is "prefix*suffix" - more complex matching
-                    if let Some(rest) = value.strip_prefix(prefix_part) {
+                    if let Some(rest) = value.strip_prefix(&prefix_part) {
                         if longest {
-                            if let Some(pos) = rest.rfind(suffix_part) {
+                            if let Some(pos) = rest.rfind(&suffix_part) {
                                 return rest[pos + suffix_part.len()..].to_string();
                             }
-                        } else if let Some(pos) = rest.find(suffix_part) {
+                        } else if let Some(pos) = rest.find(&suffix_part) {
                             return rest[pos + suffix_part.len()..].to_string();
                         }
                     }
                 }
-            } else if let Some(rest) = value.strip_prefix(pattern) {
+            } else if let Some(rest) = value.strip_prefix(&literal_pattern) {
                 return rest.to_string();
             }
         } else {
@@ -8130,26 +8214,28 @@ impl Interpreter {
             }
 
             // Check if pattern contains *
-            if let Some(star_pos) = pattern.find('*') {
+            if let Some(star_pos) = Self::find_unescaped_char(pattern, '*') {
                 let prefix_part = &pattern[..star_pos];
                 let suffix_part = &pattern[star_pos + 1..];
+                let prefix_part = Self::unescape_pattern_literal(prefix_part);
+                let suffix_part = Self::unescape_pattern_literal(suffix_part);
 
                 if suffix_part.is_empty() {
                     // Pattern is "prefix*" - find prefix and remove from there to end
                     if longest {
                         // Find first occurrence of prefix
-                        if let Some(pos) = value.find(prefix_part) {
+                        if let Some(pos) = value.find(&prefix_part) {
                             return value[..pos].to_string();
                         }
                     } else {
                         // Find last occurrence of prefix
-                        if let Some(pos) = value.rfind(prefix_part) {
+                        if let Some(pos) = value.rfind(&prefix_part) {
                             return value[..pos].to_string();
                         }
                     }
                 } else if prefix_part.is_empty() {
                     // Pattern is "*suffix" - match any chars before suffix
-                    if let Some(before) = value.strip_suffix(suffix_part) {
+                    if let Some(before) = value.strip_suffix(&suffix_part) {
                         if longest {
                             return String::new();
                         } else {
@@ -8158,17 +8244,17 @@ impl Interpreter {
                     }
                 } else {
                     // Pattern is "prefix*suffix" - more complex matching
-                    if let Some(before_suffix) = value.strip_suffix(suffix_part) {
+                    if let Some(before_suffix) = value.strip_suffix(&suffix_part) {
                         if longest {
-                            if let Some(pos) = before_suffix.find(prefix_part) {
+                            if let Some(pos) = before_suffix.find(&prefix_part) {
                                 return value[..pos].to_string();
                             }
-                        } else if let Some(pos) = before_suffix.rfind(prefix_part) {
+                        } else if let Some(pos) = before_suffix.rfind(&prefix_part) {
                             return value[..pos].to_string();
                         }
                     }
                 }
-            } else if let Some(before) = value.strip_suffix(pattern) {
+            } else if let Some(before) = value.strip_suffix(&literal_pattern) {
                 return before.to_string();
             }
         }
@@ -11968,6 +12054,23 @@ echo "count=$COUNT"
     async fn test_posix_digit_class_in_parameter_expansion() {
         let result = run_script(r#"x="abc123def"; echo "${x%%[[:digit:]]*}""#).await;
         assert_eq!(result.stdout.trim(), "abc");
+    }
+
+    #[tokio::test]
+    async fn test_quoted_remove_prefix_operand_keeps_glob_literal() {
+        // Quoted pattern operand must keep wildcard chars literal:
+        // bash: val="axxxb"; pat="a*"; echo "${val#"$pat"}" => "axxxb"
+        let result = run_script(r#"val="axxxb"; pat="a*"; echo "${val#"$pat"}""#).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "axxxb");
+    }
+
+    #[tokio::test]
+    async fn test_mixed_remove_prefix_operand_keeps_unquoted_glob_active() {
+        // Mixed operand: quoted var part literalized, unquoted * stays wildcard.
+        let result = run_script(r#"val="axxxb"; pat="a"; echo "${val#"$pat"*}""#).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "xxxb");
     }
 
     #[test]
