@@ -3826,6 +3826,43 @@ mod tests {
     }
 
     #[test]
+    fn test_ansi_c_quoted_dollar_is_literal_and_quoted() {
+        let parser = Parser::new("echo $'$(printf pwned)'");
+        let script = parser.parse().unwrap();
+        if let Command::Simple(cmd) = &script.commands[0] {
+            assert_eq!(cmd.args.len(), 1);
+            let arg = &cmd.args[0];
+            assert!(arg.quoted, "ANSI-C quoted argument must be quoted");
+            assert!(
+                arg.parts
+                    .iter()
+                    .all(|part| matches!(part, WordPart::Literal(_))),
+                "ANSI-C quoted argument must remain literal, got {:?}",
+                arg.parts
+            );
+            assert_eq!(arg.to_string(), "$(printf pwned)");
+        } else {
+            panic!("expected simple command");
+        }
+    }
+
+    #[test]
+    fn test_locale_quote_marks_word_as_quoted_without_expansion() {
+        let parser = Parser::new("echo $\"*.txt\"");
+        let script = parser.parse().unwrap();
+        if let Command::Simple(cmd) = &script.commands[0] {
+            assert_eq!(cmd.args.len(), 1);
+            assert!(
+                cmd.args[0].quoted,
+                "locale-quoted argument must be marked quoted"
+            );
+            assert_eq!(cmd.args[0].to_string(), "*.txt");
+        } else {
+            panic!("expected simple command");
+        }
+    }
+
+    #[test]
     fn test_top_level_reserved_word_errors_immediately() {
         let parser = Parser::with_fuel("fi", usize::MAX);
         let err = parser.parse().unwrap_err();

@@ -600,13 +600,20 @@ impl<'a> Lexer<'a> {
                 // $'...' — ANSI-C quoting: resolve escapes at parse time
                 if self.peek_char() == Some('\'') {
                     self.advance(); // consume opening '
-                    word.push_str(&self.read_dollar_single_quoted_content());
+                    Self::push_literal_with_escaped_dollar(
+                        &mut word,
+                        &self.read_dollar_single_quoted_content(),
+                    );
+                    // ANSI-C quotes are single-quote semantics: quoted context.
+                    has_quoted_expansion = true;
                     continue;
                 }
 
                 // $"..." — locale translation synonym, treated like "..."
                 if self.peek_char() == Some('"') {
                     self.advance(); // consume opening "
+                    // Locale quotes are double-quote semantics: quoted context.
+                    has_quoted_expansion = true;
                     while let Some(c) = self.peek_char() {
                         if c == '"' {
                             self.advance();
@@ -1059,7 +1066,10 @@ impl<'a> Lexer<'a> {
                     if lookahead.next() == Some('\'') {
                         self.advance(); // consume $
                         self.advance(); // consume opening '
-                        content.push_str(&self.read_dollar_single_quoted_content());
+                        Self::push_literal_with_escaped_dollar(
+                            content,
+                            &self.read_dollar_single_quoted_content(),
+                        );
                     } else {
                         content.push('$');
                         self.advance();
@@ -1183,6 +1193,16 @@ impl<'a> Lexer<'a> {
             self.advance();
         }
         out
+    }
+
+    /// Append a literal segment while protecting `$` from parse_word expansion.
+    fn push_literal_with_escaped_dollar(dst: &mut String, segment: &str) {
+        for ch in segment.chars() {
+            if ch == '$' {
+                dst.push('\x00');
+            }
+            dst.push(ch);
+        }
     }
 
     fn read_double_quoted_string(&mut self) -> Option<Token> {
