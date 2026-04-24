@@ -2928,6 +2928,24 @@ mod overlay_limit_accounting {
         );
     }
 
+    /// TM-DOS-037: recursive mkdir must account for all missing components.
+    #[tokio::test]
+    async fn tm_dos_037_recursive_mkdir_counts_all_new_dirs() {
+        let lower = make_lower();
+        let temp = OverlayFs::new(lower.clone());
+        let base_dirs = temp.usage().dir_count;
+
+        // Only allow one additional directory, but recursive mkdir needs three.
+        let limits = FsLimits::new().max_dir_count(base_dirs + 1);
+        let overlay = OverlayFs::with_limits(lower, limits);
+
+        let result = overlay.mkdir(Path::new("/a/b/c"), true).await;
+        assert!(
+            result.is_err(),
+            "TM-DOS-037: recursive mkdir should fail when total new dirs exceed limit"
+        );
+    }
+
     // --- TM-DOS-038: Incomplete recursive whiteout ---
 
     /// TM-DOS-038: Recursive delete must hide all lower children.
