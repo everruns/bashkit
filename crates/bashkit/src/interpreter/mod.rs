@@ -8927,45 +8927,39 @@ impl Interpreter {
     /// Expand a parameter expansion with operators inside arithmetic context.
     /// Handles common cases like ${var%%-*}, ${var##prefix}, etc.
     fn expand_param_op_in_arithmetic(&self, inner: &str) -> String {
-        // ${var%%pattern} — remove longest suffix
-        if let Some(pos) = inner.find("%%") {
-            let name = &inner[..pos];
-            let pattern = &inner[pos + 2..];
-            let value = self.expand_variable(name);
-            return self.remove_pattern(&value, pattern, false, true);
-        }
-        // ${var%pattern} — remove shortest suffix
-        if let Some(pos) = inner.find('%') {
-            let name = &inner[..pos];
-            let pattern = &inner[pos + 1..];
-            let value = self.expand_variable(name);
-            return self.remove_pattern(&value, pattern, false, false);
-        }
-        // ${var##pattern} — remove longest prefix
-        if let Some(pos) = inner.find("##") {
-            let name = &inner[..pos];
-            let pattern = &inner[pos + 2..];
-            let value = self.expand_variable(name);
-            return self.remove_pattern(&value, pattern, true, true);
-        }
-        // ${var#pattern} — remove shortest prefix (but not ${#var} length)
-        if let Some(pos) = inner.find('#')
-            && pos > 0
-        {
-            let name = &inner[..pos];
-            let pattern = &inner[pos + 1..];
-            let value = self.expand_variable(name);
-            return self.remove_pattern(&value, pattern, true, false);
-        }
-        // ${var:-default}
-        if let Some(pos) = inner.find(":-") {
-            let name = &inner[..pos];
-            let default = &inner[pos + 2..];
-            let value = self.expand_variable(name);
-            if value.is_empty() {
-                return default.to_string();
+        for (pos, ch) in inner.char_indices() {
+            match ch {
+                '%' => {
+                    let name = &inner[..pos];
+                    let value = self.expand_variable(name);
+                    if inner[pos..].starts_with("%%") {
+                        let pattern = &inner[pos + 2..];
+                        return self.remove_pattern(&value, pattern, false, true);
+                    }
+                    let pattern = &inner[pos + 1..];
+                    return self.remove_pattern(&value, pattern, false, false);
+                }
+                '#' if pos > 0 => {
+                    let name = &inner[..pos];
+                    let value = self.expand_variable(name);
+                    if inner[pos..].starts_with("##") {
+                        let pattern = &inner[pos + 2..];
+                        return self.remove_pattern(&value, pattern, true, true);
+                    }
+                    let pattern = &inner[pos + 1..];
+                    return self.remove_pattern(&value, pattern, true, false);
+                }
+                ':' if inner[pos..].starts_with(":-") => {
+                    let name = &inner[..pos];
+                    let default = &inner[pos + 2..];
+                    let value = self.expand_variable(name);
+                    if value.is_empty() {
+                        return default.to_string();
+                    }
+                    return value;
+                }
+                _ => {}
             }
-            return value;
         }
         // Fallback
         self.expand_variable(inner)
@@ -11666,6 +11660,20 @@ mod tests {
         // Invalid char for base — should return 0
         let result = run_script("echo $(( 37#! ))").await;
         assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_arithmetic_base_suffix_pattern_with_double_percent() {
+        let result = run_script("var='123foo%%bar'; echo $(( 10#${var%foo%%bar} ))").await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "123");
+    }
+
+    #[tokio::test]
+    async fn test_arithmetic_base_prefix_pattern_with_double_hash() {
+        let result = run_script("var='foo##bar123'; echo $(( 10#${var#foo##bar} ))").await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "123");
     }
 
     #[tokio::test]
