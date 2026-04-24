@@ -81,6 +81,16 @@ echo "still running"
 still running
 ### end
 
+
+### bash_duplicate_errexit_flags_do_not_leak
+# duplicate errexit flags in child must not leak to parent shell
+bash -e -o errexit -c 'false'
+false
+echo "still running"
+### expect
+still running
+### end
+
 ### bash_o_invalid_option
 # bash -o with invalid option returns error
 bash -o invalidopt -c 'echo hi' 2>/dev/null
