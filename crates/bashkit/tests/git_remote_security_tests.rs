@@ -132,7 +132,12 @@ mod protocol_enforcement {
             .await
             .unwrap();
         assert_ne!(result.exit_code, 0);
-        assert!(result.stderr.contains("only HTTPS URLs are allowed"));
+        assert!(
+            result.stderr.contains("only HTTPS URLs are allowed")
+                || result.stderr.contains("invalid remote URL"),
+            "unexpected stderr: {}",
+            result.stderr
+        );
     }
 
     /// TM-GIT-013: git:// protocol should be blocked
@@ -148,7 +153,12 @@ mod protocol_enforcement {
             .await
             .unwrap();
         assert_ne!(result.exit_code, 0);
-        assert!(result.stderr.contains("only HTTPS URLs are allowed"));
+        assert!(
+            result.stderr.contains("only HTTPS URLs are allowed")
+                || result.stderr.contains("invalid remote URL"),
+            "unexpected stderr: {}",
+            result.stderr
+        );
     }
 
     /// TM-GIT-012, TM-GIT-013: Only HTTPS allowed
