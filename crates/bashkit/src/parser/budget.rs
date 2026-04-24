@@ -201,27 +201,23 @@ fn validate_compound(
 }
 
 fn validate_word(word: &Word, ctx: &mut ValidationContext) -> Result<(), BudgetError> {
-    // Check for literal brace ranges that would be too large
-    if !word.quoted {
-        for part in &word.parts {
-            validate_word_part(part, ctx)?;
-        }
-
-        // Also check if the whole word is a literal brace range like {1..999999}
-        if word.parts.len() == 1
-            && let WordPart::Literal(s) = &word.parts[0]
-        {
-            check_brace_range(s)?;
-        }
+    // Always validate dynamic substitutions regardless of quoting.
+    // Quoting suppresses brace expansion only for literal text.
+    for part in &word.parts {
+        validate_word_part(part, ctx, word.quoted)?;
     }
     Ok(())
 }
 
-fn validate_word_part(part: &WordPart, ctx: &mut ValidationContext) -> Result<(), BudgetError> {
+fn validate_word_part(
+    part: &WordPart,
+    ctx: &mut ValidationContext,
+    word_is_quoted: bool,
+) -> Result<(), BudgetError> {
     match part {
         WordPart::CommandSubstitution(commands) => validate_commands(commands, ctx),
         WordPart::ProcessSubstitution { commands, .. } => validate_commands(commands, ctx),
-        WordPart::Literal(s) => check_brace_range(s),
+        WordPart::Literal(s) if !word_is_quoted => check_brace_range(s),
         _ => Ok(()),
     }
 }
@@ -446,6 +442,14 @@ mod tests {
     fn command_substitution_in_word_checked() {
         // Command substitution with nested loops should be checked
         let ast = parse("echo $(for i in {1..999999999}; do echo $i; done)");
+        let limits = ExecutionLimits::default();
+        let err = validate(&ast, &limits).unwrap_err();
+        assert!(matches!(err, BudgetError::BraceRangeTooLarge { .. }));
+    }
+
+    #[test]
+    fn quoted_command_substitution_is_still_checked() {
+        let ast = parse(r#"echo "$(for i in {1..999999999}; do echo $i; done)""#);
         let limits = ExecutionLimits::default();
         let err = validate(&ast, &limits).unwrap_err();
         assert!(matches!(err, BudgetError::BraceRangeTooLarge { .. }));
