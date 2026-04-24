@@ -526,7 +526,6 @@ pub struct Bash {
     mountable: Arc<MountableFs>,
     interpreter: Interpreter,
     /// Parser timeout (stored separately for use before interpreter runs)
-    #[cfg(not(target_family = "wasm"))]
     parser_timeout: std::time::Duration,
     /// Maximum input script size in bytes
     max_input_bytes: usize,
@@ -552,7 +551,6 @@ impl Bash {
         let mountable = Arc::new(MountableFs::new(base_fs));
         let fs: Arc<dyn FileSystem> = Arc::clone(&mountable) as Arc<dyn FileSystem>;
         let interpreter = Interpreter::new(Arc::clone(&fs));
-        #[cfg(not(target_family = "wasm"))]
         let parser_timeout = ExecutionLimits::default().parser_timeout;
         let max_input_bytes = ExecutionLimits::default().max_input_bytes;
         let max_ast_depth = ExecutionLimits::default().max_ast_depth;
@@ -561,7 +559,6 @@ impl Bash {
             fs,
             mountable,
             interpreter,
-            #[cfg(not(target_family = "wasm"))]
             parser_timeout,
             max_input_bytes,
             max_ast_depth,
@@ -660,7 +657,6 @@ impl Bash {
             )));
         }
 
-        #[cfg(not(target_family = "wasm"))]
         let parser_timeout = self.parser_timeout;
         let max_ast_depth = self.max_ast_depth;
         let max_parser_operations = self.max_parser_operations;
@@ -679,7 +675,12 @@ impl Bash {
         // work (no blocking thread pool, timer driver unreliable). Parse inline.
         #[cfg(target_family = "wasm")]
         let ast = {
-            let parser = Parser::with_limits(&script_owned, max_ast_depth, max_parser_operations);
+            let parser = Parser::with_limits_and_timeout(
+                &script_owned,
+                max_ast_depth,
+                max_parser_operations,
+                Some(parser_timeout),
+            );
             parser.parse()?
         };
 
@@ -2601,7 +2602,6 @@ impl BashBuilder {
             interpreter.set_history_file(hf);
         }
 
-        #[cfg(not(target_family = "wasm"))]
         let parser_timeout = limits.parser_timeout;
         let max_input_bytes = limits.max_input_bytes;
         let max_ast_depth = limits.max_ast_depth;
@@ -2619,7 +2619,6 @@ impl BashBuilder {
             fs,
             mountable,
             interpreter,
-            #[cfg(not(target_family = "wasm"))]
             parser_timeout,
             max_input_bytes,
             max_ast_depth,

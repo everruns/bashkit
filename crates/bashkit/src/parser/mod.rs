@@ -25,6 +25,8 @@ pub use lexer::{Lexer, SpannedToken};
 pub use span::{Position, Span};
 
 use crate::error::{Error, Result};
+use crate::limits::LimitExceeded;
+use std::time::{Duration, Instant};
 
 /// Default maximum AST depth (matches ExecutionLimits default)
 const DEFAULT_MAX_AST_DEPTH: usize = 100;
@@ -60,6 +62,10 @@ pub struct Parser<'a> {
     fuel: usize,
     /// Maximum fuel (for error reporting)
     max_fuel: usize,
+    /// Optional parser timeout enforced via cooperative checks in `tick`.
+    timeout: Option<Duration>,
+    /// Parse start time used with `timeout`.
+    started_at: Instant,
 }
 
 impl<'a> Parser<'a> {
@@ -84,6 +90,16 @@ impl<'a> Parser<'a> {
     /// to prevent stack overflow from misconfiguration. Even if the caller passes
     /// `max_depth = 1_000_000`, the parser will cap it at 500.
     pub fn with_limits(input: &'a str, max_depth: usize, max_fuel: usize) -> Self {
+        Self::with_limits_and_timeout(input, max_depth, max_fuel, None)
+    }
+
+    /// Create a new parser with custom limits and optional timeout.
+    pub fn with_limits_and_timeout(
+        input: &'a str,
+        max_depth: usize,
+        max_fuel: usize,
+        timeout: Option<Duration>,
+    ) -> Self {
         let mut lexer = Lexer::with_max_subst_depth(input, max_depth.min(HARD_MAX_AST_DEPTH));
         let spanned = lexer.next_spanned_token();
         let (current_token, current_span) = match spanned {
@@ -100,6 +116,8 @@ impl<'a> Parser<'a> {
             current_depth: 0,
             fuel: max_fuel,
             max_fuel,
+            timeout,
+            started_at: Instant::now(),
         }
     }
 
@@ -145,6 +163,11 @@ impl<'a> Parser<'a> {
 
     /// Consume one unit of fuel, returning an error if exhausted
     fn tick(&mut self) -> Result<()> {
+        if let Some(timeout) = self.timeout
+            && self.started_at.elapsed() > timeout
+        {
+            return Err(Error::ResourceLimit(LimitExceeded::ParserTimeout(timeout)));
+        }
         if self.fuel == 0 {
             let used = self.max_fuel;
             return Err(Error::parse(format!(
@@ -3508,6 +3531,7 @@ impl<'a> Parser<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn test_parse_simple_command() {
@@ -3523,6 +3547,17 @@ mod tests {
         } else {
             panic!("expected simple command");
         }
+    }
+
+    #[test]
+    fn test_parse_timeout_exceeded() {
+        let parser =
+            Parser::with_limits_and_timeout("echo hello", 100, 100_000, Some(Duration::ZERO));
+        let err = parser.parse().expect_err("expected parser timeout");
+        assert!(matches!(
+            err,
+            Error::ResourceLimit(LimitExceeded::ParserTimeout(timeout)) if timeout == Duration::ZERO
+        ));
     }
 
     #[test]
