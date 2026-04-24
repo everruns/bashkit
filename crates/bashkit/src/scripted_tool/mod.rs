@@ -1463,6 +1463,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_custom_dry_run_handler_sanitizes_errors() {
+        let tool = ScriptedTool::builder("dr_sanitize")
+            .tool_with_dry_run(
+                ToolDef::new("check", "Validate input"),
+                |_args: &ToolArgs| Ok("ok\n".to_string()),
+                |_args: &ToolArgs| {
+                    Err("sensitive: /tmp/token.txt postgres://user:pass@localhost/db".to_string())
+                },
+            )
+            .build();
+
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "check --dry-run".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+        assert_eq!(resp.exit_code, 1);
+        assert!(resp.stderr.contains("callback failed"));
+        assert!(!resp.stderr.contains("sensitive"));
+        assert!(!resp.stderr.contains("postgres://"));
+    }
+
+    #[tokio::test]
     async fn test_help_flag_returns_help() {
         let tool = build_test_tool();
         let resp = tool
