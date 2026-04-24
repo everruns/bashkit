@@ -167,3 +167,26 @@ alias | grep -c 'ex\|ll'
 ### expect
 2
 ### end
+
+### alias_preserves_quoted_arg_literalness
+# Quoted literal args must not be dequoted/re-tokenized by alias reparse.
+
+shopt -s expand_aliases
+alias pass='printf "<%s>\n" '
+payload='A B;C'
+pass "$payload"
+### expect
+<A B;C>
+### end
+
+### alias_preserves_quoted_redirect_target
+# Quoted redirect targets must not be split during alias reparse.
+
+shopt -s expand_aliases
+alias put='printf "ok\n" '
+file='out file.txt'
+put > "$file"
+cat "$file"
+### expect
+ok
+### end
