@@ -1,5 +1,6 @@
-// Decision: enable http, git, python by default for CLI users.
-// Provide --no-http, --no-git, --no-python to disable individually.
+// Decision: keep network default-deny in CLI mode. --http-allow-all is explicit
+// opt-in for trusted scripts only; --no-http remains for symmetry with other
+// feature toggles.
 // Decision: keep one-shot CLI on a current-thread runtime; reserve multi-thread
 // runtime for MCP only so cold-start work stays off the common path.
 // Decision: interactive mode uses relaxed execution limits (ExecutionLimits::cli())
@@ -48,6 +49,10 @@ struct Args {
     /// Disable HTTP builtins (curl/wget)
     #[arg(long)]
     no_http: bool,
+
+    /// Enable HTTP builtins with unrestricted outbound access (trusted scripts only)
+    #[arg(long, conflicts_with = "no_http")]
+    http_allow_all: bool,
 
     /// Disable git builtin
     #[arg(long)]
@@ -130,7 +135,7 @@ fn build_bash(args: &Args, mode: CliMode) -> bashkit::Bash {
 fn configure_bash(args: &Args, mode: CliMode) -> bashkit::BashBuilder {
     let mut builder = bashkit::Bash::builder();
 
-    if !args.no_http {
+    if args.http_allow_all && !args.no_http {
         builder = builder.network(bashkit::NetworkAllowlist::allow_all());
     }
 
@@ -368,16 +373,25 @@ mod tests {
             "echo hi",
         ]);
         assert!(args.no_http);
+        assert!(!args.http_allow_all);
         assert!(args.no_git);
         assert!(args.no_python);
     }
 
     #[test]
-    fn defaults_all_enabled() {
+    fn defaults_keep_http_disabled() {
         let args = Args::parse_from(["bashkit", "-c", "echo hi"]);
         assert!(!args.no_http);
+        assert!(!args.http_allow_all);
         assert!(!args.no_git);
         assert!(!args.no_python);
+    }
+
+    #[test]
+    fn parse_http_allow_all_flag() {
+        let args = Args::parse_from(["bashkit", "--http-allow-all", "-c", "curl --help"]);
+        assert!(args.http_allow_all);
+        assert!(!args.no_http);
     }
 
     #[test]
@@ -439,20 +453,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn http_enabled_by_default() {
-        // curl should be recognized (not "command not found") even if network fails
-        let args = Args::parse_from(["bashkit", "-c", "curl --help"]);
+    async fn http_disabled_by_default() {
+        let args = Args::parse_from(["bashkit", "-c", "curl https://example.com"]);
         let mut bash = build_bash(&args, CliMode::Command);
-        let result = bash.exec("curl --help").await.expect("exec");
-        assert!(!result.stderr.contains("command not found"));
+        let result = bash.exec("curl https://example.com").await.expect("exec");
+        assert!(result.stderr.contains("network access not configured"));
     }
 
     #[tokio::test]
-    async fn http_can_be_disabled() {
-        let args = Args::parse_from(["bashkit", "--no-http", "-c", "curl https://example.com"]);
+    async fn http_can_be_enabled_explicitly() {
+        let args = Args::parse_from([
+            "bashkit",
+            "--http-allow-all",
+            "-c",
+            "curl https://example.com",
+        ]);
         let mut bash = build_bash(&args, CliMode::Command);
         let result = bash.exec("curl https://example.com").await.expect("exec");
-        assert!(result.stderr.contains("not configured"));
+        assert!(!result.stderr.contains("not configured"));
     }
 
     #[tokio::test]
