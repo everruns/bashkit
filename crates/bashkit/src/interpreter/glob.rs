@@ -766,7 +766,7 @@ impl Interpreter {
         let mut all_dirs = vec![base_dir.clone()];
         // THREAT[TM-DOS-049]: Cap recursion depth using filesystem path depth limit
         let max_depth = self.fs.limits().max_path_depth;
-        self.collect_dirs_recursive(&base_dir, &mut all_dirs, max_depth)
+        self.collect_dirs_recursive(&base_dir, &mut all_dirs, max_depth, dotglob)
             .await;
 
         let mut matches = Vec::new();
@@ -812,6 +812,7 @@ impl Interpreter {
         dir: &'a Path,
         result: &'a mut Vec<PathBuf>,
         max_depth: usize,
+        dotglob: bool,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
         Box::pin(async move {
             if max_depth == 0 {
@@ -820,9 +821,12 @@ impl Interpreter {
             if let Ok(entries) = self.fs.read_dir(dir).await {
                 for entry in entries {
                     if entry.metadata.file_type.is_dir() {
+                        if entry.name.starts_with('.') && !dotglob {
+                            continue;
+                        }
                         let subdir = dir.join(&entry.name);
                         result.push(subdir.clone());
-                        self.collect_dirs_recursive(&subdir, result, max_depth - 1)
+                        self.collect_dirs_recursive(&subdir, result, max_depth - 1, dotglob)
                             .await;
                     }
                 }
