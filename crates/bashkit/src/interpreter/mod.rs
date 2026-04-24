@@ -3451,25 +3451,32 @@ fn route_fd_table_content(
                  target: &FdTarget,
                  fw: &mut std::collections::HashMap<PathBuf, (String, bool, String)>,
                  out: &mut String,
-                 err: &mut String| {
-        if data.is_empty() {
-            return;
-        }
-        match target {
-            FdTarget::Stdout => out.push_str(data),
-            FdTarget::Stderr => err.push_str(data),
-            FdTarget::DevNull => {}
-            FdTarget::WriteFile(p, d) => {
-                fw.entry(p.clone())
-                    .or_insert_with(|| (String::new(), false, d.clone()))
-                    .0
-                    .push_str(data);
+                 err: &mut String| match target {
+        FdTarget::Stdout => {
+            if !data.is_empty() {
+                out.push_str(data);
             }
-            FdTarget::AppendFile(p, d) => {
-                fw.entry(p.clone())
-                    .or_insert_with(|| (String::new(), true, d.clone()))
-                    .0
-                    .push_str(data);
+        }
+        FdTarget::Stderr => {
+            if !data.is_empty() {
+                err.push_str(data);
+            }
+        }
+        FdTarget::DevNull => {}
+        FdTarget::WriteFile(p, d) => {
+            let entry = fw
+                .entry(p.clone())
+                .or_insert_with(|| (String::new(), false, d.clone()));
+            if !data.is_empty() {
+                entry.0.push_str(data);
+            }
+        }
+        FdTarget::AppendFile(p, d) => {
+            let entry = fw
+                .entry(p.clone())
+                .or_insert_with(|| (String::new(), true, d.clone()));
+            if !data.is_empty() {
+                entry.0.push_str(data);
             }
         }
     };
