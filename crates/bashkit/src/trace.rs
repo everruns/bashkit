@@ -282,8 +282,8 @@ fn redact_argv(argv: &[String]) -> Vec<String> {
         }
 
         // --token=VALUE, --api-key=VALUE, etc. (= concatenated form)
-        if let Some(eq_pos) = arg.find('=') {
-            let flag_part = &lower[..eq_pos];
+        if let (Some(eq_pos), Some(lower_eq_pos)) = (arg.find('='), lower.find('=')) {
+            let flag_part = &lower[..lower_eq_pos];
             if SECRET_FLAGS.contains(&flag_part) {
                 result.push(format!("{}=[REDACTED]", &arg[..eq_pos]));
                 continue;
@@ -599,6 +599,13 @@ mod tests {
         let argv = vec!["cli".into(), "--api-key=key-abc".into()];
         let redacted = redact_argv(&argv);
         assert_eq!(redacted[1], "--api-key=[REDACTED]");
+    }
+
+    #[test]
+    fn test_redact_equals_form_handles_unicode_case_expansion() {
+        let argv = vec!["cli".into(), "İ=secret".into()];
+        let redacted = redact_argv(&argv);
+        assert_eq!(redacted, argv);
     }
 
     #[test]
