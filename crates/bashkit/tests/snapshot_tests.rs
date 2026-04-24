@@ -689,3 +689,47 @@ async fn keyed_snapshot_tampered_rejected() {
     let result = Bash::from_snapshot_keyed(&bytes, key);
     assert!(result.is_err());
 }
+
+/// Regression for #1421: HMAC verification must not short-circuit on a
+/// matching prefix. A forged digest that agrees with the real digest in
+/// every byte except the last must still be rejected — this exercises
+/// the `Mac::verify_slice` constant-time path that replaced raw `==`.
+#[tokio::test]
+async fn keyed_snapshot_matching_prefix_digest_rejected() {
+    let key = b"secret-key";
+    let mut bash = Bash::new();
+    bash.exec("x=1").await.unwrap();
+    let mut bytes = bash.snapshot_to_bytes_keyed(key).unwrap();
+
+    // Flip only the final byte of the 32-byte HMAC digest. The first 31
+    // bytes still match the real digest; a short-circuiting compare could
+    // leak that position via timing. Verification must still reject it.
+    assert!(bytes.len() >= 32, "snapshot must contain a 32-byte digest");
+    bytes[31] ^= 0xFF;
+
+    let err = match Bash::from_snapshot_keyed(&bytes, key) {
+        Ok(_) => panic!("expected verification to fail"),
+        Err(e) => e.to_string(),
+    };
+    assert!(err.contains("HMAC mismatch"), "Expected HMAC error: {err}");
+}
+
+/// Regression for #1421: a digest that differs only in its first byte
+/// must also be rejected. Symmetrical to the matching-prefix case — the
+/// verifier should not depend on byte position.
+#[tokio::test]
+async fn keyed_snapshot_matching_suffix_digest_rejected() {
+    let key = b"secret-key";
+    let mut bash = Bash::new();
+    bash.exec("x=1").await.unwrap();
+    let mut bytes = bash.snapshot_to_bytes_keyed(key).unwrap();
+
+    assert!(bytes.len() >= 32, "snapshot must contain a 32-byte digest");
+    bytes[0] ^= 0xFF;
+
+    let err = match Bash::from_snapshot_keyed(&bytes, key) {
+        Ok(_) => panic!("expected verification to fail"),
+        Err(e) => e.to_string(),
+    };
+    assert!(err.contains("HMAC mismatch"), "Expected HMAC error: {err}");
+}
