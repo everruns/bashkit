@@ -212,6 +212,19 @@ count: 1
 key=[hello] val=[world]
 ### end
 
+### assoc_key_embedded_parameter_expansions
+declare -A m=()
+foo="left"
+bar="right"
+m["$foo$bar"]="combined"
+m["prefix-$foo-$bar"]="mixed"
+echo "${m[leftright]}"
+echo "${m[prefix-left-right]}"
+### expect
+combined
+mixed
+### end
+
 ### assoc_iteration
 declare -A m
 m[a]="1"
