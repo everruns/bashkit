@@ -492,6 +492,68 @@ fn parse_address(s: &str) -> Result<(Option<Address>, &str)> {
 
 const MAX_GROUP_NESTING_DEPTH: usize = 128;
 
+fn validate_group_nesting(s: &str, base_depth: usize) -> Result<()> {
+    let mut in_subst = false;
+    let mut subst_delim = None;
+    let mut subst_delim_count = 0;
+    let mut escaped = false;
+    let mut group_depth = 0;
+
+    for c in s.chars() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+
+        if c == '\\' {
+            escaped = true;
+            continue;
+        }
+
+        if !in_subst && c == 's' {
+            in_subst = true;
+            subst_delim = None;
+            subst_delim_count = 0;
+            continue;
+        }
+
+        if in_subst {
+            if subst_delim.is_none() {
+                subst_delim = Some(c);
+                continue;
+            }
+
+            if Some(c) == subst_delim {
+                subst_delim_count += 1;
+                if subst_delim_count >= 3 {
+                    in_subst = false;
+                    subst_delim = None;
+                    subst_delim_count = 0;
+                }
+            }
+            continue;
+        }
+
+        match c {
+            '{' => {
+                group_depth += 1;
+                if base_depth + group_depth > MAX_GROUP_NESTING_DEPTH {
+                    return Err(Error::Execution(format!(
+                        "sed: grouped command nesting exceeds max depth {}",
+                        MAX_GROUP_NESTING_DEPTH
+                    )));
+                }
+            }
+            '}' => {
+                group_depth = group_depth.saturating_sub(1);
+            }
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+
 fn parse_sed_command(s: &str, extended_regex: bool) -> Result<(Option<Address>, bool, SedCommand)> {
     parse_sed_command_with_depth(s, extended_regex, 0)
 }
@@ -682,12 +744,7 @@ fn parse_sed_command_with_depth(
             Ok((address, negate, SedCommand::BranchIfSub(label)))
         }
         '{' => {
-            if depth >= MAX_GROUP_NESTING_DEPTH {
-                return Err(Error::Execution(format!(
-                    "sed: grouped command nesting exceeds max depth {}",
-                    MAX_GROUP_NESTING_DEPTH
-                )));
-            }
+            validate_group_nesting(rest, depth)?;
             // Grouped commands: { cmd1; cmd2; ... }
             // Find matching closing brace
             let inner = rest[1..].trim();
