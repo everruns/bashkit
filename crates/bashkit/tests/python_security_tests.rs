@@ -52,6 +52,23 @@ async fn python_requires_explicit_inprocess_opt_in() {
     );
 }
 
+#[tokio::test]
+async fn python_opt_in_cannot_be_enabled_from_script() {
+    let mut bash = Bash::builder().python().build();
+    let r = bash
+        .exec("BASHKIT_ALLOW_INPROCESS_PYTHON=1 python3 -c \"print('should_not_run')\"")
+        .await
+        .unwrap();
+    assert_ne!(r.exit_code, 0);
+    assert!(!r.stdout.contains("should_not_run"));
+    assert!(
+        r.stderr
+            .contains("in-process Python disabled by default for security"),
+        "expected security gate message, got stderr={:?}",
+        r.stderr
+    );
+}
+
 // =============================================================================
 // 1. BLACK-BOX: DANGEROUS MODULE IMPORTS
 //
