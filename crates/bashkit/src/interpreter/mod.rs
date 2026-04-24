@@ -4221,14 +4221,18 @@ impl Interpreter {
                 });
             }
 
-            // Inject prefix assignments into env for command duration
-            let mut env_saves: Vec<(String, Option<String>)> = Vec::new();
+            // Inject prefix assignments into env for command duration.
+            // Save original env value once per name so duplicate assignments
+            // (e.g., `A=1 A=2 cmd`) restore to pre-command state.
+            let mut env_saves: HashMap<String, Option<String>> = HashMap::new();
             for assignment in &command.assignments {
                 if assignment.index.is_none()
                     && let Some(value) = self.variables.get(&assignment.name).cloned()
                 {
-                    let old = self.env.insert(assignment.name.clone(), value);
-                    env_saves.push((assignment.name.clone(), old));
+                    env_saves
+                        .entry(assignment.name.clone())
+                        .or_insert_with(|| self.env.get(&assignment.name).cloned());
+                    self.env.insert(assignment.name.clone(), value);
                 }
             }
 
