@@ -320,6 +320,30 @@ test("Bash: reset preserves username config", (t) => {
   t.is(bash.executeSync("whoami").stdout.trim(), "keeper");
 });
 
+test("Bash: cancel works after reset", async (t) => {
+  const bash = new Bash({ maxCommands: 5000, maxLoopIterations: 5000 });
+  bash.reset();
+
+  const running = bash.execute("for i in $(seq 1 2000); do sleep 0.001; done");
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  bash.cancel();
+
+  const cancelled = await running;
+  t.not(cancelled.exitCode, 0);
+});
+
+test("BashTool: cancel works after reset", async (t) => {
+  const tool = new BashTool({ maxCommands: 5000, maxLoopIterations: 5000 });
+  tool.reset();
+
+  const running = tool.execute("for i in $(seq 1 2000); do sleep 0.001; done");
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  tool.cancel();
+
+  const cancelled = await running;
+  t.not(cancelled.exitCode, 0);
+});
+
 test("Bash: cancel stays sticky until clearCancel", (t) => {
   const bash = new Bash();
   bash.cancel();

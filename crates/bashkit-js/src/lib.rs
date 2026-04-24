@@ -771,7 +771,7 @@ fn to_snapshot_options(options: Option<SnapshotOptions>) -> RustSnapshotOptions 
 struct SharedState {
     inner: Mutex<RustBash>,
     rt: Mutex<tokio::runtime::Runtime>,
-    cancelled: Arc<AtomicBool>,
+    cancelled: std::sync::Mutex<Arc<AtomicBool>>,
     on_output_reentry_depth: Arc<AtomicUsize>,
     username: Option<String>,
     hostname: Option<String>,
@@ -948,7 +948,8 @@ impl Bash {
     /// command boundary.
     #[napi]
     pub fn cancel(&self) {
-        self.state.cancelled.store(true, Ordering::SeqCst);
+        let arc = self.state.cancelled.lock().unwrap().clone();
+        arc.store(true, Ordering::SeqCst);
     }
 
     /// Clear the cancellation flag so subsequent executions proceed normally.
@@ -958,7 +959,8 @@ impl Bash {
     /// or VFS state.
     #[napi]
     pub fn clear_cancel(&self) {
-        self.state.cancelled.store(false, Ordering::SeqCst);
+        let arc = self.state.cancelled.lock().unwrap().clone();
+        arc.store(false, Ordering::SeqCst);
     }
 
     /// Reset interpreter to fresh state, preserving configuration.
@@ -967,6 +969,7 @@ impl Bash {
         block_on_with(&self.state, |s| async move {
             let mut bash = s.inner.lock().await;
             *bash = build_bash_from_state(&s, None);
+            *s.cancelled.lock().unwrap() = bash.cancellation_token();
             Ok(())
         })
     }
@@ -1378,7 +1381,8 @@ impl BashTool {
     /// Cancel the currently running execution.
     #[napi]
     pub fn cancel(&self) {
-        self.state.cancelled.store(true, Ordering::SeqCst);
+        let arc = self.state.cancelled.lock().unwrap().clone();
+        arc.store(true, Ordering::SeqCst);
     }
 
     /// Clear the cancellation flag so subsequent executions proceed normally.
@@ -1388,7 +1392,8 @@ impl BashTool {
     /// shell or VFS state.
     #[napi]
     pub fn clear_cancel(&self) {
-        self.state.cancelled.store(false, Ordering::SeqCst);
+        let arc = self.state.cancelled.lock().unwrap().clone();
+        arc.store(false, Ordering::SeqCst);
     }
 
     /// Reset interpreter to fresh state, preserving configuration.
@@ -1397,6 +1402,7 @@ impl BashTool {
         block_on_with(&self.state, |s| async move {
             let mut bash = s.inner.lock().await;
             *bash = build_bash_from_state(&s, None);
+            *s.cancelled.lock().unwrap() = bash.cancellation_token();
             Ok(())
         })
     }
@@ -2129,7 +2135,7 @@ fn shared_state_from_opts(
                 .build()
                 .map_err(|e| napi::Error::from_reason(format!("Failed to create runtime: {e}")))?,
         ),
-        cancelled: Arc::new(AtomicBool::new(false)),
+        cancelled: std::sync::Mutex::new(Arc::new(AtomicBool::new(false))),
         on_output_reentry_depth: Arc::new(AtomicUsize::new(0)),
         username: opts.username.clone(),
         hostname: opts.hostname.clone(),
@@ -2163,7 +2169,7 @@ fn shared_state_from_opts(
     Ok(SharedState {
         inner: Mutex::new(bash),
         rt: Mutex::new(rt),
-        cancelled,
+        cancelled: std::sync::Mutex::new(cancelled),
         on_output_reentry_depth: tmp.on_output_reentry_depth,
         username: opts.username,
         hostname: opts.hostname,
