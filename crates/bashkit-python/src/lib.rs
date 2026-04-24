@@ -812,12 +812,10 @@ fn glob_via_bash(rt: &Arc<Runtime>, inner: &Arc<Mutex<Bash>>, pattern: String) -
 
                 match entry.metadata.file_type {
                     FsFileType::Directory => stack.push(child),
-                    FsFileType::File => {
-                        if glob_match_path(&child, &pattern) {
-                            matches.push(child);
-                            if matches.len() >= GLOB_MAX_RESULTS {
-                                return Ok(matches);
-                            }
+                    FsFileType::File if glob_match_path(&child, &pattern) => {
+                        matches.push(child);
+                        if matches.len() >= GLOB_MAX_RESULTS {
+                            return Ok(matches);
                         }
                     }
                     _ => {}
