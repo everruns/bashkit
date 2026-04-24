@@ -71,6 +71,7 @@ is_openai_quota_error() {
 }
 
 "$BASHKIT" \
+  --http-allow-all \
   --mount-ro "${HARNESS_DIR}:/harness" \
   --mount-rw "${WORK_DIR}:/work" \
   --timeout 120 \

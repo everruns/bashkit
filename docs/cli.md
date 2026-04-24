@@ -47,15 +47,19 @@ cargo build -p bashkit-cli --no-default-features
 
 Builtins enabled out of the box:
 
-- **HTTP** (`curl`, `wget`) — all URLs allowed
 - **Git** (`git`) — local VFS operations (init, add, commit, log, …)
 - **Python** (`python`, `python3`) — embedded via [Monty](https://github.com/pydantic/monty) (requires `python` feature)
+
+Disabled by default (security):
+
+- **HTTP** (`curl`, `wget`) — network access stays blocked unless explicitly enabled
 
 Disable per-run:
 
 | Flag | Effect |
 |------|--------|
-| `--no-http` | Disable curl/wget builtins |
+| `--http-allow-all` | Enable curl/wget with unrestricted outbound access (trusted scripts only) |
+| `--no-http` | Force-disable curl/wget builtins |
 | `--no-git` | Disable git builtin |
 | `--no-python` | Disable python/python3 builtins |
 
