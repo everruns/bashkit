@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 
-use super::{Builtin, Context, read_text_file};
+use super::{Builtin, Context, MAX_FORMAT_WIDTH, read_text_file};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
@@ -89,6 +89,12 @@ fn parse_nl_args(args: &[String]) -> std::result::Result<(NlOptions, Vec<String>
             opts.width = val
                 .parse()
                 .map_err(|_| format!("nl: invalid line number field width: '{}'", val))?;
+            if opts.width > MAX_FORMAT_WIDTH {
+                return Err(format!(
+                    "nl: line number field width {} exceeds maximum ({})",
+                    opts.width, MAX_FORMAT_WIDTH
+                ));
+            }
         } else if let Some(arg) = p.positional() {
             files.push(arg.to_string());
         }
@@ -320,6 +326,14 @@ mod tests {
         let result = run_nl(&["-w", "3"], Some("a\nb\n")).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "  1\ta\n  2\tb\n");
+    }
+
+    #[tokio::test]
+    async fn test_nl_rejects_excessive_width() {
+        let too_wide = (MAX_FORMAT_WIDTH + 1).to_string();
+        let result = run_nl(&["-w", &too_wide], Some("a\n")).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("exceeds maximum"));
     }
 
     #[tokio::test]
