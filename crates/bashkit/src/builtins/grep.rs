@@ -302,8 +302,10 @@ impl GrepOptions {
 
 /// Strip surrounding single or double quotes from a value
 fn strip_quotes(s: &str) -> String {
-    if (s.starts_with('\'') && s.ends_with('\'')) || (s.starts_with('"') && s.ends_with('"')) {
-        s[1..s.len() - 1].to_string()
+    if let Some(inner) = s.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')) {
+        inner.to_string()
+    } else if let Some(inner) = s.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
+        inner.to_string()
     } else {
         s.to_string()
     }
@@ -1122,6 +1124,12 @@ mod tests {
 
         assert!(should_include_file("foo.txt", &inc, &exc));
         assert!(!should_include_file("foo.log", &inc, &exc));
+    }
+
+    #[test]
+    fn test_strip_quotes_single_quote_char_does_not_panic() {
+        assert_eq!(strip_quotes("'"), "'");
+        assert_eq!(strip_quotes("\""), "\"");
     }
 
     #[tokio::test]
