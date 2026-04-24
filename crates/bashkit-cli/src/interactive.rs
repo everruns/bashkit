@@ -24,6 +24,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 const DEFAULT_PS1: &str = "\\u@bashkit:\\w\\$ ";
 const DEFAULT_PS2: &str = "> ";
 const RC_FILE: &str = "/home/user/.bashkitrc";
+const SOURCE_RC_ENV: &str = "BASHKIT_SOURCE_RC";
 const MAX_HISTORY: usize = 1000;
 
 // Same list as compgen.rs — keep in sync.
@@ -394,6 +395,10 @@ async fn set_interactive_env(bash: &mut bashkit::Bash) {
 }
 
 async fn source_rc_file(bash: &mut bashkit::Bash) {
+    if !should_source_rc(&bash.shell_state_view()) {
+        return;
+    }
+
     // Check if ~/.bashkitrc exists in the VFS
     let fs = bash.fs();
     let rc_path = std::path::PathBuf::from(RC_FILE);
@@ -403,6 +408,18 @@ async fn source_rc_file(bash: &mut bashkit::Bash) {
     {
         let _ = bash.exec(&script).await;
     }
+}
+
+fn should_source_rc(state: &bashkit::ShellStateView) -> bool {
+    state
+        .variables
+        .get(SOURCE_RC_ENV)
+        .or_else(|| state.env.get(SOURCE_RC_ENV))
+        .map(|value| {
+            let normalized = value.trim().to_ascii_lowercase();
+            matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
+        })
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -1450,11 +1467,23 @@ mod tests {
     // --- Source RC ---
 
     #[tokio::test]
-    async fn source_rc_sets_variables() {
+    async fn source_rc_is_disabled_by_default() {
         let mut bash = test_bash();
         let fs = bash.fs();
         let rc = std::path::PathBuf::from(RC_FILE);
         let _ = fs.write_file(&rc, b"MY_RC_VAR=loaded\n").await;
+        source_rc_file(&mut bash).await;
+        let result = bash.exec("echo $MY_RC_VAR").await.unwrap();
+        assert_eq!(result.stdout, "\n");
+    }
+
+    #[tokio::test]
+    async fn source_rc_can_be_enabled_explicitly() {
+        let mut bash = test_bash();
+        let fs = bash.fs();
+        let rc = std::path::PathBuf::from(RC_FILE);
+        let _ = fs.write_file(&rc, b"MY_RC_VAR=loaded\n").await;
+        bash.exec("export BASHKIT_SOURCE_RC=1").await.unwrap();
         source_rc_file(&mut bash).await;
         let result = bash.exec("echo $MY_RC_VAR").await.unwrap();
         assert_eq!(result.stdout, "loaded\n");
