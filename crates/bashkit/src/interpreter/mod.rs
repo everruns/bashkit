@@ -12356,6 +12356,18 @@ cat /tmp/test_fd_leak.txt"#,
         assert_eq!(result.stdout.trim(), "prefixa b c");
     }
 
+    // Mixed-quoting starting with quote: "$var"suffix must stay one word.
+    #[tokio::test]
+    async fn test_mixed_quote_starts_with_var_no_split() {
+        let result = run_script(
+            r#"v="a b c"; set -- "${v}"suffix; echo "count:$#"; echo "arg1:$1"; echo "arg2:${2:-<none>}""#,
+        )
+        .await;
+        assert_eq!(result.exit_code, 0);
+        let lines: Vec<&str> = result.stdout.lines().collect();
+        assert_eq!(lines, vec!["count:1", "arg1:a b csuffix", "arg2:<none>"]);
+    }
+
     /// Issue #1184: input process substitution temp files must be cleaned up
     #[tokio::test]
     async fn test_proc_sub_input_cleanup() {
