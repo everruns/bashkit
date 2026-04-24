@@ -1,19 +1,18 @@
 # bashkit-cli
 
 Command-line interface for running bash scripts in a sandboxed virtual
-filesystem. One binary, four modes.
+filesystem. One binary, three modes.
 
 ## Modes
 
-| Invocation | Mode | Runtime |
-|------------|------|---------|
-| `bashkit -c '…'` | Execute command string, print stdout/stderr, exit | current-thread tokio |
-| `bashkit script.sh` | Execute script file | current-thread tokio |
-| `bashkit` | Interactive shell (REPL) | current-thread tokio |
-| `bashkit mcp` | Model Context Protocol server over stdio | multi-thread tokio |
+| Invocation | Mode |
+|------------|------|
+| `bashkit -c '…'` | Execute command string, print stdout/stderr, exit |
+| `bashkit script.sh` | Execute script file |
+| `bashkit` | Interactive shell (REPL) |
 
-Mode is detected from arguments — `mcp` subcommand wins, then `-c`, then
-positional script, otherwise REPL.
+Mode is detected from arguments — `-c` wins, then positional script,
+otherwise REPL.
 
 ## Install
 
@@ -61,14 +60,11 @@ Disable per-run:
 
 ## Execution limits
 
-CLI and script modes start from `ExecutionLimits::cli()` — counting-based
-limits are effectively unlimited, timeout is off (user has Ctrl-C). Memory
-guards (function depth, AST depth, parser fuel) stay on.
+All modes start from `ExecutionLimits::cli()` — counting-based limits are
+effectively unlimited, timeout is off (user has Ctrl-C). Memory guards
+(function depth, AST depth, parser fuel) stay on.
 
-MCP mode starts from `ExecutionLimits::new()` — the sandboxed defaults
-(10 000 commands, 30 s timeout, …).
-
-Override any mode with:
+Override with:
 
 | Flag | Meaning |
 |------|---------|
@@ -95,9 +91,8 @@ bashkit --mount-ro /data:/mnt/data -c 'wc -l /mnt/data/*.csv'
 bashkit --mount-rw /tmp/out:/mnt/out script.sh
 ```
 
-**Warning.** `--mount-rw` breaks the sandbox boundary. Using it with `mcp`
-prints a warning to stderr — LLM agents get read-write access to host files.
-Prefer `--mount-ro` unless writes are required.
+**Warning.** `--mount-rw` breaks the sandbox boundary — scripts can modify
+host files. Prefer `--mount-ro` unless writes are required.
 
 ## Interactive shell
 
@@ -154,23 +149,6 @@ read-only rc). Typical contents: aliases, `PS1`, environment.
 - History expansion (`!!`, `!N`) — complexity vs. value
 - Persistent history file — would leak across sessions, breaks isolation
 - `exec` — excluded for security
-
-## MCP server
-
-Speak JSON-RPC 2.0 over stdio. Exposes bashkit as an MCP tool for agent
-frameworks.
-
-```bash
-bashkit mcp
-bashkit mcp --max-requests-per-minute 60
-```
-
-| Flag | Meaning |
-|------|---------|
-| `--max-requests-per-minute N` | Rate limit tool calls; `0` = unlimited (default) |
-
-MCP mode keeps the sandboxed defaults (command caps, timeout). Each request
-builds a fresh `Bash`. See `crates/bashkit-cli/src/mcp.rs`.
 
 ## Examples
 
@@ -233,12 +211,6 @@ Tighten limits for an untrusted script:
 
 ```bash
 bashkit --max-commands 1000 --timeout 5 untrusted.sh
-```
-
-MCP server:
-
-```bash
-bashkit mcp
 ```
 
 ## Error handling
