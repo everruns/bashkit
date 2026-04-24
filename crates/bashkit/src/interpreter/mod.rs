@@ -2960,8 +2960,14 @@ impl Interpreter {
         let write_fd = self.coproc_next_fd - 1;
         self.coproc_next_fd -= 2; // reserve pair for next coproc
 
-        // Execute the command body, capturing output
-        let result = self.execute_command(&coproc.body).await?;
+        // Execute the command body while suppressing streaming callbacks.
+        // Coproc output must stay internal and be consumed only via read -u / <&FD.
+        let saved_callback = self.output_callback.take();
+        let result = self.execute_command(&coproc.body).await;
+        if let Some(callback) = saved_callback {
+            self.output_callback = Some(callback);
+        }
+        let result = result?;
 
         // Buffer stdout lines for reading via the virtual read FD.
         // Lines are stored in reverse order so pop() yields the first line.
