@@ -428,10 +428,15 @@ def test_bash_direct_vfs_methods_track_shell_changes_and_reset():
 def test_bash_direct_vfs_glob_limits_result_count():
     bash = Bash()
     bash.mkdir("/data", recursive=True)
-    for idx in range(10_200):
-        bash.write_file(f"/data/file_{idx}.txt", "x")
-    matches = bash.glob("/data/*.txt")
-    assert len(matches) == 10_000
+    # VFS default max_file_count is 10_000, so stay within that while still
+    # writing enough files to exercise the traversal path.
+    for shard in range(10):
+        shard_dir = f"/data/s{shard}"
+        bash.mkdir(shard_dir, recursive=True)
+        for idx in range(900):
+            bash.write_file(f"{shard_dir}/file_{idx}.txt", "x")
+    matches = bash.glob("/data/*/*.txt")
+    assert len(matches) == 9_000
 
 
 # -- Bash: FS / mount error cases ------------------------------------------

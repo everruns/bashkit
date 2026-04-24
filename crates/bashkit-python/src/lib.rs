@@ -790,8 +790,13 @@ fn glob_via_bash(rt: &Arc<Runtime>, inner: &Arc<Mutex<Bash>>, pattern: String) -
         let mut matches = Vec::new();
         let mut stack = vec![root.clone()];
 
-        if let Ok(metadata) = fs.stat(root_path).await {
-            if metadata.file_type == FsFileType::File && glob_match_path(&root, &pattern) {
+        // If the root resolves to a single file (no wildcards in pattern),
+        // just match against it and return. Otherwise fall through to walk
+        // the directory tree rooted at `root`.
+        if let Ok(metadata) = fs.stat(root_path).await
+            && metadata.file_type == FsFileType::File
+        {
+            if glob_match_path(&root, &pattern) {
                 matches.push(root);
             }
             return Ok(matches);
