@@ -214,6 +214,22 @@ matched
 fell_through
 ### end
 
+### case_fallthrough_preserves_break
+# break inside ;& case arm must break enclosing loop immediately
+i=0; while true; do echo loop; case a in a) break ;& b) echo wrong ;; esac; echo after; done; echo done
+### expect
+loop
+done
+### end
+
+### case_fallthrough_preserves_return
+# return inside ;& case arm must return from function immediately
+f() { case a in a) echo start; return 7 ;& b) echo wrong ;; esac; echo after; }; f; echo rc=$?
+### expect
+start
+rc=7
+### end
+
 ### and_list_success
 # AND list with success
 true && echo yes
