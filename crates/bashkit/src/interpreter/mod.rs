@@ -2359,7 +2359,7 @@ impl Interpreter {
         // Evaluate with lazy expansion to support short-circuit semantics.
         // In `[[ -n "${X:-}" && "$X" != "off" ]]`, if the left side is false,
         // the right side must NOT be expanded (to avoid set -u errors).
-        let result = self.evaluate_conditional_words(words).await;
+        let result = self.evaluate_conditional_words(words).await?;
         // If a nounset error occurred during evaluation, propagate it.
         if let Some(err_msg) = self.nounset_error.take() {
             self.last_exit_code = 1;
@@ -2386,10 +2386,10 @@ impl Interpreter {
     fn evaluate_conditional_words<'a>(
         &'a mut self,
         words: &'a [Word],
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send + 'a>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool>> + Send + 'a>> {
         Box::pin(async move {
             if words.is_empty() {
-                return false;
+                return Ok(false);
             }
 
             // Helper: get literal text of a word (for operators like &&, ||, !, (, ))
@@ -2404,7 +2404,7 @@ impl Interpreter {
 
             // Handle negation
             if word_literal(&words[0]).as_deref() == Some("!") {
-                return !self.evaluate_conditional_words(&words[1..]).await;
+                return Ok(!self.evaluate_conditional_words(&words[1..]).await?);
             }
 
             // Handle parentheses
@@ -2419,18 +2419,18 @@ impl Interpreter {
             // Look for || (lowest precedence), then && — scan right to left
             for i in (0..words.len()).rev() {
                 if word_literal(&words[i]).as_deref() == Some("||") && i > 0 {
-                    let left = self.evaluate_conditional_words(&words[..i]).await;
+                    let left = self.evaluate_conditional_words(&words[..i]).await?;
                     if left {
-                        return true; // short-circuit: skip right side
+                        return Ok(true); // short-circuit: skip right side
                     }
                     return self.evaluate_conditional_words(&words[i + 1..]).await;
                 }
             }
             for i in (0..words.len()).rev() {
                 if word_literal(&words[i]).as_deref() == Some("&&") && i > 0 {
-                    let left = self.evaluate_conditional_words(&words[..i]).await;
+                    let left = self.evaluate_conditional_words(&words[..i]).await?;
                     if !left {
-                        return false; // short-circuit: skip right side
+                        return Ok(false); // short-circuit: skip right side
                     }
                     return self.evaluate_conditional_words(&words[i + 1..]).await;
                 }
@@ -2439,12 +2439,9 @@ impl Interpreter {
             // Leaf: expand words and evaluate as a simple condition
             let mut expanded = Vec::new();
             for word in words {
-                match self.expand_word(word).await {
-                    Ok(s) => expanded.push(s),
-                    Err(_) => return false,
-                }
+                expanded.push(self.expand_word(word).await?);
             }
-            self.evaluate_conditional(&expanded).await
+            Ok(self.evaluate_conditional(&expanded).await)
         })
     }
 
