@@ -20,6 +20,29 @@ info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
+# Decision: pin tool versions + verify SHA-256 in-repo to avoid remote script execution
+# and unverified binary extraction during bootstrap.
+sha256_file() {
+    local file="$1"
+    if command -v sha256sum &> /dev/null; then
+        sha256sum "$file" | awk '{print $1}'
+    elif command -v shasum &> /dev/null; then
+        shasum -a 256 "$file" | awk '{print $1}'
+    else
+        error "No SHA-256 tool found (need sha256sum or shasum)"
+    fi
+}
+
+verify_sha256() {
+    local file="$1"
+    local expected="$2"
+    local actual
+    actual=$(sha256_file "$file")
+    if [[ "$actual" != "$expected" ]]; then
+        error "Checksum mismatch for $(basename "$file"): expected $expected got $actual"
+    fi
+}
+
 INSTALL_DIR="${HOME}/.cargo/bin"
 mkdir -p "$INSTALL_DIR"
 if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
@@ -33,7 +56,26 @@ install_just() {
     fi
 
     info "Installing just (pre-built binary)..."
-    curl --proto '=https' --tlsv1.2 -sSf --connect-timeout 10 --max-time 60 --retry 2 --retry-delay 2 https://just.systems/install.sh | bash -s -- --to "$INSTALL_DIR"
+
+    ARCH=$(uname -m)
+    case "$ARCH" in
+        x86_64)  JUST_ARCH="x86_64"; JUST_SHA256="181b91d0ceebe8a57723fb648ed2ce1a44d849438ce2e658339df4f8db5f1263" ;;
+        aarch64) JUST_ARCH="aarch64"; JUST_SHA256="d065d0df1a1f99529869fba8a5b3e0a25c1795b9007099b00dfabe29c7c1f7b6" ;;
+        *)       error "Unsupported architecture: $ARCH" ;;
+    esac
+
+    JUST_VERSION="1.40.0"
+    JUST_TARBALL="just-${JUST_VERSION}-${JUST_ARCH}-unknown-linux-musl.tar.gz"
+    JUST_URL="https://github.com/casey/just/releases/download/${JUST_VERSION}/${JUST_TARBALL}"
+
+    TEMP_DIR=$(mktemp -d)
+    trap "rm -rf $TEMP_DIR" EXIT
+
+    curl --proto '=https' --tlsv1.2 -sSf --connect-timeout 10 --max-time 60 --retry 2 --retry-delay 2 "$JUST_URL" -o "$TEMP_DIR/$JUST_TARBALL"
+    verify_sha256 "$TEMP_DIR/$JUST_TARBALL" "$JUST_SHA256"
+    tar -xzf "$TEMP_DIR/$JUST_TARBALL" -C "$TEMP_DIR"
+    cp "$TEMP_DIR/just" "$INSTALL_DIR/just"
+    chmod +x "$INSTALL_DIR/just"
 
     if command -v just &> /dev/null; then
         info "just installed: $(just --version)"
@@ -52,8 +94,8 @@ install_gh() {
 
     ARCH=$(uname -m)
     case "$ARCH" in
-        x86_64)  GH_ARCH="amd64" ;;
-        aarch64) GH_ARCH="arm64" ;;
+        x86_64)  GH_ARCH="amd64"; GH_SHA256="912fdb1ca29cb005fb746fc5d2b787a289078923a29d0f9ec19a0b00272ded00" ;;
+        aarch64) GH_ARCH="arm64"; GH_SHA256="0f31e2a8549c64b5c1679f0b99ce5e0dac7c91da9e86f6246adb8805b0f0b4bb" ;;
         *)       error "Unsupported architecture: $ARCH" ;;
     esac
 
@@ -68,6 +110,7 @@ install_gh() {
 
     info "Downloading gh v${GH_VERSION}..."
     curl -fsSL --connect-timeout 10 --max-time 60 --retry 2 --retry-delay 2 "$GH_URL" -o "$TEMP_DIR/$GH_TARBALL"
+    verify_sha256 "$TEMP_DIR/$GH_TARBALL" "$GH_SHA256"
     tar -xzf "$TEMP_DIR/$GH_TARBALL" -C "$TEMP_DIR"
     cp "$TEMP_DIR/gh_${GH_VERSION}_linux_${GH_ARCH}/bin/gh" "$INSTALL_DIR/gh"
     chmod +x "$INSTALL_DIR/gh"
