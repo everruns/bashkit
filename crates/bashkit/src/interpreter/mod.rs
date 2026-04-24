@@ -1921,6 +1921,7 @@ impl Interpreter {
                 let saved_aliases = self.aliases.clone();
                 let saved_coproc = self.coproc_buffers.clone();
                 let saved_memory_budget = self.memory_budget.clone();
+                let saved_exec_fd_table = self.exec_fd_table.clone();
 
                 let mut result = self.execute_command_sequence(commands).await;
 
@@ -1965,6 +1966,7 @@ impl Interpreter {
                 self.aliases = saved_aliases;
                 self.coproc_buffers = saved_coproc;
                 self.memory_budget = saved_memory_budget;
+                self.exec_fd_table = saved_exec_fd_table;
 
                 // Consume Exit and Return control flow at subshell boundary —
                 // they only terminate the subshell, not the parent shell.
@@ -4943,6 +4945,7 @@ impl Interpreter {
         let saved_coproc = self.coproc_buffers.clone();
         let saved_env = self.env.clone();
         let saved_memory_budget = self.memory_budget.clone();
+        let saved_exec_fd_table = self.exec_fd_table.clone();
 
         // Child only sees exported variables (env), not all shell variables.
         // Reset last_exit_code so $? starts at 0 (matches real bash subprocess).
@@ -4989,6 +4992,7 @@ impl Interpreter {
         self.coproc_buffers = saved_coproc;
         self.env = saved_env;
         self.memory_budget = saved_memory_budget;
+        self.exec_fd_table = saved_exec_fd_table;
         self.bash_source_stack = saved_source_stack;
         self.pipeline_stdin = prev_pipeline_stdin;
 
@@ -7008,6 +7012,7 @@ impl Interpreter {
             let saved_aliases = self.aliases.clone();
             let saved_cwd = self.cwd.clone();
             let saved_memory_budget = self.memory_budget.clone();
+            let saved_exec_fd_table = self.exec_fd_table.clone();
             let mut stdout = String::new();
             for cmd in commands {
                 let cmd_result = self.execute_command(cmd).await?;
@@ -7039,6 +7044,7 @@ impl Interpreter {
             self.aliases = saved_aliases;
             self.cwd = saved_cwd;
             self.memory_budget = saved_memory_budget;
+            self.exec_fd_table = saved_exec_fd_table;
             self.counters.pop_subst();
             self.subst_generation += 1;
             let trimmed = stdout.trim_end_matches('\n');
@@ -9578,6 +9584,7 @@ impl Interpreter {
                             let saved_aliases = self.aliases.clone();
                             let saved_cwd = self.cwd.clone();
                             let saved_memory_budget = self.memory_budget.clone();
+                            let saved_exec_fd_table = self.exec_fd_table.clone();
                             let cmd_result =
                                 self.execute_command_sequence(&script.commands).await?;
                             self.variables = saved_vars;
@@ -9588,6 +9595,7 @@ impl Interpreter {
                             self.aliases = saved_aliases;
                             self.cwd = saved_cwd;
                             self.memory_budget = saved_memory_budget;
+                            self.exec_fd_table = saved_exec_fd_table;
                             self.counters.pop_subst();
                             let trimmed = cmd_result.stdout.trim_end_matches('\n');
                             if trimmed.is_empty() {
@@ -10543,6 +10551,28 @@ mod tests {
 
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout.trim(), "first second");
+    }
+
+    #[tokio::test]
+    async fn test_exec_fd_in_subshell_does_not_leak_to_parent() {
+        let result = run_script(
+            "(exec 3>/tmp/subshell-fd.txt; echo child >&3); echo parent >&3; cat /tmp/subshell-fd.txt",
+        )
+        .await;
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("child"));
+        assert!(!result.stdout.contains("parent"));
+    }
+
+    #[tokio::test]
+    async fn test_exec_fd_in_command_substitution_does_not_leak_to_parent() {
+        let result = run_script(
+            "x=$(exec 3>/tmp/cmd-sub-fd.txt; echo child >&3); echo parent >&3; cat /tmp/cmd-sub-fd.txt",
+        )
+        .await;
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("child"));
+        assert!(!result.stdout.contains("parent"));
     }
 
     #[tokio::test]
