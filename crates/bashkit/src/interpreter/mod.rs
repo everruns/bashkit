@@ -3342,7 +3342,12 @@ impl Interpreter {
         });
 
         let mut saved_opts: Vec<(String, Option<String>)> = Vec::new();
+        let mut saved_opt_names: HashSet<&'static str> = HashSet::new();
         for (var, val) in &shell_opts {
+            if !saved_opt_names.insert(*var) {
+                self.insert_variable_checked(var.to_string(), val.to_string());
+                continue;
+            }
             let prev = self.variables.get(*var).cloned();
             saved_opts.push((var.to_string(), prev));
             self.insert_variable_checked(var.to_string(), val.to_string());
