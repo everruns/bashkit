@@ -216,6 +216,8 @@ pub use git::Git;
 pub use ssh::{Scp, Sftp, Ssh};
 
 #[cfg(feature = "python")]
+pub(crate) use python::PythonInprocessOptIn;
+#[cfg(feature = "python")]
 pub use python::{Python, PythonExternalFnHandler, PythonExternalFns, PythonLimits};
 
 #[cfg(feature = "typescript")]
