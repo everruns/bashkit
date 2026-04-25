@@ -350,8 +350,33 @@ async fn snapshot_restores_functions_from_source_when_ast_missing() {
     let bytes = rewritten.to_bytes().unwrap();
     let mut restored = Bash::from_snapshot(&bytes).unwrap();
 
-    let result = restored.exec("greet world").await.unwrap();
-    assert_eq!(result.stdout.trim(), "hi world");
+    let result = restored
+        .exec("type greet >/dev/null 2>&1; echo $?; greet world")
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "0\nhi world\n");
+}
+
+#[tokio::test]
+async fn snapshot_restores_legacy_function_shape_without_wrapper() {
+    let mut bash = Bash::new();
+    bash.exec("greet() { echo \"hi $1\"; }").await.unwrap();
+
+    let bytes = bash.snapshot().unwrap();
+    let parsed = Snapshot::from_bytes(&bytes).unwrap();
+    let legacy_func = serde_json::to_value(parsed.shell.functions.get("greet").unwrap()).unwrap();
+    let mut json: serde_json::Value = serde_json::from_slice(&bytes[32..]).unwrap();
+    json["shell"]["functions"]["greet"] = legacy_func;
+
+    let rewritten: Snapshot = serde_json::from_value(json).unwrap();
+    let bytes = rewritten.to_bytes().unwrap();
+    let mut restored = Bash::from_snapshot(&bytes).unwrap();
+
+    let result = restored
+        .exec("type greet >/dev/null 2>&1; echo $?; greet world")
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "0\nhi world\n");
 }
 
 #[tokio::test]

@@ -490,6 +490,7 @@ impl Default for ShellStateOptions {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SnapshottedFunction {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     source: Option<String>,
