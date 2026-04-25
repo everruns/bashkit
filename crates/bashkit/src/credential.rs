@@ -246,20 +246,20 @@ impl CredentialPolicy {
                         event.headers.extend(rule.credential.to_headers());
                     }
                     Some(placeholder) => {
-                        // Placeholder mode: find and replace placeholder in header values.
-                        let real_values = rule.credential.secret_values();
+                        // Placeholder mode: replace only in credential-owned header values.
+                        let credential_header_secrets = rule
+                            .credential
+                            .header_names()
+                            .into_iter()
+                            .zip(rule.credential.secret_values())
+                            .collect::<Vec<_>>();
                         let placeholder_str: &str = placeholder;
-                        // For Bearer: placeholder appears as the token value,
-                        // real value is the token. Replace in header values.
-                        for (_, header_value) in &mut event.headers {
-                            if header_value.contains(placeholder_str) {
-                                // Replace placeholder with real secret value.
-                                // For multi-value credentials, use the first value
-                                // (each header has its own placeholder if needed).
-                                if let Some(real_value) = real_values.first() {
-                                    *header_value =
-                                        header_value.replace(placeholder_str, real_value);
-                                }
+                        for (header_name, header_value) in &mut event.headers {
+                            if let Some((_, secret_value)) = credential_header_secrets
+                                .iter()
+                                .find(|(name, _)| name.eq_ignore_ascii_case(header_name))
+                            {
+                                *header_value = header_value.replace(placeholder_str, secret_value);
                             }
                         }
                     }
@@ -430,6 +430,31 @@ mod tests {
             HookAction::Continue(e) => {
                 // Placeholder should NOT be replaced — wrong host
                 assert!(e.headers[0].1.contains("bk_placeholder_"));
+            }
+            HookAction::Cancel(_) => panic!("should not cancel"),
+        }
+    }
+
+    #[test]
+    fn test_placeholder_only_replaced_in_credential_headers() {
+        let mut policy = CredentialPolicy::new();
+        let placeholder =
+            policy.add_placeholder("https://api.openai.com", Credential::bearer("sk-real-key"));
+
+        let hook = policy.into_hook();
+        let event = HttpRequestEvent {
+            method: "POST".into(),
+            url: "https://api.openai.com/v1/chat/completions".into(),
+            headers: vec![
+                ("Authorization".into(), format!("Bearer {}", placeholder)),
+                ("X-Debug".into(), format!("leak={}", placeholder)),
+            ],
+        };
+
+        match hook(event) {
+            HookAction::Continue(e) => {
+                assert_eq!(e.headers[0].1, "Bearer sk-real-key");
+                assert!(e.headers[1].1.contains("bk_placeholder_"));
             }
             HookAction::Cancel(_) => panic!("should not cancel"),
         }
