@@ -95,3 +95,14 @@ async fn awk_range_pattern_default_action() {
         .unwrap();
     assert_eq!(result.stdout, "a\nb\nc\n");
 }
+
+/// Start/end matching same record should only match that single record.
+#[tokio::test]
+async fn awk_range_pattern_start_end_same_line() {
+    let mut bash = Bash::new();
+    let result = bash
+        .exec(r#"printf "a\nb\na\nc\n" | awk '/a/,/a/{print}'"#)
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "a\na\n");
+}
