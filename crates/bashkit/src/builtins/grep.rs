@@ -732,6 +732,9 @@ impl Builtin for Grep {
                     let mut sorted_lines: Vec<usize> = printed_lines.iter().copied().collect();
                     sorted_lines.sort_unstable();
 
+                    let match_line_set: std::collections::HashSet<usize> =
+                        match_lines.iter().copied().collect();
+
                     let mut prev_line: Option<usize> = None;
                     for line_idx in sorted_lines {
                         // Print separator if there's a gap
@@ -743,7 +746,7 @@ impl Builtin for Grep {
                         prev_line = Some(line_idx);
 
                         // Determine if this is a match line or context line
-                        let is_match = match_lines.contains(&line_idx);
+                        let is_match = match_line_set.contains(&line_idx);
                         let separator = if is_match { fname_sep } else { '-' };
 
                         if show_filename {
