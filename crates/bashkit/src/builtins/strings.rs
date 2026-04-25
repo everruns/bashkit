@@ -54,16 +54,20 @@ fn parse_strings_args(
             });
         } else if p.flag("-a") {
             // Default behavior, ignore
-        } else if let Some(arg) = p.positional() {
-            files.push(arg.to_string());
         } else if let Some(arg) = p.current() {
-            // Try parsing as -NUM shorthand
-            if let Some(rest) = arg.strip_prefix('-')
-                && let Ok(n) = rest.parse::<usize>()
-            {
-                opts.min_length = n;
+            if arg != "-" && arg.starts_with('-') {
+                // Try parsing as -NUM shorthand
+                if let Some(rest) = arg.strip_prefix('-')
+                    && let Ok(n) = rest.parse::<usize>()
+                {
+                    opts.min_length = n;
+                }
+                p.advance();
+            } else if let Some(file) = p.positional() {
+                files.push(file.to_string());
+            } else {
+                p.advance();
             }
-            p.advance();
         } else {
             p.advance();
         }
@@ -289,6 +293,14 @@ mod tests {
         let result = run_strings_with_fs(&["-n", "4", "/test.bin"], &[("/test.bin", &data)]).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "cdef\nghijklm\n");
+    }
+
+    #[tokio::test]
+    async fn test_strings_min_length_shorthand() {
+        let data = b"short\0longest-string\0";
+        let result = run_strings_with_fs(&["-8", "/test.bin"], &[("/test.bin", data)]).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "longest-string\n");
     }
 
     #[tokio::test]
