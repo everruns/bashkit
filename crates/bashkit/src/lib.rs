@@ -505,7 +505,9 @@ pub use zapcode_core::Value as ZapcodeValue;
 /// Only available when the `logging` feature is enabled.
 #[cfg(feature = "logging")]
 pub mod logging {
-    pub use crate::logging_impl::{LogConfig, format_script_for_log, sanitize_for_log};
+    pub use crate::logging_impl::{
+        LogConfig, format_error_for_log, format_script_for_log, sanitize_for_log,
+    };
 }
 
 #[cfg(feature = "logging")]
@@ -809,9 +811,10 @@ impl Bash {
                 );
             }
             Err(e) => {
+                let error = logging::format_error_for_log(&e.to_string(), &self.log_config);
                 tracing::error!(
                     target: "bashkit::session",
-                    error = %e,
+                    error = %error,
                     "Script execution failed"
                 );
             }

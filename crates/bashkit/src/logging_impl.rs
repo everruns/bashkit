@@ -337,6 +337,30 @@ pub fn format_script_for_log(script: &str, config: &LogConfig) -> String {
     config.truncate(&sanitized).into_owned()
 }
 
+/// Format an execution error message for safe logging.
+///
+/// Applies sensitive-data redaction and log-injection sanitization.
+pub fn format_error_for_log(error: &str, config: &LogConfig) -> String {
+    let sanitized = sanitize_for_log(error);
+    let redacted = config.redact_value(&sanitized);
+    if redacted.as_ref() == "[REDACTED]" {
+        return redacted.into_owned();
+    }
+
+    if config.redact_sensitive
+        && sanitized.split_whitespace().any(|chunk| {
+            let token = chunk.trim_matches(|c: char| {
+                !(c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '+' | '/' | '='))
+            });
+            !token.is_empty() && is_likely_secret(token)
+        })
+    {
+        return "[REDACTED]".to_string();
+    }
+
+    config.truncate(redacted.as_ref()).into_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -476,6 +500,14 @@ mod tests {
         let sanitized = sanitize_for_log(malicious);
         assert!(!sanitized.contains('\n'));
         assert!(sanitized.contains("\\n"));
+    }
+
+    #[test]
+    fn test_error_message_redacted_and_sanitized() {
+        let config = LogConfig::new();
+        let input = "grep: invalid max count: sk-1234567890abcdefghij\nforged line";
+        let formatted = format_error_for_log(input, &config);
+        assert_eq!(formatted, "[REDACTED]");
     }
 
     #[test]
