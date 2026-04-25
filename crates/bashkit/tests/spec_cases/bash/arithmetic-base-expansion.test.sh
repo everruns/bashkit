@@ -29,3 +29,20 @@ echo $(( 10#${x} ))
 ### expect
 99
 ### end
+
+
+### arithmetic_base_suffix_pattern_contains_double_percent
+# Ensure %% inside pattern is not treated as operator location
+var="123foo%%bar"
+echo $(( 10#${var%foo%%bar} ))
+### expect
+123
+### end
+
+### arithmetic_base_prefix_pattern_contains_double_hash
+# Ensure ## inside pattern is not treated as operator location
+var="foo##bar123"
+echo $(( 10#${var#foo##bar} ))
+### expect
+123
+### end
