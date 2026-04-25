@@ -612,13 +612,21 @@ fn parse_find_args(args: &[String]) -> std::result::Result<(Vec<String>, FindOpt
     Ok((paths, opts))
 }
 
-/// Collect matched paths for find, without -exec output.
-async fn collect_find_paths(
+struct FindPlanData {
+    matched_paths: Vec<String>,
+    errors: String,
+    had_error: bool,
+}
+
+/// Collect matched paths and path/traversal errors for find execution planning.
+async fn collect_find_plan_data(
     ctx: &Context<'_>,
     search_paths: &[String],
     opts: &FindOptions,
-) -> Result<Vec<String>> {
+) -> Result<FindPlanData> {
     let mut matched: Vec<String> = Vec::new();
+    let mut errors = String::new();
+    let mut had_error = false;
     // Reuse find_recursive but with a temporary output buffer
     let temp_opts = FindOptions {
         name_pattern: opts.name_pattern.clone(),
@@ -636,13 +644,17 @@ async fn collect_find_paths(
     for path_str in search_paths {
         let path = resolve_path(ctx.cwd, path_str);
         if !ctx.fs.exists(&path).await.unwrap_or(false) {
+            errors.push_str(&format!(
+                "find: '{}': No such file or directory\n",
+                path_str
+            ));
+            had_error = true;
             continue;
         }
-        // Intentionally swallowing errors (`let _ =`) rather than propagating (`?`):
-        // this feeds execution_plan(), which is only an optimization hint. Propagating
-        // would bubble up as Err and abort the entire command. Real error handling
-        // (stderr messages, exit codes) lives in execute(), which is always called.
-        let _ = find_recursive(ctx, &path, path_str, &temp_opts, 0, &mut output).await;
+        if let Err(e) = find_recursive(ctx, &path, path_str, &temp_opts, 0, &mut output).await {
+            errors.push_str(&format!("find: '{}': {}\n", path_str, e));
+            had_error = true;
+        }
     }
     // Parse the output back into paths (each line is a path)
     for line in output.lines() {
@@ -650,7 +662,11 @@ async fn collect_find_paths(
             matched.push(line.to_string());
         }
     }
-    Ok(matched)
+    Ok(FindPlanData {
+        matched_paths: matched,
+        errors,
+        had_error,
+    })
 }
 
 /// Build exec sub-commands from matched paths and exec_args template.
@@ -763,15 +779,24 @@ impl Builtin for Find {
             return Ok(None);
         }
 
-        // Collect matched paths (collect_find_paths skips missing paths)
-        let matched_paths = collect_find_paths(ctx, &search_paths, &opts).await?;
-        if matched_paths.is_empty() {
+        // Collect matched paths plus any path/traversal errors.
+        let plan_data = collect_find_plan_data(ctx, &search_paths, &opts).await?;
+        if plan_data.matched_paths.is_empty() && !plan_data.had_error {
             return Ok(None);
         }
 
-        let commands = build_find_exec_commands(&opts.exec_args, &matched_paths, opts.exec_batch);
-        if commands.is_empty() {
+        let commands =
+            build_find_exec_commands(&opts.exec_args, &plan_data.matched_paths, opts.exec_batch);
+        if commands.is_empty() && !plan_data.had_error {
             return Ok(None);
+        }
+
+        if plan_data.had_error {
+            return Ok(Some(ExecutionPlan::BatchWithStatus {
+                commands,
+                stderr_prefix: plan_data.errors,
+                force_error_exit: true,
+            }));
         }
 
         Ok(Some(ExecutionPlan::Batch { commands }))
@@ -3526,5 +3551,55 @@ mod tests {
 
         let plan = Find.execution_plan(&ctx).await.unwrap();
         assert!(plan.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_find_plan_exec_with_missing_path_returns_status_plan() {
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+
+        fs.write_file(&PathBuf::from("/home/user/a.txt"), b"hello")
+            .await
+            .unwrap();
+
+        let args = vec![
+            "/home/user".to_string(),
+            "/home/missing".to_string(),
+            "-name".to_string(),
+            "*.txt".to_string(),
+            "-exec".to_string(),
+            "echo".to_string(),
+            "{}".to_string(),
+            ";".to_string(),
+        ];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+
+        let plan = Find.execution_plan(&ctx).await.unwrap();
+        match plan {
+            Some(ExecutionPlan::BatchWithStatus {
+                commands,
+                stderr_prefix,
+                force_error_exit,
+            }) => {
+                assert_eq!(commands.len(), 1);
+                assert!(stderr_prefix.contains("No such file or directory"));
+                assert!(force_error_exit);
+            }
+            _ => panic!("expected BatchWithStatus plan"),
+        }
     }
 }
