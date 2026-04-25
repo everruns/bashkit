@@ -3341,7 +3341,9 @@ impl AwkInterpreter {
                 } else {
                     // Not in range — check if start pattern matches
                     if self.matches_pattern(start) {
-                        self.range_active.insert(rule_idx, true);
+                        // If end also matches this same line, range closes immediately.
+                        let end_matches = self.matches_pattern(end);
+                        self.range_active.insert(rule_idx, !end_matches);
                         true
                     } else {
                         false
