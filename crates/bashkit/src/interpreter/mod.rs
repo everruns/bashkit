@@ -6597,6 +6597,59 @@ impl Interpreter {
                     ..Default::default()
                 }
             }
+            builtins::ExecutionPlan::BatchWithStatus {
+                commands,
+                stderr_prefix,
+                force_error_exit,
+            } => {
+                let mut combined_stdout = String::new();
+                let mut combined_stderr = stderr_prefix;
+                let mut last_exit_code = 0;
+
+                for cmd in commands {
+                    let cmd_redirects = if let Some(ref stdin_data) = cmd.stdin {
+                        vec![Redirect {
+                            fd: None,
+                            fd_var: None,
+                            kind: RedirectKind::HereString,
+                            target: Word::literal(stdin_data.trim_end_matches('\n').to_string()),
+                        }]
+                    } else {
+                        Vec::new()
+                    };
+
+                    let inner_cmd = Command::Simple(SimpleCommand {
+                        name: Word::quoted_literal(cmd.name),
+                        args: cmd
+                            .args
+                            .iter()
+                            .map(|s| Word::quoted_literal(s.clone()))
+                            .collect(),
+                        redirects: cmd_redirects,
+                        assignments: Vec::new(),
+                        span: Span::new(),
+                    });
+
+                    let result = self.execute_command(&inner_cmd).await?;
+                    combined_stdout.push_str(&result.stdout);
+                    combined_stderr.push_str(&result.stderr);
+                    last_exit_code = result.exit_code;
+                }
+
+                let exit_code = if force_error_exit && last_exit_code == 0 {
+                    1
+                } else {
+                    last_exit_code
+                };
+
+                ExecResult {
+                    stdout: combined_stdout,
+                    stderr: combined_stderr,
+                    exit_code,
+                    control_flow: ControlFlow::None,
+                    ..Default::default()
+                }
+            }
         };
 
         self.apply_redirections(result, redirects).await
