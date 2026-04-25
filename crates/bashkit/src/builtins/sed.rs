@@ -745,6 +745,12 @@ fn parse_sed_command_with_depth(
         }
         '{' => {
             validate_group_nesting(rest, depth)?;
+            if depth + 1 > MAX_GROUP_NESTING_DEPTH {
+                return Err(Error::Execution(format!(
+                    "sed: grouped command nesting exceeds max depth {}",
+                    MAX_GROUP_NESTING_DEPTH
+                )));
+            }
             // Grouped commands: { cmd1; cmd2; ... }
             // Find matching closing brace
             let inner = rest[1..].trim();
@@ -1261,6 +1267,14 @@ mod tests {
         }
 
         let err = parse_sed_command(&script, false).expect_err("expected nesting depth error");
+        assert!(err.to_string().contains("nesting exceeds max depth"));
+    }
+
+    #[test]
+    fn test_sed_grouped_command_nesting_depth_limit_with_address_bypass_shape() {
+        let script = "{/s\u{E000}/{p}}";
+        let err = parse_sed_command_with_depth(script, false, MAX_GROUP_NESTING_DEPTH)
+            .expect_err("expected nesting depth error");
         assert!(err.to_string().contains("nesting exceeds max depth"));
     }
 
