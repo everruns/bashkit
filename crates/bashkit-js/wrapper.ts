@@ -1091,6 +1091,8 @@ export type ToolCallback = (
  */
 export class ScriptedTool {
   private native: NativeScriptedToolType;
+  // Keep strong JS refs while native TSFN callbacks are weak.
+  private callbackRefs: Array<(requestJson: string) => string> = [];
 
   constructor(options: ScriptedToolOptions) {
     this.native = new NativeScriptedTool({
@@ -1126,6 +1128,7 @@ export class ScriptedTool {
       };
       return callback(request.params, request.stdin);
     };
+    this.callbackRefs.push(wrappedCallback);
     this.native.addTool(
       name,
       description,
