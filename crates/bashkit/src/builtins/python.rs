@@ -41,6 +41,10 @@ const DEFAULT_MAX_RECURSION: usize = 200;
 // Security hard-stop: catastrophic regex backtracking can bypass cooperative
 // interpreter budget checks, so disable regex stdlib module in untrusted code.
 const DISABLED_STDLIB_MODULES: &[&str] = &["re"];
+// Security decision: virtual Python datetime uses a fixed UTC instant so
+// sandboxed code cannot fingerprint host clock/timezone state.
+const VIRTUAL_NOW_UNIX_SECS: i64 = 1_704_067_200; // 2024-01-01T00:00:00Z
+const VIRTUAL_NOW_NANOS: u32 = 123_456_000; // 123456 µs for deterministic microseconds
 
 const PYTHON_INPROCESS_OPT_IN_ENV: &str = "BASHKIT_ALLOW_INPROCESS_PYTHON";
 
@@ -866,9 +870,9 @@ fn handle_get_environ(env: &HashMap<String, String>) -> ExtFunctionResult {
     ExtFunctionResult::Return(MontyObject::dict(pairs))
 }
 
-/// Handle datetime.date.today() → current date from host system.
+/// Handle datetime.date.today() using the sandbox virtual clock.
 fn handle_date_today() -> ExtFunctionResult {
-    let now = chrono::Local::now();
+    let now = virtual_now_utc();
     ExtFunctionResult::Return(MontyObject::Date(MontyDate {
         year: now.year(),
         month: now.month() as u8,
@@ -876,11 +880,12 @@ fn handle_date_today() -> ExtFunctionResult {
     }))
 }
 
-/// Handle datetime.datetime.now(tz=None) → current datetime from host system.
+/// Handle datetime.datetime.now(tz=None) using the sandbox virtual clock.
 ///
 /// If tz is None, returns a naive datetime (no timezone info).
 /// If tz is a TimeZone, returns an aware datetime at that offset.
 fn handle_datetime_now(args: &[MontyObject]) -> ExtFunctionResult {
+    let base_utc = virtual_now_utc();
     let tz = match args.first() {
         Some(MontyObject::TimeZone(tz)) => Some(tz),
         _ => None,
@@ -890,7 +895,7 @@ fn handle_datetime_now(args: &[MontyObject]) -> ExtFunctionResult {
         // Aware datetime at the requested offset
         let offset = chrono::FixedOffset::east_opt(tz.offset_seconds)
             .unwrap_or(chrono::FixedOffset::east_opt(0).expect("UTC offset is always valid"));
-        let dt = chrono::Utc::now().with_timezone(&offset);
+        let dt = base_utc.with_timezone(&offset);
         ExtFunctionResult::Return(MontyObject::DateTime(MontyDateTime {
             year: dt.year(),
             month: dt.month() as u8,
@@ -903,8 +908,8 @@ fn handle_datetime_now(args: &[MontyObject]) -> ExtFunctionResult {
             timezone_name: tz.name.clone(),
         }))
     } else {
-        // No timezone → naive local datetime
-        let dt = chrono::Local::now();
+        // No timezone → naive UTC datetime (no timezone metadata)
+        let dt = base_utc.naive_utc();
         ExtFunctionResult::Return(MontyObject::DateTime(MontyDateTime {
             year: dt.year(),
             month: dt.month() as u8,
@@ -917,6 +922,11 @@ fn handle_datetime_now(args: &[MontyObject]) -> ExtFunctionResult {
             timezone_name: None,
         }))
     }
+}
+
+fn virtual_now_utc() -> chrono::DateTime<chrono::Utc> {
+    chrono::DateTime::<chrono::Utc>::from_timestamp(VIRTUAL_NOW_UNIX_SECS, VIRTUAL_NOW_NANOS)
+        .expect("virtual timestamp constant must be valid")
 }
 
 // ---------------------------------------------------------------------------
@@ -1638,13 +1648,13 @@ mod tests {
         let r = run(
             &[
                 "-c",
-                "from datetime import date\nd = date.today()\nprint(d.year > 2000)",
+                "from datetime import date\nd = date.today()\nprint(f'{d.year}-{d.month}-{d.day}')",
             ],
             None,
         )
         .await;
         assert_eq!(r.exit_code, 0);
-        assert_eq!(r.stdout.trim(), "True");
+        assert_eq!(r.stdout.trim(), "2024-1-1");
     }
 
     #[tokio::test]
@@ -1652,13 +1662,13 @@ mod tests {
         let r = run(
             &[
                 "-c",
-                "from datetime import datetime\ndt = datetime.now()\nprint(dt.year > 2000)",
+                "from datetime import datetime\ndt = datetime.now()\nprint(f'{dt.year}-{dt.month}-{dt.day} {dt.hour}:{dt.minute}:{dt.second}.{dt.microsecond}')",
             ],
             None,
         )
         .await;
         assert_eq!(r.exit_code, 0);
-        assert_eq!(r.stdout.trim(), "True");
+        assert_eq!(r.stdout.trim(), "2024-1-1 0:0:0.123456");
     }
 
     #[tokio::test]
@@ -1666,13 +1676,13 @@ mod tests {
         let r = run(
             &[
                 "-c",
-                "from datetime import datetime, timezone\ndt = datetime.now(timezone.utc)\nprint(dt.year > 2000)",
+                "from datetime import datetime, timezone\ndt = datetime.now(timezone.utc)\nprint(f'{dt.year}-{dt.month}-{dt.day} {dt.hour}:{dt.minute}:{dt.second}.{dt.microsecond}')",
             ],
             None,
         )
         .await;
         assert_eq!(r.exit_code, 0);
-        assert_eq!(r.stdout.trim(), "True");
+        assert_eq!(r.stdout.trim(), "2024-1-1 0:0:0.123456");
     }
 
     #[tokio::test]
