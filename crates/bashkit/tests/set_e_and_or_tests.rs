@@ -188,7 +188,11 @@ echo "SHOULD NOT APPEAR"
         )
         .await
         .unwrap();
-    assert!(!result.stdout.contains("SHOULD NOT APPEAR"));
+    assert!(
+        !result.stdout.contains("SHOULD NOT APPEAR"),
+        "unexpected stdout: {:?}",
+        result.stdout
+    );
 }
 
 /// set -e: && chain failure at end of for loop body should NOT exit (issue #873)
@@ -230,4 +234,31 @@ echo "SHOULD NOT APPEAR"
         .await
         .unwrap();
     assert!(!result.stdout.contains("SHOULD NOT APPEAR"));
+}
+
+/// set -e: mixed && and semicolon list should still exit on trailing plain failure
+#[tokio::test]
+async fn set_e_mixed_and_or_then_plain_failure_exits() {
+    let mut bash = Bash::new();
+    let result = bash
+        .exec(
+            r#"
+set -e
+f() {
+    true && echo "ok"; false
+}
+f
+echo "SHOULD NOT APPEAR"
+"#,
+        )
+        .await
+        .unwrap();
+    assert!(result.stdout.contains("ok"));
+    assert!(
+        !result.stdout.contains("SHOULD NOT APPEAR"),
+        "exit_code={}, stdout={:?}, stderr={:?}",
+        result.exit_code,
+        result.stdout,
+        result.stderr
+    );
 }
