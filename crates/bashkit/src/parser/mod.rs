@@ -3843,6 +3843,27 @@ mod tests {
     }
 
     #[test]
+    fn test_single_quoted_segment_concatenation_stays_literal() {
+        let parser = Parser::new("echo foo'$(id)'");
+        let script = parser.parse().unwrap();
+
+        if let Command::Simple(cmd) = &script.commands[0] {
+            assert_eq!(cmd.args.len(), 1);
+            assert_eq!(cmd.args[0].to_string(), "foo$(id)");
+            assert!(
+                cmd.args[0]
+                    .parts
+                    .iter()
+                    .all(|p| matches!(p, WordPart::Literal(_))),
+                "single-quoted segment should not produce expansions: {:?}",
+                cmd.args[0].parts
+            );
+        } else {
+            panic!("expected simple command");
+        }
+    }
+
+    #[test]
     fn test_locale_quote_marks_word_as_quoted_without_expansion() {
         let parser = Parser::new("echo $\"*.txt\"");
         let script = parser.parse().unwrap();
@@ -3853,6 +3874,30 @@ mod tests {
                 "locale-quoted argument must be marked quoted"
             );
             assert_eq!(cmd.args[0].to_string(), "*.txt");
+        } else {
+            panic!("expected simple command");
+        }
+    }
+
+    #[test]
+    fn test_single_quoted_assignment_value_stays_literal() {
+        let parser = Parser::new("VAR='$(id)'");
+        let script = parser.parse().unwrap();
+
+        if let Command::Simple(cmd) = &script.commands[0] {
+            assert_eq!(cmd.assignments.len(), 1);
+            assert_eq!(cmd.assignments[0].name, "VAR");
+            match &cmd.assignments[0].value {
+                AssignmentValue::Scalar(word) => {
+                    assert_eq!(word.to_string(), "$(id)");
+                    assert!(
+                        word.parts.iter().all(|p| matches!(p, WordPart::Literal(_))),
+                        "single-quoted assignment should remain literal: {:?}",
+                        word.parts
+                    );
+                }
+                AssignmentValue::Array(_) => panic!("expected scalar assignment"),
+            }
         } else {
             panic!("expected simple command");
         }
