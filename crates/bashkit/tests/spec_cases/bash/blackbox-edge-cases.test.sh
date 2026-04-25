@@ -265,6 +265,16 @@ declare -A m; echo "${m[nokey]:-default}"
 default
 ### end
 
+### assoc_array_assign_default
+# Associative array default assignment
+declare -A m
+echo "${m[nokey]:=default}"
+echo "${m[nokey]}"
+### expect
+default
+default
+### end
+
 ### assoc_array_check_key
 # Check if associative array key exists
 declare -A m; m[foo]=bar; [[ -v m[foo] ]] && echo exists || echo missing
