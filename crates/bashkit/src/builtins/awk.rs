@@ -2209,6 +2209,23 @@ impl AwkInterpreter {
                 value
             }
             AwkExpr::BinOp(left, op, right) => {
+                if op == "&&" {
+                    let lb = self.eval_expr_as_bool(left);
+                    if !lb {
+                        return AwkValue::Number(0.0);
+                    }
+                    let rb = self.eval_expr_as_bool(right);
+                    return AwkValue::Number(if rb { 1.0 } else { 0.0 });
+                }
+                if op == "||" {
+                    let lb = self.eval_expr_as_bool(left);
+                    if lb {
+                        return AwkValue::Number(1.0);
+                    }
+                    let rb = self.eval_expr_as_bool(right);
+                    return AwkValue::Number(if rb { 1.0 } else { 0.0 });
+                }
+
                 let l = self.eval_expr(left);
                 let r = self.eval_expr(right);
 
@@ -2249,16 +2266,6 @@ impl AwkInterpreter {
                     } else {
                         0.0
                     }),
-                    "&&" => {
-                        let lb = self.eval_expr_as_bool(left);
-                        let rb = self.eval_expr_as_bool(right);
-                        AwkValue::Number(if lb && rb { 1.0 } else { 0.0 })
-                    }
-                    "||" => {
-                        let lb = self.eval_expr_as_bool(left);
-                        let rb = self.eval_expr_as_bool(right);
-                        AwkValue::Number(if lb || rb { 1.0 } else { 0.0 })
-                    }
                     "~" => {
                         if let Ok(re) = build_regex(&r.as_string()) {
                             AwkValue::Number(if re.is_match(&l.as_string()) {

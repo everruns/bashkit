@@ -26,3 +26,21 @@ flag && /^status:/ { print "status matched: " $0 }
     assert_eq!(lines[0], "id matched: id: t1");
     assert_eq!(lines[1], "status matched: status: open");
 }
+
+/// Regression test: boolean ops must not evaluate operands twice.
+#[tokio::test]
+async fn awk_boolean_ops_do_not_double_evaluate_side_effects() {
+    let mut bash = Bash::new();
+
+    let and_result = bash
+        .exec(r#"awk 'BEGIN { a=0; b=0; if (a++ && b++) {} ; print a, b }'"#)
+        .await
+        .unwrap();
+    assert_eq!(and_result.stdout.trim(), "1 0");
+
+    let or_result = bash
+        .exec(r#"awk 'BEGIN { a=1; b=0; if (a++ || b++) {} ; print a, b }'"#)
+        .await
+        .unwrap();
+    assert_eq!(or_result.stdout.trim(), "2 0");
+}
