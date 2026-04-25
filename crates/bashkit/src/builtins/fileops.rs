@@ -836,6 +836,30 @@ impl Builtin for Kill {
 ///   -t       Interpret TEMPLATE relative to a temp directory
 pub struct Mktemp;
 
+const MKTEMP_MAX_ATTEMPTS: usize = 64;
+
+fn mktemp_suffix_for_attempt(attempt: usize) -> String {
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
+
+    let mut hasher = RandomState::new().build_hasher();
+    hasher.write_usize(attempt);
+    let random = hasher.finish();
+    format!("{:010x}", random % 0xFF_FFFF_FFFF)
+}
+
+fn mktemp_name(template: Option<&str>, suffix: &str) -> String {
+    if let Some(tmpl) = template {
+        if tmpl.contains("XXXXXX") {
+            tmpl.replacen("XXXXXX", &suffix[..6], 1)
+        } else {
+            format!("{}.{}", tmpl, &suffix[..6])
+        }
+    } else {
+        format!("tmp.{}", &suffix[..10])
+    }
+}
+
 #[async_trait]
 impl Builtin for Mktemp {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
@@ -871,54 +895,59 @@ impl Builtin for Mktemp {
             i += 1;
         }
 
-        // Generate random suffix
-        use std::collections::hash_map::RandomState;
-        use std::hash::{BuildHasher, Hasher};
-        let random = RandomState::new().build_hasher().finish();
-        let suffix = format!("{:010x}", random % 0xFF_FFFF_FFFF);
+        for attempt in 0..MKTEMP_MAX_ATTEMPTS {
+            let suffix = mktemp_suffix_for_attempt(attempt);
+            let name = mktemp_name(template.as_deref(), &suffix);
 
-        // Build path
-        let name = if let Some(tmpl) = &template {
-            if tmpl.contains("XXXXXX") {
-                tmpl.replacen("XXXXXX", &suffix[..6], 1)
+            let path = if use_tmpdir || template.is_none() || !name.contains('/') {
+                format!("{}/{}", prefix_dir, name)
             } else {
-                format!("{}.{}", tmpl, &suffix[..6])
+                let p = resolve_path(ctx.cwd, &name);
+                p.to_string_lossy().to_string()
+            };
+
+            let full_path = std::path::PathBuf::from(&path);
+
+            // Ensure parent directory exists
+            if let Some(parent) = full_path.parent()
+                && !ctx.fs.exists(parent).await.unwrap_or(false)
+            {
+                let _ = ctx.fs.mkdir(parent, true).await;
             }
-        } else {
-            format!("tmp.{}", &suffix[..10])
-        };
 
-        let path = if use_tmpdir || template.is_none() || !name.contains('/') {
-            format!("{}/{}", prefix_dir, name)
-        } else {
-            let p = resolve_path(ctx.cwd, &name);
-            p.to_string_lossy().to_string()
-        };
+            if ctx.fs.exists(&full_path).await.unwrap_or(false) {
+                continue;
+            }
 
-        let full_path = std::path::PathBuf::from(&path);
-
-        // Ensure parent directory exists
-        if let Some(parent) = full_path.parent()
-            && !ctx.fs.exists(parent).await.unwrap_or(false)
-        {
-            let _ = ctx.fs.mkdir(parent, true).await;
+            if create_dir {
+                match ctx.fs.mkdir(&full_path, false).await {
+                    Ok(_) => return Ok(ExecResult::ok(format!("{}\n", path))),
+                    Err(_) if ctx.fs.exists(&full_path).await.unwrap_or(false) => continue,
+                    Err(e) => {
+                        return Ok(ExecResult::err(
+                            format!("mktemp: failed to create directory '{}': {}\n", path, e),
+                            1,
+                        ));
+                    }
+                }
+            } else {
+                match ctx.fs.write_file(&full_path, &[]).await {
+                    Ok(_) => return Ok(ExecResult::ok(format!("{}\n", path))),
+                    Err(_) if ctx.fs.exists(&full_path).await.unwrap_or(false) => continue,
+                    Err(e) => {
+                        return Ok(ExecResult::err(
+                            format!("mktemp: failed to create file '{}': {}\n", path, e),
+                            1,
+                        ));
+                    }
+                }
+            }
         }
 
-        if create_dir {
-            if let Err(e) = ctx.fs.mkdir(&full_path, true).await {
-                return Ok(ExecResult::err(
-                    format!("mktemp: failed to create directory '{}': {}\n", path, e),
-                    1,
-                ));
-            }
-        } else if let Err(e) = ctx.fs.write_file(&full_path, &[]).await {
-            return Ok(ExecResult::err(
-                format!("mktemp: failed to create file '{}': {}\n", path, e),
-                1,
-            ));
-        }
-
-        Ok(ExecResult::ok(format!("{}\n", path)))
+        Ok(ExecResult::err(
+            "mktemp: failed to create unique temporary path after 64 attempts\n".to_string(),
+            1,
+        ))
     }
 }
 
@@ -1254,5 +1283,17 @@ mod tests {
 
         let meta = fs.stat(&cwd.join("script.sh")).await.unwrap();
         assert_eq!(meta.mode, 0o755);
+    }
+
+    #[test]
+    fn test_mktemp_name_template_replaces_xxxxxx() {
+        let name = mktemp_name(Some("/tmp/myapp.XXXXXX"), "abcdef1234");
+        assert_eq!(name, "/tmp/myapp.abcdef");
+    }
+
+    #[test]
+    fn test_mktemp_name_template_without_xxxxxx_appends_suffix() {
+        let name = mktemp_name(Some("/tmp/myapp"), "abcdef1234");
+        assert_eq!(name, "/tmp/myapp.abcdef");
     }
 }
