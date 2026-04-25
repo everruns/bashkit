@@ -8176,7 +8176,7 @@ impl Interpreter {
             ParameterOp::AssignDefault => {
                 if use_default {
                     let expanded = self.expand_operand(operand);
-                    self.set_variable(name.to_string(), expanded.clone());
+                    self.set_parameter_expansion_target(name, expanded.clone());
                     expanded
                 } else {
                     value.to_string()
@@ -9590,6 +9590,75 @@ impl Interpreter {
         if allexport && self.variables.contains_key(&resolved) {
             self.insert_env_checked(resolved, value);
         }
+    }
+
+    /// Set a parameter expansion assignment target (`:=`), including array elements.
+    fn set_parameter_expansion_target(&mut self, name: &str, value: String) {
+        if let Some(bracket) = name.find('[')
+            && name.ends_with(']')
+        {
+            let arr_name = &name[..bracket];
+            let key = &name[bracket + 1..name.len() - 1];
+            let resolved_name = self.resolve_nameref(arr_name).to_string();
+
+            if self.assoc_arrays.contains_key(&resolved_name) {
+                let expanded_key = self.expand_variable_or_literal(key);
+                let is_new_entry = self
+                    .assoc_arrays
+                    .get(&resolved_name)
+                    .is_none_or(|a| !a.contains_key(&expanded_key));
+                if is_new_entry
+                    && self
+                        .memory_budget
+                        .check_array_entries(1, &self.memory_limits)
+                        .is_err()
+                {
+                    return;
+                }
+                if is_new_entry {
+                    self.memory_budget.record_array_insert(1);
+                }
+                self.assoc_arrays
+                    .entry(resolved_name)
+                    .or_default()
+                    .insert(expanded_key, value);
+                return;
+            }
+
+            let raw_idx = self.evaluate_arithmetic(key);
+            let index = if raw_idx < 0 {
+                let len = self
+                    .arrays
+                    .get(&resolved_name)
+                    .and_then(|a| a.keys().max().map(|m| m + 1))
+                    .unwrap_or(0) as i64;
+                (len + raw_idx).max(0) as usize
+            } else {
+                raw_idx as usize
+            };
+            let is_new_entry = self
+                .arrays
+                .get(&resolved_name)
+                .is_none_or(|a| !a.contains_key(&index));
+            if is_new_entry
+                && self
+                    .memory_budget
+                    .check_array_entries(1, &self.memory_limits)
+                    .is_err()
+            {
+                return;
+            }
+            if is_new_entry {
+                self.memory_budget.record_array_insert(1);
+            }
+            self.arrays
+                .entry(resolved_name)
+                .or_default()
+                .insert(index, value);
+            return;
+        }
+
+        self.set_variable(name.to_string(), value);
     }
 
     /// Insert a variable into the global variables map with memory budget checking.
