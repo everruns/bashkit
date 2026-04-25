@@ -24,7 +24,19 @@ version = "0.7.12"
 [[audits.rand]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
+delta = "0.8.5 -> 0.8.6"
+notes = "Reviewed delta: backports RUSTSEC-2026-0097 fix by removing rand logging callbacks, panics on reseed failure instead of logging, removes experimental SIMD support, and keeps public RNG behavior otherwise compatible; no new ambient capabilities."
+
+[[audits.rand]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
 delta = "0.10.0 -> 0.10.1"
+
+[[audits.russh]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.60.0 -> 0.60.1"
+notes = "Reviewed delta: bounds keyboard-interactive auth response allocation/iteration by remaining packet data, adjusts PKCS#8 salt size, and adds roundtrip coverage; no new unsafe code or ambient capability changes."
 
 [[audits.rustls-webpki]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
