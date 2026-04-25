@@ -372,6 +372,9 @@ impl Builtin for Jq {
                             ));
                         }
                     };
+                    if let Err(e) = check_json_depth(&json_val, MAX_JQ_JSON_DEPTH) {
+                        return Ok(ExecResult::err(format!("{}\n", e), 2));
+                    }
                     var_bindings.push((name, json_val));
                     i += 3;
                     continue;
@@ -1267,6 +1270,19 @@ mod tests {
         assert!(
             result.exit_code != 0,
             "invalid JSON for --argjson should have non-zero exit"
+        );
+    }
+    #[tokio::test]
+    async fn test_jq_argjson_rejects_deep_nesting() {
+        let deep = format!("{}0{}", "[".repeat(101), "]".repeat(101));
+        let result = run_jq_result_with_args(&["--argjson", "x", &deep, "-n", "$x"], "")
+            .await
+            .unwrap();
+        assert!(result.exit_code != 0, "deep --argjson should be rejected");
+        assert!(
+            result.stderr.contains("nesting too deep"),
+            "error should mention depth limit: {}",
+            result.stderr
         );
     }
 
