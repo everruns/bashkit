@@ -3559,17 +3559,9 @@ impl Interpreter {
             }
 
             // Check for errexit (set -e) if enabled.
-            // Skip errexit for commands that are AND-OR lists — per POSIX, set -e
-            // does not exit on failures that are part of && or || chains.
-            // The list executor already handles errexit internally.
-            // Also skip when the result has errexit_suppressed set — this means
-            // a compound command (loop, etc.) ended with an AND-OR list exit code
-            // that should not propagate errexit to the caller.
-            let is_and_or_list = matches!(
-                command,
-                Command::List(list) if list.rest.iter().any(|(op, _)| matches!(op, ListOperator::And | ListOperator::Or))
-            );
-            let suppress = is_and_or_list || result.errexit_suppressed;
+            // Suppression is decided by the callee and surfaced through
+            // result.errexit_suppressed (e.g. AND-OR lists).
+            let suppress = result.errexit_suppressed;
             if check_errexit && self.is_errexit_enabled() && exit_code != 0 && !suppress {
                 return Ok(ExecResult {
                     stdout,
@@ -3707,6 +3699,7 @@ impl Interpreter {
         let mut stderr = String::new();
         let mut exit_code;
         let mut control_flow;
+        let mut exit_code_from_conditional_context = false;
 
         // Determine if the first command should run in the background.
         // The `&` terminator for first appears as rest[0].op == Background.
@@ -3717,6 +3710,7 @@ impl Interpreter {
                 .await?;
             exit_code = 0;
             control_flow = ControlFlow::None;
+            exit_code_from_conditional_context = false;
         } else {
             let emit_before = self.output_emit_count;
             let result = self.execute_command(&list.first).await?;
@@ -3726,6 +3720,11 @@ impl Interpreter {
             exit_code = result.exit_code;
             self.last_exit_code = exit_code;
             control_flow = result.control_flow;
+            exit_code_from_conditional_context = result.errexit_suppressed
+                || list
+                    .rest
+                    .first()
+                    .is_some_and(|(op, _)| matches!(op, ListOperator::And | ListOperator::Or));
 
             // If first command signaled control flow, return immediately
             if control_flow != ControlFlow::None {
@@ -3748,15 +3747,6 @@ impl Interpreter {
             }
         }
 
-        // Track if the list contains any && or || operators
-        let has_conditional_operators = list
-            .rest
-            .iter()
-            .any(|(op, _)| matches!(op, ListOperator::And | ListOperator::Or));
-
-        // Track if we just exited a conditional chain (for errexit check)
-        let mut just_exited_conditional_chain = false;
-
         for (i, (op, cmd)) in list.rest.iter().enumerate() {
             // Skip empty sentinel commands (produced by trailing `&`)
             if Self::is_empty_sentinel(cmd) {
@@ -3764,10 +3754,7 @@ impl Interpreter {
             }
 
             // Check if next operator (if any) is && or ||
-            let next_op = list.rest.get(i + 1).map(|(op, _)| op);
             let current_is_conditional = matches!(op, ListOperator::And | ListOperator::Or);
-            let next_is_conditional =
-                matches!(next_op, Some(ListOperator::And) | Some(ListOperator::Or));
 
             // Determine if THIS command should be backgrounded.
             // A command is backgrounded when the NEXT separator is Background
@@ -3775,14 +3762,12 @@ impl Interpreter {
             let should_background =
                 matches!(list.rest.get(i + 1), Some((ListOperator::Background, _)));
 
-            // Check errexit before executing if:
-            // - We just exited a conditional chain (and current op is semicolon)
-            // - OR: current op is semicolon and previous wasn't in a conditional chain
-            // - Exit code is non-zero
+            // Check errexit before executing next semicolon-separated command:
+            // if previous command failed outside conditional context, exit now.
             let should_check_errexit = matches!(op, ListOperator::Semicolon)
-                && !just_exited_conditional_chain
                 && self.is_errexit_enabled()
-                && exit_code != 0;
+                && exit_code != 0
+                && !exit_code_from_conditional_context;
 
             if should_check_errexit {
                 return Ok(ExecResult {
@@ -3794,25 +3779,24 @@ impl Interpreter {
                 });
             }
 
-            // Reset the flag
-            just_exited_conditional_chain = false;
-
-            // Mark that we're exiting a conditional chain
-            if current_is_conditional && !next_is_conditional {
-                just_exited_conditional_chain = true;
-            }
-
             let should_execute = match op {
                 ListOperator::And => exit_code == 0,
                 ListOperator::Or => exit_code != 0,
                 ListOperator::Semicolon | ListOperator::Background => true,
             };
 
+            if !should_execute && current_is_conditional {
+                // Short-circuited && / ||: the carried exit code came from
+                // a conditional chain, so errexit must not fire on it.
+                exit_code_from_conditional_context = true;
+            }
+
             if should_execute {
                 if should_background {
                     self.spawn_in_background(cmd, &mut stdout, &mut stderr)
                         .await?;
                     exit_code = 0;
+                    exit_code_from_conditional_context = false;
                 } else {
                     let emit_before = self.output_emit_count;
                     let result = self.execute_command(cmd).await?;
@@ -3822,6 +3806,8 @@ impl Interpreter {
                     exit_code = result.exit_code;
                     self.last_exit_code = exit_code;
                     control_flow = result.control_flow;
+                    exit_code_from_conditional_context =
+                        current_is_conditional || result.errexit_suppressed;
 
                     // If command signaled control flow, return immediately
                     if control_flow != ControlFlow::None {
@@ -3842,9 +3828,16 @@ impl Interpreter {
             }
         }
 
+        let last_nonempty_op_is_conditional = list
+            .rest
+            .iter()
+            .rev()
+            .find(|(_, cmd)| !Self::is_empty_sentinel(cmd))
+            .is_some_and(|(op, _)| matches!(op, ListOperator::And | ListOperator::Or));
+
         // Final errexit check for the last command
         let should_final_errexit_check =
-            !has_conditional_operators && self.is_errexit_enabled() && exit_code != 0;
+            self.is_errexit_enabled() && exit_code != 0 && !last_nonempty_op_is_conditional;
 
         if should_final_errexit_check {
             return Ok(ExecResult {
@@ -3861,7 +3854,7 @@ impl Interpreter {
             stderr,
             exit_code,
             control_flow: ControlFlow::None,
-            errexit_suppressed: has_conditional_operators && exit_code != 0,
+            errexit_suppressed: last_nonempty_op_is_conditional && exit_code != 0,
             ..Default::default()
         })
     }
