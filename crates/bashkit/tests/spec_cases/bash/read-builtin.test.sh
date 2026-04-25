@@ -75,6 +75,14 @@ echo "a=$a b=$b c=$c"
 a= b=two c=three
 ### end
 
+### read_ifs_mixed_whitespace_and_non_ws
+# Mixed IFS should split on both whitespace and non-whitespace delimiters
+IFS=": " read a b c <<< "one two:three"
+echo "a=$a b=$b c=$c"
+### expect
+a=one b=two c=three
+### end
+
 ### read_nchars
 # read -n N reads N characters
 read -n 3 var <<< "hello"
