@@ -44,15 +44,27 @@ const DISABLED_STDLIB_MODULES: &[&str] = &["re"];
 
 const PYTHON_INPROCESS_OPT_IN_ENV: &str = "BASHKIT_ALLOW_INPROCESS_PYTHON";
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PythonInprocessOptIn(pub bool);
+
 fn python_inprocess_enabled(ctx: &Context<'_>) -> bool {
-    let is_enabled = |v: &str| matches!(v, "1" | "true" | "TRUE" | "yes" | "YES");
-    ctx.env
-        .get(PYTHON_INPROCESS_OPT_IN_ENV)
-        .is_some_and(|v| is_enabled(v))
-        || ctx
-            .variables
-            .get(PYTHON_INPROCESS_OPT_IN_ENV)
-            .is_some_and(|v| is_enabled(v))
+    ctx.execution_extension::<PythonInprocessOptIn>()
+        .is_some_and(|opt_in| opt_in.0)
+        // Unit tests in this module build Context::new_for_test without
+        // execution extensions. Keep local test ergonomics only under cfg(test).
+        || {
+            #[cfg(test)]
+            {
+                let is_enabled = |v: &str| matches!(v, "1" | "true" | "TRUE" | "yes" | "YES");
+                ctx.env
+                    .get(PYTHON_INPROCESS_OPT_IN_ENV)
+                    .is_some_and(|v| is_enabled(v))
+            }
+            #[cfg(not(test))]
+            {
+                false
+            }
+        }
 }
 
 /// Resource limits for the embedded Python (Monty) interpreter.

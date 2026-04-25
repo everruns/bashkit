@@ -517,6 +517,12 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+#[cfg(feature = "python")]
+fn env_opt_in_enabled(env: &HashMap<String, String>, key: &str) -> bool {
+    env.get(key)
+        .is_some_and(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+}
+
 /// Main entry point for Bashkit.
 ///
 /// Provides a virtual bash interpreter with an in-memory virtual filesystem.
@@ -536,6 +542,9 @@ pub struct Bash {
     /// Logging configuration
     #[cfg(feature = "logging")]
     log_config: logging::LogConfig,
+    /// Operator-approved in-process Python opt-in captured at build time.
+    #[cfg(feature = "python")]
+    python_inprocess_opt_in: bool,
 }
 
 impl Default for Bash {
@@ -565,6 +574,8 @@ impl Bash {
             max_parser_operations,
             #[cfg(feature = "logging")]
             log_config: logging::LogConfig::default(),
+            #[cfg(feature = "python")]
+            python_inprocess_opt_in: false,
         }
     }
 
@@ -592,6 +603,8 @@ impl Bash {
         // Expose active execution limits to builtins that need to honor
         // per-execution sandbox settings.
         let _ = extensions.insert(self.interpreter.limits().clone());
+        #[cfg(feature = "python")]
+        let _ = extensions.insert(builtins::PythonInprocessOptIn(self.python_inprocess_opt_in));
         let _extensions_guard = self.interpreter.scoped_execution_extensions(extensions);
         self.exec_impl(script).await
     }
@@ -1584,8 +1597,8 @@ impl BashBuilder {
     /// by Monty's runtime (memory, allocations, time, recursion).
     ///
     /// For security, execution is runtime-gated: set
-    /// `BASHKIT_ALLOW_INPROCESS_PYTHON=1` (builder `.env(...)` or `export`)
-    /// before invoking `python`/`python3`.
+    /// `BASHKIT_ALLOW_INPROCESS_PYTHON=1` via builder `.env(...)` before
+    /// invoking `python`/`python3`.
     ///
     /// Requires the `python` feature flag. Python `pathlib.Path` operations are
     /// bridged to the virtual filesystem.
@@ -2554,6 +2567,8 @@ impl BashBuilder {
             // so they take precedence over the defaults
             interpreter.set_var(key, value);
         }
+        #[cfg(feature = "python")]
+        let python_inprocess_opt_in = env_opt_in_enabled(&env, "BASHKIT_ALLOW_INPROCESS_PYTHON");
         drop(env);
 
         // If username is set, automatically set USER env var
@@ -2614,7 +2629,6 @@ impl BashBuilder {
             trace_collector.set_callback(cb);
         }
         interpreter.set_trace(trace_collector);
-
         Bash {
             fs,
             mountable,
@@ -2625,6 +2639,8 @@ impl BashBuilder {
             max_parser_operations,
             #[cfg(feature = "logging")]
             log_config,
+            #[cfg(feature = "python")]
+            python_inprocess_opt_in,
         }
     }
 }
