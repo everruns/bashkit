@@ -1464,10 +1464,10 @@ impl<'a> Parser<'a> {
 
                     // After =~, handle regex pattern.
                     // If the pattern contains $ (variable reference), parse it as a
-                    // normal word so variables expand. Otherwise collect as literal
-                    // regex to preserve parens, backslashes, etc.
+                    // normal word so variables expand. Keep quoted/literal tokens as
+                    // literal regex patterns to preserve shell quoting semantics.
                     if saw_regex_op {
-                        if w_clone.contains('$') && !is_quoted {
+                        if w_clone.contains('$') && !is_quoted && !is_literal {
                             // Variable reference — parse normally for expansion
                             let parsed = self.parse_word(w_clone);
                             words.push(parsed);
