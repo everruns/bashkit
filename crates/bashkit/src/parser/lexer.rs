@@ -450,6 +450,12 @@ impl<'a> Lexer<'a> {
                         }
                         continue;
                     }
+                    if quote_char == '\'' && c == '$' {
+                        // Preserve literal '$' semantics from single-quoted
+                        // segments when concatenated into an existing word
+                        // (e.g. foo'$(id)' or VAR='${HOME}').
+                        word.push('\x00');
+                    }
                     word.push(c);
                     self.advance();
                 }
@@ -588,6 +594,12 @@ impl<'a> Lexer<'a> {
                             continue;
                         }
                         continue;
+                    }
+                    if quote_char == '\'' && c == '$' {
+                        // Preserve literal '$' semantics from single-quoted
+                        // segments when concatenated into an existing word
+                        // (e.g. foo'$(id)' or VAR='${HOME}').
+                        word.push('\x00');
                     }
                     word.push(c);
                     self.advance();
@@ -1894,6 +1906,17 @@ mod tests {
         assert_eq!(
             lexer.next_token(),
             Some(Token::QuotedWord("hello world".to_string()))
+        );
+        assert_eq!(lexer.next_token(), None);
+    }
+
+    #[test]
+    fn test_single_quoted_segment_in_word_escapes_dollar() {
+        let mut lexer = Lexer::new("echo foo'$(id)'");
+        assert_eq!(lexer.next_token(), Some(Token::Word("echo".to_string())));
+        assert_eq!(
+            lexer.next_token(),
+            Some(Token::Word("foo\x00$(id)".to_string()))
         );
         assert_eq!(lexer.next_token(), None);
     }
