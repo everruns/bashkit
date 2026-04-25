@@ -91,3 +91,25 @@ cat /tmp/out3.txt
         "file should contain stderr: {stdout}"
     );
 }
+
+/// Regression guard: mixed 2>&1 + >file must still truncate/create file on empty output.
+#[tokio::test]
+async fn redirect_2_to_1_then_file_truncates_on_empty_output() {
+    let mut bash = Bash::new();
+    let result = bash
+        .exec(
+            r#"
+echo "stale" >"/tmp/out-empty.txt"
+true 2>&1 >"/tmp/out-empty.txt"
+wc -c <"/tmp/out-empty.txt"
+"#,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        result.stdout.trim(),
+        "0",
+        "expected redirected file to be truncated to zero bytes"
+    );
+}
