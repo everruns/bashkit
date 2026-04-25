@@ -23,7 +23,7 @@ use bashkit::{
 use napi::JsValue;
 use napi_derive::napi;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
@@ -716,6 +716,10 @@ pub struct BashOptions {
     pub files: Option<HashMap<String, String>>,
     /// Real filesystem mounts. Each entry: { hostPath, vfsPath?, writable? }
     pub mounts: Option<Vec<MountConfig>>,
+    /// Allowlist of host path prefixes permitted for real filesystem mounts.
+    ///
+    /// Required to use `mounts` or runtime `mount()` APIs.
+    pub allowed_mount_paths: Option<Vec<String>>,
     /// Enable embedded Python execution (`python`/`python3` builtins).
     pub python: Option<bool>,
     /// Names of external functions callable from embedded Python code.
@@ -747,6 +751,7 @@ fn default_opts() -> BashOptions {
         capture_final_env: None,
         files: None,
         mounts: None,
+        allowed_mount_paths: None,
         python: None,
         external_functions: None,
     }
@@ -789,6 +794,7 @@ struct SharedState {
     max_memory: Option<f64>,
     capture_final_env: Option<bool>,
     mounts: Option<Vec<MountConfig>>,
+    allowed_mount_paths: Option<Vec<String>>,
     python: bool,
     external_functions: Vec<String>,
     external_handler: Option<ExternalHandlerArc>,
@@ -820,6 +826,46 @@ where
     let rt_guard = s.rt.blocking_lock();
     let s2 = state.clone();
     rt_guard.block_on(f(s2))
+}
+
+fn canonicalize_path(path: &str, label: &str) -> napi::Result<PathBuf> {
+    std::fs::canonicalize(path)
+        .map_err(|e| napi::Error::from_reason(format!("Invalid {label} '{path}': {e}")))
+}
+
+fn canonicalize_allowlist(allowlist: &[String]) -> napi::Result<Vec<PathBuf>> {
+    allowlist
+        .iter()
+        .map(|path| canonicalize_path(path, "allowedMountPaths entry"))
+        .collect()
+}
+
+fn enforce_mount_policy(
+    allowlist: Option<&[String]>,
+    host_path: &str,
+    api_name: &str,
+) -> napi::Result<()> {
+    let allowlist = allowlist.ok_or_else(|| {
+        napi::Error::from_reason(format!(
+            "{api_name} requires allowedMountPaths; refusing unrestricted host filesystem mount"
+        ))
+    })?;
+    if allowlist.is_empty() {
+        return Err(napi::Error::from_reason(
+            "allowedMountPaths cannot be empty when using real filesystem mounts".to_string(),
+        ));
+    }
+    let canonical_host = canonicalize_path(host_path, "host_path")?;
+    let canonical_allowlist = canonicalize_allowlist(allowlist)?;
+    if canonical_allowlist
+        .iter()
+        .any(|allowed| canonical_host.starts_with(allowed))
+    {
+        return Ok(());
+    }
+    Err(napi::Error::from_reason(format!(
+        "Mount path '{host_path}' is not in allowedMountPaths"
+    )))
 }
 
 // ============================================================================
@@ -1208,6 +1254,11 @@ impl Bash {
                 host_path
             );
         }
+        enforce_mount_policy(
+            self.state.allowed_mount_paths.as_deref(),
+            &host_path,
+            "Bash.mount",
+        )?;
         block_on_with(&self.state, |s| async move {
             let bash = s.inner.lock().await;
             let mode = if is_writable {
@@ -1688,6 +1739,11 @@ impl BashTool {
                 host_path
             );
         }
+        enforce_mount_policy(
+            self.state.allowed_mount_paths.as_deref(),
+            &host_path,
+            "BashTool.mount",
+        )?;
         block_on_with(&self.state, |s| async move {
             let bash = s.inner.lock().await;
             let mode = if is_writable {
@@ -2081,6 +2137,10 @@ fn build_bash_from_state(state: &SharedState, files: Option<&HashMap<String, Str
     }
 
     // Apply real filesystem mounts
+    if let Some(ref allowed_mount_paths) = state.allowed_mount_paths {
+        builder = builder.allowed_mount_paths(allowed_mount_paths.iter().cloned());
+    }
+
     if let Some(ref mounts) = state.mounts {
         for m in mounts {
             let writable = m.writable.unwrap_or(false);
@@ -2125,6 +2185,7 @@ fn shared_state_from_opts(
     let py = opts.python.unwrap_or(false);
     let ext_fns = opts.external_functions.clone().unwrap_or_default();
     let mounts = opts.mounts.clone();
+    let allowed_mount_paths = opts.allowed_mount_paths.clone();
 
     // Build a temporary SharedState to pass to build_bash_from_state
     let tmp = SharedState {
@@ -2153,10 +2214,21 @@ fn shared_state_from_opts(
         max_memory: opts.max_memory,
         capture_final_env: opts.capture_final_env,
         mounts: mounts.clone(),
+        allowed_mount_paths: allowed_mount_paths.clone(),
         python: py,
         external_functions: ext_fns.clone(),
         external_handler: external_handler.clone(),
     };
+
+    if let Some(ref mounts) = mounts {
+        for m in mounts {
+            enforce_mount_policy(
+                allowed_mount_paths.as_deref(),
+                &m.host_path,
+                "BashOptions.mounts",
+            )?;
+        }
+    }
 
     let bash = build_bash_from_state(&tmp, opts.files.as_ref());
     let cancelled = bash.cancellation_token();
@@ -2187,6 +2259,7 @@ fn shared_state_from_opts(
         max_memory: opts.max_memory,
         capture_final_env: opts.capture_final_env,
         mounts,
+        allowed_mount_paths,
         python: py,
         external_functions: ext_fns,
         external_handler,
