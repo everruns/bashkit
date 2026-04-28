@@ -1,7 +1,7 @@
 """Pure-Python mock of bashkit's FileSystem for local testing."""
 
+import posixpath
 import time
-from pathlib import PurePosixPath
 
 
 class _Entry:
@@ -25,13 +25,12 @@ class MockFileSystem:
         self._entries["/"] = _Entry("directory", mode=0o755)
 
     def _normalize(self, path: str) -> str:
-        p = str(PurePosixPath(path))
-        if not p.startswith("/"):
+        if not path.startswith("/"):
             raise ValueError(f"path must be absolute: {path}")
-        return p
+        return posixpath.normpath(path)
 
     def _parent(self, path: str) -> str:
-        return str(PurePosixPath(path).parent)
+        return posixpath.dirname(path)
 
     def read_file(self, path: str) -> bytes:
         path = self._normalize(path)
@@ -86,6 +85,8 @@ class MockFileSystem:
 
     def remove(self, path: str, recursive: bool = False) -> None:
         path = self._normalize(path)
+        if path == "/":
+            raise OSError("Cannot remove root directory")
         entry = self._entries.get(path)
         if entry is None:
             raise FileNotFoundError(f"No such file or directory: {path}")
@@ -160,7 +161,7 @@ class MockFileSystem:
         entry = self._entries.get(path)
         if entry is None:
             raise FileNotFoundError(f"No such symlink: {path}")
-        if entry.file_type != "symlink":
+        if entry.file_type != "symlink" or entry.target is None:
             raise OSError(f"Not a symlink: {path}")
         return entry.target
 
@@ -170,7 +171,6 @@ class MockFileSystem:
         if entry is None:
             raise FileNotFoundError(f"No such file or directory: {path}")
         entry.mode = mode
-        entry.modified = time.time()
 
     def rename(self, from_path: str, to_path: str) -> None:
         from_path = self._normalize(from_path)
@@ -198,3 +198,4 @@ class MockFileSystem:
         if entry.file_type == "directory":
             raise IsADirectoryError(f"Cannot copy directory: {from_path}")
         self.write_file(to_path, bytes(entry.content))
+        self._entries[to_path].mode = entry.mode
