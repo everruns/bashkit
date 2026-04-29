@@ -3,112 +3,117 @@
 Tests to_capsule()/from_capsule() API surface: VFS operations through
 capsule-imported handles, mount behavior, capsule semantics, error cases,
 and bash command execution against mounted capsule filesystems.
+
+VFS operation tests are parametrized to run against both the native
+FileSystem (via capsule roundtrip) and the pure-Python MockFileSystem.
 """
 
+from __future__ import annotations
+
+from typing import Any, Union
+
 import pytest
+from mock_filesystem import MockFileSystem
 
 from bashkit import Bash, FileSystem
 
-# -- VFS operations through capsule-imported FS --------------------------------
+FS = Union[FileSystem, MockFileSystem]
 
 
-def _make_imported():
-    source = FileSystem()
-    source.mkdir("/data/sub", recursive=True)
-    source.write_file("/data/hello.txt", b"world")
-    source.write_file("/data/sub/nested.txt", b"deep")
-    source.symlink("/data/hello.txt", "/data/link.txt")
-    source.chmod("/data/hello.txt", 0o755)
-    return FileSystem.from_capsule(source.to_capsule())
+def _populate(fs: Any) -> Any:
+    fs.mkdir("/data/sub", recursive=True)
+    fs.write_file("/data/hello.txt", b"world")
+    fs.write_file("/data/sub/nested.txt", b"deep")
+    fs.symlink("/data/hello.txt", "/data/link.txt")
+    fs.chmod("/data/hello.txt", 0o755)
+    return fs
 
 
-def test_capsule_read_file():
-    fs = _make_imported()
-    assert fs.read_file("/data/hello.txt") == b"world"
+@pytest.fixture(params=["capsule", "mock"])
+def imported(request: pytest.FixtureRequest) -> FS:
+    if request.param == "capsule":
+        source = FileSystem()
+        return _populate(FileSystem.from_capsule(source.to_capsule()))
+    return _populate(MockFileSystem())
 
 
-def test_capsule_write_file():
-    fs = _make_imported()
-    fs.write_file("/data/new.txt", b"created")
-    assert fs.read_file("/data/new.txt") == b"created"
+# -- VFS operations (parametrized: capsule + mock) -----------------------------
 
 
-def test_capsule_append_file():
-    fs = _make_imported()
-    fs.append_file("/data/hello.txt", b"!")
-    assert fs.read_file("/data/hello.txt") == b"world!"
+def test_read_file(imported: FS) -> None:
+    assert imported.read_file("/data/hello.txt") == b"world"
 
 
-def test_capsule_mkdir():
-    fs = _make_imported()
-    fs.mkdir("/data/newdir")
-    assert fs.exists("/data/newdir")
-    assert fs.stat("/data/newdir")["file_type"] == "directory"
+def test_write_file(imported: FS) -> None:
+    imported.write_file("/data/new.txt", b"created")
+    assert imported.read_file("/data/new.txt") == b"created"
 
 
-def test_capsule_remove_file():
-    fs = _make_imported()
-    fs.remove("/data/sub/nested.txt")
-    assert not fs.exists("/data/sub/nested.txt")
+def test_append_file(imported: FS) -> None:
+    imported.append_file("/data/hello.txt", b"!")
+    assert imported.read_file("/data/hello.txt") == b"world!"
 
 
-def test_capsule_remove_dir_recursive():
-    fs = _make_imported()
-    fs.remove("/data/sub", recursive=True)
-    assert not fs.exists("/data/sub")
+def test_mkdir(imported: FS) -> None:
+    imported.mkdir("/data/newdir")
+    assert imported.exists("/data/newdir")
+    assert imported.stat("/data/newdir")["file_type"] == "directory"
 
 
-def test_capsule_exists():
-    fs = _make_imported()
-    assert fs.exists("/data/hello.txt")
-    assert not fs.exists("/data/nope.txt")
+def test_remove_file(imported: FS) -> None:
+    imported.remove("/data/sub/nested.txt")
+    assert not imported.exists("/data/sub/nested.txt")
 
 
-def test_capsule_stat():
-    fs = _make_imported()
-    s = fs.stat("/data/hello.txt")
+def test_remove_dir_recursive(imported: FS) -> None:
+    imported.remove("/data/sub", recursive=True)
+    assert not imported.exists("/data/sub")
+
+
+def test_exists(imported: FS) -> None:
+    assert imported.exists("/data/hello.txt")
+    assert not imported.exists("/data/nope.txt")
+
+
+def test_stat(imported: FS) -> None:
+    s = imported.stat("/data/hello.txt")
     assert s["file_type"] == "file"
     assert s["size"] == 5
     assert s["mode"] == 0o755
 
 
-def test_capsule_read_dir():
-    fs = _make_imported()
-    names = sorted(e["name"] for e in fs.read_dir("/data"))
+def test_read_dir(imported: FS) -> None:
+    names = sorted(e["name"] for e in imported.read_dir("/data"))
     assert "hello.txt" in names
     assert "sub" in names
     assert "link.txt" in names
 
 
-def test_capsule_symlink_and_read_link():
-    fs = _make_imported()
-    assert fs.read_link("/data/link.txt") == "/data/hello.txt"
+def test_symlink_and_read_link(imported: FS) -> None:
+    assert imported.read_link("/data/link.txt") == "/data/hello.txt"
 
 
-def test_capsule_chmod():
-    fs = _make_imported()
-    fs.chmod("/data/hello.txt", 0o600)
-    assert fs.stat("/data/hello.txt")["mode"] == 0o600
+def test_chmod(imported: FS) -> None:
+    imported.chmod("/data/hello.txt", 0o600)
+    assert imported.stat("/data/hello.txt")["mode"] == 0o600
 
 
-def test_capsule_rename():
-    fs = _make_imported()
-    fs.rename("/data/hello.txt", "/data/renamed.txt")
-    assert fs.read_file("/data/renamed.txt") == b"world"
-    assert not fs.exists("/data/hello.txt")
+def test_rename(imported: FS) -> None:
+    imported.rename("/data/hello.txt", "/data/renamed.txt")
+    assert imported.read_file("/data/renamed.txt") == b"world"
+    assert not imported.exists("/data/hello.txt")
 
 
-def test_capsule_copy():
-    fs = _make_imported()
-    fs.copy("/data/hello.txt", "/data/copied.txt")
-    assert fs.read_file("/data/copied.txt") == b"world"
-    assert fs.read_file("/data/hello.txt") == b"world"
+def test_copy(imported: FS) -> None:
+    imported.copy("/data/hello.txt", "/data/copied.txt")
+    assert imported.read_file("/data/copied.txt") == b"world"
+    assert imported.read_file("/data/hello.txt") == b"world"
 
 
-# -- Capsule semantics ---------------------------------------------------------
+# -- Capsule semantics (native only) ------------------------------------------
 
 
-def test_multiple_imports_share_state():
+def test_multiple_imports_share_state() -> None:
     source = FileSystem()
     source.write_file("/f.txt", b"original")
     capsule = source.to_capsule()
@@ -120,7 +125,7 @@ def test_multiple_imports_share_state():
     assert b.read_file("/f.txt") == b"mutated"
 
 
-def test_source_mutation_visible_through_capsule():
+def test_source_mutation_visible_through_capsule() -> None:
     source = FileSystem()
     source.write_file("/f.txt", b"v1")
     imported = FileSystem.from_capsule(source.to_capsule())
@@ -129,7 +134,7 @@ def test_source_mutation_visible_through_capsule():
     assert imported.read_file("/f.txt") == b"v2"
 
 
-def test_imported_mutation_visible_to_source():
+def test_imported_mutation_visible_to_source() -> None:
     source = FileSystem()
     source.write_file("/f.txt", b"original")
     imported = FileSystem.from_capsule(source.to_capsule())
@@ -138,7 +143,7 @@ def test_imported_mutation_visible_to_source():
     assert source.read_file("/f.txt") == b"changed"
 
 
-def test_double_capsule_roundtrip():
+def test_double_capsule_roundtrip() -> None:
     fs1 = FileSystem()
     fs1.write_file("/f.txt", b"data")
 
@@ -151,7 +156,7 @@ def test_double_capsule_roundtrip():
 # -- Mount behavior ------------------------------------------------------------
 
 
-def test_mount_and_execute():
+def test_mount_and_execute() -> None:
     source = FileSystem()
     source.write_file("/greeting.txt", b"hello\n")
 
@@ -163,7 +168,7 @@ def test_mount_and_execute():
     assert result.stdout == "hello\n"
 
 
-def test_multiple_mounts_isolated():
+def test_multiple_mounts_isolated() -> None:
     fs1 = FileSystem()
     fs1.write_file("/data.txt", b"from fs1\n")
 
@@ -180,10 +185,8 @@ def test_multiple_mounts_isolated():
     assert r2.stdout == "from fs2\n"
 
 
-# NOTE: unmount of capsule-imported FS aborts in release_export_state
-# (double-drop of Arc in bashkit-fs-interop). Skipped until fixed in PR #1353.
-@pytest.mark.skip(reason="unmount capsule FS panics — native binding bug")
-def test_unmount_removes_access():
+@pytest.mark.skip(reason="unmount capsule FS aborts process — double-drop of Arc in bashkit-fs-interop")
+def test_unmount_removes_access() -> None:
     source = FileSystem()
     source.write_file("/f.txt", b"data\n")
 
@@ -196,7 +199,7 @@ def test_unmount_removes_access():
     assert result.stdout.strip() == "no"
 
 
-def test_mount_deep_directory_structure():
+def test_mount_deep_directory_structure() -> None:
     source = FileSystem()
     source.mkdir("/a/b/c/d", recursive=True)
     source.write_file("/a/b/c/d/deep.txt", b"found\n")
@@ -209,7 +212,7 @@ def test_mount_deep_directory_structure():
     assert result.stdout == "found\n"
 
 
-def test_write_through_mounted_capsule():
+def test_write_through_mounted_capsule() -> None:
     source = FileSystem()
     source.mkdir("/data")
 
@@ -223,12 +226,12 @@ def test_write_through_mounted_capsule():
 # -- Error cases ---------------------------------------------------------------
 
 
-def test_from_capsule_wrong_type_raises():
+def test_from_capsule_wrong_type_raises() -> None:
     with pytest.raises((TypeError, RuntimeError)):
         FileSystem.from_capsule("not a capsule")
 
 
-def test_from_capsule_none_raises():
+def test_from_capsule_none_raises() -> None:
     with pytest.raises((TypeError, RuntimeError)):
         FileSystem.from_capsule(None)
 
@@ -236,7 +239,8 @@ def test_from_capsule_none_raises():
 # -- Bash commands against capsule FS ------------------------------------------
 
 
-def _make_workspace():
+@pytest.fixture()
+def workspace() -> Bash:
     source = FileSystem()
     source.mkdir("/repo/src", recursive=True)
     source.mkdir("/repo/docs")
@@ -249,46 +253,40 @@ def _make_workspace():
     return bash
 
 
-def test_bash_find():
-    bash = _make_workspace()
-    result = bash.execute_sync("find /ws/repo -name '*.py' | sort")
+def test_bash_find(workspace: Bash) -> None:
+    result = workspace.execute_sync("find /ws/repo -name '*.py' | sort")
     assert result.exit_code == 0
     lines = result.stdout.strip().split("\n")
     assert lines == ["/ws/repo/src/lib.py", "/ws/repo/src/main.py"]
 
 
-def test_bash_grep_recursive():
-    bash = _make_workspace()
-    result = bash.execute_sync("grep -rl 'hello' /ws/repo/src | sort")
+def test_bash_grep_recursive(workspace: Bash) -> None:
+    result = workspace.execute_sync("grep -rl 'hello' /ws/repo/src | sort")
     assert result.exit_code == 0
     lines = result.stdout.strip().split("\n")
     assert lines == ["/ws/repo/src/lib.py", "/ws/repo/src/main.py"]
 
 
-def test_bash_wc():
-    bash = _make_workspace()
-    result = bash.execute_sync("wc -l /ws/repo/src/lib.py")
+def test_bash_wc(workspace: Bash) -> None:
+    result = workspace.execute_sync("wc -l /ws/repo/src/lib.py")
     assert result.exit_code == 0
     assert "2" in result.stdout
 
 
-def test_bash_cat_pipe_grep():
-    bash = _make_workspace()
-    result = bash.execute_sync("cat /ws/repo/README.md | grep Project")
+def test_bash_cat_pipe_grep(workspace: Bash) -> None:
+    result = workspace.execute_sync("cat /ws/repo/README.md | grep Project")
     assert result.exit_code == 0
     assert "Project" in result.stdout
 
 
-def test_bash_ls():
-    bash = _make_workspace()
-    result = bash.execute_sync("ls /ws/repo | sort")
+def test_bash_ls(workspace: Bash) -> None:
+    result = workspace.execute_sync("ls /ws/repo | sort")
     assert result.exit_code == 0
     names = result.stdout.strip().split("\n")
     assert names == ["README.md", "docs", "src"]
 
 
-def test_bash_head():
-    bash = _make_workspace()
-    result = bash.execute_sync("head -1 /ws/repo/docs/guide.md")
+def test_bash_head(workspace: Bash) -> None:
+    result = workspace.execute_sync("head -1 /ws/repo/docs/guide.md")
     assert result.exit_code == 0
     assert result.stdout.strip() == "# Guide"
