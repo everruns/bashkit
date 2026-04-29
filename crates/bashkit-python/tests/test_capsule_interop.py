@@ -31,10 +31,14 @@ def _populate(fs: Any) -> Any:
 
 @pytest.fixture(params=["capsule", "mock"])
 def imported(request: pytest.FixtureRequest) -> FS:
-    if request.param == "capsule":
-        source = FileSystem()
-        return _populate(FileSystem.from_capsule(source.to_capsule()))
-    return _populate(MockFileSystem())
+    match request.param:
+        case "capsule":
+            source = FileSystem()
+            return _populate(FileSystem.from_capsule(source.to_capsule()))
+        case "mock":
+            return _populate(MockFileSystem())
+        case _:
+            raise ValueError(request.param)
 
 
 # -- VFS operations (parametrized: capsule + mock) -----------------------------
