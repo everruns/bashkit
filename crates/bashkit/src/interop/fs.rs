@@ -23,6 +23,78 @@ pub type BashkitFsAbiStatus = u32;
 pub const BASHKIT_FS_ABI_STATUS_OK: BashkitFsAbiStatus = 0;
 pub const BASHKIT_FS_ABI_STATUS_ERR: BashkitFsAbiStatus = 1;
 
+pub type ReadFileFn = unsafe extern "C" fn(
+    instance: *const c_void,
+    path: BashkitFsAbiStrRef,
+    out: *mut BashkitFsAbiOwnedBytes,
+    err: *mut BashkitFsAbiError,
+) -> BashkitFsAbiStatus;
+pub type WriteFileFn = unsafe extern "C" fn(
+    instance: *const c_void,
+    path: BashkitFsAbiStrRef,
+    content: BashkitFsAbiStrRef,
+    err: *mut BashkitFsAbiError,
+) -> BashkitFsAbiStatus;
+pub type MkdirFn = unsafe extern "C" fn(
+    instance: *const c_void,
+    path: BashkitFsAbiStrRef,
+    recursive: bool,
+    err: *mut BashkitFsAbiError,
+) -> BashkitFsAbiStatus;
+pub type RemoveFn = unsafe extern "C" fn(
+    instance: *const c_void,
+    path: BashkitFsAbiStrRef,
+    recursive: bool,
+    err: *mut BashkitFsAbiError,
+) -> BashkitFsAbiStatus;
+pub type StatFn = unsafe extern "C" fn(
+    instance: *const c_void,
+    path: BashkitFsAbiStrRef,
+    out: *mut BashkitFsAbiMetadata,
+    err: *mut BashkitFsAbiError,
+) -> BashkitFsAbiStatus;
+pub type ReadDirFn = unsafe extern "C" fn(
+    instance: *const c_void,
+    path: BashkitFsAbiStrRef,
+    out: *mut BashkitFsAbiOwnedDirEntries,
+    err: *mut BashkitFsAbiError,
+) -> BashkitFsAbiStatus;
+pub type ExistsFn = unsafe extern "C" fn(
+    instance: *const c_void,
+    path: BashkitFsAbiStrRef,
+    out: *mut bool,
+    err: *mut BashkitFsAbiError,
+) -> BashkitFsAbiStatus;
+pub type RenameFn = unsafe extern "C" fn(
+    instance: *const c_void,
+    from: BashkitFsAbiStrRef,
+    to: BashkitFsAbiStrRef,
+    err: *mut BashkitFsAbiError,
+) -> BashkitFsAbiStatus;
+pub type SymlinkFn = unsafe extern "C" fn(
+    instance: *const c_void,
+    target: BashkitFsAbiStrRef,
+    link: BashkitFsAbiStrRef,
+    err: *mut BashkitFsAbiError,
+) -> BashkitFsAbiStatus;
+pub type ReadLinkFn = unsafe extern "C" fn(
+    instance: *const c_void,
+    path: BashkitFsAbiStrRef,
+    out: *mut BashkitFsAbiOwnedBytes,
+    err: *mut BashkitFsAbiError,
+) -> BashkitFsAbiStatus;
+pub type ChmodFn = unsafe extern "C" fn(
+    instance: *const c_void,
+    path: BashkitFsAbiStrRef,
+    mode: u32,
+    err: *mut BashkitFsAbiError,
+) -> BashkitFsAbiStatus;
+pub type FreeBytesFn = unsafe extern "C" fn(instance: *const c_void, bytes: BashkitFsAbiOwnedBytes);
+pub type FreeDirEntriesFn =
+    unsafe extern "C" fn(instance: *const c_void, entries: BashkitFsAbiOwnedDirEntries);
+pub type RetainFn = unsafe extern "C" fn(instance: *const c_void);
+pub type ReleaseFn = unsafe extern "C" fn(instance: *const c_void);
+
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct BashkitFsAbiStrRef {
@@ -38,7 +110,7 @@ pub struct BashkitFsAbiOwnedBytes {
 }
 
 #[repr(u32)]
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum BashkitFsAbiErrorKind {
     #[default]
     Other = 0,
@@ -99,87 +171,21 @@ pub struct BashkitFsAbiOwnedDirEntries {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct BashkitFsAbiVTableV1 {
-    pub read_file: unsafe extern "C" fn(
-        instance: *const c_void,
-        path: BashkitFsAbiStrRef,
-        out: *mut BashkitFsAbiOwnedBytes,
-        err: *mut BashkitFsAbiError,
-    ) -> BashkitFsAbiStatus,
-    pub write_file: unsafe extern "C" fn(
-        instance: *const c_void,
-        path: BashkitFsAbiStrRef,
-        content: BashkitFsAbiStrRef,
-        err: *mut BashkitFsAbiError,
-    ) -> BashkitFsAbiStatus,
-    pub append_file: unsafe extern "C" fn(
-        instance: *const c_void,
-        path: BashkitFsAbiStrRef,
-        content: BashkitFsAbiStrRef,
-        err: *mut BashkitFsAbiError,
-    ) -> BashkitFsAbiStatus,
-    pub mkdir: unsafe extern "C" fn(
-        instance: *const c_void,
-        path: BashkitFsAbiStrRef,
-        recursive: bool,
-        err: *mut BashkitFsAbiError,
-    ) -> BashkitFsAbiStatus,
-    pub remove: unsafe extern "C" fn(
-        instance: *const c_void,
-        path: BashkitFsAbiStrRef,
-        recursive: bool,
-        err: *mut BashkitFsAbiError,
-    ) -> BashkitFsAbiStatus,
-    pub stat: unsafe extern "C" fn(
-        instance: *const c_void,
-        path: BashkitFsAbiStrRef,
-        out: *mut BashkitFsAbiMetadata,
-        err: *mut BashkitFsAbiError,
-    ) -> BashkitFsAbiStatus,
-    pub read_dir: unsafe extern "C" fn(
-        instance: *const c_void,
-        path: BashkitFsAbiStrRef,
-        out: *mut BashkitFsAbiOwnedDirEntries,
-        err: *mut BashkitFsAbiError,
-    ) -> BashkitFsAbiStatus,
-    pub exists: unsafe extern "C" fn(
-        instance: *const c_void,
-        path: BashkitFsAbiStrRef,
-        out: *mut bool,
-        err: *mut BashkitFsAbiError,
-    ) -> BashkitFsAbiStatus,
-    pub rename: unsafe extern "C" fn(
-        instance: *const c_void,
-        from: BashkitFsAbiStrRef,
-        to: BashkitFsAbiStrRef,
-        err: *mut BashkitFsAbiError,
-    ) -> BashkitFsAbiStatus,
-    pub copy: unsafe extern "C" fn(
-        instance: *const c_void,
-        from: BashkitFsAbiStrRef,
-        to: BashkitFsAbiStrRef,
-        err: *mut BashkitFsAbiError,
-    ) -> BashkitFsAbiStatus,
-    pub symlink: unsafe extern "C" fn(
-        instance: *const c_void,
-        target: BashkitFsAbiStrRef,
-        link: BashkitFsAbiStrRef,
-        err: *mut BashkitFsAbiError,
-    ) -> BashkitFsAbiStatus,
-    pub read_link: unsafe extern "C" fn(
-        instance: *const c_void,
-        path: BashkitFsAbiStrRef,
-        out: *mut BashkitFsAbiOwnedBytes,
-        err: *mut BashkitFsAbiError,
-    ) -> BashkitFsAbiStatus,
-    pub chmod: unsafe extern "C" fn(
-        instance: *const c_void,
-        path: BashkitFsAbiStrRef,
-        mode: u32,
-        err: *mut BashkitFsAbiError,
-    ) -> BashkitFsAbiStatus,
-    pub free_bytes: unsafe extern "C" fn(instance: *const c_void, bytes: BashkitFsAbiOwnedBytes),
-    pub free_dir_entries:
-        unsafe extern "C" fn(instance: *const c_void, entries: BashkitFsAbiOwnedDirEntries),
+    pub read_file: Option<ReadFileFn>,
+    pub write_file: Option<WriteFileFn>,
+    pub append_file: Option<WriteFileFn>,
+    pub mkdir: Option<MkdirFn>,
+    pub remove: Option<RemoveFn>,
+    pub stat: Option<StatFn>,
+    pub read_dir: Option<ReadDirFn>,
+    pub exists: Option<ExistsFn>,
+    pub rename: Option<RenameFn>,
+    pub copy: Option<RenameFn>,
+    pub symlink: Option<SymlinkFn>,
+    pub read_link: Option<ReadLinkFn>,
+    pub chmod: Option<ChmodFn>,
+    pub free_bytes: Option<FreeBytesFn>,
+    pub free_dir_entries: Option<FreeDirEntriesFn>,
 }
 
 #[repr(C)]
@@ -188,8 +194,8 @@ pub struct BashkitFsAbiHandleV1 {
     pub abi_version: u32,
     pub _reserved: u32,
     pub instance: *const c_void,
-    pub retain: unsafe extern "C" fn(instance: *const c_void),
-    pub release: unsafe extern "C" fn(instance: *const c_void),
+    pub retain: Option<RetainFn>,
+    pub release: Option<ReleaseFn>,
     pub vtable: *const BashkitFsAbiVTableV1,
 }
 
@@ -206,8 +212,10 @@ impl BashkitFsAbiOwnedHandleV1 {
 
 impl Drop for BashkitFsAbiOwnedHandleV1 {
     fn drop(&mut self) {
-        unsafe {
-            (self.handle.release)(self.handle.instance);
+        if let Some(release) = self.handle.release {
+            unsafe {
+                release(self.handle.instance);
+            }
         }
     }
 }
@@ -253,8 +261,8 @@ pub fn export_filesystem(fs: Arc<dyn FileSystem>) -> io::Result<BashkitFsAbiOwne
             abi_version: BASHKIT_FS_ABI_VERSION_V1,
             _reserved: 0,
             instance,
-            retain: retain_export_state,
-            release: release_export_state,
+            retain: Some(retain_export_state),
+            release: Some(release_export_state),
             vtable: &EXPORT_VTABLE,
         },
     })
@@ -270,32 +278,71 @@ pub fn import_owned_filesystem(
     import_filesystem(handle.as_handle())
 }
 
+fn missing_abi_field(name: &str) -> IoError {
+    IoError::new(
+        ErrorKind::InvalidData,
+        format!("filesystem ABI field '{name}' must not be null"),
+    )
+}
+
+fn require_abi_fn<T>(value: Option<T>, name: &str) -> io::Result<T> {
+    value.ok_or_else(|| missing_abi_field(name))
+}
+
+fn validate_vtable(vtable: &BashkitFsAbiVTableV1) -> io::Result<()> {
+    require_abi_fn(vtable.read_file, "vtable.read_file")?;
+    require_abi_fn(vtable.write_file, "vtable.write_file")?;
+    require_abi_fn(vtable.append_file, "vtable.append_file")?;
+    require_abi_fn(vtable.mkdir, "vtable.mkdir")?;
+    require_abi_fn(vtable.remove, "vtable.remove")?;
+    require_abi_fn(vtable.stat, "vtable.stat")?;
+    require_abi_fn(vtable.read_dir, "vtable.read_dir")?;
+    require_abi_fn(vtable.exists, "vtable.exists")?;
+    require_abi_fn(vtable.rename, "vtable.rename")?;
+    require_abi_fn(vtable.copy, "vtable.copy")?;
+    require_abi_fn(vtable.symlink, "vtable.symlink")?;
+    require_abi_fn(vtable.read_link, "vtable.read_link")?;
+    require_abi_fn(vtable.chmod, "vtable.chmod")?;
+    require_abi_fn(vtable.free_bytes, "vtable.free_bytes")?;
+    require_abi_fn(vtable.free_dir_entries, "vtable.free_dir_entries")?;
+    Ok(())
+}
+
+fn validate_handle(handle: &BashkitFsAbiHandleV1) -> io::Result<&BashkitFsAbiVTableV1> {
+    if handle.abi_version != BASHKIT_FS_ABI_VERSION_V1 {
+        return Err(IoError::new(
+            ErrorKind::InvalidData,
+            format!("unsupported filesystem ABI version: {}", handle.abi_version),
+        ));
+    }
+    if handle.instance.is_null() {
+        return Err(IoError::new(
+            ErrorKind::InvalidData,
+            "filesystem handle instance must not be null",
+        ));
+    }
+    require_abi_fn(handle.retain, "retain")?;
+    require_abi_fn(handle.release, "release")?;
+    let vtable = unsafe {
+        handle
+            .vtable
+            .as_ref()
+            .ok_or_else(|| missing_abi_field("vtable"))?
+    };
+    validate_vtable(vtable)?;
+    Ok(vtable)
+}
+
 pub struct ImportedFileSystem {
     handle: BashkitFsAbiHandleV1,
 }
 
 impl ImportedFileSystem {
     pub fn from_handle(handle: &BashkitFsAbiHandleV1) -> io::Result<Self> {
-        if handle.abi_version != BASHKIT_FS_ABI_VERSION_V1 {
-            return Err(IoError::new(
-                ErrorKind::InvalidData,
-                format!("unsupported filesystem ABI version: {}", handle.abi_version),
-            ));
-        }
-        if handle.instance.is_null() {
-            return Err(IoError::new(
-                ErrorKind::InvalidData,
-                "filesystem handle instance must not be null",
-            ));
-        }
-        if handle.vtable.is_null() {
-            return Err(IoError::new(
-                ErrorKind::InvalidData,
-                "filesystem handle vtable must not be null",
-            ));
-        }
+        validate_handle(handle)?;
+        let retain = handle.retain.expect("filesystem ABI handle was validated");
         unsafe {
-            (handle.retain)(handle.instance);
+            retain(handle.instance);
         }
         Ok(Self { handle: *handle })
     }
@@ -318,16 +365,24 @@ impl ImportedFileSystem {
 
     fn take_bytes(&self, bytes: BashkitFsAbiOwnedBytes) -> io::Result<Vec<u8>> {
         let result = owned_bytes_to_vec(bytes);
+        let free_bytes = self
+            .vtable()
+            .free_bytes
+            .expect("filesystem ABI vtable was validated");
         unsafe {
-            (self.vtable().free_bytes)(self.handle.instance, bytes);
+            free_bytes(self.handle.instance, bytes);
         }
         result
     }
 
     fn take_dir_entries(&self, entries: BashkitFsAbiOwnedDirEntries) -> BashResult<Vec<DirEntry>> {
         let result = owned_dir_entries_to_vec(entries);
+        let free_dir_entries = self
+            .vtable()
+            .free_dir_entries
+            .expect("filesystem ABI vtable was validated");
         unsafe {
-            (self.vtable().free_dir_entries)(self.handle.instance, entries);
+            free_dir_entries(self.handle.instance, entries);
         }
         result.map_err(Into::into)
     }
@@ -338,8 +393,10 @@ unsafe impl Sync for ImportedFileSystem {}
 
 impl Drop for ImportedFileSystem {
     fn drop(&mut self) {
-        unsafe {
-            (self.handle.release)(self.handle.instance);
+        if let Some(release) = self.handle.release {
+            unsafe {
+                release(self.handle.instance);
+            }
         }
     }
 }
@@ -353,7 +410,14 @@ impl FileSystem for ImportedFileSystem {
         let path = str_ref_from_path(path)?;
         let mut out = BashkitFsAbiOwnedBytes::default();
         self.call(|vtable, err| unsafe {
-            (vtable.read_file)(self.handle.instance, path, &mut out, err)
+            (vtable
+                .read_file
+                .expect("filesystem ABI vtable was validated"))(
+                self.handle.instance,
+                path,
+                &mut out,
+                err,
+            )
         })?;
         self.take_bytes(out).map_err(Into::into)
     }
@@ -365,7 +429,14 @@ impl FileSystem for ImportedFileSystem {
             len: content.len(),
         };
         self.call(|vtable, err| unsafe {
-            (vtable.write_file)(self.handle.instance, path, content, err)
+            (vtable
+                .write_file
+                .expect("filesystem ABI vtable was validated"))(
+                self.handle.instance,
+                path,
+                content,
+                err,
+            )
         })
     }
 
@@ -376,21 +447,38 @@ impl FileSystem for ImportedFileSystem {
             len: content.len(),
         };
         self.call(|vtable, err| unsafe {
-            (vtable.append_file)(self.handle.instance, path, content, err)
+            (vtable
+                .append_file
+                .expect("filesystem ABI vtable was validated"))(
+                self.handle.instance,
+                path,
+                content,
+                err,
+            )
         })
     }
 
     async fn mkdir(&self, path: &Path, recursive: bool) -> BashResult<()> {
         let path = str_ref_from_path(path)?;
         self.call(|vtable, err| unsafe {
-            (vtable.mkdir)(self.handle.instance, path, recursive, err)
+            (vtable.mkdir.expect("filesystem ABI vtable was validated"))(
+                self.handle.instance,
+                path,
+                recursive,
+                err,
+            )
         })
     }
 
     async fn remove(&self, path: &Path, recursive: bool) -> BashResult<()> {
         let path = str_ref_from_path(path)?;
         self.call(|vtable, err| unsafe {
-            (vtable.remove)(self.handle.instance, path, recursive, err)
+            (vtable.remove.expect("filesystem ABI vtable was validated"))(
+                self.handle.instance,
+                path,
+                recursive,
+                err,
+            )
         })
     }
 
@@ -398,7 +486,12 @@ impl FileSystem for ImportedFileSystem {
         let path = str_ref_from_path(path)?;
         let mut out = BashkitFsAbiMetadata::default();
         self.call(|vtable, err| unsafe {
-            (vtable.stat)(self.handle.instance, path, &mut out, err)
+            (vtable.stat.expect("filesystem ABI vtable was validated"))(
+                self.handle.instance,
+                path,
+                &mut out,
+                err,
+            )
         })?;
         abi_metadata_to_metadata(out).map_err(Into::into)
     }
@@ -407,7 +500,14 @@ impl FileSystem for ImportedFileSystem {
         let path = str_ref_from_path(path)?;
         let mut out = BashkitFsAbiOwnedDirEntries::default();
         self.call(|vtable, err| unsafe {
-            (vtable.read_dir)(self.handle.instance, path, &mut out, err)
+            (vtable
+                .read_dir
+                .expect("filesystem ABI vtable was validated"))(
+                self.handle.instance,
+                path,
+                &mut out,
+                err,
+            )
         })?;
         self.take_dir_entries(out)
     }
@@ -416,7 +516,12 @@ impl FileSystem for ImportedFileSystem {
         let path = str_ref_from_path(path)?;
         let mut out = false;
         self.call(|vtable, err| unsafe {
-            (vtable.exists)(self.handle.instance, path, &mut out, err)
+            (vtable.exists.expect("filesystem ABI vtable was validated"))(
+                self.handle.instance,
+                path,
+                &mut out,
+                err,
+            )
         })?;
         Ok(out)
     }
@@ -424,20 +529,39 @@ impl FileSystem for ImportedFileSystem {
     async fn rename(&self, from: &Path, to: &Path) -> BashResult<()> {
         let from = str_ref_from_path(from)?;
         let to = str_ref_from_path(to)?;
-        self.call(|vtable, err| unsafe { (vtable.rename)(self.handle.instance, from, to, err) })
+        self.call(|vtable, err| unsafe {
+            (vtable.rename.expect("filesystem ABI vtable was validated"))(
+                self.handle.instance,
+                from,
+                to,
+                err,
+            )
+        })
     }
 
     async fn copy(&self, from: &Path, to: &Path) -> BashResult<()> {
         let from = str_ref_from_path(from)?;
         let to = str_ref_from_path(to)?;
-        self.call(|vtable, err| unsafe { (vtable.copy)(self.handle.instance, from, to, err) })
+        self.call(|vtable, err| unsafe {
+            (vtable.copy.expect("filesystem ABI vtable was validated"))(
+                self.handle.instance,
+                from,
+                to,
+                err,
+            )
+        })
     }
 
     async fn symlink(&self, target: &Path, link: &Path) -> BashResult<()> {
         let target = str_ref_from_path(target)?;
         let link = str_ref_from_path(link)?;
         self.call(|vtable, err| unsafe {
-            (vtable.symlink)(self.handle.instance, target, link, err)
+            (vtable.symlink.expect("filesystem ABI vtable was validated"))(
+                self.handle.instance,
+                target,
+                link,
+                err,
+            )
         })
     }
 
@@ -445,7 +569,14 @@ impl FileSystem for ImportedFileSystem {
         let path = str_ref_from_path(path)?;
         let mut out = BashkitFsAbiOwnedBytes::default();
         self.call(|vtable, err| unsafe {
-            (vtable.read_link)(self.handle.instance, path, &mut out, err)
+            (vtable
+                .read_link
+                .expect("filesystem ABI vtable was validated"))(
+                self.handle.instance,
+                path,
+                &mut out,
+                err,
+            )
         })?;
         let bytes = self.take_bytes(out)?;
         let text = String::from_utf8(bytes)
@@ -455,7 +586,14 @@ impl FileSystem for ImportedFileSystem {
 
     async fn chmod(&self, path: &Path, mode: u32) -> BashResult<()> {
         let path = str_ref_from_path(path)?;
-        self.call(|vtable, err| unsafe { (vtable.chmod)(self.handle.instance, path, mode, err) })
+        self.call(|vtable, err| unsafe {
+            (vtable.chmod.expect("filesystem ABI vtable was validated"))(
+                self.handle.instance,
+                path,
+                mode,
+                err,
+            )
+        })
     }
 }
 
@@ -718,8 +856,10 @@ fn abi_error_to_io(
         unsafe { String::from_utf8_lossy(slice::from_raw_parts(err.message.ptr, err.message.len)) }
             .into_owned()
     };
-    unsafe {
-        (vtable.free_bytes)(instance, err.message);
+    if let Some(free_bytes) = vtable.free_bytes {
+        unsafe {
+            free_bytes(instance, err.message);
+        }
     }
     IoError::new(abi_kind_to_io(err.kind), message)
 }
@@ -732,19 +872,29 @@ fn bash_error_to_io(err: BashError) -> IoError {
     }
 }
 
-fn export_state<'a>(instance: *const c_void) -> &'a ExportState {
-    unsafe { &*instance.cast::<ExportState>() }
+fn export_state<'a>(instance: *const c_void) -> io::Result<&'a ExportState> {
+    if instance.is_null() {
+        return Err(IoError::new(
+            ErrorKind::InvalidInput,
+            "filesystem ABI instance must not be null",
+        ));
+    }
+    Ok(unsafe { &*instance.cast::<ExportState>() })
 }
 
 unsafe extern "C" fn retain_export_state(instance: *const c_void) {
-    unsafe {
-        Arc::increment_strong_count(instance.cast::<ExportState>());
+    if !instance.is_null() {
+        unsafe {
+            Arc::increment_strong_count(instance.cast::<ExportState>());
+        }
     }
 }
 
 unsafe extern "C" fn release_export_state(instance: *const c_void) {
-    unsafe {
-        Arc::decrement_strong_count(instance.cast::<ExportState>());
+    if !instance.is_null() {
+        unsafe {
+            Arc::decrement_strong_count(instance.cast::<ExportState>());
+        }
     }
 }
 
@@ -763,7 +913,7 @@ fn call0(
     err: *mut BashkitFsAbiError,
     f: impl FnOnce(&ExportState) -> io::Result<()>,
 ) -> BashkitFsAbiStatus {
-    match f(export_state(instance)) {
+    match export_state(instance).and_then(f) {
         Ok(()) => BASHKIT_FS_ABI_STATUS_OK,
         Err(io) => {
             fill_abi_error(err, &io);
@@ -778,7 +928,7 @@ fn call<T>(
     f: impl FnOnce(&ExportState) -> io::Result<T>,
     out: impl FnOnce(T),
 ) -> BashkitFsAbiStatus {
-    match f(export_state(instance)) {
+    match export_state(instance).and_then(f) {
         Ok(value) => {
             out(value);
             BASHKIT_FS_ABI_STATUS_OK
@@ -1026,21 +1176,21 @@ unsafe extern "C" fn export_free_dir_entries(
 }
 
 static EXPORT_VTABLE: BashkitFsAbiVTableV1 = BashkitFsAbiVTableV1 {
-    read_file: export_read_file,
-    write_file: export_write_file,
-    append_file: export_append_file,
-    mkdir: export_mkdir,
-    remove: export_remove,
-    stat: export_stat,
-    read_dir: export_read_dir,
-    exists: export_exists,
-    rename: export_rename,
-    copy: export_copy,
-    symlink: export_symlink,
-    read_link: export_read_link,
-    chmod: export_chmod,
-    free_bytes: export_free_bytes,
-    free_dir_entries: export_free_dir_entries,
+    read_file: Some(export_read_file),
+    write_file: Some(export_write_file),
+    append_file: Some(export_append_file),
+    mkdir: Some(export_mkdir),
+    remove: Some(export_remove),
+    stat: Some(export_stat),
+    read_dir: Some(export_read_dir),
+    exists: Some(export_exists),
+    rename: Some(export_rename),
+    copy: Some(export_copy),
+    symlink: Some(export_symlink),
+    read_link: Some(export_read_link),
+    chmod: Some(export_chmod),
+    free_bytes: Some(export_free_bytes),
+    free_dir_entries: Some(export_free_dir_entries),
 };
 
 #[cfg(test)]
@@ -1075,8 +1225,8 @@ mod tests {
             abi_version: 999,
             _reserved: 0,
             instance: ptr::null(),
-            retain: retain_export_state,
-            release: release_export_state,
+            retain: Some(retain_export_state),
+            release: Some(release_export_state),
             vtable: ptr::null(),
         };
         let err = match ImportedFileSystem::from_handle(&handle) {
@@ -1084,5 +1234,47 @@ mod tests {
             Err(err) => err,
         };
         assert_eq!(err.kind(), ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn rejects_null_abi_callbacks_before_retain() {
+        let source: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        let exported = export_filesystem(source).unwrap();
+
+        let mut handle = *exported.as_handle();
+        handle.retain = None;
+        let err = match ImportedFileSystem::from_handle(&handle) {
+            Ok(_) => panic!("expected null retain check to fail"),
+            Err(err) => err,
+        };
+        assert_eq!(err.kind(), ErrorKind::InvalidData);
+
+        let mut vtable = EXPORT_VTABLE;
+        vtable.read_file = None;
+        let mut handle = *exported.as_handle();
+        handle.vtable = &vtable;
+        let err = match ImportedFileSystem::from_handle(&handle) {
+            Ok(_) => panic!("expected null vtable entry check to fail"),
+            Err(err) => err,
+        };
+        assert_eq!(err.kind(), ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn export_callbacks_reject_null_instance() {
+        let path = BashkitFsAbiStrRef {
+            ptr: b"/missing".as_ptr(),
+            len: b"/missing".len(),
+        };
+        let mut out = BashkitFsAbiOwnedBytes::default();
+        let mut err = BashkitFsAbiError::default();
+
+        let status = unsafe { export_read_file(ptr::null(), path, &mut out, &mut err) };
+
+        assert_eq!(status, BASHKIT_FS_ABI_STATUS_ERR);
+        assert_eq!(err.kind, BashkitFsAbiErrorKind::InvalidInput);
+        unsafe {
+            free_owned_bytes(err.message);
+        }
     }
 }

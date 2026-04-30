@@ -1,4 +1,7 @@
 import test from "ava";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { Bash, FileSystem } from "../wrapper.js";
 
 // ============================================================================
@@ -158,4 +161,46 @@ test("filesystem external roundtrip mounts into bash", (t) => {
   const result = bash.executeSync("cat /workspace/org/repo/README.md");
   t.is(result.exitCode, 0);
   t.is(result.stdout, "hello from external\n");
+});
+
+test("filesystem external import requires owner token", (t) => {
+  const source = new FileSystem();
+  const external = source.toExternal() as { bytes: Uint8Array };
+
+  t.throws(() => FileSystem.fromExternal({ bytes: external.bytes }), {
+    message: /owner|External/,
+  });
+});
+
+test("filesystem external import rejects mismatched owner token", (t) => {
+  const first = new FileSystem().toExternal() as { bytes: Uint8Array };
+  const second = new FileSystem().toExternal() as { owner: unknown };
+
+  t.throws(
+    () => FileSystem.fromExternal({ bytes: first.bytes, owner: second.owner }),
+    {
+      message: /owner token/,
+    },
+  );
+});
+
+test("real filesystem requires and enforces allowedMountPaths", (t) => {
+  const allowed = mkdtempSync(path.join(tmpdir(), "bashkit-allowed-"));
+  const denied = mkdtempSync(path.join(tmpdir(), "bashkit-denied-"));
+  try {
+    writeFileSync(path.join(allowed, "hello.txt"), "host\n");
+
+    t.throws(() => (FileSystem.real as any)(allowed), {
+      message: /allowedMountPaths/,
+    });
+    t.throws(() => FileSystem.real(denied, { allowedMountPaths: [allowed] }), {
+      message: /allowedMountPaths/,
+    });
+
+    const fs = FileSystem.real(allowed, { allowedMountPaths: [allowed] });
+    t.is(fs.readFile("/hello.txt"), "host\n");
+  } finally {
+    rmSync(allowed, { recursive: true, force: true });
+    rmSync(denied, { recursive: true, force: true });
+  }
 });

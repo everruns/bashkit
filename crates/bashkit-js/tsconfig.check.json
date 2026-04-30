@@ -12,7 +12,8 @@
     "anthropic.ts",
     "openai.ts",
     "ai.ts",
-    "__test__/**/*.spec.ts"
+    "__test__/**/*.spec.ts",
+    "test-fixtures/**/*.spec.ts"
   ],
   "exclude": ["node_modules"]
 }

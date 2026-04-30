@@ -14,7 +14,7 @@
 //! holding a raw-pointer-derived `&self` across `block_on` or `.await` points.
 
 use bashkit::interop::fs::{
-    BashkitFsAbiHandleV1, BashkitFsAbiOwnedHandleV1, export_filesystem, import_filesystem,
+    BashkitFsAbiHandleV1, BashkitFsAbiOwnedHandleV1, export_filesystem, import_owned_filesystem,
 };
 use bashkit::tool::VERSION;
 use bashkit::{
@@ -25,9 +25,10 @@ use bashkit::{
     ToolDef, ToolRequest,
 };
 use napi::bindgen_prelude::{Buffer, External, JsObjectValue, Object};
-use napi::{Env, JsValue, Unknown};
+use napi::{Env, JsValue, Unknown, ValueType, sys};
 use napi_derive::napi;
 use std::collections::HashMap;
+use std::ffi::c_void;
 use std::mem::{MaybeUninit, size_of};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -315,14 +316,77 @@ fn decode_file_system_handle(bytes: &[u8]) -> napi::Result<BashkitFsAbiHandleV1>
     }
 }
 
+unsafe extern "C" fn finalize_owned_file_system_handle(
+    _env: sys::napi_env,
+    data: *mut c_void,
+    _hint: *mut c_void,
+) {
+    if !data.is_null() {
+        unsafe {
+            drop(Box::from_raw(data.cast::<BashkitFsAbiOwnedHandleV1>()));
+        }
+    }
+}
+
+fn napi_status_result(status: sys::napi_status, action: &str) -> napi::Result<()> {
+    if status == sys::Status::napi_ok {
+        return Ok(());
+    }
+    Err(napi::Error::from_reason(format!(
+        "{action} failed with napi status {status}"
+    )))
+}
+
+fn create_file_system_owner_external(
+    env: &Env,
+    handle: BashkitFsAbiOwnedHandleV1,
+) -> napi::Result<Unknown<'static>> {
+    let raw_handle = Box::into_raw(Box::new(handle));
+    let mut raw_owner = ptr::null_mut();
+    let status = unsafe {
+        sys::napi_create_external(
+            env.raw(),
+            raw_handle.cast::<c_void>(),
+            Some(finalize_owned_file_system_handle),
+            ptr::null_mut(),
+            &mut raw_owner,
+        )
+    };
+    if let Err(err) = napi_status_result(status, "create filesystem owner external") {
+        unsafe {
+            drop(Box::from_raw(raw_handle));
+        }
+        return Err(err);
+    }
+    Ok(unsafe { Unknown::from_raw_unchecked(env.raw(), raw_owner) })
+}
+
+fn file_system_owner_handle(
+    owner: Unknown<'_>,
+) -> napi::Result<&'static BashkitFsAbiOwnedHandleV1> {
+    if owner.get_type()? != ValueType::External {
+        return Err(napi::Error::from_reason(
+            "filesystem external owner must be a native External token",
+        ));
+    }
+    let value = owner.value();
+    let mut raw_owner = ptr::null_mut();
+    let status = unsafe { sys::napi_get_value_external(value.env, value.value, &mut raw_owner) };
+    napi_status_result(status, "read filesystem owner external")?;
+    if raw_owner.is_null() {
+        return Err(napi::Error::from_reason(
+            "filesystem external owner must not be null",
+        ));
+    }
+    Ok(unsafe { &*raw_owner.cast::<BashkitFsAbiOwnedHandleV1>() })
+}
+
 fn create_file_system_external(
     env: Env,
     handle: BashkitFsAbiOwnedHandleV1,
 ) -> napi::Result<Object<'static>> {
-    // Keep the export alive with napi's built-in External wrapper so the
-    // binding does not hand-roll raw external ownership.
     let bytes = encode_file_system_handle(handle.as_handle());
-    let owner = External::new(handle).into_unknown(&env)?;
+    let owner = create_file_system_owner_external(&env, handle)?;
     let mut external = Object::new(&env)?;
     external.set_named_property("bytes", Buffer::from(bytes))?;
     external.set_named_property("owner", owner)?;
@@ -332,13 +396,36 @@ fn create_file_system_external(
 fn import_external_file_system(external: Unknown<'_>) -> napi::Result<Arc<dyn BashFileSystem>> {
     let external = unsafe { external.cast::<Object<'_>>() }?;
     let bytes: Buffer = external.get_named_property("bytes")?;
-    let handle = decode_file_system_handle(bytes.as_ref())?;
-    import_filesystem(&handle).map_err(|e| napi::Error::from_reason(e.to_string()))
+    let owner: Unknown<'_> = external.get_named_property("owner")?;
+    let owner = file_system_owner_handle(owner)?;
+    if bytes.as_ref() != encode_file_system_handle(owner.as_handle()) {
+        return Err(napi::Error::from_reason(
+            "filesystem external bytes do not match owner token",
+        ));
+    }
+    decode_file_system_handle(bytes.as_ref())?;
+    import_owned_filesystem(owner).map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
 impl NativeFileSystemState {
-    fn real(host_path: String, writable: Option<bool>) -> napi::Result<Self> {
-        let mode = if writable.unwrap_or(false) {
+    fn real(
+        host_path: String,
+        writable: Option<bool>,
+        allowed_mount_paths: Option<Vec<String>>,
+    ) -> napi::Result<Self> {
+        let is_writable = writable.unwrap_or(false);
+        if is_writable {
+            eprintln!(
+                "bashkit: warning: writable mount at {} — scripts can modify host files",
+                host_path
+            );
+        }
+        enforce_mount_policy(
+            allowed_mount_paths.as_deref(),
+            &host_path,
+            "FileSystem.real",
+        )?;
+        let mode = if is_writable {
             RealFsMode::ReadWrite
         } else {
             RealFsMode::ReadOnly
@@ -495,9 +582,12 @@ pub fn create_file_system() -> External<NativeFileSystemState> {
 pub fn real_file_system(
     host_path: String,
     writable: Option<bool>,
+    allowed_mount_paths: Option<Vec<String>>,
 ) -> napi::Result<External<NativeFileSystemState>> {
     Ok(External::new(NativeFileSystemState::real(
-        host_path, writable,
+        host_path,
+        writable,
+        allowed_mount_paths,
     )?))
 }
 

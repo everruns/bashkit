@@ -152,6 +152,7 @@ files:  { "/path": "content" }                # text files (writable, in-memory)
 mounts: [{ host_path, vfs_path?, writable? }] # real FS (read-only by default)
 FileSystem()                                  # standalone in-memory filesystem
 FileSystem.real(host_path, writable=false)    # standalone real filesystem
+                                              # JS requires allowed_mount_paths
 ```
 
 Runtime methods:

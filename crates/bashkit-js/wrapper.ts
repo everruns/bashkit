@@ -19,6 +19,7 @@ const nativeCreateFileSystem: () => any = native.__createFileSystem;
 const nativeRealFileSystem: (
   hostPath: string,
   writable?: boolean,
+  allowedMountPaths?: string[],
 ) => any = native.__realFileSystem;
 const nativeImportFileSystem: (external: unknown) => any =
   native.__importFileSystem;
@@ -46,7 +47,10 @@ const nativeFileSystemRemove: (
   path: string,
   recursive?: boolean,
 ) => void = native.__fileSystemRemove;
-const nativeFileSystemStat: (fs: any, path: string) => {
+const nativeFileSystemStat: (
+  fs: any,
+  path: string,
+) => {
   fileType: string;
   size: number;
   mode: number;
@@ -55,7 +59,10 @@ const nativeFileSystemStat: (fs: any, path: string) => {
 } = native.__fileSystemStat;
 const nativeFileSystemExists: (fs: any, path: string) => boolean =
   native.__fileSystemExists;
-const nativeFileSystemReadDir: (fs: any, path: string) => Array<{
+const nativeFileSystemReadDir: (
+  fs: any,
+  path: string,
+) => Array<{
   name: string;
   metadata: {
     fileType: string;
@@ -65,18 +72,12 @@ const nativeFileSystemReadDir: (fs: any, path: string) => Array<{
     created: number;
   };
 }> = native.__fileSystemReadDir;
-const nativeFileSystemSymlink: (
-  fs: any,
-  target: string,
-  link: string,
-) => void = native.__fileSystemSymlink;
+const nativeFileSystemSymlink: (fs: any, target: string, link: string) => void =
+  native.__fileSystemSymlink;
 const nativeFileSystemReadLink: (fs: any, path: string) => string =
   native.__fileSystemReadLink;
-const nativeFileSystemChmod: (
-  fs: any,
-  path: string,
-  mode: number,
-) => void = native.__fileSystemChmod;
+const nativeFileSystemChmod: (fs: any, path: string, mode: number) => void =
+  native.__fileSystemChmod;
 const nativeFileSystemRename: (
   fs: any,
   fromPath: string,
@@ -397,6 +398,12 @@ function toNativeSnapshotOptions(
   };
 }
 
+function isFileSystemLike(value: unknown): value is { toExternal(): unknown } {
+  return (
+    typeof (value as { toExternal?: unknown } | null)?.toExternal === "function"
+  );
+}
+
 /**
  * Error thrown when a bash command execution fails.
  */
@@ -421,6 +428,11 @@ export class BashError extends Error {
 /**
  * Standalone filesystem handle for direct VFS operations and native addon interop.
  */
+export interface FileSystemRealOptions {
+  writable?: boolean;
+  allowedMountPaths: string[];
+}
+
 export class FileSystem {
   private native: any;
 
@@ -434,8 +446,17 @@ export class FileSystem {
     return fs;
   }
 
-  static real(hostPath: string, writable = false): FileSystem {
-    return FileSystem.fromNative(nativeRealFileSystem(hostPath, writable));
+  static real(hostPath: string, options: FileSystemRealOptions): FileSystem {
+    if (!options || !Array.isArray(options.allowedMountPaths)) {
+      throw new TypeError("FileSystem.real requires options.allowedMountPaths");
+    }
+    return FileSystem.fromNative(
+      nativeRealFileSystem(
+        hostPath,
+        options.writable,
+        options.allowedMountPaths,
+      ),
+    );
   }
 
   static fromExternal(external: unknown): FileSystem {
@@ -825,11 +846,8 @@ export class Bash {
     vfsPathOrFs: string | FileSystem,
     writable?: boolean,
   ): void {
-    if (vfsPathOrFs instanceof FileSystem) {
-      this.native.mountFileSystem(
-        hostPathOrVfsPath,
-        vfsPathOrFs.toExternal() as any,
-      );
+    if (isFileSystemLike(vfsPathOrFs)) {
+      this.native.mountFileSystem(hostPathOrVfsPath, vfsPathOrFs.toExternal());
       return;
     }
     this.native.mount(hostPathOrVfsPath, vfsPathOrFs, writable);
@@ -1165,11 +1183,8 @@ export class BashTool {
     vfsPathOrFs: string | FileSystem,
     writable?: boolean,
   ): void {
-    if (vfsPathOrFs instanceof FileSystem) {
-      this.native.mountFileSystem(
-        hostPathOrVfsPath,
-        vfsPathOrFs.toExternal() as any,
-      );
+    if (isFileSystemLike(vfsPathOrFs)) {
+      this.native.mountFileSystem(hostPathOrVfsPath, vfsPathOrFs.toExternal());
       return;
     }
     this.native.mount(hostPathOrVfsPath, vfsPathOrFs, writable);

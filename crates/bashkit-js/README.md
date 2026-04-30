@@ -58,7 +58,7 @@ console.log((await bash.execute("cat /tmp/file.txt")).stdout); // data\n
 const bash = new Bash();
 
 const result = await bash.execute(
-  'for i in 1 2 3; do echo out-$i; echo err-$i >&2; done',
+  "for i in 1 2 3; do echo out-$i; echo err-$i >&2; done",
   {
     onOutput({ stdout, stderr }) {
       if (stdout) process.stdout.write(stdout);
@@ -192,7 +192,10 @@ console.log(bash.executeSync("ls /workspace").stdout);
 import { Bash, FileSystem } from "@everruns/bashkit";
 
 const bash = new Bash();
-const workspace = FileSystem.real("./src", true);
+const workspace = FileSystem.real("./src", {
+  writable: true,
+  allowedMountPaths: ["./src"],
+});
 
 bash.mount("/workspace", workspace);
 console.log(bash.executeSync("ls /workspace").stdout);
