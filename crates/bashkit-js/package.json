@@ -1,6 +1,6 @@
 {
   "name": "@everruns/bashkit",
-  "version": "0.1.21",
+  "version": "0.2.0",
   "description": "Sandboxed bash interpreter for JavaScript/TypeScript",
   "main": "wrapper.js",
   "browser": "bashkit.wasi-browser.js",

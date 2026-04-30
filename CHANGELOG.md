@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-04-30
+
+### Highlights
+
+- **Filesystem interop ABI** — New `bashkit::interop::fs` (behind the `interop` cargo feature) exposes a versioned `repr(C)` filesystem handle + vtable, plus Python `FileSystem.from_capsule()` / `to_capsule()` and Node `FileSystem.fromExternal()` / `toExternal()` so downstream native extensions can mount custom filesystems without sharing addon-private layouts ([#1353](https://github.com/everruns/bashkit/pull/1353))
+- **Python `network=` constructor kwarg** — `Bash(network=...)` now controls outbound network access at construction time, the first phase of the network policy work tracked in [#1348](https://github.com/everruns/bashkit/pull/1348) ([#1489](https://github.com/everruns/bashkit/pull/1489))
+- **jq compatibility** — Added `input_filename` / `input_line_number` / `$ENV` stubs ([#1490](https://github.com/everruns/bashkit/pull/1490)) and bounded, jq-like runtime error messages that no longer dump full input values to stderr ([#1488](https://github.com/everruns/bashkit/pull/1488))
+
+### What's Changed
+
+* feat(jq): add input_filename / input_line_number / $ENV stubs ([#1490](https://github.com/everruns/bashkit/pull/1490)) by @chaliy
+* feat(python): add network= constructor kwarg (phase 1 of #1348) ([#1489](https://github.com/everruns/bashkit/pull/1489)) by @chaliy
+* fix(jq): format runtime errors without value dumps ([#1488](https://github.com/everruns/bashkit/pull/1488)) by @chaliy
+* feat(site): add canonical sitemap generation ([#1485](https://github.com/everruns/bashkit/pull/1485)) by @chaliy
+* chore(deps): bump the rust-dependencies group with 5 updates ([#1483](https://github.com/everruns/bashkit/pull/1483)) by @dependabot
+* feat(interop): add filesystem ABI handles ([#1353](https://github.com/everruns/bashkit/pull/1353)) by @chaliy
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.1.21...v0.2.0
+
 ## [0.1.21] - 2026-04-25
 
 ### Highlights
