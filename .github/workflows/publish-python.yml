@@ -56,9 +56,14 @@ jobs:
           - os: linux
             target: x86_64
             runs-on: ubuntu-latest
+          # aarch64 wheel builds natively on ubuntu-24.04-arm. Cross-compiling
+          # from x86_64 inside the manylinux container fails with toolchain
+          # gaps in C-built crypto deps (e.g. ring's asm needs `__ARM_ARCH`,
+          # aws-lc-sys's cpu_aarch64_linux.c needs `AT_HWCAP2`). Native arm64
+          # avoids both. Same pattern as publish-js.yml.
           - os: linux
             target: aarch64
-            runs-on: ubuntu-latest
+            runs-on: ubuntu-24.04-arm
 
           # Linux musl
           - os: linux
@@ -68,7 +73,7 @@ jobs:
           - os: linux
             target: aarch64
             manylinux: musllinux_1_1
-            runs-on: ubuntu-latest
+            runs-on: ubuntu-24.04-arm
 
           # macOS
           - os: macos
