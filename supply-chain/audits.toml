@@ -6,6 +6,48 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 version = "0.39.1"
 
+[[audits.clap]]
+who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
+criteria = "safe-to-deploy"
+delta = "4.6.0 -> 4.6.1"
+notes = "Reviewed delta: version/dependency metadata plus generated env! guard for derive defaults; clap remains unsafe-forbidden and no new ambient capabilities."
+
+[[audits.clap_derive]]
+who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
+criteria = "safe-to-deploy"
+delta = "4.6.0 -> 4.6.1"
+notes = "Reviewed delta: derive macro emits compile-time env! guards for Cargo metadata and otherwise metadata/dependency updates; crate forbids unsafe code and adds no new runtime capabilities."
+
+[[audits.ctor]]
+who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
+criteria = "safe-to-deploy"
+delta = "0.8.0 -> 0.10.1"
+notes = "Reviewed delta: macro support refactor adds explicit unsafe/no_warn handling, priority support, and dtor integration; linker-section and atexit behavior remains explicit, documented, and does not introduce new attacker-controlled ambient capabilities."
+
+[[audits.ctor-proc-macro]]
+who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
+criteria = "safe-to-deploy"
+delta = "0.0.7 -> 0.0.13"
+notes = "Reviewed delta: crate metadata only; generated code behavior is unchanged."
+
+[[audits.dtor]]
+who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
+criteria = "safe-to-deploy"
+delta = "0.3.0 -> 0.8.1"
+notes = "Reviewed delta: native atexit/__cxa_atexit helpers are exposed with unsafe APIs and used by macros; callbacks remain caller-supplied function pointers with documented lifecycle hazards and no new untrusted input handling."
+
+[[audits.dtor-proc-macro]]
+who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
+criteria = "safe-to-deploy"
+delta = "0.0.6 -> 0.0.13"
+notes = "Reviewed delta: crate metadata only; generated code behavior is unchanged."
+
+[[audits.fancy-regex]]
+who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
+criteria = "safe-to-deploy"
+delta = "0.17.0 -> 0.18.0"
+notes = "Reviewed delta: adds Oniguruma-compatible syntax, absent repeater, CRLF/newline handling, and subroutine calls; no Rust unsafe added, parser nesting/backtracking limits remain, subroutine expansion is bounded and analysis rejects left/unbounded recursion."
+
 [[audits.fastrand]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -20,6 +62,24 @@ version = "0.4.9"
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 version = "0.7.12"
+
+[[audits.napi]]
+who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
+criteria = "safe-to-deploy"
+delta = "3.8.4 -> 3.8.5"
+notes = "Reviewed delta: iterator prototype setup moves to class registration, threadsafe callback error handling preserves causes and avoids shutdown panics, and new unsafe N-API calls operate on env/value handles obtained from Node without new ambient capabilities."
+
+[[audits.napi-derive]]
+who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
+criteria = "safe-to-deploy"
+delta = "3.5.3 -> 3.5.4"
+notes = "Reviewed delta: dependency metadata updates for ctor/napi backend only; proc-macro source unchanged."
+
+[[audits.napi-derive-backend]]
+who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
+criteria = "safe-to-deploy"
+delta = "5.0.2 -> 5.0.3"
+notes = "Reviewed delta: register_class call now forwards async iterator metadata; no new filesystem/process/network capabilities and generated N-API unsafe shape remains through existing napi abstractions."
 
 [[audits.rand]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
@@ -48,3 +108,9 @@ notes = "Reviewed delta: fixes BIT STRING/CRL parsing edge cases and preserves f
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "1.51.0 -> 1.51.1"
+
+[[audits.tokio]]
+who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
+criteria = "safe-to-deploy"
+delta = "1.52.0 -> 1.52.1"
+notes = "Reviewed delta: reverts blocking-pool sharded queue to mutex/condvar VecDeque to fix spawn_blocking hang, adjusts fastrand cfg, and adds no new unsafe blocks or ambient capabilities."
