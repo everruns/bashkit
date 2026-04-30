@@ -14,7 +14,7 @@
 //! holding a raw-pointer-derived `&self` across `block_on` or `.await` points.
 
 use bashkit::interop::fs::{
-    BashkitFsAbiHandleV1, BashkitFsAbiOwnedHandleV1, export_filesystem, import_owned_filesystem,
+    BashkitFsAbiHandleV1, BashkitFsAbiOwnedHandleV1, export_filesystem, import_filesystem,
 };
 use bashkit::tool::VERSION;
 use bashkit::{
@@ -24,7 +24,7 @@ use bashkit::{
     ScriptedTool as RustScriptedTool, SnapshotOptions as RustSnapshotOptions, Tool, ToolArgs,
     ToolDef, ToolRequest,
 };
-use napi::bindgen_prelude::{Buffer, External, JsObjectValue, Object};
+use napi::bindgen_prelude::External;
 use napi::{Env, JsValue, Unknown, ValueType, sys};
 use napi_derive::napi;
 use std::collections::HashMap;
@@ -33,7 +33,6 @@ use std::mem::{MaybeUninit, size_of};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::ptr;
-use std::slice;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::Mutex;
@@ -246,9 +245,9 @@ enum FileSystemHandle {
     Live(Arc<SharedState>),
 }
 
-// Decision: keep filesystem handles as opaque `External<T>` values in Node.
-// The public JS `FileSystem` class lives in `wrapper.ts`; native bindings only
-// expose module functions over this hidden state.
+// Decision: keep filesystem handles opaque in Node. `FileSystem.toExternal()`
+// returns a native N-API External carrying `BashkitFsAbiOwnedHandleV1`; JS never
+// receives mutable handle bytes or function pointers.
 pub struct NativeFileSystemState {
     inner: FileSystemHandle,
 }
@@ -288,34 +287,6 @@ impl NativeFileSystemState {
     }
 }
 
-fn encode_file_system_handle(handle: &BashkitFsAbiHandleV1) -> Vec<u8> {
-    unsafe {
-        slice::from_raw_parts(
-            (handle as *const BashkitFsAbiHandleV1).cast::<u8>(),
-            size_of::<BashkitFsAbiHandleV1>(),
-        )
-        .to_vec()
-    }
-}
-
-fn decode_file_system_handle(bytes: &[u8]) -> napi::Result<BashkitFsAbiHandleV1> {
-    if bytes.len() != size_of::<BashkitFsAbiHandleV1>() {
-        return Err(napi::Error::from_reason(format!(
-            "filesystem handle must be {} bytes",
-            size_of::<BashkitFsAbiHandleV1>()
-        )));
-    }
-    let mut handle = MaybeUninit::<BashkitFsAbiHandleV1>::uninit();
-    unsafe {
-        ptr::copy_nonoverlapping(
-            bytes.as_ptr(),
-            handle.as_mut_ptr().cast::<u8>(),
-            bytes.len(),
-        );
-        Ok(handle.assume_init())
-    }
-}
-
 unsafe extern "C" fn finalize_owned_file_system_handle(
     _env: sys::napi_env,
     data: *mut c_void,
@@ -337,74 +308,59 @@ fn napi_status_result(status: sys::napi_status, action: &str) -> napi::Result<()
     )))
 }
 
-fn create_file_system_owner_external(
+fn create_file_system_external(
     env: &Env,
     handle: BashkitFsAbiOwnedHandleV1,
 ) -> napi::Result<Unknown<'static>> {
     let raw_handle = Box::into_raw(Box::new(handle));
-    let mut raw_owner = ptr::null_mut();
+    let mut raw_external = ptr::null_mut();
     let status = unsafe {
         sys::napi_create_external(
             env.raw(),
             raw_handle.cast::<c_void>(),
             Some(finalize_owned_file_system_handle),
             ptr::null_mut(),
-            &mut raw_owner,
+            &mut raw_external,
         )
     };
-    if let Err(err) = napi_status_result(status, "create filesystem owner external") {
+    if let Err(err) = napi_status_result(status, "create filesystem external") {
         unsafe {
             drop(Box::from_raw(raw_handle));
         }
         return Err(err);
     }
-    Ok(unsafe { Unknown::from_raw_unchecked(env.raw(), raw_owner) })
+    Ok(unsafe { Unknown::from_raw_unchecked(env.raw(), raw_external) })
 }
 
-fn file_system_owner_handle(
-    owner: Unknown<'_>,
-) -> napi::Result<&'static BashkitFsAbiOwnedHandleV1> {
-    if owner.get_type()? != ValueType::External {
+fn file_system_external_handle(external: Unknown<'_>) -> napi::Result<BashkitFsAbiHandleV1> {
+    if external.get_type()? != ValueType::External {
         return Err(napi::Error::from_reason(
-            "filesystem external owner must be a native External token",
+            "filesystem external must be a native External token",
         ));
     }
-    let value = owner.value();
-    let mut raw_owner = ptr::null_mut();
-    let status = unsafe { sys::napi_get_value_external(value.env, value.value, &mut raw_owner) };
-    napi_status_result(status, "read filesystem owner external")?;
-    if raw_owner.is_null() {
+    let value = external.value();
+    let mut raw_external = ptr::null_mut();
+    let status = unsafe { sys::napi_get_value_external(value.env, value.value, &mut raw_external) };
+    napi_status_result(status, "read filesystem external")?;
+    if raw_external.is_null() {
         return Err(napi::Error::from_reason(
-            "filesystem external owner must not be null",
+            "filesystem external must not be null",
         ));
     }
-    Ok(unsafe { &*raw_owner.cast::<BashkitFsAbiOwnedHandleV1>() })
-}
-
-fn create_file_system_external(
-    env: Env,
-    handle: BashkitFsAbiOwnedHandleV1,
-) -> napi::Result<Object<'static>> {
-    let bytes = encode_file_system_handle(handle.as_handle());
-    let owner = create_file_system_owner_external(&env, handle)?;
-    let mut external = Object::new(&env)?;
-    external.set_named_property("bytes", Buffer::from(bytes))?;
-    external.set_named_property("owner", owner)?;
-    Ok(external)
+    let mut handle = MaybeUninit::<BashkitFsAbiHandleV1>::uninit();
+    unsafe {
+        ptr::copy_nonoverlapping(
+            raw_external.cast::<u8>(),
+            handle.as_mut_ptr().cast::<u8>(),
+            size_of::<BashkitFsAbiHandleV1>(),
+        );
+        Ok(handle.assume_init())
+    }
 }
 
 fn import_external_file_system(external: Unknown<'_>) -> napi::Result<Arc<dyn BashFileSystem>> {
-    let external = unsafe { external.cast::<Object<'_>>() }?;
-    let bytes: Buffer = external.get_named_property("bytes")?;
-    let owner: Unknown<'_> = external.get_named_property("owner")?;
-    let owner = file_system_owner_handle(owner)?;
-    if bytes.as_ref() != encode_file_system_handle(owner.as_handle()) {
-        return Err(napi::Error::from_reason(
-            "filesystem external bytes do not match owner token",
-        ));
-    }
-    decode_file_system_handle(bytes.as_ref())?;
-    import_owned_filesystem(owner).map_err(|e| napi::Error::from_reason(e.to_string()))
+    let handle = file_system_external_handle(external)?;
+    import_filesystem(&handle).map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
 impl NativeFileSystemState {
@@ -441,10 +397,10 @@ impl NativeFileSystemState {
         Ok(Self::from_static(fs))
     }
 
-    fn to_external(&self, env: Env) -> napi::Result<Object<'static>> {
+    fn to_external(&self, env: Env) -> napi::Result<Unknown<'static>> {
         let fs = self.export_fs()?;
         let handle = export_filesystem(fs).map_err(|e| napi::Error::from_reason(e.to_string()))?;
-        create_file_system_external(env, handle)
+        create_file_system_external(&env, handle)
     }
 
     fn read_file(&self, path: String) -> napi::Result<String> {
@@ -602,7 +558,7 @@ pub fn import_file_system(external: Unknown<'_>) -> napi::Result<External<Native
 pub fn file_system_to_external(
     fs: &External<NativeFileSystemState>,
     env: Env,
-) -> napi::Result<Object<'static>> {
+) -> napi::Result<Unknown<'static>> {
     fs.to_external(env)
 }
 

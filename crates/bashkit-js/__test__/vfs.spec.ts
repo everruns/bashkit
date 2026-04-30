@@ -163,25 +163,15 @@ test("filesystem external roundtrip mounts into bash", (t) => {
   t.is(result.stdout, "hello from external\n");
 });
 
-test("filesystem external import requires owner token", (t) => {
-  const source = new FileSystem();
-  const external = source.toExternal() as { bytes: Uint8Array };
-
-  t.throws(() => FileSystem.fromExternal({ bytes: external.bytes }), {
-    message: /owner|External/,
+test("filesystem external import rejects plain objects", (t) => {
+  t.throws(() => FileSystem.fromExternal({}), {
+    message: /native External/,
   });
 });
 
-test("filesystem external import rejects mismatched owner token", (t) => {
-  const first = new FileSystem().toExternal() as { bytes: Uint8Array };
-  const second = new FileSystem().toExternal() as { owner: unknown };
-
-  t.throws(
-    () => FileSystem.fromExternal({ bytes: first.bytes, owner: second.owner }),
-    {
-      message: /owner token/,
-    },
-  );
+test("filesystem external export is cached", (t) => {
+  const source = new FileSystem();
+  t.is(source.toExternal(), source.toExternal());
 });
 
 test("real filesystem requires and enforces allowedMountPaths", (t) => {

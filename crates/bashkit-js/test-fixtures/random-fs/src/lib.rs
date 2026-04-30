@@ -1,17 +1,14 @@
 //! Downstream-style NAPI fixture that validates the public filesystem external ABI.
 
-use bashkit::interop::fs::{BashkitFsAbiHandleV1, export_filesystem};
+use bashkit::interop::fs::export_filesystem;
 use bashkit::{
     DirEntry, FileSystem, FileSystemExt, FileType, Metadata, Result as BashResult, async_trait,
 };
-use napi::bindgen_prelude::{Buffer, JsObjectValue, Object};
 use napi::{Env, Unknown, sys};
 use napi_derive::napi;
 use std::ffi::c_void;
 use std::io::{Error as IoError, ErrorKind};
-use std::mem::size_of;
 use std::path::{Path, PathBuf};
-use std::slice;
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -179,16 +176,6 @@ fn seed_from_i64(seed: i64) -> napi::Result<u64> {
     u64::try_from(seed).map_err(|_| napi::Error::from_reason("seed must be non-negative"))
 }
 
-fn encode_file_system_handle(handle: &BashkitFsAbiHandleV1) -> Vec<u8> {
-    unsafe {
-        slice::from_raw_parts(
-            (handle as *const BashkitFsAbiHandleV1).cast::<u8>(),
-            size_of::<BashkitFsAbiHandleV1>(),
-        )
-        .to_vec()
-    }
-}
-
 unsafe extern "C" fn finalize_owned_file_system_handle(
     _env: sys::napi_env,
     data: *mut c_void,
@@ -203,19 +190,19 @@ unsafe extern "C" fn finalize_owned_file_system_handle(
     }
 }
 
-fn create_file_system_owner_external(
+fn create_file_system_external(
     env: &Env,
     handle: bashkit::interop::fs::BashkitFsAbiOwnedHandleV1,
 ) -> napi::Result<Unknown<'static>> {
     let raw_handle = Box::into_raw(Box::new(handle));
-    let mut raw_owner = std::ptr::null_mut();
+    let mut raw_external = std::ptr::null_mut();
     let status = unsafe {
         sys::napi_create_external(
             env.raw(),
             raw_handle.cast::<c_void>(),
             Some(finalize_owned_file_system_handle),
             std::ptr::null_mut(),
-            &mut raw_owner,
+            &mut raw_external,
         )
     };
     if status != sys::Status::napi_ok {
@@ -223,10 +210,10 @@ fn create_file_system_owner_external(
             drop(Box::from_raw(raw_handle));
         }
         return Err(napi::Error::from_reason(format!(
-            "create filesystem owner external failed with napi status {status}"
+            "create filesystem external failed with napi status {status}"
         )));
     }
-    Ok(unsafe { Unknown::from_raw_unchecked(env.raw(), raw_owner) })
+    Ok(unsafe { Unknown::from_raw_unchecked(env.raw(), raw_external) })
 }
 
 #[napi(js_name = "expectedRandomText")]
@@ -238,14 +225,9 @@ pub fn expected_random_text(seed: i64, path: String) -> napi::Result<String> {
 pub fn create_random_filesystem_external(
     env: Env,
     seed: Option<i64>,
-) -> napi::Result<Object<'static>> {
+) -> napi::Result<Unknown<'static>> {
     let seed = seed_from_i64(seed.unwrap_or(7))?;
     let fs: Arc<dyn FileSystem> = Arc::new(SeededRandomFs::new(seed));
     let handle = export_filesystem(fs).map_err(|err| napi::Error::from_reason(err.to_string()))?;
-    let bytes = encode_file_system_handle(handle.as_handle());
-    let owner = create_file_system_owner_external(&env, handle)?;
-    let mut external = Object::new(&env)?;
-    external.set_named_property("bytes", Buffer::from(bytes))?;
-    external.set_named_property("owner", owner)?;
-    Ok(external)
+    create_file_system_external(&env, handle)
 }

@@ -435,6 +435,7 @@ export interface FileSystemRealOptions {
 
 export class FileSystem {
   private native: any;
+  private external?: unknown;
 
   constructor() {
     this.native = nativeCreateFileSystem();
@@ -443,6 +444,7 @@ export class FileSystem {
   static fromNative(nativeFs: any): FileSystem {
     const fs = Object.create(FileSystem.prototype) as FileSystem;
     fs.native = nativeFs;
+    fs.external = undefined;
     return fs;
   }
 
@@ -460,11 +462,14 @@ export class FileSystem {
   }
 
   static fromExternal(external: unknown): FileSystem {
-    return FileSystem.fromNative(nativeImportFileSystem(external));
+    const fs = FileSystem.fromNative(nativeImportFileSystem(external));
+    fs.external = external;
+    return fs;
   }
 
   toExternal(): unknown {
-    return nativeFileSystemToExternal(this.native);
+    this.external ??= nativeFileSystemToExternal(this.native);
+    return this.external;
   }
 
   readFile(path: string): string {
