@@ -136,6 +136,11 @@ const MAX_JQ_JSON_DEPTH: usize = 100;
 /// - `leaf_paths`: paths to scalar leaves (not in jaq stdlib)
 /// - `match` override: adds `"name":null` to unnamed captures
 /// - `scan` override: uses "g" flag for global matching (jq default)
+/// - `input_filename` / `input_line_number` (#1486): bashkit reads inputs as
+///   a single concatenated stream via shell redirection, so per-input file
+///   metadata is not tracked. These stubs return jq's documented "no input"
+///   defaults (`null` and `0`) so LLM-generated filters compile cleanly
+///   instead of erroring against ~800 chars of prepended stdlib.
 const JQ_COMPAT_DEFS: &str = r#"
 def setpath(p; v):
   if (p | length) == 0 then v
@@ -155,6 +160,8 @@ def match(re; flags):
 def match(re): match(re; "");
 def scan(re; flags): matches(re; "g" + flags)[] | .[0].string;
 def scan(re): scan(re; "");
+def input_filename: null;
+def input_line_number: 0;
 "#;
 
 /// Internal global variable name used to pass shell env to jq's `env` filter.
@@ -162,6 +169,11 @@ def scan(re): scan(re; "");
 /// host process env vars. Shell variables are now passed as a jaq global
 /// variable, and `def env:` is overridden to read from it.
 const ENV_VAR_NAME: &str = "$__bashkit_env__";
+
+/// Public `$ENV` variable name. Real jq exposes the environment as both the
+/// `env` function and the `$ENV` variable; bashkit binds both to the shell
+/// env (#1486) so LLM-generated filters that use `$ENV` compile and resolve.
+const PUBLIC_ENV_VAR_NAME: &str = "$ENV";
 
 /// jq command - JSON processor
 pub struct Jq;
@@ -726,6 +738,7 @@ impl Builtin for Jq {
         // a def that reads from our injected global variable.
         let mut var_names: Vec<&str> = var_bindings.iter().map(|(n, _)| n.as_str()).collect();
         var_names.push(ENV_VAR_NAME);
+        var_names.push(PUBLIC_ENV_VAR_NAME);
         type D = InputData<Val>;
         let input_funs: Vec<jaq_core::native::Fun<D>> = jaq_std::input::funs::<D>()
             .into_vec()
@@ -810,6 +823,7 @@ impl Builtin for Jq {
                 .iter()
                 .map(|(_, v)| serde_to_val(v.clone()))
                 .collect();
+            var_vals.push(env_val.clone());
             var_vals.push(env_val.clone());
             let data = InputDataRef {
                 lut: &filter.lut,
@@ -1948,5 +1962,100 @@ mod tests {
     async fn test_jq_help_short() {
         let result = run_jq_with_args(&["-h"], "").await.unwrap();
         assert!(result.contains("Usage:"), "-h should also show help");
+    }
+
+    // === #1486: input_filename / input_line_number / $ENV ===
+    //
+    // These previously hit jaq compile errors against ~800 chars of bashkit's
+    // prepended stdlib, which LLM agents misread as parse failures and re-ran.
+    // Stubs now compile and return jq's "no input" defaults.
+
+    #[tokio::test]
+    async fn test_jq_input_filename_compiles_and_returns_null() {
+        let result = run_jq("input_filename", "1").await.unwrap();
+        assert_eq!(result.trim(), "null");
+    }
+
+    #[tokio::test]
+    async fn test_jq_input_filename_with_chained_filter_compiles() {
+        // Reproduces the LLM idiom from the bug report:
+        //     jq 'input_filename | split("/") | last'
+        // Real jq returns null|split("/") which is a runtime null error;
+        // the bashkit stub mirrors that — it must NOT compile-error.
+        let result = run_jq_result(r#"input_filename // "stdin""#, "1")
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), r#""stdin""#);
+    }
+
+    #[tokio::test]
+    async fn test_jq_input_line_number_compiles_and_returns_zero() {
+        let result = run_jq("input_line_number", "1").await.unwrap();
+        assert_eq!(result.trim(), "0");
+    }
+
+    #[tokio::test]
+    async fn test_jq_dollar_env_returns_shell_env() {
+        let jq = Jq;
+        let fs = Arc::new(InMemoryFs::new());
+        let mut vars = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+        let args = vec!["$ENV.MY_VAR".to_string()];
+        let mut env = HashMap::new();
+        env.insert("MY_VAR".to_string(), "hello".to_string());
+
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut vars,
+            cwd: &mut cwd,
+            fs,
+            stdin: Some("null"),
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+
+        let result = jq.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), r#""hello""#);
+    }
+
+    #[tokio::test]
+    async fn test_jq_dollar_env_matches_env_function() {
+        // $ENV and `env` must agree — both expose the same shell env map.
+        let jq = Jq;
+        let fs = Arc::new(InMemoryFs::new());
+        let mut vars = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+        let args = vec![r#"$ENV == env"#.to_string()];
+        let mut env = HashMap::new();
+        env.insert("FOO".to_string(), "bar".to_string());
+        env.insert("BAZ".to_string(), "qux".to_string());
+
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut vars,
+            cwd: &mut cwd,
+            fs,
+            stdin: Some("null"),
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+
+        let result = jq.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "true");
     }
 }

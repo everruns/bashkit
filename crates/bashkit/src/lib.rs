@@ -2693,6 +2693,18 @@ pub mod custom_builtins_guide {}
 #[doc = include_str!("../docs/compatibility.md")]
 pub mod compatibility_scorecard {}
 
+/// jq builtin: supported filters, flags, and variables.
+///
+/// **Topics covered:**
+/// - Implemented command-line flags
+/// - Variables (including `$ENV`)
+/// - Notable filters and the bashkit compatibility shim
+/// - Known gaps where bashkit's input model differs from upstream jq
+///
+/// **Related:** [`compatibility_scorecard`], [`threat_model`]
+#[doc = include_str!("../docs/jq.md")]
+pub mod jq_guide {}
+
 /// Security threat model guide.
 ///
 /// This guide documents security threats addressed by Bashkit and their mitigations.
