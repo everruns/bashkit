@@ -115,6 +115,8 @@ typescript = ["dep:zapcode-core"]
 # WARNING: This intentionally breaks the sandbox boundary.
 # Usage: cargo build --features realfs
 realfs = []
+# Enable native-extension interop contracts such as bashkit::interop::fs.
+interop = ["tokio/rt-multi-thread"]
 
 [package.metadata.docs.rs]
 all-features = true

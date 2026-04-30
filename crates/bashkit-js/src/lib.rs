@@ -13,18 +13,26 @@
 //! work. This prevents CodeQL `rust/access-invalid-pointer` alerts caused by
 //! holding a raw-pointer-derived `&self` across `block_on` or `.await` points.
 
+use bashkit::interop::fs::{
+    BashkitFsAbiHandleV1, BashkitFsAbiOwnedHandleV1, export_filesystem, import_filesystem,
+};
 use bashkit::tool::VERSION;
 use bashkit::{
     Bash as RustBash, BashTool as RustBashTool, ExecResult as RustExecResult, ExecutionLimits,
-    ExtFunctionResult, FileType, Metadata, MontyObject, OutputCallback, PythonExternalFnHandler,
-    PythonLimits, ScriptedTool as RustScriptedTool, SnapshotOptions as RustSnapshotOptions, Tool,
-    ToolArgs, ToolDef, ToolRequest,
+    ExtFunctionResult, FileSystem as BashFileSystem, FileType, InMemoryFs, Metadata, MontyObject,
+    OutputCallback, PosixFs, PythonExternalFnHandler, PythonLimits, RealFs, RealFsMode,
+    ScriptedTool as RustScriptedTool, SnapshotOptions as RustSnapshotOptions, Tool, ToolArgs,
+    ToolDef, ToolRequest,
 };
-use napi::JsValue;
+use napi::bindgen_prelude::External;
+use napi::{Env, JsValue, Unknown, ValueType, sys};
 use napi_derive::napi;
 use std::collections::HashMap;
+use std::ffi::c_void;
+use std::mem::{MaybeUninit, size_of};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
+use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::Mutex;
@@ -231,20 +239,173 @@ fn metadata_to_js(meta: &Metadata) -> FileMetadata {
 ///
 /// Obtained via `bash.fs()` or `bashTool.fs()`. All methods are synchronous
 /// and block until the underlying async VFS operation completes.
-#[napi]
-pub struct JsFileSystem {
-    state: Arc<SharedState>,
+#[derive(Clone)]
+enum FileSystemHandle {
+    Static(Arc<dyn BashFileSystem>),
+    Live(Arc<SharedState>),
 }
 
-#[napi]
-impl JsFileSystem {
-    /// Read a file as UTF-8 string.
-    #[napi]
-    pub fn read_file(&self, path: String) -> napi::Result<String> {
-        block_on_with(&self.state, |s| async move {
-            let bash = s.inner.lock().await;
-            let bytes = bash
-                .fs()
+// Decision: keep filesystem handles opaque in Node. `FileSystem.toExternal()`
+// returns a native N-API External carrying `BashkitFsAbiOwnedHandleV1`; JS never
+// receives mutable handle bytes or function pointers.
+pub struct NativeFileSystemState {
+    inner: FileSystemHandle,
+}
+
+impl NativeFileSystemState {
+    fn new() -> Self {
+        Self::from_static(Arc::new(InMemoryFs::new()))
+    }
+
+    fn from_static(fs: Arc<dyn BashFileSystem>) -> Self {
+        Self {
+            inner: FileSystemHandle::Static(fs),
+        }
+    }
+
+    fn from_live(state: Arc<SharedState>) -> Self {
+        Self {
+            inner: FileSystemHandle::Live(state),
+        }
+    }
+
+    fn with_fs<T, Fut>(&self, f: impl FnOnce(Arc<dyn BashFileSystem>) -> Fut) -> napi::Result<T>
+    where
+        Fut: std::future::Future<Output = napi::Result<T>>,
+    {
+        match &self.inner {
+            FileSystemHandle::Static(fs) => callback_runtime().block_on(f(fs.clone())),
+            FileSystemHandle::Live(state) => block_on_with(state, |s| async move {
+                let bash = s.inner.lock().await;
+                f(bash.fs()).await
+            }),
+        }
+    }
+
+    fn export_fs(&self) -> napi::Result<Arc<dyn BashFileSystem>> {
+        self.with_fs(|fs| async move { Ok(fs) })
+    }
+}
+
+unsafe extern "C" fn finalize_owned_file_system_handle(
+    _env: sys::napi_env,
+    data: *mut c_void,
+    _hint: *mut c_void,
+) {
+    if !data.is_null() {
+        unsafe {
+            drop(Box::from_raw(data.cast::<BashkitFsAbiOwnedHandleV1>()));
+        }
+    }
+}
+
+fn napi_status_result(status: sys::napi_status, action: &str) -> napi::Result<()> {
+    if status == sys::Status::napi_ok {
+        return Ok(());
+    }
+    Err(napi::Error::from_reason(format!(
+        "{action} failed with napi status {status}"
+    )))
+}
+
+fn create_file_system_external(
+    env: &Env,
+    handle: BashkitFsAbiOwnedHandleV1,
+) -> napi::Result<Unknown<'static>> {
+    let raw_handle = Box::into_raw(Box::new(handle));
+    let mut raw_external = ptr::null_mut();
+    let status = unsafe {
+        sys::napi_create_external(
+            env.raw(),
+            raw_handle.cast::<c_void>(),
+            Some(finalize_owned_file_system_handle),
+            ptr::null_mut(),
+            &mut raw_external,
+        )
+    };
+    if let Err(err) = napi_status_result(status, "create filesystem external") {
+        unsafe {
+            drop(Box::from_raw(raw_handle));
+        }
+        return Err(err);
+    }
+    Ok(unsafe { Unknown::from_raw_unchecked(env.raw(), raw_external) })
+}
+
+fn file_system_external_handle(external: Unknown<'_>) -> napi::Result<BashkitFsAbiHandleV1> {
+    if external.get_type()? != ValueType::External {
+        return Err(napi::Error::from_reason(
+            "filesystem external must be a native External token",
+        ));
+    }
+    let value = external.value();
+    let mut raw_external = ptr::null_mut();
+    let status = unsafe { sys::napi_get_value_external(value.env, value.value, &mut raw_external) };
+    napi_status_result(status, "read filesystem external")?;
+    if raw_external.is_null() {
+        return Err(napi::Error::from_reason(
+            "filesystem external must not be null",
+        ));
+    }
+    let mut handle = MaybeUninit::<BashkitFsAbiHandleV1>::uninit();
+    unsafe {
+        ptr::copy_nonoverlapping(
+            raw_external.cast::<u8>(),
+            handle.as_mut_ptr().cast::<u8>(),
+            size_of::<BashkitFsAbiHandleV1>(),
+        );
+        Ok(handle.assume_init())
+    }
+}
+
+fn import_external_file_system(external: Unknown<'_>) -> napi::Result<Arc<dyn BashFileSystem>> {
+    let handle = file_system_external_handle(external)?;
+    import_filesystem(&handle).map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
+impl NativeFileSystemState {
+    fn real(
+        host_path: String,
+        writable: Option<bool>,
+        allowed_mount_paths: Option<Vec<String>>,
+    ) -> napi::Result<Self> {
+        let is_writable = writable.unwrap_or(false);
+        if is_writable {
+            eprintln!(
+                "bashkit: warning: writable mount at {} — scripts can modify host files",
+                host_path
+            );
+        }
+        enforce_mount_policy(
+            allowed_mount_paths.as_deref(),
+            &host_path,
+            "FileSystem.real",
+        )?;
+        let mode = if is_writable {
+            RealFsMode::ReadWrite
+        } else {
+            RealFsMode::ReadOnly
+        };
+        let backend =
+            RealFs::new(&host_path, mode).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        let fs: Arc<dyn BashFileSystem> = Arc::new(PosixFs::new(backend));
+        Ok(Self::from_static(fs))
+    }
+
+    fn import_external(external: Unknown<'_>) -> napi::Result<Self> {
+        let fs = import_external_file_system(external)?;
+        Ok(Self::from_static(fs))
+    }
+
+    fn to_external(&self, env: Env) -> napi::Result<Unknown<'static>> {
+        let fs = self.export_fs()?;
+        let handle = export_filesystem(fs).map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        create_file_system_external(&env, handle)
+    }
+
+    fn read_file(&self, path: String) -> napi::Result<String> {
+        self.with_fs(|fs| async move {
+            let bytes = fs
                 .read_file(Path::new(&path))
                 .await
                 .map_err(|e| napi::Error::from_reason(e.to_string()))?;
@@ -253,61 +414,41 @@ impl JsFileSystem {
         })
     }
 
-    /// Write string content to a file (creates or replaces).
-    #[napi]
-    pub fn write_file(&self, path: String, content: String) -> napi::Result<()> {
-        block_on_with(&self.state, |s| async move {
-            let bash = s.inner.lock().await;
-            bash.fs()
-                .write_file(Path::new(&path), content.as_bytes())
+    fn write_file(&self, path: String, content: String) -> napi::Result<()> {
+        self.with_fs(|fs| async move {
+            fs.write_file(Path::new(&path), content.as_bytes())
                 .await
                 .map_err(|e| napi::Error::from_reason(e.to_string()))
         })
     }
 
-    /// Append string content to a file.
-    #[napi]
-    pub fn append_file(&self, path: String, content: String) -> napi::Result<()> {
-        block_on_with(&self.state, |s| async move {
-            let bash = s.inner.lock().await;
-            bash.fs()
-                .append_file(Path::new(&path), content.as_bytes())
+    fn append_file(&self, path: String, content: String) -> napi::Result<()> {
+        self.with_fs(|fs| async move {
+            fs.append_file(Path::new(&path), content.as_bytes())
                 .await
                 .map_err(|e| napi::Error::from_reason(e.to_string()))
         })
     }
 
-    /// Create a directory. If `recursive` is true, creates parent directories.
-    #[napi]
-    pub fn mkdir(&self, path: String, recursive: Option<bool>) -> napi::Result<()> {
-        block_on_with(&self.state, |s| async move {
-            let bash = s.inner.lock().await;
-            bash.fs()
-                .mkdir(Path::new(&path), recursive.unwrap_or(false))
+    fn mkdir(&self, path: String, recursive: Option<bool>) -> napi::Result<()> {
+        self.with_fs(|fs| async move {
+            fs.mkdir(Path::new(&path), recursive.unwrap_or(false))
                 .await
                 .map_err(|e| napi::Error::from_reason(e.to_string()))
         })
     }
 
-    /// Remove a file or directory. If `recursive` is true, removes contents.
-    #[napi]
-    pub fn remove(&self, path: String, recursive: Option<bool>) -> napi::Result<()> {
-        block_on_with(&self.state, |s| async move {
-            let bash = s.inner.lock().await;
-            bash.fs()
-                .remove(Path::new(&path), recursive.unwrap_or(false))
+    fn remove(&self, path: String, recursive: Option<bool>) -> napi::Result<()> {
+        self.with_fs(|fs| async move {
+            fs.remove(Path::new(&path), recursive.unwrap_or(false))
                 .await
                 .map_err(|e| napi::Error::from_reason(e.to_string()))
         })
     }
 
-    /// Get metadata for a path.
-    #[napi]
-    pub fn stat(&self, path: String) -> napi::Result<FileMetadata> {
-        block_on_with(&self.state, |s| async move {
-            let bash = s.inner.lock().await;
-            let meta = bash
-                .fs()
+    fn stat(&self, path: String) -> napi::Result<FileMetadata> {
+        self.with_fs(|fs| async move {
+            let meta = fs
                 .stat(Path::new(&path))
                 .await
                 .map_err(|e| napi::Error::from_reason(e.to_string()))?;
@@ -315,25 +456,17 @@ impl JsFileSystem {
         })
     }
 
-    /// Check if a path exists.
-    #[napi]
-    pub fn exists(&self, path: String) -> napi::Result<bool> {
-        block_on_with(&self.state, |s| async move {
-            let bash = s.inner.lock().await;
-            bash.fs()
-                .exists(Path::new(&path))
+    fn exists(&self, path: String) -> napi::Result<bool> {
+        self.with_fs(|fs| async move {
+            fs.exists(Path::new(&path))
                 .await
                 .map_err(|e| napi::Error::from_reason(e.to_string()))
         })
     }
 
-    /// List directory entries with metadata.
-    #[napi]
-    pub fn read_dir(&self, path: String) -> napi::Result<Vec<JsDirEntry>> {
-        block_on_with(&self.state, |s| async move {
-            let bash = s.inner.lock().await;
-            let entries = bash
-                .fs()
+    fn read_dir(&self, path: String) -> napi::Result<Vec<JsDirEntry>> {
+        self.with_fs(|fs| async move {
+            let entries = fs
                 .read_dir(Path::new(&path))
                 .await
                 .map_err(|e| napi::Error::from_reason(e.to_string()))?;
@@ -347,25 +480,17 @@ impl JsFileSystem {
         })
     }
 
-    /// Create a symbolic link.
-    #[napi]
-    pub fn symlink(&self, target: String, link: String) -> napi::Result<()> {
-        block_on_with(&self.state, |s| async move {
-            let bash = s.inner.lock().await;
-            bash.fs()
-                .symlink(Path::new(&target), Path::new(&link))
+    fn symlink(&self, target: String, link: String) -> napi::Result<()> {
+        self.with_fs(|fs| async move {
+            fs.symlink(Path::new(&target), Path::new(&link))
                 .await
                 .map_err(|e| napi::Error::from_reason(e.to_string()))
         })
     }
 
-    /// Read the target of a symbolic link.
-    #[napi]
-    pub fn read_link(&self, path: String) -> napi::Result<String> {
-        block_on_with(&self.state, |s| async move {
-            let bash = s.inner.lock().await;
-            let target = bash
-                .fs()
+    fn read_link(&self, path: String) -> napi::Result<String> {
+        self.with_fs(|fs| async move {
+            let target = fs
                 .read_link(Path::new(&path))
                 .await
                 .map_err(|e| napi::Error::from_reason(e.to_string()))?;
@@ -373,41 +498,180 @@ impl JsFileSystem {
         })
     }
 
-    /// Change file permissions.
-    #[napi]
-    pub fn chmod(&self, path: String, mode: u32) -> napi::Result<()> {
-        block_on_with(&self.state, |s| async move {
-            let bash = s.inner.lock().await;
-            bash.fs()
-                .chmod(Path::new(&path), mode)
+    fn chmod(&self, path: String, mode: u32) -> napi::Result<()> {
+        self.with_fs(|fs| async move {
+            fs.chmod(Path::new(&path), mode)
                 .await
                 .map_err(|e| napi::Error::from_reason(e.to_string()))
         })
     }
 
-    /// Rename/move a file or directory.
-    #[napi]
-    pub fn rename(&self, from_path: String, to_path: String) -> napi::Result<()> {
-        block_on_with(&self.state, |s| async move {
-            let bash = s.inner.lock().await;
-            bash.fs()
-                .rename(Path::new(&from_path), Path::new(&to_path))
+    fn rename(&self, from_path: String, to_path: String) -> napi::Result<()> {
+        self.with_fs(|fs| async move {
+            fs.rename(Path::new(&from_path), Path::new(&to_path))
                 .await
                 .map_err(|e| napi::Error::from_reason(e.to_string()))
         })
     }
 
-    /// Copy a file.
-    #[napi]
-    pub fn copy(&self, from_path: String, to_path: String) -> napi::Result<()> {
-        block_on_with(&self.state, |s| async move {
-            let bash = s.inner.lock().await;
-            bash.fs()
-                .copy(Path::new(&from_path), Path::new(&to_path))
+    fn copy(&self, from_path: String, to_path: String) -> napi::Result<()> {
+        self.with_fs(|fs| async move {
+            fs.copy(Path::new(&from_path), Path::new(&to_path))
                 .await
                 .map_err(|e| napi::Error::from_reason(e.to_string()))
         })
     }
+}
+
+impl Default for NativeFileSystemState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[napi(js_name = "__createFileSystem")]
+pub fn create_file_system() -> External<NativeFileSystemState> {
+    External::new(NativeFileSystemState::new())
+}
+
+#[napi(js_name = "__realFileSystem")]
+pub fn real_file_system(
+    host_path: String,
+    writable: Option<bool>,
+    allowed_mount_paths: Option<Vec<String>>,
+) -> napi::Result<External<NativeFileSystemState>> {
+    Ok(External::new(NativeFileSystemState::real(
+        host_path,
+        writable,
+        allowed_mount_paths,
+    )?))
+}
+
+#[napi(js_name = "__importFileSystem")]
+pub fn import_file_system(external: Unknown<'_>) -> napi::Result<External<NativeFileSystemState>> {
+    Ok(External::new(NativeFileSystemState::import_external(
+        external,
+    )?))
+}
+
+#[napi(js_name = "__fileSystemToExternal")]
+pub fn file_system_to_external(
+    fs: &External<NativeFileSystemState>,
+    env: Env,
+) -> napi::Result<Unknown<'static>> {
+    fs.to_external(env)
+}
+
+#[napi(js_name = "__fileSystemReadFile")]
+pub fn file_system_read_file(
+    fs: &External<NativeFileSystemState>,
+    path: String,
+) -> napi::Result<String> {
+    fs.read_file(path)
+}
+
+#[napi(js_name = "__fileSystemWriteFile")]
+pub fn file_system_write_file(
+    fs: &External<NativeFileSystemState>,
+    path: String,
+    content: String,
+) -> napi::Result<()> {
+    fs.write_file(path, content)
+}
+
+#[napi(js_name = "__fileSystemAppendFile")]
+pub fn file_system_append_file(
+    fs: &External<NativeFileSystemState>,
+    path: String,
+    content: String,
+) -> napi::Result<()> {
+    fs.append_file(path, content)
+}
+
+#[napi(js_name = "__fileSystemMkdir")]
+pub fn file_system_mkdir(
+    fs: &External<NativeFileSystemState>,
+    path: String,
+    recursive: Option<bool>,
+) -> napi::Result<()> {
+    fs.mkdir(path, recursive)
+}
+
+#[napi(js_name = "__fileSystemRemove")]
+pub fn file_system_remove(
+    fs: &External<NativeFileSystemState>,
+    path: String,
+    recursive: Option<bool>,
+) -> napi::Result<()> {
+    fs.remove(path, recursive)
+}
+
+#[napi(js_name = "__fileSystemStat")]
+pub fn file_system_stat(
+    fs: &External<NativeFileSystemState>,
+    path: String,
+) -> napi::Result<FileMetadata> {
+    fs.stat(path)
+}
+
+#[napi(js_name = "__fileSystemExists")]
+pub fn file_system_exists(
+    fs: &External<NativeFileSystemState>,
+    path: String,
+) -> napi::Result<bool> {
+    fs.exists(path)
+}
+
+#[napi(js_name = "__fileSystemReadDir")]
+pub fn file_system_read_dir(
+    fs: &External<NativeFileSystemState>,
+    path: String,
+) -> napi::Result<Vec<JsDirEntry>> {
+    fs.read_dir(path)
+}
+
+#[napi(js_name = "__fileSystemSymlink")]
+pub fn file_system_symlink(
+    fs: &External<NativeFileSystemState>,
+    target: String,
+    link: String,
+) -> napi::Result<()> {
+    fs.symlink(target, link)
+}
+
+#[napi(js_name = "__fileSystemReadLink")]
+pub fn file_system_read_link(
+    fs: &External<NativeFileSystemState>,
+    path: String,
+) -> napi::Result<String> {
+    fs.read_link(path)
+}
+
+#[napi(js_name = "__fileSystemChmod")]
+pub fn file_system_chmod(
+    fs: &External<NativeFileSystemState>,
+    path: String,
+    mode: u32,
+) -> napi::Result<()> {
+    fs.chmod(path, mode)
+}
+
+#[napi(js_name = "__fileSystemRename")]
+pub fn file_system_rename(
+    fs: &External<NativeFileSystemState>,
+    from_path: String,
+    to_path: String,
+) -> napi::Result<()> {
+    fs.rename(from_path, to_path)
+}
+
+#[napi(js_name = "__fileSystemCopy")]
+pub fn file_system_copy(
+    fs: &External<NativeFileSystemState>,
+    from_path: String,
+    to_path: String,
+) -> napi::Result<()> {
+    fs.copy(from_path, to_path)
 }
 
 // ============================================================================
@@ -1262,14 +1526,25 @@ impl Bash {
         block_on_with(&self.state, |s| async move {
             let bash = s.inner.lock().await;
             let mode = if is_writable {
-                bashkit::RealFsMode::ReadWrite
+                RealFsMode::ReadWrite
             } else {
-                bashkit::RealFsMode::ReadOnly
+                RealFsMode::ReadOnly
             };
-            let real_backend = bashkit::RealFs::new(&host_path, mode)
+            let real_backend = RealFs::new(&host_path, mode)
                 .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-            let fs: Arc<dyn bashkit::FileSystem> = Arc::new(bashkit::PosixFs::new(real_backend));
+            let fs: Arc<dyn BashFileSystem> = Arc::new(PosixFs::new(real_backend));
             bash.mount(Path::new(&vfs_path), fs)
+                .map_err(|e| napi::Error::from_reason(e.to_string()))
+        })
+    }
+
+    /// Mount a filesystem handle without rebuilding the interpreter.
+    #[napi]
+    pub fn mount_file_system(&self, vfs_path: String, fs: Unknown<'_>) -> napi::Result<()> {
+        let mounted_fs = import_external_file_system(fs)?;
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            bash.mount(Path::new(&vfs_path), mounted_fs)
                 .map_err(|e| napi::Error::from_reason(e.to_string()))
         })
     }
@@ -1286,11 +1561,11 @@ impl Bash {
 
     /// Get a `JsFileSystem` handle for direct VFS operations.
     #[napi]
-    pub fn fs(&self) -> napi::Result<JsFileSystem> {
+    pub fn fs(&self) -> napi::Result<External<NativeFileSystemState>> {
         reject_on_output_reentry(&self.state)?;
-        Ok(JsFileSystem {
-            state: self.state.clone(),
-        })
+        Ok(External::new(NativeFileSystemState::from_live(
+            self.state.clone(),
+        )))
     }
 }
 
@@ -1747,14 +2022,25 @@ impl BashTool {
         block_on_with(&self.state, |s| async move {
             let bash = s.inner.lock().await;
             let mode = if is_writable {
-                bashkit::RealFsMode::ReadWrite
+                RealFsMode::ReadWrite
             } else {
-                bashkit::RealFsMode::ReadOnly
+                RealFsMode::ReadOnly
             };
-            let real_backend = bashkit::RealFs::new(&host_path, mode)
+            let real_backend = RealFs::new(&host_path, mode)
                 .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-            let fs: Arc<dyn bashkit::FileSystem> = Arc::new(bashkit::PosixFs::new(real_backend));
+            let fs: Arc<dyn BashFileSystem> = Arc::new(PosixFs::new(real_backend));
             bash.mount(Path::new(&vfs_path), fs)
+                .map_err(|e| napi::Error::from_reason(e.to_string()))
+        })
+    }
+
+    /// Mount a filesystem handle without rebuilding the interpreter.
+    #[napi]
+    pub fn mount_file_system(&self, vfs_path: String, fs: Unknown<'_>) -> napi::Result<()> {
+        let mounted_fs = import_external_file_system(fs)?;
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            bash.mount(Path::new(&vfs_path), mounted_fs)
                 .map_err(|e| napi::Error::from_reason(e.to_string()))
         })
     }
@@ -1771,11 +2057,11 @@ impl BashTool {
 
     /// Get a `JsFileSystem` handle for direct VFS operations.
     #[napi]
-    pub fn fs(&self) -> napi::Result<JsFileSystem> {
+    pub fn fs(&self) -> napi::Result<External<NativeFileSystemState>> {
         reject_on_output_reentry(&self.state)?;
-        Ok(JsFileSystem {
-            state: self.state.clone(),
-        })
+        Ok(External::new(NativeFileSystemState::from_live(
+            self.state.clone(),
+        )))
     }
 }
 

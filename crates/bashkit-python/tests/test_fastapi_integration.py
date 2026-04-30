@@ -15,10 +15,11 @@ import pytest
 fastapi = pytest.importorskip("fastapi")
 httpx = pytest.importorskip("httpx")
 
+from bashkit_random_fs import create_random_filesystem_capsule, expected_random_text  # noqa: E402
 from fastapi import FastAPI, Request  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from bashkit import Bash, ScriptedTool  # noqa: E402
+from bashkit import Bash, FileSystem, ScriptedTool  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # ContextVar for request-scoped state
@@ -287,3 +288,26 @@ async def test_concurrent_sync_requests_with_shared_bash_and_async_custom_builti
     assert bodies[0]["request_id"] == "req-slow"
     assert bodies[1]["argv"] == ["fast"]
     assert bodies[1]["request_id"] == "req-fast"
+
+
+@pytest.mark.asyncio
+async def test_async_endpoint_mounts_native_filesystem_capsule():
+    """FastAPI async endpoint can mount a native-extension filesystem capsule."""
+    app = FastAPI()
+
+    @app.get("/random/{seed}")
+    async def random_endpoint(seed: int):
+        fs = FileSystem.from_capsule(create_random_filesystem_capsule(seed))
+        bash = Bash()
+        bash.mount("/remote", fs)
+        result = await bash.execute("cat /remote/random.txt")
+        return {"stdout": result.stdout, "exit_code": result.exit_code}
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/random/314")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["exit_code"] == 0
+    assert data["stdout"] == expected_random_text(314, "/random.txt")

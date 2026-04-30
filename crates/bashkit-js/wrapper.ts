@@ -15,6 +15,79 @@ const NativeBash: typeof NativeBashType = native.Bash;
 const NativeBashTool: typeof NativeBashToolType = native.BashTool;
 const NativeScriptedTool: typeof NativeScriptedToolType = native.ScriptedTool;
 const nativeGetVersion: () => string = native.getVersion;
+const nativeCreateFileSystem: () => any = native.__createFileSystem;
+const nativeRealFileSystem: (
+  hostPath: string,
+  writable?: boolean,
+  allowedMountPaths?: string[],
+) => any = native.__realFileSystem;
+const nativeImportFileSystem: (external: unknown) => any =
+  native.__importFileSystem;
+const nativeFileSystemToExternal: (fs: any) => unknown =
+  native.__fileSystemToExternal;
+const nativeFileSystemReadFile: (fs: any, path: string) => string =
+  native.__fileSystemReadFile;
+const nativeFileSystemWriteFile: (
+  fs: any,
+  path: string,
+  content: string,
+) => void = native.__fileSystemWriteFile;
+const nativeFileSystemAppendFile: (
+  fs: any,
+  path: string,
+  content: string,
+) => void = native.__fileSystemAppendFile;
+const nativeFileSystemMkdir: (
+  fs: any,
+  path: string,
+  recursive?: boolean,
+) => void = native.__fileSystemMkdir;
+const nativeFileSystemRemove: (
+  fs: any,
+  path: string,
+  recursive?: boolean,
+) => void = native.__fileSystemRemove;
+const nativeFileSystemStat: (
+  fs: any,
+  path: string,
+) => {
+  fileType: string;
+  size: number;
+  mode: number;
+  modified: number;
+  created: number;
+} = native.__fileSystemStat;
+const nativeFileSystemExists: (fs: any, path: string) => boolean =
+  native.__fileSystemExists;
+const nativeFileSystemReadDir: (
+  fs: any,
+  path: string,
+) => Array<{
+  name: string;
+  metadata: {
+    fileType: string;
+    size: number;
+    mode: number;
+    modified: number;
+    created: number;
+  };
+}> = native.__fileSystemReadDir;
+const nativeFileSystemSymlink: (fs: any, target: string, link: string) => void =
+  native.__fileSystemSymlink;
+const nativeFileSystemReadLink: (fs: any, path: string) => string =
+  native.__fileSystemReadLink;
+const nativeFileSystemChmod: (fs: any, path: string, mode: number) => void =
+  native.__fileSystemChmod;
+const nativeFileSystemRename: (
+  fs: any,
+  fromPath: string,
+  toPath: string,
+) => void = native.__fileSystemRename;
+const nativeFileSystemCopy: (
+  fs: any,
+  fromPath: string,
+  toPath: string,
+) => void = native.__fileSystemCopy;
 
 export type { ExecResult };
 
@@ -325,6 +398,12 @@ function toNativeSnapshotOptions(
   };
 }
 
+function isFileSystemLike(value: unknown): value is { toExternal(): unknown } {
+  return (
+    typeof (value as { toExternal?: unknown } | null)?.toExternal === "function"
+  );
+}
+
 /**
  * Error thrown when a bash command execution fails.
  */
@@ -343,6 +422,121 @@ export class BashError extends Error {
 
   display(): string {
     return `BashError(exit_code=${this.exitCode}): ${this.message}`;
+  }
+}
+
+/**
+ * Standalone filesystem handle for direct VFS operations and native addon interop.
+ */
+export interface FileSystemRealOptions {
+  writable?: boolean;
+  allowedMountPaths: string[];
+}
+
+export class FileSystem {
+  private native: any;
+  private external?: unknown;
+
+  constructor() {
+    this.native = nativeCreateFileSystem();
+  }
+
+  static fromNative(nativeFs: any): FileSystem {
+    const fs = Object.create(FileSystem.prototype) as FileSystem;
+    fs.native = nativeFs;
+    fs.external = undefined;
+    return fs;
+  }
+
+  static real(hostPath: string, options: FileSystemRealOptions): FileSystem {
+    if (!options || !Array.isArray(options.allowedMountPaths)) {
+      throw new TypeError("FileSystem.real requires options.allowedMountPaths");
+    }
+    return FileSystem.fromNative(
+      nativeRealFileSystem(
+        hostPath,
+        options.writable,
+        options.allowedMountPaths,
+      ),
+    );
+  }
+
+  static fromExternal(external: unknown): FileSystem {
+    const fs = FileSystem.fromNative(nativeImportFileSystem(external));
+    fs.external = external;
+    return fs;
+  }
+
+  toExternal(): unknown {
+    this.external ??= nativeFileSystemToExternal(this.native);
+    return this.external;
+  }
+
+  readFile(path: string): string {
+    return nativeFileSystemReadFile(this.native, path);
+  }
+
+  writeFile(path: string, content: string): void {
+    nativeFileSystemWriteFile(this.native, path, content);
+  }
+
+  appendFile(path: string, content: string): void {
+    nativeFileSystemAppendFile(this.native, path, content);
+  }
+
+  mkdir(path: string, recursive?: boolean): void {
+    nativeFileSystemMkdir(this.native, path, recursive);
+  }
+
+  remove(path: string, recursive?: boolean): void {
+    nativeFileSystemRemove(this.native, path, recursive);
+  }
+
+  stat(path: string): {
+    fileType: string;
+    size: number;
+    mode: number;
+    modified: number;
+    created: number;
+  } {
+    return nativeFileSystemStat(this.native, path);
+  }
+
+  exists(path: string): boolean {
+    return nativeFileSystemExists(this.native, path);
+  }
+
+  readDir(path: string): Array<{
+    name: string;
+    metadata: {
+      fileType: string;
+      size: number;
+      mode: number;
+      modified: number;
+      created: number;
+    };
+  }> {
+    return nativeFileSystemReadDir(this.native, path);
+  }
+
+  symlink(target: string, link: string): void {
+    nativeFileSystemSymlink(this.native, target, link);
+  }
+
+  readLink(path: string): string {
+    return nativeFileSystemReadLink(this.native, path);
+  }
+
+  chmod(path: string, mode: number): void {
+    nativeFileSystemChmod(this.native, path, mode);
+  }
+
+  rename(fromPath: string, toPath: string): void {
+    nativeFileSystemRename(this.native, fromPath, toPath);
+  }
+
+  copy(fromPath: string, toPath: string): void {
+    nativeFileSystemCopy(this.native, fromPath, toPath);
   }
 }
 
@@ -644,14 +838,24 @@ export class Bash {
     return this.native.readDir(path);
   }
 
-  /** Get a JsFileSystem handle for direct VFS operations. */
-  fs(): any {
-    return this.native.fs();
+  /** Get a FileSystem handle for direct VFS operations. */
+  fs(): FileSystem {
+    return FileSystem.fromNative(this.native.fs());
   }
 
-  /** Mount a host directory into the VFS. Read-only by default; pass writable: true to enable writes. */
-  mount(hostPath: string, vfsPath: string, writable?: boolean): void {
-    this.native.mount(hostPath, vfsPath, writable);
+  mount(vfsPath: string, fs: FileSystem): void;
+  mount(hostPath: string, vfsPath: string, writable?: boolean): void;
+  /** Mount either a host directory or a FileSystem into the VFS. */
+  mount(
+    hostPathOrVfsPath: string,
+    vfsPathOrFs: string | FileSystem,
+    writable?: boolean,
+  ): void {
+    if (isFileSystemLike(vfsPathOrFs)) {
+      this.native.mountFileSystem(hostPathOrVfsPath, vfsPathOrFs.toExternal());
+      return;
+    }
+    this.native.mount(hostPathOrVfsPath, vfsPathOrFs, writable);
   }
 
   /** Unmount a previously mounted filesystem. */
@@ -971,14 +1175,24 @@ export class BashTool {
     return this.native.readDir(path);
   }
 
-  /** Get a JsFileSystem handle for direct VFS operations. */
-  fs(): any {
-    return this.native.fs();
+  /** Get a FileSystem handle for direct VFS operations. */
+  fs(): FileSystem {
+    return FileSystem.fromNative(this.native.fs());
   }
 
-  /** Mount a host directory into the VFS. Read-only by default; pass writable: true to enable writes. */
-  mount(hostPath: string, vfsPath: string, writable?: boolean): void {
-    this.native.mount(hostPath, vfsPath, writable);
+  mount(vfsPath: string, fs: FileSystem): void;
+  mount(hostPath: string, vfsPath: string, writable?: boolean): void;
+  /** Mount either a host directory or a FileSystem into the VFS. */
+  mount(
+    hostPathOrVfsPath: string,
+    vfsPathOrFs: string | FileSystem,
+    writable?: boolean,
+  ): void {
+    if (isFileSystemLike(vfsPathOrFs)) {
+      this.native.mountFileSystem(hostPathOrVfsPath, vfsPathOrFs.toExternal());
+      return;
+    }
+    this.native.mount(hostPathOrVfsPath, vfsPathOrFs, writable);
   }
 
   /** Unmount a previously mounted filesystem. */

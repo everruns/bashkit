@@ -405,6 +405,8 @@ mod fs;
 mod git;
 /// Interceptor hooks for the execution pipeline.
 pub mod hooks;
+#[cfg(feature = "interop")]
+pub mod interop;
 mod interpreter;
 mod limits;
 #[cfg(feature = "logging")]

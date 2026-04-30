@@ -1,0 +1,15 @@
+[package]
+name = "bashkit-random-fs"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[lib]
+name = "bashkit_random_fs"
+crate-type = ["cdylib"]
+
+[dependencies]
+bashkit = { path = "../../../bashkit", features = ["interop"] }
+pyo3 = { version = "0.28.2", features = ["extension-module"] }

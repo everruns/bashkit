@@ -8,7 +8,7 @@ Sandboxed bash interpreter for JavaScript and TypeScript. Native NAPI-RS binding
 - Full bash syntax: variables, pipelines, redirects, loops, functions, and arrays
 - 160 built-in commands including `grep`, `sed`, `awk`, `jq`, `curl`, and `find`
 - Sync and async execution APIs
-- Direct VFS helpers, constructor mounts, and live host mounts
+- Direct VFS helpers, standalone `FileSystem` handles, and live mounts
 - Cancellation support via `cancel()`
 - Sticky cancellation recovery via `clearCancel()`
 - Snapshot and restore support on `Bash`
@@ -58,7 +58,7 @@ console.log((await bash.execute("cat /tmp/file.txt")).stdout); // data\n
 const bash = new Bash();
 
 const result = await bash.execute(
-  'for i in 1 2 3; do echo out-$i; echo err-$i >&2; done',
+  "for i in 1 2 3; do echo out-$i; echo err-$i >&2; done",
   {
     onOutput({ stdout, stderr }) {
       if (stdout) process.stdout.write(stdout);
@@ -118,7 +118,37 @@ console.log(bash.glob("/data/*.json"));
 
 ### FileSystem Accessor
 
-Call `bash.fs()` or `tool.fs()` when you need the underlying filesystem handle directly. For most applications, the convenience methods on `Bash` and `BashTool` are simpler and more explicit.
+```typescript
+import { Bash, FileSystem } from "@everruns/bashkit";
+
+const source = new FileSystem();
+source.writeFile("/org/repo/README.md", "hello\n");
+
+const bash = new Bash();
+bash.mount("/workspace", source);
+
+console.log(bash.executeSync("cat /workspace/org/repo/README.md").stdout);
+```
+
+Call `bash.fs()` or `tool.fs()` when you need a live handle to the current interpreter filesystem. Use `new FileSystem()` or `FileSystem.real(...)` when you need a standalone mountable filesystem.
+
+### Native Addon Interop
+
+```typescript
+import { Bash, FileSystem } from "@everruns/bashkit";
+import { createFilesystem } from "filesystem-addon";
+
+const imported = FileSystem.fromExternal(createFilesystem());
+
+const bash = new Bash();
+bash.mount("/workspace", imported);
+console.log(bash.executeSync("ls /workspace").stdout);
+```
+
+`toExternal()` / `fromExternal()` exchange an opaque native `External` token for
+the versioned stable ABI handle, so JavaScript cannot inspect or mutate native
+handle bytes. Native addons should depend on `bashkit` with the `interop`
+feature and use `bashkit::interop::fs`.
 
 ### Pre-Initialized Files
 
@@ -159,11 +189,15 @@ console.log(bash.executeSync("ls /workspace").stdout);
 ### Live Mounts
 
 ```typescript
-import { Bash } from "@everruns/bashkit";
+import { Bash, FileSystem } from "@everruns/bashkit";
 
 const bash = new Bash();
+const workspace = FileSystem.real("./src", {
+  writable: true,
+  allowedMountPaths: ["./src"],
+});
 
-bash.mount("./src", "/workspace", true);
+bash.mount("/workspace", workspace);
 console.log(bash.executeSync("ls /workspace").stdout);
 bash.unmount("/workspace");
 ```

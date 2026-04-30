@@ -347,6 +347,22 @@ def test_bash_fs_handle_tracks_reset_and_new_live_mounts():
     assert fs.read_file("/mnt/mounted.txt") == b"fresh"
 
 
+def test_filesystem_capsule_roundtrip_mounts_into_bash():
+    source = FileSystem()
+    source.mkdir("/org/repo", recursive=True)
+    source.write_file("/org/repo/README.md", b"hello from capsule\n")
+
+    capsule = source.to_capsule()
+    imported = FileSystem.from_capsule(capsule)
+
+    bash = Bash()
+    bash.mount("/workspace", imported)
+
+    result = bash.execute_sync("cat /workspace/org/repo/README.md")
+    assert result.exit_code == 0
+    assert result.stdout == "hello from capsule\n"
+
+
 def test_bash_fs_handle_supports_directory_ops_and_links():
     fs = FileSystem()
 
