@@ -171,6 +171,13 @@ bashkit -c 'python3 -c "print(2 + 2)"'
 # 4
 ```
 
+`cargo install bashkit-cli` from crates.io 0.1.21 does not include the CLI
+`python` feature. Until the next release, install from main:
+
+```bash
+cargo install --git https://github.com/everruns/bashkit --package bashkit-cli --features python --force
+```
+
 Git on the VFS:
 
 ```bash
