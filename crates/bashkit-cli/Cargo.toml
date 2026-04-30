@@ -30,7 +30,7 @@ scripted_tool = ["bashkit/scripted_tool"]
 interactive = ["dep:rustyline", "dep:terminal_size", "dep:signal-hook"]
 
 [dependencies]
-bashkit = { path = "../bashkit", version = "0.2.0", features = ["http_client", "git", "jq"] }
+bashkit = { path = "../bashkit", version = "0.2.1", features = ["http_client", "git", "jq"] }
 tokio = { workspace = true, features = ["macros", "net", "rt", "rt-multi-thread", "time"] }
 clap.workspace = true
 anyhow.workspace = true
