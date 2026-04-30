@@ -92,6 +92,7 @@ jobs:
           uv venv
           uv pip install maturin pytest pytest-asyncio langchain-core langgraph fastapi httpx
           uv run maturin develop --release -m crates/bashkit-python/Cargo.toml
+          uv run maturin develop --release -m crates/bashkit-python/test-fixtures/random-fs/Cargo.toml
           uv run pytest crates/bashkit-python/tests -v
           cargo llvm-cov report \
             --release \

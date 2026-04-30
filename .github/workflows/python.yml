@@ -88,7 +88,14 @@ jobs:
       - name: Install wheel and test dependencies
         run: |
           pip install bashkit --no-index --find-links crates/bashkit-python/dist --force-reinstall
-          pip install pytest pytest-asyncio langchain-core langgraph fastapi httpx
+          pip install pytest pytest-asyncio langchain-core langgraph fastapi httpx maturin
+
+      - name: Build random filesystem fixture
+        run: |
+          python -m maturin build --release --out /tmp/bashkit-random-fs \
+            -m crates/bashkit-python/test-fixtures/random-fs/Cargo.toml \
+            -i python${{ matrix.python-version }}
+          pip install bashkit-random-fs --no-index --find-links /tmp/bashkit-random-fs --force-reinstall
 
       - name: Run tests
         working-directory: crates/bashkit-python
@@ -122,11 +129,19 @@ jobs:
       - name: Install local wheel
         run: |
           pip install bashkit --no-index --find-links crates/bashkit-python/dist --force-reinstall
-          pip install langchain-core langgraph fastapi httpx uvicorn nbconvert jupyter-client ipykernel
+          pip install langchain-core langgraph fastapi httpx uvicorn nbconvert jupyter-client ipykernel maturin
+
+      - name: Build random filesystem fixture
+        run: |
+          python -m maturin build --release --out /tmp/bashkit-random-fs \
+            -m crates/bashkit-python/test-fixtures/random-fs/Cargo.toml \
+            -i python3.12
+          pip install bashkit-random-fs --no-index --find-links /tmp/bashkit-random-fs --force-reinstall
 
       - name: Run examples
         run: |
           python crates/bashkit-python/examples/bash_basics.py
+          python crates/bashkit-python/examples/custom_filesystem_interop.py
           python crates/bashkit-python/examples/k8s_orchestrator.py
           python crates/bashkit-python/examples/data_pipeline.py
           python crates/bashkit-python/examples/llm_tool.py

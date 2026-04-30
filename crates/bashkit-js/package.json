@@ -71,11 +71,13 @@
   "scripts": {
     "build": "npm run build:napi && npm run build:cjs && npm run build:ts",
     "build:napi": "napi build --platform --release",
+    "build:test-fixtures": "node scripts/build-test-fixtures.mjs",
     "build:wasm": "napi build --platform --target wasm32-wasip1-threads --release",
     "build:cjs": "node -e \"const fs=require('fs'); if(fs.existsSync('index.js')){fs.renameSync('index.js','index.cjs')}; if(fs.existsSync('index.d.ts')){fs.copyFileSync('index.d.ts','index.d.cts')}\"",
     "build:ts": "tsc",
     "artifacts": "napi artifacts",
     "test": "ava",
+    "test:interop": "npm run build:test-fixtures && ava test-fixtures/random-fs/interop.spec.ts",
     "lint": "oxlint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -113,6 +115,9 @@
     "uuid": "14.0.0"
   },
   "ava": {
+    "files": [
+      "__test__/**/*.spec.ts"
+    ],
     "extensions": {
       "ts": "module"
     },

@@ -143,6 +143,11 @@ jobs:
         run: npm test
         working-directory: crates/bashkit-js
 
+      - name: Run native filesystem interop fixture test (Node only)
+        if: matrix.runtime == 'node'
+        run: npm run test:interop
+        working-directory: crates/bashkit-js
+
       - name: Run runtime-compat tests (Node)
         if: matrix.runtime == 'node'
         run: node --test __test__/runtime-compat/*.test.mjs

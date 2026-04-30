@@ -141,6 +141,27 @@ assert fs.read_file("/data/blob.bin") == b"\x00\x01hello"
 assert fs.exists("/data/backup.bin")
 ```
 
+### Native Extension Interop
+
+```python
+from bashkit import Bash, FileSystem
+
+source = FileSystem()
+source.write_file("/org/repo/README.md", b"hello\n")
+
+capsule = source.to_capsule()
+imported = FileSystem.from_capsule(capsule)
+
+bash = Bash()
+bash.mount("/workspace", imported)
+print(bash.execute_sync("cat /workspace/org/repo/README.md").stdout)
+```
+
+`to_capsule()` / `from_capsule()` exchange a versioned stable ABI handle so
+separate PyO3 extensions do not need to share bashkit's internal Rust object
+layout. Native extensions should depend on `bashkit` with the `interop` feature
+and use `bashkit::interop::fs`.
+
 ### Pre-Initialized Files
 
 ```python
@@ -462,6 +483,8 @@ from bashkit.deepagents import BashkitBackend, BashkitMiddleware
 - `chmod(path, mode)`
 - `read_link(path) -> str`
 - `FileSystem.real(host_path, writable=False) -> FileSystem`
+- `FileSystem.from_capsule(capsule) -> FileSystem`
+- `FileSystem.to_capsule() -> object`
 
 ### ExecResult and BashError
 

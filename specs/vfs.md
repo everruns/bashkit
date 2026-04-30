@@ -145,14 +145,35 @@ Symlinks are stored but intentionally not followed for security:
 
 ## Binding API Parity
 
-All language bindings must expose the same mount API:
+All language bindings must expose the same filesystem concepts:
 
 ```
 files:  { "/path": "content" }                # text files (writable, in-memory)
 mounts: [{ host_path, vfs_path?, writable? }] # real FS (read-only by default)
+FileSystem()                                  # standalone in-memory filesystem
+FileSystem.real(host_path, writable=false)    # standalone real filesystem
+                                              # JS requires allowed_mount_paths
 ```
 
-Runtime methods: `mount(host_path, vfs_path, writable=false)`, `unmount(vfs_path)`.
+Runtime methods:
+- host-path mount: `mount(host_path, vfs_path, writable=false)`
+- filesystem mount: `mount(vfs_path, filesystem)`
+- `unmount(vfs_path)`
+
+Native-extension interop is binding-specific but must preserve bashkit-owned
+filesystem objects when crossing the language runtime boundary:
+- Python: `FileSystem.from_capsule(capsule)`, `FileSystem.to_capsule()`
+- Node.js: `FileSystem.fromExternal(external)`, `FileSystem.toExternal()`
+
+Interop contract:
+- The native Rust contract lives at `bashkit::interop::fs` behind the
+  `interop` cargo feature
+- The cross-addon payload must be a versioned `repr(C)` handle + vtable
+- Do not expose `Arc<dyn FileSystem>` or any addon-private Rust layout
+- Python capsules carry the stable owned handle directly
+- Node interop values carry stable handle bytes plus an owner token
+- On import, bashkit reconstructs a binding-owned `FileSystem` wrapper from the
+  stable handle payload
 
 Safety: real mounts are **read-only by default**. Text files are writable (sandboxed).
 

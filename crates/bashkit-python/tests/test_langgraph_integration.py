@@ -7,14 +7,18 @@ callbacks. Requires ``langchain-core`` to be installed.
 import asyncio
 import contextvars
 import json
+from typing import TypedDict
 
 import pytest
 
 langchain_core = pytest.importorskip("langchain_core")
+langgraph = pytest.importorskip("langgraph")
 
+from bashkit_random_fs import create_random_filesystem_capsule, expected_random_text  # noqa: E402
 from langchain_core.tools import StructuredTool  # noqa: E402
+from langgraph.graph import END, StateGraph  # noqa: E402
 
-from bashkit import ScriptedTool  # noqa: E402
+from bashkit import Bash, FileSystem, ScriptedTool  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Simulate LangGraph's get_stream_writer() pattern
@@ -181,3 +185,30 @@ def test_langchain_structured_tool_wrapper():
     assert r.stdout.strip() == "5"
     assert len(events) == 1
     assert events[0]["tool"] == "calculator"
+
+
+class RandomFsState(TypedDict):
+    seed: int
+    stdout: str
+
+
+@pytest.mark.asyncio
+async def test_langgraph_async_node_mounts_native_filesystem_capsule():
+    """LangGraph async nodes can mount a native-extension filesystem capsule."""
+
+    async def read_random_file(state: RandomFsState) -> dict[str, str]:
+        fs = FileSystem.from_capsule(create_random_filesystem_capsule(state["seed"]))
+        bash = Bash()
+        bash.mount("/remote", fs)
+        result = await bash.execute("cat /remote/random.txt")
+        return {"stdout": result.stdout}
+
+    graph = StateGraph(RandomFsState)
+    graph.add_node("read_random_file", read_random_file)
+    graph.set_entry_point("read_random_file")
+    graph.add_edge("read_random_file", END)
+    app = graph.compile()
+
+    result = await app.ainvoke({"seed": 2718, "stdout": ""})
+
+    assert result["stdout"] == expected_random_text(2718, "/random.txt")

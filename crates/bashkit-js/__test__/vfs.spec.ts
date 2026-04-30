@@ -1,5 +1,8 @@
 import test from "ava";
-import { Bash } from "../wrapper.js";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { Bash, FileSystem } from "../wrapper.js";
 
 // ============================================================================
 // VFS — readFile / writeFile
@@ -142,4 +145,52 @@ test("reset clears VFS state", (t) => {
   t.true(bash.exists("/tmp/persist.txt"));
   bash.reset();
   t.false(bash.exists("/tmp/persist.txt"));
+});
+
+test("filesystem external roundtrip mounts into bash", (t) => {
+  const source = new FileSystem();
+  source.mkdir("/org/repo", true);
+  source.writeFile("/org/repo/README.md", "hello from external\n");
+
+  const external = source.toExternal();
+  const imported = FileSystem.fromExternal(external);
+
+  const bash = new Bash();
+  bash.mount("/workspace", imported);
+
+  const result = bash.executeSync("cat /workspace/org/repo/README.md");
+  t.is(result.exitCode, 0);
+  t.is(result.stdout, "hello from external\n");
+});
+
+test("filesystem external import rejects plain objects", (t) => {
+  t.throws(() => FileSystem.fromExternal({}), {
+    message: /native External/,
+  });
+});
+
+test("filesystem external export is cached", (t) => {
+  const source = new FileSystem();
+  t.is(source.toExternal(), source.toExternal());
+});
+
+test("real filesystem requires and enforces allowedMountPaths", (t) => {
+  const allowed = mkdtempSync(path.join(tmpdir(), "bashkit-allowed-"));
+  const denied = mkdtempSync(path.join(tmpdir(), "bashkit-denied-"));
+  try {
+    writeFileSync(path.join(allowed, "hello.txt"), "host\n");
+
+    t.throws(() => (FileSystem.real as any)(allowed), {
+      message: /allowedMountPaths/,
+    });
+    t.throws(() => FileSystem.real(denied, { allowedMountPaths: [allowed] }), {
+      message: /allowedMountPaths/,
+    });
+
+    const fs = FileSystem.real(allowed, { allowedMountPaths: [allowed] });
+    t.is(fs.readFile("/hello.txt"), "host\n");
+  } finally {
+    rmSync(allowed, { recursive: true, force: true });
+    rmSync(denied, { recursive: true, force: true });
+  }
 });
