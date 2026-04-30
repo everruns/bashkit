@@ -1015,3 +1015,24 @@ printf 'hello' | jq -Rs '.'
 ### expect
 "hello"
 ### end
+
+### jq_input_filename_returns_null
+# #1486: input_filename compiles and returns null when not reading from files
+echo '1' | jq 'input_filename'
+### expect
+null
+### end
+
+### jq_input_line_number_returns_zero
+# #1486: input_line_number compiles and returns 0 when no per-line tracking
+echo '1' | jq 'input_line_number'
+### expect
+0
+### end
+
+### jq_dollar_env_returns_shell_env
+# #1486: $ENV variable mirrors the env function output
+FOO=bar jq -n '$ENV.FOO'
+### expect
+"bar"
+### end
