@@ -260,6 +260,236 @@ fn format_with_tabs(value: &serde_json::Value) -> String {
     result
 }
 
+const MAX_JQ_RUNTIME_ERROR_CHARS: usize = 240;
+const MAX_JQ_VALUE_PREVIEW_CHARS: usize = 11;
+const MAX_JQ_STRING_ERROR_CHARS: usize = 80;
+
+/// Format jaq runtime errors without dumping full input values into stderr.
+/// Important decision: stderr is agent-facing API, so value-bearing diagnostics
+/// summarize operand types and keep generic fallbacks bounded.
+fn format_jq_runtime_error(error: &jaq_core::Error<Val>) -> String {
+    let message = error.to_string();
+    let body = humanize_jq_runtime_error(&message)
+        .unwrap_or_else(|| capitalize_first(&truncate_text(&message, MAX_JQ_RUNTIME_ERROR_CHARS)));
+    format!("jq: error: {body}\n")
+}
+
+fn humanize_jq_runtime_error(message: &str) -> Option<String> {
+    if let Some(rest) = message.strip_prefix("cannot index ") {
+        let (left, rest) = take_jq_value(rest)?;
+        let rest = rest.strip_prefix(" with ")?;
+        let (right, trailing) = take_jq_value(rest)?;
+        if trailing.trim().is_empty() {
+            return Some(format!(
+                "Cannot index {} with {}",
+                summarize_jq_value(left),
+                summarize_jq_value(right)
+            ));
+        }
+    }
+
+    if let Some(rest) = message.strip_prefix("cannot use ") {
+        let (value, rest) = take_jq_value(rest)?;
+        let typ = rest.strip_prefix(" as ")?.trim();
+        if !typ.is_empty() {
+            if typ.starts_with("iterable") {
+                return Some(format!("Cannot iterate over {}", jq_typed_value(value)));
+            }
+            return Some(format!("Cannot use {} as {typ}", summarize_jq_value(value)));
+        }
+    }
+
+    if let Some(rest) = message.strip_prefix("cannot calculate ") {
+        let (left, rest) = take_jq_value(rest)?;
+        let rest = rest.trim_start();
+        let (op, rest) = take_operator(rest)?;
+        let (right, trailing) = take_jq_value(rest)?;
+        if trailing.trim().is_empty() {
+            return Some(format!(
+                "{} and {} cannot be {}",
+                jq_typed_value(left),
+                jq_typed_value(right),
+                math_operation_name(op)
+            ));
+        }
+    }
+
+    if let Some(value) = message.strip_prefix("invalid path expression with input ") {
+        return Some(format!(
+            "Invalid path expression with input {}",
+            summarize_jq_value(value)
+        ));
+    }
+
+    None
+}
+
+fn take_operator(input: &str) -> Option<(&str, &str)> {
+    ["+", "-", "*", "/", "%"]
+        .into_iter()
+        .find_map(|op| input.strip_prefix(op).map(|rest| (op, rest)))
+}
+
+fn math_operation_name(op: &str) -> &'static str {
+    match op {
+        "+" => "added",
+        "-" => "subtracted",
+        "*" => "multiplied",
+        "/" => "divided",
+        "%" => "remaindered",
+        _ => "calculated",
+    }
+}
+
+fn take_jq_value(input: &str) -> Option<(&str, &str)> {
+    let input = input.trim_start();
+    let end = jq_value_end(input)?;
+    Some((&input[..end], &input[end..]))
+}
+
+fn jq_value_end(input: &str) -> Option<usize> {
+    match input.chars().next()? {
+        '"' => quoted_string_end(input),
+        '[' => bracketed_value_end(input, '[', ']'),
+        '{' => bracketed_value_end(input, '{', '}'),
+        _ => input
+            .char_indices()
+            .find_map(|(idx, ch)| ch.is_whitespace().then_some(idx))
+            .or(Some(input.len())),
+    }
+}
+
+fn quoted_string_end(input: &str) -> Option<usize> {
+    let mut escaped = false;
+    for (idx, ch) in input.char_indices().skip(1) {
+        if escaped {
+            escaped = false;
+        } else if ch == '\\' {
+            escaped = true;
+        } else if ch == '"' {
+            return Some(idx + ch.len_utf8());
+        }
+    }
+    None
+}
+
+fn bracketed_value_end(input: &str, open: char, close: char) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for (idx, ch) in input.char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        if ch == '"' {
+            in_string = true;
+        } else if ch == open {
+            depth += 1;
+        } else if ch == close {
+            depth = depth.checked_sub(1)?;
+            if depth == 0 {
+                return Some(idx + ch.len_utf8());
+            }
+        }
+    }
+
+    None
+}
+
+fn summarize_jq_value(raw: &str) -> String {
+    let raw = raw.trim();
+    if raw.starts_with('[') {
+        "array".to_string()
+    } else if raw.starts_with('{') {
+        "object".to_string()
+    } else if raw == "null" {
+        "null".to_string()
+    } else if raw == "true" || raw == "false" {
+        "boolean".to_string()
+    } else if raw.starts_with('"') {
+        format!("string {}", truncate_string_literal(raw))
+    } else if raw.parse::<f64>().is_ok() {
+        "number".to_string()
+    } else {
+        truncate_text(raw, MAX_JQ_STRING_ERROR_CHARS)
+    }
+}
+
+fn jq_typed_value(raw: &str) -> String {
+    let raw = raw.trim();
+    let typ = if raw.starts_with('[') {
+        "array"
+    } else if raw.starts_with('{') {
+        "object"
+    } else if raw.starts_with('"') {
+        "string"
+    } else if raw == "true" || raw == "false" {
+        "boolean"
+    } else if raw == "null" {
+        "null"
+    } else if raw.parse::<f64>().is_ok() {
+        "number"
+    } else {
+        "value"
+    };
+    format!("{typ} ({})", jq_value_preview(raw))
+}
+
+fn jq_value_preview(raw: &str) -> String {
+    let raw = raw.trim();
+    if raw.chars().count() <= MAX_JQ_VALUE_PREVIEW_CHARS {
+        return raw.to_string();
+    }
+    format!(
+        "{}...",
+        raw.chars()
+            .take(MAX_JQ_VALUE_PREVIEW_CHARS)
+            .collect::<String>()
+    )
+}
+
+fn truncate_string_literal(raw: &str) -> String {
+    let Ok(value) = serde_json::from_str::<String>(raw) else {
+        return truncate_text(raw, MAX_JQ_STRING_ERROR_CHARS);
+    };
+    if value.chars().count() <= MAX_JQ_STRING_ERROR_CHARS {
+        return raw.to_string();
+    }
+    let truncated = format!(
+        "{}...",
+        value
+            .chars()
+            .take(MAX_JQ_STRING_ERROR_CHARS.saturating_sub(3))
+            .collect::<String>()
+    );
+    serde_json::to_string(&truncated).unwrap_or_else(|_| "\"...\"".to_string())
+}
+
+fn truncate_text(input: &str, max_chars: usize) -> String {
+    if input.chars().count() <= max_chars {
+        return input.to_string();
+    }
+    let keep = max_chars.saturating_sub(3);
+    format!("{}...", input.chars().take(keep).collect::<String>())
+}
+
+fn capitalize_first(input: &str) -> String {
+    let mut chars = input.chars();
+    let Some(first) = chars.next() else {
+        return String::new();
+    };
+    first.to_uppercase().chain(chars).collect()
+}
+
 #[async_trait]
 impl Builtin for Jq {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
@@ -587,7 +817,7 @@ impl Builtin for Jq {
             };
             let ctx = Ctx::<InputData<Val>>::new(data, Vars::new(var_vals));
             for result in filter.id.run((ctx, jaq_input)) {
-                match result {
+                match jaq_core::unwrap_valr(result) {
                     Ok(val) => {
                         has_output = true;
                         // Convert back to serde_json::Value and format
@@ -690,7 +920,7 @@ impl Builtin for Jq {
                         }
                     }
                     Err(e) => {
-                        return Ok(ExecResult::err(format!("jq: runtime error: {:?}\n", e), 5));
+                        return Ok(ExecResult::err(format_jq_runtime_error(&e), 5));
                     }
                 }
             }
@@ -863,6 +1093,106 @@ mod tests {
         };
 
         jq.execute(ctx).await
+    }
+
+    #[tokio::test]
+    async fn test_jq_runtime_error_summarizes_index_operands() {
+        let items = (0..50)
+            .map(|i| {
+                format!(
+                    r#"{{"product_id":"{i}","product_name":"Item {i}","revenue":{}}}"#,
+                    i * 100
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let input = format!("[{items}]");
+
+        let result = run_jq_result(".product_name", &input).await.unwrap();
+
+        assert_eq!(result.exit_code, 5);
+        assert_eq!(
+            result.stderr,
+            "jq: error: Cannot index array with string \"product_name\"\n"
+        );
+        assert!(result.stderr.len() < 100);
+        assert!(!result.stderr.contains("Obj("));
+        assert!(!result.stderr.contains("TStr("));
+        assert!(!result.stderr.contains("Item 49"));
+    }
+
+    #[tokio::test]
+    async fn test_jq_runtime_error_summarizes_type_operand() {
+        let input = format!(
+            "[{}]",
+            (0..50).map(|i| i.to_string()).collect::<Vec<_>>().join(",")
+        );
+
+        let result = run_jq_result("startswith(\"x\")", &input).await.unwrap();
+
+        assert_eq!(result.exit_code, 5);
+        assert_eq!(result.stderr, "jq: error: Cannot use array as string\n");
+        assert!(result.stderr.len() < 100);
+        assert!(!result.stderr.contains("[0,"));
+    }
+
+    #[tokio::test]
+    async fn test_jq_runtime_error_matches_jq_iterable_wording() {
+        let result = run_jq_result(".[]", "null").await.unwrap();
+
+        assert_eq!(result.exit_code, 5);
+        assert_eq!(
+            result.stderr,
+            "jq: error: Cannot iterate over null (null)\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_jq_runtime_error_summarizes_math_operands() {
+        let input = format!(
+            "[{}]",
+            (0..50).map(|i| i.to_string()).collect::<Vec<_>>().join(",")
+        );
+
+        let result = run_jq_result(". + 1", &input).await.unwrap();
+
+        assert_eq!(result.exit_code, 5);
+        assert_eq!(
+            result.stderr,
+            "jq: error: array ([0,1,2,3,4,...) and number (1) cannot be added\n"
+        );
+        assert!(result.stderr.len() < 120);
+        assert!(!result.stderr.contains("49"));
+    }
+
+    #[tokio::test]
+    async fn test_jq_runtime_error_summarizes_invalid_path_operand() {
+        let input = format!(
+            r#"{{"bad":[{}]}}"#,
+            (0..50).map(|i| i.to_string()).collect::<Vec<_>>().join(",")
+        );
+
+        let result = run_jq_result("path(. + 1)", &input).await.unwrap();
+
+        assert_eq!(result.exit_code, 5);
+        assert_eq!(
+            result.stderr,
+            "jq: error: Invalid path expression with input object\n"
+        );
+        assert!(result.stderr.len() < 100);
+        assert!(!result.stderr.contains("\"bad\""));
+    }
+
+    #[tokio::test]
+    async fn test_jq_runtime_error_caps_unstructured_values() {
+        let input = format!(r#""{}""#, "x".repeat(MAX_JQ_RUNTIME_ERROR_CHARS + 100));
+
+        let result = run_jq_result("error", &input).await.unwrap();
+
+        assert_eq!(result.exit_code, 5);
+        assert!(result.stderr.starts_with("jq: error: "));
+        assert!(result.stderr.len() <= "jq: error: \n".len() + MAX_JQ_RUNTIME_ERROR_CHARS);
+        assert!(result.stderr.ends_with("...\n"));
     }
 
     #[tokio::test]
