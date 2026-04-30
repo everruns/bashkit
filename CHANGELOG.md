@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-04-30
+
+### Highlights
+
+- **Windows mount path validation** — `MountableFs::mount` now uses `Path::has_root` instead of `Path::is_absolute`, so POSIX-style mount points like `/workspace` are accepted on every host. The v0.2.0 interop FS roundtrip test (`vfs › filesystem external roundtrip mounts into bash`) regressed silently on Windows because PR CI runs Rust tests on Linux only ([#1492](https://github.com/everruns/bashkit/pull/1492)).
+- **rustls switched to ring** — Replaces the `aws-lc-rs`/`aws-lc-sys` C crypto stack with pure-Rust ring across the workspace. Unblocks the aarch64 manylinux wheel build, which had failed in v0.2.0 with `'AT_HWCAP2' undeclared` from the cross-compiled `aws-lc-sys 0.39.1`. `cargo tree -i aws-lc-sys` now returns no match ([#1493](https://github.com/everruns/bashkit/pull/1493)).
+
+### What's Changed
+
+* fix(fs): validate mount paths with POSIX semantics on Windows ([#1492](https://github.com/everruns/bashkit/pull/1492)) by @chaliy
+* fix(http): switch rustls crypto provider to ring ([#1493](https://github.com/everruns/bashkit/pull/1493)) by @chaliy
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.2.0...v0.2.1
+
 ## [0.2.0] - 2026-04-30
 
 ### Highlights
