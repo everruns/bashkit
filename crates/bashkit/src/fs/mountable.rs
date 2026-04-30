@@ -19,6 +19,16 @@ use super::traits::{DirEntry, FileSystem, FileSystemExt, FileType, Metadata};
 use crate::error::Result;
 use std::io::ErrorKind;
 
+/// Returns `true` if `path` is absolute under POSIX semantics (starts with `/`).
+///
+/// This differs from [`Path::is_absolute`], which on Windows requires a drive
+/// prefix (`C:\…`) and rejects POSIX-style absolute paths like `/workspace`.
+/// The bashkit VFS is always POSIX-style on every host, so we cannot use the
+/// platform-aware predicate.
+fn is_posix_absolute(path: &Path) -> bool {
+    path.has_root()
+}
+
 /// Filesystem with Unix-style mount points.
 ///
 /// `MountableFs` allows mounting different filesystem implementations at
@@ -213,12 +223,16 @@ impl MountableFs {
     /// # }
     /// ```
     pub fn mount(&self, path: impl AsRef<Path>, fs: Arc<dyn FileSystem>) -> Result<()> {
-        let path = Self::normalize_path(path.as_ref());
-
-        if !path.is_absolute() {
+        // Validate against the *input* path: the bashkit VFS is always
+        // POSIX-style, so mount points must start with `/`. We use
+        // `Path::has_root()` rather than `Path::is_absolute()` because the
+        // latter requires a drive prefix on Windows and rejects `/foo`,
+        // which would silently break Windows hosts.
+        if !is_posix_absolute(path.as_ref()) {
             return Err(IoError::other("mount path must be absolute").into());
         }
 
+        let path = Self::normalize_path(path.as_ref());
         let mut mounts = self.mounts.write().unwrap();
         mounts.insert(path, fs);
         Ok(())
@@ -657,5 +671,48 @@ mod tests {
 
         // Should no longer exist (falls back to root which doesn't have it)
         assert!(!mfs.exists(Path::new("/mnt/data.txt")).await.unwrap());
+    }
+
+    #[test]
+    fn test_is_posix_absolute_accepts_root_paths() {
+        // Paths starting with `/` are POSIX-absolute on every host.
+        // `Path::is_absolute` would reject these on Windows.
+        assert!(is_posix_absolute(Path::new("/")));
+        assert!(is_posix_absolute(Path::new("/workspace")));
+        assert!(is_posix_absolute(Path::new("/data/sub")));
+    }
+
+    #[test]
+    fn test_is_posix_absolute_rejects_relative_paths() {
+        assert!(!is_posix_absolute(Path::new("relative")));
+        assert!(!is_posix_absolute(Path::new("relative/path")));
+        assert!(!is_posix_absolute(Path::new("./foo")));
+        assert!(!is_posix_absolute(Path::new("")));
+    }
+
+    #[test]
+    fn test_mount_accepts_posix_absolute_path_on_any_host() {
+        // Regression: mount("/workspace", ...) must succeed on Windows.
+        // Before the `has_root` switch, `Path::is_absolute` rejected POSIX
+        // paths on Windows, breaking the JS interop FS roundtrip test.
+        let root = Arc::new(InMemoryFs::new());
+        let mounted = Arc::new(InMemoryFs::new());
+
+        let mfs = MountableFs::new(root);
+        mfs.mount("/workspace", mounted.clone()).unwrap();
+        mfs.mount("/data/sub", mounted).unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_mount_rejects_relative_path() {
+        let root = Arc::new(InMemoryFs::new());
+        let mounted = Arc::new(InMemoryFs::new());
+
+        let mfs = MountableFs::new(root);
+        let err = mfs.mount("relative/path", mounted).unwrap_err();
+        assert!(
+            err.to_string().contains("absolute"),
+            "expected 'absolute' in error, got: {err}"
+        );
     }
 }
