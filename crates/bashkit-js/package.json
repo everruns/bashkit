@@ -115,6 +115,9 @@
     "uuid": "14.0.0"
   },
   "ava": {
+    "files": [
+      "__test__/**/*.spec.ts"
+    ],
     "extensions": {
       "ts": "module"
     },
