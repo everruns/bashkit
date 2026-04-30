@@ -11,10 +11,10 @@ use bashkit::{
     Bash, BashTool as RustBashTool, Builtin, BuiltinContext, DirEntry as FsDirEntry, ExcType,
     ExecResult as RustExecResult, ExecutionExtensions, ExecutionLimits, ExtFunctionResult,
     FileSystem, FileSystemExt, FileType as FsFileType, InMemoryFs, Metadata as FsMetadata,
-    MontyException, MontyObject, OutputCallback as RustOutputCallback, OverlayFs, PosixFs,
-    PythonExternalFnHandler, PythonLimits, RealFs, RealFsMode, ScriptedTool as RustScriptedTool,
-    ShellStateView as RustShellStateView, SnapshotOptions as RustSnapshotOptions, Tool, ToolArgs,
-    ToolDef, ToolRequest, async_trait,
+    MontyException, MontyObject, NetworkAllowlist, OutputCallback as RustOutputCallback, OverlayFs,
+    PosixFs, PythonExternalFnHandler, PythonLimits, RealFs, RealFsMode,
+    ScriptedTool as RustScriptedTool, ShellStateView as RustShellStateView,
+    SnapshotOptions as RustSnapshotOptions, Tool, ToolArgs, ToolDef, ToolRequest, async_trait,
 };
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
@@ -159,6 +159,91 @@ fn make_runtime() -> PyResult<Arc<Runtime>> {
 
 /// Parse `mounts` kwarg (list of dicts) into internal config.
 /// Each dict: { "host_path": str, "vfs_path"?: str, "writable"?: bool }.
+/// Internal storage for the Python `network=` kwarg.
+///
+/// Phase 1 of `feat(python): expose outbound HTTP/network config` (#1348):
+/// allowlist patterns, `allow_all`, and `block_private_ips` are supported here.
+/// Credential injection, callbacks, and bot-auth land in later phases.
+#[derive(Debug, Clone, Default)]
+struct PyNetworkConfig {
+    allow: Vec<String>,
+    allow_all: bool,
+    block_private_ips: bool,
+}
+
+impl PyNetworkConfig {
+    fn to_allowlist(&self) -> NetworkAllowlist {
+        let base = if self.allow_all {
+            NetworkAllowlist::allow_all()
+        } else {
+            NetworkAllowlist::new().allow_many(self.allow.iter().cloned())
+        };
+        base.block_private_ips(self.block_private_ips)
+    }
+}
+
+/// Parse the `network=` kwarg into a `PyNetworkConfig`.
+///
+/// Returns `None` when omitted (network disabled). When provided, the dict
+/// must specify either `allow` (a list of URL patterns) or `allow_all=True`,
+/// not both. `block_private_ips` defaults to `True` to preserve the Rust
+/// default. Unknown keys raise `ValueError` so typos surface immediately.
+fn parse_network_config(network: Option<&Bound<'_, PyDict>>) -> PyResult<Option<PyNetworkConfig>> {
+    let Some(dict) = network else {
+        return Ok(None);
+    };
+
+    const KNOWN_KEYS: &[&str] = &["allow", "allow_all", "block_private_ips"];
+    for (key_obj, _) in dict.iter() {
+        let key: String = key_obj.extract()?;
+        if !KNOWN_KEYS.contains(&key.as_str()) {
+            return Err(PyValueError::new_err(format!(
+                "network: unknown key '{key}' (supported: allow, allow_all, block_private_ips)"
+            )));
+        }
+    }
+
+    let allow_all: bool = dict
+        .get_item("allow_all")?
+        .map(|v| v.extract())
+        .transpose()?
+        .unwrap_or(false);
+
+    let allow_obj = dict.get_item("allow")?;
+    if allow_all && allow_obj.is_some() {
+        return Err(PyValueError::new_err(
+            "network: 'allow' and 'allow_all' are mutually exclusive",
+        ));
+    }
+    if !allow_all && allow_obj.is_none() {
+        return Err(PyValueError::new_err(
+            "network: must provide 'allow' (list of URL patterns) or 'allow_all=True'",
+        ));
+    }
+
+    let mut allow: Vec<String> = Vec::new();
+    if let Some(value) = allow_obj {
+        let list = value.cast::<PyList>().map_err(|_| {
+            PyValueError::new_err("network['allow'] must be a list of URL pattern strings")
+        })?;
+        for item in list.iter() {
+            allow.push(item.extract()?);
+        }
+    }
+
+    let block_private_ips: bool = dict
+        .get_item("block_private_ips")?
+        .map(|v| v.extract())
+        .transpose()?
+        .unwrap_or(true);
+
+    Ok(Some(PyNetworkConfig {
+        allow,
+        allow_all,
+        block_private_ips,
+    }))
+}
+
 fn parse_mounts(mounts: Option<&Bound<'_, PyList>>) -> PyResult<Vec<RealMountConfig>> {
     let Some(list) = mounts else {
         return Ok(Vec::new());
@@ -2604,6 +2689,10 @@ pub struct PyBash {
     max_loop_iterations: Option<u64>,
     max_memory: Option<u64>,
     timeout_seconds: Option<f64>,
+    /// Outbound network config preserved across `reset()` and snapshots.
+    /// `None` means the interpreter is built without a `NetworkAllowlist`,
+    /// matching the current "network disabled" default.
+    network: Option<PyNetworkConfig>,
 }
 
 impl PyBash {
@@ -2646,6 +2735,9 @@ impl PyBash {
             handler_clone,
             self.external_handler_reentry_depth.clone(),
         );
+        if let Some(ref net) = self.network {
+            builder = builder.network(net.to_allowlist());
+        }
         let files = clone_file_mounts(py, &self.files);
         let builder = apply_fs_config(builder, &files, &self.real_mounts)?;
         Ok(apply_custom_builtins_to_builder(
@@ -2672,6 +2764,7 @@ impl PyBash {
         files=None,
         mounts=None,
         custom_builtins=None,
+        network=None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -2688,6 +2781,7 @@ impl PyBash {
         files: Option<&Bound<'_, PyDict>>,
         mounts: Option<&Bound<'_, PyList>>,
         custom_builtins: Option<&Bound<'_, PyDict>>,
+        network: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         let mut builder = Bash::builder();
 
@@ -2717,6 +2811,7 @@ impl PyBash {
         let files = parse_files(files)?;
         let real_mounts = parse_mounts(mounts)?;
         let custom_builtins = parse_custom_builtins(py, custom_builtins)?;
+        let network = parse_network_config(network)?;
 
         let fn_names = external_functions.clone().unwrap_or_default();
         if !fn_names.is_empty() && external_handler.is_none() {
@@ -2752,6 +2847,9 @@ impl PyBash {
             handler_for_build,
             external_handler_reentry_depth.clone(),
         );
+        if let Some(ref net) = network {
+            builder = builder.network(net.to_allowlist());
+        }
         builder = apply_fs_config(builder, &files, &real_mounts)?;
         let builtin_engine = PyCallbackEngine::new(py)?;
         builder = apply_custom_builtins_to_builder(py, builder, &custom_builtins);
@@ -2779,6 +2877,7 @@ impl PyBash {
             max_loop_iterations,
             max_memory,
             timeout_seconds,
+            network,
         })
     }
 
@@ -2998,6 +3097,7 @@ impl PyBash {
         files=None,
         mounts=None,
         custom_builtins=None,
+        network=None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn from_snapshot(
@@ -3015,6 +3115,7 @@ impl PyBash {
         files: Option<&Bound<'_, PyDict>>,
         mounts: Option<&Bound<'_, PyList>>,
         custom_builtins: Option<&Bound<'_, PyDict>>,
+        network: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         let bash = Self::new(
             py,
@@ -3030,6 +3131,7 @@ impl PyBash {
             files,
             mounts,
             custom_builtins,
+            network,
         )?;
         bash.restore_snapshot(py, data)?;
         Ok(bash)
@@ -3223,6 +3325,8 @@ pub struct BashTool {
     max_loop_iterations: Option<u64>,
     max_memory: Option<u64>,
     timeout_seconds: Option<f64>,
+    /// Outbound network config preserved across `reset()` and snapshots.
+    network: Option<PyNetworkConfig>,
 }
 
 impl BashTool {
@@ -3253,6 +3357,9 @@ impl BashTool {
             builder = builder.max_memory(usize::try_from(max_memory).unwrap_or(usize::MAX));
         }
 
+        if let Some(ref net) = self.network {
+            builder = builder.network(net.to_allowlist());
+        }
         let files = clone_file_mounts(py, &self.files);
         let builder = apply_fs_config(builder, &files, &self.real_mounts)?;
         Ok(apply_custom_builtins_to_builder(
@@ -3310,6 +3417,7 @@ impl BashTool {
         files=None,
         mounts=None,
         custom_builtins=None,
+        network=None,
     ))]
     fn new(
         py: Python<'_>,
@@ -3322,6 +3430,7 @@ impl BashTool {
         files: Option<&Bound<'_, PyDict>>,
         mounts: Option<&Bound<'_, PyList>>,
         custom_builtins: Option<&Bound<'_, PyDict>>,
+        network: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         let mut builder = Bash::builder();
 
@@ -3351,6 +3460,10 @@ impl BashTool {
         let files = parse_files(files)?;
         let real_mounts = parse_mounts(mounts)?;
         let custom_builtins = parse_custom_builtins(py, custom_builtins)?;
+        let network = parse_network_config(network)?;
+        if let Some(ref net) = network {
+            builder = builder.network(net.to_allowlist());
+        }
         builder = apply_fs_config(builder, &files, &real_mounts)?;
         let builtin_engine = PyCallbackEngine::new(py)?;
         builder = apply_custom_builtins_to_builder(py, builder, &custom_builtins);
@@ -3374,6 +3487,7 @@ impl BashTool {
             max_loop_iterations,
             max_memory,
             timeout_seconds,
+            network,
         })
     }
 
@@ -3563,6 +3677,7 @@ impl BashTool {
         files=None,
         mounts=None,
         custom_builtins=None,
+        network=None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn from_snapshot(
@@ -3577,6 +3692,7 @@ impl BashTool {
         files: Option<&Bound<'_, PyDict>>,
         mounts: Option<&Bound<'_, PyList>>,
         custom_builtins: Option<&Bound<'_, PyDict>>,
+        network: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         let tool = Self::new(
             py,
@@ -3589,6 +3705,7 @@ impl BashTool {
             files,
             mounts,
             custom_builtins,
+            network,
         )?;
         tool.restore_snapshot(py, data)?;
         Ok(tool)

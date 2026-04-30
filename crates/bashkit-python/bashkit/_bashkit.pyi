@@ -1,7 +1,20 @@
 """Type stubs for bashkit native module."""
 
 from collections.abc import Awaitable, Callable, Mapping
-from typing import Any, Protocol
+from typing import Any, Protocol, TypedDict
+
+class NetworkConfig(TypedDict, total=False):
+    """Outbound HTTP / network configuration for ``Bash`` and ``BashTool``.
+
+    Phase 1 of #1348 — only the allowlist surface is wired through. Provide
+    either ``allow`` (a list of URL patterns) or ``allow_all=True``; passing
+    both raises ``ValueError``. Omitting ``network=`` keeps the network
+    disabled (the existing default).
+    """
+
+    allow: list[str]
+    allow_all: bool
+    block_private_ips: bool
 
 # Synchronous chunk callback for live stdout/stderr streaming.
 OutputHandler = Callable[[str, str], None]
@@ -389,6 +402,7 @@ class Bash:
         files: dict[str, str | Callable[[], str]] | None = None,
         mounts: list[dict[str, Any]] | None = None,
         custom_builtins: Mapping[str, BuiltinCallback] | None = None,
+        network: NetworkConfig | None = None,
     ) -> None:
         """Create a new Bash interpreter.
 
@@ -414,6 +428,13 @@ class Bash:
                 await either. Async callbacks run on the caller's active
                 asyncio loop for ``await execute()`` and on a private loop
                 for ``execute_sync()``.
+            network: Optional outbound HTTP / network configuration. Pass
+                ``{"allow": [...]}`` for an explicit allowlist or
+                ``{"allow_all": True}`` to allow every URL (mirrors
+                ``NetworkAllowlist::allow_all()`` in the Rust core). Set
+                ``"block_private_ips": False`` to relax the SSRF guard.
+                When omitted, network access is disabled (current default).
+                Preserved across ``reset()`` and ``from_snapshot()``.
 
         Example::
 
@@ -421,6 +442,7 @@ class Bash:
             ...     timeout_seconds=30,
             ...     files={"/input.txt": "some data"},
             ...     custom_builtins={"ping": lambda ctx: "pong\\n"},
+            ...     network={"allow": ["https://api.github.com"]},
             ... )
         """
         ...
@@ -588,6 +610,7 @@ class Bash:
         files: dict[str, str] | None = None,
         mounts: list[dict[str, Any]] | None = None,
         custom_builtins: Mapping[str, BuiltinCallback] | None = None,
+        network: NetworkConfig | None = None,
     ) -> Bash:
         """Create a new ``Bash`` from snapshot bytes and optional constructor kwargs."""
         ...
@@ -763,6 +786,7 @@ class BashTool:
         files: dict[str, str | Callable[[], str]] | None = None,
         mounts: list[dict[str, Any]] | None = None,
         custom_builtins: Mapping[str, BuiltinCallback] | None = None,
+        network: NetworkConfig | None = None,
     ) -> None:
         """Create a new BashTool.
 
@@ -781,12 +805,16 @@ class BashTool:
                 await either. Async callbacks run on the caller's active
                 asyncio loop for ``await execute()`` and on a private loop
                 for ``execute_sync()``.
+            network: Optional outbound HTTP / network configuration. See
+                ``Bash.__init__`` for accepted keys. Preserved across
+                ``reset()`` and ``from_snapshot()``.
 
         Example::
 
             >>> tool = BashTool(
             ...     timeout_seconds=30,
             ...     custom_builtins={"ping": lambda ctx: "pong\\n"},
+            ...     network={"allow_all": True},
             ... )
             >>> print(tool.name)
             bash
@@ -1003,6 +1031,7 @@ class BashTool:
         files: dict[str, str] | None = None,
         mounts: list[dict[str, Any]] | None = None,
         custom_builtins: Mapping[str, BuiltinCallback] | None = None,
+        network: NetworkConfig | None = None,
     ) -> BashTool:
         """Create a new ``BashTool`` from snapshot bytes and optional constructor kwargs."""
         ...

@@ -163,6 +163,30 @@ tool.output_schema()   # JSON schema string
 tool.version           # from Rust crate
 ```
 
+### Network configuration
+
+Outbound HTTP (`curl`, `wget`, `http`) is gated behind `NetworkAllowlist` in
+the Rust core and exposed via the optional `network=` constructor kwarg on
+both `Bash(...)` and `BashTool(...)`. The kwarg accepts a dict with
+`allow` (list of URL patterns) **or** `allow_all=True`, plus an optional
+`block_private_ips` flag (defaults to `True`). Omitting `network=` leaves
+the network disabled (the secure default).
+
+```python
+Bash(network={"allow": ["https://api.github.com"]})
+Bash(network={"allow_all": True})
+Bash(network={"allow": ["http://127.0.0.1:8080"], "block_private_ips": False})
+```
+
+The `bashkit-python` crate compiles the core with `http_client`, so
+`reqwest` is available unconditionally — gating happens at the Python API
+layer. Configuration is persisted on the wrapper struct so `reset()` and
+`from_snapshot(...)` rebuild with the same allowlist.
+
+Phase 1 (#1348) covers the allowlist surface only. Credential injection,
+request callbacks (`http_handler`, `before_http`, `after_http`), and
+bot-auth ship in follow-up phases.
+
 Snapshot/restore methods also exist on `Bash` and mirror the Node bindings:
 
 ```python

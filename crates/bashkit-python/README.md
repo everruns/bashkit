@@ -202,6 +202,31 @@ bash.execute_sync("echo 'hello' > /workspace/demo.txt")
 bash.unmount("/workspace")
 ```
 
+## Network Access
+
+`curl`, `wget`, and `http` are gated behind an explicit allowlist. Without a
+`network=` kwarg outbound HTTP is disabled (the secure default). Pass an
+explicit allowlist or `allow_all=True` to opt in:
+
+```python
+from bashkit import Bash
+
+# Per-host allowlist - all other URLs are blocked.
+bash = Bash(network={"allow": ["https://api.github.com", "https://api.openai.com/v1"]})
+
+# Allow every URL (mirrors NetworkAllowlist::allow_all() in the Rust core).
+trusted = Bash(network={"allow_all": True})
+
+# Disable the SSRF guard if you legitimately need to reach a private IP.
+local = Bash(network={"allow": ["http://127.0.0.1:8080"], "block_private_ips": False})
+```
+
+`network=` is also accepted by `BashTool(...)` and persists across `reset()`
+and `from_snapshot(...)`. An explicit `network={"allow": []}` blocks every
+URL but is distinct from omitting `network=` entirely. Phase 1 of #1348
+covers the allowlist surface; credential injection, request callbacks, and
+bot-auth ship in follow-ups.
+
 ## Error Handling
 
 ```python
@@ -442,6 +467,7 @@ from bashkit.deepagents import BashkitBackend, BashkitMiddleware
 - `snapshot() -> bytes`
 - `restore_snapshot(data: bytes)`
 - `from_snapshot(data: bytes, **kwargs) -> Bash`
+- constructor kwarg: `network={"allow": [...], "block_private_ips": True}` or `network={"allow_all": True}`
 - `mount(vfs_path: str, fs: FileSystem)`
 - `unmount(vfs_path: str)`
 - Direct VFS helpers: `read_file`, `write_file`, `append_file`, `mkdir`, `remove`, `exists`, `stat`, `read_dir`, `ls`, `glob`, `copy`, `rename`, `symlink`, `chmod`, `read_link`
