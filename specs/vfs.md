@@ -165,6 +165,8 @@ filesystem objects when crossing the language runtime boundary:
 - Node.js: `FileSystem.fromExternal(external)`, `FileSystem.toExternal()`
 
 Interop contract:
+- The native Rust contract lives at `bashkit::interop::fs` behind the
+  `interop` cargo feature
 - The cross-addon payload must be a versioned `repr(C)` handle + vtable
 - Do not expose `Arc<dyn FileSystem>` or any addon-private Rust layout
 - Python capsules carry the stable owned handle directly

@@ -1,7 +1,7 @@
 // Decision: cross-addon filesystem interop uses only a versioned repr(C)
 // handle + vtable. Rust trait objects stay inside the exporting addon.
 
-use bashkit::{
+use crate::{
     DirEntry, Error as BashError, FileSystem, FileSystemExt, FileType, Metadata,
     Result as BashResult, async_trait,
 };
@@ -1046,7 +1046,7 @@ static EXPORT_VTABLE: BashkitFsAbiVTableV1 = BashkitFsAbiVTableV1 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bashkit::InMemoryFs;
+    use crate::InMemoryFs;
 
     #[test]
     fn export_import_roundtrip() {

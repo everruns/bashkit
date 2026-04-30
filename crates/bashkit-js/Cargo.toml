@@ -14,8 +14,7 @@ repository.workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
-bashkit = { path = "../bashkit", features = ["scripted_tool", "python", "realfs", "jq"] }
-bashkit-fs-interop = { path = "../bashkit-fs-interop" }
+bashkit = { path = "../bashkit", features = ["scripted_tool", "python", "realfs", "jq", "interop"] }
 napi = { workspace = true }
 napi-derive = { workspace = true }
 serde = { workspace = true }

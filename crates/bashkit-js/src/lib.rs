@@ -13,6 +13,9 @@
 //! work. This prevents CodeQL `rust/access-invalid-pointer` alerts caused by
 //! holding a raw-pointer-derived `&self` across `block_on` or `.await` points.
 
+use bashkit::interop::fs::{
+    BashkitFsAbiHandleV1, BashkitFsAbiOwnedHandleV1, export_filesystem, import_filesystem,
+};
 use bashkit::tool::VERSION;
 use bashkit::{
     Bash as RustBash, BashTool as RustBashTool, ExecResult as RustExecResult, ExecutionLimits,
@@ -20,9 +23,6 @@ use bashkit::{
     OutputCallback, PosixFs, PythonExternalFnHandler, PythonLimits, RealFs, RealFsMode,
     ScriptedTool as RustScriptedTool, SnapshotOptions as RustSnapshotOptions, Tool, ToolArgs,
     ToolDef, ToolRequest,
-};
-use bashkit_fs_interop::{
-    BashkitFsAbiHandleV1, BashkitFsAbiOwnedHandleV1, export_filesystem, import_filesystem,
 };
 use napi::bindgen_prelude::{Buffer, External, JsObjectValue, Object};
 use napi::{Env, JsValue, Unknown};

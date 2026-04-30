@@ -147,7 +147,8 @@ console.log(bash.executeSync("ls /workspace").stdout);
 
 `toExternal()` / `fromExternal()` exchange an opaque JS value carrying versioned
 stable ABI handle bytes plus an owner token, so separate addons do not depend on
-bashkit's internal Rust object layout.
+bashkit's internal Rust object layout. Native addons should depend on `bashkit`
+with the `interop` feature and use `bashkit::interop::fs`.
 
 ### Pre-Initialized Files
 

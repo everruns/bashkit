@@ -5,6 +5,7 @@
 //! `help`, `system_prompt`, JSON schemas) on top of the core interpreter.
 //! Orchestration: `ScriptedTool` — composes Python callbacks as bash builtins.
 
+use bashkit::interop::fs::{BashkitFsAbiOwnedHandleV1, export_filesystem, import_owned_filesystem};
 use bashkit::tool::VERSION;
 use bashkit::{
     Bash, BashTool as RustBashTool, Builtin, BuiltinContext, DirEntry as FsDirEntry, ExcType,
@@ -15,7 +16,6 @@ use bashkit::{
     ShellStateView as RustShellStateView, SnapshotOptions as RustSnapshotOptions, Tool, ToolArgs,
     ToolDef, ToolRequest, async_trait,
 };
-use bashkit_fs_interop::{BashkitFsAbiOwnedHandleV1, export_filesystem, import_owned_filesystem};
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;

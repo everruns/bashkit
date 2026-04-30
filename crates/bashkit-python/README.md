@@ -159,7 +159,8 @@ print(bash.execute_sync("cat /workspace/org/repo/README.md").stdout)
 
 `to_capsule()` / `from_capsule()` exchange a versioned stable ABI handle so
 separate PyO3 extensions do not need to share bashkit's internal Rust object
-layout.
+layout. Native extensions should depend on `bashkit` with the `interop` feature
+and use `bashkit::interop::fs`.
 
 ### Pre-Initialized Files
 
