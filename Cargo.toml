@@ -39,7 +39,12 @@ jaq-std = "3.0"
 jaq-json = "2.0"
 
 # HTTP client (for curl and API calls)
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream"] }
+# IMPORTANT: rustls-no-provider keeps the aws-lc-rs C crypto out of the dep tree so
+# we don't depend on cross-toolchain glibc headers (e.g. AT_HWCAP2 on aarch64
+# manylinux). The ring provider below is installed at runtime in
+# bashkit::network::client.
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider", "stream"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 
 # Regex
 regex = "1"

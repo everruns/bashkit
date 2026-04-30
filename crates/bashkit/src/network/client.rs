@@ -759,10 +759,31 @@ impl HttpClient {
     }
 }
 
+/// Install the rustls `ring` crypto provider as the process-wide default.
+///
+/// We pair reqwest's `rustls-no-provider` feature with an explicit `ring`
+/// install so the dep tree contains zero C-compiled crypto (no aws-lc-sys).
+/// That keeps cross-compiled wheel builds (notably aarch64 manylinux, where
+/// the cross sysroot is missing `AT_HWCAP2`) green and removes a class of
+/// toolchain-specific build failures.
+///
+/// Idempotent: safe to call from multiple call sites and across crates.
+/// `install_default` errors if a provider is already installed (e.g. set by
+/// the embedder); we treat that as success because *some* provider is now
+/// active, which is all rustls needs.
+fn install_default_crypto_provider() {
+    use std::sync::Once;
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+}
+
 fn build_client(
     timeout: Duration,
     connect_timeout: Option<Duration>,
 ) -> std::result::Result<Client, String> {
+    install_default_crypto_provider();
     Client::builder()
         .timeout(timeout)
         .connect_timeout(connect_timeout.unwrap_or(Duration::from_secs(10)))
@@ -947,6 +968,35 @@ mod tests {
         // host HTTP_PROXY/HTTPS_PROXY env vars are ignored (TM-NET-015).
         let client = build_client(Duration::from_secs(30), None);
         assert!(client.is_ok(), "build_client should succeed with no_proxy");
+    }
+
+    #[test]
+    fn test_build_client_installs_ring_crypto_provider() {
+        // Regression: with reqwest's `rustls-no-provider` feature, rustls panics
+        // on first TLS handshake unless a default crypto provider is installed.
+        // build_client must install the ring provider via the `Once` guard so
+        // every code path (default client + per-request timeout client) is safe.
+        // The dep tree must NOT include aws-lc-sys/aws-lc-rs (verified by
+        // `cargo tree -i aws-lc-sys` returning no match).
+        let _ = build_client(Duration::from_secs(30), None);
+        // A provider is now installed process-wide. `install_default` returns
+        // Err on the second call — that's our invariant: the first install
+        // succeeded.
+        let second_install = rustls::crypto::ring::default_provider().install_default();
+        assert!(
+            second_install.is_err(),
+            "build_client must install a default crypto provider before \
+             returning, otherwise the first HTTPS request panics"
+        );
+    }
+
+    #[test]
+    fn test_install_default_crypto_provider_is_idempotent() {
+        // Multiple invocations must not panic; the `Once` guard ensures only
+        // the first call attempts an install.
+        install_default_crypto_provider();
+        install_default_crypto_provider();
+        install_default_crypto_provider();
     }
 
     #[tokio::test]

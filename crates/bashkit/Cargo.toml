@@ -39,6 +39,9 @@ chrono = { workspace = true }
 
 # HTTP client (for curl/wget) - optional, enabled with http_client feature
 reqwest = { workspace = true, optional = true }
+# Direct rustls dep so we can install the `ring` crypto provider at runtime
+# (paired with reqwest's `rustls-no-provider` feature). Optional, gated under http_client.
+rustls = { workspace = true, optional = true }
 
 # SSH client (for ssh/scp/sftp) - optional, enabled with ssh feature
 russh = { workspace = true, optional = true }
@@ -85,7 +88,7 @@ default = []
 # Enable jq builtin via embedded jaq interpreter
 # Usage: cargo build --features jq
 jq = ["dep:jaq-core", "dep:jaq-std", "dep:jaq-json"]
-http_client = ["reqwest"]
+http_client = ["reqwest", "rustls"]
 # Enable Ed25519 request signing per RFC 9421 / web-bot-auth profile
 bot-auth = ["http_client", "dep:ed25519-dalek", "dep:rand", "dep:zeroize"]
 # Enable fail points for security/fault injection testing

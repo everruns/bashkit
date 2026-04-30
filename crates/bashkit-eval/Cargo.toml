@@ -22,6 +22,10 @@ serde_json.workspace = true
 clap.workspace = true
 anyhow.workspace = true
 reqwest.workspace = true
+# Direct rustls dep so we can install the `ring` crypto provider before
+# any HTTPS request — paired with reqwest's `rustls-no-provider`. See
+# bashkit::network::client for the same pattern in the http_client path.
+rustls = { workspace = true }
 regex.workspace = true
 async-trait.workspace = true
 chrono.workspace = true

@@ -58,6 +58,11 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // bashkit-eval uses reqwest directly with rustls' `rustls-no-provider`
+    // feature, so we must install a crypto provider before any HTTPS request.
+    // We use `ring` to keep the dep tree free of C-compiled crypto.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     let cli = Cli::parse();
 
     match cli.command {
