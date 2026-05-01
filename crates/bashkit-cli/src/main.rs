@@ -11,6 +11,8 @@
 // Decision: interactive mode uses rustyline for line editing — lightweight, MIT,
 // no heavy deps (no SQLite, no crossterm). Multiline via parse error detection.
 // See specs/interactive-shell.md
+// Decision: CLI enables embedded Python by default when compiled in. This is an
+// explicit CLI builder opt-in, not ambient process environment inheritance.
 
 //! Bashkit CLI - Command line interface for virtual bash execution
 //!
@@ -28,6 +30,9 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use tokio::runtime::Builder;
+
+#[cfg(feature = "python")]
+const PYTHON_INPROCESS_OPT_IN_ENV: &str = "BASHKIT_ALLOW_INPROCESS_PYTHON";
 
 /// Bashkit - Virtual bash interpreter
 #[derive(Parser, Debug)]
@@ -146,6 +151,7 @@ fn configure_bash(args: &Args, mode: CliMode) -> bashkit::BashBuilder {
     #[cfg(feature = "python")]
     if !args.no_python {
         builder = builder.python();
+        builder = builder.env(PYTHON_INPROCESS_OPT_IN_ENV, "1");
     }
 
     #[cfg(feature = "realfs")]
@@ -425,6 +431,17 @@ mod tests {
         let mut bash = build_bash(&args, CliMode::Command);
         let result = bash.exec("python --version").await.expect("exec");
         assert_ne!(result.stderr, "python: command not found\n");
+    }
+
+    #[cfg(feature = "python")]
+    #[tokio::test]
+    async fn python_code_runs_by_default() {
+        let args = Args::parse_from(["bashkit", "-c", "python -c 'print(2 + 2)'"]);
+        let mut bash = build_bash(&args, CliMode::Command);
+        let result = bash.exec("python -c 'print(2 + 2)'").await.expect("exec");
+        assert_eq!(result.stdout, "4\n");
+        assert_eq!(result.stderr, "");
+        assert_eq!(result.exit_code, 0);
     }
 
     #[cfg(feature = "python")]
