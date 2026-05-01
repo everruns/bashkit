@@ -908,6 +908,7 @@ mod decompression_security {
 mod custom_handler {
     use super::*;
     use bashkit::{HttpHandler, HttpResponse as Response};
+    use std::sync::{Arc, Mutex};
 
     struct MockHandler;
 
@@ -938,6 +939,97 @@ mod custom_handler {
 
         let result = bash.exec("curl -s https://example.com").await.unwrap();
         assert_eq!(result.stdout.trim(), "mocked-response");
+    }
+
+    struct HeaderCaptureHandler {
+        headers: Arc<Mutex<Vec<(String, String)>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl HttpHandler for HeaderCaptureHandler {
+        async fn request(
+            &self,
+            _method: &str,
+            _url: &str,
+            _body: Option<&[u8]>,
+            headers: &[(String, String)],
+        ) -> std::result::Result<Response, String> {
+            *self.headers.lock().unwrap() = headers.to_vec();
+            Ok(Response {
+                status: 200,
+                headers: vec![("content-type".to_string(), "text/plain".to_string())],
+                body: b"mocked-response".to_vec(),
+            })
+        }
+    }
+
+    fn captured_user_agent(headers: &Arc<Mutex<Vec<(String, String)>>>) -> Option<String> {
+        headers
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case("user-agent"))
+            .map(|(_, value)| value.clone())
+    }
+
+    #[tokio::test]
+    async fn curl_sends_curl_user_agent_by_default() {
+        let headers = Arc::new(Mutex::new(Vec::new()));
+        let mut bash = Bash::builder()
+            .network(NetworkAllowlist::allow_all())
+            .http_handler(Box::new(HeaderCaptureHandler {
+                headers: headers.clone(),
+            }))
+            .build();
+
+        let result = bash.exec("curl -s https://example.com").await.unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(captured_user_agent(&headers).as_deref(), Some("curl/8.7.1"));
+    }
+
+    #[tokio::test]
+    async fn curl_user_agent_flags_override_default() {
+        let headers = Arc::new(Mutex::new(Vec::new()));
+        let mut bash = Bash::builder()
+            .network(NetworkAllowlist::allow_all())
+            .http_handler(Box::new(HeaderCaptureHandler {
+                headers: headers.clone(),
+            }))
+            .build();
+
+        let result = bash
+            .exec("curl -s -A 'CustomAgent/1.0' https://example.com")
+            .await
+            .unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(
+            captured_user_agent(&headers).as_deref(),
+            Some("CustomAgent/1.0")
+        );
+    }
+
+    #[tokio::test]
+    async fn curl_user_agent_header_overrides_default() {
+        let headers = Arc::new(Mutex::new(Vec::new()));
+        let mut bash = Bash::builder()
+            .network(NetworkAllowlist::allow_all())
+            .http_handler(Box::new(HeaderCaptureHandler {
+                headers: headers.clone(),
+            }))
+            .build();
+
+        let result = bash
+            .exec("curl -s -H 'User-Agent: HeaderAgent/1.0' https://example.com")
+            .await
+            .unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(
+            captured_user_agent(&headers).as_deref(),
+            Some("HeaderAgent/1.0")
+        );
     }
 
     #[tokio::test]

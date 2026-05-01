@@ -19,6 +19,11 @@ use super::{Builtin, Context};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
+// Default curl requests should look like the curl version bashkit advertises.
+// The lower-level HttpClient keeps its bashkit UA for non-curl callers.
+#[cfg(feature = "http_client")]
+const DEFAULT_CURL_USER_AGENT: &str = "curl/8.7.1";
+
 /// The curl builtin - transfer data from URLs.
 ///
 /// Usage: curl [OPTIONS] URL
@@ -364,9 +369,15 @@ async fn execute_curl_request(
         header_pairs.push(("Authorization".to_string(), format!("Basic {}", encoded)));
     }
 
-    // Add custom user agent
+    // Add the user agent after custom -H headers so -A can override them.
     if let Some(ua) = user_agent {
+        header_pairs.retain(|(name, _)| !name.eq_ignore_ascii_case("user-agent"));
         header_pairs.push(("User-Agent".to_string(), ua.to_string()));
+    } else if !has_header(&header_pairs, "user-agent") {
+        header_pairs.push((
+            "User-Agent".to_string(),
+            DEFAULT_CURL_USER_AGENT.to_string(),
+        ));
     }
 
     // Add referer
@@ -708,6 +719,13 @@ fn same_origin(a: &str, b: &str) -> bool {
 
 /// Sensitive headers that must not be forwarded cross-origin on redirect.
 const SENSITIVE_HEADERS: &[&str] = &["authorization", "cookie", "proxy-authorization"];
+
+#[cfg(feature = "http_client")]
+fn has_header(headers: &[(String, String)], needle: &str) -> bool {
+    headers
+        .iter()
+        .any(|(name, _)| name.eq_ignore_ascii_case(needle))
+}
 
 /// Format the -w/--write-out output.
 #[cfg(feature = "http_client")]

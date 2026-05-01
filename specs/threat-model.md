@@ -666,7 +666,7 @@ async fn read_body_with_limit(&self, response: Response) -> Result<Vec<u8>> {
 | No auto-redirect | Policy::none() | Prevent redirect-based bypass |
 | No auto-decompress | no_gzip/no_brotli/no_deflate | Prevent zip bomb attacks |
 | Content-Length check | Pre-download validation | Fail fast on huge files |
-| User-Agent fixed | "bashkit/0.1.0" | Identify requests, prevent spoofing |
+| User-Agent controlled | HttpClient defaults to "bashkit/*"; curl builtin defaults to "curl/8.7.1" and honors explicit overrides | Identify non-builtin requests while matching curl wire behavior |
 
 #### 5.5 Cryptographic Material Security
 
