@@ -8,8 +8,8 @@
 use bashkit::interop::fs::{BashkitFsAbiOwnedHandleV1, export_filesystem, import_owned_filesystem};
 use bashkit::tool::VERSION;
 use bashkit::{
-    Bash, BashTool as RustBashTool, Builtin, BuiltinContext, DirEntry as FsDirEntry, ExcType,
-    ExecResult as RustExecResult, ExecutionExtensions, ExecutionLimits, ExtFunctionResult,
+    Bash, BashTool as RustBashTool, Builtin, BuiltinContext, Credential, DirEntry as FsDirEntry,
+    ExcType, ExecResult as RustExecResult, ExecutionExtensions, ExecutionLimits, ExtFunctionResult,
     FileSystem, FileSystemExt, FileType as FsFileType, InMemoryFs, Metadata as FsMetadata,
     MontyException, MontyObject, NetworkAllowlist, OutputCallback as RustOutputCallback, OverlayFs,
     PosixFs, PythonExternalFnHandler, PythonLimits, RealFs, RealFsMode,
@@ -161,14 +161,47 @@ fn make_runtime() -> PyResult<Arc<Runtime>> {
 /// Each dict: { "host_path": str, "vfs_path"?: str, "writable"?: bool }.
 /// Internal storage for the Python `network=` kwarg.
 ///
-/// Phase 1 of `feat(python): expose outbound HTTP/network config` (#1348):
-/// allowlist patterns, `allow_all`, and `block_private_ips` are supported here.
-/// Credential injection, callbacks, and bot-auth land in later phases.
+/// Covers phases 1 and 2 of `feat(python): expose outbound HTTP/network config` (#1348):
+/// allowlist patterns, `allow_all`, `block_private_ips`, plus credential
+/// injection (`credentials`) and placeholder-mode credential injection
+/// (`credential_placeholders`). Callbacks and bot-auth land in later phases.
 #[derive(Debug, Clone, Default)]
 struct PyNetworkConfig {
     allow: Vec<String>,
     allow_all: bool,
     block_private_ips: bool,
+    credentials: Vec<PyCredentialInjection>,
+    credential_placeholders: Vec<PyCredentialPlaceholder>,
+}
+
+#[derive(Debug, Clone)]
+struct PyCredentialInjection {
+    pattern: String,
+    spec: PyCredentialSpec,
+}
+
+#[derive(Debug, Clone)]
+struct PyCredentialPlaceholder {
+    env: String,
+    pattern: String,
+    spec: PyCredentialSpec,
+}
+
+#[derive(Debug, Clone)]
+enum PyCredentialSpec {
+    Bearer { token: String },
+    Header { name: String, value: String },
+    Headers { headers: Vec<(String, String)> },
+}
+
+impl PyCredentialSpec {
+    fn into_credential(self) -> Credential {
+        match self {
+            Self::Bearer { token } => Credential::bearer(token),
+            Self::Header { name, value } => Credential::header(name, value),
+            Self::Headers { headers } => Credential::headers(headers),
+        }
+    }
 }
 
 impl PyNetworkConfig {
@@ -179,6 +212,21 @@ impl PyNetworkConfig {
             NetworkAllowlist::new().allow_many(self.allow.iter().cloned())
         };
         base.block_private_ips(self.block_private_ips)
+    }
+
+    fn apply(&self, mut builder: bashkit::BashBuilder) -> bashkit::BashBuilder {
+        builder = builder.network(self.to_allowlist());
+        for inj in &self.credentials {
+            builder = builder.credential(&inj.pattern, inj.spec.clone().into_credential());
+        }
+        for ph in &self.credential_placeholders {
+            builder = builder.credential_placeholder(
+                &ph.env,
+                &ph.pattern,
+                ph.spec.clone().into_credential(),
+            );
+        }
+        builder
     }
 }
 
@@ -193,12 +241,18 @@ fn parse_network_config(network: Option<&Bound<'_, PyDict>>) -> PyResult<Option<
         return Ok(None);
     };
 
-    const KNOWN_KEYS: &[&str] = &["allow", "allow_all", "block_private_ips"];
+    const KNOWN_KEYS: &[&str] = &[
+        "allow",
+        "allow_all",
+        "block_private_ips",
+        "credentials",
+        "credential_placeholders",
+    ];
     for (key_obj, _) in dict.iter() {
         let key: String = key_obj.extract()?;
         if !KNOWN_KEYS.contains(&key.as_str()) {
             return Err(PyValueError::new_err(format!(
-                "network: unknown key '{key}' (supported: allow, allow_all, block_private_ips)"
+                "network: unknown key '{key}' (supported: allow, allow_all, block_private_ips, credentials, credential_placeholders)"
             )));
         }
     }
@@ -237,11 +291,183 @@ fn parse_network_config(network: Option<&Bound<'_, PyDict>>) -> PyResult<Option<
         .transpose()?
         .unwrap_or(true);
 
+    let credentials = parse_credential_injections(dict.get_item("credentials")?.as_ref())?;
+    let credential_placeholders =
+        parse_credential_placeholders(dict.get_item("credential_placeholders")?.as_ref())?;
+
     Ok(Some(PyNetworkConfig {
         allow,
         allow_all,
         block_private_ips,
+        credentials,
+        credential_placeholders,
     }))
+}
+
+fn parse_credential_injections(
+    value: Option<&Bound<'_, PyAny>>,
+) -> PyResult<Vec<PyCredentialInjection>> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let list = value.cast::<PyList>().map_err(|_| {
+        PyValueError::new_err("network['credentials'] must be a list of credential dicts")
+    })?;
+    let mut out = Vec::with_capacity(list.len());
+    for (idx, item) in list.iter().enumerate() {
+        let dict = item.cast::<PyDict>().map_err(|_| {
+            PyValueError::new_err(format!(
+                "network['credentials'][{idx}] must be a dict with 'pattern' and 'kind'"
+            ))
+        })?;
+        let label = format!("credentials[{idx}]");
+        let pattern = require_string(dict, "pattern", &label)?;
+        let spec = parse_credential_spec(dict, &label, &["pattern"])?;
+        out.push(PyCredentialInjection { pattern, spec });
+    }
+    Ok(out)
+}
+
+fn parse_credential_placeholders(
+    value: Option<&Bound<'_, PyAny>>,
+) -> PyResult<Vec<PyCredentialPlaceholder>> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let list = value.cast::<PyList>().map_err(|_| {
+        PyValueError::new_err(
+            "network['credential_placeholders'] must be a list of credential placeholder dicts",
+        )
+    })?;
+    let mut out = Vec::with_capacity(list.len());
+    for (idx, item) in list.iter().enumerate() {
+        let dict = item.cast::<PyDict>().map_err(|_| {
+            PyValueError::new_err(format!(
+                "network['credential_placeholders'][{idx}] must be a dict with 'env', 'pattern', and 'kind'"
+            ))
+        })?;
+        let label = format!("credential_placeholders[{idx}]");
+        let env = require_string(dict, "env", &label)?;
+        if env.is_empty() {
+            return Err(PyValueError::new_err(format!(
+                "network['{label}']['env'] must be a non-empty environment variable name"
+            )));
+        }
+        let pattern = require_string(dict, "pattern", &label)?;
+        let spec = parse_credential_spec(dict, &label, &["env", "pattern"])?;
+        out.push(PyCredentialPlaceholder { env, pattern, spec });
+    }
+    Ok(out)
+}
+
+fn require_string(dict: &Bound<'_, PyDict>, key: &str, label: &str) -> PyResult<String> {
+    let value = dict.get_item(key)?.ok_or_else(|| {
+        PyValueError::new_err(format!("network['{label}'] missing required '{key}' key"))
+    })?;
+    value
+        .extract::<String>()
+        .map_err(|_| PyValueError::new_err(format!("network['{label}']['{key}'] must be a string")))
+}
+
+fn parse_credential_spec(
+    dict: &Bound<'_, PyDict>,
+    label: &str,
+    extra_keys: &[&str],
+) -> PyResult<PyCredentialSpec> {
+    let kind = require_string(dict, "kind", label)?;
+    let spec = match kind.as_str() {
+        "bearer" => {
+            let allowed = build_allowed_keys(&["kind", "token"], extra_keys);
+            reject_unknown_keys(dict, &allowed, label)?;
+            let token = require_string(dict, "token", label)?;
+            PyCredentialSpec::Bearer { token }
+        }
+        "header" => {
+            let allowed = build_allowed_keys(&["kind", "name", "value"], extra_keys);
+            reject_unknown_keys(dict, &allowed, label)?;
+            let name = require_string(dict, "name", label)?;
+            if name.is_empty() {
+                return Err(PyValueError::new_err(format!(
+                    "network['{label}']['name'] must be a non-empty header name"
+                )));
+            }
+            let value = require_string(dict, "value", label)?;
+            PyCredentialSpec::Header { name, value }
+        }
+        "headers" => {
+            let allowed = build_allowed_keys(&["kind", "headers"], extra_keys);
+            reject_unknown_keys(dict, &allowed, label)?;
+            let raw = dict.get_item("headers")?.ok_or_else(|| {
+                PyValueError::new_err(format!("network['{label}'] missing required 'headers' key"))
+            })?;
+            let list = raw.cast::<PyList>().map_err(|_| {
+                PyValueError::new_err(format!(
+                    "network['{label}']['headers'] must be a list of (name, value) pairs"
+                ))
+            })?;
+            if list.is_empty() {
+                return Err(PyValueError::new_err(format!(
+                    "network['{label}']['headers'] must contain at least one (name, value) pair"
+                )));
+            }
+            let mut headers = Vec::with_capacity(list.len());
+            for (idx, item) in list.iter().enumerate() {
+                let pair = extract_string_pair(&item).map_err(|_| {
+                    PyValueError::new_err(format!(
+                        "network['{label}']['headers'][{idx}] must be a (name, value) pair of strings"
+                    ))
+                })?;
+                if pair.0.is_empty() {
+                    return Err(PyValueError::new_err(format!(
+                        "network['{label}']['headers'][{idx}] header name must be non-empty"
+                    )));
+                }
+                headers.push(pair);
+            }
+            PyCredentialSpec::Headers { headers }
+        }
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "network['{label}']['kind'] must be one of 'bearer', 'header', 'headers' (got '{other}')"
+            )));
+        }
+    };
+    Ok(spec)
+}
+
+fn extract_string_pair(item: &Bound<'_, PyAny>) -> PyResult<(String, String)> {
+    if let Ok(tup) = item.cast::<PyTuple>() {
+        if tup.len() != 2 {
+            return Err(PyValueError::new_err("expected a (name, value) pair"));
+        }
+        return Ok((tup.get_item(0)?.extract()?, tup.get_item(1)?.extract()?));
+    }
+    if let Ok(list) = item.cast::<PyList>() {
+        if list.len() != 2 {
+            return Err(PyValueError::new_err("expected a [name, value] pair"));
+        }
+        return Ok((list.get_item(0)?.extract()?, list.get_item(1)?.extract()?));
+    }
+    Err(PyValueError::new_err("expected a 2-element pair"))
+}
+
+fn build_allowed_keys(base: &[&str], extra: &[&str]) -> Vec<String> {
+    let mut all: Vec<String> = base.iter().map(|s| s.to_string()).collect();
+    all.extend(extra.iter().map(|s| s.to_string()));
+    all
+}
+
+fn reject_unknown_keys(dict: &Bound<'_, PyDict>, allowed: &[String], label: &str) -> PyResult<()> {
+    for (key_obj, _) in dict.iter() {
+        let key: String = key_obj.extract()?;
+        if !allowed.iter().any(|k| k == &key) {
+            return Err(PyValueError::new_err(format!(
+                "network['{label}']: unknown key '{key}' (allowed: {})",
+                allowed.join(", ")
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn parse_mounts(mounts: Option<&Bound<'_, PyList>>) -> PyResult<Vec<RealMountConfig>> {
@@ -2736,7 +2962,7 @@ impl PyBash {
             self.external_handler_reentry_depth.clone(),
         );
         if let Some(ref net) = self.network {
-            builder = builder.network(net.to_allowlist());
+            builder = net.apply(builder);
         }
         let files = clone_file_mounts(py, &self.files);
         let builder = apply_fs_config(builder, &files, &self.real_mounts)?;
@@ -2848,7 +3074,7 @@ impl PyBash {
             external_handler_reentry_depth.clone(),
         );
         if let Some(ref net) = network {
-            builder = builder.network(net.to_allowlist());
+            builder = net.apply(builder);
         }
         builder = apply_fs_config(builder, &files, &real_mounts)?;
         let builtin_engine = PyCallbackEngine::new(py)?;
@@ -3358,7 +3584,7 @@ impl BashTool {
         }
 
         if let Some(ref net) = self.network {
-            builder = builder.network(net.to_allowlist());
+            builder = net.apply(builder);
         }
         let files = clone_file_mounts(py, &self.files);
         let builder = apply_fs_config(builder, &files, &self.real_mounts)?;
@@ -3462,7 +3688,7 @@ impl BashTool {
         let custom_builtins = parse_custom_builtins(py, custom_builtins)?;
         let network = parse_network_config(network)?;
         if let Some(ref net) = network {
-            builder = builder.network(net.to_allowlist());
+            builder = net.apply(builder);
         }
         builder = apply_fs_config(builder, &files, &real_mounts)?;
         let builtin_engine = PyCallbackEngine::new(py)?;
