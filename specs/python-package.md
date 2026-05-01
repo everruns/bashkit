@@ -183,8 +183,41 @@ The `bashkit-python` crate compiles the core with `http_client`, so
 layer. Configuration is persisted on the wrapper struct so `reset()` and
 `from_snapshot(...)` rebuild with the same allowlist.
 
-Phase 1 (#1348) covers the allowlist surface only. Credential injection,
-request callbacks (`http_handler`, `before_http`, `after_http`), and
+Phase 2 (#1348) adds per-host credential injection through two optional
+keys on the same `network=` dict:
+
+- `credentials`: list of injection rules. Each rule has `pattern`, `kind`
+  (`"bearer"`, `"header"`, or `"headers"`), and the credential payload
+  (`token` for bearer, `name`/`value` for header, or a list of
+  `(name, value)` pairs for headers). The script never sees the secret —
+  the runtime adds the headers transparently after the allowlist check.
+- `credential_placeholders`: list of placeholder rules. Each rule adds an
+  `env` key (the env-var name visible to scripts) on top of the injection
+  fields. The runtime sets the env var to a randomly generated
+  `bk_placeholder_<hex>` token and replaces that token with the real
+  credential on the wire only for requests matching `pattern`.
+
+```python
+Bash(
+    network={
+        "allow": ["https://api.github.com", "https://api.openai.com/v1"],
+        "credentials": [
+            {"pattern": "https://api.github.com", "kind": "bearer",
+             "token": "ghp_xxx"},
+        ],
+        "credential_placeholders": [
+            {"env": "OPENAI_API_KEY", "pattern": "https://api.openai.com",
+             "kind": "bearer", "token": "sk-real-key"},
+        ],
+    },
+)
+```
+
+Credentials and placeholders are also preserved across `reset()` and
+`from_snapshot(...)`. Each rebuild generates a fresh placeholder string,
+so scripts must read placeholder env vars after every reset/restore.
+
+Request callbacks (`http_handler`, `before_http`, `after_http`) and
 bot-auth ship in follow-up phases.
 
 Snapshot/restore methods also exist on `Bash` and mirror the Node bindings:

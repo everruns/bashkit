@@ -1,20 +1,83 @@
 """Type stubs for bashkit native module."""
 
 from collections.abc import Awaitable, Callable, Mapping
-from typing import Any, Protocol, TypedDict
+from typing import Any, Literal, Protocol, TypedDict
+
+class BearerCredentialInjection(TypedDict):
+    """Inject ``Authorization: Bearer <token>`` for matching URLs."""
+
+    pattern: str
+    kind: Literal["bearer"]
+    token: str
+
+class HeaderCredentialInjection(TypedDict):
+    """Inject a single custom header for matching URLs."""
+
+    pattern: str
+    kind: Literal["header"]
+    name: str
+    value: str
+
+class HeadersCredentialInjection(TypedDict):
+    """Inject multiple custom headers for matching URLs."""
+
+    pattern: str
+    kind: Literal["headers"]
+    headers: list[tuple[str, str]]
+
+CredentialInjection = BearerCredentialInjection | HeaderCredentialInjection | HeadersCredentialInjection
+
+class BearerCredentialPlaceholder(TypedDict):
+    """Placeholder-mode bearer-token injection.
+
+    Sets ``env`` to an opaque placeholder visible to scripts; the placeholder
+    is replaced with the real ``token`` on the wire for requests matching
+    ``pattern``.
+    """
+
+    env: str
+    pattern: str
+    kind: Literal["bearer"]
+    token: str
+
+class HeaderCredentialPlaceholder(TypedDict):
+    """Placeholder-mode single-header injection."""
+
+    env: str
+    pattern: str
+    kind: Literal["header"]
+    name: str
+    value: str
+
+class HeadersCredentialPlaceholder(TypedDict):
+    """Placeholder-mode multi-header injection."""
+
+    env: str
+    pattern: str
+    kind: Literal["headers"]
+    headers: list[tuple[str, str]]
+
+CredentialPlaceholder = BearerCredentialPlaceholder | HeaderCredentialPlaceholder | HeadersCredentialPlaceholder
 
 class NetworkConfig(TypedDict, total=False):
     """Outbound HTTP / network configuration for ``Bash`` and ``BashTool``.
 
-    Phase 1 of #1348 — only the allowlist surface is wired through. Provide
-    either ``allow`` (a list of URL patterns) or ``allow_all=True``; passing
-    both raises ``ValueError``. Omitting ``network=`` keeps the network
-    disabled (the existing default).
+    Covers phases 1 and 2 of #1348 — allowlist plus credential injection.
+    Provide either ``allow`` (a list of URL patterns) or ``allow_all=True``;
+    passing both raises ``ValueError``. Omitting ``network=`` keeps the
+    network disabled (the existing default).
+
+    ``credentials`` injects headers transparently for matching URLs without
+    the script ever seeing the secret. ``credential_placeholders`` exposes
+    the credential to the script as an opaque placeholder via an env var,
+    and replaces the placeholder with the real value in outbound headers.
     """
 
     allow: list[str]
     allow_all: bool
     block_private_ips: bool
+    credentials: list[CredentialInjection]
+    credential_placeholders: list[CredentialPlaceholder]
 
 # Synchronous chunk callback for live stdout/stderr streaming.
 OutputHandler = Callable[[str, str], None]
@@ -433,8 +496,13 @@ class Bash:
                 ``{"allow_all": True}`` to allow every URL (mirrors
                 ``NetworkAllowlist::allow_all()`` in the Rust core). Set
                 ``"block_private_ips": False`` to relax the SSRF guard.
-                When omitted, network access is disabled (current default).
-                Preserved across ``reset()`` and ``from_snapshot()``.
+                Add ``"credentials": [...]`` to inject headers transparently
+                for matching URLs and ``"credential_placeholders": [...]``
+                to expose opaque placeholder env vars that are replaced with
+                the real secret on the wire. When omitted, network access
+                is disabled (current default). Preserved across ``reset()``
+                and ``from_snapshot()`` — placeholder env vars are
+                regenerated on each rebuild.
 
         Example::
 
@@ -442,7 +510,16 @@ class Bash:
             ...     timeout_seconds=30,
             ...     files={"/input.txt": "some data"},
             ...     custom_builtins={"ping": lambda ctx: "pong\\n"},
-            ...     network={"allow": ["https://api.github.com"]},
+            ...     network={
+            ...         "allow": ["https://api.github.com"],
+            ...         "credentials": [
+            ...             {
+            ...                 "pattern": "https://api.github.com",
+            ...                 "kind": "bearer",
+            ...                 "token": "ghp_xxx",
+            ...             }
+            ...         ],
+            ...     },
             ... )
         """
         ...
