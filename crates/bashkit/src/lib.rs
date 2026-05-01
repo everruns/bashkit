@@ -518,7 +518,9 @@ pub use logging::LogConfig;
 use interpreter::Interpreter;
 use parser::Parser;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+#[cfg(feature = "realfs")]
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 #[cfg(feature = "python")]
