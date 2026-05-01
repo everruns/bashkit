@@ -223,9 +223,51 @@ local = Bash(network={"allow": ["http://127.0.0.1:8080"], "block_private_ips": F
 
 `network=` is also accepted by `BashTool(...)` and persists across `reset()`
 and `from_snapshot(...)`. An explicit `network={"allow": []}` blocks every
-URL but is distinct from omitting `network=` entirely. Phase 1 of #1348
-covers the allowlist surface; credential injection, request callbacks, and
-bot-auth ship in follow-ups.
+URL but is distinct from omitting `network=` entirely.
+
+### Credential injection
+
+Inject per-host credentials transparently so scripts never see the real
+secret. Two modes are supported (mirroring the Rust `BashBuilder::credential`
+and `BashBuilder::credential_placeholder` APIs):
+
+```python
+from bashkit import Bash
+
+bash = Bash(
+    network={
+        "allow": ["https://api.github.com", "https://api.openai.com/v1"],
+        # Direct injection — script has no knowledge of the credential.
+        "credentials": [
+            {
+                "pattern": "https://api.github.com",
+                "kind": "bearer",
+                "token": "ghp_xxx",
+            },
+        ],
+        # Placeholder mode — script sees an opaque placeholder via env var.
+        "credential_placeholders": [
+            {
+                "env": "OPENAI_API_KEY",
+                "pattern": "https://api.openai.com",
+                "kind": "bearer",
+                "token": "sk-real-key",
+            },
+        ],
+    },
+)
+# Scripts can: curl -s https://api.github.com/repos/foo/bar
+#   → Authorization: Bearer ghp_xxx is added on the wire.
+# Scripts can: curl -s -H "Authorization: Bearer $OPENAI_API_KEY" \
+#                   https://api.openai.com/v1/chat
+#   → the placeholder is replaced with sk-real-key on the wire.
+```
+
+Each credential dict accepts `kind: "bearer"` (`token`),
+`kind: "header"` (`name`, `value`), or `kind: "headers"` (a list of
+`(name, value)` pairs). Injected headers overwrite script-provided headers
+with the same name to prevent credential spoofing. Phase 2 of #1348 covers
+the credential surface; request callbacks and bot-auth ship in follow-ups.
 
 ## Error Handling
 
@@ -467,7 +509,7 @@ from bashkit.deepagents import BashkitBackend, BashkitMiddleware
 - `snapshot() -> bytes`
 - `restore_snapshot(data: bytes)`
 - `from_snapshot(data: bytes, **kwargs) -> Bash`
-- constructor kwarg: `network={"allow": [...], "block_private_ips": True}` or `network={"allow_all": True}`
+- constructor kwarg: `network={"allow": [...], "block_private_ips": True}` or `network={"allow_all": True}`, optionally with `credentials=[...]` and `credential_placeholders=[...]`
 - `mount(vfs_path: str, fs: FileSystem)`
 - `unmount(vfs_path: str)`
 - Direct VFS helpers: `read_file`, `write_file`, `append_file`, `mkdir`, `remove`, `exists`, `stat`, `read_dir`, `ls`, `glob`, `copy`, `rename`, `symlink`, `chmod`, `read_link`
