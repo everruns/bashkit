@@ -138,8 +138,12 @@ pub struct SqliteLimits {
     /// Backend selection.
     pub backend: SqliteBackend,
     /// Lower-cased PRAGMA names that the builtin will refuse to execute.
-    /// Defaults to a curated list of resource/sandbox-affecting PRAGMAs;
-    /// see [`DEFAULT_PRAGMA_DENY`].
+    ///
+    /// Defaults to a curated list of resource- and sandbox-affecting
+    /// PRAGMAs: `cache_size`, `mmap_size`, `page_size`, `max_page_count`,
+    /// `temp_store_directory`, `data_store_directory`, `compile_options`,
+    /// `locking_mode`, `shared_cache`. Override via
+    /// [`SqliteLimits::pragma_deny`] (the builder method).
     pub pragma_deny: Vec<String>,
 }
 
