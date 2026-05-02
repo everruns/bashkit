@@ -121,7 +121,10 @@ proptest! {
                     quotes += 1;
                 }
             }
-            prop_assert!(quotes % 2 == 0, "unbalanced quotes in {line:?}");
+            prop_assert!(
+                quotes.is_multiple_of(2),
+                "unbalanced quotes in {line:?}"
+            );
         }
     }
 
