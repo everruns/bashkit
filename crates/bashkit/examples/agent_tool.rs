@@ -262,6 +262,10 @@ impl Agent {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // reqwest is built with `rustls-no-provider`, so a CryptoProvider must be
+    // installed process-wide before `reqwest::Client::new()` is called.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     println!("=== Bashkit LLM Agent Example ===\n");
 
     let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_else(|_| {
