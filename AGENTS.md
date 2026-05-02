@@ -107,29 +107,26 @@ just pre-pr       # Pre-PR checks
 
 ### Stderr from builtins must not leak internal Debug shapes
 
-Real shell tools print short, opaque error messages. Builtins that wrap
-external libraries (jaq, regex, serde_json, semver, …) and forward the
-library's error via `format!("{:?}", e)` dump internal struct shapes
-(`File { code: "...", path: () }`, `[("@tsv", Filter(0))]`) into stderr
-where LLM agents see them.
+See **TM-INF-022** in `specs/threat-model.md`.
 
 Rules:
 - No `{:?}`, `{:#?}`, or `{name:?}` in `crates/bashkit/src/builtins/`.
 - Use `Display` (`{}`) or a domain-specific formatter that maps each
-  library error variant to a short, jq-style message (see
-  `format_jq_compile_errors` in `builtins/jq.rs`).
-- Cap diagnostic length at ≤ 1 KB so a single bad input can't flood
-  stderr.
+  library error variant to a short, real-shell-style message (see
+  `format_jq_compile_errors` in `builtins/jq.rs` as the reference).
+- Cap diagnostic length at ≤ 1 KB.
 - Legitimate Debug uses (assert-failure messages in `#[cfg(test)]`)
   must annotate the line with `// debug-ok: <reason>`.
 
-Enforcement:
-- Static: `just check-no-debug-fmt` (greps for `{:?}` patterns).
-- Dynamic: `cargo test --test no_debug_leak_tests` fires curated
-  malformed inputs at high-risk builtins and asserts stderr contains
-  no banned Debug-shape substrings.
+Enforcement (both run by `cargo test`, no separate recipe needed):
+- **Static**: `builtins::tests::no_debug_fmt_in_builtin_source` walks
+  every builtin source file and asserts no `{:?}` directives.
+- **Dynamic**: each tool's `mod tests` calls
+  `crate::builtins::debug_leak_check::assert_no_leak` against malformed
+  inputs that exercise its error paths.
 
-Both run as part of `just pre-pr`.
+When adding a new builtin that wraps a library: add a `no_leak_*` test
+to its `mod tests` (see `jq.rs`, `awk.rs`, `json.rs` for examples).
 
 ### Python
 

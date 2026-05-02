@@ -1674,4 +1674,15 @@ mod tests {
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "(stdin)\0");
     }
+
+    // TM-INF-022: malformed-regex stderr must not leak `regex` crate Debug.
+    #[tokio::test]
+    async fn no_leak_invalid_regex() {
+        let r = crate::builtins::debug_leak_check::run(r"echo 1 | grep -E '['").await;
+        crate::builtins::debug_leak_check::assert_no_leak(
+            &r,
+            "grep_invalid_regex",
+            &["regex::Error", "ParseError {"],
+        );
+    }
 }

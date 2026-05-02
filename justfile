@@ -37,14 +37,8 @@ python-lint:
     ruff check crates/bashkit-python
     ruff format --check crates/bashkit-python
 
-# Forbid `{:?}` in builtin error paths — Debug formatting leaks internal
-# struct shapes into stderr where LLM agents see them. Per-line opt-out
-# via `// debug-ok: <reason>`. See specs/threat-model.md.
-check-no-debug-fmt:
-    ./scripts/check-no-debug-fmt.sh
-
 # Run all pre-PR checks
-pre-pr: check check-no-debug-fmt vet
+pre-pr: check vet
     @echo "Pre-PR checks passed"
 
 # Run all pre-PR checks plus strict host-bash parity

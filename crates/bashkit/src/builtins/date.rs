@@ -1066,4 +1066,16 @@ mod tests {
         let tz = result.stdout.trim();
         assert!(tz.contains("UTC") || tz == "+0000" || tz == "+00:00");
     }
+
+    // TM-INF-022: invalid-date stderr must not leak `chrono` Debug shapes.
+    #[tokio::test]
+    async fn no_leak_invalid_format() {
+        let r =
+            crate::builtins::debug_leak_check::run(r#"date -d 'not a date in any format'"#).await;
+        crate::builtins::debug_leak_check::assert_no_leak(
+            &r,
+            "date_invalid_format",
+            &["chrono::ParseError", "ParseError {"],
+        );
+    }
 }

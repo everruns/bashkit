@@ -668,6 +668,77 @@ impl Builtin for std::sync::Arc<dyn Builtin> {
 }
 
 #[cfg(test)]
+pub(crate) mod debug_leak_check {
+    //! Shared helpers for the cross-tool no-Debug-leak guard.
+    //!
+    //! Real shell tools print short, opaque error messages. Builtins that
+    //! wrap external libraries (jaq, regex, serde_json, semver, …) must not
+    //! let their library's `Debug` formatter reach stderr — `{:?}` on a // debug-ok: pattern doc
+    //! `jaq::load::File` dumps ~800 chars of prepended compat-defs source,
+    //! and `Undefined::Filter(0)` exposes internal variant tags. See
+    //! `specs/threat-model.md` (TM-INF-022) and the "Stderr from builtins
+    //! must not leak internal Debug shapes" section in `AGENTS.md`.
+    //!
+    //! Two enforcement layers, both run by `cargo test`:
+    //!
+    //! 1. **Static** — `tests::no_debug_fmt_in_builtin_source` walks every
+    //!    `crates/bashkit/src/builtins/*.rs` file and asserts no Rust Debug
+    //!    format directives appear, modulo `// debug-ok: <reason>` opt-outs.
+    //! 2. **Dynamic** — each tool's own `mod tests` calls
+    //!    [`assert_no_leak`] against malformed inputs that exercise its
+    //!    error paths (see e.g. `jq.rs`, `awk.rs`).
+
+    use crate::{Bash, ControlFlow, ExecResult};
+
+    /// Universal Debug-shape substrings forbidden in builtin stderr.
+    /// Per-tool tests extend this with their own internals.
+    pub const UNIVERSAL_BANNED: &[&str] = &[
+        // jaq internals
+        "File {",
+        "path: ()",
+        "Token(",
+        "Tok::",
+        "Undefined::",
+        "Errors {",
+        // generic Debug-of-struct/enum shapes
+        "Vec [",
+        " { code:",
+        "Some([",
+        "Span {",
+        "Range {",
+    ];
+
+    pub const MAX_STDERR_BYTES: usize = 1024;
+
+    pub async fn run(script: &str) -> ExecResult {
+        let mut bash = Bash::new();
+        bash.exec(script).await.unwrap_or_else(|e| ExecResult {
+            stdout: String::new(),
+            stderr: e.to_string(),
+            exit_code: 1,
+            control_flow: ControlFlow::None,
+            ..Default::default()
+        })
+    }
+
+    #[track_caller]
+    pub fn assert_no_leak(result: &ExecResult, ctx: &str, tool_banned: &[&str]) {
+        let stderr = &result.stderr;
+        assert!(
+            stderr.len() <= MAX_STDERR_BYTES,
+            "[{ctx}] stderr exceeds {MAX_STDERR_BYTES} bytes ({} bytes):\n---\n{stderr}\n---",
+            stderr.len()
+        );
+        for pat in UNIVERSAL_BANNED.iter().chain(tool_banned.iter()) {
+            assert!(
+                !stderr.contains(pat),
+                "[{ctx}] stderr leaks banned shape `{pat}`:\n---\n{stderr}\n---"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::fs::{FileSystem, InMemoryFs};
@@ -786,5 +857,136 @@ mod tests {
         let args = vec!["-c".to_string(), "filter".to_string()];
         let r = check_help_version(&args, "usage\n", Some("v1"));
         assert!(r.is_none());
+    }
+
+    // -------------------------------------------------------------------------
+    // TM-INF-022: stderr from builtins must not leak Rust Debug shapes.
+    //
+    // Static guard — walks every `crates/bashkit/src/builtins/*.rs` file
+    // and asserts no Rust Debug format directives appear, modulo
+    // `// debug-ok: <reason>` per-line opt-outs.
+    //
+    // Dynamic counterpart: each tool's own `mod tests` exercises its
+    // error paths through `super::debug_leak_check::assert_no_leak`.
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn no_debug_fmt_in_builtin_source() {
+        // Match `{:?}`, `{:#?}`, `{name:?}`, `{name:#?}`. // debug-ok: pattern doc
+        let pat = regex::Regex::new(r"\{[A-Za-z0-9_]*:#?\?\}").unwrap();
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/builtins");
+        let mut violations = Vec::new();
+
+        for entry in std::fs::read_dir(&dir).expect("read builtins dir") {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if path.extension().is_none_or(|e| e != "rs") {
+                continue;
+            }
+            let src = std::fs::read_to_string(&path).expect("read source");
+            for (i, line) in src.lines().enumerate() {
+                if line.contains("// debug-ok:") {
+                    continue;
+                }
+                if line.trim_start().starts_with("#[derive(") {
+                    continue;
+                }
+                if pat.is_match(line) {
+                    violations.push(format!(
+                        "{}:{}: {}",
+                        path.file_name().unwrap().to_string_lossy(),
+                        i + 1,
+                        line.trim_end()
+                    ));
+                }
+            }
+        }
+
+        assert!(
+            violations.is_empty(),
+            "Rust Debug formatting found in builtin source. This leaks \
+             internal struct shapes into stderr where LLM agents see them. \
+             Use Display ({{}}) or a domain-specific formatter. Add \
+             `// debug-ok: <reason>` to the line for legitimate test \
+             asserts.\n\nViolations:\n{}",
+            violations.join("\n")
+        );
+    }
+
+    /// Coarse sweep: every common flag-accepting builtin called with a
+    /// bogus flag must produce a clean error. Tools without flag parsing
+    /// (`true`, `false`, `:`) and tools that take a path/filter as their
+    /// first arg (`cd`, `source`) are excluded.
+    #[tokio::test]
+    async fn every_builtin_handles_bogus_flag_cleanly() {
+        const TOOLS: &[&str] = &[
+            "cat",
+            "ls",
+            "wc",
+            "head",
+            "tail",
+            "sort",
+            "uniq",
+            "cut",
+            "tr",
+            "grep",
+            "sed",
+            "awk",
+            "find",
+            "tree",
+            "diff",
+            "comm",
+            "paste",
+            "column",
+            "join",
+            "split",
+            "fold",
+            "expand",
+            "unexpand",
+            "nl",
+            "tac",
+            "rev",
+            "strings",
+            "od",
+            "xxd",
+            "hexdump",
+            "base64",
+            "md5sum",
+            "sha1sum",
+            "sha256sum",
+            "tar",
+            "gzip",
+            "gunzip",
+            "zip",
+            "unzip",
+            "seq",
+            "expr",
+            "bc",
+            "numfmt",
+            "test",
+            "printf",
+            "echo",
+            "env",
+            "printenv",
+            "stat",
+            "file",
+            "basename",
+            "dirname",
+            "realpath",
+            "csv",
+            "json",
+            "yaml",
+            "tomlq",
+            "semver",
+            "envsubst",
+            "template",
+            "patch",
+        ];
+        for tool in TOOLS {
+            let r =
+                super::debug_leak_check::run(&format!("{tool} --xyzzy-not-a-real-flag </dev/null"))
+                    .await;
+            super::debug_leak_check::assert_no_leak(&r, &format!("{tool}_bogus_flag"), &[]);
+        }
     }
 }

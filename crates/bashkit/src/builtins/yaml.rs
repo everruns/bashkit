@@ -734,4 +734,15 @@ fruits:
         assert_eq!(r.exit_code, 0);
         assert_eq!(r.stdout.trim(), "value");
     }
+
+    // TM-INF-022: malformed-input stderr must not leak `serde_yaml` Debug.
+    #[tokio::test]
+    async fn no_leak_malformed_input() {
+        let r = crate::builtins::debug_leak_check::run(r#"echo ':' | yaml get .foo"#).await;
+        crate::builtins::debug_leak_check::assert_no_leak(
+            &r,
+            "yaml_malformed_input",
+            &["serde_yaml::Error", "Error { line:"],
+        );
+    }
 }

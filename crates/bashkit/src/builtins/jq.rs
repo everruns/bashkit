@@ -2252,4 +2252,120 @@ mod tests {
             result.stderr
         );
     }
+
+    // -------------------------------------------------------------------------
+    // TM-INF-022 dynamic guard: malformed-input corpus.
+    //
+    // The static counterpart in `builtins/mod.rs` forbids `{:?}` in source. // debug-ok: pattern doc
+    // These tests exercise jq's error paths with curated bad inputs and
+    // assert no banned Debug-shape substrings reach stderr.
+    // -------------------------------------------------------------------------
+
+    /// jq-specific internals that must never reach stderr — they would
+    /// reveal the prepended compat-defs source we splice into every filter.
+    const JQ_BANNED: &[&str] = &[
+        "__bashkit_env__",
+        "JQ_COMPAT_DEFS",
+        "def setpath",
+        "def leaf_paths",
+        "def @tsv:",
+        "def @csv:",
+        "def env:",
+        // Undefined::* variant Debug spellings — post-formatter these
+        // become `name/arity is not defined`; the raw tag must not appear.
+        "Filter(0)",
+        "Filter(1)",
+        "Filter(2)",
+        "Var,",
+        "Mod,",
+    ];
+
+    macro_rules! jq_no_leak {
+        ($name:ident, $script:expr) => {
+            #[tokio::test]
+            async fn $name() {
+                let r = crate::builtins::debug_leak_check::run($script).await;
+                crate::builtins::debug_leak_check::assert_no_leak(&r, stringify!($name), JQ_BANNED);
+            }
+        };
+    }
+
+    // compile errors — every Undefined variant
+    jq_no_leak!(
+        no_leak_undefined_filter_zero_arity,
+        "echo 1 | jq totally_made_up"
+    );
+    jq_no_leak!(
+        no_leak_undefined_filter_with_arity,
+        "echo 1 | jq 'totally_made_up(1; 2)'"
+    );
+    jq_no_leak!(no_leak_undefined_variable, "echo 1 | jq '$nope'");
+    jq_no_leak!(no_leak_undefined_format, "echo '[1]' | jq '@xyzzy'");
+
+    // exact filter from the original bug report (#TM-INF-022)
+    jq_no_leak!(
+        no_leak_harness_tsv_filter_with_undefined_inner,
+        r#"echo '{"data":[]}' | jq '
+          if (.data | length) == 0 then
+            "No harnesses found."
+          else
+            (.data[] | [(.id // ""), totally_undefined_helper] | @tsv)
+          end
+        '"#
+    );
+
+    // parse / lex errors
+    jq_no_leak!(no_leak_unbalanced_bracket, "echo 1 | jq '['");
+    jq_no_leak!(no_leak_unbalanced_paren, "echo 1 | jq '('");
+    jq_no_leak!(no_leak_stray_pipe, "echo 1 | jq '|'");
+    jq_no_leak!(no_leak_unterminated_string, r#"echo 1 | jq '"abc'"#);
+    jq_no_leak!(no_leak_if_without_then, "echo 1 | jq 'if . then'");
+    jq_no_leak!(no_leak_reduce_without_as, "echo 1 | jq 'reduce . '");
+    jq_no_leak!(no_leak_def_without_body, "echo 1 | jq 'def f:'");
+    jq_no_leak!(no_leak_empty_brace_expr, "echo 1 | jq '{(.)}'");
+
+    // input errors
+    jq_no_leak!(no_leak_malformed_json_input, "echo 'not json {' | jq '.'");
+
+    #[tokio::test]
+    async fn no_leak_deeply_nested_input() {
+        let script = format!("echo '{}{}' | jq '.'", "[".repeat(200), "]".repeat(200));
+        let r = crate::builtins::debug_leak_check::run(&script).await;
+        crate::builtins::debug_leak_check::assert_no_leak(
+            &r,
+            "no_leak_deeply_nested_input",
+            JQ_BANNED,
+        );
+    }
+
+    // runtime errors
+    jq_no_leak!(
+        no_leak_index_array_with_string,
+        r#"echo '[1,2]' | jq '.foo'"#
+    );
+    jq_no_leak!(no_leak_iterate_over_null, r#"echo 'null' | jq '.[]'"#);
+    jq_no_leak!(no_leak_add_array_and_number, r#"echo '[1,2]' | jq '. + 1'"#);
+
+    // @tsv / @csv positive regressions — the user's original failing filter
+    // must compile and produce the expected tsv output.
+    #[tokio::test]
+    async fn tsv_compiles_for_user_harness_filter() {
+        let r = crate::builtins::debug_leak_check::run(
+            r#"echo '{"data":[{"id":"h1","name":"a","description":"d","parent_harness_id":null,"capabilities":["x"],"created_at":"t"}]}' | jq -r '
+                .data[] | [(.id // ""), (.name // ""), (.description // ""), (.parent_harness_id // ""), ((.capabilities // []) | length | tostring), (.created_at // "")] | @tsv
+            '"#,
+        )
+        .await;
+        assert_eq!(r.exit_code, 0, "stderr: {}", r.stderr);
+        assert!(r.stdout.contains("h1"), "stdout: {}", r.stdout);
+        assert!(r.stdout.contains('\t'), "tab not present: {}", r.stdout);
+    }
+
+    #[tokio::test]
+    async fn csv_compiles_basic_via_shell() {
+        let r = crate::builtins::debug_leak_check::run(r#"echo 'null' | jq -r '["a","b"] | @csv'"#)
+            .await;
+        assert_eq!(r.exit_code, 0, "stderr: {}", r.stderr);
+        assert!(r.stdout.contains("\"a\",\"b\""), "stdout: {}", r.stdout);
+    }
 }
