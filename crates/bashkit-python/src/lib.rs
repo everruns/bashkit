@@ -2875,6 +2875,20 @@ fn apply_python_config(
     builder
 }
 
+/// Apply the sqlite-builtin opt-in to a `BashBuilder`.
+///
+/// Mirrors `apply_python_config`: passing `sqlite=True` from Python is the
+/// explicit opt-in for in-process SQLite execution, so we register the
+/// builtin and inject the runtime gate env var. The deny-list defaults
+/// (resource/FS-shaped PRAGMAs) come from `SqliteLimits::default()`.
+fn apply_sqlite_config(mut builder: bashkit::BashBuilder, sqlite: bool) -> bashkit::BashBuilder {
+    if sqlite {
+        builder = builder.sqlite();
+        builder = builder.env("BASHKIT_ALLOW_INPROCESS_SQLITE", "1");
+    }
+    builder
+}
+
 /// Core bash interpreter with virtual filesystem.
 ///
 /// State persists between calls — files created in one `execute()` are
@@ -2902,6 +2916,8 @@ pub struct PyBash {
     hostname: Option<String>,
     /// Whether Monty Python execution is enabled (`python`/`python3` builtins).
     python: bool,
+    /// Whether the embedded SQLite (`sqlite`/`sqlite3`) builtin is enabled.
+    sqlite: bool,
     /// External function names callable from Monty code via the handler.
     external_functions: Vec<String>,
     /// Async Python callable invoked when Monty calls an external function.
@@ -2961,6 +2977,7 @@ impl PyBash {
             handler_clone,
             self.external_handler_reentry_depth.clone(),
         );
+        builder = apply_sqlite_config(builder, self.sqlite);
         if let Some(ref net) = self.network {
             builder = net.apply(builder);
         }
@@ -2985,6 +3002,7 @@ impl PyBash {
         max_memory=None,
         timeout_seconds=None,
         python=false,
+        sqlite=false,
         external_functions=None,
         external_handler=None,
         files=None,
@@ -3002,6 +3020,7 @@ impl PyBash {
         max_memory: Option<u64>,
         timeout_seconds: Option<f64>,
         python: bool,
+        sqlite: bool,
         external_functions: Option<Vec<String>>,
         external_handler: Option<Py<PyAny>>,
         files: Option<&Bound<'_, PyDict>>,
@@ -3073,6 +3092,7 @@ impl PyBash {
             handler_for_build,
             external_handler_reentry_depth.clone(),
         );
+        builder = apply_sqlite_config(builder, sqlite);
         if let Some(ref net) = network {
             builder = net.apply(builder);
         }
@@ -3092,6 +3112,7 @@ impl PyBash {
             username,
             hostname,
             python,
+            sqlite,
             external_functions: external_functions.unwrap_or_default(),
             external_handler,
             external_handler_reentry_depth,
@@ -3318,6 +3339,7 @@ impl PyBash {
         max_memory=None,
         timeout_seconds=None,
         python=false,
+        sqlite=false,
         external_functions=None,
         external_handler=None,
         files=None,
@@ -3336,6 +3358,7 @@ impl PyBash {
         max_memory: Option<u64>,
         timeout_seconds: Option<f64>,
         python: bool,
+        sqlite: bool,
         external_functions: Option<Vec<String>>,
         external_handler: Option<Py<PyAny>>,
         files: Option<&Bound<'_, PyDict>>,
@@ -3352,6 +3375,7 @@ impl PyBash {
             max_memory,
             timeout_seconds,
             python,
+            sqlite,
             external_functions,
             external_handler,
             files,
