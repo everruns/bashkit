@@ -303,7 +303,7 @@ mod tests {
         let config = SshConfig::new()
             .default_password(&pass)
             .default_private_key(&key);
-        let debug = format!("{:?}", config);
+        let debug = format!("{:?}", config); // debug-ok: this test verifies Debug redaction
         // Verify sensitive values are not present in Debug output
         assert!(!debug.contains(&pass), "password leaked in Debug output");
         assert!(
