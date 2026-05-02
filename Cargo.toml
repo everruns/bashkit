@@ -99,12 +99,12 @@ russh-keys = "0.49"
 serial_test = "3"
 
 # Python bindings
-pyo3 = { version = "0.28.2", features = ["extension-module", "generate-import-lib"] }
+pyo3 = { version = "0.28.3", features = ["extension-module", "generate-import-lib"] }
 pyo3-async-runtimes = { version = "0.28", features = ["tokio-runtime"] }
 
 # JavaScript/Node.js bindings (NAPI-RS)
-napi = { version = "3.8.5", default-features = false, features = ["napi6", "compat-mode", "tokio_rt"] }
-napi-derive = "3.5.4"
+napi = { version = "3.8.6", default-features = false, features = ["napi6", "compat-mode", "tokio_rt"] }
+napi-derive = "3.5.5"
 napi-build = "2"
 
 [profile.release]
