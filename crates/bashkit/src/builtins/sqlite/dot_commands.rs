@@ -127,15 +127,14 @@ fn set_mode(args: Vec<String>, opts: &mut OutputOpts) -> Result<(), DotError> {
         value: v.clone(),
     })?;
     opts.mode = mode;
-    // sqlite3 also flips the separator for csv/tabs to a sensible default.
+    // sqlite3 also flips the separator for csv/tabs to a sensible default,
+    // and switching back to list mode restores `|` only if the previous mode
+    // had clobbered it (otherwise we keep whatever the user picked).
     match mode {
         OutputMode::Csv => opts.separator = ",".to_string(),
         OutputMode::Tabs => opts.separator = "\t".to_string(),
-        OutputMode::List => {
-            // Restore default if user had previously been in csv/tabs.
-            if opts.separator == "," || opts.separator == "\t" {
-                opts.separator = "|".to_string();
-            }
+        OutputMode::List if opts.separator == "," || opts.separator == "\t" => {
+            opts.separator = "|".to_string();
         }
         _ => {}
     }
