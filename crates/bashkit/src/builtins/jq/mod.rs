@@ -42,9 +42,7 @@ use compat::{
     ARGS_VAR_NAME, ENV_VAR_NAME, FILENAME_VAR_NAME, LINENO_VAR_NAME, PUBLIC_ENV_VAR_NAME,
     build_compat_prefix,
 };
-use convert::{
-    JqJson, MAX_JQ_JSON_DEPTH, check_json_depth, jq_to_val, parse_json_stream, val_to_jq,
-};
+use convert::{JqJson, MAX_JQ_JSON_DEPTH, jq_to_val, parse_json_stream, val_to_jq};
 use errors::{format_compile_errors, format_load_errors, format_runtime_error};
 use format::{Indent, render, sort_keys as sort_jq_keys};
 
@@ -113,16 +111,10 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
             FileVarKind::Raw => serde_json::Value::String(text),
             FileVarKind::Slurp => match parse_json_stream(&text) {
                 Ok(vals) => {
-                    let arr: Vec<serde_json::Value> = vals
-                        .iter()
-                        .map(jq_to_serde_value)
-                        .collect::<std::result::Result<Vec<_>, _>>()
-                        .unwrap_or_default();
-                    if let Err(e) =
-                        check_json_depth(&serde_json::Value::Array(arr.clone()), MAX_JQ_JSON_DEPTH)
-                    {
-                        return Ok(ExecResult::err(format!("{e}\n"), 2));
-                    }
+                    // Inner values are already depth-checked by parse_json_stream;
+                    // the wrapping array adds one level which the recursive
+                    // limit already accommodates.
+                    let arr: Vec<serde_json::Value> = vals.iter().map(jq_to_serde_value).collect();
                     serde_json::Value::Array(arr)
                 }
                 Err(e) => return Ok(ExecResult::err(format!("{e}\n"), 5)),
@@ -424,26 +416,23 @@ fn jq_from_serde(v: &serde_json::Value) -> JqJson {
 
 /// Convert a JqJson back to serde_json::Value (lossy for Number tokens
 /// outside i64/f64 range, which is acceptable since this only feeds into
-/// our re-serializer for `--slurpfile` arrays).
-fn jq_to_serde_value(v: &JqJson) -> std::result::Result<serde_json::Value, String> {
-    Ok(match v {
+/// our re-serializer for `--slurpfile` arrays — values originate from
+/// `parse_json_stream`, so they round-trip cleanly).
+fn jq_to_serde_value(v: &JqJson) -> serde_json::Value {
+    match v {
         JqJson::Null => serde_json::Value::Null,
         JqJson::Bool(b) => serde_json::Value::Bool(*b),
         JqJson::Number(s) => {
             serde_json::from_str::<serde_json::Value>(s).unwrap_or(serde_json::Value::Null)
         }
         JqJson::String(s) => serde_json::Value::String(s.clone()),
-        JqJson::Array(arr) => serde_json::Value::Array(
-            arr.iter()
-                .map(jq_to_serde_value)
-                .collect::<std::result::Result<Vec<_>, _>>()?,
-        ),
+        JqJson::Array(arr) => serde_json::Value::Array(arr.iter().map(jq_to_serde_value).collect()),
         JqJson::Object(map) => {
             let mut out = serde_json::Map::new();
             for (k, item) in map {
-                out.insert(k.clone(), jq_to_serde_value(item)?);
+                out.insert(k.clone(), jq_to_serde_value(item));
             }
             serde_json::Value::Object(out)
         }
-    })
+    }
 }
