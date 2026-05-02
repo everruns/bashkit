@@ -140,8 +140,15 @@ threat table. Highlights:
   the engine reads from the VFS only.
 - **Default-disabled at runtime.** Without
   `BASHKIT_ALLOW_INPROCESS_SQLITE=1`, the builtin refuses to execute.
-- **No `ATTACH`/`DETACH` sandbox holes.** Cross-database access is left
-  unsupported intentionally.
+- **`ATTACH` / `DETACH` rejected by policy.** A pre-execution check
+  refuses both keywords (case-insensitive, comment-aware) so cross-DB
+  access can't bypass VFS isolation.
+- **PRAGMA deny list.** `SqliteLimits::pragma_deny` blocks resource and
+  filesystem-shaped knobs (`cache_size`, `mmap_size`, `page_size`,
+  `temp_store_directory`, `compile_options`, `locking_mode`, …) by
+  default. Common operational PRAGMAs (`user_version`, `wal_checkpoint`,
+  `foreign_keys`, `journal_mode`) pass through. Override with
+  `SqliteLimits::pragma_deny([...])`.
 - **Bounded recursion in `.read`.**
 
 ## Compatibility with the `sqlite3` shell
