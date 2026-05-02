@@ -192,4 +192,4 @@ just pre-pr
 
 - `specs/threat-model.md` - Security threats and mitigations
 - `specs/builtins.md` - Builtin command reference
-- `crates/bashkit/src/git/` - Implementation
+- `crates/bashkit/src/builtins/git/` - Implementation

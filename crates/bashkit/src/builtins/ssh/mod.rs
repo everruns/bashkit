@@ -35,6 +35,9 @@ mod config;
 mod client;
 
 #[cfg(feature = "ssh")]
+mod cmd;
+
+#[cfg(feature = "ssh")]
 mod handler;
 
 #[cfg(feature = "ssh")]
@@ -45,6 +48,9 @@ pub use config::{SshConfig, TrustedHostKey};
 
 #[cfg(feature = "ssh")]
 pub use client::SshClient;
+
+#[cfg(feature = "ssh")]
+pub use cmd::{Scp, Sftp, Ssh};
 
 #[cfg(feature = "ssh")]
 pub use handler::{SshHandler, SshOutput, SshTarget};

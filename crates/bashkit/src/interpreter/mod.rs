@@ -777,10 +777,10 @@ pub struct Interpreter {
     http_client: Option<crate::network::HttpClient>,
     /// Git client for git builtins
     #[cfg(feature = "git")]
-    git_client: Option<crate::git::GitClient>,
+    git_client: Option<crate::builtins::git::GitClient>,
     /// SSH client for ssh/scp/sftp builtins
     #[cfg(feature = "ssh")]
-    ssh_client: Option<crate::ssh::SshClient>,
+    ssh_client: Option<crate::builtins::ssh::SshClient>,
     /// Stdin inherited from pipeline for compound commands (while read, etc.)
     /// Each read operation consumes one line, advancing through the data.
     pipeline_stdin: Option<String>,
@@ -1656,7 +1656,7 @@ impl Interpreter {
     ///
     /// This is only available when the `git` feature is enabled.
     #[cfg(feature = "git")]
-    pub fn set_git_client(&mut self, client: crate::git::GitClient) {
+    pub fn set_git_client(&mut self, client: crate::builtins::git::GitClient) {
         self.git_client = Some(client);
     }
 
@@ -1664,7 +1664,7 @@ impl Interpreter {
     ///
     /// This is only available when the `ssh` feature is enabled.
     #[cfg(feature = "ssh")]
-    pub fn set_ssh_client(&mut self, client: crate::ssh::SshClient) {
+    pub fn set_ssh_client(&mut self, client: crate::builtins::ssh::SshClient) {
         self.ssh_client = Some(client);
     }
 

@@ -68,7 +68,7 @@ pub struct SshOutput {
 /// # Example
 ///
 /// ```rust,ignore
-/// use bashkit::ssh::{SshHandler, SshTarget, SshOutput};
+/// use bashkit::{SshHandler, SshTarget, SshOutput};
 /// use async_trait::async_trait;
 ///
 /// struct MockSsh;
