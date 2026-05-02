@@ -423,6 +423,80 @@ pub use traits::{DirEntry, FileSystem, FileSystemExt, FileType, Metadata, fs_err
 use crate::error::Result;
 use std::io::{Error as IoError, ErrorKind};
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+
+/// Filesystem implementation for logic-only shells.
+///
+/// Important decision: ScriptedTool code mode still needs an `Arc<dyn FileSystem>`
+/// because the interpreter and builtin context require one, but every real
+/// operation is rejected so scripts cannot use VFS as storage or input.
+pub(crate) struct DisabledFs;
+
+fn disabled_fs_error() -> crate::Error {
+    IoError::new(ErrorKind::PermissionDenied, "filesystem access disabled").into()
+}
+
+#[async_trait::async_trait]
+impl FileSystemExt for DisabledFs {}
+
+#[async_trait::async_trait]
+impl FileSystem for DisabledFs {
+    async fn read_file(&self, _path: &Path) -> Result<Vec<u8>> {
+        Err(disabled_fs_error())
+    }
+
+    async fn write_file(&self, _path: &Path, _content: &[u8]) -> Result<()> {
+        Err(disabled_fs_error())
+    }
+
+    async fn append_file(&self, _path: &Path, _content: &[u8]) -> Result<()> {
+        Err(disabled_fs_error())
+    }
+
+    async fn mkdir(&self, _path: &Path, _recursive: bool) -> Result<()> {
+        Err(disabled_fs_error())
+    }
+
+    async fn remove(&self, _path: &Path, _recursive: bool) -> Result<()> {
+        Err(disabled_fs_error())
+    }
+
+    async fn stat(&self, _path: &Path) -> Result<Metadata> {
+        Err(disabled_fs_error())
+    }
+
+    async fn read_dir(&self, _path: &Path) -> Result<Vec<DirEntry>> {
+        Err(disabled_fs_error())
+    }
+
+    async fn exists(&self, _path: &Path) -> Result<bool> {
+        Ok(false)
+    }
+
+    async fn rename(&self, _from: &Path, _to: &Path) -> Result<()> {
+        Err(disabled_fs_error())
+    }
+
+    async fn copy(&self, _from: &Path, _to: &Path) -> Result<()> {
+        Err(disabled_fs_error())
+    }
+
+    async fn symlink(&self, _target: &Path, _link: &Path) -> Result<()> {
+        Err(disabled_fs_error())
+    }
+
+    async fn read_link(&self, _path: &Path) -> Result<PathBuf> {
+        Err(disabled_fs_error())
+    }
+
+    async fn chmod(&self, _path: &Path, _mode: u32) -> Result<()> {
+        Err(disabled_fs_error())
+    }
+
+    async fn set_modified_time(&self, _path: &Path, _time: SystemTime) -> Result<()> {
+        Err(disabled_fs_error())
+    }
+}
 
 /// Normalize a virtual filesystem path by resolving `.` and `..` components.
 ///

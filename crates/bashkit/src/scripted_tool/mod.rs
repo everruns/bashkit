@@ -840,6 +840,153 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_scripted_tool_rejects_filesystem_command() {
+        let tool = build_test_tool();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "mkdir -p /tmp/work".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+
+        assert_eq!(resp.exit_code, 127);
+        assert!(resp.stderr.contains("command not found"), "{}", resp.stderr);
+    }
+
+    #[tokio::test]
+    async fn test_scripted_tool_rejects_file_redirection() {
+        let tool = build_test_tool();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "echo data > /tmp/out".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+
+        assert_ne!(resp.exit_code, 0);
+        assert!(
+            resp.stderr.contains("filesystem redirection disabled"),
+            "{}",
+            resp.stderr
+        );
+    }
+
+    #[tokio::test]
+    async fn test_scripted_tool_rejects_file_redirection_before_callback() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let tool_calls = Arc::clone(&calls);
+        let tool = ScriptedTool::builder("test_api")
+            .tool_fn(
+                ToolDef::new("side_effect", "Count calls"),
+                move |_args: &ToolArgs| {
+                    tool_calls.fetch_add(1, Ordering::SeqCst);
+                    Ok("called\n".to_string())
+                },
+            )
+            .build();
+
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "side_effect > /tmp/out".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+
+        assert_ne!(resp.exit_code, 0);
+        assert!(
+            resp.stderr.contains("filesystem redirection disabled"),
+            "{}",
+            resp.stderr
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn test_scripted_tool_allows_dev_null_redirection() {
+        let tool = build_test_tool();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "echo hidden > /dev/null; echo visible".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+
+        assert_eq!(resp.exit_code, 0);
+        assert_eq!(resp.stdout.trim(), "visible");
+    }
+
+    #[tokio::test]
+    async fn test_scripted_tool_rejects_input_redirection() {
+        let tool = build_test_tool();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "from_stdin < /tmp/in".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+
+        assert_ne!(resp.exit_code, 0);
+        assert!(
+            resp.stderr.contains("filesystem redirection disabled"),
+            "{}",
+            resp.stderr
+        );
+    }
+
+    #[tokio::test]
+    async fn test_scripted_tool_rejects_path_operands_for_dual_use_tools() {
+        let tool = build_test_tool();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "grep Alice /tmp/users.json".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+
+        assert_ne!(resp.exit_code, 0);
+        let combined = format!("{}{}", resp.stdout, resp.stderr);
+        assert!(
+            combined.contains("filesystem access disabled"),
+            "{}",
+            combined
+        );
+    }
+
+    #[tokio::test]
+    async fn test_scripted_tool_rejects_script_path_execution() {
+        let tool = build_test_tool();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "/tmp/script.sh".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+
+        assert_eq!(resp.exit_code, 127);
+        assert!(resp.stderr.contains("command not found"), "{}", resp.stderr);
+    }
+
+    #[tokio::test]
+    async fn test_scripted_tool_rejects_process_substitution() {
+        let tool = build_test_tool();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "from_stdin < <(echo data)".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+
+        assert_ne!(resp.exit_code, 0);
+        assert!(
+            resp.stderr.contains("process substitution disabled"),
+            "{}",
+            resp.stderr
+        );
+    }
+
+    #[tokio::test]
     async fn test_execute_with_env() {
         let tool = ScriptedTool::builder("env_test")
             .env("API_BASE", "https://api.example.com")

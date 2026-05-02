@@ -1191,6 +1191,7 @@ pub struct BashBuilder {
     hostname: Option<String>,
     /// Fixed epoch for virtualizing the `date` builtin (TM-INF-018)
     fixed_epoch: Option<i64>,
+    shell_profile: interpreter::ShellProfile,
     custom_builtins: HashMap<String, Box<dyn Builtin>>,
     /// Files to mount in the virtual filesystem
     mounted_files: Vec<MountedFile>,
@@ -1264,6 +1265,12 @@ impl BashBuilder {
     /// Set execution limits.
     pub fn limits(mut self, limits: ExecutionLimits) -> Self {
         self.limits = limits;
+        self
+    }
+
+    /// Restrict this shell to logic/data-flow commands and custom builtins.
+    pub(crate) fn logic_only(mut self) -> Self {
+        self.shell_profile = interpreter::ShellProfile::LogicOnly;
         self
     }
 
@@ -2303,7 +2310,11 @@ impl BashBuilder {
     /// # }
     /// ```
     pub fn build(self) -> Bash {
-        let base_fs = self.fs.unwrap_or_else(|| Arc::new(InMemoryFs::new()));
+        let base_fs: Arc<dyn FileSystem> = if self.shell_profile.is_logic_only() {
+            Arc::new(fs::DisabledFs)
+        } else {
+            self.fs.unwrap_or_else(|| Arc::new(InMemoryFs::new()))
+        };
 
         // Layer 1: Apply real filesystem mounts (if any)
         #[cfg(feature = "realfs")]
@@ -2342,6 +2353,7 @@ impl BashBuilder {
             self.hostname,
             self.fixed_epoch,
             self.cwd,
+            self.shell_profile,
             self.limits,
             self.session_limits,
             self.memory_limits,
@@ -2539,6 +2551,7 @@ impl BashBuilder {
         hostname: Option<String>,
         fixed_epoch: Option<i64>,
         cwd: Option<PathBuf>,
+        shell_profile: interpreter::ShellProfile,
         limits: ExecutionLimits,
         session_limits: SessionLimits,
         memory_limits: MemoryLimits,
@@ -2571,6 +2584,7 @@ impl BashBuilder {
             hostname,
             fixed_epoch,
             custom_builtins,
+            shell_profile,
         );
 
         // Set environment variables (also override shell variable defaults)

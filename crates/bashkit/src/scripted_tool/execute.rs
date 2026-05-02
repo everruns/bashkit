@@ -432,7 +432,7 @@ impl Builtin for DiscoverBuiltin {
 impl ScriptedTool {
     /// Create a fresh Bash instance with all tool builtins registered.
     fn create_bash(&self, log: InvocationLog) -> Bash {
-        let mut builder = Bash::builder();
+        let mut builder = Bash::builder().logic_only();
 
         if let Some(ref limits) = self.limits {
             builder = builder.limits(limits.clone());
@@ -501,7 +501,7 @@ impl ScriptedTool {
         }
 
         doc.push_str(
-            "\n## Result\n\n| Field | Type | Description |\n|------|------|-------------|\n| `stdout` | string | Combined standard output |\n| `stderr` | string | Tool or bash errors |\n| `exit_code` | integer | Shell exit code |\n| `error` | string | Error category when execution fails |\n\n## Examples\n\n```json\n{\"commands\":\"get_user --id 42\"}\n```\n\n```json\n{\"commands\":\"user=$(get_user --id 42)\\necho \\\"$user\\\" | jq -r '.name'\"}\n```\n\n## Notes\n\n- Pass arguments as `--key value` or `--key=value`.\n- Standard bash builtins like `echo`, `jq`, `grep`, `sed`, and `awk` are available.\n- Use `help <tool> --json` inside the tool for runtime schema inspection.\n",
+            "\n## Result\n\n| Field | Type | Description |\n|------|------|-------------|\n| `stdout` | string | Combined standard output |\n| `stderr` | string | Tool or bash errors |\n| `exit_code` | integer | Shell exit code |\n| `error` | string | Error category when execution fails |\n\n## Examples\n\n```json\n{\"commands\":\"get_user --id 42\"}\n```\n\n```json\n{\"commands\":\"user=$(get_user --id 42)\\necho \\\"$user\\\" | jq -r '.name'\"}\n```\n\n## Notes\n\n- Pass arguments as `--key value` or `--key=value`.\n- Shell logic, variables, loops, conditionals, pipes, heredocs, here-strings, and stdin-based transforms are available.\n- Filesystem primitives are unavailable: file commands, path script execution, file redirection, and process substitution are rejected.\n- Use `help <tool> --json` inside the tool for runtime schema inspection.\n",
         );
 
         doc
@@ -539,8 +539,8 @@ impl ScriptedTool {
         ));
         parts.push(localized(
             self.locale.as_str(),
-            "Pass args as --key value or --key=value. Use help/discover builtins for runtime details.",
-            "Передавайте аргументи як --key value або --key=value. Використовуйте help/discover для деталей.",
+            "Pass args as --key value or --key=value. Shell logic and stdin pipelines are available; filesystem primitives are unavailable. Use help/discover builtins for runtime details.",
+            "Передавайте аргументи як --key value або --key=value. Доступні логіка shell і stdin-конвеєри; файлові примітиви недоступні. Використовуйте help/discover для деталей.",
         ).to_string());
 
         parts.join(" ")
