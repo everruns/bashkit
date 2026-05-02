@@ -48,26 +48,26 @@ fuzz_target!(|data: &[u8]| {
 
         // Test 1: attempt gunzip on arbitrary binary data
         let script = format!(
-            "printf '{}' | gunzip 2>/dev/null; true",
+            "printf '{}' | gunzip",
             hex,
         );
-        let _ = bash.exec(&script).await;
+        bashkit::testing::fuzz_exec(&mut bash, &script, "archive_fuzz", &[]).await;
 
         // Test 2: attempt tar listing on arbitrary binary data
         let script2 = format!(
-            "printf '{}' | tar -tf - 2>/dev/null; true",
+            "printf '{}' | tar -tf -",
             hex,
         );
-        let _ = bash.exec(&script2).await;
+        bashkit::testing::fuzz_exec(&mut bash, &script2, "archive_fuzz", &[]).await;
 
         // Test 3: attempt gzip then gunzip roundtrip on valid UTF-8
         if let Ok(text) = std::str::from_utf8(data) {
             if text.len() <= 512 {
                 let script3 = format!(
-                    "echo '{}' | gzip | gunzip 2>/dev/null; true",
+                    "echo '{}' | gzip | gunzip",
                     text.replace('\'', "'\\''"),
                 );
-                let _ = bash.exec(&script3).await;
+                bashkit::testing::fuzz_exec(&mut bash, &script3, "archive_fuzz", &[]).await;
             }
         }
     });

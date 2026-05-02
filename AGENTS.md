@@ -118,15 +118,25 @@ Rules:
 - Legitimate Debug uses (assert-failure messages in `#[cfg(test)]`)
   must annotate the line with `// debug-ok: <reason>`.
 
-Enforcement (both run by `cargo test`, no separate recipe needed):
+Enforcement (all three layers run by `cargo test`, no separate recipe):
 - **Static**: `builtins::tests::no_debug_fmt_in_builtin_source` walks
   every builtin source file and asserts no `{:?}` directives.
-- **Dynamic**: each tool's `mod tests` calls
-  `crate::builtins::debug_leak_check::assert_no_leak` against malformed
-  inputs that exercise its error paths.
+- **Dynamic per-tool**: each tool's `mod tests` calls
+  `bashkit::testing::assert_no_leak` against malformed inputs that
+  exercise its error paths.
+- **Fuzz**: `tests/{jq,awk}_fuzz_scaffold_tests.rs`, the proptest cases
+  in `tests/proptest_security.rs`, and every `fuzz/fuzz_targets/*.rs`
+  cargo-fuzz target call `bashkit::testing::assert_fuzz_invariants`
+  on the result. This also enforces the host-env canary
+  (`BASHKIT_FUZZ_HOST_CANARY_*` must not appear in stdout/stderr —
+  TM-INF-013 regression guard) and the host-path bans (`/rustc/`,
+  `/.cargo/registry/`, etc. — TM-INF-016).
 
-When adding a new builtin that wraps a library: add a `no_leak_*` test
-to its `mod tests` (see `jq.rs`, `awk.rs`, `json.rs` for examples).
+When adding a new builtin that wraps a library:
+1. Add a `no_leak_*` test to its `mod tests` (see `jq.rs`, `awk.rs`,
+   `json.rs` for examples).
+2. If a cargo-fuzz target exists for the tool, ensure it uses
+   `bashkit::testing::fuzz_exec(...)` — not bare `bash.exec(...)`.
 
 ### Python
 

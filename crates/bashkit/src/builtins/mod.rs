@@ -667,76 +667,12 @@ impl Builtin for std::sync::Arc<dyn Builtin> {
     }
 }
 
+/// Internal alias for `crate::testing` so per-tool `#[cfg(test)]`
+/// modules can keep their existing `crate::builtins::debug_leak_check::*`
+/// imports. The source of truth is `crate::testing` (which is also
+/// reachable from integration tests and cargo-fuzz targets).
 #[cfg(test)]
-pub(crate) mod debug_leak_check {
-    //! Shared helpers for the cross-tool no-Debug-leak guard.
-    //!
-    //! Real shell tools print short, opaque error messages. Builtins that
-    //! wrap external libraries (jaq, regex, serde_json, semver, …) must not
-    //! let their library's `Debug` formatter reach stderr — `{:?}` on a // debug-ok: pattern doc
-    //! `jaq::load::File` dumps ~800 chars of prepended compat-defs source,
-    //! and `Undefined::Filter(0)` exposes internal variant tags. See
-    //! `specs/threat-model.md` (TM-INF-022) and the "Stderr from builtins
-    //! must not leak internal Debug shapes" section in `AGENTS.md`.
-    //!
-    //! Two enforcement layers, both run by `cargo test`:
-    //!
-    //! 1. **Static** — `tests::no_debug_fmt_in_builtin_source` walks every
-    //!    `crates/bashkit/src/builtins/*.rs` file and asserts no Rust Debug
-    //!    format directives appear, modulo `// debug-ok: <reason>` opt-outs.
-    //! 2. **Dynamic** — each tool's own `mod tests` calls
-    //!    [`assert_no_leak`] against malformed inputs that exercise its
-    //!    error paths (see e.g. `jq.rs`, `awk.rs`).
-
-    use crate::{Bash, ControlFlow, ExecResult};
-
-    /// Universal Debug-shape substrings forbidden in builtin stderr.
-    /// Per-tool tests extend this with their own internals.
-    pub const UNIVERSAL_BANNED: &[&str] = &[
-        // jaq internals
-        "File {",
-        "path: ()",
-        "Token(",
-        "Tok::",
-        "Undefined::",
-        "Errors {",
-        // generic Debug-of-struct/enum shapes
-        "Vec [",
-        " { code:",
-        "Some([",
-        "Span {",
-        "Range {",
-    ];
-
-    pub const MAX_STDERR_BYTES: usize = 1024;
-
-    pub async fn run(script: &str) -> ExecResult {
-        let mut bash = Bash::new();
-        bash.exec(script).await.unwrap_or_else(|e| ExecResult {
-            stdout: String::new(),
-            stderr: e.to_string(),
-            exit_code: 1,
-            control_flow: ControlFlow::None,
-            ..Default::default()
-        })
-    }
-
-    #[track_caller]
-    pub fn assert_no_leak(result: &ExecResult, ctx: &str, tool_banned: &[&str]) {
-        let stderr = &result.stderr;
-        assert!(
-            stderr.len() <= MAX_STDERR_BYTES,
-            "[{ctx}] stderr exceeds {MAX_STDERR_BYTES} bytes ({} bytes):\n---\n{stderr}\n---",
-            stderr.len()
-        );
-        for pat in UNIVERSAL_BANNED.iter().chain(tool_banned.iter()) {
-            assert!(
-                !stderr.contains(pat),
-                "[{ctx}] stderr leaks banned shape `{pat}`:\n---\n{stderr}\n---"
-            );
-        }
-    }
-}
+pub(crate) use crate::testing as debug_leak_check;
 
 #[cfg(test)]
 mod tests {

@@ -26,6 +26,7 @@ fuzz_target!(|data: &[u8]| {
             .unwrap();
 
         rt.block_on(async {
+            bashkit::testing::fuzz_init();
             let mut bash = bashkit::Bash::builder()
                 .limits(
                     bashkit::ExecutionLimits::new()
@@ -39,31 +40,31 @@ fuzz_target!(|data: &[u8]| {
 
             // Test 1: encode arbitrary data
             let script = format!(
-                "echo -n '{}' | base64 2>/dev/null; true",
+                "echo -n '{}' | base64",
                 input.replace('\'', "'\\''"),
             );
-            let _ = bash.exec(&script).await;
+            bashkit::testing::fuzz_exec(&mut bash, &script, "base64_fuzz", &[]).await;
 
             // Test 2: decode arbitrary data (may be invalid base64)
             let script2 = format!(
-                "echo -n '{}' | base64 -d 2>/dev/null; true",
+                "echo -n '{}' | base64 -d",
                 input.replace('\'', "'\\''"),
             );
-            let _ = bash.exec(&script2).await;
+            bashkit::testing::fuzz_exec(&mut bash, &script2, "base64_fuzz", &[]).await;
 
             // Test 3: encode then decode roundtrip
             let script3 = format!(
-                "echo -n '{}' | base64 | base64 -d 2>/dev/null; true",
+                "echo -n '{}' | base64 | base64 -d",
                 input.replace('\'', "'\\''"),
             );
-            let _ = bash.exec(&script3).await;
+            bashkit::testing::fuzz_exec(&mut bash, &script3, "base64_fuzz", &[]).await;
 
             // Test 4: decode with --wrap=0
             let script4 = format!(
-                "echo -n '{}' | base64 --wrap=0 2>/dev/null; true",
+                "echo -n '{}' | base64 --wrap=0",
                 input.replace('\'', "'\\''"),
             );
-            let _ = bash.exec(&script4).await;
+            bashkit::testing::fuzz_exec(&mut bash, &script4, "base64_fuzz", &[]).await;
         });
     }
 });

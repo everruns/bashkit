@@ -48,6 +48,7 @@ fuzz_target!(|data: &[u8]| {
             .unwrap();
 
         rt.block_on(async {
+            bashkit::testing::fuzz_init();
             let mut bash = bashkit::Bash::builder()
                 .limits(
                     bashkit::ExecutionLimits::new()
@@ -61,7 +62,7 @@ fuzz_target!(|data: &[u8]| {
                 .build();
 
             // Should not panic, errors are acceptable
-            let _ = bash.exec(&script).await;
+            bashkit::testing::fuzz_exec(&mut bash, &script, "arithmetic_fuzz", &[]).await;
         });
     }
 });
