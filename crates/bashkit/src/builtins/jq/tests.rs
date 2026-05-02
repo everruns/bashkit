@@ -638,6 +638,162 @@ async fn raw_input_slurp_empty_stdin_emits_empty_string() {
 }
 
 // =========================================================================
+// fancy-regex backed natives — lookahead/lookbehind/backrefs/atomic groups
+// (real jq uses Oniguruma; jaq's regex crate rejects these patterns)
+// =========================================================================
+
+#[tokio::test]
+async fn regex_lookahead_compiles_and_matches() {
+    // Positive lookahead: match "foo" only when followed by "bar"
+    let result = run_jq(r#"test("foo(?=bar)")"#, r#""foobar""#)
+        .await
+        .unwrap();
+    assert_eq!(result.trim(), "true");
+}
+
+#[tokio::test]
+async fn regex_lookahead_negative_does_not_match() {
+    let result = run_jq(r#"test("foo(?=bar)")"#, r#""foobaz""#)
+        .await
+        .unwrap();
+    assert_eq!(result.trim(), "false");
+}
+
+#[tokio::test]
+async fn regex_negative_lookahead() {
+    let result = run_jq(r#"test("foo(?!bar)")"#, r#""foobaz""#)
+        .await
+        .unwrap();
+    assert_eq!(result.trim(), "true");
+}
+
+#[tokio::test]
+async fn regex_lookbehind_compiles_and_matches() {
+    // Lookbehind: match "bar" only when preceded by "foo"
+    let result = run_jq(r#"test("(?<=foo)bar")"#, r#""foobar""#)
+        .await
+        .unwrap();
+    assert_eq!(result.trim(), "true");
+}
+
+#[tokio::test]
+async fn regex_negative_lookbehind() {
+    let result = run_jq(r#"test("(?<!foo)bar")"#, r#""xxbar""#)
+        .await
+        .unwrap();
+    assert_eq!(result.trim(), "true");
+}
+
+#[tokio::test]
+async fn regex_backreference() {
+    // Backref \1: match repeated word
+    let result = run_jq(r#"test("(\\w+) \\1")"#, r#""hello hello""#)
+        .await
+        .unwrap();
+    assert_eq!(result.trim(), "true");
+}
+
+#[tokio::test]
+async fn regex_backreference_no_match() {
+    let result = run_jq(r#"test("(\\w+) \\1")"#, r#""hello world""#)
+        .await
+        .unwrap();
+    assert_eq!(result.trim(), "false");
+}
+
+#[tokio::test]
+async fn regex_atomic_group_compiles() {
+    // Atomic group (?>...): no backtracking
+    let result = run_jq(r#"test("(?>abc|abd)d")"#, r#""abcd""#)
+        .await
+        .unwrap();
+    assert_eq!(result.trim(), "true");
+}
+
+#[tokio::test]
+async fn regex_match_with_lookbehind_has_correct_offset() {
+    // Lookbehind is zero-width: match offset is at "bar", not "foo"
+    let result = run_jq(r#"match("(?<=foo)bar") | .offset"#, r#""foobar""#)
+        .await
+        .unwrap();
+    assert_eq!(result.trim(), "3");
+}
+
+#[tokio::test]
+async fn regex_capture_groups_with_lookahead_named() {
+    // Named capture group with lookahead
+    let result = run_jq(r#"capture("(?<word>\\w+)(?=,)")"#, r#""apple,banana""#)
+        .await
+        .unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(result.trim()).unwrap();
+    assert_eq!(parsed["word"], serde_json::json!("apple"));
+}
+
+#[tokio::test]
+async fn regex_basic_pattern_still_works() {
+    // Regression — basic patterns must keep working under fancy-regex.
+    let result = run_jq(r#"test("\\d+")"#, r#""abc123""#).await.unwrap();
+    assert_eq!(result.trim(), "true");
+}
+
+#[tokio::test]
+async fn regex_scan_returns_all_matches() {
+    let result = run_jq(r#"[scan("\\d+")]"#, r#""a1 b22 c333""#)
+        .await
+        .unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(result.trim()).unwrap();
+    assert_eq!(parsed, serde_json::json!(["1", "22", "333"]));
+}
+
+#[tokio::test]
+async fn regex_scan_with_lookahead() {
+    // scan with lookahead — extract digits before letters only
+    let result = run_jq(r#"[scan("\\d+(?=[a-z])")]"#, r#""1a 2 3b 4""#)
+        .await
+        .unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(result.trim()).unwrap();
+    assert_eq!(parsed, serde_json::json!(["1", "3"]));
+}
+
+#[tokio::test]
+async fn regex_match_on_unicode_offset_in_chars() {
+    // Offset must be in CHARS not bytes (matches jq docs).
+    // "héllo" — byte 3 = char 2 (start of second 'l').
+    let result = run_jq(r#"match("ll") | .offset"#, r#""héllo""#)
+        .await
+        .unwrap();
+    assert_eq!(result.trim(), "2");
+}
+
+#[tokio::test]
+async fn regex_invalid_pattern_yields_short_error() {
+    let result = run_jq_result(r#"test("(unbalanced")"#, r#""x""#)
+        .await
+        .unwrap();
+    assert_ne!(result.exit_code, 0);
+    assert!(result.stderr.starts_with("jq: error: "));
+    assert!(result.stderr.len() < 300);
+    // Must not leak fancy-regex internal Debug shapes
+    assert!(!result.stderr.contains("ParseError"));
+    assert!(!result.stderr.contains("CompileError"));
+}
+
+#[tokio::test]
+async fn regex_invalid_flag_yields_short_error() {
+    let result = run_jq_result(r#"match("x"; "z")"#, r#""x""#).await.unwrap();
+    assert_ne!(result.exit_code, 0);
+    assert!(result.stderr.contains("invalid regex flag"));
+}
+
+#[tokio::test]
+async fn regex_swap_greed_flag_silently_accepted() {
+    // 'l' (swap greed) is not exposed by fancy-regex; we silently accept
+    // for jq-flag-string parity. The pattern still compiles.
+    let result = run_jq(r#"test("a+"; "l")"#, r#""aaa""#).await.unwrap();
+    assert_eq!(result.trim(), "true");
+}
+
+// =========================================================================
 // Error formatting (TM-INF-022 regression — must be jq-shaped, not Debug)
 // =========================================================================
 
@@ -1258,5 +1414,48 @@ mod differential {
             "real jq exit={code}, bashkit={}",
             bk.exit_code
         );
+    }
+
+    // ----- Regex parity (fancy-regex vs Oniguruma) -----
+
+    #[tokio::test]
+    async fn diff_regex_basic_test() {
+        assert_matches(&[r#"test("\\d+")"#], r#""abc123""#).await;
+    }
+
+    #[tokio::test]
+    async fn diff_regex_lookahead_test() {
+        assert_matches(&[r#"test("foo(?=bar)")"#], r#""foobar""#).await;
+    }
+
+    #[tokio::test]
+    async fn diff_regex_lookbehind_test() {
+        assert_matches(&[r#"test("(?<=foo)bar")"#], r#""foobar""#).await;
+    }
+
+    #[tokio::test]
+    async fn diff_regex_backref_test() {
+        assert_matches(&[r#"test("(\\w+) \\1")"#], r#""hello hello""#).await;
+    }
+
+    #[tokio::test]
+    async fn diff_regex_match_offset() {
+        assert_matches(&[r#"match("ll") | .offset"#], r#""hello""#).await;
+    }
+
+    #[tokio::test]
+    async fn diff_regex_match_unicode_offset() {
+        // Real jq reports char (not byte) offset; bashkit must match.
+        assert_matches(&[r#"match("ll") | .offset"#], r#""héllo""#).await;
+    }
+
+    #[tokio::test]
+    async fn diff_regex_scan_digits() {
+        assert_matches(&[r#"[scan("\\d+")]"#], r#""a1 b22 c333""#).await;
+    }
+
+    #[tokio::test]
+    async fn diff_regex_capture_named() {
+        assert_matches(&[r#"capture("(?<word>\\w+),")"#], r#""apple,banana""#).await;
     }
 }

@@ -33,6 +33,7 @@ mod compat;
 mod convert;
 mod errors;
 mod format;
+mod regex_compat;
 
 #[cfg(test)]
 mod tests;
@@ -205,9 +206,20 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
         .into_iter()
         .map(|(name, arity, run)| (name, arity, jaq_core::Native::<D>::new(run)))
         .collect();
+    // Replace jaq-std's `regex`-crate-backed natives (matches/split_matches/
+    // split_) with our fancy-regex backed versions so patterns with
+    // lookahead/lookbehind/atomic groups/backrefs work.
+    let regex_funs: Vec<jaq_core::native::Fun<D>> = regex_compat::funs::<D>()
+        .into_vec()
+        .into_iter()
+        .map(|(name, arity, run)| (name, arity, jaq_core::Native::<D>::new(run)))
+        .collect();
     let native_funs = jaq_core::funs::<D>()
-        .chain(jaq_std::funs::<D>().filter(|(name, _, _)| *name != "env"))
+        .chain(jaq_std::funs::<D>().filter(|(name, _, _)| {
+            *name != "env" && !regex_compat::SHADOWED_NATIVE_NAMES.contains(name)
+        }))
         .chain(input_funs)
+        .chain(regex_funs)
         .chain(jaq_json::funs::<D>());
 
     let compiler = Compiler::default()
