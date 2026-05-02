@@ -299,14 +299,14 @@ Fix: use `Parser::with_limits()` everywhere.
 `+(a|aa)` against `"aaaa..."` creates exponential backtracking via nested `glob_match_impl` calls.
 Fix: add depth parameter to `glob_match_impl`, bail when exceeded.
 
-**Implementation**: `limits.rs`, `builtins/awk.rs`, `builtins/jq.rs`, `builtins/diff.rs`
+**Implementation**: `limits.rs`, `builtins/awk.rs`, `builtins/jq/`, `builtins/diff.rs`
 ```rust
 timeout: Duration::from_secs(30),       // Execution timeout (TM-DOS-023)
 parser_timeout: Duration::from_secs(5), // Parser timeout (TM-DOS-024)
 max_parser_operations: 100_000,         // Parser fuel (TM-DOS-024)
 // TM-DOS-027: Builtin parser depth limits (compile-time constants)
 // MAX_AWK_PARSER_DEPTH: 100  (builtins/awk.rs) - awk expression recursion
-// MAX_JQ_JSON_DEPTH: 100     (builtins/jq.rs)  - JSON input nesting depth
+// MAX_JQ_JSON_DEPTH: 100     (builtins/jq/)  - JSON input nesting depth
 // TM-DOS-028: Diff LCS matrix cap (builtins/diff.rs)
 // MAX_LCS_CELLS: 10_000_000 - prevents O(n*m) memory/CPU blow-up
 ```
@@ -422,7 +422,7 @@ All execution stays within the virtual interpreter — no OS subprocess is spawn
 | TM-INF-022 | Library Debug shapes leak via stderr | Builtins wrapping external libs (jaq, regex, serde_json, semver, chrono, …) format errors with `format!("{:?}", e)` and dump internal struct shapes into stderr — e.g. jq printed `(File { code: "<800 chars of prepended compat-defs source>", path: () }, [("@tsv", Filter(0))])` to LLM agents | Three-layer enforcement, all run by `cargo test`: (1) static — `builtins::tests::no_debug_fmt_in_builtin_source` walks every `crates/bashkit/src/builtins/*.rs` and forbids `{:?}` / `{:#?}` / `{name:?}` (per-line opt-out: `// debug-ok: <reason>`); (2) dynamic per-tool — each tool's `mod tests` calls `bashkit::testing::assert_no_leak` with malformed inputs; (3) fuzz — every cargo-fuzz target plus 5 proptest cases call `bashkit::testing::assert_fuzz_invariants` against random input and check the same invariants on stderr/stdout | **FIXED** |
 
 **TM-INF-022**: Generalizes TM-INF-016 to cover the whole builtin surface.
-The originating bug was `builtins/jq.rs` formatting jaq's compile/parse
+The originating bug was `builtins/jq/` formatting jaq's compile/parse
 errors with `{:?}`, leaking the jaq `File` struct, the prepended compat-
 defs source we splice into every filter, and the raw `Undefined::Filter(N)`
 variant tags. Fix: replaced `{:?}` with custom `format_jq_compile_errors`
@@ -430,7 +430,7 @@ variant tags. Fix: replaced `{:?}` with custom `format_jq_compile_errors`
 (`<name>/<arity> is not defined`), capped at 1 KB. Generalized to all
 builtins via the static + dynamic + fuzz guards described above. New
 builtins that wrap library errors must use Display (`{}`) or a domain-
-specific formatter — see `format_jq_compile_errors` in `builtins/jq.rs`
+specific formatter — see `format_compile_errors` in `builtins/jq/errors.rs`
 as the reference shape.
 
 The fuzz layer also catches three sister threats with the same
@@ -448,10 +448,11 @@ machinery (`bashkit::testing::assert_fuzz_invariants`):
   (1 KB) — one bad input that produces 10 MB of library-error spam
   trips this.
 
-**TM-INF-013**: The jq builtin (`builtins/jq.rs:414-421`) calls `std::env::set_var()` to expose
-shell variables to jaq's `env` function. This also makes host process env vars (API keys, tokens)
-visible. Additionally, `set_var` is thread-unsafe (unsound in Rust 2024 edition). Fix: provide
-custom `env` impl to jaq reading from `ctx.env`/`ctx.variables`.
+**TM-INF-013**: The jq builtin previously called `std::env::set_var()` to expose
+shell variables to jaq's `env` function. This also made host process env vars (API keys, tokens)
+visible. Additionally, `set_var` is thread-unsafe (unsound in Rust 2024 edition). Fixed: a custom
+`env` def in `builtins/jq/compat.rs` reads from a `$__bashkit_env__` global wired up in
+`builtins/jq/mod.rs` from `ctx.env`/`ctx.variables`.
 
 **TM-INF-014**: `$$` (`interpreter/mod.rs:7615`) returns `std::process::id()`, leaking the real
 host PID. All other system builtins return virtual values. Fix: return fixed or random value.
@@ -852,7 +853,7 @@ Only exact domain matches are allowed (TM-NET-017).
 
 **TM-ISO-004**: Fixed. The jq builtin now injects shell variables via a custom jaq context variable
 (`$__bashkit_env__`) and overrides the `env` filter to read from it instead of `std::env`.
-See `builtins/jq.rs:321-339`.
+See `builtins/jq/compat.rs` and `builtins/jq/mod.rs` (env wiring).
 
 **TM-ISO-005**: `ExecutionCounters::reset_for_execution()` zeros all counters at each `exec()` entry.
 A tenant splitting work across many `exec()` calls gets unlimited aggregate commands, loop iterations,
@@ -1337,7 +1338,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | AST depth limit (100) | TM-DOS-022 | `limits.rs` | Yes |
 | Child parser limit propagation | TM-DOS-021 | `parser/mod.rs` | Yes |
 | Arithmetic depth limit (50) | TM-DOS-026 | `interpreter/mod.rs` | Yes |
-| Builtin parser depth limit (100) | TM-DOS-027 | `builtins/awk.rs`, `builtins/jq.rs` | Yes |
+| Builtin parser depth limit (100) | TM-DOS-027 | `builtins/awk.rs`, `builtins/jq/` | Yes |
 | Execution timeout (30s) | TM-DOS-023 | `limits.rs` | Yes |
 | Virtual filesystem | TM-ESC-001, TM-ESC-003 | `fs/memory.rs` | Yes |
 | Filesystem limits | TM-DOS-005 to TM-DOS-010, TM-DOS-014 | `fs/limits.rs` | Yes |
@@ -1436,7 +1437,7 @@ ExecutionLimits::new()
     .max_parser_operations(100_000)    // TM-DOS-024 (also inherited by child parsers: TM-DOS-021)
 // Note: MAX_ARITHMETIC_DEPTH (50) is a compile-time constant in interpreter (TM-DOS-026)
 // Note: MAX_AWK_PARSER_DEPTH (100) is a compile-time constant in builtins/awk.rs (TM-DOS-027)
-// Note: MAX_JQ_JSON_DEPTH (100) is a compile-time constant in builtins/jq.rs (TM-DOS-027)
+// Note: MAX_JQ_JSON_DEPTH (100) is a compile-time constant in builtins/jq/ (TM-DOS-027)
 
 // Path validation limits (applied via FsLimits):
 FsLimits::new()
@@ -2056,7 +2057,7 @@ specs are rare in practice).
 - **wc** (`builtins/wc.rs`): Correctly uses `.len()` for bytes and `.chars().count()`
   for characters
 - **grep** (`builtins/grep.rs`): Delegates to regex crate which handles Unicode correctly
-- **jq** (`builtins/jq.rs`): Delegates to jaq crate
+- **jq** (`builtins/jq/`): Delegates to jaq crate
 - **sort/uniq** (`builtins/sort_uniq.rs`): String comparison-based, no byte indexing
 - **logging** (`logging_impl.rs`): Uses `is_char_boundary()` correctly
 - **python** (`builtins/python.rs`): Shebang strip uses `find('\n')` — newline is ASCII,

@@ -813,30 +813,45 @@ mod tests {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/builtins");
         let mut violations = Vec::new();
 
-        for entry in std::fs::read_dir(&dir).expect("read builtins dir") {
-            let entry = entry.unwrap();
-            let path = entry.path();
-            if path.extension().is_none_or(|e| e != "rs") {
-                continue;
-            }
-            let src = std::fs::read_to_string(&path).expect("read source");
-            for (i, line) in src.lines().enumerate() {
-                if line.contains("// debug-ok:") {
+        // Recursive walk so submodule directories like `builtins/jq/` are
+        // covered too. The TM-INF-022 invariant must hold for every builtin
+        // source file regardless of layout.
+        fn walk(dir: &std::path::Path, violations: &mut Vec<String>, pat: &regex::Regex) {
+            for entry in std::fs::read_dir(dir).expect("read builtins dir") {
+                let entry = entry.unwrap();
+                let path = entry.path();
+                if path.is_dir() {
+                    walk(&path, violations, pat);
                     continue;
                 }
-                if line.trim_start().starts_with("#[derive(") {
+                if path.extension().is_none_or(|e| e != "rs") {
                     continue;
                 }
-                if pat.is_match(line) {
-                    violations.push(format!(
-                        "{}:{}: {}",
-                        path.file_name().unwrap().to_string_lossy(),
-                        i + 1,
-                        line.trim_end()
-                    ));
+                let src = std::fs::read_to_string(&path).expect("read source");
+                for (i, line) in src.lines().enumerate() {
+                    if line.contains("// debug-ok:") {
+                        continue;
+                    }
+                    if line.trim_start().starts_with("#[derive(") {
+                        continue;
+                    }
+                    if pat.is_match(line) {
+                        // Show parent dir + filename so jq submodules are
+                        // distinguishable from the top-level files.
+                        let rel = path
+                            .strip_prefix(std::path::Path::new(env!("CARGO_MANIFEST_DIR")))
+                            .unwrap_or(&path);
+                        violations.push(format!(
+                            "{}:{}: {}",
+                            rel.display(),
+                            i + 1,
+                            line.trim_end()
+                        ));
+                    }
                 }
             }
         }
+        walk(&dir, &mut violations, &pat);
 
         assert!(
             violations.is_empty(),
@@ -913,6 +928,7 @@ mod tests {
             "json",
             "yaml",
             "tomlq",
+            "jq",
             "semver",
             "envsubst",
             "template",
