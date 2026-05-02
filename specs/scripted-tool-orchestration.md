@@ -8,6 +8,10 @@ Implemented
 
 Compose tool definitions (`ToolDef`) + execution callbacks into a single `ScriptedTool` that accepts bash scripts. Each sub-tool becomes a builtin command, letting LLMs orchestrate N tools in one call using pipes, variables, loops, and conditionals.
 
+`ScriptedTool` always runs in code/logic mode. The bash language is used for
+control flow and data transformation, not as a VFS shell: filesystem primitives,
+path script execution, file redirection, and process substitution are unavailable.
+
 `ScriptedToolBuilder` and `ScriptingToolSetBuilder` also implement the shared
 toolkit-library contract from [the tool contract](./tool-contract.md):
 locale-aware metadata, `build_service()`, `build_tool_definition()`,
@@ -21,6 +25,11 @@ locale-aware metadata, `build_service()`, `build_tool_definition()`,
 ## Motivation
 
 When an LLM has access to many tools (get_user, list_orders, get_inventory, etc.), each tool call is a separate round-trip. A data-gathering task that needs 5 tools requires 5+ turns. With `ScriptedTool`, the LLM writes a single bash script that calls all tools, pipes results through `jq`, and returns composed output — reducing latency and token cost.
+
+The intended use is "code mode": logic, conditionals, loops, pipes, and data
+transformations represented as bash. It is not intended for project/file
+manipulation; use `Bash` / `BashTool` when a virtual filesystem is part of the
+task.
 
 ## Design
 
@@ -216,12 +225,32 @@ from `ctx.args` using the tool's schema for type coercion, then calls the callba
 
 Implements the `Tool` trait. On each `execute()`:
 
-1. Creates a fresh `Bash` instance.
+1. Creates a fresh logic-only `Bash` instance.
 2. Registers each callback as a builtin via `Arc::clone`.
 3. Runs the user-provided script.
 4. Returns `ToolResponse { stdout, stderr, exit_code }`.
 
 Reusable — multiple `execute()` calls share the same `Arc<ToolCallback>` instances.
+
+The logic-only shell keeps bash syntax and stdin/stdout data-flow features:
+
+- variables, arrays, functions, arithmetic, command substitution
+- `if`/`case`/`for`/`while`
+- pipelines, heredocs, here-strings
+- callback commands plus `help` and `discover`
+- stdin-oriented transforms such as `jq`, `grep`, `sed`, `awk`, `sort`, `cut`,
+  `tr`, `wc`, `head`, `tail`, `seq`, and `expr`
+
+The following filesystem surfaces are rejected:
+
+- file commands such as `cat`, `ls`, `find`, `mkdir`, `rm`, `cp`, `mv`, `touch`,
+  `chmod`, `ln`, `stat`, `source`, and `.`
+- path execution such as `/tmp/script.sh` or `$PATH` script lookup
+- file input/output redirection (`< file`, `> file`, `>> file`, `&> file`), except
+  `/dev/null`
+- process substitution (`<(...)`, `>(...)`)
+- file operands to dual-use tools; the internal filesystem rejects all real
+  operations with `filesystem access disabled`
 
 ### Built-in `help` command
 
@@ -287,6 +316,7 @@ Output: {stdout, stderr, exit_code}
 - Pass arguments as `--key value` or `--key=value` flags
 - Pipe tool output through `jq` for JSON processing
 - Use variables to pass data between tool calls
+- Do not use filesystem commands or file redirection
 ```
 
 ### Shared context across callbacks
@@ -438,5 +468,8 @@ Inherits all bashkit sandbox guarantees:
 - Virtual filesystem (no host access)
 - Resource limits (max commands, loop iterations, function depth)
 - No network access unless explicitly configured
+
+`ScriptedTool` further uses a disabled filesystem backend and a reduced builtin
+surface so scripts cannot use VFS storage or path-based script execution.
 
 Sub-tool callback implementations control their own security boundaries.

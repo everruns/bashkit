@@ -57,6 +57,134 @@ pub struct HistoryEntry {
     pub duration_ms: u64,
 }
 
+/// Runtime command surface for an interpreter instance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum ShellProfile {
+    /// Full Bashkit shell with VFS-backed commands.
+    #[default]
+    Full,
+    /// Logic-only shell for ScriptedTool code mode: no filesystem primitives.
+    LogicOnly,
+}
+
+impl ShellProfile {
+    pub(crate) fn is_logic_only(self) -> bool {
+        self == Self::LogicOnly
+    }
+}
+
+fn logic_only_builtin_allowed(name: &str) -> bool {
+    matches!(
+        name,
+        // Core shell/data flow
+        "echo"
+            | "true"
+            | "false"
+            | "exit"
+            | "break"
+            | "continue"
+            | "return"
+            | "test"
+            | "["
+            | "printf"
+            | "export"
+            | "read"
+            | "set"
+            | "unset"
+            | "shift"
+            | "local"
+            | ":"
+            | "readonly"
+            | "times"
+            | "eval"
+            // Text and data transforms that work from stdin
+            | "grep"
+            | "sed"
+            | "awk"
+            | "head"
+            | "tail"
+            | "sort"
+            | "uniq"
+            | "cut"
+            | "tr"
+            | "wc"
+            | "nl"
+            | "paste"
+            | "column"
+            | "comm"
+            | "strings"
+            | "tac"
+            | "rev"
+            | "fold"
+            | "expand"
+            | "unexpand"
+            | "join"
+            | "split"
+            | "jq"
+            | "seq"
+            | "expr"
+            | "bc"
+            | "numfmt"
+            // Shell state, introspection, and structured transforms
+            | "env"
+            | "printenv"
+            | "type"
+            | "which"
+            | "hash"
+            | "alias"
+            | "unalias"
+            | "trap"
+            | "caller"
+            | "mapfile"
+            | "readarray"
+            | "shopt"
+            | "clear"
+            | "envsubst"
+            | "assert"
+            | "log"
+            | "retry"
+            | "semver"
+            | "verify"
+            | "compgen"
+            | "csv"
+            | "help"
+            | "iconv"
+            | "json"
+            | "parallel"
+            | "template"
+            | "tomlq"
+            | "yaml"
+            | "timeout"
+            | "xargs"
+            | "wait"
+    )
+}
+
+fn word_literal_text(word: &Word) -> Option<&str> {
+    if word.parts.len() == 1
+        && let WordPart::Literal(s) = &word.parts[0]
+    {
+        return Some(s);
+    }
+    None
+}
+
+fn word_has_process_substitution(word: &Word) -> bool {
+    word.parts
+        .iter()
+        .any(|part| matches!(part, WordPart::ProcessSubstitution { .. }))
+}
+
+fn word_is_literal_dev_null(word: &Word) -> bool {
+    word_literal_text(word) == Some(DEV_NULL)
+}
+
+fn redirect_target_label(word: &Word) -> String {
+    word_literal_text(word)
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| word.to_string())
+}
+
 fn compat_bash_versinfo_array() -> HashMap<usize, String> {
     COMPAT_BASH_VERSINFO
         .iter()
@@ -727,6 +855,9 @@ pub struct Interpreter {
     /// Uses `AtomicU32` for interior mutability so $RANDOM can advance state
     /// in `expand_variable(&self, ...)` while remaining `Send + Sync`.
     random_state: AtomicU32,
+    /// Runtime command surface. ScriptedTool uses LogicOnly to prevent scripts
+    /// from reaching VFS-backed commands while preserving shell logic.
+    shell_profile: ShellProfile,
 }
 
 impl Interpreter {
@@ -747,7 +878,7 @@ impl Interpreter {
 
     /// Create a new interpreter with the given filesystem.
     pub fn new(fs: Arc<dyn FileSystem>) -> Self {
-        Self::with_config(fs, None, None, None, HashMap::new())
+        Self::with_config(fs, None, None, None, HashMap::new(), ShellProfile::Full)
     }
 
     /// Create a new interpreter with custom username, hostname, and builtins.
@@ -764,6 +895,7 @@ impl Interpreter {
         hostname: Option<String>,
         fixed_epoch: Option<i64>,
         custom_builtins: HashMap<String, Box<dyn Builtin>>,
+        shell_profile: ShellProfile,
     ) -> Self {
         // Macro to reduce boilerplate for simple zero-arg builtin registration.
         // Custom-construction builtins (date, source, hostname, etc.) are registered below.
@@ -987,6 +1119,10 @@ impl Interpreter {
             builtins.insert("sftp".to_string(), Box::new(builtins::Sftp));
         }
 
+        if shell_profile.is_logic_only() {
+            builtins.retain(|name, _| logic_only_builtin_allowed(name));
+        }
+
         // Merge custom builtins (override defaults if same name)
         for (name, builtin) in custom_builtins {
             builtins.insert(name, builtin);
@@ -1065,6 +1201,7 @@ impl Interpreter {
             deferred_proc_subs: Vec::new(),
             proc_sub_paths: HashSet::new(),
             random_state: AtomicU32::new(random_seed),
+            shell_profile,
         }
     }
 
@@ -1809,6 +1946,10 @@ impl Interpreter {
                 Command::Pipeline(pipeline) => self.execute_pipeline(pipeline).await,
                 Command::List(list) => self.execute_list(list).await,
                 Command::Compound(compound, redirects) => {
+                    if let Some(stderr) = self.logic_only_redirect_error(redirects) {
+                        return Ok(ExecResult::err(stderr, 1));
+                    }
+
                     // Process input redirections before executing compound
                     let stdin = self.process_input_redirections(None, redirects).await?;
                     let prev_pipeline_stdin = if stdin.is_some() {
@@ -4379,6 +4520,10 @@ impl Interpreter {
                 });
             }
 
+            if let Some(stderr) = self.logic_only_redirect_error(&command.redirects) {
+                return Ok(ExecResult::err(stderr, 1));
+            }
+
             // Handle input redirections first
             let stdin = self
                 .process_input_redirections(stdin, &command.redirects)
@@ -4728,6 +4873,15 @@ impl Interpreter {
         stdin: Option<String>,
         redirects: &[Redirect],
     ) -> Option<Result<ExecResult>> {
+        if self.shell_profile.is_logic_only()
+            && matches!(name, "exec" | "bash" | "sh" | "source" | ".")
+        {
+            return Some(Ok(ExecResult::err(
+                format!("bash: {}: command not found", name),
+                127,
+            )));
+        }
+
         match name {
             "exec" => Some(self.execute_exec_builtin(args, redirects).await),
             "local" => Some(self.execute_local_builtin(args, redirects).await),
@@ -4778,15 +4932,22 @@ impl Interpreter {
 
             // Script execution by path
             if name.contains('/') {
+                if self.shell_profile.is_logic_only() {
+                    return Ok(ExecResult::err(
+                        format!("bash: {}: command not found", name),
+                        127,
+                    ));
+                }
                 return self
                     .try_execute_script_by_path(name, &args, stdin, &command.redirects)
                     .await;
             }
 
             // $PATH search
-            if let Some(result) = self
-                .try_execute_script_via_path_search(name, &args, stdin, &command.redirects)
-                .await?
+            if !self.shell_profile.is_logic_only()
+                && let Some(result) = self
+                    .try_execute_script_via_path_search(name, &args, stdin, &command.redirects)
+                    .await?
             {
                 return Ok(result);
             }
@@ -4869,6 +5030,10 @@ impl Interpreter {
     /// Resolve a command name to its full path via PATH search on VFS.
     /// Returns the resolved path string if found, None otherwise.
     async fn resolve_command_path(&self, name: &str) -> Option<String> {
+        if self.shell_profile.is_logic_only() {
+            return None;
+        }
+
         let path_var = self
             .variables
             .get("PATH")
@@ -6443,11 +6608,24 @@ impl Interpreter {
         for redirect in redirects {
             match redirect.kind {
                 RedirectKind::Input => {
+                    if self.shell_profile.is_logic_only()
+                        && !word_is_literal_dev_null(&redirect.target)
+                    {
+                        return Err(crate::error::Error::Execution(format!(
+                            "bash: {}: filesystem redirection disabled",
+                            redirect_target_label(&redirect.target)
+                        )));
+                    }
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
                     // Handle /dev/null at interpreter level - cannot be bypassed
                     if is_dev_null(&path) {
                         stdin = Some(String::new()); // EOF
+                    } else if self.shell_profile.is_logic_only() {
+                        return Err(crate::error::Error::Execution(format!(
+                            "bash: {}: filesystem redirection disabled",
+                            target_path
+                        )));
                     } else {
                         let content = self.fs.read_file(&path).await?;
                         stdin = Some(bytes_to_latin1_string(&content));
@@ -6752,6 +6930,13 @@ impl Interpreter {
         mut result: ExecResult,
         redirects: &[Redirect],
     ) -> Result<ExecResult> {
+        if let Some(stderr) = self.logic_only_redirect_error(redirects) {
+            result.stdout = String::new();
+            result.stderr = stderr;
+            result.exit_code = 1;
+            return Ok(result);
+        }
+
         // Skip the fd-table path when there are no DupOutput redirects mixed
         // with file redirects — the simple single-pass logic is sufficient and
         // avoids any behavioural delta for the common case.
@@ -6927,6 +7112,34 @@ impl Interpreter {
         }
 
         Ok(result)
+    }
+
+    fn logic_only_redirect_error(&self, redirects: &[Redirect]) -> Option<String> {
+        if !self.shell_profile.is_logic_only() {
+            return None;
+        }
+
+        for redirect in redirects {
+            if word_has_process_substitution(&redirect.target) {
+                return Some("bash: process substitution disabled in logic-only shell".to_string());
+            }
+
+            if matches!(
+                redirect.kind,
+                RedirectKind::Output
+                    | RedirectKind::Clobber
+                    | RedirectKind::Append
+                    | RedirectKind::Input
+                    | RedirectKind::OutputBoth
+            ) && !word_is_literal_dev_null(&redirect.target)
+            {
+                return Some(format!(
+                    "bash: {}: filesystem redirection disabled\n",
+                    redirect_target_label(&redirect.target)
+                ));
+            }
+        }
+        None
     }
 
     /// Apply redirections using an fd-table model for correct left-to-right
@@ -7190,6 +7403,12 @@ impl Interpreter {
         commands: &[Command],
         is_input: bool,
     ) -> Result<String> {
+        if self.shell_profile.is_logic_only() {
+            return Err(crate::error::Error::Execution(
+                "bash: process substitution disabled in logic-only shell".to_string(),
+            ));
+        }
+
         let path_str = format!(
             "/dev/fd/proc_sub_{}",
             PROC_SUB_COUNTER.fetch_add(1, Ordering::Relaxed)
