@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-02
+
+### Highlights
+
+- **Embedded SQLite via Turso** — New `sqlite` builtin with `MemoryIO` and `VfsIO` backends, dot-commands (`.tables`, `.schema`, `.dump`), and a hardened deny list that blocks `ATTACH`/`DETACH` and dangerous `PRAGMA`s. Exposed to Python and JS bindings ([#1502](https://github.com/everruns/bashkit/pull/1502), [#1507](https://github.com/everruns/bashkit/pull/1507), [#1510](https://github.com/everruns/bashkit/pull/1510)).
+- **jq parity expansion** — Filter module restructured for parity with real jq, regex backend swapped from `regex` to `fancy-regex` for advanced patterns (lookaround, backreferences), `@tsv`/`@csv` defs and short jq-style runtime errors with cross-tool no-Debug-leak guard (TM-INF-022) ([#1501](https://github.com/everruns/bashkit/pull/1501), [#1503](https://github.com/everruns/bashkit/pull/1503), [#1508](https://github.com/everruns/bashkit/pull/1508)).
+- **Scripted-tool logic-only mode** — Orchestrator scripts can now run in a restricted "code mode" that disables shell features unrelated to control flow, narrowing the attack surface for LLM-authored scripts.
+- **Python network credentials** — Phase 2 of [#1348](https://github.com/everruns/bashkit/pull/1348) lands `credentials=` and `credential_placeholders=` kwargs on `Bash(network=...)`, completing the Python-side network policy surface ([#1499](https://github.com/everruns/bashkit/pull/1499)).
+- **Toolchain pinning** — Rust toolchain pinned via `rust-toolchain.toml` and matched in CI workflow refs to prevent same-day rustc releases from breaking CI; RSA advisory mirrored locally and dead code gated ([#1509](https://github.com/everruns/bashkit/pull/1509)).
+
+### What's Changed
+
+* feat(bindings): expose sqlite builtin to Python and JS bindings ([#1510](https://github.com/everruns/bashkit/pull/1510)) by @chaliy
+* chore(ci): pin Rust toolchain, mirror RSA advisory, gate dead code ([#1509](https://github.com/everruns/bashkit/pull/1509)) by @chaliy
+* feat(jq): replace regex backend with fancy-regex for advanced patterns ([#1508](https://github.com/everruns/bashkit/pull/1508)) by @chaliy
+* feat(sqlite): block ATTACH/DETACH, PRAGMA deny list, dependabot rule ([#1507](https://github.com/everruns/bashkit/pull/1507)) by @chaliy
+* fix(ci): green up failing main-branch tests and example ([#1506](https://github.com/everruns/bashkit/pull/1506)) by @chaliy
+* refactor: move git and ssh modules into builtins/ ([#1505](https://github.com/everruns/bashkit/pull/1505)) by @chaliy
+* feat(jq): expand parity with real jq + restructure into module ([#1503](https://github.com/everruns/bashkit/pull/1503)) by @chaliy
+* feat(sqlite): embedded SQLite via Turso (Phase 1 + Phase 2) ([#1502](https://github.com/everruns/bashkit/pull/1502)) by @chaliy
+* fix(jq): @tsv/@csv defs + short jq-style errors; cross-tool no-Debug-leak guard (TM-INF-022) ([#1501](https://github.com/everruns/bashkit/pull/1501)) by @chaliy
+* chore(deps): bump all workspace dependencies ([#1500](https://github.com/everruns/bashkit/pull/1500)) by @chaliy
+* feat(python): add credentials + credential_placeholders to network= (phase 2 of #1348) ([#1499](https://github.com/everruns/bashkit/pull/1499)) by @chaliy
+* fix(curl): use curl user agent by default ([#1498](https://github.com/everruns/bashkit/pull/1498)) by @chaliy
+* fix(bashkit): gate Path import behind realfs ([#1497](https://github.com/everruns/bashkit/pull/1497)) by @chaliy
+* fix(cli): enable python execution by default by @chaliy
+* ci(python): build aarch64 wheels on native ubuntu-24.04-arm ([#1495](https://github.com/everruns/bashkit/pull/1495)) by @chaliy
+* feat(scripted-tool): run scripts in logic-only code mode by @chaliy
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.2.1...v0.3.0
+
 ## [0.2.1] - 2026-04-30
 
 ### Highlights
