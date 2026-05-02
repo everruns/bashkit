@@ -11,6 +11,16 @@ updates:
       rust-dependencies:
         patterns:
           - "*"
+        exclude-patterns:
+          # turso_core is BETA upstream — keep it as standalone PRs so each
+          # bump (and its 30+ transitive crates) goes through manual review
+          # rather than landing inside an aggregated `chore(deps)` PR.
+          - "turso_core"
+          - "turso_*"
+    # Surface turso bumps individually with a label that flags them for
+    # extra scrutiny. The `groups` section above already excludes them
+    # from the aggregated PR; no additional config needed here for
+    # standalone delivery.
 
   # GitHub Actions
   - package-ecosystem: "github-actions"

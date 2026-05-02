@@ -68,6 +68,34 @@ const DEFAULT_MAX_DURATION: std::time::Duration = std::time::Duration::from_secs
 /// otherwise stay under the byte cap (e.g. millions of empty `;`s).
 const DEFAULT_MAX_STATEMENTS: usize = 10_000;
 
+/// PRAGMAs that are denied by default because they let scripted SQL push
+/// past the resource caps the builtin negotiates with the host. These are
+/// memory- or filesystem-shaped knobs, not SQL semantics.
+///
+/// Operators can override by constructing [`SqliteLimits`] with a custom
+/// [`SqliteLimits::pragma_deny`]. Anything not in the deny list passes
+/// straight through to turso, including `wal_checkpoint`, `user_version`,
+/// `foreign_keys`, etc.
+const DEFAULT_PRAGMA_DENY: &[&str] = &[
+    // Memory pressure knobs — would let a script outgrow `max_db_bytes`
+    // by allocating cache pages instead.
+    "cache_size",
+    "mmap_size",
+    "page_size",
+    "max_page_count",
+    // Filesystem-shaped knobs — these *should* be inert against our VFS,
+    // but an upstream regression that resolved them against the host FS
+    // would punch straight through the sandbox. Block defensively.
+    "temp_store_directory",
+    "data_store_directory",
+    // Environment fingerprinting — leaks build info about the host turso.
+    "compile_options",
+    // Shared-cache and locking tweaks — single-process model breaks if the
+    // script flips these out from under turso's defaults.
+    "locking_mode",
+    "shared_cache",
+];
+
 /// Choice of `IO` backend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SqliteBackend {
@@ -109,6 +137,14 @@ pub struct SqliteLimits {
     pub max_statements: usize,
     /// Backend selection.
     pub backend: SqliteBackend,
+    /// Lower-cased PRAGMA names that the builtin will refuse to execute.
+    ///
+    /// Defaults to a curated list of resource- and sandbox-affecting
+    /// PRAGMAs: `cache_size`, `mmap_size`, `page_size`, `max_page_count`,
+    /// `temp_store_directory`, `data_store_directory`, `compile_options`,
+    /// `locking_mode`, `shared_cache`. Override via
+    /// [`SqliteLimits::pragma_deny`] (the builder method).
+    pub pragma_deny: Vec<String>,
 }
 
 impl Default for SqliteLimits {
@@ -120,6 +156,10 @@ impl Default for SqliteLimits {
             max_duration: DEFAULT_MAX_DURATION,
             max_statements: DEFAULT_MAX_STATEMENTS,
             backend: SqliteBackend::default(),
+            pragma_deny: DEFAULT_PRAGMA_DENY
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect(),
         }
     }
 }
@@ -159,6 +199,20 @@ impl SqliteLimits {
     #[must_use]
     pub fn backend(mut self, backend: SqliteBackend) -> Self {
         self.backend = backend;
+        self
+    }
+    /// Replace the PRAGMA deny list. Names are matched case-insensitively
+    /// against the PRAGMA's identifier (the part before `=` or `(`).
+    #[must_use]
+    pub fn pragma_deny<I, S>(mut self, names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.pragma_deny = names
+            .into_iter()
+            .map(|n| n.into().to_ascii_lowercase())
+            .collect();
         self
     }
 }
@@ -568,6 +622,7 @@ async fn run_statements(
         }
         match stmt {
             Stmt::Sql(sql) => {
+                check_sql_policy(&sql, limits)?;
                 let outcome = engine.execute(&sql, deadline).map_err(|e| sanitize(&e))?;
                 if outcome.rows.len() > limits.max_rows_per_query {
                     return Err(format!(
@@ -617,6 +672,37 @@ async fn run_statements(
                 }
             }
         }
+    }
+    Ok(())
+}
+
+/// Reject SQL whose leading keyword or PRAGMA name is on the policy block
+/// list. Returning `Err(reason)` aborts the run and surfaces `reason`
+/// straight to the user.
+///
+/// Decisions made here:
+///
+/// * `ATTACH` / `DETACH` are unconditionally rejected. Cross-database
+///   access would let scripts read/write VFS paths the operator did not
+///   stage, and turso's ATTACH path interacts with the registry in ways
+///   the `:memory:bashkit-N` isolation does not cover.
+/// * `PRAGMA <name>` is rejected when `<name>` (case-insensitive) is in
+///   `limits.pragma_deny`. Defaults are listed in [`DEFAULT_PRAGMA_DENY`].
+fn check_sql_policy(sql: &str, limits: &SqliteLimits) -> std::result::Result<(), String> {
+    match parser::leading_keyword(sql).as_deref() {
+        Some("ATTACH") | Some("DETACH") => {
+            return Err("ATTACH/DETACH is not supported in the bashkit sandbox; \
+                 cross-database access bypasses VFS isolation"
+                .to_string());
+        }
+        _ => {}
+    }
+    if let Some(name) = parser::pragma_name(sql)
+        && limits.pragma_deny.iter().any(|denied| denied == &name)
+    {
+        return Err(format!(
+            "PRAGMA {name} is denied by SqliteLimits::pragma_deny"
+        ));
     }
     Ok(())
 }

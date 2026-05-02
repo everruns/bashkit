@@ -127,6 +127,27 @@ mixed mid-statement with `;`.
 `.read` is bounded by `MAX_DOT_READ_DEPTH` (16) to prevent stack overflow
 on self-referential scripts. Tested via `tm_sql_008`.
 
+### SQL policy: ATTACH / DETACH and PRAGMA deny list
+
+Before each statement reaches turso, `check_sql_policy()` inspects the
+leading SQL keyword via the parser's lightweight tokeniser
+(`leading_keyword`, comment- and case-aware):
+
+- `ATTACH` and `DETACH` are unconditionally rejected. Cross-database
+  access bypasses VFS isolation: ATTACH would let scripts open VFS paths
+  the operator never staged for read/write, and on the VFS backend it
+  would also build new `MemoryIO`/`VfsIO` state outside our
+  `:memory:bashkit-N` registry isolation.
+- `PRAGMA <name>` is checked against `SqliteLimits::pragma_deny` (case-
+  insensitive, schema-prefix-aware so `PRAGMA main.cache_size` is also
+  matched). Defaults block resource/FS-shaped knobs:
+  `cache_size`, `mmap_size`, `page_size`, `max_page_count`,
+  `temp_store_directory`, `data_store_directory`, `compile_options`,
+  `locking_mode`, `shared_cache`. Pass an empty list to
+  `SqliteLimits::pragma_deny([])` to opt out (or supply a custom set).
+  Common operational PRAGMAs like `user_version`, `wal_checkpoint`,
+  `foreign_keys`, and `journal_mode` are intentionally **not** denied.
+
 ### Output formatting
 
 `formatter::render(cols, rows, opts) -> String`. Rules:
@@ -153,7 +174,9 @@ on self-referential scripts. Tested via `tm_sql_008`.
 | TM-SQL-006    | Binary corruption / truncation in BLOB round-trip    | Backed by `Vec<u8>`; tested via `tm_sql_006`                            |
 | TM-SQL-007    | CSV escape failure with separator-bearing blobs      | Per-RFC-4180 quoting; tested via `tm_sql_007`                           |
 | TM-SQL-008    | Stack overflow via recursive `.read`                 | `MAX_DOT_READ_DEPTH` cap; tested via `tm_sql_008`                       |
-| TM-SQL-009    | Information leakage via host-side error strings      | `sanitize()` strips ` at /…:N:M` annotations from turso errors          |
+| TM-SQL-009    | Cross-database access via `ATTACH`/`DETACH`          | Policy rejects both keywords (case-insensitive, comment-aware); tested via `tm_sql_009` |
+| TM-SQL-010    | DoS / fingerprinting via dangerous PRAGMAs           | `SqliteLimits::pragma_deny` defaults block `cache_size`, `mmap_size`, `page_size`, `max_page_count`, `temp_store_directory`, `data_store_directory`, `compile_options`, `locking_mode`, `shared_cache`; tested via `tm_sql_010` |
+| TM-SQL-011    | Information leakage via host-side error strings      | `sanitize()` strips ` at /…:N:M` annotations from turso errors          |
 
 ## Test Plan
 

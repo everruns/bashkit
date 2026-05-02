@@ -18,6 +18,8 @@
 //! | TM-SQL-006    | NULL byte / control char injection in identifiers        |
 //! | TM-SQL-007    | Blob-in-CSV escape correctness                           |
 //! | TM-SQL-008    | Recursive `.read` does not unbounded-recurse             |
+//! | TM-SQL-009    | ATTACH/DETACH blocked by policy                          |
+//! | TM-SQL-010    | PRAGMA deny list blocks resource/FS knobs                |
 
 #![cfg(feature = "sqlite")]
 
@@ -189,6 +191,52 @@ async fn tm_sql_008_recursive_dot_read_eventually_terminates() {
         r.stderr,
     );
     let _ = (Path::new("/tmp/loop.sql"), bash.fs());
+}
+
+#[tokio::test]
+async fn tm_sql_009_attach_detach_rejected() {
+    // ATTACH and DETACH would let scripted SQL reach VFS paths the operator
+    // never staged for read/write — and on the VFS backend, opening a new
+    // file path through ATTACH would also invent fresh `MemoryIO` state
+    // outside our isolation. The policy rejects both keywords up-front.
+    let mut bash = make_bash_default();
+    let r = bash
+        .exec(r#"sqlite :memory: "ATTACH DATABASE '/tmp/other.db' AS other""#)
+        .await
+        .unwrap();
+    assert_eq!(r.exit_code, 1);
+    assert!(r.stderr.contains("ATTACH/DETACH is not supported"));
+
+    let r = bash
+        .exec(r#"sqlite :memory: 'DETACH DATABASE other'"#)
+        .await
+        .unwrap();
+    assert_eq!(r.exit_code, 1);
+    assert!(r.stderr.contains("ATTACH/DETACH is not supported"));
+}
+
+#[tokio::test]
+async fn tm_sql_010_pragma_deny_blocks_resource_knobs() {
+    // The default deny list exists so a script can't push past
+    // `max_db_bytes` by ballooning the page cache, or fingerprint the host
+    // build via `compile_options`. Probe a representative entry from each
+    // bucket and assert the rejection comes from the policy (not turso).
+    let mut bash = make_bash_default();
+    for pragma in [
+        "PRAGMA cache_size = -100000",
+        "PRAGMA mmap_size = 268435456",
+        "PRAGMA temp_store_directory = '/tmp/host'",
+        "PRAGMA compile_options",
+    ] {
+        let cmd = format!("sqlite :memory: \"{pragma}\"");
+        let r = bash.exec(&cmd).await.unwrap();
+        assert_eq!(r.exit_code, 1, "{pragma} stderr: {}", r.stderr);
+        assert!(
+            r.stderr.contains("denied by SqliteLimits::pragma_deny"),
+            "{pragma} did not match policy: {}",
+            r.stderr
+        );
+    }
 }
 
 #[tokio::test]

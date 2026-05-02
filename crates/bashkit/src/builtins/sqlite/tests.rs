@@ -330,7 +330,7 @@ async fn persistence_round_trip_memory_backend() {
         &env,
     )
     .await;
-    assert_eq!(r1.exit_code, 0, "first invocation failed: {r1:?}"); // debug-ok: assert-failure message
+    assert_eq!(r1.exit_code, 0, "first invocation failed: {r1:?}"); // debug-ok: test assertion message
     // The DB file must now exist on the VFS.
     assert!(fs.exists(Path::new("/tmp/db.sqlite")).await.unwrap());
     let r2 = run_persisting(
@@ -340,7 +340,7 @@ async fn persistence_round_trip_memory_backend() {
         &env,
     )
     .await;
-    assert_eq!(r2.exit_code, 0, "second invocation failed: {r2:?}"); // debug-ok: assert-failure message
+    assert_eq!(r2.exit_code, 0, "second invocation failed: {r2:?}"); // debug-ok: test assertion message
     assert_eq!(r2.stdout.trim(), "1");
 }
 
@@ -358,7 +358,7 @@ async fn persistence_round_trip_vfs_backend() {
         &env,
     )
     .await;
-    assert_eq!(r1.exit_code, 0, "first invocation failed: {r1:?}"); // debug-ok: assert-failure message
+    assert_eq!(r1.exit_code, 0, "first invocation failed: {r1:?}"); // debug-ok: test assertion message
     let r2 = run_persisting(
         &["/tmp/dbvfs.sqlite", "SELECT * FROM t"],
         SqliteBackend::Vfs,
@@ -479,13 +479,133 @@ fn limits_builder_round_trips() {
         .max_db_bytes(2048)
         .max_duration(std::time::Duration::from_secs(7))
         .max_statements(42)
-        .backend(SqliteBackend::Vfs);
+        .backend(SqliteBackend::Vfs)
+        .pragma_deny(["foo", "BAR"]);
     assert_eq!(l.max_script_bytes, 1024);
     assert_eq!(l.max_rows_per_query, 10);
     assert_eq!(l.max_db_bytes, 2048);
     assert_eq!(l.max_duration, std::time::Duration::from_secs(7));
     assert_eq!(l.max_statements, 42);
     assert_eq!(l.backend, SqliteBackend::Vfs);
+    // Deny list is normalised to lower-case for case-insensitive matching.
+    assert_eq!(l.pragma_deny, vec!["foo".to_string(), "bar".to_string()]);
+}
+
+#[test]
+fn default_pragma_deny_contains_resource_knobs() {
+    let defaults = SqliteLimits::default();
+    for must_block in ["cache_size", "mmap_size", "temp_store_directory"] {
+        assert!(
+            defaults.pragma_deny.iter().any(|n| n == must_block),
+            "default deny list missing {must_block}",
+        );
+    }
+}
+
+#[tokio::test]
+async fn attach_statement_blocked() {
+    let r = run(
+        &[":memory:", "ATTACH DATABASE '/tmp/other.db' AS other"],
+        None,
+    )
+    .await;
+    assert_eq!(r.exit_code, 1);
+    assert!(
+        r.stderr.contains("ATTACH/DETACH is not supported"),
+        "stderr was: {}",
+        r.stderr
+    );
+}
+
+#[tokio::test]
+async fn detach_statement_blocked() {
+    let r = run(&[":memory:", "DETACH DATABASE other"], None).await;
+    assert_eq!(r.exit_code, 1);
+    assert!(r.stderr.contains("ATTACH/DETACH is not supported"));
+}
+
+#[tokio::test]
+async fn attach_blocked_even_with_leading_comment() {
+    // The argv parser rejects values that begin with `-`, so a leading
+    // line-comment would fail in arg parsing rather than in the policy.
+    // Use a block comment + whitespace, which still exercises the policy's
+    // comment-skipping logic.
+    let r = run(
+        &[
+            ":memory:",
+            "  /* hi */ ATTACH DATABASE '/tmp/other.db' AS other",
+        ],
+        None,
+    )
+    .await;
+    assert_eq!(r.exit_code, 1, "stderr: {}", r.stderr);
+    assert!(r.stderr.contains("ATTACH/DETACH is not supported"));
+}
+
+#[tokio::test]
+async fn pragma_user_version_still_works() {
+    // user_version isn't on the deny list — it must round-trip cleanly.
+    let r = run(
+        &[":memory:", "PRAGMA user_version=42; PRAGMA user_version"],
+        None,
+    )
+    .await;
+    assert_eq!(r.exit_code, 0, "stderr: {}", r.stderr);
+    assert!(r.stdout.contains("42"));
+}
+
+#[tokio::test]
+async fn pragma_cache_size_blocked_by_default() {
+    let r = run(&[":memory:", "PRAGMA cache_size = -8000"], None).await;
+    assert_eq!(r.exit_code, 1);
+    assert!(
+        r.stderr.contains("PRAGMA cache_size is denied"),
+        "stderr was: {}",
+        r.stderr
+    );
+}
+
+#[tokio::test]
+async fn pragma_schema_qualified_match() {
+    // Schema-qualified PRAGMAs (e.g. `main.cache_size`) must still hit the
+    // deny list — otherwise the policy is trivial to bypass.
+    let r = run(&[":memory:", "PRAGMA main.cache_size = 100"], None).await;
+    assert_eq!(r.exit_code, 1);
+    assert!(r.stderr.contains("PRAGMA cache_size is denied"));
+}
+
+#[tokio::test]
+async fn pragma_deny_override_lets_cache_size_through() {
+    let env = opt_in_env();
+    let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+    let owned: Vec<String> = vec![
+        ":memory:".to_string(),
+        "PRAGMA cache_size = -2000; SELECT 1".to_string(),
+    ];
+    let mut variables = HashMap::new();
+    let mut cwd = PathBuf::from("/home/user");
+    let ctx = Context::new_for_test(&owned, &env, &mut variables, &mut cwd, fs, None);
+    // Custom deny list — empty, so nothing is blocked.
+    let limits = SqliteLimits::default().pragma_deny::<[&str; 0], &str>([]);
+    let r = Sqlite::with_limits(limits).execute(ctx).await.unwrap();
+    assert_eq!(r.exit_code, 0, "stderr: {}", r.stderr);
+    assert_eq!(r.stdout.trim(), "1");
+}
+
+#[tokio::test]
+async fn pragma_block_does_not_match_table_named_pragma() {
+    // A table or column whose name happens to *contain* "pragma" must
+    // still pass — the keyword sniffer requires whitespace after PRAGMA.
+    let r = run(
+        &[
+            ":memory:",
+            "CREATE TABLE pragma_log(name); INSERT INTO pragma_log VALUES ('ok'); SELECT * FROM pragma_log",
+        ],
+        None,
+    )
+    .await;
+    assert_eq!(r.exit_code, 0, "stderr: {}", r.stderr);
+    assert_eq!(r.stdout.trim(), "ok");
 }
 
 #[tokio::test]
@@ -611,7 +731,7 @@ async fn null_text_does_not_collide_with_real_text() {
     assert_eq!(r.exit_code, 0, "stderr: {}", r.stderr);
     assert!(
         r.stdout.contains("(null)"),
-        "stdout missing null sentinel: {:?}", // debug-ok: assert-failure message
+        "stdout missing null sentinel: {:?}", // debug-ok: test assertion message
         r.stdout
     );
     // The empty-string row is rendered as a literal empty line (just `\n`).
