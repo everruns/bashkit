@@ -132,6 +132,96 @@ pub(super) fn tokenize_dot(line: &str) -> (String, Vec<String>) {
     (name, args)
 }
 
+/// Strip leading whitespace + line/block comments from a SQL statement so
+/// the keyword sniffer below can see the actual first token. Returns a slice
+/// pointing into the original input.
+pub(super) fn strip_leading_noise(sql: &str) -> &str {
+    let bytes = sql.as_bytes();
+    let mut i = 0;
+    loop {
+        // ASCII whitespace
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        // Line comment
+        if i + 1 < bytes.len() && bytes[i] == b'-' && bytes[i + 1] == b'-' {
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+        // Block comment
+        if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'*' {
+            i += 2;
+            while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                i += 1;
+            }
+            i = (i + 2).min(bytes.len());
+            continue;
+        }
+        break;
+    }
+    &sql[i..]
+}
+
+/// Return the leading SQL keyword (uppercased ASCII) of `sql`, or `None`
+/// when the statement starts with no identifier (e.g. only whitespace).
+///
+/// This is a lightweight tokeniser used for *policy decisions only* — we
+/// reject `ATTACH`/`DETACH` and inspect `PRAGMA`/`CREATE TRIGGER` etc.
+/// Real SQL parsing is delegated to turso.
+pub(super) fn leading_keyword(sql: &str) -> Option<String> {
+    let s = strip_leading_noise(sql);
+    let bytes = s.as_bytes();
+    let end = bytes
+        .iter()
+        .position(|b| !b.is_ascii_alphabetic() && *b != b'_')
+        .unwrap_or(bytes.len());
+    if end == 0 {
+        return None;
+    }
+    Some(s[..end].to_ascii_uppercase())
+}
+
+/// Return the PRAGMA name (lowercased ASCII) when `sql` is a PRAGMA
+/// statement, else `None`. The name is the identifier following `PRAGMA `,
+/// before any `=`, `(`, or whitespace.
+pub(super) fn pragma_name(sql: &str) -> Option<String> {
+    let s = strip_leading_noise(sql);
+    if s.len() < 7 || !s[..6].eq_ignore_ascii_case("pragma") {
+        return None;
+    }
+    let after = &s[6..];
+    if !after.starts_with(|c: char| c.is_ascii_whitespace()) {
+        return None;
+    }
+    // Skip whitespace + optional `main.`/`temp.` schema prefix. We compare
+    // the *last* identifier — `PRAGMA main.cache_size = 0` should still be
+    // matched as `cache_size`.
+    let after = after.trim_start();
+    let bytes = after.as_bytes();
+    let mut start = 0usize;
+    let mut end = 0usize;
+    while end < bytes.len() {
+        let b = bytes[end];
+        if b.is_ascii_alphanumeric() || b == b'_' {
+            end += 1;
+            continue;
+        }
+        if b == b'.' && end > start {
+            // Schema-qualified PRAGMA — restart name tracking after the dot.
+            end += 1;
+            start = end;
+            continue;
+        }
+        break;
+    }
+    if end == start {
+        return None;
+    }
+    Some(after[start..end].to_ascii_lowercase())
+}
+
 fn split_args(s: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
@@ -284,5 +374,66 @@ mod tests {
         let s = split("SELECT '");
         // We treat it as one unterminated SQL; the engine will reject it.
         assert_eq!(s.len(), 1);
+    }
+
+    #[test]
+    fn leading_keyword_basic() {
+        assert_eq!(leading_keyword("select 1"), Some("SELECT".into()));
+        assert_eq!(leading_keyword("  CREATE  TABLE t"), Some("CREATE".into()));
+        assert_eq!(
+            leading_keyword("  -- comment\n ATTACH 'x' AS y"),
+            Some("ATTACH".into())
+        );
+        assert_eq!(leading_keyword("/* hi */ DETACH y"), Some("DETACH".into()));
+    }
+
+    #[test]
+    fn leading_keyword_handles_no_keyword() {
+        assert_eq!(leading_keyword(""), None);
+        assert_eq!(leading_keyword("   "), None);
+        assert_eq!(leading_keyword(";"), None);
+    }
+
+    #[test]
+    fn pragma_name_simple() {
+        assert_eq!(pragma_name("PRAGMA cache_size"), Some("cache_size".into()));
+        assert_eq!(
+            pragma_name("pragma  user_version=1"),
+            Some("user_version".into())
+        );
+        assert_eq!(
+            pragma_name("PRAGMA wal_checkpoint(TRUNCATE)"),
+            Some("wal_checkpoint".into())
+        );
+    }
+
+    #[test]
+    fn pragma_name_schema_qualified() {
+        assert_eq!(
+            pragma_name("PRAGMA main.cache_size = -1024"),
+            Some("cache_size".into())
+        );
+        assert_eq!(
+            pragma_name("pragma temp.user_version"),
+            Some("user_version".into())
+        );
+    }
+
+    #[test]
+    fn pragma_name_skips_comments() {
+        assert_eq!(
+            pragma_name("-- hi\n  /* */ PRAGMA cache_size"),
+            Some("cache_size".into())
+        );
+    }
+
+    #[test]
+    fn pragma_name_returns_none_for_non_pragma() {
+        assert_eq!(pragma_name("SELECT 1"), None);
+        assert_eq!(pragma_name("PRAGMAcache_size"), None);
+        assert_eq!(pragma_name(""), None);
+        // `PRAGMA` alone (no name) is not a usable statement.
+        assert_eq!(pragma_name("PRAGMA"), None);
+        assert_eq!(pragma_name("PRAGMA "), None);
     }
 }
