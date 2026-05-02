@@ -610,4 +610,16 @@ mod tests {
         assert_eq!(r.exit_code, 1);
         assert!(r.stderr.contains("no input"));
     }
+
+    // TM-INF-022: malformed-input stderr must not leak `csv` crate Debug.
+    #[tokio::test]
+    async fn no_leak_malformed_input() {
+        let r =
+            crate::builtins::debug_leak_check::run(r#"printf 'a,"unterm\n' | csv to-json"#).await;
+        crate::builtins::debug_leak_check::assert_no_leak(
+            &r,
+            "csv_malformed_input",
+            &["csv::Error", "Error { kind:"],
+        );
+    }
 }

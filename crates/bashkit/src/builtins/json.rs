@@ -482,4 +482,15 @@ mod tests {
         assert_eq!(r.exit_code, 1);
         assert!(r.stderr.contains("no input"));
     }
+
+    // TM-INF-022: malformed-input stderr must not leak `serde_json` Debug.
+    #[tokio::test]
+    async fn no_leak_malformed_input() {
+        let r = crate::builtins::debug_leak_check::run(r#"echo 'not json' | json get .foo"#).await;
+        crate::builtins::debug_leak_check::assert_no_leak(
+            &r,
+            "json_malformed_input",
+            &["serde_json::Error", "Error { line:"],
+        );
+    }
 }

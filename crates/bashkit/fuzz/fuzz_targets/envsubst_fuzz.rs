@@ -44,6 +44,7 @@ fuzz_target!(|data: &[u8]| {
             .unwrap();
 
         rt.block_on(async {
+            bashkit::testing::fuzz_init();
             let mut bash = bashkit::Bash::builder()
                 .limits(
                     bashkit::ExecutionLimits::new()
@@ -61,24 +62,24 @@ fuzz_target!(|data: &[u8]| {
 
             // Test 1: envsubst on fuzzed text with variable references
             let script = format!(
-                "echo '{}' | envsubst 2>/dev/null; true",
+                "echo '{}' | envsubst",
                 input.replace('\'', "'\\''"),
             );
-            let _ = bash.exec(&script).await;
+            bashkit::testing::fuzz_exec(&mut bash, &script, "envsubst_fuzz", &[]).await;
 
             // Test 2: envsubst with -v flag to list variables
             let script2 = format!(
-                "echo '{}' | envsubst -v 2>/dev/null; true",
+                "echo '{}' | envsubst -v",
                 input.replace('\'', "'\\''"),
             );
-            let _ = bash.exec(&script2).await;
+            bashkit::testing::fuzz_exec(&mut bash, &script2, "envsubst_fuzz", &[]).await;
 
             // Test 3: envsubst with SHELL-FORMAT restriction
             let script3 = format!(
-                "echo '{}' | envsubst '$HOME $PATH' 2>/dev/null; true",
+                "echo '{}' | envsubst '$HOME $PATH'",
                 input.replace('\'', "'\\''"),
             );
-            let _ = bash.exec(&script3).await;
+            bashkit::testing::fuzz_exec(&mut bash, &script3, "envsubst_fuzz", &[]).await;
         });
     }
 });

@@ -619,4 +619,17 @@ mod tests {
         let err = apply_printf_format(1.0, "%.2000000f", "", 0).unwrap_err();
         assert!(err.contains("format precision too large"));
     }
+
+    // TM-INF-022: garbage-input stderr must not leak parser Debug shapes.
+    #[tokio::test]
+    async fn no_leak_garbage_input() {
+        let r =
+            crate::builtins::debug_leak_check::run(r#"echo 'not a number' | numfmt --from=iec"#)
+                .await;
+        crate::builtins::debug_leak_check::assert_no_leak(
+            &r,
+            "numfmt_garbage",
+            &["ParseFloatError", "ParseIntError"],
+        );
+    }
 }

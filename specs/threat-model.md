@@ -419,6 +419,34 @@ All execution stays within the virtual interpreter — no OS subprocess is spawn
 | TM-INF-019 | `envsubst` exposes all env vars | `envsubst` substitutes `$VAR`/`${VAR}` from `ctx.env` — scripts can probe any env var | Same as TM-INF-001 (caller controls env) | **CALLER RISK** |
 | TM-INF-020 | `template` exposes env vars via `{{var}}` | Template builtin looks up variables from env as fallback after shell vars and JSON data | Same as TM-INF-001 (caller controls env) | **CALLER RISK** |
 | TM-INF-021 | Stack backtrace information disclosure | Panics leak internal source paths, dependency versions, and function names via stderr | Custom panic hook suppresses backtraces in CLI | **MITIGATED** |
+| TM-INF-022 | Library Debug shapes leak via stderr | Builtins wrapping external libs (jaq, regex, serde_json, semver, chrono, …) format errors with `format!("{:?}", e)` and dump internal struct shapes into stderr — e.g. jq printed `(File { code: "<800 chars of prepended compat-defs source>", path: () }, [("@tsv", Filter(0))])` to LLM agents | Three-layer enforcement, all run by `cargo test`: (1) static — `builtins::tests::no_debug_fmt_in_builtin_source` walks every `crates/bashkit/src/builtins/*.rs` and forbids `{:?}` / `{:#?}` / `{name:?}` (per-line opt-out: `// debug-ok: <reason>`); (2) dynamic per-tool — each tool's `mod tests` calls `bashkit::testing::assert_no_leak` with malformed inputs; (3) fuzz — every cargo-fuzz target plus 5 proptest cases call `bashkit::testing::assert_fuzz_invariants` against random input and check the same invariants on stderr/stdout | **FIXED** |
+
+**TM-INF-022**: Generalizes TM-INF-016 to cover the whole builtin surface.
+The originating bug was `builtins/jq.rs` formatting jaq's compile/parse
+errors with `{:?}`, leaking the jaq `File` struct, the prepended compat-
+defs source we splice into every filter, and the raw `Undefined::Filter(N)`
+variant tags. Fix: replaced `{:?}` with custom `format_jq_compile_errors`
+/ `format_jq_load_errors` that emit short jq-style messages
+(`<name>/<arity> is not defined`), capped at 1 KB. Generalized to all
+builtins via the static + dynamic + fuzz guards described above. New
+builtins that wrap library errors must use Display (`{}`) or a domain-
+specific formatter — see `format_jq_compile_errors` in `builtins/jq.rs`
+as the reference shape.
+
+The fuzz layer also catches three sister threats with the same
+machinery (`bashkit::testing::assert_fuzz_invariants`):
+- **TM-INF-013 regression**: `fuzz_init()` seeds the host OS env with
+  the magic value `BASHKIT_FUZZ_HOST_CANARY_47a83bcf_DO_NOT_LEAK` once
+  per process. Every fuzz iteration asserts the canary appears in
+  neither stdout nor stderr — a builtin reading `std::env::vars()`
+  instead of the sandboxed `ctx.env` trips this immediately.
+- **TM-INF-016 (host paths)**: `UNIVERSAL_BANNED` includes `/rustc/`,
+  `/.cargo/registry/`, `target/{debug,release}/deps/`,
+  `/.rustup/toolchains/` so leaked panic backtraces / build-artifact
+  paths fail the assertion.
+- **stderr flooding**: per-call stderr capped at `MAX_STDERR_BYTES`
+  (1 KB) — one bad input that produces 10 MB of library-error spam
+  trips this.
 
 **TM-INF-013**: The jq builtin (`builtins/jq.rs:414-421`) calls `std::env::set_var()` to expose
 shell variables to jaq's `env` function. This also makes host process env vars (API keys, tokens)

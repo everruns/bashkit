@@ -37,6 +37,7 @@ fuzz_target!(|data: &[u8]| {
             .unwrap();
 
         rt.block_on(async {
+            bashkit::testing::fuzz_init();
             let mut bash = bashkit::Bash::builder()
                 .limits(
                     bashkit::ExecutionLimits::new()
@@ -62,26 +63,26 @@ fuzz_target!(|data: &[u8]| {
 
             // Test 1: printf with fuzzed format string and arguments
             let script = format!(
-                "printf '{}' {} 2>/dev/null; true",
+                "printf '{}' {}",
                 format.replace('\'', "'\\''"),
                 args_joined,
             );
-            let _ = bash.exec(&script).await;
+            bashkit::testing::fuzz_exec(&mut bash, &script, "printf_fuzz", &[]).await;
 
             // Test 2: printf with -v flag (assign to variable)
             let script2 = format!(
-                "printf -v result '{}' {} 2>/dev/null; true",
+                "printf -v result '{}' {}",
                 format.replace('\'', "'\\''"),
                 args_joined,
             );
-            let _ = bash.exec(&script2).await;
+            bashkit::testing::fuzz_exec(&mut bash, &script2, "printf_fuzz", &[]).await;
 
             // Test 3: printf with numeric format specifiers and fuzzed args
             let script3 = format!(
-                "printf '%d %o %x' {} 2>/dev/null; true",
+                "printf '%d %o %x' {}",
                 args_joined,
             );
-            let _ = bash.exec(&script3).await;
+            bashkit::testing::fuzz_exec(&mut bash, &script3, "printf_fuzz", &[]).await;
         });
     }
 });

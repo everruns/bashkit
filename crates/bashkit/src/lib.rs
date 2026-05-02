@@ -420,6 +420,12 @@ pub mod parser;
 pub mod scripted_tool;
 mod snapshot;
 mod ssh;
+/// Test-only helpers shared between internal `#[cfg(test)]` modules,
+/// integration tests in `tests/*.rs`, and cargo-fuzz targets in
+/// `fuzz/fuzz_targets/*.rs`. See `specs/threat-model.md` for the
+/// invariants enforced (TM-INF-013, TM-INF-016, TM-INF-022).
+#[doc(hidden)]
+pub mod testing;
 /// Tool contract for LLM integration
 pub mod tool;
 /// Reusable tool primitives: ToolDef, ToolArgs, ToolImpl, exec types.

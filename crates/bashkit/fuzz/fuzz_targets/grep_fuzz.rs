@@ -55,6 +55,7 @@ fuzz_target!(|data: &[u8]| {
             .unwrap();
 
         rt.block_on(async {
+            bashkit::testing::fuzz_init();
             let mut bash = bashkit::Bash::builder()
                 .limits(
                     bashkit::ExecutionLimits::new()
@@ -68,35 +69,35 @@ fuzz_target!(|data: &[u8]| {
 
             // Test 1: basic grep pattern matching
             let script = format!(
-                "echo '{}' | grep '{}' 2>/dev/null; true",
+                "echo '{}' | grep '{}'",
                 text.replace('\'', "'\\''"),
                 pattern.replace('\'', "'\\''"),
             );
-            let _ = bash.exec(&script).await;
+            bashkit::testing::fuzz_exec(&mut bash, &script, "grep_fuzz", &[]).await;
 
             // Test 2: extended regex (-E)
             let script2 = format!(
-                "echo '{}' | grep -E '{}' 2>/dev/null; true",
+                "echo '{}' | grep -E '{}'",
                 text.replace('\'', "'\\''"),
                 pattern.replace('\'', "'\\''"),
             );
-            let _ = bash.exec(&script2).await;
+            bashkit::testing::fuzz_exec(&mut bash, &script2, "grep_fuzz", &[]).await;
 
             // Test 3: case-insensitive with line numbers (-in)
             let script3 = format!(
-                "echo '{}' | grep -in '{}' 2>/dev/null; true",
+                "echo '{}' | grep -in '{}'",
                 text.replace('\'', "'\\''"),
                 pattern.replace('\'', "'\\''"),
             );
-            let _ = bash.exec(&script3).await;
+            bashkit::testing::fuzz_exec(&mut bash, &script3, "grep_fuzz", &[]).await;
 
             // Test 4: inverted match with count (-vc)
             let script4 = format!(
-                "echo '{}' | grep -vc '{}' 2>/dev/null; true",
+                "echo '{}' | grep -vc '{}'",
                 text.replace('\'', "'\\''"),
                 pattern.replace('\'', "'\\''"),
             );
-            let _ = bash.exec(&script4).await;
+            bashkit::testing::fuzz_exec(&mut bash, &script4, "grep_fuzz", &[]).await;
         });
     }
 });

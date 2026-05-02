@@ -677,4 +677,16 @@ mod tests {
         let result = run_bc("1+1\n2+2\n3+3\n", &[]).await;
         assert_eq!(result.stdout, "2\n4\n6\n");
     }
+
+    // TM-INF-022: garbage input stderr must not leak parser Debug shapes.
+    #[tokio::test]
+    async fn no_leak_garbage_input() {
+        let r =
+            crate::builtins::debug_leak_check::run(r#"echo 'not an expression {{{' | bc"#).await;
+        crate::builtins::debug_leak_check::assert_no_leak(
+            &r,
+            "bc_garbage",
+            &["ParseFloatError", "ParseIntError"],
+        );
+    }
 }

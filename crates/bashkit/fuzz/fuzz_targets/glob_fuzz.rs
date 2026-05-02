@@ -60,19 +60,19 @@ fuzz_target!(|data: &[u8]| {
                 .build();
 
             // Test 1: glob expansion via ls (triggers expand_glob)
-            let script = format!("ls /tmp/{} 2>/dev/null; true", input);
-            let _ = bash.exec(&script).await;
+            let script = format!("ls /tmp/{}", input);
+            bashkit::testing::fuzz_exec(&mut bash, &script, "glob_fuzz", &[]).await;
 
             // Test 2: pattern matching via case statement
             let script2 = format!(
                 "case \"test.txt\" in {}) echo match;; *) echo no;; esac",
                 input
             );
-            let _ = bash.exec(&script2).await;
+            bashkit::testing::fuzz_exec(&mut bash, &script2, "glob_fuzz", &[]).await;
 
             // Test 3: [[ conditional pattern matching
             let script3 = format!("if [[ \"hello.world\" == {} ]]; then echo y; fi", input);
-            let _ = bash.exec(&script3).await;
+            bashkit::testing::fuzz_exec(&mut bash, &script3, "glob_fuzz", &[]).await;
         });
     }
 });

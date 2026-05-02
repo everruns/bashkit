@@ -5,6 +5,7 @@
 //!
 //! Run with: cargo test --test proptest_security
 
+use bashkit::testing::{assert_fuzz_invariants, fuzz_init};
 use bashkit::{Bash, ExecutionLimits};
 use proptest::prelude::*;
 use std::time::Duration;
@@ -323,4 +324,150 @@ fn test_multibyte_in_variable_expansion() {
             let _ = bash.exec(script).await;
         }
     });
+}
+
+// ============================================================================
+// TM-INF-013, TM-INF-016, TM-INF-022: cross-tool invariants under random input.
+//
+// Random strings through high-risk builtins must not leak Debug shapes,
+// host paths, or the host-env canary. The static check
+// (`builtins::tests::no_debug_fmt_in_builtin_source`) and the per-tool
+// `no_leak_*` curated cases catch known patterns; this proptest catches
+// what we didn't think of.
+// ============================================================================
+
+/// Generates short random strings — not bash-grammar valid, just stuff
+/// likely to trigger error paths in tools that parse their argument as
+/// a regex / format / filter expression.
+fn arbitrary_tool_arg() -> impl Strategy<Value = String> {
+    proptest::string::string_regex(r"[\x20-\x7e\t]{0,80}").unwrap()
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig {
+        cases: 64,
+        max_shrink_iters: 32,
+        ..ProptestConfig::default()
+    })]
+
+    /// jq with arbitrary filter input must not leak.
+    #[cfg(feature = "jq")]
+    #[test]
+    fn jq_arbitrary_filter_no_leak(filter in arbitrary_tool_arg()) {
+        thread_local! {
+            static RT: tokio::runtime::Runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+        }
+        RT.with(|rt| rt.block_on(async {
+            fuzz_init();
+            let limits = ExecutionLimits::new()
+                .max_commands(5)
+                .max_stdout_bytes(4096)
+                .max_stderr_bytes(4096)
+                .timeout(Duration::from_millis(200));
+            let mut bash = Bash::builder().limits(limits).build();
+            let escaped = filter.replace('\'', "'\\''");
+            let script = format!("echo '{{}}' | jq '{}'", escaped);
+            let result = bash.exec(&script).await.unwrap_or_default();
+            assert_fuzz_invariants(&result, "jq_arbitrary_filter", &[]);
+        }));
+    }
+
+    /// awk with arbitrary program input must not leak.
+    #[test]
+    fn awk_arbitrary_program_no_leak(program in arbitrary_tool_arg()) {
+        thread_local! {
+            static RT: tokio::runtime::Runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+        }
+        RT.with(|rt| rt.block_on(async {
+            fuzz_init();
+            let limits = ExecutionLimits::new()
+                .max_commands(5)
+                .max_stdout_bytes(4096)
+                .max_stderr_bytes(4096)
+                .timeout(Duration::from_millis(200));
+            let mut bash = Bash::builder().limits(limits).build();
+            let escaped = program.replace('\'', "'\\''");
+            let script = format!("echo 'a b c' | awk '{}'", escaped);
+            let result = bash.exec(&script).await.unwrap_or_default();
+            assert_fuzz_invariants(&result, "awk_arbitrary_program", &[]);
+        }));
+    }
+
+    /// grep with arbitrary regex must not leak (TM-INF-022 + ReDoS guard).
+    #[test]
+    fn grep_arbitrary_regex_no_leak(pattern in arbitrary_tool_arg()) {
+        thread_local! {
+            static RT: tokio::runtime::Runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+        }
+        RT.with(|rt| rt.block_on(async {
+            fuzz_init();
+            let limits = ExecutionLimits::new()
+                .max_commands(5)
+                .max_stdout_bytes(4096)
+                .max_stderr_bytes(4096)
+                .timeout(Duration::from_millis(200));
+            let mut bash = Bash::builder().limits(limits).build();
+            let escaped = pattern.replace('\'', "'\\''");
+            let script = format!("echo 'hello world' | grep -E '{}'", escaped);
+            let result = bash.exec(&script).await.unwrap_or_default();
+            assert_fuzz_invariants(&result, "grep_arbitrary_regex", &[]);
+        }));
+    }
+
+    /// sed with arbitrary expression must not leak.
+    #[test]
+    fn sed_arbitrary_expr_no_leak(expr in arbitrary_tool_arg()) {
+        thread_local! {
+            static RT: tokio::runtime::Runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+        }
+        RT.with(|rt| rt.block_on(async {
+            fuzz_init();
+            let limits = ExecutionLimits::new()
+                .max_commands(5)
+                .max_stdout_bytes(4096)
+                .max_stderr_bytes(4096)
+                .timeout(Duration::from_millis(200));
+            let mut bash = Bash::builder().limits(limits).build();
+            let escaped = expr.replace('\'', "'\\''");
+            let script = format!("echo 'hello' | sed '{}'", escaped);
+            let result = bash.exec(&script).await.unwrap_or_default();
+            assert_fuzz_invariants(&result, "sed_arbitrary_expr", &[]);
+        }));
+    }
+
+    /// json with arbitrary path must not leak.
+    #[test]
+    fn json_arbitrary_path_no_leak(path in arbitrary_tool_arg()) {
+        thread_local! {
+            static RT: tokio::runtime::Runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+        }
+        RT.with(|rt| rt.block_on(async {
+            fuzz_init();
+            let limits = ExecutionLimits::new()
+                .max_commands(5)
+                .max_stdout_bytes(4096)
+                .max_stderr_bytes(4096)
+                .timeout(Duration::from_millis(200));
+            let mut bash = Bash::builder().limits(limits).build();
+            let escaped = path.replace('\'', "'\\''");
+            let script = format!("echo '{{\"a\":1}}' | json get '{}'", escaped);
+            let result = bash.exec(&script).await.unwrap_or_default();
+            assert_fuzz_invariants(&result, "json_arbitrary_path", &[]);
+        }));
+    }
 }

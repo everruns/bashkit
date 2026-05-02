@@ -3857,7 +3857,7 @@ mod tests {
         let result = parser.parse();
         assert!(
             result.is_ok(),
-            "moderate nesting should succeed: {:?}",
+            "moderate nesting should succeed: {:?}", // debug-ok: assert-failure message
             result.err()
         );
     }
@@ -4702,5 +4702,33 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(result.stdout, "-1\n");
+    }
+
+    // TM-INF-022: malformed-input corpus must not leak Debug shapes.
+    const AWK_BANNED: &[&str] = &["AwkError::", "ParseError {", "Token::"];
+
+    #[tokio::test]
+    async fn no_leak_unbalanced_brace() {
+        let r = crate::builtins::debug_leak_check::run("echo 1 | awk 'BEGIN { print'").await;
+        crate::builtins::debug_leak_check::assert_no_leak(&r, "awk_unbalanced_brace", AWK_BANNED);
+    }
+
+    #[tokio::test]
+    async fn no_leak_invalid_regex() {
+        let r = crate::builtins::debug_leak_check::run("echo 1 | awk '/[/'").await;
+        crate::builtins::debug_leak_check::assert_no_leak(&r, "awk_invalid_regex", AWK_BANNED);
+    }
+
+    #[tokio::test]
+    async fn no_leak_undefined_function_call() {
+        let r = crate::builtins::debug_leak_check::run(
+            "echo 1 | awk 'BEGIN { totally_undefined_fn() }'",
+        )
+        .await;
+        crate::builtins::debug_leak_check::assert_no_leak(
+            &r,
+            "awk_undefined_function_call",
+            AWK_BANNED,
+        );
     }
 }

@@ -46,6 +46,7 @@ fuzz_target!(|data: &[u8]| {
             .unwrap();
 
         rt.block_on(async {
+            bashkit::testing::fuzz_init();
             let mut bash = bashkit::Bash::builder()
                 .limits(
                     bashkit::ExecutionLimits::new()
@@ -59,18 +60,18 @@ fuzz_target!(|data: &[u8]| {
 
             // Test 1: parse TOML and query by path
             let script = format!(
-                "echo '{}' | tomlq '{}' 2>/dev/null; true",
+                "echo '{}' | tomlq '{}'",
                 toml_doc.replace('\'', "'\\''"),
                 query.replace('\'', "'\\''"),
             );
-            let _ = bash.exec(&script).await;
+            bashkit::testing::fuzz_exec(&mut bash, &script, "tomlq_fuzz", &[]).await;
 
             // Test 2: parse TOML with dot-path query
             let script2 = format!(
-                "echo '{}' | tomlq 2>/dev/null; true",
+                "echo '{}' | tomlq",
                 toml_doc.replace('\'', "'\\''"),
             );
-            let _ = bash.exec(&script2).await;
+            bashkit::testing::fuzz_exec(&mut bash, &script2, "tomlq_fuzz", &[]).await;
         });
     }
 });
