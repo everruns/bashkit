@@ -68,7 +68,7 @@ jobs:
           cache-dependency-path: crates/bashkit-js/package-lock.json
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.94.1
         with:
           targets: ${{ matrix.settings.target }}
 

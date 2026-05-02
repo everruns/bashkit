@@ -400,6 +400,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
 mod builtins;
+#[cfg(feature = "http_client")]
 mod credential;
 mod error;
 mod fs;
@@ -437,6 +438,7 @@ pub use async_trait::async_trait;
 pub use builtins::git::GitConfig;
 pub use builtins::ssh::{SshAllowlist, SshConfig, TrustedHostKey};
 pub use builtins::{Builtin, Context as BuiltinContext, ExecutionExtensions};
+#[cfg(feature = "http_client")]
 pub use credential::Credential;
 pub use error::{Error, Result};
 pub use fs::{
@@ -1278,6 +1280,7 @@ impl BashBuilder {
     }
 
     /// Restrict this shell to logic/data-flow commands and custom builtins.
+    #[cfg(feature = "scripted_tool")]
     pub(crate) fn logic_only(mut self) -> Self {
         self.shell_profile = interpreter::ShellProfile::LogicOnly;
         self

@@ -40,6 +40,12 @@ ignore = [
     # rand: unsoundness with custom logger using rand::rng() (RUSTSEC-2026-0097)
     # Transitive via russh, statrs, proptest, reqwest; we don't use custom loggers
     "RUSTSEC-2026-0097",
+    # rsa: Marvin Attack timing side-channel (RUSTSEC-2023-0071, GHSA-c25x-cm9x-cq9w)
+    # No patched version published upstream — RustCrypto/RSA#19. Pulled in
+    # transitively via russh's ssh-key dep. Mirrors the `ignore:` already set
+    # in .github/workflows/ci.yml for rustsec/audit-check, and is the same
+    # advisory surfaced as Dependabot moderate alert #27.
+    "RUSTSEC-2023-0071",
 ]
 
 [bans]

@@ -102,7 +102,9 @@ just pre-pr       # Pre-PR checks
 
 ### Rust
 
-- Stable Rust, toolchain in `rust-toolchain.toml`
+- Stable Rust, version pinned in `rust-toolchain.toml` (bump deliberately;
+  match the new version in `dtolnay/rust-toolchain@<version>` refs across
+  `.github/workflows/*` so CI can't be broken by a same-day rustc release)
 - `cargo fmt` and `cargo clippy -- -D warnings`
 - License checks: `cargo deny check` (see `deny.toml`)
 

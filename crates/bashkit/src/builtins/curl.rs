@@ -708,6 +708,7 @@ fn resolve_redirect_url(base: &str, location: &str) -> String {
 }
 
 /// Check if two URLs have the same origin (scheme + host + port).
+#[cfg(feature = "http_client")]
 fn same_origin(a: &str, b: &str) -> bool {
     let (Ok(a_url), Ok(b_url)) = (url::Url::parse(a), url::Url::parse(b)) else {
         return false;
@@ -718,6 +719,7 @@ fn same_origin(a: &str, b: &str) -> bool {
 }
 
 /// Sensitive headers that must not be forwarded cross-origin on redirect.
+#[cfg(feature = "http_client")]
 const SENSITIVE_HEADERS: &[&str] = &["authorization", "cookie", "proxy-authorization"];
 
 #[cfg(feature = "http_client")]
