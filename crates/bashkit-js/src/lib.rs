@@ -988,6 +988,12 @@ pub struct BashOptions {
     pub python: Option<bool>,
     /// Names of external functions callable from embedded Python code.
     pub external_functions: Option<Vec<String>>,
+    /// Enable the embedded SQLite builtin (`sqlite`/`sqlite3`).
+    ///
+    /// Backed by Turso. When `true`, the binding both registers the
+    /// builtin and injects `BASHKIT_ALLOW_INPROCESS_SQLITE=1` so the
+    /// runtime gate is satisfied. Defaults to `false`.
+    pub sqlite: Option<bool>,
 }
 
 #[napi(object)]
@@ -1018,6 +1024,7 @@ fn default_opts() -> BashOptions {
         allowed_mount_paths: None,
         python: None,
         external_functions: None,
+        sqlite: None,
     }
 }
 
@@ -1060,6 +1067,7 @@ struct SharedState {
     mounts: Option<Vec<MountConfig>>,
     allowed_mount_paths: Option<Vec<String>>,
     python: bool,
+    sqlite: bool,
     external_functions: Vec<String>,
     external_handler: Option<ExternalHandlerArc>,
 }
@@ -2460,6 +2468,13 @@ fn build_bash_from_state(state: &SharedState, files: Option<&HashMap<String, Str
         builder = builder.env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1");
     }
 
+    // Enable embedded SQLite (Turso). Passing `sqlite: true` from JS is the
+    // explicit opt-in that must also flip the in-process SQLite env gate.
+    if state.sqlite {
+        builder = builder.sqlite();
+        builder = builder.env("BASHKIT_ALLOW_INPROCESS_SQLITE", "1");
+    }
+
     builder.build()
 }
 
@@ -2469,6 +2484,7 @@ fn shared_state_from_opts(
     external_handler: Option<ExternalHandlerArc>,
 ) -> napi::Result<SharedState> {
     let py = opts.python.unwrap_or(false);
+    let sql = opts.sqlite.unwrap_or(false);
     let ext_fns = opts.external_functions.clone().unwrap_or_default();
     let mounts = opts.mounts.clone();
     let allowed_mount_paths = opts.allowed_mount_paths.clone();
@@ -2502,6 +2518,7 @@ fn shared_state_from_opts(
         mounts: mounts.clone(),
         allowed_mount_paths: allowed_mount_paths.clone(),
         python: py,
+        sqlite: sql,
         external_functions: ext_fns.clone(),
         external_handler: external_handler.clone(),
     };
@@ -2547,6 +2564,7 @@ fn shared_state_from_opts(
         mounts,
         allowed_mount_paths,
         python: py,
+        sqlite: sql,
         external_functions: ext_fns,
         external_handler,
     })

@@ -181,6 +181,16 @@ export interface BashOptions {
    */
   python?: boolean;
   /**
+   * Enable the embedded SQLite builtin (`sqlite`/`sqlite3`).
+   *
+   * Backed by Turso. When `true`, the binding both registers the builtin
+   * and injects `BASHKIT_ALLOW_INPROCESS_SQLITE=1` so the runtime gate is
+   * satisfied. Defaults to `false`. Default `SqliteLimits` apply: 4 MiB
+   * script cap, 256 MiB DB cap, 30 s wall-clock budget,
+   * resource-affecting PRAGMAs and `ATTACH`/`DETACH` rejected.
+   */
+  sqlite?: boolean;
+  /**
    * Names of external functions callable from embedded Python code.
    *
    * These function names become available as Python builtins within
@@ -385,6 +395,7 @@ function toNativeOptions(
     allowedMountPaths: options?.allowedMountPaths,
     python: options?.python,
     externalFunctions: options?.externalFunctions,
+    sqlite: options?.sqlite,
   };
 }
 
