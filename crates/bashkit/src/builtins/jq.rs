@@ -1385,7 +1385,7 @@ mod tests {
         let result = run_jq(".", &input).await;
         assert!(
             result.is_ok(),
-            "moderate nesting should succeed: {:?}",
+            "moderate nesting should succeed: {:?}", // debug-ok: assert-failure message
             result.err()
         );
     }

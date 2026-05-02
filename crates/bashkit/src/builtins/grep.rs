@@ -1212,7 +1212,7 @@ mod tests {
         assert_eq!(result.exit_code, 0, "grep -r on a single file should match");
         assert!(
             result.stdout.contains("hello world"),
-            "expected 'hello world' in stdout, got: {:?}",
+            "expected 'hello world' in stdout, got: {:?}", // debug-ok: assert-failure message
             result.stdout
         );
     }
@@ -1256,7 +1256,7 @@ mod tests {
         assert_eq!(result.exit_code, 0, "grep -r on single file via OverlayFs");
         assert!(
             result.stdout.contains("hello world"),
-            "expected 'hello world' in stdout, got: {:?}",
+            "expected 'hello world' in stdout, got: {:?}", // debug-ok: assert-failure message
             result.stdout
         );
     }

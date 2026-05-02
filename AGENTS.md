@@ -105,6 +105,32 @@ just pre-pr       # Pre-PR checks
 - `cargo fmt` and `cargo clippy -- -D warnings`
 - License checks: `cargo deny check` (see `deny.toml`)
 
+### Stderr from builtins must not leak internal Debug shapes
+
+Real shell tools print short, opaque error messages. Builtins that wrap
+external libraries (jaq, regex, serde_json, semver, …) and forward the
+library's error via `format!("{:?}", e)` dump internal struct shapes
+(`File { code: "...", path: () }`, `[("@tsv", Filter(0))]`) into stderr
+where LLM agents see them.
+
+Rules:
+- No `{:?}`, `{:#?}`, or `{name:?}` in `crates/bashkit/src/builtins/`.
+- Use `Display` (`{}`) or a domain-specific formatter that maps each
+  library error variant to a short, jq-style message (see
+  `format_jq_compile_errors` in `builtins/jq.rs`).
+- Cap diagnostic length at ≤ 1 KB so a single bad input can't flood
+  stderr.
+- Legitimate Debug uses (assert-failure messages in `#[cfg(test)]`)
+  must annotate the line with `// debug-ok: <reason>`.
+
+Enforcement:
+- Static: `just check-no-debug-fmt` (greps for `{:?}` patterns).
+- Dynamic: `cargo test --test no_debug_leak_tests` fires curated
+  malformed inputs at high-risk builtins and asserts stderr contains
+  no banned Debug-shape substrings.
+
+Both run as part of `just pre-pr`.
+
 ### Python
 
 - Python package in `crates/bashkit-python/`
