@@ -767,10 +767,10 @@ true
 ### end
 
 ### jq_match
-### bash_diff: jaq/serde_json sorts object keys alphabetically vs jq insertion order
+# Object keys preserve insertion order (matches real jq exactly).
 echo '"hello"' | jq -c 'match("e(ll)o")'
 ### expect
-{"captures":[{"length":2,"name":null,"offset":2,"string":"ll"}],"length":4,"offset":1,"string":"ello"}
+{"offset":1,"length":4,"string":"ello","captures":[{"offset":2,"length":2,"string":"ll","name":null}]}
 ### end
 
 ### jq_scan
@@ -1023,11 +1023,12 @@ echo '1' | jq 'input_filename'
 null
 ### end
 
-### jq_input_line_number_returns_zero
-# #1486: input_line_number compiles and returns 0 when no per-line tracking
+### jq_input_line_number_per_input
+# input_line_number reports 1-based index of the current input value
+# (matches real jq for stdin too — the previous "always 0" stub is gone).
 echo '1' | jq 'input_line_number'
 ### expect
-0
+1
 ### end
 
 ### jq_dollar_env_returns_shell_env
