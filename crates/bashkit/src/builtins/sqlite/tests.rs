@@ -330,7 +330,7 @@ async fn persistence_round_trip_memory_backend() {
         &env,
     )
     .await;
-    assert_eq!(r1.exit_code, 0, "first invocation failed: {r1:?}");
+    assert_eq!(r1.exit_code, 0, "first invocation failed: {r1:?}"); // debug-ok: assert-failure message
     // The DB file must now exist on the VFS.
     assert!(fs.exists(Path::new("/tmp/db.sqlite")).await.unwrap());
     let r2 = run_persisting(
@@ -340,7 +340,7 @@ async fn persistence_round_trip_memory_backend() {
         &env,
     )
     .await;
-    assert_eq!(r2.exit_code, 0, "second invocation failed: {r2:?}");
+    assert_eq!(r2.exit_code, 0, "second invocation failed: {r2:?}"); // debug-ok: assert-failure message
     assert_eq!(r2.stdout.trim(), "1");
 }
 
@@ -358,7 +358,7 @@ async fn persistence_round_trip_vfs_backend() {
         &env,
     )
     .await;
-    assert_eq!(r1.exit_code, 0, "first invocation failed: {r1:?}");
+    assert_eq!(r1.exit_code, 0, "first invocation failed: {r1:?}"); // debug-ok: assert-failure message
     let r2 = run_persisting(
         &["/tmp/dbvfs.sqlite", "SELECT * FROM t"],
         SqliteBackend::Vfs,
@@ -611,7 +611,7 @@ async fn null_text_does_not_collide_with_real_text() {
     assert_eq!(r.exit_code, 0, "stderr: {}", r.stderr);
     assert!(
         r.stdout.contains("(null)"),
-        "stdout missing null sentinel: {:?}",
+        "stdout missing null sentinel: {:?}", // debug-ok: assert-failure message
         r.stdout
     );
     // The empty-string row is rendered as a literal empty line (just `\n`).

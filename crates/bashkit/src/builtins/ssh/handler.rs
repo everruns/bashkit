@@ -156,7 +156,7 @@ mod tests {
             private_key: Some("-----BEGIN OPENSSH PRIVATE KEY-----".to_string()),
             password: Some("super_secret".to_string()),
         };
-        let debug = format!("{:?}", target);
+        let debug = format!("{:?}", target); // debug-ok: this test verifies Debug redaction
         assert!(!debug.contains("super_secret"), "password leaked: {debug}");
         assert!(
             !debug.contains("BEGIN OPENSSH PRIVATE KEY"),

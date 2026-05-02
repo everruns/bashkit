@@ -1111,7 +1111,11 @@ mod differential {
             .stderr(Stdio::piped())
             .spawn()
             .ok()?;
-        child.stdin.as_mut()?.write_all(input.as_bytes()).ok()?;
+        // Ignore write errors: jq may exit before reading stdin (e.g. on
+        // unknown flags), causing a broken pipe. Drop stdin to signal EOF.
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(input.as_bytes());
+        }
         let out = child.wait_with_output().ok()?;
         let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
         Some((stdout, out.status.code().unwrap_or(-1)))
