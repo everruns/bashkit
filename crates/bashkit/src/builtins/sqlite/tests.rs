@@ -417,6 +417,78 @@ async fn invalid_backend_value() {
 }
 
 #[tokio::test]
+async fn too_many_statements_rejected() {
+    // Cap to 5 statements; feed 20.
+    let env = opt_in_env();
+    let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+    let many = "SELECT 1; ".repeat(20);
+    let owned: Vec<String> = vec![":memory:".to_string(), many];
+    let mut variables = HashMap::new();
+    let mut cwd = PathBuf::from("/home/user");
+    let ctx = Context::new_for_test(&owned, &env, &mut variables, &mut cwd, fs, None);
+    let limits = SqliteLimits::default().max_statements(5);
+    let r = Sqlite::with_limits(limits).execute(ctx).await.unwrap();
+    assert_eq!(r.exit_code, 1);
+    assert!(r.stderr.contains("too many statements"));
+}
+
+#[tokio::test]
+async fn deadline_zero_means_unlimited() {
+    // ZERO duration disables the deadline entirely. Without this carve-out,
+    // any non-trivial workload would race with the start time and fail.
+    let env = opt_in_env();
+    let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+    let owned: Vec<String> = vec![":memory:".to_string(), "SELECT 1".to_string()];
+    let mut variables = HashMap::new();
+    let mut cwd = PathBuf::from("/home/user");
+    let ctx = Context::new_for_test(&owned, &env, &mut variables, &mut cwd, fs, None);
+    let limits = SqliteLimits::default().max_duration(std::time::Duration::ZERO);
+    let r = Sqlite::with_limits(limits).execute(ctx).await.unwrap();
+    assert_eq!(r.exit_code, 0, "stderr: {}", r.stderr);
+    assert_eq!(r.stdout.trim(), "1");
+}
+
+#[tokio::test]
+async fn deadline_already_expired_aborts_with_timeout() {
+    // Construct a deadline that has already passed (1ns budget) so the very
+    // first statement aborts.
+    let env = opt_in_env();
+    let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+    let owned: Vec<String> = vec![":memory:".to_string(), "SELECT 1".to_string()];
+    let mut variables = HashMap::new();
+    let mut cwd = PathBuf::from("/home/user");
+    let ctx = Context::new_for_test(&owned, &env, &mut variables, &mut cwd, fs, None);
+    // Pick a value smaller than any realistic SQL execution path.
+    let limits = SqliteLimits::default().max_duration(std::time::Duration::from_nanos(1));
+    // Spin briefly so the deadline is definitely in the past before we
+    // start the engine — otherwise we'd race on Linux's monotonic clock
+    // resolution.
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    let r = Sqlite::with_limits(limits).execute(ctx).await.unwrap();
+    // Either we hit the per-statement deadline check (most likely) or the
+    // pre-statement check; both surface the timeout message.
+    assert_eq!(r.exit_code, 1);
+    assert!(r.stderr.contains("timed out"), "stderr was: {}", r.stderr);
+}
+
+#[test]
+fn limits_builder_round_trips() {
+    let l = SqliteLimits::default()
+        .max_script_bytes(1024)
+        .max_rows_per_query(10)
+        .max_db_bytes(2048)
+        .max_duration(std::time::Duration::from_secs(7))
+        .max_statements(42)
+        .backend(SqliteBackend::Vfs);
+    assert_eq!(l.max_script_bytes, 1024);
+    assert_eq!(l.max_rows_per_query, 10);
+    assert_eq!(l.max_db_bytes, 2048);
+    assert_eq!(l.max_duration, std::time::Duration::from_secs(7));
+    assert_eq!(l.max_statements, 42);
+    assert_eq!(l.backend, SqliteBackend::Vfs);
+}
+
+#[tokio::test]
 async fn script_too_large_rejected() {
     let env = opt_in_env();
     let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());

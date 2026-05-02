@@ -34,6 +34,9 @@ use tokio::runtime::Builder;
 #[cfg(feature = "python")]
 const PYTHON_INPROCESS_OPT_IN_ENV: &str = "BASHKIT_ALLOW_INPROCESS_PYTHON";
 
+#[cfg(feature = "sqlite")]
+const SQLITE_INPROCESS_OPT_IN_ENV: &str = "BASHKIT_ALLOW_INPROCESS_SQLITE";
+
 /// Bashkit - Virtual bash interpreter
 #[derive(Parser, Debug)]
 #[command(name = "bashkit")]
@@ -67,6 +70,11 @@ struct Args {
     #[cfg_attr(not(feature = "python"), arg(long, hide = true))]
     #[cfg_attr(feature = "python", arg(long))]
     no_python: bool,
+
+    /// Disable sqlite/sqlite3 builtin (turso backend, BETA)
+    #[cfg_attr(not(feature = "sqlite"), arg(long, hide = true))]
+    #[cfg_attr(feature = "sqlite", arg(long))]
+    no_sqlite: bool,
 
     /// Mount a host directory as readonly in the VFS (format: HOST_PATH or HOST_PATH:VFS_PATH)
     ///
@@ -152,6 +160,12 @@ fn configure_bash(args: &Args, mode: CliMode) -> bashkit::BashBuilder {
     if !args.no_python {
         builder = builder.python();
         builder = builder.env(PYTHON_INPROCESS_OPT_IN_ENV, "1");
+    }
+
+    #[cfg(feature = "sqlite")]
+    if !args.no_sqlite {
+        builder = builder.sqlite();
+        builder = builder.env(SQLITE_INPROCESS_OPT_IN_ENV, "1");
     }
 
     #[cfg(feature = "realfs")]
@@ -450,6 +464,28 @@ mod tests {
         let args = Args::parse_from(["bashkit", "--no-python", "-c", "python --version"]);
         let mut bash = build_bash(&args, CliMode::Command);
         let result = bash.exec("python --version").await.expect("exec");
+        assert!(result.stderr.contains("command not found"));
+    }
+
+    #[cfg(feature = "sqlite")]
+    #[tokio::test]
+    async fn sqlite_enabled_by_default() {
+        // The CLI default-builds with `sqlite` and auto-injects the runtime
+        // opt-in env var, so a fresh `sqlite :memory: 'SELECT 1'` works
+        // without further configuration.
+        let args = Args::parse_from(["bashkit", "-c", "sqlite :memory: 'SELECT 1'"]);
+        let mut bash = build_bash(&args, CliMode::Command);
+        let result = bash.exec("sqlite :memory: 'SELECT 1'").await.expect("exec");
+        assert_eq!(result.exit_code, 0, "stderr: {}", result.stderr);
+        assert_eq!(result.stdout.trim(), "1");
+    }
+
+    #[cfg(feature = "sqlite")]
+    #[tokio::test]
+    async fn sqlite_can_be_disabled() {
+        let args = Args::parse_from(["bashkit", "--no-sqlite", "-c", "sqlite :memory: 'SELECT 1'"]);
+        let mut bash = build_bash(&args, CliMode::Command);
+        let result = bash.exec("sqlite :memory: 'SELECT 1'").await.expect("exec");
         assert!(result.stderr.contains("command not found"));
     }
 

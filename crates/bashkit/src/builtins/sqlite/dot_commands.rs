@@ -24,7 +24,7 @@ use std::path::PathBuf;
 
 use turso_core::Value;
 
-use super::engine::SqliteEngine;
+use super::engine::{Deadline, SqliteEngine};
 use super::formatter::{OutputMode, OutputOpts};
 use super::parser::tokenize_dot;
 
@@ -73,6 +73,7 @@ pub(super) fn dispatch(
     line: &str,
     engine: &SqliteEngine,
     opts: &mut OutputOpts,
+    deadline: Deadline,
 ) -> Result<DotOutcome, DotError> {
     let (name, args) = tokenize_dot(line);
     match name.as_str() {
@@ -82,10 +83,10 @@ pub(super) fn dispatch(
         "mode" => set_mode(args, opts).map(|_| DotOutcome::Configured),
         "separator" | "sep" => set_separator(args, opts).map(|_| DotOutcome::Configured),
         "nullvalue" | "null" => set_null(args, opts).map(|_| DotOutcome::Configured),
-        "tables" => tables(args, engine, opts).map(DotOutcome::Stdout),
-        "schema" => schema(args, engine).map(DotOutcome::Stdout),
-        "indexes" | "indices" => indexes(args, engine, opts).map(DotOutcome::Stdout),
-        "dump" => dump(engine).map(DotOutcome::Stdout),
+        "tables" => tables(args, engine, opts, deadline).map(DotOutcome::Stdout),
+        "schema" => schema(args, engine, deadline).map(DotOutcome::Stdout),
+        "indexes" | "indices" => indexes(args, engine, opts, deadline).map(DotOutcome::Stdout),
+        "dump" => dump(engine, deadline).map(DotOutcome::Stdout),
         "read" => {
             let path = args
                 .into_iter()
@@ -183,7 +184,12 @@ fn decode_escapes(s: &str) -> String {
     out
 }
 
-fn tables(args: Vec<String>, engine: &SqliteEngine, opts: &OutputOpts) -> Result<String, DotError> {
+fn tables(
+    args: Vec<String>,
+    engine: &SqliteEngine,
+    opts: &OutputOpts,
+    deadline: Deadline,
+) -> Result<String, DotError> {
     let pattern = args.into_iter().next();
     let sql = match pattern {
         Some(p) => format!(
@@ -192,7 +198,7 @@ fn tables(args: Vec<String>, engine: &SqliteEngine, opts: &OutputOpts) -> Result
         ),
         None => "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name".to_string(),
     };
-    let outcome = engine.execute(&sql).map_err(DotError::Engine)?;
+    let outcome = engine.execute(&sql, deadline).map_err(DotError::Engine)?;
     let mut names = Vec::new();
     for row in &outcome.rows {
         if let Some(Value::Text(t)) = row.first() {
@@ -210,7 +216,11 @@ fn tables(args: Vec<String>, engine: &SqliteEngine, opts: &OutputOpts) -> Result
     Ok(out)
 }
 
-fn schema(args: Vec<String>, engine: &SqliteEngine) -> Result<String, DotError> {
+fn schema(
+    args: Vec<String>,
+    engine: &SqliteEngine,
+    deadline: Deadline,
+) -> Result<String, DotError> {
     let pattern = args.into_iter().next();
     let sql = match pattern {
         Some(p) => format!(
@@ -219,7 +229,7 @@ fn schema(args: Vec<String>, engine: &SqliteEngine) -> Result<String, DotError> 
         ),
         None => "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY name".to_string(),
     };
-    let outcome = engine.execute(&sql).map_err(DotError::Engine)?;
+    let outcome = engine.execute(&sql, deadline).map_err(DotError::Engine)?;
     let mut out = String::new();
     for row in &outcome.rows {
         if let Some(Value::Text(t)) = row.first() {
@@ -234,6 +244,7 @@ fn indexes(
     args: Vec<String>,
     engine: &SqliteEngine,
     _opts: &OutputOpts,
+    deadline: Deadline,
 ) -> Result<String, DotError> {
     let pattern = args.into_iter().next();
     let sql = match pattern {
@@ -243,7 +254,7 @@ fn indexes(
         ),
         None => "SELECT name FROM sqlite_master WHERE type='index' ORDER BY name".to_string(),
     };
-    let outcome = engine.execute(&sql).map_err(DotError::Engine)?;
+    let outcome = engine.execute(&sql, deadline).map_err(DotError::Engine)?;
     let mut out = String::new();
     for row in &outcome.rows {
         if let Some(Value::Text(t)) = row.first() {
@@ -257,12 +268,15 @@ fn indexes(
 /// Emit `BEGIN; <CREATE TABLE>...; <INSERT INTO ... VALUES (...)>; COMMIT;`.
 /// This matches sqlite3's `.dump` for tables; views/triggers/indexes only get
 /// their CREATE statement, no rows. Blob literals are emitted as `X'..'`.
-fn dump(engine: &SqliteEngine) -> Result<String, DotError> {
+fn dump(engine: &SqliteEngine, deadline: Deadline) -> Result<String, DotError> {
     let mut out = String::from("PRAGMA foreign_keys=OFF;\nBEGIN TRANSACTION;\n");
 
     // Schema first.
     let schema_outcome = engine
-        .execute("SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY rowid")
+        .execute(
+            "SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY rowid",
+            deadline,
+        )
         .map_err(DotError::Engine)?;
     for row in &schema_outcome.rows {
         if let Some(Value::Text(sql)) = row.get(2) {
@@ -273,7 +287,10 @@ fn dump(engine: &SqliteEngine) -> Result<String, DotError> {
 
     // Then data, table by table.
     let tables_outcome = engine
-        .execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+        .execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+            deadline,
+        )
         .map_err(DotError::Engine)?;
     for row in &tables_outcome.rows {
         let Some(Value::Text(t)) = row.first() else {
@@ -282,7 +299,7 @@ fn dump(engine: &SqliteEngine) -> Result<String, DotError> {
         let name = t.as_str().to_string();
         let quoted = name.replace('"', "\"\"");
         let sql = format!("SELECT * FROM \"{quoted}\"");
-        let data = engine.execute(&sql).map_err(DotError::Engine)?;
+        let data = engine.execute(&sql, deadline).map_err(DotError::Engine)?;
         for data_row in &data.rows {
             let values: Vec<String> = data_row.iter().map(format_sql_literal).collect();
             out.push_str(&format!(
@@ -330,11 +347,25 @@ mod tests {
         SqliteEngine::open_pure_memory().expect("open in-mem")
     }
 
+    fn no_deadline() -> Deadline {
+        // Tests run instantly; an "unlimited" deadline is the only sensible
+        // choice so a slow CI host doesn't flake.
+        Deadline::new(std::time::Duration::ZERO)
+    }
+
+    fn dispatch_t(
+        line: &str,
+        engine: &SqliteEngine,
+        opts: &mut OutputOpts,
+    ) -> Result<DotOutcome, DotError> {
+        dispatch(line, engine, opts, no_deadline())
+    }
+
     #[test]
     fn help_returns_text() {
         let engine = mk_engine();
         let mut o = opts();
-        let r = dispatch(".help", &engine, &mut o).unwrap();
+        let r = dispatch_t(".help", &engine, &mut o).unwrap();
         match r {
             DotOutcome::Stdout(s) => assert!(s.contains(".tables")),
             _ => panic!("expected stdout"),
@@ -345,7 +376,7 @@ mod tests {
     fn unknown_command_errors() {
         let engine = mk_engine();
         let mut o = opts();
-        let err = dispatch(".doesnotexist", &engine, &mut o).unwrap_err();
+        let err = dispatch_t(".doesnotexist", &engine, &mut o).unwrap_err();
         assert!(matches!(err, DotError::BadCommand(_)));
     }
 
@@ -353,9 +384,9 @@ mod tests {
     fn headers_toggle() {
         let engine = mk_engine();
         let mut o = opts();
-        dispatch(".headers on", &engine, &mut o).unwrap();
+        dispatch_t(".headers on", &engine, &mut o).unwrap();
         assert!(o.headers);
-        dispatch(".headers off", &engine, &mut o).unwrap();
+        dispatch_t(".headers off", &engine, &mut o).unwrap();
         assert!(!o.headers);
     }
 
@@ -363,7 +394,7 @@ mod tests {
     fn headers_invalid() {
         let engine = mk_engine();
         let mut o = opts();
-        let err = dispatch(".headers maybe", &engine, &mut o).unwrap_err();
+        let err = dispatch_t(".headers maybe", &engine, &mut o).unwrap_err();
         assert!(matches!(err, DotError::InvalidValue { cmd: "headers", .. }));
     }
 
@@ -371,7 +402,7 @@ mod tests {
     fn headers_missing_arg() {
         let engine = mk_engine();
         let mut o = opts();
-        let err = dispatch(".headers", &engine, &mut o).unwrap_err();
+        let err = dispatch_t(".headers", &engine, &mut o).unwrap_err();
         assert!(matches!(err, DotError::Usage("headers", _)));
     }
 
@@ -379,11 +410,11 @@ mod tests {
     fn mode_changes_separator_for_csv() {
         let engine = mk_engine();
         let mut o = opts();
-        dispatch(".mode csv", &engine, &mut o).unwrap();
+        dispatch_t(".mode csv", &engine, &mut o).unwrap();
         assert_eq!(o.separator, ",");
-        dispatch(".mode tabs", &engine, &mut o).unwrap();
+        dispatch_t(".mode tabs", &engine, &mut o).unwrap();
         assert_eq!(o.separator, "\t");
-        dispatch(".mode list", &engine, &mut o).unwrap();
+        dispatch_t(".mode list", &engine, &mut o).unwrap();
         assert_eq!(o.separator, "|");
     }
 
@@ -391,7 +422,7 @@ mod tests {
     fn mode_invalid() {
         let engine = mk_engine();
         let mut o = opts();
-        let err = dispatch(".mode bogus", &engine, &mut o).unwrap_err();
+        let err = dispatch_t(".mode bogus", &engine, &mut o).unwrap_err();
         assert!(matches!(err, DotError::InvalidValue { cmd: "mode", .. }));
     }
 
@@ -399,9 +430,9 @@ mod tests {
     fn separator_decodes_escapes() {
         let engine = mk_engine();
         let mut o = opts();
-        dispatch(".separator '\\t'", &engine, &mut o).unwrap();
+        dispatch_t(".separator '\\t'", &engine, &mut o).unwrap();
         assert_eq!(o.separator, "\t");
-        dispatch(".separator '\\n'", &engine, &mut o).unwrap();
+        dispatch_t(".separator '\\n'", &engine, &mut o).unwrap();
         assert_eq!(o.separator, "\n");
     }
 
@@ -409,20 +440,24 @@ mod tests {
     fn nullvalue_sets_placeholder() {
         let engine = mk_engine();
         let mut o = opts();
-        dispatch(".nullvalue NIL", &engine, &mut o).unwrap();
+        dispatch_t(".nullvalue NIL", &engine, &mut o).unwrap();
         assert_eq!(o.null_text, "NIL");
         // Empty arg → empty placeholder
-        dispatch(".nullvalue", &engine, &mut o).unwrap();
+        dispatch_t(".nullvalue", &engine, &mut o).unwrap();
         assert_eq!(o.null_text, "");
     }
 
     #[test]
     fn tables_lists_existing() {
         let engine = mk_engine();
-        engine.execute("CREATE TABLE foo(a)").unwrap();
-        engine.execute("CREATE TABLE bar(b)").unwrap();
+        engine
+            .execute("CREATE TABLE foo(a)", no_deadline())
+            .unwrap();
+        engine
+            .execute("CREATE TABLE bar(b)", no_deadline())
+            .unwrap();
         let mut o = opts();
-        let DotOutcome::Stdout(s) = dispatch(".tables", &engine, &mut o).unwrap() else {
+        let DotOutcome::Stdout(s) = dispatch_t(".tables", &engine, &mut o).unwrap() else {
             panic!("expected stdout");
         };
         assert!(s.contains("foo"));
@@ -432,10 +467,14 @@ mod tests {
     #[test]
     fn tables_with_pattern() {
         let engine = mk_engine();
-        engine.execute("CREATE TABLE foo(a)").unwrap();
-        engine.execute("CREATE TABLE bar(b)").unwrap();
+        engine
+            .execute("CREATE TABLE foo(a)", no_deadline())
+            .unwrap();
+        engine
+            .execute("CREATE TABLE bar(b)", no_deadline())
+            .unwrap();
         let mut o = opts();
-        let DotOutcome::Stdout(s) = dispatch(".tables foo", &engine, &mut o).unwrap() else {
+        let DotOutcome::Stdout(s) = dispatch_t(".tables foo", &engine, &mut o).unwrap() else {
             panic!("expected stdout");
         };
         assert!(s.contains("foo"));
@@ -446,7 +485,7 @@ mod tests {
     fn tables_empty_db() {
         let engine = mk_engine();
         let mut o = opts();
-        let DotOutcome::Stdout(s) = dispatch(".tables", &engine, &mut o).unwrap() else {
+        let DotOutcome::Stdout(s) = dispatch_t(".tables", &engine, &mut o).unwrap() else {
             panic!("expected stdout");
         };
         assert_eq!(s, "");
@@ -456,10 +495,10 @@ mod tests {
     fn schema_returns_create() {
         let engine = mk_engine();
         engine
-            .execute("CREATE TABLE foo(a INTEGER, b TEXT)")
+            .execute("CREATE TABLE foo(a INTEGER, b TEXT)", no_deadline())
             .unwrap();
         let mut o = opts();
-        let DotOutcome::Stdout(s) = dispatch(".schema", &engine, &mut o).unwrap() else {
+        let DotOutcome::Stdout(s) = dispatch_t(".schema", &engine, &mut o).unwrap() else {
             panic!("expected stdout");
         };
         assert!(s.contains("CREATE TABLE foo"));
@@ -468,12 +507,17 @@ mod tests {
     #[test]
     fn dump_round_trips() {
         let engine = mk_engine();
-        engine.execute("CREATE TABLE t(x INTEGER, y TEXT)").unwrap();
         engine
-            .execute("INSERT INTO t VALUES (1, 'hello'), (2, 'O''Brien')")
+            .execute("CREATE TABLE t(x INTEGER, y TEXT)", no_deadline())
+            .unwrap();
+        engine
+            .execute(
+                "INSERT INTO t VALUES (1, 'hello'), (2, 'O''Brien')",
+                no_deadline(),
+            )
             .unwrap();
         let mut o = opts();
-        let DotOutcome::Stdout(s) = dispatch(".dump", &engine, &mut o).unwrap() else {
+        let DotOutcome::Stdout(s) = dispatch_t(".dump", &engine, &mut o).unwrap() else {
             panic!("expected stdout");
         };
         assert!(s.contains("BEGIN TRANSACTION;"));
@@ -487,7 +531,7 @@ mod tests {
     fn read_returns_path() {
         let engine = mk_engine();
         let mut o = opts();
-        let DotOutcome::Read(p) = dispatch(".read /tmp/x.sql", &engine, &mut o).unwrap() else {
+        let DotOutcome::Read(p) = dispatch_t(".read /tmp/x.sql", &engine, &mut o).unwrap() else {
             panic!("expected read");
         };
         assert_eq!(p.to_string_lossy(), "/tmp/x.sql");
@@ -497,7 +541,7 @@ mod tests {
     fn read_without_path_errors() {
         let engine = mk_engine();
         let mut o = opts();
-        let err = dispatch(".read", &engine, &mut o).unwrap_err();
+        let err = dispatch_t(".read", &engine, &mut o).unwrap_err();
         assert!(matches!(err, DotError::Usage("read", _)));
     }
 
@@ -505,9 +549,9 @@ mod tests {
     fn quit_signals_quit() {
         let engine = mk_engine();
         let mut o = opts();
-        let r = dispatch(".quit", &engine, &mut o).unwrap();
+        let r = dispatch_t(".quit", &engine, &mut o).unwrap();
         assert!(matches!(r, DotOutcome::Quit));
-        let r = dispatch(".exit", &engine, &mut o).unwrap();
+        let r = dispatch_t(".exit", &engine, &mut o).unwrap();
         assert!(matches!(r, DotOutcome::Quit));
     }
 }

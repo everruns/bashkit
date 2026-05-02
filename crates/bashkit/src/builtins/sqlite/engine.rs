@@ -17,10 +17,36 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
 use turso_core::{Connection, Database, IO, MemoryIO, OpenFlags, StepResult, Value};
 
 use super::vfs_io::BashkitVfsIO;
+
+/// Shared wall-clock budget for an engine's lifetime. Each `step()` cycle
+/// checks whether the deadline has passed and trips an interrupt if so.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Deadline {
+    pub deadline: Option<Instant>,
+}
+
+impl Deadline {
+    pub(super) fn new(max_duration: std::time::Duration) -> Self {
+        // Treat zero/near-zero as "no deadline" — useful in tests and for
+        // operators that explicitly opt out via `Duration::ZERO`.
+        let deadline = if max_duration.is_zero() {
+            None
+        } else {
+            Some(Instant::now() + max_duration)
+        };
+        Self { deadline }
+    }
+
+    /// Returns true once the budget is exhausted.
+    pub(super) fn expired(&self) -> bool {
+        self.deadline.map(|d| Instant::now() >= d).unwrap_or(false)
+    }
+}
 
 /// Result alias for engine operations. The error string is intended to be
 /// shown directly to the user via `ExecResult::err`, so it should not include
@@ -130,13 +156,21 @@ impl SqliteEngine {
 
     /// Execute a single statement, materialising rows up-front so that the
     /// caller doesn't need to drive the step loop.
-    pub(super) fn execute(&self, sql: &str) -> EngineResult<StatementOutcome> {
+    ///
+    /// `deadline` carries the wall-clock budget shared across all statements
+    /// in this invocation. Once it expires, we issue `stmt.interrupt()` and
+    /// return a timeout error rather than continuing the step loop.
+    pub(super) fn execute(&self, sql: &str, deadline: Deadline) -> EngineResult<StatementOutcome> {
         let mut stmt = self.conn.prepare(sql).map_err(turso_msg)?;
         let mut outcome = StatementOutcome::default();
         for idx in 0..stmt.num_columns() {
             outcome.columns.push(stmt.get_column_name(idx).to_string());
         }
         loop {
+            if deadline.expired() {
+                stmt.interrupt();
+                return Err("query timed out".to_string());
+            }
             match stmt.step().map_err(turso_msg)? {
                 StepResult::Row => {
                     if let Some(row) = stmt.row() {

@@ -148,6 +148,8 @@ on self-referential scripts. Tested via `tm_sql_008`.
 | TM-SQL-003    | DoS via large SQL input                              | `SqliteLimits::max_script_bytes` (4 MiB default)                        |
 | TM-SQL-004    | DoS via huge result set                              | `SqliteLimits::max_rows_per_query` (1M default)                         |
 | TM-SQL-005    | DoS via huge DB file                                 | `SqliteLimits::max_db_bytes` (256 MiB default) at load time             |
+| TM-SQL-005a   | DoS via wall-clock burn (regex-style queries, CTEs)  | `SqliteLimits::max_duration` enforced via per-step deadline + `Statement::interrupt()` |
+| TM-SQL-005b   | DoS via statement-flood (millions of `;`)            | `SqliteLimits::max_statements` checked after splitting                  |
 | TM-SQL-006    | Binary corruption / truncation in BLOB round-trip    | Backed by `Vec<u8>`; tested via `tm_sql_006`                            |
 | TM-SQL-007    | CSV escape failure with separator-bearing blobs      | Per-RFC-4180 quoting; tested via `tm_sql_007`                           |
 | TM-SQL-008    | Stack overflow via recursive `.read`                 | `MAX_DOT_READ_DEPTH` cap; tested via `tm_sql_008`                       |
@@ -194,17 +196,31 @@ let bash = Bash::builder()
     .build();
 
 // Custom limits / backend selection
+use std::time::Duration;
 let bash = Bash::builder()
     .sqlite_with_limits(
         SqliteLimits::default()
             .backend(SqliteBackend::Vfs)
             .max_db_bytes(8 * 1024 * 1024)
-            .max_rows_per_query(10_000),
+            .max_rows_per_query(10_000)
+            .max_duration(Duration::from_secs(5))
+            .max_statements(1_000),
     )
     .env("BASHKIT_ALLOW_INPROCESS_SQLITE", "1")
     .build();
 
 bash.exec(r#"sqlite /tmp/cache.sqlite "SELECT * FROM cache""#).await?;
+```
+
+### CLI
+
+The `bashkit` CLI ships `sqlite` enabled by default (matching `python` and
+`git`). The runtime opt-in env var is auto-injected by `configure_bash`:
+
+```bash
+bashkit -c "sqlite :memory: 'SELECT 1'"           # works out of the box
+bashkit --no-sqlite -c "sqlite :memory: 'SELECT 1'"
+# → sqlite: command not found
 ```
 
 LLM hint (auto-injected when `sqlite` is registered):

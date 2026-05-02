@@ -110,17 +110,25 @@ of nesting to prevent stack overflow on self-referential scripts.
 
 ## Resource limits
 
-`SqliteLimits` caps script size, result-set size, and database file size.
-Defaults:
+`SqliteLimits` caps every resource the engine can use to push back against
+malicious or runaway SQL. Defaults:
 
-| Limit                  | Default     |
-|------------------------|-------------|
-| `max_script_bytes`     | 4 MiB       |
-| `max_rows_per_query`   | 1,000,000   |
-| `max_db_bytes`         | 256 MiB     |
+| Limit                  | Default       |
+|------------------------|---------------|
+| `max_script_bytes`     | 4 MiB         |
+| `max_rows_per_query`   | 1,000,000     |
+| `max_db_bytes`         | 256 MiB       |
+| `max_duration`         | 30 s          |
+| `max_statements`       | 10,000        |
+| `MAX_DOT_READ_DEPTH`   | 16 (constant) |
 
-These act as defence-in-depth against malicious or runaway SQL. Tune them
-per workload via `SqliteLimits::default().max_*(...)`.
+`max_duration` is enforced via a wall-clock deadline shared across every
+statement in the invocation. The step loop checks the deadline on each
+turn and calls `Statement::interrupt()` once it expires. Pass
+`std::time::Duration::ZERO` to opt out (useful for CI hosts with bursty
+schedulers).
+
+Tune per workload via `SqliteLimits::default().max_*(...)`.
 
 ## Security
 

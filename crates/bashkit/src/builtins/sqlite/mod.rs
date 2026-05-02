@@ -18,10 +18,14 @@
 //! - `BASHKIT_ALLOW_INPROCESS_SQLITE=1` (env or via builder) gates execution
 //!   in case operators want to keep the BETA upstream code dormant.
 //!
-//! Limits enforced:
-//! - SQL script length capped at [`SqliteLimits::max_script_bytes`].
-//! - Per-result-set row count capped at [`SqliteLimits::max_rows_per_query`].
-//! - Per-database file size capped at [`SqliteLimits::max_db_bytes`].
+//! Limits enforced (see [`SqliteLimits`]):
+//! - SQL script length capped at `max_script_bytes` (4 MiB default).
+//! - Per-result-set row count capped at `max_rows_per_query` (1M default).
+//! - Per-database file size capped at `max_db_bytes` (256 MiB default).
+//! - Wall-clock budget per invocation at `max_duration` (30 s default; pass
+//!   [`std::time::Duration::ZERO`] to opt out).
+//! - Total statement count per invocation at `max_statements` (10k default).
+//! - `.read` recursion depth bounded by `MAX_DOT_READ_DEPTH` (16, hard-coded).
 
 mod dot_commands;
 mod engine;
@@ -55,6 +59,14 @@ const DEFAULT_MAX_SCRIPT_BYTES: usize = 4 * 1024 * 1024; // 4 MiB
 const DEFAULT_MAX_ROWS_PER_QUERY: usize = 1_000_000;
 /// Default cap on the size of a single database file when loaded from VFS.
 const DEFAULT_MAX_DB_BYTES: usize = 256 * 1024 * 1024; // 256 MiB
+/// Default per-script wall-clock cap. Each individual statement is checked
+/// against the *remaining* budget — once spent, further `step()` calls are
+/// interrupted via turso's cooperative interrupt.
+const DEFAULT_MAX_DURATION: std::time::Duration = std::time::Duration::from_secs(30);
+/// Default cap on the number of SQL statements + dot-commands per
+/// invocation. Defence-in-depth against pathological scripts that would
+/// otherwise stay under the byte cap (e.g. millions of empty `;`s).
+const DEFAULT_MAX_STATEMENTS: usize = 10_000;
 
 /// Choice of `IO` backend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -89,6 +101,12 @@ pub struct SqliteLimits {
     pub max_rows_per_query: usize,
     /// Maximum database file size loadable from the VFS.
     pub max_db_bytes: usize,
+    /// Wall-clock budget for the whole invocation (every statement shares
+    /// it). When the budget is exhausted, the in-flight statement is
+    /// interrupted and the run aborts with `query timed out`.
+    pub max_duration: std::time::Duration,
+    /// Maximum number of SQL statements + dot-commands per invocation.
+    pub max_statements: usize,
     /// Backend selection.
     pub backend: SqliteBackend,
 }
@@ -99,6 +117,8 @@ impl Default for SqliteLimits {
             max_script_bytes: DEFAULT_MAX_SCRIPT_BYTES,
             max_rows_per_query: DEFAULT_MAX_ROWS_PER_QUERY,
             max_db_bytes: DEFAULT_MAX_DB_BYTES,
+            max_duration: DEFAULT_MAX_DURATION,
+            max_statements: DEFAULT_MAX_STATEMENTS,
             backend: SqliteBackend::default(),
         }
     }
@@ -121,6 +141,18 @@ impl SqliteLimits {
     #[must_use]
     pub fn max_db_bytes(mut self, n: usize) -> Self {
         self.max_db_bytes = n;
+        self
+    }
+    /// Set wall-clock budget shared across all statements in an invocation.
+    #[must_use]
+    pub fn max_duration(mut self, d: std::time::Duration) -> Self {
+        self.max_duration = d;
+        self
+    }
+    /// Set the maximum number of statements per invocation.
+    #[must_use]
+    pub fn max_statements(mut self, n: usize) -> Self {
+        self.max_statements = n;
         self
     }
     /// Pick a backend.
@@ -248,6 +280,17 @@ impl Builtin for Sqlite {
         let mut stderr = String::new();
         let mut exit_code = 0i32;
         let stmts = parser::split(&parsed.script);
+        if stmts.len() > self.limits.max_statements {
+            return Ok(ExecResult::err(
+                format!(
+                    "sqlite: too many statements ({} > {} limit)\n",
+                    stmts.len(),
+                    self.limits.max_statements
+                ),
+                1,
+            ));
+        }
+        let deadline = engine::Deadline::new(self.limits.max_duration);
         let exec_outcome = run_statements(
             &engine,
             stmts,
@@ -256,6 +299,7 @@ impl Builtin for Sqlite {
             &mut opts,
             &mut stdout,
             &self.limits,
+            deadline,
             0,
         )
         .await;
@@ -510,6 +554,7 @@ async fn run_statements(
     opts: &mut OutputOpts,
     stdout: &mut String,
     limits: &SqliteLimits,
+    deadline: engine::Deadline,
     depth: usize,
 ) -> std::result::Result<(), String> {
     if depth > MAX_DOT_READ_DEPTH {
@@ -518,9 +563,12 @@ async fn run_statements(
         ));
     }
     for stmt in stmts {
+        if deadline.expired() {
+            return Err("query timed out".to_string());
+        }
         match stmt {
             Stmt::Sql(sql) => {
-                let outcome = engine.execute(&sql).map_err(|e| sanitize(&e))?;
+                let outcome = engine.execute(&sql, deadline).map_err(|e| sanitize(&e))?;
                 if outcome.rows.len() > limits.max_rows_per_query {
                     return Err(format!(
                         "result set exceeds row cap ({} > {})",
@@ -532,7 +580,7 @@ async fn run_statements(
                 stdout.push_str(&rendered);
             }
             Stmt::Dot(line) => {
-                let result = dot_commands::dispatch(&line, engine, opts);
+                let result = dot_commands::dispatch(&line, engine, opts, deadline);
                 match result {
                     Ok(DotOutcome::Stdout(s)) => stdout.push_str(&s),
                     Ok(DotOutcome::Configured) => {}
@@ -555,6 +603,7 @@ async fn run_statements(
                             opts,
                             stdout,
                             limits,
+                            deadline,
                             depth + 1,
                         ))
                         .await?;

@@ -197,6 +197,10 @@ required-features = ["realfs"]
 name = "sqlite_basic"
 required-features = ["sqlite"]
 
+[[example]]
+name = "sqlite_workflow"
+required-features = ["sqlite"]
+
 # Additional tokio features needed only on native (not WASM)
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "fs"] }
