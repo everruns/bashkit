@@ -83,6 +83,10 @@ monty = { git = "https://github.com/pydantic/monty", rev = "2e9df4b", optional =
 # Embedded TypeScript interpreter (optional)
 zapcode-core = { version = "1.5", optional = true }
 
+# Embedded SQLite engine via Turso (optional, BETA upstream).
+# Pulls a multi-MB transitive dep tree only when the `sqlite` feature is active.
+turso_core = { workspace = true, optional = true }
+
 [features]
 default = []
 # Enable jq builtin via embedded jaq interpreter
@@ -114,6 +118,17 @@ python = ["dep:monty"]
 # Enable ts/node/deno/bun builtins via embedded ZapCode TypeScript interpreter
 # Usage: cargo build --features typescript
 typescript = ["dep:zapcode-core"]
+# Enable sqlite/sqlite3 builtins backed by Turso (pure-Rust SQLite-compatible
+# engine). Phase 1 uses turso's `MemoryIO` with a load/flush against the VFS
+# at command boundaries; Phase 2 plugs the bashkit VFS in via a custom `IO`
+# implementation. Both paths share the same builtin and dot-command surface.
+# See specs/sqlite-builtin.md.
+#
+# Turso is BETA upstream — keep this off by default and document the risk.
+# Requires the multi-threaded tokio runtime so the sync `IO` trait can bridge
+# back to the async VFS via `block_in_place`.
+# Usage: cargo build --features sqlite
+sqlite = ["dep:turso_core", "tokio/rt-multi-thread"]
 # Enable RealFs backend for accessing host filesystem directories
 # WARNING: This intentionally breaks the sandbox boundary.
 # Usage: cargo build --features realfs
@@ -177,6 +192,10 @@ required-features = ["realfs"]
 [[example]]
 name = "realfs_readwrite"
 required-features = ["realfs"]
+
+[[example]]
+name = "sqlite_basic"
+required-features = ["sqlite"]
 
 # Additional tokio features needed only on native (not WASM)
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

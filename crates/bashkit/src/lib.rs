@@ -14,6 +14,7 @@
 //! - **Async-first** - Built on tokio
 //! - **Experimental: Git** - Virtual git operations on the VFS (`git` feature)
 //! - **Experimental: Python** - Embedded Python via [Monty](https://github.com/pydantic/monty) (`python` feature)
+//! - **Experimental: SQLite** - Embedded SQLite-compatible engine via [Turso](https://github.com/tursodatabase/turso) (`sqlite` feature)
 //!
 //! # Built-in Commands (160)
 //!
@@ -37,7 +38,7 @@
 //! | Structured data | `json`, `csv`, `yaml`, `tomlq`, `semver` |
 //! | Network | `curl`, `wget`, `http` (requires [`NetworkAllowlist`])
 //! | Arithmetic | `bc` |
-//! | Experimental | `python`, `python3` (requires `python` feature), `git` (requires `git` feature), `ts`, `typescript`, `node`, `deno`, `bun` (requires `typescript` feature), `ssh`, `scp`, `sftp` (requires `ssh` feature)
+//! | Experimental | `python`, `python3` (requires `python` feature), `git` (requires `git` feature), `ts`, `typescript`, `node`, `deno`, `bun` (requires `typescript` feature), `ssh`, `scp`, `sftp` (requires `ssh` feature), `sqlite`, `sqlite3` (requires `sqlite` feature)
 //!
 //! # Shell Features
 //!
@@ -493,6 +494,9 @@ pub use ssh::{SshClient, SshHandler, SshOutput, SshTarget};
 
 #[cfg(feature = "python")]
 pub use builtins::{PythonExternalFnHandler, PythonExternalFns, PythonLimits};
+
+#[cfg(feature = "sqlite")]
+pub use builtins::{Sqlite, SqliteBackend, SqliteLimits};
 // Re-export monty types needed by external handler consumers.
 // **Unstable:** These types come from monty (git-pinned, not on crates.io).
 // They may change in breaking ways between bashkit releases.
@@ -529,7 +533,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-#[cfg(feature = "python")]
+#[cfg(any(feature = "python", feature = "sqlite"))]
 fn env_opt_in_enabled(env: &HashMap<String, String>, key: &str) -> bool {
     env.get(key)
         .is_some_and(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
@@ -557,6 +561,9 @@ pub struct Bash {
     /// Operator-approved in-process Python opt-in captured at build time.
     #[cfg(feature = "python")]
     python_inprocess_opt_in: bool,
+    /// Operator-approved in-process SQLite opt-in captured at build time.
+    #[cfg(feature = "sqlite")]
+    sqlite_inprocess_opt_in: bool,
 }
 
 impl Default for Bash {
@@ -588,6 +595,8 @@ impl Bash {
             log_config: logging::LogConfig::default(),
             #[cfg(feature = "python")]
             python_inprocess_opt_in: false,
+            #[cfg(feature = "sqlite")]
+            sqlite_inprocess_opt_in: false,
         }
     }
 
@@ -617,6 +626,8 @@ impl Bash {
         let _ = extensions.insert(self.interpreter.limits().clone());
         #[cfg(feature = "python")]
         let _ = extensions.insert(builtins::PythonInprocessOptIn(self.python_inprocess_opt_in));
+        #[cfg(feature = "sqlite")]
+        let _ = extensions.insert(builtins::SqliteInprocessOptIn(self.sqlite_inprocess_opt_in));
         let _extensions_guard = self.interpreter.scoped_execution_extensions(extensions);
         self.exec_impl(script).await
     }
@@ -1626,6 +1637,57 @@ impl BashBuilder {
         self.python_with_limits(builtins::PythonLimits::default())
     }
 
+    /// Enable embedded SQLite (`sqlite`/`sqlite3` builtins) via Turso.
+    ///
+    /// Registers both names with the default [`SqliteLimits`]. The Turso
+    /// engine is BETA upstream — for security, execution is runtime-gated:
+    /// set `BASHKIT_ALLOW_INPROCESS_SQLITE=1` via builder `.env(...)` (or
+    /// `export`) before invoking `sqlite`.
+    ///
+    /// Requires the `sqlite` feature flag. Database files are loaded from /
+    /// flushed to the virtual filesystem at command boundaries.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let bash = Bash::builder()
+    ///     .sqlite()
+    ///     .env("BASHKIT_ALLOW_INPROCESS_SQLITE", "1")
+    ///     .build();
+    /// ```
+    #[cfg(feature = "sqlite")]
+    pub fn sqlite(self) -> Self {
+        self.sqlite_with_limits(builtins::SqliteLimits::default())
+    }
+
+    /// Enable embedded SQLite with custom limits and backend selection.
+    ///
+    /// See [`BashBuilder::sqlite`] for details. Use [`SqliteLimits::backend`]
+    /// to switch between the in-memory shim (Phase 1, default) and the
+    /// VFS-backed adapter (Phase 2).
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use bashkit::{SqliteBackend, SqliteLimits};
+    ///
+    /// let bash = Bash::builder()
+    ///     .sqlite_with_limits(
+    ///         SqliteLimits::default()
+    ///             .backend(SqliteBackend::Vfs)
+    ///             .max_db_bytes(8 * 1024 * 1024),
+    ///     )
+    ///     .build();
+    /// ```
+    #[cfg(feature = "sqlite")]
+    pub fn sqlite_with_limits(self, limits: builtins::SqliteLimits) -> Self {
+        self.builtin(
+            "sqlite",
+            Box::new(builtins::Sqlite::with_limits(limits.clone())),
+        )
+        .builtin("sqlite3", Box::new(builtins::Sqlite::with_limits(limits)))
+    }
+
     /// Enable embedded Python with custom resource limits.
     ///
     /// See [`BashBuilder::python`] for details.
@@ -2582,6 +2644,8 @@ impl BashBuilder {
         }
         #[cfg(feature = "python")]
         let python_inprocess_opt_in = env_opt_in_enabled(&env, "BASHKIT_ALLOW_INPROCESS_PYTHON");
+        #[cfg(feature = "sqlite")]
+        let sqlite_inprocess_opt_in = env_opt_in_enabled(&env, "BASHKIT_ALLOW_INPROCESS_SQLITE");
         drop(env);
 
         // If username is set, automatically set USER env var
@@ -2654,6 +2718,8 @@ impl BashBuilder {
             log_config,
             #[cfg(feature = "python")]
             python_inprocess_opt_in,
+            #[cfg(feature = "sqlite")]
+            sqlite_inprocess_opt_in,
         }
     }
 }
@@ -2745,6 +2811,21 @@ pub mod threat_model {}
 #[cfg(feature = "python")]
 #[doc = include_str!("../docs/python.md")]
 pub mod python_guide {}
+
+/// Guide for the embedded SQLite builtin (Turso).
+///
+/// Topics covered:
+/// - Quick start with `Bash::builder().sqlite()`
+/// - Memory vs VFS backends
+/// - `:memory:` databases
+/// - Output modes (list, csv, tabs, line, column, box, json, markdown)
+/// - Dot-commands (`.tables`, `.schema`, `.dump`, `.read`, …)
+/// - Resource limits and security model
+///
+/// **Related:** [`BashBuilder::sqlite`], [`SqliteLimits`], [`SqliteBackend`], [`threat_model`]
+#[cfg(feature = "sqlite")]
+#[doc = include_str!("../docs/sqlite.md")]
+pub mod sqlite_guide {}
 
 /// Guide for embedded TypeScript execution via the ZapCode interpreter.
 ///

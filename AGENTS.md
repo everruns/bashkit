@@ -45,6 +45,7 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 | zapcode-runtime | Embedded TypeScript via ZapCode, VFS bridging, resource limits |
 | request-signing | Transparent Ed25519 request signing (bot-auth) per RFC 9421 |
 | interactive-shell | Interactive REPL mode with rustyline line editing |
+| sqlite-builtin | Embedded SQLite via Turso (MemoryIO + VfsIO backends, dot-commands) |
 
 ### Documentation
 
