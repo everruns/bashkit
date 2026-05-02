@@ -30,7 +30,7 @@
 
 use async_trait::async_trait;
 
-use super::{Context, resolve_path};
+use crate::builtins::{Context, resolve_path};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
@@ -43,7 +43,7 @@ fn git_err(e: impl std::fmt::Display) -> Result<ExecResult> {
 }
 
 #[async_trait]
-impl super::Builtin for Git {
+impl crate::builtins::Builtin for Git {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         // Check if git client is available
         #[cfg(feature = "git")]
@@ -64,7 +64,7 @@ impl super::Builtin for Git {
 }
 
 #[cfg(feature = "git")]
-async fn execute_git(ctx: Context<'_>, git_client: &crate::git::GitClient) -> Result<ExecResult> {
+async fn execute_git(ctx: Context<'_>, git_client: &super::GitClient) -> Result<ExecResult> {
     if ctx.args.is_empty() {
         return Ok(ExecResult::err(
             "usage: git <command> [<args>]\n\n\
@@ -133,7 +133,7 @@ async fn execute_git(ctx: Context<'_>, git_client: &crate::git::GitClient) -> Re
 #[cfg(feature = "git")]
 async fn git_init(
     ctx: Context<'_>,
-    git_client: &crate::git::GitClient,
+    git_client: &super::GitClient,
     args: &[String],
 ) -> Result<ExecResult> {
     // Parse path argument (default to cwd)
@@ -157,7 +157,7 @@ async fn git_init(
 #[cfg(feature = "git")]
 async fn git_config(
     ctx: Context<'_>,
-    git_client: &crate::git::GitClient,
+    git_client: &super::GitClient,
     args: &[String],
 ) -> Result<ExecResult> {
     // Parse arguments
@@ -209,7 +209,7 @@ async fn git_config(
 #[cfg(feature = "git")]
 async fn git_add(
     ctx: Context<'_>,
-    git_client: &crate::git::GitClient,
+    git_client: &super::GitClient,
     args: &[String],
 ) -> Result<ExecResult> {
     if args.is_empty() {
@@ -232,7 +232,7 @@ async fn git_add(
 #[cfg(feature = "git")]
 async fn git_commit(
     ctx: Context<'_>,
-    git_client: &crate::git::GitClient,
+    git_client: &super::GitClient,
     args: &[String],
 ) -> Result<ExecResult> {
     // Parse -m <message>
@@ -266,7 +266,7 @@ async fn git_commit(
 }
 
 #[cfg(feature = "git")]
-async fn git_status(ctx: Context<'_>, git_client: &crate::git::GitClient) -> Result<ExecResult> {
+async fn git_status(ctx: Context<'_>, git_client: &super::GitClient) -> Result<ExecResult> {
     match git_client.status(&ctx.fs, ctx.cwd).await {
         Ok(status) => {
             let output = git_client.format_status(&status);
@@ -279,7 +279,7 @@ async fn git_status(ctx: Context<'_>, git_client: &crate::git::GitClient) -> Res
 #[cfg(feature = "git")]
 async fn git_log(
     ctx: Context<'_>,
-    git_client: &crate::git::GitClient,
+    git_client: &super::GitClient,
     args: &[String],
 ) -> Result<ExecResult> {
     // Parse -n <number> or -<number>
@@ -321,7 +321,7 @@ async fn git_log(
 #[cfg(feature = "git")]
 async fn git_remote(
     ctx: Context<'_>,
-    git_client: &crate::git::GitClient,
+    git_client: &super::GitClient,
     args: &[String],
 ) -> Result<ExecResult> {
     if args.is_empty() {
@@ -400,7 +400,7 @@ async fn git_remote(
 #[cfg(feature = "git")]
 async fn git_clone(
     ctx: Context<'_>,
-    git_client: &crate::git::GitClient,
+    git_client: &super::GitClient,
     args: &[String],
 ) -> Result<ExecResult> {
     if args.is_empty() {
@@ -432,7 +432,7 @@ async fn git_clone(
 #[cfg(feature = "git")]
 async fn git_fetch(
     ctx: Context<'_>,
-    git_client: &crate::git::GitClient,
+    git_client: &super::GitClient,
     args: &[String],
 ) -> Result<ExecResult> {
     let remote = if args.is_empty() { "origin" } else { &args[0] };
@@ -446,7 +446,7 @@ async fn git_fetch(
 #[cfg(feature = "git")]
 async fn git_push(
     ctx: Context<'_>,
-    git_client: &crate::git::GitClient,
+    git_client: &super::GitClient,
     args: &[String],
 ) -> Result<ExecResult> {
     let remote = if args.is_empty() { "origin" } else { &args[0] };
@@ -460,7 +460,7 @@ async fn git_push(
 #[cfg(feature = "git")]
 async fn git_pull(
     ctx: Context<'_>,
-    git_client: &crate::git::GitClient,
+    git_client: &super::GitClient,
     args: &[String],
 ) -> Result<ExecResult> {
     let remote = if args.is_empty() { "origin" } else { &args[0] };
@@ -474,7 +474,7 @@ async fn git_pull(
 #[cfg(feature = "git")]
 async fn git_branch(
     ctx: Context<'_>,
-    git_client: &crate::git::GitClient,
+    git_client: &super::GitClient,
     args: &[String],
 ) -> Result<ExecResult> {
     if args.is_empty() {
@@ -510,7 +510,7 @@ async fn git_branch(
 #[cfg(feature = "git")]
 async fn git_checkout(
     ctx: Context<'_>,
-    git_client: &crate::git::GitClient,
+    git_client: &super::GitClient,
     args: &[String],
 ) -> Result<ExecResult> {
     if args.is_empty() {
@@ -548,7 +548,7 @@ async fn git_checkout(
 #[cfg(feature = "git")]
 async fn git_diff(
     ctx: Context<'_>,
-    git_client: &crate::git::GitClient,
+    git_client: &super::GitClient,
     args: &[String],
 ) -> Result<ExecResult> {
     let from = args.first().map(|s| s.as_str());
@@ -563,7 +563,7 @@ async fn git_diff(
 #[cfg(feature = "git")]
 async fn git_reset(
     ctx: Context<'_>,
-    git_client: &crate::git::GitClient,
+    git_client: &super::GitClient,
     args: &[String],
 ) -> Result<ExecResult> {
     // Parse mode and target
@@ -587,7 +587,7 @@ async fn git_reset(
 #[cfg(feature = "git")]
 async fn git_show(
     ctx: Context<'_>,
-    git_client: &crate::git::GitClient,
+    git_client: &super::GitClient,
     args: &[String],
 ) -> Result<ExecResult> {
     let target = args.first().map(|s| s.as_str());
@@ -598,7 +598,7 @@ async fn git_show(
 }
 
 #[cfg(feature = "git")]
-async fn git_ls_files(ctx: Context<'_>, git_client: &crate::git::GitClient) -> Result<ExecResult> {
+async fn git_ls_files(ctx: Context<'_>, git_client: &super::GitClient) -> Result<ExecResult> {
     match git_client.ls_files(&ctx.fs, ctx.cwd).await {
         Ok(files) => {
             let output: String = files.iter().map(|f| format!("{}\n", f)).collect();
@@ -611,7 +611,7 @@ async fn git_ls_files(ctx: Context<'_>, git_client: &crate::git::GitClient) -> R
 #[cfg(feature = "git")]
 async fn git_rev_parse(
     ctx: Context<'_>,
-    git_client: &crate::git::GitClient,
+    git_client: &super::GitClient,
     args: &[String],
 ) -> Result<ExecResult> {
     if args.is_empty() {
@@ -630,7 +630,7 @@ async fn git_rev_parse(
 #[cfg(feature = "git")]
 async fn git_restore(
     ctx: Context<'_>,
-    git_client: &crate::git::GitClient,
+    git_client: &super::GitClient,
     args: &[String],
 ) -> Result<ExecResult> {
     if args.is_empty() {
@@ -663,7 +663,7 @@ async fn git_restore(
 #[cfg(feature = "git")]
 async fn git_merge_base(
     ctx: Context<'_>,
-    git_client: &crate::git::GitClient,
+    git_client: &super::GitClient,
     args: &[String],
 ) -> Result<ExecResult> {
     if args.len() < 2 {
@@ -684,7 +684,7 @@ async fn git_merge_base(
 #[cfg(feature = "git")]
 async fn git_grep(
     ctx: Context<'_>,
-    git_client: &crate::git::GitClient,
+    git_client: &super::GitClient,
     args: &[String],
 ) -> Result<ExecResult> {
     if args.is_empty() {

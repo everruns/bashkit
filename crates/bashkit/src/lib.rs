@@ -402,7 +402,6 @@ mod builtins;
 mod credential;
 mod error;
 mod fs;
-mod git;
 /// Interceptor hooks for the execution pipeline.
 pub mod hooks;
 #[cfg(feature = "interop")]
@@ -419,7 +418,6 @@ pub mod parser;
 #[cfg(feature = "scripted_tool")]
 pub mod scripted_tool;
 mod snapshot;
-mod ssh;
 /// Test-only helpers shared between internal `#[cfg(test)]` modules,
 /// integration tests in `tests/*.rs`, and cargo-fuzz targets in
 /// `fuzz/fuzz_targets/*.rs`. See `specs/threat-model.md` for the
@@ -435,6 +433,8 @@ pub(crate) mod tool_def;
 pub mod trace;
 
 pub use async_trait::async_trait;
+pub use builtins::git::GitConfig;
+pub use builtins::ssh::{SshAllowlist, SshConfig, TrustedHostKey};
 pub use builtins::{Builtin, Context as BuiltinContext, ExecutionExtensions};
 pub use credential::Credential;
 pub use error::{Error, Result};
@@ -446,7 +446,6 @@ pub use fs::{
 };
 #[cfg(feature = "realfs")]
 pub use fs::{RealFs, RealFsMode};
-pub use git::GitConfig;
 pub use interpreter::{
     ControlFlow, ExecResult, HistoryEntry, OutputCallback, ShellState, ShellStateView,
 };
@@ -455,7 +454,6 @@ pub use limits::{
 };
 pub use network::NetworkAllowlist;
 pub use snapshot::{Snapshot, SnapshotOptions};
-pub use ssh::{SshAllowlist, SshConfig, TrustedHostKey};
 pub use tool::BashToolBuilder as ToolBuilder;
 pub use tool::{
     BashTool, BashToolBuilder, Tool, ToolError, ToolExecution, ToolImage, ToolOutput,
@@ -486,10 +484,10 @@ pub use network::Response as HttpResponse;
 pub use network::{BotAuthConfig, BotAuthError, BotAuthPublicKey, derive_bot_auth_public_key};
 
 #[cfg(feature = "git")]
-pub use git::GitClient;
+pub use builtins::git::GitClient;
 
 #[cfg(feature = "ssh")]
-pub use ssh::{SshClient, SshHandler, SshOutput, SshTarget};
+pub use builtins::ssh::{SshClient, SshHandler, SshOutput, SshTarget};
 
 #[cfg(feature = "python")]
 pub use builtins::{PythonExternalFnHandler, PythonExternalFns, PythonLimits};
@@ -1217,7 +1215,7 @@ pub struct BashBuilder {
     ssh_config: Option<SshConfig>,
     /// Custom SSH handler for transport interception
     #[cfg(feature = "ssh")]
-    ssh_handler: Option<Box<dyn ssh::SshHandler>>,
+    ssh_handler: Option<Box<dyn builtins::ssh::SshHandler>>,
     /// Real host directories to mount in the VFS
     #[cfg(feature = "realfs")]
     real_mounts: Vec<MountedRealDir>,
@@ -1605,7 +1603,7 @@ impl BashBuilder {
     /// rate-limit SSH operations. The allowlist check happens before
     /// the handler is called.
     #[cfg(feature = "ssh")]
-    pub fn ssh_handler(mut self, handler: Box<dyn ssh::SshHandler>) -> Self {
+    pub fn ssh_handler(mut self, handler: Box<dyn builtins::ssh::SshHandler>) -> Self {
         self.ssh_handler = Some(handler);
         self
     }
@@ -2565,7 +2563,7 @@ impl BashBuilder {
         #[cfg(feature = "logging")] log_config: Option<logging::LogConfig>,
         #[cfg(feature = "git")] git_config: Option<GitConfig>,
         #[cfg(feature = "ssh")] ssh_config: Option<SshConfig>,
-        #[cfg(feature = "ssh")] ssh_handler: Option<Box<dyn ssh::SshHandler>>,
+        #[cfg(feature = "ssh")] ssh_handler: Option<Box<dyn builtins::ssh::SshHandler>>,
     ) -> Bash {
         #[cfg(feature = "logging")]
         let log_config = log_config.unwrap_or_default();
@@ -2625,14 +2623,14 @@ impl BashBuilder {
         // Configure git client for git builtins
         #[cfg(feature = "git")]
         if let Some(config) = git_config {
-            let client = git::GitClient::new(config);
+            let client = builtins::git::GitClient::new(config);
             interpreter.set_git_client(client);
         }
 
         // Configure SSH client for ssh/scp/sftp builtins
         #[cfg(feature = "ssh")]
         if let Some(config) = ssh_config {
-            let mut client = ssh::SshClient::new(config);
+            let mut client = builtins::ssh::SshClient::new(config);
             if let Some(handler) = ssh_handler {
                 client.set_handler(handler);
             }

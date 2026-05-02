@@ -49,10 +49,16 @@ mod config;
 #[cfg(feature = "git")]
 mod client;
 
+#[cfg(feature = "git")]
+mod cmd;
+
 pub use config::GitConfig;
 
 #[cfg(feature = "git")]
 pub use client::GitClient;
+
+#[cfg(feature = "git")]
+pub use cmd::Git;
 
 /// THREAT[TM-GIT-015]: Sanitize git output to prevent terminal injection.
 ///

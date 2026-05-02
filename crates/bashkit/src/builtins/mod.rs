@@ -112,11 +112,9 @@ mod zip_cmd;
 /// Shared by printf and AWK builtins.
 pub(crate) const MAX_FORMAT_WIDTH: usize = 10_000;
 
-#[cfg(feature = "git")]
-mod git;
+pub(crate) mod git;
 
-#[cfg(feature = "ssh")]
-mod ssh;
+pub(crate) mod ssh;
 
 #[cfg(feature = "python")]
 mod python;
@@ -500,7 +498,7 @@ pub struct Context<'a> {
     /// a [`GitConfig`](crate::GitConfig) is configured via
     /// [`BashBuilder::git`](crate::BashBuilder::git).
     #[cfg(feature = "git")]
-    pub git_client: Option<&'a crate::git::GitClient>,
+    pub git_client: Option<&'a crate::builtins::git::GitClient>,
 
     /// SSH client for ssh/scp/sftp operations.
     ///
@@ -508,7 +506,7 @@ pub struct Context<'a> {
     /// an [`SshConfig`](crate::SshConfig) is configured via
     /// [`BashBuilder::ssh`](crate::BashBuilder::ssh).
     #[cfg(feature = "ssh")]
-    pub ssh_client: Option<&'a crate::ssh::SshClient>,
+    pub ssh_client: Option<&'a crate::builtins::ssh::SshClient>,
 
     /// Direct access to interpreter shell state.
     ///
