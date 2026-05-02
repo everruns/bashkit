@@ -460,6 +460,7 @@ class Bash:
         max_memory: int | None = None,
         timeout_seconds: float | None = None,
         python: bool = False,
+        sqlite: bool = False,
         external_functions: list[str] | None = None,
         external_handler: ExternalHandler | None = None,
         files: dict[str, str | Callable[[], str]] | None = None,
@@ -477,6 +478,13 @@ class Bash:
             max_memory: Memory limit in bytes for the VFS.
             timeout_seconds: Abort execution after this duration.
             python: Enable embedded Python (``python3`` builtin).
+            sqlite: Enable embedded SQLite (``sqlite``/``sqlite3`` builtin).
+                Defaults to ``False``. When ``True``, the Turso-backed engine
+                is registered and ``BASHKIT_ALLOW_INPROCESS_SQLITE=1`` is
+                injected automatically. Default ``SqliteLimits`` apply: 4 MiB
+                script cap, 256 MiB DB cap, 30 s wall-clock budget,
+                resource-affecting PRAGMAs (`cache_size`, `mmap_size`, …)
+                rejected, ``ATTACH``/``DETACH`` rejected.
             external_functions: Function names callable from Python code.
             external_handler: Async callback for external function calls.
                 The callback must not call back into the same ``Bash`` instance
