@@ -11,7 +11,7 @@
 
 use async_trait::async_trait;
 
-use super::{Context, resolve_path};
+use crate::builtins::{Context, resolve_path};
 use crate::interpreter::ExecResult;
 
 // ── SSH builtin ──────────────────────────────────────────────────────────
@@ -34,7 +34,7 @@ use crate::interpreter::ExecResult;
 pub struct Ssh;
 
 #[async_trait]
-impl super::Builtin for Ssh {
+impl crate::builtins::Builtin for Ssh {
     async fn execute(&self, ctx: Context<'_>) -> crate::Result<ExecResult> {
         #[cfg(feature = "ssh")]
         {
@@ -56,11 +56,8 @@ impl super::Builtin for Ssh {
 }
 
 #[cfg(feature = "ssh")]
-async fn execute_ssh(
-    ctx: Context<'_>,
-    ssh_client: &crate::ssh::SshClient,
-) -> crate::Result<ExecResult> {
-    use crate::ssh::SshTarget;
+async fn execute_ssh(ctx: Context<'_>, ssh_client: &super::SshClient) -> crate::Result<ExecResult> {
+    use super::SshTarget;
 
     let mut port: Option<u16> = None;
     let mut identity_file: Option<String> = None;
@@ -222,7 +219,7 @@ async fn execute_ssh(
 pub struct Scp;
 
 #[async_trait]
-impl super::Builtin for Scp {
+impl crate::builtins::Builtin for Scp {
     async fn execute(&self, ctx: Context<'_>) -> crate::Result<ExecResult> {
         #[cfg(feature = "ssh")]
         {
@@ -243,11 +240,8 @@ impl super::Builtin for Scp {
 }
 
 #[cfg(feature = "ssh")]
-async fn execute_scp(
-    ctx: Context<'_>,
-    ssh_client: &crate::ssh::SshClient,
-) -> crate::Result<ExecResult> {
-    use crate::ssh::SshTarget;
+async fn execute_scp(ctx: Context<'_>, ssh_client: &super::SshClient) -> crate::Result<ExecResult> {
+    use super::SshTarget;
 
     let mut port: Option<u16> = None;
     let mut identity_file: Option<String> = None;
@@ -397,7 +391,7 @@ async fn execute_scp(
 pub struct Sftp;
 
 #[async_trait]
-impl super::Builtin for Sftp {
+impl crate::builtins::Builtin for Sftp {
     async fn execute(&self, ctx: Context<'_>) -> crate::Result<ExecResult> {
         #[cfg(feature = "ssh")]
         {
@@ -420,9 +414,9 @@ impl super::Builtin for Sftp {
 #[cfg(feature = "ssh")]
 async fn execute_sftp(
     ctx: Context<'_>,
-    ssh_client: &crate::ssh::SshClient,
+    ssh_client: &super::SshClient,
 ) -> crate::Result<ExecResult> {
-    use crate::ssh::SshTarget;
+    use super::SshTarget;
 
     let mut port: Option<u16> = None;
     let mut identity_file: Option<String> = None;
@@ -603,7 +597,7 @@ async fn execute_sftp(
 
 /// Parse `user@host` into (user, host). Falls back to config default user.
 #[cfg(feature = "ssh")]
-fn parse_user_host(spec: &str, config: &crate::ssh::SshConfig) -> (String, String) {
+fn parse_user_host(spec: &str, config: &super::SshConfig) -> (String, String) {
     if let Some(at_pos) = spec.find('@') {
         let user = spec[..at_pos].to_string();
         let host = spec[at_pos + 1..].to_string();
@@ -636,7 +630,7 @@ fn parse_remote_path(spec: &str) -> Option<(String, String)> {
 
 /// Build an ExecResult from SSH output.
 #[cfg(feature = "ssh")]
-fn build_result(output: crate::ssh::SshOutput, _quiet: bool) -> ExecResult {
+fn build_result(output: super::SshOutput, _quiet: bool) -> ExecResult {
     if output.exit_code == 0 {
         let mut result = ExecResult::ok(output.stdout);
         if !output.stderr.is_empty() {
@@ -660,7 +654,7 @@ mod tests {
     #[test]
     #[cfg(feature = "ssh")]
     fn test_parse_user_host_with_user() {
-        let config = crate::ssh::SshConfig::new();
+        let config = super::super::SshConfig::new();
         let (user, host) = parse_user_host("deploy@db.supabase.co", &config);
         assert_eq!(user, "deploy");
         assert_eq!(host, "db.supabase.co");
@@ -669,7 +663,7 @@ mod tests {
     #[test]
     #[cfg(feature = "ssh")]
     fn test_parse_user_host_without_user() {
-        let config = crate::ssh::SshConfig::new().default_user("admin");
+        let config = super::super::SshConfig::new().default_user("admin");
         let (user, host) = parse_user_host("db.supabase.co", &config);
         assert_eq!(user, "admin");
         assert_eq!(host, "db.supabase.co");
@@ -678,7 +672,7 @@ mod tests {
     #[test]
     #[cfg(feature = "ssh")]
     fn test_parse_user_host_no_default() {
-        let config = crate::ssh::SshConfig::new();
+        let config = super::super::SshConfig::new();
         let (user, host) = parse_user_host("db.supabase.co", &config);
         assert_eq!(user, "root");
         assert_eq!(host, "db.supabase.co");

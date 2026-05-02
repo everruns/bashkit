@@ -368,7 +368,7 @@ mod tests {
 
     #[test]
     fn test_russh_handler_default_max_response_bytes() {
-        use crate::ssh::config::DEFAULT_MAX_RESPONSE_BYTES;
+        use super::super::config::DEFAULT_MAX_RESPONSE_BYTES;
         let handler = RusshHandler::new(
             Duration::from_secs(30),
             DEFAULT_MAX_RESPONSE_BYTES,
@@ -390,8 +390,8 @@ mod tests {
     /// here we verify construction and field propagation.
     #[test]
     fn test_streaming_limit_propagation() {
-        use crate::ssh::client::SshClient;
-        use crate::ssh::config::SshConfig;
+        use super::super::client::SshClient;
+        use super::super::config::SshConfig;
 
         let config = SshConfig::new().max_response_bytes(512);
         let client = SshClient::new(config);
@@ -400,8 +400,8 @@ mod tests {
 
     #[test]
     fn test_strict_host_key_checking_propagation() {
-        use crate::ssh::client::SshClient;
-        use crate::ssh::config::SshConfig;
+        use super::super::client::SshClient;
+        use super::super::config::SshConfig;
 
         let config = SshConfig::new().strict_host_key_checking(true);
         let client = SshClient::new(config);
@@ -442,11 +442,11 @@ mod tests {
     /// THREAT[TM-SSH-006]: Default strict mode rejects connections with unknown keys.
     #[tokio::test]
     async fn test_strict_mode_rejects_unknown_key() {
-        let config = crate::ssh::config::SshConfig::new()
+        let config = super::super::config::SshConfig::new()
             .allow_all()
             .strict_host_key_checking(true);
-        let client = crate::ssh::client::SshClient::new(config);
-        let target = crate::ssh::handler::SshTarget {
+        let client = super::super::client::SshClient::new(config);
+        let target = super::super::handler::SshTarget {
             host: "localhost".to_string(),
             port: 22,
             user: "test".to_string(),
