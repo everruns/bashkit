@@ -27,6 +27,7 @@ Awesomely fast virtual sandbox with bash and file system. Written in Rust.
 - **Experimental: Git support** - Virtual git operations on the virtual filesystem (`git` feature)
 - **Experimental: Python support** - Embedded Python interpreter via [Monty](https://github.com/pydantic/monty) (`python` feature)
 - **Experimental: TypeScript support** - Embedded TypeScript interpreter via [ZapCode](https://github.com/TheUncharted/zapcode) (`typescript` feature)
+- **Experimental: SQLite support** - Embedded SQLite-compatible engine via [Turso](https://github.com/tursodatabase/turso) (`sqlite` feature)
 
 ## Install
 
@@ -47,6 +48,7 @@ Optional features:
 cargo add bashkit --features git              # Virtual git operations
 cargo add bashkit --features python           # Embedded Python interpreter
 cargo add bashkit --features typescript       # Embedded TypeScript interpreter
+cargo add bashkit --features sqlite           # Embedded SQLite engine (Turso)
 cargo add bashkit --features realfs           # Real filesystem backend
 cargo add bashkit --features scripted_tool    # Tool orchestration framework
 ```
@@ -132,7 +134,7 @@ assert_eq!(output.result["stdout"], "hello\nworld\n");
 | Data formats | `csv`, `json`, `yaml`, `tomlq`, `template`, `envsubst` |
 | Network | `curl`, `wget` (requires allowlist), `http` |
 | DevOps | `assert`, `dotenv`, `glob`, `log`, `retry`, `semver`, `verify`, `parallel`, `patch` |
-| Experimental | `python`, `python3` (requires `python` feature), `ts`, `typescript`, `node`, `deno`, `bun` (requires `typescript` feature), `git` (requires `git` feature) |
+| Experimental | `python`, `python3` (requires `python` feature), `ts`, `typescript`, `node`, `deno`, `bun` (requires `typescript` feature), `git` (requires `git` feature), `sqlite`, `sqlite3` (requires `sqlite` feature) |
 
 ## Shell Features
 
@@ -318,6 +320,38 @@ let bash = Bash::builder()
 
 Limitations: no `import`/`require`, no `eval()`, no network, no `process`/`Deno`/`Bun` globals.
 See [crates/bashkit/docs/typescript.md](crates/bashkit/docs/typescript.md) for the full guide.
+
+## Experimental: SQLite Support
+
+Enable the `sqlite` feature to embed [Turso](https://github.com/tursodatabase/turso) — a pure-Rust, SQLite-compatible engine — backed by the bashkit virtual filesystem. Turso is BETA upstream, so the builtin is opt-in at both the cargo and runtime layer.
+
+```toml
+[dependencies]
+bashkit = { version = "0.2", features = ["sqlite"] }
+```
+
+```rust
+use bashkit::Bash;
+
+let mut bash = Bash::builder()
+    .sqlite()
+    .env("BASHKIT_ALLOW_INPROCESS_SQLITE", "1")
+    .build();
+
+// In-memory query
+bash.exec("sqlite :memory: 'SELECT 1 + 2'").await?;
+
+// VFS-backed database — persists across invocations
+bash.exec(r#"sqlite /tmp/notes.sqlite '
+  CREATE TABLE IF NOT EXISTS notes(id INTEGER PRIMARY KEY, body TEXT);
+  INSERT INTO notes(body) VALUES ("hello");
+'"#).await?;
+bash.exec("sqlite -header /tmp/notes.sqlite 'SELECT * FROM notes'").await?;
+```
+
+Sqlite3-shell-compatible flags (`-csv`, `-json`, `-markdown`, `-header`, `-separator`, `-nullvalue`, `-cmd`) and dot-commands (`.tables`, `.schema`, `.dump`, `.read`, `.headers`, `.mode`) are supported. Two IO backends are available: `Memory` (default — load/flush against the VFS at command boundaries) and `Vfs` (custom turso `IO` impl).
+
+Limits via [`SqliteLimits`](crates/bashkit/src/builtins/sqlite/mod.rs) cap script size, result-set rows, DB file size, wall-clock duration, and statement count. See [crates/bashkit/docs/sqlite.md](crates/bashkit/docs/sqlite.md) for the full guide.
 
 ## Virtual Filesystem
 

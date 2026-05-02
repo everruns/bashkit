@@ -122,6 +122,9 @@ mod python;
 #[cfg(feature = "typescript")]
 mod typescript;
 
+#[cfg(feature = "sqlite")]
+mod sqlite;
+
 pub use alias::{Alias, Unalias};
 pub use archive::{Gunzip, Gzip, Tar};
 pub use assert::Assert;
@@ -223,6 +226,11 @@ pub use typescript::{
     TypeScript, TypeScriptConfig, TypeScriptExternalFnHandler, TypeScriptExternalFns,
     TypeScriptLimits,
 };
+
+#[cfg(feature = "sqlite")]
+pub(crate) use sqlite::SqliteInprocessOptIn;
+#[cfg(feature = "sqlite")]
+pub use sqlite::{Sqlite, SqliteBackend, SqliteLimits};
 
 use async_trait::async_trait;
 use std::any::{Any, TypeId};

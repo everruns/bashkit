@@ -274,7 +274,7 @@ Features that may be added in the future (not intentionally excluded):
 
 ### Implemented
 
-**148 core builtins + 12 feature-gated = 160 total**
+**148 core builtins + 14 feature-gated = 162 total**
 
 `echo`, `printf`, `cat`, `nl`, `cd`, `pwd`, `true`, `false`, `exit`, `test`, `[`,
 `export`, `set`, `unset`, `local`, `source`, `.`, `read`, `shift`, `break`,
@@ -300,7 +300,8 @@ Features that may be added in the future (not intentionally excluded):
 `git` (requires `git` feature, see [git-support.md](git-support.md)),
 `ssh`, `scp`, `sftp` (requires `ssh` feature, see [ssh-support.md](ssh-support.md)),
 `python`, `python3` (requires `python` feature, see [python-builtin.md](python-builtin.md)),
-`ts`, `typescript`, `node`, `deno`, `bun` (requires `typescript` feature, see [zapcode-runtime.md](zapcode-runtime.md))
+`ts`, `typescript`, `node`, `deno`, `bun` (requires `typescript` feature, see [zapcode-runtime.md](zapcode-runtime.md)),
+`sqlite`, `sqlite3` (requires `sqlite` feature, see [sqlite-builtin.md](sqlite-builtin.md))
 
 ### Not Yet Implemented
 

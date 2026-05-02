@@ -82,13 +82,13 @@ jobs:
       # Examples have a dedicated job below; skipping them here avoids
       # duplicated example links that can exhaust runner disk on main.
       - name: Run tests
-        run: cargo test --workspace --lib --bins --tests --features http_client,ssh
+        run: cargo test --workspace --lib --bins --tests --features http_client,ssh,sqlite
 
       - name: Run strict bash parity tests
         run: cargo test -p bashkit --test spec_tests --features http_client,ssh -- bash_comparison_tests --ignored
 
       - name: Run doc tests
-        run: cargo test --workspace --doc --features http_client,ssh
+        run: cargo test --workspace --doc --features http_client,ssh,sqlite
 
       - name: Run realfs tests
         run: cargo test --features realfs -p bashkit --test realfs_tests -p bashkit-cli
@@ -115,7 +115,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Build examples
-        run: cargo build --examples --features "git,http_client,ssh"
+        run: cargo build --examples --features "git,http_client,ssh,sqlite"
 
       - name: Run examples
         run: |
@@ -129,6 +129,8 @@ jobs:
           cargo run --example typescript_external_functions --features typescript
           cargo run --example realfs_readonly --features realfs
           cargo run --example realfs_readwrite --features realfs
+          cargo run --example sqlite_basic --features sqlite
+          cargo run --example sqlite_workflow --features sqlite
 
       # SSH tests
       - name: Run ssh builtin tests (mock handler)
