@@ -34,6 +34,7 @@ cargo binstall bashkit-cli
 |---------|---------|--------|
 | `interactive` | on | Interactive REPL (rustyline, signal-hook, terminal_size) |
 | `python` | on | `python`/`python3` builtin via Monty |
+| `sqlite` | on | `sqlite`/`sqlite3` builtin via Turso (BETA upstream) |
 | `realfs` | off | `--mount-ro` / `--mount-rw` host filesystem mounts |
 | `scripted_tool` | off | Scripted tool orchestration |
 
@@ -49,6 +50,7 @@ Builtins enabled out of the box:
 
 - **Git** (`git`) — local VFS operations (init, add, commit, log, …)
 - **Python** (`python`, `python3`) — embedded via [Monty](https://github.com/pydantic/monty) (requires `python` feature)
+- **SQLite** (`sqlite`, `sqlite3`) — embedded via [Turso](https://github.com/tursodatabase/turso) (requires `sqlite` feature). The CLI auto-injects `BASHKIT_ALLOW_INPROCESS_SQLITE=1` so the runtime opt-in is satisfied transparently.
 
 Disabled by default (security):
 
@@ -62,6 +64,7 @@ Disable per-run:
 | `--no-http` | Force-disable curl/wget builtins |
 | `--no-git` | Disable git builtin |
 | `--no-python` | Disable python/python3 builtins |
+| `--no-sqlite` | Disable sqlite/sqlite3 builtins |
 
 ## Execution limits
 
@@ -191,11 +194,27 @@ git log --oneline
 '
 ```
 
+SQLite (default):
+
+```bash
+bashkit -c "sqlite :memory: 'SELECT 1 + 2'"
+# 3
+
+bashkit -c "sqlite -header /tmp/notes.sqlite '
+  CREATE TABLE IF NOT EXISTS notes(id INTEGER PRIMARY KEY, body TEXT);
+  INSERT INTO notes(body) VALUES (\"hello\");
+  SELECT * FROM notes;
+'"
+```
+
 Disable a builtin:
 
 ```bash
 bashkit --no-python -c 'python --version'
 # python: command not found
+
+bashkit --no-sqlite -c "sqlite :memory: 'SELECT 1'"
+# sqlite: command not found
 ```
 
 Run a script file:
