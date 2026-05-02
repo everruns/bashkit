@@ -79,6 +79,15 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # Pre-installed on `ubuntu-latest` images, but make the dependency
+      # explicit so a future runner image change can't silently turn the
+      # `sqlite_differential_tests` suite into a no-op (it skips when
+      # `sqlite3` isn't on PATH).
+      - name: Install host sqlite3 for differential tests
+        run: |
+          which sqlite3 || sudo apt-get update && sudo apt-get install -y sqlite3
+          sqlite3 --version
+
       # Examples have a dedicated job below; skipping them here avoids
       # duplicated example links that can exhaust runner disk on main.
       - name: Run tests
