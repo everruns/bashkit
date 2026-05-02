@@ -1,10 +1,13 @@
 // Scaffold tests for the awk_fuzz target.
 // Validates that the awk builtin handles arbitrary programs and input
-// data without panicking.
+// data without panicking AND without leaking Debug shapes, host paths,
+// or the host-env canary into stderr/stdout.
 
+use bashkit::testing::{fuzz_exec, fuzz_init};
 use bashkit::{Bash, ExecutionLimits};
 
 fn fuzz_bash() -> Bash {
+    fuzz_init();
     Bash::builder()
         .limits(
             ExecutionLimits::new()
@@ -20,43 +23,59 @@ fn fuzz_bash() -> Bash {
 #[tokio::test]
 async fn awk_valid_program() {
     let mut bash = fuzz_bash();
-    let result = bash.exec("echo 'a b c' | awk '{print $2}'").await.unwrap();
-    assert_eq!(result.stdout.trim(), "b");
+    fuzz_exec(
+        &mut bash,
+        "echo 'a b c' | awk '{print $2}'",
+        "awk_valid_program",
+        &[],
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn awk_invalid_program() {
     let mut bash = fuzz_bash();
-    let _ = bash.exec("echo 'x' | awk '{{{{{' 2>/dev/null; true").await;
-    // Must not panic
+    fuzz_exec(
+        &mut bash,
+        "echo 'x' | awk '{{{{{ '",
+        "awk_invalid_program",
+        &[],
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn awk_begin_end() {
     let mut bash = fuzz_bash();
-    let result = bash
-        .exec("echo 'x' | awk 'BEGIN{print \"start\"} END{print \"end\"}'")
-        .await
-        .unwrap();
-    assert!(result.stdout.contains("start"));
-    assert!(result.stdout.contains("end"));
+    fuzz_exec(
+        &mut bash,
+        "echo 'x' | awk 'BEGIN{print \"start\"} END{print \"end\"}'",
+        "awk_begin_end",
+        &[],
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn awk_regex_pattern() {
     let mut bash = fuzz_bash();
-    let _ = bash
-        .exec("echo 'hello' | awk '/[[[/' 2>/dev/null; true")
-        .await;
-    // Must not panic on malformed regex
+    fuzz_exec(
+        &mut bash,
+        "echo 'hello' | awk '/[[[/'",
+        "awk_regex_pattern",
+        &[],
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn awk_field_separator() {
     let mut bash = fuzz_bash();
-    let result = bash
-        .exec("echo 'a:b:c' | awk -F: '{print $2}'")
-        .await
-        .unwrap();
-    assert_eq!(result.stdout.trim(), "b");
+    fuzz_exec(
+        &mut bash,
+        "echo 'a:b:c' | awk -F: '{print $2}'",
+        "awk_field_separator",
+        &[],
+    )
+    .await;
 }

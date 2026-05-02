@@ -7,6 +7,7 @@
 //!   jq '.[] | .id' < data.json
 
 use async_trait::async_trait;
+use jaq_core::compile::Undefined;
 use jaq_core::load::{Arena, File, Loader};
 use jaq_core::{Compiler, Ctx, Vars, data};
 use jaq_json::Val;
@@ -141,6 +142,9 @@ const MAX_JQ_JSON_DEPTH: usize = 100;
 ///   metadata is not tracked. These stubs return jq's documented "no input"
 ///   defaults (`null` and `0`) so LLM-generated filters compile cleanly
 ///   instead of erroring against ~800 chars of prepended stdlib.
+/// - `@tsv` / `@csv`: format filters jaq-std does not provide; LLM-generated
+///   filters frequently end with `| @tsv` and otherwise hit a confusing
+///   `@tsv/0 is not defined` compile error.
 const JQ_COMPAT_DEFS: &str = r#"
 def setpath(p; v):
   if (p | length) == 0 then v
@@ -162,6 +166,25 @@ def scan(re; flags): matches(re; "g" + flags)[] | .[0].string;
 def scan(re): scan(re; "");
 def input_filename: null;
 def input_line_number: 0;
+def @tsv:
+  [.[] |
+    if type == "string" then
+      (split("\\") | join("\\\\"))
+      | (split("\t") | join("\\t"))
+      | (split("\r") | join("\\r"))
+      | (split("\n") | join("\\n"))
+    elif . == null then ""
+    else tostring
+    end
+  ] | join("\t");
+def @csv:
+  [.[] |
+    if type == "string" then
+      "\"" + (split("\"") | join("\"\"")) + "\""
+    elif . == null then ""
+    else tostring
+    end
+  ] | join(",");
 "#;
 
 /// Internal global variable name used to pass shell env to jq's `env` filter.
@@ -270,6 +293,67 @@ fn format_with_tabs(value: &serde_json::Value) -> String {
     // Remove trailing newline to match pattern
     result.truncate(result.trim_end_matches('\n').len());
     result
+}
+
+/// Cap for formatted compile/parse error messages. Bounds stderr so jaq
+/// internals (file structs, AST debug, ~800 chars of prepended stdlib) never
+/// reach the agent — real jq errors are short, ours must be too.
+const MAX_JQ_DIAG_CHARS: usize = 240;
+
+/// Format jaq compile errors as jq-style `name/arity is not defined` messages.
+/// Hides the underlying `(File, Vec<(name, Undefined)>)` debug shape that
+/// would otherwise leak the full prepended compat-defs source into stderr.
+fn format_jq_compile_errors<P>(errs: jaq_core::compile::Errors<&str, P>) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for (_file, file_errs) in errs {
+        for (name, undef) in file_errs {
+            parts.push(match undef {
+                Undefined::Filter(arity) => format!("{name}/{arity} is not defined"),
+                Undefined::Var => format!("{name} is not defined"),
+                Undefined::Label => format!("label {name} is not defined"),
+                Undefined::Mod => format!("module {name} is not defined"),
+                _ => format!("{} {name} is not defined", undef.as_str()),
+            });
+        }
+    }
+    let body = if parts.is_empty() {
+        "compile error".to_string()
+    } else {
+        parts.join(", ")
+    };
+    format!("jq: error: {}\n", truncate_text(&body, MAX_JQ_DIAG_CHARS))
+}
+
+/// Format jaq load (lex/parse/io) errors as short jq-style messages.
+/// Skips offending-token text so prepended compat-defs source can't leak.
+fn format_jq_load_errors<P>(errs: jaq_core::load::Errors<&str, P>) -> String {
+    use jaq_core::load::Error as LoadError;
+    let mut parts: Vec<String> = Vec::new();
+    for (_file, err) in errs {
+        match err {
+            LoadError::Lex(es) => {
+                for (expect, _) in es {
+                    parts.push(format!("expected {}", expect.as_str()));
+                }
+            }
+            LoadError::Parse(es) => {
+                for (expect, _) in es {
+                    parts.push(format!("expected {}", expect.as_str()));
+                }
+            }
+            LoadError::Io(es) => {
+                for (name, _) in es {
+                    parts.push(format!("could not load module {name}"));
+                }
+            }
+        }
+    }
+    let body = if parts.is_empty() {
+        "syntax error".to_string()
+    } else {
+        parts.join(", ")
+    };
+    format!("jq: error: {}\n", truncate_text(&body, MAX_JQ_DIAG_CHARS))
 }
 
 const MAX_JQ_RUNTIME_ERROR_CHARS: usize = 240;
@@ -721,14 +805,7 @@ impl Builtin for Jq {
         let modules = match loader.load(&arena, program) {
             Ok(m) => m,
             Err(errs) => {
-                let msg = format!(
-                    "jq: parse error: {}\n",
-                    errs.into_iter()
-                        .map(|e| format!("{:?}", e))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                );
-                return Ok(ExecResult::err(msg, 3));
+                return Ok(ExecResult::err(format_jq_load_errors(errs), 3));
             }
         };
 
@@ -755,14 +832,7 @@ impl Builtin for Jq {
         let filter = match compiler.compile(modules) {
             Ok(f) => f,
             Err(errs) => {
-                let msg = format!(
-                    "jq: compile error: {}\n",
-                    errs.into_iter()
-                        .map(|e| format!("{:?}", e))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                );
-                return Ok(ExecResult::err(msg, 3));
+                return Ok(ExecResult::err(format_jq_compile_errors(errs), 3));
             }
         };
 
@@ -1315,7 +1385,7 @@ mod tests {
         let result = run_jq(".", &input).await;
         assert!(
             result.is_ok(),
-            "moderate nesting should succeed: {:?}",
+            "moderate nesting should succeed: {:?}", // debug-ok: assert-failure message
             result.err()
         );
     }
@@ -2057,5 +2127,245 @@ mod tests {
         let result = jq.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout.trim(), "true");
+    }
+
+    // === @tsv / @csv format filters ===
+    //
+    // jaq-std doesn't define @tsv or @csv — LLM-generated filters that end
+    // with `| @tsv` previously hit `@tsv/0 is not defined` compile errors.
+    // Compat defs in JQ_COMPAT_DEFS now provide jq-compatible behavior.
+
+    #[tokio::test]
+    async fn test_jq_tsv_basic() {
+        let result = run_jq(r#"["a","b","c"] | @tsv"#, "null").await.unwrap();
+        assert_eq!(result.trim(), r#""a\tb\tc""#);
+    }
+
+    #[tokio::test]
+    async fn test_jq_tsv_escapes_special_chars() {
+        // jq spec: tab, newline, return, backslash escape to literal \t \n \r \\
+        let result = run_jq(r#"["a\tb","c\nd","e\\f"] | @tsv"#, "null")
+            .await
+            .unwrap();
+        assert_eq!(result.trim(), r#""a\\tb\tc\\nd\te\\\\f""#);
+    }
+
+    #[tokio::test]
+    async fn test_jq_tsv_handles_null_and_numbers() {
+        let result = run_jq(r#"[null, 1, true, "x"] | @tsv"#, "null")
+            .await
+            .unwrap();
+        assert_eq!(result.trim(), r#""\t1\ttrue\tx""#);
+    }
+
+    #[tokio::test]
+    async fn test_jq_csv_basic() {
+        let result = run_jq(r#"["a","b","c"] | @csv"#, "null").await.unwrap();
+        assert_eq!(result.trim(), r#""\"a\",\"b\",\"c\"""#);
+    }
+
+    #[tokio::test]
+    async fn test_jq_csv_escapes_quotes() {
+        let result = run_jq(r#"["a\"b"] | @csv"#, "null").await.unwrap();
+        assert_eq!(result.trim(), r#""\"a\"\"b\"""#);
+    }
+
+    #[tokio::test]
+    async fn test_jq_harness_tsv_filter_compiles_and_runs() {
+        // Reproduces the exact failure from the bug report: an LLM-generated
+        // filter that walks a list and renders rows via `| @tsv`.
+        let filter = r#"
+            if (.data | length) == 0 then
+              "No harnesses found."
+            else
+              (.data[] | [(.id // ""), (.name // ""), (.description // ""), (.parent_harness_id // ""), ((.capabilities // []) | length | tostring), (.created_at // "")] | @tsv)
+            end
+        "#;
+        let input = r#"{"data":[{"id":"h1","name":"alpha","description":"d","parent_harness_id":null,"capabilities":["a","b"],"created_at":"2024-01-01"}]}"#;
+        let result = run_jq_result(filter, input).await.unwrap();
+        assert_eq!(result.exit_code, 0, "stderr: {}", result.stderr);
+        // raw string output uses surrounding quotes; \t separates fields
+        assert_eq!(result.stdout.trim(), r#""h1\talpha\td\t\t2\t2024-01-01""#);
+    }
+
+    // === Compile/parse error formatting ===
+    //
+    // Real jq prints concise diagnostics like `jq: error: foo/0 is not
+    // defined`. Bashkit previously dumped jaq's internal Debug output
+    // (File { code: "...", path: () }, [(...)]) which leaked the entire
+    // prepended stdlib. Errors must stay short and jq-shaped.
+
+    #[tokio::test]
+    async fn test_jq_unknown_filter_error_is_jq_shaped() {
+        let result = run_jq_result("totally_made_up_filter", "1").await.unwrap();
+        assert_ne!(result.exit_code, 0);
+        assert_eq!(
+            result.stderr,
+            "jq: error: totally_made_up_filter/0 is not defined\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_jq_compile_error_does_not_leak_internals() {
+        let result = run_jq_result("totally_made_up_filter", "1").await.unwrap();
+        // Must NOT contain jaq Debug noise: File { ... }, Filter(0), etc.
+        assert!(
+            !result.stderr.contains("File {"),
+            "leaked File debug: {}",
+            result.stderr
+        );
+        assert!(
+            !result.stderr.contains("Filter("),
+            "leaked Undefined debug: {}",
+            result.stderr
+        );
+        assert!(
+            !result.stderr.contains("setpath"),
+            "leaked compat-defs source: {}",
+            result.stderr
+        );
+        assert!(
+            !result.stderr.contains("__bashkit_env__"),
+            "leaked internal env var: {}",
+            result.stderr
+        );
+    }
+
+    #[tokio::test]
+    async fn test_jq_parse_error_is_short() {
+        // Unbalanced bracket: triggers a parse/lex error path.
+        let result = run_jq_result("[", "1").await.unwrap();
+        assert_ne!(result.exit_code, 0);
+        assert!(
+            result.stderr.starts_with("jq: error: "),
+            "stderr: {}",
+            result.stderr
+        );
+        assert!(
+            !result.stderr.contains("File {"),
+            "leaked File debug: {}",
+            result.stderr
+        );
+        assert!(
+            result.stderr.len() <= "jq: error: \n".len() + MAX_JQ_DIAG_CHARS,
+            "stderr too long: {}",
+            result.stderr
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // TM-INF-022 dynamic guard: malformed-input corpus.
+    //
+    // The static counterpart in `builtins/mod.rs` forbids `{:?}` in source. // debug-ok: pattern doc
+    // These tests exercise jq's error paths with curated bad inputs and
+    // assert no banned Debug-shape substrings reach stderr.
+    // -------------------------------------------------------------------------
+
+    /// jq-specific internals that must never reach stderr — they would
+    /// reveal the prepended compat-defs source we splice into every filter.
+    const JQ_BANNED: &[&str] = &[
+        "__bashkit_env__",
+        "JQ_COMPAT_DEFS",
+        "def setpath",
+        "def leaf_paths",
+        "def @tsv:",
+        "def @csv:",
+        "def env:",
+        // Undefined::* variant Debug spellings — post-formatter these
+        // become `name/arity is not defined`; the raw tag must not appear.
+        "Filter(0)",
+        "Filter(1)",
+        "Filter(2)",
+        "Var,",
+        "Mod,",
+    ];
+
+    macro_rules! jq_no_leak {
+        ($name:ident, $script:expr) => {
+            #[tokio::test]
+            async fn $name() {
+                let r = crate::builtins::debug_leak_check::run($script).await;
+                crate::builtins::debug_leak_check::assert_no_leak(&r, stringify!($name), JQ_BANNED);
+            }
+        };
+    }
+
+    // compile errors — every Undefined variant
+    jq_no_leak!(
+        no_leak_undefined_filter_zero_arity,
+        "echo 1 | jq totally_made_up"
+    );
+    jq_no_leak!(
+        no_leak_undefined_filter_with_arity,
+        "echo 1 | jq 'totally_made_up(1; 2)'"
+    );
+    jq_no_leak!(no_leak_undefined_variable, "echo 1 | jq '$nope'");
+    jq_no_leak!(no_leak_undefined_format, "echo '[1]' | jq '@xyzzy'");
+
+    // exact filter from the original bug report (#TM-INF-022)
+    jq_no_leak!(
+        no_leak_harness_tsv_filter_with_undefined_inner,
+        r#"echo '{"data":[]}' | jq '
+          if (.data | length) == 0 then
+            "No harnesses found."
+          else
+            (.data[] | [(.id // ""), totally_undefined_helper] | @tsv)
+          end
+        '"#
+    );
+
+    // parse / lex errors
+    jq_no_leak!(no_leak_unbalanced_bracket, "echo 1 | jq '['");
+    jq_no_leak!(no_leak_unbalanced_paren, "echo 1 | jq '('");
+    jq_no_leak!(no_leak_stray_pipe, "echo 1 | jq '|'");
+    jq_no_leak!(no_leak_unterminated_string, r#"echo 1 | jq '"abc'"#);
+    jq_no_leak!(no_leak_if_without_then, "echo 1 | jq 'if . then'");
+    jq_no_leak!(no_leak_reduce_without_as, "echo 1 | jq 'reduce . '");
+    jq_no_leak!(no_leak_def_without_body, "echo 1 | jq 'def f:'");
+    jq_no_leak!(no_leak_empty_brace_expr, "echo 1 | jq '{(.)}'");
+
+    // input errors
+    jq_no_leak!(no_leak_malformed_json_input, "echo 'not json {' | jq '.'");
+
+    #[tokio::test]
+    async fn no_leak_deeply_nested_input() {
+        let script = format!("echo '{}{}' | jq '.'", "[".repeat(200), "]".repeat(200));
+        let r = crate::builtins::debug_leak_check::run(&script).await;
+        crate::builtins::debug_leak_check::assert_no_leak(
+            &r,
+            "no_leak_deeply_nested_input",
+            JQ_BANNED,
+        );
+    }
+
+    // runtime errors
+    jq_no_leak!(
+        no_leak_index_array_with_string,
+        r#"echo '[1,2]' | jq '.foo'"#
+    );
+    jq_no_leak!(no_leak_iterate_over_null, r#"echo 'null' | jq '.[]'"#);
+    jq_no_leak!(no_leak_add_array_and_number, r#"echo '[1,2]' | jq '. + 1'"#);
+
+    // @tsv / @csv positive regressions — the user's original failing filter
+    // must compile and produce the expected tsv output.
+    #[tokio::test]
+    async fn tsv_compiles_for_user_harness_filter() {
+        let r = crate::builtins::debug_leak_check::run(
+            r#"echo '{"data":[{"id":"h1","name":"a","description":"d","parent_harness_id":null,"capabilities":["x"],"created_at":"t"}]}' | jq -r '
+                .data[] | [(.id // ""), (.name // ""), (.description // ""), (.parent_harness_id // ""), ((.capabilities // []) | length | tostring), (.created_at // "")] | @tsv
+            '"#,
+        )
+        .await;
+        assert_eq!(r.exit_code, 0, "stderr: {}", r.stderr);
+        assert!(r.stdout.contains("h1"), "stdout: {}", r.stdout);
+        assert!(r.stdout.contains('\t'), "tab not present: {}", r.stdout);
+    }
+
+    #[tokio::test]
+    async fn csv_compiles_basic_via_shell() {
+        let r = crate::builtins::debug_leak_check::run(r#"echo 'null' | jq -r '["a","b"] | @csv'"#)
+            .await;
+        assert_eq!(r.exit_code, 0, "stderr: {}", r.stderr);
+        assert!(r.stdout.contains("\"a\",\"b\""), "stdout: {}", r.stdout);
     }
 }

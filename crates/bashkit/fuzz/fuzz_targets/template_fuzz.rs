@@ -43,6 +43,7 @@ fuzz_target!(|data: &[u8]| {
             .unwrap();
 
         rt.block_on(async {
+            bashkit::testing::fuzz_init();
             let mut bash = bashkit::Bash::builder()
                 .limits(
                     bashkit::ExecutionLimits::new()
@@ -56,27 +57,27 @@ fuzz_target!(|data: &[u8]| {
 
             // Test 1: render template with JSON data via stdin
             let script = format!(
-                "echo '{}' | template -d /dev/stdin '{}' 2>/dev/null; true",
+                "echo '{}' | template -d /dev/stdin '{}'",
                 json_data.replace('\'', "'\\''"),
                 template.replace('\'', "'\\''"),
             );
-            let _ = bash.exec(&script).await;
+            bashkit::testing::fuzz_exec(&mut bash, &script, "template_fuzz", &[]).await;
 
             // Test 2: render template with --strict mode
             let script2 = format!(
-                "echo '{}' | template --strict -d /dev/stdin '{}' 2>/dev/null; true",
+                "echo '{}' | template --strict -d /dev/stdin '{}'",
                 json_data.replace('\'', "'\\''"),
                 template.replace('\'', "'\\''"),
             );
-            let _ = bash.exec(&script2).await;
+            bashkit::testing::fuzz_exec(&mut bash, &script2, "template_fuzz", &[]).await;
 
             // Test 3: render template with -e (HTML escape) flag
             let script3 = format!(
-                "echo '{}' | template -e -d /dev/stdin '{}' 2>/dev/null; true",
+                "echo '{}' | template -e -d /dev/stdin '{}'",
                 json_data.replace('\'', "'\\''"),
                 template.replace('\'', "'\\''"),
             );
-            let _ = bash.exec(&script3).await;
+            bashkit::testing::fuzz_exec(&mut bash, &script3, "template_fuzz", &[]).await;
         });
     }
 });

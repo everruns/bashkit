@@ -105,6 +105,39 @@ just pre-pr       # Pre-PR checks
 - `cargo fmt` and `cargo clippy -- -D warnings`
 - License checks: `cargo deny check` (see `deny.toml`)
 
+### Stderr from builtins must not leak internal Debug shapes
+
+See **TM-INF-022** in `specs/threat-model.md`.
+
+Rules:
+- No `{:?}`, `{:#?}`, or `{name:?}` in `crates/bashkit/src/builtins/`.
+- Use `Display` (`{}`) or a domain-specific formatter that maps each
+  library error variant to a short, real-shell-style message (see
+  `format_jq_compile_errors` in `builtins/jq.rs` as the reference).
+- Cap diagnostic length at ≤ 1 KB.
+- Legitimate Debug uses (assert-failure messages in `#[cfg(test)]`)
+  must annotate the line with `// debug-ok: <reason>`.
+
+Enforcement (all three layers run by `cargo test`, no separate recipe):
+- **Static**: `builtins::tests::no_debug_fmt_in_builtin_source` walks
+  every builtin source file and asserts no `{:?}` directives.
+- **Dynamic per-tool**: each tool's `mod tests` calls
+  `bashkit::testing::assert_no_leak` against malformed inputs that
+  exercise its error paths.
+- **Fuzz**: `tests/{jq,awk}_fuzz_scaffold_tests.rs`, the proptest cases
+  in `tests/proptest_security.rs`, and every `fuzz/fuzz_targets/*.rs`
+  cargo-fuzz target call `bashkit::testing::assert_fuzz_invariants`
+  on the result. This also enforces the host-env canary
+  (`BASHKIT_FUZZ_HOST_CANARY_*` must not appear in stdout/stderr —
+  TM-INF-013 regression guard) and the host-path bans (`/rustc/`,
+  `/.cargo/registry/`, etc. — TM-INF-016).
+
+When adding a new builtin that wraps a library:
+1. Add a `no_leak_*` test to its `mod tests` (see `jq.rs`, `awk.rs`,
+   `json.rs` for examples).
+2. If a cargo-fuzz target exists for the tool, ensure it uses
+   `bashkit::testing::fuzz_exec(...)` — not bare `bash.exec(...)`.
+
 ### Python
 
 - Python package in `crates/bashkit-python/`

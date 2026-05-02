@@ -55,6 +55,7 @@ fuzz_target!(|data: &[u8]| {
             .unwrap();
 
         rt.block_on(async {
+            bashkit::testing::fuzz_init();
             let mut bash = bashkit::Bash::builder()
                 .limits(
                     bashkit::ExecutionLimits::new()
@@ -68,19 +69,19 @@ fuzz_target!(|data: &[u8]| {
 
             // Test 1: pipe data through awk program
             let script = format!(
-                "echo '{}' | awk '{}' 2>/dev/null; true",
+                "echo '{}' | awk '{}'",
                 input_data.replace('\'', "'\\''"),
                 program.replace('\'', "'\\''"),
             );
-            let _ = bash.exec(&script).await;
+            bashkit::testing::fuzz_exec(&mut bash, &script, "awk_fuzz", &[]).await;
 
             // Test 2: awk with -F (field separator) flag
             let script2 = format!(
-                "echo '{}' | awk -F: '{}' 2>/dev/null; true",
+                "echo '{}' | awk -F: '{}'",
                 input_data.replace('\'', "'\\''"),
                 program.replace('\'', "'\\''"),
             );
-            let _ = bash.exec(&script2).await;
+            bashkit::testing::fuzz_exec(&mut bash, &script2, "awk_fuzz", &[]).await;
         });
     }
 });

@@ -693,4 +693,15 @@ mod tests {
         assert_eq!(result.stdout.trim(), "é");
         assert_eq!(result.exit_code, 0);
     }
+
+    // TM-INF-022: garbage expression stderr must not leak parser Debug shapes.
+    #[tokio::test]
+    async fn no_leak_garbage_expression() {
+        let r = crate::builtins::debug_leak_check::run(r#"expr garbage / 0"#).await;
+        crate::builtins::debug_leak_check::assert_no_leak(
+            &r,
+            "expr_garbage",
+            &["ParseFloatError", "ParseIntError"],
+        );
+    }
 }

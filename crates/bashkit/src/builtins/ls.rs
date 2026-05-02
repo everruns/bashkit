@@ -2162,7 +2162,7 @@ mod tests {
         let result = Find.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
         let lines: Vec<&str> = result.stdout.lines().filter(|l| !l.is_empty()).collect();
-        assert_eq!(lines.len(), 2, "Should find 2 files: {:?}", lines);
+        assert_eq!(lines.len(), 2, "Should find 2 files: {:?}", lines); // debug-ok: assert-failure message
 
         // mindepth 1 + type d
         let args2 = vec![
@@ -2190,7 +2190,7 @@ mod tests {
         let result2 = Find.execute(ctx2).await.unwrap();
         assert_eq!(result2.exit_code, 0);
         let lines2: Vec<&str> = result2.stdout.lines().filter(|l| !l.is_empty()).collect();
-        assert_eq!(lines2.len(), 2, "Should find 2 dirs: {:?}", lines2);
+        assert_eq!(lines2.len(), 2, "Should find 2 dirs: {:?}", lines2); // debug-ok: assert-failure message
     }
 
     #[tokio::test]

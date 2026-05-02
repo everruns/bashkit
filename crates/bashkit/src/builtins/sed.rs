@@ -1448,4 +1448,15 @@ mod tests {
         assert!(result.stderr.is_empty());
         assert_eq!(result.stdout, "world\n");
     }
+
+    // TM-INF-022: malformed-regex stderr must not leak `regex` crate Debug.
+    #[tokio::test]
+    async fn no_leak_invalid_regex() {
+        let r = crate::builtins::debug_leak_check::run(r"echo 1 | sed -E 's/[//'").await;
+        crate::builtins::debug_leak_check::assert_no_leak(
+            &r,
+            "sed_invalid_regex",
+            &["regex::Error", "ParseError {"],
+        );
+    }
 }

@@ -55,6 +55,7 @@ fuzz_target!(|data: &[u8]| {
             .unwrap();
 
         rt.block_on(async {
+            bashkit::testing::fuzz_init();
             let mut bash = bashkit::Bash::builder()
                 .limits(
                     bashkit::ExecutionLimits::new()
@@ -68,19 +69,19 @@ fuzz_target!(|data: &[u8]| {
 
             // Test 1: pipe JSON through jq filter
             let script = format!(
-                "echo '{}' | jq '{}' 2>/dev/null; true",
+                "echo '{}' | jq '{}'",
                 json_data.replace('\'', "'\\''"),
                 filter.replace('\'', "'\\''"),
             );
-            let _ = bash.exec(&script).await;
+            bashkit::testing::fuzz_exec(&mut bash, &script, "jq_fuzz", &[]).await;
 
             // Test 2: jq with -r (raw output) flag
             let script2 = format!(
-                "echo '{}' | jq -r '{}' 2>/dev/null; true",
+                "echo '{}' | jq -r '{}'",
                 json_data.replace('\'', "'\\''"),
                 filter.replace('\'', "'\\''"),
             );
-            let _ = bash.exec(&script2).await;
+            bashkit::testing::fuzz_exec(&mut bash, &script2, "jq_fuzz", &[]).await;
         });
     }
 });

@@ -340,4 +340,15 @@ mod tests {
         let r = run(&["compare", "abc", "1.0.0"], None).await;
         assert_eq!(r.exit_code, 1);
     }
+
+    // TM-INF-022: invalid-version stderr must not leak `semver` crate Debug.
+    #[tokio::test]
+    async fn no_leak_invalid_version() {
+        let r = crate::builtins::debug_leak_check::run(r#"semver lt not.a.version 1.0.0"#).await;
+        crate::builtins::debug_leak_check::assert_no_leak(
+            &r,
+            "semver_invalid",
+            &["semver::Error", "Error { kind:"],
+        );
+    }
 }

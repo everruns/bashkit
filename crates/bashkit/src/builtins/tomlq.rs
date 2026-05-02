@@ -509,4 +509,17 @@ timeout = 30
         assert_eq!(r.exit_code, 0);
         assert_eq!(r.stdout.trim(), "hello # world");
     }
+
+    // TM-INF-022: malformed-input stderr must not leak `toml` crate Debug.
+    #[tokio::test]
+    async fn no_leak_malformed_input() {
+        let r =
+            crate::builtins::debug_leak_check::run(r#"echo 'not = toml = nope' | tomlq '.foo'"#)
+                .await;
+        crate::builtins::debug_leak_check::assert_no_leak(
+            &r,
+            "tomlq_malformed_input",
+            &["toml::de::Error", "Error { line:"],
+        );
+    }
 }
