@@ -196,6 +196,16 @@ Coverage lives in four layers (all cited tests are real):
   parity checks against the sqlite3 shell (separator, CSV escaping,
   `.tables` ordering, `.dump` brackets, PRAGMA round-trip, ORDER/LIMIT,
   aggregates).
+- **Differential** — `crates/bashkit/tests/sqlite_differential_tests.rs`.
+  18 cases that drive the same SQL through both bashkit's sqlite and
+  the host `sqlite3` binary, asserting byte-equal stdout. Covers all
+  output modes, aggregates, ORDER/LIMIT/OFFSET, GROUP BY, CASE,
+  COALESCE, subqueries, INNER JOIN, NULL handling, and PRAGMA round
+  trips. Skips gracefully when `sqlite3` isn't on `$PATH`; CI
+  explicitly installs it. One additional case (`recursive_cte_unsupported_in_turso`)
+  pins a *known* divergence: Turso 0.5.3 rejects recursive CTEs while
+  real sqlite3 accepts them — convert to `assert_matches` once Turso
+  closes the gap.
 - **Fuzz / property** — `crates/bashkit/tests/sqlite_fuzz_tests.rs`.
   4 proptest harnesses (no-panic on arbitrary SQL, no host file leak via
   random paths, CSV well-formedness, no `:memory:` artifacts on the VFS).
