@@ -222,6 +222,104 @@ async fn dot_dump_round_trips_via_dot_read() {
 }
 
 #[tokio::test]
+async fn cached_engine_keeps_in_flight_transaction_across_exec_calls() {
+    // Without the engine cache, every `sqlite` invocation opens a fresh
+    // connection from the VFS bytes — so a `BEGIN` in one call would be
+    // dropped before the next call's `COMMIT` could see it. With the
+    // cache, the connection persists for the lifetime of the `Bash`
+    // instance, and transactions span shell commands.
+    let mut bash = make_bash();
+    let r = bash
+        .exec(
+            r#"sqlite /tmp/tx.sqlite 'CREATE TABLE t(a INTEGER); BEGIN; INSERT INTO t VALUES (1)'"#,
+        )
+        .await
+        .unwrap();
+    assert_eq!(r.exit_code, 0, "stderr: {}", r.stderr);
+
+    // Mid-transaction: the row is visible to the same connection but not
+    // yet committed. A follow-up call on the SAME `Bash` reuses the same
+    // engine, so it sees the uncommitted row.
+    let mid = bash
+        .exec(r#"sqlite /tmp/tx.sqlite 'SELECT count(*) FROM t'"#)
+        .await
+        .unwrap();
+    assert_eq!(mid.exit_code, 0, "stderr: {}", mid.stderr);
+    assert_eq!(mid.stdout.trim(), "1");
+
+    // Commit and verify with a final query.
+    let commit = bash
+        .exec(r#"sqlite /tmp/tx.sqlite 'COMMIT; SELECT count(*) FROM t'"#)
+        .await
+        .unwrap();
+    assert_eq!(commit.exit_code, 0, "stderr: {}", commit.stderr);
+    assert_eq!(commit.stdout.trim(), "1");
+}
+
+#[tokio::test]
+async fn cached_engine_isolated_per_database_path() {
+    // Two different DB paths must not collide in the cache. Schema
+    // changes to `/tmp/a.sqlite` are invisible from `/tmp/b.sqlite`.
+    let mut bash = make_bash();
+    bash.exec(r#"sqlite /tmp/a.sqlite 'CREATE TABLE only_in_a(x)'"#)
+        .await
+        .unwrap();
+    let r = bash
+        .exec(r#"sqlite /tmp/b.sqlite '.tables'"#)
+        .await
+        .unwrap();
+    assert_eq!(r.exit_code, 0, "stderr: {}", r.stderr);
+    assert!(
+        !r.stdout.contains("only_in_a"),
+        "schema leaked across cache keys: {:?}",
+        r.stdout
+    );
+}
+
+#[tokio::test]
+async fn memory_target_does_not_persist_across_exec_calls() {
+    // `:memory:` databases are deliberately ephemeral — the cache only
+    // holds file-backed engines. A schema created in one call must NOT
+    // be visible to the next.
+    let mut bash = make_bash();
+    bash.exec(r#"sqlite :memory: 'CREATE TABLE ephemeral(x)'"#)
+        .await
+        .unwrap();
+    let r = bash.exec(r#"sqlite :memory: '.tables'"#).await.unwrap();
+    assert_eq!(r.exit_code, 0, "stderr: {}", r.stderr);
+    assert!(
+        !r.stdout.contains("ephemeral"),
+        ":memory: leaked schema between invocations: {:?}",
+        r.stdout
+    );
+}
+
+#[tokio::test]
+async fn snapshot_and_restore_round_trips_sqlite_state() {
+    // Prove the snapshot/restore story end-to-end: write a row in one
+    // Bash, snapshot, drop it, restore in a fresh Bash, and read the
+    // row back. The flush at command boundary keeps the on-disk image
+    // current, so the snapshot picks up everything.
+    let mut bash = make_bash();
+    bash.exec(r#"sqlite /tmp/snap.sqlite 'CREATE TABLE t(v); INSERT INTO t VALUES ("preserved")'"#)
+        .await
+        .unwrap();
+    let snap = bash.snapshot().expect("snapshot");
+
+    // Brand new Bash, restored from the snapshot. The engine cache is
+    // empty, so the first `sqlite` call re-opens from the VFS — and
+    // sees the row because the previous Bash flushed before snapshot.
+    let mut restored = make_bash();
+    restored.restore_snapshot(&snap).expect("restore");
+    let r = restored
+        .exec(r#"sqlite /tmp/snap.sqlite 'SELECT v FROM t'"#)
+        .await
+        .unwrap();
+    assert_eq!(r.exit_code, 0, "stderr: {}", r.stderr);
+    assert_eq!(r.stdout.trim(), "preserved");
+}
+
+#[tokio::test]
 async fn invalid_sql_exit_code_one() {
     let mut bash = make_bash();
     let r = bash
