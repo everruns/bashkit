@@ -97,7 +97,7 @@ const DEFAULT_PRAGMA_DENY: &[&str] = &[
 ];
 
 /// Choice of `IO` backend.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum SqliteBackend {
     /// Phase 1: load whole DB file into turso's `MemoryIO`, run, flush back.
     /// Default — most predictable and exposes the smallest surface of the
@@ -239,22 +239,58 @@ fn sqlite_inprocess_enabled(ctx: &Context<'_>) -> bool {
 }
 
 /// The `sqlite` / `sqlite3` builtin command.
+///
+/// Holds a session-scoped cache of file-backed engines so that consecutive
+/// `bash.exec("sqlite DB ...")` calls reuse the same connection. This lets
+/// transactions span shell commands (e.g. `BEGIN` in one call, `COMMIT` in
+/// the next) and avoids reloading the DB file from the VFS for every
+/// invocation.
+///
+/// `:memory:` databases bypass the cache — they are intentionally
+/// ephemeral so users get a fresh slate on every invocation.
 pub struct Sqlite {
     /// Resource and backend configuration.
     pub limits: SqliteLimits,
+    /// Per-database cached engine handles. Key: `(backend, canonical-ish path)`.
+    /// Value: an `Arc<TokioMutex<Option<SqliteEngine>>>` so concurrent calls
+    /// to the same path serialise without losing the cached connection.
+    engine_cache: EngineCache,
 }
+
+type CacheKey = (SqliteBackend, std::path::PathBuf);
+type EngineHandle = Arc<tokio::sync::Mutex<Option<engine::SqliteEngine>>>;
+type EngineCache = Arc<std::sync::Mutex<std::collections::HashMap<CacheKey, EngineHandle>>>;
 
 impl Sqlite {
     /// Construct with default limits and the Memory backend.
     pub fn new() -> Self {
         Self {
             limits: SqliteLimits::default(),
+            engine_cache: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         }
     }
 
     /// Construct with custom limits.
     pub fn with_limits(limits: SqliteLimits) -> Self {
-        Self { limits }
+        Self {
+            limits,
+            engine_cache: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        }
+    }
+
+    /// Look up (or insert) the per-database engine handle. The outer
+    /// `std::sync::Mutex` is held only briefly for HashMap access; the
+    /// inner `tokio::sync::Mutex` is what serialises concurrent `sqlite`
+    /// calls against the same database.
+    fn cache_handle(&self, key: &CacheKey) -> EngineHandle {
+        let mut cache = self
+            .engine_cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        cache
+            .entry(key.clone())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(None)))
+            .clone()
     }
 }
 
@@ -317,19 +353,10 @@ impl Builtin for Sqlite {
         // Resolve effective backend (CLI flag overrides builder default).
         let backend = parsed.backend.unwrap_or(self.limits.backend);
 
-        // Open the engine, optionally seeded from VFS.
-        let engine = match open_engine(&db_target, backend, &ctx.fs, &self.limits).await {
-            Ok(e) => e,
-            Err(msg) => return Ok(ExecResult::err(format!("sqlite: {msg}\n"), 1)),
-        };
-
         // Initial output options come from the CLI flags; dot-commands may
         // mutate them as we go.
         let mut opts = parsed.output;
 
-        // Run statements + dot-commands in order. We collect output into a
-        // single buffer; errors short-circuit further execution but still
-        // attempt a flush of any successful writes.
         let mut stdout = String::new();
         let mut stderr = String::new();
         let mut exit_code = 0i32;
@@ -345,33 +372,78 @@ impl Builtin for Sqlite {
             ));
         }
         let deadline = engine::Deadline::new(self.limits.max_duration);
-        let exec_outcome = run_statements(
-            &engine,
-            stmts,
-            &ctx.fs,
-            ctx.cwd,
-            &mut opts,
-            &mut stdout,
-            &self.limits,
-            deadline,
-            0,
-        )
-        .await;
-        if let Err(e) = exec_outcome {
-            stderr.push_str(&format!("sqlite: {e}\n"));
-            exit_code = 1;
-        }
 
-        // Flush + persist.
+        // For `:memory:`, don't cache — every invocation gets a fresh
+        // ephemeral engine. For file-backed targets we lock a per-key
+        // handle so consecutive calls reuse the same connection
+        // (transactions can span shell commands).
         match &db_target {
-            DbTarget::Memory => {}
-            DbTarget::File { path } => match backend {
-                SqliteBackend::Memory => {
-                    if let Some(bytes) = engine.snapshot_bytes() {
-                        // Even on error, try to persist anything that was
-                        // flushed by turso so the caller doesn't lose work
-                        // from earlier statements in the batch.
-                        if let Err(e) = ctx.fs.write_file(path, &bytes).await {
+            DbTarget::Memory => {
+                let engine = match SqliteEngine::open_pure_memory() {
+                    Ok(e) => e,
+                    Err(msg) => {
+                        return Ok(ExecResult::err(format!("sqlite: {msg}\n"), 1));
+                    }
+                };
+                let outcome = run_statements(
+                    &engine,
+                    stmts,
+                    &ctx.fs,
+                    ctx.cwd,
+                    &mut opts,
+                    &mut stdout,
+                    &self.limits,
+                    deadline,
+                    0,
+                )
+                .await;
+                if let Err(e) = outcome {
+                    stderr.push_str(&format!("sqlite: {e}\n"));
+                    exit_code = 1;
+                }
+            }
+            DbTarget::File { path } => {
+                let key: CacheKey = (backend, path.clone());
+                let handle = self.cache_handle(&key);
+                let mut guard = handle.lock().await;
+
+                if guard.is_none() {
+                    match open_file_engine(backend, path, &ctx.fs, &self.limits).await {
+                        Ok(e) => *guard = Some(e),
+                        Err(msg) => {
+                            return Ok(ExecResult::err(format!("sqlite: {msg}\n"), 1));
+                        }
+                    }
+                }
+                let engine = guard.as_ref().expect("engine populated above");
+
+                let outcome = run_statements(
+                    engine,
+                    stmts,
+                    &ctx.fs,
+                    ctx.cwd,
+                    &mut opts,
+                    &mut stdout,
+                    &self.limits,
+                    deadline,
+                    0,
+                )
+                .await;
+                if let Err(e) = outcome {
+                    stderr.push_str(&format!("sqlite: {e}\n"));
+                    exit_code = 1;
+                }
+
+                // Persist to the VFS so snapshots taken between exec()
+                // calls always pick up the latest committed state. We
+                // keep the engine in the cache regardless; the next call
+                // will reuse it (and any in-flight transaction will
+                // continue to see uncommitted state).
+                match backend {
+                    SqliteBackend::Memory => {
+                        if let Some(bytes) = engine.snapshot_bytes()
+                            && let Err(e) = ctx.fs.write_file(path, &bytes).await
+                        {
                             stderr.push_str(&format!(
                                 "sqlite: persist failed: {}: {e}\n",
                                 path.display()
@@ -379,14 +451,14 @@ impl Builtin for Sqlite {
                             exit_code = exit_code.max(1);
                         }
                     }
-                }
-                SqliteBackend::Vfs => {
-                    if let Err(e) = engine.flush_dirty().await {
-                        stderr.push_str(&format!("sqlite: flush failed: {e}\n"));
-                        exit_code = exit_code.max(1);
+                    SqliteBackend::Vfs => {
+                        if let Err(e) = engine.flush_dirty().await {
+                            stderr.push_str(&format!("sqlite: flush failed: {e}\n"));
+                            exit_code = exit_code.max(1);
+                        }
                     }
                 }
-            },
+            }
         }
 
         let mut result = ExecResult {
@@ -559,38 +631,39 @@ fn decode_escapes(s: &str) -> String {
     out
 }
 
-async fn open_engine(
-    target: &DbTarget,
+/// Open a fresh engine for a *file-backed* database, reading the current
+/// VFS bytes for the Memory backend or constructing a `BashkitVfsIO` for
+/// the VFS backend. Called only on cache miss; once cached, the engine
+/// is reused across invocations.
+async fn open_file_engine(
     backend: SqliteBackend,
+    path: &Path,
     fs: &Arc<dyn FileSystem>,
     limits: &SqliteLimits,
 ) -> std::result::Result<SqliteEngine, String> {
-    match target {
-        DbTarget::Memory => SqliteEngine::open_pure_memory(),
-        DbTarget::File { path } => match backend {
-            SqliteBackend::Memory => {
-                let initial = match fs.read_file(path).await {
-                    Ok(bytes) => {
-                        if bytes.len() > limits.max_db_bytes {
-                            return Err(format!(
-                                "database file too large ({} bytes; limit {})",
-                                bytes.len(),
-                                limits.max_db_bytes
-                            ));
-                        }
-                        Some(bytes)
+    match backend {
+        SqliteBackend::Memory => {
+            let initial = match fs.read_file(path).await {
+                Ok(bytes) => {
+                    if bytes.len() > limits.max_db_bytes {
+                        return Err(format!(
+                            "database file too large ({} bytes; limit {})",
+                            bytes.len(),
+                            limits.max_db_bytes
+                        ));
                     }
-                    Err(_) => None,
-                };
-                SqliteEngine::open_memory(initial.as_deref())
-            }
-            SqliteBackend::Vfs => {
-                let handle = vfs_io::current_handle_or_default();
-                let io = vfs_io::BashkitVfsIO::new(fs.clone(), handle);
-                let path_str = path.to_string_lossy().into_owned();
-                SqliteEngine::open_vfs(io, &path_str)
-            }
-        },
+                    Some(bytes)
+                }
+                Err(_) => None,
+            };
+            SqliteEngine::open_memory(initial.as_deref())
+        }
+        SqliteBackend::Vfs => {
+            let handle = vfs_io::current_handle_or_default();
+            let io = vfs_io::BashkitVfsIO::new(fs.clone(), handle);
+            let path_str = path.to_string_lossy().into_owned();
+            SqliteEngine::open_vfs(io, &path_str)
+        }
     }
 }
 
