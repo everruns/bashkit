@@ -45,6 +45,17 @@ let bash = Bash::builder()
     .build();
 ```
 
+The same builtins are provided by `TypeScriptExtension`, which can be added to
+either `BashBuilder` or `BashToolBuilder`:
+
+```rust
+use bashkit::{Bash, TypeScriptExtension};
+
+let bash = Bash::builder()
+    .extension(TypeScriptExtension::default())
+    .build();
+```
+
 The `typescript` feature flag enables compilation; `.typescript()` on the builder
 enables registration. This matches the `python` pattern
 (`Bash::builder().python().build()`).

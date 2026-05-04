@@ -27,6 +27,16 @@ let r = bash.exec("ts -c \"console.log('hello')\"").await?;
 assert_eq!(r.stdout, "hello\n");
 ```
 
+Or register the TypeScript extension explicitly:
+
+```rust
+use bashkit::{Bash, TypeScriptExtension};
+
+let mut bash = Bash::builder()
+    .extension(TypeScriptExtension::default())
+    .build();
+```
+
 ## Command aliases
 
 Five commands are registered, all running the same ZapCode interpreter:
