@@ -117,6 +117,10 @@ bench-all:
 bench-parallel:
     ./scripts/bench-parallel.sh
 
+# Run Criterion sqlite builtin benchmark and save results
+bench-sqlite:
+    ./scripts/bench-sqlite.sh
+
 # === Eval ===
 
 # Run LLM eval (requires ANTHROPIC_API_KEY or OPENAI_API_KEY)
