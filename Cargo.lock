@@ -422,6 +422,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bashkit-coreutils-port"
+version = "0.4.1"
+dependencies = [
+ "anyhow",
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "bashkit-eval"
 version = "0.4.1"
 dependencies = [

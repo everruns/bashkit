@@ -4,7 +4,6 @@
 
 use async_trait::async_trait;
 use bashkit::{Bash, Builtin, BuiltinContext, ExecResult, FileSystem, InMemoryFs};
-#[cfg(feature = "clap-builtins")]
 use bashkit::{
     BashkitContext, ClapBuiltin,
     clap::{Parser, Subcommand},
@@ -101,7 +100,6 @@ impl Builtin for EnvDumper {
     }
 }
 
-#[cfg(feature = "clap-builtins")]
 #[derive(Parser)]
 #[command(name = "hello-clap", about = "greet someone")]
 struct HelloClapArgs {
@@ -112,11 +110,9 @@ struct HelloClapArgs {
     shout: bool,
 }
 
-#[cfg(feature = "clap-builtins")]
 struct HelloClap;
 
 #[async_trait]
-#[cfg(feature = "clap-builtins")]
 impl ClapBuiltin for HelloClap {
     type Args = HelloClapArgs;
 
@@ -136,7 +132,6 @@ impl ClapBuiltin for HelloClap {
     }
 }
 
-#[cfg(feature = "clap-builtins")]
 #[derive(Parser)]
 #[command(name = "math-clap")]
 struct MathClapArgs {
@@ -144,7 +139,6 @@ struct MathClapArgs {
     command: MathClapCommand,
 }
 
-#[cfg(feature = "clap-builtins")]
 #[derive(Subcommand)]
 enum MathClapCommand {
     Add { left: i64, right: i64 },
@@ -152,11 +146,9 @@ enum MathClapCommand {
     StdinLen,
 }
 
-#[cfg(feature = "clap-builtins")]
 struct MathClap;
 
 #[async_trait]
-#[cfg(feature = "clap-builtins")]
 impl ClapBuiltin for MathClap {
     type Args = MathClapArgs;
 
@@ -214,7 +206,6 @@ async fn test_custom_builtin_no_args() {
 }
 
 #[tokio::test]
-#[cfg(feature = "clap-builtins")]
 async fn test_custom_builtin_clap_parser() {
     let mut bash = Bash::builder()
         .builtin("hello-clap", Box::new(HelloClap))
@@ -226,7 +217,6 @@ async fn test_custom_builtin_clap_parser() {
 }
 
 #[tokio::test]
-#[cfg(feature = "clap-builtins")]
 async fn test_custom_builtin_clap_help_and_errors() {
     let mut bash = Bash::builder()
         .builtin("hello-clap", Box::new(HelloClap))
@@ -244,7 +234,6 @@ async fn test_custom_builtin_clap_help_and_errors() {
 }
 
 #[tokio::test]
-#[cfg(feature = "clap-builtins")]
 async fn test_custom_builtin_clap_subcommands_and_stdin() {
     let mut bash = Bash::builder()
         .builtin("math-clap", Box::new(MathClap))

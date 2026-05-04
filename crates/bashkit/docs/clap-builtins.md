@@ -3,21 +3,8 @@
 `ClapBuiltin` lets Rust applications define custom Bashkit commands with
 `#[derive(clap::Parser)]` argument structs. Handlers receive a
 `BashkitContext` that captures stdout, stderr, and exit code for the virtual
-shell. The feature is enabled by default through `clap-builtins`.
-
-Disable it for a smaller library dependency surface:
-
-```toml
-[dependencies]
-bashkit = { version = "0.3", default-features = false }
-```
-
-Enable it explicitly when default features are off:
-
-```toml
-[dependencies]
-bashkit = { version = "0.3", default-features = false, features = ["clap-builtins"] }
-```
+shell. `clap` is an unconditional dependency of `bashkit`, so this trait is
+always available.
 
 ## Basic Usage
 

@@ -156,10 +156,9 @@ Arguments are passed as a slice of strings, excluding the command name itself:
 let first_arg = ctx.args.first().map(|s| s.as_str()).unwrap_or("default");
 ```
 
-For custom builtins with richer flags, options, or subcommands, enable the
-default `clap-builtins` feature and implement `ClapBuiltin` with a
-`#[derive(clap::Parser)]` argument type. See the `clap_builtins_guide` rustdoc
-module for tested examples.
+For custom builtins with richer flags, options, or subcommands, implement
+`ClapBuiltin` with a `#[derive(clap::Parser)]` argument type. See the
+`clap_builtins_guide` rustdoc module for tested examples.
 
 ### Environment Variables
 

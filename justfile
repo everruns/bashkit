@@ -69,6 +69,32 @@ fuzz-diff-deep:
 clean:
     cargo clean
 
+# === uutils argument-surface port (POC) ===
+
+# Regenerate the clap `Command` builders for utilities ported from
+# uutils/coreutils. Output is committed under
+# `crates/bashkit/src/builtins/generated/`. Pass UUTILS=/path/to/uutils to
+# point at a checkout (defaults to /tmp/uutils, cloned if missing).
+#
+# Add new utilities by extending the for-loop below and wiring the resulting
+# `<util>_command()` into the matching builtin module.
+regen-coreutils-args UUTILS="/tmp/uutils":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ ! -d "{{UUTILS}}/.git" ]]; then
+        echo "Cloning uutils into {{UUTILS}}..."
+        git clone --depth 1 https://github.com/uutils/coreutils.git "{{UUTILS}}"
+    fi
+    rev="$(git -C "{{UUTILS}}" rev-parse --short HEAD)"
+    out="crates/bashkit/src/builtins/generated"
+    mkdir -p "$out"
+    for util in cat tac; do
+        cargo run -q -p bashkit-coreutils-port -- "{{UUTILS}}" "$util" "$rev" \
+            > "$out/${util}_args.rs"
+        echo "regenerated $out/${util}_args.rs (uutils@$rev)"
+    done
+    cargo fmt -- "$out"/*.rs
+
 # === Run ===
 
 # Run the CLI

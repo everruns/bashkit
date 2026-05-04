@@ -44,6 +44,22 @@ echo "done"
 done
 ### end
 
+### tac_unknown_flag_rejected
+### bash_diff: clap-backed tac returns exit 2 for parse errors; GNU tac returns 1
+# tac --no-such-flag is rejected by the generated clap parser
+tac --no-such-flag 2>/dev/null; echo "exit=$?"
+### expect
+exit=2
+### end
+
+### tac_separator_unimplemented
+### bash_diff: bashkit explicitly errors on -s until the body lands; GNU tac applies the separator
+# bashkit accepts -s at the parser level but errors explicitly until the body lands
+tac -s X /tmp/tac_test 2>/dev/null; echo "exit=$?"
+### expect
+exit=2
+### end
+
 ### rev_basic
 # rev reverses characters on each line
 echo "hello" | rev
