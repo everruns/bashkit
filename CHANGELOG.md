@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-04
+
+### Highlights
+
+- **Builtin extension abstraction** — New public `Extension` trait groups related builtins for one-call registration on `BashBuilder`/`BashToolBuilder`. TypeScript registration now flows through `TypeScriptExtension`, and `ScriptedTool` reuses a shared `ToolDefExtension` for its per-call logic shell ([#1515](https://github.com/everruns/bashkit/pull/1515), [#1518](https://github.com/everruns/bashkit/pull/1518)).
+- **Clap-backed custom builtins** — Custom builtins can now be defined declaratively against a `clap` parser, replacing hand-rolled arg parsing for new integrations ([#1514](https://github.com/everruns/bashkit/pull/1514)).
+- **SQLite session engine cache** — The `sqlite` builtin keeps a session-scoped engine alive across `exec()` calls, so transactions and prepared state survive multiple shell invocations within one session ([#1513](https://github.com/everruns/bashkit/pull/1513)).
+- **SQLite hardening follow-up** — PRAGMA policy parsing now handles SQL comments and quoted/bracket/backtick identifiers (closing a `PRAGMA main."cache_size"` bypass), and `max_db_bytes` is enforced consistently across VFS writes/truncates and memory-backend persistence ([#1521](https://github.com/everruns/bashkit/pull/1521)).
+- **Python + toolchain bumps** — Embedded Python (`monty`) bumped to `0.0.17` and Rust toolchain bumped to `1.95.0` across `rust-toolchain.toml` and matching CI workflow refs ([#1520](https://github.com/everruns/bashkit/pull/1520)).
+
+### What's Changed
+
+* bench(sqlite): add Criterion benchmark for sqlite builtin ([#1523](https://github.com/everruns/bashkit/pull/1523)) by @chaliy
+* chore(python): bump monty to 49faa4c (0.0.17) and Rust to 1.95.0 ([#1520](https://github.com/everruns/bashkit/pull/1520)) by @chaliy
+* fix(deps): bump postcss to 8.5.13 in browser example ([#1522](https://github.com/everruns/bashkit/pull/1522)) by @chaliy
+* fix(sqlite): harden pragma policy and db caps ([#1521](https://github.com/everruns/bashkit/pull/1521)) by @chaliy
+* test(ssh): retry live supabase smoke ([#1519](https://github.com/everruns/bashkit/pull/1519)) by @chaliy
+* feat(scripted-tool): add ToolDef extension ([#1518](https://github.com/everruns/bashkit/pull/1518)) by @chaliy
+* feat(sqlite): session-scoped engine cache for transactions across exec() ([#1513](https://github.com/everruns/bashkit/pull/1513)) by @chaliy
+* feat(extension): add builtin extension abstraction ([#1515](https://github.com/everruns/bashkit/pull/1515)) by @chaliy
+* feat(builtins): support clap-backed custom builtins ([#1514](https://github.com/everruns/bashkit/pull/1514)) by @chaliy
+* test(sqlite): add differential tests vs host sqlite3 binary ([#1511](https://github.com/everruns/bashkit/pull/1511)) by @chaliy
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.3.0...v0.4.0
+
 ## [0.3.0] - 2026-05-02
 
 ### Highlights
