@@ -1,429 +1,15 @@
-//! ScriptedTool execution: Tool impl, builtin adapter, documentation helpers.
+//! ScriptedTool execution: Tool impl and documentation helpers.
 
-use super::{
-    CallbackKind, ScriptedCommandInvocation, ScriptedCommandKind, ScriptedExecutionTrace,
-    ScriptedTool, ToolArgs,
-};
+use super::{ScriptedExecutionTrace, ScriptedTool, ToolDefExtension, extension::InvocationLog};
 use crate::Bash;
-use crate::builtins::{Builtin, Context};
-use crate::error::Result;
-use crate::interpreter::ExecResult;
 use crate::tool::{
     Tool, ToolError, ToolExecution, ToolOutputChunk, ToolRequest, ToolResponse, ToolStatus,
     VERSION, localized, tool_output_from_response, tool_request_from_value,
 };
-use crate::tool_def::{parse_flags, usage_from_schema};
+use crate::tool_def::usage_from_schema;
 use async_trait::async_trait;
 use schemars::schema_for;
 use std::sync::{Arc, Mutex};
-
-type InvocationLog = Arc<Mutex<Vec<ScriptedCommandInvocation>>>;
-
-fn push_invocation(
-    log: &InvocationLog,
-    name: &str,
-    kind: ScriptedCommandKind,
-    args: &[String],
-    exit_code: i32,
-) {
-    let mut invocations = log.lock().expect("scripted invocation log poisoned");
-    invocations.push(ScriptedCommandInvocation {
-        name: name.to_string(),
-        kind,
-        args: args.to_vec(),
-        exit_code,
-    });
-}
-
-// ============================================================================
-// ToolBuiltinAdapter — wraps ToolCallback as a Builtin
-// ============================================================================
-
-/// Adapts a [`CallbackKind`] into a [`Builtin`] so the interpreter can execute it.
-/// Parses `--key value` flags from `ctx.args` using the schema for type coercion.
-struct ToolBuiltinAdapter {
-    name: String,
-    description: String,
-    callback: CallbackKind,
-    schema: serde_json::Value,
-    log: InvocationLog,
-    sanitize_errors: bool,
-    dry_run: Option<CallbackKind>,
-}
-
-impl ToolBuiltinAdapter {
-    /// Generate help text from the tool's schema, identical to `help <tool>`.
-    fn help_text(&self) -> String {
-        let mut out = format!("{} - {}\n", self.name, self.description);
-        if let Some(usage) = usage_from_schema(&self.schema) {
-            out.push_str(&format!("Usage: {} {}\n", self.name, usage));
-        }
-        out
-    }
-}
-
-#[async_trait]
-impl Builtin for ToolBuiltinAdapter {
-    async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        // Intercept --help before calling the callback — return the same
-        // quality output as `help <tool>` without invoking the callback.
-        // --help takes precedence over --dry-run.
-        if ctx.args.iter().any(|a| a == "--help") {
-            let result = ExecResult::ok(self.help_text());
-            push_invocation(
-                &self.log,
-                &self.name,
-                ScriptedCommandKind::Help,
-                ctx.args,
-                result.exit_code,
-            );
-            return Ok(result);
-        }
-
-        // Intercept --dry-run: validate args without executing the callback.
-        if ctx.args.iter().any(|a| a == "--dry-run") {
-            let stripped: Vec<String> = ctx
-                .args
-                .iter()
-                .filter(|a| a.as_str() != "--dry-run")
-                .cloned()
-                .collect();
-            let exit_result = match parse_flags(&stripped, &self.schema) {
-                Ok(params) => {
-                    if let Some(ref dr) = self.dry_run {
-                        // Custom dry-run handler
-                        let tool_args = ToolArgs {
-                            params,
-                            stdin: ctx.stdin.map(String::from),
-                        };
-                        let cb_result = match dr {
-                            CallbackKind::Sync(cb) => (cb)(&tool_args),
-                            CallbackKind::Async(cb) => (cb)(tool_args).await,
-                        };
-                        match cb_result {
-                            Ok(stdout) => ExecResult::ok(stdout),
-                            Err(msg) => {
-                                if self.sanitize_errors {
-                                    #[cfg(feature = "tracing")]
-                                    tracing::debug!(
-                                        tool = %self.name,
-                                        error = %msg,
-                                        "tool dry-run callback error (sanitized)"
-                                    );
-                                    ExecResult::err(format!("{}: callback failed\n", self.name), 1)
-                                } else {
-                                    ExecResult::err(msg, 1)
-                                }
-                            }
-                        }
-                    } else {
-                        // Default: return structured JSON validation result
-                        let obj = serde_json::json!({
-                            "dry_run": true,
-                            "valid": true,
-                            "tool": self.name,
-                            "params": params,
-                        });
-                        ExecResult::ok(format!(
-                            "{}\n",
-                            serde_json::to_string(&obj).unwrap_or_default()
-                        ))
-                    }
-                }
-                Err(err) => {
-                    let obj = serde_json::json!({
-                        "dry_run": true,
-                        "valid": false,
-                        "tool": self.name,
-                        "error": err,
-                    });
-                    let json = serde_json::to_string(&obj).unwrap_or_default();
-                    ExecResult::err(format!("{json}\n"), 1)
-                }
-            };
-            push_invocation(
-                &self.log,
-                &self.name,
-                ScriptedCommandKind::Tool,
-                ctx.args,
-                exit_result.exit_code,
-            );
-            return Ok(exit_result);
-        }
-
-        let exit_result = match parse_flags(ctx.args, &self.schema) {
-            Ok(params) => {
-                let tool_args = ToolArgs {
-                    params,
-                    stdin: ctx.stdin.map(String::from),
-                };
-
-                let cb_result = match &self.callback {
-                    CallbackKind::Sync(cb) => (cb)(&tool_args),
-                    CallbackKind::Async(cb) => (cb)(tool_args).await,
-                };
-
-                match cb_result {
-                    Ok(stdout) => ExecResult::ok(stdout),
-                    Err(msg) => {
-                        // THREAT[TM-INF-030]: Sanitize callback errors to prevent
-                        // leaking internal details (connection strings, file paths,
-                        // stack traces) in tool output visible to LLM agents.
-                        if self.sanitize_errors {
-                            #[cfg(feature = "tracing")]
-                            tracing::debug!(
-                                tool = %self.name,
-                                error = %msg,
-                                "tool callback error (sanitized)"
-                            );
-                            ExecResult::err(format!("{}: callback failed\n", self.name), 1)
-                        } else {
-                            ExecResult::err(msg, 1)
-                        }
-                    }
-                }
-            }
-            Err(msg) => ExecResult::err(msg, 2),
-        };
-
-        push_invocation(
-            &self.log,
-            &self.name,
-            ScriptedCommandKind::Tool,
-            ctx.args,
-            exit_result.exit_code,
-        );
-        Ok(exit_result)
-    }
-}
-
-// ============================================================================
-// HelpBuiltin — runtime schema introspection
-// ============================================================================
-
-/// Snapshot of a tool definition for the `help` and `discover` builtins.
-#[derive(Clone)]
-struct ToolDefSnapshot {
-    name: String,
-    description: String,
-    input_schema: serde_json::Value,
-    tags: Vec<String>,
-    category: Option<String>,
-}
-
-/// Built-in `help` command for runtime tool schema introspection.
-///
-/// Modes:
-/// - `help --list` — list all tool names + descriptions
-/// - `help <tool>` — human-readable usage
-/// - `help <tool> --json` — machine-readable JSON schema
-struct HelpBuiltin {
-    tools: Vec<ToolDefSnapshot>,
-    log: InvocationLog,
-}
-
-#[async_trait]
-impl Builtin for HelpBuiltin {
-    async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        let args = ctx.args;
-
-        let result = if args.is_empty() || (args.len() == 1 && args[0] == "--list") {
-            // List all tools
-            let mut out = String::new();
-            for t in &self.tools {
-                out.push_str(&format!("{:<20} {}\n", t.name, t.description));
-            }
-            ExecResult::ok(out)
-        } else {
-            // Find the tool name (first non-flag arg)
-            let tool_name = args.iter().find(|a| !a.starts_with("--"));
-            let json_mode = args.iter().any(|a| a == "--json");
-
-            let Some(tool_name) = tool_name else {
-                let result =
-                    ExecResult::err("usage: help [--list] [<tool>] [--json]".to_string(), 1);
-                push_invocation(
-                    &self.log,
-                    "help",
-                    ScriptedCommandKind::Help,
-                    args,
-                    result.exit_code,
-                );
-                return Ok(result);
-            };
-
-            let Some(tool) = self.tools.iter().find(|t| t.name == *tool_name) else {
-                let result = ExecResult::err(format!("help: unknown tool: {tool_name}"), 1);
-                push_invocation(
-                    &self.log,
-                    "help",
-                    ScriptedCommandKind::Help,
-                    args,
-                    result.exit_code,
-                );
-                return Ok(result);
-            };
-
-            if json_mode {
-                // Machine-readable JSON output
-                let obj = serde_json::json!({
-                    "name": tool.name,
-                    "description": tool.description,
-                    "input_schema": tool.input_schema,
-                });
-                let json_str = serde_json::to_string_pretty(&obj).unwrap_or_default();
-                ExecResult::ok(format!("{json_str}\n"))
-            } else {
-                // Human-readable output
-                let mut out = format!("{} - {}\n", tool.name, tool.description);
-                if let Some(usage) = usage_from_schema(&tool.input_schema) {
-                    out.push_str(&format!("Usage: {} {}\n", tool.name, usage));
-                }
-                ExecResult::ok(out)
-            }
-        };
-
-        push_invocation(
-            &self.log,
-            "help",
-            ScriptedCommandKind::Help,
-            args,
-            result.exit_code,
-        );
-        Ok(result)
-    }
-}
-
-// ============================================================================
-// DiscoverBuiltin — progressive tool discovery
-// ============================================================================
-
-/// Built-in `discover` command for exploring large tool sets.
-struct DiscoverBuiltin {
-    tools: Vec<ToolDefSnapshot>,
-    log: InvocationLog,
-}
-
-impl DiscoverBuiltin {
-    fn filter_tools(&self, args: &[String]) -> Vec<&ToolDefSnapshot> {
-        if let Some(pos) = args.iter().position(|a| a == "--category") {
-            let cat = args.get(pos + 1).map(|s| s.as_str()).unwrap_or("");
-            return self
-                .tools
-                .iter()
-                .filter(|t| t.category.as_deref() == Some(cat))
-                .collect();
-        }
-
-        if let Some(pos) = args.iter().position(|a| a == "--tag") {
-            let tag = args.get(pos + 1).map(|s| s.as_str()).unwrap_or("");
-            return self
-                .tools
-                .iter()
-                .filter(|t| t.tags.iter().any(|tg| tg == tag))
-                .collect();
-        }
-
-        if let Some(pos) = args.iter().position(|a| a == "--search") {
-            let keyword = args
-                .get(pos + 1)
-                .map(|s| s.to_lowercase())
-                .unwrap_or_default();
-            return self
-                .tools
-                .iter()
-                .filter(|t| {
-                    t.name.to_lowercase().contains(&keyword)
-                        || t.description.to_lowercase().contains(&keyword)
-                })
-                .collect();
-        }
-
-        self.tools.iter().collect()
-    }
-}
-
-#[async_trait]
-impl Builtin for DiscoverBuiltin {
-    async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        let args = ctx.args;
-
-        let result = if args.is_empty() {
-            ExecResult::err(
-                "usage: discover --categories | --category <name> | --tag <tag> | --search <keyword> [--json]".to_string(),
-                1,
-            )
-        } else {
-            let json_mode = args.iter().any(|a| a == "--json");
-
-            // --categories
-            if args.iter().any(|a| a == "--categories") {
-                let mut cats: std::collections::BTreeMap<String, usize> =
-                    std::collections::BTreeMap::new();
-                for t in &self.tools {
-                    if let Some(ref cat) = t.category {
-                        *cats.entry(cat.clone()).or_insert(0) += 1;
-                    }
-                }
-                if json_mode {
-                    let arr: Vec<serde_json::Value> = cats
-                        .iter()
-                        .map(|(name, count)| serde_json::json!({"category": name, "count": count}))
-                        .collect();
-                    let json_str =
-                        serde_json::to_string_pretty(&arr).unwrap_or_else(|_| "[]".to_string());
-                    ExecResult::ok(format!("{json_str}\n"))
-                } else {
-                    let mut out = String::new();
-                    for (name, count) in &cats {
-                        let plural = if *count == 1 { "tool" } else { "tools" };
-                        out.push_str(&format!("{name} ({count} {plural})\n"));
-                    }
-                    ExecResult::ok(out)
-                }
-            } else {
-                let filtered = self.filter_tools(args);
-
-                if json_mode {
-                    let arr: Vec<serde_json::Value> = filtered
-                        .iter()
-                        .map(|t| {
-                            let mut obj = serde_json::json!({
-                                "name": t.name,
-                                "description": t.description,
-                            });
-                            if !t.tags.is_empty() {
-                                obj["tags"] = serde_json::json!(t.tags);
-                            }
-                            if let Some(ref cat) = t.category {
-                                obj["category"] = serde_json::json!(cat);
-                            }
-                            obj
-                        })
-                        .collect();
-                    let json_str =
-                        serde_json::to_string_pretty(&arr).unwrap_or_else(|_| "[]".to_string());
-                    ExecResult::ok(format!("{json_str}\n"))
-                } else {
-                    let mut out = String::new();
-                    for t in &filtered {
-                        out.push_str(&format!("{:<20} {}\n", t.name, t.description));
-                    }
-                    ExecResult::ok(out)
-                }
-            }
-        };
-
-        push_invocation(
-            &self.log,
-            "discover",
-            ScriptedCommandKind::Discover,
-            args,
-            result.exit_code,
-        );
-        Ok(result)
-    }
-}
 
 // ============================================================================
 // ScriptedTool — internal helpers
@@ -440,45 +26,10 @@ impl ScriptedTool {
         for (key, value) in &self.env_vars {
             builder = builder.env(key, value);
         }
-        for tool in &self.tools {
-            let name = tool.def.name.clone();
-            let builtin: Box<dyn Builtin> = Box::new(ToolBuiltinAdapter {
-                name: name.clone(),
-                description: tool.def.description.clone(),
-                callback: tool.callback.clone(),
-                schema: tool.def.input_schema.clone(),
-                log: Arc::clone(&log),
-                sanitize_errors: self.sanitize_errors,
-                dry_run: tool.dry_run.clone(),
-            });
-            builder = builder.builtin(name, builtin);
-        }
-
-        // Register the help and discover builtins
-        let snapshots: Vec<ToolDefSnapshot> = self
-            .tools
-            .iter()
-            .map(|t| ToolDefSnapshot {
-                name: t.def.name.clone(),
-                description: t.def.description.clone(),
-                input_schema: t.def.input_schema.clone(),
-                tags: t.def.tags.clone(),
-                category: t.def.category.clone(),
-            })
-            .collect();
-        builder = builder.builtin(
-            "help".to_string(),
-            Box::new(HelpBuiltin {
-                tools: snapshots.clone(),
-                log: Arc::clone(&log),
-            }),
-        );
-        builder = builder.builtin(
-            "discover".to_string(),
-            Box::new(DiscoverBuiltin {
-                tools: snapshots,
-                log,
-            }),
+        builder = builder.extension(
+            ToolDefExtension::from_registered_tools(self.tools.clone())
+                .sanitize_errors(self.sanitize_errors)
+                .with_invocation_log(log),
         );
 
         builder.build()
@@ -696,7 +247,9 @@ impl Tool for ScriptedTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ToolArgs;
     use crate::ToolDef;
+    use crate::tool_def::parse_flags;
 
     #[test]
     fn test_parse_flags_key_value() {
@@ -800,7 +353,7 @@ mod tests {
                         "id": {"type": "integer"}
                     }
                 })),
-                |_args: &super::ToolArgs| Ok("{\"id\":1}\n".to_string()),
+                |_args: &ToolArgs| Ok("{\"id\":1}\n".to_string()),
             )
             .tool_fn(
                 ToolDef::new("list_orders", "List orders for user").with_schema(
@@ -812,7 +365,7 @@ mod tests {
                         }
                     }),
                 ),
-                |_args: &super::ToolArgs| Ok("[]\n".to_string()),
+                |_args: &ToolArgs| Ok("[]\n".to_string()),
             )
             .build()
     }
@@ -912,7 +465,7 @@ mod tests {
                     "type": "object",
                     "properties": { "id": {"type": "integer"} }
                 })),
-                |_args: &super::ToolArgs| Ok("ok\n".to_string()),
+                |_args: &ToolArgs| Ok("ok\n".to_string()),
             )
             .build();
         let sp = tool.system_prompt();
@@ -928,7 +481,7 @@ mod tests {
                     "type": "object",
                     "properties": { "id": {"type": "integer"} }
                 })),
-                |_args: &super::ToolArgs| Ok("ok\n".to_string()),
+                |_args: &ToolArgs| Ok("ok\n".to_string()),
             )
             .build();
         let sp = tool.system_prompt();
@@ -943,10 +496,9 @@ mod tests {
 
         let tool = ScriptedTool::builder("test")
             .short_description("test")
-            .tool_fn(
-                ToolDef::new("fail", "Always fails"),
-                |_args: &super::ToolArgs| Err("service error".to_string()),
-            )
+            .tool_fn(ToolDef::new("fail", "Always fails"), |_args: &ToolArgs| {
+                Err("service error".to_string())
+            })
             .build();
         let req = ToolRequest {
             commands: "fail".into(),
@@ -971,29 +523,29 @@ mod tests {
                 ToolDef::new("create_charge", "Create a payment charge")
                     .with_category("payments")
                     .with_tags(&["billing", "write"]),
-                |_args: &super::ToolArgs| Ok("ok\n".to_string()),
+                |_args: &ToolArgs| Ok("ok\n".to_string()),
             )
             .tool_fn(
                 ToolDef::new("refund", "Issue a refund")
                     .with_category("payments")
                     .with_tags(&["billing", "write"]),
-                |_args: &super::ToolArgs| Ok("ok\n".to_string()),
+                |_args: &ToolArgs| Ok("ok\n".to_string()),
             )
             .tool_fn(
                 ToolDef::new("get_user", "Fetch user by ID")
                     .with_category("users")
                     .with_tags(&["read"]),
-                |_args: &super::ToolArgs| Ok("ok\n".to_string()),
+                |_args: &ToolArgs| Ok("ok\n".to_string()),
             )
             .tool_fn(
                 ToolDef::new("delete_user", "Delete a user account")
                     .with_category("users")
                     .with_tags(&["admin", "write"]),
-                |_args: &super::ToolArgs| Ok("ok\n".to_string()),
+                |_args: &ToolArgs| Ok("ok\n".to_string()),
             )
             .tool_fn(
                 ToolDef::new("get_inventory", "Check inventory levels").with_category("inventory"),
-                |_args: &super::ToolArgs| Ok("ok\n".to_string()),
+                |_args: &ToolArgs| Ok("ok\n".to_string()),
             )
             .build()
     }
@@ -1152,12 +704,9 @@ mod tests {
     #[tokio::test]
     async fn test_callback_error_sanitized_by_default() {
         let tool = ScriptedTool::builder("api")
-            .tool_fn(
-                ToolDef::new("fail", "Always fails"),
-                |_args: &super::ToolArgs| {
-                    Err("connection failed: postgres://admin:secret@internal-db:5432/prod".into())
-                },
-            )
+            .tool_fn(ToolDef::new("fail", "Always fails"), |_args: &ToolArgs| {
+                Err("connection failed: postgres://admin:secret@internal-db:5432/prod".into())
+            })
             .build();
         let resp = tool
             .execute(ToolRequest {
@@ -1179,12 +728,9 @@ mod tests {
     async fn test_callback_error_unsanitized_when_disabled() {
         let tool = ScriptedTool::builder("api")
             .sanitize_errors(false)
-            .tool_fn(
-                ToolDef::new("fail", "Always fails"),
-                |_args: &super::ToolArgs| {
-                    Err("connection failed: postgres://admin:secret@internal-db:5432/prod".into())
-                },
-            )
+            .tool_fn(ToolDef::new("fail", "Always fails"), |_args: &ToolArgs| {
+                Err("connection failed: postgres://admin:secret@internal-db:5432/prod".into())
+            })
             .build();
         let resp = tool
             .execute(ToolRequest {

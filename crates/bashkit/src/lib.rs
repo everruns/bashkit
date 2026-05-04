@@ -475,7 +475,8 @@ pub use trace::{
 pub use scripted_tool::{
     AsyncToolCallback, CallbackKind, DiscoverTool, DiscoveryMode, ScriptedCommandInvocation,
     ScriptedCommandKind, ScriptedExecutionTrace, ScriptedTool, ScriptedToolBuilder,
-    ScriptingToolSet, ScriptingToolSetBuilder, ToolArgs, ToolCallback, ToolDef,
+    ScriptingToolSet, ScriptingToolSetBuilder, ToolArgs, ToolCallback, ToolDef, ToolDefExtension,
+    ToolDefExtensionBuilder,
 };
 #[cfg(feature = "scripted_tool")]
 pub use tool_def::{AsyncToolExec, SyncToolExec, ToolImpl};

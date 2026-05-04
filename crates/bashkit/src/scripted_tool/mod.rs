@@ -128,8 +128,10 @@
 //! the same `Arc<ToolCallback>` instances are reused across `execute()` calls.
 
 mod execute;
+mod extension;
 mod toolset;
 
+pub use extension::{ToolDefExtension, ToolDefExtensionBuilder};
 pub use toolset::{DiscoverTool, DiscoveryMode, ScriptingToolSet, ScriptingToolSetBuilder};
 
 // Re-export foundational types from tool_def (they used to live here).
@@ -1436,6 +1438,36 @@ mod tests {
         assert_eq!(resp.exit_code, 0);
         assert!(resp.stdout.contains("from_impl"));
         assert!(resp.stdout.contains("from_fn"));
+    }
+
+    #[tokio::test]
+    async fn test_tool_def_extension_registers_tools_help_and_discover_in_bash() {
+        let extension = ToolDefExtension::builder()
+            .tool_fn(
+                ToolDef::new("get_user", "Fetch user by ID")
+                    .with_schema(serde_json::json!({
+                        "type": "object",
+                        "properties": { "id": {"type": "integer"} }
+                    }))
+                    .with_category("users")
+                    .with_tags(&["read"]),
+                |args: &ToolArgs| {
+                    let id = args.param_i64("id").ok_or("missing --id")?;
+                    Ok(format!("{{\"id\":{id}}}\n"))
+                },
+            )
+            .build();
+
+        let mut bash = crate::Bash::builder().extension(extension).build();
+        let result = bash
+            .exec("discover --category users\nhelp get_user\nget_user --id 7")
+            .await
+            .expect("extension commands should execute");
+
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("get_user"));
+        assert!(result.stdout.contains("Usage: get_user --id <integer>"));
+        assert!(result.stdout.contains(r#""id":7"#));
     }
 
     // -- Issue #1278: --help flag tests --
