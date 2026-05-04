@@ -233,6 +233,8 @@ pub(crate) use sqlite::SqliteInprocessOptIn;
 pub use sqlite::{Sqlite, SqliteBackend, SqliteLimits};
 
 use async_trait::async_trait;
+#[cfg(feature = "clap-builtins")]
+use clap::{CommandFactory, FromArgMatches};
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -656,6 +658,230 @@ pub trait Builtin: Send + Sync {
     fn llm_hint(&self) -> Option<&'static str> {
         None
     }
+}
+
+/// Trait for custom builtins that parse arguments with [`clap`].
+///
+/// Implement this trait when a builtin has enough flags/options that deriving a
+/// `clap::Parser` struct is clearer than manually inspecting [`Context::args`].
+///
+/// Enabled by the default `clap-builtins` crate feature.
+///
+/// # Example
+///
+/// ```rust
+/// use bashkit::{Bash, BashkitContext, ClapBuiltin, async_trait};
+/// use bashkit::clap::Parser;
+///
+/// #[derive(Parser)]
+/// #[command(name = "greet")]
+/// struct GreetArgs {
+///     #[arg(short, long, default_value = "World")]
+///     name: String,
+/// }
+///
+/// struct Greet;
+///
+/// #[async_trait]
+/// impl ClapBuiltin for Greet {
+///     type Args = GreetArgs;
+///
+///     async fn execute_clap(
+///         &self,
+///         args: Self::Args,
+///         ctx: &mut BashkitContext<'_>,
+///     ) -> bashkit::Result<()> {
+///         ctx.write_stdout(format!("Hello, {}!\n", args.name));
+///         Ok(())
+///     }
+/// }
+///
+/// # #[tokio::main]
+/// # async fn main() -> bashkit::Result<()> {
+/// let mut bash = Bash::builder()
+///     .builtin("greet", Box::new(Greet))
+///     .build();
+/// let result = bash.exec("greet --name Alice").await?;
+/// assert_eq!(result.stdout, "Hello, Alice!\n");
+/// # Ok(())
+/// # }
+/// ```
+#[async_trait]
+#[cfg(feature = "clap-builtins")]
+pub trait ClapBuiltin: Send + Sync {
+    /// Clap parser type for this builtin's arguments.
+    type Args: clap::Parser + Send + 'static;
+
+    /// Execute the builtin with already-parsed clap arguments.
+    async fn execute_clap(&self, args: Self::Args, ctx: &mut BashkitContext<'_>) -> Result<()>;
+
+    /// Optional short hint for LLM system prompts.
+    fn llm_hint(&self) -> Option<&'static str> {
+        None
+    }
+}
+
+/// Mutable execution context for [`ClapBuiltin`] implementations.
+///
+/// This context keeps clap-backed builtins close to normal CLI code: handlers
+/// write to stdout/stderr, set an exit code when needed, and return
+/// `bashkit::Result<()>` for fatal host-side errors.
+#[cfg(feature = "clap-builtins")]
+pub struct BashkitContext<'a> {
+    inner: Context<'a>,
+
+    /// Captured stdout for this builtin invocation.
+    pub stdout: String,
+
+    /// Captured stderr for this builtin invocation.
+    pub stderr: String,
+
+    /// Exit code for this builtin invocation.
+    pub exit_code: i32,
+}
+
+#[cfg(feature = "clap-builtins")]
+impl<'a> BashkitContext<'a> {
+    fn new(inner: Context<'a>) -> Self {
+        Self {
+            inner,
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: 0,
+        }
+    }
+
+    fn into_exec_result(self) -> ExecResult {
+        ExecResult {
+            stdout: self.stdout,
+            stderr: self.stderr,
+            exit_code: self.exit_code,
+            ..Default::default()
+        }
+    }
+
+    /// Original shell words passed to the builtin, after shell expansion.
+    pub fn raw_args(&self) -> &[String] {
+        self.inner.args
+    }
+
+    /// Environment variables visible to this builtin.
+    pub fn env(&self) -> &HashMap<String, String> {
+        self.inner.env
+    }
+
+    /// Mutable shell variables.
+    pub fn variables(&mut self) -> &mut HashMap<String, String> {
+        self.inner.variables
+    }
+
+    /// Current working directory.
+    pub fn cwd(&self) -> &Path {
+        self.inner.cwd
+    }
+
+    /// Mutable current working directory.
+    pub fn cwd_mut(&mut self) -> &mut PathBuf {
+        self.inner.cwd
+    }
+
+    /// Virtual filesystem for this shell.
+    pub fn fs(&self) -> Arc<dyn FileSystem> {
+        Arc::clone(&self.inner.fs)
+    }
+
+    /// Pipeline stdin, if the builtin is invoked after a pipe.
+    pub fn stdin(&self) -> Option<&str> {
+        self.inner.stdin
+    }
+
+    /// Look up a typed per-execution extension, if present.
+    pub fn execution_extension<T>(&self) -> Option<&T>
+    where
+        T: Send + Sync + 'static,
+    {
+        self.inner.execution_extension::<T>()
+    }
+
+    /// Append text to stdout.
+    pub fn write_stdout(&mut self, output: impl AsRef<str>) {
+        self.stdout.push_str(output.as_ref());
+    }
+
+    /// Append text to stderr.
+    pub fn write_stderr(&mut self, output: impl AsRef<str>) {
+        self.stderr.push_str(output.as_ref());
+    }
+
+    /// Set the command exit code.
+    pub fn set_exit_code(&mut self, exit_code: i32) {
+        self.exit_code = exit_code;
+    }
+
+    /// Append stderr text and set a failing exit code.
+    pub fn fail(&mut self, stderr: impl AsRef<str>, exit_code: i32) {
+        self.write_stderr(stderr);
+        self.set_exit_code(exit_code);
+    }
+}
+
+#[async_trait]
+#[cfg(feature = "clap-builtins")]
+impl<T> Builtin for T
+where
+    T: ClapBuiltin,
+{
+    async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        let mut command = <T::Args as CommandFactory>::command().color(clap::ColorChoice::Never);
+        let command_name = command.get_name().to_string();
+        let argv = std::iter::once(command_name).chain(ctx.args.iter().cloned());
+
+        let mut matches = match command.try_get_matches_from_mut(argv) {
+            Ok(matches) => matches,
+            Err(error) => return Ok(clap_error_to_exec_result(error)),
+        };
+        let args = match <T::Args as FromArgMatches>::from_arg_matches_mut(&mut matches) {
+            Ok(args) => args,
+            Err(error) => return Ok(clap_error_to_exec_result(error)),
+        };
+
+        let mut ctx = BashkitContext::new(ctx);
+        self.execute_clap(args, &mut ctx).await?;
+        Ok(ctx.into_exec_result())
+    }
+
+    fn llm_hint(&self) -> Option<&'static str> {
+        ClapBuiltin::llm_hint(self)
+    }
+}
+
+#[cfg(feature = "clap-builtins")]
+fn clap_error_to_exec_result(error: clap::Error) -> ExecResult {
+    let text = error.to_string();
+    if matches!(
+        error.kind(),
+        clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion
+    ) {
+        return ExecResult::ok(text);
+    }
+
+    ExecResult::err(cap_diagnostic(text, 1024), error.exit_code())
+}
+
+#[cfg(feature = "clap-builtins")]
+fn cap_diagnostic(mut text: String, max_bytes: usize) -> String {
+    if text.len() <= max_bytes {
+        return text;
+    }
+
+    let cut = text
+        .char_indices()
+        .map(|(idx, _)| idx)
+        .take_while(|idx| *idx <= max_bytes)
+        .last()
+        .unwrap_or(0);
+    text.truncate(cut);
+    text
 }
 
 #[async_trait]

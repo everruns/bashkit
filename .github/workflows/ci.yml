@@ -130,6 +130,8 @@ jobs:
         run: |
           cargo run --example basic
           cargo run --example custom_fs
+          cargo run --example clap_builtin
+          cargo run --example clap_builtin_subcommands
           cargo run --example resource_limits
           cargo run --example text_processing
           cargo run --example live_mounts
