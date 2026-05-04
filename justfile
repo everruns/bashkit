@@ -117,9 +117,9 @@ bench-all:
 bench-parallel:
     ./scripts/bench-parallel.sh
 
-# Run Criterion sqlite builtin benchmark
+# Run Criterion sqlite builtin benchmark and save results
 bench-sqlite:
-    cargo bench --bench sqlite --features sqlite
+    ./scripts/bench-sqlite.sh
 
 # === Eval ===
 
