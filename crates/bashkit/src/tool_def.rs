@@ -258,7 +258,7 @@ pub(crate) fn parse_flags(
 
         // --key=value
         if let Some((key, raw_value)) = flag.split_once('=') {
-            let value = coerce_value(raw_value, properties.get(key));
+            let value = coerce_value(raw_value, properties.get(key), schema);
             result.insert(key.to_string(), value);
             i += 1;
             continue;
@@ -267,17 +267,19 @@ pub(crate) fn parse_flags(
         // --flag (boolean) or --key value
         let key = flag;
         let prop_schema = properties.get(key);
-        let is_boolean = prop_schema
-            .and_then(|s| s.get("type"))
-            .and_then(|t| t.as_str())
-            == Some("boolean");
+        let is_boolean = matches!(
+            prop_schema
+                .map(|s| resolve_effective_type(s, schema, 0))
+                .unwrap_or(EffectiveType::Unknown),
+            EffectiveType::Boolean
+        );
 
         if is_boolean {
             result.insert(key.to_string(), serde_json::Value::Bool(true));
             i += 1;
         } else if i + 1 < raw_args.len() && !raw_args[i + 1].starts_with("--") {
             let raw_value = &raw_args[i + 1];
-            let value = coerce_value(raw_value, prop_schema);
+            let value = coerce_value(raw_value, prop_schema, schema);
             result.insert(key.to_string(), value);
             i += 2;
         } else {
@@ -290,28 +292,149 @@ pub(crate) fn parse_flags(
     Ok(serde_json::Value::Object(result))
 }
 
-/// Coerce a raw string value to the type declared in the property schema.
-fn coerce_value(raw: &str, prop_schema: Option<&serde_json::Value>) -> serde_json::Value {
-    let type_str = prop_schema
-        .and_then(|s| s.get("type"))
-        .and_then(|t| t.as_str())
-        .unwrap_or("string");
+/// Effective type of a property schema after resolving `$ref`,
+/// `oneOf`/`anyOf`/`allOf` branches, nullable arrays
+/// (`type: ["array","null"]`), and implicit signals
+/// (`items` ⇒ array, `properties` ⇒ object).
+#[derive(PartialEq, Clone, Copy, Debug)]
+enum EffectiveType {
+    String,
+    Integer,
+    Number,
+    Boolean,
+    Array,
+    Object,
+    Unknown,
+}
 
-    match type_str {
-        "integer" => raw
+const MAX_REF_DEPTH: usize = 16;
+
+fn type_str_to_effective(s: &str) -> EffectiveType {
+    match s {
+        "string" => EffectiveType::String,
+        "integer" => EffectiveType::Integer,
+        "number" => EffectiveType::Number,
+        "boolean" => EffectiveType::Boolean,
+        "array" => EffectiveType::Array,
+        "object" => EffectiveType::Object,
+        _ => EffectiveType::Unknown,
+    }
+}
+
+fn resolve_ref<'a>(
+    ref_str: &str,
+    root_schema: &'a serde_json::Value,
+) -> Option<&'a serde_json::Value> {
+    let suffix = ref_str.strip_prefix("#/")?;
+    let mut current = root_schema;
+    for segment in suffix.split('/') {
+        let decoded = segment.replace("~1", "/").replace("~0", "~");
+        current = current.get(&decoded)?;
+    }
+    Some(current)
+}
+
+fn resolve_effective_type(
+    schema: &serde_json::Value,
+    root_schema: &serde_json::Value,
+    depth: usize,
+) -> EffectiveType {
+    if depth > MAX_REF_DEPTH {
+        return EffectiveType::Unknown;
+    }
+
+    if let Some(ref_str) = schema.get("$ref").and_then(|r| r.as_str()) {
+        if let Some(target) = resolve_ref(ref_str, root_schema) {
+            return resolve_effective_type(target, root_schema, depth + 1);
+        }
+        return EffectiveType::Unknown;
+    }
+
+    match schema.get("type") {
+        Some(serde_json::Value::String(s)) => return type_str_to_effective(s),
+        Some(serde_json::Value::Array(arr)) => {
+            // Prefer aggregate types when present; fall back to first non-null scalar.
+            for t in arr {
+                if let Some(s) = t.as_str()
+                    && (s == "array" || s == "object")
+                {
+                    return type_str_to_effective(s);
+                }
+            }
+            for t in arr {
+                if let Some(s) = t.as_str()
+                    && s != "null"
+                {
+                    return type_str_to_effective(s);
+                }
+            }
+        }
+        _ => {}
+    }
+
+    for key in ["oneOf", "anyOf", "allOf"] {
+        if let Some(branches) = schema.get(key).and_then(|v| v.as_array()) {
+            for branch in branches {
+                let et = resolve_effective_type(branch, root_schema, depth + 1);
+                if matches!(et, EffectiveType::Array | EffectiveType::Object) {
+                    return et;
+                }
+            }
+            for branch in branches {
+                let et = resolve_effective_type(branch, root_schema, depth + 1);
+                if !matches!(et, EffectiveType::Unknown) {
+                    return et;
+                }
+            }
+        }
+    }
+
+    if schema.get("items").is_some() {
+        return EffectiveType::Array;
+    }
+    if schema.get("properties").is_some() {
+        return EffectiveType::Object;
+    }
+
+    EffectiveType::Unknown
+}
+
+/// Coerce a raw string value to the type declared in the property schema.
+fn coerce_value(
+    raw: &str,
+    prop_schema: Option<&serde_json::Value>,
+    root_schema: &serde_json::Value,
+) -> serde_json::Value {
+    let effective = prop_schema
+        .map(|s| resolve_effective_type(s, root_schema, 0))
+        .unwrap_or(EffectiveType::Unknown);
+
+    match effective {
+        EffectiveType::Integer => raw
             .parse::<i64>()
             .map(serde_json::Value::from)
             .unwrap_or_else(|_| serde_json::Value::String(raw.to_string())),
-        "number" => raw
+        EffectiveType::Number => raw
             .parse::<f64>()
             .map(|n| serde_json::json!(n))
             .unwrap_or_else(|_| serde_json::Value::String(raw.to_string())),
-        "boolean" => match raw {
+        EffectiveType::Boolean => match raw {
             "true" | "1" | "yes" => serde_json::Value::Bool(true),
             "false" | "0" | "no" => serde_json::Value::Bool(false),
             _ => serde_json::Value::String(raw.to_string()),
         },
-        _ => serde_json::Value::String(raw.to_string()),
+        EffectiveType::Array | EffectiveType::Object => {
+            let trimmed = raw.trim_start();
+            if (trimmed.starts_with('[') || trimmed.starts_with('{'))
+                && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(raw)
+            {
+                return parsed;
+            }
+            serde_json::Value::String(raw.to_string())
+        }
+        EffectiveType::String | EffectiveType::Unknown => {
+            serde_json::Value::String(raw.to_string())
+        }
     }
 }
 
@@ -367,6 +490,195 @@ mod tests {
         let args = vec!["--id=42".to_string()];
         let result = parse_flags(&args, &schema).unwrap();
         assert_eq!(result["id"], 42);
+    }
+
+    #[test]
+    fn test_parse_flags_json_array_string() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {"tags": {"type": "array", "items": {"type": "string"}}}
+        });
+        let args = vec!["--tags".to_string(), r#"["a","b","c"]"#.to_string()];
+        let result = parse_flags(&args, &schema).unwrap();
+        assert_eq!(result["tags"], serde_json::json!(["a", "b", "c"]));
+    }
+
+    #[test]
+    fn test_parse_flags_json_object_string() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {"server": {"type": "object"}}
+        });
+        let args = vec![
+            "--server".to_string(),
+            r#"{"name":"foo","port":8080}"#.to_string(),
+        ];
+        let result = parse_flags(&args, &schema).unwrap();
+        assert_eq!(
+            result["server"],
+            serde_json::json!({"name": "foo", "port": 8080})
+        );
+    }
+
+    #[test]
+    fn test_parse_flags_nullable_array() {
+        // utoipa-style nullable: type: ["array", "null"]
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "tags": {"type": ["array", "null"], "items": {"type": "string"}}
+            }
+        });
+        let args = vec!["--tags".to_string(), r#"["x","y"]"#.to_string()];
+        let result = parse_flags(&args, &schema).unwrap();
+        assert_eq!(result["tags"], serde_json::json!(["x", "y"]));
+    }
+
+    #[test]
+    fn test_parse_flags_oneof_null_and_ref() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "config": {
+                    "oneOf": [
+                        {"type": "null"},
+                        {"$ref": "#/$defs/Config"}
+                    ]
+                }
+            },
+            "$defs": {
+                "Config": {"type": "object", "properties": {"k": {"type": "string"}}}
+            }
+        });
+        let args = vec!["--config".to_string(), r#"{"k":"v"}"#.to_string()];
+        let result = parse_flags(&args, &schema).unwrap();
+        assert_eq!(result["config"], serde_json::json!({"k": "v"}));
+    }
+
+    #[test]
+    fn test_parse_flags_allof_composition() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "data": {
+                    "allOf": [
+                        {"type": "object"},
+                        {"properties": {"x": {"type": "integer"}}}
+                    ]
+                }
+            }
+        });
+        let args = vec!["--data".to_string(), r#"{"x":1}"#.to_string()];
+        let result = parse_flags(&args, &schema).unwrap();
+        assert_eq!(result["data"], serde_json::json!({"x": 1}));
+    }
+
+    #[test]
+    fn test_parse_flags_invalid_json_left_as_string() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {"tags": {"type": "array"}}
+        });
+        // Malformed JSON — stays as raw string; serde produces the real error downstream.
+        let args = vec!["--tags".to_string(), "[1, 2,".to_string()];
+        let result = parse_flags(&args, &schema).unwrap();
+        assert_eq!(
+            result["tags"],
+            serde_json::Value::String("[1, 2,".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_flags_scalar_string_unchanged() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {"name": {"type": "string"}}
+        });
+        let args = vec!["--name".to_string(), "Alice".to_string()];
+        let result = parse_flags(&args, &schema).unwrap();
+        assert_eq!(result["name"], "Alice");
+    }
+
+    #[test]
+    fn test_parse_flags_implicit_array_from_items() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {"tags": {"items": {"type": "string"}}}
+        });
+        let args = vec!["--tags".to_string(), r#"["p","q"]"#.to_string()];
+        let result = parse_flags(&args, &schema).unwrap();
+        assert_eq!(result["tags"], serde_json::json!(["p", "q"]));
+    }
+
+    #[test]
+    fn test_parse_flags_implicit_object_from_properties() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "server": {"properties": {"port": {"type": "integer"}}}
+            }
+        });
+        let args = vec!["--server".to_string(), r#"{"port":80}"#.to_string()];
+        let result = parse_flags(&args, &schema).unwrap();
+        assert_eq!(result["server"], serde_json::json!({"port": 80}));
+    }
+
+    #[test]
+    fn test_parse_flags_ref_into_defs() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {"items": {"$ref": "#/$defs/Items"}},
+            "$defs": {
+                "Items": {"type": "array", "items": {"type": "integer"}}
+            }
+        });
+        let args = vec!["--items".to_string(), "[1,2,3]".to_string()];
+        let result = parse_flags(&args, &schema).unwrap();
+        assert_eq!(result["items"], serde_json::json!([1, 2, 3]));
+    }
+
+    #[test]
+    fn test_parse_flags_ref_into_definitions() {
+        // Older draft uses `definitions` instead of `$defs`.
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {"items": {"$ref": "#/definitions/Items"}},
+            "definitions": {
+                "Items": {"type": "array"}
+            }
+        });
+        let args = vec!["--items".to_string(), "[1,2]".to_string()];
+        let result = parse_flags(&args, &schema).unwrap();
+        assert_eq!(result["items"], serde_json::json!([1, 2]));
+    }
+
+    #[test]
+    fn test_parse_flags_ref_cycle_bounded() {
+        // Cyclical $ref must not stack-overflow.
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {"x": {"$ref": "#/$defs/A"}},
+            "$defs": {
+                "A": {"$ref": "#/$defs/B"},
+                "B": {"$ref": "#/$defs/A"}
+            }
+        });
+        let args = vec!["--x".to_string(), "value".to_string()];
+        let result = parse_flags(&args, &schema).unwrap();
+        // Falls back to string when ref cycle is detected.
+        assert_eq!(result["x"], "value");
+    }
+
+    #[test]
+    fn test_parse_flags_array_value_not_starting_with_bracket() {
+        // Per spec: parse only when raw starts with [ or {.
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {"tags": {"type": "array"}}
+        });
+        let args = vec!["--tags".to_string(), "abc".to_string()];
+        let result = parse_flags(&args, &schema).unwrap();
+        assert_eq!(result["tags"], "abc");
     }
 
     #[test]
