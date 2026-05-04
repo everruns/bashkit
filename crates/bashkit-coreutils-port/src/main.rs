@@ -15,7 +15,11 @@
 //!    - `fn format_usage(s: &str) -> String` (vendored shim)
 //!
 //! Usage:
-//!   bashkit-coreutils-port <UUTILS_DIR> <UTIL> [<UUTILS_REV>]
+//!
+//! ```text
+//! bashkit-coreutils-port <UUTILS_DIR> <UTIL> [<UUTILS_REV>]
+//! ```
+//!
 //! Output: prettyprinted Rust to stdout (caller redirects to file).
 
 use std::collections::HashMap;

@@ -66,6 +66,7 @@ a^Ib$
 ### end
 
 ### cat_unknown_flag_rejected
+### bash_diff: clap-backed cat returns exit 2 for parse errors; GNU cat returns 1
 # clap rejects unknown flags with a usage error and non-zero exit
 cat --no-such-flag 2>/dev/null; echo "exit=$?"
 ### expect
