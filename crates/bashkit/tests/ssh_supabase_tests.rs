@@ -1,6 +1,8 @@
 //! Integration tests for `ssh supabase.sh`.
 //!
 //! Requires `ssh` feature. No credentials needed — supabase.sh is a public SSH service.
+//! CI decision: the live public endpoint can reset connections, so the live
+//! test uses a small bounded retry while still remaining a required gate.
 
 #[cfg(feature = "ssh")]
 mod ssh_supabase {
@@ -21,13 +23,22 @@ mod ssh_supabase {
     /// interactive terminal, so we only assert the connection didn't error.
     #[tokio::test]
     async fn ssh_supabase_connects() {
-        let mut bash = bash_with_supabase();
-        let result = bash.exec("ssh supabase.sh").await.unwrap();
-        assert_eq!(
-            result.exit_code, 0,
-            "ssh supabase.sh failed: {}",
-            result.stderr
-        );
+        let mut last_stderr = String::new();
+
+        for attempt in 1..=3 {
+            let mut bash = bash_with_supabase();
+            let result = bash.exec("ssh supabase.sh").await.unwrap();
+            if result.exit_code == 0 {
+                return;
+            }
+
+            last_stderr = result.stderr;
+            if attempt < 3 {
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            }
+        }
+
+        panic!("ssh supabase.sh failed after 3 attempts: {last_stderr}");
     }
 
     #[tokio::test]
