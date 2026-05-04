@@ -1556,7 +1556,7 @@ mod monty_regressions {
     async fn print_interleaved_with_vfs_ops() {
         let mut bash = bash_python();
         // Print, then VFS write, then print, then VFS read, then print.
-        // Verifies PrintWriter::Collect output is preserved across OsCall suspend/resume.
+        // Verifies PrintWriter::CollectString output is preserved across OsCall suspend/resume.
         let r = bash
             .exec("python3 -c \"from pathlib import Path\nprint('before-write')\nPath('/tmp/inter.txt').write_text('data')\nprint('after-write')\ncontent = Path('/tmp/inter.txt').read_text()\nprint(f'read: {content}')\"")
             .await

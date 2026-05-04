@@ -1592,26 +1592,26 @@ mod python_security_regressions {
 
     /// TM-PY-022: Deeply nested Python expressions caught by Monty depth guard.
     /// Monty v0.0.5 added a parser depth guard (d634706). In debug builds the
-    /// limit is 35; in release builds it's 200. We use a nesting level that
-    /// triggers the Monty guard rather than overflowing the ruff parser stack.
+    /// limit is 30; in release builds it's 200. We use a nesting level that
+    /// stays under the Monty guard rather than overflowing the ruff parser stack.
     #[tokio::test]
     async fn threat_python_deep_nesting_parser() {
         let mut bash = bash_with_python();
-        // 30 levels of nested tuples triggers Monty's depth guard in debug builds
-        // (MAX_NESTING_DEPTH=35) while staying safe for ruff's parser stack.
-        let depth = 30;
+        // 25 levels of nested tuples stays under Monty's depth guard in debug
+        // builds (MAX_NESTING_DEPTH=30) while staying safe for ruff's parser stack.
+        let depth = 25;
         let code = format!(
             "python3 -c \"x = {}1{}\"",
             "(".repeat(depth),
             ",)".repeat(depth)
         );
         let result = bash.exec(&code).await.unwrap();
-        // In debug builds (depth limit 35), 30 nested tuples should succeed.
+        // In debug builds (depth limit 30), 25 nested tuples should succeed.
         // In release builds (depth limit 200), it definitely succeeds.
         // The guard prevents deeper nesting from crashing.
         assert_eq!(
             result.exit_code, 0,
-            "30 levels of nesting should be within parser depth budget"
+            "25 levels of nesting should be within parser depth budget"
         );
     }
 
@@ -1619,7 +1619,7 @@ mod python_security_regressions {
     #[tokio::test]
     async fn threat_python_nesting_at_guard_boundary() {
         let mut bash = bash_with_python();
-        // In debug builds MAX_NESTING_DEPTH=35, so 40 nested statements
+        // In debug builds MAX_NESTING_DEPTH=30, so 40 nested statements
         // should trigger the depth guard and return an error, not crash.
         // In release builds (limit=200) this will succeed, which is fine.
         let depth = 40;

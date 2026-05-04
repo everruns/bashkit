@@ -2812,8 +2812,8 @@ dependencies = [
 
 [[package]]
 name = "monty"
-version = "0.0.11"
-source = "git+https://github.com/pydantic/monty?rev=2e9df4b#2e9df4b508e8a9ac80f3a6a26ed680242d1f460d"
+version = "0.0.17"
+source = "git+https://github.com/pydantic/monty?rev=49faa4c#49faa4c8ae94490eae286e76259adcc35f64f0a5"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -2828,11 +2828,12 @@ dependencies = [
  "num-integer",
  "num-traits",
  "postcard",
- "pyo3-build-config",
  "ruff_python_ast",
  "ruff_python_parser",
+ "ruff_python_stdlib",
  "ruff_text_size",
  "serde",
+ "serde_json",
  "smallvec",
  "speedate",
  "strum 0.27.2",
@@ -4245,6 +4246,15 @@ dependencies = [
  "unicode-ident",
  "unicode-normalization",
  "unicode_names2",
+]
+
+[[package]]
+name = "ruff_python_stdlib"
+version = "0.0.0"
+source = "git+https://github.com/astral-sh/ruff.git?rev=6ded4bed1651e30b34dd04cdaa50c763036abb0d#6ded4bed1651e30b34dd04cdaa50c763036abb0d"
+dependencies = [
+ "bitflags",
+ "unicode-ident",
 ]
 
 [[package]]

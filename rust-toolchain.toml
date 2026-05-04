@@ -1,5 +1,5 @@
 [toolchain]
 # Pinned to avoid same-day rustc releases breaking CI; bump deliberately
 # (also bump dtolnay/rust-toolchain@<version> refs in .github/workflows/*).
-channel = "1.94.1"
+channel = "1.95.0"
 components = ["rustfmt", "clippy"]
