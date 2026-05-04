@@ -236,6 +236,12 @@ impl Builtin for ToolImpl {
 /// Unknown flags (not in schema) are kept as strings.
 /// Bare `--flag` without a value is treated as `true` if the schema says boolean,
 /// otherwise as `true` when the next arg also starts with `--` or is absent.
+///
+/// For aggregate flags (`type: "object"` or `type: "array"`), `key=value`
+/// pair tokens are accepted alongside JSON: a sequence of pair tokens
+/// after `--flag` is collected into one object; repeated invocations of an
+/// array-of-object flag append one object per group. Arrays of scalars
+/// accept comma-split values (`--tags a,b,c`) and repeated invocations.
 pub(crate) fn parse_flags(
     raw_args: &[String],
     schema: &serde_json::Value,
@@ -264,32 +270,237 @@ pub(crate) fn parse_flags(
             continue;
         }
 
-        // --flag (boolean) or --key value
-        let key = flag;
-        let prop_schema = properties.get(key);
-        let is_boolean = matches!(
-            prop_schema
-                .map(|s| resolve_effective_type(s, schema, 0))
-                .unwrap_or(EffectiveType::Unknown),
-            EffectiveType::Boolean
-        );
+        let key = flag.to_string();
+        let prop_schema = properties.get(&key).cloned();
+        let effective = prop_schema
+            .as_ref()
+            .map(|s| resolve_effective_type(s, schema, 0))
+            .unwrap_or(EffectiveType::Unknown);
 
-        if is_boolean {
-            result.insert(key.to_string(), serde_json::Value::Bool(true));
-            i += 1;
-        } else if i + 1 < raw_args.len() && !raw_args[i + 1].starts_with("--") {
-            let raw_value = &raw_args[i + 1];
-            let value = coerce_value(raw_value, prop_schema, schema);
-            result.insert(key.to_string(), value);
-            i += 2;
-        } else {
-            // No value follows and not boolean — treat as true
-            result.insert(key.to_string(), serde_json::Value::Bool(true));
-            i += 1;
+        i += 1;
+
+        match effective {
+            EffectiveType::Boolean => {
+                result.insert(key, serde_json::Value::Bool(true));
+            }
+            EffectiveType::Array => {
+                let items_schema = prop_schema.as_ref().and_then(|s| s.get("items")).cloned();
+                let items_effective = items_schema
+                    .as_ref()
+                    .map(|s| resolve_effective_type(s, schema, 0))
+                    .unwrap_or(EffectiveType::Unknown);
+
+                match consume_array_value(
+                    raw_args,
+                    &mut i,
+                    items_schema.as_ref(),
+                    items_effective,
+                    schema,
+                    &key,
+                )? {
+                    ArrayInput::Items(items) => {
+                        let entry = result
+                            .entry(key)
+                            .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+                        if let serde_json::Value::Array(arr) = entry {
+                            arr.extend(items);
+                        } else {
+                            *entry = serde_json::Value::Array(items);
+                        }
+                    }
+                    ArrayInput::Raw(value) => {
+                        // Invalid JSON — preserve as raw string so serde
+                        // produces the real type-mismatch error downstream.
+                        result.insert(key, value);
+                    }
+                }
+            }
+            EffectiveType::Object => {
+                let value =
+                    consume_object_value(raw_args, &mut i, prop_schema.as_ref(), schema, &key)?;
+                result.insert(key, value);
+            }
+            _ => {
+                if i < raw_args.len() && !raw_args[i].starts_with("--") {
+                    let raw_value = &raw_args[i];
+                    let value = coerce_value(raw_value, prop_schema.as_ref(), schema);
+                    result.insert(key, value);
+                    i += 1;
+                } else {
+                    result.insert(key, serde_json::Value::Bool(true));
+                }
+            }
         }
     }
 
     Ok(serde_json::Value::Object(result))
+}
+
+/// Walk a schema to extract object property definitions, following `$ref`
+/// and merging properties across `oneOf`/`anyOf`/`allOf` branches.
+fn resolve_object_properties(
+    schema: &serde_json::Value,
+    root_schema: &serde_json::Value,
+    depth: usize,
+) -> serde_json::Map<String, serde_json::Value> {
+    if depth > MAX_REF_DEPTH {
+        return Default::default();
+    }
+    if let Some(ref_str) = schema.get("$ref").and_then(|r| r.as_str()) {
+        if let Some(target) = resolve_ref(ref_str, root_schema) {
+            return resolve_object_properties(target, root_schema, depth + 1);
+        }
+        return Default::default();
+    }
+    if let Some(props) = schema.get("properties").and_then(|p| p.as_object()) {
+        return props.clone();
+    }
+    let mut merged = serde_json::Map::new();
+    for key in ["oneOf", "anyOf", "allOf"] {
+        if let Some(branches) = schema.get(key).and_then(|v| v.as_array()) {
+            for branch in branches {
+                let props = resolve_object_properties(branch, root_schema, depth + 1);
+                for (k, v) in props {
+                    merged.entry(k).or_insert(v);
+                }
+            }
+        }
+    }
+    merged
+}
+
+/// Collect `key=value` tokens into an object until the next `--flag` or end of args.
+fn collect_object_from_pairs(
+    args: &[String],
+    i: &mut usize,
+    object_schema: Option<&serde_json::Value>,
+    root_schema: &serde_json::Value,
+    flag_name: &str,
+) -> std::result::Result<serde_json::Map<String, serde_json::Value>, String> {
+    let mut obj = serde_json::Map::new();
+    let inner_props = object_schema
+        .map(|s| resolve_object_properties(s, root_schema, 0))
+        .unwrap_or_default();
+
+    while *i < args.len() {
+        let arg = &args[*i];
+        if arg.starts_with("--") {
+            break;
+        }
+        let Some((k, v)) = arg.split_once('=') else {
+            return Err(format!(
+                "--{flag_name}: expected --flag or key=value, got '{arg}'"
+            ));
+        };
+
+        if !inner_props.is_empty() && !inner_props.contains_key(k) {
+            let mut valid: Vec<&str> = inner_props.keys().map(|s| s.as_str()).collect();
+            valid.sort();
+            return Err(format!(
+                "--{flag_name}: unknown key '{k}'; valid keys: {}",
+                valid.join(", ")
+            ));
+        }
+
+        let nested_schema = inner_props.get(k);
+        let value = coerce_value(v, nested_schema, root_schema);
+        obj.insert(k.to_string(), value);
+        *i += 1;
+    }
+    Ok(obj)
+}
+
+/// Result of consuming the value(s) after an array-typed `--flag`.
+enum ArrayInput {
+    /// Items to append to the accumulated array for this flag.
+    Items(Vec<serde_json::Value>),
+    /// Raw fallback (typically when JSON parse failed) — overrides the
+    /// array entry with this value so serde surfaces the type error.
+    Raw(serde_json::Value),
+}
+
+/// Consume the value(s) following an array-typed `--flag`.
+/// Accepts: JSON array, JSON object (single-element append), `key=value` pair
+/// group (single-element append for arrays of objects), or comma-split scalars.
+fn consume_array_value(
+    args: &[String],
+    i: &mut usize,
+    items_schema: Option<&serde_json::Value>,
+    items_effective: EffectiveType,
+    root_schema: &serde_json::Value,
+    flag_name: &str,
+) -> std::result::Result<ArrayInput, String> {
+    if *i >= args.len() || args[*i].starts_with("--") {
+        return Ok(ArrayInput::Items(Vec::new()));
+    }
+    let next = &args[*i];
+    let trimmed = next.trim_start();
+
+    if trimmed.starts_with('[') {
+        if let Ok(serde_json::Value::Array(arr)) = serde_json::from_str::<serde_json::Value>(next) {
+            *i += 1;
+            return Ok(ArrayInput::Items(arr));
+        }
+        *i += 1;
+        return Ok(ArrayInput::Raw(serde_json::Value::String(next.clone())));
+    }
+
+    if items_effective == EffectiveType::Object {
+        if trimmed.starts_with('{') {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(next) {
+                *i += 1;
+                return Ok(ArrayInput::Items(vec![parsed]));
+            }
+            *i += 1;
+            return Ok(ArrayInput::Raw(serde_json::Value::String(next.clone())));
+        }
+        if next.contains('=') {
+            let obj = collect_object_from_pairs(args, i, items_schema, root_schema, flag_name)?;
+            return Ok(ArrayInput::Items(vec![serde_json::Value::Object(obj)]));
+        }
+        return Err(format!(
+            "--{flag_name}: expected JSON or key=value pairs, got '{next}'"
+        ));
+    }
+
+    // Scalar items: comma-split.
+    let mut out = Vec::new();
+    for part in next.split(',') {
+        out.push(coerce_value(part, items_schema, root_schema));
+    }
+    *i += 1;
+    Ok(ArrayInput::Items(out))
+}
+
+/// Consume the value(s) following an object-typed `--flag`.
+/// Accepts: JSON object/array literal, or a `key=value` pair group.
+fn consume_object_value(
+    args: &[String],
+    i: &mut usize,
+    prop_schema: Option<&serde_json::Value>,
+    root_schema: &serde_json::Value,
+    flag_name: &str,
+) -> std::result::Result<serde_json::Value, String> {
+    if *i >= args.len() || args[*i].starts_with("--") {
+        return Ok(serde_json::Value::Bool(true));
+    }
+    let next = &args[*i];
+    let trimmed = next.trim_start();
+
+    if trimmed.starts_with('{') || trimmed.starts_with('[') {
+        let value = coerce_value(next, prop_schema, root_schema);
+        *i += 1;
+        return Ok(value);
+    }
+
+    if next.contains('=') {
+        let obj = collect_object_from_pairs(args, i, prop_schema, root_schema, flag_name)?;
+        return Ok(serde_json::Value::Object(obj));
+    }
+
+    let value = coerce_value(next, prop_schema, root_schema);
+    *i += 1;
+    Ok(value)
 }
 
 /// Effective type of a property schema after resolving `$ref`,
@@ -439,6 +650,7 @@ fn coerce_value(
 }
 
 /// Generate a usage hint from schema properties: `--id <integer> --name <string>`.
+/// Aggregate flags advertise both JSON and `key=value` forms in their hint.
 pub(crate) fn usage_from_schema(schema: &serde_json::Value) -> Option<String> {
     let props = schema.get("properties")?.as_object()?;
     if props.is_empty() {
@@ -447,8 +659,29 @@ pub(crate) fn usage_from_schema(schema: &serde_json::Value) -> Option<String> {
     let flags: Vec<String> = props
         .iter()
         .map(|(key, prop)| {
-            let ty = prop.get("type").and_then(|t| t.as_str()).unwrap_or("value");
-            format!("--{key} <{ty}>")
+            let hint = match resolve_effective_type(prop, schema, 0) {
+                EffectiveType::Object => "<json|key=value...>".to_string(),
+                EffectiveType::Array => {
+                    let items = prop.get("items");
+                    let items_eff = items
+                        .map(|s| resolve_effective_type(s, schema, 0))
+                        .unwrap_or(EffectiveType::Unknown);
+                    if items_eff == EffectiveType::Object {
+                        "<json|key=value...>".to_string()
+                    } else {
+                        "<json|a,b,c>".to_string()
+                    }
+                }
+                EffectiveType::Integer => "<integer>".to_string(),
+                EffectiveType::Number => "<number>".to_string(),
+                EffectiveType::Boolean => "<boolean>".to_string(),
+                EffectiveType::String => "<string>".to_string(),
+                EffectiveType::Unknown => {
+                    let ty = prop.get("type").and_then(|t| t.as_str()).unwrap_or("value");
+                    format!("<{ty}>")
+                }
+            };
+            format!("--{key} {hint}")
         })
         .collect();
     Some(flags.join(" "))
@@ -671,14 +904,252 @@ mod tests {
 
     #[test]
     fn test_parse_flags_array_value_not_starting_with_bracket() {
-        // Per spec: parse only when raw starts with [ or {.
+        // Aggregate scalar array: comma-split (single token, no comma → length-1 array).
         let schema = serde_json::json!({
             "type": "object",
-            "properties": {"tags": {"type": "array"}}
+            "properties": {"tags": {"type": "array", "items": {"type": "string"}}}
         });
         let args = vec!["--tags".to_string(), "abc".to_string()];
         let result = parse_flags(&args, &schema).unwrap();
-        assert_eq!(result["tags"], "abc");
+        assert_eq!(result["tags"], serde_json::json!(["abc"]));
+    }
+
+    #[test]
+    fn test_parse_flags_pair_object_single() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "server": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "url": {"type": "string"}
+                    }
+                }
+            }
+        });
+        let args = vec![
+            "--server".to_string(),
+            "name=foo".to_string(),
+            "url=https://example.com".to_string(),
+        ];
+        let result = parse_flags(&args, &schema).unwrap();
+        assert_eq!(
+            result["server"],
+            serde_json::json!({"name": "foo", "url": "https://example.com"})
+        );
+    }
+
+    #[test]
+    fn test_parse_flags_pair_array_of_objects_repeated() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "mcp_server": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "url": {"type": "string"}
+                        }
+                    }
+                }
+            }
+        });
+        let args = vec![
+            "--mcp_server".to_string(),
+            "name=a".to_string(),
+            "url=u1".to_string(),
+            "--mcp_server".to_string(),
+            "name=b".to_string(),
+            "url=u2".to_string(),
+        ];
+        let result = parse_flags(&args, &schema).unwrap();
+        assert_eq!(
+            result["mcp_server"],
+            serde_json::json!([
+                {"name": "a", "url": "u1"},
+                {"name": "b", "url": "u2"}
+            ])
+        );
+    }
+
+    #[test]
+    fn test_parse_flags_array_string_comma_split() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "tags": {"type": "array", "items": {"type": "string"}}
+            }
+        });
+        let args = vec!["--tags".to_string(), "a,b,c".to_string()];
+        let result = parse_flags(&args, &schema).unwrap();
+        assert_eq!(result["tags"], serde_json::json!(["a", "b", "c"]));
+    }
+
+    #[test]
+    fn test_parse_flags_array_string_repeated_appends() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "tags": {"type": "array", "items": {"type": "string"}}
+            }
+        });
+        let args = vec![
+            "--tags".to_string(),
+            "x".to_string(),
+            "--tags".to_string(),
+            "y".to_string(),
+        ];
+        let result = parse_flags(&args, &schema).unwrap();
+        assert_eq!(result["tags"], serde_json::json!(["x", "y"]));
+    }
+
+    #[test]
+    fn test_parse_flags_pair_nested_type_coercion() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "server": {
+                    "type": "object",
+                    "properties": {
+                        "enabled": {"type": "boolean"},
+                        "port": {"type": "integer"}
+                    }
+                }
+            }
+        });
+        let args = vec![
+            "--server".to_string(),
+            "enabled=true".to_string(),
+            "port=8080".to_string(),
+        ];
+        let result = parse_flags(&args, &schema).unwrap();
+        assert_eq!(
+            result["server"],
+            serde_json::json!({"enabled": true, "port": 8080})
+        );
+    }
+
+    #[test]
+    fn test_parse_flags_pair_unknown_key_errors() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "server": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"}
+                    }
+                }
+            }
+        });
+        let args = vec!["--server".to_string(), "bogus=foo".to_string()];
+        let err = parse_flags(&args, &schema).unwrap_err();
+        assert!(err.contains("unknown key"), "got: {err}");
+        assert!(err.contains("bogus"), "got: {err}");
+    }
+
+    #[test]
+    fn test_parse_flags_object_json_form_unchanged() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "server": {
+                    "type": "object",
+                    "properties": {"name": {"type": "string"}}
+                }
+            }
+        });
+        let args = vec!["--server".to_string(), r#"{"name":"foo"}"#.to_string()];
+        let result = parse_flags(&args, &schema).unwrap();
+        assert_eq!(result["server"], serde_json::json!({"name": "foo"}));
+    }
+
+    #[test]
+    fn test_parse_flags_pair_mixed_with_json_rejected() {
+        // After consuming JSON `{...}` for --server, a stray `name=foo` token is
+        // not a flag and not part of the consumed JSON value, so parse_flags
+        // rejects it at the top of the loop.
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "server": {
+                    "type": "object",
+                    "properties": {"name": {"type": "string"}}
+                }
+            }
+        });
+        let args = vec![
+            "--server".to_string(),
+            r#"{"name":"foo"}"#.to_string(),
+            "name=bar".to_string(),
+        ];
+        let err = parse_flags(&args, &schema).unwrap_err();
+        assert!(err.contains("expected --flag"), "got: {err}");
+    }
+
+    #[test]
+    fn test_parse_flags_array_of_objects_json_then_pair_appends() {
+        // JSON for first invocation, pairs for second — both append.
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "mcp_server": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"}
+                        }
+                    }
+                }
+            }
+        });
+        let args = vec![
+            "--mcp_server".to_string(),
+            r#"{"name":"j"}"#.to_string(),
+            "--mcp_server".to_string(),
+            "name=p".to_string(),
+        ];
+        let result = parse_flags(&args, &schema).unwrap();
+        assert_eq!(
+            result["mcp_server"],
+            serde_json::json!([{"name": "j"}, {"name": "p"}])
+        );
+    }
+
+    #[test]
+    fn test_parse_flags_array_int_comma_split_coerced() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "ids": {"type": "array", "items": {"type": "integer"}}
+            }
+        });
+        let args = vec!["--ids".to_string(), "1,2,3".to_string()];
+        let result = parse_flags(&args, &schema).unwrap();
+        assert_eq!(result["ids"], serde_json::json!([1, 2, 3]));
+    }
+
+    #[test]
+    fn test_usage_from_schema_advertises_both_forms() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "server": {"type": "object"},
+                "tags": {"type": "array", "items": {"type": "string"}},
+                "id": {"type": "integer"}
+            }
+        });
+        let usage = usage_from_schema(&schema).expect("usage");
+        assert!(
+            usage.contains("--server <json|key=value...>"),
+            "got: {usage}"
+        );
+        assert!(usage.contains("--tags <json|a,b,c>"), "got: {usage}");
+        assert!(usage.contains("--id <integer>"), "got: {usage}");
     }
 
     #[test]
