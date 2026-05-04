@@ -209,9 +209,17 @@ Bash command args are parsed into a JSON object:
 | `--id=42` | `{"id": 42}` |
 | `--verbose` | `{"verbose": true}` (if schema says boolean) |
 | `--name Alice` | `{"name": "Alice"}` |
+| `--tags '["a","b"]'` | `{"tags": ["a","b"]}` (if schema says array) |
+| `--server '{"port":80}'` | `{"server": {"port":80}}` (if schema says object) |
 
-Type coercion follows the `input_schema` property types: `integer`, `number`, `boolean`, `string`.
-Unknown flags (not in schema) are kept as strings.
+Type coercion follows the `input_schema` property types: `integer`, `number`, `boolean`, `string`,
+`array`, `object`. Unknown flags (not in schema) are kept as strings.
+
+Aggregate types (`array`, `object`) are resolved through `$ref`, `oneOf`/`anyOf`/`allOf` branches,
+nullable shorthand (`type: ["array","null"]`), and implicit signals (`items` ⇒ array, `properties`
+⇒ object). When the resolved type is aggregate and the raw value starts with `[` or `{`,
+`parse_flags` parses it as JSON; on parse failure the original string is preserved so downstream
+serde validation produces the real error.
 
 ### ScriptedToolBuilder
 
