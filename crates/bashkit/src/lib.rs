@@ -2795,7 +2795,7 @@ pub mod custom_builtins_guide {}
 ///
 /// **Related:** [`ClapBuiltin`], [`BashkitContext`], [`BashBuilder::builtin`], [`custom_builtins_guide`]
 #[cfg(feature = "clap-builtins")]
-#[doc = include_str!("../../../docs/clap-builtins.md")]
+#[doc = include_str!("../docs/clap-builtins.md")]
 pub mod clap_builtins_guide {}
 
 /// Bash compatibility scorecard.

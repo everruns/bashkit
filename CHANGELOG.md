@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-05-04
+
+### Highlights
+
+- **Fix `bashkit` v0.4.0 crates.io publish** — Move `docs/clap-builtins.md` into `crates/bashkit/docs/` (matching the rustdoc-guides convention) and update the `include_str!` path so the guide is packaged inside the crate. v0.4.0 was published to PyPI, npm, and Homebrew but the crates.io publish failed because the guide lived outside the crate directory.
+
+### What's Changed
+
+* fix(docs): move clap-builtins guide inside bashkit crate so cargo publish includes it by @chaliy
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.4.0...v0.4.1
+
 ## [0.4.0] - 2026-05-04
 
 ### Highlights
