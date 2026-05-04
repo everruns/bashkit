@@ -79,6 +79,23 @@ dependency rot, or security gaps ship in a release.
 - No orphaned TODOs in specs that are now resolved
 - New features have spec entries
 
+### Coreutils Argument-Surface Drift
+
+See `specs/coreutils-args-port.md`.
+
+- Review any open `chore: sync uutils/coreutils argument surfaces` PR
+  produced by the `coreutils-args-drift` workflow (weekly cron):
+  - Confirm new flags are wired into the consuming builtin or explicitly
+    rejected (matching the existing `tac -b/-r/-s` "not yet implemented"
+    pattern — no silent no-ops).
+  - Confirm removed/renamed flags don't break downstream scripts; migrate
+    or document.
+  - Squash-merge as a human (PR's intermediate commits are bot-authored).
+- Run `just regen-coreutils-args` locally if no drift PR exists; commit any
+  diff yourself rather than letting it accumulate.
+- Bump the pinned uutils revision recorded in the generated file headers
+  if it has fallen >3 months behind upstream `main`.
+
 ### Code Quality
 
 - Formatted (`cargo fmt`)

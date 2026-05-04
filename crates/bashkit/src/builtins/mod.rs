@@ -54,7 +54,6 @@ mod fc;
 mod fileops;
 mod flow;
 mod fold;
-#[cfg(feature = "clap-builtins")]
 mod generated;
 mod glob_cmd;
 mod grep;
@@ -235,7 +234,6 @@ pub(crate) use sqlite::SqliteInprocessOptIn;
 pub use sqlite::{Sqlite, SqliteBackend, SqliteLimits};
 
 use async_trait::async_trait;
-#[cfg(feature = "clap-builtins")]
 use clap::{CommandFactory, FromArgMatches};
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
@@ -680,8 +678,6 @@ pub trait Builtin: Send + Sync {
 /// Implement this trait when a builtin has enough flags/options that deriving a
 /// `clap::Parser` struct is clearer than manually inspecting [`Context::args`].
 ///
-/// Enabled by the default `clap-builtins` crate feature.
-///
 /// # Example
 ///
 /// ```rust
@@ -722,7 +718,6 @@ pub trait Builtin: Send + Sync {
 /// # }
 /// ```
 #[async_trait]
-#[cfg(feature = "clap-builtins")]
 pub trait ClapBuiltin: Send + Sync {
     /// Clap parser type for this builtin's arguments.
     type Args: clap::Parser + Send + 'static;
@@ -741,7 +736,6 @@ pub trait ClapBuiltin: Send + Sync {
 /// This context keeps clap-backed builtins close to normal CLI code: handlers
 /// write to stdout/stderr, set an exit code when needed, and return
 /// `bashkit::Result<()>` for fatal host-side errors.
-#[cfg(feature = "clap-builtins")]
 pub struct BashkitContext<'a> {
     inner: Context<'a>,
 
@@ -755,7 +749,6 @@ pub struct BashkitContext<'a> {
     pub exit_code: i32,
 }
 
-#[cfg(feature = "clap-builtins")]
 impl<'a> BashkitContext<'a> {
     fn new(inner: Context<'a>) -> Self {
         Self {
@@ -841,7 +834,6 @@ impl<'a> BashkitContext<'a> {
 }
 
 #[async_trait]
-#[cfg(feature = "clap-builtins")]
 impl<T> Builtin for T
 where
     T: ClapBuiltin,
@@ -870,7 +862,6 @@ where
     }
 }
 
-#[cfg(feature = "clap-builtins")]
 fn clap_error_to_exec_result(error: clap::Error) -> ExecResult {
     let text = error.to_string();
     if matches!(
@@ -883,7 +874,6 @@ fn clap_error_to_exec_result(error: clap::Error) -> ExecResult {
     ExecResult::err(cap_diagnostic(text, 1024), error.exit_code())
 }
 
-#[cfg(feature = "clap-builtins")]
 fn cap_diagnostic(mut text: String, max_bytes: usize) -> String {
     if text.len() <= max_bytes {
         return text;

@@ -437,10 +437,9 @@ pub mod trace;
 pub use async_trait::async_trait;
 pub use builtins::git::GitConfig;
 pub use builtins::ssh::{SshAllowlist, SshConfig, TrustedHostKey};
-#[cfg(feature = "clap-builtins")]
-pub use builtins::{BashkitContext, ClapBuiltin};
-pub use builtins::{Builtin, Context as BuiltinContext, ExecutionExtensions, Extension};
-#[cfg(feature = "clap-builtins")]
+pub use builtins::{
+    BashkitContext, Builtin, ClapBuiltin, Context as BuiltinContext, ExecutionExtensions, Extension,
+};
 pub use clap;
 #[cfg(feature = "http_client")]
 pub use credential::Credential;
@@ -2787,14 +2786,12 @@ pub mod custom_builtins_guide {}
 /// Public guide for clap-backed custom builtins.
 ///
 /// This guide covers:
-/// - Enabling or disabling the default `clap-builtins` feature
 /// - Implementing [`ClapBuiltin`] with `#[derive(clap::Parser)]`
 /// - Writing stdout/stderr through [`BashkitContext`]
 /// - Help, version, and parse-error behavior
 /// - Subcommands and pipeline stdin
 ///
 /// **Related:** [`ClapBuiltin`], [`BashkitContext`], [`BashBuilder::builtin`], [`custom_builtins_guide`]
-#[cfg(feature = "clap-builtins")]
 #[doc = include_str!("../docs/clap-builtins.md")]
 pub mod clap_builtins_guide {}
 

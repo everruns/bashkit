@@ -1,7 +1,7 @@
 # Coreutils argument-surface port
 
 ## Status
-POC
+Active (POC scope: `cat`, `tac`)
 
 ## Decision
 
@@ -22,9 +22,9 @@ codegen**, not by depending on `uu_*` crates at runtime.
    `pub fn <util>_command() -> clap::Command`.
 
 bashkit's `Builtin::execute` calls `<util>_command().try_get_matches_from(...)`
-and implements behaviour against the VFS. The `clap-builtins` feature gates the
-new path; the legacy hand-parsers remain as a fallback for
-`--no-default-features` consumers.
+and implements behaviour against the VFS. `clap` is an unconditional
+dependency of `bashkit` — there is no feature flag for the ported path or
+the `ClapBuiltin` trait.
 
 Help template is overridden in the calling builtin (e.g. `cat.rs`) to put the
 `Usage:` line first, matching GNU coreutils' layout.
@@ -89,12 +89,23 @@ Ports that need bespoke transforms (e.g. utils with no `mod options`, or
 help strings using Fluent placables/selectors) currently fail with an
 `unresolved translate!()` error rather than emitting silently-wrong code.
 
-## Suggested CI guard
+## CI guard
 
-A nightly job that runs `just regen-coreutils-args` and fails if
-`git diff --exit-code` is non-empty surfaces unexpected upstream changes
-(both new flags we should pick up and removed flags we should drop) without
-breaking on every uutils commit.
+`.github/workflows/coreutils-args-drift.yml` runs weekly (Mondays 05:00 UTC)
+and on `workflow_dispatch`. It:
+
+1. Checks out bashkit and `uutils/coreutils@main` side-by-side.
+2. Runs `bashkit-coreutils-port` against every `pub mod <util>_args;` line in
+   `crates/bashkit/src/builtins/generated/mod.rs`.
+3. Verifies bashkit still builds and the cat/tac spec tests pass.
+4. Opens a PR with the regenerated files if `git diff` is non-empty.
+
+The PR's intermediate commits are bot-authored (this is automated drift
+detection, not a code change). Maintainers must **squash-merge as a human**
+so the merge commit is attributed correctly per `AGENTS.md`.
+
+Reviewing the auto-PR is part of the maintenance checklist — see
+`specs/maintenance.md` § Coreutils Argument-Surface Drift.
 
 ## Alternatives considered
 
