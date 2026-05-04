@@ -35,6 +35,7 @@ All threats use a stable ID format: `TM-<CATEGORY>-<NUMBER>`
 | TM-CRY | Cryptographic Material Security | Private key handling, zeroization, key lifetime minimization |
 | TM-PY | Python Security | Embedded Python sandbox escape, VFS isolation, resource limits |
 | TM-TS | TypeScript Security | Embedded TypeScript sandbox escape, VFS isolation, resource limits |
+| TM-SQL | SQLite Security | Embedded SQLite sandbox escape, VFS isolation, resource limits |
 | TM-UNI | Unicode Security | Byte-boundary panics, invisible chars, homoglyphs, normalization |
 
 ### Adding New Threats
@@ -1365,6 +1366,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Log injection prevention | TM-LOG-005, TM-LOG-006 | `logging.rs` | Yes |
 | Log value truncation | TM-LOG-007, TM-LOG-008 | `logging.rs` | Yes |
 | Python resource limits | TM-PY-001 to TM-PY-003 | `builtins/python.rs` | Yes |
+| SQLite opt-in and limits | TM-SQL-001 to TM-SQL-011 | `builtins/sqlite/` | Yes |
 | Path char validation (bidi) | TM-DOS-015, TM-UNI-003, TM-UNI-011 | `fs/limits.rs` | Partial (bidi yes, zero-width/tags no) |
 | Builtin panic catching | TM-INT-001, TM-UNI-001, TM-UNI-002, TM-UNI-015, TM-UNI-016, TM-UNI-017 | `interpreter/mod.rs` | Yes (catch_unwind) |
 
@@ -1815,6 +1817,63 @@ ZapCode blocks these at the language level (not just runtime):
 This means `console.log()` output produced *after* a VFS call (external
 function) is not captured. Use the return-value pattern instead — the last
 expression's value is printed. This is a `zapcode-core` API limitation.
+
+---
+
+## SQLite Security (TM-SQL)
+
+> **Experimental and opt-in for now.** The `sqlite`/`sqlite3` builtins embed
+> Turso's pure-Rust SQLite-compatible engine. Library callers must compile
+> the `sqlite` feature, register the builtin with `.sqlite()` or
+> `.sqlite_with_limits(...)`, and set `BASHKIT_ALLOW_INPROCESS_SQLITE=1`
+> before SQL executes. Without the runtime opt-in, registered commands fail
+> closed with a disabled error.
+
+Bashkit runs SQLite in-process against databases stored in the virtual
+filesystem or `:memory:`. The default backend loads and flushes whole database
+files through the VFS; the VFS backend implements Turso's `IO` trait over
+`Arc<dyn FileSystem>`. Neither backend intentionally touches the host
+filesystem.
+
+### Threats
+
+| ID | Threat | Severity | Mitigation | Test |
+|----|--------|----------|------------|------|
+| TM-SQL-001 | Code execution via BETA upstream | Critical | Cargo feature + builder registration + runtime opt-in gate | `tm_sql_001_default_disabled_without_opt_in` |
+| TM-SQL-002 | Sandbox escape via host filesystem | Critical | DB files, `.read`, and VFS backend paths resolve through `Arc<dyn FileSystem>` | `tm_sql_002_paths_resolve_only_to_vfs`, `tm_sql_002b_vfs_backend_isolated_to_bash_fs` |
+| TM-SQL-003 | DoS via large SQL input | High | `SqliteLimits::max_script_bytes` | `tm_sql_003_oversize_script_rejected` |
+| TM-SQL-004 | DoS via huge result set | High | `SqliteLimits::max_rows_per_query` | `tm_sql_004_oversize_result_set_aborts` |
+| TM-SQL-005 | DoS via huge DB file | High | `SqliteLimits::max_db_bytes` on load and while growing DBs on both backends | `tm_sql_005_oversize_db_file_rejected`, `db_growth_beyond_max_rejected_on_both_backends` |
+| TM-SQL-005a | DoS via wall-clock burn | High | Per-step deadline and `Statement::interrupt()` | `deadline_already_expired_aborts_with_timeout` |
+| TM-SQL-005b | DoS via statement flood | Medium | `SqliteLimits::max_statements` after splitting | `too_many_statements_rejected` |
+| TM-SQL-006 | Binary truncation in BLOB round-trip | Medium | Values backed by `Vec<u8>` | `tm_sql_006_null_bytes_in_text_safely_round_trip` |
+| TM-SQL-007 | CSV escape failure with separator-bearing blobs | Medium | RFC-4180 quoting | `tm_sql_007_blob_with_separator_quoted_in_csv` |
+| TM-SQL-008 | Stack overflow via recursive `.read` | High | `MAX_DOT_READ_DEPTH` hard cap | `tm_sql_008_recursive_dot_read_eventually_terminates` |
+| TM-SQL-009 | Cross-database access via `ATTACH`/`DETACH` | High | Case/comment-aware policy rejection | `tm_sql_009_attach_detach_rejected`, `attach_blocked_even_with_leading_comment` |
+| TM-SQL-010 | DoS or fingerprinting via dangerous PRAGMAs | High | `SqliteLimits::pragma_deny` default deny list; policy parser handles comments plus quoted/schema-qualified names | `tm_sql_010_pragma_deny_blocks_resource_knobs`, `pragma_schema_qualified_match` |
+| TM-SQL-011 | Host-side error string disclosure | Medium | `sanitize()` strips host path annotations from Turso errors | Manual exploratory review |
+
+### Test Shape
+
+SQLite coverage intentionally mixes black-box and white-box checks:
+
+- **Black-box**: `tests/sqlite_integration_tests.rs` and
+  `tests/sqlite_security_tests.rs` drive `Bash::exec`, shell parsing,
+  redirection, pipelines, the `sqlite3` alias, opt-in failure, VFS
+  persistence, and policy errors through the public API.
+- **White-box**: `builtins/sqlite/tests.rs` exercises parser splitting,
+  SQL policy sniffing, sanitizer behavior, backend equivalence, formatter
+  modes, resource limits, and dot-command recursion directly inside the
+  module.
+- **Differential/fuzz**: `tests/sqlite_differential_tests.rs`,
+  `tests/sqlite_compat_tests.rs`, and `tests/sqlite_fuzz_tests.rs` compare
+  against host `sqlite3` where available and assert no-panic/no-leak
+  invariants for generated inputs.
+
+Exploratory probing found and fixed two gaps in this section: quoted
+schema-qualified PRAGMAs such as `PRAGMA main."cache_size"` bypassed the deny
+list, and the VFS backend used the default 256 MiB cap instead of the caller's
+custom `max_db_bytes` while allowing growth past the cap.
 
 ---
 
