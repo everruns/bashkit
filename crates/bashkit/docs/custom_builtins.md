@@ -7,6 +7,7 @@ virtual filesystem.
 
 **See also:**
 - [API Documentation](https://docs.rs/bashkit) - Full API reference
+- [Clap Builtins](../../../docs/clap-builtins.md) - Derive parser structs for custom builtin args
 - [Hooks](./hooks.md) - Interceptor hooks for the execution pipeline
 - [Compatibility Reference](./compatibility.md) - Supported bash features
 - [Threat Model](./threat-model.md) - Security considerations
@@ -121,6 +122,11 @@ Arguments are passed as a slice of strings, excluding the command name itself:
 // For "mycommand arg1 arg2", ctx.args = ["arg1", "arg2"]
 let first_arg = ctx.args.first().map(|s| s.as_str()).unwrap_or("default");
 ```
+
+For custom builtins with richer flags, options, or subcommands, enable the
+default `clap-builtins` feature and implement `ClapBuiltin` with a
+`#[derive(clap::Parser)]` argument type. See the `clap_builtins_guide` rustdoc
+module for tested examples.
 
 ### Environment Variables
 

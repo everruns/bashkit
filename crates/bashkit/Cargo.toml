@@ -77,6 +77,9 @@ hmac = "0.13"
 # Logging/tracing (optional)
 tracing = { workspace = true, optional = true }
 
+# CLI-style argument parsing for custom builtins.
+clap = { workspace = true, optional = true }
+
 # Embedded Python interpreter (optional)
 monty = { git = "https://github.com/pydantic/monty", rev = "2e9df4b", optional = true }
 
@@ -88,7 +91,9 @@ zapcode-core = { version = "1.5", optional = true }
 turso_core = { workspace = true, optional = true }
 
 [features]
-default = []
+default = ["clap-builtins"]
+# Enable `ClapBuiltin` for custom builtins with `#[derive(clap::Parser)]`.
+clap-builtins = ["dep:clap"]
 # Enable jq builtin via embedded jaq interpreter
 # Usage: cargo build --features jq
 jq = ["dep:jaq-core", "dep:jaq-std", "dep:jaq-json"]

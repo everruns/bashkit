@@ -351,6 +351,7 @@ dependencies = [
  "async-trait",
  "base64",
  "chrono",
+ "clap",
  "criterion",
  "ed25519-dalek 2.2.0",
  "fail",
