@@ -40,10 +40,10 @@ Usage: date [+FORMAT] [-u] [-R] [-I[TIMESPEC]] [-d STRING] [-r FILE]
 
 ### cat_version
 ### bash_diff: bashkit reports its own version string
-# cat --version should output version info
-cat --version
+# cat --version should output version info; format is `cat <crate-version>`
+cat --version | sed -E 's/^(cat) [0-9]+\.[0-9]+\.[0-9]+.*/\1 X.Y.Z/'
 ### expect
-cat (bashkit) 0.1
+cat X.Y.Z
 ### end
 
 ### grep_version

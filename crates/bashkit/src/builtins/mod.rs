@@ -54,6 +54,8 @@ mod fc;
 mod fileops;
 mod flow;
 mod fold;
+#[cfg(feature = "clap-builtins")]
+mod generated;
 mod glob_cmd;
 mod grep;
 mod headtail;
