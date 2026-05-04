@@ -127,6 +127,42 @@ mixed mid-statement with `;`.
 `.read` is bounded by `MAX_DOT_READ_DEPTH` (16) to prevent stack overflow
 on self-referential scripts. Tested via `tm_sql_008`.
 
+### Session-scoped engine cache
+
+The `Sqlite` builtin holds an `Arc<Mutex<HashMap<(backend, path),
+Arc<TokioMutex<Option<SqliteEngine>>>>>>` keyed by
+`(SqliteBackend, PathBuf)`. The first `sqlite DB ...` call against a
+file-backed path opens the engine and stores it in the cache; every
+subsequent call locks the per-key `TokioMutex` and reuses the same
+connection. Concurrent calls to the same DB serialise through that
+mutex; calls against different DBs (or different backends) run
+independently.
+
+Consequences worth knowing:
+
+- **Transactions span shell commands.** `BEGIN` in one
+  `bash.exec("sqlite DB ...")` and `COMMIT` in the next now work — the
+  connection lives between calls. Tested by
+  `cached_engine_keeps_in_flight_transaction_across_exec_calls`.
+- **`:memory:` is intentionally NOT cached.** Each invocation against
+  `:memory:` opens a fresh ephemeral engine. Use a VFS path if you
+  want persistence within a single `Bash` lifecycle. Tested by
+  `memory_target_does_not_persist_across_exec_calls`.
+- **Per-call flush is preserved.** After every successful or failing
+  call, the builtin still snapshots/flushes to the VFS. Snapshots
+  taken between exec calls always pick up the latest committed state.
+  Tested by `snapshot_and_restore_round_trips_sqlite_state`.
+- **Lifecycle.** The cache is dropped when the owning `Bash` (which
+  owns the `Sqlite` trait object) drops, taking the engines with it.
+  Each `Bash::builder().sqlite()` produces its own cache, so two
+  parallel `Bash` instances do not cross-contaminate.
+
+Snapshot integration is automatic: because we always flush after every
+exec, the on-disk image (within the VFS) is current at every point a
+caller could legitimately call `bash.snapshot()`. Restore creates a
+fresh `Bash` with an empty cache; the first `sqlite` call re-opens
+the engine from the restored VFS bytes.
+
 ### SQL policy: ATTACH / DETACH and PRAGMA deny list
 
 Before each statement reaches turso, `check_sql_policy()` inspects the
