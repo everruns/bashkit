@@ -580,6 +580,43 @@ Monty runs directly in the host process. Resource limits (memory, allocations,
 time, recursion) are enforced by Monty's own runtime. All VFS operations are
 bridged through the host process — Python code never touches the real filesystem.
 
+### SQLite Security (TM-SQL-*)
+
+The `sqlite`/`sqlite3` builtins embed Turso's pure-Rust SQLite-compatible engine.
+This is experimental and **opt-in for now**. Library callers must enable the
+`sqlite` feature, register the builtin with `.sqlite()` or `.sqlite_with_limits(...)`,
+and set `BASHKIT_ALLOW_INPROCESS_SQLITE=1` before SQL executes. Without the
+runtime opt-in, registered commands fail closed with a disabled error.
+
+SQLite database files live in Bashkit's virtual filesystem, or in `:memory:`.
+The default backend loads and flushes database bytes through the VFS at command
+boundaries; the VFS backend implements Turso's IO trait over `Arc<dyn FileSystem>`.
+Both paths are tested so SQL cannot intentionally read host files.
+
+| Threat | Attack Example | Mitigation | Status |
+|--------|---------------|------------|--------|
+| BETA engine execution (TM-SQL-001) | `sqlite :memory: 'SELECT 1'` without opt-in | Feature + builder registration + runtime opt-in gate | MITIGATED |
+| Host FS escape (TM-SQL-002) | Open `/etc/passwd` as a database | All paths resolve through Bashkit VFS | MITIGATED |
+| Large SQL input (TM-SQL-003) | Multi-MB SQL script | `max_script_bytes` | MITIGATED |
+| Huge result set (TM-SQL-004) | Query returns millions of rows | `max_rows_per_query` | MITIGATED |
+| Huge DB file (TM-SQL-005) | Load or grow oversized `.sqlite` file | `max_db_bytes` on both backends | MITIGATED |
+| Wall-clock burn (TM-SQL-005a) | Expensive query/CTE | Per-step deadline + interrupt | MITIGATED |
+| Statement flood (TM-SQL-005b) | Millions of `;` statements | `max_statements` | MITIGATED |
+| Binary truncation (TM-SQL-006) | BLOB contains NUL bytes | `Vec<u8>` values, tested round-trip | MITIGATED |
+| CSV injection/escape failure (TM-SQL-007) | Blob/text contains separator | RFC-4180 quoting | MITIGATED |
+| Recursive `.read` (TM-SQL-008) | Script `.read`s itself | `MAX_DOT_READ_DEPTH` | MITIGATED |
+| Cross-database access (TM-SQL-009) | `ATTACH DATABASE '/tmp/x'` | `ATTACH`/`DETACH` rejected by policy | MITIGATED |
+| Dangerous PRAGMAs (TM-SQL-010) | `PRAGMA main."cache_size"=...` | Default `pragma_deny` list, including quoted/schema-qualified names | MITIGATED |
+| Host path errors (TM-SQL-011) | Upstream error includes `/rustc/...` | Sanitizer strips host path annotations | MITIGATED |
+
+Black-box coverage drives `Bash::exec` through
+`tests/sqlite_integration_tests.rs` and `tests/sqlite_security_tests.rs`.
+White-box coverage in `builtins/sqlite/tests.rs` exercises parser, policy,
+formatter, sanitizer, backend, and dot-command internals directly.
+Exploratory probing found and fixed two policy/limit gaps: quoted
+schema-qualified PRAGMAs bypassed the deny list, and VFS-backed databases did
+not honor custom `max_db_bytes` while growing.
+
 ### Git Security (TM-GIT-*)
 
 Optional virtual git operations via the `git` feature. All operations are confined
@@ -744,6 +781,7 @@ All threats use stable IDs in the format `TM-<CATEGORY>-<NUMBER>`:
 | TM-LOG | Logging Security |
 | TM-GIT | Git Security |
 | TM-PY | Python/Monty Security |
+| TM-SQL | SQLite Security |
 | TM-UNI | Unicode Security |
 
 Full threat analysis: [`specs/threat-model.md`][spec]
