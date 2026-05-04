@@ -65,12 +65,9 @@ impl Context<'_> {
 
 Custom Rust builtins can implement `ClapBuiltin` instead of `Builtin` when
 their arguments are better represented as a `#[derive(clap::Parser)]` struct.
-This API is enabled by the default `clap-builtins` crate feature; consumers
-that need a smaller dependency surface can disable it with
-`default-features = false`.
-The feature is part of the library default feature set, so normal
-`bashkit = "..."` usage can derive clap-backed builtins without extra feature
-configuration.
+`clap` is an unconditional dependency of `bashkit` (also used by ported
+coreutils argument surfaces — see `specs/coreutils-args-port.md`), so this
+trait is always available.
 Bashkit parses `Context::args` through clap, passes parsed args plus a mutable
 `BashkitContext` to the handler, maps `--help` and `--version` to successful
 stdout results, and maps clap parse failures to stderr with clap's exit code.
