@@ -210,7 +210,11 @@ Bash command args are parsed into a JSON object:
 | `--verbose` | `{"verbose": true}` (if schema says boolean) |
 | `--name Alice` | `{"name": "Alice"}` |
 | `--tags '["a","b"]'` | `{"tags": ["a","b"]}` (if schema says array) |
+| `--tags a,b,c` | `{"tags": ["a","b","c"]}` (array of scalars: comma-split) |
+| `--tags x --tags y` | `{"tags": ["x","y"]}` (repeated invocations append) |
 | `--server '{"port":80}'` | `{"server": {"port":80}}` (if schema says object) |
+| `--server name=foo url=http://x` | `{"server": {"name":"foo","url":"http://x"}}` (object via pairs) |
+| `--mcp name=a --mcp name=b` | `{"mcp": [{"name":"a"},{"name":"b"}]}` (array of objects via repeated pair groups) |
 
 Type coercion follows the `input_schema` property types: `integer`, `number`, `boolean`, `string`,
 `array`, `object`. Unknown flags (not in schema) are kept as strings.
@@ -220,6 +224,21 @@ nullable shorthand (`type: ["array","null"]`), and implicit signals (`items` ⇒
 ⇒ object). When the resolved type is aggregate and the raw value starts with `[` or `{`,
 `parse_flags` parses it as JSON; on parse failure the original string is preserved so downstream
 serde validation produces the real error.
+
+For aggregate flags, `parse_flags` also accepts schema-driven shorthand:
+
+- **Object via pairs**: a sequence of `key=value` tokens after `--flag` is collected into one
+  object, terminating at the next `--flag` or end of args. Each `key` is matched against the
+  property names in the object schema; unknown keys produce a validation error. Each `value` is
+  type-coerced per the nested property schema.
+- **Array of objects via repeated pair groups**: each `--flag <pairs...>` invocation contributes
+  one object; repeated invocations append. Mixing JSON and pair forms across invocations is
+  allowed (`--flag '{...}' --flag k=v`); mixing them within a single invocation is rejected.
+- **Array of scalars**: a single arg is comma-split (`--tags a,b,c`); repeated invocations
+  append (`--tags x --tags y`). JSON form (`--tags '["a","b"]'`) continues to work.
+
+Help output (`usage_from_schema`) advertises both forms for aggregate flags:
+`--server <json|key=value...>` and `--tags <json|a,b,c>`.
 
 ### ScriptedToolBuilder
 
