@@ -439,7 +439,7 @@ pub use builtins::git::GitConfig;
 pub use builtins::ssh::{SshAllowlist, SshConfig, TrustedHostKey};
 #[cfg(feature = "clap-builtins")]
 pub use builtins::{BashkitContext, ClapBuiltin};
-pub use builtins::{Builtin, Context as BuiltinContext, ExecutionExtensions};
+pub use builtins::{Builtin, Context as BuiltinContext, ExecutionExtensions, Extension};
 #[cfg(feature = "clap-builtins")]
 pub use clap;
 #[cfg(feature = "http_client")]
@@ -509,7 +509,8 @@ pub use monty::{ExcType, ExtFunctionResult, MontyException, MontyObject};
 
 #[cfg(feature = "typescript")]
 pub use builtins::{
-    TypeScriptConfig, TypeScriptExternalFnHandler, TypeScriptExternalFns, TypeScriptLimits,
+    TypeScriptConfig, TypeScriptExtension, TypeScriptExternalFnHandler, TypeScriptExternalFns,
+    TypeScriptLimits,
 };
 // Re-export zapcode-core types needed by external handler consumers.
 #[cfg(feature = "typescript")]
@@ -1801,33 +1802,7 @@ impl BashBuilder {
     /// ```
     #[cfg(feature = "typescript")]
     pub fn typescript_with_config(self, config: builtins::TypeScriptConfig) -> Self {
-        let mut builder = self
-            .builtin(
-                "ts",
-                Box::new(builtins::TypeScript::from_config(&config, "ts")),
-            )
-            .builtin(
-                "typescript",
-                Box::new(builtins::TypeScript::from_config(&config, "typescript")),
-            );
-
-        if config.enable_compat_aliases {
-            builder = builder
-                .builtin(
-                    "node",
-                    Box::new(builtins::TypeScript::from_config(&config, "node")),
-                )
-                .builtin(
-                    "deno",
-                    Box::new(builtins::TypeScript::from_config(&config, "deno")),
-                )
-                .builtin(
-                    "bun",
-                    Box::new(builtins::TypeScript::from_config(&config, "bun")),
-                );
-        }
-
-        builder
+        self.extension(builtins::TypeScriptExtension::with_config(config))
     }
 
     /// Enable embedded TypeScript with external function handlers.
@@ -1840,18 +1815,11 @@ impl BashBuilder {
         external_fns: Vec<String>,
         handler: builtins::TypeScriptExternalFnHandler,
     ) -> Self {
-        let config = builtins::TypeScriptConfig::default().limits(limits);
-
-        let make = |cmd_name: &str| {
-            builtins::TypeScript::from_config(&config, cmd_name)
-                .with_external_handler(external_fns.clone(), handler.clone())
-        };
-
-        self.builtin("ts", Box::new(make("ts")))
-            .builtin("typescript", Box::new(make("typescript")))
-            .builtin("node", Box::new(make("node")))
-            .builtin("deno", Box::new(make("deno")))
-            .builtin("bun", Box::new(make("bun")))
+        self.extension(builtins::TypeScriptExtension::with_external_handler(
+            limits,
+            external_fns,
+            handler,
+        ))
     }
 
     /// Register a custom builtin command.
@@ -1892,6 +1860,47 @@ impl BashBuilder {
     /// ```
     pub fn builtin(mut self, name: impl Into<String>, builtin: Box<dyn Builtin>) -> Self {
         self.custom_builtins.insert(name.into(), builtin);
+        self
+    }
+
+    /// Register a capability extension.
+    ///
+    /// Extensions contribute a related set of builtins as one unit. Commands
+    /// registered by an extension follow the same override rules as
+    /// [`BashBuilder::builtin`]: later registrations replace earlier ones with
+    /// the same name.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::{Bash, Builtin, BuiltinContext, ExecResult, Extension, async_trait};
+    ///
+    /// struct Hello;
+    ///
+    /// #[async_trait]
+    /// impl Builtin for Hello {
+    ///     async fn execute(&self, _ctx: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {
+    ///         Ok(ExecResult::ok("hello\n".to_string()))
+    ///     }
+    /// }
+    ///
+    /// struct HelloExtension;
+    ///
+    /// impl Extension for HelloExtension {
+    ///     fn builtins(&self) -> Vec<(String, Box<dyn Builtin>)> {
+    ///         vec![("hello".to_string(), Box::new(Hello))]
+    ///     }
+    /// }
+    ///
+    /// let bash = Bash::builder().extension(HelloExtension).build();
+    /// ```
+    pub fn extension<E>(mut self, extension: E) -> Self
+    where
+        E: builtins::Extension,
+    {
+        for (name, builtin) in extension.builtins() {
+            self.custom_builtins.insert(name, builtin);
+        }
         self
     }
 
@@ -4349,7 +4358,7 @@ fn
     mod custom_builtins {
         use super::*;
         use crate::builtins::{Builtin, Context};
-        use crate::{ExecResult, ExecutionExtensions};
+        use crate::{ExecResult, ExecutionExtensions, Extension};
         use async_trait::async_trait;
 
         /// A simple custom builtin that outputs a static string
@@ -4518,6 +4527,28 @@ fn
 
             let result = bash.exec("echo foo | upper").await.unwrap();
             assert_eq!(result.stdout, "FOO\n");
+        }
+
+        struct GreetingExtension;
+
+        impl Extension for GreetingExtension {
+            fn builtins(&self) -> Vec<(String, Box<dyn Builtin>)> {
+                vec![
+                    ("hello-ext".to_string(), Box::new(Hello)),
+                    ("greet-ext".to_string(), Box::new(Greet)),
+                ]
+            }
+        }
+
+        #[tokio::test]
+        async fn test_extension_registers_multiple_builtins() {
+            let mut bash = Bash::builder().extension(GreetingExtension).build();
+
+            let result = bash.exec("hello-ext").await.unwrap();
+            assert_eq!(result.stdout, "Hello from custom builtin!\n");
+
+            let result = bash.exec("greet-ext Extension").await.unwrap();
+            assert_eq!(result.stdout, "Hello, Extension!\n");
         }
 
         /// A custom builtin with internal state

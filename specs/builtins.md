@@ -104,6 +104,34 @@ impl ClapBuiltin for Greet {
 }
 ```
 
+### Extension Trait
+
+Extensions bundle a related set of builtins so embedders can add one capability
+to `BashBuilder` or `BashToolBuilder` instead of registering each command
+manually.
+
+```rust
+pub trait Extension: Send + Sync {
+    fn builtins(&self) -> Vec<(String, Box<dyn Builtin>)>;
+}
+```
+
+Rules:
+
+- `BashBuilder::extension(ext)` expands each returned builtin into the builder's
+  custom builtin map
+- `BashToolBuilder::extension(ext)` expands each returned builtin into the
+  tool's custom builtin list
+- For `BashBuilder`, later registrations with the same command name override
+  earlier registrations, matching `BashBuilder::builtin`
+- Extensions must construct fresh builtin values or use shared ownership
+  internally; builders may call `builtins()` when configuring reusable tools
+
+Current extension:
+
+- `TypeScriptExtension` registers `ts`/`typescript` and, when enabled by
+  `TypeScriptConfig`, `node`/`deno`/`bun`
+
 ### Execution Extensions
 
 `Bash::exec_with_extensions()` and `Bash::exec_streaming_with_extensions()`

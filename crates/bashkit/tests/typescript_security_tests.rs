@@ -500,7 +500,7 @@ mod whitebox_bash_integration {
 // =============================================================================
 
 mod optin_verification {
-    use bashkit::Bash;
+    use bashkit::{Bash, TypeScriptExtension};
 
     /// TypeScript commands are NOT registered by default
     #[tokio::test]
@@ -547,6 +547,21 @@ mod optin_verification {
         let r = bash.exec("ts -c \"console.log('hi')\"").await.unwrap();
         assert_eq!(r.exit_code, 0, "ts should work after opt-in");
         assert_eq!(r.stdout.trim(), "hi");
+    }
+
+    /// TypeScript can be registered as an extension.
+    #[tokio::test]
+    async fn typescript_extension_registers_aliases() {
+        let mut bash = Bash::builder()
+            .extension(TypeScriptExtension::default())
+            .build();
+
+        let r = bash
+            .exec("typescript -c \"console.log('ok')\"")
+            .await
+            .unwrap();
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout.trim(), "ok");
     }
 
     /// All aliases available after .typescript()

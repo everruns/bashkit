@@ -60,13 +60,14 @@
 //! # });
 //! ```
 
-use crate::builtins::Builtin;
+use crate::builtins::{Builtin, Extension};
 use crate::error::Error;
 use crate::{Bash, ExecResult, ExecutionLimits, OutputCallback};
 use async_trait::async_trait;
 use futures_core::Stream;
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -534,6 +535,22 @@ impl BashToolBuilder {
         self
     }
 
+    /// Register a capability extension.
+    ///
+    /// Extensions contribute a related set of builtins as one unit. They will
+    /// be documented in the tool's `help()` output like custom builtins. Later
+    /// registrations with the same name replace earlier registrations during
+    /// shell creation.
+    pub fn extension<E>(mut self, extension: E) -> Self
+    where
+        E: Extension,
+    {
+        for (name, builtin) in extension.builtins() {
+            self.builtins.push((name, Arc::from(builtin)));
+        }
+        self
+    }
+
     /// Enable embedded Python (`python`/`python3` builtins) via Monty interpreter
     /// with default resource limits.
     ///
@@ -556,9 +573,55 @@ impl BashToolBuilder {
             .builtin("python3", Box::new(Python::with_limits(limits)))
     }
 
+    /// Enable embedded TypeScript/JavaScript execution via ZapCode with defaults.
+    ///
+    /// Requires the `typescript` feature flag.
+    #[cfg(feature = "typescript")]
+    pub fn typescript(self) -> Self {
+        self.typescript_with_config(crate::builtins::TypeScriptConfig::default())
+    }
+
+    /// Enable embedded TypeScript with custom resource limits.
+    #[cfg(feature = "typescript")]
+    pub fn typescript_with_limits(self, limits: crate::builtins::TypeScriptLimits) -> Self {
+        self.extension(crate::builtins::TypeScriptExtension::with_limits(limits))
+    }
+
+    /// Enable embedded TypeScript with full configuration control.
+    #[cfg(feature = "typescript")]
+    pub fn typescript_with_config(self, config: crate::builtins::TypeScriptConfig) -> Self {
+        self.extension(crate::builtins::TypeScriptExtension::with_config(config))
+    }
+
+    /// Enable embedded TypeScript with external function handlers.
+    #[cfg(feature = "typescript")]
+    pub fn typescript_with_external_handler(
+        self,
+        limits: crate::builtins::TypeScriptLimits,
+        external_fns: Vec<String>,
+        handler: crate::builtins::TypeScriptExternalFnHandler,
+    ) -> Self {
+        self.extension(crate::builtins::TypeScriptExtension::with_external_handler(
+            limits,
+            external_fns,
+            handler,
+        ))
+    }
+
     /// Build the BashTool
     pub fn build(&self) -> BashTool {
-        let builtin_names: Vec<String> = self.builtins.iter().map(|(n, _)| n.clone()).collect();
+        let mut seen_builtin_names = HashSet::new();
+        let builtin_names: Vec<String> = self
+            .builtins
+            .iter()
+            .filter_map(|(name, _)| {
+                if seen_builtin_names.insert(name) {
+                    Some(name.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
 
         // Collect LLM hints from builtins, deduplicated
         let mut builtin_hints: Vec<String> = self
@@ -1505,6 +1568,91 @@ mod tests {
             sysprompt.contains("mycommand: Processes CSV"),
             "system_prompt should contain the hint"
         );
+    }
+
+    #[tokio::test]
+    async fn test_extension_builtins_in_tool() {
+        use crate::builtins::{Builtin, Extension};
+        use crate::error::Result;
+        use crate::interpreter::ExecResult;
+
+        struct ToolHello;
+
+        #[async_trait]
+        impl Builtin for ToolHello {
+            async fn execute(&self, _ctx: crate::builtins::Context<'_>) -> Result<ExecResult> {
+                Ok(ExecResult::ok("hello from tool extension\n".to_string()))
+            }
+        }
+
+        struct ToolExtension;
+
+        impl Extension for ToolExtension {
+            fn builtins(&self) -> Vec<(String, Box<dyn Builtin>)> {
+                vec![(
+                    "tool-hello".to_string(),
+                    Box::new(ToolHello) as Box<dyn Builtin>,
+                )]
+            }
+        }
+
+        let tool = BashTool::builder().extension(ToolExtension).build();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "tool-hello".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+
+        assert_eq!(resp.exit_code, 0);
+        assert_eq!(resp.stdout, "hello from tool extension\n");
+        assert!(tool.help().contains("tool-hello"));
+    }
+
+    #[tokio::test]
+    async fn test_tool_extension_duplicate_names_document_once() {
+        use crate::builtins::{Builtin, Extension};
+        use crate::error::Result;
+        use crate::interpreter::ExecResult;
+
+        struct First;
+        struct Second;
+
+        #[async_trait]
+        impl Builtin for First {
+            async fn execute(&self, _ctx: crate::builtins::Context<'_>) -> Result<ExecResult> {
+                Ok(ExecResult::ok("first\n".to_string()))
+            }
+        }
+
+        #[async_trait]
+        impl Builtin for Second {
+            async fn execute(&self, _ctx: crate::builtins::Context<'_>) -> Result<ExecResult> {
+                Ok(ExecResult::ok("second\n".to_string()))
+            }
+        }
+
+        struct OverrideExtension;
+
+        impl Extension for OverrideExtension {
+            fn builtins(&self) -> Vec<(String, Box<dyn Builtin>)> {
+                vec![("dup".to_string(), Box::new(Second) as Box<dyn Builtin>)]
+            }
+        }
+
+        let tool = BashTool::builder()
+            .builtin("dup", Box::new(First))
+            .extension(OverrideExtension)
+            .build();
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "dup".to_string(),
+                timeout_ms: None,
+            })
+            .await;
+
+        assert_eq!(resp.stdout, "second\n");
+        assert_eq!(tool.help().matches("`dup`").count(), 1);
     }
 
     #[test]

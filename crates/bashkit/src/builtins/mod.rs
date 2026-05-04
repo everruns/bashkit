@@ -223,7 +223,7 @@ pub use python::{Python, PythonExternalFnHandler, PythonExternalFns, PythonLimit
 
 #[cfg(feature = "typescript")]
 pub use typescript::{
-    TypeScript, TypeScriptConfig, TypeScriptExternalFnHandler, TypeScriptExternalFns,
+    TypeScriptConfig, TypeScriptExtension, TypeScriptExternalFnHandler, TypeScriptExternalFns,
     TypeScriptLimits,
 };
 
@@ -300,6 +300,19 @@ pub(crate) use crate::interpreter::ShellRef;
 
 // Re-export for use by builtins
 pub use crate::interpreter::BuiltinSideEffect;
+
+/// A bundle of shell capabilities registered together.
+///
+/// Extensions are intended for embedders that want to contribute a family of
+/// builtins as one unit. Builders expand extensions into normal builtin
+/// registrations so command dispatch remains unchanged.
+pub trait Extension: Send + Sync {
+    /// Return builtin commands contributed by this extension.
+    ///
+    /// Later registrations with the same name replace earlier registrations,
+    /// matching [`BashBuilder::builtin`](crate::BashBuilder::builtin).
+    fn builtins(&self) -> Vec<(String, Box<dyn Builtin>)>;
+}
 
 /// Typed, per-execution data exposed to builtin implementations.
 ///

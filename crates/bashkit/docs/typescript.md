@@ -32,6 +32,16 @@ assert_eq!(result.stdout, "hello from ZapCode\n");
 # }
 ```
 
+You can also register the same builtins through the extension model:
+
+```rust
+use bashkit::{Bash, TypeScriptExtension};
+
+let bash = Bash::builder()
+    .extension(TypeScriptExtension::default())
+    .build();
+```
+
 ## Usage Patterns
 
 ### Inline Code
