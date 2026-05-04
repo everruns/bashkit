@@ -158,6 +158,11 @@ serial_test = { workspace = true }
 name = "parallel_execution"
 harness = false
 
+[[bench]]
+name = "sqlite"
+harness = false
+required-features = ["sqlite"]
+
 [[example]]
 name = "agent_tool"
 required-features = ["http_client"]
