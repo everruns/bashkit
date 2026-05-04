@@ -4,6 +4,11 @@
 
 use async_trait::async_trait;
 use bashkit::{Bash, Builtin, BuiltinContext, ExecResult, FileSystem, InMemoryFs};
+#[cfg(feature = "clap-builtins")]
+use bashkit::{
+    BashkitContext, ClapBuiltin,
+    clap::{Parser, Subcommand},
+};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -96,6 +101,83 @@ impl Builtin for EnvDumper {
     }
 }
 
+#[cfg(feature = "clap-builtins")]
+#[derive(Parser)]
+#[command(name = "hello-clap", about = "greet someone")]
+struct HelloClapArgs {
+    #[arg(short, long, default_value = "World")]
+    name: String,
+
+    #[arg(short, long)]
+    shout: bool,
+}
+
+#[cfg(feature = "clap-builtins")]
+struct HelloClap;
+
+#[async_trait]
+#[cfg(feature = "clap-builtins")]
+impl ClapBuiltin for HelloClap {
+    type Args = HelloClapArgs;
+
+    async fn execute_clap(
+        &self,
+        args: Self::Args,
+        ctx: &mut BashkitContext<'_>,
+    ) -> bashkit::Result<()> {
+        let greeting = format!("Hello, {}!", args.name);
+        let greeting = if args.shout {
+            greeting.to_uppercase()
+        } else {
+            greeting
+        };
+        ctx.write_stdout(format!("{greeting}\n"));
+        Ok(())
+    }
+}
+
+#[cfg(feature = "clap-builtins")]
+#[derive(Parser)]
+#[command(name = "math-clap")]
+struct MathClapArgs {
+    #[command(subcommand)]
+    command: MathClapCommand,
+}
+
+#[cfg(feature = "clap-builtins")]
+#[derive(Subcommand)]
+enum MathClapCommand {
+    Add { left: i64, right: i64 },
+    Fail { message: String },
+    StdinLen,
+}
+
+#[cfg(feature = "clap-builtins")]
+struct MathClap;
+
+#[async_trait]
+#[cfg(feature = "clap-builtins")]
+impl ClapBuiltin for MathClap {
+    type Args = MathClapArgs;
+
+    async fn execute_clap(
+        &self,
+        args: Self::Args,
+        ctx: &mut BashkitContext<'_>,
+    ) -> bashkit::Result<()> {
+        let value = match args.command {
+            MathClapCommand::Add { left, right } => left + right,
+            MathClapCommand::Fail { message } => {
+                ctx.fail(format!("math-clap: {message}\n"), 7);
+                return Ok(());
+            }
+            MathClapCommand::StdinLen => ctx.stdin().unwrap_or("").len() as i64,
+        };
+        ctx.write_stdout(format!("{value}\n"));
+        Ok(())
+    }
+}
+
 // =============================================================================
 // Basic functionality tests
 // =============================================================================
@@ -129,6 +211,57 @@ async fn test_custom_builtin_no_args() {
 
     let result = bash.exec("prefix").await.unwrap();
     assert_eq!(result.stdout, ">>> \n");
+}
+
+#[tokio::test]
+#[cfg(feature = "clap-builtins")]
+async fn test_custom_builtin_clap_parser() {
+    let mut bash = Bash::builder()
+        .builtin("hello-clap", Box::new(HelloClap))
+        .build();
+
+    let result = bash.exec("hello-clap --name Alice --shout").await.unwrap();
+    assert_eq!(result.stdout, "HELLO, ALICE!\n");
+    assert_eq!(result.exit_code, 0);
+}
+
+#[tokio::test]
+#[cfg(feature = "clap-builtins")]
+async fn test_custom_builtin_clap_help_and_errors() {
+    let mut bash = Bash::builder()
+        .builtin("hello-clap", Box::new(HelloClap))
+        .build();
+
+    let help = bash.exec("hello-clap --help").await.unwrap();
+    assert_eq!(help.exit_code, 0);
+    assert!(help.stdout.contains("Usage: hello-clap"));
+    assert!(help.stderr.is_empty());
+
+    let error = bash.exec("hello-clap --unknown").await.unwrap();
+    assert_eq!(error.exit_code, 2);
+    assert!(error.stderr.contains("unexpected argument"));
+    assert!(error.stdout.is_empty());
+}
+
+#[tokio::test]
+#[cfg(feature = "clap-builtins")]
+async fn test_custom_builtin_clap_subcommands_and_stdin() {
+    let mut bash = Bash::builder()
+        .builtin("math-clap", Box::new(MathClap))
+        .build();
+
+    let add = bash.exec("math-clap add 20 22").await.unwrap();
+    assert_eq!(add.stdout, "42\n");
+    assert_eq!(add.exit_code, 0);
+
+    let stdin_len = bash.exec("printf abc | math-clap stdin-len").await.unwrap();
+    assert_eq!(stdin_len.stdout, "3\n");
+    assert_eq!(stdin_len.exit_code, 0);
+
+    let fail = bash.exec("math-clap fail nope").await.unwrap();
+    assert_eq!(fail.stdout, "");
+    assert_eq!(fail.stderr, "math-clap: nope\n");
+    assert_eq!(fail.exit_code, 7);
 }
 
 // =============================================================================

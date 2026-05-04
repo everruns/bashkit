@@ -61,6 +61,49 @@ impl Context<'_> {
 }
 ```
 
+### Clap-Backed Custom Builtins
+
+Custom Rust builtins can implement `ClapBuiltin` instead of `Builtin` when
+their arguments are better represented as a `#[derive(clap::Parser)]` struct.
+This API is enabled by the default `clap-builtins` crate feature; consumers
+that need a smaller dependency surface can disable it with
+`default-features = false`.
+The feature is part of the library default feature set, so normal
+`bashkit = "..."` usage can derive clap-backed builtins without extra feature
+configuration.
+Bashkit parses `Context::args` through clap, passes parsed args plus a mutable
+`BashkitContext` to the handler, maps `--help` and `--version` to successful
+stdout results, and maps clap parse failures to stderr with clap's exit code.
+Parse diagnostics are capped to 1 KB to preserve TM-INF-022 stderr constraints.
+
+```rust
+use bashkit::{BashkitContext, ClapBuiltin, async_trait};
+use bashkit::clap::Parser;
+
+#[derive(Parser)]
+#[command(name = "greet")]
+struct GreetArgs {
+    #[arg(short, long, default_value = "World")]
+    name: String,
+}
+
+struct Greet;
+
+#[async_trait]
+impl ClapBuiltin for Greet {
+    type Args = GreetArgs;
+
+    async fn execute_clap(
+        &self,
+        args: Self::Args,
+        ctx: &mut BashkitContext<'_>,
+    ) -> bashkit::Result<()> {
+        ctx.write_stdout(format!("Hello, {}!\n", args.name));
+        Ok(())
+    }
+}
+```
+
 ### Execution Extensions
 
 `Bash::exec_with_extensions()` and `Bash::exec_streaming_with_extensions()`
