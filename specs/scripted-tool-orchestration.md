@@ -143,6 +143,32 @@ ScriptedTool::builder("api").tool(tool).build();
 Type aliases for backward compatibility: `ToolCallback = SyncToolExec`,
 `AsyncToolCallback = AsyncToolExec`.
 
+### ToolDefExtension — Bash extension for ToolDef-backed commands
+
+`ToolDefExtension` implements the shared `Extension` trait and registers a group
+of `ToolDef`/callback pairs into any `Bash` instance:
+
+```rust
+let extension = ToolDefExtension::builder()
+    .tool_fn(ToolDef::new("get_user", "Fetch user by ID"), |args| {
+        let id = args.param_i64("id").ok_or("missing --id")?;
+        Ok(format!("{{\"id\":{id}}}\n"))
+    })
+    .build();
+
+let mut bash = Bash::builder().extension(extension).build();
+```
+
+The extension contributes:
+
+- one builtin per registered tool
+- `help` for runtime schema/usage introspection
+- `discover` for category/tag/search discovery
+- `--help`, `--dry-run`, callback error sanitization, and invocation tracing behavior shared with `ScriptedTool`
+
+`ScriptedTool` builds its per-call logic-only shell by installing this extension,
+so plain `Bash` and `ScriptedTool` use one command adapter path.
+
 ### ContextVar propagation (Python)
 
 Python callbacks (both sync and async) automatically see `contextvars.ContextVar`
@@ -427,14 +453,16 @@ Builder API mirrors `ScriptedToolBuilder`: `.tool()`, `.env()`, `.limits()`,
 tool_def.rs          — ToolDef, ToolArgs, ToolImpl, SyncToolExec, AsyncToolExec, parse_flags
 scripted_tool/
 ├── mod.rs           — CallbackKind, ScriptedToolBuilder, ScriptedTool, re-exports from tool_def
-├── execute.rs       — Tool impl, ToolBuiltinAdapter, documentation helpers
+├── extension.rs     — ToolDefExtension, ToolBuiltinAdapter, help/discover builtins
+├── execute.rs       — Tool impl and documentation helpers
 └── toolset.rs       — ScriptingToolSet, ScriptingToolSetBuilder, DiscoveryMode
 ```
 
 Public exports from `lib.rs` (gated by `scripted_tool` feature):
 `ToolDef`, `ToolArgs`, `ToolImpl`, `SyncToolExec`, `AsyncToolExec`,
 `ToolCallback`, `AsyncToolCallback` (aliases), `ScriptedTool`, `ScriptedToolBuilder`,
-`ScriptingToolSet`, `ScriptingToolSetBuilder`, `DiscoverTool`, `DiscoveryMode`.
+`ToolDefExtension`, `ToolDefExtensionBuilder`, `ScriptingToolSet`,
+`ScriptingToolSetBuilder`, `DiscoverTool`, `DiscoveryMode`.
 
 ## Example
 
