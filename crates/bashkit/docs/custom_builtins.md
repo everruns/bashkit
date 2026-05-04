@@ -114,6 +114,39 @@ let result = bash
 assert_eq!(result.stdout, "req-123\n");
 ```
 
+## Extensions
+
+Use an `Extension` when one capability contributes multiple builtins.
+
+```rust,ignore
+use bashkit::{Bash, Builtin, BuiltinContext, ExecResult, Extension, async_trait};
+
+struct Hello;
+
+#[async_trait]
+impl Builtin for Hello {
+    async fn execute(&self, _ctx: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {
+        Ok(ExecResult::ok("hello\n".to_string()))
+    }
+}
+
+struct MyExtension;
+
+impl Extension for MyExtension {
+    fn builtins(&self) -> Vec<(String, Box<dyn Builtin>)> {
+        vec![("hello".to_string(), Box::new(Hello))]
+    }
+}
+
+let mut bash = Bash::builder().extension(MyExtension).build();
+let result = bash.exec("hello").await?;
+assert_eq!(result.stdout, "hello\n");
+```
+
+The same extension can be added to `BashTool::builder().extension(...)`.
+`TypeScriptExtension` uses this model to register the embedded
+TypeScript/JavaScript builtins.
+
 ### Arguments
 
 Arguments are passed as a slice of strings, excluding the command name itself:

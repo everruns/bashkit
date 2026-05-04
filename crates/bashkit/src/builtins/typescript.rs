@@ -23,7 +23,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use zapcode_core::{ResourceLimits, RunResult, Value, VmState, ZapcodeRun};
 
-use super::{Builtin, Context, resolve_path};
+use super::{Builtin, Context, Extension, resolve_path};
 use crate::error::Result;
 use crate::fs::FileSystem;
 use crate::interpreter::ExecResult;
@@ -246,6 +246,94 @@ impl TypeScriptConfig {
     pub fn unsupported_mode_hint(mut self, enable: bool) -> Self {
         self.enable_unsupported_mode_hint = enable;
         self
+    }
+}
+
+/// Extension that registers embedded TypeScript/JavaScript builtins.
+///
+/// Registers `ts` and `typescript`, plus `node`, `deno`, and `bun` when
+/// [`TypeScriptConfig::compat_aliases`] is enabled.
+#[derive(Debug, Clone, Default)]
+pub struct TypeScriptExtension {
+    config: TypeScriptConfig,
+    external_fns: Option<TypeScriptExternalFns>,
+}
+
+impl TypeScriptExtension {
+    /// Create a TypeScript extension with default configuration.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create a TypeScript extension with custom configuration.
+    pub fn with_config(config: TypeScriptConfig) -> Self {
+        Self {
+            config,
+            external_fns: None,
+        }
+    }
+
+    /// Create a TypeScript extension with custom resource limits.
+    pub fn with_limits(limits: TypeScriptLimits) -> Self {
+        Self::with_config(TypeScriptConfig::default().limits(limits))
+    }
+
+    /// Create a TypeScript extension with external function handlers.
+    pub fn with_external_handler(
+        limits: TypeScriptLimits,
+        external_fns: Vec<String>,
+        handler: TypeScriptExternalFnHandler,
+    ) -> Self {
+        Self {
+            config: TypeScriptConfig::default().limits(limits),
+            external_fns: Some(TypeScriptExternalFns {
+                names: external_fns,
+                handler,
+            }),
+        }
+    }
+
+    fn make_builtin(&self, cmd_name: &str) -> TypeScript {
+        let builtin = TypeScript::from_config(&self.config, cmd_name);
+        if let Some(external_fns) = &self.external_fns {
+            builtin.with_external_handler(external_fns.names.clone(), external_fns.handler.clone())
+        } else {
+            builtin
+        }
+    }
+}
+
+impl Extension for TypeScriptExtension {
+    fn builtins(&self) -> Vec<(String, Box<dyn Builtin>)> {
+        let mut builtins: Vec<(String, Box<dyn Builtin>)> = vec![
+            (
+                "ts".to_string(),
+                Box::new(self.make_builtin("ts")) as Box<dyn Builtin>,
+            ),
+            (
+                "typescript".to_string(),
+                Box::new(self.make_builtin("typescript")) as Box<dyn Builtin>,
+            ),
+        ];
+
+        if self.config.enable_compat_aliases {
+            builtins.extend([
+                (
+                    "node".to_string(),
+                    Box::new(self.make_builtin("node")) as Box<dyn Builtin>,
+                ),
+                (
+                    "deno".to_string(),
+                    Box::new(self.make_builtin("deno")) as Box<dyn Builtin>,
+                ),
+                (
+                    "bun".to_string(),
+                    Box::new(self.make_builtin("bun")) as Box<dyn Builtin>,
+                ),
+            ]);
+        }
+
+        builtins
     }
 }
 
