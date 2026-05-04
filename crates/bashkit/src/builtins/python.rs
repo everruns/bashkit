@@ -490,10 +490,10 @@ async fn run_python(
     let tracker = LimitedTracker::new(limits);
 
     // Run the synchronous start() phase, then extract collected output.
-    // PrintWriter::Collect is not Send, so we scope it to avoid holding across .await.
+    // PrintWriter::CollectString is not Send, so we scope it to avoid holding across .await.
     let (mut progress, mut buf) = {
         let mut buf = String::new();
-        match runner.start(vec![], tracker, PrintWriter::Collect(&mut buf)) {
+        match runner.start(vec![], tracker, PrintWriter::CollectString(&mut buf)) {
             Ok(p) => (p, buf),
             Err(e) => {
                 return Ok(format_exception_with_output(e, &buf));
@@ -513,7 +513,7 @@ async fn run_python(
                     env,
                 )
                 .await;
-                match os_call.resume(result, PrintWriter::Collect(&mut buf)) {
+                match os_call.resume(result, PrintWriter::CollectString(&mut buf)) {
                     Ok(next) => {
                         progress = next;
                     }
@@ -540,7 +540,7 @@ async fn run_python(
                     ))
                 };
 
-                match call.resume(result, PrintWriter::Collect(&mut buf)) {
+                match call.resume(result, PrintWriter::CollectString(&mut buf)) {
                     Ok(next) => {
                         progress = next;
                     }
@@ -567,7 +567,7 @@ async fn run_python(
                     NameLookupResult::Undefined
                 };
 
-                match lookup.resume(result, PrintWriter::Collect(&mut buf)) {
+                match lookup.resume(result, PrintWriter::CollectString(&mut buf)) {
                     Ok(next) => {
                         progress = next;
                     }
