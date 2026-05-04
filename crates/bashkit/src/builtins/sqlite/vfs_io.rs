@@ -39,15 +39,24 @@ pub(super) struct VfsFile {
     path: PathBuf,
     bytes: Mutex<Vec<u8>>,
     dirty: AtomicBool,
+    max_file_bytes: usize,
 }
 
 impl VfsFile {
-    fn new(path: PathBuf, bytes: Vec<u8>) -> Self {
+    fn new(path: PathBuf, bytes: Vec<u8>, max_file_bytes: usize) -> Self {
         Self {
             path,
             bytes: Mutex::new(bytes),
             dirty: AtomicBool::new(false),
+            max_file_bytes,
         }
+    }
+
+    fn cap_error(&self) -> turso_core::LimboError {
+        turso_core::LimboError::InternalError(format!(
+            "sqlite: VFS file exceeds {} bytes cap",
+            self.max_file_bytes
+        ))
     }
 }
 
@@ -95,8 +104,13 @@ impl File for VfsFile {
         c: Completion,
     ) -> turso_core::Result<Completion> {
         let mut buf = lock_bytes(&self.bytes);
-        let pos_usize = pos as usize;
-        let needed = pos_usize + buffer.len();
+        let pos_usize = usize::try_from(pos).map_err(|_| self.cap_error())?;
+        let needed = pos_usize
+            .checked_add(buffer.len())
+            .ok_or_else(|| self.cap_error())?;
+        if needed > self.max_file_bytes {
+            return Err(self.cap_error());
+        }
         if needed > buf.len() {
             buf.resize(needed, 0);
         }
@@ -121,8 +135,12 @@ impl File for VfsFile {
     }
 
     fn truncate(&self, len: u64, c: Completion) -> turso_core::Result<Completion> {
+        let len_usize = usize::try_from(len).map_err(|_| self.cap_error())?;
+        if len_usize > self.max_file_bytes {
+            return Err(self.cap_error());
+        }
         let mut buf = lock_bytes(&self.bytes);
-        buf.resize(len as usize, 0);
+        buf.resize(len_usize, 0);
         self.dirty.store(true, Ordering::Release);
         c.complete(0);
         Ok(c)
@@ -144,23 +162,9 @@ pub(super) struct BashkitVfsIO {
 }
 
 impl BashkitVfsIO {
-    pub(super) fn new(fs: Arc<dyn FileSystem>, handle: Handle) -> Arc<Self> {
-        Arc::new(Self {
-            fs,
-            open_files: Mutex::new(HashMap::new()),
-            handle,
-            max_file_bytes: 256 * 1024 * 1024,
-        })
-    }
-
-    /// Test/admin hook to override the file-size cap.
-    ///
-    /// Currently unused outside of the public crate API but retained as a
-    /// test seam: integration tests that want to exercise the VFS-cap path
-    /// without going through the full builtin can construct an IO with a
-    /// tighter limit here.
-    #[cfg(test)]
-    #[allow(dead_code)]
+    /// Override the file-size cap. The builtin passes
+    /// `SqliteLimits::max_db_bytes` here so both VFS reads and writes share
+    /// the same per-database cap.
     pub(super) fn new_with_cap(
         fs: Arc<dyn FileSystem>,
         handle: Handle,
@@ -256,7 +260,7 @@ impl IO for BashkitVfsIO {
                 Vec::new()
             }
         };
-        let file = Arc::new(VfsFile::new(pb, bytes));
+        let file = Arc::new(VfsFile::new(pb, bytes, cap));
         self.open_files_lock()
             .insert(path.to_string(), file.clone());
         Ok(file as Arc<dyn File>)

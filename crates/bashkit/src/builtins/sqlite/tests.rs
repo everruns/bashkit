@@ -569,9 +569,16 @@ async fn pragma_cache_size_blocked_by_default() {
 async fn pragma_schema_qualified_match() {
     // Schema-qualified PRAGMAs (e.g. `main.cache_size`) must still hit the
     // deny list — otherwise the policy is trivial to bypass.
-    let r = run(&[":memory:", "PRAGMA main.cache_size = 100"], None).await;
-    assert_eq!(r.exit_code, 1);
-    assert!(r.stderr.contains("PRAGMA cache_size is denied"));
+    for sql in [
+        "PRAGMA main.cache_size = 100",
+        "PRAGMA main.\"cache_size\" = 100",
+        "PRAGMA temp.[cache_size]",
+        "PRAGMA main.`cache_size`",
+    ] {
+        let r = run(&[":memory:", sql], None).await;
+        assert_eq!(r.exit_code, 1, "{sql} stderr: {}", r.stderr);
+        assert!(r.stderr.contains("PRAGMA cache_size is denied"));
+    }
 }
 
 #[tokio::test]
@@ -669,6 +676,34 @@ async fn db_file_too_large_rejected() {
     let r = Sqlite::with_limits(limits).execute(ctx).await.unwrap();
     assert_eq!(r.exit_code, 1);
     assert!(r.stderr.contains("too large"));
+}
+
+#[tokio::test]
+async fn db_growth_beyond_max_rejected_on_both_backends() {
+    for backend in [SqliteBackend::Memory, SqliteBackend::Vfs] {
+        let backend_name = match backend {
+            SqliteBackend::Memory => "memory",
+            SqliteBackend::Vfs => "vfs",
+        };
+        let env = opt_in_env();
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        let owned: Vec<String> = [
+            "/tmp/tiny.sqlite".to_string(),
+            "CREATE TABLE t(a); INSERT INTO t VALUES (1)".to_string(),
+        ]
+        .to_vec();
+        let mut variables = HashMap::new();
+        let mut cwd = PathBuf::from("/home/user");
+        let ctx = Context::new_for_test(&owned, &env, &mut variables, &mut cwd, fs, None);
+        let limits = SqliteLimits::default().max_db_bytes(128).backend(backend);
+        let r = Sqlite::with_limits(limits).execute(ctx).await.unwrap();
+        assert_eq!(r.exit_code, 1, "{backend_name} stdout: {}", r.stdout);
+        assert!(
+            r.stderr.contains("too large") || r.stderr.contains("exceeds 128 bytes cap"),
+            "{backend_name} stderr: {}",
+            r.stderr
+        );
+    }
 }
 
 #[tokio::test]

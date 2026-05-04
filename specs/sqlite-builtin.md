@@ -204,30 +204,30 @@ leading SQL keyword via the parser's lightweight tokeniser
 | TM-SQL-002    | Sandbox escape via host filesystem                  | All paths resolve through `Arc<dyn FileSystem>`; Phase 2 IO is bound to that FS only |
 | TM-SQL-003    | DoS via large SQL input                              | `SqliteLimits::max_script_bytes` (4 MiB default)                        |
 | TM-SQL-004    | DoS via huge result set                              | `SqliteLimits::max_rows_per_query` (1M default)                         |
-| TM-SQL-005    | DoS via huge DB file                                 | `SqliteLimits::max_db_bytes` (256 MiB default) at load time             |
+| TM-SQL-005    | DoS via huge DB file                                 | `SqliteLimits::max_db_bytes` (256 MiB default) at load time and while growing DBs |
 | TM-SQL-005a   | DoS via wall-clock burn (regex-style queries, CTEs)  | `SqliteLimits::max_duration` enforced via per-step deadline + `Statement::interrupt()` |
 | TM-SQL-005b   | DoS via statement-flood (millions of `;`)            | `SqliteLimits::max_statements` checked after splitting                  |
 | TM-SQL-006    | Binary corruption / truncation in BLOB round-trip    | Backed by `Vec<u8>`; tested via `tm_sql_006`                            |
 | TM-SQL-007    | CSV escape failure with separator-bearing blobs      | Per-RFC-4180 quoting; tested via `tm_sql_007`                           |
 | TM-SQL-008    | Stack overflow via recursive `.read`                 | `MAX_DOT_READ_DEPTH` cap; tested via `tm_sql_008`                       |
 | TM-SQL-009    | Cross-database access via `ATTACH`/`DETACH`          | Policy rejects both keywords (case-insensitive, comment-aware); tested via `tm_sql_009` |
-| TM-SQL-010    | DoS / fingerprinting via dangerous PRAGMAs           | `SqliteLimits::pragma_deny` defaults block `cache_size`, `mmap_size`, `page_size`, `max_page_count`, `temp_store_directory`, `data_store_directory`, `compile_options`, `locking_mode`, `shared_cache`; tested via `tm_sql_010` |
+| TM-SQL-010    | DoS / fingerprinting via dangerous PRAGMAs           | `SqliteLimits::pragma_deny` defaults block `cache_size`, `mmap_size`, `page_size`, `max_page_count`, `temp_store_directory`, `data_store_directory`, `compile_options`, `locking_mode`, `shared_cache`; parser handles comments plus quoted/schema-qualified names |
 | TM-SQL-011    | Information leakage via host-side error strings      | `sanitize()` strips ` at /…:N:M` annotations from turso errors          |
 
 ## Test Plan
 
 Coverage lives in four layers (all cited tests are real):
 
-- **Unit** — `crates/bashkit/src/builtins/sqlite/{tests.rs,…}`. 74 cases
-  covering positive flow, every flag, every dot-command, every output
-  mode, opt-in gate, recursion cap, oversize input, and proptest harness
-  for the SQL splitter.
+- **Unit** — `crates/bashkit/src/builtins/sqlite/{tests.rs,…}`. Covers
+  positive flow, every flag, every dot-command, every output mode, opt-in
+  gate, recursion cap, oversize input, parser/policy/sanitizer internals,
+  and the proptest harness for the SQL splitter.
 - **Integration** — `crates/bashkit/tests/sqlite_integration_tests.rs`.
   14 cases driving `Bash::exec` end-to-end (pipelines, redirection, env
   expansion, `.read` of a heredoc-built VFS file, `.dump`/`.read` round
   trip, both backends).
-- **Security** — `crates/bashkit/tests/sqlite_security_tests.rs`. 9 cases,
-  one per TM row above.
+- **Security** — `crates/bashkit/tests/sqlite_security_tests.rs`. Black-box
+  threat-model regression tests for the TM-SQL rows above.
 - **Compatibility** — `crates/bashkit/tests/sqlite_compat_tests.rs`. 8
   parity checks against the sqlite3 shell (separator, CSV escaping,
   `.tables` ordering, `.dump` brackets, PRAGMA round-trip, ORDER/LIMIT,

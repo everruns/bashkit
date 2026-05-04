@@ -436,19 +436,28 @@ impl Builtin for Sqlite {
 
                 // Persist to the VFS so snapshots taken between exec()
                 // calls always pick up the latest committed state. We
-                // keep the engine in the cache regardless; the next call
-                // will reuse it (and any in-flight transaction will
-                // continue to see uncommitted state).
+                // keep the engine in the cache unless the snapshot exceeds
+                // the configured cap; an oversized cached image would keep
+                // memory pressure alive across later shell commands.
+                let mut drop_cached_engine = false;
                 match backend {
                     SqliteBackend::Memory => {
-                        if let Some(bytes) = engine.snapshot_bytes()
-                            && let Err(e) = ctx.fs.write_file(path, &bytes).await
-                        {
-                            stderr.push_str(&format!(
-                                "sqlite: persist failed: {}: {e}\n",
-                                path.display()
-                            ));
-                            exit_code = exit_code.max(1);
+                        if let Some(bytes) = engine.snapshot_bytes() {
+                            if bytes.len() > self.limits.max_db_bytes {
+                                stderr.push_str(&format!(
+                                    "sqlite: database file too large after execution ({} bytes; limit {})\n",
+                                    bytes.len(),
+                                    self.limits.max_db_bytes
+                                ));
+                                exit_code = exit_code.max(1);
+                                drop_cached_engine = true;
+                            } else if let Err(e) = ctx.fs.write_file(path, &bytes).await {
+                                stderr.push_str(&format!(
+                                    "sqlite: persist failed: {}: {e}\n",
+                                    path.display()
+                                ));
+                                exit_code = exit_code.max(1);
+                            }
                         }
                     }
                     SqliteBackend::Vfs => {
@@ -457,6 +466,9 @@ impl Builtin for Sqlite {
                             exit_code = exit_code.max(1);
                         }
                     }
+                }
+                if drop_cached_engine {
+                    *guard = None;
                 }
             }
         }
@@ -660,7 +672,7 @@ async fn open_file_engine(
         }
         SqliteBackend::Vfs => {
             let handle = vfs_io::current_handle_or_default();
-            let io = vfs_io::BashkitVfsIO::new(fs.clone(), handle);
+            let io = vfs_io::BashkitVfsIO::new_with_cap(fs.clone(), handle, limits.max_db_bytes);
             let path_str = path.to_string_lossy().into_owned();
             SqliteEngine::open_vfs(io, &path_str)
         }

@@ -191,35 +191,105 @@ pub(super) fn pragma_name(sql: &str) -> Option<String> {
     if s.len() < 7 || !s[..6].eq_ignore_ascii_case("pragma") {
         return None;
     }
-    let after = &s[6..];
-    if !after.starts_with(|c: char| c.is_ascii_whitespace()) {
+    let bytes = s.as_bytes();
+    if !starts_sql_separator(bytes, 6) {
         return None;
     }
     // Skip whitespace + optional `main.`/`temp.` schema prefix. We compare
     // the *last* identifier — `PRAGMA main.cache_size = 0` should still be
     // matched as `cache_size`.
-    let after = after.trim_start();
-    let bytes = after.as_bytes();
-    let mut start = 0usize;
-    let mut end = 0usize;
-    while end < bytes.len() {
-        let b = bytes[end];
-        if b.is_ascii_alphanumeric() || b == b'_' {
-            end += 1;
-            continue;
-        }
-        if b == b'.' && end > start {
-            // Schema-qualified PRAGMA — restart name tracking after the dot.
-            end += 1;
-            start = end;
+    let mut i = skip_sql_noise(bytes, 6);
+    let (name, next) = parse_identifier(s, i)?;
+    let mut last = name.to_ascii_lowercase();
+    i = skip_sql_noise(bytes, next);
+    loop {
+        if bytes.get(i) == Some(&b'.') {
+            i = skip_sql_noise(bytes, i + 1);
+            let (name, next) = parse_identifier(s, i)?;
+            last = name.to_ascii_lowercase();
+            i = skip_sql_noise(bytes, next);
             continue;
         }
         break;
     }
-    if end == start {
+    Some(last)
+}
+
+fn starts_sql_separator(bytes: &[u8], i: usize) -> bool {
+    bytes.get(i).is_some_and(|b| b.is_ascii_whitespace())
+        || (bytes.get(i) == Some(&b'/') && bytes.get(i + 1) == Some(&b'*'))
+        || (bytes.get(i) == Some(&b'-') && bytes.get(i + 1) == Some(&b'-'))
+}
+
+fn skip_sql_noise(bytes: &[u8], mut i: usize) -> usize {
+    loop {
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i + 1 < bytes.len() && bytes[i] == b'-' && bytes[i + 1] == b'-' {
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+        if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'*' {
+            i += 2;
+            while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                i += 1;
+            }
+            i = (i + 2).min(bytes.len());
+            continue;
+        }
+        return i;
+    }
+}
+
+fn parse_identifier(s: &str, start: usize) -> Option<(String, usize)> {
+    let bytes = s.as_bytes();
+    match bytes.get(start).copied()? {
+        b'"' | b'`' => parse_quoted_identifier(s, start),
+        b'[' => parse_bracket_identifier(s, start),
+        b if b.is_ascii_alphanumeric() || b == b'_' => {
+            let mut end = start + 1;
+            while end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_') {
+                end += 1;
+            }
+            Some((s[start..end].to_string(), end))
+        }
+        _ => None,
+    }
+}
+
+fn parse_quoted_identifier(s: &str, start: usize) -> Option<(String, usize)> {
+    let bytes = s.as_bytes();
+    let quote = bytes[start];
+    let mut out = String::new();
+    let mut i = start + 1;
+    while i < bytes.len() {
+        if bytes[i] == quote {
+            if quote == b'"' && bytes.get(i + 1) == Some(&quote) {
+                out.push('"');
+                i += 2;
+                continue;
+            }
+            return Some((out, i + 1));
+        }
+        out.push(bytes[i] as char);
+        i += 1;
+    }
+    None
+}
+
+fn parse_bracket_identifier(s: &str, start: usize) -> Option<(String, usize)> {
+    let bytes = s.as_bytes();
+    let mut end = start + 1;
+    while end < bytes.len() && bytes[end] != b']' {
+        end += 1;
+    }
+    if end >= bytes.len() {
         return None;
     }
-    Some(after[start..end].to_ascii_lowercase())
+    Some((s[start + 1..end].to_string(), end + 1))
 }
 
 fn split_args(s: &str) -> Vec<String> {
@@ -420,9 +490,29 @@ mod tests {
     }
 
     #[test]
+    fn pragma_name_handles_quoted_schema_qualified_names() {
+        assert_eq!(
+            pragma_name("PRAGMA main.\"cache_size\" = -1024"),
+            Some("cache_size".into())
+        );
+        assert_eq!(
+            pragma_name("PRAGMA temp.[cache_size]"),
+            Some("cache_size".into())
+        );
+        assert_eq!(
+            pragma_name("PRAGMA main.`cache_size`"),
+            Some("cache_size".into())
+        );
+    }
+
+    #[test]
     fn pragma_name_skips_comments() {
         assert_eq!(
             pragma_name("-- hi\n  /* */ PRAGMA cache_size"),
+            Some("cache_size".into())
+        );
+        assert_eq!(
+            pragma_name("PRAGMA/**/cache_size"),
             Some("cache_size".into())
         );
     }
