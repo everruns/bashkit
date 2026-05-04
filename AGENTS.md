@@ -164,8 +164,9 @@ When adding a new builtin that wraps a library:
 10. CI green before merge
 11. Resolve all PR comments
 12. `cargo bench --bench parallel_execution` if touching Arc/async/Interpreter/builtins (see `specs/parallel-execution.md`)
-13. `just bench` if changes might impact performance (interpreter, builtins, tools)
-14. `ruff check crates/bashkit-python && ruff format --check crates/bashkit-python` if touching Python code
+13. `just bench-sqlite` if touching the sqlite builtin or its VFS/IO bridge (see `specs/sqlite-builtin.md`)
+14. `just bench` if changes might impact performance (interpreter, builtins, tools)
+15. `ruff check crates/bashkit-python && ruff format --check crates/bashkit-python` if touching Python code
 
 ### CI
 
