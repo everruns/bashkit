@@ -29,7 +29,7 @@ const BUILTIN_COMMANDS: &[&str] = &[
     "history", "hostname", "iconv", "id", "jq", "json", "join", "kill", "ln", "local", "log", "ls",
     "mkdir", "mktemp", "mv", "nl", "od", "paste", "popd", "printenv", "printf", "pushd", "pwd",
     "read", "readlink", "readonly", "realpath", "retry", "return", "rev", "rm", "rmdir", "sed",
-    "semver", "seq", "set", "shift", "shopt", "sleep", "sort", "source", "split", "stat",
+    "semver", "seq", "set", "shift", "shopt", "shuf", "sleep", "sort", "source", "split", "stat",
     "strings", "tac", "tail", "tar", "tee", "test", "timeout", "touch", "tr", "tree", "truncate",
     "true", "uname", "unexpand", "uniq", "unset", "wait", "watch", "wc", "wget", "whoami", "xargs",
     "xxd", "yes",

@@ -978,6 +978,7 @@ impl Interpreter {
             "find" => Find,
             "tree" => Tree,
             "truncate" => Truncate,
+            "shuf" => Shuf,
             // File inspection
             "less" => Less,
             "file" => File,

@@ -6,8 +6,10 @@
 // Original uutils licensed MIT; see THIRD_PARTY_LICENSES.
 
 #![allow(unused_imports, dead_code)]
-use clap::{Arg, ArgAction, Command};
+use clap::{Arg, ArgAction, Command, builder::ValueParser};
 use std::ffi::OsString;
+use std::ops::RangeInclusive;
+use std::str::FromStr;
 pub mod options {
     pub static IO_BLOCKS: &str = "io-blocks";
     pub static NO_CREATE: &str = "no-create";

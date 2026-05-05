@@ -18,7 +18,7 @@ description = "Port uutils/coreutils argument interfaces into bashkit at codegen
 publish = false
 
 [dependencies]
-syn = { version = "2", features = ["full", "visit-mut", "extra-traits"] }
+syn = { version = "2", features = ["full", "visit", "visit-mut", "extra-traits"] }
 quote = "1"
 proc-macro2 = "1"
 prettyplease = "0.2"

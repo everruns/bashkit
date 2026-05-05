@@ -6,8 +6,10 @@
 // Original uutils licensed MIT; see THIRD_PARTY_LICENSES.
 
 #![allow(unused_imports, dead_code)]
-use clap::{Arg, ArgAction, Command};
+use clap::{Arg, ArgAction, Command, builder::ValueParser};
 use std::ffi::OsString;
+use std::ops::RangeInclusive;
+use std::str::FromStr;
 mod options {
     pub static FILE: &str = "file";
     pub static SHOW_ALL: &str = "show-all";
