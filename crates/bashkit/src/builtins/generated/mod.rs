@@ -7,3 +7,4 @@
 
 pub mod cat_args;
 pub mod tac_args;
+pub mod truncate_args;

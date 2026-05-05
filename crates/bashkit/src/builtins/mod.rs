@@ -101,6 +101,7 @@ pub(crate) mod timeout;
 mod tomlq;
 mod trap;
 mod tree;
+mod truncate;
 mod vars;
 mod verify;
 mod wait;
@@ -203,6 +204,7 @@ pub use timeout::Timeout;
 pub use tomlq::Tomlq;
 pub use trap::Trap;
 pub use tree::Tree;
+pub use truncate::Truncate;
 pub use vars::{Eval, Local, Readonly, Set, Shift, Shopt, Times, Unset};
 pub use verify::Verify;
 pub use wait::Wait;
@@ -1133,6 +1135,7 @@ mod tests {
             "unexpand",
             "nl",
             "tac",
+            "truncate",
             "rev",
             "strings",
             "od",
