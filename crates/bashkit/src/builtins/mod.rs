@@ -88,6 +88,7 @@ pub(crate) mod search_common;
 mod sed;
 mod semver;
 mod seq;
+mod shuf;
 mod sleep;
 mod sortuniq;
 mod source;
@@ -191,6 +192,8 @@ pub use rg::Rg;
 pub use sed::Sed;
 pub use semver::Semver;
 pub use seq::Seq;
+pub use shuf::Shuf;
+
 pub use sleep::Sleep;
 pub use sortuniq::{Sort, Uniq};
 pub use source::Source;
@@ -1184,6 +1187,7 @@ mod tests {
             "nl",
             "tac",
             "truncate",
+            "shuf",
             "rev",
             "strings",
             "od",

@@ -28,5 +28,6 @@
 pub const UUTILS_REVISION: &str = "39364b6";
 
 pub mod cat_args;
+pub mod shuf_args;
 pub mod tac_args;
 pub mod truncate_args;
