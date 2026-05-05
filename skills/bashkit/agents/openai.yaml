@@ -1,0 +1,4 @@
+interface:
+  display_name: "Bashkit"
+  short_description: "Use Bashkit as a sandboxed shell runtime"
+  default_prompt: "Use $bashkit to show me how to run a sandboxed Bash command."

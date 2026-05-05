@@ -1,0 +1,12 @@
+{
+  "$schema": "https://schemas.agentskills.io/discovery/0.2.0/schema.json",
+  "skills": [
+    {
+      "name": "bashkit",
+      "type": "archive",
+      "description": "Use Bashkit as a sandboxed shell runtime for CLI commands, scripts, LLM tools, and Rust/Python/JavaScript/TypeScript integrations.",
+      "url": "/.well-known/agent-skills/bashkit.tar.gz",
+      "digest": "sha256:3195cddf2280c796e3e9725fb5c7a437eefa3dd43c1de1b6cf1db9a92a93513f"
+    }
+  ]
+}
