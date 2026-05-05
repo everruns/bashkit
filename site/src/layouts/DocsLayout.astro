@@ -15,11 +15,12 @@ const index = DOC_META.findIndex((doc) => doc.slug === slug);
 const prev = index > 0 ? DOC_META[index - 1] : null;
 const next = index >= 0 && index < DOC_META.length - 1 ? DOC_META[index + 1] : null;
 
-const editUrl = `https://github.com/everruns/bashkit/blob/main/docs/${slug}.md`;
+const editPath = meta?.editPath ?? `docs/${slug}.md`;
+const editUrl = `https://github.com/everruns/bashkit/blob/main/${editPath}`;
 ---
 
 <BaseLayout
-  title={`${title} — Bashkit docs`}
+  title={title}
   description={description ?? meta?.summary}
 >
   <article class="doc section">

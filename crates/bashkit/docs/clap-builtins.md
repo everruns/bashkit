@@ -133,6 +133,6 @@ async fn main() -> bashkit::Result<()> {
 
 ## See Also
 
-- [`crates/bashkit/examples/clap_builtin.rs`](../crates/bashkit/examples/clap_builtin.rs)
-- [`crates/bashkit/examples/clap_builtin_subcommands.rs`](../crates/bashkit/examples/clap_builtin_subcommands.rs)
-- [`crates/bashkit/docs/custom_builtins.md`](../crates/bashkit/docs/custom_builtins.md)
+- [`crates/bashkit/examples/clap_builtin.rs`](../examples/clap_builtin.rs)
+- [`crates/bashkit/examples/clap_builtin_subcommands.rs`](../examples/clap_builtin_subcommands.rs)
+- [`crates/bashkit/docs/custom_builtins.md`](./custom_builtins.md)
