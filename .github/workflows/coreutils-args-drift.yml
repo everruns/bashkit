@@ -86,6 +86,23 @@ jobs:
         working-directory: bashkit
         run: cargo test -p bashkit --test spec_tests bash_spec_tests
 
+      # Body-drift gate: rebuild the matching uutils binaries from the
+      # *same* tree the args codegen ran against, then run the
+      # differential harness. Catches semantic divergence (e.g. uutils
+      # reworking how -A renders a control byte) that the args drift
+      # check cannot see.
+      - name: Build uutils multicall from pinned tree
+        working-directory: uutils
+        run: |
+          cargo build --release --bin coreutils
+          echo "$GITHUB_WORKSPACE/uutils/target/release" >> "$GITHUB_PATH"
+
+      - name: Run coreutils differential harness
+        working-directory: bashkit
+        env:
+          BASHKIT_RUN_COREUTILS_DIFF: '1'
+        run: cargo test -p bashkit --test coreutils_differential_tests
+
       - name: Open pull request if drifted
         uses: peter-evans/create-pull-request@v7
         with:
