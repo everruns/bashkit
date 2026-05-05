@@ -204,6 +204,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language.
 | procsub.test.sh | 14 | process substitution |
 | quote.test.sh | 42 | quoting edge cases |
 | read-builtin.test.sh | 16 | `read` builtin, IFS splitting, `-r`, `-a` (array), `-n` (nchars), here-string |
+| readlink.test.sh | 6 | codegen-ported args, `-f`/`-m`/`-e` modes, `-fn` combined short flags, long form, unknown-flag rejection |
 | recursive-cmdsub.test.sh | 3 | recursive function calls inside `$()` command substitution |
 | regex-limit.test.sh | 1 | regex size limits in sed, grep, awk |
 | replace_pattern_limit.test.sh | 3 | global pattern replacement result size cap |
