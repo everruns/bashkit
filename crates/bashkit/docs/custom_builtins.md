@@ -7,7 +7,7 @@ virtual filesystem.
 
 **See also:**
 - [API Documentation](https://docs.rs/bashkit) - Full API reference
-- [Clap Builtins](../../../docs/clap-builtins.md) - Derive parser structs for custom builtin args
+- [Clap Builtins](./clap-builtins.md) - Derive parser structs for custom builtin args
 - [Hooks](./hooks.md) - Interceptor hooks for the execution pipeline
 - [Compatibility Reference](./compatibility.md) - Supported bash features
 - [Threat Model](./threat-model.md) - Security considerations

@@ -39,6 +39,7 @@ const pageUrl = Astro.site
     <meta name="twitter:description" content={description} />
 
     <script
+      is:inline
       type="application/ld+json"
       set:html={JSON.stringify({
         "@context": "https://schema.org",
