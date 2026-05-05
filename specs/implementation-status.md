@@ -228,6 +228,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language.
 | time.test.sh | 11 | Wall-clock only (user/sys always 0) |
 | timeout.test.sh | 16 | |
 | tree.test.sh | 1 | tree directory listing |
+| truncate.test.sh | 13 | `truncate -s` set/extend/shrink, relative `+`/`-`/`<`/`>`, `--no-create`, `-r REF`, K/KB units |
 | type.test.sh | 15 | `type`, `which`, `hash` builtins |
 | unicode.test.sh | 17 | unicode handling (3 skipped) |
 | unset-exported-var.test.sh | 3 | unset removes exported vars from env (1 skipped) |
