@@ -977,6 +977,7 @@ impl Interpreter {
             "ls" => Ls,
             "find" => Find,
             "tree" => Tree,
+            "truncate" => Truncate,
             // File inspection
             "less" => Less,
             "file" => File,

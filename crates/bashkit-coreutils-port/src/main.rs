@@ -9,6 +9,10 @@
 //!    - `uucore::crate_version!()`     -> `env!("CARGO_PKG_VERSION")`
 //!    - `uucore::format_usage(x)`      -> `format_usage(x)` (local shim)
 //!    - `uucore::localized_help_template("x")` -> the chained call is dropped
+//!    - `uucore::clap_localization::configure_localized_command(cmd)` -> `cmd`
+//!      (uutils wraps the Command in a localization-aware adapter that
+//!      pulls in Fluent; bashkit doesn't need it, so we replace the
+//!      call with its first argument)
 //! 4. Emit a generated file containing only:
 //!    - `mod options { pub static ... }` (verbatim from source)
 //!    - `pub fn <util>_command() -> clap::Command` (rewritten `uu_app`)
@@ -255,6 +259,15 @@ impl Rewriter {
             // Returning a sentinel marker lets the caller (visit_expr_mut on
             // the surrounding MethodCall) elide the chained step.
             return Some(parse_quote!(__bashkit_drop_chain__()));
+        }
+
+        if last == "configure_localized_command" && path_starts_with(&func_path, "uucore") {
+            // uucore::clap_localization::configure_localized_command(cmd)
+            // -> cmd. The wrapper pulls Fluent into the Command's
+            // help/version paths; bashkit's Command works without it.
+            if let Some(first) = call.args.first() {
+                return Some(first.clone());
+            }
         }
 
         None
