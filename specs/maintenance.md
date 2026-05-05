@@ -91,6 +91,9 @@ See `specs/coreutils-args-port.md`.
   - Confirm removed/renamed flags don't break downstream scripts; migrate
     or document.
   - Squash-merge as a human (PR's intermediate commits are bot-authored).
+  - Confirm the `coreutils_differential_tests` step in the auto-PR is
+    green — body drift (semantic divergence vs GNU/uutils) surfaces here
+    even when args parity holds.
 - Run `just regen-coreutils-args` locally if no drift PR exists; commit any
   diff yourself rather than letting it accumulate.
 - Bump the pinned uutils revision recorded in the generated file headers
