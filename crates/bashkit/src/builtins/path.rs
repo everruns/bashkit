@@ -580,7 +580,7 @@ mod tests {
             stderr_lower.contains("unexpected argument")
                 || stderr_lower.contains("unknown argument")
                 || stderr_lower.contains("invalid option"),
-            "expected clap unknown-flag stderr, got {:?}",
+            "expected clap unknown-flag stderr, got {}",
             result.stderr
         );
     }
