@@ -173,6 +173,10 @@ impl Builtin for Realpath {
 
 /// The readlink builtin - print resolved symbolic links or canonical file names.
 ///
+/// Argument surface is generated from uutils/coreutils' `uu_app()` via the
+/// `bashkit-coreutils-port` codegen tool — see `generated/readlink_args.rs`.
+/// Behaviour stays local against the bashkit VFS.
+///
 /// Usage: readlink [-f|-m|-e] FILE...
 ///
 /// Options:
@@ -186,49 +190,52 @@ pub struct Readlink;
 impl Builtin for Readlink {
     #[allow(clippy::collapsible_if)]
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        if let Some(r) = super::check_help_version(
-            ctx.args,
-            "Usage: readlink [-f|-m|-e] FILE...\nPrint resolved symbolic links or canonical file names.\n\n  -f\tcanonicalize by following every symlink; all but last component must exist\n  -m\tcanonicalize without requiring components to exist\n  -e\tcanonicalize; all components must exist\n  -n\tdo not output the trailing newline\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
-            Some("readlink (bashkit) 0.1"),
-        ) {
-            return Ok(r);
-        }
-        if ctx.args.is_empty() {
-            return Ok(ExecResult::err(
-                "readlink: missing operand\n".to_string(),
-                1,
-            ));
-        }
+        let argv: Vec<std::ffi::OsString> = std::iter::once(std::ffi::OsString::from("readlink"))
+            .chain(ctx.args.iter().map(std::ffi::OsString::from))
+            .collect();
 
-        let mut mode = ReadlinkMode::Raw;
-        let mut files: Vec<&str> = Vec::new();
-
-        for arg in ctx.args {
-            match arg.as_str() {
-                "-f" => mode = ReadlinkMode::Canonicalize,
-                "-m" => mode = ReadlinkMode::CanonicalizeMissing,
-                "-e" => mode = ReadlinkMode::CanonicalizeExisting,
-                "-n" | "-v" | "-q" | "-s" | "--no-newline" => { /* silently accept */ }
-                s if s.starts_with('-') && s.len() > 1 && !s.starts_with("--") => {
-                    // Could be combined flags like -fn
-                    for ch in s[1..].chars() {
-                        match ch {
-                            'f' => mode = ReadlinkMode::Canonicalize,
-                            'm' => mode = ReadlinkMode::CanonicalizeMissing,
-                            'e' => mode = ReadlinkMode::CanonicalizeExisting,
-                            'n' | 'v' | 'q' | 's' => {}
-                            _ => {
-                                return Ok(ExecResult::err(
-                                    format!("readlink: invalid option -- '{}'\n", ch),
-                                    1,
-                                ));
-                            }
-                        }
-                    }
+        let cmd = super::generated::readlink_args::readlink_command()
+            .help_template("Usage: {usage}\n{about}\n\n{all-args}\n");
+        let matches = match cmd.try_get_matches_from(argv) {
+            Ok(m) => m,
+            Err(e) => {
+                let kind = e.kind();
+                let rendered = e.render().to_string();
+                if matches!(
+                    kind,
+                    clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion
+                ) {
+                    return Ok(ExecResult::ok(rendered));
                 }
-                _ => files.push(arg),
+                return Ok(ExecResult::err(rendered, 2));
             }
-        }
+        };
+
+        // -e/-m/-f are mutually exclusive in spirit; check most-restrictive
+        // first, matching uutils' precedence.
+        let mode = if matches.get_flag("canonicalize-existing") {
+            ReadlinkMode::CanonicalizeExisting
+        } else if matches.get_flag("canonicalize-missing") {
+            ReadlinkMode::CanonicalizeMissing
+        } else if matches.get_flag("canonicalize") {
+            ReadlinkMode::Canonicalize
+        } else {
+            ReadlinkMode::Raw
+        };
+
+        // -n suppresses the trailing terminator entirely; -z swaps it
+        // to NUL. Both can come from the codegen-generated args now
+        // that the parser handles them; the previous handwritten path
+        // silently accepted -n as a no-op, so honoring it is a strict
+        // improvement.
+        let suppress_terminator = matches.get_flag("no-newline");
+        let zero_terminated = matches.get_flag("zero");
+        let terminator: char = if zero_terminated { '\0' } else { '\n' };
+
+        let files: Vec<String> = matches
+            .get_many::<std::ffi::OsString>("files")
+            .map(|vs| vs.map(|v| v.to_string_lossy().into_owned()).collect())
+            .unwrap_or_default();
 
         if files.is_empty() {
             return Ok(ExecResult::err(
@@ -239,9 +246,12 @@ impl Builtin for Readlink {
 
         let mut output = String::new();
         let mut exit_code = 0;
+        let total_files = files.len();
 
-        for file in &files {
+        for (idx, file) in files.iter().enumerate() {
             let resolved = super::resolve_path(ctx.cwd, file);
+            let is_last = idx + 1 == total_files;
+            let needs_terminator = !(suppress_terminator && is_last);
 
             match mode {
                 ReadlinkMode::Raw => {
@@ -249,7 +259,9 @@ impl Builtin for Readlink {
                     match ctx.fs.read_link(&resolved).await {
                         Ok(target) => {
                             output.push_str(&target.to_string_lossy());
-                            output.push('\n');
+                            if needs_terminator {
+                                output.push(terminator);
+                            }
                         }
                         Err(_) => {
                             exit_code = 1;
@@ -274,13 +286,17 @@ impl Builtin for Readlink {
                         }
                     }
                     output.push_str(&resolved.to_string_lossy());
-                    output.push('\n');
+                    if needs_terminator {
+                        output.push(terminator);
+                    }
                 }
                 ReadlinkMode::CanonicalizeExisting => {
                     // -e: all components must exist
                     if ctx.fs.exists(&resolved).await.unwrap_or(false) {
                         output.push_str(&resolved.to_string_lossy());
-                        output.push('\n');
+                        if needs_terminator {
+                            output.push(terminator);
+                        }
                     } else {
                         exit_code = 1;
                     }

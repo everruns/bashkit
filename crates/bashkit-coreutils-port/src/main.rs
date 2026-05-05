@@ -77,8 +77,26 @@ fn run(uutils_dir: &Path, util: &str, rev: &str) -> Result<String> {
     let translations = parse_ftl(&ftl);
     let file = syn::parse_file(&src).context("parse uutils source as rust")?;
 
-    let options_mod = find_mod(&file, "options")
-        .ok_or_else(|| anyhow!("could not find `mod options` in {}", src_path.display()))?;
+    // Two option-key declaration styles in the wild:
+    // 1. `mod options { pub static FOO: &str = "foo"; ... }` (cat, tac,
+    //    truncate, stat, shuf). uu_app() refers to keys via
+    //    `options::FOO`.
+    // 2. Module-level `const OPT_FOO: &str = "foo";` / `static OPT_FOO`
+    //    (mktemp, realpath, readlink, od). uu_app() refers to keys by
+    //    bare name (`OPT_FOO`).
+    //
+    // Collect both: the optional `options` mod (if present) and any
+    // bare-name `OPT_*` / `ARG_*` constants we should also emit so
+    // uu_app's bare-name references resolve.
+    let options_mod = find_mod(&file, "options").cloned();
+    let bare_name_consts = collect_option_constants(&file);
+    if options_mod.is_none() && bare_name_consts.is_empty() {
+        bail!(
+            "could not find `mod options` or any module-level `OPT_*`/`ARG_*` \
+             constants in {}",
+            src_path.display()
+        );
+    }
     let mut uu_app = find_fn(&file, "uu_app")
         .ok_or_else(|| anyhow!("could not find `fn uu_app` in {}", src_path.display()))?
         .clone();
@@ -129,7 +147,18 @@ fn run(uutils_dir: &Path, util: &str, rev: &str) -> Result<String> {
          // Original uutils licensed MIT; see THIRD_PARTY_LICENSES.\n\n",
     );
 
-    let options_tokens = options_mod;
+    // Optional `mod options { ... }` (cat-style); collapses to nothing
+    // for utils that use bare-name constants.
+    let options_mod_tokens: TokenStream = match options_mod {
+        Some(m) => quote!(#m),
+        None => quote!(),
+    };
+    // Bare-name constants for utils that don't wrap them in a mod.
+    let const_tokens: Vec<TokenStream> = bare_name_consts
+        .into_iter()
+        .map(|c| quote::quote!(#c))
+        .collect();
+
     let body: TokenStream = quote! {
         #![allow(unused_imports, dead_code)]
 
@@ -144,7 +173,8 @@ fn run(uutils_dir: &Path, util: &str, rev: &str) -> Result<String> {
         use std::ops::RangeInclusive;
         use std::str::FromStr;
 
-        #options_tokens
+        #options_mod_tokens
+        #(#const_tokens)*
 
         /// Vendored stand-in for `uucore::format_usage`.
         ///
@@ -267,6 +297,33 @@ fn find_mod<'a>(file: &'a syn::File, name: &str) -> Option<&'a ItemMod> {
         Item::Mod(m) if m.ident == name => Some(m),
         _ => None,
     })
+}
+
+/// Collect module-level `const OPT_FOO: &str = ...` / `static OPT_FOO`
+/// declarations that some uutils sources use in place of a
+/// `mod options { ... }`. uu_app() bodies in these utils refer to the
+/// constants by their bare name (`Arg::new(OPT_FOO)`); we emit them
+/// at the same scope in the generated file so the bare-name references
+/// resolve unchanged.
+///
+/// Filter: name must start with `OPT_` or `ARG_` to avoid sweeping in
+/// unrelated source-level constants.
+fn collect_option_constants(file: &syn::File) -> Vec<Item> {
+    file.items
+        .iter()
+        .filter(|it| match it {
+            Item::Const(c) => {
+                let n = c.ident.to_string();
+                n.starts_with("OPT_") || n.starts_with("ARG_")
+            }
+            Item::Static(s) => {
+                let n = s.ident.to_string();
+                n.starts_with("OPT_") || n.starts_with("ARG_")
+            }
+            _ => false,
+        })
+        .cloned()
+        .collect()
 }
 
 fn find_fn<'a>(file: &'a syn::File, name: &str) -> Option<&'a ItemFn> {
