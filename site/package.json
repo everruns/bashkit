@@ -10,10 +10,11 @@
   "scripts": {
     "dev": "astro dev",
     "build": "astro build",
-    "postbuild": "node scripts/verify-sitemap.mjs",
+    "postbuild": "node scripts/verify-doc-routes.mjs && node scripts/verify-sitemap.mjs",
     "preview": "wrangler dev",
     "deploy": "npm run build && wrangler deploy",
-    "check": "astro check"
+    "check": "astro check",
+    "verify:docs": "node scripts/verify-doc-routes.mjs"
   },
   "dependencies": {
     "@astrojs/sitemap": "^3.7.2",
