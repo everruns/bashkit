@@ -109,8 +109,13 @@ Properties:
 - One `DiffFixture` per row (util, argv, stdin, files, optional
   `diff_reason` for documented divergences). Adding a port is ~10
   lines: a new fixture row.
-- Skips gracefully when neither `uu_<util>` nor a `coreutils` multicall
-  binary is on `$PATH` — same UX as the sqlite harness.
+- **Opt-in.** The harness skips with a notice unless
+  `BASHKIT_RUN_COREUTILS_DIFF=1` is set. Body divergences between
+  bashkit and uutils are *expected* — the harness's purpose is to
+  surface them, not to gate the regular workspace test run on them.
+- After the env gate, also skips gracefully when neither `uu_<util>`
+  nor a `coreutils` multicall binary is on `$PATH` — same UX as the
+  sqlite harness.
 - Files are materialized to a host tempdir for the uutils side and
   mounted at the same virtual path in bashkit, so both engines receive
   the same `<file>` argument.
@@ -118,11 +123,14 @@ Properties:
 
 CI integration:
 
-- `.github/workflows/ci.yml`'s `Test` job installs the uutils
-  multicall via `taiki-e/install-action@v2` (cached). The harness then
-  runs as part of the regular test suite.
+- `.github/workflows/ci.yml`'s `Test` job pre-installs the uutils
+  multicall via `taiki-e/install-action@v2` (cached, with
+  `continue-on-error`). It does **not** set
+  `BASHKIT_RUN_COREUTILS_DIFF`, so the harness still skips here —
+  install is purely caching for downstream jobs.
 - `.github/workflows/coreutils-args-drift.yml` builds the multicall
-  from the *pinned* uutils clone and re-runs the harness so body drift
+  from the *pinned* uutils clone, sets
+  `BASHKIT_RUN_COREUTILS_DIFF=1`, and runs the harness so body drift
   surfaces in the same auto-PR as flag drift.
 
 ## CI guard

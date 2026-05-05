@@ -18,12 +18,21 @@
 //!
 //! ## Skip policy
 //!
-//! When neither `uu_<util>` nor a `coreutils` multicall binary is on
-//! `$PATH`, every fixture passes with a notice — same pattern as
-//! `sqlite_differential_tests.rs`. CI installs uutils in
-//! `.github/workflows/ci.yml`; the drift workflow rebuilds the matching
-//! binaries from the pinned uutils tree so body drift surfaces in the
-//! same auto-PR that surfaces flag drift.
+//! Two skip gates, evaluated in order:
+//!
+//! 1. **Opt-in env gate** — `BASHKIT_RUN_COREUTILS_DIFF=1` must be set
+//!    for the harness to attempt host comparison. The regular
+//!    `cargo test --workspace` run leaves the gate off, so a body
+//!    divergence between bashkit and uutils does not break unrelated
+//!    test runs (the harness's *purpose* is to surface divergences;
+//!    they are expected). The drift workflow
+//!    (`coreutils-args-drift.yml`) sets the gate after rebuilding
+//!    uutils from the pinned tree, so divergence surfaces in the same
+//!    auto-PR as flag drift.
+//! 2. **Binary presence** — when the gate is on, every fixture still
+//!    passes with a notice if neither `uu_<util>` nor a `coreutils`
+//!    multicall binary is on `$PATH`. Same pattern as
+//!    `sqlite_differential_tests.rs`.
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -200,7 +209,21 @@ fn shell_quote(s: &str) -> String {
     format!("'{escaped}'")
 }
 
+/// Check the opt-in gate. Returns `true` when the harness should run
+/// against the host. See module-level "Skip policy" docs.
+fn diff_harness_enabled() -> bool {
+    std::env::var("BASHKIT_RUN_COREUTILS_DIFF").is_ok_and(|v| v == "1")
+}
+
 async fn assert_matches(fx: &DiffFixture) {
+    if !diff_harness_enabled() {
+        eprintln!(
+            "skip: BASHKIT_RUN_COREUTILS_DIFF not set; harness is opt-in for `{u} {a:?}`",
+            u = fx.util,
+            a = fx.args,
+        );
+        return;
+    }
     if !uutils_available_for(fx.util) {
         eprintln!(
             "skip: no uu_{u} or coreutils multicall on PATH for fixture `{u} {a:?}`",

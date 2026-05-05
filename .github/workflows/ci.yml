@@ -89,15 +89,20 @@ jobs:
           sqlite3 --version
 
       # Install the uutils multicall binary for
-      # `coreutils_differential_tests`. Cached install — keeps the regular
-      # Test job from rebuilding uutils on every run. The drift workflow
-      # (`coreutils-args-drift.yml`) rebuilds from the pinned source tree
-      # so body drift surfaces in the same auto-PR as flag drift.
+      # `coreutils_differential_tests`. The harness gracefully skips when
+      # the binary is unavailable, so `continue-on-error` keeps the
+      # regular Test job green when the upstream install action has a
+      # bad day — the drift workflow (`coreutils-args-drift.yml`) is the
+      # authoritative body-drift gate, building uutils from the pinned
+      # tree before running the harness.
       - name: Install uutils coreutils multicall for differential tests
+        id: install_uutils
+        continue-on-error: true
         uses: taiki-e/install-action@v2
         with:
           tool: coreutils
       - name: Verify uutils on PATH
+        if: steps.install_uutils.outcome == 'success'
         run: coreutils --version
 
       # Examples have a dedicated job below; skipping them here avoids

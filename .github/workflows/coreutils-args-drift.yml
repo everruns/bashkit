@@ -99,6 +99,8 @@ jobs:
 
       - name: Run coreutils differential harness
         working-directory: bashkit
+        env:
+          BASHKIT_RUN_COREUTILS_DIFF: '1'
         run: cargo test -p bashkit --test coreutils_differential_tests
 
       - name: Open pull request if drifted
