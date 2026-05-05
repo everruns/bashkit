@@ -89,6 +89,42 @@ Ports that need bespoke transforms (e.g. utils with no `mod options`, or
 help strings using Fluent placables/selectors) currently fail with an
 `unresolved translate!()` error rather than emitting silently-wrong code.
 
+## Verification — Differential tests
+
+The args workflow above only catches **flag-signature drift**: it
+regenerates `<util>_args.rs` and surfaces a diff if uutils added,
+removed, or renamed flags. It cannot see **body drift** — semantic
+divergence inside `cat.rs` / `textrev.rs` against GNU/uutils.
+
+`crates/bashkit/tests/coreutils_differential_tests.rs` closes that gap:
+for each fixture row it runs the same `<util> <args>` (with the same
+stdin and the same input files) through bashkit and through the
+matching uutils binary, then asserts byte-for-byte stdout parity plus
+exit-code parity.
+
+Pattern reference: `crates/bashkit/tests/sqlite_differential_tests.rs`.
+
+Properties:
+
+- One `DiffFixture` per row (util, argv, stdin, files, optional
+  `diff_reason` for documented divergences). Adding a port is ~10
+  lines: a new fixture row.
+- Skips gracefully when neither `uu_<util>` nor a `coreutils` multicall
+  binary is on `$PATH` — same UX as the sqlite harness.
+- Files are materialized to a host tempdir for the uutils side and
+  mounted at the same virtual path in bashkit, so both engines receive
+  the same `<file>` argument.
+- `LC_ALL=C` for the host side; bashkit currently does not localize.
+
+CI integration:
+
+- `.github/workflows/ci.yml`'s `Test` job installs the uutils
+  multicall via `taiki-e/install-action@v2` (cached). The harness then
+  runs as part of the regular test suite.
+- `.github/workflows/coreutils-args-drift.yml` builds the multicall
+  from the *pinned* uutils clone and re-runs the harness so body drift
+  surfaces in the same auto-PR as flag drift.
+
 ## CI guard
 
 `.github/workflows/coreutils-args-drift.yml` runs weekly (Mondays 05:00 UTC)
