@@ -1103,6 +1103,54 @@ mod tests {
         );
     }
 
+    /// Every `<util>_args.rs` header MUST reference the same uutils
+    /// revision as `generated::UUTILS_REVISION`. The drift workflow
+    /// bumps both atomically; this test catches the case where someone
+    /// regenerates a single util at a different rev and forgets to
+    /// update the pin (or vice versa).
+    #[test]
+    fn generated_args_headers_match_pinned_uutils_revision() {
+        let pin = generated::UUTILS_REVISION;
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/builtins/generated");
+
+        let mut mismatches = Vec::new();
+        for entry in std::fs::read_dir(&dir).expect("read generated dir") {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("rs") {
+                continue;
+            }
+            let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            // Only `*_args.rs` carry per-util headers; `mod.rs` holds
+            // the pin itself.
+            if !name.ends_with("_args.rs") {
+                continue;
+            }
+            let body = std::fs::read_to_string(&path).expect("read generated file");
+            let header_rev = body
+                .lines()
+                .find_map(|l| {
+                    l.strip_prefix("// Source: uutils/coreutils@")
+                        .and_then(|rest| rest.split_whitespace().next())
+                })
+                .unwrap_or("");
+            if header_rev != pin {
+                mismatches.push(format!(
+                    "{}: header references uutils@{header_rev}, pin is uutils@{pin}",
+                    path.display()
+                ));
+            }
+        }
+        assert!(
+            mismatches.is_empty(),
+            "Generated argument files drift from `generated::UUTILS_REVISION` \
+             (`{pin}`). Regenerate every util at the pinned rev or bump the \
+             pin to match. The drift workflow does both atomically; manual \
+             bumps must too.\n\n{}",
+            mismatches.join("\n")
+        );
+    }
+
     /// Coarse sweep: every common flag-accepting builtin called with a
     /// bogus flag must produce a clean error. Tools without flag parsing
     /// (`true`, `false`, `:`) and tools that take a path/filter as their
