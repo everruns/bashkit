@@ -28,7 +28,10 @@ shuf -e a b c d e -n 2 | wc -l
 ### end
 
 ### shuf_repeat_requires_n
-# -r requires -n in bashkit's safe mode (GNU loops forever otherwise).
+# -r requires -n in bashkit's safe mode (GNU shuf loops forever
+# without -n, which is unacceptable for an embedded VFS shell).
+# Excluded from bash parity comparison since real bash never returns.
+### bash_diff: bashkit safe-mode rejects -r without -n; GNU shuf loops forever
 shuf -r -e a b c
 echo "exit=$?"
 ### expect
