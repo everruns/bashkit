@@ -211,6 +211,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language.
 | seq.test.sh | 12 | `seq` numeric sequences, `-w`, `-s`, decrement, negative |
 | set-allexport.test.sh | 5 | set -a / allexport |
 | shell-grammar.test.sh | 23 | shell grammar edge cases |
+| shuf.test.sh | 7 | `shuf -e`/`-i LO-HI`/`-n NUM`/`-r`/`-z`, codegen-ported args |
 | sleep.test.sh | 9 | sleep timing |
 | sortuniq.test.sh | 49 | sort `-f`/`-n`/`-r`/`-u`/`-V`/`-t`/`-k`/`-s`/`-c`/`-h`/`-M`/`-m`/`-z`/`-o`, uniq `-c`/`-d`/`-u`/`-i`/`-f` |
 | source.test.sh | 19 | source/., function loading, PATH search, positional params |

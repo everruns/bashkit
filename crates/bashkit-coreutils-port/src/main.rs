@@ -95,6 +95,25 @@ fn run(uutils_dir: &Path, util: &str, rev: &str) -> Result<String> {
         );
     }
 
+    // Some uu_app() definitions reference free helper functions from the
+    // same source file (e.g. shuf's `parse_range` used as a clap
+    // value_parser). Inline those helpers so the generated file
+    // compiles standalone, running them through the same rewriter so
+    // their translate!() calls resolve too.
+    let helpers = collect_referenced_helpers(&uu_app, &file)
+        .into_iter()
+        .map(|mut helper| {
+            rw.visit_item_fn_mut(&mut helper);
+            helper
+        })
+        .collect::<Vec<_>>();
+    if !rw.unresolved.is_empty() {
+        bail!(
+            "unresolved translate!() keys in inlined helpers: {:?}",
+            rw.unresolved
+        );
+    }
+
     let cmd_fn_name = syn::Ident::new(&format!("{util}_command"), proc_macro2::Span::call_site());
     uu_app.sig.ident = cmd_fn_name.clone();
     let uu_app_block = &uu_app.block;
@@ -114,8 +133,16 @@ fn run(uutils_dir: &Path, util: &str, rev: &str) -> Result<String> {
     let body: TokenStream = quote! {
         #![allow(unused_imports, dead_code)]
 
-        use clap::{Arg, ArgAction, Command};
+        // Always import the broader clap+std surface a few utils need.
+        // `#![allow(unused_imports)]` above silences warnings for
+        // utilities that don't reach for them. Add to this list when a
+        // newly-ported util needs another std type that the inlined
+        // helpers reference (e.g. shuf's `parse_range` returns
+        // `RangeInclusive<u64>`).
+        use clap::{Arg, ArgAction, Command, builder::ValueParser};
         use std::ffi::OsString;
+        use std::ops::RangeInclusive;
+        use std::str::FromStr;
 
         #options_tokens
 
@@ -127,6 +154,12 @@ fn run(uutils_dir: &Path, util: &str, rev: &str) -> Result<String> {
         fn format_usage(s: &str) -> String {
             s.to_string()
         }
+
+        // Inlined free-function helpers referenced by `uu_app()` (e.g.
+        // shuf's `parse_range` as a clap `value_parser`). Copied
+        // verbatim from the source file with the same translate!()
+        // rewriting applied so they compile without uucore.
+        #(#helpers)*
 
         #(#uu_app_attrs)*
         pub #uu_app_sig #uu_app_block
@@ -180,6 +213,53 @@ fn parse_ftl(src: &str) -> HashMap<String, String> {
     }
     flush(&mut out, &mut current_key, &mut current_val);
     out
+}
+
+/// Walk `uu_app()`'s body looking for plain identifier references
+/// (single-segment paths) and return any matching free `fn` defined at
+/// the top level of the source file. Skips items already provided by
+/// the generated preamble (e.g. `format_usage`).
+///
+/// One-level only — if a copied helper itself references another local
+/// helper, we surface that as a compile error rather than recursively
+/// inlining. The shuf use case (`parse_range` referencing only `std`
+/// and `translate!()`) doesn't need recursion; broaden when a real
+/// case demands it.
+fn collect_referenced_helpers(uu_app: &ItemFn, file: &syn::File) -> Vec<ItemFn> {
+    use syn::visit::{self, Visit};
+
+    struct IdentCollector(std::collections::HashSet<String>);
+    impl<'ast> Visit<'ast> for IdentCollector {
+        fn visit_path(&mut self, path: &'ast syn::Path) {
+            if path.segments.len() == 1
+                && let Some(seg) = path.segments.first()
+            {
+                self.0.insert(seg.ident.to_string());
+            }
+            visit::visit_path(self, path);
+        }
+    }
+
+    let mut idents = IdentCollector(Default::default());
+    idents.visit_item_fn(uu_app);
+    let names = idents.0;
+
+    const PROVIDED_BY_PREAMBLE: &[&str] = &["format_usage"];
+
+    file.items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Fn(f) => {
+                let name = f.sig.ident.to_string();
+                if names.contains(&name) && !PROVIDED_BY_PREAMBLE.contains(&name.as_str()) {
+                    Some(f.clone())
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 fn find_mod<'a>(file: &'a syn::File, name: &str) -> Option<&'a ItemMod> {
