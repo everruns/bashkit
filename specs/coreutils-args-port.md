@@ -133,16 +133,44 @@ CI integration:
   `BASHKIT_RUN_COREUTILS_DIFF=1`, and runs the harness so body drift
   surfaces in the same auto-PR as flag drift.
 
+## Source-of-truth uutils revision pin
+
+`crates/bashkit/src/builtins/generated/mod.rs` declares
+`pub const UUTILS_REVISION: &str = "<short-rev>"`. This is the single
+source of truth shared by:
+
+- The codegen tool (drift workflow checks out uutils at this rev
+  before regenerating `<util>_args.rs`).
+- The body-drift harness (drift workflow builds the `coreutils`
+  multicall from the same rev).
+- `just regen-coreutils-args` (reads the pin and checks out the local
+  uutils clone at it before regenerating).
+
+A static test in `builtins/mod.rs::tests::generated_args_headers_\
+match_pinned_uutils_revision` asserts every `<util>_args.rs` header
+references the same rev as the constant. Manual partial-regenerations
+that forget to bump (or mis-bump) the pin fail in CI.
+
+The drift workflow always runs against upstream HEAD and bumps
+`UUTILS_REVISION` together with the regenerated files in one PR — the
+two never diverge across an auto-PR boundary.
+
 ## CI guard
 
 `.github/workflows/coreutils-args-drift.yml` runs weekly (Mondays 05:00 UTC)
 and on `workflow_dispatch`. It:
 
-1. Checks out bashkit and `uutils/coreutils@main` side-by-side.
-2. Runs `bashkit-coreutils-port` against every `pub mod <util>_args;` line in
-   `crates/bashkit/src/builtins/generated/mod.rs`.
-3. Verifies bashkit still builds and the cat/tac spec tests pass.
-4. Opens a PR with the regenerated files if `git diff` is non-empty.
+1. Checks out bashkit and `uutils/coreutils` side-by-side.
+2. Reads the current pin from `generated/mod.rs` and checks out uutils
+   at upstream HEAD for the regen.
+3. Runs `bashkit-coreutils-port` against every `pub mod <util>_args;` line in
+   `crates/bashkit/src/builtins/generated/mod.rs` and bumps
+   `UUTILS_REVISION` to the rev it just generated against.
+4. Verifies bashkit still builds and the cat/tac spec tests pass.
+5. Builds the uutils multicall from the same checkout and runs the
+   differential harness with `BASHKIT_RUN_COREUTILS_DIFF=1`.
+6. Opens a PR with the regenerated files + bumped pin if `git diff` is
+   non-empty.
 
 The PR's intermediate commits are bot-authored (this is automated drift
 detection, not a code change). Maintainers must **squash-merge as a human**

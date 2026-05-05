@@ -81,14 +81,27 @@ clean:
 regen-coreutils-args UUTILS="/tmp/uutils":
     #!/usr/bin/env bash
     set -euo pipefail
+    pinned="$(grep -oE 'UUTILS_REVISION: &str = "[^"]+"' \
+        crates/bashkit/src/builtins/generated/mod.rs \
+        | sed -E 's/.*"([^"]+)"/\1/')"
+    if [[ -z "$pinned" ]]; then
+        echo "could not parse UUTILS_REVISION pin" >&2
+        exit 1
+    fi
     if [[ ! -d "{{UUTILS}}/.git" ]]; then
         echo "Cloning uutils into {{UUTILS}}..."
-        git clone --depth 1 https://github.com/uutils/coreutils.git "{{UUTILS}}"
+        git clone https://github.com/uutils/coreutils.git "{{UUTILS}}"
     fi
+    git -C "{{UUTILS}}" fetch --quiet
+    git -C "{{UUTILS}}" checkout --quiet "$pinned"
     rev="$(git -C "{{UUTILS}}" rev-parse --short HEAD)"
     out="crates/bashkit/src/builtins/generated"
     mkdir -p "$out"
-    for util in cat tac; do
+    # Discover utils from the manifest (every `pub mod <util>_args;` line)
+    # so adding a new util is one edit in mod.rs, not two.
+    mapfile -t utils < <(grep -oE 'pub mod [a-z0-9_]+_args' "$out/mod.rs" \
+        | sed -E 's/pub mod ([a-z0-9_]+)_args/\1/')
+    for util in "${utils[@]}"; do
         cargo run -q -p bashkit-coreutils-port -- "{{UUTILS}}" "$util" "$rev" \
             > "$out/${util}_args.rs"
         echo "regenerated $out/${util}_args.rs (uutils@$rev)"

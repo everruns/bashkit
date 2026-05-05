@@ -37,7 +37,9 @@ jobs:
         with:
           repository: uutils/coreutils
           path: uutils
-          fetch-depth: 1
+          # Full history so we can checkout the pinned rev below; depth=1
+          # would only have HEAD.
+          fetch-depth: 0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@1.95.0
@@ -48,13 +50,40 @@ jobs:
         with:
           workspaces: bashkit
 
+      # The pin in `crates/bashkit/src/builtins/generated/mod.rs` is the
+      # single source of truth shared by args codegen AND the body-drift
+      # harness. Resolve it here so every later step uses the same rev.
+      - name: Resolve pinned uutils revision and upstream HEAD
+        id: rev
+        working-directory: bashkit
+        run: |
+          set -euo pipefail
+          pinned="$(grep -oE 'UUTILS_REVISION: &str = "[^"]+"' \
+              crates/bashkit/src/builtins/generated/mod.rs \
+              | sed -E 's/.*"([^"]+)"/\1/')"
+          if [ -z "$pinned" ]; then
+              echo "::error::could not parse UUTILS_REVISION pin"
+              exit 1
+          fi
+          upstream="$(git -C "$GITHUB_WORKSPACE/uutils" rev-parse --short HEAD)"
+          echo "pinned=$pinned" >> "$GITHUB_OUTPUT"
+          echo "upstream=$upstream" >> "$GITHUB_OUTPUT"
+          echo "Pinned: $pinned   Upstream HEAD: $upstream"
+
+      # Drift workflow's job is to track upstream — codegen + harness
+      # both run against upstream HEAD. If anything diverges, the
+      # auto-PR bumps the pin AND the regenerated files atomically.
+      - name: Check out uutils at upstream HEAD for codegen
+        working-directory: uutils
+        run: git checkout "${{ steps.rev.outputs.upstream }}"
+
       - name: Regenerate argument surfaces
         id: regen
         working-directory: bashkit
         run: |
           set -euo pipefail
           uutils_dir="$GITHUB_WORKSPACE/uutils"
-          rev="$(git -C "$uutils_dir" rev-parse --short HEAD)"
+          rev="${{ steps.rev.outputs.upstream }}"
           out="crates/bashkit/src/builtins/generated"
 
           # Source of truth for "what's ported": the pub-mod lines in
@@ -74,6 +103,11 @@ jobs:
               echo "::endgroup::"
           done
           cargo fmt -- "$out"/*.rs
+
+          # Bump the pin so generated headers and the constant agree.
+          # Single sed with anchored pattern keeps the edit safe.
+          sed -i -E 's|(UUTILS_REVISION: &str = ")[^"]+(";)|\1'"$rev"'\2|' \
+              "$out/mod.rs"
 
           echo "rev=$rev" >> "$GITHUB_OUTPUT"
           echo "utils=${utils[*]}" >> "$GITHUB_OUTPUT"
@@ -109,6 +143,7 @@ jobs:
           path: bashkit
           branch: chore/coreutils-args-drift
           delete-branch: true
+          # Bump the pin AND the regenerated files in one atomic PR.
           add-paths: crates/bashkit/src/builtins/generated/
           title: 'chore: sync uutils/coreutils argument surfaces'
           commit-message: |
@@ -123,8 +158,14 @@ jobs:
             [uutils/coreutils](https://github.com/uutils/coreutils).
 
             **Source revision:** `${{ steps.regen.outputs.rev }}`
+            (was `${{ steps.rev.outputs.pinned }}`)
             **Utilities:** ${{ steps.regen.outputs.utils }}
             **Trigger:** `.github/workflows/coreutils-args-drift.yml`
+
+            This PR bumps `UUTILS_REVISION` in
+            `crates/bashkit/src/builtins/generated/mod.rs` and the
+            matching `<util>_args.rs` files atomically — args codegen
+            and body-drift harness stay aligned to the same rev.
 
             Review the diff to confirm whether upstream:
             - Added flags we should now expose
