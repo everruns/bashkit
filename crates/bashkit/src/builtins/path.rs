@@ -566,9 +566,22 @@ mod tests {
 
     #[tokio::test]
     async fn test_readlink_invalid_option() {
+        // The codegen-ported argument surface uses clap, which exits 2
+        // (not the GNU coreutils convention of 1) on unknown flags.
+        // The clap-vs-GNU exit-code divergence is documented in
+        // `tests/spec_cases/bash/readlink.test.sh` (### bash_diff).
+        // -z is a valid flag now (zero-terminate output), so the test
+        // uses a string that is plainly not a flag bashkit ports.
         let fs = Arc::new(InMemoryFs::new()) as Arc<dyn FileSystem>;
-        let result = run_readlink_with_fs(&["-z", "/file"], fs).await;
-        assert_eq!(result.exit_code, 1);
-        assert!(result.stderr.contains("invalid option"));
+        let result = run_readlink_with_fs(&["--definitely-not-a-flag", "/file"], fs).await;
+        assert_eq!(result.exit_code, 2);
+        let stderr_lower = result.stderr.to_lowercase();
+        assert!(
+            stderr_lower.contains("unexpected argument")
+                || stderr_lower.contains("unknown argument")
+                || stderr_lower.contains("invalid option"),
+            "expected clap unknown-flag stderr, got {:?}",
+            result.stderr
+        );
     }
 }
