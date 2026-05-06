@@ -125,27 +125,32 @@ impl std::fmt::Debug for Credential {
 /// Placeholder prefix for generated placeholder tokens.
 const PLACEHOLDER_PREFIX: &str = "bk_placeholder_";
 
-/// Generate a random placeholder token.
+/// Generate a random placeholder token using a CSPRNG.
 ///
-/// Format: `bk_placeholder_<32 hex chars>` (128 bits of randomness).
+/// Format: `bk_placeholder_<32 hex chars>` (128 bits of OS randomness).
+///
+/// # Security
+///
+/// The placeholder acts like a bearer capability inside scripts: if a script
+/// sends the placeholder value to a URL matching a credential rule, BashKit
+/// injects the real credential-owned header. The token therefore must come
+/// from a security-grade RNG so it cannot be predicted, brute-forced, or
+/// reproduced from observed program state.
+///
+/// `getrandom::fill` reads from the OS CSPRNG (`getrandom(2)` / `arc4random_buf`
+/// / `BCryptGenRandom`). If the OS RNG is genuinely unavailable the function
+/// panics — there is no safe fallback for credential-shaped randomness, and
+/// silently weakening it (e.g. `RandomState`) was the bug this code replaces.
 fn generate_placeholder() -> String {
-    use std::collections::hash_map::RandomState;
-    use std::hash::{BuildHasher, Hasher};
-
-    // Use two RandomState hashers for 128 bits of randomness.
-    // This avoids pulling `rand` as a non-optional dependency.
-    let s1 = RandomState::new();
-    let s2 = RandomState::new();
-    let mut h1 = s1.build_hasher();
-    h1.write_u64(0);
-    let mut h2 = s2.build_hasher();
-    h2.write_u64(1);
-    format!(
-        "{}{:016x}{:016x}",
-        PLACEHOLDER_PREFIX,
-        h1.finish(),
-        h2.finish()
-    )
+    let mut bytes = [0u8; 16]; // 128 bits
+    getrandom::fill(&mut bytes).expect("OS CSPRNG must be available for credential placeholder");
+    let mut hex = String::with_capacity(PLACEHOLDER_PREFIX.len() + 32);
+    hex.push_str(PLACEHOLDER_PREFIX);
+    for byte in bytes {
+        use std::fmt::Write;
+        let _ = write!(hex, "{:02x}", byte);
+    }
+    hex
 }
 
 /// A rule mapping a URL pattern to a credential.
@@ -281,10 +286,50 @@ mod tests {
         let p2 = generate_placeholder();
         assert!(p1.starts_with(PLACEHOLDER_PREFIX));
         assert!(p2.starts_with(PLACEHOLDER_PREFIX));
-        // Should be different (128 bits of randomness)
+        // Should be different (128 bits of CSPRNG randomness)
         assert_ne!(p1, p2);
         // Fixed length: prefix (15) + 32 hex chars = 47
         assert_eq!(p1.len(), 47);
+    }
+
+    #[test]
+    fn test_placeholder_format_is_lowercase_hex() {
+        let p = generate_placeholder();
+        let hex_part = &p[PLACEHOLDER_PREFIX.len()..];
+        assert_eq!(hex_part.len(), 32);
+        for c in hex_part.chars() {
+            assert!(
+                c.is_ascii_hexdigit() && (!c.is_ascii_alphabetic() || c.is_ascii_lowercase()),
+                "placeholder must be lowercase hex, got: {p}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_placeholder_uniqueness_across_many_generations() {
+        // CSPRNG must produce 1024 distinct 128-bit tokens. RandomState's
+        // hasher used to share initialization across hashers within a thread,
+        // which made this regression surface; getrandom must not.
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..1024 {
+            let p = generate_placeholder();
+            assert!(seen.insert(p), "placeholder collision detected");
+        }
+    }
+
+    #[test]
+    fn test_placeholder_does_not_leak_raw_credential() {
+        // Placeholder tokens must never embed any portion of a real secret.
+        // Build one alongside an injected credential and assert the secret
+        // bytes do not appear in the placeholder string.
+        let secret = "hunter2-very-long-secret-token-payload-XYZ";
+        let mut policy = CredentialPolicy::new();
+        let cred = Credential::bearer(secret);
+        let placeholder = policy.add_placeholder("https://api.example.com", cred);
+        assert!(!placeholder.contains(secret));
+        // Debug formatting of the placeholder must also not leak the secret.
+        let debug = format!("{:?}", placeholder);
+        assert!(!debug.contains(secret));
     }
 
     #[test]
