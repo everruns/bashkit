@@ -351,6 +351,10 @@ impl MountableFs {
 #[async_trait]
 impl FileSystem for MountableFs {
     async fn read_file(&self, path: &Path) -> Result<Vec<u8>> {
+        // THREAT[TM-DOS-046]: validate before delegation so mounted backends
+        // never receive control-character / depth-limit / length-limit
+        // violating paths through any read API.
+        self.validate_path(path)?;
         let (fs, resolved) = self.resolve(path);
         fs.read_file(&resolved).await
     }
@@ -381,11 +385,13 @@ impl FileSystem for MountableFs {
     }
 
     async fn stat(&self, path: &Path) -> Result<Metadata> {
+        self.validate_path(path)?;
         let (fs, resolved) = self.resolve(path);
         fs.stat(&resolved).await
     }
 
     async fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>> {
+        self.validate_path(path)?;
         let path = Self::normalize_path(path);
         let (fs, resolved) = self.resolve(&path);
 
@@ -418,6 +424,7 @@ impl FileSystem for MountableFs {
     }
 
     async fn exists(&self, path: &Path) -> Result<bool> {
+        self.validate_path(path)?;
         let path = Self::normalize_path(path);
 
         // Check if this is a mount point
@@ -487,6 +494,7 @@ impl FileSystem for MountableFs {
     }
 
     async fn read_link(&self, path: &Path) -> Result<PathBuf> {
+        self.validate_path(path)?;
         let (fs, resolved) = self.resolve(path);
         fs.read_link(&resolved).await
     }
