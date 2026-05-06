@@ -6,7 +6,8 @@
 // Original uutils licensed MIT; see THIRD_PARTY_LICENSES.
 
 #![allow(unused_imports, dead_code)]
-use clap::{Arg, ArgAction, Command, builder::ValueParser};
+use clap::builder::{NonEmptyStringValueParser, PossibleValue, PossibleValuesParser, ValueParser};
+use clap::{Arg, ArgAction, Command};
 use std::ffi::OsString;
 use std::ops::RangeInclusive;
 use std::str::FromStr;
@@ -23,6 +24,8 @@ mod options {
     pub static SHOW_NONPRINTING: &str = "show-nonprinting";
     pub static IGNORED_U: &str = "ignored-u";
 }
+#[allow(unused_imports)]
+use options::*;
 /// Vendored stand-in for `uucore::format_usage`.
 ///
 /// Upstream wraps the usage line with stylized "Usage:" prefix logic

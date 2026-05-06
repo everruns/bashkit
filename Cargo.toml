@@ -75,7 +75,7 @@ zeroize = "1"
 getrandom = "0.3"
 
 # CLI
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 
 # Testing
 tokio-test = "0.4"
