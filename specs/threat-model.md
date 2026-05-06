@@ -325,6 +325,7 @@ max_parser_operations: 100_000,         // Parser fuel (TM-DOS-024)
 | TM-ESC-003 | Real FS access | Direct syscalls | No real FS by default; `RealFs` canonicalizes existing paths and nearest existing ancestors before attaching missing suffixes | **MITIGATED** |
 | TM-ESC-004 | Mount escape | Mount real paths | MountableFs controlled | **MITIGATED** |
 | TM-ESC-016 | Symlink escape via overlay rename | `ln -s /etc/passwd x; mv x y` | Overlay rename/copy preserve symlinks as symlinks | **FIXED** |
+| TM-FS-013 | Permissive RealFs mount default | `mount_real_readonly_at("/", …)` exposes whole host without `allowed_mount_paths` | Allowlist-first: `/`, `/etc`, `/root`, `/Users`, `/home`, `/dev`, `/proc`, `/sys`, `/run`, `/var/run`, `/boot`, `/private`, and any path component matching `.ssh`, `.aws`, `.kube`, `.docker`, `.gnupg`, `.gcloud` are refused unless explicitly allowlisted | **MITIGATED** |
 
 **Current Risk**: MEDIUM - Two open escape vectors (TM-ESC-012, TM-ESC-013) need remediation
 
