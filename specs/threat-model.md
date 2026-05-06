@@ -268,16 +268,16 @@ max_ast_depth: 100,           // Parser recursion (TM-DOS-022)
 | TM-DOS-025 | Regex backtrack | `grep "a](*b)*c" file` | Regex crate limits | Partial |
 | TM-DOS-027 | Builtin parser recursion | Deeply nested awk/jq expressions | `MAX_AWK_PARSER_DEPTH` (100) + `MAX_JQ_JSON_DEPTH` (100) | **MITIGATED** |
 | TM-DOS-028 | Diff algorithm DoS | `diff` on two large unrelated files | LCS matrix capped at 10M cells; falls back to simple line-by-line output | **MITIGATED** |
-| TM-DOS-029 | Arithmetic overflow/panic | `$(( 2 ** -1 ))`, `$(( 1 << 64 ))`, `i64::MIN / -1` | — | **OPEN** |
+| TM-DOS-029 | Arithmetic overflow/panic | `$(( 2 ** -1 ))`, `$(( 1 << 64 ))`, `i64::MIN / -1` | Arithmetic ops use `wrapping_*` / saturating semantics — `i64::MIN / -1` and unary negate go through `wrapping_neg`; `<<` / `>>` clamp the shift amount | **MITIGATED** |
 | TM-DOS-030 | Parser limit bypass via eval/source/trap | `eval`, `source`, trap handlers now use `Parser::with_limits()` | — | **FIXED** (2026-03 audit verified) |
-| TM-DOS-031 | ExtGlob exponential blowup | `+(a\|aa)` against long string causes O(n!) recursion in `glob_match_impl` | — | **OPEN** |
+| TM-DOS-031 | ExtGlob exponential blowup | `+(a\|aa)` against long string causes O(n!) recursion in `glob_match_impl` | `glob_match_impl` carries a recursion-depth cap and bails on excessive depth (`interpreter/glob.rs:162,324`); aliases that expand to huge brace ranges go through the same parser-budget check (`interpreter/mod.rs:4216`) | **MITIGATED** |
 | TM-DOS-035 | DEBUG trap recursive amplification | `trap 'a=1;b=2;...' DEBUG` amplifies N commands to N*M | Suppress DEBUG trap inside trap handlers (`in_trap` guard) | **FIXED** |
 | TM-DOS-032 | Tokio runtime exhaustion (Python) | Rapid `execute_sync()` calls each create new tokio runtime, exhausting OS threads | — | **OPEN** |
 | TM-DOS-033 | AWK unbounded loops | `BEGIN { while(1){} }` has no iteration limit in AWK interpreter | Timeout (30s) backstop | **PARTIAL** |
 | TM-DOS-051 | YAML parser unbounded recursion | `yaml get key` on deeply nested YAML input causes stack overflow in `parse_yaml_block`/`parse_yaml_map`/`parse_yaml_list` | `parse_yaml_block` carries a `depth: usize` parameter; depth > `MAX_YAML_DEPTH = 100` returns an `ERROR: maximum nesting depth exceeded` value instead of recursing | **MITIGATED** |
 | TM-DOS-052 | Template engine unbounded recursion | `{{#if}}` and `{{#each}}` blocks call `render_template` recursively with no depth limit | `render_template_inner` checks `depth > MAX_TEMPLATE_DEPTH = 100` and returns a `template: maximum nesting depth exceeded` error | **MITIGATED** |
 | TM-DOS-053 | Template `{{#each}}` output explosion | `{{#each arr}}` on large JSON array produces O(n * body) output | Bounded by JSON data file size (max_file_size) | **MITIGATED** |
-| TM-DOS-054 | `glob --files` inherits ExtGlob blowup | `glob --files "+(a|aa)" /dir` dispatches to `glob_match` with same exponential cost as TM-DOS-031 | Same as TM-DOS-031 | **OPEN** |
+| TM-DOS-054 | `glob --files` inherits ExtGlob blowup | `glob --files "+(a|aa)" /dir` dispatches to `glob_match` with same exponential cost as TM-DOS-031 | Same as TM-DOS-031 — `glob_match_impl` recursion-depth cap covers `glob --files` callers | **MITIGATED** |
 | TM-DOS-055 | `split` file count amplification | `split -l 1 bigfile` creates one output file per line; bounded by `max_file_count` FS limit | FS limits (TM-DOS-006) | **MITIGATED** |
 | TM-DOS-056 | `source` self-recursion stack overflow | Script that sources itself causes unbounded recursion; function depth limit doesn't apply to `source` | `source` increments the same call-depth counter as functions, so self- and mutual-recursion hit the configured `max_function_depth` and return a clean error rather than a SIGABRT | **MITIGATED** |
 | TM-DOS-057 | `sleep` bypasses execution timeout | `sleep`, `(sleep N)`, `echo x \| sleep N`, `sleep N & wait`, `timeout N sleep N` all ignore `ExecutionLimits::timeout` | `Bash::exec_impl` wraps the whole execution in `tokio::time::timeout(limits.timeout, …)`, so subshell, pipeline, background+wait, and the `timeout` builtin all surface a timeout error within the configured budget | **MITIGATED** |
@@ -348,7 +348,7 @@ max_parser_operations: 100_000,         // Parser fuel (TM-DOS-024)
 - Collapses `..` components at path boundaries
 - Ensures all paths stay within virtual root
 
-| TM-ESC-012 | VFS limit bypass via public API | `add_file()` / `restore()` skip `validate_path()` and `check_write_limits()` | — | **OPEN** |
+| TM-ESC-012 | VFS limit bypass via public API | `add_file()` / `restore()` skip `validate_path()` and `check_write_limits()` | `InMemoryFs::add_file` and `InMemoryFs::restore` (`fs/memory.rs:704,832`) now run `validate_path` and `check_write_limits` like every other write path | **MITIGATED** |
 | TM-ESC-013 | OverlayFs upper() exposes unlimited FS | `OverlayFs::upper()` returns `InMemoryFs` with `FsLimits::unlimited()` | — | **OPEN** |
 | TM-ESC-014 | BashTool custom builtins lost after first call | `std::mem::take` empties builtins on first `execute()`, removing security wrappers | Arc-cloned builtins survive across calls | **FIXED** |
 
@@ -548,7 +548,7 @@ Bash::builder()
 
 **Current Risk**: MEDIUM - Internal variable namespace injection (TM-INJ-009) needs remediation
 
-| TM-INJ-009 | Internal variable namespace injection | Set `_NAMEREF_`, `_READONLY_`, etc. directly | — | **OPEN** |
+| TM-INJ-009 | Internal variable namespace injection | Set `_NAMEREF_`, `_READONLY_`, etc. directly | Every write path (`set_variable`, `read`/`read -a`, `printf -v`, `local`, `declare`, `readonly`, `export`, `dotenv`, `unset`) checks `is_internal_variable()` and refuses internal-prefix names; `set` / `declare -p` filter them from listings (TM-INF-017) | **MITIGATED** |
 
 | TM-INJ-011 | Cyclic nameref silent resolution | Cyclic namerefs (a→b→a) silently resolve after 10 iterations instead of erroring | `resolve_nameref()` tracks visited names in a `HashSet`; on cycle detection it returns the original name and the lookup sees no value | **MITIGATED** |
 | TM-INJ-018 | `dotenv` internal variable prefix injection | `.env` file with `_NAMEREF_x=target` sets internal interpreter variables via `ctx.variables.insert()` | `Dotenv::execute` calls `is_internal_variable(&full_key)` and skips injected internal-prefix keys (`builtins/dotenv.rs:138`) | **MITIGATED** |
@@ -869,8 +869,8 @@ Only exact domain matches are allowed (TM-NET-017).
 | TM-ISO-020 | Subshell mutation leakage | Subshell vars leak to parent or sibling sessions | Snapshot/restore in subshell + per-instance state | **MITIGATED** |
 
 | TM-ISO-004 | Cross-session env pollution via jq | `std::env::set_var()` in jq modifies process-wide env, visible to concurrent sessions | Custom `$__bashkit_env__` jaq context variable replaces `std::env` access | **FIXED** |
-| TM-ISO-005 | Session-level cumulative counter bypass | Repeated `exec()` calls each reset `ExecutionCounters`, giving unbounded aggregate resources | — | **OPEN** |
-| TM-ISO-006 | No per-instance variable/memory budget | Unbounded `HashMap` growth in variables, arrays, functions exhausts process memory | — | **OPEN** |
+| TM-ISO-005 | Session-level cumulative counter bypass | Repeated `exec()` calls each reset `ExecutionCounters`, giving unbounded aggregate resources | `SessionLimits` (`limits.rs`) caps cumulative commands and `exec()` call count across the lifetime of a `Bash` instance; counters are preserved across `reset_transient_state()` | **MITIGATED** |
+| TM-ISO-006 | No per-instance variable/memory budget | Unbounded `HashMap` growth in variables, arrays, functions exhausts process memory | `MemoryLimits` (`limits.rs`) caps `max_variable_count`, `max_total_variable_bytes`, `max_array_entries`, `max_function_count`, and `max_function_body_bytes` per instance | **MITIGATED** |
 | TM-ISO-021 | EXIT trap leaks across `exec()` calls | EXIT trap set in one `exec()` fires in subsequent `exec()` calls on same Bash instance | `reset_transient_state()` clears `traps` at the start of every `exec()` | **MITIGATED** |
 | TM-ISO-022 | `$?` leaks across `exec()` calls | Exit code from one `exec()` visible as `$?` in next `exec()` instead of resetting to 0 | `reset_transient_state()` zeroes `last_exit_code` at the start of every `exec()` | **MITIGATED** |
 | TM-ISO-023 | `set -e` leaks across `exec()` calls | `set` options (`-e`, `-x`, etc.) persist across `exec()` calls, causing unexpected abort behavior | `reset_transient_state()` clears `SET_OPTION_VARS` | **FIXED** |
@@ -1017,7 +1017,7 @@ let config = format!(
 | TM-GIT-012 | SSH key access | Use host SSH keys | HTTPS only (no SSH) | **PLANNED** |
 | TM-GIT-013 | Git protocol bypass | Use git:// protocol | HTTPS only | **PLANNED** |
 
-| TM-GIT-014 | Branch name path injection | `branch_create(name="../../config")` overwrites `.git/config` via `Path::join()` | — | **OPEN** |
+| TM-GIT-014 | Branch name path injection | `branch_create(name="../../config")` overwrites `.git/config` via `Path::join()` | `git/client.rs::validate_ref_name` rejects refs containing `..`, leading `/`, control chars, or other path-injection patterns before any `Path::join` | **MITIGATED** |
 
 **TM-GIT-014**: Branch names are used directly in `Path::join()` (`git/client.rs:1035, 1080, 1119`)
 without validation. A name like `../../config` can overwrite `.git/config` within the VFS. While
@@ -1233,18 +1233,18 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 
 | Threat ID | Vulnerability | Impact | Recommendation |
 |-----------|---------------|--------|----------------|
-| TM-DOS-029 | Arithmetic overflow/panic | Interpreter crash/hang | Use wrapping arithmetic, clamp shift/exponent |
-| TM-ESC-012 | VFS limit bypass via add_file()/restore() | Unlimited VFS writes | Add limit checks or restrict visibility |
-| TM-INJ-009 | Internal variable namespace injection | Bypass readonly, manipulate interpreter | Separate internal state HashMap |
-| TM-INJ-012–015 | Builtin bypass of is_internal_variable() | Unauthorized nameref/case attr injection via declare/readonly/local/export | Add is_internal_variable() check to all builtin insert paths |
-| TM-DOS-043 | Arithmetic panic in compound assignment | Process crash (DoS) in debug mode | wrapping_* ops in execute_arithmetic_with_side_effects |
+| ~~TM-DOS-029~~ | ~~Arithmetic overflow/panic~~ | ~~Interpreter crash/hang~~ | ~~Use wrapping arithmetic, clamp shift/exponent~~ (**FIXED**) |
+| ~~TM-ESC-012~~ | ~~VFS limit bypass via add_file()/restore()~~ | ~~Unlimited VFS writes~~ | ~~Add limit checks or restrict visibility~~ — `validate_path` + `check_write_limits` now run on both paths (**FIXED**) |
+| ~~TM-INJ-009~~ | ~~Internal variable namespace injection~~ | ~~Bypass readonly, manipulate interpreter~~ | ~~Separate internal state HashMap~~ — `is_internal_variable()` check on every write path (**FIXED**) |
+| ~~TM-INJ-012–015~~ | ~~Builtin bypass of is_internal_variable()~~ | ~~Unauthorized nameref/case attr injection via declare/readonly/local/export~~ | ~~Add is_internal_variable() check to all builtin insert paths~~ (**FIXED**) |
+| ~~TM-DOS-043~~ | ~~Arithmetic panic in compound assignment~~ | ~~Process crash (DoS) in debug mode~~ | ~~wrapping_* ops in execute_arithmetic_with_side_effects~~ (**FIXED**) |
 | ~~TM-DOS-044~~ | ~~Lexer stack overflow on nested $()~~ | ~~Process crash (SIGABRT)~~ | ~~Depth tracking in read_command_subst_into~~ — bounded; nested-subst tests pass at depth 50 (**FIXED**) |
 
 ### Open (High Priority)
 
 | Threat ID | Vulnerability | Impact | Recommendation |
 |-----------|---------------|--------|----------------|
-| TM-DOS-031 | ExtGlob exponential blowup | CPU exhaustion / stack overflow | Add fuel counter to glob_match_impl |
+| ~~TM-DOS-031~~ | ~~ExtGlob exponential blowup~~ | ~~CPU exhaustion / stack overflow~~ | ~~Add fuel counter to glob_match_impl~~ — recursion-depth cap in `glob_match_impl` (**FIXED**) |
 | ~~TM-DOS-041~~ | ~~Brace expansion unbounded range~~ | ~~OOM DoS~~ | ~~Cap range size in try_expand_range()~~ (**FIXED**) |
 | TM-DOS-032 | Tokio runtime per sync call (Python) | OS thread/fd exhaustion | Shared runtime |
 | TM-PY-023 | Shell injection in deepagents.py | Command injection within VFS | Use shlex.quote() or direct API |
@@ -1259,19 +1259,19 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 |-----------|---------------|--------|----------------|
 | ~~TM-DOS-051~~ | ~~YAML parser unbounded recursion~~ | ~~Stack overflow on deeply nested YAML~~ | ~~Add depth parameter to parse_yaml_block/map/list~~ — `depth` arg + `MAX_YAML_DEPTH = 100` cap (**FIXED**) |
 | ~~TM-DOS-052~~ | ~~Template engine unbounded recursion~~ | ~~Stack overflow on deeply nested templates~~ | ~~Add depth parameter to render_template~~ — `depth` arg + `MAX_TEMPLATE_DEPTH = 100` cap (**FIXED**) |
-| TM-DOS-054 | `glob --files` ExtGlob blowup | CPU exhaustion (same as TM-DOS-031) | Fix TM-DOS-031 covers this |
+| ~~TM-DOS-054~~ | ~~`glob --files` ExtGlob blowup~~ | ~~CPU exhaustion (same as TM-DOS-031)~~ | ~~Fix TM-DOS-031 covers this~~ (**FIXED**) |
 | ~~TM-INJ-017~~ | ~~Unzip path traversal within VFS~~ | ~~Arbitrary VFS file overwrite~~ | ~~Validate paths stay within extract_base~~ — `validate_extract_entry_path` rejects non-`Normal` components (**FIXED**) |
 | ~~TM-INJ-018~~ | ~~Dotenv internal variable injection~~ | ~~Bypass readonly, manipulate interpreter~~ | ~~Add is_internal_variable() check~~ — `Dotenv::execute` skips internal-prefix keys (**FIXED**) |
 | TM-INF-001 | Env vars may leak secrets | Information disclosure | Document caller responsibility |
 | TM-INJ-008 | Terminal escapes in output | UI manipulation | Document sanitization need |
 | ~~TM-INJ-010~~ | ~~Tar path traversal within VFS~~ | ~~Arbitrary VFS file overwrite~~ | ~~Validate paths stay within extract_base~~ — archive.rs rejects entries that don't `starts_with(&extract_base)` (**FIXED**) |
-| TM-GIT-014 | Git branch name path injection | VFS git repo corruption | Validate branch names |
+| ~~TM-GIT-014~~ | ~~Git branch name path injection~~ | ~~VFS git repo corruption~~ | ~~Validate branch names~~ — `validate_ref_name` in `git/client.rs` (**FIXED**) |
 | TM-INF-014 | Real PID leak via $$ | Host information disclosure | Return virtual PID |
 | TM-INF-015 | URL credentials in error messages | Credential leak | Apply URL redaction |
 | TM-INF-016 | Internal state in error messages | Info leak (paths, IPs, TLS) | Consistent Display format |
 | TM-DOS-034 | ~~TOCTOU in append_file~~ | ~~VFS size limit bypass~~ | ~~Single write lock~~ (**FIXED**) |
-| TM-ISO-005 | Session-level cumulative counter bypass | Unbounded aggregate resources across exec() calls | Session-level counters |
-| TM-ISO-006 | No per-instance variable/memory budget | Process OOM via unbounded HashMap growth | MemoryLimits struct |
+| ~~TM-ISO-005~~ | ~~Session-level cumulative counter bypass~~ | ~~Unbounded aggregate resources across exec() calls~~ | ~~Session-level counters~~ — `SessionLimits` struct (**FIXED**) |
+| ~~TM-ISO-006~~ | ~~No per-instance variable/memory budget~~ | ~~Process OOM via unbounded HashMap growth~~ | ~~MemoryLimits struct~~ — `MemoryLimits` struct (**FIXED**) |
 | ~~TM-DOS-035~~ | ~~OverlayFs limit check upper-only~~ | ~~Combined size limit bypass~~ | ~~Use compute_usage()~~ (**FIXED**) |
 | ~~TM-DOS-036~~ | ~~OverlayFs usage double-count~~ | ~~Premature limit rejections~~ | ~~Subtract overrides~~ (**FIXED**) |
 | ~~TM-DOS-037~~ | ~~OverlayFs chmod CoW bypass~~ | ~~Limit bypass via chmod~~ | ~~Route through check_write_limits~~ (**FIXED**) |
@@ -1296,16 +1296,16 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 
 | Threat ID | Vulnerability | Impact | Recommendation |
 |-----------|---------------|--------|----------------|
-| TM-INJ-012 | `declare` bypasses `is_internal_variable()` | Unauthorized nameref creation, case conversion injection | Route declare assignments through `set_variable()` or add `is_internal_variable()` check at `interpreter/mod.rs:5574` |
-| TM-INJ-013 | `readonly` bypasses `is_internal_variable()` | Unauthorized nameref creation via `readonly _NAMEREF_x=target` | Add `is_internal_variable()` check at `builtins/vars.rs:265` |
-| TM-INJ-014 | `local` bypasses `is_internal_variable()` | Internal prefix injection in function scope | Add `is_internal_variable()` check at `builtins/vars.rs:223` |
-| TM-INJ-015 | `export` bypasses `is_internal_variable()` | Internal prefix injection via export | Add `is_internal_variable()` check at `builtins/export.rs:41` |
-| TM-INJ-016 | `_ARRAY_READ_` prefix not in `is_internal_variable()` | Arbitrary array creation/overwrite via marker injection | Add `_ARRAY_READ_` prefix to `is_internal_variable()` at `interpreter/mod.rs:7634` |
+| ~~TM-INJ-012~~ | ~~`declare` bypasses `is_internal_variable()`~~ | ~~Unauthorized nameref creation, case conversion injection~~ | ~~Route declare assignments through `set_variable()` or add `is_internal_variable()` check~~ (**FIXED**) |
+| ~~TM-INJ-013~~ | ~~`readonly` bypasses `is_internal_variable()`~~ | ~~Unauthorized nameref creation via `readonly _NAMEREF_x=target`~~ | ~~Add `is_internal_variable()` check~~ (**FIXED**) |
+| ~~TM-INJ-014~~ | ~~`local` bypasses `is_internal_variable()`~~ | ~~Internal prefix injection in function scope~~ | ~~Add `is_internal_variable()` check~~ (**FIXED**) |
+| ~~TM-INJ-015~~ | ~~`export` bypasses `is_internal_variable()`~~ | ~~Internal prefix injection via export~~ | ~~Add `is_internal_variable()` check~~ (**FIXED**) |
+| ~~TM-INJ-016~~ | ~~`_ARRAY_READ_` prefix not in `is_internal_variable()`~~ | ~~Arbitrary array creation/overwrite via marker injection~~ | ~~Add `_ARRAY_READ_` prefix to `is_internal_variable()`~~ (**FIXED**) |
 | TM-INF-017 | `set` and `declare -p` leak internal markers | Internal state disclosure (_NAMEREF_, _READONLY_, _UPPER_, _LOWER_) | Filter `is_internal_variable()` names from output |
 | TM-INF-018 | `date` builtin returns real host time | Timezone fingerprinting, timing correlation | Configurable time source (fixed or offset) |
 | ~~TM-DOS-041~~ | ~~Brace expansion `{N..M}` unbounded range~~ | ~~OOM via `{1..999999999}` allocating billions of strings~~ | Static parser-time check (`MAX_STATIC_BRACE_RANGE = 100_000` in `parser/budget.rs`) rejects oversized literal ranges with `BraceRangeTooLarge`; runtime fallback in `try_expand_range` (`MAX_BRACE_RANGE = 10_000`) treats remaining oversized ranges as literals (**FIXED**) |
 | ~~TM-DOS-042~~ | ~~Brace expansion combinatorial explosion~~ | ~~OOM via `{1..100}{1..100}{1..100}` = 1M strings~~ | `expand_braces` caps total emitted strings at `MAX_BRACE_EXPANSION_TOTAL = 100_000` and bails out of the recursion when the budget is hit (**FIXED**) |
-| TM-DOS-043 | Arithmetic overflow in `execute_arithmetic_with_side_effects` | Panic (DoS) in debug mode via `((x+=1))` with x=i64::MAX | Use `wrapping_add/sub/mul` at `interpreter/mod.rs:1563-1565` |
+| ~~TM-DOS-043~~ | ~~Arithmetic overflow in `execute_arithmetic_with_side_effects`~~ | ~~Panic (DoS) in debug mode via `((x+=1))` with x=i64::MAX~~ | ~~Use `wrapping_add/sub/mul`~~ (**FIXED**) |
 | ~~TM-DOS-044~~ | ~~Lexer `read_command_subst_into` stack overflow~~ | ~~Process crash (SIGABRT) via ~50 nested `$()` in double-quotes~~ | ~~Add depth parameter to `read_command_subst_into()`~~ (**FIXED**) |
 | ~~TM-DOS-045~~ | ~~OverlayFs `symlink()` bypasses all limits~~ | ~~Unlimited symlink creation despite `max_file_count`~~ | ~~Add `check_write_limits()` + `validate_path()` to symlink~~ — overlay symlink path enforces limits (**FIXED**) |
 | ~~TM-DOS-046~~ | ~~MountableFs has zero `validate_path()` calls~~ | ~~Path validation completely bypassed for mounted filesystems~~ | ~~Add `validate_path()` to all FileSystem methods~~ — `MountableFs::validate_path` runs before every delegation (**FIXED**) |
@@ -1398,15 +1398,15 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 
 | Finding | Threat IDs | Required Control | Status |
 |---------|------------|------------------|--------|
-| Wrapping arithmetic | TM-DOS-029 | `wrapping_*` ops, clamp shift/exponent | **NEEDED** |
-| VFS limit enforcement on public API | TM-ESC-012, TM-ESC-013 | `validate_path()` + `check_write_limits()` in `add_file()` | **NEEDED** |
+| Wrapping arithmetic | TM-DOS-029 | `wrapping_*` ops, clamp shift/exponent | **MITIGATED** |
+| VFS limit enforcement on public API | TM-ESC-012 | `validate_path()` + `check_write_limits()` in `add_file()` / `restore()` | **MITIGATED** |
 | Custom jaq env function | TM-INF-013, TM-ISO-004 | Read from `ctx.env`/`ctx.variables`, not `std::env` | **DONE** |
-| Internal variable namespace isolation | TM-INJ-009 | Separate HashMap or prefix rejection | **NEEDED** |
+| Internal variable namespace isolation | TM-INJ-009 | `is_internal_variable()` rejection in every write path; `set` / `declare -p` filter | **MITIGATED** |
 | Parser limit propagation | TM-DOS-030 | `Parser::with_limits()` in eval/source/trap/alias | **NEEDED** |
-| ExtGlob depth limit | TM-DOS-031 | Depth parameter in `glob_match_impl` | **NEEDED** |
+| ExtGlob depth limit | TM-DOS-031 | Depth parameter in `glob_match_impl` (`interpreter/glob.rs:162,324`) | **MITIGATED** |
 | Python wrapper input sanitization | TM-PY-023, TM-PY-024 | `shlex.quote()` or direct VFS API | **NEEDED** |
 | Tar path validation | TM-INJ-010 | Resolved-path check + `starts_with(&extract_base)` in `archive.rs` | **MITIGATED** |
-| Git branch name validation | TM-GIT-014 | Reject `..`, control chars, trailing `.lock` | **NEEDED** |
+| Git branch name validation | TM-GIT-014 | `validate_ref_name` rejects `..`, control chars, leading `/`, trailing `.lock` | **MITIGATED** |
 | GIL release in execute_sync | TM-PY-025 | `Python::allow_threads()` around every `rt.block_on` in `bashkit-python/src/lib.rs` | **MITIGATED** |
 | TOCTOU fix in append_file | TM-DOS-034 | Single write lock for read-check-write | **DONE** |
 | OverlayFs combined limit accounting | TM-DOS-035, TM-DOS-036 | Use combined usage for limit checks, subtract overrides | **NEEDED** |
@@ -1440,8 +1440,8 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Template engine depth limit | TM-DOS-052 | `depth` parameter on `render_template_inner` with `MAX_TEMPLATE_DEPTH = 100` | **MITIGATED** |
 | Unzip path traversal validation | TM-INJ-017 | `validate_extract_entry_path` rejects non-`Normal` components in `zip_cmd.rs` | **MITIGATED** |
 | Dotenv internal variable guard | TM-INJ-018 | `is_internal_variable()` check in `Dotenv::execute` (`builtins/dotenv.rs:138`) | **MITIGATED** |
-| Session-level cumulative counters | TM-ISO-005 | Persistent counters across `exec()` calls within a `Bash` instance | **NEEDED** |
-| Per-instance memory budget | TM-ISO-006 | `MemoryLimits` capping variable count, total bytes, array entries, function count | **NEEDED** |
+| Session-level cumulative counters | TM-ISO-005 | `SessionLimits` caps cumulative commands and `exec()` calls across the lifetime of a `Bash` instance | **MITIGATED** |
+| Per-instance memory budget | TM-ISO-006 | `MemoryLimits` capping variable count, total bytes, array entries, function count, function body bytes | **MITIGATED** |
 
 ---
 
