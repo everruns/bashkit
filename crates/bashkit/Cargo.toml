@@ -68,6 +68,9 @@ ed25519-dalek = { workspace = true, optional = true }
 rand = { workspace = true, optional = true }
 zeroize = { workspace = true, optional = true }
 
+# CSPRNG for credential placeholder generation
+getrandom = { workspace = true }
+
 # Checksums (for md5sum, sha1sum, sha256sum builtins)
 md-5 = { workspace = true }
 sha1 = { workspace = true }
