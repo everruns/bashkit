@@ -634,6 +634,41 @@ mod finding_urandom_empty {
             "/dev/urandom produced empty output"
         );
     }
+
+    /// TM-INT-007: `head -c N /dev/urandom` (path argument form) produces data,
+    /// not the empty string the original threat-model entry described.
+    /// The byte count via `wc -c` may exceed N because non-ASCII bytes inflate
+    /// to multi-byte UTF-8 sequences when stdout is captured as a string;
+    /// the safety property is that *some* data flows through.
+    #[tokio::test]
+    async fn urandom_head_c_path_form_produces_data() {
+        let mut bash = tight_bash();
+        let result = bash.exec("head -c 16 /dev/urandom | wc -c").await.unwrap();
+        let count: usize = result.stdout.trim().parse().unwrap_or(0);
+        assert!(
+            count >= 16,
+            "head -c 16 /dev/urandom must produce at least 16 bytes of stdout, got: {:?}",
+            result.stdout
+        );
+    }
+
+    /// TM-INT-007: `cat /dev/urandom | head -c N` (pipe form) does not lose
+    /// data — pipe forwarding from a virtual device into a builtin must
+    /// produce non-empty stdout.
+    #[tokio::test]
+    async fn urandom_pipe_into_head_c_produces_data() {
+        let mut bash = tight_bash();
+        let result = bash
+            .exec("cat /dev/urandom | head -c 16 | wc -c")
+            .await
+            .unwrap();
+        let count: usize = result.stdout.trim().parse().unwrap_or(0);
+        assert!(
+            count >= 16,
+            "cat /dev/urandom | head -c 16 must produce at least 16 bytes, got: {:?}",
+            result.stdout
+        );
+    }
 }
 
 // =============================================================================
