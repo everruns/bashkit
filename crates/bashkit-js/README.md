@@ -2,6 +2,8 @@
 
 Sandboxed bash interpreter for JavaScript and TypeScript. Native NAPI-RS bindings to the `bashkit` Rust core for Node.js, Bun, and Deno.
 
+Homepage: [bashkit.sh](https://bashkit.sh)
+
 ## Features
 
 - Sandboxed, in-process execution with a virtual filesystem
