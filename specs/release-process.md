@@ -21,12 +21,14 @@ Bashkit follows [Semantic Versioning](https://semver.org/):
 ### Overview
 
 ```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│  Human asks     │     │  Agent creates  │     │  GitHub         │     │  crates.io      │
-│  "release v0.2" │────>│  release PR     │────>│  Release        │────>│  Publish        │
-│                 │     │                 │     │  (automatic)    │     │  (automatic)    │
-└─────────────────┘     └─────────────────┘     └─────────────────┘     └─────────────────┘
+┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐
+│ Human    │   │ Agent    │   │ Agent    │   │ Human    │   │ CI       │   │ Agent    │
+│ asks     │──>│ prepares │──>│ verifies │──>│ merges   │──>│ tags +   │──>│ monitors │
+│ release  │   │ PR       │   │ publish  │   │ PR       │   │ publishes│   │ registries│
+└──────────┘   └──────────┘   └──────────┘   └──────────┘   └──────────┘   └──────────┘
 ```
+
+The flow is: **prepare → verify-can-publish → merge → monitor-published**. Skipping the verify step risks tagging a release that fails to publish to crates.io / PyPI / npm (as v0.4.0 did, requiring the v0.4.1 hotfix); skipping the monitor step risks declaring "shipped" while one or more registries silently failed.
 
 ### Human Steps
 
@@ -35,9 +37,11 @@ Bashkit follows [Semantic Versioning](https://semver.org/):
    - "Prepare a patch release"
    - "Release the current changes as v0.2.0"
 
-2. **Review the PR** created by the agent
+2. **Review the PR** created by the agent — including the agent's publish-readiness report (see Agent step 5)
 
 3. **Merge to main** - CI handles GitHub Release and crates.io publish
+
+4. **Ask the agent to monitor publishing** (or let it auto-monitor if subscribed to PR activity) — the agent watches the publish workflows and registries, and reports back when all targets show the new version.
 
 ### Agent Steps (automated)
 
@@ -53,21 +57,38 @@ When asked to create a release, the agent:
    - List PRs in descending order with GitHub-style links and contributors
    - End with `**Full Changelog**: URL`
 
-3. **Update Cargo.toml**
-   - Set `version = "X.Y.Z"` in workspace
+3. **Update version across all manifests** (must all match the workspace version):
+   - `Cargo.toml` workspace `version`
+   - `crates/bashkit-cli/Cargo.toml` path-dep version pin on `bashkit`
+   - `crates/bashkit-js/package.json` `version`
+   - `crates/bashkit-js/package-lock.json` top-level `version` and `packages.""` `version`
+   - `Cargo.lock` (regenerate via `cargo update -p bashkit -p bashkit-cli ...`)
 
-4. **Run verification**
+4. **Run local verification**
    - `cargo fmt --check`
-   - `cargo clippy`
+   - `cargo clippy --all-targets --all-features -- -D warnings`
    - `cargo test`
 
-5. **Commit and push**
+5. **Verify publish-readiness** (catches what local tests don't — the `cargo publish` packaging step, missing files, version drift across registries):
+   - **crates.io**: `cargo publish --dry-run -p bashkit` and `cargo publish --dry-run -p bashkit-cli` — must succeed. This is what caught the v0.4.0 → v0.4.1 incident: the rustdoc guide lived outside the crate dir, so `cargo publish` couldn't find it. Local `cargo build` did not catch it.
+   - **PyPI / npm**: confirm the build pipelines that feed those registries still build (e.g. `maturin build --release` smoke for Python, `napi build` smoke for JS) when the changes touch packaging.
+   - **Version sync check**: confirm all manifests from step 3 read the same `X.Y.Z`, and that the new version is greater than the latest published version on every registry (`cargo search bashkit`, `pip index versions bashkit`, `npm view @everruns/bashkit version`).
+   - If any check fails, fix the root cause and re-run before opening the PR — do **not** merge a release PR with a known-broken publish path.
+
+6. **Commit and push**
    - Commit message: `chore(release): prepare vX.Y.Z`
    - Push to feature branch
 
-6. **Create PR**
+7. **Create PR**
    - Title: `chore(release): prepare vX.Y.Z`
    - Include changelog excerpt in description
+   - Include a **publish-readiness report** summarizing step 5 results (which dry-runs ran, registry version checks)
+
+8. **Monitor post-merge publishing** (after the human merges the PR):
+   - Watch `release.yml` complete and confirm the GitHub Release + tag `vX.Y.Z` were created.
+   - Watch `publish.yml`, `publish-python.yml`, `publish-js.yml`, and `cli-binaries.yml` to completion; surface any failure immediately.
+   - Run the post-release verification commands (see "Post-Release Verification" below) and report which registries show the new version.
+   - Only declare the release "shipped" when **all four** targets (crates.io, PyPI, npm, Homebrew) report the new version. If one fails, open a hotfix PR rather than leaving the release half-shipped.
 
 ### CI Automation
 
@@ -89,6 +110,24 @@ The agent verifies before creating a release PR:
 - [ ] `cargo clippy` - no warnings
 - [ ] `cargo test` - all tests pass
 - [ ] CHANGELOG.md has entries for changes since last release
+- [ ] Version is consistent across `Cargo.toml`, `crates/bashkit-cli/Cargo.toml`, `crates/bashkit-js/package.json`, `package-lock.json`, and `Cargo.lock`
+- [ ] `cargo publish --dry-run -p bashkit` succeeds
+- [ ] `cargo publish --dry-run -p bashkit-cli` succeeds
+- [ ] New version > latest published version on each registry (crates.io, PyPI, npm)
+
+## Post-Merge Monitoring
+
+After the release PR merges, the agent watches each publish target until it reports the new version (or fails):
+
+| Target      | Workflow                | How to confirm                                            |
+|-------------|-------------------------|-----------------------------------------------------------|
+| GitHub Release | `release.yml`        | `gh release view vX.Y.Z`                                  |
+| crates.io   | `publish.yml`           | `cargo search bashkit` shows `X.Y.Z`                      |
+| PyPI        | `publish-python.yml`    | `pip index versions bashkit` includes `X.Y.Z`             |
+| npm         | `publish-js.yml`        | `npm view @everruns/bashkit version` returns `X.Y.Z`      |
+| Homebrew    | `cli-binaries.yml`      | `everruns/homebrew-tap` formula bumped to `X.Y.Z`         |
+
+If a workflow fails, the agent inspects logs (`gh run view <run-id> --log-failed`), identifies root cause, and either re-runs the workflow (transient) or opens a hotfix PR (code/packaging bug — see v0.4.0 → v0.4.1 for a worked example).
 
 ## Changelog Format
 
