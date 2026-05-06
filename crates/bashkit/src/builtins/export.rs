@@ -27,6 +27,9 @@ impl Builtin for Export {
             return Ok(ExecResult::ok(output));
         }
 
+        let mut stderr = String::new();
+        let mut exit_code = 0;
+
         for arg in ctx.args {
             // Handle NAME=VALUE format
             if let Some(eq_pos) = arg.find('=') {
@@ -43,8 +46,11 @@ impl Builtin for Export {
                 if is_internal_variable(name) {
                     continue;
                 }
-                // THREAT[TM-INJ-021]: Refuse to overwrite readonly variables
+                // THREAT[TM-INJ-021]: Refuse to overwrite readonly variables and
+                // surface the error so callers cannot mistake a silent skip for success.
                 if ctx.variables.contains_key(&format!("_READONLY_{}", name)) {
+                    stderr.push_str(&format!("bash: export: {name}: readonly variable\n"));
+                    exit_code = 1;
                     continue;
                 }
                 ctx.variables.insert(name.to_string(), value.to_string());
@@ -54,6 +60,10 @@ impl Builtin for Export {
             }
         }
 
-        Ok(ExecResult::ok(String::new()))
+        Ok(ExecResult {
+            stderr,
+            exit_code,
+            ..Default::default()
+        })
     }
 }
