@@ -535,20 +535,25 @@ Bash::builder()
 
 | TM-INJ-009 | Internal variable namespace injection | Set `_NAMEREF_`, `_READONLY_`, etc. directly | — | **OPEN** |
 
-| TM-INJ-011 | Cyclic nameref silent resolution | Cyclic namerefs (a→b→a) silently resolve after 10 iterations instead of erroring | — | **OPEN** |
-| TM-INJ-018 | `dotenv` internal variable prefix injection | `.env` file with `_NAMEREF_x=target` sets internal interpreter variables via `ctx.variables.insert()` | — | **OPEN** |
+| TM-INJ-011 | Cyclic nameref silent resolution | Cyclic namerefs (a→b→a) silently resolve after 10 iterations instead of erroring | `resolve_nameref()` tracks visited names in a `HashSet`; on cycle detection it returns the original name and the lookup sees no value | **MITIGATED** |
+| TM-INJ-018 | `dotenv` internal variable prefix injection | `.env` file with `_NAMEREF_x=target` sets internal interpreter variables via `ctx.variables.insert()` | `Dotenv::execute` calls `is_internal_variable(&full_key)` and skips injected internal-prefix keys (`builtins/dotenv.rs:138`) | **MITIGATED** |
 | TM-INJ-019 | `unset` removes readonly variables | `readonly X=v; unset X` removes the variable despite readonly attribute | `execute_unset_builtin` and `Unset` builtin both check `_READONLY_<name>` markers, emit `bash: unset: <name>: cannot unset: readonly variable`, and return exit 1 | **MITIGATED** |
 | TM-INJ-020 | `declare` overwrites readonly variables | `readonly X=v; declare X=new` overwrites without error | `declare` assignment path checks `_READONLY_<name>`, emits `bash: declare: <name>: readonly variable`, returns exit 1 | **MITIGATED** |
 | TM-INJ-021 | `export` overwrites readonly variables | `readonly X=v; export X=new` overwrites without error | `export NAME=VALUE` checks `_READONLY_<name>`, emits `bash: export: <name>: readonly variable`, returns exit 1 | **MITIGATED** |
 
-**TM-INJ-011**: `interpreter/mod.rs:7547-7560` — cyclic namerefs silently resolve to whatever
-variable is current after 10 iterations. Real bash errors with `circular name reference`. Can
-be exploited to read/write unintended variables. Fix: detect cycles (track visited names), error.
+**TM-INJ-011** (mitigated): `interpreter/mod.rs::resolve_nameref` tracks visited names in a
+`HashSet`. When a cycle (e.g. `a→b→a`, `a→a`, or longer chains) is detected on the next hop,
+the resolver returns the original name and breaks the loop, so `${a}` looks up the (unset)
+top-level variable rather than infinite-recursing. We do not emit Bash's exact
+`circular name reference` warning, but the safety property — no hang, no stack overflow, no
+silent traversal to a stale variable — is upheld. Regression tests:
+`tests/threat_model_tests.rs::tm_inj_011_*`.
 
-**TM-INJ-018**: `builtins/dotenv.rs:142` — `dotenv` inserts parsed key-value pairs directly into
-`ctx.variables` without checking `is_internal_variable()`. A `.env` file containing
-`_NAMEREF_x=target` or `_READONLY_x=1` manipulates interpreter internals. Same class as
-TM-INJ-012–015. Fix: add `is_internal_variable()` check before `ctx.variables.insert()`.
+**TM-INJ-018** (mitigated): `builtins/dotenv.rs:138` — `Dotenv::execute` calls
+`is_internal_variable(&full_key)` and skips any key in the internal namespace (`_NAMEREF_*`,
+`_READONLY_*`, `_UPPER_*`, `_LOWER_*`, `_INTEGER_*`, `_ARRAY_READ_*`, `_SHIFT_COUNT`,
+`_SET_POSITIONAL`). Regression test:
+`tests/threat_model_tests.rs::tm_inj_018_dotenv_rejects_internal_prefixes`.
 
 **TM-INJ-009**: The interpreter uses magic variable prefixes as internal control signals:
 `_NAMEREF_<name>` (nameref), `_READONLY_<name>` (readonly), `_SHIFT_COUNT`, `_SET_POSITIONAL`,
@@ -1239,7 +1244,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | TM-DOS-052 | Template engine unbounded recursion | Stack overflow on deeply nested templates | Add depth parameter to render_template |
 | TM-DOS-054 | `glob --files` ExtGlob blowup | CPU exhaustion (same as TM-DOS-031) | Fix TM-DOS-031 covers this |
 | TM-INJ-017 | Unzip path traversal within VFS | Arbitrary VFS file overwrite | Validate paths stay within extract_base |
-| TM-INJ-018 | Dotenv internal variable injection | Bypass readonly, manipulate interpreter | Add is_internal_variable() check |
+| ~~TM-INJ-018~~ | ~~Dotenv internal variable injection~~ | ~~Bypass readonly, manipulate interpreter~~ | ~~Add is_internal_variable() check~~ — `Dotenv::execute` skips internal-prefix keys (**FIXED**) |
 | TM-INF-001 | Env vars may leak secrets | Information disclosure | Document caller responsibility |
 | TM-INJ-008 | Terminal escapes in output | UI manipulation | Document sanitization need |
 | TM-INJ-010 | Tar path traversal within VFS | Arbitrary VFS file overwrite | Validate paths stay within extract_base |
@@ -1257,7 +1262,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | TM-DOS-039 | Missing validate_path in VFS | Path validation gaps | Add to all methods |
 | TM-ESC-014 | ~~Custom builtins lost after first call~~ | ~~Security wrappers silently removed~~ | ~~Clone or Arc builtins~~ (**FIXED**) |
 | TM-PY-026 | reset() discards security config | DoS protections removed | Preserve config on reset |
-| TM-INJ-011 | Cyclic nameref silent resolution | Read/write unintended variables | Detect cycles, error |
+| ~~TM-INJ-011~~ | ~~Cyclic nameref silent resolution~~ | ~~Read/write unintended variables~~ | ~~Detect cycles, error~~ — `resolve_nameref()` detects cycles via visited-set and returns original name (**FIXED**) |
 | TM-PY-027 | py_to_json unbounded recursion | Stack overflow | Add depth counter |
 | TM-DOS-040 | Integer truncation on 32-bit | Size check bypass | Use try_from() |
 | TM-UNI-001 | Awk parser byte-boundary panic on Unicode | Silent builtin failure on valid input | Fix awk parser to use char-boundary-safe indexing |
@@ -1394,7 +1399,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Custom builtin preservation | TM-ESC-014 | Clone builtins instead of `std::mem::take` | **DONE** |
 | Python config preservation on reset | TM-PY-026 | Store and reapply builder config | **NEEDED** |
 | JSON conversion depth limit | TM-PY-027 | Depth counter in `py_to_json`/`json_to_py` | **NEEDED** |
-| Cyclic nameref detection | TM-INJ-011 | Track visited names, emit error on cycle | **NEEDED** |
+| Cyclic nameref detection | TM-INJ-011 | Visited-set in `resolve_nameref()` breaks the cycle and returns the original name | **MITIGATED** |
 | Error message sanitization gaps | TM-INF-016 | Consistent Display format, wrap external errors | **DONE** |
 | 32-bit integer safety | TM-DOS-040 | `usize::try_from()` for `u64` casts | **NEEDED** |
 
@@ -1417,7 +1422,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | YAML parser depth limit | TM-DOS-051 | Depth parameter in `parse_yaml_block`/`parse_yaml_map`/`parse_yaml_list` | **NEEDED** |
 | Template engine depth limit | TM-DOS-052 | Depth parameter in `render_template` | **NEEDED** |
 | Unzip path traversal validation | TM-INJ-017 | Validate resolved path stays within `extract_base` | **NEEDED** |
-| Dotenv internal variable guard | TM-INJ-018 | `is_internal_variable()` check in dotenv insert | **NEEDED** |
+| Dotenv internal variable guard | TM-INJ-018 | `is_internal_variable()` check in `Dotenv::execute` (`builtins/dotenv.rs:138`) | **MITIGATED** |
 | Session-level cumulative counters | TM-ISO-005 | Persistent counters across `exec()` calls within a `Bash` instance | **NEEDED** |
 | Per-instance memory budget | TM-ISO-006 | `MemoryLimits` capping variable count, total bytes, array entries, function count | **NEEDED** |
 
