@@ -2710,6 +2710,82 @@ echo ${_NAMEREF_x:-blocked1} ${_READONLY_y:-blocked2} $NORMAL
         );
     }
 
+    // --- TM-INJ-011: Cyclic nameref resolution ---
+
+    /// TM-INJ-011: A nameref cycle a→b→a must not loop forever, stack-overflow,
+    /// or silently resolve to a stale value. `resolve_nameref` detects the cycle
+    /// and returns the original name; the lookup then sees no value.
+    #[tokio::test]
+    async fn tm_inj_011_cyclic_nameref_two_node_does_not_hang() {
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            exec(
+                r#"
+declare -n a=b
+declare -n b=a
+echo "result=${a:-cycle_broken}"
+echo "exit=$?"
+"#,
+            ),
+        )
+        .await
+        .expect("cyclic nameref must not hang");
+        assert!(
+            result.stdout.contains("result=cycle_broken"),
+            "cycle resolved to a value instead of breaking: {:?}",
+            result.stdout
+        );
+        assert!(
+            result.stdout.contains("exit=0"),
+            "cycle handling caused a non-zero exit: {:?}",
+            result.stdout
+        );
+    }
+
+    /// TM-INJ-011: A three-node cycle (a→b→c→a) is also detected.
+    #[tokio::test]
+    async fn tm_inj_011_cyclic_nameref_three_node_does_not_hang() {
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            exec(
+                r#"
+declare -n a=b
+declare -n b=c
+declare -n c=a
+echo "result=${a:-cycle_broken}"
+"#,
+            ),
+        )
+        .await
+        .expect("cyclic nameref must not hang");
+        assert!(
+            result.stdout.contains("result=cycle_broken"),
+            "3-node cycle resolved to a value: {:?}",
+            result.stdout
+        );
+    }
+
+    /// TM-INJ-011: A self-referencing nameref (a→a) breaks immediately.
+    #[tokio::test]
+    async fn tm_inj_011_self_referencing_nameref_does_not_hang() {
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            exec(
+                r#"
+declare -n a=a
+echo "result=${a:-cycle_broken}"
+"#,
+            ),
+        )
+        .await
+        .expect("self-ref nameref must not hang");
+        assert!(
+            result.stdout.contains("result=cycle_broken"),
+            "self-ref resolved to a value: {:?}",
+            result.stdout
+        );
+    }
+
     // --- Cross-builtin: injected markers from one builtin don't affect another ---
 
     #[tokio::test]
