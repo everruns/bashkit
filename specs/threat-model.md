@@ -129,33 +129,44 @@ the session-level backstop.
 | TM-DOS-009 | Recursive copy | `cp -r /tmp /tmp/copy` | FS limits | **MITIGATED** |
 | TM-DOS-010 | Append flood | `while true; do echo x >> file; done` | FS limits + loop limit | **MITIGATED** |
 | TM-DOS-034 | TOCTOU in append_file | Concurrent appends between read-lock and write-lock bypass size checks | Single write lock for entire read-check-write | **FIXED** |
-| TM-DOS-035 | OverlayFs limit check upper-only | `check_write_limits()` ignores lower layer usage, allowing combined usage to exceed limits | — | **OPEN** |
-| TM-DOS-036 | OverlayFs usage double-count | `compute_usage()` double-counts overwritten/whited-out files | — | **OPEN** |
-| TM-DOS-037 | OverlayFs chmod CoW bypass | `chmod` copy-on-write writes to unlimited upper layer, bypassing overlay limits | — | **OPEN** |
-| TM-DOS-038 | OverlayFs incomplete recursive whiteout | `rm -r /dir` only whiteouts directory, not children; lower layer files remain visible | — | **OPEN** |
-| TM-DOS-039 | Missing validate_path in VFS methods | `remove`, `stat`, `read_dir`, `copy`, `rename`, `symlink`, `chmod` skip `validate_path()` | — | **OPEN** |
+| TM-DOS-035 | OverlayFs limit check upper-only | `check_write_limits()` ignores lower layer usage, allowing combined usage to exceed limits | `OverlayFs::check_write_limits` now uses `compute_usage()` (combined upper + lower minus overrides); upper layer is type-fixed to `InMemoryFs` so its own limits are bypassable but irrelevant | **MITIGATED** |
+| TM-DOS-036 | OverlayFs usage double-count | `compute_usage()` double-counts overwritten/whited-out files | `compute_usage()` subtracts shadowed lower files when the upper layer carries an override or whiteout | **MITIGATED** |
+| TM-DOS-037 | OverlayFs chmod CoW bypass | `chmod` copy-on-write writes to unlimited upper layer, bypassing overlay limits | `chmod`'s file/directory CoW path checks `check_write_limits()` and `check_dir_count()` before promoting to upper | **MITIGATED** |
+| TM-DOS-038 | OverlayFs incomplete recursive whiteout | `rm -r /dir` only whiteouts directory, not children; lower layer files remain visible | `OverlayFs::remove(recursive=true)` walks the lower layer and writes a whiteout per surviving descendant; `is_whiteout()` also checks ancestor whiteouts | **MITIGATED** |
+| TM-DOS-039 | Missing validate_path in VFS methods | `remove`, `stat`, `read_dir`, `copy`, `rename`, `symlink`, `chmod` skip `validate_path()` | All `FileSystem` methods on `InMemoryFs` and `OverlayFs` call `validate_path()`; `MountableFs` validates via the root limits before delegating (TM-DOS-046) | **MITIGATED** |
 | TM-DOS-040 | Integer truncation on 32-bit | `u64 as usize` casts in network/Python extension silently truncate on 32-bit, bypassing size checks | — | **OPEN** |
 
 **TM-DOS-034**: Fixed. `InMemoryFs::append_file()` now uses a single write lock for the entire
 read-check-write operation, preventing TOCTOU races. See `fs/memory.rs:940-942`.
 
-**TM-DOS-035**: `OverlayFs::check_write_limits()` (line 263-293) checks only upper layer bytes.
-With 80MB in lower and 100MB limit, upper gets another full 100MB (180MB total). Fix: use
-`compute_usage()` for combined accounting.
+**TM-DOS-035** (mitigated): `OverlayFs::check_write_limits` now sources its accounting from
+`compute_usage()`, which sums combined upper + lower bytes minus overrides. Regression tests:
+`tests/threat_model_tests.rs::overlay_limit_accounting::tm_dos_035_combined_byte_limit` and
+`…tm_dos_035_combined_file_count_limit`.
 
-**TM-DOS-036**: `OverlayFs::compute_usage()` (line 246-259) sums upper + lower without deducting
-overwritten or whited-out files. Causes premature limit rejections. Fix: subtract overrides.
+**TM-DOS-036** (mitigated): `compute_usage()` deducts a lower file's bytes when the upper
+carries an override (overwrite) or whiteout (delete). Regression tests:
+`overlay_limit_accounting::tm_dos_036_no_double_count_on_override` and
+`…tm_dos_036_whiteout_deducts_usage`.
 
-**TM-DOS-037**: `OverlayFs::chmod()` (line 610-638) triggers copy-on-write directly to `self.upper`
-which has `FsLimits::unlimited()`. Fix: route through `check_write_limits()`.
+**TM-DOS-037** (mitigated): The CoW path on `chmod` (file or directory) calls
+`check_write_limits()` / `check_dir_count()` before promoting the entry to `self.upper`, so
+chmod cannot smuggle bytes or directory entries past the overlay's combined limit. Regression
+tests: `overlay_limit_accounting::tm_dos_037_chmod_file_cow_checks_limits`,
+`…tm_dos_037_chmod_dir_cow_checks_limits`,
+`…tm_dos_037_mkdir_checks_dir_limits`,
+`…tm_dos_037_recursive_mkdir_counts_all_new_dirs`.
 
-**TM-DOS-038**: `OverlayFs::remove()` (line 456-484) whiteouts directory path only.
-`is_whiteout()` uses exact match so `/dir/file.txt` stays visible from lower layer. Fix: check
-ancestor whiteouts in `is_whiteout()`.
+**TM-DOS-038** (mitigated): `OverlayFs::remove(recursive=true)` walks the lower-layer subtree
+and emits a whiteout for every surviving descendant; `is_whiteout()` additionally treats any
+descendant of a whited-out ancestor as hidden. Regression tests:
+`overlay_limit_accounting::tm_dos_038_recursive_delete_hides_all_children` and
+`…tm_dos_038_recursive_delete_deducts_all_bytes`.
 
-**TM-DOS-039**: `validate_path()` only called in `read_file`, `write_file`, `append_file`, `mkdir`.
-Missing from `remove`, `stat`, `read_dir`, `exists`, `rename`, `copy`, `symlink`, `read_link`,
-`chmod`. `copy()` also skips `check_write_limits()`. Fix: add validation to all path-accepting methods.
+**TM-DOS-039** (mitigated): Every `FileSystem` method on `InMemoryFs` and `OverlayFs` calls
+`validate_path()`; `MountableFs` validates each path against the root layer's limits before
+delegation (see TM-DOS-046). Regression tests: `path_validation_security` module
+(8 tests) plus the overlay/mountable tests in `security_audit_pocs`.
 
 **TM-DOS-040**: `network/client.rs:236,419` and `bashkit-python/src/lib.rs:197,200` cast `u64` to
 `usize`. On 32-bit, `Content-Length: 5GB` truncates to ~1GB. Fix: use `usize::try_from()`.
@@ -1261,11 +1272,11 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | TM-DOS-034 | ~~TOCTOU in append_file~~ | ~~VFS size limit bypass~~ | ~~Single write lock~~ (**FIXED**) |
 | TM-ISO-005 | Session-level cumulative counter bypass | Unbounded aggregate resources across exec() calls | Session-level counters |
 | TM-ISO-006 | No per-instance variable/memory budget | Process OOM via unbounded HashMap growth | MemoryLimits struct |
-| TM-DOS-035 | OverlayFs limit check upper-only | Combined size limit bypass | Use compute_usage() |
-| TM-DOS-036 | OverlayFs usage double-count | Premature limit rejections | Subtract overrides |
-| TM-DOS-037 | OverlayFs chmod CoW bypass | Limit bypass via chmod | Route through check_write_limits |
-| TM-DOS-038 | OverlayFs incomplete whiteout | Deleted files remain visible | Check ancestor whiteouts |
-| TM-DOS-039 | Missing validate_path in VFS | Path validation gaps | Add to all methods |
+| ~~TM-DOS-035~~ | ~~OverlayFs limit check upper-only~~ | ~~Combined size limit bypass~~ | ~~Use compute_usage()~~ (**FIXED**) |
+| ~~TM-DOS-036~~ | ~~OverlayFs usage double-count~~ | ~~Premature limit rejections~~ | ~~Subtract overrides~~ (**FIXED**) |
+| ~~TM-DOS-037~~ | ~~OverlayFs chmod CoW bypass~~ | ~~Limit bypass via chmod~~ | ~~Route through check_write_limits~~ (**FIXED**) |
+| ~~TM-DOS-038~~ | ~~OverlayFs incomplete whiteout~~ | ~~Deleted files remain visible~~ | ~~Check ancestor whiteouts~~ (**FIXED**) |
+| ~~TM-DOS-039~~ | ~~Missing validate_path in VFS~~ | ~~Path validation gaps~~ | ~~Add to all methods~~ — `validate_path()` in every InMemoryFs / OverlayFs / MountableFs method (**FIXED**) |
 | TM-ESC-014 | ~~Custom builtins lost after first call~~ | ~~Security wrappers silently removed~~ | ~~Clone or Arc builtins~~ (**FIXED**) |
 | TM-PY-026 | reset() discards security config | DoS protections removed | Preserve config on reset |
 | ~~TM-INJ-011~~ | ~~Cyclic nameref silent resolution~~ | ~~Read/write unintended variables~~ | ~~Detect cycles, error~~ — `resolve_nameref()` detects cycles via visited-set and returns original name (**FIXED**) |
@@ -1296,12 +1307,12 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | ~~TM-DOS-042~~ | ~~Brace expansion combinatorial explosion~~ | ~~OOM via `{1..100}{1..100}{1..100}` = 1M strings~~ | `expand_braces` caps total emitted strings at `MAX_BRACE_EXPANSION_TOTAL = 100_000` and bails out of the recursion when the budget is hit (**FIXED**) |
 | TM-DOS-043 | Arithmetic overflow in `execute_arithmetic_with_side_effects` | Panic (DoS) in debug mode via `((x+=1))` with x=i64::MAX | Use `wrapping_add/sub/mul` at `interpreter/mod.rs:1563-1565` |
 | TM-DOS-044 | Lexer `read_command_subst_into` stack overflow | Process crash (SIGABRT) via ~50 nested `$()` in double-quotes | Add depth parameter to `read_command_subst_into()` at `parser/lexer.rs:1109` |
-| TM-DOS-045 | OverlayFs `symlink()` bypasses all limits | Unlimited symlink creation despite `max_file_count` | Add `check_write_limits()` + `validate_path()` to `fs/overlay.rs:683` |
-| TM-DOS-046 | MountableFs has zero `validate_path()` calls | Path validation completely bypassed for mounted filesystems | Add `validate_path()` to all FileSystem methods in `fs/mountable.rs:348-491` |
-| TM-DOS-047 | InMemoryFs `copy()` skips limit check when dest exists | Total VFS bytes can exceed `max_total_bytes` | Always call `check_write_limits()` in `fs/memory.rs:1176`, accounting for size delta |
-| TM-DOS-048 | InMemoryFs `rename()` overwrites dirs, orphans children | VFS corruption — orphaned entries consume memory but are unreachable | Check dest type in `rename()`, reject file-over-directory per POSIX |
-| TM-DOS-049 | `collect_dirs_recursive` has no depth limit | Deep recursion on VFS trees (mitigated by `max_path_depth`) | Add explicit depth parameter at `interpreter/mod.rs:8352` |
-| TM-DOS-050 | `parse_word_string` uses default parser limits | Caller-configured tighter limits ignored for parameter expansion | Propagate limits through `parse_word_string()` at `parser/mod.rs:109` |
+| ~~TM-DOS-045~~ | ~~OverlayFs `symlink()` bypasses all limits~~ | ~~Unlimited symlink creation despite `max_file_count`~~ | ~~Add `check_write_limits()` + `validate_path()` to symlink~~ — overlay symlink path enforces limits (**FIXED**) |
+| ~~TM-DOS-046~~ | ~~MountableFs has zero `validate_path()` calls~~ | ~~Path validation completely bypassed for mounted filesystems~~ | ~~Add `validate_path()` to all FileSystem methods~~ — `MountableFs::validate_path` runs before every delegation (**FIXED**) |
+| ~~TM-DOS-047~~ | ~~InMemoryFs `copy()` skips limit check when dest exists~~ | ~~Total VFS bytes can exceed `max_total_bytes`~~ | ~~Always call `check_write_limits()`, accounting for size delta~~ (**FIXED**) |
+| ~~TM-DOS-048~~ | ~~InMemoryFs `rename()` overwrites dirs, orphans children~~ | ~~VFS corruption — orphaned entries consume memory but are unreachable~~ | ~~Check dest type in `rename()`, reject file-over-directory per POSIX~~ (**FIXED**) |
+| ~~TM-DOS-049~~ | ~~`collect_dirs_recursive` has no depth limit~~ | ~~Deep recursion on VFS trees~~ | ~~Add explicit depth parameter~~ — capped using `FsLimits::max_path_depth` (**FIXED**) |
+| ~~TM-DOS-050~~ | ~~`parse_word_string` uses default parser limits~~ | ~~Caller-configured tighter limits ignored for parameter expansion~~ | ~~Propagate limits through `parse_word_string()`~~ (**FIXED**) |
 | TM-PY-028 | BashTool.reset() in Python drops security config | Resource limits silently removed after reset | Preserve limits like `PyBash.reset()` does (see `bashkit-python/src/lib.rs:470`) |
 | TM-PY-029 | ContextVar capture may include sensitive state | `copy_context()` snapshots all caller ContextVars, not just intended ones | Accepted: same semantics as `asyncio.Task` context inheritance; caller controls what is set |
 
@@ -1420,9 +1431,9 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Arithmetic overflow in compound assignment | TM-DOS-043 | Use `wrapping_*` ops in `execute_arithmetic_with_side_effects` | **NEEDED** |
 | Lexer stack overflow | TM-DOS-044 | Depth tracking in `read_command_subst_into` | **NEEDED** |
 | Cmd subst OOM via state cloning | TM-DOS-088 | `max_subst_depth` limit in `ExecutionLimits` | **DONE** |
-| OverlayFs symlink limit bypass | TM-DOS-045 | `check_write_limits()` + `validate_path()` in `symlink()` | **NEEDED** |
-| MountableFs path validation gap | TM-DOS-046 | `validate_path()` in all MountableFs methods | **NEEDED** |
-| VFS copy/rename semantic bugs | TM-DOS-047, TM-DOS-048 | Fix limit check in copy(), type check in rename() | **NEEDED** |
+| OverlayFs symlink limit bypass | TM-DOS-045 | `check_write_limits()` + `validate_path()` in `symlink()` | **MITIGATED** |
+| MountableFs path validation gap | TM-DOS-046 | `validate_path()` in all MountableFs methods | **MITIGATED** |
+| VFS copy/rename semantic bugs | TM-DOS-047, TM-DOS-048 | Fix limit check in copy(), type check in rename() | **MITIGATED** |
 | Date time info leak | TM-INF-018 | Configurable time source | **NEEDED** |
 | Python BashTool.reset() drops limits | TM-PY-028 | Preserve config on reset (match PyBash.reset()) | **NEEDED** |
 | YAML parser depth limit | TM-DOS-051 | `depth` parameter on `parse_yaml_block`/`map`/`list` with `MAX_YAML_DEPTH = 100` | **MITIGATED** |
