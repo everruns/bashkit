@@ -49,6 +49,11 @@ function normalizeGuideMarkdown() {
 }
 
 function repoUrl(url) {
+  const renderedDocsUrl = renderedDocsRepoUrl(url);
+  if (renderedDocsUrl) {
+    return renderedDocsUrl;
+  }
+
   if (
     url.startsWith("http://") ||
     url.startsWith("https://") ||
@@ -72,6 +77,31 @@ function repoUrl(url) {
   const examplesIndex = cleanUrl.indexOf("examples/");
   if (examplesIndex >= 0) {
     return `https://github.com/everruns/bashkit/blob/main/crates/bashkit/${cleanUrl.slice(examplesIndex)}`;
+  }
+
+  return null;
+}
+
+function renderedDocsRepoUrl(url) {
+  const prefix = "/docs/";
+  if (!url.startsWith(prefix)) {
+    return null;
+  }
+
+  const docsPath = url.slice(prefix.length);
+  if (docsPath === "README.md" || docsPath === "SECURITY.md") {
+    return `https://github.com/everruns/bashkit/blob/main/${docsPath}`;
+  }
+
+  const specsIndex = docsPath.indexOf("specs/");
+  if (specsIndex >= 0) {
+    return `https://github.com/everruns/bashkit/blob/main/${docsPath.slice(specsIndex)}`;
+  }
+
+  const cratesDocsIndex = docsPath.indexOf("crates/bashkit/docs/");
+  if (cratesDocsIndex >= 0) {
+    const rustdocPath = docsPath.slice(cratesDocsIndex);
+    return `https://github.com/everruns/bashkit/blob/main/${rustdocPath}`;
   }
 
   return null;
