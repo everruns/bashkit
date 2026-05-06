@@ -1,0 +1,4 @@
+# Decision: bashkit.sh does not publish an HTTP API catalog today, so advertise
+# the existing machine-readable Agent Skills index and human service docs.
+/
+  Link: </.well-known/agent-skills/index.json>; rel="service-desc"; type="application/json", </docs/>; rel="service-doc"; type="text/html"
