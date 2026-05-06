@@ -1260,8 +1260,8 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | TM-DOS-040 | Integer truncation on 32-bit | Size check bypass | Use try_from() |
 | TM-UNI-001 | Awk parser byte-boundary panic on Unicode | Silent builtin failure on valid input | Fix awk parser to use char-boundary-safe indexing |
 | TM-UNI-002 | Sed parser byte-boundary issues | Silent builtin failure on valid input | Audit and fix sed byte-indexing |
-| TM-UNI-003 | Zero-width chars in filenames | Invisible/confusable filenames | Extend `find_unsafe_path_char()` |
-| TM-UNI-011 | Tag characters in filenames | Invisible content in filenames | Extend `find_unsafe_path_char()` |
+| ~~TM-UNI-003~~ | ~~Zero-width chars in filenames~~ | ~~Invisible/confusable filenames~~ | ~~Extend `find_unsafe_path_char()`~~ (**FIXED**) |
+| ~~TM-UNI-011~~ | ~~Tag characters in filenames~~ | ~~Invisible content in filenames~~ | ~~Extend `find_unsafe_path_char()`~~ (**FIXED**) |
 | TM-UNI-015 | Expr `substr` byte-boundary panic | Silent failure on multi-byte substr | Fix to use char-boundary-safe indexing (issue #434) |
 | TM-UNI-016 | Printf precision mid-char panic | Silent failure on multi-byte precision truncation | Use `is_char_boundary()` before slicing (issue #435) |
 | TM-UNI-017 | Cut/tr byte-level char set parsing | Multi-byte chars silently dropped in tr specs | Switch from `as_bytes()` to char iteration (issue #436) |
@@ -1974,7 +1974,7 @@ The `logging_impl.rs:truncate()` function demonstrates the correct pattern using
 
 | ID | Threat | Attack Vector | Mitigation | Status |
 |----|--------|--------------|------------|--------|
-| TM-UNI-003 | Zero-width chars in filenames | `touch "/tmp/file\u{200B}name"` — invisible ZWSP creates confusable filenames | `find_unsafe_path_char()` does NOT detect zero-width chars | **UNMITIGATED** |
+| TM-UNI-003 | Zero-width chars in filenames | `touch "/tmp/file\u{200B}name"` — invisible ZWSP creates confusable filenames | `find_unsafe_path_char()` rejects U+200B-U+200D, U+2060, U+FEFF, U+180E in path components | **MITIGATED** |
 | TM-UNI-004 | Zero-width chars in variable names | `\u{200B}PATH=malicious` — invisible char makes variable look like PATH | Not detected; Bash itself allows this | **ACCEPTED** |
 | TM-UNI-005 | Zero-width chars in script source | `echo "pass\u{200B}word"` — invisible char in string literal | Not detected; pass-through is correct Bash behavior | **ACCEPTED** |
 
@@ -1989,9 +1989,9 @@ The `logging_impl.rs:truncate()` function demonstrates the correct pattern using
 - U+2060 Word Joiner
 - U+180E Mongolian Vowel Separator
 
-**Recommendation**: Extend `find_unsafe_path_char()` to reject zero-width characters in
-filenames (TM-UNI-003). Variable names and script content should pass through as-is to
-match Bash behavior.
+**Status**: TM-UNI-003 is **MITIGATED**. `find_unsafe_path_char()` (`crates/bashkit/src/fs/limits.rs`)
+rejects U+200B-U+200D, U+2060, U+FEFF, and U+180E in path components. Variable names and
+script content still pass through as-is to match Bash behavior (TM-UNI-004, TM-UNI-005).
 
 ### 11.3 Homoglyph / Confusable Characters
 
@@ -2034,18 +2034,21 @@ real Bash on Linux.
 
 | ID | Threat | Attack Vector | Mitigation | Status |
 |----|--------|--------------|------------|--------|
-| TM-UNI-011 | Tag character hiding | U+E0001-U+E007F (Tags block) — invisible chars that can conceal content in filenames | `find_unsafe_path_char()` does NOT detect tag chars | **UNMITIGATED** |
-| TM-UNI-012 | Interlinear annotation hiding | U+FFF9-U+FFFB (Interlinear Annotations) — can hide text in filenames | Not detected in paths | **UNMITIGATED** |
-| TM-UNI-013 | Deprecated format chars | U+206A-U+206F (Deprecated formatting) — can cause display confusion | Not detected in paths | **UNMITIGATED** |
+| TM-UNI-011 | Tag character hiding | U+E0001-U+E007F (Tags block) — invisible chars that can conceal content in filenames | `find_unsafe_path_char()` rejects U+E0000-U+E007F in path components | **MITIGATED** |
+| TM-UNI-012 | Interlinear annotation hiding | U+FFF9-U+FFFB (Interlinear Annotations) — can hide text in filenames | `find_unsafe_path_char()` rejects U+FFF9-U+FFFB in path components | **MITIGATED** |
+| TM-UNI-013 | Deprecated format chars | U+206A-U+206F (Deprecated formatting) — can cause display confusion | `find_unsafe_path_char()` rejects U+206A-U+206F in path components | **MITIGATED** |
 
-**Current Risk**: LOW — These are extremely obscure. Tag characters were deprecated in
-Unicode 5.0. Practical exploitation likelihood is minimal.
+**Status**: All three are **MITIGATED**. `find_unsafe_path_char()` rejects every
+documented invisible/confusable range in path components:
+- U+200B-U+200D, U+2060, U+FEFF, U+180E (zero-width, TM-UNI-003)
+- U+202A-U+202E, U+2066-U+2069 (bidi overrides, TM-DOS-015)
+- U+206A-U+206F (deprecated format, TM-UNI-013)
+- U+FFF9-U+FFFB (interlinear annotations, TM-UNI-012)
+- U+E0000-U+E007F (tag block, TM-UNI-011)
 
-**Recommendation**: Extend `find_unsafe_path_char()` to also reject:
-- U+200B-U+200D, U+2060, U+FEFF (zero-width chars, per TM-UNI-003)
-- U+E0001-U+E007F (tag characters)
-- U+FFF9-U+FFFB (interlinear annotations)
-- U+206A-U+206F (deprecated format characters)
+Variable names, script content, and command output are unaffected — pass-through there
+matches Bash behavior. Caller-side display sanitization (see Caller Responsibilities)
+remains useful defense-in-depth.
 
 ### 11.7 Bidi in Script Source
 
@@ -2142,7 +2145,7 @@ specs are rare in practice).
 |----|--------|------|--------|--------|
 | TM-UNI-001 | Awk parser byte-boundary panic | MEDIUM | PARTIAL | Fix awk parser indexing (issue #395) |
 | TM-UNI-002 | Sed parser byte-boundary panic | MEDIUM | PARTIAL | Fix sed byte-indexing patterns |
-| TM-UNI-003 | Zero-width chars in filenames | LOW | UNMITIGATED | Extend `find_unsafe_path_char()` |
+| TM-UNI-003 | Zero-width chars in filenames | LOW | MITIGATED | `find_unsafe_path_char()` rejects U+200B-U+200D, U+2060, U+FEFF, U+180E |
 | TM-UNI-004 | Zero-width chars in variables | MINIMAL | ACCEPTED | Matches Bash behavior |
 | TM-UNI-005 | Zero-width chars in scripts | MINIMAL | ACCEPTED | Correct pass-through |
 | TM-UNI-006 | Homoglyph filenames | LOW | ACCEPTED | Impractical to fully detect |
@@ -2150,9 +2153,9 @@ specs are rare in practice).
 | TM-UNI-008 | Normalization bypass | LOW | ACCEPTED | Matches Linux FS behavior |
 | TM-UNI-009 | Excessive combining marks (filenames) | LOW | MITIGATED | Length limits bound damage |
 | TM-UNI-010 | Excessive combining marks (builtins) | LOW | MITIGATED | Timeout + depth limits |
-| TM-UNI-011 | Tag character hiding | LOW | UNMITIGATED | Extend path validation |
-| TM-UNI-012 | Interlinear annotation hiding | LOW | UNMITIGATED | Extend path validation |
-| TM-UNI-013 | Deprecated format chars | LOW | UNMITIGATED | Extend path validation |
+| TM-UNI-011 | Tag character hiding | LOW | MITIGATED | `find_unsafe_path_char()` rejects U+E0000-U+E007F |
+| TM-UNI-012 | Interlinear annotation hiding | LOW | MITIGATED | `find_unsafe_path_char()` rejects U+FFF9-U+FFFB |
+| TM-UNI-013 | Deprecated format chars | LOW | MITIGATED | `find_unsafe_path_char()` rejects U+206A-U+206F |
 | TM-UNI-014 | Bidi in script source | LOW | ACCEPTED | Caller responsibility |
 | TM-UNI-015 | Expr substr byte-boundary panic | MEDIUM | PARTIAL | Fix expr to use char-safe indexing (issue #434) |
 | TM-UNI-016 | Printf precision mid-char panic | MEDIUM | PARTIAL | Use `is_char_boundary()` (issue #435) |

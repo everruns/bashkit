@@ -16,6 +16,10 @@
 //! - **TM-DOS-013**: Long filenames → `max_filename_length`, `max_path_length`
 //! - **TM-DOS-014**: Many directory entries → `max_file_count`
 //! - **TM-DOS-015**: Unicode path attacks → `validate_path()` control char rejection
+//! - **TM-UNI-003**: Zero-width chars in paths → `find_unsafe_path_char()` rejection
+//! - **TM-UNI-011**: Tag-block chars in paths → `find_unsafe_path_char()` rejection
+//! - **TM-UNI-012**: Interlinear annotations in paths → `find_unsafe_path_char()` rejection
+//! - **TM-UNI-013**: Deprecated format chars in paths → `find_unsafe_path_char()` rejection
 
 use std::fmt;
 use std::path::Path;
@@ -343,12 +347,23 @@ impl FsLimits {
 }
 
 // THREAT[TM-DOS-015]: Unicode control chars and bidi overrides can cause path confusion
-// Mitigation: Reject paths containing these characters
+// THREAT[TM-UNI-003]: Zero-width chars create visually-identical filenames
+// THREAT[TM-UNI-011]: Tag block chars (U+E0001-U+E007F) hide content invisibly
+// THREAT[TM-UNI-012]: Interlinear annotations (U+FFF9-U+FFFB) hide text
+// THREAT[TM-UNI-013]: Deprecated format chars (U+206A-U+206F) cause display confusion
+// Mitigation: Reject path components containing any of these invisible/confusable chars
 /// Check if a path component contains unsafe characters.
 ///
 /// Returns `Some(description)` for the first unsafe character found.
-/// Rejects: ASCII control chars (0x00-0x1F, 0x7F), C1 controls (0x80-0x9F),
-/// and Unicode bidi override characters (U+202A-U+202E, U+2066-U+2069).
+///
+/// Rejects:
+/// - ASCII control chars (0x00-0x1F, 0x7F)
+/// - C1 control characters (U+0080-U+009F)
+/// - Bidi override characters (U+202A-U+202E, U+2066-U+2069)
+/// - Zero-width characters: U+200B-U+200D, U+2060, U+FEFF, U+180E
+/// - Deprecated format characters (U+206A-U+206F)
+/// - Interlinear annotation markers (U+FFF9-U+FFFB)
+/// - Tag block (U+E0000-U+E007F)
 fn find_unsafe_path_char(name: &str) -> Option<String> {
     for ch in name.chars() {
         // ASCII control characters (except we allow nothing - null is already
@@ -363,6 +378,28 @@ fn find_unsafe_path_char(name: &str) -> Option<String> {
         // Bidi override characters - can cause visual path confusion
         if ('\u{202A}'..='\u{202E}').contains(&ch) || ('\u{2066}'..='\u{2069}').contains(&ch) {
             return Some(format!("U+{:04X} (bidi override)", ch as u32));
+        }
+        // TM-UNI-003: Zero-width characters - invisible, create confusable names
+        // U+200B ZWSP, U+200C ZWNJ, U+200D ZWJ, U+2060 Word Joiner,
+        // U+FEFF BOM/Zero Width No-Break Space, U+180E Mongolian Vowel Separator
+        if matches!(
+            ch,
+            '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{2060}' | '\u{FEFF}' | '\u{180E}'
+        ) {
+            return Some(format!("U+{:04X} (zero-width)", ch as u32));
+        }
+        // TM-UNI-013: Deprecated format characters - display confusion
+        if ('\u{206A}'..='\u{206F}').contains(&ch) {
+            return Some(format!("U+{:04X} (deprecated format)", ch as u32));
+        }
+        // TM-UNI-012: Interlinear annotation markers - hide text
+        if ('\u{FFF9}'..='\u{FFFB}').contains(&ch) {
+            return Some(format!("U+{:04X} (interlinear annotation)", ch as u32));
+        }
+        // TM-UNI-011: Tag block - invisible chars (deprecated in Unicode 5.0)
+        // Range covers U+E0000 LANGUAGE TAG and U+E0001-U+E007F (TAG ASCII chars)
+        if ('\u{E0000}'..='\u{E007F}').contains(&ch) {
+            return Some(format!("U+{:04X} (tag char)", ch as u32));
         }
     }
     None
@@ -660,5 +697,112 @@ mod tests {
         // Normal unicode (accented chars, CJK, emoji) should be fine
         assert!(limits.validate_path(Path::new("/tmp/café")).is_ok());
         assert!(limits.validate_path(Path::new("/tmp/文件")).is_ok());
+    }
+
+    // TM-UNI-003: Zero-width characters in filenames must be rejected
+    #[test]
+    fn test_validate_path_zwsp_rejected() {
+        let limits = FsLimits::new();
+        let path = PathBuf::from("/tmp/file\u{200B}name.txt");
+        let err = limits.validate_path(&path).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("zero-width"), "got: {msg}");
+        assert!(msg.contains("U+200B"), "got: {msg}");
+    }
+
+    #[test]
+    fn test_validate_path_zwnj_rejected() {
+        let limits = FsLimits::new();
+        assert!(limits.validate_path(Path::new("/tmp/a\u{200C}b")).is_err());
+    }
+
+    #[test]
+    fn test_validate_path_zwj_rejected() {
+        let limits = FsLimits::new();
+        assert!(limits.validate_path(Path::new("/tmp/a\u{200D}b")).is_err());
+    }
+
+    #[test]
+    fn test_validate_path_word_joiner_rejected() {
+        let limits = FsLimits::new();
+        assert!(limits.validate_path(Path::new("/tmp/a\u{2060}b")).is_err());
+    }
+
+    #[test]
+    fn test_validate_path_bom_rejected() {
+        let limits = FsLimits::new();
+        assert!(
+            limits
+                .validate_path(Path::new("/tmp/\u{FEFF}file"))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn test_validate_path_mongolian_vowel_separator_rejected() {
+        let limits = FsLimits::new();
+        assert!(limits.validate_path(Path::new("/tmp/a\u{180E}b")).is_err());
+    }
+
+    // TM-UNI-013: Deprecated format characters (U+206A-U+206F) must be rejected
+    #[test]
+    fn test_validate_path_deprecated_format_rejected() {
+        let limits = FsLimits::new();
+        for ch in '\u{206A}'..='\u{206F}' {
+            let path = PathBuf::from(format!("/tmp/a{ch}b"));
+            let err = limits.validate_path(&path).unwrap_err();
+            assert!(
+                err.to_string().contains("deprecated format"),
+                "U+{:04X}: {}",
+                ch as u32,
+                err
+            );
+        }
+    }
+
+    // TM-UNI-012: Interlinear annotation markers (U+FFF9-U+FFFB) must be rejected
+    #[test]
+    fn test_validate_path_interlinear_annotation_rejected() {
+        let limits = FsLimits::new();
+        for ch in ['\u{FFF9}', '\u{FFFA}', '\u{FFFB}'] {
+            let path = PathBuf::from(format!("/tmp/a{ch}b"));
+            let err = limits.validate_path(&path).unwrap_err();
+            assert!(
+                err.to_string().contains("interlinear annotation"),
+                "U+{:04X}: {}",
+                ch as u32,
+                err
+            );
+        }
+    }
+
+    // TM-UNI-011: Tag block characters (U+E0000-U+E007F) must be rejected
+    #[test]
+    fn test_validate_path_tag_chars_rejected() {
+        let limits = FsLimits::new();
+        // Spot-check the boundary values and a TAG ASCII char
+        for ch in ['\u{E0000}', '\u{E0001}', '\u{E0041}', '\u{E007F}'] {
+            let path = PathBuf::from(format!("/tmp/a{ch}b"));
+            let err = limits.validate_path(&path).unwrap_err();
+            assert!(
+                err.to_string().contains("tag char"),
+                "U+{:04X}: {}",
+                ch as u32,
+                err
+            );
+        }
+    }
+
+    // Adjacent chars to the new ranges must NOT be over-blocked.
+    #[test]
+    fn test_validate_path_adjacent_chars_allowed() {
+        let limits = FsLimits::new();
+        // U+200A HAIR SPACE — visible whitespace, just below ZWSP
+        assert!(limits.validate_path(Path::new("/tmp/a\u{200A}b")).is_ok());
+        // U+200E LRM, U+200F RLM — bidi marks (not overrides)
+        assert!(limits.validate_path(Path::new("/tmp/a\u{200E}b")).is_ok());
+        assert!(limits.validate_path(Path::new("/tmp/a\u{200F}b")).is_ok());
+        // U+2070 SUPERSCRIPT ZERO — just past the deprecated-format range
+        assert!(limits.validate_path(Path::new("/tmp/a\u{2070}b")).is_ok());
     }
 }
