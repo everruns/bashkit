@@ -522,6 +522,52 @@ mod brace_expansion_dos {
         let result = bash.exec("echo {1..3}").await.unwrap();
         assert_eq!(result.stdout.trim(), "1 2 3");
     }
+
+    /// TM-DOS-041: Reverse range `{N..1}` with N over the static cap is rejected.
+    #[tokio::test]
+    async fn security_audit_brace_expansion_reverse_capped() {
+        let mut bash = Bash::new();
+        let result = bash.exec("echo {1000000..1}").await;
+        assert!(
+            result.is_err(),
+            "Reverse brace expansion with 1M elements must be rejected"
+        );
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("brace range too large"),
+            "Expected static budget rejection on reverse range"
+        );
+    }
+
+    /// TM-DOS-042: Combinatorial blowup `{1..100}{1..100}{1..100}` (= 1M) cannot
+    /// allocate more than the runtime cap of 100k strings. Each individual range
+    /// passes the static check, so this exercises the runtime cap in
+    /// `expand_braces_capped`.
+    #[tokio::test]
+    async fn security_audit_brace_expansion_combinatorial_capped() {
+        let limits = ExecutionLimits::new()
+            .max_commands(10)
+            .timeout(Duration::from_secs(15));
+        let mut bash = Bash::builder().limits(limits).build();
+
+        // Pipe through `wc -w` so we don't materialise the whole expansion in stdout.
+        let result = bash
+            .exec("echo {1..100}{1..100}{1..100} | wc -w")
+            .await
+            .expect("combinatorial expansion must not panic or OOM");
+        let count: usize = result.stdout.trim().parse().unwrap_or(usize::MAX);
+
+        // Hard upper bound: runtime cap is 100k, plus one literal "tail" string
+        // that the loop emits when count >= max.
+        assert!(
+            count <= 200_000,
+            "combinatorial expansion produced {count} words, expected <= 200000",
+        );
+        // And it must produce *something* — sanity check that the call ran.
+        assert!(count > 0, "combinatorial expansion returned no output");
+    }
 }
 
 // =============================================================================
