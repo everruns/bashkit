@@ -653,6 +653,85 @@ mod mountable_fs_validate_path {
         let result = mountable.symlink(Path::new("/target"), bad_link).await;
         assert!(result.is_err(), "MountableFs must validate symlink paths");
     }
+
+    /// TM-DOS-046: MountableFs must validate paths on read_file.
+    #[tokio::test]
+    async fn security_audit_mountable_validates_read_file_path() {
+        let root = Arc::new(InMemoryFs::new());
+        let mountable = MountableFs::new(root);
+
+        let bad_path = Path::new("/tmp/file\x01name");
+        let result = mountable.read_file(bad_path).await;
+        assert!(result.is_err(), "read_file must reject control characters");
+    }
+
+    /// TM-DOS-046: MountableFs must validate paths on stat.
+    #[tokio::test]
+    async fn security_audit_mountable_validates_stat_path() {
+        let root = Arc::new(InMemoryFs::new());
+        let mountable = MountableFs::new(root);
+
+        let bad_path = Path::new("/tmp/file\x01name");
+        let result = mountable.stat(bad_path).await;
+        assert!(result.is_err(), "stat must reject control characters");
+    }
+
+    /// TM-DOS-046: MountableFs must validate paths on read_dir.
+    #[tokio::test]
+    async fn security_audit_mountable_validates_read_dir_path() {
+        let root = Arc::new(InMemoryFs::new());
+        let mountable = MountableFs::new(root);
+
+        let bad_path = Path::new("/tmp/dir\x01name");
+        let result = mountable.read_dir(bad_path).await;
+        assert!(result.is_err(), "read_dir must reject control characters");
+    }
+
+    /// TM-DOS-046: MountableFs must validate paths on exists.
+    #[tokio::test]
+    async fn security_audit_mountable_validates_exists_path() {
+        let root = Arc::new(InMemoryFs::new());
+        let mountable = MountableFs::new(root);
+
+        let bad_path = Path::new("/tmp/file\x01name");
+        let result = mountable.exists(bad_path).await;
+        assert!(result.is_err(), "exists must reject control characters");
+    }
+
+    /// TM-DOS-046: MountableFs must validate paths on read_link.
+    #[tokio::test]
+    async fn security_audit_mountable_validates_read_link_path() {
+        let root = Arc::new(InMemoryFs::new());
+        let mountable = MountableFs::new(root);
+
+        let bad_path = Path::new("/tmp/link\x01name");
+        let result = mountable.read_link(bad_path).await;
+        assert!(result.is_err(), "read_link must reject control characters");
+    }
+
+    /// TM-DOS-046: MountableFs cross-mount rename must validate both ends.
+    #[tokio::test]
+    async fn security_audit_mountable_validates_rename_dest_path() {
+        let root = Arc::new(InMemoryFs::new());
+        let mountable = MountableFs::new(root);
+
+        let src = Path::new("/tmp/src");
+        let bad_dest = Path::new("/tmp/dest\x01name");
+        let result = mountable.rename(src, bad_dest).await;
+        assert!(result.is_err(), "rename must reject control chars in dest");
+    }
+
+    /// TM-DOS-046: MountableFs cross-mount copy must validate both ends.
+    #[tokio::test]
+    async fn security_audit_mountable_validates_copy_dest_path() {
+        let root = Arc::new(InMemoryFs::new());
+        let mountable = MountableFs::new(root);
+
+        let src = Path::new("/tmp/src");
+        let bad_dest = Path::new("/tmp/dest\x01name");
+        let result = mountable.copy(src, bad_dest).await;
+        assert!(result.is_err(), "copy must reject control chars in dest");
+    }
 }
 
 // =============================================================================
