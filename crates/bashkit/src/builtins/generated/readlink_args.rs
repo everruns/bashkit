@@ -6,7 +6,8 @@
 // Original uutils licensed MIT; see THIRD_PARTY_LICENSES.
 
 #![allow(unused_imports, dead_code)]
-use clap::{Arg, ArgAction, Command, builder::ValueParser};
+use clap::builder::{NonEmptyStringValueParser, PossibleValue, PossibleValuesParser, ValueParser};
+use clap::{Arg, ArgAction, Command};
 use std::ffi::OsString;
 use std::ops::RangeInclusive;
 use std::str::FromStr;

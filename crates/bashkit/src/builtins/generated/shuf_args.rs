@@ -6,7 +6,8 @@
 // Original uutils licensed MIT; see THIRD_PARTY_LICENSES.
 
 #![allow(unused_imports, dead_code)]
-use clap::{Arg, ArgAction, Command, builder::ValueParser};
+use clap::builder::{NonEmptyStringValueParser, PossibleValue, PossibleValuesParser, ValueParser};
+use clap::{Arg, ArgAction, Command};
 use std::ffi::OsString;
 use std::ops::RangeInclusive;
 use std::str::FromStr;
@@ -21,6 +22,8 @@ mod options {
     pub static ZERO_TERMINATED: &str = "zero-terminated";
     pub static FILE_OR_ARGS: &str = "file-or-args";
 }
+#[allow(unused_imports)]
+use options::*;
 /// Vendored stand-in for `uucore::format_usage`.
 ///
 /// Upstream wraps the usage line with stylized "Usage:" prefix logic

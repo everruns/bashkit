@@ -4,12 +4,33 @@
 #![allow(clippy::unwrap_used)]
 
 use async_trait::async_trait;
+use std::ffi::OsString;
 use std::path::Path;
 
+use super::generated::ls_args::ls_command;
 use super::{Builtin, Context, ExecutionPlan, SubCommand, resolve_path};
 use crate::error::Result;
 use crate::fs::FileType;
 use crate::interpreter::{ControlFlow, ExecResult};
+
+/// Argument IDs from the generated `ls_command()` that bashkit currently
+/// implements. Anything else clap accepts is reported as "not yet
+/// implemented" so scripts get a deterministic error instead of silently
+/// missing behavior. See spec `coreutils-args-port.md`.
+const LS_SUPPORTED_IDS: &[&str] = &[
+    // The 8 short flags the original bashkit ls accepted.
+    "long",           // -l
+    "all",            // -a
+    "human-readable", // -h
+    "1",              // -1
+    "recursive",      // -R
+    "t",              // -t
+    "classify",       // -F / --classify
+    "C",              // -C
+    // Non-flag positional + always-supported infrastructure.
+    "paths",
+    "help",
+];
 
 /// Options for ls command
 struct LsOptions {
@@ -41,53 +62,81 @@ pub struct Ls;
 #[async_trait]
 impl Builtin for Ls {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        if let Some(r) = super::check_help_version(
-            ctx.args,
-            "Usage: ls [OPTION]... [FILE]...\nList directory contents.\n\n  -l\t\tuse a long listing format\n  -a\t\tdo not ignore entries starting with .\n  -h\t\thuman-readable sizes (with -l)\n  -1\t\tlist one file per line\n  -R\t\tlist subdirectories recursively\n  -t\t\tsort by modification time, newest first\n  -F, --classify\tappend indicator (/ for dirs, * for executables, @ for symlinks, | for FIFOs)\n  -C\t\tlist entries in columns\n      --help\tdisplay this help and exit\n      --version\toutput version information and exit\n",
-            Some("ls (bashkit) 0.1"),
-        ) {
-            return Ok(r);
-        }
+        // clap expects argv[0] = program name; bashkit's ctx.args excludes it.
+        let argv: Vec<OsString> = std::iter::once(OsString::from("ls"))
+            .chain(ctx.args.iter().map(OsString::from))
+            .collect();
 
-        let mut opts = LsOptions {
-            long: false,
-            all: false,
-            human: false,
-            one_per_line: false,
-            recursive: false,
-            sort_by_time: false,
-            classify: false,
-            columns: false,
+        // GNU coreutils' help layout opens with the usage line; clap's
+        // default template leads with the `about`. uutils handles this via
+        // uucore's `localized_help_template`, which we drop during codegen
+        // because it pulls in Fluent. Re-apply a GNU-equivalent template.
+        let cmd = ls_command().help_template("Usage: {usage}\n{about}\n\n{all-args}\n");
+        let matches = match cmd.try_get_matches_from(argv) {
+            Ok(m) => m,
+            Err(e) => {
+                let kind = e.kind();
+                let rendered = e.render().to_string();
+                if matches!(
+                    kind,
+                    clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion
+                ) {
+                    return Ok(ExecResult::ok(rendered));
+                }
+                return Ok(ExecResult::err(rendered, 2));
+            }
         };
 
-        // Parse flags
-        let mut paths: Vec<&str> = Vec::new();
-        for arg in ctx.args {
-            if arg == "--classify" {
-                opts.classify = true;
-            } else if arg.starts_with('-') && arg.len() > 1 && !arg.starts_with("--") {
-                for c in arg[1..].chars() {
-                    match c {
-                        'l' => opts.long = true,
-                        'a' => opts.all = true,
-                        'h' => opts.human = true,
-                        '1' => opts.one_per_line = true,
-                        'R' => opts.recursive = true,
-                        't' => opts.sort_by_time = true,
-                        'F' => opts.classify = true,
-                        'C' => opts.columns = true,
-                        _ => {
-                            return Ok(ExecResult::err(
-                                format!("ls: invalid option -- '{}'\n", c),
-                                2,
-                            ));
-                        }
-                    }
-                }
-            } else {
-                paths.push(arg);
-            }
+        // Reject any uu_ls flag bashkit hasn't implemented yet. Reporting
+        // them up front beats silently parsing them and producing GNU-
+        // incompatible output. Same pattern as `tac -b/-r/-s`.
+        let unsupported: Vec<String> = matches
+            .ids()
+            .filter(|id| {
+                let name = id.as_str();
+                !LS_SUPPORTED_IDS.contains(&name)
+                    && matches.value_source(name) != Some(clap::parser::ValueSource::DefaultValue)
+            })
+            .map(|id| id.as_str().to_string())
+            .collect();
+        if !unsupported.is_empty() {
+            return Ok(ExecResult::err(
+                format!(
+                    "ls: option(s) not yet implemented in bashkit: {}\n",
+                    unsupported.join(", ")
+                ),
+                2,
+            ));
         }
+
+        // -F/--classify takes an optional value (`always`/`auto`/`never`).
+        // The bashkit implementation only knows "classify or not"; treat
+        // an explicit `never` as off and anything else (including the
+        // default "always") as on.
+        let classify = matches.contains_id("classify")
+            && matches
+                .get_one::<String>("classify")
+                .map(|v| v != "never")
+                .unwrap_or(true);
+
+        let opts = LsOptions {
+            long: matches.get_flag("long"),
+            all: matches.get_flag("all"),
+            human: matches.get_flag("human-readable"),
+            one_per_line: matches.get_flag("1"),
+            recursive: matches.get_flag("recursive"),
+            sort_by_time: matches.get_flag("t"),
+            classify,
+            columns: matches.get_flag("C"),
+        };
+
+        // PATHS holds OsString values; convert to owned strings for the
+        // existing rendering loop.
+        let paths_owned: Vec<String> = matches
+            .get_many::<OsString>("paths")
+            .map(|vs| vs.map(|v| v.to_string_lossy().into_owned()).collect())
+            .unwrap_or_default();
+        let mut paths: Vec<&str> = paths_owned.iter().map(String::as_str).collect();
 
         // Default to current directory
         if paths.is_empty() {
@@ -1378,7 +1427,15 @@ mod tests {
 
         let result = Ls.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 2);
-        assert!(result.stderr.contains("invalid option"));
+        // clap-rendered diagnostic differs from GNU coreutils' wording
+        // ("invalid option") but both flag the unknown short flag.
+        // `### bash_diff` documents the GNU divergence in spec tests.
+        let combined = format!("{}{}", result.stdout, result.stderr);
+        assert!(
+            combined.contains("unexpected argument") || combined.contains("invalid option"),
+            "expected an unknown-flag diagnostic, got: {}",
+            combined
+        );
     }
 
     #[tokio::test]
