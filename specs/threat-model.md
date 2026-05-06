@@ -536,9 +536,9 @@ Bash::builder()
 
 | TM-INJ-011 | Cyclic nameref silent resolution | Cyclic namerefs (a→b→a) silently resolve after 10 iterations instead of erroring | — | **OPEN** |
 | TM-INJ-018 | `dotenv` internal variable prefix injection | `.env` file with `_NAMEREF_x=target` sets internal interpreter variables via `ctx.variables.insert()` | — | **OPEN** |
-| TM-INJ-019 | `unset` removes readonly variables | `readonly X=v; unset X` removes the variable despite readonly attribute | — | **OPEN** |
-| TM-INJ-020 | `declare` overwrites readonly variables | `readonly X=v; declare X=new` overwrites without error | — | **OPEN** |
-| TM-INJ-021 | `export` overwrites readonly variables | `readonly X=v; export X=new` overwrites without error | — | **OPEN** |
+| TM-INJ-019 | `unset` removes readonly variables | `readonly X=v; unset X` removes the variable despite readonly attribute | `execute_unset_builtin` and `Unset` builtin both check `_READONLY_<name>` markers, emit `bash: unset: <name>: cannot unset: readonly variable`, and return exit 1 | **MITIGATED** |
+| TM-INJ-020 | `declare` overwrites readonly variables | `readonly X=v; declare X=new` overwrites without error | `declare` assignment path checks `_READONLY_<name>`, emits `bash: declare: <name>: readonly variable`, returns exit 1 | **MITIGATED** |
+| TM-INJ-021 | `export` overwrites readonly variables | `readonly X=v; export X=new` overwrites without error | `export NAME=VALUE` checks `_READONLY_<name>`, emits `bash: export: <name>: readonly variable`, returns exit 1 | **MITIGATED** |
 
 **TM-INJ-011**: `interpreter/mod.rs:7547-7560` — cyclic namerefs silently resolve to whatever
 variable is current after 10 iterations. Real bash errors with `circular name reference`. Can
@@ -1299,9 +1299,9 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | TM-DOS-056 | `source` self-recursion stack overflow | Process crash (SIGABRT) via script that sources itself | Track source depth like function depth; apply `max_function_depth` limit |
 | TM-DOS-057 | `sleep` bypasses execution timeout | CPU/time exhaustion; `sleep`, subshell sleep, pipeline sleep, background sleep, `timeout` builtin all ignore `ExecutionLimits::timeout` | Implement timeout as tokio::time::timeout wrapper around exec(), not cooperative check |
 | TM-DOS-058 | Single-builtin unbounded output | OOM via `seq 1 1000000` producing 1M lines despite command limit of 50 | Add `max_stdout_bytes` / `max_stderr_bytes` to ExecutionLimits (see #648) |
-| TM-INJ-019 | `unset` removes readonly variables | Integrity bypass — readonly protection defeated | Check readonly attribute in unset before removal |
-| TM-INJ-020 | `declare` overwrites readonly variables | Integrity bypass — `declare X=new` overwrites `readonly X=old` | Check readonly attribute in declare assignment path |
-| TM-INJ-021 | `export` overwrites readonly variables | Integrity bypass — `export X=new` overwrites `readonly X=old` | Check readonly attribute in export assignment path |
+| ~~TM-INJ-019~~ | ~~`unset` removes readonly variables~~ | ~~Integrity bypass — readonly protection defeated~~ | ~~Check readonly attribute in unset before removal~~ (**FIXED**) |
+| ~~TM-INJ-020~~ | ~~`declare` overwrites readonly variables~~ | ~~Integrity bypass — `declare X=new` overwrites `readonly X=old`~~ | ~~Check readonly attribute in declare assignment path~~ (**FIXED**) |
+| ~~TM-INJ-021~~ | ~~`export` overwrites readonly variables~~ | ~~Integrity bypass — `export X=new` overwrites `readonly X=old`~~ | ~~Check readonly attribute in export assignment path~~ (**FIXED**) |
 | TM-ISO-021 | EXIT trap leaks across `exec()` calls | Cross-invocation interference — trap from exec N fires in exec N+1 | Reset traps in `reset_for_execution()` |
 | TM-ISO-022 | `$?` leaks across `exec()` calls | State pollution — exit code from previous exec visible to next exec | Reset `last_exit_code` in `reset_for_execution()` |
 | TM-ISO-023 | `set -e` leaks across `exec()` calls | Unexpected abort — `set` options from previous exec affect next exec | `SET_OPTION_VARS` cleared in `reset_transient_state()` (**FIXED**) |
