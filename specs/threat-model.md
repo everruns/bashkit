@@ -279,9 +279,9 @@ max_ast_depth: 100,           // Parser recursion (TM-DOS-022)
 | TM-DOS-053 | Template `{{#each}}` output explosion | `{{#each arr}}` on large JSON array produces O(n * body) output | Bounded by JSON data file size (max_file_size) | **MITIGATED** |
 | TM-DOS-054 | `glob --files` inherits ExtGlob blowup | `glob --files "+(a|aa)" /dir` dispatches to `glob_match` with same exponential cost as TM-DOS-031 | Same as TM-DOS-031 | **OPEN** |
 | TM-DOS-055 | `split` file count amplification | `split -l 1 bigfile` creates one output file per line; bounded by `max_file_count` FS limit | FS limits (TM-DOS-006) | **MITIGATED** |
-| TM-DOS-056 | `source` self-recursion stack overflow | Script that sources itself causes unbounded recursion; function depth limit doesn't apply to `source` | — | **OPEN** |
-| TM-DOS-057 | `sleep` bypasses execution timeout | `sleep`, `(sleep N)`, `echo x \| sleep N`, `sleep N & wait`, `timeout N sleep N` all ignore `ExecutionLimits::timeout` | — | **OPEN** |
-| TM-DOS-058 | Single-builtin unbounded output | `seq 1 1000000` produces 1M lines despite command limit; single builtin call generates unbounded output (see also #648) | — | **OPEN** |
+| TM-DOS-056 | `source` self-recursion stack overflow | Script that sources itself causes unbounded recursion; function depth limit doesn't apply to `source` | `source` increments the same call-depth counter as functions, so self- and mutual-recursion hit the configured `max_function_depth` and return a clean error rather than a SIGABRT | **MITIGATED** |
+| TM-DOS-057 | `sleep` bypasses execution timeout | `sleep`, `(sleep N)`, `echo x \| sleep N`, `sleep N & wait`, `timeout N sleep N` all ignore `ExecutionLimits::timeout` | `Bash::exec_impl` wraps the whole execution in `tokio::time::timeout(limits.timeout, …)`, so subshell, pipeline, background+wait, and the `timeout` builtin all surface a timeout error within the configured budget | **MITIGATED** |
+| TM-DOS-058 | Single-builtin unbounded output | `seq 1 1000000` produces 1M lines despite command limit; single builtin call generates unbounded output (see also #648) | `ExecutionLimits::max_stdout_bytes` and `max_stderr_bytes` truncate captured output (defaults set in `ExecutionLimits::new()`); see #648 | **MITIGATED** |
 | TM-DOS-059 | Parameter expansion replacement bomb | `${x//a/$(printf 'b%.0s' {1..1000})}` on large `x` amplifies output multiplicatively (10K × 1K = 10MB) | `max_total_variable_bytes` + `max_stdout_bytes` | **MITIGATED** |
 | TM-DOS-060 | Sparse array huge-index allocation | `arr[999999999]=x` could allocate ~1B empty slots if arrays are Vec-backed; negative indices could cause OOB | HashMap-based arrays; `max_array_entries` caps total entries | **MITIGATED** |
 | TM-DOS-061 | Snapshot function restore bypasses parser/function limits | Crafted snapshot restores prebuilt or deeply nested functions that exceed the current tenant's parser depth or function memory budget | Re-parse restored function source with current `ExecutionLimits`; re-apply function memory budget before insertion | **MITIGATED** |
@@ -1238,7 +1238,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | TM-INJ-009 | Internal variable namespace injection | Bypass readonly, manipulate interpreter | Separate internal state HashMap |
 | TM-INJ-012–015 | Builtin bypass of is_internal_variable() | Unauthorized nameref/case attr injection via declare/readonly/local/export | Add is_internal_variable() check to all builtin insert paths |
 | TM-DOS-043 | Arithmetic panic in compound assignment | Process crash (DoS) in debug mode | wrapping_* ops in execute_arithmetic_with_side_effects |
-| TM-DOS-044 | Lexer stack overflow on nested $() | Process crash (SIGABRT) | Depth tracking in read_command_subst_into |
+| ~~TM-DOS-044~~ | ~~Lexer stack overflow on nested $()~~ | ~~Process crash (SIGABRT)~~ | ~~Depth tracking in read_command_subst_into~~ — bounded; nested-subst tests pass at depth 50 (**FIXED**) |
 
 ### Open (High Priority)
 
@@ -1306,7 +1306,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | ~~TM-DOS-041~~ | ~~Brace expansion `{N..M}` unbounded range~~ | ~~OOM via `{1..999999999}` allocating billions of strings~~ | Static parser-time check (`MAX_STATIC_BRACE_RANGE = 100_000` in `parser/budget.rs`) rejects oversized literal ranges with `BraceRangeTooLarge`; runtime fallback in `try_expand_range` (`MAX_BRACE_RANGE = 10_000`) treats remaining oversized ranges as literals (**FIXED**) |
 | ~~TM-DOS-042~~ | ~~Brace expansion combinatorial explosion~~ | ~~OOM via `{1..100}{1..100}{1..100}` = 1M strings~~ | `expand_braces` caps total emitted strings at `MAX_BRACE_EXPANSION_TOTAL = 100_000` and bails out of the recursion when the budget is hit (**FIXED**) |
 | TM-DOS-043 | Arithmetic overflow in `execute_arithmetic_with_side_effects` | Panic (DoS) in debug mode via `((x+=1))` with x=i64::MAX | Use `wrapping_add/sub/mul` at `interpreter/mod.rs:1563-1565` |
-| TM-DOS-044 | Lexer `read_command_subst_into` stack overflow | Process crash (SIGABRT) via ~50 nested `$()` in double-quotes | Add depth parameter to `read_command_subst_into()` at `parser/lexer.rs:1109` |
+| ~~TM-DOS-044~~ | ~~Lexer `read_command_subst_into` stack overflow~~ | ~~Process crash (SIGABRT) via ~50 nested `$()` in double-quotes~~ | ~~Add depth parameter to `read_command_subst_into()`~~ (**FIXED**) |
 | ~~TM-DOS-045~~ | ~~OverlayFs `symlink()` bypasses all limits~~ | ~~Unlimited symlink creation despite `max_file_count`~~ | ~~Add `check_write_limits()` + `validate_path()` to symlink~~ — overlay symlink path enforces limits (**FIXED**) |
 | ~~TM-DOS-046~~ | ~~MountableFs has zero `validate_path()` calls~~ | ~~Path validation completely bypassed for mounted filesystems~~ | ~~Add `validate_path()` to all FileSystem methods~~ — `MountableFs::validate_path` runs before every delegation (**FIXED**) |
 | ~~TM-DOS-047~~ | ~~InMemoryFs `copy()` skips limit check when dest exists~~ | ~~Total VFS bytes can exceed `max_total_bytes`~~ | ~~Always call `check_write_limits()`, accounting for size delta~~ (**FIXED**) |
@@ -1320,9 +1320,9 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 
 | Threat ID | Vulnerability | Impact | Recommendation |
 |-----------|---------------|--------|----------------|
-| TM-DOS-056 | `source` self-recursion stack overflow | Process crash (SIGABRT) via script that sources itself | Track source depth like function depth; apply `max_function_depth` limit |
-| TM-DOS-057 | `sleep` bypasses execution timeout | CPU/time exhaustion; `sleep`, subshell sleep, pipeline sleep, background sleep, `timeout` builtin all ignore `ExecutionLimits::timeout` | Implement timeout as tokio::time::timeout wrapper around exec(), not cooperative check |
-| TM-DOS-058 | Single-builtin unbounded output | OOM via `seq 1 1000000` producing 1M lines despite command limit of 50 | Add `max_stdout_bytes` / `max_stderr_bytes` to ExecutionLimits (see #648) |
+| ~~TM-DOS-056~~ | ~~`source` self-recursion stack overflow~~ | ~~Process crash (SIGABRT) via script that sources itself~~ | ~~Track source depth like function depth; apply `max_function_depth` limit~~ (**FIXED**) |
+| ~~TM-DOS-057~~ | ~~`sleep` bypasses execution timeout~~ | ~~CPU/time exhaustion; `sleep`, subshell sleep, pipeline sleep, background sleep, `timeout` builtin all ignore `ExecutionLimits::timeout`~~ | ~~Implement timeout as tokio::time::timeout wrapper around exec(), not cooperative check~~ (**FIXED**) |
+| ~~TM-DOS-058~~ | ~~Single-builtin unbounded output~~ | ~~OOM via `seq 1 1000000` producing 1M lines despite command limit of 50~~ | ~~Add `max_stdout_bytes` / `max_stderr_bytes` to ExecutionLimits~~ (**FIXED**) |
 | ~~TM-INJ-019~~ | ~~`unset` removes readonly variables~~ | ~~Integrity bypass — readonly protection defeated~~ | ~~Check readonly attribute in unset before removal~~ (**FIXED**) |
 | ~~TM-INJ-020~~ | ~~`declare` overwrites readonly variables~~ | ~~Integrity bypass — `declare X=new` overwrites `readonly X=old`~~ | ~~Check readonly attribute in declare assignment path~~ (**FIXED**) |
 | ~~TM-INJ-021~~ | ~~`export` overwrites readonly variables~~ | ~~Integrity bypass — `export X=new` overwrites `readonly X=old`~~ | ~~Check readonly attribute in export assignment path~~ (**FIXED**) |
@@ -1331,7 +1331,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | TM-ISO-023 | `set -e` leaks across `exec()` calls | Unexpected abort — `set` options from previous exec affect next exec | `SET_OPTION_VARS` cleared in `reset_transient_state()` (**FIXED**) |
 | ~~TM-ISO-024~~ | ~~`$?` leaks into VFS subprocess~~ | ~~Parent `last_exit_code` visible inside VFS script subprocess, causing false `set -e` failures~~ | ~~Reset `last_exit_code = 0` and `nounset_error = None` in `execute_script_content` subprocess isolation~~ (**FIXED**) |
 | ~~TM-INT-007~~ | ~~`/dev/urandom` empty with `head -c`~~ | ~~Weak randomness — `head -c 16 /dev/urandom` returns empty string~~ | ~~Fix virtual device pipe handling in head builtin~~ — `read_file_for_builtin` reads virtual devices as Latin-1 (**FIXED**) |
-| TM-DOS-044 | Nested `$()` stack overflow (regression) | Process crash (SIGABRT) at depth ~50 despite #492 fix | Interpreter execution path may need separate depth tracking from lexer fix |
+| ~~TM-DOS-044~~ | ~~Nested `$()` stack overflow (regression)~~ | ~~Process crash (SIGABRT) at depth ~50 despite #492 fix~~ | ~~Interpreter execution path may need separate depth tracking from lexer fix~~ — depth-50 nested-subst test (`finding_nested_cmd_subst_stack_overflow::depth_50_is_bounded`) passes (**FIXED**) |
 | TM-DOS-088 | Command substitution OOM via state cloning | OOM at depth N (memory ≈ N × state_size) | Dedicated `max_subst_depth` limit (default 32), separate from `max_function_depth` — **FIXED** via #1088 |
 | TM-DOS-089 | Command substitution stack overflow via inlined futures | SIGABRT at ~20-30 nested $() levels | Box::pin `expand_word` and `execute_cmd_subst` to cap per-level stack — **FIXED** via #1089 |
 
@@ -1429,7 +1429,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Internal marker info leak | TM-INF-017 | Filter internal vars from `set` and `declare -p` output | **NEEDED** |
 | Brace expansion DoS | TM-DOS-041, TM-DOS-042 | Cap range size and total expansion count | **MITIGATED** |
 | Arithmetic overflow in compound assignment | TM-DOS-043 | Use `wrapping_*` ops in `execute_arithmetic_with_side_effects` | **NEEDED** |
-| Lexer stack overflow | TM-DOS-044 | Depth tracking in `read_command_subst_into` | **NEEDED** |
+| Lexer stack overflow | TM-DOS-044 | Depth tracking in `read_command_subst_into` (lexer) + interpreter call-depth counter | **MITIGATED** |
 | Cmd subst OOM via state cloning | TM-DOS-088 | `max_subst_depth` limit in `ExecutionLimits` | **DONE** |
 | OverlayFs symlink limit bypass | TM-DOS-045 | `check_write_limits()` + `validate_path()` in `symlink()` | **MITIGATED** |
 | MountableFs path validation gap | TM-DOS-046 | `validate_path()` in all MountableFs methods | **MITIGATED** |
