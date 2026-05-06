@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-06
+
+### Highlights
+
+- **Coreutils argument surface via codegen** — New POC pipeline ports uutils' `uu_app()` clap definitions into bashkit so builtins share the real coreutils argument shape; `cat`, `tac`, `truncate`, `shuf`, and `readlink` now flow through this surface, with a coreutils differential testing harness to catch parity drift. The codegen pipeline reads a single pinned uutils revision so generated builtins, the differential harness, and CI all agree on the upstream source of truth ([#1529](https://github.com/everruns/bashkit/pull/1529), [#1535](https://github.com/everruns/bashkit/pull/1535), [#1536](https://github.com/everruns/bashkit/pull/1536), [#1537](https://github.com/everruns/bashkit/pull/1537), [#1538](https://github.com/everruns/bashkit/pull/1538), [#1542](https://github.com/everruns/bashkit/pull/1542)).
+- **Site updates** — Bashkit agent skill is now published on the site, alongside rustdoc guides and content signal declarations for discoverability.
+
+### What's Changed
+
+* refactor(builtins): migrate readlink to codegen-ported argument surface ([#1542](https://github.com/everruns/bashkit/pull/1542)) by @chaliy
+* chore(site): publish bashkit agent skill ([#1541](https://github.com/everruns/bashkit/pull/1541)) by @chaliy
+* chore(site): declare content signals by @chaliy
+* docs(site): publish rustdoc guides by @chaliy
+* feat(builtins): add shuf via codegen with helper-fn inlining ([#1538](https://github.com/everruns/bashkit/pull/1538)) by @chaliy
+* chore(builtins): pin uutils revision as single source of truth ([#1537](https://github.com/everruns/bashkit/pull/1537)) by @chaliy
+* feat(builtins): add truncate via codegen-ported argument surface ([#1536](https://github.com/everruns/bashkit/pull/1536)) by @chaliy
+* test(builtins): add coreutils differential testing harness ([#1535](https://github.com/everruns/bashkit/pull/1535)) by @chaliy
+* feat(builtins): port uutils argument surfaces via codegen (POC: cat, tac) ([#1529](https://github.com/everruns/bashkit/pull/1529)) by @chaliy
+* feat(tool_def): accept --flag key=value... syntax for object/array flags ([#1528](https://github.com/everruns/bashkit/pull/1528)) by @chaliy
+* fix(tool_def): coerce stringified JSON for array/object flag schemas ([#1527](https://github.com/everruns/bashkit/pull/1527)) by @chaliy
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.4.1...v0.5.0
+
 ## [0.4.1] - 2026-05-04
 
 ### Highlights
