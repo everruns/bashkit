@@ -115,3 +115,67 @@ ls -lF /tmp/lslf | grep -v "^total" | awk '{print $NF}'
 file.txt
 sub/
 ### end
+
+### ls_quote_name_short_flag
+### bash_diff: bashkit accepts -Q via the uu_ls argument surface but does
+### bash_diff: not yet implement quoting; report not-yet-impl rather than
+### bash_diff: silently fall through to default rendering.
+mkdir -p /tmp/lsqn
+echo x > /tmp/lsqn/a.txt
+ls -Q /tmp/lsqn 2>&1
+echo "exit=$?"
+### expect
+ls: option(s) not yet implemented in bashkit: quote-name
+exit=2
+### end
+
+### ls_quoting_style_long_flag
+### bash_diff: --quoting-style= parsed by clap but not implemented.
+mkdir -p /tmp/lsqs
+echo x > /tmp/lsqs/a.txt
+ls --quoting-style=shell /tmp/lsqs 2>&1
+echo "exit=$?"
+### expect
+ls: option(s) not yet implemented in bashkit: quoting-style
+exit=2
+### end
+
+### ls_group_directories_first_flag
+### bash_diff: --group-directories-first parsed by clap but not implemented.
+mkdir -p /tmp/lsgdf/sub
+echo x > /tmp/lsgdf/file.txt
+ls --group-directories-first /tmp/lsgdf 2>&1
+echo "exit=$?"
+### expect
+ls: option(s) not yet implemented in bashkit: group-directories-first
+exit=2
+### end
+
+### ls_composite_unsupported_then_supported
+### bash_diff: -lr (long + reverse) — uu_ls treats -r as --reverse, which
+### bash_diff: bashkit doesn't render yet. The unsupported-flag check
+### bash_diff: fires before the listing runs.
+mkdir -p /tmp/lscomp
+echo x > /tmp/lscomp/a.txt
+ls -lr /tmp/lscomp 2>&1
+echo "exit=$?"
+### expect
+ls: option(s) not yet implemented in bashkit: reverse
+exit=2
+### end
+
+### ls_unknown_flag_rejected
+### bash_diff: clap-rendered diagnostic differs from GNU's "invalid option"
+### bash_diff: wording, but exit code matches (2).
+ls -z >/dev/null 2>&1
+echo "exit=$?"
+### expect
+exit=2
+### end
+
+### ls_version
+### bash_diff: bashkit reports its own version string (clap default)
+ls --version | sed -E 's/^(ls) [0-9]+\.[0-9]+\.[0-9]+.*/\1 X.Y.Z/'
+### expect
+ls X.Y.Z
+### end

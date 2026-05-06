@@ -1,7 +1,7 @@
 # Coreutils argument-surface port
 
 ## Status
-Active (POC scope: `cat`, `tac`)
+Active (`cat`, `tac`, `ls`, `shuf`, `readlink`, `truncate`)
 
 ## Decision
 
@@ -11,13 +11,18 @@ codegen**, not by depending on `uu_*` crates at runtime.
 `crates/bashkit-coreutils-port/` is a small standalone binary that:
 
 1. Parses `<uutils>/src/uu/<util>/src/<util>.rs` with `syn`.
-2. Reads `<uutils>/src/uu/<util>/locales/en-US.ftl` for help/about strings.
-3. Rewrites the `uu_app()` AST in place:
+2. Falls back to scanning sibling `.rs` files (e.g. `ls/src/config.rs`) when
+   the `mod options` it needs lives next to `<util>.rs` rather than inside it.
+3. Reads `<uutils>/src/uu/<util>/locales/en-US.ftl` for help/about strings.
+4. Rewrites the `uu_app()` AST in place:
    - `translate!("k")` → `String::from("<value from ftl>")`
    - `uucore::crate_version!()` → `env!("CARGO_PKG_VERSION")`
    - `uucore::format_usage(x)` → local `format_usage` shim
    - `.help_template(uucore::localized_help_template(...))` → chain step elided
-4. Emits a generated file under
+   - `uucore::clap_localization::configure_localized_command(cmd)` → `cmd`
+   - `ShortcutValueParser::new([…])` → `clap::builder::PossibleValuesParser::new([…])`
+     (loses uucore's unambiguous-abbreviation behaviour; documented divergence)
+5. Emits a generated file under
    `crates/bashkit/src/builtins/generated/<util>_args.rs` with a clean
    `pub fn <util>_command() -> clap::Command`.
 

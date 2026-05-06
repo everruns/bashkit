@@ -84,16 +84,23 @@ fn run(uutils_dir: &Path, util: &str, rev: &str) -> Result<String> {
     // 2. Module-level `const OPT_FOO: &str = "foo";` / `static OPT_FOO`
     //    (mktemp, realpath, readlink, od). uu_app() refers to keys by
     //    bare name (`OPT_FOO`).
+    // 3. `pub mod options { ... }` declared in a sibling file (ls/config.rs)
+    //    with nested submodules (`options::format::COLUMNS`). The util's
+    //    own .rs imports `use crate::options;` or `use config::options::*`.
+    //    Look in every `.rs` in the util's `src/` directory.
     //
     // Collect both: the optional `options` mod (if present) and any
     // bare-name `OPT_*` / `ARG_*` constants we should also emit so
     // uu_app's bare-name references resolve.
-    let options_mod = find_mod(&file, "options").cloned();
+    let mut options_mod = find_mod(&file, "options").cloned();
+    if options_mod.is_none() {
+        options_mod = find_mod_in_sibling_files(&src_path, "options")?;
+    }
     let bare_name_consts = collect_option_constants(&file);
     if options_mod.is_none() && bare_name_consts.is_empty() {
         bail!(
             "could not find `mod options` or any module-level `OPT_*`/`ARG_*` \
-             constants in {}",
+             constants in {} or its sibling files",
             src_path.display()
         );
     }
@@ -149,6 +156,7 @@ fn run(uutils_dir: &Path, util: &str, rev: &str) -> Result<String> {
 
     // Optional `mod options { ... }` (cat-style); collapses to nothing
     // for utils that use bare-name constants.
+    let has_options_mod = options_mod.is_some();
     let options_mod_tokens: TokenStream = match options_mod {
         Some(m) => quote!(#m),
         None => quote!(),
@@ -158,6 +166,17 @@ fn run(uutils_dir: &Path, util: &str, rev: &str) -> Result<String> {
         .into_iter()
         .map(|c| quote::quote!(#c))
         .collect();
+    // Only re-export `options::*` when there is an `options` mod to glob.
+    // utils that put constants at module level (mktemp, realpath, ...)
+    // already have them in scope by name.
+    let options_glob: TokenStream = if has_options_mod {
+        quote! {
+            #[allow(unused_imports)]
+            use options::*;
+        }
+    } else {
+        quote!()
+    };
 
     let body: TokenStream = quote! {
         #![allow(unused_imports, dead_code)]
@@ -168,13 +187,18 @@ fn run(uutils_dir: &Path, util: &str, rev: &str) -> Result<String> {
         // newly-ported util needs another std type that the inlined
         // helpers reference (e.g. shuf's `parse_range` returns
         // `RangeInclusive<u64>`).
-        use clap::{Arg, ArgAction, Command, builder::ValueParser};
+        use clap::builder::{
+            NonEmptyStringValueParser, PossibleValue, PossibleValuesParser, ValueParser,
+        };
+        use clap::{Arg, ArgAction, Command};
         use std::ffi::OsString;
         use std::ops::RangeInclusive;
         use std::str::FromStr;
 
         #options_mod_tokens
         #(#const_tokens)*
+
+        #options_glob
 
         /// Vendored stand-in for `uucore::format_usage`.
         ///
@@ -299,6 +323,40 @@ fn find_mod<'a>(file: &'a syn::File, name: &str) -> Option<&'a ItemMod> {
     })
 }
 
+/// Look for `mod <name>` (or `pub mod <name>`) in any `.rs` file that lives
+/// alongside `src_path`. Used by utilities that declare their option-key
+/// module in a sibling file (e.g. `ls/src/config.rs::pub mod options`)
+/// and `use` it from `<util>.rs`. Returns the first match — the codegen
+/// tool already requires that exactly one `mod options` exists per util.
+fn find_mod_in_sibling_files(src_path: &Path, name: &str) -> Result<Option<ItemMod>> {
+    let parent = src_path
+        .parent()
+        .ok_or_else(|| anyhow!("source path has no parent: {}", src_path.display()))?;
+    let entries = std::fs::read_dir(parent)
+        .with_context(|| format!("scan sibling files in {}", parent.display()))?;
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+        // Skip the file we already searched and anything that isn't .rs.
+        if path == src_path {
+            continue;
+        }
+        if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+            continue;
+        }
+        let src = std::fs::read_to_string(&path)
+            .with_context(|| format!("read sibling {}", path.display()))?;
+        let file = match syn::parse_file(&src) {
+            Ok(f) => f,
+            Err(_) => continue, // sibling that doesn't parse — leave it alone
+        };
+        if let Some(m) = find_mod(&file, name) {
+            return Ok(Some(m.clone()));
+        }
+    }
+    Ok(None)
+}
+
 /// Collect module-level `const OPT_FOO: &str = ...` / `static OPT_FOO`
 /// declarations that some uutils sources use in place of a
 /// `mod options { ... }`. uu_app() bodies in these utils refer to the
@@ -407,6 +465,18 @@ impl Rewriter {
             }
         }
 
+        if last == "new" && (matches_shortcut_value_parser(&func_path)) {
+            // ShortcutValueParser::new([...]) -> PossibleValuesParser::new([...]).
+            // uucore's parser permits unambiguous abbreviation; we trade
+            // that for clap's exact-match semantics. The accepted-value
+            // set is identical, only the abbreviation behavior differs —
+            // documented as out-of-scope by #1531.
+            if let Expr::Path(p) = &mut *call.func {
+                p.path = parse_quote!(::clap::builder::PossibleValuesParser::new);
+            }
+            return None;
+        }
+
         None
     }
 }
@@ -474,4 +544,21 @@ fn path_segments(p: &syn::Path) -> Vec<String> {
 
 fn path_starts_with(segs: &[String], head: &str) -> bool {
     segs.first().map(String::as_str) == Some(head)
+}
+
+/// Return `true` when the call path resolves to uucore's
+/// `ShortcutValueParser::new`, regardless of how the caller spelled the
+/// import. uutils sources reach the type via several aliases:
+///
+/// - `ShortcutValueParser::new(...)` (after `use uucore::parser::shortcut_value_parser::ShortcutValueParser`)
+/// - `parser::shortcut_value_parser::ShortcutValueParser::new(...)`
+/// - the fully qualified `uucore::parser::shortcut_value_parser::ShortcutValueParser::new(...)`
+fn matches_shortcut_value_parser(segs: &[String]) -> bool {
+    let last_two: Vec<&str> = segs
+        .iter()
+        .rev()
+        .take(2)
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    matches!(last_two.as_slice(), ["new", "ShortcutValueParser"])
 }
