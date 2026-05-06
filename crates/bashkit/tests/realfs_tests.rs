@@ -405,6 +405,116 @@ async fn mount_sensitive_path_blocked() {
     );
 }
 
+/// THREAT[TM-FS-013]: Each broad host root must be refused without an
+/// explicit `allowed_mount_paths` opt-in. Each path is tested independently
+/// because canonicalization can fail for some on a given host (e.g. /Users
+/// only exists on macOS). A path that doesn't exist canonicalizes to an
+/// error and the mount is skipped before reaching the sensitive-path check;
+/// that is also a refusal, so the regression invariant holds either way.
+#[tokio::test]
+async fn mount_root_filesystem_blocked_without_allowlist() {
+    let mut bash = Bash::builder()
+        .mount_real_readonly_at("/", "/mnt/host")
+        .build();
+    let r = bash.exec("ls /mnt/host 2>&1; echo $?").await.unwrap();
+    assert!(
+        r.stdout.trim().ends_with('1') || r.stdout.contains("No such file"),
+        "Mounting / must be refused without allowlist, got: {}",
+        r.stdout
+    );
+}
+
+#[tokio::test]
+async fn mount_etc_blocked_without_allowlist() {
+    let mut bash = Bash::builder()
+        .mount_real_readonly_at("/etc", "/mnt/etc")
+        .build();
+    let r = bash.exec("ls /mnt/etc 2>&1; echo $?").await.unwrap();
+    assert!(
+        r.stdout.trim().ends_with('1') || r.stdout.contains("No such file"),
+        "Mounting /etc must be refused without allowlist, got: {}",
+        r.stdout
+    );
+}
+
+#[tokio::test]
+async fn mount_dev_blocked_without_allowlist() {
+    let mut bash = Bash::builder()
+        .mount_real_readonly_at("/dev", "/mnt/dev")
+        .build();
+    let r = bash.exec("ls /mnt/dev 2>&1; echo $?").await.unwrap();
+    assert!(
+        r.stdout.trim().ends_with('1') || r.stdout.contains("No such file"),
+        "Mounting /dev must be refused without allowlist, got: {}",
+        r.stdout
+    );
+}
+
+#[tokio::test]
+async fn mount_sys_blocked_without_allowlist() {
+    let mut bash = Bash::builder()
+        .mount_real_readonly_at("/sys", "/mnt/sys")
+        .build();
+    let r = bash.exec("ls /mnt/sys 2>&1; echo $?").await.unwrap();
+    assert!(
+        r.stdout.trim().ends_with('1') || r.stdout.contains("No such file"),
+        "Mounting /sys must be refused without allowlist, got: {}",
+        r.stdout
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn mount_secret_dir_component_blocked_without_allowlist() {
+    use std::os::unix::fs::PermissionsExt;
+    // Create a fake .ssh directory inside a sandbox and try to mount it.
+    // The path component check must refuse it regardless of where it lives.
+    let sandbox = tempfile::tempdir().unwrap();
+    let secret_dir = sandbox.path().join(".ssh");
+    std::fs::create_dir_all(&secret_dir).unwrap();
+    let key_path = secret_dir.join("id_rsa");
+    std::fs::write(&key_path, "PRIVATE KEY").unwrap();
+    std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+    let mut bash = Bash::builder()
+        .mount_real_readonly_at(&secret_dir, "/mnt/keys")
+        .build();
+    let r = bash
+        .exec("cat /mnt/keys/id_rsa 2>&1; echo $?")
+        .await
+        .unwrap();
+    assert!(
+        !r.stdout.contains("PRIVATE KEY"),
+        "Mounting a path containing .ssh must be refused, got: {}",
+        r.stdout
+    );
+}
+
+/// THREAT[TM-FS-013]: An explicit `allowed_mount_paths` opt-in is the
+/// documented escape hatch. When the embedder allowlists a sensitive path,
+/// the mount succeeds (the trust-boundary break is intentional and visible).
+#[cfg(unix)]
+#[tokio::test]
+async fn mount_secret_dir_component_allowed_via_explicit_allowlist() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let secret_dir = sandbox.path().join(".aws");
+    std::fs::create_dir_all(&secret_dir).unwrap();
+    let cfg = secret_dir.join("config");
+    std::fs::write(&cfg, "[default]\nregion=us-east-1\n").unwrap();
+
+    let canonical = std::fs::canonicalize(&secret_dir).unwrap();
+    let mut bash = Bash::builder()
+        .allowed_mount_paths([&canonical])
+        .mount_real_readonly_at(&secret_dir, "/mnt/aws")
+        .build();
+    let r = bash.exec("cat /mnt/aws/config 2>&1").await.unwrap();
+    assert!(
+        r.stdout.contains("us-east-1"),
+        "Explicit allowlist must allow the mount, got: {}",
+        r.stdout
+    );
+}
+
 #[tokio::test]
 async fn mount_allowlist_blocks_dotdot_escape() {
     let sandbox = tempfile::tempdir().unwrap();

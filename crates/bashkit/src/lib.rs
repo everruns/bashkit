@@ -2497,9 +2497,51 @@ impl BashBuilder {
         result
     }
 
-    /// Sensitive host paths that are blocked from mounting by default.
+    /// THREAT[TM-FS-013]: Host prefixes refused as `RealFs` mount targets unless
+    /// the embedder explicitly allowlists a narrower path under them. Mounting
+    /// any of these (or a child of them) exposes broad system / kernel /
+    /// secrets surface to sandboxed scripts via a single mount call.
     #[cfg(feature = "realfs")]
-    const SENSITIVE_MOUNT_PATHS: &[&str] = &["/etc/shadow", "/etc/sudoers", "/proc", "/sys"];
+    const SENSITIVE_MOUNT_PATHS: &[&str] = &[
+        // Kernel and pseudo-filesystems
+        "/proc", "/sys", "/dev", // System configuration / secret stores
+        "/etc", "/boot", // Privileged user directories (whole tree, not just secrets)
+        "/root", // User home roots — refuse the whole tree; embedder must narrow.
+        "/Users", "/home", // Runtime / sockets / pid dirs (host IPC surface)
+        "/run", "/var/run", // macOS canonicalized roots that mirror the above
+        "/private",
+    ];
+
+    /// THREAT[TM-FS-013]: Path components that always indicate a secret-bearing
+    /// directory regardless of where they live (typically inside a user home).
+    /// Any mount whose canonicalized path contains one of these as a component
+    /// is refused unless explicitly allowlisted.
+    #[cfg(feature = "realfs")]
+    const SENSITIVE_PATH_COMPONENTS: &[&str] =
+        &[".ssh", ".aws", ".kube", ".docker", ".gnupg", ".gcloud"];
+
+    /// Returns `true` if `host_path` (already canonicalized) is a sensitive
+    /// mount target — either the host root itself, a path under one of the
+    /// `SENSITIVE_MOUNT_PATHS` prefixes, or a path containing a known secret
+    /// directory component.
+    #[cfg(feature = "realfs")]
+    fn is_sensitive_mount_path(host_path: &Path) -> bool {
+        // Refuse mounting the host root outright. `starts_with("/")` matches
+        // everything so the prefix check below cannot express this.
+        if host_path == Path::new("/") {
+            return true;
+        }
+        if Self::SENSITIVE_MOUNT_PATHS
+            .iter()
+            .any(|s| host_path.starts_with(Path::new(s)))
+        {
+            return true;
+        }
+        host_path.components().any(|c| {
+            let s = c.as_os_str();
+            Self::SENSITIVE_PATH_COMPONENTS.iter().any(|sec| s == *sec)
+        })
+    }
 
     #[cfg(feature = "realfs")]
     fn apply_real_mounts(
@@ -2551,26 +2593,37 @@ impl BashBuilder {
                 }
             };
 
-            // Block sensitive paths
-            if Self::SENSITIVE_MOUNT_PATHS
-                .iter()
-                .any(|s| canonical_host.starts_with(Path::new(s)))
-            {
-                eprintln!(
-                    "bashkit: warning: refusing to mount sensitive path {}",
-                    m.host_path.display()
-                );
-                continue;
-            }
+            // THREAT[TM-FS-013]: Sensitive paths are refused by default. They
+            // can still be mounted by adding an explicit `allowed_mount_paths`
+            // entry that covers them — this turns the embedder's intent into
+            // an audit-visible decision instead of silent permissiveness.
+            let is_sensitive = Self::is_sensitive_mount_path(&canonical_host);
 
-            // Check allowlist if configured
-            if let Some(allowlist) = &canonical_allowlist
-                && !allowlist
+            if let Some(allowlist) = &canonical_allowlist {
+                if !allowlist
                     .iter()
                     .any(|allowed| canonical_host.starts_with(allowed))
-            {
+                {
+                    eprintln!(
+                        "bashkit: warning: mount path {} not in allowlist, skipping",
+                        m.host_path.display()
+                    );
+                    continue;
+                }
+                // Allowlisted: caller has accepted the risk explicitly. Still
+                // emit a stronger warning when the path is also sensitive so
+                // the trust-boundary break is visible in logs.
+                if is_sensitive {
+                    eprintln!(
+                        "bashkit: warning: mounting sensitive path {} via explicit allowlist — \
+                         host trust boundary intentionally broken",
+                        m.host_path.display()
+                    );
+                }
+            } else if is_sensitive {
                 eprintln!(
-                    "bashkit: warning: mount path {} not in allowlist, skipping",
+                    "bashkit: warning: refusing to mount sensitive path {} (no allowlist set; \
+                     pass an explicit `allowed_mount_paths` entry to override)",
                     m.host_path.display()
                 );
                 continue;
