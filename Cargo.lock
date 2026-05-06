@@ -359,6 +359,7 @@ dependencies = [
  "flate2",
  "futures-core",
  "futures-util",
+ "getrandom 0.3.4",
  "hmac 0.13.0",
  "insta",
  "jaq-core",
