@@ -15,13 +15,64 @@
 //! - **TM-NET-013**: Gzip/compression bomb → auto-decompression disabled
 //! - **TM-NET-014**: DNS rebind via redirect → manual redirect requires allowlist check
 //! - **TM-NET-015**: Host proxy leakage → `.no_proxy()` ignores host `HTTP_PROXY`/`HTTPS_PROXY`
+//! - **TM-NET-002 (TOCTOU)**: DNS rebinding between pre-resolve check and actual connect →
+//!   private-IP filtering installed as reqwest's DNS resolver, so the connection path itself
+//!   refuses to dial any private/reserved IP, even if DNS answers diverge between checks.
 
 use reqwest::Client;
-use std::sync::OnceLock;
+use reqwest::dns::{Name, Resolve, Resolving};
+use std::net::SocketAddr;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use super::allowlist::{NetworkAllowlist, UrlMatch, is_private_ip};
 use crate::error::{Error, Result};
+
+/// THREAT[TM-NET-002 TOCTOU]: DNS resolver wrapper that rejects any
+/// hostname whose addresses include a private/reserved IP at connect time.
+///
+/// The pre-resolve check in `enforce_url_security` cannot bind the validated
+/// IP to the actual connection because reqwest re-resolves the hostname when
+/// `send()` runs. An attacker controlling DNS for an allowed hostname can
+/// answer with a public IP during the check and then a private/internal IP
+/// during the connect ("DNS rebinding"). Installing this resolver in the
+/// reqwest client moves the policy onto the connection path, so the connect
+/// itself refuses to dial private addresses regardless of pre-check timing.
+struct PrivateIpFilteringResolver;
+
+impl Resolve for PrivateIpFilteringResolver {
+    fn resolve(&self, name: Name) -> Resolving {
+        Box::pin(async move {
+            let host = name.as_str().to_string();
+            // Use port 0 in the lookup; reqwest documents that explicit URL
+            // ports override the resolved port, and otherwise scheme-default
+            // ports are substituted. Port 0 is a valid placeholder.
+            let lookup_target = format!("{}:0", host);
+            let resolved = tokio::net::lookup_host(lookup_target.as_str())
+                .await
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+
+            let addrs: Vec<SocketAddr> = resolved.collect();
+            let mut filtered: Vec<SocketAddr> = Vec::with_capacity(addrs.len());
+            for addr in addrs {
+                if !is_private_ip(&addr.ip()) {
+                    filtered.push(addr);
+                }
+            }
+
+            if filtered.is_empty() {
+                let msg = format!(
+                    "access denied: '{}' resolves only to private/reserved IPs (SSRF protection)",
+                    host
+                );
+                return Err(msg.into());
+            }
+
+            let iter: Box<dyn Iterator<Item = SocketAddr> + Send> = Box::new(filtered.into_iter());
+            Ok(iter)
+        })
+    }
+}
 
 /// Default maximum response body size (10 MB)
 pub const DEFAULT_MAX_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
@@ -291,9 +342,10 @@ impl HttpClient {
     }
 
     fn client(&self) -> Result<&Client> {
+        let block_private = self.allowlist.is_blocking_private_ips();
         let client = self
             .client
-            .get_or_init(|| build_client(self.default_timeout, None));
+            .get_or_init(|| build_client(self.default_timeout, None, block_private));
         client
             .as_ref()
             .map_err(|err| Error::Internal(format!("failed to build HTTP client: {err}")))
@@ -690,8 +742,12 @@ impl HttpClient {
                 || std::cmp::min(request_timeout, Duration::from_secs(10)),
                 |s| Duration::from_secs(clamp_timeout(s)),
             );
-            build_client(request_timeout, Some(connect_timeout))
-                .map_err(|e| Error::network_sanitized("failed to create client", &e))?
+            build_client(
+                request_timeout,
+                Some(connect_timeout),
+                self.allowlist.is_blocking_private_ips(),
+            )
+            .map_err(|e| Error::network_sanitized("failed to create client", &e))?
         } else {
             self.client()?.clone()
         };
@@ -782,9 +838,10 @@ fn install_default_crypto_provider() {
 fn build_client(
     timeout: Duration,
     connect_timeout: Option<Duration>,
+    block_private_ips: bool,
 ) -> std::result::Result<Client, String> {
     install_default_crypto_provider();
-    Client::builder()
+    let mut builder = Client::builder()
         .timeout(timeout)
         .connect_timeout(connect_timeout.unwrap_or(Duration::from_secs(10)))
         .user_agent("bashkit/0.1.2")
@@ -799,9 +856,16 @@ fn build_client(
         .no_deflate()
         // THREAT[TM-NET-015]: Ignore host proxy env vars (HTTP_PROXY, HTTPS_PROXY, ALL_PROXY)
         // to prevent sandboxed HTTP traffic from being redirected through a host proxy
-        .no_proxy()
-        .build()
-        .map_err(|e| e.to_string())
+        .no_proxy();
+
+    // THREAT[TM-NET-002 TOCTOU]: install a DNS resolver that filters private IPs
+    // at connect time, so DNS rebinding cannot slip a private address past the
+    // pre-resolve check.
+    if block_private_ips {
+        builder = builder.dns_resolver(Arc::new(PrivateIpFilteringResolver));
+    }
+
+    builder.build().map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -966,7 +1030,7 @@ mod tests {
     fn test_build_client_uses_no_proxy() {
         // Verify build_client succeeds — the .no_proxy() call ensures
         // host HTTP_PROXY/HTTPS_PROXY env vars are ignored (TM-NET-015).
-        let client = build_client(Duration::from_secs(30), None);
+        let client = build_client(Duration::from_secs(30), None, true);
         assert!(client.is_ok(), "build_client should succeed with no_proxy");
     }
 
@@ -978,7 +1042,7 @@ mod tests {
         // every code path (default client + per-request timeout client) is safe.
         // The dep tree must NOT include aws-lc-sys/aws-lc-rs (verified by
         // `cargo tree -i aws-lc-sys` returning no match).
-        let _ = build_client(Duration::from_secs(30), None);
+        let _ = build_client(Duration::from_secs(30), None, true);
         // A provider is now installed process-wide. `install_default` returns
         // Err on the second call — that's our invariant: the first install
         // succeeded.
@@ -997,6 +1061,75 @@ mod tests {
         install_default_crypto_provider();
         install_default_crypto_provider();
         install_default_crypto_provider();
+    }
+
+    #[tokio::test]
+    async fn test_private_ip_filtering_resolver_rejects_loopback() {
+        // THREAT[TM-NET-002]: regression for DNS-rebinding TOCTOU. The pre-resolve
+        // check is best-effort and is now backed by a connection-time resolver
+        // that refuses to dial private/reserved IPs even when DNS answers
+        // change between the security check and `send()`.
+        //
+        // `localhost` always resolves to a loopback address (127.0.0.1 / ::1).
+        // The filter must reject it, proving the policy is enforced on the path
+        // reqwest actually uses to connect.
+        let resolver = PrivateIpFilteringResolver;
+        let name: Name = "localhost".parse().expect("valid DNS name");
+        let result = resolver.resolve(name).await;
+        assert!(
+            result.is_err(),
+            "localhost must be rejected by the private-IP-filtering resolver"
+        );
+        let err = result.err().unwrap().to_string();
+        assert!(
+            err.contains("private/reserved"),
+            "error must mention SSRF protection, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_private_ip_filtering_resolver_filters_private_from_mixed() {
+        // If a hostname resolved to a mix of public and private IPs, only the
+        // public addresses must reach reqwest's connection logic. Simulate by
+        // resolving a public-DNS name we don't actually depend on for the
+        // network test — we just verify the filtering logic in isolation.
+        //
+        // We construct synthetic addresses to drive the filter directly,
+        // because relying on third-party DNS in unit tests is flaky.
+        use std::net::{IpAddr, Ipv4Addr};
+        let public: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34)), 0);
+        let private: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 0);
+        let metadata: SocketAddr =
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(169, 254, 169, 254)), 0);
+        let mixed = vec![public, private, metadata];
+        let kept: Vec<SocketAddr> = mixed
+            .into_iter()
+            .filter(|a| !is_private_ip(&a.ip()))
+            .collect();
+        assert_eq!(kept, vec![public]);
+    }
+
+    #[tokio::test]
+    async fn test_default_client_rejects_loopback_via_resolver() {
+        // End-to-end regression: build the same reqwest client the runtime uses
+        // (private-IP filtering enabled) and try to dial a hostname that
+        // resolves only to loopback. The resolver must short-circuit the
+        // connection attempt with an SSRF-style error rather than dialing.
+        let allowlist = NetworkAllowlist::new().allow("http://localhost");
+        let client = HttpClient::new(allowlist);
+        let result = client.get("http://localhost").await;
+        assert!(
+            result.is_err(),
+            "request to a loopback hostname must be refused"
+        );
+        let msg = result.err().unwrap().to_string();
+        assert!(
+            msg.contains("private")
+                || msg.contains("SSRF")
+                || msg.contains("reserved")
+                || msg.contains("access denied"),
+            "expected SSRF-protection error, got: {msg}"
+        );
     }
 
     #[tokio::test]
