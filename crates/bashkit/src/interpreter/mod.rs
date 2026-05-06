@@ -5911,6 +5911,9 @@ impl Interpreter {
             }
         }
 
+        let mut stderr = String::new();
+        let mut exit_code: i32 = 0;
+
         for arg in &var_args {
             if unset_function {
                 self.functions.remove(arg.as_str());
@@ -5938,13 +5941,22 @@ impl Interpreter {
                 let resolved = self.resolve_nameref(arg).to_string();
                 // THREAT[TM-INJ-009]: Block unset of internal marker variables
                 if is_internal_variable(&resolved) {
+                    stderr.push_str(&format!(
+                        "bash: unset: {resolved}: cannot unset: readonly variable\n"
+                    ));
+                    exit_code = 1;
                     continue;
                 }
-                // THREAT[TM-INJ-019]: Refuse to unset readonly variables
+                // THREAT[TM-INJ-019]: Refuse to unset readonly variables and surface
+                // the error so callers cannot mistake a silent skip for success.
                 if self
                     .variables
                     .contains_key(&format!("_READONLY_{}", resolved))
                 {
+                    stderr.push_str(&format!(
+                        "bash: unset: {resolved}: cannot unset: readonly variable\n"
+                    ));
+                    exit_code = 1;
                     continue;
                 }
                 self.variables.remove(&resolved);
@@ -5956,7 +5968,11 @@ impl Interpreter {
                 }
             }
         }
-        let result = ExecResult::ok(String::new());
+        let result = ExecResult {
+            stderr,
+            exit_code,
+            ..Default::default()
+        };
         self.apply_redirections(result, redirects).await
     }
 
@@ -6429,6 +6445,9 @@ impl Interpreter {
         // Reconstruct compound assignments: declare -A m=([a]="1" [b]="2")
         let merged_names = merge_compound_assignments(&names);
 
+        let mut declare_stderr = String::new();
+        let mut declare_exit_code: i32 = 0;
+
         // Set variables
         for name in &merged_names {
             if let Some(eq_pos) = name.find('=') {
@@ -6440,11 +6459,15 @@ impl Interpreter {
                     continue;
                 }
 
-                // THREAT[TM-INJ-020]: Refuse to overwrite readonly variables
+                // THREAT[TM-INJ-020]: Refuse to overwrite readonly variables and
+                // surface the error so callers cannot mistake a silent skip for success.
                 if self
                     .variables
                     .contains_key(&format!("_READONLY_{}", var_name))
                 {
+                    declare_stderr
+                        .push_str(&format!("bash: declare: {var_name}: readonly variable\n"));
+                    declare_exit_code = 1;
                     continue;
                 }
 
@@ -6594,7 +6617,11 @@ impl Interpreter {
             }
         }
 
-        let mut result = ExecResult::ok(String::new());
+        let mut result = ExecResult {
+            stderr: declare_stderr,
+            exit_code: declare_exit_code,
+            ..Default::default()
+        };
         result = self.apply_redirections(result, redirects).await?;
         Ok(result)
     }

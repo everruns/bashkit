@@ -339,6 +339,122 @@ mod finding_readonly_bypass {
         );
     }
 
+    /// TM-INJ-019: unset on a readonly variable reports the error and exits 1.
+    /// Value preservation is already covered above; this guards against silent skips.
+    #[tokio::test]
+    async fn unset_readonly_reports_error_and_exit_1() {
+        let mut bash = tight_bash();
+        let result = bash
+            .exec(
+                r#"
+                readonly LOCKED=v
+                unset LOCKED
+                echo "exit=$?"
+                "#,
+            )
+            .await
+            .unwrap();
+        assert!(
+            result.stderr.contains("LOCKED") && result.stderr.contains("readonly"),
+            "expected stderr to mention readonly, got: {:?}",
+            result.stderr
+        );
+        assert!(
+            result.stdout.contains("exit=1"),
+            "expected unset to exit 1, got: {:?}",
+            result.stdout
+        );
+    }
+
+    /// TM-INJ-020: declare on a readonly variable reports the error and exits 1.
+    #[tokio::test]
+    async fn declare_readonly_reports_error_and_exit_1() {
+        let mut bash = tight_bash();
+        let result = bash
+            .exec(
+                r#"
+                readonly LOCKED=original
+                declare LOCKED=overwritten
+                echo "exit=$?"
+                echo "value=$LOCKED"
+                "#,
+            )
+            .await
+            .unwrap();
+        assert!(
+            result.stderr.contains("declare")
+                && result.stderr.contains("LOCKED")
+                && result.stderr.contains("readonly"),
+            "expected stderr to mention declare/readonly, got: {:?}",
+            result.stderr
+        );
+        assert!(
+            result.stdout.contains("exit=1"),
+            "expected declare to exit 1, got: {:?}",
+            result.stdout
+        );
+        assert!(
+            result.stdout.contains("value=original"),
+            "value must be preserved, got: {:?}",
+            result.stdout
+        );
+    }
+
+    /// TM-INJ-021: export on a readonly variable reports the error and exits 1.
+    #[tokio::test]
+    async fn export_readonly_reports_error_and_exit_1() {
+        let mut bash = tight_bash();
+        let result = bash
+            .exec(
+                r#"
+                readonly LOCKED=original
+                export LOCKED=overwritten
+                echo "exit=$?"
+                echo "value=$LOCKED"
+                "#,
+            )
+            .await
+            .unwrap();
+        assert!(
+            result.stderr.contains("export")
+                && result.stderr.contains("LOCKED")
+                && result.stderr.contains("readonly"),
+            "expected stderr to mention export/readonly, got: {:?}",
+            result.stderr
+        );
+        assert!(
+            result.stdout.contains("exit=1"),
+            "expected export to exit 1, got: {:?}",
+            result.stdout
+        );
+        assert!(
+            result.stdout.contains("value=original"),
+            "value must be preserved, got: {:?}",
+            result.stdout
+        );
+    }
+
+    /// declare/export must keep processing remaining args even after a readonly hit.
+    #[tokio::test]
+    async fn declare_continues_after_readonly_error() {
+        let mut bash = tight_bash();
+        let result = bash
+            .exec(
+                r#"
+                readonly LOCKED=original
+                declare LOCKED=skip OTHER=ok
+                echo "exit=$?"
+                echo "locked=$LOCKED"
+                echo "other=$OTHER"
+                "#,
+            )
+            .await
+            .unwrap();
+        assert!(result.stdout.contains("locked=original"));
+        assert!(result.stdout.contains("other=ok"));
+        assert!(result.stdout.contains("exit=1"));
+    }
+
     /// Non-finding: readonly via local in function is bash-compatible shadowing.
     #[tokio::test]
     async fn local_shadows_readonly_in_function() {
