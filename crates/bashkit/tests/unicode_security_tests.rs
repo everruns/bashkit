@@ -166,59 +166,66 @@ mod byte_boundary_safety {
 mod zero_width_chars {
     use super::*;
 
-    /// TM-UNI-003: Zero-width space in filename — documents current behavior.
-    /// Currently UNMITIGATED: find_unsafe_path_char() does not reject ZWSP.
+    /// TM-UNI-003: Zero-width space in filename — MITIGATED.
+    /// `find_unsafe_path_char()` rejects ZWSP, so the visually-identical
+    /// confusable filename can never reach the filesystem.
     #[tokio::test]
-    async fn unicode_zwsp_in_filename_current_behavior() {
+    async fn unicode_zwsp_in_filename_rejected() {
         let fs = InMemoryFs::new();
-
-        // Zero Width Space (U+200B) in filename
-        let result = fs
+        let err = fs
             .write_file(Path::new("/tmp/file\u{200B}name.txt"), b"data")
-            .await;
-
-        // Currently this succeeds — documents the gap.
-        // When TM-UNI-003 is fixed, this should return an error.
-        if result.is_ok() {
-            // Gap confirmed: zero-width chars pass validation
-            // Also verify the file is distinguishable from "filename.txt"
-            let normal = fs
-                .write_file(Path::new("/tmp/filename.txt"), b"other")
-                .await;
-            assert!(normal.is_ok());
-            // Two distinct files exist with visually identical names
-            let content1 = fs
-                .read_file(Path::new("/tmp/file\u{200B}name.txt"))
-                .await
-                .unwrap();
-            let content2 = fs.read_file(Path::new("/tmp/filename.txt")).await.unwrap();
-            assert_ne!(
-                content1, content2,
-                "ZWSP creates distinct file (TM-UNI-003 gap)"
-            );
-        }
-        // If it fails, the mitigation has been implemented
+            .await
+            .expect_err("ZWSP must be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("U+200B") || msg.contains("zero-width") || msg.contains("unsafe"),
+            "got: {msg}"
+        );
     }
 
-    /// TM-UNI-003: BOM (U+FEFF) in filename — documents current behavior
+    /// TM-UNI-003: BOM (U+FEFF) in filename — MITIGATED.
     #[tokio::test]
-    async fn unicode_bom_in_filename_current_behavior() {
+    async fn unicode_bom_in_filename_rejected() {
         let fs = InMemoryFs::new();
-        let result = fs
-            .write_file(Path::new("/tmp/\u{FEFF}file.txt"), b"data")
-            .await;
-        // Documents whether BOM is caught or not
-        let _ = result;
+        fs.write_file(Path::new("/tmp/\u{FEFF}file.txt"), b"data")
+            .await
+            .expect_err("BOM must be rejected");
     }
 
-    /// TM-UNI-003: ZWJ (U+200D) in filename — documents current behavior
+    /// TM-UNI-003: ZWJ (U+200D) in filename — MITIGATED.
     #[tokio::test]
-    async fn unicode_zwj_in_filename_current_behavior() {
+    async fn unicode_zwj_in_filename_rejected() {
         let fs = InMemoryFs::new();
-        let result = fs
-            .write_file(Path::new("/tmp/file\u{200D}name.txt"), b"data")
-            .await;
-        let _ = result;
+        fs.write_file(Path::new("/tmp/file\u{200D}name.txt"), b"data")
+            .await
+            .expect_err("ZWJ must be rejected");
+    }
+
+    /// TM-UNI-011: Tag block char (U+E0041 = TAG LATIN A) — MITIGATED.
+    #[tokio::test]
+    async fn unicode_tag_char_in_filename_rejected() {
+        let fs = InMemoryFs::new();
+        fs.write_file(Path::new("/tmp/file\u{E0041}name.txt"), b"data")
+            .await
+            .expect_err("tag char must be rejected");
+    }
+
+    /// TM-UNI-012: Interlinear annotation marker (U+FFF9) — MITIGATED.
+    #[tokio::test]
+    async fn unicode_interlinear_annotation_in_filename_rejected() {
+        let fs = InMemoryFs::new();
+        fs.write_file(Path::new("/tmp/file\u{FFF9}name.txt"), b"data")
+            .await
+            .expect_err("interlinear annotation must be rejected");
+    }
+
+    /// TM-UNI-013: Deprecated format char (U+206C) — MITIGATED.
+    #[tokio::test]
+    async fn unicode_deprecated_format_in_filename_rejected() {
+        let fs = InMemoryFs::new();
+        fs.write_file(Path::new("/tmp/file\u{206C}name.txt"), b"data")
+            .await
+            .expect_err("deprecated format char must be rejected");
     }
 
     /// TM-UNI-004: Zero-width chars in variable names — pass-through is correct
@@ -391,41 +398,31 @@ mod combining_char_tests {
 mod invisible_char_tests {
     use super::*;
 
-    /// TM-UNI-011: Tag characters in filename — documents current behavior
+    /// TM-UNI-011: U+E0001 LANGUAGE TAG — MITIGATED.
     #[tokio::test]
-    async fn unicode_tag_chars_in_filename_current_behavior() {
+    async fn unicode_tag_chars_in_filename_rejected() {
         let fs = InMemoryFs::new();
-
-        // U+E0001 (Language Tag) — invisible, deprecated since Unicode 5.0
-        let result = fs
-            .write_file(Path::new("/tmp/file\u{E0001}name.txt"), b"data")
-            .await;
-        // Currently UNMITIGATED — documents the gap
-        let _ = result;
+        fs.write_file(Path::new("/tmp/file\u{E0001}name.txt"), b"data")
+            .await
+            .expect_err("U+E0001 LANGUAGE TAG must be rejected");
     }
 
-    /// TM-UNI-012: Interlinear annotation chars in filename — documents current behavior
+    /// TM-UNI-012: U+FFF9 INTERLINEAR ANNOTATION ANCHOR — MITIGATED.
     #[tokio::test]
-    async fn unicode_interlinear_annotation_in_filename() {
+    async fn unicode_interlinear_annotation_in_filename_rejected() {
         let fs = InMemoryFs::new();
-
-        // U+FFF9 (Interlinear Annotation Anchor)
-        let result = fs
-            .write_file(Path::new("/tmp/file\u{FFF9}name.txt"), b"data")
-            .await;
-        let _ = result;
+        fs.write_file(Path::new("/tmp/file\u{FFF9}name.txt"), b"data")
+            .await
+            .expect_err("U+FFF9 INTERLINEAR ANNOTATION ANCHOR must be rejected");
     }
 
-    /// TM-UNI-013: Deprecated format chars in filename — documents current behavior
+    /// TM-UNI-013: U+206A INHIBIT SYMMETRIC SWAPPING — MITIGATED.
     #[tokio::test]
-    async fn unicode_deprecated_format_chars_in_filename() {
+    async fn unicode_deprecated_format_chars_in_filename_rejected() {
         let fs = InMemoryFs::new();
-
-        // U+206A (Inhibit Symmetric Swapping) — deprecated
-        let result = fs
-            .write_file(Path::new("/tmp/file\u{206A}name.txt"), b"data")
-            .await;
-        let _ = result;
+        fs.write_file(Path::new("/tmp/file\u{206A}name.txt"), b"data")
+            .await
+            .expect_err("U+206A deprecated format must be rejected");
     }
 }
 
