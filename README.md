@@ -8,6 +8,8 @@
 
 Awesomely fast virtual sandbox with bash and file system. Written in Rust.
 
+Homepage: [bashkit.sh](https://bashkit.sh)
+
 ## Features
 
 - **Secure by default** - No process spawning, no filesystem access, no network access unless explicitly enabled. [250+ threats](specs/threat-model.md) analyzed and mitigated

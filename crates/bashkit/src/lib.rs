@@ -3,6 +3,8 @@
 //! Virtual bash interpreter for AI agents, CI/CD pipelines, and code sandboxes.
 //! Written in Rust.
 //!
+//! Homepage: [bashkit.sh](https://bashkit.sh)
+//!
 //! # Features
 //!
 //! - **POSIX compliant** - Substantial IEEE 1003.1-2024 Shell Command Language compliance

@@ -4,6 +4,8 @@
 
 Sandboxed bash interpreter for Python. Native bindings to the `bashkit` Rust core for fast, in-process execution with a virtual filesystem.
 
+Homepage: [bashkit.sh](https://bashkit.sh)
+
 ## Features
 
 - Sandboxed execution in-process, without containers or subprocess orchestration
