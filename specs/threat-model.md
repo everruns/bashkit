@@ -1221,7 +1221,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Threat ID | Vulnerability | Impact | Recommendation |
 |-----------|---------------|--------|----------------|
 | TM-DOS-031 | ExtGlob exponential blowup | CPU exhaustion / stack overflow | Add fuel counter to glob_match_impl |
-| TM-DOS-041 | Brace expansion unbounded range | OOM DoS | Cap range size in try_expand_range() |
+| ~~TM-DOS-041~~ | ~~Brace expansion unbounded range~~ | ~~OOM DoS~~ | ~~Cap range size in try_expand_range()~~ (**FIXED**) |
 | TM-DOS-032 | Tokio runtime per sync call (Python) | OS thread/fd exhaustion | Shared runtime |
 | TM-PY-023 | Shell injection in deepagents.py | Command injection within VFS | Use shlex.quote() or direct API |
 | TM-PY-024 | Heredoc content injection in write() | Command injection within VFS | Random delimiter or direct API |
@@ -1279,8 +1279,8 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | TM-INJ-016 | `_ARRAY_READ_` prefix not in `is_internal_variable()` | Arbitrary array creation/overwrite via marker injection | Add `_ARRAY_READ_` prefix to `is_internal_variable()` at `interpreter/mod.rs:7634` |
 | TM-INF-017 | `set` and `declare -p` leak internal markers | Internal state disclosure (_NAMEREF_, _READONLY_, _UPPER_, _LOWER_) | Filter `is_internal_variable()` names from output |
 | TM-INF-018 | `date` builtin returns real host time | Timezone fingerprinting, timing correlation | Configurable time source (fixed or offset) |
-| TM-DOS-041 | Brace expansion `{N..M}` unbounded range | OOM via `{1..999999999}` allocating billions of strings | Cap range size (e.g., 10,000 elements) in `try_expand_range()` at `interpreter/mod.rs:8049` |
-| TM-DOS-042 | Brace expansion combinatorial explosion | OOM via `{1..100}{1..100}{1..100}` = 1M strings | Cap total expansion count in `expand_braces()` at `interpreter/mod.rs:7967` |
+| ~~TM-DOS-041~~ | ~~Brace expansion `{N..M}` unbounded range~~ | ~~OOM via `{1..999999999}` allocating billions of strings~~ | Static parser-time check (`MAX_STATIC_BRACE_RANGE = 100_000` in `parser/budget.rs`) rejects oversized literal ranges with `BraceRangeTooLarge`; runtime fallback in `try_expand_range` (`MAX_BRACE_RANGE = 10_000`) treats remaining oversized ranges as literals (**FIXED**) |
+| ~~TM-DOS-042~~ | ~~Brace expansion combinatorial explosion~~ | ~~OOM via `{1..100}{1..100}{1..100}` = 1M strings~~ | `expand_braces` caps total emitted strings at `MAX_BRACE_EXPANSION_TOTAL = 100_000` and bails out of the recursion when the budget is hit (**FIXED**) |
 | TM-DOS-043 | Arithmetic overflow in `execute_arithmetic_with_side_effects` | Panic (DoS) in debug mode via `((x+=1))` with x=i64::MAX | Use `wrapping_add/sub/mul` at `interpreter/mod.rs:1563-1565` |
 | TM-DOS-044 | Lexer `read_command_subst_into` stack overflow | Process crash (SIGABRT) via ~50 nested `$()` in double-quotes | Add depth parameter to `read_command_subst_into()` at `parser/lexer.rs:1109` |
 | TM-DOS-045 | OverlayFs `symlink()` bypasses all limits | Unlimited symlink creation despite `max_file_count` | Add `check_write_limits()` + `validate_path()` to `fs/overlay.rs:683` |
@@ -1403,7 +1403,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Internal prefix injection via builtins | TM-INJ-012 to TM-INJ-015 | Add `is_internal_variable()` check to `declare`, `readonly`, `local`, `export` | **NEEDED** |
 | Missing `_ARRAY_READ_` in prefix guard | TM-INJ-016 | Add prefix to `is_internal_variable()` | **NEEDED** |
 | Internal marker info leak | TM-INF-017 | Filter internal vars from `set` and `declare -p` output | **NEEDED** |
-| Brace expansion DoS | TM-DOS-041, TM-DOS-042 | Cap range size and total expansion count | **NEEDED** |
+| Brace expansion DoS | TM-DOS-041, TM-DOS-042 | Cap range size and total expansion count | **MITIGATED** |
 | Arithmetic overflow in compound assignment | TM-DOS-043 | Use `wrapping_*` ops in `execute_arithmetic_with_side_effects` | **NEEDED** |
 | Lexer stack overflow | TM-DOS-044 | Depth tracking in `read_command_subst_into` | **NEEDED** |
 | Cmd subst OOM via state cloning | TM-DOS-088 | `max_subst_depth` limit in `ExecutionLimits` | **DONE** |
