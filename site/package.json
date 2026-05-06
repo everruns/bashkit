@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "astro dev",
     "build": "astro build",
-    "postbuild": "node scripts/verify-doc-routes.mjs && node scripts/verify-sitemap.mjs && node scripts/verify-robots.mjs && node scripts/verify-agent-skills.mjs",
+    "postbuild": "node scripts/verify-doc-routes.mjs && node scripts/verify-sitemap.mjs && node scripts/verify-robots.mjs && node scripts/verify-agent-skills.mjs && node scripts/verify-link-headers.mjs",
     "preview": "wrangler dev",
     "deploy": "npm run build && wrangler deploy",
     "check": "astro check",
