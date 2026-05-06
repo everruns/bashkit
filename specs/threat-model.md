@@ -922,7 +922,7 @@ let session_b = Bash::builder()
 | TM-INT-001 | Builtin panic crash | Invalid input triggers panic in builtin | `catch_unwind` wrapper on all builtins | **MITIGATED** |
 | TM-INT-002 | Panic info leak | Panic message reveals sensitive data | Sanitized error messages (no panic details) | **MITIGATED** |
 | TM-INT-003 | Date format panic | Invalid strftime format causes chrono panic | Pre-validation with `StrftimeItems` | **MITIGATED** |
-| TM-INT-007 | `/dev/urandom` empty with `head -c` | `head -c 16 /dev/urandom` returns empty output; pipe from virtual device to builtin loses data | — | **OPEN** |
+| TM-INT-007 | `/dev/urandom` empty with `head -c` | `head -c 16 /dev/urandom` returns empty output; pipe from virtual device to builtin loses data | `read_file_for_builtin` (`builtins/mod.rs`) reads `/dev/urandom`/`/dev/random` as Latin-1 chars (each byte 0x00-0xFF maps 1:1 to a char) so `head -c N` returns N bytes of randomness in both the path-argument form and the `cat /dev/urandom \| head -c N` pipe form | **MITIGATED** |
 
 **Current Risk**: LOW - All builtin panics are caught and converted to sanitized errors
 
@@ -1249,7 +1249,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | TM-DOS-032 | Tokio runtime per sync call (Python) | OS thread/fd exhaustion | Shared runtime |
 | TM-PY-023 | Shell injection in deepagents.py | Command injection within VFS | Use shlex.quote() or direct API |
 | TM-PY-024 | Heredoc content injection in write() | Command injection within VFS | Random delimiter or direct API |
-| TM-PY-025 | GIL deadlock in execute_sync | Python process deadlock | py.allow_threads() |
+| ~~TM-PY-025~~ | ~~GIL deadlock in execute_sync~~ | ~~Python process deadlock~~ | ~~py.allow_threads()~~ — every `rt.block_on` in lib.rs now releases the GIL via `Python::allow_threads` (**FIXED**) |
 | TM-ISO-004 | ~~Cross-session env pollution via jq~~ | ~~Session isolation breach~~ | ~~Same fix as TM-INF-013~~ (**FIXED**) |
 | TM-ESC-013 | OverlayFs upper() exposes unlimited FS | VFS limit bypass | Restrict upper() visibility |
 
@@ -1278,9 +1278,9 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | ~~TM-DOS-038~~ | ~~OverlayFs incomplete whiteout~~ | ~~Deleted files remain visible~~ | ~~Check ancestor whiteouts~~ (**FIXED**) |
 | ~~TM-DOS-039~~ | ~~Missing validate_path in VFS~~ | ~~Path validation gaps~~ | ~~Add to all methods~~ — `validate_path()` in every InMemoryFs / OverlayFs / MountableFs method (**FIXED**) |
 | TM-ESC-014 | ~~Custom builtins lost after first call~~ | ~~Security wrappers silently removed~~ | ~~Clone or Arc builtins~~ (**FIXED**) |
-| TM-PY-026 | reset() discards security config | DoS protections removed | Preserve config on reset |
+| ~~TM-PY-026~~ | ~~reset() discards security config~~ | ~~DoS protections removed~~ | ~~Preserve config on reset~~ — `PyBash::reset` and `BashTool::reset` rebuild via `replace_live_bash_with_builder` (**FIXED**) |
 | ~~TM-INJ-011~~ | ~~Cyclic nameref silent resolution~~ | ~~Read/write unintended variables~~ | ~~Detect cycles, error~~ — `resolve_nameref()` detects cycles via visited-set and returns original name (**FIXED**) |
-| TM-PY-027 | py_to_json unbounded recursion | Stack overflow | Add depth counter |
+| ~~TM-PY-027~~ | ~~py_to_json unbounded recursion~~ | ~~Stack overflow~~ | ~~Add depth counter~~ — `MAX_NESTING_DEPTH = 64` enforced in `json_to_py_inner` / `py_to_json_inner` / MontyObject converters (**FIXED**) |
 | TM-DOS-040 | Integer truncation on 32-bit | Size check bypass | Use try_from() |
 | TM-UNI-001 | Awk parser byte-boundary panic on Unicode | Silent builtin failure on valid input | Fix awk parser to use char-boundary-safe indexing |
 | TM-UNI-002 | Sed parser byte-boundary issues | Silent builtin failure on valid input | Audit and fix sed byte-indexing |
@@ -1313,7 +1313,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | ~~TM-DOS-048~~ | ~~InMemoryFs `rename()` overwrites dirs, orphans children~~ | ~~VFS corruption — orphaned entries consume memory but are unreachable~~ | ~~Check dest type in `rename()`, reject file-over-directory per POSIX~~ (**FIXED**) |
 | ~~TM-DOS-049~~ | ~~`collect_dirs_recursive` has no depth limit~~ | ~~Deep recursion on VFS trees~~ | ~~Add explicit depth parameter~~ — capped using `FsLimits::max_path_depth` (**FIXED**) |
 | ~~TM-DOS-050~~ | ~~`parse_word_string` uses default parser limits~~ | ~~Caller-configured tighter limits ignored for parameter expansion~~ | ~~Propagate limits through `parse_word_string()`~~ (**FIXED**) |
-| TM-PY-028 | BashTool.reset() in Python drops security config | Resource limits silently removed after reset | Preserve limits like `PyBash.reset()` does (see `bashkit-python/src/lib.rs:470`) |
+| ~~TM-PY-028~~ | ~~BashTool.reset() in Python drops security config~~ | ~~Resource limits silently removed after reset~~ | ~~Preserve limits like `PyBash.reset()` does~~ — `BashTool::reset` rebuilds via `replace_live_bash_with_builder` matching `PyBash::reset` (**FIXED**) |
 | TM-PY-029 | ContextVar capture may include sensitive state | `copy_context()` snapshots all caller ContextVars, not just intended ones | Accepted: same semantics as `asyncio.Task` context inheritance; caller controls what is set |
 
 ### Open (From 2026-03 Blackbox Security Testing)
@@ -1330,7 +1330,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | ~~TM-ISO-022~~ | ~~`$?` leaks across `exec()` calls~~ | ~~State pollution — exit code from previous exec visible to next exec~~ | ~~Reset `last_exit_code` in `reset_for_execution()`~~ — `reset_transient_state()` zeroes `last_exit_code` (**FIXED**) |
 | TM-ISO-023 | `set -e` leaks across `exec()` calls | Unexpected abort — `set` options from previous exec affect next exec | `SET_OPTION_VARS` cleared in `reset_transient_state()` (**FIXED**) |
 | ~~TM-ISO-024~~ | ~~`$?` leaks into VFS subprocess~~ | ~~Parent `last_exit_code` visible inside VFS script subprocess, causing false `set -e` failures~~ | ~~Reset `last_exit_code = 0` and `nounset_error = None` in `execute_script_content` subprocess isolation~~ (**FIXED**) |
-| TM-INT-007 | `/dev/urandom` empty with `head -c` | Weak randomness — `head -c 16 /dev/urandom` returns empty string | Fix virtual device pipe handling in head builtin |
+| ~~TM-INT-007~~ | ~~`/dev/urandom` empty with `head -c`~~ | ~~Weak randomness — `head -c 16 /dev/urandom` returns empty string~~ | ~~Fix virtual device pipe handling in head builtin~~ — `read_file_for_builtin` reads virtual devices as Latin-1 (**FIXED**) |
 | TM-DOS-044 | Nested `$()` stack overflow (regression) | Process crash (SIGABRT) at depth ~50 despite #492 fix | Interpreter execution path may need separate depth tracking from lexer fix |
 | TM-DOS-088 | Command substitution OOM via state cloning | OOM at depth N (memory ≈ N × state_size) | Dedicated `max_subst_depth` limit (default 32), separate from `max_function_depth` — **FIXED** via #1088 |
 | TM-DOS-089 | Command substitution stack overflow via inlined futures | SIGABRT at ~20-30 nested $() levels | Box::pin `expand_word` and `execute_cmd_subst` to cap per-level stack — **FIXED** via #1089 |
@@ -1407,15 +1407,15 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Python wrapper input sanitization | TM-PY-023, TM-PY-024 | `shlex.quote()` or direct VFS API | **NEEDED** |
 | Tar path validation | TM-INJ-010 | Resolved-path check + `starts_with(&extract_base)` in `archive.rs` | **MITIGATED** |
 | Git branch name validation | TM-GIT-014 | Reject `..`, control chars, trailing `.lock` | **NEEDED** |
-| GIL release in execute_sync | TM-PY-025 | `py.allow_threads()` wrapper | **NEEDED** |
+| GIL release in execute_sync | TM-PY-025 | `Python::allow_threads()` around every `rt.block_on` in `bashkit-python/src/lib.rs` | **MITIGATED** |
 | TOCTOU fix in append_file | TM-DOS-034 | Single write lock for read-check-write | **DONE** |
 | OverlayFs combined limit accounting | TM-DOS-035, TM-DOS-036 | Use combined usage for limit checks, subtract overrides | **NEEDED** |
 | OverlayFs chmod CoW limits | TM-DOS-037 | Route copy-on-write through `check_write_limits()` | **NEEDED** |
 | OverlayFs recursive whiteout | TM-DOS-038 | Check ancestor whiteouts in `is_whiteout()` | **NEEDED** |
 | VFS-wide path validation | TM-DOS-039 | `validate_path()` in all path-accepting methods | **NEEDED** |
 | Custom builtin preservation | TM-ESC-014 | Clone builtins instead of `std::mem::take` | **DONE** |
-| Python config preservation on reset | TM-PY-026 | Store and reapply builder config | **NEEDED** |
-| JSON conversion depth limit | TM-PY-027 | Depth counter in `py_to_json`/`json_to_py` | **NEEDED** |
+| Python config preservation on reset | TM-PY-026 | `PyBash::reset` and `BashTool::reset` rebuild via `replace_live_bash_with_builder` | **MITIGATED** |
+| JSON conversion depth limit | TM-PY-027 | `MAX_NESTING_DEPTH = 64` in `json_to_py_inner` / `py_to_json_inner` | **MITIGATED** |
 | Cyclic nameref detection | TM-INJ-011 | Visited-set in `resolve_nameref()` breaks the cycle and returns the original name | **MITIGATED** |
 | Error message sanitization gaps | TM-INF-016 | Consistent Display format, wrap external errors | **DONE** |
 | 32-bit integer safety | TM-DOS-040 | `usize::try_from()` for `u64` casts | **NEEDED** |
@@ -1435,7 +1435,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | MountableFs path validation gap | TM-DOS-046 | `validate_path()` in all MountableFs methods | **MITIGATED** |
 | VFS copy/rename semantic bugs | TM-DOS-047, TM-DOS-048 | Fix limit check in copy(), type check in rename() | **MITIGATED** |
 | Date time info leak | TM-INF-018 | Configurable time source | **NEEDED** |
-| Python BashTool.reset() drops limits | TM-PY-028 | Preserve config on reset (match PyBash.reset()) | **NEEDED** |
+| Python BashTool.reset() drops limits | TM-PY-028 | `BashTool::reset` rebuilds via `replace_live_bash_with_builder` matching `PyBash::reset` | **MITIGATED** |
 | YAML parser depth limit | TM-DOS-051 | `depth` parameter on `parse_yaml_block`/`map`/`list` with `MAX_YAML_DEPTH = 100` | **MITIGATED** |
 | Template engine depth limit | TM-DOS-052 | `depth` parameter on `render_template_inner` with `MAX_TEMPLATE_DEPTH = 100` | **MITIGATED** |
 | Unzip path traversal validation | TM-INJ-017 | `validate_extract_entry_path` rejects non-`Normal` components in `zip_cmd.rs` | **MITIGATED** |
@@ -1654,7 +1654,7 @@ events that BashKit intercepts and dispatches to the VFS.
 | TM-PY-022 | Parser/VM crash kills host | Critical | Parser depth limit (since 0.0.4) prevents parser crashes; Monty runs in-process with resource limits | — (removed: subprocess tests no longer applicable) |
 | TM-PY-023 | Shell injection in Python wrapper | High | Python `BashkitBackend` (deepagents.py) uses f-string interpolation for shell commands | **OPEN** |
 | TM-PY-024 | Heredoc content injection | High | `write()` uses fixed `BASHKIT_EOF` delimiter; content containing it escapes heredoc | **OPEN** |
-| TM-PY-025 | GIL deadlock in execute_sync | High | `execute_sync()` calls `rt.block_on()` without releasing GIL; tool callbacks reacquire GIL | **OPEN** |
+| TM-PY-025 | GIL deadlock in execute_sync | High | `execute_sync()` calls `rt.block_on()` without releasing GIL; tool callbacks reacquire GIL | **MITIGATED** |
 
 **TM-PY-023**: `crates/bashkit-python/bashkit/deepagents.py` constructs shell commands via f-string
 interpolation of user-supplied paths/content (lines 187, 198, 206, 230, 258, 278, 302). Paths
@@ -1665,20 +1665,25 @@ expose direct VFS methods.
 Content containing `BASHKIT_EOF` on its own line terminates the heredoc early, executing remaining
 text as shell commands. Fix: random delimiter suffix or direct write API.
 
-**TM-PY-025**: `crates/bashkit-python/src/lib.rs:510-527` calls `rt.block_on()` while holding the
-GIL. Tool callbacks call `Python::attach()` to reacquire. Can deadlock in multi-threaded Python.
-Fix: wrap with `py.allow_threads(|| { ... })`.
+**TM-PY-025** (mitigated): every blocking-on-tokio entry point in
+`crates/bashkit-python/src/lib.rs` now wraps the `rt.block_on(...)` call with
+`Python::allow_threads(...)` (see `execute_sync`, `reset`, `snapshot`, and the
+`BashTool` equivalents). Tool callbacks that re-enter Python no longer race the
+caller's GIL hold.
 
-| TM-PY-026 | reset() discards security config | `BashTool.reset()` creates new `Bash` with bare builder, dropping all configured limits | — | **OPEN** |
-| TM-PY-027 | Unbounded recursion in JSON conversion | `py_to_json`/`json_to_py` recurse without depth limit on nested dicts/lists | — | **OPEN** |
+| TM-PY-026 | reset() discards security config | `BashTool.reset()` creates new `Bash` with bare builder, dropping all configured limits | `PyBash::reset` and `BashTool::reset` rebuild via `replace_live_bash_with_builder` + `build_live_builder`, which preserves the original limits, env, and registered builtins | **MITIGATED** |
+| TM-PY-027 | Unbounded recursion in JSON conversion | `py_to_json`/`json_to_py` recurse without depth limit on nested dicts/lists | `json_to_py_inner`, `py_to_json_inner`, and the MontyObject converters all carry a `depth` arg; depth > `MAX_NESTING_DEPTH = 64` raises `ValueError("… nesting depth exceeds maximum of 64")` | **MITIGATED** |
 
-**TM-PY-026**: `crates/bashkit-python/src/lib.rs:260-271` — `reset()` creates `Bash::builder().build()`
-without reapplying `max_commands`, `max_loop_iterations`, `username`, `hostname`. After reset,
-DoS protections are silently removed. Fix: store original config and reapply.
+**TM-PY-026** (mitigated): `PyBash::reset` and `BashTool::reset` (`crates/bashkit-python/src/lib.rs`)
+rebuild the inner `Bash` via `replace_live_bash_with_builder` + `build_live_builder`, which
+re-applies the original limits, env, and registered builtins. Regression tests:
+`tests/test_python_security.py::test_bash_reset_preserves_limits`,
+`…test_bashtool_reset_preserves_limits`.
 
-**TM-PY-027**: `crates/bashkit-python/src/lib.rs:58-92` — `py_to_json` and `json_to_py` recurse
-on nested Python dicts/lists with no depth counter. Deeply nested structures cause stack overflow.
-Fix: add depth counter, fail beyond 64 levels.
+**TM-PY-027** (mitigated): `json_to_py_inner`, `py_to_json_inner`, and the corresponding
+MontyObject converters in `crates/bashkit-python/src/lib.rs` carry a `depth: usize` argument.
+At `depth > MAX_NESTING_DEPTH = 64`, conversion raises a Python `ValueError` instead of
+recursing. Coverage: `tests/_security_advanced.py::JsonConversionBoundariesTests`.
 
 | TM-PY-029 | Host clock information disclosure | `datetime.date.today()` / `datetime.datetime.now()` expose host system time and timezone | Intentional — required for correct datetime semantics | **ACCEPTED** |
 
