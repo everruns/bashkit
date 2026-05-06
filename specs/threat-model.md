@@ -581,19 +581,21 @@ echo $user_input
 | TM-INJ-004 | Null byte | `cat "file\x00/../etc/passwd"` | Rust strings no nulls | **MITIGATED** |
 | TM-INJ-005 | Path traversal | `../../../../etc/passwd` | Path normalization | **MITIGATED** |
 | TM-INJ-006 | Encoding bypass | URL/unicode encoding | PathBuf handles | **MITIGATED** |
-| TM-INJ-010 | Tar path traversal within VFS | `tar -xf` with `../../../etc/passwd` entry names | — | **OPEN** |
-| TM-INJ-017 | Unzip path traversal within VFS | `unzip` with `../../../etc/passwd` entry names in custom BKZIP format | — | **OPEN** |
+| TM-INJ-010 | Tar path traversal within VFS | `tar -xf` with `../../../etc/passwd` entry names | `archive.rs` rejects entries whose absolute name escapes the extract base or whose resolved path doesn't `starts_with(&extract_base)`, returning `tar: <name>: path traversal blocked` and exit 1 | **MITIGATED** |
+| TM-INJ-017 | Unzip path traversal within VFS | `unzip` with `../../../etc/passwd` entry names in custom BKZIP format | `zip_cmd.rs::validate_extract_entry_path` rejects any path component that is `ParentDir`, `RootDir`, `Prefix`, or `CurDir` and surfaces `unzip: invalid archive entry path: <name>` | **MITIGATED** |
 
-**TM-INJ-010**: Tar entry names like `../../../etc/passwd` pass through `resolve_path()` which
-normalizes `..` but can write to arbitrary VFS locations outside the extraction directory. A
-crafted tar can overwrite any file in the VFS. Fix: validate resolved paths stay within
-`extract_base`; reject entries with `..` or leading `/`.
+**TM-INJ-010** (mitigated): `builtins/archive.rs` validates each tar entry name against
+`extract_base` before any write. Entries starting with `/`, containing `..`, or whose
+`resolve_path(&extract_base, &name)` does not `starts_with(&extract_base)` are rejected
+with `tar: <name>: path traversal blocked` (exit 1, no file created). Regression tests:
+`builtins::archive::tests::test_tar_extract_path_traversal_dotdot_blocked`,
+`…_absolute_blocked`, `…_dir_dotdot_blocked` (3 tests).
 
-**TM-INJ-017**: `builtins/zip_cmd.rs:341-342` — `unzip` joins entry path directly with
-`extract_base` via `extract_base.join(entry_path)`. Entry path `../../etc/passwd` resolves
-outside the extraction directory within VFS. Leading `/` is stripped but `..` is not rejected.
-Same class as TM-INJ-010. Fix: validate resolved path starts with `extract_base`; reject
-entries containing `..` components.
+**TM-INJ-017** (mitigated): `builtins/zip_cmd.rs::validate_extract_entry_path` walks the
+entry path's `Path::components()` and rejects anything that is not `Component::Normal`,
+including `..`, leading `/`, drive prefixes, and `.`. The unzip loop then surfaces
+`unzip: invalid archive entry path: <name>` with exit 1 and aborts the extract.
+Regression test: `builtins::zip_cmd::tests::test_unzip_rejects_path_traversal_entries`.
 
 **Current Risk**: LOW - Rust's type system prevents most attacks; tar traversal is VFS-contained
 
@@ -1247,11 +1249,11 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | ~~TM-DOS-051~~ | ~~YAML parser unbounded recursion~~ | ~~Stack overflow on deeply nested YAML~~ | ~~Add depth parameter to parse_yaml_block/map/list~~ — `depth` arg + `MAX_YAML_DEPTH = 100` cap (**FIXED**) |
 | ~~TM-DOS-052~~ | ~~Template engine unbounded recursion~~ | ~~Stack overflow on deeply nested templates~~ | ~~Add depth parameter to render_template~~ — `depth` arg + `MAX_TEMPLATE_DEPTH = 100` cap (**FIXED**) |
 | TM-DOS-054 | `glob --files` ExtGlob blowup | CPU exhaustion (same as TM-DOS-031) | Fix TM-DOS-031 covers this |
-| TM-INJ-017 | Unzip path traversal within VFS | Arbitrary VFS file overwrite | Validate paths stay within extract_base |
+| ~~TM-INJ-017~~ | ~~Unzip path traversal within VFS~~ | ~~Arbitrary VFS file overwrite~~ | ~~Validate paths stay within extract_base~~ — `validate_extract_entry_path` rejects non-`Normal` components (**FIXED**) |
 | ~~TM-INJ-018~~ | ~~Dotenv internal variable injection~~ | ~~Bypass readonly, manipulate interpreter~~ | ~~Add is_internal_variable() check~~ — `Dotenv::execute` skips internal-prefix keys (**FIXED**) |
 | TM-INF-001 | Env vars may leak secrets | Information disclosure | Document caller responsibility |
 | TM-INJ-008 | Terminal escapes in output | UI manipulation | Document sanitization need |
-| TM-INJ-010 | Tar path traversal within VFS | Arbitrary VFS file overwrite | Validate paths stay within extract_base |
+| ~~TM-INJ-010~~ | ~~Tar path traversal within VFS~~ | ~~Arbitrary VFS file overwrite~~ | ~~Validate paths stay within extract_base~~ — archive.rs rejects entries that don't `starts_with(&extract_base)` (**FIXED**) |
 | TM-GIT-014 | Git branch name path injection | VFS git repo corruption | Validate branch names |
 | TM-INF-014 | Real PID leak via $$ | Host information disclosure | Return virtual PID |
 | TM-INF-015 | URL credentials in error messages | Credential leak | Apply URL redaction |
@@ -1392,7 +1394,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Parser limit propagation | TM-DOS-030 | `Parser::with_limits()` in eval/source/trap/alias | **NEEDED** |
 | ExtGlob depth limit | TM-DOS-031 | Depth parameter in `glob_match_impl` | **NEEDED** |
 | Python wrapper input sanitization | TM-PY-023, TM-PY-024 | `shlex.quote()` or direct VFS API | **NEEDED** |
-| Tar path validation | TM-INJ-010 | Check resolved path starts with extract_base | **NEEDED** |
+| Tar path validation | TM-INJ-010 | Resolved-path check + `starts_with(&extract_base)` in `archive.rs` | **MITIGATED** |
 | Git branch name validation | TM-GIT-014 | Reject `..`, control chars, trailing `.lock` | **NEEDED** |
 | GIL release in execute_sync | TM-PY-025 | `py.allow_threads()` wrapper | **NEEDED** |
 | TOCTOU fix in append_file | TM-DOS-034 | Single write lock for read-check-write | **DONE** |
@@ -1425,7 +1427,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Python BashTool.reset() drops limits | TM-PY-028 | Preserve config on reset (match PyBash.reset()) | **NEEDED** |
 | YAML parser depth limit | TM-DOS-051 | `depth` parameter on `parse_yaml_block`/`map`/`list` with `MAX_YAML_DEPTH = 100` | **MITIGATED** |
 | Template engine depth limit | TM-DOS-052 | `depth` parameter on `render_template_inner` with `MAX_TEMPLATE_DEPTH = 100` | **MITIGATED** |
-| Unzip path traversal validation | TM-INJ-017 | Validate resolved path stays within `extract_base` | **NEEDED** |
+| Unzip path traversal validation | TM-INJ-017 | `validate_extract_entry_path` rejects non-`Normal` components in `zip_cmd.rs` | **MITIGATED** |
 | Dotenv internal variable guard | TM-INJ-018 | `is_internal_variable()` check in `Dotenv::execute` (`builtins/dotenv.rs:138`) | **MITIGATED** |
 | Session-level cumulative counters | TM-ISO-005 | Persistent counters across `exec()` calls within a `Bash` instance | **NEEDED** |
 | Per-instance memory budget | TM-ISO-006 | `MemoryLimits` capping variable count, total bytes, array entries, function count | **NEEDED** |
