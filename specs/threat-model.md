@@ -263,8 +263,8 @@ max_ast_depth: 100,           // Parser recursion (TM-DOS-022)
 | TM-DOS-035 | DEBUG trap recursive amplification | `trap 'a=1;b=2;...' DEBUG` amplifies N commands to N*M | Suppress DEBUG trap inside trap handlers (`in_trap` guard) | **FIXED** |
 | TM-DOS-032 | Tokio runtime exhaustion (Python) | Rapid `execute_sync()` calls each create new tokio runtime, exhausting OS threads | — | **OPEN** |
 | TM-DOS-033 | AWK unbounded loops | `BEGIN { while(1){} }` has no iteration limit in AWK interpreter | Timeout (30s) backstop | **PARTIAL** |
-| TM-DOS-051 | YAML parser unbounded recursion | `yaml get key` on deeply nested YAML input causes stack overflow in `parse_yaml_block`/`parse_yaml_map`/`parse_yaml_list` | `catch_unwind` (TM-INT-001) catches panic; no depth limit | **OPEN** |
-| TM-DOS-052 | Template engine unbounded recursion | `{{#if}}` and `{{#each}}` blocks call `render_template` recursively with no depth limit | `catch_unwind` catches stack overflow; no depth cap | **OPEN** |
+| TM-DOS-051 | YAML parser unbounded recursion | `yaml get key` on deeply nested YAML input causes stack overflow in `parse_yaml_block`/`parse_yaml_map`/`parse_yaml_list` | `parse_yaml_block` carries a `depth: usize` parameter; depth > `MAX_YAML_DEPTH = 100` returns an `ERROR: maximum nesting depth exceeded` value instead of recursing | **MITIGATED** |
+| TM-DOS-052 | Template engine unbounded recursion | `{{#if}}` and `{{#each}}` blocks call `render_template` recursively with no depth limit | `render_template_inner` checks `depth > MAX_TEMPLATE_DEPTH = 100` and returns a `template: maximum nesting depth exceeded` error | **MITIGATED** |
 | TM-DOS-053 | Template `{{#each}}` output explosion | `{{#each arr}}` on large JSON array produces O(n * body) output | Bounded by JSON data file size (max_file_size) | **MITIGATED** |
 | TM-DOS-054 | `glob --files` inherits ExtGlob blowup | `glob --files "+(a|aa)" /dir` dispatches to `glob_match` with same exponential cost as TM-DOS-031 | Same as TM-DOS-031 | **OPEN** |
 | TM-DOS-055 | `split` file count amplification | `split -l 1 bigfile` creates one output file per line; bounded by `max_file_count` FS limit | FS limits (TM-DOS-006) | **MITIGATED** |
@@ -275,14 +275,18 @@ max_ast_depth: 100,           // Parser recursion (TM-DOS-022)
 | TM-DOS-060 | Sparse array huge-index allocation | `arr[999999999]=x` could allocate ~1B empty slots if arrays are Vec-backed; negative indices could cause OOB | HashMap-based arrays; `max_array_entries` caps total entries | **MITIGATED** |
 | TM-DOS-061 | Snapshot function restore bypasses parser/function limits | Crafted snapshot restores prebuilt or deeply nested functions that exceed the current tenant's parser depth or function memory budget | Re-parse restored function source with current `ExecutionLimits`; re-apply function memory budget before insertion | **MITIGATED** |
 
-**TM-DOS-051**: `builtins/yaml.rs` — `parse_yaml_block`, `parse_yaml_map`, `parse_yaml_list` recurse
-on nested YAML structures with no depth counter. Crafted YAML with 1000+ nesting levels causes stack
-overflow. `catch_unwind` (TM-INT-001) prevents process crash but returns unhelpful error.
-Fix: add depth parameter, bail at 100 levels.
+**TM-DOS-051** (mitigated): `builtins/yaml.rs` — `parse_yaml_block`, `parse_yaml_map`,
+`parse_yaml_list` carry a `depth: usize` parameter. When `depth > MAX_YAML_DEPTH = 100`,
+`parse_yaml_block` short-circuits with an `ERROR: maximum nesting depth exceeded` value
+instead of recursing further. `catch_unwind` (TM-INT-001) remains a backstop, but is no
+longer the primary defence. Regression tests:
+`tests/threat_model_tests.rs::yaml_template_depth::tm_dos_051_*`.
 
-**TM-DOS-052**: `builtins/template.rs:render_template()` recurses for `{{#if}}` and `{{#each}}`
-blocks. Template `{{#if a}}{{#if b}}...{{/if}}{{/if}}` with 1000+ nesting levels causes stack
-overflow. Fix: add depth parameter, bail at 50 levels.
+**TM-DOS-052** (mitigated): `builtins/template.rs:render_template_inner()` receives a
+`depth` arg that increments on each `{{#if}}` / `{{#each}}` recursion. When
+`depth > MAX_TEMPLATE_DEPTH = 100`, the call returns a clean `template: maximum nesting
+depth exceeded` error. Regression test:
+`tests/threat_model_tests.rs::yaml_template_depth::tm_dos_052_template_if_depth_bomb`.
 
 **Current Risk**: MEDIUM - Three open DoS vectors (TM-DOS-029, TM-DOS-030, TM-DOS-031) need remediation
 
@@ -1240,8 +1244,8 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 
 | Threat ID | Vulnerability | Impact | Recommendation |
 |-----------|---------------|--------|----------------|
-| TM-DOS-051 | YAML parser unbounded recursion | Stack overflow on deeply nested YAML | Add depth parameter to parse_yaml_block/map/list |
-| TM-DOS-052 | Template engine unbounded recursion | Stack overflow on deeply nested templates | Add depth parameter to render_template |
+| ~~TM-DOS-051~~ | ~~YAML parser unbounded recursion~~ | ~~Stack overflow on deeply nested YAML~~ | ~~Add depth parameter to parse_yaml_block/map/list~~ — `depth` arg + `MAX_YAML_DEPTH = 100` cap (**FIXED**) |
+| ~~TM-DOS-052~~ | ~~Template engine unbounded recursion~~ | ~~Stack overflow on deeply nested templates~~ | ~~Add depth parameter to render_template~~ — `depth` arg + `MAX_TEMPLATE_DEPTH = 100` cap (**FIXED**) |
 | TM-DOS-054 | `glob --files` ExtGlob blowup | CPU exhaustion (same as TM-DOS-031) | Fix TM-DOS-031 covers this |
 | TM-INJ-017 | Unzip path traversal within VFS | Arbitrary VFS file overwrite | Validate paths stay within extract_base |
 | ~~TM-INJ-018~~ | ~~Dotenv internal variable injection~~ | ~~Bypass readonly, manipulate interpreter~~ | ~~Add is_internal_variable() check~~ — `Dotenv::execute` skips internal-prefix keys (**FIXED**) |
@@ -1419,8 +1423,8 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | VFS copy/rename semantic bugs | TM-DOS-047, TM-DOS-048 | Fix limit check in copy(), type check in rename() | **NEEDED** |
 | Date time info leak | TM-INF-018 | Configurable time source | **NEEDED** |
 | Python BashTool.reset() drops limits | TM-PY-028 | Preserve config on reset (match PyBash.reset()) | **NEEDED** |
-| YAML parser depth limit | TM-DOS-051 | Depth parameter in `parse_yaml_block`/`parse_yaml_map`/`parse_yaml_list` | **NEEDED** |
-| Template engine depth limit | TM-DOS-052 | Depth parameter in `render_template` | **NEEDED** |
+| YAML parser depth limit | TM-DOS-051 | `depth` parameter on `parse_yaml_block`/`map`/`list` with `MAX_YAML_DEPTH = 100` | **MITIGATED** |
+| Template engine depth limit | TM-DOS-052 | `depth` parameter on `render_template_inner` with `MAX_TEMPLATE_DEPTH = 100` | **MITIGATED** |
 | Unzip path traversal validation | TM-INJ-017 | Validate resolved path stays within `extract_base` | **NEEDED** |
 | Dotenv internal variable guard | TM-INJ-018 | `is_internal_variable()` check in `Dotenv::execute` (`builtins/dotenv.rs:138`) | **MITIGATED** |
 | Session-level cumulative counters | TM-ISO-005 | Persistent counters across `exec()` calls within a `Bash` instance | **NEEDED** |
