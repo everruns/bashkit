@@ -549,6 +549,73 @@ mod finding_shell_options_leak {
 }
 
 // =============================================================================
+// FINDING 7b: STATE ISOLATION — $? LEAKS INTO VFS SUBPROCESS
+// Threat: TM-ISO-024 (new)
+// Issue: Within one exec(), the parent's $? leaks into a VFS-script subprocess
+// and trips `set -e`.
+// =============================================================================
+
+mod finding_subprocess_exit_code_leak {
+    use super::*;
+
+    /// TM-ISO-024: $? must reset to 0 inside a VFS-script subprocess regardless
+    /// of the parent's last exit code. Otherwise a child running `set -e` aborts
+    /// on its first command for no reason.
+    #[tokio::test]
+    async fn parent_exit_code_does_not_leak_into_subprocess() {
+        let mut bash = tight_bash();
+        let result = bash
+            .exec(
+                r#"
+                cat > /tmp/child.sh <<'EOF'
+#!/bin/bash
+echo "child_dollar_q=$?"
+EOF
+                chmod +x /tmp/child.sh
+                false
+                /tmp/child.sh
+                "#,
+            )
+            .await
+            .unwrap();
+        assert!(
+            result.stdout.contains("child_dollar_q=0"),
+            "parent's $?=1 leaked into VFS subprocess; got: {}",
+            result.stdout
+        );
+    }
+
+    /// TM-ISO-024: combined with `set -e`, a leaked parent exit code would abort
+    /// the child immediately. This pins that the child runs to completion.
+    #[tokio::test]
+    async fn set_e_in_subprocess_does_not_trip_on_parent_exit_code() {
+        let mut bash = tight_bash();
+        let result = bash
+            .exec(
+                r#"
+                cat > /tmp/child.sh <<'EOF'
+#!/bin/bash
+set -e
+echo "child_first_line"
+echo "child_second_line"
+EOF
+                chmod +x /tmp/child.sh
+                false
+                /tmp/child.sh
+                "#,
+            )
+            .await
+            .unwrap();
+        assert!(
+            result.stdout.contains("child_first_line")
+                && result.stdout.contains("child_second_line"),
+            "child aborted under set -e; got: {}",
+            result.stdout
+        );
+    }
+}
+
+// =============================================================================
 // FINDING 8: /dev/urandom RETURNS EMPTY WITH head -c
 // Threat: TM-INT-007 (new)
 // Issue: head -c N /dev/urandom returns empty output.
