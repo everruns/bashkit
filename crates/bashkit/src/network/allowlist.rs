@@ -7,7 +7,9 @@
 //! This module mitigates the following threats (see `specs/threat-model.md`):
 //!
 //! - **TM-NET-001**: DNS spoofing → literal host matching, no DNS resolution
-//! - **TM-NET-002**: DNS rebinding → allowlist uses literal strings
+//! - **TM-NET-002**: DNS rebinding → allowlist uses literal strings; the
+//!   reqwest client also installs `PrivateIpFilteringResolver` so private
+//!   IPs are refused at connect time even if DNS rebinds between checks.
 //! - **TM-NET-004**: IP-based bypass → IPs must be explicitly allowed
 //! - **TM-NET-005**: Port scanning → port must match allowlist entry
 //! - **TM-NET-006**: Protocol downgrade → scheme must match exactly
