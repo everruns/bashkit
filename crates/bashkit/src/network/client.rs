@@ -99,9 +99,9 @@ pub const MIN_TIMEOUT_SECS: u64 = 1;
 /// # Default
 ///
 /// When no custom handler is set, `HttpClient` uses `reqwest` directly,
-/// with a [`PrivateIpFilteringResolver`] installed on the connector that
-/// rejects private IPs at connect time. This catches DNS rebinding that
-/// happens between the precheck and the actual TCP connect.
+/// with a private-IP-filtering DNS resolver installed on the connector
+/// that rejects private IPs at connect time. This catches DNS rebinding
+/// that happens between the precheck and the actual TCP connect.
 ///
 /// # SSRF responsibility for handlers (TM-NET-023, #1570)
 ///
@@ -111,10 +111,12 @@ pub const MIN_TIMEOUT_SECS: u64 = 1;
 /// the handler opens its own socket. If a handler performs real network
 /// I/O (proxies, custom transports, sidecar HTTP clients) it MUST
 /// re-resolve the host and re-apply private-IP filtering itself before
-/// connecting, or constrain its egress at a lower layer.
-/// [`crate::network::is_private_ip`] is exported for that purpose.
-/// Handlers that only consult fixtures or in-memory state (mocks, test
-/// doubles) have no exposure here.
+/// connecting, or constrain its egress at a lower layer. The internal
+/// classifier `bashkit::network::allowlist::is_private_ip` (re-exported
+/// at `bashkit::network::is_private_ip` when used from inside this
+/// crate) is the same one the default reqwest path uses. Handlers that
+/// only consult fixtures or in-memory state (mocks, test doubles) have
+/// no exposure here.
 #[async_trait::async_trait]
 pub trait HttpHandler: Send + Sync {
     /// Handle an HTTP request and return a response.
