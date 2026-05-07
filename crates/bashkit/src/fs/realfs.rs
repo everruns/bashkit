@@ -191,6 +191,44 @@ impl RealFs {
         Ok(candidate)
     }
 
+    /// Resolve a virtual path *without* dereferencing the final path
+    /// component, used by operations that act on the directory entry itself
+    /// (`stat`, `read_link`, `remove`).
+    ///
+    /// Issue #1578: the standard `resolve()` canonicalizes the full path,
+    /// so a symlink at the leaf was always followed — `stat('/link')`
+    /// reported the target, `read_link('/link')` failed, and
+    /// `remove('/link', recursive=true)` could `remove_dir_all` the target
+    /// tree. Here we canonicalize only the parent, verify it stays under
+    /// root, then append the basename verbatim. The caller must then use
+    /// `symlink_metadata`/`read_link`/`remove_file` on the result.
+    fn resolve_no_follow(&self, vpath: &Path) -> std::io::Result<PathBuf> {
+        let normalized = normalize_vpath(vpath);
+        let relative = normalized.strip_prefix("/").unwrap_or(&normalized);
+
+        if relative == Path::new("") {
+            return Ok(self.root.clone());
+        }
+
+        let joined = self.root.join(relative);
+        let parent = joined
+            .parent()
+            .ok_or_else(|| IoError::new(ErrorKind::PermissionDenied, "path escapes realfs root"))?;
+        let file_name = joined
+            .file_name()
+            .ok_or_else(|| IoError::new(ErrorKind::InvalidInput, "path has no final component"))?;
+
+        let canon_parent = std::fs::canonicalize(parent)?;
+        if !canon_parent.starts_with(&self.root) {
+            return Err(IoError::new(
+                ErrorKind::PermissionDenied,
+                "path escapes realfs root",
+            ));
+        }
+
+        Ok(canon_parent.join(file_name))
+    }
+
     /// Check that the mode allows writes. Returns PermissionDenied if readonly.
     fn check_writable(&self) -> std::io::Result<()> {
         if self.mode == RealFsMode::ReadOnly {
@@ -351,9 +389,15 @@ impl FsBackend for RealFs {
 
     async fn remove(&self, path: &Path, recursive: bool) -> Result<()> {
         self.check_writable()?;
-        let real = self.resolve(path)?;
-        let meta = tokio::fs::metadata(&real).await?;
-        if meta.is_dir() {
+        // Issue #1578: use no-follow resolution + symlink_metadata so
+        // `remove('/link', recursive=true)` unlinks the symlink instead of
+        // recursively wiping its target.
+        let real = self.resolve_no_follow(path)?;
+        let meta = tokio::fs::symlink_metadata(&real).await?;
+        let ft = meta.file_type();
+        if ft.is_symlink() {
+            tokio::fs::remove_file(&real).await?;
+        } else if ft.is_dir() {
             if recursive {
                 tokio::fs::remove_dir_all(&real).await?;
             } else {
@@ -366,8 +410,9 @@ impl FsBackend for RealFs {
     }
 
     async fn stat(&self, path: &Path) -> Result<Metadata> {
-        let real = self.resolve(path)?;
-        // Use symlink_metadata to not follow symlinks
+        // Issue #1578: don't dereference a final symlink — stat must
+        // describe the link itself.
+        let real = self.resolve_no_follow(path)?;
         let meta = tokio::fs::symlink_metadata(&real).await?;
         Ok(metadata_from_std(&meta))
     }
@@ -480,7 +525,10 @@ impl FsBackend for RealFs {
     }
 
     async fn read_link(&self, path: &Path) -> Result<PathBuf> {
-        let real = self.resolve(path)?;
+        // Issue #1578: keep the link's basename intact so read_link
+        // reports the symlink's own target rather than failing on a
+        // canonicalized non-symlink path.
+        let real = self.resolve_no_follow(path)?;
         let target = tokio::fs::read_link(&real).await?;
         Ok(target)
     }
@@ -874,5 +922,88 @@ mod tests {
         let dbg = format!("{:?}", fs);
         assert!(dbg.contains("RealFs"));
         assert!(dbg.contains("ReadOnly"));
+    }
+
+    // --- Regression tests for issue #1578 ---
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stat_describes_symlink_not_target() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("target.txt"), b"target body").unwrap();
+        symlink("target.txt", root.path().join("link")).unwrap();
+
+        let fs = RealFs::new(root.path(), RealFsMode::ReadOnly).unwrap();
+        let meta = fs.stat(Path::new("/link")).await.unwrap();
+        assert!(
+            meta.file_type.is_symlink(),
+            "stat on a symlink must describe the link, not its target"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn read_link_returns_target_for_link_path() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("target.txt"), b"target body").unwrap();
+        symlink("target.txt", root.path().join("link")).unwrap();
+
+        let fs = RealFs::new(root.path(), RealFsMode::ReadOnly).unwrap();
+        let target = fs.read_link(Path::new("/link")).await.unwrap();
+        assert_eq!(target, PathBuf::from("target.txt"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn remove_unlinks_symlink_without_following() {
+        use std::os::unix::fs::symlink;
+
+        // Critical: with `recursive=true`, the previous implementation
+        // would `remove_dir_all` the *target* directory tree.
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("real_dir")).unwrap();
+        std::fs::write(root.path().join("real_dir/inside.txt"), b"keep").unwrap();
+        symlink("real_dir", root.path().join("dir_link")).unwrap();
+
+        let fs = RealFs::new(root.path(), RealFsMode::ReadWrite).unwrap();
+        fs.remove(Path::new("/dir_link"), true).await.unwrap();
+
+        // Symlink unlinked …
+        assert!(
+            !root.path().join("dir_link").is_symlink() && !root.path().join("dir_link").exists(),
+            "the dangling symlink should be gone"
+        );
+        // … but the target tree must still be intact.
+        assert!(
+            root.path().join("real_dir/inside.txt").exists(),
+            "remove(symlink, recursive=true) must NOT wipe the target tree (#1578)"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn remove_symlink_with_recursive_flag_outside_target_intact() {
+        use std::os::unix::fs::symlink;
+
+        // Even when the symlink points outside the realfs root, removing
+        // the link itself stays inside root and must not touch the target.
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("victim.txt"), b"important").unwrap();
+        symlink(outside.path(), root.path().join("escape_link")).unwrap();
+
+        let fs = RealFs::new(root.path(), RealFsMode::ReadWrite).unwrap();
+        // Removing the link itself should always succeed and never wipe the
+        // outside tree. (resolve_no_follow keeps the leaf in-root because
+        // only the parent is canonicalized.)
+        fs.remove(Path::new("/escape_link"), true).await.unwrap();
+        assert!(
+            outside.path().join("victim.txt").exists(),
+            "removing a symlink must never delete the target tree (#1578)"
+        );
     }
 }
