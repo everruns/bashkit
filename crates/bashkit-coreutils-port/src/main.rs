@@ -108,6 +108,14 @@ fn run(uutils_dir: &Path, util: &str, rev: &str) -> Result<String> {
         .ok_or_else(|| anyhow!("could not find `fn uu_app` in {}", src_path.display()))?
         .clone();
 
+    // Harvest `.env(...)` annotations BEFORE the rewriter strips them
+    // from the runtime Arg chain. Each entry becomes a row in the
+    // generated `<UTIL>_ENV_DEFAULTS` table that the bashkit-side shim
+    // (`builtins::clap_env::apply_env_defaults`) consults to fold
+    // bashkit's virtual `ctx.env` into clap parsing — never the host
+    // `std::env` (TM-INF-024).
+    let env_defaults = collect_env_defaults(&uu_app)?;
+
     let mut rw = Rewriter {
         translations,
         unresolved: vec![],
@@ -178,6 +186,43 @@ fn run(uutils_dir: &Path, util: &str, rev: &str) -> Result<String> {
         quote!()
     };
 
+    // `<UTIL>_ENV_DEFAULTS` table — the codegen-side half of the
+    // virtual-env shim. Always emitted (possibly empty) so every
+    // generated module exposes the same surface; bashkit-side
+    // builtins import it by name and feed it to
+    // `crate::builtins::clap_env::apply_env_defaults`.
+    let env_defaults_const_name = syn::Ident::new(
+        &format!("{}_ENV_DEFAULTS", util.to_uppercase()),
+        proc_macro2::Span::call_site(),
+    );
+    let env_defaults_rows: Vec<TokenStream> = env_defaults
+        .iter()
+        .map(|d| {
+            let arg_id = &d.arg_id;
+            let long = &d.long;
+            let env_var = LitStr::new(&d.env_var, proc_macro2::Span::call_site());
+            let kind_ident = syn::Ident::new(d.kind.as_str(), proc_macro2::Span::call_site());
+            quote! {
+                crate::builtins::clap_env::EnvDefault {
+                    arg_id: #arg_id,
+                    long: #long,
+                    env_var: #env_var,
+                    kind: crate::builtins::clap_env::EnvKind::#kind_ident,
+                }
+            }
+        })
+        .collect();
+    let env_defaults_tokens: TokenStream = quote! {
+        /// Sidecar harvest of every `Arg::env(...)` annotation the codegen
+        /// stripped from the runtime Arg chain (TM-INF-024). Consumed by
+        /// `crate::builtins::clap_env::apply_env_defaults` so bashkit's
+        /// virtual `ctx.env` — never `std::env` — drives clap's env-default
+        /// path. Order matches the chain order in the original `uu_app()`.
+        pub static #env_defaults_const_name: &[crate::builtins::clap_env::EnvDefault] = &[
+            #(#env_defaults_rows),*
+        ];
+    };
+
     let body: TokenStream = quote! {
         #![allow(unused_imports, dead_code)]
 
@@ -208,6 +253,8 @@ fn run(uutils_dir: &Path, util: &str, rev: &str) -> Result<String> {
         fn format_usage(s: &str) -> String {
             s.to_string()
         }
+
+        #env_defaults_tokens
 
         // Inlined free-function helpers referenced by `uu_app()` (e.g.
         // shuf's `parse_range` as a clap `value_parser`). Copied
@@ -267,6 +314,185 @@ fn parse_ftl(src: &str) -> HashMap<String, String> {
     }
     flush(&mut out, &mut current_key, &mut current_val);
     out
+}
+
+/// One row in the codegen's harvest of `Arg::env(...)` annotations.
+/// Carries token-stream-form expressions for `arg_id` and `long` so we
+/// can quote them straight back into the generated `<UTIL>_ENV_DEFAULTS`
+/// table without resolving constants — they evaluate to `&'static str`
+/// in the generated module's scope (uutils' `mod options` items are
+/// `pub static FOO: &str = "..."`).
+struct EnvDefaultMeta {
+    arg_id: TokenStream,
+    long: TokenStream,
+    env_var: String,
+    kind: EnvKindMeta,
+}
+
+#[derive(Clone, Copy)]
+enum EnvKindMeta {
+    Single,
+    Bool,
+    Multi,
+}
+
+impl EnvKindMeta {
+    fn as_str(self) -> &'static str {
+        match self {
+            EnvKindMeta::Single => "Single",
+            EnvKindMeta::Bool => "Bool",
+            EnvKindMeta::Multi => "Multi",
+        }
+    }
+}
+
+/// Walk `uu_app()` body, find every `.arg(<chain>)` whose `<chain>`
+/// contains `.env("VAR")`, and harvest one `EnvDefaultMeta` per chain.
+///
+/// Each chain is rooted at `Arg::new(<id_expr>)` — innermost receiver
+/// of the method-call stack. We extract:
+///   - `arg_id`: the expression `Arg::new` was called with.
+///   - `long`: the expression `.long(...)` was called with (required;
+///     bail if absent — every uutils env-bound option has `.long`).
+///   - `env_var`: the string literal `.env(...)` was called with.
+///   - `kind`: `Bool` if `.action(ArgAction::SetTrue|SetFalse)` is
+///     present, `Multi` if `.value_delimiter(...)` is present, else
+///     `Single` (the dominant case for uutils — `TIME_STYLE`,
+///     `TABSIZE`, `BLOCK_SIZE`, …).
+///
+/// Run BEFORE the rewriter mutates `uu_app`, while `.env(...)` is still
+/// in place. The rewriter then strips the call from the runtime chain.
+fn collect_env_defaults(uu_app: &ItemFn) -> Result<Vec<EnvDefaultMeta>> {
+    use syn::visit::{self, Visit};
+
+    struct Collector {
+        out: Vec<EnvDefaultMeta>,
+        errors: Vec<String>,
+    }
+    impl<'ast> Visit<'ast> for Collector {
+        fn visit_expr_method_call(&mut self, mc: &'ast syn::ExprMethodCall) {
+            // Match `.arg(<single-expr>)` — every Arg chain in
+            // `Command::new(...).arg(<chain>)…` shows up here.
+            if mc.method == "arg"
+                && mc.args.len() == 1
+                && let Some(arg_expr) = mc.args.first()
+                && let Some(meta) = parse_arg_chain_for_env(arg_expr, &mut self.errors)
+            {
+                self.out.push(meta);
+            }
+            visit::visit_expr_method_call(self, mc);
+        }
+    }
+
+    let mut c = Collector {
+        out: vec![],
+        errors: vec![],
+    };
+    c.visit_item_fn(uu_app);
+    if !c.errors.is_empty() {
+        bail!("env-default harvest errors: {}", c.errors.join("; "));
+    }
+    Ok(c.out)
+}
+
+/// For an `.arg(<expr>)` argument, walk the method-call chain and
+/// extract env-default metadata if `.env(...)` is present. Returns
+/// `None` for chains that don't carry a `.env(...)` annotation.
+fn parse_arg_chain_for_env(arg_expr: &Expr, errors: &mut Vec<String>) -> Option<EnvDefaultMeta> {
+    let mut node: &Expr = arg_expr;
+    let mut env_var: Option<String> = None;
+    let mut long: Option<TokenStream> = None;
+    let mut kind = EnvKindMeta::Single;
+
+    while let Expr::MethodCall(mc) = node {
+        let m = mc.method.to_string();
+        if m == "env" {
+            if let Some(Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Str(s),
+                ..
+            })) = mc.args.first()
+            {
+                env_var = Some(s.value());
+            } else {
+                errors.push(format!(
+                    "Arg::env(...) call with non-string-literal argument: {}",
+                    quote::quote!(#mc)
+                ));
+            }
+        } else if m == "long" && mc.args.len() == 1 {
+            let arg = &mc.args[0];
+            long = Some(quote!(#arg));
+        } else if m == "action"
+            && mc
+                .args
+                .first()
+                .is_some_and(expr_is_set_true_or_set_false_action)
+        {
+            kind = EnvKindMeta::Bool;
+        } else if m == "value_delimiter" {
+            kind = EnvKindMeta::Multi;
+        }
+        node = &mc.receiver;
+    }
+
+    // Bottom of the chain must be `Arg::new(<id_expr>)` — record the id.
+    let arg_id = match node {
+        Expr::Call(call) => {
+            if !path_ends_with_arg_new(&call.func) {
+                return None;
+            }
+            match call.args.first() {
+                Some(id_expr) => quote!(#id_expr),
+                None => {
+                    errors.push("Arg::new() with zero arguments".into());
+                    return None;
+                }
+            }
+        }
+        _ => return None,
+    };
+
+    let env_var = env_var?;
+    let long = match long {
+        Some(l) => l,
+        None => {
+            errors.push(format!(
+                "Arg with .env({env_var:?}) but no .long(...) — bashkit's \
+                 virtual-env shim needs a long flag to inject"
+            ));
+            return None;
+        }
+    };
+
+    Some(EnvDefaultMeta {
+        arg_id,
+        long,
+        env_var,
+        kind,
+    })
+}
+
+fn expr_is_set_true_or_set_false_action(expr: &Expr) -> bool {
+    let Expr::Path(p) = expr else {
+        return false;
+    };
+    let segs = path_segments(&p.path);
+    let last = segs.last().map(String::as_str).unwrap_or("");
+    matches!(last, "SetTrue" | "SetFalse")
+}
+
+fn path_ends_with_arg_new(func: &Expr) -> bool {
+    let Expr::Path(p) = func else {
+        return false;
+    };
+    let segs = path_segments(&p.path);
+    let last_two: Vec<&str> = segs
+        .iter()
+        .rev()
+        .take(2)
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    matches!(last_two.as_slice(), ["new", "Arg"])
 }
 
 /// Walk `uu_app()`'s body looking for plain identifier references

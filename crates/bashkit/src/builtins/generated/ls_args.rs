@@ -99,6 +99,25 @@ use options::*;
 fn format_usage(s: &str) -> String {
     s.to_string()
 }
+/// Sidecar harvest of every `Arg::env(...)` annotation the codegen
+/// stripped from `ls_command()` (TM-INF-024). Consumed by
+/// `crate::builtins::clap_env::apply_env_defaults` so bashkit's
+/// virtual `ctx.env` — never `std::env` — drives clap's env-default
+/// path. Order matches the chain order in the original `uu_app()`.
+pub static LS_ENV_DEFAULTS: &[crate::builtins::clap_env::EnvDefault] = &[
+    crate::builtins::clap_env::EnvDefault {
+        arg_id: options::format::TAB_SIZE,
+        long: options::format::TAB_SIZE,
+        env_var: "TABSIZE",
+        kind: crate::builtins::clap_env::EnvKind::Single,
+    },
+    crate::builtins::clap_env::EnvDefault {
+        arg_id: options::TIME_STYLE,
+        long: options::TIME_STYLE,
+        env_var: "TIME_STYLE",
+        kind: crate::builtins::clap_env::EnvKind::Single,
+    },
+];
 pub fn ls_command() -> Command {
     Command::new("ls")
         .version(env!("CARGO_PKG_VERSION"))
