@@ -214,10 +214,30 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
         .into_iter()
         .map(|(name, arity, run)| (name, arity, jaq_core::Native::<D>::new(run)))
         .collect();
+    // SECURITY (TM-INF-023, #1571): replace the upstream `halt` native.
+    // jaq-std's impl calls `std::process::exit(...)`, which would tear
+    // down the entire embedding process — a sandbox escape via DoS for
+    // any caller hosting bashkit. Strip it from the `funs` chain and add
+    // a safe stub so the wrapper defs in jaq-std's `defs.jq`
+    // (`def halt: halt(0);`, `def halt_error(...): ..., halt(...);`)
+    // still resolve, but produce a normal jq runtime error instead of
+    // killing the host.
+    let safe_halt_run: jaq_core::RunPtr<D> = |mut cv| {
+        let _ = cv.0.pop_var();
+        jaq_core::native::bome(Err(jaq_core::Error::str(
+            "halt is disabled in the bashkit sandbox",
+        )))
+    };
+    let safe_halt: jaq_core::native::Fun<D> = (
+        "halt",
+        jaq_core::native::v(1),
+        jaq_core::Native::<D>::new(safe_halt_run),
+    );
     let native_funs = jaq_core::funs::<D>()
         .chain(jaq_std::funs::<D>().filter(|(name, _, _)| {
-            *name != "env" && !regex_compat::SHADOWED_NATIVE_NAMES.contains(name)
+            *name != "env" && *name != "halt" && !regex_compat::SHADOWED_NATIVE_NAMES.contains(name)
         }))
+        .chain(std::iter::once(safe_halt))
         .chain(input_funs)
         .chain(regex_funs)
         .chain(jaq_json::funs::<D>());
