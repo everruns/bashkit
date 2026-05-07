@@ -307,7 +307,7 @@ impl Builtin for Sqlite {
             "sqlite/sqlite3: Embedded SQLite-compatible engine (Turso, BETA). \
              Usage: sqlite DB SQL... | sqlite DB <script | sqlite -separator , -header DB SELECT. \
              Dot-commands: .tables .schema .dump .headers .mode .separator .nullvalue .read .help. \
-             Supports :memory:. No ATTACH/DETACH. \
+             Supports :memory:. No ATTACH/DETACH/VACUUM. \
              Set BASHKIT_ALLOW_INPROCESS_SQLITE=1 to enable.",
         )
     }
@@ -771,6 +771,11 @@ async fn run_statements(
 ///   access would let scripts read/write VFS paths the operator did not
 ///   stage, and turso's ATTACH path interacts with the registry in ways
 ///   the `:memory:bashkit-N` isolation does not cover.
+/// * `VACUUM` (with or without `INTO`) is unconditionally rejected.
+///   `VACUUM INTO` opens the destination via turso's `PlatformIO`, which
+///   writes to the host filesystem and bypasses both `MemoryIO` and
+///   `BashkitVfsIO`. Plain `VACUUM` is denied for symmetry — there is no
+///   sandbox-safe way to express it today.
 /// * `PRAGMA <name>` is rejected when `<name>` (case-insensitive) is in
 ///   `limits.pragma_deny`. Defaults are listed in [`DEFAULT_PRAGMA_DENY`].
 fn check_sql_policy(sql: &str, limits: &SqliteLimits) -> std::result::Result<(), String> {
@@ -778,6 +783,11 @@ fn check_sql_policy(sql: &str, limits: &SqliteLimits) -> std::result::Result<(),
         Some("ATTACH") | Some("DETACH") => {
             return Err("ATTACH/DETACH is not supported in the bashkit sandbox; \
                  cross-database access bypasses VFS isolation"
+                .to_string());
+        }
+        Some("VACUUM") => {
+            return Err("VACUUM is not supported in the bashkit sandbox; \
+                 VACUUM INTO would write to the host filesystem outside the VFS"
                 .to_string());
         }
         _ => {}
