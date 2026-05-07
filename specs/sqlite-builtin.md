@@ -163,7 +163,7 @@ caller could legitimately call `bash.snapshot()`. Restore creates a
 fresh `Bash` with an empty cache; the first `sqlite` call re-opens
 the engine from the restored VFS bytes.
 
-### SQL policy: ATTACH / DETACH and PRAGMA deny list
+### SQL policy: ATTACH / DETACH / VACUUM and PRAGMA deny list
 
 Before each statement reaches turso, `check_sql_policy()` inspects the
 leading SQL keyword via the parser's lightweight tokeniser
@@ -174,6 +174,12 @@ leading SQL keyword via the parser's lightweight tokeniser
   the operator never staged for read/write, and on the VFS backend it
   would also build new `MemoryIO`/`VfsIO` state outside our
   `:memory:bashkit-N` registry isolation.
+- `VACUUM` (with or without `INTO`) is unconditionally rejected. In
+  turso's current implementation, `VACUUM INTO` opens the destination
+  file via `PlatformIO`, which writes to the host filesystem rather than
+  the configured `MemoryIO`/`BashkitVfsIO`, escaping the sandbox. Plain
+  `VACUUM` is denied for symmetry — there is no sandbox-safe way to
+  express it today.
 - `PRAGMA <name>` is checked against `SqliteLimits::pragma_deny` (case-
   insensitive, schema-prefix-aware so `PRAGMA main.cache_size` is also
   matched). Defaults block resource/FS-shaped knobs:
@@ -213,6 +219,7 @@ leading SQL keyword via the parser's lightweight tokeniser
 | TM-SQL-009    | Cross-database access via `ATTACH`/`DETACH`          | Policy rejects both keywords (case-insensitive, comment-aware); tested via `tm_sql_009` |
 | TM-SQL-010    | DoS / fingerprinting via dangerous PRAGMAs           | `SqliteLimits::pragma_deny` defaults block `cache_size`, `mmap_size`, `page_size`, `max_page_count`, `temp_store_directory`, `data_store_directory`, `compile_options`, `locking_mode`, `shared_cache`; parser handles comments plus quoted/schema-qualified names |
 | TM-SQL-011    | Information leakage via host-side error strings      | `sanitize()` strips ` at /…:N:M` annotations from turso errors          |
+| TM-SQL-012    | Sandbox escape via `VACUUM INTO` writing host files  | Policy rejects `VACUUM` (with/without `INTO`) at the keyword sniffer; tested via `vacuum_into_blocked`/`vacuum_plain_blocked`/`vacuum_blocked_with_leading_comment` |
 
 ## Test Plan
 

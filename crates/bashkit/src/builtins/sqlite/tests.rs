@@ -543,6 +543,34 @@ async fn attach_blocked_even_with_leading_comment() {
 }
 
 #[tokio::test]
+async fn vacuum_into_blocked() {
+    // Regression for #1572: `VACUUM INTO` lets turso open the destination
+    // file via PlatformIO, escaping the VFS sandbox to write host paths.
+    let r = run(&[":memory:", "VACUUM INTO '/tmp/escape.db'"], None).await;
+    assert_eq!(r.exit_code, 1, "stderr: {}", r.stderr);
+    assert!(
+        r.stderr.contains("VACUUM is not supported"),
+        "stderr was: {}",
+        r.stderr
+    );
+}
+
+#[tokio::test]
+async fn vacuum_plain_blocked() {
+    let r = run(&[":memory:", "VACUUM"], None).await;
+    assert_eq!(r.exit_code, 1, "stderr: {}", r.stderr);
+    assert!(r.stderr.contains("VACUUM is not supported"));
+}
+
+#[tokio::test]
+async fn vacuum_blocked_with_leading_comment() {
+    // The keyword-sniffer must skip leading comments before deciding.
+    let r = run(&[":memory:", "/* hi */ VACUUM INTO '/tmp/escape.db'"], None).await;
+    assert_eq!(r.exit_code, 1, "stderr: {}", r.stderr);
+    assert!(r.stderr.contains("VACUUM is not supported"));
+}
+
+#[tokio::test]
 async fn pragma_user_version_still_works() {
     // user_version isn't on the deny list — it must round-trip cleanly.
     let r = run(
