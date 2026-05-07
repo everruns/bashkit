@@ -1,11 +1,14 @@
 # bashkit-coreutils-port
 #
-# Port-time codegen tool: parses uutils/coreutils `uu_app()` definitions
-# and emits clean, dependency-free clap `Command` builders into
-# `crates/bashkit/src/builtins/generated/`.
+# Port-time codegen tool with two modes:
+# - args mode (default, positional CLI): rewrite a uutils `uu_app()` clap
+#   definition into a clean, dependency-free `<util>_args.rs`.
+# - module mode (`port-module` subcommand): vendor a uucore module
+#   verbatim into `crates/bashkit/src/builtins/generated/<out>/`, with a
+#   manifest (`vendored.toml`) declaring per-import substitution policy.
 #
 # Run manually when bumping the pinned uutils revision; output is committed.
-# See specs (TBD) — POC validating reuse of uutils argument interfaces.
+# See specs/coreutils-args-port.md for both modes.
 
 [package]
 name = "bashkit-coreutils-port"
@@ -14,7 +17,7 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "Port uutils/coreutils argument interfaces into bashkit at codegen time"
+description = "Port uutils/coreutils argument interfaces and platform-clean modules into bashkit at codegen time"
 publish = false
 
 [dependencies]
@@ -23,3 +26,8 @@ quote = "1"
 proc-macro2 = "1"
 prettyplease = "0.2"
 anyhow = { workspace = true }
+serde = { workspace = true }
+toml = "0.8"
+
+[dev-dependencies]
+tempfile = { workspace = true }
