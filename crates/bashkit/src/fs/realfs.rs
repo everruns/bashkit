@@ -229,6 +229,35 @@ impl RealFs {
         Ok(canon_parent.join(file_name))
     }
 
+    /// Resolve a virtual path for a *creating write* (write/append/copy
+    /// destination). Rejects paths whose final component is a symlink —
+    /// dangling or otherwise — so that the kernel cannot redirect the
+    /// open(2) to a target outside the mount root (issue #1575).
+    ///
+    /// `Path::exists()` follows symlinks and treats dangling links as
+    /// missing, so the standard `resolve()` fallback would happily produce
+    /// a host path whose leaf is still a symlink to outside the root.
+    /// `symlink_metadata` describes the link itself, catching that case.
+    fn resolve_for_create(&self, vpath: &Path) -> std::io::Result<PathBuf> {
+        let normalized = normalize_vpath(vpath);
+        let relative = normalized.strip_prefix("/").unwrap_or(&normalized);
+
+        if relative != Path::new("") {
+            let joined = self.root.join(relative);
+            if matches!(
+                std::fs::symlink_metadata(&joined),
+                Ok(m) if m.file_type().is_symlink()
+            ) {
+                return Err(IoError::new(
+                    ErrorKind::PermissionDenied,
+                    "refusing to create or write through a symlink (sandbox security)",
+                ));
+            }
+        }
+
+        self.resolve(vpath)
+    }
+
     /// Check that the mode allows writes. Returns PermissionDenied if readonly.
     fn check_writable(&self) -> std::io::Result<()> {
         if self.mode == RealFsMode::ReadOnly {
@@ -354,7 +383,10 @@ impl FsBackend for RealFs {
 
     async fn write(&self, path: &Path, content: &[u8]) -> Result<()> {
         self.check_writable()?;
-        let real = self.resolve(path)?;
+        // Issue #1575: refuse to follow a leaf symlink (dangling or
+        // otherwise) so the kernel can't be tricked into creating a file
+        // outside the mount root.
+        let real = self.resolve_for_create(path)?;
         if let Some(parent) = real.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
@@ -364,7 +396,8 @@ impl FsBackend for RealFs {
 
     async fn append(&self, path: &Path, content: &[u8]) -> Result<()> {
         self.check_writable()?;
-        let real = self.resolve(path)?;
+        // Issue #1575: same leaf-symlink rejection as write().
+        let real = self.resolve_for_create(path)?;
         use tokio::io::AsyncWriteExt;
         let mut file = tokio::fs::OpenOptions::new()
             .create(true)
@@ -450,7 +483,9 @@ impl FsBackend for RealFs {
     async fn copy(&self, from: &Path, to: &Path) -> Result<()> {
         self.check_writable()?;
         let real_from = self.resolve(from)?;
-        let real_to = self.resolve(to)?;
+        // Issue #1575: refuse to copy through a leaf symlink at the
+        // destination — that would let an attacker write outside root.
+        let real_to = self.resolve_for_create(to)?;
         tokio::fs::copy(&real_from, &real_to).await?;
         Ok(())
     }
@@ -913,6 +948,99 @@ mod tests {
             !root.path().join("escape-link").exists(),
             "must not create link when target escapes realfs root"
         );
+    }
+
+    // --- Regression tests for issue #1575 ---
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn write_through_dangling_symlink_to_outside_blocked() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let outside_target = outside.path().join("newfile.txt");
+        // Dangling symlink: target does not yet exist but its parent does,
+        // so a naive open(O_CREAT) would create outside the mount.
+        symlink(&outside_target, root.path().join("link")).unwrap();
+
+        let fs = RealFs::new(root.path(), RealFsMode::ReadWrite).unwrap();
+        let result = fs.write(Path::new("/link"), b"pwned").await;
+        assert!(
+            result.is_err(),
+            "write through dangling symlink must fail (#1575)"
+        );
+        assert!(
+            !outside_target.exists(),
+            "no file must be created outside the realfs root"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn append_through_leaf_symlink_blocked() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let outside_target = outside.path().join("appendme.txt");
+        symlink(&outside_target, root.path().join("link")).unwrap();
+
+        let fs = RealFs::new(root.path(), RealFsMode::ReadWrite).unwrap();
+        let result = fs.append(Path::new("/link"), b"x").await;
+        assert!(result.is_err(), "append through leaf symlink must fail");
+        assert!(!outside_target.exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn copy_to_leaf_symlink_blocked() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("src.txt"), b"src body").unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let outside_target = outside.path().join("escaped.txt");
+        symlink(&outside_target, root.path().join("dst")).unwrap();
+
+        let fs = RealFs::new(root.path(), RealFsMode::ReadWrite).unwrap();
+        let result = fs.copy(Path::new("/src.txt"), Path::new("/dst")).await;
+        assert!(result.is_err(), "copy through leaf symlink must fail");
+        assert!(!outside_target.exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn write_through_leaf_symlink_to_inside_root_also_blocked() {
+        // Conservative: even when the leaf symlink points inside root we
+        // refuse the write so attackers can't use a per-tenant link to
+        // overwrite a co-tenant file.
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("victim.txt"), b"original").unwrap();
+        symlink("victim.txt", root.path().join("link")).unwrap();
+
+        let fs = RealFs::new(root.path(), RealFsMode::ReadWrite).unwrap();
+        let result = fs.write(Path::new("/link"), b"new").await;
+        assert!(
+            result.is_err(),
+            "write through any leaf symlink must fail, even inside root"
+        );
+        assert_eq!(
+            std::fs::read(root.path().join("victim.txt")).unwrap(),
+            b"original",
+            "victim file must not be modified through the symlink"
+        );
+    }
+
+    #[tokio::test]
+    async fn write_to_plain_path_still_works() {
+        // Sanity: the leaf-symlink check must not break ordinary writes.
+        let dir = setup();
+        let fs = RealFs::new(dir.path(), RealFsMode::ReadWrite).unwrap();
+        fs.write(Path::new("/new.txt"), b"plain").await.unwrap();
+        assert_eq!(std::fs::read(dir.path().join("new.txt")).unwrap(), b"plain");
     }
 
     #[test]
