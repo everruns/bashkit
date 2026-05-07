@@ -78,13 +78,6 @@ Check current package docs for adapter names:
 - Vercel AI SDK adapter: `@everruns/bashkit/ai`
 - LangChain adapter: `@everruns/bashkit/langchain`
 
-## CLI MCP Server
-
-```bash
-bashkit mcp
-```
-
-Use this when the user wants to expose Bashkit to MCP-compatible clients.
 
 ## Reference
 

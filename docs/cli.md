@@ -68,9 +68,12 @@ Disable per-run:
 
 ## Execution limits
 
-All modes start from `ExecutionLimits::cli()` — counting-based limits are
-effectively unlimited, timeout is off (user has Ctrl-C). Memory guards
-(function depth, AST depth, parser fuel) stay on.
+Command and script modes start from sandboxed default execution limits:
+10,000 commands, 10,000 iterations per loop, 1,000,000 total loop iterations,
+and a 30 second execution timeout. Interactive mode uses
+`ExecutionLimits::cli()` so counting limits and the execution timeout are
+effectively unlimited while memory guards (function depth, AST depth, parser
+fuel) stay on.
 
 Override with:
 

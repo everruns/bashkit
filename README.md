@@ -23,7 +23,6 @@ Homepage: [bashkit.sh](https://bashkit.sh)
 - **LLM tool contract** - `BashTool` with discovery metadata, streaming output, and system prompts
 - **Snapshotting** - Serialize shell state and VFS contents for checkpoint/resume workflows
 - **Scripted tool orchestration** - Compose ToolDef+callback pairs into multi-tool bash scripts (`scripted_tool` feature)
-- **MCP server** - Model Context Protocol endpoint via `bashkit mcp`
 - **Async-first** - Built on tokio
 - **Language bindings** - Python (PyO3) and JavaScript/TypeScript (NAPI-RS) for Node.js, Bun, and Deno
 - **Experimental: Git support** - Virtual git operations on the virtual filesystem (`git` feature)
@@ -374,17 +373,15 @@ mountable.mount("/data", Arc::new(InMemoryFs::new()));
 
 ```bash
 # Run a script
-bashkit run script.sh
+bashkit script.sh
 
 # Interactive REPL
-bashkit repl
+bashkit
 
-# MCP server (Model Context Protocol)
-bashkit mcp
 
 # Mount real filesystem (read-only or read-write)
-bashkit run script.sh --mount-ro /data
-bashkit run script.sh --mount-rw /workspace
+bashkit --mount-ro /data script.sh
+bashkit --mount-rw /workspace script.sh
 ```
 
 ## Development
