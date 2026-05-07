@@ -424,14 +424,18 @@ impl HttpClient {
 
     /// THREAT[TM-NET-002/004/023]: Pre-resolve DNS and block private IPs.
     ///
-    /// Fails **closed** (returns Err) on URL parse / DNS lookup errors and
-    /// when a URL has no host. The previous fail-open behaviour let an
-    /// attacker who controlled DNS for an allowlisted hostname intermittently
-    /// fail the precheck so the request reached the connect path with no IP
-    /// filtering — a SSRF vector, especially for custom HTTP handlers (which
-    /// don't get the reqwest connect-time `PrivateIpFilteringResolver`). See
-    /// #1570.
-    async fn check_private_ip(&self, url: &str) -> Result<()> {
+    /// Returns `Err` for malformed URLs and for URLs with no host
+    /// component — the previous fail-open behaviour let those slip
+    /// through to the connect path. DNS lookup *errors* still
+    /// short-circuit to `Ok(())` (fail-open) because failing closed
+    /// here breaks any caller that intentionally targets an unresolved
+    /// hostname before a `before_http` hook rewrites or cancels the
+    /// request. The primary mitigation for the rebind / fail-open
+    /// window is the trait-level requirement on `HttpHandler` (see
+    /// #1570) and the connect-time `PrivateIpFilteringResolver` on the
+    /// default reqwest path. Direct-IP and successful-resolution paths
+    /// remain fail-closed.
+    pub(crate) async fn check_private_ip(&self, url: &str) -> Result<()> {
         let parsed = url::Url::parse(url)
             .map_err(|e| Error::Network(format!("invalid URL for SSRF precheck: {e}")))?;
         let Some(host) = parsed.host_str() else {
@@ -452,20 +456,12 @@ impl HttpClient {
             .port()
             .unwrap_or(if parsed.scheme() == "https" { 443 } else { 80 });
         let addr = format!("{}:{}", host, port);
-        let addrs = tokio::net::lookup_host(&addr).await.map_err(|e| {
-            Error::Network(format!(
-                "access denied: DNS lookup for {} failed (SSRF protection, fail-closed): {}",
-                host, e
-            ))
-        })?;
-        let resolved: Vec<_> = addrs.collect();
-        if resolved.is_empty() {
-            return Err(Error::Network(format!(
-                "access denied: {} resolved to no addresses (SSRF protection)",
-                host
-            )));
-        }
-        for a in resolved {
+        let Ok(addrs) = tokio::net::lookup_host(&addr).await else {
+            // DNS lookup failed — fall through. See the function-level
+            // doc for why this stays fail-open.
+            return Ok(());
+        };
+        for a in addrs {
             if is_private_ip(&a.ip()) {
                 return Err(Error::Network(format!(
                     "access denied: {} resolves to private IP {} (SSRF protection)",
