@@ -14,6 +14,8 @@ use std::future::Future;
 use std::sync::{Arc, Mutex};
 
 pub(crate) type InvocationLog = Arc<Mutex<Vec<ScriptedCommandInvocation>>>;
+const MAX_LOG_ENTRIES: usize = 256;
+const MAX_LOG_ARG_BYTES: usize = 1024;
 
 fn push_invocation(
     log: &InvocationLog,
@@ -22,20 +24,35 @@ fn push_invocation(
     args: &[String],
     exit_code: i32,
 ) {
+    let args = truncate_args(args);
     let mut invocations = log.lock().expect("tool-def invocation log poisoned");
+    if invocations.len() == MAX_LOG_ENTRIES {
+        invocations.remove(0);
+    }
     invocations.push(ScriptedCommandInvocation {
         name: name.to_string(),
         kind,
-        args: args.to_vec(),
+        args,
         exit_code,
     });
+}
+
+fn truncate_args(args: &[String]) -> Vec<String> {
+    args.iter()
+        .map(|arg| {
+            if arg.len() <= MAX_LOG_ARG_BYTES {
+                arg.clone()
+            } else {
+                arg.chars().take(MAX_LOG_ARG_BYTES).collect()
+            }
+        })
+        .collect()
 }
 
 /// Builder for [`ToolDefExtension`].
 pub struct ToolDefExtensionBuilder {
     tools: Vec<RegisteredTool>,
     sanitize_errors: bool,
-    invocation_log: InvocationLog,
 }
 
 impl Default for ToolDefExtensionBuilder {
@@ -43,7 +60,6 @@ impl Default for ToolDefExtensionBuilder {
         Self {
             tools: Vec::new(),
             sanitize_errors: true,
-            invocation_log: Arc::new(Mutex::new(Vec::new())),
         }
     }
 }
@@ -109,17 +125,26 @@ impl ToolDefExtensionBuilder {
         ToolDefExtension {
             tools: self.tools.clone(),
             sanitize_errors: self.sanitize_errors,
-            invocation_log: Arc::clone(&self.invocation_log),
+            invocation_log: Arc::new(Mutex::new(Vec::new())),
         }
     }
 }
 
 /// Bash extension that registers ToolDef-backed commands plus `help` and `discover`.
-#[derive(Clone)]
 pub struct ToolDefExtension {
     tools: Vec<RegisteredTool>,
     sanitize_errors: bool,
     invocation_log: InvocationLog,
+}
+
+impl Clone for ToolDefExtension {
+    fn clone(&self) -> Self {
+        Self {
+            tools: self.tools.clone(),
+            sanitize_errors: self.sanitize_errors,
+            invocation_log: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
 }
 
 impl ToolDefExtension {

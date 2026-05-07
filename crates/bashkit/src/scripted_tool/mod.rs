@@ -1470,6 +1470,50 @@ mod tests {
         assert!(result.stdout.contains(r#""id":7"#));
     }
 
+    #[tokio::test]
+    async fn test_tool_def_extension_clones_do_not_share_invocations() {
+        let extension = ToolDefExtension::builder()
+            .tool_fn(ToolDef::new("echo_arg", "Echo"), |args: &ToolArgs| {
+                Ok(format!("{}\n", args.param_str("msg").unwrap_or_default()))
+            })
+            .build();
+        let extension_clone = extension.clone();
+
+        let mut bash_a = crate::Bash::builder().extension(extension).build();
+        let mut bash_b = crate::Bash::builder().extension(extension_clone.clone()).build();
+        bash_a
+            .exec("echo_arg --msg alpha")
+            .await
+            .expect("bash a should execute");
+        bash_b
+            .exec("echo_arg --msg beta")
+            .await
+            .expect("bash b should execute");
+
+        let trace_b = extension_clone.take_invocations();
+        assert_eq!(trace_b.len(), 1);
+        assert_eq!(trace_b[0].args, vec!["--msg".to_string(), "beta".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn test_tool_def_extension_invocations_are_bounded_and_truncated() {
+        let extension = ToolDefExtension::builder()
+            .tool_fn(ToolDef::new("noop", "No-op"), |_args: &ToolArgs| Ok("ok\n".to_string()))
+            .build();
+        let extension_handle = extension.clone();
+        let mut bash = crate::Bash::builder().extension(extension).build();
+
+        for i in 0..300 {
+            let cmd = format!("noop --msg {}", "x".repeat(1500));
+            bash.exec(&cmd).await.expect("noop should execute");
+            if i == 299 {
+                let trace = extension_handle.take_invocations();
+                assert_eq!(trace.len(), 256);
+                assert_eq!(trace[0].args[1].len(), 1024);
+            }
+        }
+    }
+
     // -- Issue #1278: --help flag tests --
 
     #[tokio::test]
