@@ -6,10 +6,14 @@
 // Original uutils licensed MIT; see THIRD_PARTY_LICENSES.
 
 #![allow(unused_imports, dead_code)]
-use clap::builder::{NonEmptyStringValueParser, PossibleValue, PossibleValuesParser, ValueParser};
+use clap::builder::{
+    NonEmptyStringValueParser, PossibleValue, PossibleValuesParser, TypedValueParser, ValueParser,
+    ValueParserFactory,
+};
 use clap::{Arg, ArgAction, Command};
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::ops::RangeInclusive;
+use std::path::PathBuf;
 use std::str::FromStr;
 pub mod options {
     pub mod format {
@@ -100,21 +104,21 @@ fn format_usage(s: &str) -> String {
     s.to_string()
 }
 /// Sidecar harvest of every `Arg::env(...)` annotation the codegen
-/// stripped from `ls_command()` (TM-INF-024). Consumed by
+/// stripped from the runtime Arg chain (TM-INF-024). Consumed by
 /// `crate::builtins::clap_env::apply_env_defaults` so bashkit's
 /// virtual `ctx.env` — never `std::env` — drives clap's env-default
 /// path. Order matches the chain order in the original `uu_app()`.
 pub static LS_ENV_DEFAULTS: &[crate::builtins::clap_env::EnvDefault] = &[
     crate::builtins::clap_env::EnvDefault {
-        arg_id: options::format::TAB_SIZE,
-        long: options::format::TAB_SIZE,
-        env_var: "TABSIZE",
-        kind: crate::builtins::clap_env::EnvKind::Single,
-    },
-    crate::builtins::clap_env::EnvDefault {
         arg_id: options::TIME_STYLE,
         long: options::TIME_STYLE,
         env_var: "TIME_STYLE",
+        kind: crate::builtins::clap_env::EnvKind::Single,
+    },
+    crate::builtins::clap_env::EnvDefault {
+        arg_id: options::format::TAB_SIZE,
+        long: options::format::TAB_SIZE,
+        env_var: "TABSIZE",
         kind: crate::builtins::clap_env::EnvKind::Single,
     },
 ];

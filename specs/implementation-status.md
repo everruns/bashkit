@@ -197,7 +197,9 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language.
 | parse-errors.test.sh | 18 | syntax error detection (4 skipped) |
 | paste-flags.test.sh | 3 | paste combined short flags |
 | paste.test.sh | 4 | line merging with `-s` serial and `-d` delimiter |
-| path.test.sh | 18 | basename, dirname, `realpath` canonical path resolution |
+| od.test.sh | 6 | `od -An`/`-tx1`/`-j`/`-N`/`-w`, codegen-ported args, unknown-flag rejection |
+| path.test.sh | 18 | basename, dirname, `realpath` canonical path resolution (codegen-ported args; clap-vs-GNU exit-code divergence on `realpath` with no args annotated as `### bash_diff`) |
+| mktemp.test.sh | 5 | codegen-ported args, default file/`-d` directory, `-u`/`--dry-run`, custom template, unknown-flag rejection |
 | pipes-redirects.test.sh | 26 | includes stderr redirects |
 | printenv.test.sh | 2 | printenv builtin |
 | printf.test.sh | 32 | format specifiers, array expansion, `-v` variable assignment, `%q` shell quoting |
@@ -216,13 +218,13 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language.
 | sleep.test.sh | 9 | sleep timing |
 | sortuniq.test.sh | 49 | sort `-f`/`-n`/`-r`/`-u`/`-V`/`-t`/`-k`/`-s`/`-c`/`-h`/`-M`/`-m`/`-z`/`-o`, uniq `-c`/`-d`/`-u`/`-i`/`-f` |
 | source.test.sh | 19 | source/., function loading, PATH search, positional params |
-| stat.test.sh | 7 | stat file information |
+| stat.test.sh | 10 | stat file information; codegen-ported args; `--file-system` surfaces VFS divergence; clap-vs-GNU exit-code differences on `--no-such-flag` and `-c` without value annotated as `### bash_diff` |
 | string-ops.test.sh | 14 | string replacement (prefix/suffix anchored), `${var:?}`, case conversion |
 | strings.test.sh | 6 | strings extraction |
 | subprocess-isolation.test.sh | 8 | subprocess variable isolation |
 | subshell.test.sh | 14 | subshell execution |
 | tar.test.sh | 8 | tar archive operations |
-| tee.test.sh | 6 | tee output splitting |
+| tee.test.sh | 8 | tee output splitting, codegen-ported args, `-i`/`-p` accepted (no-op in VFS), unknown-flag rejection annotated as `### bash_diff` |
 | temp-binding.test.sh | 10 | temporary variable bindings `VAR=val cmd` |
 | test-operators.test.sh | 29 | file/string tests, `-nt`/`-ot`/`-ef` file comparisons |
 | test-tty.test.sh | 5 | tty detection tests |

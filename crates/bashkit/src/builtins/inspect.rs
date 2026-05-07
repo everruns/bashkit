@@ -237,50 +237,69 @@ fn determine_file_content_type(content: &[u8]) -> String {
 /// Usage: stat [-c FORMAT] FILE...
 ///
 /// Options:
-///   -c FORMAT   Use specified format instead of default
-///
-/// Format sequences:
+/// Format sequences (default `-c FORMAT` token expansion):
 ///   %n   File name
 ///   %s   Size in bytes
 ///   %a   Octal permissions
 ///   %A   Human-readable permissions
 ///   %F   File type
+///   %y   Last-modified timestamp (per VFS metadata, when available)
+///
+/// Argument surface is generated from uutils/coreutils' `uu_app()` via
+/// the `bashkit-coreutils-port` codegen tool — see
+/// `generated/stat_args.rs`. Behaviour is implemented locally against
+/// the bashkit VFS. Host-only fields (`%u`/`%U`/`%g`/`%G`) read from
+/// bashkit's username/hostname env per the existing convention;
+/// unsupported tokens are echoed verbatim.
 pub struct Stat;
 
 #[async_trait]
 impl Builtin for Stat {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        if let Some(r) = super::check_help_version(
-            ctx.args,
-            "Usage: stat [OPTION]... FILE...\nDisplay file status.\n\n  -c FORMAT, --format FORMAT\tuse specified format\n    %n\tfile name\n    %s\tsize in bytes\n    %a\toctal permissions\n    %A\thuman-readable permissions\n    %F\tfile type\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
-            Some("stat (bashkit) 0.1"),
-        ) {
-            return Ok(r);
-        }
-        let mut format: Option<String> = None;
-        let mut files: Vec<&String> = Vec::new();
+        use super::generated::stat_args::stat_command;
+        use std::ffi::OsString;
 
-        // Parse arguments
-        let mut i = 0;
-        while i < ctx.args.len() {
-            let arg = &ctx.args[i];
-            if arg == "-c" || arg == "--format" {
-                i += 1;
-                if i >= ctx.args.len() {
-                    return Ok(ExecResult::err(
-                        "stat: missing argument to '-c'\n".to_string(),
-                        1,
-                    ));
+        let argv: Vec<OsString> = std::iter::once(OsString::from("stat"))
+            .chain(ctx.args.iter().map(OsString::from))
+            .collect();
+
+        let cmd = stat_command().help_template("Usage: {usage}\n{about}\n\n{all-args}\n");
+        let matches = match cmd.try_get_matches_from(argv) {
+            Ok(m) => m,
+            Err(e) => {
+                let kind = e.kind();
+                let rendered = e.render().to_string();
+                if matches!(
+                    kind,
+                    clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion
+                ) {
+                    return Ok(ExecResult::ok(rendered));
                 }
-                format = Some(ctx.args[i].clone());
-            } else if let Some(fmt) = arg.strip_prefix("-c") {
-                // -cFORMAT (no space)
-                format = Some(fmt.to_string());
-            } else if !arg.starts_with('-') {
-                files.push(arg);
+                return Ok(ExecResult::err(rendered, 2));
             }
-            i += 1;
+        };
+
+        // -f/--file-system is not supported in bashkit's VFS (no
+        // per-mount block stats). Surface the divergence rather than
+        // pretending to honour it.
+        if matches.get_flag("file-system") {
+            return Ok(ExecResult::err(
+                "stat: --file-system not supported in bashkit's VFS\n".to_string(),
+                1,
+            ));
         }
+        let _ = matches.get_flag("dereference");
+        let _ = matches.get_flag("terse");
+
+        let format = matches
+            .get_one::<String>("format")
+            .or_else(|| matches.get_one::<String>("printf"))
+            .cloned();
+
+        let files: Vec<String> = matches
+            .get_many::<OsString>("files")
+            .map(|vs| vs.map(|v| v.to_string_lossy().into_owned()).collect())
+            .unwrap_or_default();
 
         if files.is_empty() {
             return Ok(ExecResult::err("stat: missing operand\n".to_string(), 1));
@@ -288,7 +307,7 @@ impl Builtin for Stat {
 
         let mut output = String::new();
 
-        for file in files {
+        for file in &files {
             let path = resolve_path(ctx.cwd, file);
 
             if !ctx.fs.exists(&path).await.unwrap_or(false) {
@@ -304,7 +323,6 @@ impl Builtin for Stat {
                 output.push_str(&format_stat(file, &metadata, fmt));
                 output.push('\n');
             } else {
-                // Default format
                 output.push_str(&default_stat_format(file, &metadata));
             }
         }
@@ -1034,8 +1052,17 @@ mod tests {
         };
 
         let result = Stat.execute(ctx).await.unwrap();
-        assert_eq!(result.exit_code, 1);
-        assert!(result.stderr.contains("missing argument"));
+        // `-c` without a value: clap reports exit code 2 (its own
+        // "argument requires a value" diagnostic), where GNU stat
+        // exits 1. Documented as a clap-vs-GNU divergence in the
+        // matching spec test (`tests/spec_cases/bash/stat.test.sh`).
+        assert_eq!(result.exit_code, 2);
+        assert!(
+            result.stderr.contains("a value is required")
+                || result.stderr.contains("missing argument"),
+            "expected clap or GNU diagnostic in stderr, got: {}", // debug-ok: assert-failure context
+            result.stderr
+        );
     }
 
     // ==================== content type tests ====================

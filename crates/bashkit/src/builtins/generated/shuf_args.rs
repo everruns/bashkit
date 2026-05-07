@@ -6,10 +6,14 @@
 // Original uutils licensed MIT; see THIRD_PARTY_LICENSES.
 
 #![allow(unused_imports, dead_code)]
-use clap::builder::{NonEmptyStringValueParser, PossibleValue, PossibleValuesParser, ValueParser};
+use clap::builder::{
+    NonEmptyStringValueParser, PossibleValue, PossibleValuesParser, TypedValueParser, ValueParser,
+    ValueParserFactory,
+};
 use clap::{Arg, ArgAction, Command};
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::ops::RangeInclusive;
+use std::path::PathBuf;
 use std::str::FromStr;
 mod options {
     pub static ECHO: &str = "echo";
@@ -33,9 +37,10 @@ fn format_usage(s: &str) -> String {
     s.to_string()
 }
 /// Sidecar harvest of every `Arg::env(...)` annotation the codegen
-/// stripped from the runtime Arg chain (TM-INF-024). Empty for utils
-/// whose `uu_app()` has no `.env(...)` calls; emitted unconditionally
-/// so the bashkit-side surface is uniform.
+/// stripped from the runtime Arg chain (TM-INF-024). Consumed by
+/// `crate::builtins::clap_env::apply_env_defaults` so bashkit's
+/// virtual `ctx.env` — never `std::env` — drives clap's env-default
+/// path. Order matches the chain order in the original `uu_app()`.
 pub static SHUF_ENV_DEFAULTS: &[crate::builtins::clap_env::EnvDefault] = &[];
 fn parse_range(input_range: &str) -> Result<RangeInclusive<u64>, String> {
     if let Some((from, to)) = input_range.split_once('-') {

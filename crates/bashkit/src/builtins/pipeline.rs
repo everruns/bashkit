@@ -198,41 +198,62 @@ impl Builtin for Xargs {
 /// Usage: tee [-a] [FILE...]
 ///
 /// Options:
-///   -a   Append to files instead of overwriting
+///   -a, --append              Append to files instead of overwriting
+///   -i, --ignore-interrupts   No-op in bashkit's virtual mode (no signals)
+///   -p                        Diagnose only non-pipe write errors
+///   --output-error[=MODE]     Set write-error behavior (parsed but reduced
+///                              to bashkit's all-or-nothing VFS write model)
+///
+/// Argument surface is generated from uutils/coreutils' `uu_app()` via
+/// the `bashkit-coreutils-port` codegen tool — see
+/// `generated/tee_args.rs`. Behaviour is implemented locally against
+/// the bashkit VFS.
 pub struct Tee;
 
 #[async_trait]
 impl Builtin for Tee {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        if let Some(r) = super::check_help_version(
-            ctx.args,
-            "Usage: tee [OPTION]... [FILE]...\nRead from standard input and write to standard output and files.\n\n  -a, --append\tappend to files instead of overwriting\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
-            Some("tee (bashkit) 0.1"),
-        ) {
-            return Ok(r);
-        }
-        let mut append = false;
-        let mut files: Vec<String> = Vec::new();
+        use super::generated::tee_args::tee_command;
+        use std::ffi::OsString;
 
-        // Parse arguments
-        for arg in ctx.args {
-            if arg == "-a" || arg == "--append" {
-                append = true;
-            } else if arg.starts_with('-') && arg != "-" {
-                return Ok(ExecResult::err(
-                    format!("tee: invalid option -- '{}'\n", &arg[1..]),
-                    1,
-                ));
-            } else {
-                files.push(arg.clone());
+        let argv: Vec<OsString> = std::iter::once(OsString::from("tee"))
+            .chain(ctx.args.iter().map(OsString::from))
+            .collect();
+
+        let cmd = tee_command().help_template("Usage: {usage}\n{about}\n\n{all-args}\n");
+        let matches = match cmd.try_get_matches_from(argv) {
+            Ok(m) => m,
+            Err(e) => {
+                let kind = e.kind();
+                let rendered = e.render().to_string();
+                if matches!(
+                    kind,
+                    clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion
+                ) {
+                    return Ok(ExecResult::ok(rendered));
+                }
+                return Ok(ExecResult::err(rendered, 2));
             }
-        }
+        };
 
-        // Read from stdin
+        let append = matches.get_flag("append");
+        // -i/--ignore-interrupts and -p are accepted but irrelevant in
+        // bashkit: there are no signals and no pipe errors in the VFS
+        // write model. Read them so clap counts them as consumed.
+        let _ = matches.get_flag("ignore-interrupts");
+        let _ = matches.get_flag("ignore-pipe-errors");
+        let _ = matches.get_one::<String>("output-error");
+
+        let files: Vec<String> = matches
+            .get_many::<OsString>("file")
+            .map(|vs| vs.map(|v| v.to_string_lossy().into_owned()).collect())
+            .unwrap_or_default();
+
         let input = ctx.stdin.unwrap_or("");
 
-        // Write to each file
         for file in &files {
+            // tee(1): "If a FILE is -, it refers to a file named - ."
+            // The codegen output documents the same in `after_help`.
             let path = resolve_path(ctx.cwd, file);
 
             if append {
@@ -242,7 +263,6 @@ impl Builtin for Tee {
             }
         }
 
-        // Output to stdout as well
         Ok(ExecResult::ok(input.to_string()))
     }
 }
@@ -761,8 +781,15 @@ mod tests {
         };
 
         let result = Tee.execute(ctx).await.unwrap();
-        assert_eq!(result.exit_code, 1);
-        assert!(result.stderr.contains("invalid option"));
+        // Unknown flag: clap returns exit code 2 with its own
+        // "unexpected argument" diagnostic. GNU coreutils' tee exits
+        // 1 with "invalid option". The clap-vs-GNU divergence is
+        // documented in `tests/spec_cases/bash/tee.test.sh`.
+        assert_eq!(result.exit_code, 2);
+        assert!(
+            result.stderr.contains("unexpected argument")
+                || result.stderr.contains("invalid option")
+        );
     }
 
     // ==================== watch tests ====================
