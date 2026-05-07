@@ -1,13 +1,11 @@
 // Decision: keep network default-deny in CLI mode. --http-allow-all is explicit
 // opt-in for trusted scripts only; --no-http remains for symmetry with other
 // feature toggles.
-// Decision: keep one-shot CLI on a current-thread runtime; reserve multi-thread
-// runtime for MCP only so cold-start work stays off the common path.
+// Decision: keep one-shot CLI on a current-thread runtime for lower cold-start.
 // Decision: interactive mode uses relaxed execution limits (ExecutionLimits::cli())
 // because users have terminal control (Ctrl-C) and expect long-running sessions.
 // One-shot command/script mode uses sandboxed defaults unless explicitly overridden
 // by flags to avoid unbounded hangs for wrapper/automation usage.
-// MCP mode keeps the sandboxed defaults since requests come from LLM agents.
 // Decision: interactive mode uses rustyline for line editing — lightweight, MIT,
 // no heavy deps (no SQLite, no crossterm). Multiline via parse error detection.
 // See specs/interactive-shell.md
@@ -19,15 +17,13 @@
 //! Usage:
 //!   bashkit -c 'echo hello'        # Execute a command string
 //!   bashkit script.sh              # Execute a script file
-//!   bashkit mcp                    # Run as MCP server
 //!   bashkit                        # Interactive REPL
 
 #[cfg(feature = "interactive")]
 mod interactive;
-mod mcp;
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use std::path::PathBuf;
 use tokio::runtime::Builder;
 
@@ -96,39 +92,25 @@ struct Args {
     #[cfg_attr(feature = "realfs", arg(long, value_name = "PATH"))]
     mount_rw: Vec<String>,
 
-    /// Maximum number of commands to execute (unlimited for CLI, 10000 for MCP)
+    /// Maximum number of commands to execute (unlimited for interactive mode)
     #[arg(long)]
     max_commands: Option<usize>,
 
-    /// Maximum iterations for a single loop (unlimited for CLI, 10000 for MCP)
+    /// Maximum iterations for a single loop (unlimited for interactive mode)
     #[arg(long)]
     max_loop_iterations: Option<usize>,
 
-    /// Maximum total loop iterations across all loops (unlimited for CLI, 1000000 for MCP)
+    /// Maximum total loop iterations across all loops (unlimited for interactive mode)
     #[arg(long)]
     max_total_loop_iterations: Option<usize>,
 
-    /// Execution timeout in seconds (unlimited for CLI, 30 for MCP)
+    /// Execution timeout in seconds (unlimited for interactive mode)
     #[arg(long)]
     timeout: Option<u64>,
-
-    #[command(subcommand)]
-    subcommand: Option<SubCmd>,
-}
-
-#[derive(Subcommand, Debug)]
-enum SubCmd {
-    /// Run as MCP (Model Context Protocol) server
-    Mcp {
-        /// Maximum tool call requests per minute (0 = unlimited)
-        #[arg(long, default_value_t = 0)]
-        max_requests_per_minute: u32,
-    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CliMode {
-    Mcp,
     Command,
     Script,
     Interactive,
@@ -170,20 +152,10 @@ fn configure_bash(args: &Args, mode: CliMode) -> bashkit::BashBuilder {
 
     #[cfg(feature = "realfs")]
     {
-        // THREAT[TM-ESC-030]: Warn when --mount-rw is used in MCP mode — LLM agents
-        // get read-write access to the host filesystem, breaking the sandbox boundary.
-        if mode == CliMode::Mcp && !args.mount_rw.is_empty() {
-            eprintln!(
-                "WARNING: --mount-rw in MCP mode gives LLM agents read-write access to host files."
-            );
-            eprintln!(
-                "         This breaks the sandbox boundary. Use --mount-ro for safer access."
-            );
-        }
         builder = apply_real_mounts(builder, &args.mount_ro, &args.mount_rw);
     }
 
-    // Interactive mode uses relaxed limits; MCP/one-shot keep sandboxed defaults.
+    // Interactive mode uses relaxed limits; one-shot keeps sandboxed defaults.
     let mut limits = if mode == CliMode::Interactive {
         bashkit::ExecutionLimits::cli()
     } else {
@@ -216,9 +188,7 @@ fn configure_bash(args: &Args, mode: CliMode) -> bashkit::BashBuilder {
 }
 
 fn cli_mode(args: &Args) -> CliMode {
-    if matches!(args.subcommand, Some(SubCmd::Mcp { .. })) {
-        CliMode::Mcp
-    } else if args.command.is_some() {
+    if args.command.is_some() {
         CliMode::Command
     } else if args.script.is_some() {
         CliMode::Script
@@ -276,7 +246,6 @@ fn main() -> Result<()> {
 
     let mode = cli_mode(&args);
     match mode {
-        CliMode::Mcp => run_mcp(args, mode),
         CliMode::Command | CliMode::Script => {
             let output = run_oneshot(args, mode)?;
             print!("{}", output.stdout);
@@ -322,23 +291,6 @@ fn run_interactive(args: Args, mode: CliMode) -> Result<i32> {
         .build()
         .context("Failed to build interactive runtime")?
         .block_on(interactive::run(bash, exit_state))
-}
-
-fn run_mcp(args: Args, mode: CliMode) -> Result<()> {
-    let max_rpm = match &args.subcommand {
-        Some(SubCmd::Mcp {
-            max_requests_per_minute,
-        }) => *max_requests_per_minute,
-        _ => 0,
-    };
-    Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .context("Failed to build MCP runtime")?
-        .block_on(mcp::run_with_rate_limit(
-            move || build_bash(&args, mode),
-            max_rpm,
-        ))
 }
 
 fn run_oneshot(args: Args, mode: CliMode) -> Result<RunOutput> {
@@ -412,12 +364,6 @@ mod tests {
         let args = Args::parse_from(["bashkit", "--http-allow-all", "-c", "curl --help"]);
         assert!(args.http_allow_all);
         assert!(!args.no_http);
-    }
-
-    #[test]
-    fn cli_mode_prefers_mcp() {
-        let args = Args::parse_from(["bashkit", "mcp"]);
-        assert_eq!(cli_mode(&args), CliMode::Mcp);
     }
 
     #[test]
@@ -609,27 +555,6 @@ mod tests {
     }
 
     #[cfg(feature = "realfs")]
-    #[test]
-    fn mount_rw_mcp_mode_emits_warning() {
-        // THREAT[TM-ESC-030]: Verify warning is emitted when --mount-rw is used with MCP mode.
-        let args = Args::parse_from(["bashkit", "--mount-rw", "/tmp", "mcp"]);
-        assert_eq!(cli_mode(&args), CliMode::Mcp);
-        assert!(!args.mount_rw.is_empty());
-        // configure_bash emits the warning to stderr; verify it doesn't panic
-        // and the builder still succeeds (mounts are still applied).
-        let _builder = configure_bash(&args, CliMode::Mcp);
-    }
-
-    #[cfg(feature = "realfs")]
-    #[test]
-    fn mount_ro_mcp_mode_no_warning() {
-        // Read-only mounts in MCP mode should not trigger a warning.
-        let args = Args::parse_from(["bashkit", "--mount-ro", "/tmp", "mcp"]);
-        assert_eq!(cli_mode(&args), CliMode::Mcp);
-        assert!(args.mount_rw.is_empty());
-        let _builder = configure_bash(&args, CliMode::Mcp);
-    }
-
     #[test]
     fn panic_message_str_payload() {
         let msg = format_panic_message(&"something went wrong" as &dyn std::any::Any);

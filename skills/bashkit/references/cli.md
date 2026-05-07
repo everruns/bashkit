@@ -69,13 +69,3 @@ bashkit --no-python -c 'python3 -c "print(1)"'
 bashkit --no-sqlite -c "sqlite :memory: 'SELECT 1'"
 bashkit --max-commands 1000 --timeout 5 ./untrusted.sh
 ```
-
-## MCP Server
-
-Run Bashkit as a Model Context Protocol server:
-
-```bash
-bashkit mcp
-```
-
-Check current CLI docs before giving MCP flags beyond the command name.
