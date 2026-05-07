@@ -1238,6 +1238,52 @@ async fn double_dash_separator() {
 }
 
 // =========================================================================
+// Security: jq filters must not terminate the host process (#1571)
+// =========================================================================
+
+#[tokio::test]
+async fn halt_does_not_terminate_host_process() {
+    // Regression for #1571: the upstream `halt` native calls
+    // `std::process::exit(...)`, which would tear down the embedding
+    // process. We strip it from the funs chain; calling `halt` therefore
+    // surfaces as an ordinary jq compile/runtime error rather than process
+    // termination.
+    //
+    // The test reaching the assertion at all proves the host wasn't killed.
+    let result = run_jq_result("halt", r#"{}"#).await.unwrap();
+    assert_ne!(
+        result.exit_code, 0,
+        "halt should fail safely; stdout={:?} stderr={:?}",
+        result.stdout, result.stderr
+    );
+}
+
+#[tokio::test]
+async fn halt_with_arg_does_not_terminate_host_process() {
+    // Regression for #1571: the explicit-arity form `halt(N)` must also
+    // be neutered, not just the wrapper-def `halt`.
+    let result = run_jq_result("halt(7)", r#"{}"#).await.unwrap();
+    assert_ne!(
+        result.exit_code, 0,
+        "halt(7) should fail safely; stdout={:?} stderr={:?}",
+        result.stdout, result.stderr
+    );
+}
+
+#[tokio::test]
+async fn halt_error_does_not_terminate_host_process() {
+    // Regression for #1571: `halt_error` is a jq-syntax def in jaq-std
+    // that ultimately calls `halt(...)`. Stripping the native makes the
+    // whole family fail closed.
+    let result = run_jq_result("halt_error", r#""boom""#).await.unwrap();
+    assert_ne!(
+        result.exit_code, 0,
+        "halt_error should fail safely; stdout={:?} stderr={:?}",
+        result.stdout, result.stderr
+    );
+}
+
+// =========================================================================
 // Differential tests vs real jq binary (when present in $PATH)
 // =========================================================================
 
