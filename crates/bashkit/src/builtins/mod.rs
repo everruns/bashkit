@@ -1106,6 +1106,47 @@ mod tests {
         );
     }
 
+    /// TM-INF-024: clap `Arg::env(...)` reads defaults from the real
+    /// process environment. uutils ships `.env("TABSIZE")` /
+    /// `.env("TIME_STYLE")` on `ls`, but bashkit isolates scripts inside
+    /// `ctx.env`; if the host parser were allowed to consult `std::env`
+    /// the sandbox boundary would leak (host can probe presence, host can
+    /// inject values that propagate into bashkit's option-validation
+    /// path). Codegen strips `.env(...)` from generated Arg chains; this
+    /// static guard makes sure no future regen (or hand-edit) re-adds
+    /// one. Defence-in-depth: the workspace `clap` dep also drops the
+    /// `env` cargo feature, so a slipped `.env(...)` won't compile.
+    #[test]
+    fn no_clap_env_in_generated_parsers() {
+        let pat = regex::Regex::new(r"\.env\s*\(").unwrap();
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/builtins/generated");
+        let mut violations = Vec::new();
+        for entry in std::fs::read_dir(&dir).expect("read generated dir") {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("rs") {
+                continue;
+            }
+            let src = std::fs::read_to_string(&path).expect("read generated file");
+            for (i, line) in src.lines().enumerate() {
+                if pat.is_match(line) {
+                    let rel = path
+                        .strip_prefix(std::path::Path::new(env!("CARGO_MANIFEST_DIR")))
+                        .unwrap_or(&path);
+                    violations.push(format!("{}:{}: {}", rel.display(), i + 1, line.trim_end()));
+                }
+            }
+        }
+        assert!(
+            violations.is_empty(),
+            "clap `Arg::env(...)` found in a generated parser. This pulls \
+             defaults from the host process environment and breaks bashkit's \
+             sandbox boundary (TM-INF-024). Re-run `just regen-coreutils-args` \
+             — the codegen strips these — or remove the call by hand.\n\n{}",
+            violations.join("\n")
+        );
+    }
+
     /// Every `<util>_args.rs` header MUST reference the same uutils
     /// revision as `generated::UUTILS_REVISION`. The drift workflow
     /// bumps both atomically; this test catches the case where someone

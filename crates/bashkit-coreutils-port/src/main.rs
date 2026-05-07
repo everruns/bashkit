@@ -511,6 +511,33 @@ impl VisitMut for Rewriter {
         {
             let receiver = (*mc.receiver).clone();
             *node = receiver;
+            return;
+        }
+
+        // Strip `clap::Arg::env(...)` chained method calls. uutils sources
+        // pull defaults like `TABSIZE`/`TIME_STYLE` from `std::env`, but
+        // bashkit sandboxes scripts inside its own `ctx.env`. Letting clap
+        // read from the host process leaks host state into the sandbox
+        // (TM-INF-024): scripts can probe whether the host has these vars
+        // set, and a host-set `TIME_STYLE` would tunnel a value through
+        // bashkit's "unsupported option" gate and kill `ls` for unrelated
+        // tenants. Drop the `.env(...)` step from the Arg chain at codegen
+        // time so generated parsers only see argv. Conservative match:
+        // method ident is `env` and the single argument is a string
+        // literal (the only shape uutils uses).
+        if let Expr::MethodCall(mc) = node
+            && mc.method == "env"
+            && mc.args.len() == 1
+            && matches!(
+                mc.args.first(),
+                Some(Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Str(_),
+                    ..
+                }))
+            )
+        {
+            let receiver = (*mc.receiver).clone();
+            *node = receiver;
         }
     }
 }

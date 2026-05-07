@@ -22,6 +22,13 @@ codegen**, not by depending on `uu_*` crates at runtime.
    - `uucore::clap_localization::configure_localized_command(cmd)` → `cmd`
    - `ShortcutValueParser::new([…])` → `clap::builder::PossibleValuesParser::new([…])`
      (loses uucore's unambiguous-abbreviation behaviour; documented divergence)
+   - `Arg::…env("FOO")…` → chain step elided (TM-INF-024). uutils
+     attaches `.env(...)` to options like `TABSIZE`/`TIME_STYLE` so they
+     pick up host process state; bashkit sandboxes scripts inside
+     `ctx.env`, so generated parsers must only consult argv. The
+     workspace `clap` dep also drops the `env` cargo feature as
+     defence-in-depth, and `builtins::tests::no_clap_env_in_generated_parsers`
+     statically forbids `.env(` from re-appearing in `generated/*.rs`.
 5. Emits a generated file under
    `crates/bashkit/src/builtins/generated/<util>_args.rs` with a clean
    `pub fn <util>_command() -> clap::Command`.

@@ -1543,6 +1543,70 @@ mod tests {
         assert!(result.stdout.contains("nested.txt"));
     }
 
+    /// TM-INF-024 regression: a host-set `TIME_STYLE` (or any other env var
+    /// uutils' `uu_app()` attaches to an Arg via `.env(...)`) MUST NOT
+    /// reach the clap parser. uutils' upstream wires
+    /// `Arg::new(TIME_STYLE).env("TIME_STYLE")` so the option defaults
+    /// from the host process — bashkit strips that at codegen time and
+    /// drops the `env` clap feature workspace-wide as defence-in-depth.
+    /// Without those guards a plain `ls` in a container that exports
+    /// `TIME_STYLE=long-iso` would trip the unsupported-option gate
+    /// (since bashkit hasn't implemented `--time-style` yet) and break
+    /// `ls` for every script running on that host.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn ls_ignores_host_time_style_and_tabsize() {
+        // SAFETY: serial_test::serial serializes against other tests that
+        // touch the process env. Setting + unsetting around a single
+        // bashkit `Ls.execute()` is the only way to exercise the
+        // sandbox-leak regression: we're asserting bashkit does NOT
+        // observe these even when they're present on the host process.
+        unsafe {
+            std::env::set_var("TIME_STYLE", "long-iso");
+            std::env::set_var("TABSIZE", "16");
+        }
+
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        fs.write_file(&cwd.join("a.txt"), b"a").await.unwrap();
+        let env = HashMap::new();
+        let args: Vec<String> = vec![];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+
+        let result = Ls.execute(ctx).await.unwrap();
+
+        unsafe {
+            std::env::remove_var("TIME_STYLE");
+            std::env::remove_var("TABSIZE");
+        }
+
+        assert_eq!(
+            result.exit_code, 0,
+            "host TIME_STYLE/TABSIZE leaked into bashkit ls parser \
+             (TM-INF-024): stderr={}",
+            result.stderr
+        );
+        assert!(result.stdout.contains("a.txt"));
+        assert!(
+            !result.stderr.contains("not yet implemented"),
+            "host env tunneled through clap as a value source: stderr={}",
+            result.stderr
+        );
+    }
+
     // ==================== find tests ====================
 
     #[tokio::test]

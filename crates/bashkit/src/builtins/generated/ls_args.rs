@@ -194,7 +194,6 @@ pub fn ls_command() -> Command {
             Arg::new(options::format::TAB_SIZE)
                 .short('T')
                 .long(options::format::TAB_SIZE)
-                .env("TABSIZE")
                 .value_name("COLS")
                 .help(
                     ::std::string::String::from(
@@ -903,7 +902,6 @@ pub fn ls_command() -> Command {
                     ),
                 )
                 .value_name("TIME_STYLE")
-                .env("TIME_STYLE")
                 .value_parser(NonEmptyStringValueParser::new())
                 .overrides_with_all([options::TIME_STYLE]),
         )
