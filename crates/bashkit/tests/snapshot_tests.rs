@@ -24,7 +24,7 @@ async fn vfs_snapshot_restores_file_content() {
         .unwrap();
 
     // Restore
-    fs.restore(&snapshot);
+    fs.restore(&snapshot).unwrap();
 
     let content = fs.read_file(Path::new("/tmp/test.txt")).await.unwrap();
     assert_eq!(content, b"original");
@@ -42,7 +42,7 @@ async fn vfs_snapshot_removes_new_files() {
     assert!(fs.exists(Path::new("/tmp/new.txt")).await.unwrap());
 
     // Restore
-    fs.restore(&snapshot);
+    fs.restore(&snapshot).unwrap();
     assert!(!fs.exists(Path::new("/tmp/new.txt")).await.unwrap());
 }
 
@@ -60,7 +60,7 @@ async fn vfs_snapshot_restores_deleted_files() {
     assert!(!fs.exists(Path::new("/tmp/keep.txt")).await.unwrap());
 
     // Restore
-    fs.restore(&snapshot);
+    fs.restore(&snapshot).unwrap();
     let content = fs.read_file(Path::new("/tmp/keep.txt")).await.unwrap();
     assert_eq!(content, b"keep me");
 }
@@ -79,7 +79,7 @@ async fn vfs_snapshot_preserves_directories() {
     fs.remove(Path::new("/data"), true).await.unwrap();
     assert!(!fs.exists(Path::new("/data")).await.unwrap());
 
-    fs.restore(&snapshot);
+    fs.restore(&snapshot).unwrap();
     assert!(fs.exists(Path::new("/data/sub")).await.unwrap());
     let content = fs.read_file(Path::new("/data/sub/file.txt")).await.unwrap();
     assert_eq!(content, b"content");
@@ -97,7 +97,7 @@ async fn vfs_snapshot_serialization_roundtrip() {
     let restored: bashkit::VfsSnapshot = serde_json::from_str(&json).unwrap();
 
     let fs2 = Arc::new(InMemoryFs::new());
-    fs2.restore(&restored);
+    fs2.restore(&restored).unwrap();
 
     let content = fs2.read_file(Path::new("/tmp/data.txt")).await.unwrap();
     assert_eq!(content, b"serialize me");
@@ -187,7 +187,7 @@ async fn combined_snapshot_restore_multi_turn() {
         .unwrap();
 
     // Rollback to turn 1
-    fs.restore(&vfs_snap);
+    fs.restore(&vfs_snap).unwrap();
     bash.restore_shell_state(&shell_snap);
 
     let result = bash
@@ -591,6 +591,66 @@ async fn snapshot_restore_rejects_tampered_shell_state_that_exceeds_memory_limit
         result.is_err(),
         "restore must reject shell state above configured memory limits"
     );
+}
+
+// ==================== Atomic restore (Issue #1576) ====================
+
+/// A malformed VFS snapshot (path validation failure) must cause
+/// `restore_snapshot` to fail closed. The previous-tenant shell state
+/// must not be replaced and the previous-tenant VFS must not be
+/// observable, otherwise a forged unkeyed snapshot can leave a reused
+/// instance in a half-restored, cross-tenant state.
+#[tokio::test]
+async fn snapshot_restore_fails_closed_on_malformed_vfs() {
+    // Tenant A: real, valid snapshot.
+    let mut tenant_a = Bash::new();
+    tenant_a.exec("greeting=alpha").await.unwrap();
+    tenant_a
+        .fs()
+        .write_file(Path::new("/tmp/secret-a.txt"), b"alpha-secret")
+        .await
+        .unwrap();
+    let bytes = tenant_a.snapshot().unwrap();
+
+    // Patch the snapshot JSON so the VFS section contains a poisoned
+    // path (rejected by limits::validate_path) and the shell variable
+    // changes — both clearly distinguish "applied" from "not applied".
+    let mut json: serde_json::Value = serde_json::from_slice(&bytes[32..]).unwrap();
+    json["shell"]["variables"]["greeting"] = serde_json::json!("BETA");
+    json["vfs"] = serde_json::json!({
+        "entries": [
+            {
+                "path": "/poison\u{0}bad",
+                "kind": { "File": { "content": [120] } },
+                "mode": 0o644,
+            }
+        ]
+    });
+    let forged_snap: Snapshot = serde_json::from_value(json).unwrap();
+    let forged = forged_snap.to_bytes().unwrap();
+
+    let result = tenant_a.restore_snapshot(&forged);
+    assert!(
+        result.is_err(),
+        "restore must fail closed when VFS validation fails (#1576)"
+    );
+
+    // Shell state must not be mutated.
+    let r = tenant_a.exec("echo $greeting").await.unwrap();
+    assert_eq!(
+        r.stdout.trim(),
+        "alpha",
+        "shell state must remain unchanged after a failed restore"
+    );
+
+    // Pre-existing VFS must still match tenant A's contents (no clobber
+    // by partial restore, no tenant-B injection).
+    let secret = tenant_a
+        .fs()
+        .read_file(Path::new("/tmp/secret-a.txt"))
+        .await
+        .unwrap();
+    assert_eq!(secret, b"alpha-secret");
 }
 
 // ==================== Integrity verification (Issue #977) ====================

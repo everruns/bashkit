@@ -165,10 +165,14 @@ pub trait FileSystemExt: Send + Sync {
 
     /// Restore filesystem contents from a snapshot.
     ///
-    /// Returns `false` if this filesystem doesn't support restore.
-    /// The default implementation returns `false`.
-    fn vfs_restore(&self, _snapshot: &super::VfsSnapshot) -> bool {
-        false
+    /// Returns `Err(...)` if this filesystem doesn't support restore, or if
+    /// the snapshot fails validation (path, size, or count limits). On error
+    /// the filesystem MUST be left untouched so callers can refuse the
+    /// restore atomically (issue #1576).
+    ///
+    /// The default implementation returns `Err(Unsupported)`.
+    fn vfs_restore(&self, _snapshot: &super::VfsSnapshot) -> Result<()> {
+        Err(IoError::new(ErrorKind::Unsupported, "vfs_restore not supported").into())
     }
 }
 

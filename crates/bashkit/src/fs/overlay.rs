@@ -953,9 +953,8 @@ impl FileSystemExt for OverlayFs {
         Some(self.upper.snapshot())
     }
 
-    fn vfs_restore(&self, snapshot: &super::VfsSnapshot) -> bool {
-        self.upper.restore(snapshot);
-        true
+    fn vfs_restore(&self, snapshot: &super::VfsSnapshot) -> crate::Result<()> {
+        self.upper.restore(snapshot)
     }
 }
 
