@@ -268,14 +268,40 @@ pub fn export_filesystem(fs: Arc<dyn FileSystem>) -> io::Result<BashkitFsAbiOwne
     })
 }
 
-pub fn import_filesystem(handle: &BashkitFsAbiHandleV1) -> io::Result<Arc<dyn FileSystem>> {
-    Ok(Arc::new(ImportedFileSystem::from_handle(handle)?) as Arc<dyn FileSystem>)
+/// Import a filesystem from a raw FFI handle.
+///
+/// # Safety
+///
+/// `handle.instance` must be a live pointer, valid for the lifetime of the
+/// returned `Arc`, and `handle.vtable` must point to a valid
+/// `BashkitFsAbiVTableV1` whose function pointers stay callable for that
+/// lifetime. The caller is responsible for ensuring all of `instance`,
+/// `vtable`, `retain`, and `release` form a coherent ABI v1 contract.
+///
+/// Bashkit retains an extra reference via `handle.retain` and releases it
+/// in `Drop`. The vtable is copied into owned state so its memory does
+/// not need to outlive this call.
+///
+/// Issue #1579: this API is unsafe because it dereferences raw FFI
+/// pointers.
+pub unsafe fn import_filesystem(handle: &BashkitFsAbiHandleV1) -> io::Result<Arc<dyn FileSystem>> {
+    let imported = unsafe { ImportedFileSystem::from_handle(handle)? };
+    Ok(Arc::new(imported) as Arc<dyn FileSystem>)
 }
 
-pub fn import_owned_filesystem(
+/// Import a filesystem from a bashkit-owned handle.
+///
+/// # Safety
+///
+/// Although [`BashkitFsAbiOwnedHandleV1`] is created by [`export_filesystem`]
+/// and therefore points at a valid bashkit-managed instance, dereferencing
+/// raw vtable function pointers from a foreign producer is still unsafe in
+/// the general case. Callers must uphold the same invariants as
+/// [`import_filesystem`].
+pub unsafe fn import_owned_filesystem(
     handle: &BashkitFsAbiOwnedHandleV1,
 ) -> io::Result<Arc<dyn FileSystem>> {
-    import_filesystem(handle.as_handle())
+    unsafe { import_filesystem(handle.as_handle()) }
 }
 
 fn missing_abi_field(name: &str) -> IoError {
@@ -335,20 +361,40 @@ fn validate_handle(handle: &BashkitFsAbiHandleV1) -> io::Result<&BashkitFsAbiVTa
 
 pub struct ImportedFileSystem {
     handle: BashkitFsAbiHandleV1,
+    /// Owned copy of the foreign vtable. Issue #1579: storing the
+    /// dereferenced vtable means we never re-deref the raw `vtable`
+    /// pointer after construction, eliminating use-after-free and
+    /// concurrent-mutation hazards across the FFI boundary.
+    vtable: BashkitFsAbiVTableV1,
 }
 
 impl ImportedFileSystem {
-    pub fn from_handle(handle: &BashkitFsAbiHandleV1) -> io::Result<Self> {
-        validate_handle(handle)?;
+    /// Build an `ImportedFileSystem` from a raw FFI handle.
+    ///
+    /// # Safety
+    ///
+    /// See [`import_filesystem`]. The caller must guarantee
+    /// `handle.instance` and `handle.vtable` point at live, valid memory
+    /// for the duration of the call. The vtable contents are copied into
+    /// owned state, so the vtable pointer itself does not need to outlive
+    /// this constructor.
+    pub unsafe fn from_handle(handle: &BashkitFsAbiHandleV1) -> io::Result<Self> {
+        // SAFETY: caller-established invariants on `handle.vtable` allow
+        // the deref inside `validate_handle`.
+        let vtable_ref = validate_handle(handle)?;
+        let vtable_owned = *vtable_ref;
         let retain = handle.retain.expect("filesystem ABI handle was validated");
         unsafe {
             retain(handle.instance);
         }
-        Ok(Self { handle: *handle })
+        Ok(Self {
+            handle: *handle,
+            vtable: vtable_owned,
+        })
     }
 
     fn vtable(&self) -> &BashkitFsAbiVTableV1 {
-        unsafe { &*self.handle.vtable }
+        &self.vtable
     }
 
     fn call(
@@ -1211,7 +1257,9 @@ mod tests {
         });
 
         let exported = export_filesystem(source).unwrap();
-        let imported = import_owned_filesystem(&exported).unwrap();
+        // SAFETY: `exported` is bashkit-owned and lives until the end of
+        // this scope, so its instance and vtable are valid here.
+        let imported = unsafe { import_owned_filesystem(&exported) }.unwrap();
 
         let bytes = rt
             .block_on(async { imported.read_file(Path::new("/org/repo/README.md")).await })
@@ -1229,7 +1277,9 @@ mod tests {
             release: Some(release_export_state),
             vtable: ptr::null(),
         };
-        let err = match ImportedFileSystem::from_handle(&handle) {
+        // SAFETY: the handle is intentionally invalid; from_handle must
+        // reject it before any deref happens.
+        let err = match unsafe { ImportedFileSystem::from_handle(&handle) } {
             Ok(_) => panic!("expected ABI version check to fail"),
             Err(err) => err,
         };
@@ -1243,7 +1293,9 @@ mod tests {
 
         let mut handle = *exported.as_handle();
         handle.retain = None;
-        let err = match ImportedFileSystem::from_handle(&handle) {
+        // SAFETY: handle is bashkit-owned; from_handle must reject the
+        // missing retain entry before dereferencing it.
+        let err = match unsafe { ImportedFileSystem::from_handle(&handle) } {
             Ok(_) => panic!("expected null retain check to fail"),
             Err(err) => err,
         };
@@ -1253,11 +1305,51 @@ mod tests {
         vtable.read_file = None;
         let mut handle = *exported.as_handle();
         handle.vtable = &vtable;
-        let err = match ImportedFileSystem::from_handle(&handle) {
+        // SAFETY: same — vtable is locally owned, handle is bashkit-owned.
+        let err = match unsafe { ImportedFileSystem::from_handle(&handle) } {
             Ok(_) => panic!("expected null vtable entry check to fail"),
             Err(err) => err,
         };
         assert_eq!(err.kind(), ErrorKind::InvalidData);
+    }
+
+    /// Regression: issue #1579. After `from_handle` returns, the foreign
+    /// vtable memory must no longer be consulted: bashkit copies it into
+    /// owned state. We mutate the source vtable in place after import and
+    /// verify subsequent operations still behave per the captured contract.
+    #[test]
+    fn imported_filesystem_uses_owned_vtable_copy() {
+        let rt = Builder::new_current_thread().enable_all().build().unwrap();
+        let source: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        rt.block_on(async {
+            source
+                .write_file(Path::new("/file.txt"), b"copy-vtable")
+                .await
+                .unwrap();
+        });
+        let exported = export_filesystem(source).unwrap();
+
+        // Build an importable handle using a *local, mutable* vtable so we
+        // can null it out after import. The static EXPORT_VTABLE can't be
+        // mutated, but we can copy it.
+        let mut local_vtable = EXPORT_VTABLE;
+        let mut handle = *exported.as_handle();
+        handle.vtable = &local_vtable;
+
+        // SAFETY: instance is bashkit-owned; local_vtable is on stack and
+        // outlives import_filesystem's deref.
+        let imported = unsafe { import_filesystem(&handle) }.unwrap();
+
+        // After import, smash the source vtable. If bashkit re-derefs the
+        // raw pointer on each call, this would either crash or read None
+        // entries; with an owned copy it's a no-op.
+        local_vtable.read_file = None;
+        assert!(local_vtable.read_file.is_none());
+
+        let bytes = rt
+            .block_on(async { imported.read_file(Path::new("/file.txt")).await })
+            .expect("read_file must use the owned vtable copy, not the smashed source");
+        assert_eq!(bytes, b"copy-vtable");
     }
 
     #[test]

@@ -1354,7 +1354,9 @@ impl PyFileSystem {
             .map_err(|_| PyTypeError::new_err("capsule must be a PyCapsule"))?;
         let ptr = capsule.pointer_checked(Some(FILESYSTEM_CAPSULE_NAME))?;
         let exported = unsafe { &*ptr.as_ptr().cast::<BashkitFsAbiOwnedHandleV1>() };
-        let fs = import_owned_filesystem(exported)
+        // SAFETY: capsule was created by export_filesystem; the embedded
+        // ABI handle is valid as long as the capsule is alive.
+        let fs = unsafe { import_owned_filesystem(exported) }
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         let rt = make_runtime()?;
         Ok(Self::from_static(fs, rt))

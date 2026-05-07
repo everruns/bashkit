@@ -360,7 +360,9 @@ fn file_system_external_handle(external: Unknown<'_>) -> napi::Result<BashkitFsA
 
 fn import_external_file_system(external: Unknown<'_>) -> napi::Result<Arc<dyn BashFileSystem>> {
     let handle = file_system_external_handle(external)?;
-    import_filesystem(&handle).map_err(|e| napi::Error::from_reason(e.to_string()))
+    // SAFETY: `external` was created by export_external_file_system; the
+    // ABI handle inside it is valid as long as the external value lives.
+    unsafe { import_filesystem(&handle) }.map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
 impl NativeFileSystemState {
