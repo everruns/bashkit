@@ -40,6 +40,12 @@ dependency rot, or security gaps ship in a release.
 - Threat model (`specs/threat-model.md`) covers all current features
 - Public threat model doc (`crates/bashkit/docs/threat-model.md`) in sync with spec
 - Every new builtin/feature has a corresponding TM-XXX entry
+- DeepSec is updated to the latest published version before scanning:
+  - Run `cd .deepsec && pnpm update deepsec@latest`
+  - Run `pnpm deepsec scan --project-id bashkit`
+  - Run `pnpm deepsec process --project-id bashkit --agent codex`
+  - Review `pnpm deepsec report --project-id bashkit` and create GitHub issues
+    for any deferred findings
 - Security tests exist for every MITIGATED threat
 - Failpoint tests pass
 - Unsafe usage reviewed (`cargo geiger`)

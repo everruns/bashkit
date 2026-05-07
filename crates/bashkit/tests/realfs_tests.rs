@@ -4,8 +4,14 @@
 
 #![cfg(feature = "realfs")]
 
-use bashkit::Bash;
+use bashkit::{Bash, BashBuilder};
 use std::path::Path;
+
+// macOS temp dirs canonicalize under /private, which RealFs treats as
+// sensitive. Tests allowlist only the temp fixtures they mount.
+fn builder_allowing_host_paths(paths: &[&Path]) -> BashBuilder {
+    Bash::builder().allowed_mount_paths(paths.iter().map(|path| (*path).to_path_buf()))
+}
 
 fn setup_host_dir() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
@@ -21,7 +27,9 @@ fn setup_host_dir() -> tempfile::TempDir {
 #[tokio::test]
 async fn readonly_root_overlay_cat() {
     let dir = setup_host_dir();
-    let mut bash = Bash::builder().mount_real_readonly(dir.path()).build();
+    let mut bash = builder_allowing_host_paths(&[dir.path()])
+        .mount_real_readonly(dir.path())
+        .build();
 
     let result = bash.exec("cat /hello.txt").await.unwrap();
     assert_eq!(result.stdout, "hello world\n");
@@ -31,7 +39,9 @@ async fn readonly_root_overlay_cat() {
 #[tokio::test]
 async fn readonly_root_overlay_ls() {
     let dir = setup_host_dir();
-    let mut bash = Bash::builder().mount_real_readonly(dir.path()).build();
+    let mut bash = builder_allowing_host_paths(&[dir.path()])
+        .mount_real_readonly(dir.path())
+        .build();
 
     let result = bash.exec("ls /").await.unwrap();
     assert!(result.stdout.contains("hello.txt"));
@@ -41,7 +51,9 @@ async fn readonly_root_overlay_ls() {
 #[tokio::test]
 async fn readonly_root_overlay_nested() {
     let dir = setup_host_dir();
-    let mut bash = Bash::builder().mount_real_readonly(dir.path()).build();
+    let mut bash = builder_allowing_host_paths(&[dir.path()])
+        .mount_real_readonly(dir.path())
+        .build();
 
     let result = bash.exec("cat /subdir/nested.txt").await.unwrap();
     assert_eq!(result.stdout, "nested\n");
@@ -50,7 +62,9 @@ async fn readonly_root_overlay_nested() {
 #[tokio::test]
 async fn readonly_root_overlay_write_goes_to_memory() {
     let dir = setup_host_dir();
-    let mut bash = Bash::builder().mount_real_readonly(dir.path()).build();
+    let mut bash = builder_allowing_host_paths(&[dir.path()])
+        .mount_real_readonly(dir.path())
+        .build();
 
     // Write a new file - should go to in-memory overlay
     bash.exec("echo 'vfs only' > /new_file.txt").await.unwrap();
@@ -64,7 +78,9 @@ async fn readonly_root_overlay_write_goes_to_memory() {
 #[tokio::test]
 async fn readonly_root_overlay_pipes() {
     let dir = setup_host_dir();
-    let mut bash = Bash::builder().mount_real_readonly(dir.path()).build();
+    let mut bash = builder_allowing_host_paths(&[dir.path()])
+        .mount_real_readonly(dir.path())
+        .build();
 
     let result = bash.exec("cat /data.csv | grep b").await.unwrap();
     assert_eq!(result.stdout, "b,2\n");
@@ -73,7 +89,9 @@ async fn readonly_root_overlay_pipes() {
 #[tokio::test]
 async fn readonly_root_overlay_wc() {
     let dir = setup_host_dir();
-    let mut bash = Bash::builder().mount_real_readonly(dir.path()).build();
+    let mut bash = builder_allowing_host_paths(&[dir.path()])
+        .mount_real_readonly(dir.path())
+        .build();
 
     let result = bash.exec("wc -l < /data.csv").await.unwrap();
     assert_eq!(result.stdout.trim(), "3");
@@ -84,7 +102,7 @@ async fn readonly_root_overlay_wc() {
 #[tokio::test]
 async fn readonly_mount_at_path_cat() {
     let dir = setup_host_dir();
-    let mut bash = Bash::builder()
+    let mut bash = builder_allowing_host_paths(&[dir.path()])
         .mount_real_readonly_at(dir.path(), "/mnt/data")
         .build();
 
@@ -95,7 +113,7 @@ async fn readonly_mount_at_path_cat() {
 #[tokio::test]
 async fn readonly_mount_at_path_ls() {
     let dir = setup_host_dir();
-    let mut bash = Bash::builder()
+    let mut bash = builder_allowing_host_paths(&[dir.path()])
         .mount_real_readonly_at(dir.path(), "/mnt/data")
         .build();
 
@@ -107,7 +125,7 @@ async fn readonly_mount_at_path_ls() {
 #[tokio::test]
 async fn readonly_mount_at_path_vfs_root_intact() {
     let dir = setup_host_dir();
-    let mut bash = Bash::builder()
+    let mut bash = builder_allowing_host_paths(&[dir.path()])
         .mount_real_readonly_at(dir.path(), "/mnt/data")
         .build();
 
@@ -129,7 +147,7 @@ async fn readonly_mount_at_path_vfs_root_intact() {
 #[tokio::test]
 async fn readwrite_mount_modifies_host() {
     let dir = setup_host_dir();
-    let mut bash = Bash::builder()
+    let mut bash = builder_allowing_host_paths(&[dir.path()])
         .mount_real_readwrite_at(dir.path(), "/workspace")
         .build();
 
@@ -162,7 +180,7 @@ async fn readwrite_mount_modifies_host() {
 #[tokio::test]
 async fn readwrite_mount_creates_files_on_host() {
     let dir = setup_host_dir();
-    let mut bash = Bash::builder()
+    let mut bash = builder_allowing_host_paths(&[dir.path()])
         .mount_real_readwrite_at(dir.path(), "/workspace")
         .build();
 
@@ -178,7 +196,7 @@ async fn readwrite_mount_creates_files_on_host() {
 #[tokio::test]
 async fn readwrite_mount_creates_dirs_on_host() {
     let dir = setup_host_dir();
-    let mut bash = Bash::builder()
+    let mut bash = builder_allowing_host_paths(&[dir.path()])
         .mount_real_readwrite_at(dir.path(), "/workspace")
         .build();
 
@@ -189,7 +207,9 @@ async fn readwrite_mount_creates_dirs_on_host() {
 #[tokio::test]
 async fn readwrite_root_overlay() {
     let dir = setup_host_dir();
-    let mut bash = Bash::builder().mount_real_readwrite(dir.path()).build();
+    let mut bash = builder_allowing_host_paths(&[dir.path()])
+        .mount_real_readwrite(dir.path())
+        .build();
 
     let result = bash.exec("cat /hello.txt").await.unwrap();
     assert_eq!(result.stdout, "hello world\n");
@@ -210,7 +230,7 @@ async fn multiple_readonly_mounts() {
     let dir2 = tempfile::tempdir().unwrap();
     std::fs::write(dir2.path().join("other.txt"), "from dir2\n").unwrap();
 
-    let mut bash = Bash::builder()
+    let mut bash = builder_allowing_host_paths(&[dir1.path(), dir2.path()])
         .mount_real_readonly_at(dir1.path(), "/mnt/a")
         .mount_real_readonly_at(dir2.path(), "/mnt/b")
         .build();
@@ -226,7 +246,7 @@ async fn multiple_readonly_mounts() {
 async fn mixed_readonly_and_text_mounts() {
     let dir = setup_host_dir();
 
-    let mut bash = Bash::builder()
+    let mut bash = builder_allowing_host_paths(&[dir.path()])
         .mount_real_readonly_at(dir.path(), "/mnt/host")
         .mount_text("/config/app.toml", "key = 'value'\n")
         .build();
@@ -243,7 +263,7 @@ async fn mixed_readonly_and_text_mounts() {
 #[tokio::test]
 async fn path_traversal_blocked_via_bash() {
     let dir = setup_host_dir();
-    let mut bash = Bash::builder()
+    let mut bash = builder_allowing_host_paths(&[dir.path()])
         .mount_real_readonly_at(dir.path(), "/mnt/data")
         .build();
 
@@ -261,7 +281,7 @@ async fn path_traversal_blocked_via_bash() {
 #[tokio::test]
 async fn direct_fs_api_read() {
     let dir = setup_host_dir();
-    let bash = Bash::builder()
+    let bash = builder_allowing_host_paths(&[dir.path()])
         .mount_real_readonly_at(dir.path(), "/mnt/data")
         .build();
 
@@ -276,7 +296,7 @@ async fn direct_fs_api_read() {
 #[tokio::test]
 async fn direct_fs_api_stat() {
     let dir = setup_host_dir();
-    let bash = Bash::builder()
+    let bash = builder_allowing_host_paths(&[dir.path()])
         .mount_real_readonly_at(dir.path(), "/mnt/data")
         .build();
 
@@ -289,7 +309,7 @@ async fn direct_fs_api_stat() {
 #[tokio::test]
 async fn direct_fs_api_exists() {
     let dir = setup_host_dir();
-    let bash = Bash::builder()
+    let bash = builder_allowing_host_paths(&[dir.path()])
         .mount_real_readonly_at(dir.path(), "/mnt/data")
         .build();
 
@@ -303,7 +323,7 @@ async fn direct_fs_api_exists() {
 #[tokio::test]
 async fn realfs_symlink_absolute_escape_blocked() {
     let dir = setup_host_dir();
-    let mut bash = Bash::builder()
+    let mut bash = builder_allowing_host_paths(&[dir.path()])
         .mount_real_readwrite_at(dir.path(), "/mnt/workspace")
         .build();
 
@@ -325,7 +345,7 @@ async fn realfs_symlink_absolute_escape_blocked() {
 #[tokio::test]
 async fn realfs_symlink_relative_escape_blocked() {
     let dir = setup_host_dir();
-    let mut bash = Bash::builder()
+    let mut bash = builder_allowing_host_paths(&[dir.path()])
         .mount_real_readwrite_at(dir.path(), "/mnt/workspace")
         .build();
 
@@ -348,7 +368,7 @@ async fn realfs_symlink_within_mount_allowed() {
     let dir = setup_host_dir();
     std::fs::write(dir.path().join("original.txt"), "content").unwrap();
 
-    let mut bash = Bash::builder()
+    let mut bash = builder_allowing_host_paths(&[dir.path()])
         .mount_real_readwrite_at(dir.path(), "/mnt/workspace")
         .build();
 
