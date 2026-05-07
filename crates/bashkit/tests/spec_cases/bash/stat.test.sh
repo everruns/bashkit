@@ -52,3 +52,27 @@ stat -c '%n %F' /tmp/stat_combo.txt
 ### expect
 /tmp/stat_combo.txt regular file
 ### end
+
+### stat_unknown_flag_rejected
+### bash_diff: clap-backed stat returns exit 2 for parse errors; GNU stat returns 1
+# Unknown long flag rejected with usage error
+stat --no-such-flag /tmp/stat_combo.txt 2>/dev/null; echo "exit=$?"
+### expect
+exit=2
+### end
+
+### stat_missing_format_value
+### bash_diff: clap-backed stat returns exit 2 when -c lacks a value; GNU stat returns 1
+# -c without a value is a parse error
+stat -c 2>/dev/null; echo "exit=$?"
+### expect
+exit=2
+### end
+
+### stat_filesystem_unsupported
+### bash_diff: bashkit rejects --file-system (no VFS block-stat surface); GNU stat reports host filesystem stats
+# --file-system isn't VFS-shaped; we surface that rather than silently no-op
+stat -f /tmp/stat_combo.txt 2>/dev/null; echo "exit=$?"
+### expect
+exit=1
+### end

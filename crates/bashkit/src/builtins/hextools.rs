@@ -8,13 +8,12 @@ use crate::interpreter::ExecResult;
 
 /// The od builtin - dump files in octal and other formats.
 ///
-/// Usage: od [-A RADIX] [-t TYPE] [-N COUNT] [-j SKIP] [FILE...]
-///
-/// Options:
-///   -A RADIX   Address radix: d (decimal), o (octal, default), x (hex), n (none)
-///   -t TYPE    Output type: o (octal, default), x (hex), d (decimal), c (char)
-///   -N COUNT   Dump at most COUNT bytes
-///   -j SKIP    Skip SKIP bytes from beginning
+/// Argument surface is generated from uutils/coreutils' `uu_app()` via
+/// the `bashkit-coreutils-port` codegen tool — see
+/// `generated/od_args.rs`. Behaviour is implemented locally against
+/// the bashkit VFS. Subset honoured today: `-A RADIX`, `-t TYPE`,
+/// `-N COUNT`, `-j SKIP`, `-w COLS`, plus `-x`/`-c`/`-d`/`-o`
+/// shorthands.
 pub struct Od;
 
 /// The xxd builtin - make a hexdump or do the reverse.
@@ -47,6 +46,7 @@ struct OdOptions {
     output_type: OutputType,
     count: Option<usize>,
     skip: usize,
+    width: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -65,52 +65,85 @@ enum OutputType {
     Char,
 }
 
-fn parse_od_args(args: &[String]) -> std::result::Result<(OdOptions, Vec<String>), String> {
+/// Translate clap-parsed `od` matches into the local rendering struct.
+/// The clap surface is generated from uutils; we only honour the subset
+/// the bashkit VFS dump supports — other flags are accepted (so unknown
+/// flags still error cleanly) but ignored.
+fn od_options_from_matches(
+    matches: &clap::ArgMatches,
+) -> std::result::Result<(OdOptions, Vec<String>), String> {
     let mut opts = OdOptions {
         addr_radix: AddrRadix::Octal,
         output_type: OutputType::Octal,
         count: None,
         skip: 0,
+        width: 16,
     };
-    let mut files = Vec::new();
-    let mut p = super::arg_parser::ArgParser::new(args);
 
-    while !p.is_done() {
-        if let Some(val) = p.flag_value("-A", "od")? {
-            opts.addr_radix = match val {
-                "d" => AddrRadix::Decimal,
-                "o" => AddrRadix::Octal,
-                "x" => AddrRadix::Hex,
-                "n" => AddrRadix::None,
-                other => return Err(format!("od: invalid address radix: '{}'", other)),
-            };
-        } else if let Some(val) = p.flag_value("-t", "od")? {
-            opts.output_type = match val.chars().next() {
+    if let Some(radix) = matches.get_one::<String>("address-radix") {
+        opts.addr_radix = match radix.as_str() {
+            "d" => AddrRadix::Decimal,
+            "o" => AddrRadix::Octal,
+            "x" => AddrRadix::Hex,
+            "n" => AddrRadix::None,
+            other => return Err(format!("od: invalid address radix: '{}'", other)),
+        };
+    }
+    if let Some(mut formats) = matches.get_many::<String>("format") {
+        // -t accepts a stack of types upstream; bashkit only honours the
+        // last one, matching the behaviour of the original handwritten
+        // path. Unknown TYPE letters surface as an explicit error.
+        if let Some(t) = formats.next_back() {
+            opts.output_type = match t.chars().next() {
                 Some('o') => OutputType::Octal,
                 Some('x') => OutputType::Hex,
                 Some('d') => OutputType::Decimal,
                 Some('c') => OutputType::Char,
-                _ => return Err(format!("od: invalid output type: '{}'", val)),
+                _ => return Err(format!("od: invalid output type: '{}'", t)),
             };
-        } else if let Some(val) = p.flag_value("-N", "od")? {
-            opts.count = Some(
-                val.parse()
-                    .map_err(|_| format!("od: invalid count: '{}'", val))?,
-            );
-        } else if let Some(val) = p.flag_value("-j", "od")? {
-            opts.skip = val
-                .parse()
-                .map_err(|_| format!("od: invalid skip: '{}'", val))?;
-        } else if p.flag("-x") {
-            opts.output_type = OutputType::Hex;
-        } else if p.flag("-c") {
-            opts.output_type = OutputType::Char;
-        } else if p.flag("-d") {
-            opts.output_type = OutputType::Decimal;
-        } else if let Some(arg) = p.positional() {
-            files.push(arg.to_string());
         }
     }
+    if let Some(s) = matches.get_one::<String>("read-bytes") {
+        opts.count = Some(
+            s.parse()
+                .map_err(|_| format!("od: invalid count: '{}'", s))?,
+        );
+    }
+    if let Some(s) = matches.get_one::<String>("skip-bytes") {
+        opts.skip = s
+            .parse()
+            .map_err(|_| format!("od: invalid skip: '{}'", s))?;
+    }
+    if let Some(s) = matches.get_one::<String>("width") {
+        let parsed: usize = s
+            .parse()
+            .map_err(|_| format!("od: invalid width: '{}'", s))?;
+        if parsed > 0 {
+            opts.width = parsed;
+        }
+    }
+
+    // Single-letter shorthands: clap exposes each as its own SetTrue
+    // flag (see `generated/od_args.rs`). Honour the four bashkit
+    // supports today; the rest are accepted-but-ignored, matching the
+    // documented coverage.
+    if matches.try_get_one::<bool>("x").ok().flatten().copied() == Some(true) {
+        opts.output_type = OutputType::Hex;
+    }
+    if matches.try_get_one::<bool>("c").ok().flatten().copied() == Some(true) {
+        opts.output_type = OutputType::Char;
+    }
+    if matches.try_get_one::<bool>("d").ok().flatten().copied() == Some(true) {
+        opts.output_type = OutputType::Decimal;
+    }
+    if matches.try_get_one::<bool>("o").ok().flatten().copied() == Some(true) {
+        opts.output_type = OutputType::Octal;
+    }
+
+    let files: Vec<String> = matches
+        .get_many::<String>("FILENAME")
+        .map(|vs| vs.cloned().collect())
+        .unwrap_or_default();
 
     Ok((opts, files))
 }
@@ -148,7 +181,7 @@ fn format_od_byte(byte: u8, output_type: OutputType) -> String {
 }
 
 fn od_dump(data: &[u8], opts: &OdOptions) -> String {
-    let bytes_per_line = 16;
+    let bytes_per_line = opts.width;
     let mut output = String::new();
 
     let data = if opts.skip < data.len() {
@@ -191,14 +224,30 @@ fn od_dump(data: &[u8], opts: &OdOptions) -> String {
 #[async_trait]
 impl Builtin for Od {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        if let Some(r) = super::check_help_version(
-            ctx.args,
-            "Usage: od [OPTION]... [FILE]...\nDump files in octal and other formats.\n\n  -A RADIX\taddress radix: d (decimal), o (octal), x (hex), n (none)\n  -t TYPE\toutput type: o (octal), x (hex), d (decimal), c (char)\n  -N COUNT\tdump at most COUNT bytes\n  -j SKIP\tskip SKIP bytes from beginning\n  -x\tshorthand for -t x\n  -c\tshorthand for -t c\n  -d\tshorthand for -t d\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
-            Some("od (bashkit) 0.1"),
-        ) {
-            return Ok(r);
-        }
-        let (opts, files) = match parse_od_args(ctx.args) {
+        use super::generated::od_args::od_command;
+        use std::ffi::OsString;
+
+        let argv: Vec<OsString> = std::iter::once(OsString::from("od"))
+            .chain(ctx.args.iter().map(OsString::from))
+            .collect();
+
+        let cmd = od_command().help_template("Usage: {usage}\n{about}\n\n{all-args}\n");
+        let matches = match cmd.try_get_matches_from(argv) {
+            Ok(m) => m,
+            Err(e) => {
+                let kind = e.kind();
+                let rendered = e.render().to_string();
+                if matches!(
+                    kind,
+                    clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion
+                ) {
+                    return Ok(ExecResult::ok(rendered));
+                }
+                return Ok(ExecResult::err(rendered, 2));
+            }
+        };
+
+        let (opts, files) = match od_options_from_matches(&matches) {
             Ok(v) => v,
             Err(e) => return Ok(ExecResult::err(format!("{}\n", e), 1)),
         };

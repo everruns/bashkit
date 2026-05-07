@@ -51,3 +51,19 @@ line1
 line2
 line3
 ### end
+
+### tee_unknown_flag_rejected
+### bash_diff: clap-backed tee returns exit 2 for parse errors; GNU tee returns 1
+# Unknown short flag is rejected with a usage error
+echo x | tee -z 2>/dev/null; echo "exit=$?"
+### expect
+exit=2
+### end
+
+### tee_ignore_interrupts_accepted
+# -i is accepted (no-op in bashkit's virtual mode — no signals)
+echo "ok" | tee -i /tmp/tee_i.txt > /dev/null
+cat /tmp/tee_i.txt
+### expect
+ok
+### end
