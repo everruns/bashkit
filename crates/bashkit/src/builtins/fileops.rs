@@ -696,8 +696,16 @@ impl Builtin for Ln {
         // If link already exists
         if ctx.fs.exists(&link_path).await.unwrap_or(false) {
             if force {
-                // Remove existing
-                let _ = ctx.fs.remove(&link_path, false).await;
+                // Surface remove failures (e.g. non-empty directory) instead
+                // of falling through and overwriting via symlink, which on
+                // the in-memory VFS would orphan children and corrupt state
+                // (issue #1577).
+                if let Err(e) = ctx.fs.remove(&link_path, false).await {
+                    return Ok(ExecResult::err(
+                        format!("ln: cannot remove '{}': {}\n", link_name, e),
+                        1,
+                    ));
+                }
             } else {
                 return Ok(ExecResult::err(
                     format!(
@@ -1283,6 +1291,57 @@ mod tests {
 
         let meta = fs.stat(&cwd.join("script.sh")).await.unwrap();
         assert_eq!(meta.mode, 0o755);
+    }
+
+    /// Regression: issue #1577. `ln -f` over a non-empty directory must
+    /// surface the underlying remove failure instead of silently
+    /// proceeding to symlink creation, which on the in-memory VFS would
+    /// orphan the directory's children.
+    #[tokio::test]
+    async fn test_ln_force_over_non_empty_dir_fails() {
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+
+        // Set up: target file + non-empty destination directory.
+        fs.write_file(&cwd.join("target.txt"), b"content")
+            .await
+            .unwrap();
+        fs.mkdir(&cwd.join("destdir"), false).await.unwrap();
+        fs.write_file(&cwd.join("destdir/child.txt"), b"x")
+            .await
+            .unwrap();
+
+        let args = vec![
+            "-sf".to_string(),
+            "target.txt".to_string(),
+            "destdir".to_string(),
+        ];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+
+        let result = Ln.execute(ctx).await.unwrap();
+        assert_ne!(
+            result.exit_code, 0,
+            "ln -sf must fail when destination is a non-empty directory"
+        );
+        // Child must still exist; ln must not have proceeded to symlink.
+        assert!(
+            fs.exists(&cwd.join("destdir/child.txt")).await.unwrap(),
+            "child file must not be orphaned"
+        );
     }
 
     #[test]
