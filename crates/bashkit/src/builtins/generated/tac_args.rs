@@ -27,6 +27,11 @@ use options::*;
 fn format_usage(s: &str) -> String {
     s.to_string()
 }
+/// Sidecar harvest of every `Arg::env(...)` annotation the codegen
+/// stripped from the runtime Arg chain (TM-INF-024). Empty for utils
+/// whose `uu_app()` has no `.env(...)` calls; emitted unconditionally
+/// so the bashkit-side surface is uniform.
+pub static TAC_ENV_DEFAULTS: &[crate::builtins::clap_env::EnvDefault] = &[];
 pub fn tac_command() -> Command {
     Command::new("tac")
         .version(env!("CARGO_PKG_VERSION"))

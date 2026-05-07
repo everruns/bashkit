@@ -32,6 +32,11 @@ use options::*;
 fn format_usage(s: &str) -> String {
     s.to_string()
 }
+/// Sidecar harvest of every `Arg::env(...)` annotation the codegen
+/// stripped from the runtime Arg chain (TM-INF-024). Empty for utils
+/// whose `uu_app()` has no `.env(...)` calls; emitted unconditionally
+/// so the bashkit-side surface is uniform.
+pub static SHUF_ENV_DEFAULTS: &[crate::builtins::clap_env::EnvDefault] = &[];
 fn parse_range(input_range: &str) -> Result<RangeInclusive<u64>, String> {
     if let Some((from, to)) = input_range.split_once('-') {
         let begin = from.parse::<u64>().map_err(|e| e.to_string())?;

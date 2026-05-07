@@ -7,7 +7,8 @@ use async_trait::async_trait;
 use std::ffi::OsString;
 use std::path::Path;
 
-use super::generated::ls_args::ls_command;
+use super::clap_env::apply_env_defaults;
+use super::generated::ls_args::{LS_ENV_DEFAULTS, ls_command};
 use super::{Builtin, Context, ExecutionPlan, SubCommand, resolve_path};
 use crate::error::Result;
 use crate::fs::FileType;
@@ -66,6 +67,11 @@ impl Builtin for Ls {
         let argv: Vec<OsString> = std::iter::once(OsString::from("ls"))
             .chain(ctx.args.iter().map(OsString::from))
             .collect();
+        // Layer bashkit's virtual env over argv before clap parses it.
+        // Mirrors uutils' `Arg::env(...)` precedence (argv > env > default)
+        // but sources values from `ctx.env` instead of the host process —
+        // see TM-INF-024 and `builtins/clap_env.rs`.
+        let argv = apply_env_defaults(argv, LS_ENV_DEFAULTS, ctx.env);
 
         // GNU coreutils' help layout opens with the usage line; clap's
         // default template leads with the `about`. uutils handles this via
@@ -1541,6 +1547,162 @@ mod tests {
         assert!(result.stdout.contains("file.txt"));
         assert!(result.stdout.contains("subdir"));
         assert!(result.stdout.contains("nested.txt"));
+    }
+
+    /// TM-INF-024 regression: a host-set `TIME_STYLE` (or any other env var
+    /// uutils' `uu_app()` attaches to an Arg via `.env(...)`) MUST NOT
+    /// reach the clap parser. uutils' upstream wires
+    /// `Arg::new(TIME_STYLE).env("TIME_STYLE")` so the option defaults
+    /// from the host process — bashkit strips that at codegen time, drops
+    /// the `env` clap feature workspace-wide as defence-in-depth, and
+    /// re-implements env-default precedence against `ctx.env` only via
+    /// `apply_env_defaults`. Without those guards a plain `ls` in a
+    /// container that exports `TIME_STYLE=long-iso` would trip the
+    /// unsupported-option gate (since bashkit hasn't implemented
+    /// `--time-style` yet) and break `ls` for every script running on
+    /// that host.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn ls_ignores_host_time_style_and_tabsize() {
+        // SAFETY: serial_test::serial serializes against other tests that
+        // touch the process env. Setting + unsetting around a single
+        // bashkit `Ls.execute()` is the only way to exercise the
+        // sandbox-leak regression: we're asserting bashkit does NOT
+        // observe these even when they're present on the host process.
+        unsafe {
+            std::env::set_var("TIME_STYLE", "long-iso");
+            std::env::set_var("TABSIZE", "16");
+        }
+
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        fs.write_file(&cwd.join("a.txt"), b"a").await.unwrap();
+        let env = HashMap::new();
+        let args: Vec<String> = vec![];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+
+        let result = Ls.execute(ctx).await.unwrap();
+
+        unsafe {
+            std::env::remove_var("TIME_STYLE");
+            std::env::remove_var("TABSIZE");
+        }
+
+        assert_eq!(
+            result.exit_code, 0,
+            "host TIME_STYLE/TABSIZE leaked into bashkit ls parser \
+             (TM-INF-024): stderr={}",
+            result.stderr
+        );
+        assert!(result.stdout.contains("a.txt"));
+        assert!(
+            !result.stderr.contains("not yet implemented"),
+            "host env tunneled through clap as a value source: stderr={}",
+            result.stderr
+        );
+    }
+
+    /// Counterpart to `ls_ignores_host_time_style_and_tabsize`: when
+    /// `TIME_STYLE` lives in bashkit's *virtual* env (`ctx.env`), the
+    /// codegen-emitted `LS_ENV_DEFAULTS` table feeds it through
+    /// `apply_env_defaults` and clap honours it just as upstream
+    /// uutils would honour `std::env::var("TIME_STYLE")`. We assert
+    /// that path by observing the clap value-source: ls today rejects
+    /// `--time-style` with a "not yet implemented" message, but only
+    /// because clap saw the option at all. If the env→argv shim were
+    /// silently broken, ls would succeed.
+    #[tokio::test]
+    async fn ls_honors_virtual_env_time_style() {
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        fs.write_file(&cwd.join("a.txt"), b"a").await.unwrap();
+        let mut env = HashMap::new();
+        env.insert("TIME_STYLE".to_string(), "long-iso".to_string());
+        let args: Vec<String> = vec![];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+
+        let result = Ls.execute(ctx).await.unwrap();
+
+        assert_eq!(
+            result.exit_code, 2,
+            "virtual TIME_STYLE should reach clap's parser; got stdout={} \
+             stderr={}",
+            result.stdout, result.stderr
+        );
+        assert!(
+            result.stderr.contains("not yet implemented") && result.stderr.contains("time-style"),
+            "expected unsupported-option error mentioning time-style; got stderr={}",
+            result.stderr
+        );
+    }
+
+    /// Argv-set `--time-style` must take precedence over a `ctx.env`
+    /// value, matching clap's documented "argv > env > default"
+    /// precedence and `apply_env_defaults`'s contract. Easiest way to
+    /// observe it: pass an explicit `--time-style=iso`, set a
+    /// *different* value in `ctx.env`, and assert the error message
+    /// surfaces the explicit one (or at least that env did not
+    /// double-inject — the unsupported-option path collapses both
+    /// into the same diagnostic, so we just confirm exit==2 and that
+    /// argv wasn't mangled).
+    #[tokio::test]
+    async fn ls_argv_time_style_overrides_virtual_env() {
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let mut env = HashMap::new();
+        env.insert("TIME_STYLE".to_string(), "long-iso".to_string());
+        let args: Vec<String> = vec!["--time-style=iso".to_string()];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+        let result = Ls.execute(ctx).await.unwrap();
+        // Same unsupported-option gate as the virtual-env-only test;
+        // the precedence-correctness signal is that we don't see
+        // *two* sources or a clap parse failure complaining about
+        // duplicate `--time-style`.
+        assert_eq!(result.exit_code, 2);
+        assert!(
+            !result.stderr.contains("supplied more than once"),
+            "shim double-injected --time-style: stderr={}",
+            result.stderr
+        );
     }
 
     // ==================== find tests ====================

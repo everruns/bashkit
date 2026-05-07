@@ -75,7 +75,12 @@ zeroize = "1"
 getrandom = "0.3"
 
 # CLI
-clap = { version = "4", features = ["derive", "env"] }
+# Intentionally NOT enabling clap's `env` feature: it makes `Arg::env(...)`
+# read defaults from `std::env`, which would tunnel host process state into
+# the bashkit sandbox (TM-INF-023). The coreutils-args-port codegen strips
+# `.env(...)` chains from vendored Arg builders; dropping the feature here
+# is defence-in-depth so any re-introduction fails to compile.
+clap = { version = "4", features = ["derive"] }
 
 # Testing
 tokio-test = "0.4"
