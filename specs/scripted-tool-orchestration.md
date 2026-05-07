@@ -214,7 +214,7 @@ Bash command args are parsed into a JSON object:
 | `--tags x --tags y` | `{"tags": ["x","y"]}` (repeated invocations append) |
 | `--server '{"port":80}'` | `{"server": {"port":80}}` (if schema says object) |
 | `--server name=foo url=http://x` | `{"server": {"name":"foo","url":"http://x"}}` (object via pairs) |
-| `--mcp name=a --mcp name=b` | `{"mcp": [{"name":"a"},{"name":"b"}]}` (array of objects via repeated pair groups) |
+| `--endpoint name=a --endpoint name=b` | `{"endpoint": [{"name":"a"},{"name":"b"}]}` (array of objects via repeated pair groups) |
 
 Type coercion follows the `input_schema` property types: `integer`, `number`, `boolean`, `string`,
 `array`, `object`. Unknown flags (not in schema) are kept as strings.
@@ -414,23 +414,6 @@ Trace entries record:
 - kind: `tool`, `help`, or `discover`
 - raw argv tokens
 - exit code
-
-### MCP integration
-
-`McpServer` in `bashkit-cli` can expose ScriptedTools over MCP's JSON-RPC protocol.
-Each registered ScriptedTool appears as a separate MCP tool in `tools/list`:
-
-```rust
-let mut server = McpServer::new();
-server.register_scripted_tool(my_tool);
-server.run().await?;
-```
-
-- `tools/list` returns the default `bash` tool plus all registered ScriptedTools
-- `tools/call` routes by tool name: ScriptedTool names go to `ScriptedTool::execute()`,
-  `bash` goes to the default handler
-- Gated behind `scripted_tool` feature flag on `bashkit-cli`
-- Existing `bash` tool unaffected (backward compatible)
 
 ### ScriptingToolSet — mode-controlled multi-tool wrapper
 

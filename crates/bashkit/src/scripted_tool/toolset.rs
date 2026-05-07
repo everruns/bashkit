@@ -106,7 +106,7 @@ impl DiscoverTool {
         }
     }
 
-    /// Translate structured MCP input into a [`ToolRequest`].
+    /// Translate structured tool input into a [`ToolRequest`].
     ///
     /// Priority: `commands` (backward compat) > `all` > `query`.
     fn resolve_request(args: &serde_json::Value) -> Result<ToolRequest, String> {
@@ -967,7 +967,7 @@ mod tests {
         assert_eq!(tools[1].name(), "api_discover");
     }
 
-    // -- Structured discover input (MCP) --
+    // -- Structured discover input --
 
     #[tokio::test]
     async fn test_discover_structured_query() {

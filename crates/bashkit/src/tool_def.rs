@@ -945,7 +945,7 @@ mod tests {
         let schema = serde_json::json!({
             "type": "object",
             "properties": {
-                "mcp_server": {
+                "endpoint": {
                     "type": "array",
                     "items": {
                         "type": "object",
@@ -958,16 +958,16 @@ mod tests {
             }
         });
         let args = vec![
-            "--mcp_server".to_string(),
+            "--endpoint".to_string(),
             "name=a".to_string(),
             "url=u1".to_string(),
-            "--mcp_server".to_string(),
+            "--endpoint".to_string(),
             "name=b".to_string(),
             "url=u2".to_string(),
         ];
         let result = parse_flags(&args, &schema).unwrap();
         assert_eq!(
-            result["mcp_server"],
+            result["endpoint"],
             serde_json::json!([
                 {"name": "a", "url": "u1"},
                 {"name": "b", "url": "u2"}
@@ -1096,7 +1096,7 @@ mod tests {
         let schema = serde_json::json!({
             "type": "object",
             "properties": {
-                "mcp_server": {
+                "endpoint": {
                     "type": "array",
                     "items": {
                         "type": "object",
@@ -1108,14 +1108,14 @@ mod tests {
             }
         });
         let args = vec![
-            "--mcp_server".to_string(),
+            "--endpoint".to_string(),
             r#"{"name":"j"}"#.to_string(),
-            "--mcp_server".to_string(),
+            "--endpoint".to_string(),
             "name=p".to_string(),
         ];
         let result = parse_flags(&args, &schema).unwrap();
         assert_eq!(
-            result["mcp_server"],
+            result["endpoint"],
             serde_json::json!([{"name": "j"}, {"name": "p"}])
         );
     }
