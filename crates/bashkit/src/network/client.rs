@@ -1175,45 +1175,57 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_check_private_ip_fails_closed_on_dns_error() {
-        // Regression for #1570 (TM-NET-023): the precheck previously returned
-        // Ok(()) on DNS lookup error, letting requests reach the connect
-        // path with no IP filter — a SSRF vector for custom HTTP handlers
-        // that don't get reqwest's connect-time PrivateIpFilteringResolver.
-        // .invalid is reserved by RFC 2606 and never resolves.
-        let allowlist =
-            NetworkAllowlist::new().allow("https://nonexistent-host-for-ssrf-test.invalid");
-        let client = HttpClient::new(allowlist);
-        let result = client
-            .get("https://nonexistent-host-for-ssrf-test.invalid")
-            .await;
-        assert!(
-            result.is_err(),
-            "DNS-failing host must not pass the precheck"
-        );
+    async fn test_check_private_ip_fails_closed_on_invalid_url() {
+        // Regression for #1570 (TM-NET-023): malformed URLs previously
+        // returned Ok(()) from the precheck. The fail-closed contract is
+        // exercised directly against `check_private_ip` to avoid relying
+        // on the allowlist's parser short-circuiting first.
+        let client = HttpClient::new(NetworkAllowlist::allow_all());
+        let result = client.check_private_ip("definitely::not::a::url").await;
+        assert!(result.is_err(), "malformed URL must trip the SSRF precheck");
         let msg = result.err().unwrap().to_string();
         assert!(
-            msg.contains("DNS lookup") && msg.contains("fail-closed"),
-            "expected fail-closed DNS error, got: {msg}"
+            msg.contains("invalid URL") || msg.contains("SSRF"),
+            "expected SSRF-precheck error, got: {msg}"
         );
     }
 
     #[tokio::test]
-    async fn test_check_private_ip_fails_closed_on_invalid_url() {
-        // Regression for #1570: malformed URLs previously returned Ok(())
-        // from the precheck. They should be rejected.
-        let allowlist = NetworkAllowlist::allow_all();
-        let client = HttpClient::new(allowlist);
-        let result = client.get("not-a-url").await;
-        assert!(result.is_err(), "invalid URL must not pass the precheck");
+    async fn test_check_private_ip_fails_closed_on_no_host() {
+        // Regression for #1570: URLs without a host component used to slip
+        // through. Now they are rejected.
+        let client = HttpClient::new(NetworkAllowlist::allow_all());
+        let result = client.check_private_ip("file:///etc/passwd").await;
+        assert!(result.is_err(), "host-less URL must trip the precheck");
+        let msg = result.err().unwrap().to_string();
+        assert!(
+            msg.contains("no host") || msg.contains("SSRF"),
+            "expected SSRF-precheck error, got: {msg}"
+        );
     }
 
     #[tokio::test]
-    async fn test_check_private_ip_blocks_direct_private_ip_url() {
-        // Sanity check that the existing direct-IP path still rejects.
-        let allowlist = NetworkAllowlist::new().allow("http://10.0.0.1");
-        let client = HttpClient::new(allowlist);
-        let result = client.get("http://10.0.0.1/").await;
+    async fn test_check_private_ip_blocks_literal_private_ip() {
+        // Direct IP form: no DNS, deterministic — the existing direct-IP
+        // branch must still reject 10.0.0.1.
+        let client = HttpClient::new(NetworkAllowlist::allow_all());
+        let result = client.check_private_ip("http://10.0.0.1/").await;
+        assert!(result.is_err());
+        let msg = result.err().unwrap().to_string();
+        assert!(
+            msg.contains("private IP") || msg.contains("SSRF"),
+            "expected SSRF-protection error, got: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_check_private_ip_blocks_metadata_via_v4_mapped_v6() {
+        // Belt-and-braces with TM-NET-022 (#1569): IPv4-mapped IPv6 form of
+        // AWS metadata must also fail closed.
+        let client = HttpClient::new(NetworkAllowlist::allow_all());
+        let result = client
+            .check_private_ip("http://[::ffff:169.254.169.254]/")
+            .await;
         assert!(result.is_err());
         let msg = result.err().unwrap().to_string();
         assert!(
