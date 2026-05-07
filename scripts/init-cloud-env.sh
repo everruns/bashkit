@@ -59,19 +59,20 @@ install_just() {
 
     ARCH=$(uname -m)
     case "$ARCH" in
-        x86_64)  JUST_ARCH="x86_64"; JUST_SHA256="181b91d0ceebe8a57723fb648ed2ce1a44d849438ce2e658339df4f8db5f1263" ;;
-        aarch64) JUST_ARCH="aarch64"; JUST_SHA256="d065d0df1a1f99529869fba8a5b3e0a25c1795b9007099b00dfabe29c7c1f7b6" ;;
+        x86_64)  JUST_ARCH="x86_64"; JUST_SHA256="27e011cd6328fadd632e59233d2cf5f18460b8a8c4269acd324c1a8669f34db0" ;;
+        aarch64) JUST_ARCH="aarch64"; JUST_SHA256="3beb4967ce05883cf09ac12d6d128166eb4c6d0b03eff74b61018a6880655d7d" ;;
         *)       error "Unsupported architecture: $ARCH" ;;
     esac
 
-    JUST_VERSION="1.40.0"
+    JUST_VERSION="1.50.0"
     JUST_TARBALL="just-${JUST_VERSION}-${JUST_ARCH}-unknown-linux-musl.tar.gz"
     JUST_URL="https://github.com/casey/just/releases/download/${JUST_VERSION}/${JUST_TARBALL}"
 
     TEMP_DIR=$(mktemp -d)
     trap "rm -rf $TEMP_DIR" EXIT
 
-    curl --proto '=https' --tlsv1.2 -sSf --connect-timeout 10 --max-time 60 --retry 2 --retry-delay 2 "$JUST_URL" -o "$TEMP_DIR/$JUST_TARBALL"
+    # -L required: GitHub releases redirect to S3; without it curl writes an empty body.
+    curl --proto '=https' --tlsv1.2 -fsSL --connect-timeout 10 --max-time 60 --retry 2 --retry-delay 2 "$JUST_URL" -o "$TEMP_DIR/$JUST_TARBALL"
     verify_sha256 "$TEMP_DIR/$JUST_TARBALL" "$JUST_SHA256"
     tar -xzf "$TEMP_DIR/$JUST_TARBALL" -C "$TEMP_DIR"
     cp "$TEMP_DIR/just" "$INSTALL_DIR/just"
