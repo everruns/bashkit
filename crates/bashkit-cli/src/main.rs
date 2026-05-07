@@ -379,6 +379,13 @@ mod tests {
     }
 
     #[test]
+    fn cli_mode_treats_mcp_as_script_name() {
+        let args = Args::parse_from(["bashkit", "mcp"]);
+        assert_eq!(cli_mode(&args), CliMode::Script);
+        assert_eq!(args.script, Some(PathBuf::from("mcp")));
+    }
+
+    #[test]
     fn cli_mode_falls_back_to_interactive() {
         let args = Args::parse_from(["bashkit"]);
         assert_eq!(cli_mode(&args), CliMode::Interactive);

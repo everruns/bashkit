@@ -373,15 +373,15 @@ mountable.mount("/data", Arc::new(InMemoryFs::new()));
 
 ```bash
 # Run a script
-bashkit run script.sh
+bashkit script.sh
 
 # Interactive REPL
-bashkit repl
+bashkit
 
 
 # Mount real filesystem (read-only or read-write)
-bashkit run script.sh --mount-ro /data
-bashkit run script.sh --mount-rw /workspace
+bashkit --mount-ro /data script.sh
+bashkit --mount-rw /workspace script.sh
 ```
 
 ## Development
