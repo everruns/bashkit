@@ -136,8 +136,18 @@ impl RusshHandler {
             .await
             .map_err(|e| format!("connection failed: {e}"))?;
 
-        // Authenticate: try "none" first (public SSH services like supabase.sh),
-        // then private key, then password.
+        // Authenticate: try "none" first so the server can succeed without
+        // ever seeing the configured password/key (TM-SSH secrets-exposure,
+        // issue #1574). Only fall back to credentials if the server rejects
+        // none-auth.
+        let none_auth = session
+            .authenticate_none(&target.user)
+            .await
+            .map_err(|e| format!("auth failed: {e}"))?;
+        if none_auth.success() {
+            return Ok(session);
+        }
+
         if let Some(ref key_pem) = target.private_key {
             let key_pair = russh::keys::PrivateKey::from_openssh(key_pem.as_bytes())
                 .map_err(|e| format!("invalid private key: {e}"))?;
@@ -168,14 +178,7 @@ impl RusshHandler {
                 return Err("password authentication rejected".to_string());
             }
         } else {
-            // No credentials — try "none" auth (works for public SSH services)
-            let auth = session
-                .authenticate_none(&target.user)
-                .await
-                .map_err(|e| format!("auth failed: {e}"))?;
-            if !auth.success() {
-                return Err("ssh: authentication failed (server requires credentials)".to_string());
-            }
+            return Err("ssh: authentication failed (server requires credentials)".to_string());
         }
 
         Ok(session)
@@ -396,6 +399,39 @@ mod tests {
         let config = SshConfig::new().max_response_bytes(512);
         let client = SshClient::new(config);
         assert_eq!(client.config().max_response_bytes, 512);
+    }
+
+    /// Regression: issue #1574. `authenticate_none` must be attempted before
+    /// any credential so a server that accepts none-auth never sees the
+    /// configured default password or key. We assert this by inspecting
+    /// `connect()` in the source — a unit-level test of the ordering would
+    /// require a real SSH server.
+    #[test]
+    fn test_auth_order_none_first() {
+        let src = include_str!("russh_handler.rs");
+        // Locate the `connect` function body.
+        let connect_start = src
+            .find("async fn connect(")
+            .expect("connect fn must exist");
+        let body = &src[connect_start..];
+        // Bound the search to the function: stop at the next `}\n}\n` (end of impl).
+        let none_pos = body
+            .find(".authenticate_none(")
+            .expect("authenticate_none must be called in connect");
+        let key_pos = body
+            .find(".authenticate_publickey(")
+            .expect("authenticate_publickey must be called in connect");
+        let pass_pos = body
+            .find(".authenticate_password(")
+            .expect("authenticate_password must be called in connect");
+        assert!(
+            none_pos < key_pos,
+            "authenticate_none must precede authenticate_publickey (#1574)"
+        );
+        assert!(
+            none_pos < pass_pos,
+            "authenticate_none must precede authenticate_password (#1574)"
+        );
     }
 
     #[test]
