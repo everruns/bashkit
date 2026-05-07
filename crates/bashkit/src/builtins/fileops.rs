@@ -836,12 +836,17 @@ impl Builtin for Kill {
 
 /// The mktemp builtin - create temporary files or directories.
 ///
-/// Usage: mktemp [-d] [-p DIR] [-t] [TEMPLATE]
+/// Argument surface is generated from uutils/coreutils' `uu_app()` via
+/// the `bashkit-coreutils-port` codegen tool — see
+/// `generated/mktemp_args.rs`. Behaviour is implemented locally
+/// against the bashkit VFS.
 ///
-/// Options:
-///   -d       Create a directory instead of a file
-///   -p DIR   Use DIR as prefix (default: /tmp)
-///   -t       Interpret TEMPLATE relative to a temp directory
+/// Options of note:
+///   -d, --directory      Create a directory instead of a file.
+///   -p / --tmpdir[=DIR]  Prefix dir (defaults to /tmp).
+///   -u, --dry-run        Print the would-be path without creating it.
+///   --suffix=SUFFIX      Append SUFFIX after the template's `X`s.
+///   -q, --quiet          Suppress error diagnostics on failure.
 pub struct Mktemp;
 
 const MKTEMP_MAX_ATTEMPTS: usize = 64;
@@ -871,43 +876,63 @@ fn mktemp_name(template: Option<&str>, suffix: &str) -> String {
 #[async_trait]
 impl Builtin for Mktemp {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        if let Some(r) = super::check_help_version(
-            ctx.args,
-            "Usage: mktemp [-d] [-p DIR] [-t] [TEMPLATE]\nCreate a temporary file or directory, safely, and print its name.\n\n  -d\t\tcreate a directory, not a file\n  -p DIR\tuse DIR as a prefix (default: /tmp)\n  -t\t\tinterpret TEMPLATE relative to a temporary directory\n      --help\tdisplay this help and exit\n      --version\toutput version information and exit\n",
-            Some("mktemp (bashkit) 0.1"),
-        ) {
-            return Ok(r);
-        }
+        use super::generated::mktemp_args::mktemp_command;
+        use std::ffi::OsString;
+        use std::path::PathBuf;
 
-        let mut create_dir = false;
-        let mut prefix_dir = "/tmp".to_string();
-        let mut template: Option<String> = None;
-        let mut use_tmpdir = false;
+        let argv: Vec<OsString> = std::iter::once(OsString::from("mktemp"))
+            .chain(ctx.args.iter().map(OsString::from))
+            .collect();
 
-        let mut i = 0;
-        while i < ctx.args.len() {
-            match ctx.args[i].as_str() {
-                "-d" => create_dir = true,
-                "-p" => {
-                    i += 1;
-                    if i < ctx.args.len() {
-                        prefix_dir = ctx.args[i].clone();
-                    }
+        let cmd = mktemp_command().help_template("Usage: {usage}\n{about}\n\n{all-args}\n");
+        let matches = match cmd.try_get_matches_from(argv) {
+            Ok(m) => m,
+            Err(e) => {
+                let kind = e.kind();
+                let rendered = e.render().to_string();
+                if matches!(
+                    kind,
+                    clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion
+                ) {
+                    return Ok(ExecResult::ok(rendered));
                 }
-                "-t" => use_tmpdir = true,
-                arg if !arg.starts_with('-') => {
-                    template = Some(arg.to_string());
-                }
-                _ => {} // ignore unknown flags
+                return Ok(ExecResult::err(rendered, 2));
             }
-            i += 1;
-        }
+        };
+
+        let create_dir = matches.get_flag("directory");
+        let dry_run = matches.get_flag("dry-run");
+        let quiet = matches.get_flag("quiet");
+        let use_tmpdir = matches.get_flag("t");
+        // -p and --tmpdir parse to Option<PathBuf>: empty value falls
+        // back to the default. clap stores the *outer* presence as the
+        // arg id, the typed value as Option<PathBuf>.
+        let p_value: Option<&Option<PathBuf>> = matches.get_one("p");
+        let tmpdir_value: Option<&Option<PathBuf>> = matches.get_one("tmpdir");
+        let suffix_arg = matches
+            .get_one::<OsString>("suffix")
+            .map(|s| s.to_string_lossy().into_owned());
+
+        let prefix_dir: String = match (tmpdir_value, p_value) {
+            (Some(Some(p)), _) | (_, Some(Some(p))) => p.to_string_lossy().into_owned(),
+            _ => "/tmp".to_string(),
+        };
+
+        let template: Option<String> = matches
+            .get_one::<OsString>("template")
+            .map(|s| s.to_string_lossy().into_owned());
 
         for attempt in 0..MKTEMP_MAX_ATTEMPTS {
-            let suffix = mktemp_suffix_for_attempt(attempt);
-            let name = mktemp_name(template.as_deref(), &suffix);
+            let rand_part = mktemp_suffix_for_attempt(attempt);
+            let name_with_x = mktemp_name(template.as_deref(), &rand_part);
+            let name = match &suffix_arg {
+                Some(suf) => format!("{name_with_x}{suf}"),
+                None => name_with_x,
+            };
 
-            let path = if use_tmpdir || template.is_none() || !name.contains('/') {
+            let path = if template.as_deref().is_some_and(|t| t.starts_with('/')) {
+                name
+            } else if use_tmpdir || template.is_none() || !name.contains('/') {
                 format!("{}/{}", prefix_dir, name)
             } else {
                 let p = resolve_path(ctx.cwd, &name);
@@ -916,7 +941,6 @@ impl Builtin for Mktemp {
 
             let full_path = std::path::PathBuf::from(&path);
 
-            // Ensure parent directory exists
             if let Some(parent) = full_path.parent()
                 && !ctx.fs.exists(parent).await.unwrap_or(false)
             {
@@ -927,15 +951,21 @@ impl Builtin for Mktemp {
                 continue;
             }
 
+            if dry_run {
+                return Ok(ExecResult::ok(format!("{}\n", path)));
+            }
+
             if create_dir {
                 match ctx.fs.mkdir(&full_path, false).await {
                     Ok(_) => return Ok(ExecResult::ok(format!("{}\n", path))),
                     Err(_) if ctx.fs.exists(&full_path).await.unwrap_or(false) => continue,
                     Err(e) => {
-                        return Ok(ExecResult::err(
-                            format!("mktemp: failed to create directory '{}': {}\n", path, e),
-                            1,
-                        ));
+                        let msg = if quiet {
+                            String::new()
+                        } else {
+                            format!("mktemp: failed to create directory '{}': {}\n", path, e)
+                        };
+                        return Ok(ExecResult::err(msg, 1));
                     }
                 }
             } else {
@@ -943,19 +973,23 @@ impl Builtin for Mktemp {
                     Ok(_) => return Ok(ExecResult::ok(format!("{}\n", path))),
                     Err(_) if ctx.fs.exists(&full_path).await.unwrap_or(false) => continue,
                     Err(e) => {
-                        return Ok(ExecResult::err(
-                            format!("mktemp: failed to create file '{}': {}\n", path, e),
-                            1,
-                        ));
+                        let msg = if quiet {
+                            String::new()
+                        } else {
+                            format!("mktemp: failed to create file '{}': {}\n", path, e)
+                        };
+                        return Ok(ExecResult::err(msg, 1));
                     }
                 }
             }
         }
 
-        Ok(ExecResult::err(
-            "mktemp: failed to create unique temporary path after 64 attempts\n".to_string(),
-            1,
-        ))
+        let msg = if quiet {
+            String::new()
+        } else {
+            "mktemp: failed to create unique temporary path after 64 attempts\n".to_string()
+        };
+        Ok(ExecResult::err(msg, 1))
     }
 }
 

@@ -29,7 +29,12 @@ pub const UUTILS_REVISION: &str = "39364b6";
 
 pub mod cat_args;
 pub mod ls_args;
+pub mod mktemp_args;
+pub mod od_args;
 pub mod readlink_args;
+pub mod realpath_args;
 pub mod shuf_args;
+pub mod stat_args;
 pub mod tac_args;
+pub mod tee_args;
 pub mod truncate_args;

@@ -123,9 +123,10 @@ realpath /home/user/docs/../file.txt
 ### end
 
 ### realpath_no_args
+### bash_diff: clap-backed realpath returns exit 2 for parse errors; GNU realpath returns 1
 # realpath with no args should error
 realpath 2>/dev/null
 echo $?
 ### expect
-1
+2
 ### end

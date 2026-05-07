@@ -134,39 +134,105 @@ impl Builtin for Dirname {
 
 /// The realpath builtin - resolve absolute pathname.
 ///
-/// Usage: realpath [PATH...]
+/// Argument surface is generated from uutils/coreutils' `uu_app()` via
+/// the `bashkit-coreutils-port` codegen tool — see
+/// `generated/realpath_args.rs`. Behaviour is implemented locally
+/// against the bashkit VFS.
 ///
-/// Resolves `.` and `..` components and prints absolute canonical paths.
-/// In bashkit's virtual filesystem, symlink resolution is not performed.
+/// Symlink resolution stays disabled per `specs/implementation-status.md`'s
+/// "Intentionally Unimplemented" entry: bashkit's VFS does not model
+/// symlinks, so `-e`/`-m` only differ on existence checks, and
+/// `-L`/`-P`/`--strip` collapse to the same lexical canonicalisation.
 pub struct Realpath;
 
 #[async_trait]
 impl Builtin for Realpath {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        if let Some(r) = super::check_help_version(
-            ctx.args,
-            "Usage: realpath [PATH...]\nPrint the resolved absolute pathname.\n\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
-            Some("realpath (bashkit) 0.1"),
-        ) {
-            return Ok(r);
-        }
-        if ctx.args.is_empty() {
-            return Ok(ExecResult::err(
-                "realpath: missing operand\n".to_string(),
-                1,
-            ));
-        }
+        use super::generated::realpath_args::realpath_command;
+        use std::ffi::OsString;
 
-        let mut output = String::new();
-        for arg in ctx.args {
-            if arg.starts_with('-') {
-                continue; // skip flags like -e, -m, -s
+        let argv: Vec<OsString> = std::iter::once(OsString::from("realpath"))
+            .chain(ctx.args.iter().map(OsString::from))
+            .collect();
+
+        let cmd = realpath_command().help_template("Usage: {usage}\n{about}\n\n{all-args}\n");
+        let matches = match cmd.try_get_matches_from(argv) {
+            Ok(m) => m,
+            Err(e) => {
+                let kind = e.kind();
+                let rendered = e.render().to_string();
+                if matches!(
+                    kind,
+                    clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion
+                ) {
+                    return Ok(ExecResult::ok(rendered));
+                }
+                return Ok(ExecResult::err(rendered, 2));
             }
+        };
+
+        let quiet = matches.get_flag("quiet");
+        let zero = matches.get_flag("zero");
+        let canonicalize_existing = matches.get_flag("canonicalize-existing");
+        let relative_to = matches
+            .get_one::<OsString>("relative-to")
+            .map(|s| s.to_string_lossy().into_owned());
+        let relative_base = matches
+            .get_one::<OsString>("relative-base")
+            .map(|s| s.to_string_lossy().into_owned());
+
+        let files: Vec<String> = matches
+            .get_many::<OsString>("files")
+            .map(|vs| vs.map(|v| v.to_string_lossy().into_owned()).collect())
+            .unwrap_or_default();
+
+        let separator = if zero { '\0' } else { '\n' };
+        let mut output = String::new();
+        let mut had_error = false;
+
+        for arg in &files {
             let resolved = super::resolve_path(ctx.cwd, arg);
-            output.push_str(&resolved.to_string_lossy());
-            output.push('\n');
+
+            // -e: every component must exist.
+            // -m (default in bashkit): no existence requirement.
+            // -E (default upstream): only the parent must exist —
+            //   without symlinks the distinction between -E and -m is
+            //   purely existence-based, so we treat them identically.
+            if canonicalize_existing && !ctx.fs.exists(&resolved).await.unwrap_or(false) {
+                had_error = true;
+                if !quiet {
+                    return Ok(ExecResult::err(
+                        format!(
+                            "realpath: {}: No such file or directory\n",
+                            resolved.display()
+                        ),
+                        1,
+                    ));
+                }
+                continue;
+            }
+
+            let mut printed = resolved.to_string_lossy().into_owned();
+            if let Some(base) = relative_to.as_ref().or(relative_base.as_ref()) {
+                let base_path = super::resolve_path(ctx.cwd, base);
+                if let Ok(rel) = std::path::Path::new(&printed)
+                    .strip_prefix(base_path.to_string_lossy().as_ref())
+                {
+                    let rel_str = rel.to_string_lossy();
+                    printed = if rel_str.is_empty() {
+                        ".".to_string()
+                    } else {
+                        rel_str.into_owned()
+                    };
+                }
+            }
+            output.push_str(&printed);
+            output.push(separator);
         }
 
+        if had_error {
+            return Ok(ExecResult::err(output, 1));
+        }
         Ok(ExecResult::ok(output))
     }
 }

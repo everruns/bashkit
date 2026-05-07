@@ -34,7 +34,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::visit_mut::{self, VisitMut};
-use syn::{Expr, ExprCall, ExprMacro, Item, ItemFn, ItemMod, LitStr, parse_quote};
+use syn::{Expr, ExprCall, ExprMacro, Item, ItemFn, ItemImpl, ItemMod, LitStr, Type, parse_quote};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
@@ -69,13 +69,30 @@ fn run(uutils_dir: &Path, util: &str, rev: &str) -> Result<String> {
         .join(util)
         .join("locales/en-US.ftl");
 
-    let src = std::fs::read_to_string(&src_path)
+    let primary_src = std::fs::read_to_string(&src_path)
         .with_context(|| format!("read uutils source {}", src_path.display()))?;
     let ftl = std::fs::read_to_string(&ftl_path)
         .with_context(|| format!("read uutils ftl {}", ftl_path.display()))?;
 
     let translations = parse_ftl(&ftl);
-    let file = syn::parse_file(&src).context("parse uutils source as rust")?;
+    let primary_file = syn::parse_file(&primary_src).context("parse uutils source as rust")?;
+
+    // `uu_app` usually lives in `<util>.rs`, but a few utilities (e.g.
+    // tee) split it into a sibling `cli.rs` and re-export. Find the
+    // file that actually defines `fn uu_app` and treat that as the
+    // source of truth for the rest of the algorithm: option-key
+    // constants, helper inlining, and the `mod options` lookup all
+    // need to see whichever file owns the clap definition.
+    let (src_path, file) = if find_fn(&primary_file, "uu_app").is_some() {
+        (src_path.clone(), primary_file)
+    } else if let Some((sib_path, sib_file)) = find_sibling_file_with_fn(&src_path, "uu_app")? {
+        (sib_path, sib_file)
+    } else {
+        bail!(
+            "could not find `fn uu_app` in {} or its sibling files",
+            src_path.display()
+        );
+    };
 
     // Two option-key declaration styles in the wild:
     // 1. `mod options { pub static FOO: &str = "foo"; ... }` (cat, tac,
@@ -105,7 +122,7 @@ fn run(uutils_dir: &Path, util: &str, rev: &str) -> Result<String> {
         );
     }
     let mut uu_app = find_fn(&file, "uu_app")
-        .ok_or_else(|| anyhow!("could not find `fn uu_app` in {}", src_path.display()))?
+        .expect("uu_app presence already verified in source resolution above")
         .clone();
 
     // Harvest `.env(...)` annotations BEFORE the rewriter strips them
@@ -128,18 +145,17 @@ fn run(uutils_dir: &Path, util: &str, rev: &str) -> Result<String> {
         );
     }
 
-    // Some uu_app() definitions reference free helper functions from the
-    // same source file (e.g. shuf's `parse_range` used as a clap
-    // value_parser). Inline those helpers so the generated file
-    // compiles standalone, running them through the same rewriter so
-    // their translate!() calls resolve too.
-    let helpers = collect_referenced_helpers(&uu_app, &file)
-        .into_iter()
-        .map(|mut helper| {
-            rw.visit_item_fn_mut(&mut helper);
-            helper
-        })
-        .collect::<Vec<_>>();
+    // Some uu_app() definitions reference free helpers from the same
+    // source file: free functions (e.g. shuf's `parse_range`, used as
+    // a clap `value_parser`) or custom value-parser structs together
+    // with their `impl` blocks (e.g. mktemp's `OptionalPathBufParser`,
+    // realpath's `NonEmptyOsStringParser`). Inline both kinds so the
+    // generated file compiles standalone, running them through the
+    // same rewriter so any embedded `translate!()` calls resolve too.
+    let mut helpers = collect_referenced_items(&uu_app, &file);
+    for item in &mut helpers {
+        rw.visit_item_mut(item);
+    }
     if !rw.unresolved.is_empty() {
         bail!(
             "unresolved translate!() keys in inlined helpers: {:?}",
@@ -233,11 +249,13 @@ fn run(uutils_dir: &Path, util: &str, rev: &str) -> Result<String> {
         // helpers reference (e.g. shuf's `parse_range` returns
         // `RangeInclusive<u64>`).
         use clap::builder::{
-            NonEmptyStringValueParser, PossibleValue, PossibleValuesParser, ValueParser,
+            NonEmptyStringValueParser, PossibleValue, PossibleValuesParser, TypedValueParser,
+            ValueParser, ValueParserFactory,
         };
         use clap::{Arg, ArgAction, Command};
-        use std::ffi::OsString;
+        use std::ffi::{OsStr, OsString};
         use std::ops::RangeInclusive;
+        use std::path::PathBuf;
         use std::str::FromStr;
 
         #options_mod_tokens
@@ -496,16 +514,21 @@ fn path_ends_with_arg_new(func: &Expr) -> bool {
 }
 
 /// Walk `uu_app()`'s body looking for plain identifier references
-/// (single-segment paths) and return any matching free `fn` defined at
-/// the top level of the source file. Skips items already provided by
-/// the generated preamble (e.g. `format_usage`).
+/// (single-segment paths) and return any matching free items defined
+/// at the top level of the source file. Handles two helper shapes:
 ///
-/// One-level only — if a copied helper itself references another local
-/// helper, we surface that as a compile error rather than recursively
-/// inlining. The shuf use case (`parse_range` referencing only `std`
-/// and `translate!()`) doesn't need recursion; broaden when a real
-/// case demands it.
-fn collect_referenced_helpers(uu_app: &ItemFn, file: &syn::File) -> Vec<ItemFn> {
+/// * Free functions used as `value_parser`s (e.g. shuf's `parse_range`).
+/// * Newtype `value_parser` structs with their `impl` blocks (e.g.
+///   mktemp's `OptionalPathBufParser`, realpath's
+///   `NonEmptyOsStringParser`). Both `impl TypedValueParser` and
+///   `impl ValueParserFactory` blocks for the struct are pulled in.
+///
+/// Skips items already provided by the generated preamble
+/// (e.g. `format_usage`). One-level only: a helper that itself
+/// references another local helper surfaces as a compile error rather
+/// than triggering recursive inlining. Broaden when a real case demands
+/// it.
+fn collect_referenced_items(uu_app: &ItemFn, file: &syn::File) -> Vec<Item> {
     use syn::visit::{self, Visit};
 
     struct IdentCollector(std::collections::HashSet<String>);
@@ -526,20 +549,52 @@ fn collect_referenced_helpers(uu_app: &ItemFn, file: &syn::File) -> Vec<ItemFn> 
 
     const PROVIDED_BY_PREAMBLE: &[&str] = &["format_usage"];
 
-    file.items
-        .iter()
-        .filter_map(|item| match item {
+    let mut out: Vec<Item> = Vec::new();
+    let mut struct_names: std::collections::HashSet<String> = Default::default();
+    for item in &file.items {
+        match item {
             Item::Fn(f) => {
                 let name = f.sig.ident.to_string();
                 if names.contains(&name) && !PROVIDED_BY_PREAMBLE.contains(&name.as_str()) {
-                    Some(f.clone())
-                } else {
-                    None
+                    out.push(Item::Fn(f.clone()));
                 }
             }
-            _ => None,
-        })
-        .collect()
+            Item::Struct(s) => {
+                let name = s.ident.to_string();
+                if names.contains(&name) {
+                    out.push(Item::Struct(s.clone()));
+                    struct_names.insert(name);
+                }
+            }
+            _ => {}
+        }
+    }
+    // Pull in `impl ... for <Struct>` and inherent `impl <Struct>`
+    // blocks for any struct we just inlined, preserving source order so
+    // `impl` blocks always follow their struct definition.
+    for item in &file.items {
+        if let Item::Impl(im) = item
+            && let Some(target) = impl_target_ident(im)
+            && struct_names.contains(&target)
+        {
+            out.push(Item::Impl(im.clone()));
+        }
+    }
+    out
+}
+
+/// Extract the single-segment ident of an `impl` block's `Self` type.
+/// Returns `None` for impls on generic or path-qualified types — the
+/// helper inlining path only handles the simple newtype shape uutils
+/// uses for value-parser structs.
+fn impl_target_ident(im: &ItemImpl) -> Option<String> {
+    if let Type::Path(tp) = im.self_ty.as_ref()
+        && tp.qself.is_none()
+        && tp.path.segments.len() == 1
+    {
+        return Some(tp.path.segments[0].ident.to_string());
+    }
+    None
 }
 
 fn find_mod<'a>(file: &'a syn::File, name: &str) -> Option<&'a ItemMod> {
@@ -615,6 +670,39 @@ fn find_fn<'a>(file: &'a syn::File, name: &str) -> Option<&'a ItemFn> {
         Item::Fn(f) if f.sig.ident == name => Some(f),
         _ => None,
     })
+}
+
+/// Look for `fn <name>` (or `pub fn <name>`) in any sibling `.rs` file.
+/// Used by utilities that split `uu_app()` into a sibling `cli.rs` and
+/// re-export it from `<util>.rs` (e.g. tee). Returns the first match —
+/// when uu_app is defined in a sibling, that file becomes the source
+/// of truth for option constants and helper inlining as well.
+fn find_sibling_file_with_fn(src_path: &Path, name: &str) -> Result<Option<(PathBuf, syn::File)>> {
+    let parent = src_path
+        .parent()
+        .ok_or_else(|| anyhow!("source path has no parent: {}", src_path.display()))?;
+    let entries = std::fs::read_dir(parent)
+        .with_context(|| format!("scan sibling files in {}", parent.display()))?;
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+        if path == src_path {
+            continue;
+        }
+        if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+            continue;
+        }
+        let src = std::fs::read_to_string(&path)
+            .with_context(|| format!("read sibling {}", path.display()))?;
+        let file = match syn::parse_file(&src) {
+            Ok(f) => f,
+            Err(_) => continue,
+        };
+        if find_fn(&file, name).is_some() {
+            return Ok(Some((path, file)));
+        }
+    }
+    Ok(None)
 }
 
 struct Rewriter {
