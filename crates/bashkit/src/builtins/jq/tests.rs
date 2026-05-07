@@ -1253,7 +1253,7 @@ async fn halt_does_not_terminate_host_process() {
     let result = run_jq_result("halt", r#"{}"#).await.unwrap();
     assert_ne!(
         result.exit_code, 0,
-        "halt should fail safely; stdout={:?} stderr={:?}",
+        "halt should fail safely; stdout=<{}> stderr=<{}>",
         result.stdout, result.stderr
     );
 }
@@ -1265,7 +1265,7 @@ async fn halt_with_arg_does_not_terminate_host_process() {
     let result = run_jq_result("halt(7)", r#"{}"#).await.unwrap();
     assert_ne!(
         result.exit_code, 0,
-        "halt(7) should fail safely; stdout={:?} stderr={:?}",
+        "halt(7) should fail safely; stdout=<{}> stderr=<{}>",
         result.stdout, result.stderr
     );
 }
@@ -1278,7 +1278,7 @@ async fn halt_error_does_not_terminate_host_process() {
     let result = run_jq_result("halt_error", r#""boom""#).await.unwrap();
     assert_ne!(
         result.exit_code, 0,
-        "halt_error should fail safely; stdout={:?} stderr={:?}",
+        "halt_error should fail safely; stdout=<{}> stderr=<{}>",
         result.stdout, result.stderr
     );
 }
