@@ -87,7 +87,7 @@ pub mod bot_auth;
 mod client;
 
 #[allow(unused_imports)] // UrlMatch is used internally but may not be exported
-pub use allowlist::{NetworkAllowlist, UrlMatch};
+pub use allowlist::{NetworkAllowlist, UrlMatch, is_private_ip};
 
 #[cfg(feature = "bot-auth")]
 pub use bot_auth::{BotAuthConfig, BotAuthError, BotAuthPublicKey, derive_bot_auth_public_key};
