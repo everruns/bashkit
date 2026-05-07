@@ -46,3 +46,15 @@ echo "ok"
 ### expect
 ok
 ### end
+
+### ln_force_dir_dest_fails
+### exit_code:1
+### bash_diff: Bashkit VFS rejects ln -sf over a non-empty directory; real ln also fails here.
+# Regression: issue #1577. ln -f must not silently overwrite a non-empty
+# directory with a symlink — that would orphan its children in the VFS.
+echo content > /tmp/force_dir_target.txt
+mkdir -p /tmp/force_dir_dest
+echo child > /tmp/force_dir_dest/child.txt
+ln -sf /tmp/force_dir_target.txt /tmp/force_dir_dest
+### expect
+### end
