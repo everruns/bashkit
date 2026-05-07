@@ -690,7 +690,7 @@ impl InMemoryFs {
     /// fs.write_file(Path::new("/tmp/new.txt"), b"new file").await?;
     ///
     /// // Restore
-    /// fs.restore(&snapshot);
+    /// fs.restore(&snapshot)?;
     ///
     /// // Original state is back
     /// let content = fs.read_file(Path::new("/tmp/data.txt")).await?;
@@ -701,32 +701,39 @@ impl InMemoryFs {
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any snapshot entry violates the configured VFS
+    /// limits (path validation, file size, total bytes, or file count). On
+    /// error the existing filesystem contents are left untouched (issue
+    /// #1576) so callers can refuse the restore atomically.
     // THREAT[TM-ESC-012]: Enforce VFS limits to prevent bypass via restore()
-    pub fn restore(&self, snapshot: &VfsSnapshot) {
+    pub fn restore(&self, snapshot: &VfsSnapshot) -> crate::error::Result<()> {
         // Validate ALL snapshot entries before clearing existing state.
         // If any validation fails, return early WITHOUT clearing.
         let mut total_bytes = 0u64;
         let mut file_count = 0u64;
 
         for entry in &snapshot.entries {
-            if self.limits.validate_path(&entry.path).is_err() {
-                return;
-            }
+            self.limits
+                .validate_path(&entry.path)
+                .map_err(|e| IoError::other(e.to_string()))?;
             if let VfsEntryKind::File { content } = &entry.kind {
-                if self.limits.check_file_size(content.len() as u64).is_err() {
-                    return;
-                }
+                self.limits
+                    .check_file_size(content.len() as u64)
+                    .map_err(|e| IoError::other(e.to_string()))?;
                 total_bytes += content.len() as u64;
                 file_count += 1;
             }
         }
 
         if total_bytes > self.limits.max_total_bytes {
-            return;
+            return Err(IoError::other("snapshot total bytes exceed limit").into());
         }
-        if self.limits.check_file_count(file_count).is_err() {
-            return;
-        }
+        self.limits
+            .check_file_count(file_count)
+            .map_err(|e| IoError::other(e.to_string()))?;
 
         let mut entries = self.entries.write().unwrap();
         entries.clear();
@@ -796,6 +803,8 @@ impl InMemoryFs {
                 }
             }
         }
+
+        Ok(())
     }
 
     fn normalize_path(path: &Path) -> PathBuf {
@@ -1714,9 +1723,8 @@ impl FileSystemExt for InMemoryFs {
         Some(self.snapshot())
     }
 
-    fn vfs_restore(&self, snapshot: &VfsSnapshot) -> bool {
-        self.restore(snapshot);
-        true
+    fn vfs_restore(&self, snapshot: &VfsSnapshot) -> Result<()> {
+        self.restore(snapshot)
     }
 }
 
@@ -2134,7 +2142,9 @@ mod tests {
             max_file_size: 100,
             ..FsLimits::default()
         });
-        limited.restore(&snapshot);
+        // Issue #1576: restore must fail closed and not silently no-op.
+        let err = limited.restore(&snapshot);
+        assert!(err.is_err(), "restore must report the limit violation");
         assert!(!limited.exists(Path::new("/tmp/huge.bin")).await.unwrap());
     }
 

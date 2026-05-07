@@ -545,7 +545,7 @@ impl FileSystemExt for MountableFs {
         self.root.vfs_snapshot()
     }
 
-    fn vfs_restore(&self, snapshot: &super::VfsSnapshot) -> bool {
+    fn vfs_restore(&self, snapshot: &super::VfsSnapshot) -> crate::Result<()> {
         // Delegate to root filesystem
         self.root.vfs_restore(snapshot)
     }

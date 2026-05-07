@@ -324,12 +324,17 @@ impl crate::Bash {
     }
 
     fn restore_snapshot_inner(&mut self, snap: &Snapshot) -> crate::Result<()> {
+        // Issue #1576: validate everything that can fail before mutating
+        // either the shell or the VFS, so a malformed/forged snapshot can't
+        // leave the instance in a half-restored state.
         self.interpreter
             .validate_shell_state_restore_limits(&snap.shell)?;
-        self.interpreter.restore_shell_state(&snap.shell);
         if let Some(ref vfs) = snap.vfs {
-            self.fs.vfs_restore(vfs);
+            self.fs.vfs_restore(vfs)?;
         }
+        // Shell state cannot fail past validation, and the VFS has already
+        // been restored atomically (or rejected) above.
+        self.interpreter.restore_shell_state(&snap.shell);
         Ok(())
     }
 
