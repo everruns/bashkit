@@ -676,6 +676,7 @@ allowlist.allow("https://api.example.com");
 | TM-NET-019 | Query param injection | `http GET url q=='foo&admin=true'` injects extra params | URL-encode via `url::form_urlencoded` | **MITIGATED** |
 | TM-NET-020 | Form body injection | `http --form POST url user='x&role=admin'` injects extra fields | URL-encode via `url::form_urlencoded` | **MITIGATED** |
 | TM-NET-021 | Bot identity spoofing | Forge requests as a trusted bot | Ed25519 request signing (bot-auth feature, `specs/request-signing.md`) | **MITIGATED** (opt-in) |
+| TM-NET-022 | IPv4-mapped IPv6 SSRF bypass | AAAA record returns `::ffff:127.0.0.1`, `::ffff:10.0.0.1`, `::ffff:169.254.169.254`, etc. — embedded v4 address would re-enter the v4 address space at the kernel/socket layer, but the v6 branch of `is_private_ip` only inspected `is_loopback`/`is_unspecified`/`fd00::/8`/`fe80::/10`, treating everything else as public | `is_private_ip` normalizes IPv4-mapped (`::ffff:0:0/96`) and IPv4-compatible (`::a.b.c.d`) v6 forms back to v4 via `Ipv6Addr::to_ipv4_mapped()` and applies the v4 classifier (`is_private_ipv4`). Tested via `test_is_private_ip_v4_mapped_v6_*` cases for loopback, RFC1918, AWS metadata (169.254.169.254), CGNAT, unspecified, public, and IPv4-compatible. Mitigation reaches both the v6 connect-time `PrivateIpFilteringResolver` and the URL/precheck path. | **FIXED** (#1569) |
 
 **Current Risk**: LOW - Multiple mitigations in place
 
