@@ -23,28 +23,51 @@ use url::Url;
 /// Check if an IP address is in a private/reserved range.
 ///
 /// Blocks: 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
-/// 169.254.0.0/16, 0.0.0.0, ::1, fd00::/8, fe80::/10, ::
+/// 169.254.0.0/16, 100.64.0.0/10, 0.0.0.0, ::1, fd00::/8, fe80::/10, ::
 ///
-/// # Security (TM-NET-002, TM-NET-004)
+/// IPv4-mapped IPv6 addresses (`::ffff:0:0/96`) are normalized to their
+/// embedded IPv4 form and classified using the v4 rules. This is critical:
+/// without it, an attacker who controls DNS for an allowlisted hostname
+/// can return an AAAA record pointing at e.g. `::ffff:127.0.0.1` or
+/// `::ffff:169.254.169.254` and bypass the v4 private-range checks.
+///
+/// # Security (TM-NET-002, TM-NET-004, TM-NET-008)
 ///
 /// Used to prevent SSRF attacks where an allowed hostname resolves
 /// to an internal/cloud metadata IP address.
 pub fn is_private_ip(ip: &IpAddr) -> bool {
     match ip {
-        IpAddr::V4(v4) => {
-            v4.is_loopback()                    // 127.0.0.0/8
-                || v4.is_private()              // 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
-                || v4.is_link_local()           // 169.254.0.0/16
-                || v4.is_unspecified()          // 0.0.0.0
-                || v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64 // 100.64.0.0/10 (CGNAT)
-        }
+        IpAddr::V4(v4) => is_private_ipv4(v4),
         IpAddr::V6(v6) => {
+            // SECURITY (TM-NET-008, #1569): IPv4-mapped IPv6 addresses
+            // (`::ffff:a.b.c.d`) and IPv4-compatible addresses
+            // (`::a.b.c.d`, deprecated but still resolvable) re-enter the
+            // address space as v4 at the kernel/socket layer. Reject them
+            // by their v4 classification before applying v6-only rules.
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_private_ipv4(&v4);
+            }
+            if let Some(v4) = v6.to_ipv4()
+                && v6.segments()[..6].iter().all(|s| *s == 0)
+                && v6.segments()[6] != 0
+            {
+                // ::a.b.c.d (IPv4-compatible) — apply v4 rules.
+                return is_private_ipv4(&v4);
+            }
             v6.is_loopback()                    // ::1
                 || v6.is_unspecified()          // ::
                 || (v6.segments()[0] & 0xfe00) == 0xfc00 // fd00::/8 (unique local)
                 || (v6.segments()[0] & 0xffc0) == 0xfe80 // fe80::/10 (link-local)
         }
     }
+}
+
+fn is_private_ipv4(v4: &std::net::Ipv4Addr) -> bool {
+    v4.is_loopback()                    // 127.0.0.0/8
+        || v4.is_private()              // 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+        || v4.is_link_local()           // 169.254.0.0/16
+        || v4.is_unspecified()          // 0.0.0.0
+        || v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64 // 100.64.0.0/10 (CGNAT)
 }
 
 /// Redact credentials from a URL for safe inclusion in error messages.
@@ -554,6 +577,60 @@ mod tests {
         assert!(!is_private_ip(
             &"2001:db8::1".parse::<std::net::IpAddr>().unwrap()
         ));
+    }
+
+    #[test]
+    fn test_is_private_ip_v4_mapped_v6_loopback() {
+        // Regression for #1569 (TM-NET-008): IPv4-mapped IPv6 addresses
+        // must be normalized and classified by the embedded v4 address.
+        // Without normalization, an AAAA record returning `::ffff:127.0.0.1`
+        // would bypass the v4 loopback check and reach localhost.
+        assert!(is_private_ip(&"::ffff:127.0.0.1".parse().unwrap()));
+        assert!(is_private_ip(&"::ffff:127.255.255.255".parse().unwrap()));
+    }
+
+    #[test]
+    fn test_is_private_ip_v4_mapped_v6_rfc1918() {
+        // Regression for #1569: AAAA → ::ffff:10.0.0.1 / ::ffff:192.168.x.y
+        // must trip the v4 private-range check.
+        assert!(is_private_ip(&"::ffff:10.0.0.1".parse().unwrap()));
+        assert!(is_private_ip(&"::ffff:172.16.0.1".parse().unwrap()));
+        assert!(is_private_ip(&"::ffff:192.168.1.1".parse().unwrap()));
+    }
+
+    #[test]
+    fn test_is_private_ip_v4_mapped_v6_metadata() {
+        // Regression for #1569: ::ffff:169.254.169.254 (AWS metadata) is
+        // the highest-impact bypass and must classify as private.
+        assert!(is_private_ip(&"::ffff:169.254.169.254".parse().unwrap()));
+        assert!(is_private_ip(&"::ffff:169.254.0.1".parse().unwrap()));
+    }
+
+    #[test]
+    fn test_is_private_ip_v4_mapped_v6_cgnat() {
+        // CGNAT range coverage carries through normalization too.
+        assert!(is_private_ip(&"::ffff:100.64.0.1".parse().unwrap()));
+        assert!(is_private_ip(&"::ffff:100.127.255.255".parse().unwrap()));
+    }
+
+    #[test]
+    fn test_is_private_ip_v4_mapped_v6_unspecified() {
+        assert!(is_private_ip(&"::ffff:0.0.0.0".parse().unwrap()));
+    }
+
+    #[test]
+    fn test_is_private_ip_v4_mapped_v6_public_still_public() {
+        // Public IPv4 wrapped as v4-mapped v6 must still be public.
+        assert!(!is_private_ip(&"::ffff:8.8.8.8".parse().unwrap()));
+        assert!(!is_private_ip(&"::ffff:1.1.1.1".parse().unwrap()));
+    }
+
+    #[test]
+    fn test_is_private_ip_v4_compatible_v6_loopback() {
+        // IPv4-compatible IPv6 (`::a.b.c.d`, deprecated but still parsable)
+        // also needs v4 classification.
+        assert!(is_private_ip(&"::127.0.0.1".parse().unwrap()));
+        assert!(is_private_ip(&"::169.254.169.254".parse().unwrap()));
     }
 
     #[test]
