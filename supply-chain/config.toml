@@ -1788,12 +1788,12 @@ criteria = "safe-to-deploy"
 version = "1.0.149"
 criteria = "safe-to-deploy"
 
-[[exemptions.serdect]]
-version = "0.4.2"
-criteria = "safe-to-deploy"
-
 [[exemptions.serde_spanned]]
 version = "0.6.9"
+criteria = "safe-to-deploy"
+
+[[exemptions.serdect]]
+version = "0.4.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.serial_test]]
