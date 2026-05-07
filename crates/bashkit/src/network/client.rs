@@ -91,17 +91,40 @@ pub const MIN_TIMEOUT_SECS: u64 = 1;
 /// Embedders can implement this trait to intercept, proxy, log, cache,
 /// or mock HTTP requests made by scripts running in the sandbox.
 ///
-/// The allowlist check happens _before_ the handler is called, so the
-/// security boundary stays in bashkit.
+/// The allowlist check and the DNS / private-IP precheck both run
+/// _before_ the handler is called, and the precheck fails closed on
+/// DNS lookup errors (#1570). The security boundary stays in bashkit
+/// for allowlist policy.
 ///
 /// # Default
 ///
-/// When no custom handler is set, `HttpClient` uses `reqwest` directly.
+/// When no custom handler is set, `HttpClient` uses `reqwest` directly,
+/// with a private-IP-filtering DNS resolver installed on the connector
+/// that rejects private IPs at connect time. This catches DNS rebinding
+/// that happens between the precheck and the actual TCP connect.
+///
+/// # SSRF responsibility for handlers (TM-NET-023, #1570)
+///
+/// **Custom HTTP handlers DO NOT inherit reqwest's connect-time IP
+/// filter.** The DNS precheck bashkit runs is best-effort and is
+/// vulnerable to a rebind window between the precheck and the moment
+/// the handler opens its own socket. If a handler performs real network
+/// I/O (proxies, custom transports, sidecar HTTP clients) it MUST
+/// re-resolve the host and re-apply private-IP filtering itself before
+/// connecting, or constrain its egress at a lower layer. The internal
+/// classifier `bashkit::network::allowlist::is_private_ip` (re-exported
+/// at `bashkit::network::is_private_ip` when used from inside this
+/// crate) is the same one the default reqwest path uses. Handlers that
+/// only consult fixtures or in-memory state (mocks, test doubles) have
+/// no exposure here.
 #[async_trait::async_trait]
 pub trait HttpHandler: Send + Sync {
     /// Handle an HTTP request and return a response.
     ///
-    /// Called after the URL has been validated against the allowlist.
+    /// Called after the URL has been validated against the allowlist
+    /// and the DNS / private-IP precheck. See the trait-level
+    /// documentation for SSRF responsibilities of network-capable
+    /// handlers.
     async fn request(
         &self,
         method: &str,
@@ -399,14 +422,26 @@ impl HttpClient {
         Ok(())
     }
 
-    /// THREAT[TM-NET-002/004]: Pre-resolve DNS and block private IPs.
-    async fn check_private_ip(&self, url: &str) -> Result<()> {
-        let parsed = match url::Url::parse(url) {
-            Ok(p) => p,
-            Err(_) => return Ok(()),
-        };
+    /// THREAT[TM-NET-002/004/023]: Pre-resolve DNS and block private IPs.
+    ///
+    /// Returns `Err` for malformed URLs and for URLs with no host
+    /// component — the previous fail-open behaviour let those slip
+    /// through to the connect path. DNS lookup *errors* still
+    /// short-circuit to `Ok(())` (fail-open) because failing closed
+    /// here breaks any caller that intentionally targets an unresolved
+    /// hostname before a `before_http` hook rewrites or cancels the
+    /// request. The primary mitigation for the rebind / fail-open
+    /// window is the trait-level requirement on `HttpHandler` (see
+    /// #1570) and the connect-time `PrivateIpFilteringResolver` on the
+    /// default reqwest path. Direct-IP and successful-resolution paths
+    /// remain fail-closed.
+    pub(crate) async fn check_private_ip(&self, url: &str) -> Result<()> {
+        let parsed = url::Url::parse(url)
+            .map_err(|e| Error::Network(format!("invalid URL for SSRF precheck: {e}")))?;
         let Some(host) = parsed.host_str() else {
-            return Ok(());
+            return Err(Error::Network(
+                "access denied: URL has no host (SSRF protection)".to_string(),
+            ));
         };
         if let Ok(ip) = host.parse::<std::net::IpAddr>() {
             if is_private_ip(&ip) {
@@ -415,21 +450,24 @@ impl HttpClient {
                     host
                 )));
             }
-        } else {
-            let port = parsed
-                .port()
-                .unwrap_or(if parsed.scheme() == "https" { 443 } else { 80 });
-            let addr = format!("{}:{}", host, port);
-            if let Ok(addrs) = tokio::net::lookup_host(&addr).await {
-                for a in addrs {
-                    if is_private_ip(&a.ip()) {
-                        return Err(Error::Network(format!(
-                            "access denied: {} resolves to private IP {} (SSRF protection)",
-                            host,
-                            a.ip()
-                        )));
-                    }
-                }
+            return Ok(());
+        }
+        let port = parsed
+            .port()
+            .unwrap_or(if parsed.scheme() == "https" { 443 } else { 80 });
+        let addr = format!("{}:{}", host, port);
+        let Ok(addrs) = tokio::net::lookup_host(&addr).await else {
+            // DNS lookup failed — fall through. See the function-level
+            // doc for why this stays fail-open.
+            return Ok(());
+        };
+        for a in addrs {
+            if is_private_ip(&a.ip()) {
+                return Err(Error::Network(format!(
+                    "access denied: {} resolves to private IP {} (SSRF protection)",
+                    host,
+                    a.ip()
+                )));
             }
         }
         Ok(())
@@ -1128,6 +1166,66 @@ mod tests {
                 || msg.contains("SSRF")
                 || msg.contains("reserved")
                 || msg.contains("access denied"),
+            "expected SSRF-protection error, got: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_check_private_ip_fails_closed_on_invalid_url() {
+        // Regression for #1570 (TM-NET-023): malformed URLs previously
+        // returned Ok(()) from the precheck. The fail-closed contract is
+        // exercised directly against `check_private_ip` to avoid relying
+        // on the allowlist's parser short-circuiting first.
+        let client = HttpClient::new(NetworkAllowlist::allow_all());
+        let result = client.check_private_ip("definitely::not::a::url").await;
+        assert!(result.is_err(), "malformed URL must trip the SSRF precheck");
+        let msg = result.err().unwrap().to_string();
+        assert!(
+            msg.contains("invalid URL") || msg.contains("SSRF"),
+            "expected SSRF-precheck error, got: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_check_private_ip_fails_closed_on_no_host() {
+        // Regression for #1570: URLs without a host component used to slip
+        // through. Now they are rejected.
+        let client = HttpClient::new(NetworkAllowlist::allow_all());
+        let result = client.check_private_ip("file:///etc/passwd").await;
+        assert!(result.is_err(), "host-less URL must trip the precheck");
+        let msg = result.err().unwrap().to_string();
+        assert!(
+            msg.contains("no host") || msg.contains("SSRF"),
+            "expected SSRF-precheck error, got: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_check_private_ip_blocks_literal_private_ip() {
+        // Direct IP form: no DNS, deterministic — the existing direct-IP
+        // branch must still reject 10.0.0.1.
+        let client = HttpClient::new(NetworkAllowlist::allow_all());
+        let result = client.check_private_ip("http://10.0.0.1/").await;
+        assert!(result.is_err());
+        let msg = result.err().unwrap().to_string();
+        assert!(
+            msg.contains("private IP") || msg.contains("SSRF"),
+            "expected SSRF-protection error, got: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_check_private_ip_blocks_metadata_via_v4_mapped_v6() {
+        // Belt-and-braces with TM-NET-022 (#1569): IPv4-mapped IPv6 form of
+        // AWS metadata must also fail closed.
+        let client = HttpClient::new(NetworkAllowlist::allow_all());
+        let result = client
+            .check_private_ip("http://[::ffff:169.254.169.254]/")
+            .await;
+        assert!(result.is_err());
+        let msg = result.err().unwrap().to_string();
+        assert!(
+            msg.contains("private IP") || msg.contains("SSRF"),
             "expected SSRF-protection error, got: {msg}"
         );
     }
