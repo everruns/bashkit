@@ -32,6 +32,7 @@ mod bc;
 mod caller;
 mod cat;
 mod checksum;
+mod clap_env;
 mod clear;
 mod column;
 mod comm;
@@ -1103,6 +1104,122 @@ mod tests {
              `// debug-ok: <reason>` to the line for legitimate test \
              asserts.\n\nViolations:\n{}",
             violations.join("\n")
+        );
+    }
+
+    /// TM-INF-024: clap `Arg::env(...)` reads defaults from the real
+    /// process environment. uutils ships `.env("TABSIZE")` /
+    /// `.env("TIME_STYLE")` on `ls`, but bashkit isolates scripts inside
+    /// `ctx.env`; if the host parser were allowed to consult `std::env`
+    /// the sandbox boundary would leak (host can probe presence, host can
+    /// inject values that propagate into bashkit's option-validation
+    /// path). Codegen strips `.env(...)` from generated Arg chains and
+    /// re-emits the metadata as a `<UTIL>_ENV_DEFAULTS` table that the
+    /// `clap_env::apply_env_defaults` shim feeds from `ctx.env`. This
+    /// static guard makes sure no future regen (or hand-edit) re-adds
+    /// a runtime `.env(...)` call. Defence-in-depth: the workspace
+    /// `clap` dep also drops the `env` cargo feature, so a slipped
+    /// `.env(...)` won't compile.
+    #[test]
+    fn no_clap_env_in_generated_parsers() {
+        let pat = regex::Regex::new(r"\.env\s*\(").unwrap();
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/builtins/generated");
+        let mut violations = Vec::new();
+        for entry in std::fs::read_dir(&dir).expect("read generated dir") {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("rs") {
+                continue;
+            }
+            let src = std::fs::read_to_string(&path).expect("read generated file");
+            for (i, line) in src.lines().enumerate() {
+                // Skip doc/line comments — they reference `.env(...)`
+                // when describing the harvest rule. We only care about
+                // real call expressions.
+                if line.trim_start().starts_with("//") {
+                    continue;
+                }
+                if pat.is_match(line) {
+                    let rel = path
+                        .strip_prefix(std::path::Path::new(env!("CARGO_MANIFEST_DIR")))
+                        .unwrap_or(&path);
+                    violations.push(format!("{}:{}: {}", rel.display(), i + 1, line.trim_end()));
+                }
+            }
+        }
+        assert!(
+            violations.is_empty(),
+            "clap `Arg::env(...)` found in a generated parser. This pulls \
+             defaults from the host process environment and breaks bashkit's \
+             sandbox boundary (TM-INF-024). Re-run `just regen-coreutils-args` \
+             — the codegen harvests these into `<UTIL>_ENV_DEFAULTS` instead — \
+             or remove the call by hand.\n\n{}",
+            violations.join("\n")
+        );
+    }
+
+    /// Every `<util>_args.rs` MUST expose a `<UTIL>_ENV_DEFAULTS` static.
+    /// The codegen always emits one (possibly empty) so the bashkit-side
+    /// surface is uniform — every clap-based builtin can wire through
+    /// `apply_env_defaults` without per-util conditional code. Catches
+    /// the regression where a regen drops the table because the codegen
+    /// branch that emits it was removed or skipped.
+    #[test]
+    fn every_generated_parser_emits_env_defaults_table() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/builtins/generated");
+        let mut missing = Vec::new();
+        for entry in std::fs::read_dir(&dir).expect("read generated dir") {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            if !name.ends_with("_args.rs") {
+                continue;
+            }
+            // util name is everything before `_args.rs`
+            let util = name.trim_end_matches("_args.rs");
+            let const_name = format!("{}_ENV_DEFAULTS", util.to_uppercase());
+            let needle = format!("pub static {const_name}");
+            let src = std::fs::read_to_string(&path).expect("read generated file");
+            if !src.contains(&needle) {
+                let rel = path
+                    .strip_prefix(std::path::Path::new(env!("CARGO_MANIFEST_DIR")))
+                    .unwrap_or(&path);
+                missing.push(format!("{}: missing `{needle}: ...`", rel.display()));
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "Generated parser is missing its `<UTIL>_ENV_DEFAULTS` sidecar. \
+             The codegen always emits this (possibly empty) so the bashkit \
+             builtin can route argv through `apply_env_defaults` without \
+             per-util conditionals. Re-run `just regen-coreutils-args` to \
+             regenerate.\n\n{}",
+            missing.join("\n")
+        );
+    }
+
+    /// Pin LS's env-default surface explicitly. uutils' upstream `ls`
+    /// uses `.env("TABSIZE")` and `.env("TIME_STYLE")` as of the pinned
+    /// rev — both must appear in `LS_ENV_DEFAULTS`, with matching long
+    /// flags, or the virtual-env shim silently drops them. Updating
+    /// uutils may legitimately add or remove rows; bump this list in
+    /// the same PR as the codegen regen.
+    #[test]
+    fn ls_env_defaults_surface_matches_uutils() {
+        use crate::builtins::generated::ls_args::LS_ENV_DEFAULTS;
+        let mut got: Vec<(&'static str, &'static str)> = LS_ENV_DEFAULTS
+            .iter()
+            .map(|d| (d.env_var, d.long))
+            .collect();
+        got.sort();
+        let mut expected = vec![("TABSIZE", "tabsize"), ("TIME_STYLE", "time-style")];
+        expected.sort();
+        assert_eq!(
+            got, expected,
+            "LS_ENV_DEFAULTS surface drifted from upstream uutils. Either \
+             the codegen harvest dropped a row, or uutils added/removed an \
+             `.env(...)` annotation on `ls` — bump this fixture together \
+             with the regen."
         );
     }
 

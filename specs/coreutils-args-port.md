@@ -22,6 +22,28 @@ codegen**, not by depending on `uu_*` crates at runtime.
    - `uucore::clap_localization::configure_localized_command(cmd)` → `cmd`
    - `ShortcutValueParser::new([…])` → `clap::builder::PossibleValuesParser::new([…])`
      (loses uucore's unambiguous-abbreviation behaviour; documented divergence)
+   - `Arg::…env("FOO")…` → chain step elided AND harvested into a
+     sidecar table (TM-INF-024). uutils attaches `.env(...)` to options
+     like `TABSIZE`/`TIME_STYLE` so they pick up host process state;
+     bashkit sandboxes scripts inside `ctx.env`, so the generated
+     `<util>_command()` only consults argv. To preserve uutils' UX
+     across the port, codegen records each stripped `.env(...)` into
+     `pub static <UTIL>_ENV_DEFAULTS: &[clap_env::EnvDefault]` next to
+     the command builder. Each row carries `(arg_id, long, env_var,
+     kind ∈ {Single, Bool, Multi})`. The bashkit-side shim
+     `crate::builtins::clap_env::apply_env_defaults` reads
+     `<UTIL>_ENV_DEFAULTS` plus the caller's `ctx.env` and synthesises
+     `--<long> <value>` (or `--<long>` for `Bool`) into argv before
+     `try_get_matches_from`, emulating clap's documented "argv > env >
+     default" precedence — but sourced from the sandbox, never
+     `std::env`. Defence-in-depth: the workspace `clap` dep drops the
+     `env` cargo feature, `builtins::tests::no_clap_env_in_generated_parsers`
+     statically forbids runtime `.env(` calls in `generated/*.rs`, and
+     `every_generated_parser_emits_env_defaults_table` enforces the
+     uniform sidecar surface (every util emits the table, possibly
+     empty). Per-builtin opt-in: a builtin chooses whether to wire
+     through the shim — if it does, every uutils env-default
+     auto-lights as that option's bashkit support lands.
 5. Emits a generated file under
    `crates/bashkit/src/builtins/generated/<util>_args.rs` with a clean
    `pub fn <util>_command() -> clap::Command`.
