@@ -1,0 +1,26 @@
+# Manifest of uucore modules vendored into bashkit by
+# `bashkit-coreutils-port port-module`.
+#
+# Single source of truth for both the porting tool (CLI lookup) and the
+# coreutils-args-drift workflow (which iterates this file to re-port
+# every entry against uutils HEAD). Adding a new vendored module is
+# one TOML stanza here plus consumer wiring in bashkit.
+#
+# Schema: see the rustdoc on `crate::manifest::Manifest`.
+#
+# Currently empty — module-vendor mode lands here as the tool capability
+# (#1533). The first consumer (uucore::format for printf, #1534) adds
+# the first stanza.
+#
+# Example, kept commented out so the file parses cleanly when empty:
+#
+# [[modules]]
+# name = "format"
+# source = "src/uucore/src/lib/features/format"
+# out = "format"
+#
+# [[modules.substitutions]]
+# prefix = "uucore::error::UError"
+# action = "error"
+
+modules = []

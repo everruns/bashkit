@@ -85,23 +85,34 @@ dependency rot, or security gaps ship in a release.
 - No orphaned TODOs in specs that are now resolved
 - New features have spec entries
 
-### Coreutils Argument-Surface Drift
+### Coreutils Argument-Surface and Module-Vendor Drift
 
 See `specs/coreutils-args-port.md`.
 
-- Review any open `chore: sync uutils/coreutils argument surfaces` PR
-  produced by the `coreutils-args-drift` workflow (weekly cron):
-  - Confirm new flags are wired into the consuming builtin or explicitly
-    rejected (matching the existing `tac -b/-r/-s` "not yet implemented"
-    pattern — no silent no-ops).
-  - Confirm removed/renamed flags don't break downstream scripts; migrate
-    or document.
+- Review any open `chore: sync uutils/coreutils argument surfaces and
+  vendored modules` PR produced by the `coreutils-args-drift` workflow
+  (weekly cron). The PR covers **both** ported argument surfaces (args
+  mode) and vendored uucore modules (module mode):
+  - **Args mode review**: confirm new flags are wired into the
+    consuming builtin or explicitly rejected (matching the existing
+    `tac -b/-r/-s` "not yet implemented" pattern — no silent no-ops).
+    Confirm removed/renamed flags don't break downstream scripts;
+    migrate or document.
+  - **Module mode review**: for every entry in
+    `crates/bashkit-coreutils-port/vendored.toml`, scan the diff for
+    body changes in the vendored sources — this is verbatim copy, so
+    upstream behaviour changes land directly. Validate that
+    `vendored.toml` substitutions still cover every internal `use`
+    (the port aborts loudly if not, but check that the rationale of
+    any `error` actions still reflects intent).
   - Squash-merge as a human (PR's intermediate commits are bot-authored).
   - Confirm the `coreutils_differential_tests` step in the auto-PR is
     green — body drift (semantic divergence vs GNU/uutils) surfaces here
     even when args parity holds.
 - Run `just regen-coreutils-args` locally if no drift PR exists; commit any
-  diff yourself rather than letting it accumulate.
+  diff yourself rather than letting it accumulate. Module-mode regen is
+  driven by the same workflow; trigger `workflow_dispatch` if you need
+  to refresh vendored modules out-of-band.
 - Bump the pinned uutils revision recorded in the generated file headers
   if it has fallen >3 months behind upstream `main`.
 
