@@ -2409,6 +2409,20 @@ fn build_limits(state: &SharedState) -> ExecutionLimits {
     limits
 }
 
+fn derive_sqlite_limits(state: &SharedState) -> bashkit::SqliteLimits {
+    let mut limits = bashkit::SqliteLimits::default();
+    if let Some(ms) = state.timeout_ms {
+        limits = limits.max_duration(std::time::Duration::from_millis(u64::from(ms)));
+    }
+    if let Some(memory_mb) = state.max_memory {
+        let max_db_bytes = (memory_mb.max(0.0) * 1024.0 * 1024.0).floor() as usize;
+        if max_db_bytes > 0 {
+            limits = limits.max_db_bytes(max_db_bytes);
+        }
+    }
+    limits
+}
+
 fn build_bash_from_state(state: &SharedState, files: Option<&HashMap<String, String>>) -> RustBash {
     let mut builder = RustBash::builder();
 
@@ -2473,7 +2487,7 @@ fn build_bash_from_state(state: &SharedState, files: Option<&HashMap<String, Str
     // Enable embedded SQLite (Turso). Passing `sqlite: true` from JS is the
     // explicit opt-in that must also flip the in-process SQLite env gate.
     if state.sqlite {
-        builder = builder.sqlite();
+        builder = builder.sqlite_with_limits(derive_sqlite_limits(state));
         builder = builder.env("BASHKIT_ALLOW_INPROCESS_SQLITE", "1");
     }
 
