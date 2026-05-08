@@ -10,10 +10,11 @@ use crate::error::Result;
 use crate::interpreter::ExecResult;
 use crate::tool_def::{parse_flags, usage_from_schema};
 use async_trait::async_trait;
+use std::collections::VecDeque;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
 
-pub(crate) type InvocationLog = Arc<Mutex<Vec<ScriptedCommandInvocation>>>;
+pub(crate) type InvocationLog = Arc<Mutex<VecDeque<ScriptedCommandInvocation>>>;
 const MAX_LOG_ENTRIES: usize = 256;
 const MAX_LOG_ARG_BYTES: usize = 1024;
 
@@ -27,9 +28,9 @@ fn push_invocation(
     let args = truncate_args(args);
     let mut invocations = log.lock().expect("tool-def invocation log poisoned");
     if invocations.len() == MAX_LOG_ENTRIES {
-        invocations.remove(0);
+        invocations.pop_front();
     }
-    invocations.push(ScriptedCommandInvocation {
+    invocations.push_back(ScriptedCommandInvocation {
         name: name.to_string(),
         kind,
         args,
@@ -38,15 +39,21 @@ fn push_invocation(
 }
 
 fn truncate_args(args: &[String]) -> Vec<String> {
-    args.iter()
-        .map(|arg| {
-            if arg.len() <= MAX_LOG_ARG_BYTES {
-                arg.clone()
-            } else {
-                arg.chars().take(MAX_LOG_ARG_BYTES).collect()
-            }
-        })
-        .collect()
+    args.iter().map(|arg| truncate_arg(arg)).collect()
+}
+
+fn truncate_arg(arg: &str) -> String {
+    if arg.len() <= MAX_LOG_ARG_BYTES {
+        return arg.to_string();
+    }
+    // Byte-aware truncation that respects UTF-8 char boundaries.
+    let cut = arg
+        .char_indices()
+        .map(|(i, c)| i + c.len_utf8())
+        .take_while(|&end| end <= MAX_LOG_ARG_BYTES)
+        .last()
+        .unwrap_or(0);
+    arg[..cut].to_string()
 }
 
 /// Builder for [`ToolDefExtension`].
@@ -121,30 +128,31 @@ impl ToolDefExtensionBuilder {
     }
 
     /// Build the extension.
+    ///
+    /// Each call mints a fresh, isolated invocation log. Clones of the
+    /// returned extension share the log with the original — keep a clone
+    /// before passing the extension to a `Bash` if you intend to call
+    /// [`ToolDefExtension::take_invocations`] later.
     pub fn build(&self) -> ToolDefExtension {
         ToolDefExtension {
             tools: self.tools.clone(),
             sanitize_errors: self.sanitize_errors,
-            invocation_log: Arc::new(Mutex::new(Vec::new())),
+            invocation_log: Arc::new(Mutex::new(VecDeque::new())),
         }
     }
 }
 
 /// Bash extension that registers ToolDef-backed commands plus `help` and `discover`.
+///
+/// Each [`ToolDefExtensionBuilder::build`] mints a fresh invocation log, so
+/// distinct builds (e.g. per tenant) never share traces. Cloning shares the
+/// log with the original — that is the supported pattern for retaining a
+/// `take_invocations` handle after passing the extension to a `Bash`.
+#[derive(Clone)]
 pub struct ToolDefExtension {
     tools: Vec<RegisteredTool>,
     sanitize_errors: bool,
     invocation_log: InvocationLog,
-}
-
-impl Clone for ToolDefExtension {
-    fn clone(&self) -> Self {
-        Self {
-            tools: self.tools.clone(),
-            sanitize_errors: self.sanitize_errors,
-            invocation_log: Arc::new(Mutex::new(Vec::new())),
-        }
-    }
 }
 
 impl ToolDefExtension {
@@ -157,7 +165,7 @@ impl ToolDefExtension {
         Self {
             tools,
             sanitize_errors: true,
-            invocation_log: Arc::new(Mutex::new(Vec::new())),
+            invocation_log: Arc::new(Mutex::new(VecDeque::new())),
         }
     }
 
@@ -178,7 +186,7 @@ impl ToolDefExtension {
             .invocation_log
             .lock()
             .expect("tool-def invocation log poisoned");
-        std::mem::take(&mut *invocations)
+        std::mem::take(&mut *invocations).into()
     }
 
     fn snapshots(&self) -> Vec<ToolDefSnapshot> {
