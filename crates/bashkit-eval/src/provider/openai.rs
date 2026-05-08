@@ -5,7 +5,10 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 
-use super::{ContentBlock, Message, Provider, ProviderResponse, Role, ToolDefinition};
+use super::{
+    ContentBlock, Message, Provider, ProviderResponse, Role, ToolDefinition,
+    ensure_rustls_crypto_provider,
+};
 
 pub struct OpenAiProvider {
     client: reqwest::Client,
@@ -15,6 +18,7 @@ pub struct OpenAiProvider {
 
 impl OpenAiProvider {
     pub fn new(model: &str) -> Result<Self> {
+        ensure_rustls_crypto_provider()?;
         let api_key = std::env::var("OPENAI_API_KEY").context("OPENAI_API_KEY env var not set")?;
         Ok(Self {
             client: reqwest::Client::new(),
