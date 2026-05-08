@@ -474,6 +474,27 @@ mod finding_readonly_bypass {
         assert!(result.stdout.contains("ok"));
     }
 
+    /// export with invalid identifier must continue processing later valid operands.
+    #[tokio::test]
+    async fn export_continues_after_invalid_identifier_and_exports_good_args() {
+        let mut bash = tight_bash();
+        let result = bash
+            .exec(
+                r#"
+                GOOD=old
+                export 1BAD=x GOOD=new
+                echo "exit=$?"
+                echo "var=$GOOD"
+                printenv GOOD
+                "#,
+            )
+            .await
+            .unwrap();
+        assert!(result.stdout.contains("exit=1"));
+        assert!(result.stdout.contains("var=new"));
+        assert!(result.stdout.contains("new"));
+    }
+
     /// Non-finding: readonly via local in function is bash-compatible shadowing.
     #[tokio::test]
     async fn local_shadows_readonly_in_function() {
