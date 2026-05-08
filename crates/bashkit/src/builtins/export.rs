@@ -37,10 +37,9 @@ impl Builtin for Export {
                 let value = &arg[eq_pos + 1..];
                 // Validate variable name
                 if !is_valid_var_name(name) {
-                    return Ok(ExecResult::err(
-                        format!("export: `{}': not a valid identifier\n", arg),
-                        1,
-                    ));
+                    stderr.push_str(&format!("export: `{arg}': not a valid identifier\n"));
+                    exit_code = 1;
+                    continue;
                 }
                 // THREAT[TM-INJ-015]: Block internal variable prefix injection via export
                 if is_internal_variable(name) {
