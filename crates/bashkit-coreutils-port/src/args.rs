@@ -29,7 +29,9 @@ use anyhow::{Context, Result, anyhow, bail};
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::visit_mut::{self, VisitMut};
-use syn::{Expr, ExprCall, ExprMacro, Item, ItemFn, ItemImpl, ItemMod, LitStr, Type, parse_quote};
+use syn::{
+    Expr, ExprCall, ExprMacro, Item, ItemFn, ItemImpl, ItemMod, LitStr, Stmt, Type, parse_quote,
+};
 
 pub fn run(uutils_dir: &Path, util: &str, rev: &str) -> Result<String> {
     let src_path = uutils_dir
@@ -135,6 +137,8 @@ pub fn run(uutils_dir: &Path, util: &str, rev: &str) -> Result<String> {
             rw.unresolved
         );
     }
+
+    validate_uu_app_body(&uu_app)?;
 
     let cmd_fn_name = syn::Ident::new(&format!("{util}_command"), proc_macro2::Span::call_site());
     uu_app.sig.ident = cmd_fn_name.clone();
@@ -638,6 +642,109 @@ fn collect_option_constants(file: &syn::File) -> Vec<Item> {
         .collect()
 }
 
+// THREAT[TM-INF-025]: args-mode consumes third-party Rust from uutils.
+// Only a single clap builder expression may become executable bashkit
+// code; prefix statements would run during CI/parser construction.
+fn validate_uu_app_body(uu_app: &ItemFn) -> Result<()> {
+    let command_expr = match uu_app.block.stmts.as_slice() {
+        [Stmt::Expr(expr, None)] => expr,
+        stmts => bail!(
+            "unsafe uu_app body: expected a single clap Command builder expression, found {} statements",
+            stmts.len()
+        ),
+    };
+
+    let mut validator = UuAppExprValidator { errors: vec![] };
+    syn::visit::Visit::visit_expr(&mut validator, command_expr);
+    if !validator.errors.is_empty() {
+        bail!("unsafe uu_app body: {}", validator.errors.join("; "));
+    }
+    if !chain_roots_at_command_new(command_expr) {
+        bail!("unsafe uu_app body: tail expression must be a clap Command::new(...) builder chain");
+    }
+    Ok(())
+}
+
+struct UuAppExprValidator {
+    errors: Vec<String>,
+}
+
+impl<'ast> syn::visit::Visit<'ast> for UuAppExprValidator {
+    fn visit_expr_block(&mut self, node: &'ast syn::ExprBlock) {
+        self.errors.push(format!(
+            "block expression is not allowed in command builder: {}",
+            quote::quote!(#node)
+        ));
+    }
+
+    fn visit_expr_unsafe(&mut self, node: &'ast syn::ExprUnsafe) {
+        self.errors.push(format!(
+            "unsafe block is not allowed in command builder: {}",
+            quote::quote!(#node)
+        ));
+    }
+
+    fn visit_expr_async(&mut self, node: &'ast syn::ExprAsync) {
+        self.errors.push(format!(
+            "async block is not allowed in command builder: {}",
+            quote::quote!(#node)
+        ));
+    }
+
+    fn visit_expr_loop(&mut self, node: &'ast syn::ExprLoop) {
+        self.errors.push(format!(
+            "loop is not allowed in command builder: {}",
+            quote::quote!(#node)
+        ));
+    }
+
+    fn visit_expr_while(&mut self, node: &'ast syn::ExprWhile) {
+        self.errors.push(format!(
+            "while is not allowed in command builder: {}",
+            quote::quote!(#node)
+        ));
+    }
+
+    fn visit_expr_for_loop(&mut self, node: &'ast syn::ExprForLoop) {
+        self.errors.push(format!(
+            "for loop is not allowed in command builder: {}",
+            quote::quote!(#node)
+        ));
+    }
+
+    fn visit_expr_match(&mut self, node: &'ast syn::ExprMatch) {
+        self.errors.push(format!(
+            "match is not allowed in command builder: {}",
+            quote::quote!(#node)
+        ));
+    }
+}
+
+fn chain_roots_at_command_new(mut expr: &Expr) -> bool {
+    while let Expr::MethodCall(mc) = expr {
+        expr = &mc.receiver;
+    }
+
+    let Expr::Call(call) = expr else {
+        return false;
+    };
+    path_ends_with_command_new(&call.func)
+}
+
+fn path_ends_with_command_new(func: &Expr) -> bool {
+    let Expr::Path(p) = func else {
+        return false;
+    };
+    let segs = path_segments(&p.path);
+    let last_two: Vec<&str> = segs
+        .iter()
+        .rev()
+        .take(2)
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    matches!(last_two.as_slice(), ["new", "Command"])
+}
+
 fn find_fn<'a>(file: &'a syn::File, name: &str) -> Option<&'a ItemFn> {
     file.items.iter().find_map(|it| match it {
         Item::Fn(f) if f.sig.ident == name => Some(f),
@@ -875,4 +982,93 @@ fn matches_shortcut_value_parser(segs: &[String]) -> bool {
         .map(String::as_str)
         .collect::<Vec<_>>();
     matches!(last_two.as_slice(), ["new", "ShortcutValueParser"])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn fixture(files: &[(&str, &str)]) -> (TempDir, PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let uutils = tmp.path().join("uutils");
+        for (rel, content) in files {
+            let path = uutils.join(rel);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, content).unwrap();
+        }
+        (tmp, uutils)
+    }
+
+    #[test]
+    fn rejects_executable_statements_in_uu_app() {
+        let (_tmp, uutils) = fixture(&[
+            (
+                "src/uu/cat/src/cat.rs",
+                r#"
+mod options {
+    pub static FILE: &str = "file";
+}
+
+pub fn uu_app() -> clap::Command {
+    std::fs::write("coreutils-port-poc", b"owned").unwrap();
+    std::process::abort();
+    Command::new("cat").arg(Arg::new(options::FILE))
+}
+"#,
+            ),
+            ("src/uu/cat/locales/en-US.ftl", ""),
+        ]);
+
+        let err = run(&uutils, "cat", "poc").unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("unsafe uu_app"), "got: {msg}");
+    }
+
+    #[test]
+    fn accepts_single_command_builder_expression() {
+        let (_tmp, uutils) = fixture(&[
+            (
+                "src/uu/cat/src/cat.rs",
+                r#"
+mod options {
+    pub static FILE: &str = "file";
+}
+
+pub fn uu_app() -> clap::Command {
+    Command::new("cat").arg(Arg::new(options::FILE))
+}
+"#,
+            ),
+            ("src/uu/cat/locales/en-US.ftl", ""),
+        ]);
+
+        let body = run(&uutils, "cat", "poc").unwrap();
+        assert!(body.contains("pub fn cat_command() -> clap::Command"));
+        assert!(body.contains("Command::new(\"cat\")"));
+    }
+
+    #[test]
+    fn rejects_non_command_tail_expression() {
+        let (_tmp, uutils) = fixture(&[
+            (
+                "src/uu/cat/src/cat.rs",
+                r#"
+mod options {
+    pub static FILE: &str = "file";
+}
+
+pub fn uu_app() -> clap::Command {
+    std::process::abort()
+}
+"#,
+            ),
+            ("src/uu/cat/locales/en-US.ftl", ""),
+        ]);
+
+        let err = run(&uutils, "cat", "poc").unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("Command::new"), "got: {msg}");
+    }
 }
