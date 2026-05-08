@@ -1338,6 +1338,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | ~~TM-DOS-044~~ | ~~Nested `$()` stack overflow (regression)~~ | ~~Process crash (SIGABRT) at depth ~50 despite #492 fix~~ | ~~Interpreter execution path may need separate depth tracking from lexer fix~~ — depth-50 nested-subst test (`finding_nested_cmd_subst_stack_overflow::depth_50_is_bounded`) passes (**FIXED**) |
 | TM-DOS-088 | Command substitution OOM via state cloning | OOM at depth N (memory ≈ N × state_size) | Dedicated `max_subst_depth` limit (default 32), separate from `max_function_depth` — **FIXED** via #1088 |
 | TM-DOS-089 | Command substitution stack overflow via inlined futures | SIGABRT at ~20-30 nested $() levels | Box::pin `expand_word` and `execute_cmd_subst` to cap per-level stack — **FIXED** via #1089 |
+| ~~TM-DOS-090~~ | ~~`shuf` unbounded range/repeat materialization~~ | ~~OOM/CPU exhaustion via huge `--input-range` or `--head-count` before stdout truncation~~ | ~~Sample numeric ranges without full collection and reject output that exceeds `ExecutionLimits` before allocation~~ — `shuf_resource_tests` cover huge range `-n 1` and repeat output caps (**FIXED**) |
 
 ### Accepted (Low Priority)
 
@@ -1369,6 +1370,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Arithmetic depth limit (50) | TM-DOS-026 | `interpreter/mod.rs` | Yes |
 | Builtin parser depth limit (100) | TM-DOS-027 | `builtins/awk.rs`, `builtins/jq/` | Yes |
 | Execution timeout (30s) | TM-DOS-023 | `limits.rs` | Yes |
+| Builtin output pre-allocation caps | TM-DOS-058, TM-DOS-090 | `limits.rs`, `builtins/shuf.rs` | Yes |
 | Virtual filesystem | TM-ESC-001, TM-ESC-003 | `fs/memory.rs` | Yes |
 | Filesystem limits | TM-DOS-005 to TM-DOS-010, TM-DOS-014 | `fs/limits.rs` | Yes |
 | Path depth limit (100) | TM-DOS-012 | `fs/limits.rs` | Yes |
