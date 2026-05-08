@@ -165,7 +165,7 @@ test("filesystem external roundtrip mounts into bash", (t) => {
 
 test("filesystem external import rejects plain objects", (t) => {
   t.throws(() => FileSystem.fromExternal({}), {
-    message: /native External/,
+    message: /requires a token created by FileSystem\.toExternal\(\)/,
   });
 });
 

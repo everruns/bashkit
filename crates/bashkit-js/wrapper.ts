@@ -409,6 +409,30 @@ function toNativeSnapshotOptions(
   };
 }
 
+const fileSystemExternalTokens = new WeakSet<object>();
+
+interface FileSystemExternalToken {
+  readonly __bashkitFsExternalBrand: true;
+  readonly external: unknown;
+}
+
+function createFileSystemExternalToken(external: unknown): FileSystemExternalToken {
+  const token = Object.freeze({
+    __bashkitFsExternalBrand: true as const,
+    external,
+  });
+  fileSystemExternalTokens.add(token);
+  return token;
+}
+
+function isFileSystemExternalToken(value: unknown): value is FileSystemExternalToken {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    fileSystemExternalTokens.has(value as object)
+  );
+}
+
 function isFileSystemLike(value: unknown): value is { toExternal(): unknown } {
   return (
     typeof (value as { toExternal?: unknown } | null)?.toExternal === "function"
@@ -446,7 +470,7 @@ export interface FileSystemRealOptions {
 
 export class FileSystem {
   private native: any;
-  private external?: unknown;
+  private external?: FileSystemExternalToken;
 
   constructor() {
     this.native = nativeCreateFileSystem();
@@ -473,13 +497,20 @@ export class FileSystem {
   }
 
   static fromExternal(external: unknown): FileSystem {
-    const fs = FileSystem.fromNative(nativeImportFileSystem(external));
+    if (!isFileSystemExternalToken(external)) {
+      throw new TypeError(
+        "FileSystem.fromExternal requires a token created by FileSystem.toExternal()",
+      );
+    }
+    const fs = FileSystem.fromNative(nativeImportFileSystem(external.external));
     fs.external = external;
     return fs;
   }
 
   toExternal(): unknown {
-    this.external ??= nativeFileSystemToExternal(this.native);
+    this.external ??= createFileSystemExternalToken(
+      nativeFileSystemToExternal(this.native),
+    );
     return this.external;
   }
 
@@ -863,7 +894,9 @@ export class Bash {
     writable?: boolean,
   ): void {
     if (isFileSystemLike(vfsPathOrFs)) {
-      this.native.mountFileSystem(hostPathOrVfsPath, vfsPathOrFs.toExternal());
+      const token = vfsPathOrFs.toExternal();
+      const external = isFileSystemExternalToken(token) ? token.external : token;
+      this.native.mountFileSystem(hostPathOrVfsPath, external);
       return;
     }
     this.native.mount(hostPathOrVfsPath, vfsPathOrFs, writable);
@@ -1200,7 +1233,9 @@ export class BashTool {
     writable?: boolean,
   ): void {
     if (isFileSystemLike(vfsPathOrFs)) {
-      this.native.mountFileSystem(hostPathOrVfsPath, vfsPathOrFs.toExternal());
+      const token = vfsPathOrFs.toExternal();
+      const external = isFileSystemExternalToken(token) ? token.external : token;
+      this.native.mountFileSystem(hostPathOrVfsPath, external);
       return;
     }
     this.native.mount(hostPathOrVfsPath, vfsPathOrFs, writable);
