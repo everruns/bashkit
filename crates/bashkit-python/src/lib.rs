@@ -1185,20 +1185,50 @@ fn snapshot_live_bash(
     })
 }
 
-fn restore_live_bash(
+fn restore_live_bash_with_env_overrides(
     py: Python<'_>,
     rt: &Arc<Runtime>,
     inner: &Arc<Mutex<Bash>>,
     data: Vec<u8>,
+    env_overrides: &[(String, String)],
 ) -> PyResult<()> {
     let rt = rt.clone();
     let inner = inner.clone();
+    let env_overrides = env_overrides.to_vec();
     py.detach(|| {
         rt.block_on(async move {
             let mut bash = inner.lock().await;
-            bash.restore_snapshot(&data).map_err(raise_snapshot_error)
+            bash.restore_snapshot(&data).map_err(raise_snapshot_error)?;
+            if env_overrides.is_empty() {
+                return Ok(());
+            }
+            let mut state = bash.shell_state();
+            for (key, value) in env_overrides {
+                state.env.insert(key, value);
+            }
+            bash.restore_shell_state(&state);
+            Ok(())
         })
     })
+}
+
+fn placeholder_env_overrides(
+    state: &ShellState,
+    network_config: &Option<PyNetworkConfig>,
+) -> Vec<(String, String)> {
+    let Some(config) = network_config else {
+        return Vec::new();
+    };
+    config
+        .credential_placeholders
+        .iter()
+        .filter_map(|ph| {
+            state
+                .env
+                .get(&ph.env)
+                .map(|value| (ph.env.clone(), value.clone()))
+        })
+        .collect()
 }
 
 static MAPPING_PROXY_TYPE: PyOnceLock<Py<PyAny>> = PyOnceLock::new();
@@ -3327,7 +3357,9 @@ impl PyBash {
     /// Restore interpreter state from bytes previously produced by `snapshot()`.
     fn restore_snapshot(&self, py: Python<'_>, data: Vec<u8>) -> PyResult<()> {
         self.reject_external_handler_reentry()?;
-        restore_live_bash(py, &self.rt, &self.inner, data)
+        let state = capture_shell_state(py, &self.rt, &self.inner)?;
+        let env_overrides = placeholder_env_overrides(&state, &self.network);
+        restore_live_bash_with_env_overrides(py, &self.rt, &self.inner, data, &env_overrides)
     }
 
     /// Create a new Bash instance from a snapshot and optional constructor kwargs.
@@ -3913,7 +3945,9 @@ impl BashTool {
 
     /// Restore interpreter state from bytes previously produced by `snapshot()`.
     fn restore_snapshot(&self, py: Python<'_>, data: Vec<u8>) -> PyResult<()> {
-        restore_live_bash(py, &self.rt, &self.inner, data)
+        let state = capture_shell_state(py, &self.rt, &self.inner)?;
+        let env_overrides = placeholder_env_overrides(&state, &self.network);
+        restore_live_bash_with_env_overrides(py, &self.rt, &self.inner, data, &env_overrides)
     }
 
     /// Create a new BashTool instance from a snapshot and optional constructor kwargs.
