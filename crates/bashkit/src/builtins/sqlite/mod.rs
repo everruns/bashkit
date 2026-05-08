@@ -724,19 +724,20 @@ async fn run_statements(
         match stmt {
             Stmt::Sql(sql) => {
                 check_sql_policy(&sql, limits)?;
-                let outcome = engine.execute(&sql, deadline).map_err(|e| sanitize(&e))?;
-                if outcome.rows.len() > limits.max_rows_per_query {
-                    return Err(format!(
-                        "result set exceeds row cap ({} > {})",
-                        outcome.rows.len(),
-                        limits.max_rows_per_query
-                    ));
-                }
+                let outcome = engine
+                    .execute(&sql, deadline, limits.max_rows_per_query)
+                    .map_err(|e| sanitize(&e))?;
                 let rendered = render(&outcome.columns, &outcome.rows, opts);
                 stdout.push_str(&rendered);
             }
             Stmt::Dot(line) => {
-                let result = dot_commands::dispatch(&line, engine, opts, deadline);
+                let result = dot_commands::dispatch(
+                    &line,
+                    engine,
+                    opts,
+                    deadline,
+                    limits.max_rows_per_query,
+                );
                 match result {
                     Ok(DotOutcome::Stdout(s)) => stdout.push_str(&s),
                     Ok(DotOutcome::Configured) => {}
