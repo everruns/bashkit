@@ -70,9 +70,11 @@ rand = "0.10"
 zeroize = "1"
 
 # CSPRNG for placeholder token generation (security-grade randomness).
+# Important decision: enable `wasm_js` so the public `wasm32-unknown-unknown`
+# build gate stays green; bashkit targets JS-backed wasm for that triple.
 # Used by the credential placeholder generator; getrandom is the lowest-level
 # CSPRNG primitive and is already transitively in the dep tree via reqwest/rustls.
-getrandom = "0.3"
+getrandom = { version = "0.3", features = ["wasm_js"] }
 
 # CLI
 # Intentionally NOT enabling clap's `env` feature: it makes `Arg::env(...)`

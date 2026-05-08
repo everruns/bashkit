@@ -37,11 +37,18 @@
 //! Action support, current implementation:
 //!
 //! - `error` — fully implemented (port aborts when matched).
-//! - `inline`, `replace_with` — accepted in the schema, but require
-//!   the future `syn`-based import rewriter; the tool errors at
-//!   runtime if a module's substitution declares them. Manifest-side
-//!   declarations stay forward-compatible: when the rewriter lands,
-//!   the same manifest works without further changes.
+//! - `replace_with` — fully implemented. The matched prefix in every
+//!   `use` path is rewritten to `target`. When the rewritten path's
+//!   final segment differs from the original, an `as <orig>` rename is
+//!   inserted so call sites compile unchanged. Use groups are
+//!   flattened into individual `use` items as a side effect.
+//! - `inline` — fully implemented. The file at `inline_source` is
+//!   vendored next to the module's output dir (under
+//!   `<out_base>/<leaf>.rs` where `<leaf>` is the prefix's final
+//!   segment), and matching `use` paths are rewritten to
+//!   `super::<leaf>::…` so the vendored module compiles. The
+//!   inlined file goes through the same enforce + rewrite pipeline
+//!   so transitive uucore references either substitute or surface.
 
 use serde::Deserialize;
 
@@ -87,6 +94,7 @@ pub enum Action {
 }
 
 impl Action {
+    #[allow(dead_code)] // Kept for diagnostic strings that don't currently consume it.
     pub fn as_str(self) -> &'static str {
         match self {
             Action::Inline => "inline",

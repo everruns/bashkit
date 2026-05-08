@@ -1,5 +1,6 @@
 // GENERATED MODULE INDEX. Edit individual `*_args.rs` files only via the
 // `bashkit-coreutils-port` codegen tool — see crates/bashkit-coreutils-port.
+#![allow(dead_code)]
 //
 // Each `<util>_args.rs` exposes `pub fn <util>_command() -> clap::Command`
 // derived from uutils/coreutils' `uu_app()` definitions, with `translate!()`
@@ -28,8 +29,15 @@
 pub const UUTILS_REVISION: &str = "39364b6";
 
 pub mod cat_args;
+#[allow(clippy::collapsible_if, clippy::unwrap_used)]
+pub mod extendedbigdecimal;
+#[allow(clippy::collapsible_if, clippy::unwrap_used)]
+pub mod format;
+pub mod format_support;
 pub mod ls_args;
 pub mod mktemp_args;
+#[allow(clippy::collapsible_if, clippy::unwrap_used)]
+pub mod num_parser;
 pub mod od_args;
 pub mod readlink_args;
 pub mod realpath_args;

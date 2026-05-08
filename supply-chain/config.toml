@@ -1200,6 +1200,10 @@ criteria = "safe-to-deploy"
 version = "1.2.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.os_display]]
+version = "0.1.4"
+criteria = "safe-to-deploy"
+
 [[exemptions.owo-colors]]
 version = "3.5.0"
 criteria = "safe-to-deploy"
@@ -2190,6 +2194,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.unicode_names2_generator]]
 version = "1.3.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.unit-prefix]]
+version = "0.5.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.universal-hash]]

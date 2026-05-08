@@ -204,6 +204,18 @@ fn apply_real_mounts(
     ro_mounts: &[String],
     rw_mounts: &[String],
 ) -> bashkit::BashBuilder {
+    // Important decision: explicit CLI mount flags are the user's allowlist.
+    // The library keeps sensitive host paths closed by default for embedders;
+    // the CLI turns each requested host path into an audit-visible allow entry.
+    let allowed_mount_paths = ro_mounts
+        .iter()
+        .chain(rw_mounts)
+        .map(|spec| spec.split_once(':').map_or(spec.as_str(), |(host, _)| host))
+        .collect::<Vec<_>>();
+    if !allowed_mount_paths.is_empty() {
+        builder = builder.allowed_mount_paths(allowed_mount_paths);
+    }
+
     for spec in ro_mounts {
         if let Some((host, vfs)) = spec.split_once(':') {
             builder = builder.mount_real_readonly_at(host, vfs);

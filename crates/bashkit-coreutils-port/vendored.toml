@@ -23,4 +23,63 @@
 # prefix = "uucore::error::UError"
 # action = "error"
 
-modules = []
+[[modules]]
+name = "format"
+source = "src/uucore/src/lib/features/format"
+out = "format"
+
+# Self-references inside uucore::format now point at the vendored
+# generated module path.
+[[modules.substitutions]]
+prefix = "crate::format"
+action = "replace_with"
+target = "crate::builtins::generated::format"
+
+# Small numeric helper module. Inlined so the generated code stays detached
+# from uucore's broad runtime dependency surface.
+[[modules.substitutions]]
+prefix = "crate::extendedbigdecimal"
+action = "inline"
+inline_source = "src/uucore/src/lib/features/extendedbigdecimal.rs"
+
+# Numeric parser required by FormatArgument::Unparsed.
+[[modules.substitutions]]
+prefix = "crate::parser::num_parser"
+action = "inline"
+inline_source = "src/uucore/src/lib/features/parser/num_parser.rs"
+
+# Bashkit-local replacements for uucore runtime hooks and platform helpers.
+[[modules.substitutions]]
+prefix = "crate::NonUtf8OsStrError"
+action = "replace_with"
+target = "crate::builtins::generated::format_support::NonUtf8OsStrError"
+
+[[modules.substitutions]]
+prefix = "crate::os_str_as_bytes"
+action = "replace_with"
+target = "crate::builtins::generated::format_support::os_str_as_bytes"
+
+[[modules.substitutions]]
+prefix = "crate::error::UError"
+action = "replace_with"
+target = "crate::builtins::generated::format_support::UError"
+
+[[modules.substitutions]]
+prefix = "crate::error::set_exit_code"
+action = "replace_with"
+target = "crate::builtins::generated::format_support::set_exit_code"
+
+[[modules.substitutions]]
+prefix = "crate::quoting_style"
+action = "replace_with"
+target = "crate::builtins::generated::format_support"
+
+[[modules.substitutions]]
+prefix = "crate::show_error"
+action = "replace_with"
+target = "crate::builtins::generated::format_support::show_error"
+
+[[modules.substitutions]]
+prefix = "crate::show_warning"
+action = "replace_with"
+target = "crate::builtins::generated::format_support::show_warning"
