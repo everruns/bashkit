@@ -1,12 +1,10 @@
-//! Module mode — vendor a uucore module verbatim into bashkit.
+//! Module mode — vendor a uucore module into bashkit.
 //!
 //! Algorithm:
 //! 1. Load the manifest and look up the requested module entry.
 //! 2. Walk every `.rs` file under the entry's `source` (single file
 //!    or directory, depth-recursive).
-//! 3. For each file, parse with syn purely to inspect top-level
-//!    `use` items — flatten use trees into individual paths, then
-//!    enforce the policy:
+//! 3. For each file, parse with syn and walk top-level `use` items:
 //!    - `use fluent::*;` (or any `fluent::...`) → hard error: the
 //!      module is not safely vendorable without code changes.
 //!    - `use uucore::translate;` / `translate::*` → same hard error
@@ -15,18 +13,20 @@
 //!      manifest substitution prefix. Unmatched paths abort the port
 //!      so unexpected internal references surface explicitly.
 //!    - matched `error` actions abort with a policy-rejection message.
-//!    - matched `inline`/`replace_with` actions abort with a
-//!      "rewriter-not-implemented" message — the manifest schema
-//!      already accepts them, but actual rewriting awaits the future
-//!      `syn`-based rewriter (#1534's first consumer will drive that).
-//! 4. Write the file body verbatim with a banner header prepended.
-//!    No body rewriting; this is the verbatim-copy path documented
-//!    in `specs/coreutils-args-port.md` § Module mode.
+//!    - matched `replace_with` actions are rewritten in place (see
+//!      [`apply_replace_with`]).
+//!    - matched `inline` actions still abort — inline vendoring awaits
+//!      a follow-up; manifest stanzas stay forward-compatible.
+//! 4. If any `replace_with` substitutions are in scope, the rewritten
+//!    AST is emitted via `prettyplease::unparse` (use groups become
+//!    individual `use` items as a side effect). Otherwise the source
+//!    is written verbatim. A banner is prepended either way.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
-use syn::{Item, UseTree};
+use proc_macro2::Span;
+use syn::{Ident, Item, ItemUse, UseTree};
 
 use crate::manifest::{Action, Manifest, Module, Substitution};
 
@@ -113,18 +113,32 @@ fn port_dir(
 fn port_file(src: &Path, out: &Path, module: &Module, rev: &str, rel_path: &str) -> Result<()> {
     let text =
         std::fs::read_to_string(src).with_context(|| format!("read source {}", src.display()))?;
-    let parsed =
+    let mut parsed =
         syn::parse_file(&text).with_context(|| format!("parse {} as rust", src.display()))?;
     enforce_use_policy(&parsed, module, rel_path)?;
 
+    let body_text = if has_replace_with(module) {
+        apply_replace_with(&mut parsed, module)?;
+        prettyplease::unparse(&parsed)
+    } else {
+        text
+    };
+
     let banner = banner(rev, &module.name, rel_path);
-    let body = format!("{banner}{text}");
+    let body = format!("{banner}{body_text}");
     if let Some(parent) = out.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create parent dir {}", parent.display()))?;
     }
     std::fs::write(out, body).with_context(|| format!("write {}", out.display()))?;
     Ok(())
+}
+
+fn has_replace_with(module: &Module) -> bool {
+    module
+        .substitutions
+        .iter()
+        .any(|s| s.action == Action::ReplaceWith)
 }
 
 fn banner(rev: &str, module_name: &str, rel_path: &str) -> String {
@@ -191,8 +205,16 @@ fn enforce_use_policy(file: &syn::File, module: &Module, rel_path: &str) -> Resu
                     rel_path,
                     s.prefix
                 ),
-                Action::Inline | Action::ReplaceWith => bail!(
-                    "import '{}' in {} requires action '{}' (manifest prefix '{}'), but the syn-based import rewriter is not yet implemented in bashkit-coreutils-port — file a follow-up to land it (verbatim-copy mode is the only path supported today, see specs/coreutils-args-port.md § Module mode)",
+                Action::ReplaceWith => {
+                    if s.target.is_none() {
+                        bail!(
+                            "manifest substitution prefix '{}' has action 'replace_with' but no 'target' field",
+                            s.prefix
+                        );
+                    }
+                }
+                Action::Inline => bail!(
+                    "import '{}' in {} requires action '{}' (manifest prefix '{}'), but inline vendoring is not yet implemented (replace_with is supported; inline awaits a follow-up)",
                     path.join("::"),
                     rel_path,
                     s.action.as_str(),
@@ -202,6 +224,215 @@ fn enforce_use_policy(file: &syn::File, module: &Module, rel_path: &str) -> Resu
         }
     }
     Ok(())
+}
+
+/// Apply `replace_with` substitutions across all top-level `use` items.
+///
+/// Strategy: flatten each use tree into its leaf paths (with optional
+/// renames), apply matching substitutions, then re-emit one `use` item
+/// per leaf. Use groups (`use a::{b, c}`) are flattened — semantically
+/// equivalent, but easier to rewrite without losing the formatting that
+/// was going to be re-pretty-printed anyway.
+///
+/// Substitution rule: when a leaf's path starts with `s.prefix`, the
+/// matched prefix is replaced with `s.target`. If the rewritten path's
+/// final segment differs from the original final segment, an `as`
+/// rename preserves call-site references (e.g. `use crate::error::Error
+/// as UError;`).
+fn apply_replace_with(file: &mut syn::File, module: &Module) -> Result<()> {
+    let mut new_items: Vec<Item> = Vec::with_capacity(file.items.len());
+    for item in file.items.drain(..) {
+        match item {
+            Item::Use(u) => {
+                let mut leaves: Vec<UseLeaf> = Vec::new();
+                collect_leaves(&u.tree, &mut Vec::new(), &mut leaves);
+                if leaves.is_empty() {
+                    new_items.push(Item::Use(u));
+                    continue;
+                }
+                for leaf in leaves {
+                    let rewritten = rewrite_leaf(leaf, &module.substitutions)?;
+                    new_items.push(Item::Use(build_item_use(&u, rewritten)));
+                }
+            }
+            other => new_items.push(other),
+        }
+    }
+    file.items = new_items;
+    Ok(())
+}
+
+#[derive(Clone, Debug)]
+struct UseLeaf {
+    /// Path segments excluding the final identifier (which becomes the
+    /// imported name or the source for a glob).
+    path: Vec<String>,
+    /// Final segment: either an imported identifier or `*` for glob.
+    /// `Glob` is represented as `path = full path` and `tail = Glob`.
+    tail: LeafTail,
+}
+
+#[derive(Clone, Debug)]
+enum LeafTail {
+    /// `use a::b::c;` or `use a::b::c as d;` — `name` is the source
+    /// segment (`c`), `alias` is `d` (or None if no rename).
+    Name { name: String, alias: Option<String> },
+    /// `use a::b::*;`
+    Glob,
+}
+
+fn collect_leaves(tree: &UseTree, prefix: &mut Vec<String>, out: &mut Vec<UseLeaf>) {
+    match tree {
+        UseTree::Path(p) => {
+            prefix.push(p.ident.to_string());
+            collect_leaves(&p.tree, prefix, out);
+            prefix.pop();
+        }
+        UseTree::Name(n) => {
+            out.push(UseLeaf {
+                path: prefix.clone(),
+                tail: LeafTail::Name {
+                    name: n.ident.to_string(),
+                    alias: None,
+                },
+            });
+        }
+        UseTree::Rename(r) => {
+            out.push(UseLeaf {
+                path: prefix.clone(),
+                tail: LeafTail::Name {
+                    name: r.ident.to_string(),
+                    alias: Some(r.rename.to_string()),
+                },
+            });
+        }
+        UseTree::Glob(_) => {
+            out.push(UseLeaf {
+                path: prefix.clone(),
+                tail: LeafTail::Glob,
+            });
+        }
+        UseTree::Group(g) => {
+            for t in &g.items {
+                collect_leaves(t, prefix, out);
+            }
+        }
+    }
+}
+
+fn rewrite_leaf(leaf: UseLeaf, subs: &[Substitution]) -> Result<UseLeaf> {
+    // Build the full path representing this leaf's import target. For
+    // `Name { name }` the full path is `path + [name]`; for `Glob`
+    // it's just `path`.
+    let mut full = leaf.path.clone();
+    if let LeafTail::Name { ref name, .. } = leaf.tail {
+        full.push(name.clone());
+    }
+
+    let Some(sub) = find_replace_with(&full, subs) else {
+        return Ok(leaf);
+    };
+    let target = sub
+        .target
+        .as_ref()
+        .expect("validated in enforce_use_policy");
+
+    // Replace the matched prefix with the target. The unmatched suffix
+    // is preserved.
+    let prefix_len = sub.prefix.split("::").count();
+    let target_segs: Vec<String> = target.split("::").map(String::from).collect();
+    if target_segs.is_empty() {
+        bail!(
+            "manifest substitution prefix '{}' has empty target",
+            sub.prefix
+        );
+    }
+    let suffix = &full[prefix_len..];
+    let mut rewritten_full: Vec<String> = target_segs;
+    rewritten_full.extend_from_slice(suffix);
+
+    // Split rewritten_full back into (path, tail). For glob preservation,
+    // we keep the original tail kind.
+    match leaf.tail {
+        LeafTail::Glob => Ok(UseLeaf {
+            path: rewritten_full,
+            tail: LeafTail::Glob,
+        }),
+        LeafTail::Name {
+            name: orig_name,
+            alias: orig_alias,
+        } => {
+            // Final segment of rewritten_full is the new imported ident.
+            let new_name = rewritten_full
+                .pop()
+                .ok_or_else(|| anyhow!("rewritten path is empty for prefix '{}'", sub.prefix))?;
+
+            // Preserve the original call-site name. If the user already
+            // had `as alias`, keep it. Otherwise, if rewriting changed
+            // the last segment, alias to the original name.
+            let alias = match orig_alias {
+                Some(a) => Some(a),
+                None if new_name != orig_name => Some(orig_name),
+                None => None,
+            };
+
+            Ok(UseLeaf {
+                path: rewritten_full,
+                tail: LeafTail::Name {
+                    name: new_name,
+                    alias,
+                },
+            })
+        }
+    }
+}
+
+fn find_replace_with<'a>(path: &[String], subs: &'a [Substitution]) -> Option<&'a Substitution> {
+    subs.iter()
+        .filter(|s| s.action == Action::ReplaceWith)
+        .find(|s| {
+            let segs: Vec<&str> = s.prefix.split("::").collect();
+            path.len() >= segs.len() && path.iter().zip(&segs).all(|(a, b)| a == b)
+        })
+}
+
+fn build_item_use(template: &ItemUse, leaf: UseLeaf) -> ItemUse {
+    let tree = build_use_tree(&leaf);
+    ItemUse {
+        attrs: template.attrs.clone(),
+        vis: template.vis.clone(),
+        use_token: template.use_token,
+        leading_colon: template.leading_colon,
+        tree,
+        semi_token: template.semi_token,
+    }
+}
+
+fn build_use_tree(leaf: &UseLeaf) -> UseTree {
+    let inner = match &leaf.tail {
+        LeafTail::Name { name, alias } => {
+            let ident = Ident::new(name, Span::call_site());
+            match alias {
+                Some(rename) => UseTree::Rename(syn::UseRename {
+                    ident,
+                    as_token: syn::Token![as](Span::call_site()),
+                    rename: Ident::new(rename, Span::call_site()),
+                }),
+                None => UseTree::Name(syn::UseName { ident }),
+            }
+        }
+        LeafTail::Glob => UseTree::Glob(syn::UseGlob {
+            star_token: syn::Token![*](Span::call_site()),
+        }),
+    };
+
+    leaf.path.iter().rev().fold(inner, |acc, seg| {
+        UseTree::Path(syn::UsePath {
+            ident: Ident::new(seg, Span::call_site()),
+            colon2_token: syn::Token![::](Span::call_site()),
+            tree: Box::new(acc),
+        })
+    })
 }
 
 fn is_internal(path: &[String]) -> bool {
@@ -364,7 +595,7 @@ action = "error"
     }
 
     #[test]
-    fn replace_with_action_not_yet_implemented() {
+    fn replace_with_action_rewrites_use_path() {
         let (_tmp, uutils, manifest, out) = fixture(
             r#"
 [[modules]]
@@ -379,9 +610,122 @@ target = "crate::error::Error"
 "#,
             &[("lib/demo.rs", "use uucore::error::UError;\n")],
         );
+        let written = run(&uutils, "demo", "x", &manifest, &out).unwrap();
+        assert_eq!(written.len(), 1);
+        let body = fs::read_to_string(&written[0]).unwrap();
+        assert!(
+            body.contains("use crate::error::Error as UError;"),
+            "got: {body}"
+        );
+        assert!(!body.contains("uucore::error::UError"), "got: {body}");
+    }
+
+    #[test]
+    fn replace_with_preserves_matching_leaf_without_alias() {
+        let (_tmp, uutils, manifest, out) = fixture(
+            r#"
+[[modules]]
+name = "demo"
+source = "lib/demo.rs"
+out = "demo.rs"
+
+[[modules.substitutions]]
+prefix = "uucore::extendedbigdecimal"
+action = "replace_with"
+target = "crate::extendedbigdecimal"
+"#,
+            &[(
+                "lib/demo.rs",
+                "use uucore::extendedbigdecimal::ExtendedBigDecimal;\n",
+            )],
+        );
+        let written = run(&uutils, "demo", "x", &manifest, &out).unwrap();
+        let body = fs::read_to_string(&written[0]).unwrap();
+        assert!(
+            body.contains("use crate::extendedbigdecimal::ExtendedBigDecimal;"),
+            "got: {body}"
+        );
+        assert!(!body.contains(" as "), "no alias needed; got: {body}");
+    }
+
+    #[test]
+    fn replace_with_flattens_use_groups() {
+        let (_tmp, uutils, manifest, out) = fixture(
+            r#"
+[[modules]]
+name = "demo"
+source = "lib/demo.rs"
+out = "demo.rs"
+
+[[modules.substitutions]]
+prefix = "uucore::error::UError"
+action = "replace_with"
+target = "crate::error::Error"
+
+[[modules.substitutions]]
+prefix = "uucore::extendedbigdecimal::ExtendedBigDecimal"
+action = "replace_with"
+target = "crate::extendedbigdecimal::ExtendedBigDecimal"
+"#,
+            &[(
+                "lib/demo.rs",
+                "use uucore::{error::UError, extendedbigdecimal::ExtendedBigDecimal};\n",
+            )],
+        );
+        let written = run(&uutils, "demo", "x", &manifest, &out).unwrap();
+        let body = fs::read_to_string(&written[0]).unwrap();
+        assert!(
+            body.contains("use crate::error::Error as UError;"),
+            "got: {body}"
+        );
+        assert!(
+            body.contains("use crate::extendedbigdecimal::ExtendedBigDecimal;"),
+            "got: {body}"
+        );
+    }
+
+    #[test]
+    fn replace_with_preserves_existing_alias() {
+        let (_tmp, uutils, manifest, out) = fixture(
+            r#"
+[[modules]]
+name = "demo"
+source = "lib/demo.rs"
+out = "demo.rs"
+
+[[modules.substitutions]]
+prefix = "uucore::error::UError"
+action = "replace_with"
+target = "crate::error::Error"
+"#,
+            &[("lib/demo.rs", "use uucore::error::UError as MyErr;\n")],
+        );
+        let written = run(&uutils, "demo", "x", &manifest, &out).unwrap();
+        let body = fs::read_to_string(&written[0]).unwrap();
+        assert!(
+            body.contains("use crate::error::Error as MyErr;"),
+            "got: {body}"
+        );
+    }
+
+    #[test]
+    fn replace_with_missing_target_fails() {
+        let (_tmp, uutils, manifest, out) = fixture(
+            r#"
+[[modules]]
+name = "demo"
+source = "lib/demo.rs"
+out = "demo.rs"
+
+[[modules.substitutions]]
+prefix = "uucore::error::UError"
+action = "replace_with"
+"#,
+            &[("lib/demo.rs", "use uucore::error::UError;\n")],
+        );
         let err = run(&uutils, "demo", "x", &manifest, &out).unwrap_err();
         let msg = format!("{err:#}");
-        assert!(msg.contains("not yet implemented"), "got: {msg}");
+        assert!(msg.contains("no 'target'"), "got: {msg}");
     }
 
     #[test]

@@ -234,15 +234,16 @@ Substitution `action`s:
 | Action | Behaviour | Status |
 |---|---|---|
 | `error` | Abort the port at this import. Use when the module references a uucore type that should not be vendored. | Implemented |
-| `replace_with` | Rewrite the import to a bashkit-side equivalent (`target = "crate::error::Error"`). | Schema-only — runtime rewriting awaits the future `syn`-based rewriter (#1534) |
-| `inline` | Vendor the source file defining the substituted type alongside (`inline_source = "..."`). | Schema-only — same future-rewriter dependency |
+| `replace_with` | Rewrite the matched prefix in every `use` path to `target`; when the rewritten path's final segment differs from the original, an `as <orig>` rename is inserted so call sites compile unchanged. | Implemented |
+| `inline` | Vendor the source file defining the substituted type alongside (`inline_source = "..."`). | Schema-only — awaits a follow-up |
 
 The schema accepts all three so manifest stanzas don't change shape
-when the rewriter lands. Today the tool emits sources verbatim
-(banner-only) and any module relying on `replace_with`/`inline` errors
-out with a "rewriter not yet implemented" message that points back to
-this spec. The first user with that need (#1534's printf migration on
-top of `uucore::format`) will drive landing the rewriter.
+when `inline` lands. Modules that use only `error` and `replace_with`
+port today; modules that need `inline` still error out with a
+"rewriter not yet implemented" message pointing back to this spec.
+Output goes through `prettyplease::unparse` whenever any
+`replace_with` substitution is in scope, so use-group syntax may be
+flattened into individual `use` items as a side effect of rewriting.
 
 ### Output banner
 
