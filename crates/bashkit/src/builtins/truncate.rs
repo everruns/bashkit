@@ -5,6 +5,10 @@
 //! and `crates/bashkit-coreutils-port/`. Behaviour is implemented locally
 //! against the bashkit VFS (read/resize/write — the trait has no dedicated
 //! truncate primitive yet).
+//!
+//! Security decision: validate target lengths against the active filesystem's
+//! configured limits before resizing buffers. `write_file` enforces those
+//! limits too late to guard this built-in's in-memory zero-fill path.
 
 use async_trait::async_trait;
 use std::ffi::OsString;
@@ -15,11 +19,6 @@ use crate::error::Result;
 use crate::interpreter::ExecResult;
 
 pub struct Truncate;
-
-/// Maximum target size in bytes. Bounds the in-memory zero-fill that
-/// extending a small file to a huge target would otherwise allocate.
-/// Matches the order of magnitude of bashkit's other VFS limits.
-const MAX_SIZE_BYTES: u64 = 1 << 32; // 4 GiB
 
 #[async_trait]
 impl Builtin for Truncate {
@@ -122,15 +121,28 @@ impl Builtin for Truncate {
                 Err(e) => return Ok(ExecResult::err(format!("truncate: {e}\n"), 1)),
             };
 
-            if new_len > MAX_SIZE_BYTES {
+            let vfs_limit = target_size_limit(&ctx);
+            if new_len > vfs_limit {
                 return Ok(ExecResult::err(
-                    format!("truncate: target size {new_len} exceeds VFS limit\n"),
+                    format!(
+                        "truncate: target size {new_len} exceeds VFS limit ({vfs_limit} bytes)\n"
+                    ),
                     1,
                 ));
             }
 
             let mut next = current;
-            let new_len_usize = new_len as usize;
+            // THREAT[TM-DOS-005, TM-DOS-040]: fail before allocation if the
+            // requested virtual file length cannot be represented locally.
+            let new_len_usize = match usize::try_from(new_len) {
+                Ok(n) => n,
+                Err(_) => {
+                    return Ok(ExecResult::err(
+                        format!("truncate: target size {new_len} exceeds addressable memory\n"),
+                        1,
+                    ));
+                }
+            };
             if next.len() > new_len_usize {
                 next.truncate(new_len_usize);
             } else {
@@ -151,6 +163,11 @@ impl Builtin for Truncate {
 
 fn error_message(e: &crate::error::Error) -> String {
     e.to_string()
+}
+
+fn target_size_limit(ctx: &Context<'_>) -> u64 {
+    let limits = ctx.fs.limits();
+    limits.max_file_size.min(limits.max_total_bytes)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -253,6 +270,56 @@ fn parse_size_number(raw: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    use crate::fs::{FileSystem, FsLimits, InMemoryFs};
+
+    async fn run_truncate_with_fs(args: &[&str], fs: Arc<InMemoryFs>) -> ExecResult {
+        let mut variables = HashMap::new();
+        let env = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+        let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs,
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+
+        Truncate.execute(ctx).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn rejects_target_above_vfs_limit_before_write() {
+        let fs = Arc::new(InMemoryFs::with_limits(
+            FsLimits::new().max_file_size(10).max_total_bytes(10),
+        ));
+        let result = run_truncate_with_fs(&["-s", "11", "/tmp/too-large"], fs.clone()).await;
+
+        assert_eq!(result.exit_code, 1);
+        assert!(
+            result.stderr.contains("exceeds VFS limit"),
+            "stderr was: {}",
+            result.stderr
+        );
+        assert!(
+            !fs.exists(std::path::Path::new("/tmp/too-large"))
+                .await
+                .unwrap(),
+            "oversized truncate must not create a file"
+        );
+    }
 
     #[test]
     fn parse_size_plain_number() {
