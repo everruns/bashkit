@@ -209,7 +209,7 @@ leading SQL keyword via the parser's lightweight tokeniser
 | TM-SQL-001    | Code execution via BETA upstream                    | Off by default (cargo feature) + runtime opt-in env var                 |
 | TM-SQL-002    | Sandbox escape via host filesystem                  | All paths resolve through `Arc<dyn FileSystem>`; Phase 2 IO is bound to that FS only |
 | TM-SQL-003    | DoS via large SQL input                              | `SqliteLimits::max_script_bytes` (4 MiB default)                        |
-| TM-SQL-004    | DoS via huge result set                              | `SqliteLimits::max_rows_per_query` (1M default)                         |
+| TM-SQL-004    | DoS via huge result set                              | `SqliteLimits::max_rows_per_query` (1M default), checked before materialising each row |
 | TM-SQL-005    | DoS via huge DB file                                 | `SqliteLimits::max_db_bytes` (256 MiB default) at load time and while growing DBs |
 | TM-SQL-005a   | DoS via wall-clock burn (regex-style queries, CTEs)  | `SqliteLimits::max_duration` enforced via per-step deadline + `Statement::interrupt()` |
 | TM-SQL-005b   | DoS via statement-flood (millions of `;`)            | `SqliteLimits::max_statements` checked after splitting                  |

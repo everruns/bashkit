@@ -74,6 +74,7 @@ pub(super) fn dispatch(
     engine: &SqliteEngine,
     opts: &mut OutputOpts,
     deadline: Deadline,
+    max_rows: usize,
 ) -> Result<DotOutcome, DotError> {
     let (name, args) = tokenize_dot(line);
     match name.as_str() {
@@ -83,10 +84,12 @@ pub(super) fn dispatch(
         "mode" => set_mode(args, opts).map(|_| DotOutcome::Configured),
         "separator" | "sep" => set_separator(args, opts).map(|_| DotOutcome::Configured),
         "nullvalue" | "null" => set_null(args, opts).map(|_| DotOutcome::Configured),
-        "tables" => tables(args, engine, opts, deadline).map(DotOutcome::Stdout),
-        "schema" => schema(args, engine, deadline).map(DotOutcome::Stdout),
-        "indexes" | "indices" => indexes(args, engine, opts, deadline).map(DotOutcome::Stdout),
-        "dump" => dump(engine, deadline).map(DotOutcome::Stdout),
+        "tables" => tables(args, engine, opts, deadline, max_rows).map(DotOutcome::Stdout),
+        "schema" => schema(args, engine, deadline, max_rows).map(DotOutcome::Stdout),
+        "indexes" | "indices" => {
+            indexes(args, engine, opts, deadline, max_rows).map(DotOutcome::Stdout)
+        }
+        "dump" => dump(engine, deadline, max_rows).map(DotOutcome::Stdout),
         "read" => {
             let path = args
                 .into_iter()
@@ -188,6 +191,7 @@ fn tables(
     engine: &SqliteEngine,
     opts: &OutputOpts,
     deadline: Deadline,
+    max_rows: usize,
 ) -> Result<String, DotError> {
     let pattern = args.into_iter().next();
     let sql = match pattern {
@@ -197,7 +201,9 @@ fn tables(
         ),
         None => "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name".to_string(),
     };
-    let outcome = engine.execute(&sql, deadline).map_err(DotError::Engine)?;
+    let outcome = engine
+        .execute(&sql, deadline, max_rows)
+        .map_err(DotError::Engine)?;
     let mut names = Vec::new();
     for row in &outcome.rows {
         if let Some(Value::Text(t)) = row.first() {
@@ -219,6 +225,7 @@ fn schema(
     args: Vec<String>,
     engine: &SqliteEngine,
     deadline: Deadline,
+    max_rows: usize,
 ) -> Result<String, DotError> {
     let pattern = args.into_iter().next();
     let sql = match pattern {
@@ -228,7 +235,9 @@ fn schema(
         ),
         None => "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY name".to_string(),
     };
-    let outcome = engine.execute(&sql, deadline).map_err(DotError::Engine)?;
+    let outcome = engine
+        .execute(&sql, deadline, max_rows)
+        .map_err(DotError::Engine)?;
     let mut out = String::new();
     for row in &outcome.rows {
         if let Some(Value::Text(t)) = row.first() {
@@ -244,6 +253,7 @@ fn indexes(
     engine: &SqliteEngine,
     _opts: &OutputOpts,
     deadline: Deadline,
+    max_rows: usize,
 ) -> Result<String, DotError> {
     let pattern = args.into_iter().next();
     let sql = match pattern {
@@ -253,7 +263,9 @@ fn indexes(
         ),
         None => "SELECT name FROM sqlite_master WHERE type='index' ORDER BY name".to_string(),
     };
-    let outcome = engine.execute(&sql, deadline).map_err(DotError::Engine)?;
+    let outcome = engine
+        .execute(&sql, deadline, max_rows)
+        .map_err(DotError::Engine)?;
     let mut out = String::new();
     for row in &outcome.rows {
         if let Some(Value::Text(t)) = row.first() {
@@ -267,7 +279,7 @@ fn indexes(
 /// Emit `BEGIN; <CREATE TABLE>...; <INSERT INTO ... VALUES (...)>; COMMIT;`.
 /// This matches sqlite3's `.dump` for tables; views/triggers/indexes only get
 /// their CREATE statement, no rows. Blob literals are emitted as `X'..'`.
-fn dump(engine: &SqliteEngine, deadline: Deadline) -> Result<String, DotError> {
+fn dump(engine: &SqliteEngine, deadline: Deadline, max_rows: usize) -> Result<String, DotError> {
     let mut out = String::from("PRAGMA foreign_keys=OFF;\nBEGIN TRANSACTION;\n");
 
     // Schema first.
@@ -275,6 +287,7 @@ fn dump(engine: &SqliteEngine, deadline: Deadline) -> Result<String, DotError> {
         .execute(
             "SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY rowid",
             deadline,
+            max_rows,
         )
         .map_err(DotError::Engine)?;
     for row in &schema_outcome.rows {
@@ -289,6 +302,7 @@ fn dump(engine: &SqliteEngine, deadline: Deadline) -> Result<String, DotError> {
         .execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
             deadline,
+            max_rows,
         )
         .map_err(DotError::Engine)?;
     for row in &tables_outcome.rows {
@@ -298,7 +312,9 @@ fn dump(engine: &SqliteEngine, deadline: Deadline) -> Result<String, DotError> {
         let name = t.as_str().to_string();
         let quoted = name.replace('"', "\"\"");
         let sql = format!("SELECT * FROM \"{quoted}\"");
-        let data = engine.execute(&sql, deadline).map_err(DotError::Engine)?;
+        let data = engine
+            .execute(&sql, deadline, max_rows)
+            .map_err(DotError::Engine)?;
         for data_row in &data.rows {
             let values: Vec<String> = data_row.iter().map(format_sql_literal).collect();
             out.push_str(&format!(
@@ -357,7 +373,7 @@ mod tests {
         engine: &SqliteEngine,
         opts: &mut OutputOpts,
     ) -> Result<DotOutcome, DotError> {
-        dispatch(line, engine, opts, no_deadline())
+        dispatch(line, engine, opts, no_deadline(), usize::MAX)
     }
 
     #[test]
@@ -450,10 +466,10 @@ mod tests {
     fn tables_lists_existing() {
         let engine = mk_engine();
         engine
-            .execute("CREATE TABLE foo(a)", no_deadline())
+            .execute("CREATE TABLE foo(a)", no_deadline(), usize::MAX)
             .unwrap();
         engine
-            .execute("CREATE TABLE bar(b)", no_deadline())
+            .execute("CREATE TABLE bar(b)", no_deadline(), usize::MAX)
             .unwrap();
         let mut o = opts();
         let DotOutcome::Stdout(s) = dispatch_t(".tables", &engine, &mut o).unwrap() else {
@@ -467,10 +483,10 @@ mod tests {
     fn tables_with_pattern() {
         let engine = mk_engine();
         engine
-            .execute("CREATE TABLE foo(a)", no_deadline())
+            .execute("CREATE TABLE foo(a)", no_deadline(), usize::MAX)
             .unwrap();
         engine
-            .execute("CREATE TABLE bar(b)", no_deadline())
+            .execute("CREATE TABLE bar(b)", no_deadline(), usize::MAX)
             .unwrap();
         let mut o = opts();
         let DotOutcome::Stdout(s) = dispatch_t(".tables foo", &engine, &mut o).unwrap() else {
@@ -494,7 +510,11 @@ mod tests {
     fn schema_returns_create() {
         let engine = mk_engine();
         engine
-            .execute("CREATE TABLE foo(a INTEGER, b TEXT)", no_deadline())
+            .execute(
+                "CREATE TABLE foo(a INTEGER, b TEXT)",
+                no_deadline(),
+                usize::MAX,
+            )
             .unwrap();
         let mut o = opts();
         let DotOutcome::Stdout(s) = dispatch_t(".schema", &engine, &mut o).unwrap() else {
@@ -507,12 +527,17 @@ mod tests {
     fn dump_round_trips() {
         let engine = mk_engine();
         engine
-            .execute("CREATE TABLE t(x INTEGER, y TEXT)", no_deadline())
+            .execute(
+                "CREATE TABLE t(x INTEGER, y TEXT)",
+                no_deadline(),
+                usize::MAX,
+            )
             .unwrap();
         engine
             .execute(
                 "INSERT INTO t VALUES (1, 'hello'), (2, 'O''Brien')",
                 no_deadline(),
+                usize::MAX,
             )
             .unwrap();
         let mut o = opts();
