@@ -235,15 +235,12 @@ Substitution `action`s:
 |---|---|---|
 | `error` | Abort the port at this import. Use when the module references a uucore type that should not be vendored. | Implemented |
 | `replace_with` | Rewrite the matched prefix in every `use` path to `target`; when the rewritten path's final segment differs from the original, an `as <orig>` rename is inserted so call sites compile unchanged. | Implemented |
-| `inline` | Vendor the source file defining the substituted type alongside (`inline_source = "..."`). | Schema-only — awaits a follow-up |
+| `inline` | Vendor the file at `inline_source` next to the module's output dir (under `<out_base>/<leaf>.rs` where `<leaf>` is the prefix's final segment), and rewrite matching `use` paths to `super::<leaf>::…`. The inlined file is processed through the same enforce + rewrite pipeline so transitive uucore references either substitute or surface explicitly. | Implemented |
 
-The schema accepts all three so manifest stanzas don't change shape
-when `inline` lands. Modules that use only `error` and `replace_with`
-port today; modules that need `inline` still error out with a
-"rewriter not yet implemented" message pointing back to this spec.
 Output goes through `prettyplease::unparse` whenever any
-`replace_with` substitution is in scope, so use-group syntax may be
-flattened into individual `use` items as a side effect of rewriting.
+`replace_with` or `inline` substitution is in scope, so use-group
+syntax may be flattened into individual `use` items as a side effect
+of rewriting.
 
 ### Output banner
 

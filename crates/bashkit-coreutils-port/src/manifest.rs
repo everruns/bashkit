@@ -42,8 +42,13 @@
 //!   final segment differs from the original, an `as <orig>` rename is
 //!   inserted so call sites compile unchanged. Use groups are
 //!   flattened into individual `use` items as a side effect.
-//! - `inline` — accepted in the schema, awaits a follow-up. The
-//!   manifest declarations stay forward-compatible.
+//! - `inline` — fully implemented. The file at `inline_source` is
+//!   vendored next to the module's output dir (under
+//!   `<out_base>/<leaf>.rs` where `<leaf>` is the prefix's final
+//!   segment), and matching `use` paths are rewritten to
+//!   `super::<leaf>::…` so the vendored module compiles. The
+//!   inlined file goes through the same enforce + rewrite pipeline
+//!   so transitive uucore references either substitute or surface.
 
 use serde::Deserialize;
 
@@ -89,6 +94,7 @@ pub enum Action {
 }
 
 impl Action {
+    #[allow(dead_code)] // Kept for diagnostic strings that don't currently consume it.
     pub fn as_str(self) -> &'static str {
         match self {
             Action::Inline => "inline",

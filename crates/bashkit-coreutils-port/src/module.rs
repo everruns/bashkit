@@ -14,13 +14,21 @@
 //!      so unexpected internal references surface explicitly.
 //!    - matched `error` actions abort with a policy-rejection message.
 //!    - matched `replace_with` actions are rewritten in place (see
-//!      [`apply_replace_with`]).
-//!    - matched `inline` actions still abort — inline vendoring awaits
-//!      a follow-up; manifest stanzas stay forward-compatible.
-//! 4. If any `replace_with` substitutions are in scope, the rewritten
-//!    AST is emitted via `prettyplease::unparse` (use groups become
-//!    individual `use` items as a side effect). Otherwise the source
-//!    is written verbatim. A banner is prepended either way.
+//!      [`apply_substitutions`]). Use-paths starting with the prefix
+//!      have the matched segments swapped for `target`; if the leaf
+//!      changes an `as <orig>` rename is added.
+//!    - matched `inline` actions vendor the file at `inline_source`
+//!      next to the module's output dir and rewrite the use-path to
+//!      `super::<leaf>::…` so the vendored module compiles.
+//! 4. If any `replace_with` or `inline` substitutions are in scope,
+//!    the rewritten AST is emitted via `prettyplease::unparse` (use
+//!    groups become individual `use` items as a side effect).
+//!    Otherwise the source is written verbatim. A banner is prepended
+//!    either way.
+//! 5. After the primary tree, every `inline` substitution drives a
+//!    second port pass on its `inline_source`, with the same enforce
+//!    plus rewrite policy applied so transitive uucore references still
+//!    surface explicitly.
 
 use std::path::{Path, PathBuf};
 
@@ -77,6 +85,12 @@ pub fn run(
             &mut written,
         )?;
     }
+
+    // Inline-vendor any `action = "inline"` substitutions alongside the
+    // module. The inlined files land next to the module's `out` dir so
+    // rewritten paths can resolve them as siblings.
+    port_inlined(uutils_dir, module, rev, out_base, &mut written)?;
+
     Ok(written)
 }
 
@@ -117,8 +131,8 @@ fn port_file(src: &Path, out: &Path, module: &Module, rev: &str, rel_path: &str)
         syn::parse_file(&text).with_context(|| format!("parse {} as rust", src.display()))?;
     enforce_use_policy(&parsed, module, rel_path)?;
 
-    let body_text = if has_replace_with(module) {
-        apply_replace_with(&mut parsed, module)?;
+    let body_text = if needs_rewrite(module) {
+        apply_substitutions(&mut parsed, module)?;
         prettyplease::unparse(&parsed)
     } else {
         text
@@ -134,11 +148,67 @@ fn port_file(src: &Path, out: &Path, module: &Module, rev: &str, rel_path: &str)
     Ok(())
 }
 
-fn has_replace_with(module: &Module) -> bool {
+fn needs_rewrite(module: &Module) -> bool {
     module
         .substitutions
         .iter()
-        .any(|s| s.action == Action::ReplaceWith)
+        .any(|s| matches!(s.action, Action::ReplaceWith | Action::Inline))
+}
+
+fn port_inlined(
+    uutils_dir: &Path,
+    module: &Module,
+    rev: &str,
+    out_base: &Path,
+    written: &mut Vec<PathBuf>,
+) -> Result<()> {
+    for sub in &module.substitutions {
+        if sub.action != Action::Inline {
+            continue;
+        }
+        let inline_source = sub.inline_source.as_ref().ok_or_else(|| {
+            anyhow!(
+                "manifest substitution prefix '{}' has action 'inline' but no 'inline_source' field",
+                sub.prefix
+            )
+        })?;
+        let src = uutils_dir.join(inline_source);
+        if !src.exists() {
+            bail!(
+                "inline_source path does not exist: {} (uutils dir: {})",
+                src.display(),
+                uutils_dir.display()
+            );
+        }
+        let inline_target = inline_target_path(sub)?;
+        let out = out_base.join(&inline_target);
+
+        // Each inlined file gets the same enforce + rewrite treatment as
+        // the primary module so transitive uucore references either
+        // substitute or surface explicitly.
+        port_file(&src, &out, module, rev, inline_source)?;
+        written.push(out);
+    }
+    Ok(())
+}
+
+/// Where on disk the inlined file lands. By default, derive from the
+/// substitution prefix's leaf segment (e.g. `crate::extendedbigdecimal`
+/// → `extendedbigdecimal.rs`). Manifest stanzas may override the
+/// derived path in the future via a new field; today we infer.
+fn inline_target_path(sub: &Substitution) -> Result<String> {
+    let leaf = sub
+        .prefix
+        .rsplit("::")
+        .next()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            anyhow!(
+                "inline substitution prefix '{}' has no leaf segment",
+                sub.prefix
+            )
+        })?;
+    Ok(format!("{leaf}.rs"))
 }
 
 fn banner(rev: &str, module_name: &str, rel_path: &str) -> String {
@@ -213,20 +283,22 @@ fn enforce_use_policy(file: &syn::File, module: &Module, rel_path: &str) -> Resu
                         );
                     }
                 }
-                Action::Inline => bail!(
-                    "import '{}' in {} requires action '{}' (manifest prefix '{}'), but inline vendoring is not yet implemented (replace_with is supported; inline awaits a follow-up)",
-                    path.join("::"),
-                    rel_path,
-                    s.action.as_str(),
-                    s.prefix
-                ),
+                Action::Inline => {
+                    if s.inline_source.is_none() {
+                        bail!(
+                            "manifest substitution prefix '{}' has action 'inline' but no 'inline_source' field",
+                            s.prefix
+                        );
+                    }
+                }
             },
         }
     }
     Ok(())
 }
 
-/// Apply `replace_with` substitutions across all top-level `use` items.
+/// Apply `replace_with` and `inline` substitutions across all top-level
+/// `use` items.
 ///
 /// Strategy: flatten each use tree into its leaf paths (with optional
 /// renames), apply matching substitutions, then re-emit one `use` item
@@ -234,12 +306,16 @@ fn enforce_use_policy(file: &syn::File, module: &Module, rel_path: &str) -> Resu
 /// equivalent, but easier to rewrite without losing the formatting that
 /// was going to be re-pretty-printed anyway.
 ///
-/// Substitution rule: when a leaf's path starts with `s.prefix`, the
-/// matched prefix is replaced with `s.target`. If the rewritten path's
-/// final segment differs from the original final segment, an `as`
-/// rename preserves call-site references (e.g. `use crate::error::Error
-/// as UError;`).
-fn apply_replace_with(file: &mut syn::File, module: &Module) -> Result<()> {
+/// Substitution rules:
+/// - `replace_with`: when a leaf's path starts with `s.prefix`, the
+///   matched prefix is replaced with `s.target`. If the rewritten
+///   path's final segment differs from the original, an `as` rename
+///   preserves call-site references (e.g. `use crate::error::Error as
+///   UError;`).
+/// - `inline`: the inlined file lives next to the module's `out` dir,
+///   so the path is rewritten to point at it via `super::<leaf>`. The
+///   leaf identifier in the use is preserved.
+fn apply_substitutions(file: &mut syn::File, module: &Module) -> Result<()> {
     let mut new_items: Vec<Item> = Vec::with_capacity(file.items.len());
     for item in file.items.drain(..) {
         match item {
@@ -329,24 +405,43 @@ fn rewrite_leaf(leaf: UseLeaf, subs: &[Substitution]) -> Result<UseLeaf> {
         full.push(name.clone());
     }
 
-    let Some(sub) = find_replace_with(&full, subs) else {
+    let Some(sub) = find_rewriting_match(&full, subs) else {
         return Ok(leaf);
     };
-    let target = sub
-        .target
-        .as_ref()
-        .expect("validated in enforce_use_policy");
+
+    let target_segs: Vec<String> = match sub.action {
+        Action::ReplaceWith => {
+            let target = sub
+                .target
+                .as_ref()
+                .expect("validated in enforce_use_policy");
+            let segs: Vec<String> = target.split("::").map(String::from).collect();
+            if segs.is_empty() {
+                bail!(
+                    "manifest substitution prefix '{}' has empty target",
+                    sub.prefix
+                );
+            }
+            segs
+        }
+        Action::Inline => {
+            // Inlined file is a sibling of the module out dir. Use
+            // `super::<leaf>` to reach it from the vendored module's
+            // submodules.
+            let leaf_seg = sub
+                .prefix
+                .rsplit("::")
+                .next()
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| anyhow!("inline prefix '{}' has no leaf segment", sub.prefix))?;
+            vec!["super".to_string(), leaf_seg.to_string()]
+        }
+        Action::Error => unreachable!("error action does not reach the rewriter"),
+    };
 
     // Replace the matched prefix with the target. The unmatched suffix
     // is preserved.
     let prefix_len = sub.prefix.split("::").count();
-    let target_segs: Vec<String> = target.split("::").map(String::from).collect();
-    if target_segs.is_empty() {
-        bail!(
-            "manifest substitution prefix '{}' has empty target",
-            sub.prefix
-        );
-    }
     let suffix = &full[prefix_len..];
     let mut rewritten_full: Vec<String> = target_segs;
     rewritten_full.extend_from_slice(suffix);
@@ -387,9 +482,9 @@ fn rewrite_leaf(leaf: UseLeaf, subs: &[Substitution]) -> Result<UseLeaf> {
     }
 }
 
-fn find_replace_with<'a>(path: &[String], subs: &'a [Substitution]) -> Option<&'a Substitution> {
+fn find_rewriting_match<'a>(path: &[String], subs: &'a [Substitution]) -> Option<&'a Substitution> {
     subs.iter()
-        .filter(|s| s.action == Action::ReplaceWith)
+        .filter(|s| matches!(s.action, Action::ReplaceWith | Action::Inline))
         .find(|s| {
             let segs: Vec<&str> = s.prefix.split("::").collect();
             path.len() >= segs.len() && path.iter().zip(&segs).all(|(a, b)| a == b)
@@ -777,18 +872,65 @@ out = "demo.rs"
     }
 
     #[test]
-    fn rejects_inline_until_rewriter_lands() {
+    fn inline_action_vendors_source_file_alongside() {
         let (_tmp, uutils, manifest, out) = fixture(
             r#"
 [[modules]]
 name = "demo"
 source = "lib/demo.rs"
-out = "demo.rs"
+out = "demo"
 
 [[modules.substitutions]]
 prefix = "uucore::extendedbigdecimal"
 action = "inline"
-inline_source = "src/uucore/src/lib/features/extendedbigdecimal.rs"
+inline_source = "lib/extendedbigdecimal.rs"
+"#,
+            &[
+                (
+                    "lib/demo.rs",
+                    "use uucore::extendedbigdecimal::ExtendedBigDecimal;\n",
+                ),
+                (
+                    "lib/extendedbigdecimal.rs",
+                    "use std::fmt::Display;\npub struct ExtendedBigDecimal;\n",
+                ),
+            ],
+        );
+        let written = run(&uutils, "demo", "x", &manifest, &out).unwrap();
+        assert_eq!(written.len(), 2, "got: {written:?}");
+
+        // Module body uses super::extendedbigdecimal to reach the
+        // sibling-vendored file.
+        let module_body = fs::read_to_string(&written[0]).unwrap();
+        assert!(
+            module_body.contains("use super::extendedbigdecimal::ExtendedBigDecimal;"),
+            "got: {module_body}"
+        );
+
+        // Inlined file is vendored next to the module with its own banner.
+        let inlined_body = fs::read_to_string(&written[1]).unwrap();
+        assert!(
+            inlined_body.starts_with("// GENERATED by bashkit-coreutils-port"),
+            "got: {inlined_body}"
+        );
+        assert!(
+            inlined_body.contains("pub struct ExtendedBigDecimal;"),
+            "got: {inlined_body}"
+        );
+    }
+
+    #[test]
+    fn inline_missing_inline_source_field_fails() {
+        let (_tmp, uutils, manifest, out) = fixture(
+            r#"
+[[modules]]
+name = "demo"
+source = "lib/demo.rs"
+out = "demo"
+
+[[modules.substitutions]]
+prefix = "uucore::extendedbigdecimal"
+action = "inline"
 "#,
             &[(
                 "lib/demo.rs",
@@ -797,7 +939,6 @@ inline_source = "src/uucore/src/lib/features/extendedbigdecimal.rs"
         );
         let err = run(&uutils, "demo", "x", &manifest, &out).unwrap_err();
         let msg = format!("{err:#}");
-        assert!(msg.contains("not yet implemented"), "got: {msg}");
-        assert!(msg.contains("inline"), "got: {msg}");
+        assert!(msg.contains("inline_source"), "got: {msg}");
     }
 }
