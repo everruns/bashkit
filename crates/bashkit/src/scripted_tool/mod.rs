@@ -1470,6 +1470,116 @@ mod tests {
         assert!(result.stdout.contains(r#""id":7"#));
     }
 
+    #[tokio::test]
+    async fn test_tool_def_extension_builds_have_isolated_invocation_logs() {
+        // Two separate `build()` calls must NOT share traces — that is the
+        // cross-tenant isolation contract.
+        let builder = ToolDefExtension::builder()
+            .tool_fn(ToolDef::new("echo_arg", "Echo"), |args: &ToolArgs| {
+                Ok(format!("{}\n", args.param_str("msg").unwrap_or_default()))
+            });
+        let ext_a = builder.build();
+        let ext_b = builder.build();
+        let handle_a = ext_a.clone();
+        let handle_b = ext_b.clone();
+
+        let mut bash_a = crate::Bash::builder().extension(ext_a).build();
+        let mut bash_b = crate::Bash::builder().extension(ext_b).build();
+        bash_a
+            .exec("echo_arg --msg alpha")
+            .await
+            .expect("bash a should execute");
+        bash_b
+            .exec("echo_arg --msg beta")
+            .await
+            .expect("bash b should execute");
+
+        let trace_a = handle_a.take_invocations();
+        let trace_b = handle_b.take_invocations();
+        assert_eq!(trace_a.len(), 1);
+        assert_eq!(
+            trace_a[0].args,
+            vec!["--msg".to_string(), "alpha".to_string()]
+        );
+        assert_eq!(trace_b.len(), 1);
+        assert_eq!(
+            trace_b[0].args,
+            vec!["--msg".to_string(), "beta".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_tool_def_extension_clones_share_invocation_log() {
+        // Cloning is the supported way to retain a `take_invocations` handle
+        // after passing the extension to a `Bash`.
+        let extension = ToolDefExtension::builder()
+            .tool_fn(ToolDef::new("echo_arg", "Echo"), |args: &ToolArgs| {
+                Ok(format!("{}\n", args.param_str("msg").unwrap_or_default()))
+            })
+            .build();
+        let handle = extension.clone();
+
+        let mut bash = crate::Bash::builder().extension(extension).build();
+        bash.exec("echo_arg --msg gamma")
+            .await
+            .expect("bash should execute");
+
+        let trace = handle.take_invocations();
+        assert_eq!(trace.len(), 1);
+        assert_eq!(
+            trace[0].args,
+            vec!["--msg".to_string(), "gamma".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_tool_def_extension_invocations_are_bounded_and_truncated() {
+        let extension = ToolDefExtension::builder()
+            .tool_fn(ToolDef::new("noop", "No-op"), |_args: &ToolArgs| {
+                Ok("ok\n".to_string())
+            })
+            .build();
+        let handle = extension.clone();
+        let mut bash = crate::Bash::builder().extension(extension).build();
+
+        for _ in 0..300 {
+            let cmd = format!("noop --msg {}", "x".repeat(1500));
+            bash.exec(&cmd).await.expect("noop should execute");
+        }
+        let trace = handle.take_invocations();
+        assert_eq!(trace.len(), 256, "log must be capped at MAX_LOG_ENTRIES");
+        assert_eq!(
+            trace[0].args[1].len(),
+            1024,
+            "long argv tokens must be truncated to MAX_LOG_ARG_BYTES"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_tool_def_extension_truncation_is_byte_aware_for_utf8() {
+        // 4-byte UTF-8 codepoint (U+1F600 😀); 400 of them = 1600 bytes,
+        // well over the 1024 cap. Truncation must (a) cap by bytes,
+        // not chars, and (b) leave a valid UTF-8 string.
+        let extension = ToolDefExtension::builder()
+            .tool_fn(ToolDef::new("noop", "No-op"), |_args: &ToolArgs| {
+                Ok("ok\n".to_string())
+            })
+            .build();
+        let handle = extension.clone();
+        let mut bash = crate::Bash::builder().extension(extension).build();
+
+        let big = "\u{1F600}".repeat(400);
+        let cmd = format!("noop --msg {}", big);
+        bash.exec(&cmd).await.expect("noop should execute");
+
+        let trace = handle.take_invocations();
+        assert_eq!(trace.len(), 1);
+        let truncated = &trace[0].args[1];
+        assert!(truncated.len() <= 1024, "byte length must respect cap");
+        // Each codepoint is 4 bytes; 1024 / 4 = 256 codepoints fit.
+        assert_eq!(truncated.chars().count(), 256);
+    }
+
     // -- Issue #1278: --help flag tests --
 
     #[tokio::test]

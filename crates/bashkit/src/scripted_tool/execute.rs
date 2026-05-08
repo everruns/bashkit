@@ -9,6 +9,7 @@ use crate::tool::{
 use crate::tool_def::usage_from_schema;
 use async_trait::async_trait;
 use schemars::schema_for;
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 // ============================================================================
@@ -113,7 +114,7 @@ impl ScriptedTool {
             };
         }
 
-        let log: InvocationLog = Arc::new(Mutex::new(Vec::new()));
+        let log: InvocationLog = Arc::new(Mutex::new(VecDeque::new()));
         let mut bash = self.create_bash(Arc::clone(&log));
 
         let response = if let Some(sender) = stream_sender {
@@ -146,10 +147,12 @@ impl ScriptedTool {
                 ..Default::default()
             },
         };
-        let invocations = log
+        let invocations: Vec<_> = log
             .lock()
             .expect("scripted invocation log poisoned")
-            .clone();
+            .iter()
+            .cloned()
+            .collect();
         self.store_last_execution_trace(ScriptedExecutionTrace { invocations });
         response
     }
