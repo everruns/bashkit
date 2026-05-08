@@ -44,7 +44,13 @@ codegen**, not by depending on `uu_*` crates at runtime.
      empty). Per-builtin opt-in: a builtin chooses whether to wire
      through the shim — if it does, every uutils env-default
      auto-lights as that option's bashkit support lands.
-5. Emits a generated file under
+5. Validates the rewritten `uu_app()` before emission: args mode accepts
+   only a single tail clap `Command` builder expression. Prefix
+   statements, block expressions, loops, matches, async blocks, and
+   unsafe blocks are rejected before any generated Rust is written.
+   This keeps third-party uutils source from smuggling arbitrary
+   executable statements into `<util>_command()` (TM-INF-025).
+6. Emits a generated file under
    `crates/bashkit/src/builtins/generated/<util>_args.rs` with a clean
    `pub fn <util>_command() -> clap::Command`.
 
@@ -297,8 +303,17 @@ and on `workflow_dispatch`. It:
 4. Verifies bashkit still builds and the cat/tac spec tests pass.
 5. Builds the uutils multicall from the same checkout and runs the
    differential harness with `BASHKIT_RUN_COREUTILS_DIFF=1`.
-6. Opens a PR with the regenerated files + bumped pin if `git diff` is
-   non-empty.
+6. Uploads generated files as an artifact if `git diff` is non-empty.
+7. A separate `open-pr` job downloads that artifact and opens a PR with
+   the regenerated files + bumped pin.
+
+Security boundary: the regeneration/build/test job treats uutils as
+third-party input. It has only `contents: read` permission and both
+checkouts set `persist-credentials: false`, so generated Rust can be
+compiled and exercised without a repository write token. The later
+`open-pr` job has `contents: write`/`pull-requests: write`, but it does
+not build or execute the generated code; it only commits the already
+tested generated files.
 
 The PR's intermediate commits are bot-authored (this is automated drift
 detection, not a code change). Maintainers must **squash-merge as a human**
