@@ -2414,8 +2414,8 @@ fn derive_sqlite_limits(state: &SharedState) -> bashkit::SqliteLimits {
     if let Some(ms) = state.timeout_ms {
         limits = limits.max_duration(std::time::Duration::from_millis(u64::from(ms)));
     }
-    if let Some(memory_mb) = state.max_memory {
-        let max_db_bytes = (memory_mb.max(0.0) * 1024.0 * 1024.0).floor() as usize;
+    if let Some(memory_bytes) = state.max_memory {
+        let max_db_bytes = memory_bytes.max(0.0).floor() as usize;
         if max_db_bytes > 0 {
             limits = limits.max_db_bytes(max_db_bytes);
         }
