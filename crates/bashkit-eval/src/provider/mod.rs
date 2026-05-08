@@ -9,9 +9,26 @@ pub mod openai_responses;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+use std::sync::OnceLock;
+
 pub use anthropic::AnthropicProvider;
 pub use openai::OpenAiProvider;
 pub use openai_responses::OpenAiResponsesProvider;
+
+pub fn ensure_rustls_crypto_provider() -> anyhow::Result<()> {
+    static INSTALL_RESULT: OnceLock<anyhow::Result<()>> = OnceLock::new();
+
+    let install_result = INSTALL_RESULT.get_or_init(|| {
+        rustls::crypto::ring::default_provider()
+            .install_default()
+            .map_err(|_| anyhow::anyhow!("failed to install rustls ring crypto provider"))
+    });
+
+    install_result
+        .as_ref()
+        .map(|_| ())
+        .map_err(|e| anyhow::anyhow!("rustls crypto provider unavailable: {e}"))
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
