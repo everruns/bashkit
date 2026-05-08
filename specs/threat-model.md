@@ -1876,7 +1876,7 @@ filesystem.
 | TM-SQL-001 | Code execution via BETA upstream | Critical | Cargo feature + builder registration + runtime opt-in gate | `tm_sql_001_default_disabled_without_opt_in` |
 | TM-SQL-002 | Sandbox escape via host filesystem | Critical | DB files, `.read`, and VFS backend paths resolve through `Arc<dyn FileSystem>` | `tm_sql_002_paths_resolve_only_to_vfs`, `tm_sql_002b_vfs_backend_isolated_to_bash_fs` |
 | TM-SQL-003 | DoS via large SQL input | High | `SqliteLimits::max_script_bytes` | `tm_sql_003_oversize_script_rejected` |
-| TM-SQL-004 | DoS via huge result set | High | `SqliteLimits::max_rows_per_query` | `tm_sql_004_oversize_result_set_aborts` |
+| TM-SQL-004 | DoS via huge result set | High | `SqliteLimits::max_rows_per_query`, enforced before materialising each row | `tm_sql_004_oversize_result_set_aborts` |
 | TM-SQL-005 | DoS via huge DB file | High | `SqliteLimits::max_db_bytes` on load and while growing DBs on both backends | `tm_sql_005_oversize_db_file_rejected`, `db_growth_beyond_max_rejected_on_both_backends` |
 | TM-SQL-005a | DoS via wall-clock burn | High | Per-step deadline and `Statement::interrupt()` | `deadline_already_expired_aborts_with_timeout` |
 | TM-SQL-005b | DoS via statement flood | Medium | `SqliteLimits::max_statements` after splitting | `too_many_statements_rejected` |

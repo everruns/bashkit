@@ -87,18 +87,15 @@ async fn tm_sql_004_oversize_result_set_aborts() {
     let r = bash
         .exec(
             r#"sqlite :memory: '
-            CREATE TABLE big AS WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM r WHERE n<100) SELECT n FROM r;
-            SELECT * FROM big' 2>&1 || echo SAW_ROW_CAP"#,
+            SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5
+            UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9 UNION ALL SELECT 10
+            UNION ALL SELECT 11' 2>&1 || echo SAW_ROW_CAP"#,
         )
         .await
         .unwrap();
-    // Either turso supports recursive CTE and we hit our cap, OR it returns
-    // an error. Both outcomes prove the cap is wired and the user gets
-    // back to the shell.
     assert!(
         r.stdout.contains("SAW_ROW_CAP")
-            || r.stderr.contains("row cap")
-            || r.stderr.contains("sqlite:"),
+            && r.stdout.contains("result set exceeds row cap (11 > 10)"),
         "stdout={:?} stderr={:?}",
         r.stdout,
         r.stderr,

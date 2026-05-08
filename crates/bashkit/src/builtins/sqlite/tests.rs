@@ -63,6 +63,16 @@ async fn run(args: &[&str], stdin: Option<&str>) -> ExecResult {
     run_with(args, SqliteBackend::Memory, fs, stdin, &env).await
 }
 
+async fn run_with_limits(args: &[&str], stdin: Option<&str>, limits: SqliteLimits) -> ExecResult {
+    let env = opt_in_env();
+    let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+    let mut variables = HashMap::new();
+    let mut cwd = PathBuf::from("/home/user");
+    let ctx = Context::new_for_test(&owned, &env, &mut variables, &mut cwd, fs, stdin);
+    Sqlite::with_limits(limits).execute(ctx).await.unwrap()
+}
+
 async fn run_vfs(args: &[&str], stdin: Option<&str>) -> ExecResult {
     let env = opt_in_env();
     let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
@@ -469,6 +479,43 @@ async fn deadline_already_expired_aborts_with_timeout() {
     // pre-statement check; both surface the timeout message.
     assert_eq!(r.exit_code, 1);
     assert!(r.stderr.contains("timed out"), "stderr was: {}", r.stderr);
+}
+
+#[tokio::test]
+async fn row_cap_rejects_oversize_select() {
+    let limits = SqliteLimits::default()
+        .max_rows_per_query(1)
+        .max_duration(std::time::Duration::ZERO);
+    let r = run_with_limits(&[":memory:", "SELECT 1 UNION ALL SELECT 2"], None, limits).await;
+    assert_eq!(r.exit_code, 1);
+    assert_eq!(r.stdout, "");
+    assert!(
+        r.stderr.contains("result set exceeds row cap (2 > 1)"),
+        "stderr was: {}",
+        r.stderr
+    );
+}
+
+#[tokio::test]
+async fn dump_data_respects_row_cap() {
+    let limits = SqliteLimits::default()
+        .max_rows_per_query(1)
+        .max_duration(std::time::Duration::ZERO);
+    let r = run_with_limits(
+        &[
+            ":memory:",
+            "CREATE TABLE t(x); INSERT INTO t VALUES (1), (2);\n.dump",
+        ],
+        None,
+        limits,
+    )
+    .await;
+    assert_eq!(r.exit_code, 1);
+    assert!(
+        r.stderr.contains("result set exceeds row cap (2 > 1)"),
+        "stderr was: {}",
+        r.stderr
+    );
 }
 
 #[test]

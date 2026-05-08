@@ -160,7 +160,12 @@ impl SqliteEngine {
     /// `deadline` carries the wall-clock budget shared across all statements
     /// in this invocation. Once it expires, we issue `stmt.interrupt()` and
     /// return a timeout error rather than continuing the step loop.
-    pub(super) fn execute(&self, sql: &str, deadline: Deadline) -> EngineResult<StatementOutcome> {
+    pub(super) fn execute(
+        &self,
+        sql: &str,
+        deadline: Deadline,
+        max_rows: usize,
+    ) -> EngineResult<StatementOutcome> {
         let mut stmt = self.conn.prepare(sql).map_err(turso_msg)?;
         let mut outcome = StatementOutcome::default();
         for idx in 0..stmt.num_columns() {
@@ -173,6 +178,12 @@ impl SqliteEngine {
             }
             match stmt.step().map_err(turso_msg)? {
                 StepResult::Row => {
+                    let next_row = outcome.rows.len() + 1;
+                    if next_row > max_rows {
+                        return Err(format!(
+                            "result set exceeds row cap ({next_row} > {max_rows})"
+                        ));
+                    }
                     if let Some(row) = stmt.row() {
                         let values: Vec<Value> = (0..stmt.num_columns())
                             .map(|idx| row.get_value(idx).clone())
