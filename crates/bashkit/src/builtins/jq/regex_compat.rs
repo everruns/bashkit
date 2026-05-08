@@ -45,6 +45,13 @@ struct Flags {
 }
 
 impl Flags {
+    /// Limit delegated `regex` program size for DFA/NFA paths.
+    const DELEGATE_SIZE_LIMIT: usize = 10 * (1 << 20);
+    /// Limit delegated DFA cache size.
+    const DELEGATE_DFA_SIZE_LIMIT: usize = 2 * (1 << 20);
+    /// Cap VM backtracking steps for fancy-regex paths.
+    const BACKTRACK_LIMIT: usize = 1_000_000;
+
     fn parse(s: &str) -> Result<Self, char> {
         let mut out = Self::default();
         for c in s.chars() {
@@ -71,7 +78,27 @@ impl Flags {
         b.case_insensitive(self.i)
             .multi_line(self.m)
             .dot_matches_new_line(self.s)
-            .ignore_whitespace(self.x);
+            .ignore_whitespace(self.x)
+            .delegate_size_limit(Self::DELEGATE_SIZE_LIMIT)
+            .delegate_dfa_size_limit(Self::DELEGATE_DFA_SIZE_LIMIT)
+            .backtrack_limit(Self::BACKTRACK_LIMIT);
+        b.build()
+    }
+
+    #[cfg(test)]
+    fn build_with_backtrack_limit(
+        &self,
+        pattern: &str,
+        backtrack_limit: usize,
+    ) -> Result<FRegex, fancy_regex::Error> {
+        let mut b = FRegexBuilder::new(pattern);
+        b.case_insensitive(self.i)
+            .multi_line(self.m)
+            .dot_matches_new_line(self.s)
+            .ignore_whitespace(self.x)
+            .delegate_size_limit(Self::DELEGATE_SIZE_LIMIT)
+            .delegate_dfa_size_limit(Self::DELEGATE_DFA_SIZE_LIMIT)
+            .backtrack_limit(backtrack_limit);
         b.build()
     }
 }
@@ -256,6 +283,19 @@ mod tests {
         let f = Flags::default();
         // (?=...) is a positive lookahead — `regex` rejects, fancy-regex accepts.
         assert!(f.build(r"foo(?=bar)").is_ok());
+    }
+
+    #[test]
+    fn backtrack_limit_enforced() {
+        let f = Flags::default();
+        let re = f
+            .build_with_backtrack_limit(r"(a+)+\1b", 100)
+            .expect("pattern compiles");
+        let haystack = "a".repeat(5_000);
+        let err = re
+            .is_match(haystack.as_str())
+            .expect_err("should exceed backtrack limit");
+        assert!(!err.to_string().is_empty());
     }
 
     #[test]
