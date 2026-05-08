@@ -84,6 +84,15 @@ tracing = { workspace = true, optional = true }
 # argument surfaces. Always on — see specs/coreutils-args-port.md.
 clap = { workspace = true }
 
+# Pinned to uutils' workspace versions. Used by the vendored
+# uucore::format module (see crates/bashkit/src/builtins/generated/format)
+# that backs `printf`. Kept platform-clean — no rustix / errno
+# transitive deps — so wasm32 stays buildable.
+bigdecimal = "0.4"
+num-traits = "0.2"
+unit-prefix = "0.5"
+os_display = "0.1.3"
+
 # Embedded Python interpreter (optional)
 monty = { git = "https://github.com/pydantic/monty", rev = "49faa4c", optional = true }
 
