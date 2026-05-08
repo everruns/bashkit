@@ -375,6 +375,27 @@ async fn rawfile_with_raw_output_emits_unquoted() {
     assert_eq!(result.stdout.trim(), "hello");
 }
 
+#[tokio::test]
+async fn repeated_rawfile_bindings_are_byte_capped() {
+    let payload = "x".repeat(1024 * 1024);
+    let mut args = Vec::new();
+    for i in 0..32 {
+        args.push("--rawfile".to_string());
+        args.push(format!("x{i}"));
+        args.push("/big.txt".to_string());
+    }
+    args.push("-n".to_string());
+    args.push(".".to_string());
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+
+    let result = run_jq_with_files(&refs, &[("/big.txt", &payload)])
+        .await
+        .unwrap();
+
+    assert_eq!(result.exit_code, 2);
+    assert!(result.stderr.contains("file bindings exceed"));
+}
+
 // =========================================================================
 // Tier 2: --args / --jsonargs / $ARGS
 // =========================================================================
