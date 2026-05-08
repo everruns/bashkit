@@ -407,12 +407,28 @@ impl Builtin for Sqlite {
                 let handle = self.cache_handle(&key);
                 let mut guard = handle.lock().await;
 
-                if guard.is_none() {
+                // Security: if the VFS file was removed/replaced between calls,
+                // invalidate cached state and re-open from current bytes.
+                let mut reopen = guard.is_none();
+                if !reopen
+                    && let Some(engine) = guard.as_ref()
+                    && let Some(snapshot) = engine.snapshot_bytes()
+                {
+                    match ctx.fs.read_file(path).await {
+                        Ok(current) => {
+                            if current != snapshot {
+                                reopen = true;
+                            }
+                        }
+                        Err(_) => {
+                            reopen = true;
+                        }
+                    }
+                }
+                if reopen {
                     match open_file_engine(backend, path, &ctx.fs, &self.limits).await {
                         Ok(e) => *guard = Some(e),
-                        Err(msg) => {
-                            return Ok(ExecResult::err(format!("sqlite: {msg}\n"), 1));
-                        }
+                        Err(msg) => return Ok(ExecResult::err(format!("sqlite: {msg}\n"), 1)),
                     }
                 }
                 let engine = guard.as_ref().expect("engine populated above");

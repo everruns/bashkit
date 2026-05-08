@@ -320,6 +320,50 @@ async fn snapshot_and_restore_round_trips_sqlite_state() {
 }
 
 #[tokio::test]
+async fn cached_engine_respects_deleted_db_between_exec_calls() {
+    let mut bash = make_bash();
+    let setup = bash
+        .exec(r#"sqlite /tmp/deleted.sqlite 'CREATE TABLE t(v); INSERT INTO t VALUES ("secret")'"#)
+        .await
+        .unwrap();
+    assert_eq!(setup.exit_code, 0, "stderr: {}", setup.stderr);
+
+    let rm = bash.exec(r#"rm -f /tmp/deleted.sqlite"#).await.unwrap();
+    assert_eq!(rm.exit_code, 0, "stderr: {}", rm.stderr);
+
+    let query = bash
+        .exec(r#"sqlite /tmp/deleted.sqlite 'SELECT count(*) FROM sqlite_master'"#)
+        .await
+        .unwrap();
+    assert_ne!(query.exit_code, 0, "stdout: {}", query.stdout);
+}
+
+#[tokio::test]
+async fn cached_engine_respects_replaced_db_between_exec_calls() {
+    let mut bash = make_bash();
+    let setup = bash
+        .exec(r#"sqlite /tmp/replaced.sqlite 'CREATE TABLE t(v); INSERT INTO t VALUES ("old")'"#)
+        .await
+        .unwrap();
+    assert_eq!(setup.exit_code, 0, "stderr: {}", setup.stderr);
+
+    let overwrite = bash
+        .exec(
+            r#"sqlite /tmp/new.sqlite 'CREATE TABLE t(v); INSERT INTO t VALUES ("new")'; cp /tmp/new.sqlite /tmp/replaced.sqlite"#,
+        )
+        .await
+        .unwrap();
+    assert_eq!(overwrite.exit_code, 0, "stderr: {}", overwrite.stderr);
+
+    let query = bash
+        .exec(r#"sqlite /tmp/replaced.sqlite 'SELECT v FROM t'"#)
+        .await
+        .unwrap();
+    assert_eq!(query.exit_code, 0, "stderr: {}", query.stderr);
+    assert_eq!(query.stdout.trim(), "new");
+}
+
+#[tokio::test]
 async fn invalid_sql_exit_code_one() {
     let mut bash = make_bash();
     let r = bash
