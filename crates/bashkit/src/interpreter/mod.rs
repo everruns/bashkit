@@ -4833,11 +4833,18 @@ impl Interpreter {
 
             self.apply_builtin_side_effects(&result);
 
-            // Sync exported variables into env so subprocess isolation can see them
-            if name == "export" && result.exit_code == 0 {
+            // Sync successful export operands into env so subprocess isolation can see them.
+            // Keep syncing even if export returned nonzero for other args (bash-compatible).
+            if name == "export" {
                 for arg in args {
                     if let Some(eq_pos) = arg.find('=') {
                         let var_name = &arg[..eq_pos];
+                        if self
+                            .variables
+                            .contains_key(&format!("_READONLY_{}", var_name))
+                        {
+                            continue;
+                        }
                         if let Some(value) = self.variables.get(var_name) {
                             self.env.insert(var_name.to_string(), value.clone());
                         }

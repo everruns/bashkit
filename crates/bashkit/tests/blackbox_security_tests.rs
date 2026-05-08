@@ -455,6 +455,25 @@ mod finding_readonly_bypass {
         assert!(result.stdout.contains("exit=1"));
     }
 
+    /// export must still sync successful operands into env after a readonly error.
+    #[tokio::test]
+    async fn export_continues_after_readonly_error_and_exports_good_args() {
+        let mut bash = tight_bash();
+        let result = bash
+            .exec(
+                r#"
+                readonly LOCKED=original
+                export LOCKED=skip GOOD=ok
+                echo "exit=$?"
+                printenv GOOD
+                "#,
+            )
+            .await
+            .unwrap();
+        assert!(result.stdout.contains("exit=1"));
+        assert!(result.stdout.contains("ok"));
+    }
+
     /// Non-finding: readonly via local in function is bash-compatible shadowing.
     #[tokio::test]
     async fn local_shadows_readonly_in_function() {
