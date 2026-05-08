@@ -437,7 +437,7 @@ fn consume_array_value(
     let trimmed = next.trim_start();
 
     if trimmed.starts_with('[') {
-        if let Ok(serde_json::Value::Array(arr)) = serde_json::from_str::<serde_json::Value>(next) {
+        if let Some(serde_json::Value::Array(arr)) = parse_aggregate_json_value(next) {
             *i += 1;
             return Ok(ArrayInput::Items(arr));
         }
@@ -447,7 +447,7 @@ fn consume_array_value(
 
     if items_effective == EffectiveType::Object {
         if trimmed.starts_with('{') {
-            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(next) {
+            if let Some(parsed) = parse_aggregate_json_value(next) {
                 *i += 1;
                 return Ok(ArrayInput::Items(vec![parsed]));
             }
@@ -519,6 +519,7 @@ enum EffectiveType {
 }
 
 const MAX_REF_DEPTH: usize = 16;
+const MAX_AGGREGATE_FLAG_JSON_BYTES: usize = 64 * 1024;
 
 fn type_str_to_effective(s: &str) -> EffectiveType {
     match s {
@@ -637,7 +638,7 @@ fn coerce_value(
         EffectiveType::Array | EffectiveType::Object => {
             let trimmed = raw.trim_start();
             if (trimmed.starts_with('[') || trimmed.starts_with('{'))
-                && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(raw)
+                && let Some(parsed) = parse_aggregate_json_value(raw)
             {
                 return parsed;
             }
@@ -647,6 +648,13 @@ fn coerce_value(
             serde_json::Value::String(raw.to_string())
         }
     }
+}
+
+fn parse_aggregate_json_value(raw: &str) -> Option<serde_json::Value> {
+    if raw.len() > MAX_AGGREGATE_FLAG_JSON_BYTES {
+        return None;
+    }
+    serde_json::from_str::<serde_json::Value>(raw).ok()
 }
 
 /// Generate a usage hint from schema properties: `--id <integer> --name <string>`.
@@ -1131,6 +1139,21 @@ mod tests {
         let args = vec!["--ids".to_string(), "1,2,3".to_string()];
         let result = parse_flags(&args, &schema).unwrap();
         assert_eq!(result["ids"], serde_json::json!([1, 2, 3]));
+    }
+
+    #[test]
+    fn test_parse_flags_large_json_array_stays_string() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {"tags": {"type": "array", "items": {"type": "string"}}}
+        });
+        let large = format!(
+            "[{}]",
+            "\"a\",".repeat((MAX_AGGREGATE_FLAG_JSON_BYTES / 4) + 1)
+        );
+        let args = vec!["--tags".to_string(), large.clone()];
+        let result = parse_flags(&args, &schema).unwrap();
+        assert_eq!(result["tags"], serde_json::Value::String(large));
     }
 
     #[test]
