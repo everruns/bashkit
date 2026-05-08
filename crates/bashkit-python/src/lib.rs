@@ -2883,12 +2883,24 @@ fn apply_python_config(
 /// explicit opt-in for in-process SQLite execution, so we register the
 /// builtin and inject the runtime gate env var. The deny-list defaults
 /// (resource/FS-shaped PRAGMAs) come from `SqliteLimits::default()`.
-fn apply_sqlite_config(mut builder: bashkit::BashBuilder, sqlite: bool) -> bashkit::BashBuilder {
+fn apply_sqlite_config(
+    mut builder: bashkit::BashBuilder,
+    sqlite: bool,
+    timeout_seconds: Option<f64>,
+    max_memory: Option<u64>,
+) -> PyResult<bashkit::BashBuilder> {
     if sqlite {
-        builder = builder.sqlite();
+        let mut limits = bashkit::SqliteLimits::default();
+        if let Some(ts) = timeout_seconds {
+            limits = limits.max_duration(parse_timeout_seconds(ts)?);
+        }
+        if let Some(mm) = max_memory {
+            limits = limits.max_db_bytes(usize::try_from(mm).unwrap_or(usize::MAX));
+        }
+        builder = builder.sqlite_with_limits(limits);
         builder = builder.env("BASHKIT_ALLOW_INPROCESS_SQLITE", "1");
     }
-    builder
+    Ok(builder)
 }
 
 /// Core bash interpreter with virtual filesystem.
@@ -2979,7 +2991,7 @@ impl PyBash {
             handler_clone,
             self.external_handler_reentry_depth.clone(),
         );
-        builder = apply_sqlite_config(builder, self.sqlite);
+        builder = apply_sqlite_config(builder, self.sqlite, self.timeout_seconds, self.max_memory)?;
         if let Some(ref net) = self.network {
             builder = net.apply(builder);
         }
@@ -3094,7 +3106,7 @@ impl PyBash {
             handler_for_build,
             external_handler_reentry_depth.clone(),
         );
-        builder = apply_sqlite_config(builder, sqlite);
+        builder = apply_sqlite_config(builder, sqlite, timeout_seconds, max_memory)?;
         if let Some(ref net) = network {
             builder = net.apply(builder);
         }
