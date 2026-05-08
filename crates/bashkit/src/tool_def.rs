@@ -431,7 +431,7 @@ fn consume_array_value(
     flag_name: &str,
 ) -> std::result::Result<ArrayInput, String> {
     if *i >= args.len() || args[*i].starts_with("--") {
-        return Ok(ArrayInput::Items(Vec::new()));
+        return Err(format!("--{flag_name}: missing value"));
     }
     let next = &args[*i];
     let trimmed = next.trim_start();
@@ -912,6 +912,35 @@ mod tests {
         let args = vec!["--tags".to_string(), "abc".to_string()];
         let result = parse_flags(&args, &schema).unwrap();
         assert_eq!(result["tags"], serde_json::json!(["abc"]));
+    }
+
+    #[test]
+    fn test_parse_flags_array_missing_value_is_error() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {"tags": {"type": "array", "items": {"type": "string"}}}
+        });
+        let args = vec!["--tags".to_string()];
+        let err = parse_flags(&args, &schema).unwrap_err();
+        assert_eq!(err, "--tags: missing value");
+    }
+
+    #[test]
+    fn test_parse_flags_array_missing_value_before_next_flag_is_error() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "tags": {"type": "array", "items": {"type": "string"}},
+                "name": {"type": "string"}
+            }
+        });
+        let args = vec![
+            "--tags".to_string(),
+            "--name".to_string(),
+            "alice".to_string(),
+        ];
+        let err = parse_flags(&args, &schema).unwrap_err();
+        assert_eq!(err, "--tags: missing value");
     }
 
     #[test]
