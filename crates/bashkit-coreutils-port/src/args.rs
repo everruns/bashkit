@@ -660,7 +660,9 @@ fn validate_uu_app_body(uu_app: &ItemFn) -> Result<()> {
         bail!("unsafe uu_app body: {}", validator.errors.join("; "));
     }
     if !chain_roots_at_command_new(command_expr) {
-        bail!("unsafe uu_app body: tail expression must be a clap Command::new(...) builder chain");
+        bail!(
+            "unsafe uu_app body: tail expression must be a clap::Command::new(...) builder chain"
+        );
     }
     Ok(())
 }
@@ -670,6 +672,29 @@ struct UuAppExprValidator {
 }
 
 impl<'ast> syn::visit::Visit<'ast> for UuAppExprValidator {
+    fn visit_expr_method_call(&mut self, node: &'ast syn::ExprMethodCall) {
+        if is_disallowed_chain_method(&node.method.to_string()) {
+            self.errors.push(format!(
+                "method is not allowed in command builder: {}",
+                quote::quote!(#node)
+            ));
+        }
+        syn::visit::visit_expr_method_call(self, node);
+    }
+
+    fn visit_expr_closure(&mut self, node: &'ast syn::ExprClosure) {
+        self.errors.push(format!(
+            "closure is not allowed in command builder: {}",
+            quote::quote!(#node)
+        ));
+    }
+
+    fn visit_expr_macro(&mut self, node: &'ast syn::ExprMacro) {
+        self.errors.push(format!(
+            "macro is not allowed in command builder: {}",
+            quote::quote!(#node)
+        ));
+    }
     fn visit_expr_block(&mut self, node: &'ast syn::ExprBlock) {
         self.errors.push(format!(
             "block expression is not allowed in command builder: {}",
@@ -736,13 +761,25 @@ fn path_ends_with_command_new(func: &Expr) -> bool {
         return false;
     };
     let segs = path_segments(&p.path);
-    let last_two: Vec<&str> = segs
-        .iter()
-        .rev()
-        .take(2)
-        .map(String::as_str)
-        .collect::<Vec<_>>();
-    matches!(last_two.as_slice(), ["new", "Command"])
+    matches!(segs.as_slice(), [single, new] if single == "Command" && new == "new")
+        || matches!(segs.as_slice(), [clap, command, new] if clap == "clap" && command == "Command" && new == "new")
+}
+
+fn is_disallowed_chain_method(method: &str) -> bool {
+    matches!(
+        method,
+        "spawn"
+            | "status"
+            | "output"
+            | "exec"
+            | "wait"
+            | "kill"
+            | "map"
+            | "and_then"
+            | "or_else"
+            | "unwrap"
+            | "expect"
+    )
 }
 
 fn find_fn<'a>(file: &'a syn::File, name: &str) -> Option<&'a ItemFn> {
@@ -1047,6 +1084,34 @@ pub fn uu_app() -> clap::Command {
         let body = run(&uutils, "cat", "poc").unwrap();
         assert!(body.contains("pub fn cat_command() -> clap::Command"));
         assert!(body.contains("Command::new(\"cat\")"));
+    }
+
+    #[test]
+    fn rejects_non_clap_command_root_chain() {
+        let (_tmp, uutils) = fixture(&[
+            (
+                "src/uu/cat/src/cat.rs",
+                r#"
+mod options {
+    pub static FILE: &str = "file";
+}
+
+pub fn uu_app() -> clap::Command {
+    std::process::Command::new("sh")
+        .arg("-c")
+        .arg("echo nope")
+        .status()
+        .map(|_| clap::Command::new("cat").arg(clap::Arg::new(options::FILE)))
+        .unwrap()
+}
+"#,
+            ),
+            ("src/uu/cat/locales/en-US.ftl", ""),
+        ]);
+
+        let err = run(&uutils, "cat", "poc").unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("unsafe uu_app"), "got: {msg}");
     }
 
     #[test]
