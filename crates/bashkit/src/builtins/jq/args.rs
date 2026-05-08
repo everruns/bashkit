@@ -19,6 +19,18 @@ use super::format::Indent;
 /// jq has no documented cap; we apply one defensively to keep memory bounded.
 pub(super) const MAX_ARGS_POSITIONAL: usize = 4096;
 
+/// Maximum number of `--rawfile` / `--slurpfile` bindings per call.
+/// File bindings retain full file contents in jq globals and `$ARGS.named`,
+/// so this must stay much lower than the positional argument cap.
+// THREAT[TM-DOS-062]: Count and byte caps stop jq file bindings from
+// multiplying one bounded VFS file into unbounded in-process global state.
+pub(super) const MAX_FILE_VAR_REQUESTS: usize = 128;
+
+/// Maximum cumulative bytes read through `--rawfile` / `--slurpfile`.
+/// This is counted per binding, so repeated references to the same VFS file
+/// cannot multiply one file into unbounded jq global state.
+pub(super) const MAX_FILE_VAR_BYTES: usize = 16 * 1024 * 1024;
+
 /// Parsed jq invocation. Fields mirror the documented jq options modulo
 /// the few we explicitly do not implement (`--seq`, `--stream`, color flags).
 pub(super) struct JqArgs<'a> {
@@ -258,6 +270,11 @@ pub(super) fn parse<'a>(args: &'a [String]) -> ParseOutcome<'a> {
             },
             "--slurpfile" | "--rawfile" => match (args.get(i + 1), args.get(i + 2)) {
                 (Some(name), Some(path)) => {
+                    if out.file_var_requests.len() >= MAX_FILE_VAR_REQUESTS {
+                        return ParseOutcome::Done(usage_error(format!(
+                            "jq: too many file bindings (max {MAX_FILE_VAR_REQUESTS})"
+                        )));
+                    }
                     let kind = if arg == "--slurpfile" {
                         FileVarKind::Slurp
                     } else {
@@ -530,6 +547,27 @@ mod tests {
                 assert!(matches!(a.file_var_requests[0].kind, FileVarKind::Raw));
             }
             _ => panic!("expected Args"),
+        }
+    }
+
+    #[test]
+    fn file_bindings_count_is_capped() {
+        let mut args = Vec::new();
+        for i in 0..=MAX_FILE_VAR_REQUESTS {
+            args.push("--rawfile".to_string());
+            args.push(format!("x{i}"));
+            args.push("/x.txt".to_string());
+        }
+        args.push("-n".to_string());
+        args.push(".".to_string());
+        let leaked: &'static [String] = Box::leak(args.into_boxed_slice());
+
+        match parse(leaked) {
+            ParseOutcome::Done(r) => {
+                assert_eq!(r.exit_code, 2);
+                assert!(r.stderr.contains("too many file bindings"));
+            }
+            _ => panic!("expected Done"),
         }
     }
 

@@ -38,7 +38,7 @@ mod regex_compat;
 #[cfg(test)]
 mod tests;
 
-use args::{FileVarKind, JqArgs, ParseOutcome};
+use args::{FileVarKind, JqArgs, MAX_FILE_VAR_BYTES, ParseOutcome};
 use compat::{
     ARGS_VAR_NAME, ENV_VAR_NAME, FILENAME_VAR_NAME, LINENO_VAR_NAME, PUBLIC_ENV_VAR_NAME,
     build_compat_prefix,
@@ -102,12 +102,28 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
     // so we can fail fast on missing files.
     let mut all_var_bindings = parsed.var_bindings.clone();
     let mut all_named_args = parsed.named_args.clone();
+    let mut file_binding_bytes = 0usize;
     for req in &parsed.file_var_requests {
         let path = resolve_path(ctx.cwd, req.path);
+        if let Ok(meta) = ctx.fs.stat(&path).await
+            && meta.file_type.is_file()
+            && file_binding_exceeds_limit(file_binding_bytes, meta.size)
+        {
+            return Ok(file_binding_limit_error(file_binding_bytes, meta.size));
+        }
         let text = match read_text_file(&*ctx.fs, &path, "jq").await {
             Ok(t) => t,
             Err(e) => return Ok(e),
         };
+        match file_binding_bytes.checked_add(text.len()) {
+            Some(total) if total <= MAX_FILE_VAR_BYTES => file_binding_bytes = total,
+            _ => {
+                return Ok(file_binding_limit_error(
+                    file_binding_bytes,
+                    text.len() as u64,
+                ));
+            }
+        }
         let value = match req.kind {
             FileVarKind::Raw => serde_json::Value::String(text),
             FileVarKind::Slurp => match parse_json_stream(&text) {
@@ -411,6 +427,25 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
     }
 
     Ok(ExecResult::ok(output))
+}
+
+fn file_binding_exceeds_limit(used: usize, next: u64) -> bool {
+    match usize::try_from(next) {
+        Ok(next) => used
+            .checked_add(next)
+            .is_none_or(|total| total > MAX_FILE_VAR_BYTES),
+        Err(_) => true,
+    }
+}
+
+fn file_binding_limit_error(used: usize, next: u64) -> ExecResult {
+    ExecResult::err(
+        format!(
+            "jq: file bindings exceed {} bytes (used {used}, next {next})\n",
+            MAX_FILE_VAR_BYTES
+        ),
+        2,
+    )
 }
 
 /// `--rawfile`/`--slurpfile`/$ARGS plumbing helper. The serialized object is

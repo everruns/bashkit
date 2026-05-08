@@ -285,6 +285,7 @@ max_ast_depth: 100,           // Parser recursion (TM-DOS-022)
 | TM-DOS-059 | Parameter expansion replacement bomb | `${x//a/$(printf 'b%.0s' {1..1000})}` on large `x` amplifies output multiplicatively (10K × 1K = 10MB) | `max_total_variable_bytes` + `max_stdout_bytes` | **MITIGATED** |
 | TM-DOS-060 | Sparse array huge-index allocation | `arr[999999999]=x` could allocate ~1B empty slots if arrays are Vec-backed; negative indices could cause OOB | HashMap-based arrays; `max_array_entries` caps total entries | **MITIGATED** |
 | TM-DOS-061 | Snapshot function restore bypasses parser/function limits | Crafted snapshot restores prebuilt or deeply nested functions that exceed the current tenant's parser depth or function memory budget | Re-parse restored function source with current `ExecutionLimits`; re-apply function memory budget before insertion | **MITIGATED** |
+| TM-DOS-062 | jq file binding amplification | Repeated `--rawfile` / `--slurpfile` bindings to one max-sized VFS file multiply retained jq globals and `$ARGS.named` values without consuming more VFS quota | `MAX_FILE_VAR_REQUESTS` caps binding count; `MAX_FILE_VAR_BYTES` counts cumulative file bytes per binding before retaining globals | **MITIGATED** |
 
 **TM-DOS-051** (mitigated): `builtins/yaml.rs` — `parse_yaml_block`, `parse_yaml_map`,
 `parse_yaml_list` carry a `depth: usize` parameter. When `depth > MAX_YAML_DEPTH = 100`,
@@ -1446,6 +1447,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Dotenv internal variable guard | TM-INJ-018 | `is_internal_variable()` check in `Dotenv::execute` (`builtins/dotenv.rs:138`) | **MITIGATED** |
 | Session-level cumulative counters | TM-ISO-005 | `SessionLimits` caps cumulative commands and `exec()` calls across the lifetime of a `Bash` instance | **MITIGATED** |
 | Per-instance memory budget | TM-ISO-006 | `MemoryLimits` capping variable count, total bytes, array entries, function count, function body bytes | **MITIGATED** |
+| jq file binding amplification | TM-DOS-062 | `MAX_FILE_VAR_REQUESTS` and `MAX_FILE_VAR_BYTES` bound `--rawfile` / `--slurpfile` globals | **MITIGATED** |
 
 ---
 
@@ -1468,6 +1470,7 @@ ExecutionLimits::new()
 // Note: MAX_ARITHMETIC_DEPTH (50) is a compile-time constant in interpreter (TM-DOS-026)
 // Note: MAX_AWK_PARSER_DEPTH (100) is a compile-time constant in builtins/awk.rs (TM-DOS-027)
 // Note: MAX_JQ_JSON_DEPTH (100) is a compile-time constant in builtins/jq/ (TM-DOS-027)
+// Note: MAX_FILE_VAR_REQUESTS (128) and MAX_FILE_VAR_BYTES (16MiB) cap jq file bindings (TM-DOS-062)
 
 // Path validation limits (applied via FsLimits):
 FsLimits::new()
