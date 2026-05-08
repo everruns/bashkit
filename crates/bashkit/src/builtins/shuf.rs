@@ -4,8 +4,13 @@
 //! `bashkit-coreutils-port` codegen tool — see `generated/shuf_args.rs`
 //! and `crates/bashkit-coreutils-port/`. Behaviour is implemented locally
 //! against the bashkit VFS.
+//!
+//! Resource decision: shuf builds an ExecResult/String in-process, so it must
+//! reject outputs that exceed ExecutionLimits before allocation and must never
+//! materialize numeric ranges only to apply `-n` afterward.
 
 use async_trait::async_trait;
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::ops::RangeInclusive;
 use std::path::Path;
@@ -14,6 +19,7 @@ use super::generated::shuf_args::shuf_command;
 use super::{Builtin, Context, read_text_file};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
+use crate::limits::ExecutionLimits;
 
 pub struct Shuf;
 
@@ -71,10 +77,10 @@ impl Builtin for Shuf {
 
         let separator = if zero_terminated { '\0' } else { '\n' };
 
-        let items: Vec<String> = if echo {
-            positionals
+        let input = if echo {
+            ShufInput::Items(positionals)
         } else if let Some(range) = input_range {
-            range.map(|n| n.to_string()).collect()
+            ShufInput::Range(range)
         } else {
             // Reading lines: positional file path, "-", or absent (stdin).
             let raw = match positionals.first() {
@@ -92,52 +98,21 @@ impl Builtin for Shuf {
                     }
                 }
             };
-            split_separated(&raw, separator)
+            ShufInput::Items(split_separated(&raw, separator))
         };
 
+        // THREAT[TM-DOS-090]: Bind shuf's in-process output construction to
+        // ExecutionLimits before range/repeat loops can allocate.
+        let output_limit = shuf_output_limit(&ctx, output_path.is_some());
         let mut rng = SmallRng::seed_from_now();
-
-        let output_lines: Vec<String> = if repeat {
-            // -r samples *with* replacement: each pick is independent.
-            // GNU shuf -r without -n loops forever; bashkit caps at 1
-            // and requires -n, mirroring the safe behavior an embedded
-            // VFS shell needs.
-            let count = match head_count {
-                Some(n) => n,
-                None => {
-                    return Ok(ExecResult::err(
-                        "shuf: --repeat requires --head-count to be finite\n".to_string(),
-                        1,
-                    ));
-                }
-            };
-            if items.is_empty() {
-                return Ok(ExecResult::err(
-                    "shuf: no lines to repeat from\n".to_string(),
-                    1,
-                ));
-            }
-            (0..count)
-                .map(|_| items[rng.next_usize_lt(items.len())].clone())
-                .collect()
+        let out = match if repeat {
+            render_repeat(input, head_count, separator, output_limit, &mut rng)
         } else {
-            // Without -r: Fisher-Yates shuffle, then truncate to -n.
-            let mut v = items;
-            for i in (1..v.len()).rev() {
-                let j = rng.next_usize_lt(i + 1);
-                v.swap(i, j);
-            }
-            if let Some(n) = head_count {
-                v.truncate(n as usize);
-            }
-            v
+            render_non_repeat(input, head_count, separator, output_limit, &mut rng)
+        } {
+            Ok(out) => out,
+            Err(stderr) => return Ok(ExecResult::err(stderr, 1)),
         };
-
-        let mut out = String::with_capacity(output_lines.iter().map(String::len).sum::<usize>());
-        for line in &output_lines {
-            out.push_str(line);
-            out.push(separator);
-        }
 
         if let Some(path) = output_path {
             let resolved = if path.is_absolute() {
@@ -169,6 +144,208 @@ fn split_separated(raw: &str, sep: char) -> Vec<String> {
         out.pop();
     }
     out
+}
+
+enum ShufInput {
+    Items(Vec<String>),
+    Range(RangeInclusive<u64>),
+}
+
+fn shuf_output_limit(ctx: &Context<'_>, output_to_file: bool) -> usize {
+    let exec_limit = ctx
+        .execution_extension::<ExecutionLimits>()
+        .map(|limits| limits.max_stdout_bytes)
+        .unwrap_or_else(|| ExecutionLimits::default().max_stdout_bytes);
+
+    if !output_to_file {
+        return exec_limit;
+    }
+
+    let fs_limits = ctx.fs.limits();
+    exec_limit
+        .min(u64_to_usize_saturating(fs_limits.max_file_size))
+        .min(u64_to_usize_saturating(fs_limits.max_total_bytes))
+}
+
+fn render_repeat(
+    input: ShufInput,
+    head_count: Option<u64>,
+    separator: char,
+    output_limit: usize,
+    rng: &mut SmallRng,
+) -> std::result::Result<String, String> {
+    // -r samples *with* replacement: each pick is independent.
+    // GNU shuf -r without -n loops forever; bashkit requires -n because
+    // an embedded VFS shell needs a finite output contract.
+    let count = match head_count {
+        Some(n) => n,
+        None => {
+            return Err("shuf: --repeat requires --head-count to be finite\n".to_string());
+        }
+    };
+
+    match input {
+        ShufInput::Items(items) => {
+            if items.is_empty() {
+                return Err("shuf: no lines to repeat from\n".to_string());
+            }
+            let max_line_len = items
+                .iter()
+                .map(String::len)
+                .max()
+                .unwrap_or(0)
+                .saturating_add(separator.len_utf8());
+            ensure_output_fits(count as u128, max_line_len as u128, output_limit)?;
+
+            let mut out =
+                String::with_capacity(repeat_capacity(count, max_line_len, output_limit)?);
+            for _ in 0..count {
+                out.push_str(&items[rng.next_usize_lt(items.len())]);
+                out.push(separator);
+            }
+            Ok(out)
+        }
+        ShufInput::Range(range) => {
+            let Some((start, end, len)) = range_parts(&range) else {
+                return Err("shuf: no lines to repeat from\n".to_string());
+            };
+            let max_line_len = max_range_value_len(start, end).saturating_add(separator.len_utf8());
+            ensure_output_fits(count as u128, max_line_len as u128, output_limit)?;
+
+            let mut out =
+                String::with_capacity(repeat_capacity(count, max_line_len, output_limit)?);
+            for _ in 0..count {
+                let offset = rng.next_u128_lt(len);
+                out.push_str(&(start as u128 + offset).to_string());
+                out.push(separator);
+            }
+            Ok(out)
+        }
+    }
+}
+
+fn render_non_repeat(
+    input: ShufInput,
+    head_count: Option<u64>,
+    separator: char,
+    output_limit: usize,
+    rng: &mut SmallRng,
+) -> std::result::Result<String, String> {
+    match input {
+        ShufInput::Items(mut items) => {
+            for i in (1..items.len()).rev() {
+                let j = rng.next_usize_lt(i + 1);
+                items.swap(i, j);
+            }
+            if let Some(n) = head_count {
+                items.truncate(u64_to_usize_saturating(n));
+            }
+            render_items(items, separator, output_limit)
+        }
+        ShufInput::Range(range) => {
+            let Some((start, end, len)) = range_parts(&range) else {
+                return Ok(String::new());
+            };
+            let output_count = head_count.map(u128::from).unwrap_or(len).min(len);
+            let max_line_len = max_range_value_len(start, end).saturating_add(separator.len_utf8());
+            ensure_output_fits(output_count, max_line_len as u128, output_limit)?;
+
+            let count =
+                usize::try_from(output_count).map_err(|_| output_too_large(output_limit))?;
+            let values = sample_range_without_replacement(start, len, count, rng);
+            render_items(values, separator, output_limit)
+        }
+    }
+}
+
+fn render_items(
+    items: Vec<String>,
+    separator: char,
+    output_limit: usize,
+) -> std::result::Result<String, String> {
+    let output_len =
+        items_output_len(&items, separator).ok_or_else(|| output_too_large(output_limit))?;
+    if output_len > output_limit {
+        return Err(output_too_large(output_limit));
+    }
+
+    let mut out = String::with_capacity(output_len);
+    for line in &items {
+        out.push_str(line);
+        out.push(separator);
+    }
+    Ok(out)
+}
+
+fn sample_range_without_replacement(
+    start: u64,
+    len: u128,
+    count: usize,
+    rng: &mut SmallRng,
+) -> Vec<String> {
+    let mut swaps: HashMap<u128, u128> = HashMap::with_capacity(count.saturating_mul(2));
+    let mut out = Vec::with_capacity(count);
+    for i in 0..count as u128 {
+        let j = i + rng.next_u128_lt(len - i);
+        let selected = *swaps.get(&j).unwrap_or(&j);
+        let replacement = *swaps.get(&i).unwrap_or(&i);
+        swaps.insert(j, replacement);
+        out.push((start as u128 + selected).to_string());
+    }
+    out
+}
+
+fn range_parts(range: &RangeInclusive<u64>) -> Option<(u64, u64, u128)> {
+    let start = *range.start();
+    let end = *range.end();
+    if start > end {
+        return None;
+    }
+    Some((start, end, u128::from(end - start) + 1))
+}
+
+fn items_output_len(items: &[String], separator: char) -> Option<usize> {
+    let sep_len = separator.len_utf8();
+    items.iter().try_fold(0usize, |sum, item| {
+        sum.checked_add(item.len())?.checked_add(sep_len)
+    })
+}
+
+fn ensure_output_fits(
+    count: u128,
+    max_line_len: u128,
+    output_limit: usize,
+) -> std::result::Result<(), String> {
+    let Some(max_output_len) = count.checked_mul(max_line_len) else {
+        return Err(output_too_large(output_limit));
+    };
+    if max_output_len > output_limit as u128 {
+        return Err(output_too_large(output_limit));
+    }
+    Ok(())
+}
+
+fn repeat_capacity(
+    count: u64,
+    max_line_len: usize,
+    output_limit: usize,
+) -> std::result::Result<usize, String> {
+    let capacity = (count as u128)
+        .checked_mul(max_line_len as u128)
+        .ok_or_else(|| output_too_large(output_limit))?;
+    usize::try_from(capacity).map_err(|_| output_too_large(output_limit))
+}
+
+fn max_range_value_len(start: u64, end: u64) -> usize {
+    start.to_string().len().max(end.to_string().len())
+}
+
+fn u64_to_usize_saturating(n: u64) -> usize {
+    usize::try_from(n).unwrap_or(usize::MAX)
+}
+
+fn output_too_large(output_limit: usize) -> String {
+    format!("shuf: output too large (limit {output_limit} bytes)\n")
 }
 
 // Note: range parsing is handled by `parse_range` inlined into the
@@ -225,6 +402,17 @@ impl SmallRng {
             let l = m as u64;
             if l >= bound.wrapping_neg() % bound {
                 return (m >> 64) as usize;
+            }
+        }
+    }
+
+    fn next_u128_lt(&mut self, bound: u128) -> u128 {
+        debug_assert!(bound > 0);
+        loop {
+            let value = (u128::from(self.next_u64()) << 64) | u128::from(self.next_u64());
+            let zone = u128::MAX - (u128::MAX % bound);
+            if value < zone {
+                return value % bound;
             }
         }
     }
