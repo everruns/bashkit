@@ -350,6 +350,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "base64",
+ "bigdecimal",
  "chrono",
  "clap",
  "criterion",
@@ -367,6 +368,8 @@ dependencies = [
  "jaq-std",
  "md-5",
  "monty",
+ "num-traits",
+ "os_display",
  "pretty_assertions",
  "proptest",
  "rand 0.10.1",
@@ -387,6 +390,7 @@ dependencies = [
  "tower",
  "tracing",
  "turso_core",
+ "unit-prefix",
  "url",
  "zapcode-core",
  "zeroize",
@@ -3047,6 +3051,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f7476a5b122ff1fce7208e7ee9dccd0a516e835f5b8b19b8f3c98a34cf757c1"
 dependencies = [
  "indexmap",
+]
+
+[[package]]
+name = "os_display"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad5fd71b79026fb918650dde6d125000a233764f1c2f1659a1c71118e33ea08f"
+dependencies = [
+ "unicode-width 0.2.2",
 ]
 
 [[package]]
@@ -5808,6 +5821,12 @@ dependencies = [
  "phf_codegen",
  "rand 0.8.6",
 ]
+
+[[package]]
+name = "unit-prefix"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "81e544489bf3d8ef66c953931f56617f423cd4b5494be343d9b9d3dda037b9a3"
 
 [[package]]
 name = "universal-hash"
