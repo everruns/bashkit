@@ -399,3 +399,24 @@ class TestCredentialsPreservedAcrossSnapshot:
         r = restored.execute_sync("echo $OPENAI_API_KEY")
         assert r.exit_code == 0
         assert r.stdout.strip().startswith("bk_placeholder_")
+
+    def test_bashtool_from_snapshot_reapplies_placeholder_env_after_restore(self):
+        src = BashTool()
+        data = src.snapshot()
+        restored = BashTool.from_snapshot(
+            data,
+            network={
+                "allow": ["https://api.openai.com"],
+                "credential_placeholders": [
+                    {
+                        "env": "OPENAI_API_KEY",
+                        "pattern": "https://api.openai.com",
+                        "kind": "bearer",
+                        "token": "sk-real-key",
+                    }
+                ],
+            },
+        )
+        r = restored.execute_sync("echo $OPENAI_API_KEY")
+        assert r.exit_code == 0
+        assert r.stdout.strip().startswith("bk_placeholder_")
