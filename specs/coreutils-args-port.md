@@ -217,9 +217,10 @@ output mirrors the structure.
 each ported file, flattens nested groups (`use a::{b, c}`), and
 classifies each path:
 
-- **External** (anything not rooted at `uucore`/`crate`/`self`/`super`)
+- **External or module-local** (anything not rooted at `uucore`/`crate`)
   passes through. `std`, `bigdecimal`, `num-traits`, etc. resolve at
-  bashkit's compile time.
+  bashkit's compile time; `self::`/`super::` references stay inside the
+  vendored module tree.
 - **Fluent boundary** — `use fluent::*;` and `use uucore::translate;`
   / `uucore::i18n::*` are hard errors regardless of manifest, with a
   message telling the operator the module is not safely vendorable
@@ -235,12 +236,25 @@ Substitution `action`s:
 |---|---|---|
 | `error` | Abort the port at this import. Use when the module references a uucore type that should not be vendored. | Implemented |
 | `replace_with` | Rewrite the matched prefix in every `use` path to `target`; when the rewritten path's final segment differs from the original, an `as <orig>` rename is inserted so call sites compile unchanged. | Implemented |
-| `inline` | Vendor the file at `inline_source` next to the module's output dir (under `<out_base>/<leaf>.rs` where `<leaf>` is the prefix's final segment), and rewrite matching `use` paths to `super::<leaf>::…`. The inlined file is processed through the same enforce + rewrite pipeline so transitive uucore references either substitute or surface explicitly. | Implemented |
+| `inline` | Vendor the file at `inline_source` next to the module's output dir (under `<out_base>/<leaf>.rs` where `<leaf>` is the prefix's final segment), and rewrite matching `use` paths to `crate::builtins::generated::<leaf>::…` so imports work from any nested module depth. The inlined file is processed through the same enforce + rewrite pipeline so transitive uucore references either substitute or surface explicitly. | Implemented |
 
 Output goes through `prettyplease::unparse` whenever any
 `replace_with` or `inline` substitution is in scope, so use-group
 syntax may be flattened into individual `use` items as a side effect
-of rewriting.
+of rewriting. `use module::{self, Item}` is normalized to
+`use module;` plus `use module::Item;` so flattened relative imports
+remain valid Rust.
+
+Top-level upstream `#[cfg(test)]` items and rustdoc attributes are
+stripped during module vendoring. Bashkit tests and public docs cover
+the integrated behavior, while upstream tests and examples assume the
+original uucore crate topology.
+
+### Vendored Modules
+
+| Module | uutils source | Output | Substitution decisions |
+|---|---|---|---|
+| `format` | `src/uucore/src/lib/features/format` | `crates/bashkit/src/builtins/generated/format/` plus `extendedbigdecimal.rs` and `num_parser.rs` siblings | `crate::format` self-refs rewrite to `crate::builtins::generated::format`; `extendedbigdecimal` and `parser::num_parser` are inlined; `NonUtf8OsStrError`, `os_str_as_bytes`, `UError`, `set_exit_code`, `quoting_style`, `show_error`, and `show_warning` rewrite to bashkit-local `format_support` shims. |
 
 ### Output banner
 

@@ -4,14 +4,18 @@
 //! 1. Load the manifest and look up the requested module entry.
 //! 2. Walk every `.rs` file under the entry's `source` (single file
 //!    or directory, depth-recursive).
-//! 3. For each file, parse with syn and walk top-level `use` items:
+//! 3. Strip upstream top-level `#[cfg(test)]` items and rustdoc attrs;
+//!    both assume the original uucore crate topology, while bashkit
+//!    tests and documents the integrated generated module.
+//! 4. For each file, parse with syn and walk top-level `use` items:
 //!    - `use fluent::*;` (or any `fluent::...`) → hard error: the
 //!      module is not safely vendorable without code changes.
 //!    - `use uucore::translate;` / `translate::*` → same hard error
 //!      class (Fluent is the i18n boundary).
-//!    - any other internal path (`uucore::`, `crate::`) must match a
-//!      manifest substitution prefix. Unmatched paths abort the port
-//!      so unexpected internal references surface explicitly.
+//!    - any uucore-crate path (`uucore::`, `crate::`) must match a
+//!      manifest substitution prefix. Unmatched paths abort the port so
+//!      unexpected uucore runtime references surface explicitly. Relative
+//!      `self::`/`super::` paths stay inside the vendored module tree.
 //!    - matched `error` actions abort with a policy-rejection message.
 //!    - matched `replace_with` actions are rewritten in place (see
 //!      [`apply_substitutions`]). Use-paths starting with the prefix
@@ -19,13 +23,14 @@
 //!      changes an `as <orig>` rename is added.
 //!    - matched `inline` actions vendor the file at `inline_source`
 //!      next to the module's output dir and rewrite the use-path to
-//!      `super::<leaf>::…` so the vendored module compiles.
-//! 4. If any `replace_with` or `inline` substitutions are in scope,
+//!      `crate::builtins::generated::<leaf>::…` so the vendored module
+//!      compiles from any nested depth.
+//! 5. If any `replace_with` or `inline` substitutions are in scope,
 //!    the rewritten AST is emitted via `prettyplease::unparse` (use
 //!    groups become individual `use` items as a side effect).
 //!    Otherwise the source is written verbatim. A banner is prepended
 //!    either way.
-//! 5. After the primary tree, every `inline` substitution drives a
+//! 6. After the primary tree, every `inline` substitution drives a
 //!    second port pass on its `inline_source`, with the same enforce
 //!    plus rewrite policy applied so transitive uucore references still
 //!    surface explicitly.
@@ -34,6 +39,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 use proc_macro2::Span;
+use quote::ToTokens;
 use syn::{Ident, Item, ItemUse, UseTree};
 
 use crate::manifest::{Action, Manifest, Module, Substitution};
@@ -129,9 +135,11 @@ fn port_file(src: &Path, out: &Path, module: &Module, rev: &str, rel_path: &str)
         std::fs::read_to_string(src).with_context(|| format!("read source {}", src.display()))?;
     let mut parsed =
         syn::parse_file(&text).with_context(|| format!("parse {} as rust", src.display()))?;
+    let stripped_test_items = strip_cfg_test_items(&mut parsed);
+    let stripped_doc_attrs = strip_doc_attrs(&mut parsed);
     enforce_use_policy(&parsed, module, rel_path)?;
 
-    let body_text = if needs_rewrite(module) {
+    let body_text = if needs_rewrite(module) || stripped_test_items || stripped_doc_attrs {
         apply_substitutions(&mut parsed, module)?;
         prettyplease::unparse(&parsed)
     } else {
@@ -153,6 +161,74 @@ fn needs_rewrite(module: &Module) -> bool {
         .substitutions
         .iter()
         .any(|s| matches!(s.action, Action::ReplaceWith | Action::Inline))
+}
+
+fn strip_cfg_test_items(file: &mut syn::File) -> bool {
+    let before = file.items.len();
+    file.items.retain(|item| !has_cfg_test(item));
+    before != file.items.len()
+}
+
+fn has_cfg_test(item: &Item) -> bool {
+    item_attrs(item).iter().any(|attr| {
+        attr.path().is_ident("cfg") && attr.meta.to_token_stream().to_string().contains("test")
+    })
+}
+
+fn strip_doc_attrs(file: &mut syn::File) -> bool {
+    let mut stripped = false;
+    for item in &mut file.items {
+        if let Some(attrs) = item_attrs_mut(item) {
+            let before = attrs.len();
+            attrs.retain(|attr| !attr.path().is_ident("doc"));
+            stripped |= before != attrs.len();
+        }
+    }
+    stripped
+}
+
+fn item_attrs(item: &Item) -> &[syn::Attribute] {
+    match item {
+        Item::Const(i) => &i.attrs,
+        Item::Enum(i) => &i.attrs,
+        Item::ExternCrate(i) => &i.attrs,
+        Item::Fn(i) => &i.attrs,
+        Item::ForeignMod(i) => &i.attrs,
+        Item::Impl(i) => &i.attrs,
+        Item::Macro(i) => &i.attrs,
+        Item::Mod(i) => &i.attrs,
+        Item::Static(i) => &i.attrs,
+        Item::Struct(i) => &i.attrs,
+        Item::Trait(i) => &i.attrs,
+        Item::TraitAlias(i) => &i.attrs,
+        Item::Type(i) => &i.attrs,
+        Item::Union(i) => &i.attrs,
+        Item::Use(i) => &i.attrs,
+        Item::Verbatim(_) => &[],
+        _ => &[],
+    }
+}
+
+fn item_attrs_mut(item: &mut Item) -> Option<&mut Vec<syn::Attribute>> {
+    match item {
+        Item::Const(i) => Some(&mut i.attrs),
+        Item::Enum(i) => Some(&mut i.attrs),
+        Item::ExternCrate(i) => Some(&mut i.attrs),
+        Item::Fn(i) => Some(&mut i.attrs),
+        Item::ForeignMod(i) => Some(&mut i.attrs),
+        Item::Impl(i) => Some(&mut i.attrs),
+        Item::Macro(i) => Some(&mut i.attrs),
+        Item::Mod(i) => Some(&mut i.attrs),
+        Item::Static(i) => Some(&mut i.attrs),
+        Item::Struct(i) => Some(&mut i.attrs),
+        Item::Trait(i) => Some(&mut i.attrs),
+        Item::TraitAlias(i) => Some(&mut i.attrs),
+        Item::Type(i) => Some(&mut i.attrs),
+        Item::Union(i) => Some(&mut i.attrs),
+        Item::Use(i) => Some(&mut i.attrs),
+        Item::Verbatim(_) => None,
+        _ => None,
+    }
 }
 
 fn port_inlined(
@@ -255,8 +331,10 @@ fn enforce_use_policy(file: &syn::File, module: &Module, rel_path: &str) -> Resu
             );
         }
 
-        // External: pass through. Anything not rooted at uucore/crate/self/super
-        // is assumed to be a published crate (std, bigdecimal, …).
+        // External or module-local relative paths pass through. Anything not
+        // rooted at uucore/crate is assumed to be a published crate
+        // (std, bigdecimal, …) or a `self`/`super` reference within the
+        // vendored tree.
         if !is_internal(path) {
             continue;
         }
@@ -313,8 +391,9 @@ fn enforce_use_policy(file: &syn::File, module: &Module, rel_path: &str) -> Resu
 ///   preserves call-site references (e.g. `use crate::error::Error as
 ///   UError;`).
 /// - `inline`: the inlined file lives next to the module's `out` dir,
-///   so the path is rewritten to point at it via `super::<leaf>`. The
-///   leaf identifier in the use is preserved.
+///   so the path is rewritten to point at it via
+///   `crate::builtins::generated::<leaf>`. The leaf identifier in the
+///   use is preserved.
 fn apply_substitutions(file: &mut syn::File, module: &Module) -> Result<()> {
     let mut new_items: Vec<Item> = Vec::with_capacity(file.items.len());
     for item in file.items.drain(..) {
@@ -401,7 +480,9 @@ fn rewrite_leaf(leaf: UseLeaf, subs: &[Substitution]) -> Result<UseLeaf> {
     // `Name { name }` the full path is `path + [name]`; for `Glob`
     // it's just `path`.
     let mut full = leaf.path.clone();
-    if let LeafTail::Name { ref name, .. } = leaf.tail {
+    if let LeafTail::Name { ref name, .. } = leaf.tail
+        && name != "self"
+    {
         full.push(name.clone());
     }
 
@@ -425,16 +506,21 @@ fn rewrite_leaf(leaf: UseLeaf, subs: &[Substitution]) -> Result<UseLeaf> {
             segs
         }
         Action::Inline => {
-            // Inlined file is a sibling of the module out dir. Use
-            // `super::<leaf>` to reach it from the vendored module's
-            // submodules.
+            // Inlined files are siblings under `builtins::generated`.
+            // Use an absolute crate path so references work from both the
+            // primary module root and any nested submodules.
             let leaf_seg = sub
                 .prefix
                 .rsplit("::")
                 .next()
                 .filter(|s| !s.is_empty())
                 .ok_or_else(|| anyhow!("inline prefix '{}' has no leaf segment", sub.prefix))?;
-            vec!["super".to_string(), leaf_seg.to_string()]
+            vec![
+                "crate".to_string(),
+                "builtins".to_string(),
+                "generated".to_string(),
+                leaf_seg.to_string(),
+            ]
         }
         Action::Error => unreachable!("error action does not reach the rewriter"),
     };
@@ -457,6 +543,15 @@ fn rewrite_leaf(leaf: UseLeaf, subs: &[Substitution]) -> Result<UseLeaf> {
             name: orig_name,
             alias: orig_alias,
         } => {
+            if orig_name == "self" {
+                return Ok(UseLeaf {
+                    path: rewritten_full,
+                    tail: LeafTail::Name {
+                        name: orig_name,
+                        alias: orig_alias,
+                    },
+                });
+            }
             // Final segment of rewritten_full is the new imported ident.
             let new_name = rewritten_full
                 .pop()
@@ -504,6 +599,20 @@ fn build_item_use(template: &ItemUse, leaf: UseLeaf) -> ItemUse {
 }
 
 fn build_use_tree(leaf: &UseLeaf) -> UseTree {
+    if let LeafTail::Name { name, alias } = &leaf.tail
+        && name == "self"
+        && let Some((import_name, parent)) = leaf.path.split_last()
+    {
+        let normalized = UseLeaf {
+            path: parent.to_vec(),
+            tail: LeafTail::Name {
+                name: import_name.clone(),
+                alias: alias.clone(),
+            },
+        };
+        return build_use_tree(&normalized);
+    }
+
     let inner = match &leaf.tail {
         LeafTail::Name { name, alias } => {
             let ident = Ident::new(name, Span::call_site());
@@ -531,10 +640,7 @@ fn build_use_tree(leaf: &UseLeaf) -> UseTree {
 }
 
 fn is_internal(path: &[String]) -> bool {
-    matches!(
-        path.first().map(String::as_str),
-        Some("uucore" | "crate" | "self" | "super")
-    )
+    matches!(path.first().map(String::as_str), Some("uucore" | "crate"))
 }
 
 fn find_match<'a>(path: &[String], subs: &'a [Substitution]) -> Option<&'a Substitution> {
@@ -899,11 +1005,13 @@ inline_source = "lib/extendedbigdecimal.rs"
         let written = run(&uutils, "demo", "x", &manifest, &out).unwrap();
         assert_eq!(written.len(), 2, "got: {written:?}");
 
-        // Module body uses super::extendedbigdecimal to reach the
-        // sibling-vendored file.
+        // Module body uses an absolute generated-module path so the
+        // sibling-vendored file is reachable from nested module depths.
         let module_body = fs::read_to_string(&written[0]).unwrap();
         assert!(
-            module_body.contains("use super::extendedbigdecimal::ExtendedBigDecimal;"),
+            module_body.contains(
+                "use crate::builtins::generated::extendedbigdecimal::ExtendedBigDecimal;"
+            ),
             "got: {module_body}"
         );
 
@@ -917,6 +1025,75 @@ inline_source = "lib/extendedbigdecimal.rs"
             inlined_body.contains("pub struct ExtendedBigDecimal;"),
             "got: {inlined_body}"
         );
+    }
+
+    #[test]
+    fn strips_upstream_cfg_test_modules() {
+        let (_tmp, uutils, manifest, out) = fixture(
+            r#"
+[[modules]]
+name = "demo"
+source = "lib/demo.rs"
+out = "demo.rs"
+"#,
+            &[(
+                "lib/demo.rs",
+                "#[cfg(test)]\nmod tests { use crate::original_topology::Thing; }\npub fn live() {}\n",
+            )],
+        );
+        let written = run(&uutils, "demo", "x", &manifest, &out).unwrap();
+        let body = fs::read_to_string(&written[0]).unwrap();
+        assert!(body.contains("pub fn live() {}"), "got: {body}");
+        assert!(!body.contains("original_topology"), "got: {body}");
+    }
+
+    #[test]
+    fn strips_upstream_rustdoc_attrs() {
+        let (_tmp, uutils, manifest, out) = fixture(
+            r#"
+[[modules]]
+name = "demo"
+source = "lib/demo.rs"
+out = "demo.rs"
+"#,
+            &[(
+                "lib/demo.rs",
+                "/// Example assumes `use uucore::format::printf;`.\npub fn live() {}\n",
+            )],
+        );
+        let written = run(&uutils, "demo", "x", &manifest, &out).unwrap();
+        let body = fs::read_to_string(&written[0]).unwrap();
+        assert!(body.contains("pub fn live() {}"), "got: {body}");
+        assert!(!body.contains("uucore::format"), "got: {body}");
+    }
+
+    #[test]
+    fn relative_self_use_group_rewrites_to_module_import() {
+        let (_tmp, uutils, manifest, out) = fixture(
+            r#"
+[[modules]]
+name = "demo"
+source = "lib/demo.rs"
+out = "demo.rs"
+
+[[modules.substitutions]]
+prefix = "crate::support"
+action = "replace_with"
+target = "crate::builtins::generated::support"
+"#,
+            &[(
+                "lib/demo.rs",
+                "use super::num_format::{self, Formatter};\nuse crate::support::Thing;\n",
+            )],
+        );
+        let written = run(&uutils, "demo", "x", &manifest, &out).unwrap();
+        let body = fs::read_to_string(&written[0]).unwrap();
+        assert!(body.contains("use super::num_format;"), "got: {body}");
+        assert!(
+            body.contains("use super::num_format::Formatter;"),
+            "got: {body}"
+        );
+        assert!(!body.contains("::self;"), "got: {body}");
     }
 
     #[test]
