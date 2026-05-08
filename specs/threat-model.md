@@ -122,7 +122,7 @@ the session-level backstop.
 
 | ID | Threat | Attack Vector | Mitigation | Status |
 |----|--------|--------------|------------|--------|
-| TM-DOS-005 | Large file creation | `dd if=/dev/zero bs=1G count=100` | `max_file_size` limit | **MITIGATED** |
+| TM-DOS-005 | Large file creation | `dd if=/dev/zero bs=1G count=100`; `truncate -s 4G /tmp/p` | `max_file_size` limit; builtins that resize VFS file buffers validate target lengths before allocation | **MITIGATED** |
 | TM-DOS-006 | Many small files | `for i in $(seq 1 1000000); do touch $i; done` | `max_file_count` limit | **MITIGATED** |
 | TM-DOS-007 | Zip bomb | `gunzip bomb.gz` (small file → huge output) | Decompression limit | **MITIGATED** |
 | TM-DOS-008 | Tar bomb | `tar -xf bomb.tar` (many files / large files) | FS limits | **MITIGATED** |
