@@ -18,16 +18,33 @@ pub use openai_responses::OpenAiResponsesProvider;
 pub fn ensure_rustls_crypto_provider() -> anyhow::Result<()> {
     static INSTALL_RESULT: OnceLock<anyhow::Result<()>> = OnceLock::new();
 
-    let install_result = INSTALL_RESULT.get_or_init(|| {
-        rustls::crypto::ring::default_provider()
-            .install_default()
-            .map_err(|_| anyhow::anyhow!("failed to install rustls ring crypto provider"))
-    });
+    let install_result =
+        INSTALL_RESULT.get_or_init(|| {
+            match rustls::crypto::ring::default_provider().install_default() {
+                Ok(()) => Ok(()),
+                Err(_) if rustls::crypto::CryptoProvider::get_default().is_some() => Ok(()),
+                Err(_) => Err(anyhow::anyhow!(
+                    "failed to install rustls ring crypto provider"
+                )),
+            }
+        });
 
     install_result
         .as_ref()
         .map(|_| ())
         .map_err(|e| anyhow::anyhow!("rustls crypto provider unavailable: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ensure_rustls_crypto_provider;
+
+    #[test]
+    fn ensure_rustls_provider_succeeds_when_already_installed() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let result = ensure_rustls_crypto_provider();
+        assert!(result.is_ok());
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
