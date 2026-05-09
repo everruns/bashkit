@@ -690,10 +690,13 @@ impl<'ast> syn::visit::Visit<'ast> for UuAppExprValidator {
     }
 
     fn visit_expr_macro(&mut self, node: &'ast syn::ExprMacro) {
-        self.errors.push(format!(
-            "macro is not allowed in command builder: {}",
-            quote::quote!(#node)
-        ));
+        if !is_allowed_command_builder_macro(&node.mac.path) {
+            self.errors.push(format!(
+                "macro is not allowed in command builder: {}",
+                quote::quote!(#node)
+            ));
+        }
+        syn::visit::visit_expr_macro(self, node);
     }
     fn visit_expr_block(&mut self, node: &'ast syn::ExprBlock) {
         self.errors.push(format!(
@@ -763,6 +766,13 @@ fn path_ends_with_command_new(func: &Expr) -> bool {
     let segs = path_segments(&p.path);
     matches!(segs.as_slice(), [single, new] if single == "Command" && new == "new")
         || matches!(segs.as_slice(), [clap, command, new] if clap == "clap" && command == "Command" && new == "new")
+}
+
+fn is_allowed_command_builder_macro(path: &syn::Path) -> bool {
+    let segs = path_segments(path);
+    matches!(segs.as_slice(), [env] if env == "env")
+        || matches!(segs.as_slice(), [value_parser] if value_parser == "value_parser")
+        || matches!(segs.as_slice(), [clap, value_parser] if clap == "clap" && value_parser == "value_parser")
 }
 
 fn is_disallowed_chain_method(method: &str) -> bool {
@@ -1112,6 +1122,63 @@ pub fn uu_app() -> clap::Command {
         let err = run(&uutils, "cat", "poc").unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("unsafe uu_app"), "got: {msg}");
+    }
+
+    #[test]
+    fn accepts_expected_builder_macros() {
+        let (_tmp, uutils) = fixture(&[
+            (
+                "src/uu/cat/src/cat.rs",
+                r#"
+mod options {
+    pub static FILE: &str = "file";
+}
+
+pub fn uu_app() -> clap::Command {
+    Command::new("cat")
+        .version(uucore::crate_version!())
+        .arg(Arg::new(options::FILE).value_parser(clap::value_parser!(std::ffi::OsString)))
+}
+"#,
+            ),
+            ("src/uu/cat/locales/en-US.ftl", ""),
+        ]);
+
+        let body = run(&uutils, "cat", "poc").unwrap();
+        assert!(
+            body.contains("version(env!(\"CARGO_PKG_VERSION\"))"),
+            "got: {body}"
+        );
+        assert!(
+            body.contains("value_parser(clap::value_parser!(std::ffi::OsString))"),
+            "got: {body}"
+        );
+    }
+
+    #[test]
+    fn rejects_unexpected_macro_in_builder_chain() {
+        let (_tmp, uutils) = fixture(&[
+            (
+                "src/uu/cat/src/cat.rs",
+                r#"
+mod options {
+    pub static FILE: &str = "file";
+}
+
+pub fn uu_app() -> clap::Command {
+    Command::new("cat").arg(Arg::new(options::FILE).help(format!("{}", "x")))
+}
+"#,
+            ),
+            ("src/uu/cat/locales/en-US.ftl", ""),
+        ]);
+
+        let err = run(&uutils, "cat", "poc").unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("macro is not allowed in command builder"),
+            "got: {msg}"
+        );
     }
 
     #[test]
