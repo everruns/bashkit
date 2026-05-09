@@ -291,6 +291,7 @@ struct CapSpec {
     position: CapArgLocation,
     width: Option<CapValue>,
     precision: Option<CapValue>,
+    specifier: u8,
 }
 
 enum CapValue {
@@ -308,9 +309,43 @@ impl CapSpec {
             let precision = resolve_cap_value(precision, args, false);
             reject_over_cap("precision", precision)?;
         }
-        args.consume(self.position);
+        if is_float_specifier(self.specifier) {
+            let value = args.next_arg(self.position).unwrap_or_default();
+            reject_float_exponent_over_cap(value)?;
+        } else {
+            args.consume(self.position);
+        }
         Ok(())
     }
+}
+
+fn is_float_specifier(specifier: u8) -> bool {
+    matches!(
+        specifier,
+        b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A'
+    )
+}
+
+fn reject_float_exponent_over_cap(value: &str) -> std::result::Result<(), String> {
+    let Some(exponent) = parse_float_exponent(value) else {
+        return Ok(());
+    };
+    let exponent = exponent.unsigned_abs();
+    if exponent > MAX_FORMAT_WIDTH as u64 {
+        return Err(format!(
+            "printf: format exponent {exponent} exceeds limit {MAX_FORMAT_WIDTH}\n"
+        ));
+    }
+    Ok(())
+}
+
+fn parse_float_exponent(value: &str) -> Option<i64> {
+    let bytes = value.as_bytes();
+    let marker = bytes
+        .iter()
+        .rposition(|b| matches!(b, b'e' | b'E' | b'p' | b'P'))?;
+    let exponent = value.get(marker + 1..)?;
+    Some(parse_leading_i64(exponent))
 }
 
 fn reject_over_cap(kind: &str, value: usize) -> std::result::Result<(), String> {
@@ -394,6 +429,7 @@ fn parse_cap_spec(format: &[u8], start: usize) -> Option<CapSpec> {
         position,
         width,
         precision,
+        specifier,
     })
 }
 
@@ -532,6 +568,12 @@ mod tests {
     fn rejects_nested_repeat_asterisk_width_over_cap() {
         let err = render_printf("%s %*s", &["ok".into(), "999999".into(), "x".into()]).unwrap_err();
         assert!(err.contains("width 999999 exceeds limit"));
+    }
+
+    #[test]
+    fn rejects_float_exponent_over_cap() {
+        let err = render_printf("%f", &["1e1000000000".into()]).unwrap_err();
+        assert!(err.contains("exponent 1000000000 exceeds limit"));
     }
 
     #[tokio::test]
