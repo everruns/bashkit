@@ -38,6 +38,20 @@ fuzz_target!(|data: &[u8]| {
             return;
         }
 
+        // Reject inputs that themselves contain banned substrings — this
+        // target inlines `input` into shell commands (`ls /tmp/{input}`,
+        // `case … in {input})`, `[[ … == {input} ]]`) so any unmatched
+        // path or pattern is echoed verbatim by the shell/`ls` in stderr.
+        // Real bash does the same, so an echoed user-controlled string
+        // containing e.g. "Span {" is not a TM-INF-022 leak. Filtering at
+        // the fuzz-input layer keeps the harness's leak detector strict
+        // for real internals while avoiding false positives.
+        for pat in bashkit::testing::UNIVERSAL_BANNED {
+            if input.contains(pat) {
+                return;
+            }
+        }
+
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
