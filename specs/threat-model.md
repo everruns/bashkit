@@ -469,6 +469,22 @@ machinery (`bashkit::testing::assert_fuzz_invariants`):
   (1 KB) — one bad input that produces 10 MB of library-error spam
   trips this.
 
+Fuzz/proptest targets inline arbitrary input bytes into shell scripts,
+so bash and ls produce error messages that quote the input verbatim
+(`bash: <cmd>: command not found`, `bash: <path>: No such file or
+directory`, `ls: cannot access '<path>': …`). Those echoes can
+accidentally form a banned substring — e.g. user input `Tok"` becomes
+the command name `Tok:`, and bash's `bash: %s: command not found`
+formatter renders it as `bash: Tok:: command not found`, matching the
+parser-token shape `Tok::`. They are not internal Debug leaks. To keep
+the leak detector strict on real internals while suppressing this class
+of false positive, `assert_fuzz_invariants` strips lines that match a
+recognized real-shell error template before the banned-shape check;
+the byte-length cap and the host-canary check still run on the
+unfiltered stderr so flood and TM-INF-013 regressions are still
+caught. The strict per-builtin path (`assert_no_leak`) is unchanged —
+non-fuzz tests must not produce shell echoes in the first place.
+
 **TM-INF-013**: The jq builtin previously called `std::env::set_var()` to expose
 shell variables to jaq's `env` function. This also made host process env vars (API keys, tokens)
 visible. Additionally, `set_var` is thread-unsafe (unsound in Rust 2024 edition). Fixed: a custom
