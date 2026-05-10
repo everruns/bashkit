@@ -123,15 +123,85 @@ pub fn assert_no_leak(result: &ExecResult, ctx: &str, tool_banned: &[&str]) {
     }
 }
 
-/// Full fuzz-invariant check. Combines [`assert_no_leak`] with the
-/// host-canary check (TM-INF-013): the canary must not appear in
-/// stdout or stderr.
+/// Lines fuzz/proptest targets inline arbitrary input bytes into shell
+/// scripts, so bash and ls produce error messages that quote the input
+/// verbatim — `bash: <cmd>: command not found`, `bash: <path>: No such
+/// file or directory`, `ls: cannot access '<path>': …`. These are real
+/// shell echoes of user input, not internal Debug leaks; if they happen
+/// to contain a banned substring (e.g. user input `Tok"` becomes the
+/// command name `Tok:`, which bash's `bash: %s: command not found`
+/// formatter renders as `bash: Tok:: command not found`, accidentally
+/// matching the parser-token shape `Tok::`), the leak detector must not
+/// trip. This filter strips lines that match a recognized real-shell
+/// error template before the banned-shape check; the byte-length cap
+/// and the host-canary check still run on the unfiltered stderr so
+/// flood and TM-INF-013 regressions are still caught.
+fn strip_real_shell_error_lines(stderr: &str) -> String {
+    let lines: Vec<&str> = stderr
+        .lines()
+        .filter(|line| !is_real_shell_error_line(line))
+        .collect();
+    lines.join("\n")
+}
+
+/// Recognize stderr lines that bash or ls produces verbatim from user
+/// input. Conservative: only strips if the prefix is `bash: ` or `ls: `
+/// AND the line ends with a known real-shell error suffix.
+fn is_real_shell_error_line(line: &str) -> bool {
+    const SHELL_ERROR_SUFFIXES: &[&str] = &[
+        ": command not found",
+        ": No such file or directory",
+        ": Is a directory",
+        ": Permission denied",
+        ": cannot execute: required file not found",
+        ": cannot execute binary file",
+    ];
+    if let Some(rest) = line.strip_prefix("bash: ") {
+        if SHELL_ERROR_SUFFIXES.iter().any(|suf| rest.ends_with(suf)) {
+            return true;
+        }
+        // Did-you-mean variant: `bash: <cmd>: command not found. Did you mean: ., :, [?`
+        if rest.ends_with(". Did you mean: ., :, [?") {
+            return true;
+        }
+        return false;
+    }
+    if let Some(rest) = line.strip_prefix("ls: ") {
+        if rest.starts_with("cannot access ")
+            && (rest.ends_with(": No such file or directory")
+                || rest.ends_with(": Is a directory")
+                || rest.ends_with(": Permission denied"))
+        {
+            return true;
+        }
+        return false;
+    }
+    false
+}
+
+/// Full fuzz-invariant check. Like [`assert_no_leak`] but tolerates
+/// real-shell-style error lines (which echo user input verbatim) and
+/// adds the host-canary check (TM-INF-013): the canary must not appear
+/// in stdout or stderr.
 ///
 /// Call this from cargo-fuzz targets and proptest cases — anywhere
 /// random input runs through a builtin.
 #[track_caller]
 pub fn assert_fuzz_invariants(result: &ExecResult, ctx: &str, tool_banned: &[&str]) {
-    assert_no_leak(result, ctx, tool_banned);
+    let stderr = &result.stderr;
+    assert!(
+        stderr.len() <= MAX_STDERR_BYTES,
+        "[{ctx}] stderr exceeds {MAX_STDERR_BYTES} bytes ({} bytes):\n---\n{stderr}\n---",
+        stderr.len()
+    );
+    let stripped = strip_real_shell_error_lines(stderr);
+    for pat in UNIVERSAL_BANNED.iter().chain(tool_banned.iter()) {
+        assert!(
+            !stripped.contains(pat),
+            "[{ctx}] stderr leaks banned shape `{pat}` (after stripping shell echoes):\n\
+             ---raw stderr---\n{stderr}\n---stripped---\n{stripped}\n---"
+        );
+    }
     assert!(
         !result.stdout.contains(FUZZ_HOST_CANARY),
         "[{ctx}] FUZZ canary leaked into stdout (TM-INF-013 regression — \
@@ -151,5 +221,85 @@ fn truncate(s: &str, max: usize) -> String {
         s.to_string()
     } else {
         format!("{}...<truncated>", &s[..max.min(s.len())])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strip_keeps_unrelated_lines() {
+        let s = "warning: something\nthread panicked at lib.rs:1\n";
+        assert_eq!(
+            strip_real_shell_error_lines(s),
+            "warning: something\nthread panicked at lib.rs:1"
+        );
+    }
+
+    #[test]
+    fn strip_removes_command_not_found() {
+        // From a real glob_fuzz failure — the input ended with `Tok"`,
+        // bash formatted `bash: <cmd>: command not found`, and the
+        // separator `:` after `Tok` formed the banned `Tok::` substring.
+        let s = "bash: Tok:: command not found\n";
+        assert_eq!(strip_real_shell_error_lines(s), "");
+    }
+
+    #[test]
+    fn strip_removes_no_such_file() {
+        // From a real arithmetic_fuzz failure — input contained
+        // `/.rustup/toolchains/` literally, bash echoed it back.
+        let s = "bash: /.rustup/toolchains/gww: No such file or directory\n";
+        assert_eq!(strip_real_shell_error_lines(s), "");
+    }
+
+    #[test]
+    fn strip_removes_did_you_mean_variant() {
+        let s = "bash: : command not found. Did you mean: ., :, [?\n";
+        assert_eq!(strip_real_shell_error_lines(s), "");
+    }
+
+    #[test]
+    fn strip_removes_ls_cannot_access() {
+        // From #1621 — input contained `Span {`, ls echoed it back.
+        let s = "ls: cannot access '/tmp/==(Span {(;': No such file or directory\n";
+        assert_eq!(strip_real_shell_error_lines(s), "");
+    }
+
+    #[test]
+    fn strip_keeps_internal_panic_lines() {
+        // A real internal Debug leak that doesn't match the shell
+        // template must NOT be stripped — otherwise the leak detector
+        // would silently pass real regressions.
+        let s = "thread 'fuzz' panicked at parse.rs:42:\nFile { code: \"oops\", path: () }\n";
+        let stripped = strip_real_shell_error_lines(s);
+        assert!(stripped.contains("File {"), "stripped: {stripped:?}");
+        assert!(stripped.contains("path: ()"), "stripped: {stripped:?}");
+    }
+
+    #[test]
+    fn strip_keeps_partial_matches() {
+        // Lines that look like shell errors but don't match the exact
+        // template must remain — defense in depth against accidentally
+        // masking real leaks.
+        let s = "bash: something weird Span { not at end\n\
+                 some-other-tool: Tok:: blah\n";
+        let stripped = strip_real_shell_error_lines(s);
+        assert!(stripped.contains("Span {"));
+        assert!(stripped.contains("Tok::"));
+    }
+
+    #[test]
+    fn strip_handles_multiline_mixed() {
+        let s = "bash: foo: command not found\n\
+                 bash: /tmp/Span {bar: No such file or directory\n\
+                 thread panicked at runtime.rs:1\n\
+                 ls: cannot access 'baz': No such file or directory\n";
+        let stripped = strip_real_shell_error_lines(s);
+        assert!(!stripped.contains("command not found"));
+        assert!(!stripped.contains("/tmp/Span {"));
+        assert!(!stripped.contains("cannot access"));
+        assert!(stripped.contains("thread panicked"));
     }
 }
