@@ -38,6 +38,21 @@ fuzz_target!(|data: &[u8]| {
             return;
         }
 
+        // Reject inputs that themselves contain banned substrings — this
+        // target inlines `input` into `echo $((input))`. With unbalanced
+        // parens the arithmetic expansion can close early and the
+        // remainder is parsed as commands; bash then echoes the unknown
+        // command verbatim ("bash: /.rustup/toolchains/gww: No such file
+        // or directory"). That is real-shell stderr, not a TM-INF-022
+        // leak. Filtering at the fuzz-input layer keeps the harness's
+        // leak detector strict for real internals while avoiding false
+        // positives. (Mirrors glob_fuzz.)
+        for pat in bashkit::testing::UNIVERSAL_BANNED {
+            if input.contains(pat) {
+                return;
+            }
+        }
+
         // Wrap input in arithmetic expansion context
         let script = format!("echo $(({}))", input);
 
