@@ -144,9 +144,9 @@ fn strip_real_shell_error_lines(stderr: &str) -> String {
     lines.join("\n")
 }
 
-/// Recognize stderr lines that bash or ls produces verbatim from user
-/// input. Conservative: only strips if the prefix is `bash: ` or `ls: `
-/// AND the line ends with a known real-shell error suffix.
+/// Recognize stderr lines that bash, ls, or a uutils clap CLI produces
+/// verbatim from user input. Conservative: each branch matches a fixed
+/// real-shell error template that quotes input.
 fn is_real_shell_error_line(line: &str) -> bool {
     const SHELL_ERROR_SUFFIXES: &[&str] = &[
         ": command not found",
@@ -175,6 +175,62 @@ fn is_real_shell_error_line(line: &str) -> bool {
             return true;
         }
         return false;
+    }
+    is_clap_error_chrome_line(line)
+}
+
+/// Recognize the four-line clap CLI error template that uutils builtins
+/// (`ls`, `cat`, `truncate`, …) emit when a user passes an unknown flag.
+/// Each line quotes the offending argument verbatim, so a fuzz input
+/// containing `/rustc/` becomes
+/// `error: unexpected argument '--i{fi/rustc/fi{{RRi' found` and trips
+/// the banned-shape check even though no internal Debug formatter ran.
+///
+/// Patterns are anchored on clap-specific chrome that does not occur in
+/// real Debug leaks: the literal `unexpected argument '`, the leading
+/// `  tip: to pass '`, the exact `Usage: ` prefix, and the
+/// `For more information, try '` help footer.
+fn is_clap_error_chrome_line(line: &str) -> bool {
+    // `error: unexpected argument '<input>' found`
+    // `error: invalid value '<input>' for '<flag>': <reason>`
+    // `error: the argument '<flag>' cannot be used with '<flag>'`
+    // `error: unrecognized subcommand '<input>'`
+    if let Some(rest) = line.strip_prefix("error: ") {
+        const CLAP_ERROR_FRAGMENTS: &[&str] = &[
+            "unexpected argument '",
+            "invalid value '",
+            "the argument '",
+            "unrecognized subcommand '",
+            "the following required arguments were not provided",
+            "a value is required for '",
+            "equal sign is needed when assigning values to '",
+        ];
+        if CLAP_ERROR_FRAGMENTS.iter().any(|frag| rest.contains(frag)) {
+            return true;
+        }
+        return false;
+    }
+    // `  tip: to pass '<input>' as a value, use '-- <input>'`
+    if let Some(rest) = line.strip_prefix("  tip: ") {
+        if rest.starts_with("to pass '") && rest.contains("' as a value, use '") {
+            return true;
+        }
+        return false;
+    }
+    // `Usage: <cmd> [OPTION]... [FILE]...` — user input does not appear
+    // in the Usage line itself, but it follows the error/tip block and
+    // we strip it for completeness so the leftover stderr is a clean
+    // signal of real internal leaks.
+    if let Some(rest) = line.strip_prefix("Usage: ") {
+        if rest.contains(" [") || rest.ends_with(" --help") || rest.ends_with(" --version") {
+            return true;
+        }
+        return false;
+    }
+    // `For more information, try '--help'.` /
+    // `For more information, try '<cmd> --help'.`
+    if line.starts_with("For more information, try '") && line.ends_with("'.") {
+        return true;
     }
     false
 }
@@ -301,5 +357,56 @@ mod tests {
         assert!(!stripped.contains("/tmp/Span {"));
         assert!(!stripped.contains("cannot access"));
         assert!(stripped.contains("thread panicked"));
+    }
+
+    #[test]
+    fn strip_removes_clap_unexpected_argument_block() {
+        // From a real glob_fuzz failure on main: input bytes contained
+        // `--i{fi/rustc/fi{{RRi`; uutils `ls` (clap) echoed it back in
+        // its standard four-line error template. The banned shape
+        // `/rustc/` came from the user input, not an internal formatter.
+        let s = "error: unexpected argument '--i{fi/rustc/fi{{RRi' found\n\
+                 \n\
+                 \x20\x20tip: to pass '--i{fi/rustc/fi{{RRi' as a value, use '-- --i{fi/rustc/fi{{RRi'\n\
+                 \n\
+                 Usage: ls [OPTION]... [FILE]...\n\
+                 \n\
+                 For more information, try '--help'.\n";
+        let stripped = strip_real_shell_error_lines(s);
+        assert!(!stripped.contains("/rustc/"), "stripped: {stripped:?}");
+        assert!(
+            !stripped.contains("unexpected argument"),
+            "stripped: {stripped:?}"
+        );
+        assert!(!stripped.contains("Usage:"), "stripped: {stripped:?}");
+        assert!(
+            !stripped.contains("For more information"),
+            "stripped: {stripped:?}"
+        );
+    }
+
+    #[test]
+    fn strip_removes_clap_invalid_value_line() {
+        let s = "error: invalid value 'Span {abc' for '--width <N>': not a number\n";
+        assert_eq!(strip_real_shell_error_lines(s), "");
+    }
+
+    #[test]
+    fn strip_keeps_unrelated_error_prefix_lines() {
+        // `error: ` lines that are not clap chrome must remain — e.g.
+        // a real internal error with a Debug shape glued on.
+        let s = "error: parser failed: Tok::Ident\n";
+        let stripped = strip_real_shell_error_lines(s);
+        assert!(stripped.contains("Tok::"), "stripped: {stripped:?}");
+    }
+
+    #[test]
+    fn strip_keeps_usage_lookalikes() {
+        // A line that begins with `Usage:` but lacks the clap shape
+        // (no bracketed option block, no --help/--version trailer)
+        // must stay — defense against masking real leaks.
+        let s = "Usage: see Span { for details\n";
+        let stripped = strip_real_shell_error_lines(s);
+        assert!(stripped.contains("Span {"), "stripped: {stripped:?}");
     }
 }
