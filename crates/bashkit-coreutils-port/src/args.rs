@@ -788,8 +788,16 @@ fn validate_env_macro(mac: &syn::Macro) -> Result<()> {
 }
 
 fn validate_value_parser_macro(mac: &syn::Macro) -> Result<()> {
-    syn::parse2::<syn::Type>(mac.tokens.clone())
+    // syn::Type accepts `Type::Macro`, so a bare `parse2::<Type>` lets
+    // `value_parser!(env!("…"))` (or any nested macro) slip through. Reject
+    // macro-typed payloads outright — only plain type paths/refs are valid
+    // value_parser! arguments and keeping the surface narrow preserves
+    // TM-INF-025's defence-in-depth posture against compile-time secret leaks.
+    let ty: syn::Type = syn::parse2(mac.tokens.clone())
         .context("value_parser! in command builder must contain a type path")?;
+    if matches!(ty, syn::Type::Macro(_)) {
+        bail!("value_parser! in command builder must not contain a nested macro");
+    }
     Ok(())
 }
 
@@ -1221,6 +1229,34 @@ pub fn uu_app() -> clap::Command {
         let msg = format!("{err:#}");
         assert!(
             msg.contains("env! in command builder must be env!(\"CARGO_PKG_VERSION\")"),
+            "got: {msg}"
+        );
+    }
+
+    #[test]
+    fn rejects_value_parser_macro_with_nested_macro_tokens() {
+        let (_tmp, uutils) = fixture(&[
+            (
+                "src/uu/cat/src/cat.rs",
+                r#"
+mod options {
+    pub static FILE: &str = "file";
+}
+
+pub fn uu_app() -> clap::Command {
+    Command::new("cat").arg(
+        Arg::new(options::FILE).value_parser(clap::value_parser!(env!("CI_SECRET"))),
+    )
+}
+"#,
+            ),
+            ("src/uu/cat/locales/en-US.ftl", ""),
+        ]);
+
+        let err = run(&uutils, "cat", "poc").unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("value_parser! in command builder must not contain a nested macro"),
             "got: {msg}"
         );
     }
