@@ -45,11 +45,17 @@ codegen**, not by depending on `uu_*` crates at runtime.
      through the shim — if it does, every uutils env-default
      auto-lights as that option's bashkit support lands.
 5. Validates the rewritten `uu_app()` before emission: args mode accepts
-   only a single tail clap `Command` builder expression. Prefix
-   statements, block expressions, loops, matches, async blocks, and
-   unsafe blocks are rejected before any generated Rust is written.
-   This keeps third-party uutils source from smuggling arbitrary
-   executable statements into `<util>_command()` (TM-INF-025).
+   either a single tail clap `Command` builder expression, or the
+   two-statement shape `let <ident> = Command::new(...)<chain>;
+   <ident>.<method>(...)<chain>` where the `let` initializer is itself
+   a Command::new chain and the tail's innermost receiver is the
+   let-bound identifier (the same shape that emerges after the Rewriter
+   folds `uucore::clap_localization::configure_localized_command(cmd)`
+   to `cmd`). Anything else — additional prefix statements, block
+   expressions, loops, matches, async blocks, unsafe blocks, or a
+   destructuring/let-else binding — is rejected before any generated
+   Rust is written. This keeps third-party uutils source from smuggling
+   arbitrary executable statements into `<util>_command()` (TM-INF-025).
 6. Emits a generated file under
    `crates/bashkit/src/builtins/generated/<util>_args.rs` with a clean
    `pub fn <util>_command() -> clap::Command`.
