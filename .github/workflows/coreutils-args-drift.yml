@@ -205,7 +205,7 @@ jobs:
 
       - name: Upload drift patch
         if: steps.diff.outputs.drifted == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coreutils-drift-patch
           path: ${{ runner.temp }}/coreutils-drift.patch
@@ -229,7 +229,7 @@ jobs:
           persist-credentials: false
 
       - name: Download drift patch
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: coreutils-drift-patch
           path: ${{ runner.temp }}/coreutils-drift
