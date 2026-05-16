@@ -652,7 +652,9 @@ fn collect_option_constants(file: &syn::File) -> Vec<Item> {
 //       <ident>.<builder method>(...)...`
 //      — equivalent to a single chain split across a binding. The
 //      tail's innermost receiver must be the let-bound identifier;
-//      both halves run through the same chain validator.
+//      both halves run through the same chain validator. The binding is
+//      deliberately plain: no `mut`, `ref`, type ascription, subpattern,
+//      non-doc attributes, or `let ... else`.
 fn validate_uu_app_body(uu_app: &ItemFn) -> Result<()> {
     match uu_app.block.stmts.as_slice() {
         [Stmt::Expr(expr, None)] => validate_command_chain_expr(expr),
@@ -683,12 +685,7 @@ fn validate_command_chain_expr(expr: &Expr) -> Result<()> {
 }
 
 fn validate_let_bound_command_body(local: &syn::Local, tail_expr: &Expr) -> Result<()> {
-    let binding_ident = simple_let_ident(local).ok_or_else(|| {
-        anyhow!(
-            "unsafe uu_app body: let binding must be `let <ident> = ...` \
-             (no destructuring, no let-else)"
-        )
-    })?;
+    let binding_ident = plain_let_ident(local)?;
     let init = local
         .init
         .as_ref()
@@ -718,21 +715,33 @@ fn validate_let_bound_command_body(local: &syn::Local, tail_expr: &Expr) -> Resu
     Ok(())
 }
 
-/// Returns the bound identifier of a plain `let <ident> [: T] = ...;`.
-/// Rejects destructuring, `ref`, subpatterns, or attributes — anything
-/// that could hide an active expression inside the binding pattern.
-fn simple_let_ident(local: &syn::Local) -> Option<&syn::Ident> {
-    let pat = match &local.pat {
-        syn::Pat::Type(pt) => &*pt.pat,
-        other => other,
-    };
-    match pat {
-        syn::Pat::Ident(pi)
-            if pi.attrs.is_empty() && pi.by_ref.is_none() && pi.subpat.is_none() =>
-        {
-            Some(&pi.ident)
+/// Returns the bound identifier of a plain `let <ident> = ...;`.
+/// Rejects destructuring, `mut`, `ref`, type ascription, subpatterns,
+/// or non-doc attributes — anything that could hide behavior in the
+/// binding pattern or weaken the no-mutation proof.
+fn plain_let_ident(local: &syn::Local) -> Result<&syn::Ident> {
+    if local.attrs.iter().any(|attr| !attr.path().is_ident("doc")) {
+        bail!("unsafe uu_app body: let binding must not carry non-doc attributes");
+    }
+    match &local.pat {
+        syn::Pat::Ident(pi) => {
+            if !pi.attrs.is_empty()
+                || pi.by_ref.is_some()
+                || pi.mutability.is_some()
+                || pi.subpat.is_some()
+            {
+                bail!(
+                    "unsafe uu_app body: let binding must be plain `let <ident> = ...` \
+                     (no `mut`, no `ref`, no subpattern)"
+                );
+            }
+            Ok(&pi.ident)
         }
-        _ => None,
+        syn::Pat::Type(_) => bail!("unsafe uu_app body: let binding must not use type ascription"),
+        _ => bail!(
+            "unsafe uu_app body: let binding must bind a single identifier, \
+             not a destructuring pattern"
+        ),
     }
 }
 
@@ -1442,6 +1451,30 @@ pub fn uu_app() -> clap::Command {
     }
 
     #[test]
+    fn rejects_let_mut_binding_in_uu_app() {
+        let (_tmp, uutils) = fixture(&[
+            (
+                "src/uu/cat/src/cat.rs",
+                r#"
+mod options {
+    pub static FILE: &str = "file";
+}
+
+pub fn uu_app() -> clap::Command {
+    let mut cmd = Command::new("cat");
+    cmd.arg(Arg::new(options::FILE))
+}
+"#,
+            ),
+            ("src/uu/cat/locales/en-US.ftl", ""),
+        ]);
+
+        let err = run(&uutils, "cat", "poc").unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("no `mut`"), "got: {msg}");
+    }
+
+    #[test]
     fn rejects_let_with_non_command_initializer() {
         let (_tmp, uutils) = fixture(&[
             (
@@ -1463,6 +1496,30 @@ pub fn uu_app() -> clap::Command {
         let err = run(&uutils, "cat", "poc").unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("unsafe uu_app"), "got: {msg}");
+    }
+
+    #[test]
+    fn rejects_let_init_not_rooted_at_command_new() {
+        let (_tmp, uutils) = fixture(&[
+            (
+                "src/uu/cat/src/cat.rs",
+                r#"
+mod options {
+    pub static FILE: &str = "file";
+}
+
+pub fn uu_app() -> clap::Command {
+    let cmd = some::factory();
+    cmd.arg(Arg::new(options::FILE))
+}
+"#,
+            ),
+            ("src/uu/cat/locales/en-US.ftl", ""),
+        ]);
+
+        let err = run(&uutils, "cat", "poc").unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("Command::new"), "got: {msg}");
     }
 
     #[test]
