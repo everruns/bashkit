@@ -690,11 +690,8 @@ impl<'ast> syn::visit::Visit<'ast> for UuAppExprValidator {
     }
 
     fn visit_expr_macro(&mut self, node: &'ast syn::ExprMacro) {
-        if !is_allowed_command_builder_macro(&node.mac.path) {
-            self.errors.push(format!(
-                "macro is not allowed in command builder: {}",
-                quote::quote!(#node)
-            ));
+        if let Err(err) = validate_allowed_command_builder_macro(&node.mac) {
+            self.errors.push(format!("{err}: {}", quote::quote!(#node)));
         }
         syn::visit::visit_expr_macro(self, node);
     }
@@ -768,11 +765,40 @@ fn path_ends_with_command_new(func: &Expr) -> bool {
         || matches!(segs.as_slice(), [clap, command, new] if clap == "clap" && command == "Command" && new == "new")
 }
 
-fn is_allowed_command_builder_macro(path: &syn::Path) -> bool {
-    let segs = path_segments(path);
-    matches!(segs.as_slice(), [env] if env == "env")
-        || matches!(segs.as_slice(), [value_parser] if value_parser == "value_parser")
+fn validate_allowed_command_builder_macro(mac: &syn::Macro) -> Result<()> {
+    let segs = path_segments(&mac.path);
+    if matches!(segs.as_slice(), [env] if env == "env") {
+        return validate_env_macro(mac);
+    }
+    if matches!(segs.as_slice(), [value_parser] if value_parser == "value_parser")
         || matches!(segs.as_slice(), [clap, value_parser] if clap == "clap" && value_parser == "value_parser")
+    {
+        return validate_value_parser_macro(mac);
+    }
+    bail!("macro is not allowed in command builder");
+}
+
+fn validate_env_macro(mac: &syn::Macro) -> Result<()> {
+    let lit: LitStr = syn::parse2(mac.tokens.clone())
+        .context("env! in command builder must be env!(\"CARGO_PKG_VERSION\")")?;
+    if lit.value() != "CARGO_PKG_VERSION" {
+        bail!("env! in command builder only allows CARGO_PKG_VERSION");
+    }
+    Ok(())
+}
+
+fn validate_value_parser_macro(mac: &syn::Macro) -> Result<()> {
+    // syn::Type accepts `Type::Macro`, so a bare `parse2::<Type>` lets
+    // `value_parser!(env!("…"))` (or any nested macro) slip through. Reject
+    // macro-typed payloads outright — only plain type paths/refs are valid
+    // value_parser! arguments and keeping the surface narrow preserves
+    // TM-INF-025's defence-in-depth posture against compile-time secret leaks.
+    let ty: syn::Type = syn::parse2(mac.tokens.clone())
+        .context("value_parser! in command builder must contain a type path")?;
+    if matches!(ty, syn::Type::Macro(_)) {
+        bail!("value_parser! in command builder must not contain a nested macro");
+    }
+    Ok(())
 }
 
 fn is_disallowed_chain_method(method: &str) -> bool {
@@ -1152,6 +1178,86 @@ pub fn uu_app() -> clap::Command {
         assert!(
             body.contains("value_parser(clap::value_parser!(std::ffi::OsString))"),
             "got: {body}"
+        );
+    }
+
+    #[test]
+    fn rejects_non_pkg_version_env_macro() {
+        let (_tmp, uutils) = fixture(&[
+            (
+                "src/uu/cat/src/cat.rs",
+                r#"
+mod options {
+    pub static FILE: &str = "file";
+}
+
+pub fn uu_app() -> clap::Command {
+    Command::new("cat").version(env!("CI_SECRET"))
+}
+"#,
+            ),
+            ("src/uu/cat/locales/en-US.ftl", ""),
+        ]);
+
+        let err = run(&uutils, "cat", "poc").unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("env! in command builder only allows CARGO_PKG_VERSION"),
+            "got: {msg}"
+        );
+    }
+
+    #[test]
+    fn rejects_env_macro_with_nested_macro_tokens() {
+        let (_tmp, uutils) = fixture(&[
+            (
+                "src/uu/cat/src/cat.rs",
+                r#"
+mod options {
+    pub static FILE: &str = "file";
+}
+
+pub fn uu_app() -> clap::Command {
+    Command::new("cat").version(env!(include_str!("/etc/passwd")))
+}
+"#,
+            ),
+            ("src/uu/cat/locales/en-US.ftl", ""),
+        ]);
+
+        let err = run(&uutils, "cat", "poc").unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("env! in command builder must be env!(\"CARGO_PKG_VERSION\")"),
+            "got: {msg}"
+        );
+    }
+
+    #[test]
+    fn rejects_value_parser_macro_with_nested_macro_tokens() {
+        let (_tmp, uutils) = fixture(&[
+            (
+                "src/uu/cat/src/cat.rs",
+                r#"
+mod options {
+    pub static FILE: &str = "file";
+}
+
+pub fn uu_app() -> clap::Command {
+    Command::new("cat").arg(
+        Arg::new(options::FILE).value_parser(clap::value_parser!(env!("CI_SECRET"))),
+    )
+}
+"#,
+            ),
+            ("src/uu/cat/locales/en-US.ftl", ""),
+        ]);
+
+        let err = run(&uutils, "cat", "poc").unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("value_parser! in command builder must not contain a nested macro"),
+            "got: {msg}"
         );
     }
 
