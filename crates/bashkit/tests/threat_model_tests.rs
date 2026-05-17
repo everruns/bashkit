@@ -3815,10 +3815,7 @@ mod tm_inf_018_date {
     /// epoch_offset should disable fixed_epoch.
     #[tokio::test]
     async fn last_builder_call_wins_offset_after_fixed() {
-        let mut bash = Bash::builder()
-            .fixed_epoch(0)
-            .epoch_offset(0)
-            .build();
+        let mut bash = Bash::builder().fixed_epoch(0).epoch_offset(0).build();
         let r = bash.exec("date +%s").await.unwrap();
         let observed: i64 = r.stdout.trim().parse().unwrap();
         // Should be near real-time (within a few seconds), not 0.

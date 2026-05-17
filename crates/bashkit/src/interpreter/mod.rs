@@ -878,7 +878,15 @@ impl Interpreter {
 
     /// Create a new interpreter with the given filesystem.
     pub fn new(fs: Arc<dyn FileSystem>) -> Self {
-        Self::with_config(fs, None, None, None, None, HashMap::new(), ShellProfile::Full)
+        Self::with_config(
+            fs,
+            None,
+            None,
+            None,
+            None,
+            HashMap::new(),
+            ShellProfile::Full,
+        )
     }
 
     /// Create a new interpreter with custom username, hostname, and builtins.
