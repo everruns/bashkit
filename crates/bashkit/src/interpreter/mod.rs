@@ -9167,8 +9167,15 @@ impl Interpreter {
         // ${#arr[@]} or ${#arr[*]} — array length
         if let Some(rest) = inner.strip_prefix('#') {
             if let Some(bracket) = rest.find('[') {
-                // Guard against malformed input like ${#[} where bracket+1 > len-1
-                let end = rest.len().saturating_sub(1);
+                // Require a closing ']' — anything else (e.g. `${#arr[` with
+                // an unterminated index, or `${#arr[禧` whose final byte sits
+                // inside a multi-byte UTF-8 char) is malformed. Without this
+                // guard `end = rest.len() - 1` could land mid-codepoint and
+                // panic the slice below.
+                if !rest.ends_with(']') {
+                    return "0".to_string();
+                }
+                let end = rest.len() - 1;
                 if bracket + 1 > end {
                     // Malformed — treat as string length of empty var
                     return "0".to_string();

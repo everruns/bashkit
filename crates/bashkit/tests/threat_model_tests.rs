@@ -4009,6 +4009,21 @@ mod trace_events {
         // Should not panic — just return 0 for malformed expression
         assert_eq!(r.exit_code, 0);
     }
+
+    // TM-DOS-029 regression: malformed ${#name[...} (unterminated index)
+    // whose content ends mid UTF-8 multi-byte char must not panic.
+    // Discovered by arithmetic_fuzz on 2026-05-16, crash artifact
+    // `crash-0eb6b53a030c0a10f29e1933480e76c9c1fa3971` — input
+    // `${#[rg[g([禧,...` made `end = rest.len() - 1` land in the
+    // middle of `禧` (3-byte UTF-8), panicking the string slice.
+    #[tokio::test]
+    async fn arithmetic_malformed_brace_length_utf8_no_panic() {
+        let mut bash = Bash::new();
+        let script = "echo $((${#rg[禧))";
+        let r = bash.exec(script).await;
+        // Either Ok (graceful "0") or Err is fine — must NOT panic.
+        let _ = r;
+    }
 }
 
 // =============================================================================

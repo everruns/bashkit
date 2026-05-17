@@ -187,12 +187,9 @@ multi-file refactors, cross-cutting changes), the pass must:
 Deferred items are **not** failures — they are expected for large-scope
 improvements. The requirement is that they are **tracked**, not silently skipped.
 
-### Deferred from 2026-03-27 run
-
-| Issue | Section | Description |
-|-------|---------|-------------|
-| #880  | Simplification | Migrate 27 builtins from manual arg parsing to ArgParser |
-| #881  | Simplification | Extract errexit suppression propagation helper |
+_No deferred items currently outstanding. Previously tracked items
+(#880 ArgParser migration, #881 errexit propagation helper) have been
+resolved._
 
 ## Automation
 
