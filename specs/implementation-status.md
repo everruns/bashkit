@@ -279,7 +279,7 @@ Features that may be added in the future (not intentionally excluded):
 
 ### Implemented
 
-**148 core builtins + 14 feature-gated = 162 total**
+**142 core builtins + 14 feature-gated = 156 total**
 
 `echo`, `printf`, `cat`, `nl`, `cd`, `pwd`, `true`, `false`, `exit`, `test`, `[`,
 `export`, `set`, `unset`, `local`, `source`, `.`, `read`, `shift`, `break`,

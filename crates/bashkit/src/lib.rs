@@ -18,7 +18,7 @@
 //! - **Experimental: Python** - Embedded Python via [Monty](https://github.com/pydantic/monty) (`python` feature)
 //! - **Experimental: SQLite** - Embedded SQLite-compatible engine via [Turso](https://github.com/tursodatabase/turso) (`sqlite` feature)
 //!
-//! # Built-in Commands (160)
+//! # Built-in Commands (156)
 //!
 //! | Category | Commands |
 //! |----------|----------|
@@ -1209,6 +1209,8 @@ pub struct BashBuilder {
     hostname: Option<String>,
     /// Fixed epoch for virtualizing the `date` builtin (TM-INF-018)
     fixed_epoch: Option<i64>,
+    /// Constant seconds offset applied to real-clock for `date` (TM-INF-018)
+    epoch_offset: Option<i64>,
     shell_profile: interpreter::ShellProfile,
     custom_builtins: HashMap<String, Box<dyn Builtin>>,
     /// Files to mount in the virtual filesystem
@@ -1397,6 +1399,24 @@ impl BashBuilder {
     /// When set, `date` returns this fixed time instead of the real clock.
     pub fn fixed_epoch(mut self, epoch: i64) -> Self {
         self.fixed_epoch = Some(epoch);
+        self.epoch_offset = None;
+        self
+    }
+
+    /// Apply a constant offset (in seconds) to the real system clock for
+    /// the `date` builtin. Use this when scripts need time to advance at
+    /// real-clock rate but you want to obscure the absolute wall-clock
+    /// time from the sandbox (timing-correlation resistance).
+    ///
+    /// THREAT[TM-INF-018]: A non-zero offset prevents `date` from
+    /// exposing the host's exact wall-clock time while still letting
+    /// time-sensitive scripts observe elapsed-time deltas.
+    ///
+    /// `fixed_epoch` and `epoch_offset` are mutually exclusive — the
+    /// last builder call wins.
+    pub fn epoch_offset(mut self, seconds: i64) -> Self {
+        self.epoch_offset = Some(seconds);
+        self.fixed_epoch = None;
         self
     }
 
@@ -2430,6 +2450,7 @@ impl BashBuilder {
             self.username,
             self.hostname,
             self.fixed_epoch,
+            self.epoch_offset,
             self.cwd,
             self.shell_profile,
             self.limits,
@@ -2681,6 +2702,7 @@ impl BashBuilder {
         username: Option<String>,
         hostname: Option<String>,
         fixed_epoch: Option<i64>,
+        epoch_offset: Option<i64>,
         cwd: Option<PathBuf>,
         shell_profile: interpreter::ShellProfile,
         limits: ExecutionLimits,
@@ -2714,6 +2736,7 @@ impl BashBuilder {
             username.clone(),
             hostname,
             fixed_epoch,
+            epoch_offset,
             custom_builtins,
             shell_profile,
         );

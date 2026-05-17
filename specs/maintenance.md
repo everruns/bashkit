@@ -187,9 +187,14 @@ multi-file refactors, cross-cutting changes), the pass must:
 Deferred items are **not** failures — they are expected for large-scope
 improvements. The requirement is that they are **tracked**, not silently skipped.
 
-_No deferred items currently outstanding. Previously tracked items
-(#880 ArgParser migration, #881 errexit propagation helper) have been
-resolved._
+### Deferred from 2026-05-17 run
+
+| Issue | Section | Description |
+|-------|---------|-------------|
+| #1634 | Dependencies | RustCrypto stack split between 0.10 and 0.11 lines, blocked on `turso_core` / `aes-gcm` upstreams |
+
+Previously tracked items (#880 ArgParser migration, #881 errexit
+propagation helper) have been resolved.
 
 ## Automation
 

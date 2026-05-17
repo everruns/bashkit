@@ -184,16 +184,21 @@ eval-scripting-save dataset="crates/bashkit-eval/data/scripting-tool/many-tools.
 
 # === Security ===
 
+# Auto-install cargo-vet if missing (idempotent, matches CI's
+# taiki-e/install-action step). Internal helper for vet recipes.
+_ensure-vet:
+    @command -v cargo-vet >/dev/null 2>&1 || cargo install cargo-vet --locked
+
 # Run supply chain audit (cargo-vet)
-vet:
-    cargo vet
+vet: _ensure-vet
+    cargo vet --locked
 
 # Suggest crates to audit
-vet-suggest:
+vet-suggest: _ensure-vet
     cargo vet suggest
 
 # Certify a crate after audit
-vet-certify crate version:
+vet-certify crate version: _ensure-vet
     cargo vet certify {{crate}} {{version}}
 
 # === Nightly CI ===
