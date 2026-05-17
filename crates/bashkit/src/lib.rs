@@ -18,7 +18,7 @@
 //! - **Experimental: Python** - Embedded Python via [Monty](https://github.com/pydantic/monty) (`python` feature)
 //! - **Experimental: SQLite** - Embedded SQLite-compatible engine via [Turso](https://github.com/tursodatabase/turso) (`sqlite` feature)
 //!
-//! # Built-in Commands (160)
+//! # Built-in Commands (156)
 //!
 //! | Category | Commands |
 //! |----------|----------|

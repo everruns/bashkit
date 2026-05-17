@@ -29,18 +29,11 @@ for sandbox security reasons. See the compliance spec for details.
 
 ## Quick Status
 
-| Category | Count |
-|----------|-------|
-| Core & Navigation | 12 |
-| Flow Control & Variables | 23 |
-| Shell | 7 |
-| Text Processing | 20 |
-| File Operations & Inspection | 17 |
-| Archives & Byte Tools | 6 |
-| Utilities & System | 20 |
-| Network | 2 |
-| Experimental | 3 |
-| **Total** | **150** |
+| Group | Count |
+|-------|-------|
+| Always-on builtins | 142 |
+| Feature-gated builtins (`jq`, `git`, `ssh`/`scp`/`sftp`, `python`/`python3`, `sqlite`/`sqlite3`, `ts`/`typescript`/`node`/`deno`/`bun`) | 14 |
+| **Total** | **156** |
 
 ---
 
