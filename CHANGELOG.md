@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Fixed
+
+* fix(interpreter): reject ${#name[…} without closing bracket in arithmetic
+* fix(deps): resolve dependabot alerts in JS/TS workspaces
+
+### Documentation
+
+* chore(specs): drop resolved deferred items and add credential-injection to AGENTS.md
+
 ## [0.6.0] - 2026-05-16
 
 ### Highlights

