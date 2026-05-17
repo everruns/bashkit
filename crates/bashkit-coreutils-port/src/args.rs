@@ -643,28 +643,129 @@ fn collect_option_constants(file: &syn::File) -> Vec<Item> {
 }
 
 // THREAT[TM-INF-025]: args-mode consumes third-party Rust from uutils.
-// Only a single clap builder expression may become executable bashkit
-// code; prefix statements would run during CI/parser construction.
+// Only clap builder expressions may become executable bashkit code;
+// any other statement shape would run during CI/parser construction.
+//
+// Two accepted body shapes:
+//   1. `<Command::new(...) chain>`  (single tail expression)
+//   2. `let <ident> = <Command::new(...) chain>;
+//       <ident>.<builder method>(...)...`
+//      — equivalent to a single chain split across a binding. The
+//      tail's innermost receiver must be the let-bound identifier;
+//      both halves run through the same chain validator. The binding is
+//      deliberately plain: no `mut`, `ref`, type ascription, subpattern,
+//      non-doc attributes, or `let ... else`.
 fn validate_uu_app_body(uu_app: &ItemFn) -> Result<()> {
-    let command_expr = match uu_app.block.stmts.as_slice() {
-        [Stmt::Expr(expr, None)] => expr,
+    match uu_app.block.stmts.as_slice() {
+        [Stmt::Expr(expr, None)] => validate_command_chain_expr(expr),
+        [Stmt::Local(local), Stmt::Expr(tail_expr, None)] => {
+            validate_let_bound_command_body(local, tail_expr)
+        }
         stmts => bail!(
-            "unsafe uu_app body: expected a single clap Command builder expression, found {} statements",
+            "unsafe uu_app body: expected a single clap Command builder expression \
+             or `let <ident> = Command::new(...)...; <ident>.method(...)...`, \
+             found {} statements",
             stmts.len()
         ),
-    };
+    }
+}
 
+fn validate_command_chain_expr(expr: &Expr) -> Result<()> {
     let mut validator = UuAppExprValidator { errors: vec![] };
-    syn::visit::Visit::visit_expr(&mut validator, command_expr);
+    syn::visit::Visit::visit_expr(&mut validator, expr);
     if !validator.errors.is_empty() {
         bail!("unsafe uu_app body: {}", validator.errors.join("; "));
     }
-    if !chain_roots_at_command_new(command_expr) {
+    if !chain_roots_at_command_new(expr) {
         bail!(
             "unsafe uu_app body: tail expression must be a clap::Command::new(...) builder chain"
         );
     }
     Ok(())
+}
+
+fn validate_let_bound_command_body(local: &syn::Local, tail_expr: &Expr) -> Result<()> {
+    let binding_ident = plain_let_ident(local)?;
+    let init = local
+        .init
+        .as_ref()
+        .ok_or_else(|| anyhow!("unsafe uu_app body: let binding must have an initializer"))?;
+    if init.diverge.is_some() {
+        bail!("unsafe uu_app body: let-else is not allowed");
+    }
+    // The bound expression must itself be a Command::new(...) builder
+    // chain so the only thing the binding can hold is a clap Command.
+    validate_command_chain_expr(&init.expr)?;
+
+    // The tail must be a method chain whose innermost receiver is the
+    // let-bound identifier — i.e. structurally a continuation of the
+    // builder chain.
+    let mut validator = UuAppExprValidator { errors: vec![] };
+    syn::visit::Visit::visit_expr(&mut validator, tail_expr);
+    if !validator.errors.is_empty() {
+        bail!("unsafe uu_app body: {}", validator.errors.join("; "));
+    }
+    if !tail_chains_back_to_ident(tail_expr, binding_ident) {
+        bail!(
+            "unsafe uu_app body: tail expression must be a `{}.method(...)...` \
+             chain on the let binding",
+            binding_ident
+        );
+    }
+    Ok(())
+}
+
+/// Returns the bound identifier of a plain `let <ident> = ...;`.
+/// Rejects destructuring, `mut`, `ref`, type ascription, subpatterns,
+/// or non-doc attributes — anything that could hide behavior in the
+/// binding pattern or weaken the no-mutation proof.
+fn plain_let_ident(local: &syn::Local) -> Result<&syn::Ident> {
+    if local.attrs.iter().any(|attr| !attr.path().is_ident("doc")) {
+        bail!("unsafe uu_app body: let binding must not carry non-doc attributes");
+    }
+    match &local.pat {
+        syn::Pat::Ident(pi) => {
+            if !pi.attrs.is_empty()
+                || pi.by_ref.is_some()
+                || pi.mutability.is_some()
+                || pi.subpat.is_some()
+            {
+                bail!(
+                    "unsafe uu_app body: let binding must be plain `let <ident> = ...` \
+                     (no `mut`, no `ref`, no subpattern)"
+                );
+            }
+            Ok(&pi.ident)
+        }
+        syn::Pat::Type(_) => bail!("unsafe uu_app body: let binding must not use type ascription"),
+        _ => bail!(
+            "unsafe uu_app body: let binding must bind a single identifier, \
+             not a destructuring pattern"
+        ),
+    }
+}
+
+/// Walk down method-call receivers and require the innermost expression
+/// to be a bare reference to `target` — i.e. the tail is shaped like
+/// `target.foo(...).bar(...)`. Anything else (a fresh `Command::new`,
+/// a different binding, a function call) is rejected.
+fn tail_chains_back_to_ident(expr: &Expr, target: &syn::Ident) -> bool {
+    let mut cur = expr;
+    loop {
+        match cur {
+            Expr::MethodCall(mc) => cur = &mc.receiver,
+            Expr::Path(p)
+                if p.qself.is_none()
+                    && p.path.leading_colon.is_none()
+                    && p.path.segments.len() == 1
+                    && p.path.segments[0].ident == *target
+                    && matches!(p.path.segments[0].arguments, syn::PathArguments::None) =>
+            {
+                return true;
+            }
+            _ => return false,
+        }
+    }
 }
 
 struct UuAppExprValidator {
@@ -1308,5 +1409,165 @@ pub fn uu_app() -> clap::Command {
         let err = run(&uutils, "cat", "poc").unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("Command::new"), "got: {msg}");
+    }
+
+    #[test]
+    fn accepts_let_bound_command_with_tail_chain() {
+        // Upstream uutils truncate now splits uu_app() into
+        // `let cmd = Command::new(...)...;
+        //  configure_localized_command(cmd).arg(...)...`.
+        // The Rewriter folds `configure_localized_command(cmd)` to `cmd`,
+        // leaving exactly the `let`-then-tail shape the validator must accept.
+        let (_tmp, uutils) = fixture(&[
+            (
+                "src/uu/cat/src/cat.rs",
+                r#"
+mod options {
+    pub static FILE: &str = "file";
+}
+
+pub fn uu_app() -> clap::Command {
+    let cmd = Command::new("cat")
+        .version(uucore::crate_version!())
+        .infer_long_args(true);
+    uucore::clap_localization::configure_localized_command(cmd)
+        .arg(Arg::new(options::FILE))
+}
+"#,
+            ),
+            ("src/uu/cat/locales/en-US.ftl", ""),
+        ]);
+
+        let body = run(&uutils, "cat", "poc").unwrap();
+        assert!(body.contains("pub fn cat_command() -> clap::Command"));
+        assert!(body.contains("Command::new(\"cat\")"));
+        // The configure_localized_command(cmd) wrapper is folded away;
+        // only `cmd.arg(...)` remains.
+        assert!(
+            !body.contains("configure_localized_command"),
+            "wrapper should be stripped: {body}"
+        );
+        assert!(body.contains("cmd.arg("), "got: {body}");
+    }
+
+    #[test]
+    fn rejects_let_mut_binding_in_uu_app() {
+        let (_tmp, uutils) = fixture(&[
+            (
+                "src/uu/cat/src/cat.rs",
+                r#"
+mod options {
+    pub static FILE: &str = "file";
+}
+
+pub fn uu_app() -> clap::Command {
+    let mut cmd = Command::new("cat");
+    cmd.arg(Arg::new(options::FILE))
+}
+"#,
+            ),
+            ("src/uu/cat/locales/en-US.ftl", ""),
+        ]);
+
+        let err = run(&uutils, "cat", "poc").unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("no `mut`"), "got: {msg}");
+    }
+
+    #[test]
+    fn rejects_let_with_non_command_initializer() {
+        let (_tmp, uutils) = fixture(&[
+            (
+                "src/uu/cat/src/cat.rs",
+                r#"
+mod options {
+    pub static FILE: &str = "file";
+}
+
+pub fn uu_app() -> clap::Command {
+    let cmd = std::process::Command::new("sh").arg("-c").arg("nope").status().unwrap();
+    Command::new("cat").arg(Arg::new(options::FILE))
+}
+"#,
+            ),
+            ("src/uu/cat/locales/en-US.ftl", ""),
+        ]);
+
+        let err = run(&uutils, "cat", "poc").unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("unsafe uu_app"), "got: {msg}");
+    }
+
+    #[test]
+    fn rejects_let_init_not_rooted_at_command_new() {
+        let (_tmp, uutils) = fixture(&[
+            (
+                "src/uu/cat/src/cat.rs",
+                r#"
+mod options {
+    pub static FILE: &str = "file";
+}
+
+pub fn uu_app() -> clap::Command {
+    let cmd = some::factory();
+    cmd.arg(Arg::new(options::FILE))
+}
+"#,
+            ),
+            ("src/uu/cat/locales/en-US.ftl", ""),
+        ]);
+
+        let err = run(&uutils, "cat", "poc").unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("Command::new"), "got: {msg}");
+    }
+
+    #[test]
+    fn rejects_tail_not_chained_off_let_binding() {
+        let (_tmp, uutils) = fixture(&[
+            (
+                "src/uu/cat/src/cat.rs",
+                r#"
+mod options {
+    pub static FILE: &str = "file";
+}
+
+pub fn uu_app() -> clap::Command {
+    let cmd = Command::new("cat");
+    Command::new("cat").arg(Arg::new(options::FILE))
+}
+"#,
+            ),
+            ("src/uu/cat/locales/en-US.ftl", ""),
+        ]);
+
+        let err = run(&uutils, "cat", "poc").unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("chain on the let binding"), "got: {msg}");
+    }
+
+    #[test]
+    fn rejects_three_statement_body() {
+        let (_tmp, uutils) = fixture(&[
+            (
+                "src/uu/cat/src/cat.rs",
+                r#"
+mod options {
+    pub static FILE: &str = "file";
+}
+
+pub fn uu_app() -> clap::Command {
+    let cmd = Command::new("cat");
+    std::process::abort();
+    cmd.arg(Arg::new(options::FILE))
+}
+"#,
+            ),
+            ("src/uu/cat/locales/en-US.ftl", ""),
+        ]);
+
+        let err = run(&uutils, "cat", "poc").unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("found 3 statements"), "got: {msg}");
     }
 }

@@ -2,6 +2,75 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-05-16
+
+### Highlights
+
+- **Continue coreutils adoption experiment** — Extends the codegen pipeline beyond `uu_app()` argument surfaces to vendor whole upstream uutils modules with a manifest and drift-detection CI. `tee`, `mktemp`, `realpath`, `stat`, and `od` now flow through codegen; `printf` runs on a vendored copy of uucore's format implementation; and `env` is ported through a virtual-env shim (TM-INF-024) ([#1592](https://github.com/everruns/bashkit/pull/1592), [#1593](https://github.com/everruns/bashkit/pull/1593), [#1594](https://github.com/everruns/bashkit/pull/1594)).
+- **MCP server mode removed from CLI** — The `bashkit mcp` server mode has been removed. The recommended path for MCP integrations is now to embed bashkit via the library bindings.
+- **Security hardening across the sandbox** — Fail-closed fixes across realfs (no-follow resolver for stat/read_link/remove; reject leaf-symlink writes), snapshot/restore (atomic, fail-closed `vfs_restore`), sqlite (reject `VACUUM`/`VACUUM INTO`; row caps; engine cache invalidation), network (SSRF precheck fails closed; IPv4-mapped IPv6 normalization), jq (replace `halt` to stop sandbox escape via `process::exit`; fancy-regex execution + file-binding caps), and ssh (shell-escape sftp `ls`; try `none`-auth before password/key). The final 6 OPEN entries in the threat model are now marked mitigated ([#1568](https://github.com/everruns/bashkit/pull/1568), [#1581](https://github.com/everruns/bashkit/pull/1581), [#1582](https://github.com/everruns/bashkit/pull/1582), [#1583](https://github.com/everruns/bashkit/pull/1583), [#1584](https://github.com/everruns/bashkit/pull/1584), [#1585](https://github.com/everruns/bashkit/pull/1585), [#1586](https://github.com/everruns/bashkit/pull/1586), [#1587](https://github.com/everruns/bashkit/pull/1587), [#1588](https://github.com/everruns/bashkit/pull/1588), [#1589](https://github.com/everruns/bashkit/pull/1589), [#1590](https://github.com/everruns/bashkit/pull/1590), [#1591](https://github.com/everruns/bashkit/pull/1591), [#1599](https://github.com/everruns/bashkit/pull/1599), [#1601](https://github.com/everruns/bashkit/pull/1601), [#1613](https://github.com/everruns/bashkit/pull/1613), [#1615](https://github.com/everruns/bashkit/pull/1615)).
+
+### Breaking Changes
+
+- **CLI MCP server mode removed**: The `bashkit mcp` subcommand and the MCP server transport bundled in the CLI have been removed.
+  - Before: `bashkit mcp --transport stdio`
+  - After: embed bashkit via the library bindings (`bashkit` crate, `@everruns/bashkit` on npm, `bashkit` on PyPI) and expose tools through your own MCP server.
+
+### What's Changed
+
+* fix(coreutils-port): constrain uu_app builder macro arguments ([#1629](https://github.com/everruns/bashkit/pull/1629)) by @chaliy
+* fix(coreutils-port): accept localized-Command let-binding in uu_app ([#1628](https://github.com/everruns/bashkit/pull/1628)) by @chaliy
+* chore(deps): bump the rust-dependencies group with 3 updates ([#1626](https://github.com/everruns/bashkit/pull/1626)) by @dependabot
+* fix(fuzz): strip real-shell error lines from stderr before banned-shape check ([#1623](https://github.com/everruns/bashkit/pull/1623)) by @chaliy
+* fix(fuzz): drop arithmetic_fuzz inputs that contain banned debug shapes ([#1622](https://github.com/everruns/bashkit/pull/1622)) by @chaliy
+* fix(fuzz): drop glob_fuzz inputs that contain banned debug shapes ([#1621](https://github.com/everruns/bashkit/pull/1621)) by @chaliy
+* fix(coreutils-port): allow safe clap macros in uu_app validator ([#1620](https://github.com/everruns/bashkit/pull/1620)) by @chaliy
+* fix(bashkit-eval): make rustls provider init idempotent ([#1619](https://github.com/everruns/bashkit/pull/1619)) by @chaliy
+* fix(printf): cap float exponent magnitude in format validation ([#1618](https://github.com/everruns/bashkit/pull/1618)) by @chaliy
+* fix(coreutils-port): harden uu_app builder validation ([#1617](https://github.com/everruns/bashkit/pull/1617)) by @chaliy
+* fix(sqlite): enforce row cap while stepping ([#1615](https://github.com/everruns/bashkit/pull/1615)) by @chaliy
+* fix(ci): isolate coreutils drift external execution ([#1614](https://github.com/everruns/bashkit/pull/1614)) by @chaliy
+* fix(jq): cap file binding memory ([#1613](https://github.com/everruns/bashkit/pull/1613)) by @chaliy
+* fix(ci): sandbox coreutils drift generation ([#1611](https://github.com/everruns/bashkit/pull/1611)) by @chaliy
+* fix(export): continue after invalid identifier to avoid stale env sync ([#1610](https://github.com/everruns/bashkit/pull/1610)) by @chaliy
+* fix(js): correct sqlite maxMemory unit handling ([#1609](https://github.com/everruns/bashkit/pull/1609)) by @chaliy
+* chore(specs): mark TM-DOS-057 partial on WASM ([#1607](https://github.com/everruns/bashkit/pull/1607)) by @chaliy
+* fix(bashkit-eval): install rustls provider for library providers ([#1606](https://github.com/everruns/bashkit/pull/1606)) by @chaliy
+* fix(python): preserve credential placeholder env on snapshot restore ([#1605](https://github.com/everruns/bashkit/pull/1605)) by @chaliy
+* fix(export): sync successful exports when readonly args fail ([#1604](https://github.com/everruns/bashkit/pull/1604)) by @chaliy
+* fix(tool_def): reject bare array flags without values ([#1603](https://github.com/everruns/bashkit/pull/1603)) by @chaliy
+* fix(jq): enforce fancy-regex execution limits ([#1601](https://github.com/everruns/bashkit/pull/1601)) by @chaliy
+* fix(bindings): derive sqlite limits from host time and memory caps ([#1600](https://github.com/everruns/bashkit/pull/1600)) by @chaliy
+* fix(sqlite): invalidate cached engine when VFS file changes ([#1599](https://github.com/everruns/bashkit/pull/1599)) by @chaliy
+* fix(tool_def): bound aggregate JSON flag coercion ([#1598](https://github.com/everruns/bashkit/pull/1598)) by @chaliy
+* fix(scripted-tool): isolate and bound extension invocation traces ([#1597](https://github.com/everruns/bashkit/pull/1597)) by @chaliy
+* fix(scripts): follow redirects and bump just to 1.50.0 in init-cloud-env ([#1595](https://github.com/everruns/bashkit/pull/1595)) by @chaliy
+* refactor(builtins): port tee/mktemp/realpath/stat/od to codegen args ([#1594](https://github.com/everruns/bashkit/pull/1594)) by @chaliy
+* feat(coreutils-port): add module-vendor mode with manifest and drift CI ([#1593](https://github.com/everruns/bashkit/pull/1593)) by @chaliy
+* feat(builtins): port uutils env-default surface via virtual-env shim (TM-INF-024) ([#1592](https://github.com/everruns/bashkit/pull/1592)) by @chaliy
+* fix(network): fail closed in SSRF precheck and document handler responsibility ([#1591](https://github.com/everruns/bashkit/pull/1591)) by @chaliy
+* fix(network): normalize IPv4-mapped IPv6 in is_private_ip to block SSRF ([#1590](https://github.com/everruns/bashkit/pull/1590)) by @chaliy
+* fix(jq): replace halt native to stop sandbox-escape via process::exit ([#1589](https://github.com/everruns/bashkit/pull/1589)) by @chaliy
+* fix(sqlite): reject VACUUM to block VFS escape via VACUUM INTO ([#1588](https://github.com/everruns/bashkit/pull/1588)) by @chaliy
+* fix(interop): mark filesystem import unsafe and own the foreign vtable ([#1587](https://github.com/everruns/bashkit/pull/1587)) by @chaliy
+* fix(snapshot): make vfs_restore fail closed and apply atomically ([#1586](https://github.com/everruns/bashkit/pull/1586)) by @chaliy
+* fix(realfs): reject leaf-symlink writes to block dangling-symlink escape ([#1585](https://github.com/everruns/bashkit/pull/1585)) by @chaliy
+* fix(realfs): use no-follow resolver for stat/read_link/remove ([#1584](https://github.com/everruns/bashkit/pull/1584)) by @chaliy
+* fix(ln): surface remove failure under -f instead of falling through to symlink ([#1583](https://github.com/everruns/bashkit/pull/1583)) by @chaliy
+* fix(ssh): try none-auth before password/key to avoid leaking defaults ([#1582](https://github.com/everruns/bashkit/pull/1582)) by @chaliy
+* fix(ssh): shell-escape sftp ls path to prevent remote command injection ([#1581](https://github.com/everruns/bashkit/pull/1581)) by @chaliy
+* docs(threat-model): mark final 6 OPEN entries mitigated ([#1568](https://github.com/everruns/bashkit/pull/1568)) by @chaliy
+* fix(coreutils-port): accept let-bound Command chain in uu_app validator by @chaliy
+* fix(fuzz): strip uutils clap error chrome before banned-shape check by @chaliy
+* chore(ci): bump artifact actions by @dependabot
+* feat(printf): vendor uucore format by @chaliy
+* fix(truncate): enforce VFS limits before resize by @chaliy
+* fix(shuf): cap range and repeat output allocation by @chaliy
+* fix(cli): remove MCP server mode by @chaliy
+* chore(maintenance): add deepsec scanning workspace by @chaliy
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.5.0...v0.6.0
+
 ## [0.5.0] - 2026-05-06
 
 ### Highlights
