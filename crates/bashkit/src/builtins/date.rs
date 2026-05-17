@@ -46,26 +46,53 @@ use crate::interpreter::ExecResult;
 ///   %n  Newline
 ///   %t  Tab
 ///   %%  Literal %
-/// THREAT[TM-INF-018]: Supports a fixed epoch to prevent leaking real host time.
+/// THREAT[TM-INF-018]: Supports a fixed epoch OR a constant offset on
+/// the real clock so callers can blind absolute wall-clock time without
+/// breaking elapsed-time logic. The two modes are mutually exclusive
+/// — `fixed_epoch` wins if both are set.
 pub struct Date {
     /// Fixed UTC epoch for virtualized time. None = use real system clock.
     fixed_epoch: Option<DateTime<Utc>>,
+    /// Constant offset applied to `Utc::now()` when `fixed_epoch` is None.
+    offset_seconds: i64,
 }
 
 impl Date {
     pub fn new() -> Self {
-        Self { fixed_epoch: None }
+        Self {
+            fixed_epoch: None,
+            offset_seconds: 0,
+        }
     }
 
     /// Create a Date builtin with a fixed epoch (for sandboxing).
     pub fn with_fixed_epoch(epoch: DateTime<Utc>) -> Self {
         Self {
             fixed_epoch: Some(epoch),
+            offset_seconds: 0,
+        }
+    }
+
+    /// Create a Date builtin that offsets the real clock by the given
+    /// number of seconds. Useful when scripts need a ticking clock but
+    /// must not observe the host's exact wall-clock time.
+    pub fn with_offset_seconds(offset: i64) -> Self {
+        Self {
+            fixed_epoch: None,
+            offset_seconds: offset,
         }
     }
 
     fn now(&self) -> DateTime<Utc> {
-        self.fixed_epoch.unwrap_or_else(Utc::now)
+        if let Some(t) = self.fixed_epoch {
+            return t;
+        }
+        if self.offset_seconds == 0 {
+            return Utc::now();
+        }
+        Utc::now()
+            .checked_add_signed(chrono::Duration::seconds(self.offset_seconds))
+            .unwrap_or_else(Utc::now)
     }
 }
 
@@ -533,6 +560,55 @@ mod tests {
         // Just check it outputs something with a newline
         assert!(result.stdout.ends_with('\n'));
         assert!(result.stdout.len() > 10);
+    }
+
+    /// TM-INF-018: fixed_epoch wins over real clock.
+    #[test]
+    fn date_fixed_epoch_returns_fixed_time() {
+        let fixed = DateTime::<Utc>::from_timestamp(1_700_000_000, 0).unwrap();
+        let d = Date::with_fixed_epoch(fixed);
+        assert_eq!(d.now(), fixed);
+    }
+
+    /// TM-INF-018: non-zero offset shifts the real clock without
+    /// freezing it. Verify the offset is applied within a sub-second
+    /// tolerance vs `Utc::now() + offset`.
+    #[test]
+    fn date_offset_seconds_shifts_real_clock() {
+        let offset: i64 = 365 * 24 * 60 * 60; // +1 year
+        let d = Date::with_offset_seconds(offset);
+        let before = Utc::now();
+        let observed = d.now();
+        let after = Utc::now();
+        let expected_low = before + chrono::Duration::seconds(offset);
+        let expected_high = after + chrono::Duration::seconds(offset);
+        assert!(
+            observed >= expected_low && observed <= expected_high,
+            "offset clock {observed} not in [{expected_low}, {expected_high}]"
+        );
+    }
+
+    /// TM-INF-018: fixed_epoch takes priority if both modes are set
+    /// (defensive — the builder enforces exclusivity but the struct
+    /// fields are pub(crate)-ish and could be combined directly).
+    #[test]
+    fn date_fixed_epoch_overrides_offset() {
+        let fixed = DateTime::<Utc>::from_timestamp(1_700_000_000, 0).unwrap();
+        let d = Date {
+            fixed_epoch: Some(fixed),
+            offset_seconds: 99_999,
+        };
+        assert_eq!(d.now(), fixed);
+    }
+
+    /// TM-INF-018: zero offset = real clock (no allocation overhead path).
+    #[test]
+    fn date_zero_offset_uses_real_clock() {
+        let d = Date::with_offset_seconds(0);
+        let before = Utc::now();
+        let observed = d.now();
+        let after = Utc::now();
+        assert!(observed >= before && observed <= after);
     }
 
     #[tokio::test]
