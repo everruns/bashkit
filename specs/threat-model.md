@@ -1330,7 +1330,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | ~~TM-INJ-015~~ | ~~`export` bypasses `is_internal_variable()`~~ | ~~Internal prefix injection via export~~ | ~~Add `is_internal_variable()` check~~ (**FIXED**) |
 | ~~TM-INJ-016~~ | ~~`_ARRAY_READ_` prefix not in `is_internal_variable()`~~ | ~~Arbitrary array creation/overwrite via marker injection~~ | ~~Add `_ARRAY_READ_` prefix to `is_internal_variable()`~~ (**FIXED**) |
 | TM-INF-017 | `set` and `declare -p` leak internal markers | Internal state disclosure (_NAMEREF_, _READONLY_, _UPPER_, _LOWER_) | Filter `is_internal_variable()` names from output |
-| TM-INF-018 | `date` builtin returns real host time | Timezone fingerprinting, timing correlation | Configurable time source (fixed or offset) |
+| TM-INF-018 | `date` builtin returns real host time | Timezone fingerprinting, timing correlation | `Bash::builder().fixed_epoch(N)` freezes the clock; `Bash::builder().epoch_offset(N)` shifts real-clock by N seconds (mutually exclusive, last call wins). Both implemented via `Date::with_fixed_epoch` / `Date::with_offset_seconds` in `builtins/date.rs`. Default behavior is real clock — embed callers opt in for sandboxing. Regression tests: `tm_inf_018_date::*` in `tests/threat_model_tests.rs`. | **MITIGATED** (opt-in) |
 | ~~TM-DOS-041~~ | ~~Brace expansion `{N..M}` unbounded range~~ | ~~OOM via `{1..999999999}` allocating billions of strings~~ | Static parser-time check (`MAX_STATIC_BRACE_RANGE = 100_000` in `parser/budget.rs`) rejects oversized literal ranges with `BraceRangeTooLarge`; runtime fallback in `try_expand_range` (`MAX_BRACE_RANGE = 10_000`) treats remaining oversized ranges as literals (**FIXED**) |
 | ~~TM-DOS-042~~ | ~~Brace expansion combinatorial explosion~~ | ~~OOM via `{1..100}{1..100}{1..100}` = 1M strings~~ | `expand_braces` caps total emitted strings at `MAX_BRACE_EXPANSION_TOTAL = 100_000` and bails out of the recursion when the budget is hit (**FIXED**) |
 | ~~TM-DOS-043~~ | ~~Arithmetic overflow in `execute_arithmetic_with_side_effects`~~ | ~~Panic (DoS) in debug mode via `((x+=1))` with x=i64::MAX~~ | ~~Use `wrapping_add/sub/mul`~~ (**FIXED**) |
@@ -1464,7 +1464,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | OverlayFs symlink limit bypass | TM-DOS-045 | `check_write_limits()` + `validate_path()` in `symlink()` | **MITIGATED** |
 | MountableFs path validation gap | TM-DOS-046 | `validate_path()` in all MountableFs methods | **MITIGATED** |
 | VFS copy/rename semantic bugs | TM-DOS-047, TM-DOS-048 | Fix limit check in copy(), type check in rename() | **MITIGATED** |
-| Date time info leak | TM-INF-018 | Configurable time source | **NEEDED** |
+| Date time info leak | TM-INF-018 | `fixed_epoch` + `epoch_offset` builder methods (opt-in) | **MITIGATED** |
 | Python BashTool.reset() drops limits | TM-PY-028 | `BashTool::reset` rebuilds via `replace_live_bash_with_builder` matching `PyBash::reset` | **MITIGATED** |
 | YAML parser depth limit | TM-DOS-051 | `depth` parameter on `parse_yaml_block`/`map`/`list` with `MAX_YAML_DEPTH = 100` | **MITIGATED** |
 | Template engine depth limit | TM-DOS-052 | `depth` parameter on `render_template_inner` with `MAX_TEMPLATE_DEPTH = 100` | **MITIGATED** |

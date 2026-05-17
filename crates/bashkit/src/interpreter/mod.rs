@@ -878,7 +878,7 @@ impl Interpreter {
 
     /// Create a new interpreter with the given filesystem.
     pub fn new(fs: Arc<dyn FileSystem>) -> Self {
-        Self::with_config(fs, None, None, None, HashMap::new(), ShellProfile::Full)
+        Self::with_config(fs, None, None, None, None, HashMap::new(), ShellProfile::Full)
     }
 
     /// Create a new interpreter with custom username, hostname, and builtins.
@@ -894,6 +894,7 @@ impl Interpreter {
         username: Option<String>,
         hostname: Option<String>,
         fixed_epoch: Option<i64>,
+        epoch_offset: Option<i64>,
         custom_builtins: HashMap<String, Box<dyn Builtin>>,
         shell_profile: ShellProfile,
     ) -> Self {
@@ -1076,7 +1077,8 @@ impl Interpreter {
         );
         builtins.insert(".".to_string(), Box::new(builtins::Source::new(fs.clone())));
 
-        // THREAT[TM-INF-018]: Use fixed epoch if configured, else real clock
+        // THREAT[TM-INF-018]: Resolve the virtual clock mode for `date`.
+        // Priority: fixed_epoch > epoch_offset > real clock.
         builtins.insert(
             "date".to_string(),
             Box::new(if let Some(epoch) = fixed_epoch {
@@ -1084,6 +1086,8 @@ impl Interpreter {
                 builtins::Date::with_fixed_epoch(
                     DateTime::from_timestamp(epoch, 0).unwrap_or_default(),
                 )
+            } else if let Some(offset) = epoch_offset {
+                builtins::Date::with_offset_seconds(offset)
             } else {
                 builtins::Date::new()
             }),

@@ -215,7 +215,7 @@ Scripts may attempt to leak sensitive information.
 | IP address (TM-INF-007) | `ip addr`, `ifconfig` | Not implemented | MITIGATED |
 | System info (TM-INF-008) | `uname -a` | Returns configurable virtual values | MITIGATED |
 | User ID (TM-INF-009) | `id` | Returns hardcoded uid=1000 | MITIGATED |
-| Date/time (TM-INF-018) | `date` | Returns real host time (fingerprinting risk) | **OPEN** |
+| Date/time (TM-INF-018) | `date` | Returns real host time (fingerprinting risk) | **MITIGATED** (opt-in: `Bash::builder().fixed_epoch` / `.epoch_offset`) |
 
 **Network Exfiltration:**
 

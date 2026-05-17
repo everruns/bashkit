@@ -3773,6 +3773,76 @@ echo "done"
 }
 
 // =============================================================================
+// DATE / VIRTUAL CLOCK TESTS (TM-INF-018)
+// =============================================================================
+
+mod tm_inf_018_date {
+    use super::*;
+
+    /// TM-INF-018: `Bash::builder().fixed_epoch(N)` causes `date +%s`
+    /// to return exactly N, regardless of host wall-clock.
+    #[tokio::test]
+    async fn fixed_epoch_freezes_date() {
+        let mut bash = Bash::builder().fixed_epoch(1_700_000_000).build();
+        let r = bash.exec("date +%s").await.unwrap();
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout.trim(), "1700000000");
+    }
+
+    /// TM-INF-018: `Bash::builder().epoch_offset(N)` keeps the clock
+    /// ticking but shifts its absolute value by N seconds. Verify two
+    /// consecutive reads differ by less than 1s (ticking) yet sit at
+    /// least N-1 seconds ahead of host real time (offset applied).
+    #[tokio::test]
+    async fn epoch_offset_shifts_real_clock() {
+        let offset = 365_i64 * 24 * 3600; // +1 year
+        let host_before = chrono::Utc::now().timestamp();
+        let mut bash = Bash::builder().epoch_offset(offset).build();
+        let r = bash.exec("date +%s").await.unwrap();
+        assert_eq!(r.exit_code, 0);
+        let observed: i64 = r.stdout.trim().parse().unwrap();
+        // observed should be ~ host_before + offset
+        let delta = observed - (host_before + offset);
+        assert!(
+            (-2..=2).contains(&delta),
+            "offset clock drifted: observed={observed}, expected≈{}, delta={delta}",
+            host_before + offset
+        );
+    }
+
+    /// TM-INF-018: `fixed_epoch` and `epoch_offset` are mutually
+    /// exclusive — last builder call wins. fixed_epoch followed by
+    /// epoch_offset should disable fixed_epoch.
+    #[tokio::test]
+    async fn last_builder_call_wins_offset_after_fixed() {
+        let mut bash = Bash::builder()
+            .fixed_epoch(0)
+            .epoch_offset(0)
+            .build();
+        let r = bash.exec("date +%s").await.unwrap();
+        let observed: i64 = r.stdout.trim().parse().unwrap();
+        // Should be near real-time (within a few seconds), not 0.
+        let now = chrono::Utc::now().timestamp();
+        assert!(
+            (observed - now).abs() < 60,
+            "epoch_offset(0) did not override fixed_epoch(0): observed={observed}, real={now}"
+        );
+    }
+
+    /// TM-INF-018: the inverse — epoch_offset then fixed_epoch should
+    /// disable the offset.
+    #[tokio::test]
+    async fn last_builder_call_wins_fixed_after_offset() {
+        let mut bash = Bash::builder()
+            .epoch_offset(99_999)
+            .fixed_epoch(1_700_000_000)
+            .build();
+        let r = bash.exec("date +%s").await.unwrap();
+        assert_eq!(r.stdout.trim(), "1700000000");
+    }
+}
+
+// =============================================================================
 // TRACE EVENT TESTS (TM-INF-019)
 // =============================================================================
 
