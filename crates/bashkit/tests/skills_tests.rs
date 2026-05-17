@@ -197,27 +197,6 @@ impl Builtin for StatStub {
     }
 }
 
-/// Stub for `base64` — missing builtin, stub so scripts don't fail.
-/// TODO: Remove when #287 (base64 builtin) is implemented.
-struct Base64Stub;
-
-#[async_trait]
-impl Builtin for Base64Stub {
-    async fn execute(&self, ctx: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {
-        // For testing: just return a fixed base64-url-safe string
-        if ctx.args.first().map(|s| s.as_str()) == Some("-d") {
-            // decode mode
-            let input = ctx.stdin.unwrap_or("");
-            Ok(ExecResult::ok(input.to_string()))
-        } else {
-            // encode mode — return a fixed encoded value
-            Ok(ExecResult::ok(
-                "dTIwZjlhNzNkYTRhNzRiNjM5ODNlZmViYzdiYjZm\n".to_string(),
-            ))
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Helper: write script to VFS and make executable
 // ---------------------------------------------------------------------------
@@ -246,7 +225,6 @@ fn bash_with_stubs() -> Bash {
         .builtin("curl", Box::new(CurlStub))
         .builtin("python3", Box::new(Python3Stub))
         .builtin("stat", Box::new(StatStub))
-        .builtin("base64", Box::new(Base64Stub))
         .builtin("keytool", Box::new(EchoStub { name: "keytool" }))
         .builtin("openssl", Box::new(EchoStub { name: "openssl" }))
         .build()
