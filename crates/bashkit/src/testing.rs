@@ -198,7 +198,6 @@ fn is_clap_error_chrome_line(line: &str) -> bool {
     if let Some(rest) = line.strip_prefix("error: ") {
         const CLAP_ERROR_FRAGMENTS: &[&str] = &[
             "unexpected argument '",
-            "invalid value '",
             "the argument '",
             "unrecognized subcommand '",
             "the following required arguments were not provided",
@@ -386,9 +385,10 @@ mod tests {
     }
 
     #[test]
-    fn strip_removes_clap_invalid_value_line() {
+    fn strip_keeps_clap_invalid_value_line() {
         let s = "error: invalid value 'Span {abc' for '--width <N>': not a number\n";
-        assert_eq!(strip_real_shell_error_lines(s), "");
+        let stripped = strip_real_shell_error_lines(s);
+        assert!(stripped.contains("Span {"), "stripped: {stripped:?}");
     }
 
     #[test]
