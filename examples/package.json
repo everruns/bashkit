@@ -9,15 +9,15 @@
   },
   "devDependencies": {
     "@ai-sdk/openai": "^3.0.50",
-    "@langchain/core": "^0.3",
-    "@langchain/langgraph": "^0.2",
-    "@langchain/openai": "^0.5",
+    "@langchain/core": "^1.1",
+    "@langchain/langgraph": "^1.3",
+    "@langchain/openai": "^1.4",
     "ai": "^6.0.146",
     "openai": "^5",
     "zod": "^3"
   },
   "overrides": {
-    "langsmith": "0.5.25",
+    "langsmith": "^0.6.0",
     "uuid": "14.0.0",
     "jsondiffpatch": ">=0.7.2"
   },

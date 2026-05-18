@@ -878,7 +878,15 @@ impl Interpreter {
 
     /// Create a new interpreter with the given filesystem.
     pub fn new(fs: Arc<dyn FileSystem>) -> Self {
-        Self::with_config(fs, None, None, None, HashMap::new(), ShellProfile::Full)
+        Self::with_config(
+            fs,
+            None,
+            None,
+            None,
+            None,
+            HashMap::new(),
+            ShellProfile::Full,
+        )
     }
 
     /// Create a new interpreter with custom username, hostname, and builtins.
@@ -894,6 +902,7 @@ impl Interpreter {
         username: Option<String>,
         hostname: Option<String>,
         fixed_epoch: Option<i64>,
+        epoch_offset: Option<i64>,
         custom_builtins: HashMap<String, Box<dyn Builtin>>,
         shell_profile: ShellProfile,
     ) -> Self {
@@ -1076,7 +1085,8 @@ impl Interpreter {
         );
         builtins.insert(".".to_string(), Box::new(builtins::Source::new(fs.clone())));
 
-        // THREAT[TM-INF-018]: Use fixed epoch if configured, else real clock
+        // THREAT[TM-INF-018]: Resolve the virtual clock mode for `date`.
+        // Priority: fixed_epoch > epoch_offset > real clock.
         builtins.insert(
             "date".to_string(),
             Box::new(if let Some(epoch) = fixed_epoch {
@@ -1084,6 +1094,8 @@ impl Interpreter {
                 builtins::Date::with_fixed_epoch(
                     DateTime::from_timestamp(epoch, 0).unwrap_or_default(),
                 )
+            } else if let Some(offset) = epoch_offset {
+                builtins::Date::with_offset_seconds(offset)
             } else {
                 builtins::Date::new()
             }),
@@ -9167,8 +9179,15 @@ impl Interpreter {
         // ${#arr[@]} or ${#arr[*]} — array length
         if let Some(rest) = inner.strip_prefix('#') {
             if let Some(bracket) = rest.find('[') {
-                // Guard against malformed input like ${#[} where bracket+1 > len-1
-                let end = rest.len().saturating_sub(1);
+                // Require a closing ']' — anything else (e.g. `${#arr[` with
+                // an unterminated index, or `${#arr[禧` whose final byte sits
+                // inside a multi-byte UTF-8 char) is malformed. Without this
+                // guard `end = rest.len() - 1` could land mid-codepoint and
+                // panic the slice below.
+                if !rest.ends_with(']') {
+                    return "0".to_string();
+                }
+                let end = rest.len() - 1;
                 if bracket + 1 > end {
                     // Malformed — treat as string length of empty var
                     return "0".to_string();

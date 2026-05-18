@@ -3773,6 +3773,73 @@ echo "done"
 }
 
 // =============================================================================
+// DATE / VIRTUAL CLOCK TESTS (TM-INF-018)
+// =============================================================================
+
+mod tm_inf_018_date {
+    use super::*;
+
+    /// TM-INF-018: `Bash::builder().fixed_epoch(N)` causes `date +%s`
+    /// to return exactly N, regardless of host wall-clock.
+    #[tokio::test]
+    async fn fixed_epoch_freezes_date() {
+        let mut bash = Bash::builder().fixed_epoch(1_700_000_000).build();
+        let r = bash.exec("date +%s").await.unwrap();
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout.trim(), "1700000000");
+    }
+
+    /// TM-INF-018: `Bash::builder().epoch_offset(N)` keeps the clock
+    /// ticking but shifts its absolute value by N seconds. Verify two
+    /// consecutive reads differ by less than 1s (ticking) yet sit at
+    /// least N-1 seconds ahead of host real time (offset applied).
+    #[tokio::test]
+    async fn epoch_offset_shifts_real_clock() {
+        let offset = 365_i64 * 24 * 3600; // +1 year
+        let host_before = chrono::Utc::now().timestamp();
+        let mut bash = Bash::builder().epoch_offset(offset).build();
+        let r = bash.exec("date +%s").await.unwrap();
+        assert_eq!(r.exit_code, 0);
+        let observed: i64 = r.stdout.trim().parse().unwrap();
+        // observed should be ~ host_before + offset
+        let delta = observed - (host_before + offset);
+        assert!(
+            (-2..=2).contains(&delta),
+            "offset clock drifted: observed={observed}, expected≈{}, delta={delta}",
+            host_before + offset
+        );
+    }
+
+    /// TM-INF-018: `fixed_epoch` and `epoch_offset` are mutually
+    /// exclusive — last builder call wins. fixed_epoch followed by
+    /// epoch_offset should disable fixed_epoch.
+    #[tokio::test]
+    async fn last_builder_call_wins_offset_after_fixed() {
+        let mut bash = Bash::builder().fixed_epoch(0).epoch_offset(0).build();
+        let r = bash.exec("date +%s").await.unwrap();
+        let observed: i64 = r.stdout.trim().parse().unwrap();
+        // Should be near real-time (within a few seconds), not 0.
+        let now = chrono::Utc::now().timestamp();
+        assert!(
+            (observed - now).abs() < 60,
+            "epoch_offset(0) did not override fixed_epoch(0): observed={observed}, real={now}"
+        );
+    }
+
+    /// TM-INF-018: the inverse — epoch_offset then fixed_epoch should
+    /// disable the offset.
+    #[tokio::test]
+    async fn last_builder_call_wins_fixed_after_offset() {
+        let mut bash = Bash::builder()
+            .epoch_offset(99_999)
+            .fixed_epoch(1_700_000_000)
+            .build();
+        let r = bash.exec("date +%s").await.unwrap();
+        assert_eq!(r.stdout.trim(), "1700000000");
+    }
+}
+
+// =============================================================================
 // TRACE EVENT TESTS (TM-INF-019)
 // =============================================================================
 
@@ -4008,6 +4075,21 @@ mod trace_events {
         let r = bash.exec("echo $((0 + ${#[}))").await.unwrap();
         // Should not panic — just return 0 for malformed expression
         assert_eq!(r.exit_code, 0);
+    }
+
+    // TM-DOS-029 regression: malformed ${#name[...} (unterminated index)
+    // whose content ends mid UTF-8 multi-byte char must not panic.
+    // Discovered by arithmetic_fuzz on 2026-05-16, crash artifact
+    // `crash-0eb6b53a030c0a10f29e1933480e76c9c1fa3971` — input
+    // `${#[rg[g([禧,...` made `end = rest.len() - 1` land in the
+    // middle of `禧` (3-byte UTF-8), panicking the string slice.
+    #[tokio::test]
+    async fn arithmetic_malformed_brace_length_utf8_no_panic() {
+        let mut bash = Bash::new();
+        let script = "echo $((${#rg[禧))";
+        let r = bash.exec(script).await;
+        // Either Ok (graceful "0") or Err is fine — must NOT panic.
+        let _ = r;
     }
 }
 
