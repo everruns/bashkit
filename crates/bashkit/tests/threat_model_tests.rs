@@ -3810,6 +3810,24 @@ mod tm_inf_018_date {
         );
     }
 
+
+    /// TM-INF-018: virtual clock modes must not leak host timezone via custom formats.
+    #[tokio::test]
+    async fn fixed_epoch_forces_utc_for_timezone_formats() {
+        let mut bash = Bash::builder().fixed_epoch(1_700_000_000).build();
+        let r = bash.exec("date +%z").await.unwrap();
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout.trim(), "+0000");
+    }
+
+    /// TM-INF-018: epoch_offset mode must not leak host timezone via RFC 2822 output.
+    #[tokio::test]
+    async fn epoch_offset_forces_utc_for_rfc2822() {
+        let mut bash = Bash::builder().epoch_offset(86_400).build();
+        let r = bash.exec("date -R").await.unwrap();
+        assert_eq!(r.exit_code, 0);
+        assert!(r.stdout.trim_end().ends_with(" +0000"));
+    }
     /// TM-INF-018: `fixed_epoch` and `epoch_offset` are mutually
     /// exclusive — last builder call wins. fixed_epoch followed by
     /// epoch_offset should disable fixed_epoch.
