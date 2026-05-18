@@ -246,7 +246,7 @@ Coverage lives in four layers (all cited tests are real):
   COALESCE, subqueries, INNER JOIN, NULL handling, and PRAGMA round
   trips. Skips gracefully when `sqlite3` isn't on `$PATH`; CI
   explicitly installs it. One additional case (`recursive_cte_unsupported_in_turso`)
-  pins a *known* divergence: Turso 0.5.3 rejects recursive CTEs while
+  pins a *known* divergence: Turso 0.6.0 rejects recursive CTEs while
   real sqlite3 accepts them — convert to `assert_matches` once Turso
   closes the gap.
 - **Fuzz / property** — `crates/bashkit/tests/sqlite_fuzz_tests.rs`.

@@ -293,7 +293,7 @@ async fn join_inner() {
 // Documented divergences — features the differential suite *expects* to
 // disagree on. Convert to `assert_matches` once Turso closes the gap.
 //
-// Recursive CTEs: turso 0.5.3 returns
+// Recursive CTEs: turso 0.6.0 returns
 //   "Parse error: Recursive CTEs are not yet supported"
 // while real sqlite3 emits 1..N. Track upstream:
 //   https://github.com/tursodatabase/turso (search "WITH RECURSIVE").

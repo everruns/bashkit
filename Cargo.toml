@@ -109,7 +109,7 @@ russh-keys = "0.49"
 
 # Embedded SQLite engine (Turso, pure Rust). Upstream is BETA — gated behind
 # the `sqlite` feature and disabled by default; see specs/sqlite-builtin.md.
-turso_core = "0.5"
+turso_core = "0.6"
 
 # Serial test execution
 serial_test = "3"
