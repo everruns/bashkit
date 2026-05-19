@@ -328,8 +328,8 @@ fn expand_nanoseconds(format: &str, nanos: u32) -> String {
 }
 
 /// Format an RFC 2822 date string from a UTC datetime.
-fn format_rfc2822(dt: &DateTime<Utc>, utc: bool) -> String {
-    if utc {
+fn format_rfc2822(dt: &DateTime<Utc>, force_utc: bool) -> String {
+    if force_utc {
         dt.format("%a, %d %b %Y %H:%M:%S +0000").to_string()
     } else {
         let local_dt: DateTime<Local> = (*dt).into();
@@ -338,10 +338,10 @@ fn format_rfc2822(dt: &DateTime<Utc>, utc: bool) -> String {
 }
 
 /// Format an ISO 8601 date string.
-fn format_iso8601(dt: &DateTime<Utc>, utc: bool, precision: &str) -> String {
+fn format_iso8601(dt: &DateTime<Utc>, force_utc: bool, precision: &str) -> String {
     match precision {
         "hours" => {
-            if utc {
+            if force_utc {
                 dt.format("%Y-%m-%dT%H+00:00").to_string()
             } else {
                 let local_dt: DateTime<Local> = (*dt).into();
@@ -349,7 +349,7 @@ fn format_iso8601(dt: &DateTime<Utc>, utc: bool, precision: &str) -> String {
             }
         }
         "minutes" => {
-            if utc {
+            if force_utc {
                 dt.format("%Y-%m-%dT%H:%M+00:00").to_string()
             } else {
                 let local_dt: DateTime<Local> = (*dt).into();
@@ -357,7 +357,7 @@ fn format_iso8601(dt: &DateTime<Utc>, utc: bool, precision: &str) -> String {
             }
         }
         "seconds" | "s" => {
-            if utc {
+            if force_utc {
                 dt.format("%Y-%m-%dT%H:%M:%S+00:00").to_string()
             } else {
                 let local_dt: DateTime<Local> = (*dt).into();
@@ -460,15 +460,18 @@ impl Builtin for Date {
             dt_utc = now;
         };
 
+        let virtualized_clock = self.fixed_epoch.is_some() || self.offset_seconds != 0;
+        let force_utc = utc || epoch_input || virtualized_clock;
+
         // Handle -R (RFC 2822) output
         if rfc2822 {
-            let output = format_rfc2822(&dt_utc, utc);
+            let output = format_rfc2822(&dt_utc, force_utc);
             return Ok(ExecResult::ok(format!("{}\n", output)));
         }
 
         // Handle -I (ISO 8601) output
         if let Some(ref precision) = iso8601 {
-            let output = format_iso8601(&dt_utc, utc, precision);
+            let output = format_iso8601(&dt_utc, force_utc, precision);
             return Ok(ExecResult::ok(format!("{}\n", output)));
         }
 
@@ -501,7 +504,7 @@ impl Builtin for Date {
 
         // Format the date, handling potential errors gracefully.
         let mut output = String::new();
-        let format_result = if utc || epoch_input {
+        let format_result = if force_utc {
             write!(output, "{}", dt_utc.format(&format))
         } else {
             let local_dt: DateTime<Local> = dt_utc.into();
