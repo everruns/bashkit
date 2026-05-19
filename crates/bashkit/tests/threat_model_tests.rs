@@ -3810,7 +3810,6 @@ mod tm_inf_018_date {
         );
     }
 
-
     /// TM-INF-018: virtual clock modes must not leak host timezone via custom formats.
     #[tokio::test]
     async fn fixed_epoch_forces_utc_for_timezone_formats() {
