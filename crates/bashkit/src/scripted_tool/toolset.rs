@@ -9,9 +9,10 @@ use super::{
     CallbackKind, RegisteredTool, ScriptedExecutionTrace, ScriptedTool, ToolArgs, ToolDef, ToolImpl,
 };
 use crate::ExecutionLimits;
-use crate::tool::{Tool, ToolError, ToolRequest, ToolResponse, ToolStatus, VERSION};
+use crate::tool::{
+    Tool, ToolError, ToolRequest, ToolResponse, ToolStatus, VERSION, tool_response_schema,
+};
 use async_trait::async_trait;
-use schemars::schema_for;
 use std::sync::Arc;
 
 // ============================================================================
@@ -206,8 +207,7 @@ impl Tool for DiscoverTool {
     }
 
     fn output_schema(&self) -> serde_json::Value {
-        let schema = schema_for!(ToolResponse);
-        serde_json::to_value(schema).unwrap_or_default()
+        tool_response_schema()
     }
 
     fn version(&self) -> &str {

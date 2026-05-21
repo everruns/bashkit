@@ -1747,14 +1747,6 @@ criteria = "safe-to-run"
 version = "0.1.29"
 criteria = "safe-to-deploy"
 
-[[exemptions.schemars]]
-version = "1.2.1"
-criteria = "safe-to-deploy"
-
-[[exemptions.schemars_derive]]
-version = "1.2.1"
-criteria = "safe-to-deploy"
-
 [[exemptions.scoped-tls]]
 version = "1.0.1"
 criteria = "safe-to-deploy"

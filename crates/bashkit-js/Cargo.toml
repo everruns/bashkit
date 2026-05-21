@@ -17,7 +17,6 @@ crate-type = ["cdylib"]
 bashkit = { path = "../bashkit", features = ["scripted_tool", "python", "realfs", "jq", "interop", "sqlite"] }
 napi = { workspace = true }
 napi-derive = { workspace = true }
-serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { version = "1", features = ["sync", "macros", "io-util", "rt", "time"] }
 
