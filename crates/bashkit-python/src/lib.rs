@@ -2971,6 +2971,8 @@ pub struct PyBash {
     builtin_engine: Arc<PyCallbackEngine>,
     files: Vec<PyFileMount>,
     real_mounts: Vec<RealMountConfig>,
+    allowed_mount_paths: Option<Vec<String>>,
+    readonly_filesystem: bool,
     max_commands: Option<u64>,
     max_loop_iterations: Option<u64>,
     max_memory: Option<u64>,
@@ -3025,8 +3027,12 @@ impl PyBash {
         if let Some(ref net) = self.network {
             builder = net.apply(builder);
         }
+        if let Some(ref paths) = self.allowed_mount_paths {
+            builder = builder.allowed_mount_paths(paths.iter().map(|p| PathBuf::from(p.as_str())));
+        }
         let files = clone_file_mounts(py, &self.files);
-        let builder = apply_fs_config(builder, &files, &self.real_mounts)?;
+        let mut builder = apply_fs_config(builder, &files, &self.real_mounts)?;
+        builder = builder.readonly_filesystem(self.readonly_filesystem);
         Ok(apply_custom_builtins_to_builder(
             py,
             builder,
@@ -3051,6 +3057,8 @@ impl PyBash {
         external_handler=None,
         files=None,
         mounts=None,
+        allowed_mount_paths=None,
+        readonly_filesystem=false,
         custom_builtins=None,
         network=None,
     ))]
@@ -3069,6 +3077,8 @@ impl PyBash {
         external_handler: Option<Py<PyAny>>,
         files: Option<&Bound<'_, PyDict>>,
         mounts: Option<&Bound<'_, PyList>>,
+        allowed_mount_paths: Option<Vec<String>>,
+        readonly_filesystem: bool,
         custom_builtins: Option<&Bound<'_, PyDict>>,
         network: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
@@ -3140,7 +3150,11 @@ impl PyBash {
         if let Some(ref net) = network {
             builder = net.apply(builder);
         }
+        if let Some(ref paths) = allowed_mount_paths {
+            builder = builder.allowed_mount_paths(paths.iter().map(|p| PathBuf::from(p.as_str())));
+        }
         builder = apply_fs_config(builder, &files, &real_mounts)?;
+        builder = builder.readonly_filesystem(readonly_filesystem);
         let builtin_engine = PyCallbackEngine::new(py)?;
         builder = apply_custom_builtins_to_builder(py, builder, &custom_builtins);
 
@@ -3164,6 +3178,8 @@ impl PyBash {
             builtin_engine,
             files,
             real_mounts,
+            allowed_mount_paths,
+            readonly_filesystem,
             max_commands,
             max_loop_iterations,
             max_memory,
@@ -3390,6 +3406,8 @@ impl PyBash {
         external_handler=None,
         files=None,
         mounts=None,
+        allowed_mount_paths=None,
+        readonly_filesystem=false,
         custom_builtins=None,
         network=None,
     ))]
@@ -3409,6 +3427,8 @@ impl PyBash {
         external_handler: Option<Py<PyAny>>,
         files: Option<&Bound<'_, PyDict>>,
         mounts: Option<&Bound<'_, PyList>>,
+        allowed_mount_paths: Option<Vec<String>>,
+        readonly_filesystem: bool,
         custom_builtins: Option<&Bound<'_, PyDict>>,
         network: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
@@ -3426,6 +3446,8 @@ impl PyBash {
             external_handler,
             files,
             mounts,
+            allowed_mount_paths,
+            readonly_filesystem,
             custom_builtins,
             network,
         )?;
@@ -3617,6 +3639,8 @@ pub struct BashTool {
     builtin_engine: Arc<PyCallbackEngine>,
     files: Vec<PyFileMount>,
     real_mounts: Vec<RealMountConfig>,
+    allowed_mount_paths: Option<Vec<String>>,
+    readonly_filesystem: bool,
     max_commands: Option<u64>,
     max_loop_iterations: Option<u64>,
     max_memory: Option<u64>,
@@ -3656,8 +3680,12 @@ impl BashTool {
         if let Some(ref net) = self.network {
             builder = net.apply(builder);
         }
+        if let Some(ref paths) = self.allowed_mount_paths {
+            builder = builder.allowed_mount_paths(paths.iter().map(|p| PathBuf::from(p.as_str())));
+        }
         let files = clone_file_mounts(py, &self.files);
-        let builder = apply_fs_config(builder, &files, &self.real_mounts)?;
+        let mut builder = apply_fs_config(builder, &files, &self.real_mounts)?;
+        builder = builder.readonly_filesystem(self.readonly_filesystem);
         Ok(apply_custom_builtins_to_builder(
             py,
             builder,
@@ -3712,6 +3740,8 @@ impl BashTool {
         timeout_seconds=None,
         files=None,
         mounts=None,
+        allowed_mount_paths=None,
+        readonly_filesystem=false,
         custom_builtins=None,
         network=None,
     ))]
@@ -3725,6 +3755,8 @@ impl BashTool {
         timeout_seconds: Option<f64>,
         files: Option<&Bound<'_, PyDict>>,
         mounts: Option<&Bound<'_, PyList>>,
+        allowed_mount_paths: Option<Vec<String>>,
+        readonly_filesystem: bool,
         custom_builtins: Option<&Bound<'_, PyDict>>,
         network: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
@@ -3760,7 +3792,11 @@ impl BashTool {
         if let Some(ref net) = network {
             builder = net.apply(builder);
         }
+        if let Some(ref paths) = allowed_mount_paths {
+            builder = builder.allowed_mount_paths(paths.iter().map(|p| PathBuf::from(p.as_str())));
+        }
         builder = apply_fs_config(builder, &files, &real_mounts)?;
+        builder = builder.readonly_filesystem(readonly_filesystem);
         let builtin_engine = PyCallbackEngine::new(py)?;
         builder = apply_custom_builtins_to_builder(py, builder, &custom_builtins);
 
@@ -3779,6 +3815,8 @@ impl BashTool {
             builtin_engine,
             files,
             real_mounts,
+            allowed_mount_paths,
+            readonly_filesystem,
             max_commands,
             max_loop_iterations,
             max_memory,
@@ -3974,6 +4012,8 @@ impl BashTool {
         timeout_seconds=None,
         files=None,
         mounts=None,
+        allowed_mount_paths=None,
+        readonly_filesystem=false,
         custom_builtins=None,
         network=None,
     ))]
@@ -3989,6 +4029,8 @@ impl BashTool {
         timeout_seconds: Option<f64>,
         files: Option<&Bound<'_, PyDict>>,
         mounts: Option<&Bound<'_, PyList>>,
+        allowed_mount_paths: Option<Vec<String>>,
+        readonly_filesystem: bool,
         custom_builtins: Option<&Bound<'_, PyDict>>,
         network: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
@@ -4002,6 +4044,8 @@ impl BashTool {
             timeout_seconds,
             files,
             mounts,
+            allowed_mount_paths,
+            readonly_filesystem,
             custom_builtins,
             network,
         )?;

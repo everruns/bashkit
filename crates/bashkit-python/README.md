@@ -479,7 +479,17 @@ need them after snapshot restore.
 ```python
 from bashkit.langchain import create_bash_tool
 
-tool = create_bash_tool()
+tool = create_bash_tool(
+    mounts=[
+        {
+            "host_path": "/path/to/docs",
+            "vfs_path": "/docs",
+            "writable": False,
+        }
+    ],
+    allowed_mount_paths=["/path/to/docs"],
+    readonly_filesystem=True,
+)
 ```
 
 ### PydanticAI

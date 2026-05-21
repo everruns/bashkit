@@ -231,6 +231,86 @@ def test_langchain_bashtool_accepts_timeout_seconds():
         assert tool is not None
 
 
+def test_langchain_bashtool_accepts_mounts(tmp_path):
+    """BashkitTool constructor mounts host directories."""
+    from bashkit.langchain import LANGCHAIN_AVAILABLE
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "guide.md").write_text("hello from mounted docs\n")
+
+    if LANGCHAIN_AVAILABLE:
+        from bashkit.langchain import BashkitTool
+
+        tool = BashkitTool(
+            mounts=[{"host_path": str(docs), "vfs_path": "/docs", "writable": False}],
+            allowed_mount_paths=[str(docs)],
+        )
+        assert "hello from mounted docs" in tool.invoke({"commands": "cat /docs/guide.md"})
+        assert "[Exit code:" in tool.invoke({"commands": "printf nope > /docs/nope.txt"})
+
+
+def test_bashtool_readonly_filesystem_blocks_copy_to_tmp(tmp_path):
+    """readonly_filesystem makes the whole VFS immutable, not only real mounts."""
+    from bashkit import BashTool
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "guide.md").write_text("hello from read-only docs\n")
+
+    tool = BashTool(
+        mounts=[{"host_path": str(docs), "vfs_path": "/docs", "writable": False}],
+        allowed_mount_paths=[str(docs)],
+        readonly_filesystem=True,
+    )
+    read = tool.execute_sync("cat /docs/guide.md")
+    copy = tool.execute_sync("cp /docs/guide.md /tmp/copied.md")
+    redirect = tool.execute_sync("printf nope > /tmp/nope.txt")
+
+    assert read.exit_code == 0
+    assert "hello from read-only docs" in read.stdout
+    assert copy.exit_code != 0
+    assert "read-only" in copy.stderr
+    assert redirect.exit_code != 0
+    assert "read-only" in redirect.stderr
+
+
+def test_langchain_create_bash_tool_accepts_mounts(tmp_path):
+    """create_bash_tool forwards mounts into BashTool."""
+    from bashkit.langchain import LANGCHAIN_AVAILABLE
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "guide.md").write_text("hello from mounted factory docs\n")
+
+    if LANGCHAIN_AVAILABLE:
+        from bashkit.langchain import create_bash_tool
+
+        tool = create_bash_tool(
+            mounts=[{"host_path": str(docs), "vfs_path": "/docs", "writable": False}],
+            allowed_mount_paths=[str(docs)],
+            readonly_filesystem=True,
+        )
+        assert "hello from mounted factory docs" in tool.invoke({"commands": "cat /docs/guide.md"})
+        assert "[Exit code:" in tool.invoke({"commands": "printf nope > /docs/nope.txt"})
+        assert "[Exit code:" in tool.invoke({"commands": "cp /docs/guide.md /tmp/copied.md"})
+
+
+def test_langchain_create_bash_tool_accepts_files():
+    """create_bash_tool forwards static VFS file mounts into BashTool."""
+    from bashkit.langchain import LANGCHAIN_AVAILABLE
+
+    if LANGCHAIN_AVAILABLE:
+        from bashkit.langchain import create_bash_tool
+
+        tool = create_bash_tool(
+            files={"/docs/examples/README.md": "mounted example readme\n"},
+            readonly_filesystem=True,
+        )
+        assert "mounted example readme" in tool.invoke({"commands": "cat /docs/examples/README.md"})
+        assert "[Exit code:" in tool.invoke({"commands": "printf nope > /tmp/nope.txt"})
+
+
 def test_pydantic_ai_create_bash_tool_accepts_timeout():
     """create_bash_tool in pydantic_ai accepts timeout_seconds."""
     from bashkit.pydantic_ai import PYDANTIC_AI_AVAILABLE

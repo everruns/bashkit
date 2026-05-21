@@ -65,6 +65,12 @@ let mut bash = Bash::builder()
 - Longest-prefix matching for nested mounts
 - Always used as outermost FS layer for live mount/unmount support
 
+#### ReadOnlyFs
+- Wraps another `FileSystem` and delegates read/stat/list operations
+- Denies all mutation operations with `PermissionDenied`
+- Useful for inspection-only tool sessions where even in-memory writes to
+  `/tmp`, redirections, `cp`, `mv`, `mkdir`, `rm`, and `chmod` must fail
+
 #### RealFs (Optional, `realfs` feature)
 - Direct access to a host directory as an `FsBackend`
 - Two modes: `ReadOnly` (safe) and `ReadWrite` (dangerous)
@@ -102,6 +108,8 @@ bash.unmount("/mnt/data")?;
 ```text
 ┌──────────────────────────────────┐
 │  MountableFs (live mounts)       │  ← Bash::mount() / unmount()
+├──────────────────────────────────┤
+│  ReadOnlyFs (optional)           │  ← BashBuilder::readonly_filesystem()
 ├──────────────────────────────────┤
 │  OverlayFs (text mounts)         │  ← BashBuilder::mount_text()
 ├──────────────────────────────────┤
@@ -150,6 +158,7 @@ All language bindings must expose the same filesystem concepts:
 ```
 files:  { "/path": "content" }                # text files (writable, in-memory)
 mounts: [{ host_path, vfs_path?, writable? }] # real FS (read-only by default)
+readonly_filesystem: bool                     # deny all VFS mutations after setup
 FileSystem()                                  # standalone in-memory filesystem
 FileSystem.real(host_path, writable=false)    # standalone real filesystem
                                               # JS requires allowed_mount_paths
@@ -175,7 +184,8 @@ Interop contract:
 - On import, bashkit reconstructs a binding-owned `FileSystem` wrapper from the
   stable handle payload
 
-Safety: real mounts are **read-only by default**. Text files are writable (sandboxed).
+Safety: real mounts are **read-only by default**. Text files are writable
+(sandboxed) unless the final session is wrapped with `readonly_filesystem`.
 
 ## Alternatives Considered
 

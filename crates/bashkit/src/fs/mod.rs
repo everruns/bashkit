@@ -89,6 +89,7 @@
 //! | [`InMemoryFs`] | HashMap-based storage with POSIX checks | Default, isolated execution |
 //! | [`OverlayFs`] | Copy-on-write layered filesystem | Templates, immutable bases |
 //! | [`MountableFs`] | Multiple filesystems at mount points | Complex multi-source setups |
+//! | [`ReadOnlyFs`] | Mutation-denying wrapper around another filesystem | Inspection-only sessions |
 //! | [`RealFs`] | Host directory access (`realfs` feature) | Expose host files to scripts |
 //!
 //! All implementations are thread-safe (`Send + Sync`) and fully async.
@@ -401,6 +402,7 @@ mod memory;
 mod mountable;
 mod overlay;
 mod posix;
+mod readonly;
 #[cfg(feature = "realfs")]
 mod realfs;
 mod search;
@@ -412,6 +414,7 @@ pub use memory::{InMemoryFs, LazyLoader, VfsSnapshot};
 pub use mountable::MountableFs;
 pub use overlay::OverlayFs;
 pub use posix::PosixFs;
+pub use readonly::ReadOnlyFs;
 #[cfg(feature = "realfs")]
 pub use realfs::{RealFs, RealFsMode};
 pub use search::{
