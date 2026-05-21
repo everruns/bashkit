@@ -200,9 +200,7 @@ fn build_url_with_query(base_url: &str, items: &[ItemType]) -> String {
     if query_items.is_empty() {
         return base_url.to_string();
     }
-    let encoded: String = url::form_urlencoded::Serializer::new(String::new())
-        .extend_pairs(query_items)
-        .finish();
+    let encoded = form_urlencode_pairs(query_items);
     let sep = if base_url.contains('?') { "&" } else { "?" };
     format!("{}{}{}", base_url, sep, encoded)
 }
@@ -244,9 +242,38 @@ fn build_form_body(items: &[ItemType]) -> String {
             }
         })
         .collect();
-    url::form_urlencoded::Serializer::new(String::new())
-        .extend_pairs(form_items)
-        .finish()
+    form_urlencode_pairs(form_items)
+}
+
+fn form_urlencode_pairs(pairs: Vec<(&str, &str)>) -> String {
+    let mut out = String::new();
+    for (idx, (key, value)) in pairs.into_iter().enumerate() {
+        if idx > 0 {
+            out.push('&');
+        }
+        form_urlencode_component(key, &mut out);
+        out.push('=');
+        form_urlencode_component(value, &mut out);
+    }
+    out
+}
+
+fn form_urlencode_component(input: &str, out: &mut String) {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+
+    for byte in input.as_bytes() {
+        match *byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'*' | b'-' | b'.' | b'_' => {
+                out.push(*byte as char);
+            }
+            b' ' => out.push('+'),
+            b => {
+                out.push('%');
+                out.push(HEX[(b >> 4) as usize] as char);
+                out.push(HEX[(b & 0x0f) as usize] as char);
+            }
+        }
+    }
 }
 
 /// Format the parsed request for display.
@@ -644,9 +671,7 @@ mod tests {
             "foo&admin=true".to_string(),
         )];
         let url = build_url_with_query("https://example.com", &items);
-        // The & in the value must be encoded, not treated as a param separator
-        assert!(!url.contains("admin=true"));
-        assert!(url.contains("q=foo%26admin%3Dtrue") || url.contains("q=foo%26admin=true"));
+        assert_eq!(url, "https://example.com?q=foo%26admin%3Dtrue");
     }
 
     #[test]
@@ -656,7 +681,7 @@ mod tests {
             "hello world".to_string(),
         )];
         let url = build_url_with_query("https://example.com", &items);
-        assert!(url.contains("search=hello"));
+        assert_eq!(url, "https://example.com?search=hello+world");
     }
 
     #[test]
@@ -666,12 +691,7 @@ mod tests {
             "admin&role=superadmin".to_string(),
         )];
         let body = build_form_body(&items);
-        // The & in the value must be encoded
-        assert!(!body.contains("role=superadmin"));
-        assert!(
-            body.contains("user=admin%26role%3Dsuperadmin")
-                || body.contains("user=admin%26role%3Dsuperadmin")
-        );
+        assert_eq!(body, "user=admin%26role%3Dsuperadmin");
     }
 
     #[test]
@@ -679,5 +699,15 @@ mod tests {
         let items = vec![ItemType::JsonField("name".to_string(), "test".to_string())];
         let body = build_form_body(&items);
         assert_eq!(body, "name=test");
+    }
+
+    #[test]
+    fn test_form_urlencode_component_utf8_and_reserved_bytes() {
+        let items = vec![ItemType::JsonField(
+            "sp ace".to_string(),
+            "café/tea?".to_string(),
+        )];
+        let body = build_form_body(&items);
+        assert_eq!(body, "sp+ace=caf%C3%A9%2Ftea%3F");
     }
 }

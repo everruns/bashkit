@@ -35,8 +35,6 @@ bashkit = { path = "../bashkit", version = "0.6.0", features = ["http_client", "
 tokio = { workspace = true, features = ["macros", "net", "rt", "rt-multi-thread", "time"] }
 clap.workspace = true
 anyhow.workspace = true
-serde.workspace = true
-serde_json.workspace = true
 rustyline = { version = "18", optional = true }
 terminal_size = { version = "0.4", optional = true }
 signal-hook = { version = "0.4", optional = true }
