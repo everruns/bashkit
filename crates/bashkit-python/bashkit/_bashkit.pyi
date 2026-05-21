@@ -465,6 +465,8 @@ class Bash:
         external_handler: ExternalHandler | None = None,
         files: dict[str, str | Callable[[], str]] | None = None,
         mounts: list[dict[str, Any]] | None = None,
+        allowed_mount_paths: list[str] | None = None,
+        readonly_filesystem: bool = False,
         custom_builtins: Mapping[str, BuiltinCallback] | None = None,
         network: NetworkConfig | None = None,
     ) -> None:
@@ -492,6 +494,11 @@ class Bash:
                 ``execute()``; those re-entrant calls are rejected.
             files: Dict mapping VFS paths to file contents or lazy callables.
             mounts: List of real host directory mount configs.
+            allowed_mount_paths: Host path prefixes allowed for real filesystem
+                mounts. Required when mounting sensitive host locations such as
+                paths under a user home directory.
+            readonly_filesystem: Deny all filesystem mutations after configured
+                files and mounts are applied.
             custom_builtins: Constructor-time Python callbacks exposed as
                 bash builtins. Each callback receives a ``BuiltinContext``
                 with raw ``argv`` tokens and optional pipeline ``stdin``,
@@ -694,6 +701,8 @@ class Bash:
         external_handler: ExternalHandler | None = None,
         files: dict[str, str] | None = None,
         mounts: list[dict[str, Any]] | None = None,
+        allowed_mount_paths: list[str] | None = None,
+        readonly_filesystem: bool = False,
         custom_builtins: Mapping[str, BuiltinCallback] | None = None,
         network: NetworkConfig | None = None,
     ) -> Bash:
@@ -870,6 +879,8 @@ class BashTool:
         timeout_seconds: float | None = None,
         files: dict[str, str | Callable[[], str]] | None = None,
         mounts: list[dict[str, Any]] | None = None,
+        allowed_mount_paths: list[str] | None = None,
+        readonly_filesystem: bool = False,
         custom_builtins: Mapping[str, BuiltinCallback] | None = None,
         network: NetworkConfig | None = None,
     ) -> None:
@@ -884,6 +895,11 @@ class BashTool:
             timeout_seconds: Abort execution after this duration.
             files: Dict mapping VFS paths to file contents or lazy callables.
             mounts: List of real host directory mount configs.
+            allowed_mount_paths: Host path prefixes allowed for real filesystem
+                mounts. Required when mounting sensitive host locations such as
+                paths under a user home directory.
+            readonly_filesystem: Deny all filesystem mutations after configured
+                files and mounts are applied.
             custom_builtins: Constructor-time Python callbacks exposed as
                 bash builtins. Each callback receives a ``BuiltinContext``
                 and must return a stdout string, a ``BuiltinResult``, or
@@ -1115,6 +1131,8 @@ class BashTool:
         timeout_seconds: float | None = None,
         files: dict[str, str] | None = None,
         mounts: list[dict[str, Any]] | None = None,
+        allowed_mount_paths: list[str] | None = None,
+        readonly_filesystem: bool = False,
         custom_builtins: Mapping[str, BuiltinCallback] | None = None,
         network: NetworkConfig | None = None,
     ) -> BashTool:

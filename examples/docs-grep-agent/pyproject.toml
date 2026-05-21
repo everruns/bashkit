@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "bashkit-docs-grep-agent"
+version = "0.1.0"
+description = "Minimal LangGraph console agent for answering Bashkit docs questions with read-only bashkit grep."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "bashkit",
+    "langchain>=1.0",
+    "langchain-core>=1.0",
+    "langchain-openai>=1.0.1",
+    "langgraph>=1.0",
+]
+
+[tool.uv.sources]
+bashkit = { path = "../../crates/bashkit-python" }
+
+[project.scripts]
+docs-grep-agent = "docs_grep_agent:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["docs_grep_agent"]
