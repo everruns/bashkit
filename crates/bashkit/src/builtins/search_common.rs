@@ -3,13 +3,9 @@
 //! Extracted from duplicated code in grep.rs and rg.rs to provide a single
 //! canonical implementation of common search operations.
 
-use std::path::PathBuf;
-use std::sync::Arc;
-
 use regex::{Regex, RegexBuilder};
 
 use crate::error::{Error, Result};
-use crate::fs::FileSystem;
 
 /// Default compiled-regex size limit (1 MB).
 pub(crate) const REGEX_SIZE_LIMIT: usize = 1_000_000;
@@ -32,33 +28,6 @@ pub(crate) fn build_regex_opts(
         .size_limit(REGEX_SIZE_LIMIT)
         .dfa_size_limit(REGEX_DFA_SIZE_LIMIT)
         .build()
-}
-
-/// Recursively collect all files under the given directories in the VFS.
-///
-/// Returns sorted list of file paths (directories are traversed but not included).
-pub(crate) async fn collect_files_recursive(
-    fs: &Arc<dyn FileSystem>,
-    dirs: &[PathBuf],
-) -> Vec<PathBuf> {
-    let mut result = Vec::new();
-    let mut stack: Vec<PathBuf> = dirs.to_vec();
-
-    while let Some(current) = stack.pop() {
-        if let Ok(entries) = fs.read_dir(&current).await {
-            for entry in entries {
-                let path = current.join(&entry.name);
-                if entry.metadata.file_type.is_dir() {
-                    stack.push(path);
-                } else if entry.metadata.file_type.is_file() {
-                    result.push(path);
-                }
-            }
-        }
-    }
-
-    result.sort();
-    result
 }
 
 /// Build a regex from a single pattern with common options.
