@@ -35,6 +35,9 @@ Wrap a ScriptedTool for multi-tool orchestration::
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any
+
 try:
     from langchain_core.tools import BaseTool, ToolException
     from pydantic import BaseModel, Field, PrivateAttr
@@ -89,6 +92,10 @@ if LANGCHAIN_AVAILABLE:
             max_commands: int | None = None,
             max_loop_iterations: int | None = None,
             timeout_seconds: float | None = None,
+            files: dict[str, str | Callable[[], str]] | None = None,
+            mounts: list[dict[str, Any]] | None = None,
+            allowed_mount_paths: list[str] | None = None,
+            readonly_filesystem: bool = False,
             max_output_length: int = 100_000,
             **kwargs,
         ):
@@ -98,6 +105,10 @@ if LANGCHAIN_AVAILABLE:
                 max_commands=max_commands,
                 max_loop_iterations=max_loop_iterations,
                 timeout_seconds=timeout_seconds,
+                files=files,
+                mounts=mounts,
+                allowed_mount_paths=allowed_mount_paths,
+                readonly_filesystem=readonly_filesystem,
             )
             kwargs["name"] = bash_tool.name
             kwargs["description"] = bash_tool.description()
@@ -198,6 +209,10 @@ def create_bash_tool(
     max_commands: int | None = None,
     max_loop_iterations: int | None = None,
     timeout_seconds: float | None = None,
+    files: dict[str, str | Callable[[], str]] | None = None,
+    mounts: list[dict[str, Any]] | None = None,
+    allowed_mount_paths: list[str] | None = None,
+    readonly_filesystem: bool = False,
 ) -> BashkitTool:
     """Create a LangChain-compatible Bashkit tool.
 
@@ -208,6 +223,15 @@ def create_bash_tool(
         max_loop_iterations: Max loop iterations
         timeout_seconds: Execution timeout in seconds. When set, commands
             that exceed this duration are aborted with exit code 124.
+        files: Static VFS file mounts keyed by sandbox path.
+        mounts: Real host directory mounts exposed inside the sandbox.
+            Mounts are read-only by default; pass ``{"writable": True}``
+            on a mount config to allow writes.
+        allowed_mount_paths: Host path prefixes allowed for real filesystem
+            mounts. Required when mounting sensitive host locations such as
+            paths under a user home directory.
+        readonly_filesystem: Deny all filesystem mutations after configured
+            files and mounts are applied.
 
     Returns:
         BashkitTool instance for use with LangChain agents
@@ -231,6 +255,10 @@ def create_bash_tool(
         max_commands=max_commands,
         max_loop_iterations=max_loop_iterations,
         timeout_seconds=timeout_seconds,
+        files=files,
+        mounts=mounts,
+        allowed_mount_paths=allowed_mount_paths,
+        readonly_filesystem=readonly_filesystem,
     )
 
 

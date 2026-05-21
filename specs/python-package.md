@@ -113,7 +113,8 @@ tool = BashTool(
     username="user",           # optional, default "user"
     hostname="sandbox",        # optional, default "sandbox"
     max_commands=10000,        # optional
-    max_loop_iterations=100000 # optional
+    max_loop_iterations=100000, # optional
+    readonly_filesystem=False,  # optional: deny all VFS mutations after setup
 )
 
 # Async

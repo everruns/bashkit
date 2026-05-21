@@ -56,6 +56,21 @@ export ANTHROPIC_API_KEY=your_key
 uv run examples/deepagent_coding_agent.py
 ```
 
+### docs-grep-agent/
+
+Minimal LangChain/LangGraph console agent for Bashkit docs Q&A. It exposes
+Bashkit's built-in bash tool to the model, which writes grep scripts against
+real docs and a curated examples view mounted read-only under `/docs`. The
+whole session filesystem is read-only, so copy/write attempts into `/tmp` fail
+too.
+
+```bash
+cd examples/docs-grep-agent
+export OPENAI_API_KEY=sk-...
+uv run docs-grep-agent "what is bashkit"
+uv run docs-grep-agent --show-tools "give me example on how to use bashkit cli"
+```
+
 ## JavaScript / TypeScript
 
 JS examples install `@everruns/bashkit` from npm. All dependencies are in

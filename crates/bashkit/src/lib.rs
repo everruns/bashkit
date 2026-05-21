@@ -448,9 +448,9 @@ pub use credential::Credential;
 pub use error::{Error, Result};
 pub use fs::{
     DirEntry, FileSystem, FileSystemExt, FileType, FsBackend, FsLimitExceeded, FsLimits, FsUsage,
-    InMemoryFs, LazyLoader, Metadata, MountableFs, OverlayFs, PosixFs, SearchCapabilities,
-    SearchCapable, SearchMatch, SearchProvider, SearchQuery, SearchResults, VfsSnapshot,
-    normalize_path, verify_filesystem_requirements,
+    InMemoryFs, LazyLoader, Metadata, MountableFs, OverlayFs, PosixFs, ReadOnlyFs,
+    SearchCapabilities, SearchCapable, SearchMatch, SearchProvider, SearchQuery, SearchResults,
+    VfsSnapshot, normalize_path, verify_filesystem_requirements,
 };
 #[cfg(feature = "realfs")]
 pub use fs::{RealFs, RealFsMode};
@@ -1247,6 +1247,8 @@ pub struct BashBuilder {
     mount_path_allowlist: Option<Vec<PathBuf>>,
     /// Optional VFS path for persistent history
     history_file: Option<PathBuf>,
+    /// When true, deny all filesystem mutations after configured mounts/files are applied.
+    readonly_filesystem: bool,
     /// Interceptor hooks
     hooks_on_exit: Vec<hooks::Interceptor<hooks::ExitEvent>>,
     hooks_before_exec: Vec<hooks::Interceptor<hooks::ExecInput>>,
@@ -2373,6 +2375,16 @@ impl BashBuilder {
         self
     }
 
+    /// Make the final virtual filesystem read-only.
+    ///
+    /// This is stronger than mounting real directories read-only: writes to any
+    /// VFS location fail, including `/tmp`, redirections, `cp`, `mv`, `rm`,
+    /// `mkdir`, and `chmod`.
+    pub fn readonly_filesystem(mut self, readonly: bool) -> Self {
+        self.readonly_filesystem = readonly;
+        self
+    }
+
     /// Build the Bash instance.
     ///
     /// If mounted files are specified, they are added via an [`OverlayFs`] layer
@@ -2439,7 +2451,14 @@ impl BashBuilder {
             base_fs
         };
 
-        // Layer 3: Wrap in MountableFs for post-build live mount/unmount
+        // Layer 3: Optionally deny all filesystem mutations after setup.
+        let base_fs: Arc<dyn FileSystem> = if self.readonly_filesystem {
+            Arc::new(ReadOnlyFs::new(base_fs))
+        } else {
+            base_fs
+        };
+
+        // Layer 4: Wrap in MountableFs for post-build live mount/unmount
         let mountable = Arc::new(MountableFs::new(base_fs));
         let fs: Arc<dyn FileSystem> = Arc::clone(&mountable) as Arc<dyn FileSystem>;
 
@@ -2616,8 +2635,7 @@ impl BashBuilder {
 
             // THREAT[TM-FS-013]: Sensitive paths are refused by default. They
             // can still be mounted by adding an explicit `allowed_mount_paths`
-            // entry that covers them — this turns the embedder's intent into
-            // an audit-visible decision instead of silent permissiveness.
+            // entry that covers them.
             let is_sensitive = Self::is_sensitive_mount_path(&canonical_host);
 
             if let Some(allowlist) = &canonical_allowlist {
@@ -2630,16 +2648,6 @@ impl BashBuilder {
                         m.host_path.display()
                     );
                     continue;
-                }
-                // Allowlisted: caller has accepted the risk explicitly. Still
-                // emit a stronger warning when the path is also sensitive so
-                // the trust-boundary break is visible in logs.
-                if is_sensitive {
-                    eprintln!(
-                        "bashkit: warning: mounting sensitive path {} via explicit allowlist — \
-                         host trust boundary intentionally broken",
-                        m.host_path.display()
-                    );
                 }
             } else if is_sensitive {
                 eprintln!(

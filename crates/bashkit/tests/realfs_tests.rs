@@ -142,6 +142,29 @@ async fn readonly_mount_at_path_vfs_root_intact() {
     assert_eq!(result.stdout, "test\n");
 }
 
+#[tokio::test]
+async fn readonly_filesystem_blocks_copy_from_mount_to_tmp() {
+    let dir = setup_host_dir();
+    let mut bash = builder_allowing_host_paths(&[dir.path()])
+        .mount_real_readonly_at(dir.path(), "/mnt/data")
+        .readonly_filesystem(true)
+        .build();
+
+    let read = bash.exec("cat /mnt/data/hello.txt").await.unwrap();
+    assert_eq!(read.stdout, "hello world\n");
+
+    let copy = bash
+        .exec("cp /mnt/data/hello.txt /tmp/copied.txt")
+        .await
+        .unwrap();
+    assert_ne!(copy.exit_code, 0);
+    assert!(copy.stderr.contains("read-only"));
+
+    let redirect = bash.exec("printf nope > /tmp/nope.txt").await.unwrap();
+    assert_ne!(redirect.exit_code, 0);
+    assert!(redirect.stderr.contains("read-only"));
+}
+
 // --- Use case 3: readwrite mount ---
 
 #[tokio::test]
@@ -512,7 +535,7 @@ async fn mount_secret_dir_component_blocked_without_allowlist() {
 
 /// THREAT[TM-FS-013]: An explicit `allowed_mount_paths` opt-in is the
 /// documented escape hatch. When the embedder allowlists a sensitive path,
-/// the mount succeeds (the trust-boundary break is intentional and visible).
+/// the mount succeeds.
 #[cfg(unix)]
 #[tokio::test]
 async fn mount_secret_dir_component_allowed_via_explicit_allowlist() {

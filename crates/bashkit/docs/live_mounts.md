@@ -98,6 +98,8 @@ operations to the correct mounted filesystem:
 ┌──────────────────────────────┐
 │  MountableFs (live mounts)   │  ← Bash::mount() / unmount()
 ├──────────────────────────────┤
+│  ReadOnlyFs (optional)       │  ← BashBuilder::readonly_filesystem()
+├──────────────────────────────┤
 │  OverlayFs (text mounts)     │  ← BashBuilder::mount_text()
 ├──────────────────────────────┤
 │  MountableFs (real mounts)   │  ← BashBuilder::mount_real_*_at()
@@ -109,6 +111,12 @@ operations to the correct mounted filesystem:
 Because the interpreter holds an `Arc<dyn FileSystem>` pointing to the
 outermost `MountableFs`, any mount/unmount operation is visible to the
 interpreter immediately — no rebuild or state transfer required.
+
+When `BashBuilder::readonly_filesystem(true)` is used, the configured mounts
+and text files are installed first, then the final filesystem is wrapped so
+all later mutations fail. This is stricter than read-only real mounts: writes
+to `/tmp`, shell redirections, `cp`, `mv`, `mkdir`, `rm`, and `chmod` are also
+denied.
 
 ## Builder Mounts vs Live Mounts
 
@@ -188,6 +196,7 @@ assert_eq!(result.stdout, "2.0");
 
 - [`MountableFs`] — the underlying mount infrastructure
 - [`BashBuilder::mount_text`] — pre-build text file mounts
+- [`BashBuilder::readonly_filesystem`] — deny all VFS mutations after setup
 - [`BashBuilder::fs`] — custom filesystem injection
 - [`Bash::fs`] — direct filesystem access
 - [VFS specification](https://github.com/everruns/bashkit/blob/main/specs/vfs.md)
