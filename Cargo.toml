@@ -96,17 +96,12 @@ fail = "0.5"
 # Property-based testing
 proptest = "1"
 
-# JSON Schema generation
-schemars = "1"
-
 # Logging/tracing
 tracing = "0.1"
 tower = { version = "0.5", features = ["util"] }
 
 # SSH client (for ssh/scp/sftp builtins)
 russh = "0.60"
-russh-keys = "0.49"
-
 # Embedded SQLite engine (Turso, pure Rust). Upstream is BETA — gated behind
 # the `sqlite` feature and disabled by default; see specs/sqlite-builtin.md.
 turso_core = "0.6"

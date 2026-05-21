@@ -140,7 +140,6 @@ pub use crate::tool_def::{
 };
 
 use crate::{ExecutionLimits, Tool, ToolService};
-use schemars::schema_for;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 
@@ -435,14 +434,12 @@ impl ScriptedToolBuilder {
 
     /// Build the input schema without constructing the full tool.
     pub fn build_input_schema(&self) -> serde_json::Value {
-        let schema = schema_for!(crate::tool::ToolRequest);
-        serde_json::to_value(schema).unwrap_or_default()
+        crate::tool::tool_request_schema()
     }
 
     /// Build the output schema for `ToolOutput::result`.
     pub fn build_output_schema(&self) -> serde_json::Value {
-        let schema = schema_for!(crate::tool::ToolResponse);
-        serde_json::to_value(schema).unwrap_or_default()
+        crate::tool::tool_response_schema()
     }
 }
 

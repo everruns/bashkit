@@ -4,11 +4,11 @@ use super::{ScriptedExecutionTrace, ScriptedTool, ToolDefExtension, extension::I
 use crate::Bash;
 use crate::tool::{
     Tool, ToolError, ToolExecution, ToolOutputChunk, ToolRequest, ToolResponse, ToolStatus,
-    VERSION, localized, tool_output_from_response, tool_request_from_value,
+    VERSION, localized, tool_output_from_response, tool_request_from_value, tool_request_schema,
+    tool_response_schema,
 };
 use crate::tool_def::usage_from_schema;
 use async_trait::async_trait;
-use schemars::schema_for;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
@@ -193,13 +193,11 @@ impl Tool for ScriptedTool {
     }
 
     fn input_schema(&self) -> serde_json::Value {
-        let schema = schema_for!(ToolRequest);
-        serde_json::to_value(schema).unwrap_or_default()
+        tool_request_schema()
     }
 
     fn output_schema(&self) -> serde_json::Value {
-        let schema = schema_for!(ToolResponse);
-        serde_json::to_value(schema).unwrap_or_default()
+        tool_response_schema()
     }
 
     fn version(&self) -> &str {

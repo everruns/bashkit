@@ -65,7 +65,6 @@ use crate::error::Error;
 use crate::{Bash, ExecResult, ExecutionLimits, OutputCallback};
 use async_trait::async_trait;
 use futures_core::Stream;
-use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::future::Future;
@@ -265,7 +264,7 @@ od xxd hexdump base64 \
 kill";
 
 /// Request to execute bash commands
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolRequest {
     /// Bash commands to execute (like `bash -c "commands"`)
     pub commands: String,
@@ -287,7 +286,7 @@ impl ToolRequest {
 }
 
 /// Response from executing a bash script
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ToolResponse {
     /// Standard output from the script
     pub stdout: String,
@@ -321,6 +320,68 @@ impl From<ExecResult> for ToolResponse {
             final_env: result.final_env,
         }
     }
+}
+
+/// JSON schema for the stable tool request contract.
+pub(crate) fn tool_request_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "required": ["commands"],
+        "properties": {
+            "commands": {
+                "type": "string",
+                "description": "Bash commands to execute"
+            },
+            "timeout_ms": {
+                "type": ["integer", "null"],
+                "format": "uint64",
+                "minimum": 0,
+                "description": "Optional per-call timeout in milliseconds"
+            }
+        }
+    })
+}
+
+/// JSON schema for the stable tool response contract.
+pub(crate) fn tool_response_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "required": ["stdout", "stderr", "exit_code"],
+        "properties": {
+            "stdout": {
+                "type": "string",
+                "description": "Standard output from the script"
+            },
+            "stderr": {
+                "type": "string",
+                "description": "Standard error from the script"
+            },
+            "exit_code": {
+                "type": "integer",
+                "format": "int32",
+                "description": "Exit code; 0 means success"
+            },
+            "error": {
+                "type": ["string", "null"],
+                "description": "Error message if execution failed before running"
+            },
+            "stdout_truncated": {
+                "type": "boolean",
+                "default": false,
+                "description": "Whether stdout was truncated due to output size limits"
+            },
+            "stderr_truncated": {
+                "type": "boolean",
+                "default": false,
+                "description": "Whether stderr was truncated due to output size limits"
+            },
+            "final_env": {
+                "type": ["object", "null"],
+                "additionalProperties": { "type": "string" },
+                "description": "Final environment state when requested"
+            }
+        }
+    })
 }
 
 /// Status update during tool execution
@@ -683,14 +744,12 @@ impl BashToolBuilder {
 
     /// Build the input schema without constructing a full tool.
     pub fn build_input_schema(&self) -> serde_json::Value {
-        let schema = schema_for!(ToolRequest);
-        serde_json::to_value(schema).unwrap_or_default()
+        tool_request_schema()
     }
 
     /// Build the output schema for `ToolOutput::result`.
     pub fn build_output_schema(&self) -> serde_json::Value {
-        let schema = schema_for!(ToolResponse);
-        serde_json::to_value(schema).unwrap_or_default()
+        tool_response_schema()
     }
 }
 
