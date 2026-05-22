@@ -91,6 +91,7 @@ struct RgOptions {
     ignore_file_case_insensitive: bool,
     messages: bool,
     context_separator: String,
+    no_context_separator: bool,
     field_match_separator: String,
     field_context_separator: String,
     stdin_consumed_for_patterns: bool,
@@ -223,6 +224,7 @@ impl RgOptions {
             ignore_file_case_insensitive: false,
             messages: true,
             context_separator: "--".to_string(),
+            no_context_separator: false,
             field_match_separator: ":".to_string(),
             field_context_separator: "-".to_string(),
             stdin_consumed_for_patterns: false,
@@ -305,11 +307,14 @@ impl RgOptions {
                 opts.before_context = context;
                 opts.after_context = context;
             } else if let Some(val) = long_value(&mut p, "--context-separator")? {
-                opts.context_separator = val;
+                opts.context_separator = parse_rg_separator(&val);
+                opts.no_context_separator = false;
+            } else if p.flag("--no-context-separator") {
+                opts.no_context_separator = true;
             } else if let Some(val) = long_value(&mut p, "--field-match-separator")? {
-                opts.field_match_separator = val;
+                opts.field_match_separator = parse_rg_separator(&val);
             } else if let Some(val) = long_value(&mut p, "--field-context-separator")? {
-                opts.field_context_separator = val;
+                opts.field_context_separator = parse_rg_separator(&val);
             } else if let Some(val) = p.flag_value("-g", "rg").map_err(Error::Execution)? {
                 opts.glob_rules
                     .push(RgGlobRule::parse(val, false, opts.glob_case_insensitive)?);
@@ -386,6 +391,7 @@ impl RgOptions {
                 opts.binary = false;
             } else if p.flag("--crlf") {
                 opts.crlf = true;
+                opts.null_data = false;
             } else if p.flag("--no-crlf") {
                 opts.crlf = false;
             } else if p.flag_any(&["--multiline"]) {
@@ -1431,6 +1437,56 @@ fn parse_path_separator(value: &str) -> Result<String> {
     }
 }
 
+fn parse_rg_separator(value: &str) -> String {
+    let mut output = String::new();
+    let mut chars = value.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            output.push(ch);
+            continue;
+        }
+
+        let Some(escaped) = chars.next() else {
+            output.push('\\');
+            break;
+        };
+
+        match escaped {
+            'n' => output.push('\n'),
+            'r' => output.push('\r'),
+            't' => output.push('\t'),
+            '\\' => output.push('\\'),
+            'x' => {
+                let first = chars.peek().copied();
+                let second = {
+                    let mut iter = chars.clone();
+                    iter.next();
+                    iter.peek().copied()
+                };
+                if let (Some(a), Some(b)) = (first, second)
+                    && a.is_ascii_hexdigit()
+                    && b.is_ascii_hexdigit()
+                {
+                    chars.next();
+                    chars.next();
+                    let hex = format!("{a}{b}");
+                    if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                        output.push(byte as char);
+                    }
+                } else {
+                    output.push('\\');
+                    output.push('x');
+                }
+            }
+            other => {
+                output.push('\\');
+                output.push(other);
+            }
+        }
+    }
+    output
+}
+
 fn parse_encoding(value: &str) -> Result<RgEncoding> {
     match value.to_ascii_lowercase().as_str() {
         "auto" => Ok(RgEncoding::Auto),
@@ -2240,6 +2296,7 @@ fn write_rg_context(
     for line_idx in sorted {
         if let Some(prev) = prev_line
             && line_idx > prev + 1
+            && !opts.no_context_separator
         {
             output.push_str(&opts.context_separator);
             output.push(record_terminator);
@@ -2435,6 +2492,10 @@ impl Builtin for Rg {
         let help_text = help_text.replace(
             "  --max-depth NUM\tlimit recursive directory depth\n",
             "  -d, --max-depth NUM\tlimit recursive directory depth\n  --maxdepth NUM\talias for --max-depth\n",
+        );
+        let help_text = help_text.replace(
+            "  --context-separator SEP\tset context group separator\n",
+            "  --context-separator SEP\tset context group separator\n  --no-context-separator\tdisable context group separators\n",
         );
         let help_text = help_text.replace(
             "  --max-columns-preview\tshow prefixes of long lines\n",
@@ -3470,6 +3531,11 @@ mod tests {
         ("/proj/b.txt", b"x\nneedle\ny\n"),
     ];
 
+    const DIFF_CONTEXT_GAP_FILES: &[(&str, &[u8])] = &[(
+        "/proj/gap.txt",
+        b"before\nneedle\nafter\ngap\nbefore2\nneedle again\nafter2\n",
+    )];
+
     const DIFF_SORT_FILES: &[(&str, &[u8])] =
         &[("/proj/a.txt", b"needle\n"), ("/proj/b.txt", b"needle\n")];
 
@@ -4009,6 +4075,77 @@ mod tests {
             output: RgDiffOutput::Exact,
         },
         RgDiffCase {
+            name: "context separator between discontiguous groups",
+            args: &[
+                "-n",
+                "-C1",
+                "--context-separator=@@",
+                "needle",
+                "proj/gap.txt",
+            ],
+            stdin: None,
+            files: DIFF_CONTEXT_GAP_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "no context separator",
+            args: &[
+                "-n",
+                "-C1",
+                "--no-context-separator",
+                "needle",
+                "proj/gap.txt",
+            ],
+            stdin: None,
+            files: DIFF_CONTEXT_GAP_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "context separator empty still prints blank line",
+            args: &[
+                "-n",
+                "-C1",
+                "--context-separator=",
+                "needle",
+                "proj/gap.txt",
+            ],
+            stdin: None,
+            files: DIFF_CONTEXT_GAP_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "context separator escape",
+            args: &[
+                "-n",
+                "-C1",
+                r"--context-separator=\t",
+                "needle",
+                "proj/gap.txt",
+            ],
+            stdin: None,
+            files: DIFF_CONTEXT_GAP_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "context separator last flag wins",
+            args: &[
+                "-n",
+                "-C1",
+                "--no-context-separator",
+                "--context-separator=@@",
+                "needle",
+                "proj/gap.txt",
+            ],
+            stdin: None,
+            files: DIFF_CONTEXT_GAP_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
             name: "field match separator",
             args: &[
                 "-n",
@@ -4023,11 +4160,38 @@ mod tests {
             output: RgDiffOutput::Exact,
         },
         RgDiffCase {
+            name: "field match separator escape",
+            args: &[
+                "-n",
+                r"--field-match-separator=\x7F",
+                "needle",
+                "proj/a.txt",
+            ],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
             name: "field context separator",
             args: &[
                 "-n",
                 "-C1",
                 "--field-context-separator=~",
+                "needle",
+                "proj/context.txt",
+            ],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "field context separator escape",
+            args: &[
+                "-n",
+                "-C1",
+                r"--field-context-separator=\t",
                 "needle",
                 "proj/context.txt",
             ],
@@ -5289,6 +5453,7 @@ mod tests {
         assert!(long_help.stdout.contains("-., --hidden"));
         assert!(long_help.stdout.contains("--one-file-system"));
         assert!(long_help.stdout.contains("--stop-on-nonmatch"));
+        assert!(long_help.stdout.contains("--no-context-separator"));
         assert!(long_help.stdout.contains("-d, --max-depth"));
         assert!(long_help.stdout.contains("--maxdepth"));
 
