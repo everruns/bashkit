@@ -47,6 +47,8 @@ struct RgOptions {
     invert_match: bool,
     word_boundary: bool,
     fixed_strings: bool,
+    text: bool,
+    binary: bool,
     max_count: Option<usize>,
     max_depth: Option<usize>,
     before_context: usize,
@@ -136,6 +138,8 @@ impl RgOptions {
             invert_match: false,
             word_boundary: false,
             fixed_strings: false,
+            text: false,
+            binary: false,
             max_count: None,
             max_depth: None,
             before_context: 0,
@@ -277,6 +281,10 @@ impl RgOptions {
                 opts.line_regexp = true;
             } else if p.flag_any(&["--fixed-strings"]) {
                 opts.fixed_strings = true;
+            } else if p.flag_any(&["--text"]) {
+                opts.text = true;
+            } else if p.flag("--binary") {
+                opts.binary = true;
             } else if p.flag_any(&["--only-matching"]) {
                 opts.only_matching = true;
             } else if p.flag_any(&["--quiet", "--silent"]) {
@@ -365,6 +373,7 @@ impl RgOptions {
                         'w' => opts.word_boundary = true,
                         'x' => opts.line_regexp = true,
                         'F' => opts.fixed_strings = true,
+                        'a' => opts.text = true,
                         'H' => opts.show_filename = true,
                         'I' => opts.no_filename = true,
                         'o' => opts.only_matching = true,
@@ -1475,6 +1484,10 @@ fn split_rg_lines(content: &str) -> Vec<RgLine<'_>> {
     lines
 }
 
+fn first_nul_offset(content: &str) -> Option<usize> {
+    content.as_bytes().iter().position(|&byte| byte == 0)
+}
+
 fn format_rg_line(line: &str, regex: &Regex, opts: &RgOptions, matched: bool) -> String {
     let line = if matched {
         if let Some(replacement) = &opts.replacement {
@@ -1649,7 +1662,7 @@ fn write_rg_json_summary(
 #[async_trait]
 impl Builtin for Rg {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        let help_text = "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i, --ignore-case\tcase insensitive\n  -S, --smart-case\tcase insensitive if pattern is lowercase\n  -s, --case-sensitive\tcase sensitive\n  -n, --line-number\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  --column\tshow column numbers\n  -b, --byte-offset\tshow byte offsets\n  --vimgrep\tshow file:line:column:match lines\n  --json\tshow JSON Lines events\n  --null\tterminate path fields with NUL\n  -c, --count\tcount matching lines\n  --count-matches\tcount individual matches\n  --include-zero\tinclude zero counts\n  -l, --files-with-matches\tfiles with matches\n  --files-without-match\tfiles without matches\n  --files\tprint files that would be searched\n  -v, --invert-match\tinvert match\n  -w, --word-regexp\tword boundary\n  -x, --line-regexp\tmatch whole lines\n  -F, --fixed-strings\tfixed strings (literal)\n  -o, --only-matching\tshow only matching text\n  -q, --quiet\tsuppress output; exit status only\n  -e, --regexp PATTERN\tuse PATTERN for matching\n  -f, --file PATTERNFILE\tread patterns from file\n  -r, --replace REPLACEMENT\treplace matches in output\n  --passthru\tprint matching and non-matching lines\n  --trim\ttrim whitespace from output lines\n  -m, --max-count NUM\tmax count per file\n  --max-depth NUM\tlimit recursive directory depth\n  -A, --after-context NUM\tshow trailing context\n  -B, --before-context NUM\tshow leading context\n  -C, --context NUM\tshow leading and trailing context\n  --context-separator SEP\tset context group separator\n  --field-match-separator SEP\tset match field separator\n  --field-context-separator SEP\tset context field separator\n  --heading\tgroup matches by file\n  --no-heading\tdisable heading output\n  --sort SORTBY\tsort paths (path only)\n  --sortr SORTBY\tsort paths in reverse (path only)\n  --sort-files\tsort --files output\n  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  -t, --type TYPE\tinclude files matching TYPE\n  -T, --type-not TYPE\texclude files matching TYPE\n  --type-add TYPE:GLOB\tadd a file type glob\n  --type-clear TYPE\tclear a file type definition\n  --type-list\tshow file type definitions\n  --ignore-file FILE\tuse additional ignore file\n  --no-ignore\tdo not use ignore files\n  --no-ignore-dot\tdo not use .ignore files\n  --no-ignore-vcs\tdo not use .gitignore files\n  --hidden\tsearch hidden files and directories\n  --no-hidden\tdo not search hidden files and directories\n  -H, --with-filename\tshow filename\n  -I, --no-filename\tsuppress filename\n  --color MODE\tcolor output (no-op)\n  -h, --help\tdisplay this help and exit\n  -V, --version\toutput version information and exit\n";
+        let help_text = "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i, --ignore-case\tcase insensitive\n  -S, --smart-case\tcase insensitive if pattern is lowercase\n  -s, --case-sensitive\tcase sensitive\n  -n, --line-number\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  --column\tshow column numbers\n  -b, --byte-offset\tshow byte offsets\n  --vimgrep\tshow file:line:column:match lines\n  --json\tshow JSON Lines events\n  --null\tterminate path fields with NUL\n  -c, --count\tcount matching lines\n  --count-matches\tcount individual matches\n  --include-zero\tinclude zero counts\n  -l, --files-with-matches\tfiles with matches\n  --files-without-match\tfiles without matches\n  --files\tprint files that would be searched\n  -v, --invert-match\tinvert match\n  -w, --word-regexp\tword boundary\n  -x, --line-regexp\tmatch whole lines\n  -F, --fixed-strings\tfixed strings (literal)\n  -a, --text\tsearch binary files as text\n  --binary\tsearch binary files and print binary-match summaries\n  -o, --only-matching\tshow only matching text\n  -q, --quiet\tsuppress output; exit status only\n  -e, --regexp PATTERN\tuse PATTERN for matching\n  -f, --file PATTERNFILE\tread patterns from file\n  -r, --replace REPLACEMENT\treplace matches in output\n  --passthru\tprint matching and non-matching lines\n  --trim\ttrim whitespace from output lines\n  -m, --max-count NUM\tmax count per file\n  --max-depth NUM\tlimit recursive directory depth\n  -A, --after-context NUM\tshow trailing context\n  -B, --before-context NUM\tshow leading context\n  -C, --context NUM\tshow leading and trailing context\n  --context-separator SEP\tset context group separator\n  --field-match-separator SEP\tset match field separator\n  --field-context-separator SEP\tset context field separator\n  --heading\tgroup matches by file\n  --no-heading\tdisable heading output\n  --sort SORTBY\tsort paths (path only)\n  --sortr SORTBY\tsort paths in reverse (path only)\n  --sort-files\tsort --files output\n  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  -t, --type TYPE\tinclude files matching TYPE\n  -T, --type-not TYPE\texclude files matching TYPE\n  --type-add TYPE:GLOB\tadd a file type glob\n  --type-clear TYPE\tclear a file type definition\n  --type-list\tshow file type definitions\n  --ignore-file FILE\tuse additional ignore file\n  --no-ignore\tdo not use ignore files\n  --no-ignore-dot\tdo not use .ignore files\n  --no-ignore-vcs\tdo not use .gitignore files\n  --hidden\tsearch hidden files and directories\n  --no-hidden\tdo not search hidden files and directories\n  -H, --with-filename\tshow filename\n  -I, --no-filename\tsuppress filename\n  --color MODE\tcolor output (no-op)\n  -h, --help\tdisplay this help and exit\n  -V, --version\toutput version information and exit\n";
         if ctx.args.iter().any(|arg| arg == "-h") {
             return Ok(ExecResult::ok(help_text.to_string()));
         }
@@ -1724,6 +1737,64 @@ impl Builtin for Rg {
             let mut match_count = 0usize;
             let mut count_value = 0usize;
             let mut match_lines = Vec::new();
+            if let Some(nul_offset) = first_nul_offset(content)
+                && !opts.text
+            {
+                if !opts.binary {
+                    continue;
+                }
+
+                let matched = regex.is_match(content);
+                let matched = if opts.invert_match { !matched } else { matched };
+                if !matched {
+                    if opts.files_without_matches {
+                        any_match = true;
+                        output.push_str(filename);
+                        output.push(if opts.null { '\0' } else { '\n' });
+                    } else if (opts.count_only || opts.count_matches) && opts.include_zero {
+                        if show_filename {
+                            output.push_str(filename);
+                            output.push(if opts.null { '\0' } else { ':' });
+                        }
+                        output.push_str("0\n");
+                    }
+                    continue;
+                }
+
+                any_match = true;
+                if opts.quiet {
+                    return Ok(ExecResult::ok(String::new()));
+                }
+                if opts.files_without_matches {
+                    continue;
+                }
+                if opts.files_with_matches {
+                    output.push_str(filename);
+                    output.push(if opts.null { '\0' } else { '\n' });
+                    continue;
+                }
+                if opts.count_only || opts.count_matches {
+                    if show_filename {
+                        output.push_str(filename);
+                        output.push(if opts.null { '\0' } else { ':' });
+                    }
+                    output.push_str("1\n");
+                    continue;
+                }
+
+                if show_filename {
+                    output.push_str(filename);
+                    output.push(if opts.null { '\0' } else { ':' });
+                    if !opts.null {
+                        output.push(' ');
+                    }
+                }
+                output.push_str(&format!(
+                    "binary file matches (found \"\\0\" byte around offset {})\n",
+                    nul_offset
+                ));
+                continue;
+            }
             let lines = split_rg_lines(content);
             json_bytes_searched += content.len();
             json_searches += 1;
@@ -2133,6 +2204,11 @@ mod tests {
         ("/proj/src/ignored.txt", b"needle\n"),
         ("/proj/vendor/lib.rs", b"needle\n"),
         ("/proj/scratch.tmp", b"needle\n"),
+    ];
+
+    const DIFF_BINARY_FILES: &[(&str, &[u8])] = &[
+        ("/proj/bin.dat", b"abc\0needle\n"),
+        ("/proj/text.txt", b"needle\n"),
     ];
 
     const RG_DIFF_CASES: &[RgDiffCase] = &[
@@ -2670,6 +2746,30 @@ mod tests {
             cwd: "/",
             output: RgDiffOutput::Exact,
         },
+        RgDiffCase {
+            name: "binary skipped by default",
+            args: &["needle", "proj"],
+            stdin: None,
+            files: DIFF_BINARY_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "binary as text",
+            args: &["-a", "needle", "proj/bin.dat"],
+            stdin: None,
+            files: DIFF_BINARY_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "binary match summary",
+            args: &["--binary", "needle", "proj"],
+            stdin: None,
+            files: DIFF_BINARY_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
     ];
 
     fn require_real_rg() {
@@ -2980,6 +3080,30 @@ mod tests {
         assert_eq!(no_vcs.exit_code, 0);
         assert!(no_vcs.stdout.contains("a.log"));
         assert!(!no_vcs.stdout.contains("src/ignored.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_rg_binary_text_modes() {
+        let files: &[(&str, &[u8])] = &[
+            ("/proj/bin.dat", b"abc\0needle\n"),
+            ("/proj/text.txt", b"needle\n"),
+        ];
+
+        let default = run_rg(&["needle", "/proj"], None, files).await;
+        assert_eq!(default.exit_code, 0);
+        assert!(default.stdout.contains("text.txt"));
+        assert!(!default.stdout.contains("bin.dat"));
+
+        let text = run_rg(&["--text", "needle", "/proj/bin.dat"], None, files).await;
+        assert_eq!(text.exit_code, 0);
+        assert_eq!(text.stdout, "abc\0needle\n");
+
+        let binary = run_rg(&["--binary", "needle", "/proj/bin.dat"], None, files).await;
+        assert_eq!(binary.exit_code, 0);
+        assert_eq!(
+            binary.stdout,
+            "binary file matches (found \"\\0\" byte around offset 3)\n"
+        );
     }
 
     #[tokio::test]
