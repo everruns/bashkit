@@ -567,6 +567,12 @@ impl RgOptions {
                 opts.messages = false;
             } else if p.flag("--messages") {
                 opts.messages = true;
+            } else if p.flag_any(&["--debug", "--trace", "--no-ignore-messages"]) {
+                // no-op: these flags only affect real rg's diagnostic stderr.
+            } else if long_value(&mut p, "--hostname-bin")?.is_some() {
+                // no-op: hyperlink hostname discovery is not modeled.
+            } else if long_value(&mut p, "--hyperlink-format")?.is_some() {
+                // no-op: bashkit rg does not emit terminal hyperlinks.
             } else if p.flag_any(&[
                 "--no-config",
                 "--line-buffered",
@@ -2642,6 +2648,14 @@ impl Builtin for Rg {
         let help_text = help_text.replace(
             "  --max-depth NUM\tlimit recursive directory depth\n",
             "  -d, --max-depth NUM\tlimit recursive directory depth\n  --maxdepth NUM\talias for --max-depth\n",
+        );
+        let help_text = help_text.replace(
+            "  --no-messages\tsuppress file read diagnostics\n",
+            "  --no-messages\tsuppress file read diagnostics\n  --no-ignore-messages\tsuppress ignore parse diagnostics (no-op)\n  --debug\tshow debug diagnostics (no-op)\n  --trace\tshow trace diagnostics (no-op)\n",
+        );
+        let help_text = help_text.replace(
+            "  --colors SPEC\tconfigure colors (no-op)\n",
+            "  --colors SPEC\tconfigure colors (no-op)\n  --hostname-bin COMMAND\tcommand for hyperlink hostname discovery (no-op)\n  --hyperlink-format FORMAT\tconfigure hyperlink output (no-op)\n",
         );
         let help_text = help_text.replace(
             "  --context-separator SEP\tset context group separator\n",
@@ -5455,6 +5469,46 @@ mod tests {
             output: RgDiffOutput::Exact,
         },
         RgDiffCase {
+            name: "debug keeps stdout",
+            args: &["--debug", "needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "trace keeps stdout",
+            args: &["--trace", "needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "no ignore messages accepted",
+            args: &["--no-ignore-messages", "needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "hyperlink format none accepted",
+            args: &["--hyperlink-format=none", "needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "hostname bin accepted",
+            args: &["--hostname-bin", "hostname", "needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
             name: "missing file keeps stdout and exits 2",
             args: &["needle", "proj/a.txt", "proj/missing.txt"],
             stdin: None,
@@ -5856,6 +5910,11 @@ mod tests {
         assert!(long_help.stdout.contains("--pre COMMAND"));
         assert!(long_help.stdout.contains("--pre-glob"));
         assert!(long_help.stdout.contains("--no-pre"));
+        assert!(long_help.stdout.contains("--no-ignore-messages"));
+        assert!(long_help.stdout.contains("--debug"));
+        assert!(long_help.stdout.contains("--trace"));
+        assert!(long_help.stdout.contains("--hostname-bin"));
+        assert!(long_help.stdout.contains("--hyperlink-format"));
         assert!(long_help.stdout.contains("--no-ignore-files"));
         assert!(long_help.stdout.contains("--ignore-file-case-insensitive"));
         assert!(long_help.stdout.contains("--ignore-dot"));
