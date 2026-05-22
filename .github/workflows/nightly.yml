@@ -13,6 +13,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  RG_VERSION: 15.1.0
 
 jobs:
   miri:
@@ -84,6 +85,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
+
+      # ASAN runs the Rust test suite, including `rg` differential tests.
+      - name: Install pinned ripgrep for differential tests
+        run: scripts/install-ripgrep-ci.sh "$RG_VERSION"
 
       - name: Run tests with AddressSanitizer
         env:
