@@ -380,6 +380,8 @@ impl RgOptions {
                 opts.files_without_matches = true;
             } else if p.flag_any(&["--invert-match"]) {
                 opts.invert_match = true;
+            } else if p.flag("--no-invert-match") {
+                opts.invert_match = false;
             } else if p.flag_any(&["--word-regexp"]) {
                 opts.word_boundary = true;
             } else if p.flag_any(&["--line-regexp"]) {
@@ -487,6 +489,8 @@ impl RgOptions {
                 opts.encoding = parse_encoding(val)?;
             } else if let Some(val) = long_value(&mut p, "--encoding")? {
                 opts.encoding = parse_encoding(&val)?;
+            } else if p.flag("--no-encoding") {
+                opts.encoding = RgEncoding::Auto;
             } else if let Some(val) = long_equals_value(&mut p, "--engine") {
                 parse_regex_engine(&val)?;
             } else if long_value(&mut p, "--colors")?.is_some() {
@@ -567,7 +571,12 @@ impl RgOptions {
                 opts.messages = false;
             } else if p.flag("--messages") {
                 opts.messages = true;
-            } else if p.flag_any(&["--debug", "--trace", "--no-ignore-messages"]) {
+            } else if p.flag_any(&[
+                "--debug",
+                "--trace",
+                "--no-ignore-messages",
+                "--ignore-messages",
+            ]) {
                 // no-op: these flags only affect real rg's diagnostic stderr.
             } else if long_value(&mut p, "--hostname-bin")?.is_some() {
                 // no-op: hyperlink hostname discovery is not modeled.
@@ -2651,7 +2660,15 @@ impl Builtin for Rg {
         );
         let help_text = help_text.replace(
             "  --no-messages\tsuppress file read diagnostics\n",
-            "  --no-messages\tsuppress file read diagnostics\n  --no-ignore-messages\tsuppress ignore parse diagnostics (no-op)\n  --debug\tshow debug diagnostics (no-op)\n  --trace\tshow trace diagnostics (no-op)\n",
+            "  --no-messages\tsuppress file read diagnostics\n  --ignore-messages\tshow ignore parse diagnostics (no-op)\n  --no-ignore-messages\tsuppress ignore parse diagnostics (no-op)\n  --debug\tshow debug diagnostics (no-op)\n  --trace\tshow trace diagnostics (no-op)\n",
+        );
+        let help_text = help_text.replace(
+            "  -v, --invert-match\tinvert match\n",
+            "  -v, --invert-match\tinvert match\n  --no-invert-match\tdisable inverted matching\n",
+        );
+        let help_text = help_text.replace(
+            "  -E, --encoding ENCODING\tdecode searched files using ENCODING\n",
+            "  -E, --encoding ENCODING\tdecode searched files using ENCODING\n  --no-encoding\trestore automatic encoding detection\n",
         );
         let help_text = help_text.replace(
             "  --colors SPEC\tconfigure colors (no-op)\n",
@@ -4068,6 +4085,14 @@ mod tests {
             output: RgDiffOutput::Exact,
         },
         RgDiffCase {
+            name: "no invert match disables invert",
+            args: &["-v", "--no-invert-match", "needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
             name: "max count",
             args: &["-m", "1", "needle", "proj/a.txt"],
             stdin: None,
@@ -4911,6 +4936,19 @@ mod tests {
             output: RgDiffOutput::Exact,
         },
         RgDiffCase {
+            name: "no encoding restores bom sniffing",
+            args: &[
+                "--encoding=none",
+                "--no-encoding",
+                "needle",
+                "proj/utf16bom.txt",
+            ],
+            stdin: None,
+            files: DIFF_ENCODING_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
             name: "crlf default anchor sees carriage return",
             args: &["needle$", "proj/crlf.txt"],
             stdin: None,
@@ -5493,6 +5531,14 @@ mod tests {
             output: RgDiffOutput::Exact,
         },
         RgDiffCase {
+            name: "ignore messages accepted",
+            args: &["--ignore-messages", "needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
             name: "hyperlink format none accepted",
             args: &["--hyperlink-format=none", "needle", "proj/a.txt"],
             stdin: None,
@@ -5910,11 +5956,14 @@ mod tests {
         assert!(long_help.stdout.contains("--pre COMMAND"));
         assert!(long_help.stdout.contains("--pre-glob"));
         assert!(long_help.stdout.contains("--no-pre"));
+        assert!(long_help.stdout.contains("--ignore-messages"));
         assert!(long_help.stdout.contains("--no-ignore-messages"));
         assert!(long_help.stdout.contains("--debug"));
         assert!(long_help.stdout.contains("--trace"));
         assert!(long_help.stdout.contains("--hostname-bin"));
         assert!(long_help.stdout.contains("--hyperlink-format"));
+        assert!(long_help.stdout.contains("--no-invert-match"));
+        assert!(long_help.stdout.contains("--no-encoding"));
         assert!(long_help.stdout.contains("--no-ignore-files"));
         assert!(long_help.stdout.contains("--ignore-file-case-insensitive"));
         assert!(long_help.stdout.contains("--ignore-dot"));
