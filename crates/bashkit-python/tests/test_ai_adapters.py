@@ -311,6 +311,18 @@ def test_langchain_create_bash_tool_accepts_files():
         assert "[Exit code:" in tool.invoke({"commands": "printf nope > /tmp/nope.txt"})
 
 
+def test_langchain_create_bash_tool_caps_output_length():
+    """create_bash_tool forwards max_output_length into BashkitTool."""
+    from bashkit.langchain import LANGCHAIN_AVAILABLE
+
+    if LANGCHAIN_AVAILABLE:
+        from bashkit.langchain import create_bash_tool
+
+        tool = create_bash_tool(max_output_length=12)
+        output = tool.invoke({"commands": "printf abcdefghijklmnopqrstuvwxyz"})
+        assert output == "abcdefghijkl\n[truncated]"
+
+
 def test_pydantic_ai_create_bash_tool_accepts_timeout():
     """create_bash_tool in pydantic_ai accepts timeout_seconds."""
     from bashkit.pydantic_ai import PYDANTIC_AI_AVAILABLE

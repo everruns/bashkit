@@ -59,10 +59,10 @@ uv run examples/deepagent_coding_agent.py
 ### docs-grep-agent/
 
 Minimal LangChain/LangGraph console agent for Bashkit docs Q&A. It exposes
-Bashkit's built-in bash tool to the model, which writes grep scripts against
-real docs and a curated examples view mounted read-only under `/docs`. The
-whole session filesystem is read-only, so copy/write attempts into `/tmp` fail
-too.
+Bashkit's built-in bash tool to the model, which writes compact `rg`, `grep`,
+and `sed` search scripts against real docs and a curated examples view mounted
+read-only under `/docs`. The whole session filesystem is read-only, so
+copy/write attempts into `/tmp` fail too.
 
 ```bash
 cd examples/docs-grep-agent
