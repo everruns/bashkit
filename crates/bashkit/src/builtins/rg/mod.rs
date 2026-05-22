@@ -18,7 +18,7 @@
 use async_trait::async_trait;
 use regex::Regex;
 use serde_json::json;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use super::search_common::build_regex_opts;
@@ -65,11 +65,13 @@ struct RgOptions {
     null: bool,
     sort_reverse: bool,
     hidden: bool,
+    type_list: bool,
     context_separator: String,
     field_match_separator: String,
     field_context_separator: String,
     stdin_consumed_for_patterns: bool,
     glob_rules: Vec<RgGlobRule>,
+    type_database: RgTypeDatabase,
     type_includes: Vec<RgFileType>,
     type_excludes: Vec<RgFileType>,
 }
@@ -83,24 +85,20 @@ struct RgGlobRule {
     regex: Regex,
 }
 
-#[derive(Clone, Copy)]
-enum RgFileType {
-    C,
-    Cpp,
-    Css,
-    Go,
-    Html,
-    Java,
-    Json,
-    Markdown,
-    Python,
-    Rust,
-    Shell,
-    Text,
-    Toml,
-    TypeScript,
-    JavaScript,
-    Yaml,
+#[derive(Clone)]
+struct RgTypeDatabase {
+    definitions: BTreeMap<String, Vec<RgTypeGlob>>,
+}
+
+#[derive(Clone)]
+struct RgFileType {
+    globs: Vec<RgTypeGlob>,
+}
+
+#[derive(Clone)]
+struct RgTypeGlob {
+    raw: String,
+    regex: Regex,
 }
 
 impl RgOptions {
@@ -141,11 +139,13 @@ impl RgOptions {
             null: false,
             sort_reverse: false,
             hidden: false,
+            type_list: false,
             context_separator: "--".to_string(),
             field_match_separator: ":".to_string(),
             field_context_separator: "-".to_string(),
             stdin_consumed_for_patterns: false,
             glob_rules: Vec::new(),
+            type_database: RgTypeDatabase::default(),
             type_includes: Vec::new(),
             type_excludes: Vec::new(),
         };
@@ -209,13 +209,19 @@ impl RgOptions {
             } else if let Some(val) = long_value(&mut p, "--glob")? {
                 opts.glob_rules.push(RgGlobRule::parse(&val)?);
             } else if let Some(val) = p.flag_value("-t", "rg").map_err(Error::Execution)? {
-                opts.type_includes.push(RgFileType::parse(val)?);
+                opts.type_includes.push(opts.type_database.parse(val)?);
             } else if let Some(val) = p.flag_value("-T", "rg").map_err(Error::Execution)? {
-                opts.type_excludes.push(RgFileType::parse(val)?);
+                opts.type_excludes.push(opts.type_database.parse(val)?);
             } else if let Some(val) = long_value(&mut p, "--type")? {
-                opts.type_includes.push(RgFileType::parse(&val)?);
+                opts.type_includes.push(opts.type_database.parse(&val)?);
             } else if let Some(val) = long_value(&mut p, "--type-not")? {
-                opts.type_excludes.push(RgFileType::parse(&val)?);
+                opts.type_excludes.push(opts.type_database.parse(&val)?);
+            } else if let Some(val) = long_value(&mut p, "--type-add")? {
+                opts.type_database.add(&val)?;
+            } else if let Some(val) = long_value(&mut p, "--type-clear")? {
+                opts.type_database.clear(&val);
+            } else if p.flag("--type-list") {
+                opts.type_list = true;
             } else if p.flag_any(&["-I", "--no-filename"]) {
                 opts.no_filename = true;
             } else if p.flag("--with-filename") {
@@ -491,7 +497,8 @@ impl RgOptions {
                                     }
                                 }
                             };
-                            opts.type_includes.push(RgFileType::parse(&file_type)?);
+                            opts.type_includes
+                                .push(opts.type_database.parse(&file_type)?);
                             break;
                         }
                         'T' => {
@@ -508,7 +515,8 @@ impl RgOptions {
                                     }
                                 }
                             };
-                            opts.type_excludes.push(RgFileType::parse(&file_type)?);
+                            opts.type_excludes
+                                .push(opts.type_database.parse(&file_type)?);
                             break;
                         }
                         _ => {
@@ -525,10 +533,18 @@ impl RgOptions {
         }
 
         if positional.is_empty() {
-            if opts.patterns.is_empty() && opts.pattern_files.is_empty() && !opts.list_files {
+            if opts.patterns.is_empty()
+                && opts.pattern_files.is_empty()
+                && !opts.list_files
+                && !opts.type_list
+            {
                 return Err(Error::Execution("rg: missing pattern".to_string()));
             }
-        } else if opts.patterns.is_empty() && opts.pattern_files.is_empty() && !opts.list_files {
+        } else if opts.patterns.is_empty()
+            && opts.pattern_files.is_empty()
+            && !opts.list_files
+            && !opts.type_list
+        {
             opts.patterns.push(positional.remove(0));
         }
 
@@ -610,58 +626,167 @@ impl RgOptions {
     }
 }
 
-impl RgFileType {
-    fn parse(name: &str) -> Result<Self> {
-        match name {
-            "c" => Ok(Self::C),
-            "cpp" | "c++" => Ok(Self::Cpp),
-            "css" => Ok(Self::Css),
-            "go" => Ok(Self::Go),
-            "html" | "htm" => Ok(Self::Html),
-            "java" => Ok(Self::Java),
-            "json" => Ok(Self::Json),
-            "md" | "markdown" => Ok(Self::Markdown),
-            "py" | "python" => Ok(Self::Python),
-            "rs" | "rust" => Ok(Self::Rust),
-            "sh" | "shell" => Ok(Self::Shell),
-            "text" | "txt" => Ok(Self::Text),
-            "toml" => Ok(Self::Toml),
-            "ts" | "typescript" => Ok(Self::TypeScript),
-            "js" | "javascript" => Ok(Self::JavaScript),
-            "yaml" | "yml" => Ok(Self::Yaml),
-            _ => Err(Error::Execution(format!(
+impl RgTypeDatabase {
+    fn default() -> Self {
+        let mut db = Self {
+            definitions: BTreeMap::new(),
+        };
+        db.insert_defaults("c", &["*.c", "*.h"]);
+        db.insert_defaults(
+            "cpp",
+            &[
+                "*.c++", "*.cc", "*.cpp", "*.cxx", "*.h++", "*.hh", "*.hpp", "*.hxx",
+            ],
+        );
+        db.insert_defaults(
+            "c++",
+            &[
+                "*.c++", "*.cc", "*.cpp", "*.cxx", "*.h++", "*.hh", "*.hpp", "*.hxx",
+            ],
+        );
+        db.insert_defaults("css", &["*.css"]);
+        db.insert_defaults("go", &["*.go"]);
+        db.insert_defaults("html", &["*.htm", "*.html"]);
+        db.insert_defaults("htm", &["*.htm", "*.html"]);
+        db.insert_defaults("java", &["*.java"]);
+        db.insert_defaults("json", &["*.json", "*.jsonl"]);
+        db.insert_defaults(
+            "markdown",
+            &[
+                "*.markdown",
+                "*.md",
+                "*.mdown",
+                "*.mdwn",
+                "*.mdx",
+                "*.mkd",
+                "*.mkdn",
+            ],
+        );
+        db.insert_defaults(
+            "md",
+            &[
+                "*.markdown",
+                "*.md",
+                "*.mdown",
+                "*.mdwn",
+                "*.mdx",
+                "*.mkd",
+                "*.mkdn",
+            ],
+        );
+        db.insert_defaults("py", &["*.py", "*.pyi", "*.pyw"]);
+        db.insert_defaults("python", &["*.py", "*.pyi", "*.pyw"]);
+        db.insert_defaults("rs", &["*.rs"]);
+        db.insert_defaults("rust", &["*.rs"]);
+        db.insert_defaults(
+            "sh",
+            &[
+                "*.bash", "*.bashrc", "*.csh", "*.env", "*.ksh", "*.sh", "*.tcsh", "*.zsh",
+                ".bashrc", ".env", ".profile", ".zshrc", "bashrc", "profile", "zshrc",
+            ],
+        );
+        db.insert_defaults(
+            "shell",
+            &[
+                "*.bash", "*.bashrc", "*.csh", "*.env", "*.ksh", "*.sh", "*.tcsh", "*.zsh",
+                ".bashrc", ".env", ".profile", ".zshrc", "bashrc", "profile", "zshrc",
+            ],
+        );
+        db.insert_defaults("text", &["*.txt"]);
+        db.insert_defaults("txt", &["*.txt"]);
+        db.insert_defaults("toml", &["*.toml"]);
+        db.insert_defaults("ts", &["*.cts", "*.mts", "*.ts", "*.tsx"]);
+        db.insert_defaults("typescript", &["*.cts", "*.mts", "*.ts", "*.tsx"]);
+        db.insert_defaults("js", &["*.cjs", "*.js", "*.jsx", "*.mjs", "*.vue"]);
+        db.insert_defaults("javascript", &["*.cjs", "*.js", "*.jsx", "*.mjs", "*.vue"]);
+        db.insert_defaults("yaml", &["*.yaml", "*.yml"]);
+        db.insert_defaults("yml", &["*.yaml", "*.yml"]);
+        db
+    }
+
+    fn insert_defaults(&mut self, name: &str, globs: &[&str]) {
+        self.definitions.insert(
+            name.to_string(),
+            globs
+                .iter()
+                .map(|glob| RgTypeGlob::parse(glob).expect("default rg type glob is valid"))
+                .collect(),
+        );
+    }
+
+    fn parse(&self, name: &str) -> Result<RgFileType> {
+        let Some(globs) = self.definitions.get(name) else {
+            return Err(Error::Execution(format!(
                 "rg: unrecognized file type: {}",
                 name
-            ))),
+            )));
+        };
+        Ok(RgFileType {
+            globs: globs.clone(),
+        })
+    }
+
+    fn add(&mut self, definition: &str) -> Result<()> {
+        let Some((name, glob)) = definition.split_once(':') else {
+            return Err(Error::Execution(
+                "rg: invalid definition (format is type:glob, e.g., html:*.html)".to_string(),
+            ));
+        };
+        if name.is_empty() || glob.is_empty() || glob.contains(':') {
+            return Err(Error::Execution(
+                "rg: invalid definition (format is type:glob, e.g., html:*.html)".to_string(),
+            ));
         }
+        self.definitions
+            .entry(name.to_string())
+            .or_default()
+            .push(RgTypeGlob::parse(glob)?);
+        Ok(())
     }
 
-    fn matches(self, path: &Path) -> bool {
-        let extension = path
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .unwrap_or("");
-        self.extensions().contains(&extension)
+    fn clear(&mut self, name: &str) {
+        self.definitions.remove(name);
     }
 
-    fn extensions(self) -> &'static [&'static str] {
-        match self {
-            Self::C => &["c", "h"],
-            Self::Cpp => &["cc", "cpp", "cxx", "c++", "hpp", "hh", "hxx", "h++"],
-            Self::Css => &["css"],
-            Self::Go => &["go"],
-            Self::Html => &["html", "htm"],
-            Self::Java => &["java"],
-            Self::Json => &["json", "jsonl"],
-            Self::Markdown => &["md", "markdown", "mdown", "mkdn"],
-            Self::Python => &["py", "pyw"],
-            Self::Rust => &["rs"],
-            Self::Shell => &["sh", "bash", "zsh"],
-            Self::Text => &["txt"],
-            Self::Toml => &["toml"],
-            Self::TypeScript => &["ts", "tsx"],
-            Self::JavaScript => &["js", "jsx", "mjs", "cjs"],
-            Self::Yaml => &["yaml", "yml"],
+    fn list(&self) -> String {
+        let mut output = String::new();
+        for (name, globs) in &self.definitions {
+            let mut raw_globs: Vec<&str> = globs.iter().map(|glob| glob.raw.as_str()).collect();
+            raw_globs.sort_unstable();
+            raw_globs.dedup();
+            output.push_str(name);
+            output.push_str(": ");
+            output.push_str(&raw_globs.join(", "));
+            output.push('\n');
+        }
+        output
+    }
+}
+
+impl RgFileType {
+    fn matches(&self, path: &Path) -> bool {
+        self.globs.iter().any(|glob| glob.matches(path))
+    }
+}
+
+impl RgTypeGlob {
+    fn parse(pattern: &str) -> Result<Self> {
+        let regex = build_regex_opts(&glob_to_regex(pattern), false)
+            .map_err(|e| Error::Execution(format!("rg: invalid --type-add value: {}", e)))?;
+        Ok(Self {
+            raw: pattern.to_string(),
+            regex,
+        })
+    }
+
+    fn matches(&self, path: &Path) -> bool {
+        if self.raw.contains('/') {
+            let path_string = path.to_string_lossy();
+            self.regex.is_match(&path_string)
+        } else {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| self.regex.is_match(name))
         }
     }
 }
@@ -1325,7 +1450,7 @@ fn write_rg_json_summary(
 #[async_trait]
 impl Builtin for Rg {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        let help_text = "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i, --ignore-case\tcase insensitive\n  -S, --smart-case\tcase insensitive if pattern is lowercase\n  -s, --case-sensitive\tcase sensitive\n  -n, --line-number\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  --column\tshow column numbers\n  -b, --byte-offset\tshow byte offsets\n  --vimgrep\tshow file:line:column:match lines\n  --json\tshow JSON Lines events\n  --null\tterminate path fields with NUL\n  -c, --count\tcount matching lines\n  --count-matches\tcount individual matches\n  --include-zero\tinclude zero counts\n  -l, --files-with-matches\tfiles with matches\n  --files-without-match\tfiles without matches\n  --files\tprint files that would be searched\n  -v, --invert-match\tinvert match\n  -w, --word-regexp\tword boundary\n  -x, --line-regexp\tmatch whole lines\n  -F, --fixed-strings\tfixed strings (literal)\n  -o, --only-matching\tshow only matching text\n  -q, --quiet\tsuppress output; exit status only\n  -e, --regexp PATTERN\tuse PATTERN for matching\n  -f, --file PATTERNFILE\tread patterns from file\n  -r, --replace REPLACEMENT\treplace matches in output\n  --passthru\tprint matching and non-matching lines\n  --trim\ttrim whitespace from output lines\n  -m, --max-count NUM\tmax count per file\n  --max-depth NUM\tlimit recursive directory depth\n  -A, --after-context NUM\tshow trailing context\n  -B, --before-context NUM\tshow leading context\n  -C, --context NUM\tshow leading and trailing context\n  --context-separator SEP\tset context group separator\n  --field-match-separator SEP\tset match field separator\n  --field-context-separator SEP\tset context field separator\n  --heading\tgroup matches by file\n  --no-heading\tdisable heading output\n  --sort SORTBY\tsort paths (path only)\n  --sortr SORTBY\tsort paths in reverse (path only)\n  --sort-files\tsort --files output\n  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  -t, --type TYPE\tinclude files matching TYPE\n  -T, --type-not TYPE\texclude files matching TYPE\n  --hidden\tsearch hidden files and directories\n  --no-hidden\tdo not search hidden files and directories\n  -H, --with-filename\tshow filename\n  -I, --no-filename\tsuppress filename\n  --color MODE\tcolor output (no-op)\n  -h, --help\tdisplay this help and exit\n  -V, --version\toutput version information and exit\n";
+        let help_text = "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i, --ignore-case\tcase insensitive\n  -S, --smart-case\tcase insensitive if pattern is lowercase\n  -s, --case-sensitive\tcase sensitive\n  -n, --line-number\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  --column\tshow column numbers\n  -b, --byte-offset\tshow byte offsets\n  --vimgrep\tshow file:line:column:match lines\n  --json\tshow JSON Lines events\n  --null\tterminate path fields with NUL\n  -c, --count\tcount matching lines\n  --count-matches\tcount individual matches\n  --include-zero\tinclude zero counts\n  -l, --files-with-matches\tfiles with matches\n  --files-without-match\tfiles without matches\n  --files\tprint files that would be searched\n  -v, --invert-match\tinvert match\n  -w, --word-regexp\tword boundary\n  -x, --line-regexp\tmatch whole lines\n  -F, --fixed-strings\tfixed strings (literal)\n  -o, --only-matching\tshow only matching text\n  -q, --quiet\tsuppress output; exit status only\n  -e, --regexp PATTERN\tuse PATTERN for matching\n  -f, --file PATTERNFILE\tread patterns from file\n  -r, --replace REPLACEMENT\treplace matches in output\n  --passthru\tprint matching and non-matching lines\n  --trim\ttrim whitespace from output lines\n  -m, --max-count NUM\tmax count per file\n  --max-depth NUM\tlimit recursive directory depth\n  -A, --after-context NUM\tshow trailing context\n  -B, --before-context NUM\tshow leading context\n  -C, --context NUM\tshow leading and trailing context\n  --context-separator SEP\tset context group separator\n  --field-match-separator SEP\tset match field separator\n  --field-context-separator SEP\tset context field separator\n  --heading\tgroup matches by file\n  --no-heading\tdisable heading output\n  --sort SORTBY\tsort paths (path only)\n  --sortr SORTBY\tsort paths in reverse (path only)\n  --sort-files\tsort --files output\n  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  -t, --type TYPE\tinclude files matching TYPE\n  -T, --type-not TYPE\texclude files matching TYPE\n  --type-add TYPE:GLOB\tadd a file type glob\n  --type-clear TYPE\tclear a file type definition\n  --type-list\tshow file type definitions\n  --hidden\tsearch hidden files and directories\n  --no-hidden\tdo not search hidden files and directories\n  -H, --with-filename\tshow filename\n  -I, --no-filename\tsuppress filename\n  --color MODE\tcolor output (no-op)\n  -h, --help\tdisplay this help and exit\n  -V, --version\toutput version information and exit\n";
         if ctx.args.iter().any(|arg| arg == "-h") {
             return Ok(ExecResult::ok(help_text.to_string()));
         }
@@ -1336,6 +1461,9 @@ impl Builtin for Rg {
             return Ok(r);
         }
         let mut opts = RgOptions::parse(ctx.args)?;
+        if opts.type_list {
+            return Ok(ExecResult::ok(opts.type_database.list()));
+        }
         if opts.list_files {
             let files = collect_rg_file_list(&*ctx.fs, &opts, ctx.cwd).await;
             let output = if opts.null {
@@ -1777,6 +1905,7 @@ mod tests {
         ("/proj/lang/lib.rs", b"needle\n"),
         ("/proj/lang/lib.py", b"needle\n"),
         ("/proj/lang/readme.md", b"needle\n"),
+        ("/proj/lang/custom.foo", b"needle\n"),
     ];
 
     const DIFF_TWO_CONTEXT_FILES: &[(&str, &[u8])] = &[
@@ -2242,6 +2371,38 @@ mod tests {
             cwd: "/",
             output: RgDiffOutput::Exact,
         },
+        RgDiffCase {
+            name: "type add custom",
+            args: &[
+                "--type-add",
+                "foo:*.foo",
+                "-t",
+                "foo",
+                "needle",
+                "proj/lang",
+            ],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type clear then redefine",
+            args: &[
+                "--type-clear",
+                "rust",
+                "--type-add",
+                "rust:*.foo",
+                "-t",
+                "rust",
+                "needle",
+                "proj/lang",
+            ],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
     ];
 
     fn require_real_rg() {
@@ -2504,6 +2665,21 @@ mod tests {
         let short_version = run_rg(&["-V"], None, &[]).await;
         assert_eq!(short_version.exit_code, 0);
         assert_eq!(short_version.stdout, version.stdout);
+    }
+
+    #[tokio::test]
+    async fn test_rg_type_list_and_custom_types() {
+        let type_list = run_rg(&["--type-add", "foo:*.foo", "--type-list"], None, &[]).await;
+        assert_eq!(type_list.exit_code, 0);
+        assert!(type_list.stdout.contains("foo: *.foo\n"));
+        assert!(type_list.stdout.contains("rust: *.rs\n"));
+
+        let cleared = run_rg(&["--type-clear", "rust", "--type-list"], None, &[]).await;
+        assert_eq!(cleared.exit_code, 0);
+        assert!(!cleared.stdout.contains("rust: *.rs\n"));
+
+        let invalid = RgOptions::parse(&["--type-add".to_string(), "foo".to_string()]);
+        assert!(invalid.is_err());
     }
 
     #[tokio::test]
