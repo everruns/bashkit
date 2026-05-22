@@ -66,10 +66,15 @@ struct RgOptions {
     sort_reverse: bool,
     hidden: bool,
     type_list: bool,
+    no_ignore: bool,
+    no_ignore_dot: bool,
+    no_ignore_vcs: bool,
     context_separator: String,
     field_match_separator: String,
     field_context_separator: String,
     stdin_consumed_for_patterns: bool,
+    ignore_file_paths: Vec<String>,
+    explicit_ignore_rules: Vec<RgIgnoreRule>,
     glob_rules: Vec<RgGlobRule>,
     type_database: RgTypeDatabase,
     type_includes: Vec<RgFileType>,
@@ -80,6 +85,16 @@ struct RgOptions {
 struct RgGlobRule {
     raw: String,
     include: bool,
+    has_slash: bool,
+    anchored: bool,
+    regex: Regex,
+}
+
+#[derive(Clone)]
+struct RgIgnoreRule {
+    include: bool,
+    dir_only: bool,
+    base: PathBuf,
     has_slash: bool,
     anchored: bool,
     regex: Regex,
@@ -140,10 +155,15 @@ impl RgOptions {
             sort_reverse: false,
             hidden: false,
             type_list: false,
+            no_ignore: false,
+            no_ignore_dot: false,
+            no_ignore_vcs: false,
             context_separator: "--".to_string(),
             field_match_separator: ":".to_string(),
             field_context_separator: "-".to_string(),
             stdin_consumed_for_patterns: false,
+            ignore_file_paths: Vec::new(),
+            explicit_ignore_rules: Vec::new(),
             glob_rules: Vec::new(),
             type_database: RgTypeDatabase::default(),
             type_includes: Vec::new(),
@@ -208,6 +228,8 @@ impl RgOptions {
                 opts.glob_rules.push(RgGlobRule::parse(val)?);
             } else if let Some(val) = long_value(&mut p, "--glob")? {
                 opts.glob_rules.push(RgGlobRule::parse(&val)?);
+            } else if let Some(val) = long_value(&mut p, "--ignore-file")? {
+                opts.ignore_file_paths.push(val);
             } else if let Some(val) = p.flag_value("-t", "rg").map_err(Error::Execution)? {
                 opts.type_includes.push(opts.type_database.parse(val)?);
             } else if let Some(val) = p.flag_value("-T", "rg").map_err(Error::Execution)? {
@@ -299,13 +321,16 @@ impl RgOptions {
                 opts.hidden = true;
             } else if p.flag("--no-hidden") {
                 opts.hidden = false;
-            } else if p.flag_any(&[
-                "--no-ignore",
-                "--no-ignore-vcs",
-                "--no-ignore-parent",
-                "--follow",
-            ]) {
-                // no-op: bashkit's VFS search has no ignore-file or symlink policy layer.
+            } else if p.flag("--no-ignore") {
+                opts.no_ignore = true;
+                opts.no_ignore_dot = true;
+                opts.no_ignore_vcs = true;
+            } else if p.flag("--no-ignore-dot") {
+                opts.no_ignore_dot = true;
+            } else if p.flag("--no-ignore-vcs") {
+                opts.no_ignore_vcs = true;
+            } else if p.flag_any(&["--no-ignore-parent", "--follow"]) {
+                // no-op: parent ignore discovery and symlink following are not modeled.
             } else if p.is_flag() {
                 // Combined short flags like -inFw
                 // Safe: is_flag() guarantees current() is Some
@@ -623,6 +648,97 @@ impl RgOptions {
             .iter()
             .find(|g| g.include)
             .map(|g| g.raw.clone())
+    }
+
+    fn uses_ignore_files(&self) -> bool {
+        !self.no_ignore || !self.ignore_file_paths.is_empty()
+    }
+
+    fn is_ignored_by_rules(&self, path: &Path, is_dir: bool, rules: &[RgIgnoreRule]) -> bool {
+        let mut ignored = false;
+        for rule in rules {
+            if rule.matches(path, is_dir) || (!is_dir && rule.matches_parent_dir(path)) {
+                ignored = !rule.include;
+            }
+        }
+        ignored
+    }
+}
+
+impl RgIgnoreRule {
+    fn parse(line: &str, base: &Path) -> Result<Option<Self>> {
+        let mut pattern = line.trim();
+        if pattern.is_empty() || pattern.starts_with('#') {
+            return Ok(None);
+        }
+        if let Some(rest) = pattern.strip_prefix(r"\#") {
+            pattern = rest;
+        }
+
+        let (include, pattern) = match pattern.strip_prefix('!') {
+            Some(rest) => (true, rest),
+            None => (false, pattern),
+        };
+        let pattern = pattern.strip_prefix(r"\!").unwrap_or(pattern);
+        let dir_only = pattern.ends_with('/');
+        let pattern = pattern
+            .trim_end_matches('/')
+            .strip_prefix("./")
+            .unwrap_or_else(|| pattern.trim_end_matches('/'));
+        if pattern.is_empty() {
+            return Ok(None);
+        }
+
+        let anchored = pattern.starts_with('/');
+        let normalized = pattern.trim_start_matches('/');
+        let has_slash = normalized.contains('/');
+        let regex = build_regex_opts(&glob_to_regex(normalized), false)
+            .map_err(|e| Error::Execution(format!("rg: invalid ignore pattern: {}", e)))?;
+        Ok(Some(Self {
+            include,
+            dir_only,
+            base: base.to_path_buf(),
+            has_slash,
+            anchored,
+            regex,
+        }))
+    }
+
+    fn matches(&self, path: &Path, is_dir: bool) -> bool {
+        if self.dir_only && !is_dir {
+            return false;
+        }
+        let Ok(relative) = path.strip_prefix(&self.base) else {
+            return false;
+        };
+        let relative = path_to_slash(relative).trim_start_matches('/').to_string();
+        let target = if self.has_slash || self.anchored {
+            relative
+        } else {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("")
+                .to_string()
+        };
+        self.regex.is_match(&target)
+    }
+
+    fn matches_parent_dir(&self, path: &Path) -> bool {
+        if !self.dir_only {
+            return false;
+        }
+        let Some(parent) = path.parent() else {
+            return false;
+        };
+        for ancestor in parent.ancestors() {
+            if ancestor == self.base {
+                break;
+            }
+            if self.matches(ancestor, true) {
+                return true;
+            }
+        }
+        false
     }
 }
 
@@ -988,6 +1104,82 @@ async fn load_rg_pattern_files(
     Ok(())
 }
 
+async fn load_rg_ignore_files(
+    fs: &dyn crate::fs::FileSystem,
+    cwd: &Path,
+    opts: &mut RgOptions,
+) -> std::result::Result<(), ExecResult> {
+    for ignore_file in opts.ignore_file_paths.clone() {
+        let path = resolve_path(cwd, &ignore_file);
+        let content = read_text_file(fs, &path, "rg").await?;
+        let rules = parse_rg_ignore_rules(&content, cwd)
+            .map_err(|e| ExecResult::err(format!("{}\n", e), 2))?;
+        opts.explicit_ignore_rules.extend(rules);
+    }
+    Ok(())
+}
+
+fn parse_rg_ignore_rules(content: &str, base: &Path) -> Result<Vec<RgIgnoreRule>> {
+    let mut rules = Vec::new();
+    for line in content.lines() {
+        if let Some(rule) = RgIgnoreRule::parse(line, base)? {
+            rules.push(rule);
+        }
+    }
+    Ok(rules)
+}
+
+async fn load_local_ignore_rules(
+    fs: &dyn crate::fs::FileSystem,
+    dir: &Path,
+    root: &Path,
+    opts: &RgOptions,
+    rules: &mut Vec<RgIgnoreRule>,
+) -> Result<()> {
+    if opts.no_ignore {
+        return Ok(());
+    }
+
+    if !opts.no_ignore_dot {
+        load_optional_ignore_file(fs, &dir.join(".ignore"), dir, rules).await?;
+    }
+    if !opts.no_ignore_vcs && has_git_dir_in_ancestors(fs, dir, root).await {
+        load_optional_ignore_file(fs, &dir.join(".gitignore"), dir, rules).await?;
+    }
+    Ok(())
+}
+
+async fn load_optional_ignore_file(
+    fs: &dyn crate::fs::FileSystem,
+    path: &Path,
+    base: &Path,
+    rules: &mut Vec<RgIgnoreRule>,
+) -> Result<()> {
+    let Ok(content) = fs.read_file(path).await else {
+        return Ok(());
+    };
+    let content = String::from_utf8_lossy(&content);
+    rules.extend(parse_rg_ignore_rules(&content, base)?);
+    Ok(())
+}
+
+async fn has_git_dir_in_ancestors(fs: &dyn crate::fs::FileSystem, dir: &Path, root: &Path) -> bool {
+    for ancestor in dir.ancestors() {
+        if ancestor.starts_with(root)
+            && fs
+                .stat(&ancestor.join(".git"))
+                .await
+                .is_ok_and(|meta| meta.file_type.is_dir())
+        {
+            return true;
+        }
+        if ancestor == root {
+            break;
+        }
+    }
+    false
+}
+
 async fn has_directory_path(fs: &dyn crate::fs::FileSystem, cwd: &Path, paths: &[String]) -> bool {
     for p in paths {
         let path = resolve_path(cwd, p);
@@ -1007,13 +1199,15 @@ async fn collect_rg_files_recursive(
     cwd: &Path,
 ) -> Vec<PathBuf> {
     let mut result = Vec::new();
-    let mut stack: Vec<(PathBuf, PathBuf, usize)> = roots
+    let mut stack: Vec<(PathBuf, PathBuf, usize, Vec<RgIgnoreRule>)> = roots
         .iter()
         .cloned()
-        .map(|root| (root.clone(), root, 0))
+        .map(|root| (root.clone(), root, 0, opts.explicit_ignore_rules.clone()))
         .collect();
 
-    while let Some((current, root, depth)) = stack.pop() {
+    while let Some((current, root, depth, inherited_rules)) = stack.pop() {
+        let mut rules = inherited_rules;
+        let _ = load_local_ignore_rules(fs, &current, &root, opts, &mut rules).await;
         if let Ok(entries) = fs.read_dir(&current).await {
             for entry in entries {
                 if !opts.hidden && is_hidden_name(&entry.name) {
@@ -1022,16 +1216,20 @@ async fn collect_rg_files_recursive(
                 let path = current.join(&entry.name);
                 let entry_depth = depth + 1;
                 if entry.metadata.file_type.is_dir() {
+                    if opts.is_ignored_by_rules(&path, true, &rules) {
+                        continue;
+                    }
                     if opts
                         .max_depth
                         .is_none_or(|max_depth| entry_depth < max_depth)
                     {
-                        stack.push((path, root.clone(), entry_depth));
+                        stack.push((path, root.clone(), entry_depth, rules.clone()));
                     }
                 } else if entry.metadata.file_type.is_file()
                     && opts
                         .max_depth
                         .is_none_or(|max_depth| entry_depth <= max_depth)
+                    && !opts.is_ignored_by_rules(&path, false, &rules)
                     && opts.matches_globs(&path, cwd)
                     && opts.matches_type_filters(&path)
                 {
@@ -1131,6 +1329,7 @@ async fn try_indexed_search(
 ) -> Option<Vec<(String, String)>> {
     if opts.invert_match
         || opts.files_without_matches
+        || opts.uses_ignore_files()
         || opts.patterns.len() != 1
         || !opts.type_includes.is_empty()
         || !opts.type_excludes.is_empty()
@@ -1450,7 +1649,7 @@ fn write_rg_json_summary(
 #[async_trait]
 impl Builtin for Rg {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        let help_text = "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i, --ignore-case\tcase insensitive\n  -S, --smart-case\tcase insensitive if pattern is lowercase\n  -s, --case-sensitive\tcase sensitive\n  -n, --line-number\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  --column\tshow column numbers\n  -b, --byte-offset\tshow byte offsets\n  --vimgrep\tshow file:line:column:match lines\n  --json\tshow JSON Lines events\n  --null\tterminate path fields with NUL\n  -c, --count\tcount matching lines\n  --count-matches\tcount individual matches\n  --include-zero\tinclude zero counts\n  -l, --files-with-matches\tfiles with matches\n  --files-without-match\tfiles without matches\n  --files\tprint files that would be searched\n  -v, --invert-match\tinvert match\n  -w, --word-regexp\tword boundary\n  -x, --line-regexp\tmatch whole lines\n  -F, --fixed-strings\tfixed strings (literal)\n  -o, --only-matching\tshow only matching text\n  -q, --quiet\tsuppress output; exit status only\n  -e, --regexp PATTERN\tuse PATTERN for matching\n  -f, --file PATTERNFILE\tread patterns from file\n  -r, --replace REPLACEMENT\treplace matches in output\n  --passthru\tprint matching and non-matching lines\n  --trim\ttrim whitespace from output lines\n  -m, --max-count NUM\tmax count per file\n  --max-depth NUM\tlimit recursive directory depth\n  -A, --after-context NUM\tshow trailing context\n  -B, --before-context NUM\tshow leading context\n  -C, --context NUM\tshow leading and trailing context\n  --context-separator SEP\tset context group separator\n  --field-match-separator SEP\tset match field separator\n  --field-context-separator SEP\tset context field separator\n  --heading\tgroup matches by file\n  --no-heading\tdisable heading output\n  --sort SORTBY\tsort paths (path only)\n  --sortr SORTBY\tsort paths in reverse (path only)\n  --sort-files\tsort --files output\n  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  -t, --type TYPE\tinclude files matching TYPE\n  -T, --type-not TYPE\texclude files matching TYPE\n  --type-add TYPE:GLOB\tadd a file type glob\n  --type-clear TYPE\tclear a file type definition\n  --type-list\tshow file type definitions\n  --hidden\tsearch hidden files and directories\n  --no-hidden\tdo not search hidden files and directories\n  -H, --with-filename\tshow filename\n  -I, --no-filename\tsuppress filename\n  --color MODE\tcolor output (no-op)\n  -h, --help\tdisplay this help and exit\n  -V, --version\toutput version information and exit\n";
+        let help_text = "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i, --ignore-case\tcase insensitive\n  -S, --smart-case\tcase insensitive if pattern is lowercase\n  -s, --case-sensitive\tcase sensitive\n  -n, --line-number\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  --column\tshow column numbers\n  -b, --byte-offset\tshow byte offsets\n  --vimgrep\tshow file:line:column:match lines\n  --json\tshow JSON Lines events\n  --null\tterminate path fields with NUL\n  -c, --count\tcount matching lines\n  --count-matches\tcount individual matches\n  --include-zero\tinclude zero counts\n  -l, --files-with-matches\tfiles with matches\n  --files-without-match\tfiles without matches\n  --files\tprint files that would be searched\n  -v, --invert-match\tinvert match\n  -w, --word-regexp\tword boundary\n  -x, --line-regexp\tmatch whole lines\n  -F, --fixed-strings\tfixed strings (literal)\n  -o, --only-matching\tshow only matching text\n  -q, --quiet\tsuppress output; exit status only\n  -e, --regexp PATTERN\tuse PATTERN for matching\n  -f, --file PATTERNFILE\tread patterns from file\n  -r, --replace REPLACEMENT\treplace matches in output\n  --passthru\tprint matching and non-matching lines\n  --trim\ttrim whitespace from output lines\n  -m, --max-count NUM\tmax count per file\n  --max-depth NUM\tlimit recursive directory depth\n  -A, --after-context NUM\tshow trailing context\n  -B, --before-context NUM\tshow leading context\n  -C, --context NUM\tshow leading and trailing context\n  --context-separator SEP\tset context group separator\n  --field-match-separator SEP\tset match field separator\n  --field-context-separator SEP\tset context field separator\n  --heading\tgroup matches by file\n  --no-heading\tdisable heading output\n  --sort SORTBY\tsort paths (path only)\n  --sortr SORTBY\tsort paths in reverse (path only)\n  --sort-files\tsort --files output\n  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  -t, --type TYPE\tinclude files matching TYPE\n  -T, --type-not TYPE\texclude files matching TYPE\n  --type-add TYPE:GLOB\tadd a file type glob\n  --type-clear TYPE\tclear a file type definition\n  --type-list\tshow file type definitions\n  --ignore-file FILE\tuse additional ignore file\n  --no-ignore\tdo not use ignore files\n  --no-ignore-dot\tdo not use .ignore files\n  --no-ignore-vcs\tdo not use .gitignore files\n  --hidden\tsearch hidden files and directories\n  --no-hidden\tdo not search hidden files and directories\n  -H, --with-filename\tshow filename\n  -I, --no-filename\tsuppress filename\n  --color MODE\tcolor output (no-op)\n  -h, --help\tdisplay this help and exit\n  -V, --version\toutput version information and exit\n";
         if ctx.args.iter().any(|arg| arg == "-h") {
             return Ok(ExecResult::ok(help_text.to_string()));
         }
@@ -1463,6 +1662,9 @@ impl Builtin for Rg {
         let mut opts = RgOptions::parse(ctx.args)?;
         if opts.type_list {
             return Ok(ExecResult::ok(opts.type_database.list()));
+        }
+        if let Err(result) = load_rg_ignore_files(&*ctx.fs, ctx.cwd, &mut opts).await {
+            return Ok(result);
         }
         if opts.list_files {
             let files = collect_rg_file_list(&*ctx.fs, &opts, ctx.cwd).await;
@@ -1915,6 +2117,23 @@ mod tests {
 
     const DIFF_SORT_FILES: &[(&str, &[u8])] =
         &[("/proj/a.txt", b"needle\n"), ("/proj/b.txt", b"needle\n")];
+
+    const DIFF_IGNORE_FILES: &[(&str, &[u8])] = &[
+        ("/proj/.git/config", b"[core]\n"),
+        (
+            "/proj/.gitignore",
+            b"target/\n*.log\n!keep.log\nvendor/**\n",
+        ),
+        ("/proj/.ignore", b"src/ignored.txt\n"),
+        ("/proj/custom.ignore", b"*.tmp\n"),
+        ("/proj/a.txt", b"needle\n"),
+        ("/proj/a.log", b"needle\n"),
+        ("/proj/keep.log", b"needle\n"),
+        ("/proj/target/out.txt", b"needle\n"),
+        ("/proj/src/ignored.txt", b"needle\n"),
+        ("/proj/vendor/lib.rs", b"needle\n"),
+        ("/proj/scratch.tmp", b"needle\n"),
+    ];
 
     const RG_DIFF_CASES: &[RgDiffCase] = &[
         RgDiffCase {
@@ -2403,6 +2622,54 @@ mod tests {
             cwd: "/",
             output: RgDiffOutput::Exact,
         },
+        RgDiffCase {
+            name: "ignore files default",
+            args: &["needle", "proj"],
+            stdin: None,
+            files: DIFF_IGNORE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "no ignore disables auto ignore files",
+            args: &["--no-ignore", "needle", "proj"],
+            stdin: None,
+            files: DIFF_IGNORE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "no ignore vcs keeps dot ignore",
+            args: &["--no-ignore-vcs", "needle", "proj"],
+            stdin: None,
+            files: DIFF_IGNORE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "no ignore dot keeps vcs ignore",
+            args: &["--no-ignore-dot", "needle", "proj"],
+            stdin: None,
+            files: DIFF_IGNORE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "explicit ignore file",
+            args: &["--ignore-file", "proj/custom.ignore", "needle", "proj"],
+            stdin: None,
+            files: DIFF_IGNORE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "explicit file bypasses ignore",
+            args: &["needle", "proj/a.log"],
+            stdin: None,
+            files: DIFF_IGNORE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
     ];
 
     fn require_real_rg() {
@@ -2680,6 +2947,39 @@ mod tests {
 
         let invalid = RgOptions::parse(&["--type-add".to_string(), "foo".to_string()]);
         assert!(invalid.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_rg_ignore_files_and_disable_flags() {
+        let files: &[(&str, &[u8])] = &[
+            ("/proj/.git/config", b"[core]\n"),
+            ("/proj/.gitignore", b"target/\n*.log\n!keep.log\n"),
+            ("/proj/.ignore", b"src/ignored.txt\n"),
+            ("/proj/a.txt", b"needle\n"),
+            ("/proj/a.log", b"needle\n"),
+            ("/proj/keep.log", b"needle\n"),
+            ("/proj/target/out.txt", b"needle\n"),
+            ("/proj/src/ignored.txt", b"needle\n"),
+        ];
+
+        let default = run_rg(&["needle", "/proj"], None, files).await;
+        assert_eq!(default.exit_code, 0);
+        assert!(default.stdout.contains("a.txt"));
+        assert!(default.stdout.contains("keep.log"));
+        assert!(!default.stdout.contains("a.log"));
+        assert!(!default.stdout.contains("target/out.txt"));
+        assert!(!default.stdout.contains("src/ignored.txt"));
+
+        let no_ignore = run_rg(&["--no-ignore", "needle", "/proj"], None, files).await;
+        assert_eq!(no_ignore.exit_code, 0);
+        assert!(no_ignore.stdout.contains("a.log"));
+        assert!(no_ignore.stdout.contains("target/out.txt"));
+        assert!(no_ignore.stdout.contains("src/ignored.txt"));
+
+        let no_vcs = run_rg(&["--no-ignore-vcs", "needle", "/proj"], None, files).await;
+        assert_eq!(no_vcs.exit_code, 0);
+        assert!(no_vcs.stdout.contains("a.log"));
+        assert!(!no_vcs.stdout.contains("src/ignored.txt"));
     }
 
     #[tokio::test]
@@ -3081,7 +3381,7 @@ mod tests {
             }],
         });
 
-        let result = run_rg_with_fs(&["secret", "/safe"], None, fs).await;
+        let result = run_rg_with_fs(&["--no-ignore", "secret", "/safe"], None, fs).await;
         assert_eq!(result.exit_code, 1);
         assert_eq!(result.stdout, "");
     }
