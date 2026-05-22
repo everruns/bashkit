@@ -71,7 +71,7 @@ for sandbox security reasons. See the compliance spec for details.
 | `readonly` | `VAR[=value]`, `-p` | POSIX mark variable read-only |
 | `times` | - | POSIX display process times |
 | `grep` | `-i`, `-v`, `-c`, `-n`, `-E`, `-q` | Pattern matching |
-| `rg` | `-i`, `-n`, `-c`, `-l`, `-F`, `-w`, `-m`, `-A`, `-B`, `-C`, `-g/--glob`, `-o`, `-q`, `-e` | Recursive ripgrep-style search |
+| `rg` | `-i`, `-n/-N`, `-c`, `-l`, `--files-without-match`, `-F`, `-w`, `-m`, `-A`, `-B`, `-C`, `-g/--glob`, `-o`, `-q`, `-e`, `-H/-I`, `--help`, `--version` | Recursive ripgrep-style search |
 | `sed` | `s///[g]`, `d`, `p`, `q`, `a`, `i`, `c`, `h/H/g/G/x`, `-E`, `-n`, `!` | Stream editing |
 | `awk` | `'{print}'`, `-F`, `-v`, loops, arrays, increment, ternary | Text processing |
 | `jq` | `.field`, `.[n]`, pipes, file args, `-r`, `-c`, `-n`, `-s`, `-S`, `-e`, `-j`, `--tab`, `--arg`, `--argjson`, `-V`, combined flags | JSON processing |

@@ -121,7 +121,7 @@ impl RgOptions {
                 opts.glob_rules.push(RgGlobRule::parse(val)?);
             } else if let Some(val) = long_value(&mut p, "--glob")? {
                 opts.glob_rules.push(RgGlobRule::parse(&val)?);
-            } else if p.flag("--no-filename") {
+            } else if p.flag_any(&["-I", "--no-filename"]) {
                 opts.no_filename = true;
             } else if p.flag("--with-filename") {
                 opts.show_filename = true;
@@ -186,7 +186,7 @@ impl RgOptions {
                         'w' => opts.word_boundary = true,
                         'F' => opts.fixed_strings = true,
                         'H' => opts.show_filename = true,
-                        'h' => opts.no_filename = true,
+                        'I' => opts.no_filename = true,
                         'o' => opts.only_matching = true,
                         'q' => opts.quiet = true,
                         'e' => {
@@ -347,16 +347,16 @@ impl RgOptions {
             .map_err(|e| Error::Execution(format!("rg: invalid pattern: {}", e)))
     }
 
-    fn matches_globs(&self, path: &Path) -> bool {
+    fn matches_globs(&self, path: &Path, cwd: &Path) -> bool {
         let includes: Vec<&RgGlobRule> = self.glob_rules.iter().filter(|g| g.include).collect();
-        if !includes.is_empty() && !includes.iter().any(|g| g.matches(path)) {
+        if !includes.is_empty() && !includes.iter().any(|g| g.matches(path, cwd)) {
             return false;
         }
         !self
             .glob_rules
             .iter()
             .filter(|g| !g.include)
-            .any(|g| g.matches(path))
+            .any(|g| g.matches(path, cwd))
     }
 
     fn first_positive_glob(&self) -> Option<String> {
@@ -376,7 +376,7 @@ impl RgGlobRule {
         let normalized = raw_pattern.strip_prefix("./").unwrap_or(raw_pattern);
         let has_slash = normalized.contains('/');
         let anchored = normalized.starts_with('/');
-        let regex = build_regex_opts(&glob_to_regex(normalized, has_slash, anchored), false)
+        let regex = build_regex_opts(&glob_to_regex(normalized), false)
             .map_err(|e| Error::Execution(format!("rg: invalid --glob value: {}", e)))?;
         Ok(Self {
             raw: normalized.to_string(),
@@ -387,28 +387,58 @@ impl RgGlobRule {
         })
     }
 
-    fn matches(&self, path: &Path) -> bool {
-        let full = path.to_string_lossy().replace('\\', "/");
+    fn matches(&self, path: &Path, cwd: &Path) -> bool {
         let target = if self.has_slash {
             if self.anchored {
-                full.as_str()
+                path_to_slash(path)
             } else {
-                full.trim_start_matches('/')
+                relative_path_to_slash(path, cwd)
             }
         } else {
-            path.file_name().and_then(|n| n.to_str()).unwrap_or("")
+            path.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string()
         };
-        self.regex.is_match(target)
+        self.regex.is_match(&target)
     }
 }
 
-fn glob_to_regex(pattern: &str, has_slash: bool, anchored: bool) -> String {
-    let mut out = String::new();
-    if has_slash && !anchored {
-        out.push_str("(?:^|.*/)");
-    } else {
-        out.push('^');
+fn path_to_slash(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn relative_path_to_slash(path: &Path, cwd: &Path) -> String {
+    let relative = path.strip_prefix(cwd).unwrap_or(path);
+    path_to_slash(relative).trim_start_matches('/').to_string()
+}
+
+fn display_path_for(path: &Path, cwd: &Path, root_arg: Option<&str>) -> String {
+    match root_arg {
+        Some(arg) if arg.starts_with('/') => path_to_slash(path),
+        Some(".") | Some("./") => {
+            let relative = relative_path_to_slash(path, cwd);
+            if relative.is_empty() {
+                ".".to_string()
+            } else {
+                format!("./{}", relative)
+            }
+        }
+        Some(arg) if arg.starts_with("./") => {
+            let relative = relative_path_to_slash(path, cwd);
+            if relative.is_empty() {
+                arg.trim_end_matches('/').to_string()
+            } else {
+                format!("./{}", relative)
+            }
+        }
+        _ => relative_path_to_slash(path, cwd),
     }
+}
+
+fn glob_to_regex(pattern: &str) -> String {
+    let mut out = String::new();
+    out.push('^');
 
     let chars: Vec<char> = pattern.trim_start_matches('/').chars().collect();
     let mut i = 0;
@@ -476,8 +506,10 @@ async fn collect_rg_inputs(
             return Ok(inputs);
         }
 
-        let files = collect_rg_files_recursive(&*ctx.fs, std::slice::from_ref(ctx.cwd), opts).await;
-        return Ok(read_rg_files(&*ctx.fs, files).await);
+        let files =
+            collect_rg_files_recursive(&*ctx.fs, std::slice::from_ref(ctx.cwd), opts, ctx.cwd)
+                .await;
+        return Ok(read_rg_files(&*ctx.fs, files, ctx.cwd, None).await);
     }
 
     if let Some(inputs) = try_indexed_search(&*ctx.fs, opts, ctx.cwd).await {
@@ -491,12 +523,13 @@ async fn collect_rg_inputs(
             && meta.file_type.is_dir()
         {
             let files =
-                collect_rg_files_recursive(&*ctx.fs, std::slice::from_ref(&path), opts).await;
-            inputs.extend(read_rg_files(&*ctx.fs, files).await);
+                collect_rg_files_recursive(&*ctx.fs, std::slice::from_ref(&path), opts, ctx.cwd)
+                    .await;
+            inputs.extend(read_rg_files(&*ctx.fs, files, ctx.cwd, Some(p)).await);
             continue;
         }
 
-        if !opts.matches_globs(&path) {
+        if !opts.matches_globs(&path, ctx.cwd) {
             continue;
         }
         let text = match read_text_file(&*ctx.fs, &path, "rg").await {
@@ -524,6 +557,7 @@ async fn collect_rg_files_recursive(
     fs: &dyn crate::fs::FileSystem,
     roots: &[PathBuf],
     opts: &RgOptions,
+    cwd: &Path,
 ) -> Vec<PathBuf> {
     let mut result = Vec::new();
     let mut stack: Vec<PathBuf> = roots.to_vec();
@@ -534,13 +568,13 @@ async fn collect_rg_files_recursive(
                 let path = current.join(&entry.name);
                 if entry.metadata.file_type.is_dir() {
                     stack.push(path);
-                } else if entry.metadata.file_type.is_file() && opts.matches_globs(&path) {
+                } else if entry.metadata.file_type.is_file() && opts.matches_globs(&path, cwd) {
                     result.push(path);
                 }
             }
         } else if let Ok(meta) = fs.stat(&current).await
             && meta.file_type.is_file()
-            && opts.matches_globs(&current)
+            && opts.matches_globs(&current, cwd)
         {
             result.push(current);
         }
@@ -553,12 +587,14 @@ async fn collect_rg_files_recursive(
 async fn read_rg_files(
     fs: &dyn crate::fs::FileSystem,
     files: Vec<PathBuf>,
+    cwd: &Path,
+    root_arg: Option<&str>,
 ) -> Vec<(String, String)> {
     let mut inputs = Vec::new();
     for path in files {
         if let Ok(content) = fs.read_file(&path).await {
             inputs.push((
-                path.to_string_lossy().into_owned(),
+                display_path_for(&path, cwd, root_arg),
                 String::from_utf8_lossy(&content).into_owned(),
             ));
         }
@@ -576,24 +612,25 @@ async fn try_indexed_search(
     }
 
     let sc = fs.as_search_capable()?;
-    let roots = if opts.paths.is_empty() {
-        vec![cwd.to_path_buf()]
+    let roots: Vec<(PathBuf, Option<String>)> = if opts.paths.is_empty() {
+        vec![(cwd.to_path_buf(), None)]
     } else {
         opts.paths
             .iter()
             .map(|p| {
-                if p.starts_with('/') {
+                let root = if p.starts_with('/') {
                     PathBuf::from(p)
                 } else {
                     cwd.join(p)
-                }
+                };
+                (root, Some(p.clone()))
             })
             .collect()
     };
 
     let mut inputs = Vec::new();
     let mut seen_paths = HashSet::new();
-    for root in roots {
+    for (root, root_arg) in roots {
         let root = crate::fs::normalize_path(&root);
         let provider = sc.search_provider(&root)?;
         let caps = provider.capabilities();
@@ -632,13 +669,13 @@ async fn try_indexed_search(
 
             if !candidate.starts_with(&root)
                 || !seen_paths.insert(candidate.clone())
-                || !opts.matches_globs(&candidate)
+                || !opts.matches_globs(&candidate, cwd)
             {
                 continue;
             }
             if let Ok(content) = fs.read_file(&candidate).await {
                 inputs.push((
-                    candidate.to_string_lossy().into_owned(),
+                    display_path_for(&candidate, cwd, root_arg.as_deref()),
                     String::from_utf8_lossy(&content).into_owned(),
                 ));
             }
@@ -717,11 +754,11 @@ fn write_rg_context(
 #[async_trait]
 impl Builtin for Rg {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        if let Some(r) = super::check_help_version(
-            ctx.args,
-            "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i, --ignore-case\tcase insensitive\n  -n, --line-number\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  -c, --count\tcount matches\n  -l, --files-with-matches\tfiles with matches\n  --files-without-match\tfiles without matches\n  -v, --invert-match\tinvert match\n  -w, --word-regexp\tword boundary\n  -F, --fixed-strings\tfixed strings (literal)\n  -o, --only-matching\tshow only matching text\n  -q, --quiet\tsuppress output; exit status only\n  -e, --regexp PATTERN\tuse PATTERN for matching\n  -m, --max-count NUM\tmax count per file\n  -A, --after-context NUM\tshow trailing context\n  -B, --before-context NUM\tshow leading context\n  -C, --context NUM\tshow leading and trailing context\n  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  -H, --with-filename\tshow filename\n  -h, --no-filename\tsuppress filename\n  --color MODE\tcolor output (no-op)\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
-            Some("rg (bashkit) 0.1"),
-        ) {
+        let help_text = "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i, --ignore-case\tcase insensitive\n  -n, --line-number\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  -c, --count\tcount matches\n  -l, --files-with-matches\tfiles with matches\n  --files-without-match\tfiles without matches\n  -v, --invert-match\tinvert match\n  -w, --word-regexp\tword boundary\n  -F, --fixed-strings\tfixed strings (literal)\n  -o, --only-matching\tshow only matching text\n  -q, --quiet\tsuppress output; exit status only\n  -e, --regexp PATTERN\tuse PATTERN for matching\n  -m, --max-count NUM\tmax count per file\n  -A, --after-context NUM\tshow trailing context\n  -B, --before-context NUM\tshow leading context\n  -C, --context NUM\tshow leading and trailing context\n  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  -H, --with-filename\tshow filename\n  -I, --no-filename\tsuppress filename\n  --color MODE\tcolor output (no-op)\n  -h, --help\tdisplay this help and exit\n  --version\toutput version information and exit\n";
+        if ctx.args.iter().any(|arg| arg == "-h") {
+            return Ok(ExecResult::ok(help_text.to_string()));
+        }
+        if let Some(r) = super::check_help_version(ctx.args, help_text, Some("rg (bashkit) 0.1")) {
             return Ok(r);
         }
         let opts = RgOptions::parse(ctx.args)?;
@@ -793,6 +830,9 @@ impl Builtin for Rg {
                 continue;
             }
             if opts.count_only {
+                if match_count == 0 {
+                    continue;
+                }
                 if show_filename {
                     output.push_str(filename);
                     output.push(':');
@@ -822,6 +862,9 @@ impl Builtin for Rg {
                     }
                 }
             } else if has_context {
+                if !output.is_empty() && !match_lines.is_empty() {
+                    output.push_str("--\n");
+                }
                 write_rg_context(
                     &mut output,
                     filename,
@@ -866,6 +909,15 @@ mod tests {
     use std::sync::Arc;
 
     async fn run_rg(args: &[&str], stdin: Option<&str>, files: &[(&str, &[u8])]) -> ExecResult {
+        run_rg_with_cwd(args, stdin, files, "/").await
+    }
+
+    async fn run_rg_with_cwd(
+        args: &[&str],
+        stdin: Option<&str>,
+        files: &[(&str, &[u8])],
+        cwd: &str,
+    ) -> ExecResult {
         let fs = Arc::new(InMemoryFs::new());
         for (path, content) in files {
             let p = Path::new(path);
@@ -880,17 +932,29 @@ mod tests {
             fs_trait.write_file(p, content).await.unwrap();
         }
 
-        run_rg_with_fs(args, stdin, fs).await
+        run_rg_with_fs_and_cwd(args, stdin, fs, cwd).await
     }
 
     async fn run_rg_with_fs<F>(args: &[&str], stdin: Option<&str>, fs: Arc<F>) -> ExecResult
     where
         F: FileSystem + 'static,
     {
+        run_rg_with_fs_and_cwd(args, stdin, fs, "/").await
+    }
+
+    async fn run_rg_with_fs_and_cwd<F>(
+        args: &[&str],
+        stdin: Option<&str>,
+        fs: Arc<F>,
+        cwd: &str,
+    ) -> ExecResult
+    where
+        F: FileSystem + 'static,
+    {
         let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
         let env = HashMap::new();
         let mut variables = HashMap::new();
-        let mut cwd = PathBuf::from("/");
+        let mut cwd = PathBuf::from(cwd);
         let fs_dyn = fs as Arc<dyn FileSystem>;
         let ctx = Context {
             args: &args,
@@ -909,6 +973,333 @@ mod tests {
         };
 
         Rg.execute(ctx).await.unwrap()
+    }
+
+    #[derive(Clone, Copy)]
+    enum RgDiffOutput {
+        Exact,
+        UnorderedLines,
+    }
+
+    struct RgDiffCase {
+        name: &'static str,
+        args: &'static [&'static str],
+        stdin: Option<&'static str>,
+        files: &'static [(&'static str, &'static [u8])],
+        cwd: &'static str,
+        output: RgDiffOutput,
+    }
+
+    const DIFF_BASIC_FILES: &[(&str, &[u8])] = &[
+        ("/proj/a.txt", b"needle\nnone\nneedle again\n"),
+        ("/proj/b.txt", b"none\n"),
+        ("/proj/src/main.rs", b"needle\n"),
+        ("/proj/src/main.txt", b"needle\n"),
+        ("/proj/vendor/lib.rs", b"needle\n"),
+        ("/proj/case.txt", b"Hello\nhello\n"),
+        ("/proj/fixed.txt", b"a.b\naxb\n"),
+        ("/proj/words.txt", b"cat\ncatch\nmy cat\n"),
+        ("/proj/context.txt", b"before\nneedle\nafter\n"),
+    ];
+
+    const DIFF_TWO_CONTEXT_FILES: &[(&str, &[u8])] = &[
+        ("/proj/a.txt", b"before\nneedle\nafter\n"),
+        ("/proj/b.txt", b"x\nneedle\ny\n"),
+    ];
+
+    const RG_DIFF_CASES: &[RgDiffCase] = &[
+        RgDiffCase {
+            name: "stdin line numbers",
+            args: &["-n", "needle"],
+            stdin: Some("x\nneedle\n"),
+            files: &[],
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "no path recursive cwd display",
+            args: &["needle"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/proj",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "relative recursive display",
+            args: &["needle", "proj"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "absolute path display",
+            args: &["-H", "needle", "/proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "dot root glob excludes cwd-relative path",
+            args: &["-g", "*.rs", "-g", "!vendor/**", "needle", "."],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/proj",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "relative root glob keeps nested vendor",
+            args: &["-g", "*.rs", "-g", "!vendor/**", "needle", "proj"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "long glob equals include",
+            args: &["--glob=*.rs", "needle", "proj"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "context combined",
+            args: &["-nC1", "needle", "proj/context.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "context across explicit files",
+            args: &["-n", "-A1", "-B1", "needle", "proj/a.txt", "proj/b.txt"],
+            stdin: None,
+            files: DIFF_TWO_CONTEXT_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "count suppresses zero-match files",
+            args: &["-c", "needle", "proj"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "only matching",
+            args: &["-o", "needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "quiet",
+            args: &["-q", "needle", "proj"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "multiple regexp explicit files",
+            args: &["-e", "needle", "-e", "Hello", "proj/a.txt", "proj/case.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "long regexp equals",
+            args: &["--regexp=needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "case insensitive",
+            args: &["-i", "hello", "proj/case.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "fixed strings",
+            args: &["-F", "a.b", "proj/fixed.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "word regexp",
+            args: &["-w", "cat", "proj/words.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "invert match",
+            args: &["-v", "needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "max count",
+            args: &["-m", "1", "needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "files with matches",
+            args: &["-l", "needle", "proj/a.txt", "proj/b.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "files without match",
+            args: &[
+                "--files-without-match",
+                "needle",
+                "proj/a.txt",
+                "proj/b.txt",
+            ],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "force no filename",
+            args: &["-I", "needle", "proj/a.txt", "proj/src/main.rs"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "combined line number off",
+            args: &["-nN", "needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+    ];
+
+    fn require_real_rg() {
+        let output = std::process::Command::new("rg")
+            .arg("--version")
+            .output()
+            .expect("real rg binary must be installed for rg differential tests");
+        assert!(
+            output.status.success(),
+            "real rg binary must run successfully for rg differential tests"
+        );
+    }
+
+    fn run_real_rg(case: &RgDiffCase) -> (String, i32) {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+
+        require_real_rg();
+
+        let tempdir = tempfile::tempdir().expect("tempdir for rg differential test");
+        for (path, content) in case.files {
+            let host_path = tempdir.path().join(path.trim_start_matches('/'));
+            if let Some(parent) = host_path.parent() {
+                std::fs::create_dir_all(parent).expect("create parent dir for rg fixture");
+            }
+            std::fs::write(host_path, content).expect("write rg fixture file");
+        }
+
+        let host_cwd = tempdir.path().join(case.cwd.trim_start_matches('/'));
+        let mapped_args: Vec<String> = case
+            .args
+            .iter()
+            .map(|arg| {
+                if arg.starts_with('/') {
+                    tempdir
+                        .path()
+                        .join(arg.trim_start_matches('/'))
+                        .to_string_lossy()
+                        .into_owned()
+                } else {
+                    (*arg).to_string()
+                }
+            })
+            .collect();
+
+        let mut command = Command::new("rg");
+        command
+            .args(["--threads", "1"])
+            .args(&mapped_args)
+            .current_dir(host_cwd)
+            .env("LC_ALL", "C");
+
+        let output = if let Some(stdin) = case.stdin {
+            let mut child = command
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()
+                .expect("spawn real rg for differential test");
+            child
+                .stdin
+                .as_mut()
+                .expect("real rg stdin pipe")
+                .write_all(stdin.as_bytes())
+                .expect("write stdin to real rg");
+            child
+                .wait_with_output()
+                .expect("wait for real rg differential test")
+        } else {
+            command.output().expect("run real rg differential test")
+        };
+
+        let stdout = String::from_utf8_lossy(&output.stdout)
+            .replace(&tempdir.path().to_string_lossy().to_string(), "");
+        (stdout, output.status.code().unwrap_or(-1))
+    }
+
+    async fn assert_rg_diff_case(case: &RgDiffCase) {
+        let (real_stdout, real_code) = run_real_rg(case);
+        let bashkit = run_rg_with_cwd(case.args, case.stdin, case.files, case.cwd).await;
+        match case.output {
+            RgDiffOutput::Exact => assert_eq!(
+                bashkit.stdout, real_stdout,
+                "stdout mismatch for rg differential case {}",
+                case.name
+            ),
+            RgDiffOutput::UnorderedLines => assert_eq!(
+                sorted_lines(&bashkit.stdout),
+                sorted_lines(&real_stdout),
+                "stdout line-set mismatch for rg differential case {}",
+                case.name
+            ),
+        }
+        assert_eq!(
+            bashkit.exit_code, real_code,
+            "exit-code mismatch for rg differential case {}",
+            case.name
+        );
+    }
+
+    fn sorted_lines(output: &str) -> Vec<&str> {
+        let mut lines: Vec<&str> = output.lines().collect();
+        lines.sort_unstable();
+        lines
     }
 
     struct IndexedTestFs {
@@ -993,6 +1384,27 @@ mod tests {
                 matches: self.matches.clone(),
             }))
         }
+    }
+
+    #[tokio::test]
+    async fn test_rg_help_and_version() {
+        let long_help = run_rg(&["--help"], None, &[]).await;
+        assert_eq!(long_help.exit_code, 0);
+        assert!(
+            long_help
+                .stdout
+                .contains("Usage: rg [OPTIONS] PATTERN [PATH...]")
+        );
+        assert!(long_help.stdout.contains("-h, --help"));
+        assert!(long_help.stdout.contains("--version"));
+
+        let short_help = run_rg(&["-h"], None, &[]).await;
+        assert_eq!(short_help.exit_code, 0);
+        assert_eq!(short_help.stdout, long_help.stdout);
+
+        let version = run_rg(&["--version"], None, &[]).await;
+        assert_eq!(version.exit_code, 0);
+        assert_eq!(version.stdout, "rg (bashkit) 0.1\n");
     }
 
     #[tokio::test]
@@ -1304,18 +1716,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_rg_glob_include_and_exclude() {
-        let result = run_rg(
-            &["--glob", "*.rs", "-g", "!vendor/**", "needle", "/proj"],
+        let result = run_rg_with_cwd(
+            &["--glob", "*.rs", "-g", "!vendor/**", "needle", "."],
             None,
             &[
                 ("/proj/src/main.rs", b"needle\n"),
                 ("/proj/src/main.txt", b"needle\n"),
                 ("/proj/vendor/lib.rs", b"needle\n"),
             ],
+            "/proj",
         )
         .await;
         assert_eq!(result.exit_code, 0);
-        assert!(result.stdout.contains("/proj/src/main.rs:needle"));
+        assert!(result.stdout.contains("./src/main.rs:needle"));
         assert!(!result.stdout.contains("main.txt"));
         assert!(!result.stdout.contains("vendor"));
     }
@@ -1370,5 +1783,17 @@ mod tests {
         let result = run_rg_with_fs(&["secret", "/safe"], None, fs).await;
         assert_eq!(result.exit_code, 1);
         assert_eq!(result.stdout, "");
+    }
+
+    #[test]
+    fn real_rg_binary_is_available_for_differential_tests() {
+        require_real_rg();
+    }
+
+    #[tokio::test]
+    async fn diff_rg_matches_real_rg_cases() {
+        for case in RG_DIFF_CASES {
+            assert_rg_diff_case(case).await;
+        }
     }
 }

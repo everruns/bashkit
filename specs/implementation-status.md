@@ -108,7 +108,7 @@ Bashkit implements IEEE 1003.1-2024 Shell Command Language.
 |----------|-------|-------|------|------|-------|
 | Bash (core) | 1939 | Yes | 1916 | 23 | `bash_spec_tests` in CI |
 | AWK | 126 | Yes | 126 | 0 | loops, arrays, -v, ternary, field assign, getline, %.6g, delete, dev-stderr |
-| Grep | 95 | Yes | 95 | 0 | -z, -r, -a, -b, -H, -h, -f, -P, --include, --exclude, binary detect; rg has context, glob, indexed recursive search |
+| Grep | 95 | Yes | 95 | 0 | -z, -r, -a, -b, -H, -h, -f, -P, --include, --exclude, binary detect; rg has context, glob, -e, -o, -q, filename controls, help/version, indexed recursive search, and pinned real-rg differentials |
 | Sed | 78 | Yes | 78 | 0 | hold space, change, regex ranges, -E |
 | JQ | 121 | Yes | 120 | 1 | reduce, walk, regex funcs, --arg/--argjson, combined flags, input/inputs, env |
 | Python | 60 | Yes | 58 | 2 | embedded Python (Monty 0.0.11); datetime, json, pathlib, os |
