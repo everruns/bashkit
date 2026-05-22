@@ -1898,6 +1898,28 @@ async fn load_local_ignore_rules(
     Ok(())
 }
 
+async fn load_parent_ignore_rules(
+    fs: &dyn crate::fs::FileSystem,
+    dir: &Path,
+    opts: &RgOptions,
+    rules: &mut Vec<RgIgnoreRule>,
+) -> Result<()> {
+    if opts.no_ignore || opts.no_ignore_parent {
+        return Ok(());
+    }
+
+    let Some(parent) = dir.parent() else {
+        return Ok(());
+    };
+    let mut ancestors: Vec<PathBuf> = parent.ancestors().map(Path::to_path_buf).collect();
+    ancestors.reverse();
+
+    for ancestor in ancestors {
+        load_local_ignore_rules(fs, &ancestor, Path::new("/"), opts, rules).await?;
+    }
+    Ok(())
+}
+
 async fn load_optional_ignore_file(
     fs: &dyn crate::fs::FileSystem,
     path: &Path,
@@ -1996,18 +2018,19 @@ async fn collect_rg_files_recursive(
     cwd: &Path,
 ) -> Vec<RgFileCandidate> {
     let mut result = Vec::new();
-    let mut stack: Vec<RgWalkItem> = roots
-        .iter()
-        .cloned()
-        .map(|root| RgWalkItem {
-            logical: root.logical,
+    let mut stack = Vec::new();
+    for root in roots {
+        let mut rules = opts.explicit_ignore_rules.clone();
+        let _ = load_parent_ignore_rules(fs, &root.actual, opts, &mut rules).await;
+        stack.push(RgWalkItem {
+            logical: root.logical.clone(),
             actual: root.actual.clone(),
             actual_root: root.actual.clone(),
             depth: 0,
-            rules: opts.explicit_ignore_rules.clone(),
-            ancestors: vec![root.actual],
-        })
-        .collect();
+            rules,
+            ancestors: vec![root.actual.clone()],
+        });
+    }
 
     while let Some(item) = stack.pop() {
         let mut rules = item.rules;
@@ -3904,6 +3927,15 @@ mod tests {
         ("/proj/scratch.tmp", b"needle\n"),
     ];
 
+    const DIFF_PARENT_IGNORE_FILES: &[(&str, &[u8])] = &[
+        ("/proj/.git/config", b"[core]\n"),
+        ("/proj/.ignore", b"sub/ignored.txt\n"),
+        ("/proj/.gitignore", b"sub/vcs.txt\n"),
+        ("/proj/sub/ignored.txt", b"needle\n"),
+        ("/proj/sub/keep.txt", b"needle\n"),
+        ("/proj/sub/vcs.txt", b"needle\n"),
+    ];
+
     const DIFF_BINARY_FILES: &[(&str, &[u8])] = &[
         ("/proj/bin.dat", b"abc\0needle\n"),
         ("/proj/text.txt", b"needle\n"),
@@ -4946,6 +4978,22 @@ mod tests {
             args: &["needle", "proj"],
             stdin: None,
             files: DIFF_IGNORE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "parent ignore files apply to child root",
+            args: &["needle", "proj/sub"],
+            stdin: None,
+            files: DIFF_PARENT_IGNORE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "no ignore parent disables parent ignore files",
+            args: &["--no-ignore-parent", "needle", "proj/sub"],
+            stdin: None,
+            files: DIFF_PARENT_IGNORE_FILES,
             cwd: "/",
             output: RgDiffOutput::UnorderedLines,
         },
@@ -6438,6 +6486,30 @@ mod tests {
         assert!(no_vcs.stdout.contains("a.log"));
         assert!(!no_vcs.stdout.contains("src/ignored.txt"));
         assert!(!no_vcs.stdout.contains("rgonly.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_rg_parent_ignore_files() {
+        let files: &[(&str, &[u8])] = &[
+            ("/proj/.git/config", b"[core]\n"),
+            ("/proj/.ignore", b"sub/ignored.txt\n"),
+            ("/proj/.gitignore", b"sub/vcs.txt\n"),
+            ("/proj/sub/ignored.txt", b"needle\n"),
+            ("/proj/sub/keep.txt", b"needle\n"),
+            ("/proj/sub/vcs.txt", b"needle\n"),
+        ];
+
+        let default = run_rg(&["needle", "/proj/sub"], None, files).await;
+        assert_eq!(default.exit_code, 0);
+        assert!(default.stdout.contains("keep.txt"));
+        assert!(!default.stdout.contains("ignored.txt"));
+        assert!(!default.stdout.contains("vcs.txt"));
+
+        let no_parent = run_rg(&["--no-ignore-parent", "needle", "/proj/sub"], None, files).await;
+        assert_eq!(no_parent.exit_code, 0);
+        assert!(no_parent.stdout.contains("ignored.txt"));
+        assert!(no_parent.stdout.contains("keep.txt"));
+        assert!(no_parent.stdout.contains("vcs.txt"));
     }
 
     #[tokio::test]
