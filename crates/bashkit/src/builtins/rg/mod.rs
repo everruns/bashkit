@@ -74,6 +74,7 @@ struct RgOptions {
     no_ignore: bool,
     no_ignore_dot: bool,
     no_ignore_vcs: bool,
+    require_git: bool,
     messages: bool,
     context_separator: String,
     field_match_separator: String,
@@ -179,6 +180,7 @@ impl RgOptions {
             no_ignore: false,
             no_ignore_dot: false,
             no_ignore_vcs: false,
+            require_git: true,
             messages: true,
             context_separator: "--".to_string(),
             field_match_separator: ":".to_string(),
@@ -368,14 +370,25 @@ impl RgOptions {
                 opts.no_ignore_dot = true;
             } else if p.flag("--no-ignore-vcs") {
                 opts.no_ignore_vcs = true;
+            } else if p.flag("--no-require-git") {
+                opts.require_git = false;
+            } else if p.flag("--require-git") {
+                opts.require_git = true;
             } else if p.flag("--unrestricted") {
                 opts.apply_unrestricted();
             } else if p.flag("--no-messages") {
                 opts.messages = false;
             } else if p.flag("--messages") {
                 opts.messages = true;
-            } else if p.flag_any(&["--no-ignore-parent", "--follow"]) {
-                // no-op: parent ignore discovery and symlink following are not modeled.
+            } else if p.flag_any(&[
+                "--no-config",
+                "--line-buffered",
+                "--block-buffered",
+                "--no-ignore-parent",
+                "--follow",
+            ]) {
+                // no-op: these flags affect host config, buffering, parent ignore
+                // discovery, or symlink walking, none of which are modeled here.
             } else if p.is_flag() {
                 // Combined short flags like -inFw
                 // Safe: is_flag() guarantees current() is Some
@@ -1238,7 +1251,7 @@ async fn load_local_ignore_rules(
     if !opts.no_ignore_dot {
         load_optional_ignore_file(fs, &dir.join(".ignore"), dir, rules).await?;
     }
-    if !opts.no_ignore_vcs && has_git_dir_in_ancestors(fs, dir, root).await {
+    if !opts.no_ignore_vcs && (!opts.require_git || has_git_dir_in_ancestors(fs, dir, root).await) {
         load_optional_ignore_file(fs, &dir.join(".gitignore"), dir, rules).await?;
     }
     Ok(())
@@ -1795,7 +1808,7 @@ fn append_rg_stats(output: &mut String, stats: &RgSearchStats, bytes_printed: us
 #[async_trait]
 impl Builtin for Rg {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        let help_text = "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i, --ignore-case\tcase insensitive\n  -S, --smart-case\tcase insensitive if pattern is lowercase\n  -s, --case-sensitive\tcase sensitive\n  -n, --line-number\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  --column\tshow column numbers\n  -b, --byte-offset\tshow byte offsets\n  --vimgrep\tshow file:line:column:match lines\n  --json\tshow JSON Lines events\n  --stats\tshow search statistics\n  --null\tterminate path fields with NUL\n  -c, --count\tcount matching lines\n  --count-matches\tcount individual matches\n  --include-zero\tinclude zero counts\n  -l, --files-with-matches\tfiles with matches\n  --files-without-match\tfiles without matches\n  --files\tprint files that would be searched\n  -v, --invert-match\tinvert match\n  -w, --word-regexp\tword boundary\n  -x, --line-regexp\tmatch whole lines\n  -F, --fixed-strings\tfixed strings (literal)\n  -a, --text\tsearch binary files as text\n  --binary\tsearch binary files and print binary-match summaries\n  -o, --only-matching\tshow only matching text\n  -q, --quiet\tsuppress output; exit status only\n  -e, --regexp PATTERN\tuse PATTERN for matching\n  -f, --file PATTERNFILE\tread patterns from file\n  -r, --replace REPLACEMENT\treplace matches in output\n  --passthru\tprint matching and non-matching lines\n  --trim\ttrim whitespace from output lines\n  -m, --max-count NUM\tmax count per file\n  -M, --max-columns NUM\tomit lines longer than NUM columns\n  --max-columns-preview\tshow prefixes of long lines\n  --max-depth NUM\tlimit recursive directory depth\n  -A, --after-context NUM\tshow trailing context\n  -B, --before-context NUM\tshow leading context\n  -C, --context NUM\tshow leading and trailing context\n  --context-separator SEP\tset context group separator\n  --field-match-separator SEP\tset match field separator\n  --field-context-separator SEP\tset context field separator\n  --heading\tgroup matches by file\n  --no-heading\tdisable heading output\n  --sort SORTBY\tsort paths (path only)\n  --sortr SORTBY\tsort paths in reverse (path only)\n  --sort-files\tsort --files output\n  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  -t, --type TYPE\tinclude files matching TYPE\n  -T, --type-not TYPE\texclude files matching TYPE\n  --type-add TYPE:GLOB\tadd a file type glob\n  --type-clear TYPE\tclear a file type definition\n  --type-list\tshow file type definitions\n  --ignore-file FILE\tuse additional ignore file\n  --no-ignore\tdo not use ignore files\n  --no-ignore-dot\tdo not use .ignore files\n  --no-ignore-vcs\tdo not use .gitignore files\n  -u, --unrestricted\treduce filtering (repeatable)\n  --messages\tshow file read diagnostics\n  --no-messages\tsuppress file read diagnostics\n  --hidden\tsearch hidden files and directories\n  --no-hidden\tdo not search hidden files and directories\n  -H, --with-filename\tshow filename\n  -I, --no-filename\tsuppress filename\n  --color MODE\tcolor output (no-op)\n  -h, --help\tdisplay this help and exit\n  -V, --version\toutput version information and exit\n";
+        let help_text = "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i, --ignore-case\tcase insensitive\n  -S, --smart-case\tcase insensitive if pattern is lowercase\n  -s, --case-sensitive\tcase sensitive\n  -n, --line-number\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  --column\tshow column numbers\n  -b, --byte-offset\tshow byte offsets\n  --vimgrep\tshow file:line:column:match lines\n  --json\tshow JSON Lines events\n  --stats\tshow search statistics\n  --null\tterminate path fields with NUL\n  -c, --count\tcount matching lines\n  --count-matches\tcount individual matches\n  --include-zero\tinclude zero counts\n  -l, --files-with-matches\tfiles with matches\n  --files-without-match\tfiles without matches\n  --files\tprint files that would be searched\n  -v, --invert-match\tinvert match\n  -w, --word-regexp\tword boundary\n  -x, --line-regexp\tmatch whole lines\n  -F, --fixed-strings\tfixed strings (literal)\n  -a, --text\tsearch binary files as text\n  --binary\tsearch binary files and print binary-match summaries\n  -o, --only-matching\tshow only matching text\n  -q, --quiet\tsuppress output; exit status only\n  -e, --regexp PATTERN\tuse PATTERN for matching\n  -f, --file PATTERNFILE\tread patterns from file\n  -r, --replace REPLACEMENT\treplace matches in output\n  --passthru\tprint matching and non-matching lines\n  --trim\ttrim whitespace from output lines\n  -m, --max-count NUM\tmax count per file\n  -M, --max-columns NUM\tomit lines longer than NUM columns\n  --max-columns-preview\tshow prefixes of long lines\n  --max-depth NUM\tlimit recursive directory depth\n  -A, --after-context NUM\tshow trailing context\n  -B, --before-context NUM\tshow leading context\n  -C, --context NUM\tshow leading and trailing context\n  --context-separator SEP\tset context group separator\n  --field-match-separator SEP\tset match field separator\n  --field-context-separator SEP\tset context field separator\n  --heading\tgroup matches by file\n  --no-heading\tdisable heading output\n  --sort SORTBY\tsort paths (path only)\n  --sortr SORTBY\tsort paths in reverse (path only)\n  --sort-files\tsort --files output\n  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  -t, --type TYPE\tinclude files matching TYPE\n  -T, --type-not TYPE\texclude files matching TYPE\n  --type-add TYPE:GLOB\tadd a file type glob\n  --type-clear TYPE\tclear a file type definition\n  --type-list\tshow file type definitions\n  --ignore-file FILE\tuse additional ignore file\n  --no-ignore\tdo not use ignore files\n  --no-ignore-dot\tdo not use .ignore files\n  --no-ignore-vcs\tdo not use .gitignore files\n  --no-require-git\tuse .gitignore outside git repositories\n  --require-git\trequire a git repository for .gitignore files\n  -u, --unrestricted\treduce filtering (repeatable)\n  --messages\tshow file read diagnostics\n  --no-messages\tsuppress file read diagnostics\n  --hidden\tsearch hidden files and directories\n  --no-hidden\tdo not search hidden files and directories\n  -H, --with-filename\tshow filename\n  -I, --no-filename\tsuppress filename\n  --line-buffered\tforce line buffering (no-op)\n  --block-buffered\tforce block buffering (no-op)\n  --no-config\tdo not read config files (no-op)\n  --color MODE\tcolor output (no-op)\n  -h, --help\tdisplay this help and exit\n  -V, --version\toutput version information and exit\n";
         if ctx.args.iter().any(|arg| arg == "-h") {
             return Ok(ExecResult::ok(help_text.to_string()));
         }
@@ -2396,6 +2409,12 @@ mod tests {
         ("/proj/.hidden.txt", b"needle\n"),
         ("/proj/target/out.txt", b"needle\n"),
         ("/proj/bin.dat", b"abc\0needle\n"),
+    ];
+
+    const DIFF_REQUIRE_GIT_FILES: &[(&str, &[u8])] = &[
+        ("/proj/.gitignore", b"target/\n"),
+        ("/proj/plain.txt", b"needle\n"),
+        ("/proj/target/out.txt", b"needle\n"),
     ];
 
     const DIFF_MAX_COLUMNS_FILES: &[(&str, &[u8])] = &[(
@@ -3019,6 +3038,59 @@ mod tests {
             output: RgDiffOutput::UnorderedLines,
         },
         RgDiffCase {
+            name: "gitignore requires git repo by default",
+            args: &["needle", "proj"],
+            stdin: None,
+            files: DIFF_REQUIRE_GIT_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "no require git uses gitignore outside repo",
+            args: &["--no-require-git", "needle", "proj"],
+            stdin: None,
+            files: DIFF_REQUIRE_GIT_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "require git restores default after no require git",
+            args: &["--no-require-git", "--require-git", "needle", "proj"],
+            stdin: None,
+            files: DIFF_REQUIRE_GIT_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "no config is accepted",
+            args: &["--no-config", "needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "line buffered is accepted",
+            args: &["--line-buffered", "needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "block buffered is accepted",
+            args: &[
+                "--line-buffered",
+                "--block-buffered",
+                "needle",
+                "proj/a.txt",
+            ],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
             name: "max columns omits long matches",
             args: &["--max-columns", "10", "needle", "proj/long.txt"],
             stdin: None,
@@ -3339,6 +3411,8 @@ mod tests {
         assert!(long_help.stdout.contains("--version"));
         assert!(long_help.stdout.contains("--stats"));
         assert!(long_help.stdout.contains("--unrestricted"));
+        assert!(long_help.stdout.contains("--no-require-git"));
+        assert!(long_help.stdout.contains("--no-config"));
 
         let short_help = run_rg(&["-h"], None, &[]).await;
         assert_eq!(short_help.exit_code, 0);
