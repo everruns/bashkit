@@ -19,6 +19,7 @@ use async_trait::async_trait;
 use regex::{Regex, RegexBuilder};
 use serde_json::json;
 use std::collections::{BTreeMap, HashSet};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use super::search_common::build_regex_opts;
@@ -50,6 +51,7 @@ struct RgOptions {
     fixed_strings: bool,
     text: bool,
     binary: bool,
+    search_zip: bool,
     crlf: bool,
     multiline: bool,
     multiline_dotall: bool,
@@ -184,6 +186,7 @@ impl RgOptions {
             fixed_strings: false,
             text: false,
             binary: false,
+            search_zip: false,
             crlf: false,
             multiline: false,
             multiline_dotall: false,
@@ -391,6 +394,10 @@ impl RgOptions {
                 opts.binary = true;
             } else if p.flag("--no-binary") {
                 opts.binary = false;
+            } else if p.flag("--search-zip") {
+                opts.search_zip = true;
+            } else if p.flag("--no-search-zip") {
+                opts.search_zip = false;
             } else if p.flag("--crlf") {
                 opts.crlf = true;
                 opts.null_data = false;
@@ -612,6 +619,7 @@ impl RgOptions {
                         'x' => opts.line_regexp = true,
                         'F' => opts.fixed_strings = true,
                         'a' => opts.text = true,
+                        'z' => opts.search_zip = true,
                         '0' => opts.null = true,
                         '.' => opts.hidden = true,
                         'j' => {
@@ -1523,6 +1531,23 @@ fn decode_rg_content(content: &[u8], opts: &RgOptions) -> String {
     }
 }
 
+fn rg_search_bytes(content: &[u8], opts: &RgOptions) -> std::result::Result<Vec<u8>, String> {
+    if !opts.search_zip || !is_gzip_content(content) {
+        return Ok(content.to_vec());
+    }
+
+    let mut decoder = flate2::read::GzDecoder::new(content);
+    let mut decompressed = Vec::new();
+    decoder
+        .read_to_end(&mut decompressed)
+        .map_err(|e| format!("gzip decompression failed: {e}"))?;
+    Ok(decompressed)
+}
+
+fn is_gzip_content(content: &[u8]) -> bool {
+    content.starts_with(&[0x1f, 0x8b, 0x08])
+}
+
 fn decode_utf8_lossy_strip_bom(content: &[u8]) -> String {
     let content = content.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(content);
     String::from_utf8_lossy(content).into_owned()
@@ -1600,6 +1625,8 @@ async fn read_rg_text_file(
         .await
         .map_err(|e| ExecResult::err(format!("rg: {}: {e}\n", path.display()), 1))?;
 
+    let content = rg_search_bytes(&content, opts)
+        .map_err(|e| ExecResult::err(format!("rg: {}: {e}\n", path.display()), 1))?;
     Ok(decode_rg_content(&content, opts))
 }
 
@@ -2055,6 +2082,9 @@ async fn read_rg_files(
     let mut inputs = Vec::new();
     for file in files {
         if let Ok(content) = fs.read_file(&file.actual).await {
+            let Ok(content) = rg_search_bytes(&content, opts) else {
+                continue;
+            };
             inputs.push((
                 display_path_for(&file.logical, cwd, root_arg, opts),
                 decode_rg_content(&content, opts),
@@ -2077,6 +2107,7 @@ async fn try_indexed_search(
         || !opts.type_includes.is_empty()
         || !opts.type_excludes.is_empty()
         || opts.follow_symlinks
+        || opts.search_zip
     {
         return None;
     }
@@ -2591,7 +2622,7 @@ fn append_rg_stats(output: &mut String, stats: &RgSearchStats, bytes_printed: us
 #[async_trait]
 impl Builtin for Rg {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        let help_text = "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i, --ignore-case\tcase insensitive\n  -S, --smart-case\tcase insensitive if pattern is lowercase\n  -s, --case-sensitive\tcase sensitive\n  -n, --line-number\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  --column\tshow column numbers\n  -b, --byte-offset\tshow byte offsets\n  --vimgrep\tshow file:line:column:match lines\n  --json\tshow JSON Lines events\n  --stats\tshow search statistics\n  --null\tterminate path fields with NUL\n  -c, --count\tcount matching lines\n  --count-matches\tcount individual matches\n  --include-zero\tinclude zero counts\n  -l, --files-with-matches\tfiles with matches\n  --files-without-match\tfiles without matches\n  --files\tprint files that would be searched\n  -v, --invert-match\tinvert match\n  -w, --word-regexp\tword boundary\n  -x, --line-regexp\tmatch whole lines\n  -F, --fixed-strings\tfixed strings (literal)\n  -a, --text\tsearch binary files as text\n  --binary\tsearch binary files and print binary-match summaries\n  --crlf\ttreat CRLF as line terminators for $ anchors\n  --no-crlf\tdisable CRLF line terminator mode\n  -U, --multiline\tenable matching across line boundaries\n  --no-multiline\tdisable multiline matching\n  --multiline-dotall\tmake . match line terminators in multiline mode\n  --no-multiline-dotall\tdisable multiline dotall mode\n  -o, --only-matching\tshow only matching text\n  -q, --quiet\tsuppress output; exit status only\n  -e, --regexp PATTERN\tuse PATTERN for matching\n  -f, --file PATTERNFILE\tread patterns from file\n  -E, --encoding ENCODING\tdecode searched files using ENCODING\n  -r, --replace REPLACEMENT\treplace matches in output\n  --passthru\tprint matching and non-matching lines\n  --trim\ttrim whitespace from output lines\n  -m, --max-count NUM\tmax count per file\n  -M, --max-columns NUM\tomit lines longer than NUM columns\n  --max-columns-preview\tshow prefixes of long lines\n  -j, --threads NUM\tset number of search threads (no-op)\n  --regex-size-limit NUM\tset regex size limit (no-op)\n  --dfa-size-limit NUM\tset DFA size limit (no-op)\n  --max-depth NUM\tlimit recursive directory depth\n  -A, --after-context NUM\tshow trailing context\n  -B, --before-context NUM\tshow leading context\n  -C, --context NUM\tshow leading and trailing context\n  --context-separator SEP\tset context group separator\n  --field-match-separator SEP\tset match field separator\n  --field-context-separator SEP\tset context field separator\n  -p, --pretty\talias for heading plus line numbers\n  --heading\tgroup matches by file\n  --no-heading\tdisable heading output\n  --sort SORTBY\tsort paths (path only)\n  --sortr SORTBY\tsort paths in reverse (path only)\n  --sort-files\tsort --files output\n  --path-separator SEP\tset displayed path separator\n  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  -t, --type TYPE\tinclude files matching TYPE\n  -T, --type-not TYPE\texclude files matching TYPE\n  --type-add TYPE:GLOB\tadd a file type glob\n  --type-clear TYPE\tclear a file type definition\n  --type-list\tshow file type definitions\n  --ignore-file FILE\tuse additional ignore file\n  --no-ignore\tdo not use ignore files\n  --no-ignore-dot\tdo not use .ignore files\n  --no-ignore-vcs\tdo not use .gitignore files\n  --no-require-git\tuse .gitignore outside git repositories\n  --require-git\trequire a git repository for .gitignore files\n  -u, --unrestricted\treduce filtering (repeatable)\n  --messages\tshow file read diagnostics\n  --no-messages\tsuppress file read diagnostics\n  --hidden\tsearch hidden files and directories\n  --no-hidden\tdo not search hidden files and directories\n  -H, --with-filename\tshow filename\n  -I, --no-filename\tsuppress filename\n  --line-buffered\tforce line buffering (no-op)\n  --block-buffered\tforce block buffering (no-op)\n  --no-config\tdo not read config files (no-op)\n  --mmap\tsearch using memory maps when possible (no-op)\n  --no-mmap\tdisable memory maps (no-op)\n  -P, --pcre2\tuse PCRE2 regex engine for supported patterns (no-op)\n  --no-pcre2\tdisable PCRE2 regex engine (no-op)\n  --pcre2-version\tshow PCRE2 version information\n  --unicode\tenable Unicode mode (no-op)\n  --no-unicode\tdisable Unicode mode (no-op)\n  --pcre2-unicode\tenable PCRE2 Unicode mode (no-op)\n  --no-pcre2-unicode\tdisable PCRE2 Unicode mode (no-op)\n  --engine ENGINE\tselect regex engine: default, auto, pcre2 (no-op)\n  --auto-hybrid-regex\tuse PCRE2 when needed (no-op)\n  --no-auto-hybrid-regex\tdisable auto hybrid regex (no-op)\n  --color MODE\tcolor output (no-op)\n  --colors SPEC\tconfigure colors (no-op)\n  -h, --help\tdisplay this help and exit\n  -V, --version\toutput version information and exit\n";
+        let help_text = "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i, --ignore-case\tcase insensitive\n  -S, --smart-case\tcase insensitive if pattern is lowercase\n  -s, --case-sensitive\tcase sensitive\n  -n, --line-number\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  --column\tshow column numbers\n  -b, --byte-offset\tshow byte offsets\n  --vimgrep\tshow file:line:column:match lines\n  --json\tshow JSON Lines events\n  --stats\tshow search statistics\n  --null\tterminate path fields with NUL\n  -c, --count\tcount matching lines\n  --count-matches\tcount individual matches\n  --include-zero\tinclude zero counts\n  -l, --files-with-matches\tfiles with matches\n  --files-without-match\tfiles without matches\n  --files\tprint files that would be searched\n  -v, --invert-match\tinvert match\n  -w, --word-regexp\tword boundary\n  -x, --line-regexp\tmatch whole lines\n  -F, --fixed-strings\tfixed strings (literal)\n  -a, --text\tsearch binary files as text\n  --binary\tsearch binary files and print binary-match summaries\n  -z, --search-zip\tsearch gzip-compressed files\n  --no-search-zip\tdisable compressed file search\n  --crlf\ttreat CRLF as line terminators for $ anchors\n  --no-crlf\tdisable CRLF line terminator mode\n  -U, --multiline\tenable matching across line boundaries\n  --no-multiline\tdisable multiline matching\n  --multiline-dotall\tmake . match line terminators in multiline mode\n  --no-multiline-dotall\tdisable multiline dotall mode\n  -o, --only-matching\tshow only matching text\n  -q, --quiet\tsuppress output; exit status only\n  -e, --regexp PATTERN\tuse PATTERN for matching\n  -f, --file PATTERNFILE\tread patterns from file\n  -E, --encoding ENCODING\tdecode searched files using ENCODING\n  -r, --replace REPLACEMENT\treplace matches in output\n  --passthru\tprint matching and non-matching lines\n  --trim\ttrim whitespace from output lines\n  -m, --max-count NUM\tmax count per file\n  -M, --max-columns NUM\tomit lines longer than NUM columns\n  --max-columns-preview\tshow prefixes of long lines\n  -j, --threads NUM\tset number of search threads (no-op)\n  --regex-size-limit NUM\tset regex size limit (no-op)\n  --dfa-size-limit NUM\tset DFA size limit (no-op)\n  --max-depth NUM\tlimit recursive directory depth\n  -A, --after-context NUM\tshow trailing context\n  -B, --before-context NUM\tshow leading context\n  -C, --context NUM\tshow leading and trailing context\n  --context-separator SEP\tset context group separator\n  --field-match-separator SEP\tset match field separator\n  --field-context-separator SEP\tset context field separator\n  -p, --pretty\talias for heading plus line numbers\n  --heading\tgroup matches by file\n  --no-heading\tdisable heading output\n  --sort SORTBY\tsort paths (path only)\n  --sortr SORTBY\tsort paths in reverse (path only)\n  --sort-files\tsort --files output\n  --path-separator SEP\tset displayed path separator\n  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  -t, --type TYPE\tinclude files matching TYPE\n  -T, --type-not TYPE\texclude files matching TYPE\n  --type-add TYPE:GLOB\tadd a file type glob\n  --type-clear TYPE\tclear a file type definition\n  --type-list\tshow file type definitions\n  --ignore-file FILE\tuse additional ignore file\n  --no-ignore\tdo not use ignore files\n  --no-ignore-dot\tdo not use .ignore files\n  --no-ignore-vcs\tdo not use .gitignore files\n  --no-require-git\tuse .gitignore outside git repositories\n  --require-git\trequire a git repository for .gitignore files\n  -u, --unrestricted\treduce filtering (repeatable)\n  --messages\tshow file read diagnostics\n  --no-messages\tsuppress file read diagnostics\n  --hidden\tsearch hidden files and directories\n  --no-hidden\tdo not search hidden files and directories\n  -H, --with-filename\tshow filename\n  -I, --no-filename\tsuppress filename\n  --line-buffered\tforce line buffering (no-op)\n  --block-buffered\tforce block buffering (no-op)\n  --no-config\tdo not read config files (no-op)\n  --mmap\tsearch using memory maps when possible (no-op)\n  --no-mmap\tdisable memory maps (no-op)\n  -P, --pcre2\tuse PCRE2 regex engine for supported patterns (no-op)\n  --no-pcre2\tdisable PCRE2 regex engine (no-op)\n  --pcre2-version\tshow PCRE2 version information\n  --unicode\tenable Unicode mode (no-op)\n  --no-unicode\tdisable Unicode mode (no-op)\n  --pcre2-unicode\tenable PCRE2 Unicode mode (no-op)\n  --no-pcre2-unicode\tdisable PCRE2 Unicode mode (no-op)\n  --engine ENGINE\tselect regex engine: default, auto, pcre2 (no-op)\n  --auto-hybrid-regex\tuse PCRE2 when needed (no-op)\n  --no-auto-hybrid-regex\tdisable auto hybrid regex (no-op)\n  --color MODE\tcolor output (no-op)\n  --colors SPEC\tconfigure colors (no-op)\n  -h, --help\tdisplay this help and exit\n  -V, --version\toutput version information and exit\n";
         let help_text = help_text.replace(
             "  --max-depth NUM\tlimit recursive directory depth\n",
             "  -d, --max-depth NUM\tlimit recursive directory depth\n  --maxdepth NUM\talias for --max-depth\n",
@@ -3739,6 +3770,17 @@ mod tests {
     const DIFF_MAX_FILESIZE_FILES: &[(&str, &[u8])] = &[
         ("/proj/small.txt", b"needle\n"),
         ("/proj/big.txt", b"needle long\n"),
+    ];
+
+    const GZIP_NEEDLE: &[u8] = &[
+        0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x13, 0x4b, 0xcc, 0x29, 0xc8, 0x48,
+        0xe4, 0xca, 0x4b, 0x4d, 0x4d, 0xc9, 0x49, 0xe5, 0x02, 0x00, 0x08, 0x8e, 0x37, 0xc8, 0x0d,
+        0x00, 0x00, 0x00,
+    ];
+
+    const DIFF_GZIP_FILES: &[(&str, &[u8])] = &[
+        ("/proj/plain.txt", b"needle\n"),
+        ("/proj/compressed.txt.gz", GZIP_NEEDLE),
     ];
 
     const DIFF_SYMLINK_FILES: &[(&str, &[u8])] = &[
@@ -5341,6 +5383,30 @@ mod tests {
             output: RgDiffOutput::Exact,
         },
         RgDiffCase {
+            name: "search zip explicit gzip",
+            args: &["-z", "needle", "proj/compressed.txt.gz"],
+            stdin: None,
+            files: DIFF_GZIP_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "search zip recursive gzip",
+            args: &["--search-zip", "needle", "proj"],
+            stdin: None,
+            files: DIFF_GZIP_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "no search zip disables gzip search",
+            args: &["-z", "--no-search-zip", "needle", "proj/compressed.txt.gz"],
+            stdin: None,
+            files: DIFF_GZIP_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
             name: "missing file keeps stdout and exits 2",
             args: &["needle", "proj/a.txt", "proj/missing.txt"],
             stdin: None,
@@ -5738,6 +5804,7 @@ mod tests {
         assert!(long_help.stdout.contains("--crlf"));
         assert!(long_help.stdout.contains("--multiline"));
         assert!(long_help.stdout.contains("--multiline-dotall"));
+        assert!(long_help.stdout.contains("-z, --search-zip"));
         assert!(long_help.stdout.contains("--no-ignore-files"));
         assert!(long_help.stdout.contains("--ignore-file-case-insensitive"));
         assert!(long_help.stdout.contains("--ignore-dot"));
