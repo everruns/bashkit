@@ -73,6 +73,8 @@ struct RgOptions {
     include_zero: bool,
     heading: bool,
     null: bool,
+    null_data: bool,
+    stop_on_nonmatch: bool,
     sort_reverse: bool,
     path_separator: String,
     encoding: RgEncoding,
@@ -203,6 +205,8 @@ impl RgOptions {
             include_zero: false,
             heading: false,
             null: false,
+            null_data: false,
+            stop_on_nonmatch: false,
             sort_reverse: false,
             path_separator: "/".to_string(),
             encoding: RgEncoding::Auto,
@@ -441,6 +445,13 @@ impl RgOptions {
                 opts.heading = false;
             } else if p.flag("--null") {
                 opts.null = true;
+            } else if p.flag("--null-data") {
+                opts.null_data = true;
+                opts.text = true;
+                opts.crlf = false;
+            } else if p.flag("--stop-on-nonmatch") {
+                opts.stop_on_nonmatch = true;
+                opts.multiline = false;
             } else if p.flag_any(&["--sort-files", "--no-sort-files"]) {
                 // no-op: bashkit's recursive walker already sorts paths.
             } else if long_value(&mut p, "--sort")?.is_some() {
@@ -2042,11 +2053,12 @@ struct RgMultilineMatch<'a> {
     column: usize,
 }
 
-fn split_rg_lines(content: &str, crlf: bool) -> Vec<RgLine<'_>> {
+fn split_rg_lines(content: &str, crlf: bool, null_data: bool) -> Vec<RgLine<'_>> {
     let mut lines = Vec::new();
     let mut offset = 0usize;
-    for raw in content.split_inclusive('\n') {
-        let text = raw.strip_suffix('\n').unwrap_or(raw);
+    let terminator = if null_data { '\0' } else { '\n' };
+    for raw in content.split_inclusive(terminator) {
+        let text = raw.strip_suffix(terminator).unwrap_or(raw);
         let match_text = if crlf {
             text.strip_suffix('\r').unwrap_or(text)
         } else {
@@ -2061,6 +2073,10 @@ fn split_rg_lines(content: &str, crlf: bool) -> Vec<RgLine<'_>> {
         offset += raw.len();
     }
     lines
+}
+
+fn rg_record_terminator(opts: &RgOptions) -> char {
+    if opts.null_data { '\0' } else { '\n' }
 }
 
 fn rg_line_index_for_offset(lines: &[RgLine<'_>], offset: usize) -> usize {
@@ -2219,13 +2235,14 @@ fn write_rg_context(
     sorted.sort_unstable();
     let match_set: HashSet<usize> = match_lines.iter().copied().collect();
     let mut prev_line = None;
+    let record_terminator = rg_record_terminator(opts);
 
     for line_idx in sorted {
         if let Some(prev) = prev_line
             && line_idx > prev + 1
         {
             output.push_str(&opts.context_separator);
-            output.push('\n');
+            output.push(record_terminator);
         }
         prev_line = Some(line_idx);
 
@@ -2259,7 +2276,7 @@ fn write_rg_context(
             opts,
             matched,
         ));
-        output.push('\n');
+        output.push(record_terminator);
     }
 }
 
@@ -2433,7 +2450,7 @@ impl Builtin for Rg {
         );
         let help_text = help_text.replace(
             "  --null\tterminate path fields with NUL\n",
-            "  -0, --null\tterminate path fields with NUL\n",
+            "  -0, --null\tterminate path fields with NUL\n  --null-data\tuse NUL as input and output record terminator\n",
         );
         let help_text = help_text.replace(
             "  --hidden\tsearch hidden files and directories\n",
@@ -2442,6 +2459,10 @@ impl Builtin for Rg {
         let help_text = help_text.replace(
             "  --no-ignore\tdo not use ignore files\n  --no-ignore-dot\tdo not use .ignore files\n  --no-ignore-vcs\tdo not use .gitignore files\n",
             "  --no-ignore\tdo not use ignore files\n  --ignore\tuse ignore files\n  --no-ignore-dot\tdo not use .ignore files\n  --ignore-dot\tuse .ignore files\n  --no-ignore-exclude\tdo not use .git/info/exclude files\n  --ignore-exclude\tuse .git/info/exclude files\n  --no-ignore-global\tdo not use global ignore files (no-op)\n  --ignore-global\tuse global ignore files (no-op)\n  --no-ignore-parent\tdo not use parent ignore files (no-op)\n  --ignore-parent\tuse parent ignore files (no-op)\n  --no-ignore-vcs\tdo not use .gitignore files\n  --ignore-vcs\tuse .gitignore files\n",
+        );
+        let help_text = help_text.replace(
+            "  --no-auto-hybrid-regex\tdisable auto hybrid regex (no-op)\n",
+            "  --no-auto-hybrid-regex\tdisable auto hybrid regex (no-op)\n  --stop-on-nonmatch\tstop after a non-matching line follows a match\n",
         );
         let help_text = help_text.replace(
             "  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n",
@@ -2599,7 +2620,8 @@ impl Builtin for Rg {
                 ));
                 continue;
             }
-            let lines = split_rg_lines(content, opts.crlf);
+            let lines = split_rg_lines(content, opts.crlf, opts.null_data);
+            let record_terminator = rg_record_terminator(&opts);
             json_bytes_searched += content.len();
             json_searches += 1;
             stats.bytes_searched += content.len();
@@ -2638,14 +2660,22 @@ impl Builtin for Rg {
                     }
                     if opts.files_with_matches && match_count > 0 {
                         output.push_str(filename);
-                        output.push(if opts.null { '\0' } else { '\n' });
+                        output.push(if opts.null || opts.null_data {
+                            '\0'
+                        } else {
+                            '\n'
+                        });
                         continue;
                     }
                     if opts.files_without_matches {
                         if match_count == 0 {
                             any_match = true;
                             output.push_str(filename);
-                            output.push(if opts.null { '\0' } else { '\n' });
+                            output.push(if opts.null || opts.null_data {
+                                '\0'
+                            } else {
+                                '\n'
+                            });
                         }
                         continue;
                     }
@@ -2680,7 +2710,7 @@ impl Builtin for Rg {
                             output.push(if opts.null { '\0' } else { ':' });
                         }
                         output.push_str(&count_value.to_string());
-                        output.push('\n');
+                        output.push(record_terminator);
                         continue;
                     }
                     if opts.quiet {
@@ -2689,10 +2719,10 @@ impl Builtin for Rg {
 
                     let line_show_filename = if opts.heading && show_filename && match_count > 0 {
                         if !output.is_empty() {
-                            output.push('\n');
+                            output.push(record_terminator);
                         }
                         output.push_str(filename);
-                        output.push('\n');
+                        output.push(record_terminator);
                         false
                     } else {
                         show_filename
@@ -2700,7 +2730,7 @@ impl Builtin for Rg {
                     if has_context {
                         if !opts.heading && !output.is_empty() && !inverted_match_lines.is_empty() {
                             output.push_str(&opts.context_separator);
-                            output.push('\n');
+                            output.push(record_terminator);
                         }
                         write_rg_context(
                             &mut output,
@@ -2737,7 +2767,7 @@ impl Builtin for Rg {
                                 &opts,
                                 true,
                             ));
-                            output.push('\n');
+                            output.push(record_terminator);
                         }
                     }
                     continue;
@@ -2762,14 +2792,22 @@ impl Builtin for Rg {
                 }
                 if opts.files_with_matches && match_count > 0 {
                     output.push_str(filename);
-                    output.push(if opts.null { '\0' } else { '\n' });
+                    output.push(if opts.null || opts.null_data {
+                        '\0'
+                    } else {
+                        '\n'
+                    });
                     continue;
                 }
                 if opts.files_without_matches {
                     if match_count == 0 {
                         any_match = true;
                         output.push_str(filename);
-                        output.push(if opts.null { '\0' } else { '\n' });
+                        output.push(if opts.null || opts.null_data {
+                            '\0'
+                        } else {
+                            '\n'
+                        });
                     }
                     continue;
                 }
@@ -2798,7 +2836,7 @@ impl Builtin for Rg {
                         output.push(if opts.null { '\0' } else { ':' });
                     }
                     output.push_str(&count_value.to_string());
-                    output.push('\n');
+                    output.push(record_terminator);
                     continue;
                 }
                 if opts.quiet {
@@ -2807,10 +2845,10 @@ impl Builtin for Rg {
 
                 let line_show_filename = if opts.heading && show_filename && match_count > 0 {
                     if !output.is_empty() {
-                        output.push('\n');
+                        output.push(record_terminator);
                     }
                     output.push_str(filename);
-                    output.push('\n');
+                    output.push(record_terminator);
                     false
                 } else {
                     show_filename
@@ -2848,7 +2886,7 @@ impl Builtin for Rg {
                             &opts,
                             matched,
                         ));
-                        output.push('\n');
+                        output.push(record_terminator);
                     }
                 } else if opts.vimgrep {
                     for mat in &matches {
@@ -2876,7 +2914,7 @@ impl Builtin for Rg {
                                 true,
                             ));
                         }
-                        output.push('\n');
+                        output.push(record_terminator);
                     }
                 } else if opts.only_matching {
                     for mat in &matches {
@@ -2902,12 +2940,12 @@ impl Builtin for Rg {
                         } else {
                             output.push_str(mat.text);
                         }
-                        output.push('\n');
+                        output.push(record_terminator);
                     }
                 } else if has_context {
                     if !opts.heading && !output.is_empty() && !context_match_lines.is_empty() {
                         output.push_str(&opts.context_separator);
-                        output.push('\n');
+                        output.push(record_terminator);
                     }
                     write_rg_context(
                         &mut output,
@@ -2943,7 +2981,7 @@ impl Builtin for Rg {
                             *mat,
                             replacement,
                         ));
-                        output.push('\n');
+                        output.push(record_terminator);
                     }
                 } else {
                     for mat in &matches {
@@ -2977,7 +3015,7 @@ impl Builtin for Rg {
                                 &opts,
                                 true,
                             ));
-                            output.push('\n');
+                            output.push(record_terminator);
                         }
                     }
                 }
@@ -2989,6 +3027,9 @@ impl Builtin for Rg {
                 let matched = if opts.invert_match { !matched } else { matched };
 
                 if !matched {
+                    if opts.stop_on_nonmatch && match_count > 0 {
+                        break;
+                    }
                     continue;
                 }
 
@@ -3033,14 +3074,22 @@ impl Builtin for Rg {
             }
             if opts.files_with_matches && match_count > 0 {
                 output.push_str(filename);
-                output.push(if opts.null { '\0' } else { '\n' });
+                output.push(if opts.null || opts.null_data {
+                    '\0'
+                } else {
+                    '\n'
+                });
                 continue;
             }
             if opts.files_without_matches {
                 if match_count == 0 {
                     any_match = true;
                     output.push_str(filename);
-                    output.push(if opts.null { '\0' } else { '\n' });
+                    output.push(if opts.null || opts.null_data {
+                        '\0'
+                    } else {
+                        '\n'
+                    });
                 }
                 continue;
             }
@@ -3079,7 +3128,7 @@ impl Builtin for Rg {
                     output.push(if opts.null { '\0' } else { ':' });
                 }
                 output.push_str(&count_value.to_string());
-                output.push('\n');
+                output.push(record_terminator);
                 continue;
             }
             if opts.quiet {
@@ -3088,10 +3137,10 @@ impl Builtin for Rg {
 
             let line_show_filename = if opts.heading && show_filename && match_count > 0 {
                 if !output.is_empty() {
-                    output.push('\n');
+                    output.push(record_terminator);
                 }
                 output.push_str(filename);
-                output.push('\n');
+                output.push(record_terminator);
                 false
             } else {
                 show_filename
@@ -3140,7 +3189,7 @@ impl Builtin for Rg {
                         &opts,
                         matched,
                     ));
-                    output.push('\n');
+                    output.push(record_terminator);
                 }
             } else if opts.vimgrep && !opts.invert_match {
                 for &line_idx in &match_lines {
@@ -3169,7 +3218,7 @@ impl Builtin for Rg {
                                 true,
                             ));
                         }
-                        output.push('\n');
+                        output.push(record_terminator);
                     }
                 }
             } else if opts.only_matching && !opts.invert_match {
@@ -3201,13 +3250,13 @@ impl Builtin for Rg {
                         } else {
                             output.push_str(mat.as_str());
                         }
-                        output.push('\n');
+                        output.push(record_terminator);
                     }
                 }
             } else if has_context {
                 if !opts.heading && !output.is_empty() && !match_lines.is_empty() {
                     output.push_str(&opts.context_separator);
-                    output.push('\n');
+                    output.push(record_terminator);
                 }
                 write_rg_context(
                     &mut output,
@@ -3250,7 +3299,7 @@ impl Builtin for Rg {
                         &opts,
                         true,
                     ));
-                    output.push('\n');
+                    output.push(record_terminator);
                 }
             }
         }
@@ -3408,6 +3457,12 @@ mod tests {
         ("/proj/lang/lib.py", b"needle\n"),
         ("/proj/lang/readme.md", b"needle\n"),
         ("/proj/lang/custom.foo", b"needle\n"),
+    ];
+
+    const DIFF_NULL_DATA_FILES: &[(&str, &[u8])] = &[
+        ("/proj/a.bin", b"a\0needle\0b\0"),
+        ("/proj/b.bin", b"none\0needle again\0"),
+        ("/proj/stop.txt", b"none\nneedle\nnone\nneedle again\n"),
     ];
 
     const DIFF_TWO_CONTEXT_FILES: &[(&str, &[u8])] = &[
@@ -4060,6 +4115,62 @@ mod tests {
             files: DIFF_BASIC_FILES,
             cwd: "/",
             output: RgDiffOutput::UnorderedNul,
+        },
+        RgDiffCase {
+            name: "null data basic",
+            args: &["--null-data", "needle", "proj/a.bin"],
+            stdin: None,
+            files: DIFF_NULL_DATA_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "null data line numbers",
+            args: &["--null-data", "-n", "needle", "proj/a.bin"],
+            stdin: None,
+            files: DIFF_NULL_DATA_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "null data only matching",
+            args: &["--null-data", "-o", "needle", "proj/a.bin"],
+            stdin: None,
+            files: DIFF_NULL_DATA_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "null data count",
+            args: &["--null-data", "-c", "needle", "proj/a.bin"],
+            stdin: None,
+            files: DIFF_NULL_DATA_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "null data files with matches",
+            args: &["--null-data", "-l", "needle", "proj/a.bin", "proj/b.bin"],
+            stdin: None,
+            files: DIFF_NULL_DATA_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "null data context",
+            args: &["--null-data", "-A1", "needle", "proj/a.bin"],
+            stdin: None,
+            files: DIFF_NULL_DATA_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "stop on nonmatch",
+            args: &["--stop-on-nonmatch", "needle", "proj/stop.txt"],
+            stdin: None,
+            files: DIFF_NULL_DATA_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
         },
         RgDiffCase {
             name: "no heading wins",
@@ -5174,8 +5285,10 @@ mod tests {
         assert!(long_help.stdout.contains("--ignore-vcs"));
         assert!(long_help.stdout.contains("--passthrough"));
         assert!(long_help.stdout.contains("-0, --null"));
+        assert!(long_help.stdout.contains("--null-data"));
         assert!(long_help.stdout.contains("-., --hidden"));
         assert!(long_help.stdout.contains("--one-file-system"));
+        assert!(long_help.stdout.contains("--stop-on-nonmatch"));
         assert!(long_help.stdout.contains("-d, --max-depth"));
         assert!(long_help.stdout.contains("--maxdepth"));
 
