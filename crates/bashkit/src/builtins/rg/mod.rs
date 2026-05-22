@@ -88,6 +88,7 @@ struct RgOptions {
     no_ignore_files: bool,
     no_ignore_vcs: bool,
     require_git: bool,
+    follow_symlinks: bool,
     ignore_file_case_insensitive: bool,
     messages: bool,
     context_separator: String,
@@ -221,6 +222,7 @@ impl RgOptions {
             no_ignore_files: false,
             no_ignore_vcs: false,
             require_git: true,
+            follow_symlinks: false,
             ignore_file_case_insensitive: false,
             messages: true,
             context_separator: "--".to_string(),
@@ -540,6 +542,10 @@ impl RgOptions {
                 opts.require_git = false;
             } else if p.flag("--require-git") {
                 opts.require_git = true;
+            } else if p.flag("--follow") {
+                opts.follow_symlinks = true;
+            } else if p.flag("--no-follow") {
+                opts.follow_symlinks = false;
             } else if p.flag("--unrestricted") {
                 opts.apply_unrestricted();
             } else if p.flag("--no-messages") {
@@ -554,8 +560,6 @@ impl RgOptions {
                 "--no-line-buffered",
                 "--one-file-system",
                 "--no-one-file-system",
-                "--follow",
-                "--no-follow",
                 "--mmap",
                 "--no-mmap",
                 "--pcre2",
@@ -632,7 +636,7 @@ impl RgOptions {
                             opts.line_numbers = true;
                         }
                         'u' => opts.apply_unrestricted(),
-                        'L' => {}
+                        'L' => opts.follow_symlinks = true,
                         'H' => opts.show_filename = true,
                         'I' => opts.no_filename = true,
                         'o' => opts.only_matching = true,
@@ -1617,9 +1621,11 @@ async fn collect_rg_inputs(
             return Ok(RgCollectedInputs::new(inputs));
         }
 
-        let files =
-            collect_rg_files_recursive(&*ctx.fs, std::slice::from_ref(ctx.cwd), opts, ctx.cwd)
-                .await;
+        let root = RgSearchRoot {
+            logical: ctx.cwd.to_path_buf(),
+            actual: ctx.cwd.to_path_buf(),
+        };
+        let files = collect_rg_files_recursive(&*ctx.fs, &[root], opts, ctx.cwd).await;
         return Ok(RgCollectedInputs::new(
             read_rg_files(&*ctx.fs, files, ctx.cwd, None, opts).await,
         ));
@@ -1633,12 +1639,14 @@ async fn collect_rg_inputs(
     let mut inputs = Vec::new();
     for p in &opts.paths {
         let path = resolve_path(ctx.cwd, p);
-        if let Ok(meta) = ctx.fs.stat(&path).await
+        if let Some((actual_path, meta)) = resolve_rg_explicit_path(&*ctx.fs, &path).await
             && meta.file_type.is_dir()
         {
-            let files =
-                collect_rg_files_recursive(&*ctx.fs, std::slice::from_ref(&path), opts, ctx.cwd)
-                    .await;
+            let root = RgSearchRoot {
+                logical: path.clone(),
+                actual: actual_path,
+            };
+            let files = collect_rg_files_recursive(&*ctx.fs, &[root], opts, ctx.cwd).await;
             inputs.extend(read_rg_files(&*ctx.fs, files, ctx.cwd, Some(p), opts).await);
             continue;
         }
@@ -1646,7 +1654,11 @@ async fn collect_rg_inputs(
         if !opts.matches_globs(&path, ctx.cwd) {
             continue;
         }
-        let text = match read_rg_text_file(&*ctx.fs, &path, opts).await {
+        let actual_path = resolve_rg_explicit_path(&*ctx.fs, &path)
+            .await
+            .map(|(actual, _)| actual)
+            .unwrap_or_else(|| path.clone());
+        let text = match read_rg_text_file(&*ctx.fs, &actual_path, opts).await {
             Ok(t) => t,
             Err(e) => {
                 collected.had_errors = true;
@@ -1819,7 +1831,7 @@ async fn has_git_dir_in_ancestors(fs: &dyn crate::fs::FileSystem, dir: &Path, ro
 async fn has_directory_path(fs: &dyn crate::fs::FileSystem, cwd: &Path, paths: &[String]) -> bool {
     for p in paths {
         let path = resolve_path(cwd, p);
-        if let Ok(meta) = fs.stat(&path).await
+        if let Some((_, meta)) = resolve_rg_explicit_path(fs, &path).await
             && meta.file_type.is_dir()
         {
             return true;
@@ -1828,62 +1840,146 @@ async fn has_directory_path(fs: &dyn crate::fs::FileSystem, cwd: &Path, paths: &
     false
 }
 
+#[derive(Clone)]
+struct RgSearchRoot {
+    logical: PathBuf,
+    actual: PathBuf,
+}
+
+#[derive(Clone)]
+struct RgFileCandidate {
+    logical: PathBuf,
+    actual: PathBuf,
+}
+
+struct RgWalkItem {
+    logical: PathBuf,
+    actual: PathBuf,
+    actual_root: PathBuf,
+    depth: usize,
+    rules: Vec<RgIgnoreRule>,
+    ancestors: Vec<PathBuf>,
+}
+
+async fn resolve_rg_symlink_target(
+    fs: &dyn crate::fs::FileSystem,
+    link_path: &Path,
+) -> Option<(PathBuf, crate::fs::Metadata)> {
+    let target = fs.read_link(link_path).await.ok()?;
+    let resolved = if target.is_absolute() {
+        crate::fs::normalize_path(&target)
+    } else {
+        crate::fs::normalize_path(&link_path.parent().unwrap_or(Path::new("/")).join(target))
+    };
+    let metadata = fs.stat(&resolved).await.ok()?;
+    Some((resolved, metadata))
+}
+
+async fn resolve_rg_explicit_path(
+    fs: &dyn crate::fs::FileSystem,
+    path: &Path,
+) -> Option<(PathBuf, crate::fs::Metadata)> {
+    let meta = fs.stat(path).await.ok()?;
+    if meta.file_type.is_symlink() {
+        resolve_rg_symlink_target(fs, path).await
+    } else {
+        Some((path.to_path_buf(), meta))
+    }
+}
+
 async fn collect_rg_files_recursive(
     fs: &dyn crate::fs::FileSystem,
-    roots: &[PathBuf],
+    roots: &[RgSearchRoot],
     opts: &RgOptions,
     cwd: &Path,
-) -> Vec<PathBuf> {
+) -> Vec<RgFileCandidate> {
     let mut result = Vec::new();
-    let mut stack: Vec<(PathBuf, PathBuf, usize, Vec<RgIgnoreRule>)> = roots
+    let mut stack: Vec<RgWalkItem> = roots
         .iter()
         .cloned()
-        .map(|root| (root.clone(), root, 0, opts.explicit_ignore_rules.clone()))
+        .map(|root| RgWalkItem {
+            logical: root.logical,
+            actual: root.actual.clone(),
+            actual_root: root.actual.clone(),
+            depth: 0,
+            rules: opts.explicit_ignore_rules.clone(),
+            ancestors: vec![root.actual],
+        })
         .collect();
 
-    while let Some((current, root, depth, inherited_rules)) = stack.pop() {
-        let mut rules = inherited_rules;
-        let _ = load_local_ignore_rules(fs, &current, &root, opts, &mut rules).await;
-        if let Ok(entries) = fs.read_dir(&current).await {
+    while let Some(item) = stack.pop() {
+        let mut rules = item.rules;
+        let _ =
+            load_local_ignore_rules(fs, &item.actual, &item.actual_root, opts, &mut rules).await;
+        if let Ok(entries) = fs.read_dir(&item.actual).await {
             for entry in entries {
                 if !opts.hidden && is_hidden_name(&entry.name) {
                     continue;
                 }
-                let path = current.join(&entry.name);
-                let entry_depth = depth + 1;
-                if entry.metadata.file_type.is_dir() {
+                let path = item.logical.join(&entry.name);
+                let actual_path = item.actual.join(&entry.name);
+                let entry_depth = item.depth + 1;
+                let (entry_actual_path, entry_metadata) =
+                    if entry.metadata.file_type.is_symlink() && opts.follow_symlinks {
+                        let Some((target, target_meta)) =
+                            resolve_rg_symlink_target(fs, &actual_path).await
+                        else {
+                            continue;
+                        };
+                        (target, target_meta)
+                    } else {
+                        (actual_path, entry.metadata)
+                    };
+
+                if entry_metadata.file_type.is_dir() {
                     if opts.is_ignored_by_rules(&path, true, &rules) {
                         continue;
                     }
                     if opts
                         .max_depth
                         .is_none_or(|max_depth| entry_depth < max_depth)
+                        && !item.ancestors.contains(&entry_actual_path)
                     {
-                        stack.push((path, root.clone(), entry_depth, rules.clone()));
+                        let mut child_ancestors = item.ancestors.clone();
+                        child_ancestors.push(entry_actual_path.clone());
+                        stack.push(RgWalkItem {
+                            logical: path,
+                            actual: entry_actual_path,
+                            actual_root: item.actual_root.clone(),
+                            depth: entry_depth,
+                            rules: rules.clone(),
+                            ancestors: child_ancestors,
+                        });
                     }
-                } else if entry.metadata.file_type.is_file()
+                } else if entry_metadata.file_type.is_file()
                     && opts
                         .max_depth
                         .is_none_or(|max_depth| entry_depth <= max_depth)
-                    && opts.matches_max_filesize(entry.metadata.size)
+                    && opts.matches_max_filesize(entry_metadata.size)
                     && !opts.is_ignored_by_rules(&path, false, &rules)
                     && opts.matches_globs(&path, cwd)
                     && opts.matches_type_filters(&path)
                 {
-                    result.push(path);
+                    result.push(RgFileCandidate {
+                        logical: path,
+                        actual: entry_actual_path,
+                    });
                 }
             }
-        } else if let Ok(meta) = fs.stat(&current).await
+        } else if let Ok(meta) = fs.stat(&item.actual).await
             && meta.file_type.is_file()
             && opts.matches_max_filesize(meta.size)
-            && opts.matches_globs(&current, cwd)
-            && opts.matches_type_filters(&current)
+            && opts.matches_globs(&item.logical, cwd)
+            && opts.matches_type_filters(&item.logical)
         {
-            result.push(current);
+            result.push(RgFileCandidate {
+                logical: item.logical,
+                actual: item.actual,
+            });
         }
     }
 
-    result.sort();
+    result.sort_by(|a, b| a.logical.cmp(&b.logical));
     if opts.sort_reverse {
         result.reverse();
     }
@@ -1900,26 +1996,32 @@ async fn collect_rg_file_list(
     cwd: &Path,
 ) -> Vec<String> {
     if opts.paths.is_empty() {
-        let root = cwd.to_path_buf();
-        let files = collect_rg_files_recursive(fs, std::slice::from_ref(&root), opts, cwd).await;
+        let root = RgSearchRoot {
+            logical: cwd.to_path_buf(),
+            actual: cwd.to_path_buf(),
+        };
+        let files = collect_rg_files_recursive(fs, &[root], opts, cwd).await;
         return files
             .iter()
-            .map(|path| display_path_for(path, cwd, None, opts))
+            .map(|file| display_path_for(&file.logical, cwd, None, opts))
             .collect();
     }
 
     let mut result = Vec::new();
     for p in &opts.paths {
         let path = resolve_path(cwd, p);
-        if let Ok(meta) = fs.stat(&path).await
+        if let Some((actual_path, meta)) = resolve_rg_explicit_path(fs, &path).await
             && meta.file_type.is_dir()
         {
-            let files =
-                collect_rg_files_recursive(fs, std::slice::from_ref(&path), opts, cwd).await;
+            let root = RgSearchRoot {
+                logical: path.clone(),
+                actual: actual_path,
+            };
+            let files = collect_rg_files_recursive(fs, &[root], opts, cwd).await;
             result.extend(
                 files
                     .iter()
-                    .map(|path| display_path_for(path, cwd, Some(p), opts)),
+                    .map(|file| display_path_for(&file.logical, cwd, Some(p), opts)),
             );
         } else if meta_is_file_and_matches(fs, &path, opts, cwd).await {
             result.push(display_path_for(&path, cwd, Some(p), opts));
@@ -1938,23 +2040,23 @@ async fn meta_is_file_and_matches(
     opts: &RgOptions,
     cwd: &Path,
 ) -> bool {
-    fs.stat(path)
+    resolve_rg_explicit_path(fs, path)
         .await
-        .is_ok_and(|meta| meta.file_type.is_file() && opts.matches_globs(path, cwd))
+        .is_some_and(|(_, meta)| meta.file_type.is_file() && opts.matches_globs(path, cwd))
 }
 
 async fn read_rg_files(
     fs: &dyn crate::fs::FileSystem,
-    files: Vec<PathBuf>,
+    files: Vec<RgFileCandidate>,
     cwd: &Path,
     root_arg: Option<&str>,
     opts: &RgOptions,
 ) -> Vec<(String, String)> {
     let mut inputs = Vec::new();
-    for path in files {
-        if let Ok(content) = fs.read_file(&path).await {
+    for file in files {
+        if let Ok(content) = fs.read_file(&file.actual).await {
             inputs.push((
-                display_path_for(&path, cwd, root_arg, opts),
+                display_path_for(&file.logical, cwd, root_arg, opts),
                 decode_rg_content(&content, opts),
             ));
         }
@@ -1974,6 +2076,7 @@ async fn try_indexed_search(
         || opts.max_filesize.is_some()
         || !opts.type_includes.is_empty()
         || !opts.type_excludes.is_empty()
+        || opts.follow_symlinks
     {
         return None;
     }
@@ -2515,7 +2618,7 @@ impl Builtin for Rg {
         );
         let help_text = help_text.replace(
             "  --hidden\tsearch hidden files and directories\n",
-            "  -., --hidden\tsearch hidden files and directories\n  -L, --follow\tfollow symbolic links (no-op)\n  --one-file-system\tstay on one file system (no-op)\n  --no-one-file-system\tdisable one-file-system mode (no-op)\n",
+            "  -., --hidden\tsearch hidden files and directories\n  -L, --follow\tfollow symbolic links during recursive search\n  --no-follow\tdo not follow symbolic links during recursive search\n  --one-file-system\tstay on one file system (no-op)\n  --no-one-file-system\tdisable one-file-system mode (no-op)\n",
         );
         let help_text = help_text.replace(
             "  --no-ignore\tdo not use ignore files\n  --no-ignore-dot\tdo not use .ignore files\n  --no-ignore-vcs\tdo not use .gitignore files\n",
@@ -3424,6 +3527,16 @@ mod tests {
         files: &[(&str, &[u8])],
         cwd: &str,
     ) -> ExecResult {
+        run_rg_fixture_with_cwd(args, stdin, files, &[], cwd).await
+    }
+
+    async fn run_rg_fixture_with_cwd(
+        args: &[&str],
+        stdin: Option<&str>,
+        files: &[(&str, &[u8])],
+        symlinks: &[(&str, &str)],
+        cwd: &str,
+    ) -> ExecResult {
         let fs = Arc::new(InMemoryFs::new());
         for (path, content) in files {
             let p = Path::new(path);
@@ -3436,6 +3549,17 @@ mod tests {
             }
             let fs_trait: &dyn FileSystem = &*fs;
             fs_trait.write_file(p, content).await.unwrap();
+        }
+        for (link, target) in symlinks {
+            let p = Path::new(link);
+            if let Some(parent) = p.parent()
+                && parent != Path::new("/")
+            {
+                let fs_trait: &dyn FileSystem = &*fs;
+                let _ = fs_trait.mkdir(parent, true).await;
+            }
+            let fs_trait: &dyn FileSystem = &*fs;
+            fs_trait.symlink(Path::new(target), p).await.unwrap();
         }
 
         run_rg_with_fs_and_cwd(args, stdin, fs, cwd).await
@@ -3495,6 +3619,15 @@ mod tests {
         args: &'static [&'static str],
         stdin: Option<&'static str>,
         files: &'static [(&'static str, &'static [u8])],
+        cwd: &'static str,
+        output: RgDiffOutput,
+    }
+
+    struct RgSymlinkDiffCase {
+        name: &'static str,
+        args: &'static [&'static str],
+        files: &'static [(&'static str, &'static [u8])],
+        symlinks: &'static [(&'static str, &'static str)],
         cwd: &'static str,
         output: RgDiffOutput,
     }
@@ -3606,6 +3739,68 @@ mod tests {
     const DIFF_MAX_FILESIZE_FILES: &[(&str, &[u8])] = &[
         ("/proj/small.txt", b"needle\n"),
         ("/proj/big.txt", b"needle long\n"),
+    ];
+
+    const DIFF_SYMLINK_FILES: &[(&str, &[u8])] = &[
+        ("/targets/file.txt", b"needle\n"),
+        ("/targets/dir/nested.txt", b"needle\n"),
+        ("/proj/plain.txt", b"needle\n"),
+    ];
+
+    const DIFF_SYMLINKS: &[(&str, &str)] = &[
+        ("/proj/link.txt", "../targets/file.txt"),
+        ("/proj/linkdir", "../targets/dir"),
+    ];
+
+    const RG_SYMLINK_DIFF_CASES: &[RgSymlinkDiffCase] = &[
+        RgSymlinkDiffCase {
+            name: "recursive skips symlink entries by default",
+            args: &["needle", "proj"],
+            files: DIFF_SYMLINK_FILES,
+            symlinks: DIFF_SYMLINKS,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgSymlinkDiffCase {
+            name: "recursive follow searches symlink entries",
+            args: &["-L", "needle", "proj"],
+            files: DIFF_SYMLINK_FILES,
+            symlinks: DIFF_SYMLINKS,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgSymlinkDiffCase {
+            name: "no follow disables recursive symlink following",
+            args: &["-L", "--no-follow", "needle", "proj"],
+            files: DIFF_SYMLINK_FILES,
+            symlinks: DIFF_SYMLINKS,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgSymlinkDiffCase {
+            name: "explicit file symlink is searched",
+            args: &["needle", "proj/link.txt"],
+            files: DIFF_SYMLINK_FILES,
+            symlinks: DIFF_SYMLINKS,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgSymlinkDiffCase {
+            name: "explicit directory symlink is searched",
+            args: &["needle", "proj/linkdir"],
+            files: DIFF_SYMLINK_FILES,
+            symlinks: DIFF_SYMLINKS,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgSymlinkDiffCase {
+            name: "files list follows symlinks with follow",
+            args: &["--files", "-L", "proj"],
+            files: DIFF_SYMLINK_FILES,
+            symlinks: DIFF_SYMLINKS,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
     ];
 
     const RG_DIFF_CASES: &[RgDiffCase] = &[
@@ -5237,6 +5432,64 @@ mod tests {
         (stdout, output.status.code().unwrap_or(-1))
     }
 
+    #[cfg(unix)]
+    fn run_real_rg_symlink(case: &RgSymlinkDiffCase) -> (String, i32) {
+        use std::os::unix::fs::symlink;
+        use std::process::{Command, Stdio};
+
+        require_real_rg();
+
+        let tempdir = tempfile::tempdir().expect("tempdir for rg symlink differential test");
+        for (path, content) in case.files {
+            let host_path = tempdir.path().join(path.trim_start_matches('/'));
+            if let Some(parent) = host_path.parent() {
+                std::fs::create_dir_all(parent).expect("create parent dir for rg fixture");
+            }
+            std::fs::write(host_path, content).expect("write rg fixture file");
+        }
+        for (link, target) in case.symlinks {
+            let host_link = tempdir.path().join(link.trim_start_matches('/'));
+            if let Some(parent) = host_link.parent() {
+                std::fs::create_dir_all(parent).expect("create parent dir for rg symlink");
+            }
+            symlink(target, host_link).expect("create rg fixture symlink");
+        }
+
+        let host_cwd = tempdir.path().join(case.cwd.trim_start_matches('/'));
+        let mapped_args: Vec<String> = case
+            .args
+            .iter()
+            .map(|arg| {
+                if arg.starts_with('/') {
+                    tempdir
+                        .path()
+                        .join(arg.trim_start_matches('/'))
+                        .to_string_lossy()
+                        .into_owned()
+                } else {
+                    (*arg).to_string()
+                }
+            })
+            .collect();
+
+        let mut command = Command::new("rg");
+        command
+            .args(["--threads", "1"])
+            .args(&mapped_args)
+            .current_dir(host_cwd)
+            .env("LC_ALL", "C");
+
+        let output = command
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .output()
+            .expect("run real rg symlink differential test");
+
+        let stdout = String::from_utf8_lossy(&output.stdout)
+            .replace(&tempdir.path().to_string_lossy().to_string(), "");
+        (stdout, output.status.code().unwrap_or(-1))
+    }
+
     async fn assert_rg_diff_case(case: &RgDiffCase) {
         let (real_stdout, real_code) = run_real_rg(case);
         let bashkit = run_rg_with_cwd(case.args, case.stdin, case.files, case.cwd).await;
@@ -5274,6 +5527,49 @@ mod tests {
         assert_eq!(
             bashkit.exit_code, real_code,
             "exit-code mismatch for rg differential case {}",
+            case.name
+        );
+    }
+
+    #[cfg(unix)]
+    async fn assert_rg_symlink_diff_case(case: &RgSymlinkDiffCase) {
+        let (real_stdout, real_code) = run_real_rg_symlink(case);
+        let bashkit =
+            run_rg_fixture_with_cwd(case.args, None, case.files, case.symlinks, case.cwd).await;
+        match case.output {
+            RgDiffOutput::Exact => assert_eq!(
+                bashkit.stdout, real_stdout,
+                "stdout mismatch for rg symlink differential case {}",
+                case.name
+            ),
+            RgDiffOutput::UnorderedLines => assert_eq!(
+                sorted_lines(&bashkit.stdout),
+                sorted_lines(&real_stdout),
+                "stdout line-set mismatch for rg symlink differential case {}",
+                case.name
+            ),
+            RgDiffOutput::UnorderedNul => assert_eq!(
+                sorted_nul_items(&bashkit.stdout),
+                sorted_nul_items(&real_stdout),
+                "stdout NUL-item mismatch for rg symlink differential case {}",
+                case.name
+            ),
+            RgDiffOutput::JsonEvents => assert_eq!(
+                normalize_rg_json(&bashkit.stdout),
+                normalize_rg_json(&real_stdout),
+                "stdout JSON-event mismatch for rg symlink differential case {}",
+                case.name
+            ),
+            RgDiffOutput::Stats => assert_eq!(
+                normalize_rg_stats(&bashkit.stdout),
+                normalize_rg_stats(&real_stdout),
+                "stdout stats mismatch for rg symlink differential case {}",
+                case.name
+            ),
+        }
+        assert_eq!(
+            bashkit.exit_code, real_code,
+            "exit-code mismatch for rg symlink differential case {}",
             case.name
         );
     }
@@ -6154,6 +6450,14 @@ mod tests {
     async fn diff_rg_matches_real_rg_cases() {
         for case in RG_DIFF_CASES {
             assert_rg_diff_case(case).await;
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn diff_rg_matches_real_rg_symlink_cases() {
+        for case in RG_SYMLINK_DIFF_CASES {
+            assert_rg_symlink_diff_case(case).await;
         }
     }
 }
