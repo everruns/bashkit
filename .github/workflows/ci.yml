@@ -14,6 +14,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  RG_VERSION: 15.1.0
 
 jobs:
   lint:
@@ -104,6 +105,11 @@ jobs:
       - name: Verify uutils on PATH
         if: steps.install_uutils.outcome == 'success'
         run: coreutils --version
+
+      # `rg` differential tests compare against real ripgrep. Pin the
+      # binary so upstream formatting/path semantics cannot drift under CI.
+      - name: Install pinned ripgrep for differential tests
+        run: scripts/install-ripgrep-ci.sh "$RG_VERSION"
 
       # Examples have a dedicated job below; skipping them here avoids
       # duplicated example links that can exhaust runner disk on main.
