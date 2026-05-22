@@ -2650,6 +2650,78 @@ fn append_rg_stats(output: &mut String, stats: &RgSearchStats, bytes_printed: us
     output.push_str("0.000000 seconds total\n");
 }
 
+fn rg_generate_kind(args: &[String]) -> Result<Option<String>> {
+    let mut i = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        if arg == "--" {
+            break;
+        }
+        if arg == "--generate" {
+            let Some(kind) = args.get(i + 1) else {
+                return Err(Error::Execution(
+                    "rg: --generate requires an argument".to_string(),
+                ));
+            };
+            return Ok(Some(kind.clone()));
+        }
+        if let Some(kind) = arg.strip_prefix("--generate=") {
+            return Ok(Some(kind.to_string()));
+        }
+        i += 1;
+    }
+    Ok(None)
+}
+
+fn rg_generate_output(kind: &str, help_text: &str) -> Result<String> {
+    const FLAGS: &str = "--regexp -e --file -f --after-context -A --before-context -B --binary --no-binary --byte-offset -b --case-sensitive -s --color --colors --column --context -C --count -c --count-matches --encoding -E --no-encoding --files --files-with-matches -l --files-without-match --fixed-strings -F --follow -L --generate --glob -g --heading --help -h --hidden -. --ignore-case -i --ignore-file --include-zero --invert-match -v --no-invert-match --json --line-number -n --no-line-number -N --line-regexp -x --max-columns -M --max-count -m --max-depth -d --multiline -U --no-ignore --no-messages --null -0 --only-matching -o --passthru --pcre2 -P --pre --pre-glob --pretty -p --quiet -q --replace -r --search-zip -z --smart-case -S --sort --sortr --stats --text -a --threads -j --trim --type -t --type-not -T --type-add --type-clear --type-list --unrestricted -u --version -V --vimgrep --with-filename -H --no-filename -I --word-regexp -w";
+
+    match kind {
+        "man" => Ok(format!(
+            ".TH RG 1 \"\" \"bashkit\" \"User Commands\"\n.SH NAME\nrg \\- recursively search the current directory for lines matching a pattern\n.SH SYNOPSIS\n.B rg\n[OPTIONS] PATTERN [PATH...]\n.SH DESCRIPTION\nripgrep (rg) recursively searches files. bashkit provides a sandboxed rg-compatible builtin.\n.SH OPTIONS\n.nf\n{}\n.fi\n",
+            help_text
+        )),
+        "complete-bash" => Ok(format!(
+            "_rg() {{\n  local cur opts\n  COMPREPLY=()\n  cur=\"${{COMP_WORDS[COMP_CWORD]}}\"\n  opts=\"{}\"\n  COMPREPLY=($(compgen -W \"${{opts}}\" -- \"${{cur}}\"))\n}}\ncomplete -F _rg rg\n",
+            FLAGS
+        )),
+        "complete-zsh" => Ok(format!(
+            "#compdef rg\n\n_rg() {{\n  _arguments '*::arg:->args' {}\n}}\n_rg \"$@\"\n",
+            FLAGS
+                .split_whitespace()
+                .filter(|flag| flag.starts_with("--"))
+                .map(|flag| format!("'{}[ripgrep option]'", flag))
+                .collect::<Vec<_>>()
+                .join(" ")
+        )),
+        "complete-fish" => {
+            let mut output = String::new();
+            output.push_str("# fish completions for rg\n");
+            for flag in FLAGS
+                .split_whitespace()
+                .filter(|flag| flag.starts_with("--"))
+            {
+                output.push_str("complete -c rg -l ");
+                output.push_str(flag.trim_start_matches("--"));
+                output.push_str(" -d 'ripgrep option'\n");
+            }
+            Ok(output)
+        }
+        "complete-powershell" => Ok(format!(
+            "using namespace System.Management.Automation\nRegister-ArgumentCompleter -Native -CommandName 'rg' -ScriptBlock {{\n  param($wordToComplete, $commandAst, $cursorPosition)\n  @({}) | Where-Object {{ $_ -like \"$wordToComplete*\" }} | ForEach-Object {{ [CompletionResult]::new($_, $_, [CompletionResultType]::ParameterName, 'ripgrep option') }}\n}}\n",
+            FLAGS
+                .split_whitespace()
+                .filter(|flag| flag.starts_with("--"))
+                .map(|flag| format!("'{}'", flag))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+        _ => Err(Error::Execution(format!(
+            "rg: invalid --generate value: {kind}"
+        ))),
+    }
+}
+
 #[async_trait]
 impl Builtin for Rg {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
@@ -2707,6 +2779,10 @@ impl Builtin for Rg {
             "  --no-auto-hybrid-regex\tdisable auto hybrid regex (no-op)\n  --stop-on-nonmatch\tstop after a non-matching line follows a match\n",
         );
         let help_text = help_text.replace(
+            "  --files\tprint files that would be searched\n",
+            "  --files\tprint files that would be searched\n  --generate KIND\tgenerate man page or shell completion output\n",
+        );
+        let help_text = help_text.replace(
             "  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n",
             "  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  --iglob GLOB\tcase-insensitive include/exclude path glob\n  --glob-case-insensitive\tmake -g/--glob rules case-insensitive\n  --no-glob-case-insensitive\tdisable case-insensitive -g/--glob rules\n",
         );
@@ -2723,6 +2799,9 @@ impl Builtin for Rg {
             return Ok(ExecResult::ok(
                 "PCRE2 10.45 is available (JIT is available)\n".to_string(),
             ));
+        }
+        if let Some(kind) = rg_generate_kind(ctx.args)? {
+            return Ok(ExecResult::ok(rg_generate_output(&kind, &help_text)?));
         }
         let mut opts = RgOptions::parse(ctx.args)?;
         if opts.type_list {
@@ -3690,6 +3769,7 @@ mod tests {
         UnorderedNul,
         JsonEvents,
         Stats,
+        ContainsAll(&'static [&'static str]),
     }
 
     struct RgDiffCase {
@@ -3900,6 +3980,50 @@ mod tests {
             files: &[],
             cwd: "/",
             output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "generate bash completion",
+            args: &["--generate=complete-bash"],
+            stdin: None,
+            files: &[],
+            cwd: "/",
+            output: RgDiffOutput::ContainsAll(&["_rg()", "--generate", "--regexp", "--glob"]),
+        },
+        RgDiffCase {
+            name: "generate fish completion",
+            args: &["--generate", "complete-fish"],
+            stdin: None,
+            files: &[],
+            cwd: "/",
+            output: RgDiffOutput::ContainsAll(&["complete -c rg", "generate", "regexp"]),
+        },
+        RgDiffCase {
+            name: "generate zsh completion",
+            args: &["--generate=complete-zsh"],
+            stdin: None,
+            files: &[],
+            cwd: "/",
+            output: RgDiffOutput::ContainsAll(&["#compdef rg", "_rg()", "--generate"]),
+        },
+        RgDiffCase {
+            name: "generate powershell completion",
+            args: &["--generate=complete-powershell"],
+            stdin: None,
+            files: &[],
+            cwd: "/",
+            output: RgDiffOutput::ContainsAll(&[
+                "Register-ArgumentCompleter",
+                "--generate",
+                "--regexp",
+            ]),
+        },
+        RgDiffCase {
+            name: "generate man page",
+            args: &["--generate=man"],
+            stdin: None,
+            files: &[],
+            cwd: "/",
+            output: RgDiffOutput::ContainsAll(&[".TH RG", ".SH NAME", "ripgrep"]),
         },
         RgDiffCase {
             name: "no path recursive cwd display",
@@ -5737,6 +5861,30 @@ mod tests {
                 "stdout stats mismatch for rg differential case {}",
                 case.name
             ),
+            RgDiffOutput::ContainsAll(needles) => {
+                assert!(
+                    !bashkit.stdout.is_empty(),
+                    "bashkit stdout unexpectedly empty for rg differential case {}",
+                    case.name
+                );
+                assert!(
+                    !real_stdout.is_empty(),
+                    "real rg stdout unexpectedly empty for rg differential case {}",
+                    case.name
+                );
+                for needle in needles {
+                    assert!(
+                        bashkit.stdout.contains(needle),
+                        "bashkit stdout for rg differential case {} did not contain {needle}",
+                        case.name
+                    );
+                    assert!(
+                        real_stdout.contains(needle),
+                        "real rg stdout for rg differential case {} did not contain {needle}",
+                        case.name
+                    );
+                }
+            }
         }
         assert_eq!(
             bashkit.exit_code, real_code,
@@ -5780,6 +5928,30 @@ mod tests {
                 "stdout stats mismatch for rg symlink differential case {}",
                 case.name
             ),
+            RgDiffOutput::ContainsAll(needles) => {
+                assert!(
+                    !bashkit.stdout.is_empty(),
+                    "bashkit stdout unexpectedly empty for rg symlink differential case {}",
+                    case.name
+                );
+                assert!(
+                    !real_stdout.is_empty(),
+                    "real rg stdout unexpectedly empty for rg symlink differential case {}",
+                    case.name
+                );
+                for needle in needles {
+                    assert!(
+                        bashkit.stdout.contains(needle),
+                        "bashkit stdout for rg symlink differential case {} did not contain {needle}",
+                        case.name
+                    );
+                    assert!(
+                        real_stdout.contains(needle),
+                        "real rg stdout for rg symlink differential case {} did not contain {needle}",
+                        case.name
+                    );
+                }
+            }
         }
         assert_eq!(
             bashkit.exit_code, real_code,
@@ -5937,6 +6109,7 @@ mod tests {
         assert!(long_help.stdout.contains("-h, --help"));
         assert!(long_help.stdout.contains("--version"));
         assert!(long_help.stdout.contains("--stats"));
+        assert!(long_help.stdout.contains("--generate KIND"));
         assert!(long_help.stdout.contains("--unrestricted"));
         assert!(long_help.stdout.contains("--no-require-git"));
         assert!(long_help.stdout.contains("--no-config"));
@@ -5997,6 +6170,50 @@ mod tests {
             pcre2_version.stdout,
             "PCRE2 10.45 is available (JIT is available)\n"
         );
+    }
+
+    #[tokio::test]
+    async fn test_rg_generate_outputs() {
+        let bash = run_rg(&["--generate=complete-bash"], None, &[]).await;
+        assert_eq!(bash.exit_code, 0);
+        assert!(bash.stdout.contains("_rg()"));
+        assert!(bash.stdout.contains("--generate"));
+
+        let zsh = run_rg(&["--generate", "complete-zsh"], None, &[]).await;
+        assert_eq!(zsh.exit_code, 0);
+        assert!(zsh.stdout.contains("#compdef rg"));
+        assert!(zsh.stdout.contains("--regexp"));
+
+        let fish = run_rg(&["--generate=complete-fish"], None, &[]).await;
+        assert_eq!(fish.exit_code, 0);
+        assert!(fish.stdout.contains("complete -c rg"));
+        assert!(fish.stdout.contains("-l generate"));
+
+        let powershell = run_rg(&["--generate=complete-powershell"], None, &[]).await;
+        assert_eq!(powershell.exit_code, 0);
+        assert!(powershell.stdout.contains("Register-ArgumentCompleter"));
+        assert!(powershell.stdout.contains("--generate"));
+
+        let man = run_rg(&["--generate=man"], None, &[]).await;
+        assert_eq!(man.exit_code, 0);
+        assert!(man.stdout.contains(".TH RG"));
+        assert!(man.stdout.contains(".SH NAME"));
+    }
+
+    #[test]
+    fn test_rg_generate_errors() {
+        let args = vec!["--generate".to_string()];
+        let missing = rg_generate_kind(&args);
+        assert!(matches!(
+            missing,
+            Err(Error::Execution(msg)) if msg == "rg: --generate requires an argument"
+        ));
+
+        let invalid = rg_generate_output("complete-elvish", "");
+        assert!(matches!(
+            invalid,
+            Err(Error::Execution(msg)) if msg == "rg: invalid --generate value: complete-elvish"
+        ));
     }
 
     #[tokio::test]
