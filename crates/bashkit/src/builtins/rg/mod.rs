@@ -53,6 +53,7 @@ struct RgOptions {
     crlf: bool,
     multiline: bool,
     multiline_dotall: bool,
+    line_numbers_explicit: bool,
     max_count: Option<usize>,
     max_columns: Option<usize>,
     max_columns_preview: bool,
@@ -182,6 +183,7 @@ impl RgOptions {
             crlf: false,
             multiline: false,
             multiline_dotall: false,
+            line_numbers_explicit: false,
             max_count: None,
             max_columns: None,
             max_columns_preview: false,
@@ -334,6 +336,7 @@ impl RgOptions {
                 opts.line_numbers = false;
             } else if p.flag("--line-number") {
                 opts.line_numbers = true;
+                opts.line_numbers_explicit = true;
             } else if p.flag_any(&["--ignore-case"]) {
                 opts.ignore_case = true;
                 opts.smart_case = false;
@@ -359,10 +362,16 @@ impl RgOptions {
                 opts.line_regexp = true;
             } else if p.flag_any(&["--fixed-strings"]) {
                 opts.fixed_strings = true;
+            } else if p.flag("--no-fixed-strings") {
+                opts.fixed_strings = false;
             } else if p.flag_any(&["--text"]) {
                 opts.text = true;
+            } else if p.flag("--no-text") {
+                opts.text = false;
             } else if p.flag("--binary") {
                 opts.binary = true;
+            } else if p.flag("--no-binary") {
+                opts.binary = false;
             } else if p.flag("--crlf") {
                 opts.crlf = true;
             } else if p.flag("--no-crlf") {
@@ -382,32 +391,49 @@ impl RgOptions {
             } else if p.flag("--column") {
                 opts.column = true;
                 opts.line_numbers = true;
+            } else if p.flag("--no-column") {
+                opts.column = false;
+                if !opts.line_numbers_explicit {
+                    opts.line_numbers = false;
+                }
             } else if p.flag("--byte-offset") {
                 opts.byte_offset = true;
+            } else if p.flag("--no-byte-offset") {
+                opts.byte_offset = false;
             } else if p.flag("--vimgrep") {
                 opts.vimgrep = true;
                 opts.show_filename = true;
             } else if p.flag("--json") {
                 opts.json = true;
+            } else if p.flag("--no-json") {
+                opts.json = false;
             } else if p.flag("--stats") {
                 opts.stats = true;
+            } else if p.flag("--no-stats") {
+                opts.stats = false;
             } else if p.flag("--files") {
                 opts.list_files = true;
-            } else if p.flag("--passthru") {
+            } else if p.flag_any(&["--passthru", "--passthrough"]) {
                 opts.passthru = true;
             } else if p.flag("--trim") {
                 opts.trim = true;
+            } else if p.flag("--no-trim") {
+                opts.trim = false;
             } else if p.flag("--max-columns-preview") {
                 opts.max_columns_preview = true;
+            } else if p.flag("--no-max-columns-preview") {
+                opts.max_columns_preview = false;
             } else if p.flag("--include-zero") {
                 opts.include_zero = true;
+            } else if p.flag("--no-include-zero") {
+                opts.include_zero = false;
             } else if p.flag("--heading") {
                 opts.heading = true;
             } else if p.flag("--no-heading") {
                 opts.heading = false;
             } else if p.flag("--null") {
                 opts.null = true;
-            } else if p.flag("--sort-files") {
+            } else if p.flag_any(&["--sort-files", "--no-sort-files"]) {
                 // no-op: bashkit's recursive walker already sorts paths.
             } else if long_value(&mut p, "--sort")?.is_some() {
                 opts.sort_reverse = false;
@@ -494,7 +520,12 @@ impl RgOptions {
                 "--no-config",
                 "--line-buffered",
                 "--block-buffered",
+                "--no-block-buffered",
+                "--no-line-buffered",
+                "--one-file-system",
+                "--no-one-file-system",
                 "--follow",
+                "--no-follow",
                 "--mmap",
                 "--no-mmap",
                 "--pcre2",
@@ -531,7 +562,10 @@ impl RgOptions {
                             opts.ignore_case = false;
                             opts.smart_case = true;
                         }
-                        'n' => opts.line_numbers = true,
+                        'n' => {
+                            opts.line_numbers = true;
+                            opts.line_numbers_explicit = true;
+                        }
                         'N' => opts.line_numbers = false,
                         'c' => opts.count_only = true,
                         'l' => opts.files_with_matches = true,
@@ -540,7 +574,10 @@ impl RgOptions {
                         'x' => opts.line_regexp = true,
                         'F' => opts.fixed_strings = true,
                         'a' => opts.text = true,
+                        '0' => opts.null = true,
+                        '.' => opts.hidden = true,
                         'u' => opts.apply_unrestricted(),
+                        'L' => {}
                         'H' => opts.show_filename = true,
                         'I' => opts.no_filename = true,
                         'o' => opts.only_matching = true,
@@ -2337,6 +2374,18 @@ impl Builtin for Rg {
             "  --ignore-file FILE\tuse additional ignore file\n  --ignore-file-case-insensitive\tprocess ignore files case-insensitively\n  --no-ignore-file-case-insensitive\tdisable case-insensitive ignore files\n  --no-ignore-files\tdo not use --ignore-file paths\n  --ignore-files\tuse --ignore-file paths\n",
         );
         let help_text = help_text.replace(
+            "  --passthru\tprint matching and non-matching lines\n",
+            "  --passthru\tprint matching and non-matching lines\n  --passthrough\talias for --passthru\n",
+        );
+        let help_text = help_text.replace(
+            "  --null\tterminate path fields with NUL\n",
+            "  -0, --null\tterminate path fields with NUL\n",
+        );
+        let help_text = help_text.replace(
+            "  --hidden\tsearch hidden files and directories\n",
+            "  -., --hidden\tsearch hidden files and directories\n  -L, --follow\tfollow symbolic links (no-op)\n  --one-file-system\tstay on one file system (no-op)\n  --no-one-file-system\tdisable one-file-system mode (no-op)\n",
+        );
+        let help_text = help_text.replace(
             "  --no-ignore\tdo not use ignore files\n  --no-ignore-dot\tdo not use .ignore files\n  --no-ignore-vcs\tdo not use .gitignore files\n",
             "  --no-ignore\tdo not use ignore files\n  --ignore\tuse ignore files\n  --no-ignore-dot\tdo not use .ignore files\n  --ignore-dot\tuse .ignore files\n  --no-ignore-exclude\tdo not use .git/info/exclude files\n  --ignore-exclude\tuse .git/info/exclude files\n  --no-ignore-global\tdo not use global ignore files (no-op)\n  --ignore-global\tuse global ignore files (no-op)\n  --no-ignore-parent\tdo not use parent ignore files (no-op)\n  --ignore-parent\tuse parent ignore files (no-op)\n  --no-ignore-vcs\tdo not use .gitignore files\n  --ignore-vcs\tuse .gitignore files\n",
         );
@@ -3665,6 +3714,52 @@ mod tests {
             output: RgDiffOutput::Exact,
         },
         RgDiffCase {
+            name: "no column disables column",
+            args: &[
+                "--column",
+                "--no-column",
+                "needle",
+                "proj/a.txt",
+                "proj/b.txt",
+            ],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "no byte offset disables byte offset",
+            args: &["-b", "--no-byte-offset", "needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "no fixed strings reenables regex",
+            args: &["-F", "--no-fixed-strings", "need.e", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "no json disables json",
+            args: &["--json", "--no-json", "needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "no stats disables stats",
+            args: &["--stats", "--no-stats", "needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
             name: "max depth",
             args: &["--max-depth", "1", "needle", "proj"],
             stdin: None,
@@ -3737,8 +3832,32 @@ mod tests {
             output: RgDiffOutput::Exact,
         },
         RgDiffCase {
+            name: "passthrough alias",
+            args: &["--passthrough", "needle", "proj/a.txt", "proj/b.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
             name: "trim",
             args: &["--trim", "needle", "proj/trim.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "no trim disables trim",
+            args: &["--trim", "--no-trim", "needle", "proj/trim.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "one file system accepted",
+            args: &["--one-file-system", "needle", "proj/a.txt"],
             stdin: None,
             files: DIFF_BASIC_FILES,
             cwd: "/",
@@ -3868,6 +3987,14 @@ mod tests {
             output: RgDiffOutput::Exact,
         },
         RgDiffCase {
+            name: "null short files with matches",
+            args: &["-0", "-l", "needle", "proj/a.txt", "proj/src/main.rs"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
             name: "null files list",
             args: &["--null", "--files", "proj/src"],
             stdin: None,
@@ -3924,6 +4051,14 @@ mod tests {
         RgDiffCase {
             name: "hidden recursive",
             args: &["--hidden", "needle", "proj"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "hidden short dot",
+            args: &["-.", "needle", "proj"],
             stdin: None,
             files: DIFF_BASIC_FILES,
             cwd: "/",
@@ -4901,6 +5036,10 @@ mod tests {
         assert!(long_help.stdout.contains("--ignore-dot"));
         assert!(long_help.stdout.contains("--no-ignore-exclude"));
         assert!(long_help.stdout.contains("--ignore-vcs"));
+        assert!(long_help.stdout.contains("--passthrough"));
+        assert!(long_help.stdout.contains("-0, --null"));
+        assert!(long_help.stdout.contains("-., --hidden"));
+        assert!(long_help.stdout.contains("--one-file-system"));
         assert!(long_help.stdout.contains("-d, --max-depth"));
         assert!(long_help.stdout.contains("--maxdepth"));
 
