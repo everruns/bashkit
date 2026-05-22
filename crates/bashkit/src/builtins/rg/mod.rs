@@ -16,7 +16,7 @@
 //!   rg --color never PATTERN    # color output (no-op)
 
 use async_trait::async_trait;
-use regex::Regex;
+use regex::{Regex, RegexBuilder};
 use serde_json::json;
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -51,6 +51,8 @@ struct RgOptions {
     text: bool,
     binary: bool,
     crlf: bool,
+    multiline: bool,
+    multiline_dotall: bool,
     max_count: Option<usize>,
     max_columns: Option<usize>,
     max_columns_preview: bool,
@@ -169,6 +171,8 @@ impl RgOptions {
             text: false,
             binary: false,
             crlf: false,
+            multiline: false,
+            multiline_dotall: false,
             max_count: None,
             max_columns: None,
             max_columns_preview: false,
@@ -333,6 +337,14 @@ impl RgOptions {
                 opts.crlf = true;
             } else if p.flag("--no-crlf") {
                 opts.crlf = false;
+            } else if p.flag_any(&["--multiline"]) {
+                opts.multiline = true;
+            } else if p.flag("--no-multiline") {
+                opts.multiline = false;
+            } else if p.flag("--multiline-dotall") {
+                opts.multiline_dotall = true;
+            } else if p.flag("--no-multiline-dotall") {
+                opts.multiline_dotall = false;
             } else if p.flag_any(&["--only-matching"]) {
                 opts.only_matching = true;
             } else if p.flag_any(&["--quiet", "--silent"]) {
@@ -465,6 +477,7 @@ impl RgOptions {
                         'q' => opts.quiet = true,
                         'b' => opts.byte_offset = true,
                         'P' => {}
+                        'U' => opts.multiline = true,
                         'E' => {
                             let rest: String = chars[j + 1..].iter().collect();
                             let encoding = if !rest.is_empty() {
@@ -710,13 +723,23 @@ impl RgOptions {
     }
 
     fn build_regex(&self) -> Result<Regex> {
+        if !self.multiline && self.patterns.iter().any(|pattern| pattern.contains('\n')) {
+            return Err(Error::Execution(
+                "rg: the literal \"\\n\" is not allowed in a regex\n\nConsider enabling multiline mode with the --multiline flag (or -U for short).\nWhen multiline mode is enabled, new line characters can be matched.".to_string(),
+            ));
+        }
         let combined = self
             .patterns
             .iter()
             .map(|pattern| format!("(?:{})", self.prepare_pattern(pattern)))
             .collect::<Vec<_>>()
             .join("|");
-        build_regex_opts(&combined, self.effective_ignore_case())
+        RegexBuilder::new(&combined)
+            .case_insensitive(self.effective_ignore_case())
+            .dot_matches_new_line(self.multiline && self.multiline_dotall)
+            .size_limit(super::search_common::REGEX_SIZE_LIMIT)
+            .dfa_size_limit(super::search_common::REGEX_DFA_SIZE_LIMIT)
+            .build()
             .map_err(|e| Error::Execution(format!("rg: invalid pattern: {}", e)))
     }
 
@@ -1729,6 +1752,16 @@ struct RgLine<'a> {
     start_offset: usize,
 }
 
+#[derive(Clone, Copy)]
+struct RgMultilineMatch<'a> {
+    text: &'a str,
+    start_offset: usize,
+    end_offset: usize,
+    line_idx: usize,
+    end_line_idx: usize,
+    column: usize,
+}
+
 fn split_rg_lines(content: &str, crlf: bool) -> Vec<RgLine<'_>> {
     let mut lines = Vec::new();
     let mut offset = 0usize;
@@ -1748,6 +1781,83 @@ fn split_rg_lines(content: &str, crlf: bool) -> Vec<RgLine<'_>> {
         offset += raw.len();
     }
     lines
+}
+
+fn rg_line_index_for_offset(lines: &[RgLine<'_>], offset: usize) -> usize {
+    let mut idx = 0usize;
+    for (line_idx, line) in lines.iter().enumerate() {
+        if line.start_offset <= offset {
+            idx = line_idx;
+        } else {
+            break;
+        }
+    }
+    idx
+}
+
+fn collect_rg_multiline_matches<'a>(
+    regex: &Regex,
+    content: &'a str,
+    lines: &[RgLine<'a>],
+    max_count: Option<usize>,
+) -> Vec<RgMultilineMatch<'a>> {
+    if lines.is_empty() {
+        return Vec::new();
+    }
+    let mut matches = Vec::new();
+    for mat in regex.find_iter(content) {
+        if let Some(max) = max_count
+            && matches.len() >= max
+        {
+            break;
+        }
+        let line_idx = rg_line_index_for_offset(lines, mat.start());
+        let end_line_idx = rg_line_index_for_offset(lines, mat.end().saturating_sub(1));
+        matches.push(RgMultilineMatch {
+            text: mat.as_str(),
+            start_offset: mat.start(),
+            end_offset: mat.end(),
+            line_idx,
+            end_line_idx,
+            column: mat.start().saturating_sub(lines[line_idx].start_offset) + 1,
+        });
+    }
+    matches
+}
+
+fn rg_multiline_match_lines(matches: &[RgMultilineMatch<'_>]) -> Vec<usize> {
+    let mut lines = Vec::new();
+    for mat in matches {
+        lines.extend(mat.line_idx..=mat.end_line_idx);
+    }
+    lines
+}
+
+fn rg_unique_sorted_lines(line_indices: &[usize]) -> Vec<usize> {
+    let mut lines: Vec<usize> = line_indices.to_vec();
+    lines.sort_unstable();
+    lines.dedup();
+    lines
+}
+
+fn format_rg_multiline_replacement(
+    regex: &Regex,
+    lines: &[RgLine<'_>],
+    mat: RgMultilineMatch<'_>,
+    replacement: &str,
+) -> String {
+    let start_line = lines[mat.line_idx];
+    let end_line = lines[mat.end_line_idx];
+    let prefix_end = mat.start_offset.saturating_sub(start_line.start_offset);
+    let suffix_start = mat.end_offset.saturating_sub(end_line.start_offset);
+    let prefix = start_line.text.get(..prefix_end).unwrap_or("");
+    let suffix = end_line.text.get(suffix_start..).unwrap_or("");
+    format!(
+        "{}{}{}",
+        prefix,
+        regex.replace(mat.text, replacement),
+        suffix
+    )
 }
 
 fn first_nul_offset(content: &str) -> Option<usize> {
@@ -1911,6 +2021,36 @@ fn write_rg_json_match(
     );
 }
 
+fn write_rg_json_multiline_match(
+    output: &mut String,
+    filename: &str,
+    lines: &[RgLine<'_>],
+    mat: RgMultilineMatch<'_>,
+) {
+    let start_line_offset = lines[mat.line_idx].start_offset;
+    let line_text = lines[mat.line_idx..=mat.end_line_idx]
+        .iter()
+        .map(|line| line.raw)
+        .collect::<String>();
+    write_rg_json_event(
+        output,
+        json!({
+            "type":"match",
+            "data":{
+                "path":{"text":filename},
+                "lines":{"text":line_text},
+                "line_number":mat.line_idx + 1,
+                "absolute_offset":start_line_offset,
+                "submatches":[{
+                    "match":{"text":mat.text},
+                    "start":mat.start_offset - start_line_offset,
+                    "end":mat.end_offset - start_line_offset
+                }],
+            }
+        }),
+    );
+}
+
 fn write_rg_json_end(
     output: &mut String,
     filename: &str,
@@ -1994,7 +2134,7 @@ fn append_rg_stats(output: &mut String, stats: &RgSearchStats, bytes_printed: us
 #[async_trait]
 impl Builtin for Rg {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        let help_text = "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i, --ignore-case\tcase insensitive\n  -S, --smart-case\tcase insensitive if pattern is lowercase\n  -s, --case-sensitive\tcase sensitive\n  -n, --line-number\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  --column\tshow column numbers\n  -b, --byte-offset\tshow byte offsets\n  --vimgrep\tshow file:line:column:match lines\n  --json\tshow JSON Lines events\n  --stats\tshow search statistics\n  --null\tterminate path fields with NUL\n  -c, --count\tcount matching lines\n  --count-matches\tcount individual matches\n  --include-zero\tinclude zero counts\n  -l, --files-with-matches\tfiles with matches\n  --files-without-match\tfiles without matches\n  --files\tprint files that would be searched\n  -v, --invert-match\tinvert match\n  -w, --word-regexp\tword boundary\n  -x, --line-regexp\tmatch whole lines\n  -F, --fixed-strings\tfixed strings (literal)\n  -a, --text\tsearch binary files as text\n  --binary\tsearch binary files and print binary-match summaries\n  --crlf\ttreat CRLF as line terminators for $ anchors\n  --no-crlf\tdisable CRLF line terminator mode\n  -o, --only-matching\tshow only matching text\n  -q, --quiet\tsuppress output; exit status only\n  -e, --regexp PATTERN\tuse PATTERN for matching\n  -f, --file PATTERNFILE\tread patterns from file\n  -E, --encoding ENCODING\tdecode searched files using ENCODING\n  -r, --replace REPLACEMENT\treplace matches in output\n  --passthru\tprint matching and non-matching lines\n  --trim\ttrim whitespace from output lines\n  -m, --max-count NUM\tmax count per file\n  -M, --max-columns NUM\tomit lines longer than NUM columns\n  --max-columns-preview\tshow prefixes of long lines\n  --max-depth NUM\tlimit recursive directory depth\n  -A, --after-context NUM\tshow trailing context\n  -B, --before-context NUM\tshow leading context\n  -C, --context NUM\tshow leading and trailing context\n  --context-separator SEP\tset context group separator\n  --field-match-separator SEP\tset match field separator\n  --field-context-separator SEP\tset context field separator\n  --heading\tgroup matches by file\n  --no-heading\tdisable heading output\n  --sort SORTBY\tsort paths (path only)\n  --sortr SORTBY\tsort paths in reverse (path only)\n  --sort-files\tsort --files output\n  --path-separator SEP\tset displayed path separator\n  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  -t, --type TYPE\tinclude files matching TYPE\n  -T, --type-not TYPE\texclude files matching TYPE\n  --type-add TYPE:GLOB\tadd a file type glob\n  --type-clear TYPE\tclear a file type definition\n  --type-list\tshow file type definitions\n  --ignore-file FILE\tuse additional ignore file\n  --no-ignore\tdo not use ignore files\n  --no-ignore-dot\tdo not use .ignore files\n  --no-ignore-vcs\tdo not use .gitignore files\n  --no-require-git\tuse .gitignore outside git repositories\n  --require-git\trequire a git repository for .gitignore files\n  -u, --unrestricted\treduce filtering (repeatable)\n  --messages\tshow file read diagnostics\n  --no-messages\tsuppress file read diagnostics\n  --hidden\tsearch hidden files and directories\n  --no-hidden\tdo not search hidden files and directories\n  -H, --with-filename\tshow filename\n  -I, --no-filename\tsuppress filename\n  --line-buffered\tforce line buffering (no-op)\n  --block-buffered\tforce block buffering (no-op)\n  --no-config\tdo not read config files (no-op)\n  --mmap\tsearch using memory maps when possible (no-op)\n  --no-mmap\tdisable memory maps (no-op)\n  -P, --pcre2\tuse PCRE2 regex engine for supported patterns (no-op)\n  --no-pcre2\tdisable PCRE2 regex engine (no-op)\n  --engine ENGINE\tselect regex engine: default, auto, pcre2 (no-op)\n  --auto-hybrid-regex\tuse PCRE2 when needed (no-op)\n  --no-auto-hybrid-regex\tdisable auto hybrid regex (no-op)\n  --color MODE\tcolor output (no-op)\n  -h, --help\tdisplay this help and exit\n  -V, --version\toutput version information and exit\n";
+        let help_text = "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i, --ignore-case\tcase insensitive\n  -S, --smart-case\tcase insensitive if pattern is lowercase\n  -s, --case-sensitive\tcase sensitive\n  -n, --line-number\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  --column\tshow column numbers\n  -b, --byte-offset\tshow byte offsets\n  --vimgrep\tshow file:line:column:match lines\n  --json\tshow JSON Lines events\n  --stats\tshow search statistics\n  --null\tterminate path fields with NUL\n  -c, --count\tcount matching lines\n  --count-matches\tcount individual matches\n  --include-zero\tinclude zero counts\n  -l, --files-with-matches\tfiles with matches\n  --files-without-match\tfiles without matches\n  --files\tprint files that would be searched\n  -v, --invert-match\tinvert match\n  -w, --word-regexp\tword boundary\n  -x, --line-regexp\tmatch whole lines\n  -F, --fixed-strings\tfixed strings (literal)\n  -a, --text\tsearch binary files as text\n  --binary\tsearch binary files and print binary-match summaries\n  --crlf\ttreat CRLF as line terminators for $ anchors\n  --no-crlf\tdisable CRLF line terminator mode\n  -U, --multiline\tenable matching across line boundaries\n  --no-multiline\tdisable multiline matching\n  --multiline-dotall\tmake . match line terminators in multiline mode\n  --no-multiline-dotall\tdisable multiline dotall mode\n  -o, --only-matching\tshow only matching text\n  -q, --quiet\tsuppress output; exit status only\n  -e, --regexp PATTERN\tuse PATTERN for matching\n  -f, --file PATTERNFILE\tread patterns from file\n  -E, --encoding ENCODING\tdecode searched files using ENCODING\n  -r, --replace REPLACEMENT\treplace matches in output\n  --passthru\tprint matching and non-matching lines\n  --trim\ttrim whitespace from output lines\n  -m, --max-count NUM\tmax count per file\n  -M, --max-columns NUM\tomit lines longer than NUM columns\n  --max-columns-preview\tshow prefixes of long lines\n  --max-depth NUM\tlimit recursive directory depth\n  -A, --after-context NUM\tshow trailing context\n  -B, --before-context NUM\tshow leading context\n  -C, --context NUM\tshow leading and trailing context\n  --context-separator SEP\tset context group separator\n  --field-match-separator SEP\tset match field separator\n  --field-context-separator SEP\tset context field separator\n  --heading\tgroup matches by file\n  --no-heading\tdisable heading output\n  --sort SORTBY\tsort paths (path only)\n  --sortr SORTBY\tsort paths in reverse (path only)\n  --sort-files\tsort --files output\n  --path-separator SEP\tset displayed path separator\n  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  -t, --type TYPE\tinclude files matching TYPE\n  -T, --type-not TYPE\texclude files matching TYPE\n  --type-add TYPE:GLOB\tadd a file type glob\n  --type-clear TYPE\tclear a file type definition\n  --type-list\tshow file type definitions\n  --ignore-file FILE\tuse additional ignore file\n  --no-ignore\tdo not use ignore files\n  --no-ignore-dot\tdo not use .ignore files\n  --no-ignore-vcs\tdo not use .gitignore files\n  --no-require-git\tuse .gitignore outside git repositories\n  --require-git\trequire a git repository for .gitignore files\n  -u, --unrestricted\treduce filtering (repeatable)\n  --messages\tshow file read diagnostics\n  --no-messages\tsuppress file read diagnostics\n  --hidden\tsearch hidden files and directories\n  --no-hidden\tdo not search hidden files and directories\n  -H, --with-filename\tshow filename\n  -I, --no-filename\tsuppress filename\n  --line-buffered\tforce line buffering (no-op)\n  --block-buffered\tforce block buffering (no-op)\n  --no-config\tdo not read config files (no-op)\n  --mmap\tsearch using memory maps when possible (no-op)\n  --no-mmap\tdisable memory maps (no-op)\n  -P, --pcre2\tuse PCRE2 regex engine for supported patterns (no-op)\n  --no-pcre2\tdisable PCRE2 regex engine (no-op)\n  --engine ENGINE\tselect regex engine: default, auto, pcre2 (no-op)\n  --auto-hybrid-regex\tuse PCRE2 when needed (no-op)\n  --no-auto-hybrid-regex\tdisable auto hybrid regex (no-op)\n  --color MODE\tcolor output (no-op)\n  -h, --help\tdisplay this help and exit\n  -V, --version\toutput version information and exit\n";
         if ctx.args.iter().any(|arg| arg == "-h") {
             return Ok(ExecResult::ok(help_text.to_string()));
         }
@@ -2141,6 +2281,251 @@ impl Builtin for Rg {
             json_bytes_searched += content.len();
             json_searches += 1;
             stats.bytes_searched += content.len();
+
+            if opts.multiline && !opts.invert_match {
+                let matches = collect_rg_multiline_matches(&regex, content, &lines, opts.max_count);
+                let match_line_indices = rg_multiline_match_lines(&matches);
+                let context_match_lines = rg_unique_sorted_lines(&match_line_indices);
+                match_count = matches.len();
+                count_value = matches.len();
+                json_matches += matches.len();
+                json_matched_lines += match_line_indices.len();
+                stats.matches += matches.len();
+                stats.matched_lines += match_line_indices.len();
+
+                if match_count > 0 {
+                    stats.files_with_matches += 1;
+                    if !opts.files_without_matches {
+                        any_match = true;
+                    }
+                }
+
+                if opts.quiet && match_count > 0 && !opts.stats {
+                    return Ok(ExecResult::ok(String::new()));
+                }
+                if opts.files_with_matches && match_count > 0 {
+                    output.push_str(filename);
+                    output.push(if opts.null { '\0' } else { '\n' });
+                    continue;
+                }
+                if opts.files_without_matches {
+                    if match_count == 0 {
+                        any_match = true;
+                        output.push_str(filename);
+                        output.push(if opts.null { '\0' } else { '\n' });
+                    }
+                    continue;
+                }
+                if json_output {
+                    if match_count > 0 {
+                        write_rg_json_begin(&mut output, filename);
+                        for &mat in &matches {
+                            write_rg_json_multiline_match(&mut output, filename, &lines, mat);
+                        }
+                        write_rg_json_end(
+                            &mut output,
+                            filename,
+                            content.len(),
+                            match_line_indices.len(),
+                            matches.len(),
+                        );
+                    }
+                    continue;
+                }
+                if opts.count_only || opts.count_matches {
+                    if count_value == 0 && !opts.include_zero {
+                        continue;
+                    }
+                    if show_filename {
+                        output.push_str(filename);
+                        output.push(if opts.null { '\0' } else { ':' });
+                    }
+                    output.push_str(&count_value.to_string());
+                    output.push('\n');
+                    continue;
+                }
+                if opts.quiet {
+                    continue;
+                }
+
+                let line_show_filename = if opts.heading && show_filename && match_count > 0 {
+                    if !output.is_empty() {
+                        output.push('\n');
+                    }
+                    output.push_str(filename);
+                    output.push('\n');
+                    false
+                } else {
+                    show_filename
+                };
+                if opts.passthru {
+                    let match_set: HashSet<usize> = context_match_lines.iter().copied().collect();
+                    for (line_idx, line) in lines.iter().enumerate() {
+                        let matched = match_set.contains(&line_idx);
+                        let separator = if matched {
+                            opts.field_match_separator.as_str()
+                        } else {
+                            opts.field_context_separator.as_str()
+                        };
+                        write_rg_prefix(
+                            &mut output,
+                            RgPrefix {
+                                filename,
+                                show_filename: line_show_filename,
+                                line_numbers: opts.line_numbers,
+                                line_idx,
+                                column: None,
+                                byte_offset: if opts.byte_offset {
+                                    Some(line.start_offset)
+                                } else {
+                                    None
+                                },
+                                separator,
+                                null_path_separator: opts.null,
+                            },
+                        );
+                        output.push_str(&format_rg_output_line(
+                            line.text,
+                            line.match_text,
+                            &regex,
+                            &opts,
+                            matched,
+                        ));
+                        output.push('\n');
+                    }
+                } else if opts.vimgrep {
+                    for mat in &matches {
+                        write_rg_prefix(
+                            &mut output,
+                            RgPrefix {
+                                filename,
+                                show_filename: true,
+                                line_numbers: true,
+                                line_idx: mat.line_idx,
+                                column: Some(mat.column),
+                                byte_offset: None,
+                                separator: opts.field_match_separator.as_str(),
+                                null_path_separator: opts.null,
+                            },
+                        );
+                        if opts.only_matching {
+                            output.push_str(mat.text);
+                        } else {
+                            output.push_str(&format_rg_output_line(
+                                lines[mat.line_idx].text,
+                                lines[mat.line_idx].match_text,
+                                &regex,
+                                &opts,
+                                true,
+                            ));
+                        }
+                        output.push('\n');
+                    }
+                } else if opts.only_matching {
+                    for mat in &matches {
+                        write_rg_prefix(
+                            &mut output,
+                            RgPrefix {
+                                filename,
+                                show_filename: line_show_filename,
+                                line_numbers: opts.line_numbers,
+                                line_idx: mat.line_idx,
+                                column: if opts.column { Some(mat.column) } else { None },
+                                byte_offset: if opts.byte_offset {
+                                    Some(mat.start_offset)
+                                } else {
+                                    None
+                                },
+                                separator: opts.field_match_separator.as_str(),
+                                null_path_separator: opts.null,
+                            },
+                        );
+                        if let Some(replacement) = &opts.replacement {
+                            output.push_str(&regex.replace(mat.text, replacement.as_str()));
+                        } else {
+                            output.push_str(mat.text);
+                        }
+                        output.push('\n');
+                    }
+                } else if has_context {
+                    if !opts.heading && !output.is_empty() && !context_match_lines.is_empty() {
+                        output.push_str(&opts.context_separator);
+                        output.push('\n');
+                    }
+                    write_rg_context(
+                        &mut output,
+                        filename,
+                        &regex,
+                        &lines,
+                        &context_match_lines,
+                        &opts,
+                        line_show_filename,
+                    );
+                } else if let Some(replacement) = &opts.replacement {
+                    for mat in &matches {
+                        write_rg_prefix(
+                            &mut output,
+                            RgPrefix {
+                                filename,
+                                show_filename: line_show_filename,
+                                line_numbers: opts.line_numbers,
+                                line_idx: mat.line_idx,
+                                column: if opts.column { Some(mat.column) } else { None },
+                                byte_offset: if opts.byte_offset {
+                                    Some(mat.start_offset)
+                                } else {
+                                    None
+                                },
+                                separator: opts.field_match_separator.as_str(),
+                                null_path_separator: opts.null,
+                            },
+                        );
+                        output.push_str(&format_rg_multiline_replacement(
+                            &regex,
+                            &lines,
+                            *mat,
+                            replacement,
+                        ));
+                        output.push('\n');
+                    }
+                } else {
+                    for mat in &matches {
+                        for (line_idx, line) in lines
+                            .iter()
+                            .enumerate()
+                            .take(mat.end_line_idx + 1)
+                            .skip(mat.line_idx)
+                        {
+                            write_rg_prefix(
+                                &mut output,
+                                RgPrefix {
+                                    filename,
+                                    show_filename: line_show_filename,
+                                    line_numbers: opts.line_numbers,
+                                    line_idx,
+                                    column: if opts.column { Some(mat.column) } else { None },
+                                    byte_offset: if opts.byte_offset {
+                                        Some(lines[line_idx].start_offset)
+                                    } else {
+                                        None
+                                    },
+                                    separator: opts.field_match_separator.as_str(),
+                                    null_path_separator: opts.null,
+                                },
+                            );
+                            output.push_str(&format_rg_output_line(
+                                line.text,
+                                line.match_text,
+                                &regex,
+                                &opts,
+                                true,
+                            ));
+                            output.push('\n');
+                        }
+                    }
+                }
+                continue;
+            }
 
             for (line_idx, line) in lines.iter().enumerate() {
                 let matched = regex.is_match(line.match_text);
@@ -2604,6 +2989,9 @@ mod tests {
     ];
 
     const DIFF_CRLF_FILES: &[(&str, &[u8])] = &[("/proj/crlf.txt", b"needle\r\nother\r\n")];
+
+    const DIFF_MULTILINE_FILES: &[(&str, &[u8])] =
+        &[("/proj/multi.txt", b"foo\nbar\nbaz\nxxfoo\nbar\nfoo bar\n")];
 
     const DIFF_UNRESTRICTED_FILES: &[(&str, &[u8])] = &[
         ("/proj/.git/config", b"[core]\n"),
@@ -3313,6 +3701,76 @@ mod tests {
             output: RgDiffOutput::Exact,
         },
         RgDiffCase {
+            name: "multiline literal newline",
+            args: &["-U", "foo\nbar", "proj/multi.txt"],
+            stdin: None,
+            files: DIFF_MULTILINE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "multiline line numbers",
+            args: &["-nU", "foo\nbar", "proj/multi.txt"],
+            stdin: None,
+            files: DIFF_MULTILINE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "multiline count matches",
+            args: &["-c", "-U", "foo\nbar", "proj/multi.txt"],
+            stdin: None,
+            files: DIFF_MULTILINE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "multiline only matching",
+            args: &["-o", "-U", "foo\nbar", "proj/multi.txt"],
+            stdin: None,
+            files: DIFF_MULTILINE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "multiline replacement",
+            args: &["-U", "-r", "X", "foo\nbar", "proj/multi.txt"],
+            stdin: None,
+            files: DIFF_MULTILINE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "multiline dotall",
+            args: &["-U", "--multiline-dotall", "foo.bar", "proj/multi.txt"],
+            stdin: None,
+            files: DIFF_MULTILINE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "multiline dotall disabled",
+            args: &[
+                "-U",
+                "--multiline-dotall",
+                "--no-multiline-dotall",
+                "foo.bar",
+                "proj/multi.txt",
+            ],
+            stdin: None,
+            files: DIFF_MULTILINE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "no multiline restores line mode",
+            args: &["--multiline", "--no-multiline", "foo", "proj/multi.txt"],
+            stdin: None,
+            files: DIFF_MULTILINE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
             name: "unrestricted disables ignore files",
             args: &["-u", "needle", "proj"],
             stdin: None,
@@ -3806,6 +4264,8 @@ mod tests {
         assert!(long_help.stdout.contains("--pcre2"));
         assert!(long_help.stdout.contains("--encoding"));
         assert!(long_help.stdout.contains("--crlf"));
+        assert!(long_help.stdout.contains("--multiline"));
+        assert!(long_help.stdout.contains("--multiline-dotall"));
 
         let short_help = run_rg(&["-h"], None, &[]).await;
         assert_eq!(short_help.exit_code, 0);
