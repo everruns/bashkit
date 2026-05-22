@@ -285,6 +285,49 @@ const result = tool.executeSync("get_user --id 1 | jq -r '.name'");
 console.log(result.stdout); // Alice
 ```
 
+## Custom Builtins on Bash / BashTool
+
+Register JS callbacks as persistent bash builtins that share the `Bash` or
+`BashTool` instance's virtual filesystem. Files survive across `execute()`
+calls, enabling piped command chains and multi-step workflows.
+
+Custom builtins follow the Rust builtin semantics with a shell-first context
+object (`argv`, `stdin`, `env`, `cwd`).
+
+```typescript
+import { Bash } from "@everruns/bashkit";
+
+// Option A: constructor-time registration
+const bash = new Bash({
+  customBuiltins: {
+    "get-order": (ctx) =>
+      JSON.stringify({ id: ctx.argv[0], status: "shipped" }) + "\n",
+  },
+});
+
+// Option B: post-construction registration
+bash.addBuiltin("greet", (ctx) =>
+  `hello ${ctx.argv[0] ?? "world"}\n`,
+);
+
+// Tool output → VFS file (persists)
+await bash.execute("mkdir -p /scratch");
+await bash.execute("get-order 42 > /scratch/order.json");
+
+// Separate call — file is still there
+const result = await bash.execute("cat /scratch/order.json");
+console.log(result.stdout);
+// {"id":"42","status":"shipped"}
+```
+
+**Important**: Custom builtins use async callbacks under the hood.
+Use `execute()` (async) — `executeSync()` will deadlock if your script
+invokes any custom builtin, just like `ScriptedTool.executeSync()`.
+
+Custom builtins survive `reset()`. They are host-side config, so
+`fromSnapshot()` and `restoreSnapshot()` do not preserve them —
+pass `customBuiltins` again when restoring.
+
 ## Snapshot / Restore
 
 State snapshots are available on both `Bash` and `BashTool` instances:
@@ -371,6 +414,7 @@ import {
 - `execute(commands, options?)`
 - `executeSyncOrThrow(commands, options?)`
 - `executeOrThrow(commands, options?)`
+- `addBuiltin(name, callback)` — register a JS callback as a persistent custom builtin
 - `cancel()`
 - `clearCancel()`
 - `reset()`
@@ -382,6 +426,7 @@ import {
 ### BashTool
 
 - All execution, cancellation (`cancel()`, `clearCancel()`), reset, snapshot, restore, and direct VFS helpers from `Bash`
+- `addBuiltin(name, callback)` — register a JS callback as a persistent custom builtin
 - Tool metadata: `name`, `version`, `shortDescription`
 - `snapshot()`
 - `restoreSnapshot(data)`
@@ -415,6 +460,19 @@ import {
 - `mounts?: Array<{ path: string; root: string; writable?: boolean }>`
 - `python?: boolean`
 - `externalFunctions?: string[]`
+- `customBuiltins?: Record<string, BuiltinCallback>` — register JS callbacks as persistent bash builtins
+
+### BuiltinContext
+
+- `name: string` — the builtin command name
+- `argv: string[]` — arguments (not including the command name)
+- `stdin: string | null` — piped input, or `null` if no pipe
+- `env: Record<string, string>` — environment variables
+- `cwd: string` — current working directory
+
+### BuiltinCallback
+
+`(ctx: BuiltinContext) => string` — must return the stdout result.
 
 ### ExecuteOptions
 

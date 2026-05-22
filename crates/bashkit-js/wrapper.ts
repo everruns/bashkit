@@ -102,6 +102,28 @@ export type FileValue = string | (() => string) | (() => Promise<string>);
 const MAX_JSON_NESTING_DEPTH = 64;
 
 /**
+ * Execution context passed to JS custom builtin callbacks.
+ *
+ * Fields are snapshots of the shell state at invocation time.
+ * All fields are read-only.
+ */
+export interface BuiltinContext {
+  readonly name: string;
+  readonly argv: string[];
+  readonly stdin: string | null;
+  readonly env: Record<string, string>;
+  readonly cwd: string;
+}
+
+/**
+ * Callback type for custom builtin commands registered via `customBuiltins`.
+ *
+ * Receives a `BuiltinContext` with `name`, `argv`, `stdin`, `env`, `cwd`.
+ * Must return a string result (stdout).
+ */
+export type BuiltinCallback = (ctx: BuiltinContext) => string;
+
+/**
  * Options for creating a Bash or BashTool instance.
  */
 export interface BashOptions {
@@ -197,6 +219,32 @@ export interface BashOptions {
    * the embedded interpreter. When called, they invoke the external handler.
    */
   externalFunctions?: string[];
+  /**
+   * Custom JS callbacks registered as persistent bash builtins.
+   *
+   * Each key/value pair registers a JS function as a bash builtin command.
+   * Callbacks receive a `BuiltinContext` and return a string result (stdout).
+   *
+   * Unlike `ScriptedTool`, these builtins share the `Bash` instance's
+   * persistent VFS — files survive across `execute()` calls.
+   *
+   * Custom builtins survive `reset()`. They are host-side config, so
+   * `fromSnapshot()` and `restoreSnapshot()` do not preserve them —
+   * pass `customBuiltins` again when restoring.
+   *
+   * @example
+   * ```typescript
+   * const bash = new Bash({
+   *   customBuiltins: {
+   *     "greet": (ctx) => `hello ${ctx.argv[0] ?? "world"}\n`,
+   *     "get-order": (ctx) => JSON.stringify({id: ctx.argv[0], status: "shipped"}) + "\n",
+   *   }
+   * });
+   * bash.executeSync('greet Alice');
+   * // stdout: "hello Alice\n"
+   * ```
+   */
+  customBuiltins?: Record<string, BuiltinCallback>;
 }
 
 export interface SnapshotOptions {
@@ -572,6 +620,7 @@ export class Bash {
   constructor(options?: BashOptions) {
     const resolved = resolveFilesSync(options?.files);
     this.native = new NativeBash(toNativeOptions(options, resolved));
+    this._registerCustomBuiltins(options?.customBuiltins);
   }
 
   /**
@@ -592,7 +641,21 @@ export class Bash {
     const resolved = await resolveFiles(options?.files);
     const instance = Object.create(Bash.prototype) as Bash;
     instance.native = new NativeBash(toNativeOptions(options, resolved));
+    instance._registerCustomBuiltins(options?.customBuiltins);
     return instance;
+  }
+
+  private _registerCustomBuiltins(
+    builtins?: Record<string, BuiltinCallback>,
+  ): void {
+    if (!builtins) return;
+    for (const [name, callback] of Object.entries(builtins)) {
+      const wrapped = (requestJson: string): string => {
+        const ctx = JSON.parse(requestJson) as BuiltinContext;
+        return callback(ctx);
+      };
+      this.native.addBuiltin(name, wrapped);
+    }
   }
 
   /**
@@ -722,6 +785,30 @@ export class Bash {
    */
   clearCancel(): void {
     this.native.clearCancel();
+  }
+
+  /**
+   * Register a JS callback as a custom builtin in the bash interpreter.
+   *
+   * The callback receives a `BuiltinContext` with `name`, `argv`, `stdin`,
+   * `env`, `cwd` and must return a string result.
+   *
+   * Custom builtins survive `reset()` and are available to all subsequent
+   * `execute*()` calls. Best called before first use.
+   *
+   * @example
+   * ```typescript
+   * const bash = new Bash();
+   * bash.addBuiltin("greet", (ctx) => `hello ${ctx.argv[0] ?? "world"}\n`);
+   * console.log(bash.executeSync("greet Alice").stdout); // hello Alice\n
+   * ```
+   */
+  addBuiltin(name: string, callback: BuiltinCallback): void {
+    const wrapped = (requestJson: string): string => {
+      const ctx = JSON.parse(requestJson) as BuiltinContext;
+      return callback(ctx);
+    };
+    this.native.addBuiltin(name, wrapped);
   }
 
   /**
@@ -930,6 +1017,7 @@ export class BashTool {
   constructor(options?: BashOptions) {
     const resolved = resolveFilesSync(options?.files);
     this.native = new NativeBashTool(toNativeOptions(options, resolved));
+    this._registerCustomBuiltins(options?.customBuiltins);
   }
 
   /**
@@ -939,7 +1027,21 @@ export class BashTool {
     const resolved = await resolveFiles(options?.files);
     const instance = Object.create(BashTool.prototype) as BashTool;
     instance.native = new NativeBashTool(toNativeOptions(options, resolved));
+    instance._registerCustomBuiltins(options?.customBuiltins);
     return instance;
+  }
+
+  private _registerCustomBuiltins(
+    builtins?: Record<string, BuiltinCallback>,
+  ): void {
+    if (!builtins) return;
+    for (const [name, callback] of Object.entries(builtins)) {
+      const wrapped = (requestJson: string): string => {
+        const ctx = JSON.parse(requestJson) as BuiltinContext;
+        return callback(ctx);
+      };
+      this.native.addBuiltin(name, wrapped);
+    }
   }
 
   /**
@@ -1059,6 +1161,26 @@ export class BashTool {
    */
   clearCancel(): void {
     this.native.clearCancel();
+  }
+
+  /**
+   * Register a JS callback as a custom builtin in the bash interpreter.
+   *
+   * The callback receives a `BuiltinContext` and must return a string result.
+   * Custom builtins survive `reset()`. Best called before first use.
+   *
+   * @example
+   * ```typescript
+   * const tool = new BashTool();
+   * tool.addBuiltin("greet", (ctx) => `hello ${ctx.argv[0] ?? "world"}\n`);
+   * ```
+   */
+  addBuiltin(name: string, callback: BuiltinCallback): void {
+    const wrapped = (requestJson: string): string => {
+      const ctx = JSON.parse(requestJson) as BuiltinContext;
+      return callback(ctx);
+    };
+    this.native.addBuiltin(name, wrapped);
   }
 
   /**

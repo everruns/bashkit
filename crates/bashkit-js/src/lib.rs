@@ -18,11 +18,11 @@ use bashkit::interop::fs::{
 };
 use bashkit::tool::VERSION;
 use bashkit::{
-    Bash as RustBash, BashTool as RustBashTool, ExecResult as RustExecResult, ExecutionLimits,
-    ExtFunctionResult, FileSystem as BashFileSystem, FileType, InMemoryFs, Metadata, MontyObject,
-    OutputCallback, PosixFs, PythonExternalFnHandler, PythonLimits, RealFs, RealFsMode,
-    ScriptedTool as RustScriptedTool, SnapshotOptions as RustSnapshotOptions, Tool, ToolArgs,
-    ToolDef, ToolRequest,
+    Bash as RustBash, BashTool as RustBashTool, Builtin, BuiltinContext,
+    ExecResult as RustExecResult, ExecutionLimits, ExtFunctionResult, FileSystem as BashFileSystem,
+    FileType, InMemoryFs, Metadata, MontyObject, OutputCallback, PosixFs, PythonExternalFnHandler,
+    PythonLimits, RealFs, RealFsMode, ScriptedTool as RustScriptedTool,
+    SnapshotOptions as RustSnapshotOptions, Tool, ToolArgs, ToolDef, ToolRequest, async_trait,
 };
 use napi::bindgen_prelude::External;
 use napi::{Env, JsValue, Unknown, ValueType, sys};
@@ -1072,6 +1072,9 @@ struct SharedState {
     sqlite: bool,
     external_functions: Vec<String>,
     external_handler: Option<ExternalHandlerArc>,
+    /// Custom JS builtin callbacks registered at construction time.
+    /// Wrapped in a Mutex so `add_builtin` can append without `&mut self`.
+    custom_builtins: std::sync::Mutex<Vec<JsCustomBuiltinEntry>>,
 }
 
 /// Wrapper for the external handler that can be stored and cloned.
@@ -1281,6 +1284,42 @@ impl Bash {
     pub fn clear_cancel(&self) {
         let arc = self.state.cancelled.lock().unwrap().clone();
         arc.store(false, Ordering::SeqCst);
+    }
+
+    /// Register a JS callback as a custom builtin in the bash interpreter.
+    ///
+    /// The callback receives a JSON-serialized `BuiltinContext` string with
+    /// fields `name`, `argv`, `stdin`, `env`, `cwd`, and must return a
+    /// string result.
+    ///
+    /// Custom builtins survive `reset()` and are available to all subsequent
+    /// `execute*()` calls. Call this before first use to avoid rebuilding
+    /// the interpreter with existing VFS state.
+    #[napi(ts_args_type = "name: string, callback: (request: string) => string")]
+    pub fn add_builtin(
+        &self,
+        name: String,
+        callback: napi::bindgen_prelude::Function<(String,), String>,
+    ) -> napi::Result<()> {
+        let tsfn: ToolTsfn = callback
+            .build_threadsafe_function::<(String,)>()
+            .weak::<true>()
+            .build()?;
+
+        if let Ok(mut custom_builtins) = self.state.custom_builtins.lock() {
+            custom_builtins.push(JsCustomBuiltinEntry {
+                name: name.clone(),
+                callback: Arc::new(tsfn),
+            });
+        }
+
+        // Rebuild the interpreter with all registered custom builtins.
+        block_on_with(&self.state, |s| async move {
+            let mut bash = s.inner.lock().await;
+            *bash = build_bash_from_state(&s, None);
+            *s.cancelled.lock().unwrap() = bash.cancellation_token();
+            Ok(())
+        })
     }
 
     /// Reset interpreter to fresh state, preserving configuration.
@@ -1732,6 +1771,40 @@ impl BashTool {
         arc.store(false, Ordering::SeqCst);
     }
 
+    /// Register a JS callback as a custom builtin in the bash interpreter.
+    ///
+    /// The callback receives a JSON-serialized `BuiltinContext` string with
+    /// fields `name`, `argv`, `stdin`, `env`, `cwd`, and must return a
+    /// string result.
+    ///
+    /// Custom builtins survive `reset()` and are available to all subsequent
+    /// `execute*()` calls.
+    #[napi(ts_args_type = "name: string, callback: (request: string) => string")]
+    pub fn add_builtin(
+        &self,
+        name: String,
+        callback: napi::bindgen_prelude::Function<(String,), String>,
+    ) -> napi::Result<()> {
+        let tsfn: ToolTsfn = callback
+            .build_threadsafe_function::<(String,)>()
+            .weak::<true>()
+            .build()?;
+
+        if let Ok(mut custom_builtins) = self.state.custom_builtins.lock() {
+            custom_builtins.push(JsCustomBuiltinEntry {
+                name: name.clone(),
+                callback: Arc::new(tsfn),
+            });
+        }
+
+        block_on_with(&self.state, |s| async move {
+            let mut bash = s.inner.lock().await;
+            *bash = build_bash_from_state(&s, None);
+            *s.cancelled.lock().unwrap() = bash.cancellation_token();
+            Ok(())
+        })
+    }
+
     /// Reset interpreter to fresh state, preserving configuration.
     #[napi]
     pub fn reset(&self) -> napi::Result<()> {
@@ -2110,6 +2183,54 @@ struct JsToolEntry {
     /// Wrapped in Arc so we can share references with Rust ScriptedTool callbacks
     /// (ThreadsafeFunction doesn't implement Clone).
     callback: Arc<ToolTsfn>,
+}
+
+/// Entry for a registered JS custom builtin callback.
+struct JsCustomBuiltinEntry {
+    name: String,
+    callback: Arc<ToolTsfn>,
+}
+
+/// Adapter that implements `Builtin` for JS custom builtin callbacks.
+struct JsCustomBuiltinAdapter {
+    name: String,
+    callback: Arc<ToolTsfn>,
+}
+
+#[async_trait]
+impl Builtin for JsCustomBuiltinAdapter {
+    async fn execute(&self, ctx: BuiltinContext<'_>) -> bashkit::Result<RustExecResult> {
+        let request = serde_json::json!({
+            "name": self.name,
+            "argv": ctx.args,
+            "stdin": ctx.stdin,
+            "env": ctx.env,
+            "cwd": ctx.cwd.to_string_lossy(),
+        });
+        let request_str = serde_json::to_string(&request)
+            .map_err(|e| bashkit::Error::Execution(format!("{}: {}", self.name, e)))?;
+
+        let tsfn = self.callback.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+
+        tokio::task::spawn(async move {
+            let sem = callback_semaphore();
+            let result = match sem.acquire().await {
+                Ok(_permit) => tsfn.call_async((request_str,)).await,
+                Err(e) => Err(napi::Error::from_reason(format!("semaphore error: {}", e))),
+            };
+            let _ = tx.send(result);
+        });
+
+        match rx.await {
+            Ok(Ok(stdout)) => Ok(RustExecResult::ok(stdout)),
+            Ok(Err(err)) => Ok(RustExecResult::err(err.to_string(), 1)),
+            Err(_) => Ok(RustExecResult::err(
+                format!("{}: callback channel closed", self.name),
+                1,
+            )),
+        }
+    }
 }
 
 /// Compose JS callbacks as bash builtins for multi-tool orchestration.
@@ -2491,6 +2612,19 @@ fn build_bash_from_state(state: &SharedState, files: Option<&HashMap<String, Str
         builder = builder.env("BASHKIT_ALLOW_INPROCESS_SQLITE", "1");
     }
 
+    // Register JS custom builtin callbacks.
+    if let Ok(custom_builtins) = state.custom_builtins.lock() {
+        for entry in custom_builtins.iter() {
+            builder = builder.builtin(
+                entry.name.clone(),
+                Box::new(JsCustomBuiltinAdapter {
+                    name: entry.name.clone(),
+                    callback: entry.callback.clone(),
+                }),
+            );
+        }
+    }
+
     builder.build()
 }
 
@@ -2537,6 +2671,7 @@ fn shared_state_from_opts(
         sqlite: sql,
         external_functions: ext_fns.clone(),
         external_handler: external_handler.clone(),
+        custom_builtins: std::sync::Mutex::new(Vec::new()),
     };
 
     if let Some(ref mounts) = mounts {
@@ -2583,6 +2718,7 @@ fn shared_state_from_opts(
         sqlite: sql,
         external_functions: ext_fns,
         external_handler,
+        custom_builtins: std::sync::Mutex::new(Vec::new()),
     })
 }
 
