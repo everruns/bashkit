@@ -110,6 +110,7 @@ struct RgOptions {
     type_includes: Vec<RgFileType>,
     type_excludes: Vec<RgFileType>,
     color: RgColorMode,
+    color_scheme: RgColorScheme,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -126,6 +127,128 @@ enum RgColorMode {
     Auto,
     Never,
     Always,
+}
+
+#[derive(Clone)]
+struct RgColorScheme {
+    path: RgColorStyle,
+    line: RgColorStyle,
+    column: RgColorStyle,
+    matches: RgColorStyle,
+}
+
+#[derive(Clone)]
+struct RgColorStyle {
+    enabled: bool,
+    bold: bool,
+    fg: Option<&'static str>,
+    bg: Option<&'static str>,
+}
+
+impl Default for RgColorScheme {
+    fn default() -> Self {
+        Self {
+            path: RgColorStyle::fg("35"),
+            line: RgColorStyle::fg("32"),
+            column: RgColorStyle::plain(),
+            matches: RgColorStyle {
+                enabled: true,
+                bold: true,
+                fg: Some("31"),
+                bg: None,
+            },
+        }
+    }
+}
+
+impl RgColorScheme {
+    fn apply(&mut self, spec: &str) -> Result<()> {
+        let parts: Vec<&str> = spec.split(':').collect();
+        if parts.len() == 2 && parts[1] == "none" {
+            self.style_mut(parts[0])?.disable();
+            return Ok(());
+        }
+        if parts.len() != 3 {
+            return Err(Error::Execution(format!(
+                "rg: error parsing flag --colors: invalid color spec '{spec}'"
+            )));
+        }
+        let style = self.style_mut(parts[0])?;
+        match parts[1] {
+            "fg" => style.set_fg(parse_ansi_fg(parts[2])?),
+            "bg" => style.set_bg(parse_ansi_bg(parts[2])?),
+            "style" => match parts[2] {
+                "bold" => style.set_bold(true),
+                "nobold" => style.set_bold(false),
+                _ => {
+                    return Err(Error::Execution(format!(
+                        "rg: error parsing flag --colors: invalid style '{}'",
+                        parts[2]
+                    )));
+                }
+            },
+            _ => {
+                return Err(Error::Execution(format!(
+                    "rg: error parsing flag --colors: invalid color spec '{spec}'"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn style_mut(&mut self, name: &str) -> Result<&mut RgColorStyle> {
+        match name {
+            "path" => Ok(&mut self.path),
+            "line" => Ok(&mut self.line),
+            "column" => Ok(&mut self.column),
+            "match" => Ok(&mut self.matches),
+            _ => Err(Error::Execution(format!(
+                "rg: error parsing flag --colors: unrecognized color type '{name}'"
+            ))),
+        }
+    }
+}
+
+impl RgColorStyle {
+    fn plain() -> Self {
+        Self {
+            enabled: true,
+            bold: false,
+            fg: None,
+            bg: None,
+        }
+    }
+
+    fn fg(code: &'static str) -> Self {
+        Self {
+            enabled: true,
+            bold: false,
+            fg: Some(code),
+            bg: None,
+        }
+    }
+
+    fn disable(&mut self) {
+        self.enabled = false;
+        self.bold = false;
+        self.fg = None;
+        self.bg = None;
+    }
+
+    fn set_fg(&mut self, code: &'static str) {
+        self.enabled = true;
+        self.fg = Some(code);
+    }
+
+    fn set_bg(&mut self, code: &'static str) {
+        self.enabled = true;
+        self.bg = Some(code);
+    }
+
+    fn set_bold(&mut self, bold: bool) {
+        self.enabled = true;
+        self.bold = bold;
+    }
 }
 
 #[derive(Clone)]
@@ -257,6 +380,7 @@ impl RgOptions {
             type_includes: Vec::new(),
             type_excludes: Vec::new(),
             color: RgColorMode::Auto,
+            color_scheme: RgColorScheme::default(),
         };
 
         let mut positional = Vec::new();
@@ -514,8 +638,8 @@ impl RgOptions {
                 parse_regex_engine(&val)?;
             } else if let Some(val) = long_value(&mut p, "--color")? {
                 opts.color = parse_color_mode(&val)?;
-            } else if long_value(&mut p, "--colors")?.is_some() {
-                // no-op: bashkit rg does not emit color.
+            } else if let Some(val) = long_value(&mut p, "--colors")? {
+                opts.color_scheme.apply(&val)?;
             } else if p.flag_any(&["--pretty"]) {
                 opts.heading = true;
                 opts.line_numbers = true;
@@ -1540,6 +1664,38 @@ fn parse_color_mode(value: &str) -> Result<RgColorMode> {
     }
 }
 
+fn parse_ansi_fg(value: &str) -> Result<&'static str> {
+    match value {
+        "black" => Ok("30"),
+        "red" => Ok("31"),
+        "green" => Ok("32"),
+        "yellow" => Ok("33"),
+        "blue" => Ok("34"),
+        "magenta" => Ok("35"),
+        "cyan" => Ok("36"),
+        "white" => Ok("37"),
+        _ => Err(Error::Execution(format!(
+            "rg: error parsing flag --colors: invalid foreground color '{value}'"
+        ))),
+    }
+}
+
+fn parse_ansi_bg(value: &str) -> Result<&'static str> {
+    match value {
+        "black" => Ok("40"),
+        "red" => Ok("41"),
+        "green" => Ok("42"),
+        "yellow" => Ok("43"),
+        "blue" => Ok("44"),
+        "magenta" => Ok("45"),
+        "cyan" => Ok("46"),
+        "white" => Ok("47"),
+        _ => Err(Error::Execution(format!(
+            "rg: error parsing flag --colors: invalid background color '{value}'"
+        ))),
+    }
+}
+
 fn parse_rg_separator(value: &str) -> String {
     let mut output = String::new();
     let mut chars = value.chars().peekable();
@@ -2452,32 +2608,62 @@ struct RgPrefix<'a> {
     separator: &'a str,
     null_path_separator: bool,
     color: bool,
+    color_scheme: &'a RgColorScheme,
 }
 
 const RG_ANSI_RESET: &str = "\x1b[0m";
-const RG_ANSI_PATH: &str = "\x1b[0m\x1b[35m";
-const RG_ANSI_LINE: &str = "\x1b[0m\x1b[32m";
-const RG_ANSI_MATCH: &str = "\x1b[0m\x1b[1m\x1b[31m";
 
-fn color_path(path: &str, color: bool) -> String {
+fn color_path(path: &str, color: bool, color_scheme: &RgColorScheme) -> String {
     if color {
-        format!("{RG_ANSI_PATH}{path}{RG_ANSI_RESET}")
+        color_text(path, &color_scheme.path, true)
     } else {
         path.to_string()
     }
 }
 
-fn color_numeric(value: usize, color: bool, line_number: bool) -> String {
+fn color_numeric(
+    value: usize,
+    color: bool,
+    line_number: bool,
+    color_scheme: &RgColorScheme,
+) -> String {
     if color {
-        let color_start = if line_number {
-            RG_ANSI_LINE
+        let style = if line_number {
+            &color_scheme.line
         } else {
-            RG_ANSI_RESET
+            &color_scheme.column
         };
-        format!("{color_start}{value}{RG_ANSI_RESET}")
+        color_text(&value.to_string(), style, true)
     } else {
         value.to_string()
     }
+}
+
+fn color_text(text: &str, style: &RgColorStyle, reset_when_disabled: bool) -> String {
+    if !style.enabled {
+        return if reset_when_disabled {
+            format!("{RG_ANSI_RESET}{text}{RG_ANSI_RESET}")
+        } else {
+            text.to_string()
+        };
+    }
+    let mut output = String::from(RG_ANSI_RESET);
+    if style.bold {
+        output.push_str("\x1b[1m");
+    }
+    if let Some(fg) = style.fg {
+        output.push_str("\x1b[");
+        output.push_str(fg);
+        output.push('m');
+    }
+    if let Some(bg) = style.bg {
+        output.push_str("\x1b[");
+        output.push_str(bg);
+        output.push('m');
+    }
+    output.push_str(text);
+    output.push_str(RG_ANSI_RESET);
+    output
 }
 
 fn color_matches(text: &str, regex: &Regex, opts: &RgOptions) -> String {
@@ -2486,7 +2672,7 @@ fn color_matches(text: &str, regex: &Regex, opts: &RgOptions) -> String {
     }
     regex
         .replace_all(text, |captures: &regex::Captures<'_>| {
-            format!("{RG_ANSI_MATCH}{}{RG_ANSI_RESET}", &captures[0])
+            color_text(&captures[0], &opts.color_scheme.matches, false)
         })
         .into_owned()
 }
@@ -2494,7 +2680,7 @@ fn color_matches(text: &str, regex: &Regex, opts: &RgOptions) -> String {
 fn write_rg_prefix(output: &mut String, prefix: RgPrefix<'_>) {
     if prefix.show_filename {
         if prefix.color {
-            output.push_str(&color_path(prefix.filename, true));
+            output.push_str(&color_path(prefix.filename, true, prefix.color_scheme));
         } else {
             output.push_str(prefix.filename);
         }
@@ -2505,15 +2691,30 @@ fn write_rg_prefix(output: &mut String, prefix: RgPrefix<'_>) {
         }
     }
     if prefix.line_numbers {
-        output.push_str(&color_numeric(prefix.line_idx + 1, prefix.color, true));
+        output.push_str(&color_numeric(
+            prefix.line_idx + 1,
+            prefix.color,
+            true,
+            prefix.color_scheme,
+        ));
         output.push_str(prefix.separator);
     }
     if let Some(column) = prefix.column {
-        output.push_str(&color_numeric(column, prefix.color, false));
+        output.push_str(&color_numeric(
+            column,
+            prefix.color,
+            false,
+            prefix.color_scheme,
+        ));
         output.push_str(prefix.separator);
     }
     if let Some(byte_offset) = prefix.byte_offset {
-        output.push_str(&color_numeric(byte_offset, prefix.color, false));
+        output.push_str(&color_numeric(
+            byte_offset,
+            prefix.color,
+            false,
+            prefix.color_scheme,
+        ));
         output.push_str(prefix.separator);
     }
 }
@@ -2758,6 +2959,7 @@ fn write_rg_context(
                 separator,
                 null_path_separator: opts.null,
                 color: opts.color_enabled(),
+                color_scheme: &opts.color_scheme,
             },
         );
         output.push_str(&format_rg_output_line(
@@ -2994,7 +3196,7 @@ fn rg_generate_output(kind: &str, help_text: &str) -> Result<String> {
 #[async_trait]
 impl Builtin for Rg {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        let help_text = "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i, --ignore-case\tcase insensitive\n  -S, --smart-case\tcase insensitive if pattern is lowercase\n  -s, --case-sensitive\tcase sensitive\n  -n, --line-number\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  --column\tshow column numbers\n  -b, --byte-offset\tshow byte offsets\n  --vimgrep\tshow file:line:column:match lines\n  --json\tshow JSON Lines events\n  --stats\tshow search statistics\n  --null\tterminate path fields with NUL\n  -c, --count\tcount matching lines\n  --count-matches\tcount individual matches\n  --include-zero\tinclude zero counts\n  -l, --files-with-matches\tfiles with matches\n  --files-without-match\tfiles without matches\n  --files\tprint files that would be searched\n  -v, --invert-match\tinvert match\n  -w, --word-regexp\tword boundary\n  -x, --line-regexp\tmatch whole lines\n  -F, --fixed-strings\tfixed strings (literal)\n  -a, --text\tsearch binary files as text\n  --binary\tsearch binary files and print binary-match summaries\n  -z, --search-zip\tsearch gzip-compressed files\n  --no-search-zip\tdisable compressed file search\n  --pre COMMAND\trun a preprocessor before searching (cat/empty supported)\n  --pre-glob GLOB\tlimit preprocessor paths by glob\n  --no-pre\tdisable preprocessing\n  --crlf\ttreat CRLF as line terminators for $ anchors\n  --no-crlf\tdisable CRLF line terminator mode\n  -U, --multiline\tenable matching across line boundaries\n  --no-multiline\tdisable multiline matching\n  --multiline-dotall\tmake . match line terminators in multiline mode\n  --no-multiline-dotall\tdisable multiline dotall mode\n  -o, --only-matching\tshow only matching text\n  -q, --quiet\tsuppress output; exit status only\n  -e, --regexp PATTERN\tuse PATTERN for matching\n  -f, --file PATTERNFILE\tread patterns from file\n  -E, --encoding ENCODING\tdecode searched files using ENCODING\n  -r, --replace REPLACEMENT\treplace matches in output\n  --passthru\tprint matching and non-matching lines\n  --trim\ttrim whitespace from output lines\n  -m, --max-count NUM\tmax count per file\n  -M, --max-columns NUM\tomit lines longer than NUM columns\n  --max-columns-preview\tshow prefixes of long lines\n  -j, --threads NUM\tset number of search threads (no-op)\n  --regex-size-limit NUM\tset regex size limit (no-op)\n  --dfa-size-limit NUM\tset DFA size limit (no-op)\n  --max-depth NUM\tlimit recursive directory depth\n  -A, --after-context NUM\tshow trailing context\n  -B, --before-context NUM\tshow leading context\n  -C, --context NUM\tshow leading and trailing context\n  --context-separator SEP\tset context group separator\n  --field-match-separator SEP\tset match field separator\n  --field-context-separator SEP\tset context field separator\n  -p, --pretty\talias for heading plus line numbers\n  --heading\tgroup matches by file\n  --no-heading\tdisable heading output\n  --sort SORTBY\tsort paths (path only)\n  --sortr SORTBY\tsort paths in reverse (path only)\n  --sort-files\tsort --files output\n  --path-separator SEP\tset displayed path separator\n  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  -t, --type TYPE\tinclude files matching TYPE\n  -T, --type-not TYPE\texclude files matching TYPE\n  --type-add TYPE:GLOB\tadd a file type glob\n  --type-clear TYPE\tclear a file type definition\n  --type-list\tshow file type definitions\n  --ignore-file FILE\tuse additional ignore file\n  --no-ignore\tdo not use ignore files\n  --no-ignore-dot\tdo not use .ignore files\n  --no-ignore-vcs\tdo not use .gitignore files\n  --no-require-git\tuse .gitignore outside git repositories\n  --require-git\trequire a git repository for .gitignore files\n  -u, --unrestricted\treduce filtering (repeatable)\n  --messages\tshow file read diagnostics\n  --no-messages\tsuppress file read diagnostics\n  --hidden\tsearch hidden files and directories\n  --no-hidden\tdo not search hidden files and directories\n  -H, --with-filename\tshow filename\n  -I, --no-filename\tsuppress filename\n  --line-buffered\tforce line buffering (no-op)\n  --block-buffered\tforce block buffering (no-op)\n  --no-config\tdo not read config files (no-op)\n  --mmap\tsearch using memory maps when possible (no-op)\n  --no-mmap\tdisable memory maps (no-op)\n  -P, --pcre2\tuse PCRE2 regex engine for supported patterns (no-op)\n  --no-pcre2\tdisable PCRE2 regex engine (no-op)\n  --pcre2-version\tshow PCRE2 version information\n  --unicode\tenable Unicode regex mode\n  --no-unicode\tdisable Unicode regex mode\n  --pcre2-unicode\tenable PCRE2 Unicode mode (no-op)\n  --no-pcre2-unicode\tdisable PCRE2 Unicode mode (no-op)\n  --engine ENGINE\tselect regex engine: default, auto, pcre2 (no-op)\n  --auto-hybrid-regex\tuse PCRE2 when needed (no-op)\n  --no-auto-hybrid-regex\tdisable auto hybrid regex (no-op)\n  --color MODE\tcolor output: never, auto, always, ansi\n  --colors SPEC\tconfigure colors (no-op)\n  -h, --help\tdisplay this help and exit\n  -V, --version\toutput version information and exit\n";
+        let help_text = "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i, --ignore-case\tcase insensitive\n  -S, --smart-case\tcase insensitive if pattern is lowercase\n  -s, --case-sensitive\tcase sensitive\n  -n, --line-number\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  --column\tshow column numbers\n  -b, --byte-offset\tshow byte offsets\n  --vimgrep\tshow file:line:column:match lines\n  --json\tshow JSON Lines events\n  --stats\tshow search statistics\n  --null\tterminate path fields with NUL\n  -c, --count\tcount matching lines\n  --count-matches\tcount individual matches\n  --include-zero\tinclude zero counts\n  -l, --files-with-matches\tfiles with matches\n  --files-without-match\tfiles without matches\n  --files\tprint files that would be searched\n  -v, --invert-match\tinvert match\n  -w, --word-regexp\tword boundary\n  -x, --line-regexp\tmatch whole lines\n  -F, --fixed-strings\tfixed strings (literal)\n  -a, --text\tsearch binary files as text\n  --binary\tsearch binary files and print binary-match summaries\n  -z, --search-zip\tsearch gzip-compressed files\n  --no-search-zip\tdisable compressed file search\n  --pre COMMAND\trun a preprocessor before searching (cat/empty supported)\n  --pre-glob GLOB\tlimit preprocessor paths by glob\n  --no-pre\tdisable preprocessing\n  --crlf\ttreat CRLF as line terminators for $ anchors\n  --no-crlf\tdisable CRLF line terminator mode\n  -U, --multiline\tenable matching across line boundaries\n  --no-multiline\tdisable multiline matching\n  --multiline-dotall\tmake . match line terminators in multiline mode\n  --no-multiline-dotall\tdisable multiline dotall mode\n  -o, --only-matching\tshow only matching text\n  -q, --quiet\tsuppress output; exit status only\n  -e, --regexp PATTERN\tuse PATTERN for matching\n  -f, --file PATTERNFILE\tread patterns from file\n  -E, --encoding ENCODING\tdecode searched files using ENCODING\n  -r, --replace REPLACEMENT\treplace matches in output\n  --passthru\tprint matching and non-matching lines\n  --trim\ttrim whitespace from output lines\n  -m, --max-count NUM\tmax count per file\n  -M, --max-columns NUM\tomit lines longer than NUM columns\n  --max-columns-preview\tshow prefixes of long lines\n  -j, --threads NUM\tset number of search threads (no-op)\n  --regex-size-limit NUM\tset regex size limit (no-op)\n  --dfa-size-limit NUM\tset DFA size limit (no-op)\n  --max-depth NUM\tlimit recursive directory depth\n  -A, --after-context NUM\tshow trailing context\n  -B, --before-context NUM\tshow leading context\n  -C, --context NUM\tshow leading and trailing context\n  --context-separator SEP\tset context group separator\n  --field-match-separator SEP\tset match field separator\n  --field-context-separator SEP\tset context field separator\n  -p, --pretty\talias for heading plus line numbers\n  --heading\tgroup matches by file\n  --no-heading\tdisable heading output\n  --sort SORTBY\tsort paths (path only)\n  --sortr SORTBY\tsort paths in reverse (path only)\n  --sort-files\tsort --files output\n  --path-separator SEP\tset displayed path separator\n  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  -t, --type TYPE\tinclude files matching TYPE\n  -T, --type-not TYPE\texclude files matching TYPE\n  --type-add TYPE:GLOB\tadd a file type glob\n  --type-clear TYPE\tclear a file type definition\n  --type-list\tshow file type definitions\n  --ignore-file FILE\tuse additional ignore file\n  --no-ignore\tdo not use ignore files\n  --no-ignore-dot\tdo not use .ignore files\n  --no-ignore-vcs\tdo not use .gitignore files\n  --no-require-git\tuse .gitignore outside git repositories\n  --require-git\trequire a git repository for .gitignore files\n  -u, --unrestricted\treduce filtering (repeatable)\n  --messages\tshow file read diagnostics\n  --no-messages\tsuppress file read diagnostics\n  --hidden\tsearch hidden files and directories\n  --no-hidden\tdo not search hidden files and directories\n  -H, --with-filename\tshow filename\n  -I, --no-filename\tsuppress filename\n  --line-buffered\tforce line buffering (no-op)\n  --block-buffered\tforce block buffering (no-op)\n  --no-config\tdo not read config files (no-op)\n  --mmap\tsearch using memory maps when possible (no-op)\n  --no-mmap\tdisable memory maps (no-op)\n  -P, --pcre2\tuse PCRE2 regex engine for supported patterns (no-op)\n  --no-pcre2\tdisable PCRE2 regex engine (no-op)\n  --pcre2-version\tshow PCRE2 version information\n  --unicode\tenable Unicode regex mode\n  --no-unicode\tdisable Unicode regex mode\n  --pcre2-unicode\tenable PCRE2 Unicode mode (no-op)\n  --no-pcre2-unicode\tdisable PCRE2 Unicode mode (no-op)\n  --engine ENGINE\tselect regex engine: default, auto, pcre2 (no-op)\n  --auto-hybrid-regex\tuse PCRE2 when needed (no-op)\n  --no-auto-hybrid-regex\tdisable auto hybrid regex (no-op)\n  --color MODE\tcolor output: never, auto, always, ansi\n  --colors SPEC\tconfigure color styles\n  -h, --help\tdisplay this help and exit\n  -V, --version\toutput version information and exit\n";
         let help_text = help_text.replace(
             "  --max-depth NUM\tlimit recursive directory depth\n",
             "  -d, --max-depth NUM\tlimit recursive directory depth\n  --maxdepth NUM\talias for --max-depth\n",
@@ -3012,8 +3214,8 @@ impl Builtin for Rg {
             "  -E, --encoding ENCODING\tdecode searched files using ENCODING\n  --no-encoding\trestore automatic encoding detection\n",
         );
         let help_text = help_text.replace(
-            "  --colors SPEC\tconfigure colors (no-op)\n",
-            "  --colors SPEC\tconfigure colors (no-op)\n  --hostname-bin COMMAND\tcommand for hyperlink hostname discovery (no-op)\n  --hyperlink-format FORMAT\tconfigure hyperlink output (no-op)\n",
+            "  --colors SPEC\tconfigure color styles\n",
+            "  --colors SPEC\tconfigure color styles\n  --hostname-bin COMMAND\tcommand for hyperlink hostname discovery (no-op)\n  --hyperlink-format FORMAT\tconfigure hyperlink output (no-op)\n",
         );
         let help_text = help_text.replace(
             "  --context-separator SEP\tset context group separator\n",
@@ -3085,7 +3287,7 @@ impl Builtin for Rg {
             let found_files = !files.is_empty();
             let files: Vec<String> = files
                 .into_iter()
-                .map(|file| color_path(&file, opts.color_enabled()))
+                .map(|file| color_path(&file, opts.color_enabled(), &opts.color_scheme))
                 .collect();
             let output = if opts.null {
                 let mut output = String::new();
@@ -3163,11 +3365,19 @@ impl Builtin for Rg {
                 if !matched {
                     if opts.files_without_matches {
                         any_match = true;
-                        output.push_str(&color_path(filename, opts.color_enabled()));
+                        output.push_str(&color_path(
+                            filename,
+                            opts.color_enabled(),
+                            &opts.color_scheme,
+                        ));
                         output.push(if opts.null { '\0' } else { '\n' });
                     } else if (opts.count_only || opts.count_matches) && opts.include_zero {
                         if show_filename {
-                            output.push_str(&color_path(filename, opts.color_enabled()));
+                            output.push_str(&color_path(
+                                filename,
+                                opts.color_enabled(),
+                                &opts.color_scheme,
+                            ));
                             output.push(if opts.null { '\0' } else { ':' });
                         }
                         output.push_str("0\n");
@@ -3189,13 +3399,21 @@ impl Builtin for Rg {
                     continue;
                 }
                 if opts.files_with_matches {
-                    output.push_str(&color_path(filename, opts.color_enabled()));
+                    output.push_str(&color_path(
+                        filename,
+                        opts.color_enabled(),
+                        &opts.color_scheme,
+                    ));
                     output.push(if opts.null { '\0' } else { '\n' });
                     continue;
                 }
                 if opts.count_only || opts.count_matches {
                     if show_filename {
-                        output.push_str(&color_path(filename, opts.color_enabled()));
+                        output.push_str(&color_path(
+                            filename,
+                            opts.color_enabled(),
+                            &opts.color_scheme,
+                        ));
                         output.push(if opts.null { '\0' } else { ':' });
                     }
                     output.push_str("1\n");
@@ -3203,7 +3421,11 @@ impl Builtin for Rg {
                 }
 
                 if show_filename {
-                    output.push_str(&color_path(filename, opts.color_enabled()));
+                    output.push_str(&color_path(
+                        filename,
+                        opts.color_enabled(),
+                        &opts.color_scheme,
+                    ));
                     output.push(if opts.null { '\0' } else { ':' });
                     if !opts.null {
                         output.push(' ');
@@ -3254,7 +3476,11 @@ impl Builtin for Rg {
                         return Ok(ExecResult::ok(String::new()));
                     }
                     if opts.files_with_matches && match_count > 0 {
-                        output.push_str(&color_path(filename, opts.color_enabled()));
+                        output.push_str(&color_path(
+                            filename,
+                            opts.color_enabled(),
+                            &opts.color_scheme,
+                        ));
                         output.push(if opts.null || opts.null_data {
                             '\0'
                         } else {
@@ -3265,7 +3491,11 @@ impl Builtin for Rg {
                     if opts.files_without_matches {
                         if match_count == 0 {
                             any_match = true;
-                            output.push_str(&color_path(filename, opts.color_enabled()));
+                            output.push_str(&color_path(
+                                filename,
+                                opts.color_enabled(),
+                                &opts.color_scheme,
+                            ));
                             output.push(if opts.null || opts.null_data {
                                 '\0'
                             } else {
@@ -3301,7 +3531,11 @@ impl Builtin for Rg {
                             continue;
                         }
                         if show_filename {
-                            output.push_str(&color_path(filename, opts.color_enabled()));
+                            output.push_str(&color_path(
+                                filename,
+                                opts.color_enabled(),
+                                &opts.color_scheme,
+                            ));
                             output.push(if opts.null { '\0' } else { ':' });
                         }
                         output.push_str(&count_value.to_string());
@@ -3316,7 +3550,11 @@ impl Builtin for Rg {
                         if !output.is_empty() {
                             output.push(record_terminator);
                         }
-                        output.push_str(&color_path(filename, opts.color_enabled()));
+                        output.push_str(&color_path(
+                            filename,
+                            opts.color_enabled(),
+                            &opts.color_scheme,
+                        ));
                         output.push(record_terminator);
                         false
                     } else {
@@ -3354,6 +3592,7 @@ impl Builtin for Rg {
                                     separator: opts.field_match_separator.as_str(),
                                     null_path_separator: opts.null,
                                     color: opts.color_enabled(),
+                                    color_scheme: &opts.color_scheme,
                                 },
                             );
                             output.push_str(&format_rg_output_line(
@@ -3387,7 +3626,11 @@ impl Builtin for Rg {
                     return Ok(ExecResult::ok(String::new()));
                 }
                 if opts.files_with_matches && match_count > 0 {
-                    output.push_str(&color_path(filename, opts.color_enabled()));
+                    output.push_str(&color_path(
+                        filename,
+                        opts.color_enabled(),
+                        &opts.color_scheme,
+                    ));
                     output.push(if opts.null || opts.null_data {
                         '\0'
                     } else {
@@ -3398,7 +3641,11 @@ impl Builtin for Rg {
                 if opts.files_without_matches {
                     if match_count == 0 {
                         any_match = true;
-                        output.push_str(&color_path(filename, opts.color_enabled()));
+                        output.push_str(&color_path(
+                            filename,
+                            opts.color_enabled(),
+                            &opts.color_scheme,
+                        ));
                         output.push(if opts.null || opts.null_data {
                             '\0'
                         } else {
@@ -3428,7 +3675,11 @@ impl Builtin for Rg {
                         continue;
                     }
                     if show_filename {
-                        output.push_str(&color_path(filename, opts.color_enabled()));
+                        output.push_str(&color_path(
+                            filename,
+                            opts.color_enabled(),
+                            &opts.color_scheme,
+                        ));
                         output.push(if opts.null { '\0' } else { ':' });
                     }
                     output.push_str(&count_value.to_string());
@@ -3443,7 +3694,11 @@ impl Builtin for Rg {
                     if !output.is_empty() {
                         output.push(record_terminator);
                     }
-                    output.push_str(&color_path(filename, opts.color_enabled()));
+                    output.push_str(&color_path(
+                        filename,
+                        opts.color_enabled(),
+                        &opts.color_scheme,
+                    ));
                     output.push(record_terminator);
                     false
                 } else {
@@ -3474,6 +3729,7 @@ impl Builtin for Rg {
                                 separator,
                                 null_path_separator: opts.null,
                                 color: opts.color_enabled(),
+                                color_scheme: &opts.color_scheme,
                             },
                         );
                         output.push_str(&format_rg_output_line(
@@ -3499,6 +3755,7 @@ impl Builtin for Rg {
                                 separator: opts.field_match_separator.as_str(),
                                 null_path_separator: opts.null,
                                 color: opts.color_enabled(),
+                                color_scheme: &opts.color_scheme,
                             },
                         );
                         if opts.only_matching {
@@ -3532,6 +3789,7 @@ impl Builtin for Rg {
                                 separator: opts.field_match_separator.as_str(),
                                 null_path_separator: opts.null,
                                 color: opts.color_enabled(),
+                                color_scheme: &opts.color_scheme,
                             },
                         );
                         if let Some(replacement) = &opts.replacement {
@@ -3573,6 +3831,7 @@ impl Builtin for Rg {
                                 separator: opts.field_match_separator.as_str(),
                                 null_path_separator: opts.null,
                                 color: opts.color_enabled(),
+                                color_scheme: &opts.color_scheme,
                             },
                         );
                         output.push_str(&format_rg_multiline_replacement(
@@ -3607,6 +3866,7 @@ impl Builtin for Rg {
                                     separator: opts.field_match_separator.as_str(),
                                     null_path_separator: opts.null,
                                     color: opts.color_enabled(),
+                                    color_scheme: &opts.color_scheme,
                                 },
                             );
                             output.push_str(&format_rg_output_line(
@@ -3674,7 +3934,11 @@ impl Builtin for Rg {
                 return Ok(ExecResult::ok(String::new()));
             }
             if opts.files_with_matches && match_count > 0 {
-                output.push_str(&color_path(filename, opts.color_enabled()));
+                output.push_str(&color_path(
+                    filename,
+                    opts.color_enabled(),
+                    &opts.color_scheme,
+                ));
                 output.push(if opts.null || opts.null_data {
                     '\0'
                 } else {
@@ -3685,7 +3949,11 @@ impl Builtin for Rg {
             if opts.files_without_matches {
                 if match_count == 0 {
                     any_match = true;
-                    output.push_str(&color_path(filename, opts.color_enabled()));
+                    output.push_str(&color_path(
+                        filename,
+                        opts.color_enabled(),
+                        &opts.color_scheme,
+                    ));
                     output.push(if opts.null || opts.null_data {
                         '\0'
                     } else {
@@ -3725,7 +3993,11 @@ impl Builtin for Rg {
                     continue;
                 }
                 if show_filename {
-                    output.push_str(&color_path(filename, opts.color_enabled()));
+                    output.push_str(&color_path(
+                        filename,
+                        opts.color_enabled(),
+                        &opts.color_scheme,
+                    ));
                     output.push(if opts.null { '\0' } else { ':' });
                 }
                 output.push_str(&count_value.to_string());
@@ -3740,7 +4012,11 @@ impl Builtin for Rg {
                 if !output.is_empty() {
                     output.push(record_terminator);
                 }
-                output.push_str(&color_path(filename, opts.color_enabled()));
+                output.push_str(&color_path(
+                    filename,
+                    opts.color_enabled(),
+                    &opts.color_scheme,
+                ));
                 output.push(record_terminator);
                 false
             } else {
@@ -3782,6 +4058,7 @@ impl Builtin for Rg {
                             separator,
                             null_path_separator: opts.null,
                             color: opts.color_enabled(),
+                            color_scheme: &opts.color_scheme,
                         },
                     );
                     output.push_str(&format_rg_output_line(
@@ -3808,6 +4085,7 @@ impl Builtin for Rg {
                                 separator: opts.field_match_separator.as_str(),
                                 null_path_separator: opts.null,
                                 color: opts.color_enabled(),
+                                color_scheme: &opts.color_scheme,
                             },
                         );
                         if opts.only_matching {
@@ -3847,6 +4125,7 @@ impl Builtin for Rg {
                                 separator: opts.field_match_separator.as_str(),
                                 null_path_separator: opts.null,
                                 color: opts.color_enabled(),
+                                color_scheme: &opts.color_scheme,
                             },
                         );
                         if let Some(replacement) = &opts.replacement {
@@ -3895,6 +4174,7 @@ impl Builtin for Rg {
                             separator: opts.field_match_separator.as_str(),
                             null_path_separator: opts.null,
                             color: opts.color_enabled(),
+                            color_scheme: &opts.color_scheme,
                         },
                     );
                     output.push_str(&format_rg_output_line(
@@ -4551,6 +4831,71 @@ mod tests {
             files: DIFF_BASIC_FILES,
             cwd: "/",
             output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "colors custom match fg",
+            args: &[
+                "--color=always",
+                "--colors",
+                "match:fg:blue",
+                "needle",
+                "proj/a.txt",
+            ],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "colors custom match bg and nobold",
+            args: &[
+                "--color=always",
+                "--colors",
+                "match:bg:red",
+                "--colors",
+                "match:style:nobold",
+                "needle",
+                "proj/a.txt",
+            ],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "colors custom prefixes",
+            args: &[
+                "--color=always",
+                "--colors",
+                "path:fg:green",
+                "--colors",
+                "line:fg:yellow",
+                "--colors",
+                "column:fg:cyan",
+                "-H",
+                "-n",
+                "--column",
+                "needle",
+                "proj/a.txt",
+            ],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "colors none",
+            args: &[
+                "--color=always",
+                "--colors",
+                "match:none",
+                "needle",
+                "proj/a.txt",
+            ],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
         },
         RgDiffCase {
             name: "quiet",
@@ -7639,6 +7984,23 @@ mod tests {
             prefixed.stdout,
             "\x1b[0m\x1b[32m1\x1b[0m:\x1b[0m1\x1b[0m:\x1b[0m\x1b[1m\x1b[31mneedle\x1b[0m again\n"
         );
+
+        let custom = run_rg(
+            &[
+                "--color=always",
+                "--colors",
+                "match:fg:blue",
+                "--colors",
+                "match:style:nobold",
+                "needle",
+                "/file.txt",
+            ],
+            None,
+            files,
+        )
+        .await;
+        assert_eq!(custom.exit_code, 0);
+        assert_eq!(custom.stdout, "\x1b[0m\x1b[34mneedle\x1b[0m again\n");
     }
 
     #[tokio::test]
