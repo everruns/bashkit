@@ -17,6 +17,7 @@
 
 use async_trait::async_trait;
 use regex::Regex;
+use serde_json::json;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -39,6 +40,9 @@ struct RgOptions {
     count_only: bool,
     count_matches: bool,
     column: bool,
+    byte_offset: bool,
+    vimgrep: bool,
+    json: bool,
     files_with_matches: bool,
     invert_match: bool,
     word_boundary: bool,
@@ -58,6 +62,7 @@ struct RgOptions {
     trim: bool,
     include_zero: bool,
     heading: bool,
+    null: bool,
     sort_reverse: bool,
     context_separator: String,
     field_match_separator: String,
@@ -88,6 +93,9 @@ impl RgOptions {
             count_only: false,
             count_matches: false,
             column: false,
+            byte_offset: false,
+            vimgrep: false,
+            json: false,
             files_with_matches: false,
             invert_match: false,
             word_boundary: false,
@@ -107,6 +115,7 @@ impl RgOptions {
             trim: false,
             include_zero: false,
             heading: false,
+            null: false,
             sort_reverse: false,
             context_separator: "--".to_string(),
             field_match_separator: ":".to_string(),
@@ -213,6 +222,13 @@ impl RgOptions {
             } else if p.flag("--column") {
                 opts.column = true;
                 opts.line_numbers = true;
+            } else if p.flag("--byte-offset") {
+                opts.byte_offset = true;
+            } else if p.flag("--vimgrep") {
+                opts.vimgrep = true;
+                opts.show_filename = true;
+            } else if p.flag("--json") {
+                opts.json = true;
             } else if p.flag("--files") {
                 opts.list_files = true;
             } else if p.flag("--passthru") {
@@ -223,6 +239,10 @@ impl RgOptions {
                 opts.include_zero = true;
             } else if p.flag("--heading") {
                 opts.heading = true;
+            } else if p.flag("--no-heading") {
+                opts.heading = false;
+            } else if p.flag("--null") {
+                opts.null = true;
             } else if p.flag("--sort-files") {
                 // no-op: bashkit's recursive walker already sorts paths.
             } else if long_value(&mut p, "--sort")?.is_some() {
@@ -282,6 +302,7 @@ impl RgOptions {
                         'I' => opts.no_filename = true,
                         'o' => opts.only_matching = true,
                         'q' => opts.quiet = true,
+                        'b' => opts.byte_offset = true,
                         'e' => {
                             let rest: String = chars[j + 1..].iter().collect();
                             let pattern = if !rest.is_empty() {
@@ -905,27 +926,63 @@ async fn try_indexed_search(
     Some(inputs)
 }
 
-fn write_rg_prefix(
-    output: &mut String,
-    filename: &str,
+struct RgPrefix<'a> {
+    filename: &'a str,
     show_filename: bool,
     line_numbers: bool,
     line_idx: usize,
     column: Option<usize>,
-    separator: &str,
-) {
-    if show_filename {
-        output.push_str(filename);
-        output.push_str(separator);
+    byte_offset: Option<usize>,
+    separator: &'a str,
+    null_path_separator: bool,
+}
+
+fn write_rg_prefix(output: &mut String, prefix: RgPrefix<'_>) {
+    if prefix.show_filename {
+        output.push_str(prefix.filename);
+        if prefix.null_path_separator {
+            output.push('\0');
+        } else {
+            output.push_str(prefix.separator);
+        }
     }
-    if line_numbers {
-        output.push_str(&(line_idx + 1).to_string());
-        output.push_str(separator);
+    if prefix.line_numbers {
+        output.push_str(&(prefix.line_idx + 1).to_string());
+        output.push_str(prefix.separator);
     }
-    if let Some(column) = column {
+    if let Some(column) = prefix.column {
         output.push_str(&column.to_string());
-        output.push_str(separator);
+        output.push_str(prefix.separator);
     }
+    if let Some(byte_offset) = prefix.byte_offset {
+        output.push_str(&byte_offset.to_string());
+        output.push_str(prefix.separator);
+    }
+}
+
+#[derive(Clone, Copy)]
+struct RgLine<'a> {
+    text: &'a str,
+    raw: &'a str,
+    start_offset: usize,
+}
+
+fn split_rg_lines(content: &str) -> Vec<RgLine<'_>> {
+    let mut lines = Vec::new();
+    let mut offset = 0usize;
+    for raw in content.split_inclusive('\n') {
+        let text = raw
+            .strip_suffix('\n')
+            .and_then(|line| line.strip_suffix('\r').or(Some(line)))
+            .unwrap_or(raw);
+        lines.push(RgLine {
+            text,
+            raw,
+            start_offset: offset,
+        });
+        offset += raw.len();
+    }
+    lines
 }
 
 fn format_rg_line(line: &str, regex: &Regex, opts: &RgOptions, matched: bool) -> String {
@@ -949,7 +1006,7 @@ fn write_rg_context(
     output: &mut String,
     filename: &str,
     regex: &Regex,
-    lines: &[&str],
+    lines: &[RgLine<'_>],
     match_lines: &[usize],
     opts: &RgOptions,
     show_filename: bool,
@@ -985,22 +1042,124 @@ fn write_rg_context(
         };
         write_rg_prefix(
             output,
-            filename,
-            show_filename,
-            opts.line_numbers,
-            line_idx,
-            None,
-            separator,
+            RgPrefix {
+                filename,
+                show_filename,
+                line_numbers: opts.line_numbers,
+                line_idx,
+                column: None,
+                byte_offset: if opts.byte_offset {
+                    Some(lines[line_idx].start_offset)
+                } else {
+                    None
+                },
+                separator,
+                null_path_separator: opts.null,
+            },
         );
-        output.push_str(&format_rg_line(lines[line_idx], regex, opts, matched));
+        output.push_str(&format_rg_line(lines[line_idx].text, regex, opts, matched));
         output.push('\n');
     }
+}
+
+fn write_rg_json_event(output: &mut String, value: serde_json::Value) {
+    output.push_str(&value.to_string());
+    output.push('\n');
+}
+
+fn write_rg_json_begin(output: &mut String, filename: &str) {
+    write_rg_json_event(
+        output,
+        json!({"type":"begin","data":{"path":{"text":filename}}}),
+    );
+}
+
+fn write_rg_json_match(
+    output: &mut String,
+    filename: &str,
+    line: RgLine<'_>,
+    line_idx: usize,
+    regex: &Regex,
+) {
+    let submatches: Vec<_> = regex
+        .find_iter(line.text)
+        .map(|mat| json!({"match":{"text":mat.as_str()},"start":mat.start(),"end":mat.end()}))
+        .collect();
+    write_rg_json_event(
+        output,
+        json!({
+            "type":"match",
+            "data":{
+                "path":{"text":filename},
+                "lines":{"text":line.raw},
+                "line_number":line_idx + 1,
+                "absolute_offset":line.start_offset,
+                "submatches":submatches,
+            }
+        }),
+    );
+}
+
+fn write_rg_json_end(
+    output: &mut String,
+    filename: &str,
+    bytes_searched: usize,
+    matched_lines: usize,
+    matches: usize,
+) {
+    write_rg_json_event(
+        output,
+        json!({
+            "type":"end",
+            "data":{
+                "path":{"text":filename},
+                "binary_offset":null,
+                "stats":rg_json_stats(bytes_searched, matched_lines, matches, 1),
+            }
+        }),
+    );
+}
+
+fn rg_json_stats(
+    bytes_searched: usize,
+    matched_lines: usize,
+    matches: usize,
+    searches: usize,
+) -> serde_json::Value {
+    json!({
+        "elapsed":{"secs":0,"nanos":0,"human":"0.000000s"},
+        "searches":searches,
+        "searches_with_match":usize::from(matched_lines > 0),
+        "bytes_searched":bytes_searched,
+        "bytes_printed":0,
+        "matched_lines":matched_lines,
+        "matches":matches,
+    })
+}
+
+fn write_rg_json_summary(
+    output: &mut String,
+    bytes_searched: usize,
+    matched_lines: usize,
+    matches: usize,
+    searches: usize,
+) {
+    write_rg_json_event(
+        output,
+        json!({
+            "type":"summary",
+            "data":{
+                "elapsed_total":{"secs":0,"nanos":0,"human":"0.000000s"},
+                "stats":rg_json_stats(bytes_searched, matched_lines, matches, searches),
+            }
+        }),
+    );
 }
 
 #[async_trait]
 impl Builtin for Rg {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        let help_text = "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i, --ignore-case\tcase insensitive\n  -S, --smart-case\tcase insensitive if pattern is lowercase\n  -s, --case-sensitive\tcase sensitive\n  -n, --line-number\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  --column\tshow column numbers\n  -c, --count\tcount matching lines\n  --count-matches\tcount individual matches\n  --include-zero\tinclude zero counts\n  -l, --files-with-matches\tfiles with matches\n  --files-without-match\tfiles without matches\n  --files\tprint files that would be searched\n  -v, --invert-match\tinvert match\n  -w, --word-regexp\tword boundary\n  -x, --line-regexp\tmatch whole lines\n  -F, --fixed-strings\tfixed strings (literal)\n  -o, --only-matching\tshow only matching text\n  -q, --quiet\tsuppress output; exit status only\n  -e, --regexp PATTERN\tuse PATTERN for matching\n  -f, --file PATTERNFILE\tread patterns from file\n  -r, --replace REPLACEMENT\treplace matches in output\n  --passthru\tprint matching and non-matching lines\n  --trim\ttrim whitespace from output lines\n  -m, --max-count NUM\tmax count per file\n  --max-depth NUM\tlimit recursive directory depth\n  -A, --after-context NUM\tshow trailing context\n  -B, --before-context NUM\tshow leading context\n  -C, --context NUM\tshow leading and trailing context\n  --context-separator SEP\tset context group separator\n  --field-match-separator SEP\tset match field separator\n  --field-context-separator SEP\tset context field separator\n  --heading\tgroup matches by file\n  --sort SORTBY\tsort paths (path only)\n  --sortr SORTBY\tsort paths in reverse (path only)\n  --sort-files\tsort --files output\n  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  -H, --with-filename\tshow filename\n  -I, --no-filename\tsuppress filename\n  --color MODE\tcolor output (no-op)\n  -h, --help\tdisplay this help and exit\n  -V, --version\toutput version information and exit\n";
+        let help_text = "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i, --ignore-case\tcase insensitive\n  -S, --smart-case\tcase insensitive if pattern is lowercase\n  -s, --case-sensitive\tcase sensitive\n  -n, --line-number\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  --column\tshow column numbers\n  -b, --byte-offset\tshow byte offsets\n  --vimgrep\tshow file:line:column:match lines\n  --json\tshow JSON Lines events\n  --null\tterminate path fields with NUL\n  -c, --count\tcount matching lines\n  --count-matches\tcount individual matches\n  --include-zero\tinclude zero counts\n  -l, --files-with-matches\tfiles with matches\n  --files-without-match\tfiles without matches\n  --files\tprint files that would be searched\n  -v, --invert-match\tinvert match\n  -w, --word-regexp\tword boundary\n  -x, --line-regexp\tmatch whole lines\n  -F, --fixed-strings\tfixed strings (literal)\n  -o, --only-matching\tshow only matching text\n  -q, --quiet\tsuppress output; exit status only\n  -e, --regexp PATTERN\tuse PATTERN for matching\n  -f, --file PATTERNFILE\tread patterns from file\n  -r, --replace REPLACEMENT\treplace matches in output\n  --passthru\tprint matching and non-matching lines\n  --trim\ttrim whitespace from output lines\n  -m, --max-count NUM\tmax count per file\n  --max-depth NUM\tlimit recursive directory depth\n  -A, --after-context NUM\tshow trailing context\n  -B, --before-context NUM\tshow leading context\n  -C, --context NUM\tshow leading and trailing context\n  --context-separator SEP\tset context group separator\n  --field-match-separator SEP\tset match field separator\n  --field-context-separator SEP\tset context field separator\n  --heading\tgroup matches by file\n  --no-heading\tdisable heading output\n  --sort SORTBY\tsort paths (path only)\n  --sortr SORTBY\tsort paths in reverse (path only)\n  --sort-files\tsort --files output\n  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  -H, --with-filename\tshow filename\n  -I, --no-filename\tsuppress filename\n  --color MODE\tcolor output (no-op)\n  -h, --help\tdisplay this help and exit\n  -V, --version\toutput version information and exit\n";
         if ctx.args.iter().any(|arg| arg == "-h") {
             return Ok(ExecResult::ok(help_text.to_string()));
         }
@@ -1013,7 +1172,14 @@ impl Builtin for Rg {
         let mut opts = RgOptions::parse(ctx.args)?;
         if opts.list_files {
             let files = collect_rg_file_list(&*ctx.fs, &opts, ctx.cwd).await;
-            let output = if files.is_empty() {
+            let output = if opts.null {
+                let mut output = String::new();
+                for file in files {
+                    output.push_str(&file);
+                    output.push('\0');
+                }
+                output
+            } else if files.is_empty() {
                 String::new()
             } else {
                 format!("{}\n", files.join("\n"))
@@ -1045,17 +1211,29 @@ impl Builtin for Rg {
             recursive_output || inputs.len() > 1
         };
         let has_context = opts.before_context > 0 || opts.after_context > 0;
+        let json_output = opts.json
+            && !opts.count_only
+            && !opts.count_matches
+            && !opts.files_with_matches
+            && !opts.files_without_matches;
 
         let mut output = String::new();
         let mut any_match = false;
+        let mut json_bytes_searched = 0usize;
+        let mut json_matched_lines = 0usize;
+        let mut json_matches = 0usize;
+        let mut json_searches = 0usize;
 
         for (filename, content) in &inputs {
             let mut match_count = 0usize;
             let mut count_value = 0usize;
             let mut match_lines = Vec::new();
+            let lines = split_rg_lines(content);
+            json_bytes_searched += content.len();
+            json_searches += 1;
 
-            for (line_idx, line) in content.lines().enumerate() {
-                let matched = regex.is_match(line);
+            for (line_idx, line) in lines.iter().enumerate() {
+                let matched = regex.is_match(line.text);
                 let matched = if opts.invert_match { !matched } else { matched };
 
                 if !matched {
@@ -1069,11 +1247,17 @@ impl Builtin for Rg {
                 }
 
                 match_count += 1;
+                let matches_on_line = if !opts.invert_match {
+                    regex.find_iter(line.text).count()
+                } else {
+                    1
+                };
                 if opts.count_matches && !opts.invert_match {
-                    count_value += regex.find_iter(line).count();
+                    count_value += matches_on_line;
                 } else {
                     count_value += 1;
                 }
+                json_matches += matches_on_line;
                 match_lines.push(line_idx);
                 if !opts.files_without_matches {
                     any_match = true;
@@ -1089,14 +1273,40 @@ impl Builtin for Rg {
             }
             if opts.files_with_matches && match_count > 0 {
                 output.push_str(filename);
-                output.push('\n');
+                output.push(if opts.null { '\0' } else { '\n' });
                 continue;
             }
             if opts.files_without_matches {
                 if match_count == 0 {
                     any_match = true;
                     output.push_str(filename);
-                    output.push('\n');
+                    output.push(if opts.null { '\0' } else { '\n' });
+                }
+                continue;
+            }
+            if json_output {
+                if match_count > 0 {
+                    write_rg_json_begin(&mut output, filename);
+                    for &line_idx in &match_lines {
+                        write_rg_json_match(
+                            &mut output,
+                            filename,
+                            lines[line_idx],
+                            line_idx,
+                            &regex,
+                        );
+                    }
+                    write_rg_json_end(
+                        &mut output,
+                        filename,
+                        content.len(),
+                        match_lines.len(),
+                        match_lines
+                            .iter()
+                            .map(|&line_idx| regex.find_iter(lines[line_idx].text).count())
+                            .sum(),
+                    );
+                    json_matched_lines += match_lines.len();
                 }
                 continue;
             }
@@ -1106,7 +1316,7 @@ impl Builtin for Rg {
                 }
                 if show_filename {
                     output.push_str(filename);
-                    output.push(':');
+                    output.push(if opts.null { '\0' } else { ':' });
                 }
                 output.push_str(&count_value.to_string());
                 output.push('\n');
@@ -1116,7 +1326,6 @@ impl Builtin for Rg {
                 continue;
             }
 
-            let lines: Vec<&str> = content.lines().collect();
             let line_show_filename = if opts.heading && show_filename && match_count > 0 {
                 if !output.is_empty() {
                     output.push('\n');
@@ -1138,35 +1347,87 @@ impl Builtin for Rg {
                     };
                     write_rg_prefix(
                         &mut output,
-                        filename,
-                        line_show_filename,
-                        opts.line_numbers,
-                        line_idx,
-                        if opts.column && matched && !opts.invert_match {
-                            regex.find(line).map(|mat| mat.start() + 1)
-                        } else {
-                            None
-                        },
-                        separator,
-                    );
-                    output.push_str(&format_rg_line(line, &regex, &opts, matched));
-                    output.push('\n');
-                }
-            } else if opts.only_matching && !opts.invert_match {
-                for &line_idx in &match_lines {
-                    for mat in regex.find_iter(lines[line_idx]) {
-                        write_rg_prefix(
-                            &mut output,
+                        RgPrefix {
                             filename,
-                            line_show_filename,
-                            opts.line_numbers,
+                            show_filename: line_show_filename,
+                            line_numbers: opts.line_numbers,
                             line_idx,
-                            if opts.column {
-                                Some(mat.start() + 1)
+                            column: if opts.column && matched && !opts.invert_match {
+                                regex.find(line.text).map(|mat| mat.start() + 1)
                             } else {
                                 None
                             },
-                            opts.field_match_separator.as_str(),
+                            byte_offset: if opts.byte_offset {
+                                Some(if matched && opts.only_matching && !opts.invert_match {
+                                    regex
+                                        .find(line.text)
+                                        .map(|mat| line.start_offset + mat.start())
+                                        .unwrap_or(line.start_offset)
+                                } else {
+                                    line.start_offset
+                                })
+                            } else {
+                                None
+                            },
+                            separator,
+                            null_path_separator: opts.null,
+                        },
+                    );
+                    output.push_str(&format_rg_line(line.text, &regex, &opts, matched));
+                    output.push('\n');
+                }
+            } else if opts.vimgrep && !opts.invert_match {
+                for &line_idx in &match_lines {
+                    for mat in regex.find_iter(lines[line_idx].text) {
+                        write_rg_prefix(
+                            &mut output,
+                            RgPrefix {
+                                filename,
+                                show_filename: true,
+                                line_numbers: true,
+                                line_idx,
+                                column: Some(mat.start() + 1),
+                                byte_offset: None,
+                                separator: opts.field_match_separator.as_str(),
+                                null_path_separator: opts.null,
+                            },
+                        );
+                        if opts.only_matching {
+                            output.push_str(mat.as_str());
+                        } else {
+                            output.push_str(&format_rg_line(
+                                lines[line_idx].text,
+                                &regex,
+                                &opts,
+                                true,
+                            ));
+                        }
+                        output.push('\n');
+                    }
+                }
+            } else if opts.only_matching && !opts.invert_match {
+                for &line_idx in &match_lines {
+                    for mat in regex.find_iter(lines[line_idx].text) {
+                        write_rg_prefix(
+                            &mut output,
+                            RgPrefix {
+                                filename,
+                                show_filename: line_show_filename,
+                                line_numbers: opts.line_numbers,
+                                line_idx,
+                                column: if opts.column {
+                                    Some(mat.start() + 1)
+                                } else {
+                                    None
+                                },
+                                byte_offset: if opts.byte_offset {
+                                    Some(lines[line_idx].start_offset + mat.start())
+                                } else {
+                                    None
+                                },
+                                separator: opts.field_match_separator.as_str(),
+                                null_path_separator: opts.null,
+                            },
                         );
                         if let Some(replacement) = &opts.replacement {
                             output.push_str(&regex.replace(mat.as_str(), replacement.as_str()));
@@ -1194,21 +1455,39 @@ impl Builtin for Rg {
                 for &line_idx in &match_lines {
                     write_rg_prefix(
                         &mut output,
-                        filename,
-                        line_show_filename,
-                        opts.line_numbers,
-                        line_idx,
-                        if opts.column && !opts.invert_match {
-                            regex.find(lines[line_idx]).map(|mat| mat.start() + 1)
-                        } else {
-                            None
+                        RgPrefix {
+                            filename,
+                            show_filename: line_show_filename,
+                            line_numbers: opts.line_numbers,
+                            line_idx,
+                            column: if opts.column && !opts.invert_match {
+                                regex.find(lines[line_idx].text).map(|mat| mat.start() + 1)
+                            } else {
+                                None
+                            },
+                            byte_offset: if opts.byte_offset {
+                                Some(lines[line_idx].start_offset)
+                            } else {
+                                None
+                            },
+                            separator: opts.field_match_separator.as_str(),
+                            null_path_separator: opts.null,
                         },
-                        opts.field_match_separator.as_str(),
                     );
-                    output.push_str(&format_rg_line(lines[line_idx], &regex, &opts, true));
+                    output.push_str(&format_rg_line(lines[line_idx].text, &regex, &opts, true));
                     output.push('\n');
                 }
             }
+        }
+
+        if json_output {
+            write_rg_json_summary(
+                &mut output,
+                json_bytes_searched,
+                json_matched_lines,
+                json_matches,
+                json_searches,
+            );
         }
 
         if any_match {
@@ -1301,6 +1580,8 @@ mod tests {
     enum RgDiffOutput {
         Exact,
         UnorderedLines,
+        UnorderedNul,
+        JsonEvents,
     }
 
     struct RgDiffCase {
@@ -1324,6 +1605,7 @@ mod tests {
         ("/proj/context.txt", b"before\nneedle\nafter\n"),
         ("/proj/patterns.txt", b"needle\nHello\n"),
         ("/proj/trim.txt", b"  needle one  \n  none  \n"),
+        ("/proj/offset.txt", b"abc needle\nxx needle yy\n"),
     ];
 
     const DIFF_TWO_CONTEXT_FILES: &[(&str, &[u8])] = &[
@@ -1365,7 +1647,7 @@ mod tests {
             stdin: None,
             files: DIFF_BASIC_FILES,
             cwd: "/",
-            output: RgDiffOutput::Exact,
+            output: RgDiffOutput::UnorderedNul,
         },
         RgDiffCase {
             name: "dot root glob excludes cwd-relative path",
@@ -1687,6 +1969,68 @@ mod tests {
             cwd: "/",
             output: RgDiffOutput::Exact,
         },
+        RgDiffCase {
+            name: "byte offset",
+            args: &["-n", "--column", "-b", "needle", "proj/offset.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "only matching byte offset",
+            args: &["-n", "-o", "-b", "needle", "proj/offset.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "vimgrep",
+            args: &["--vimgrep", "needle", "proj/offset.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "null files with matches",
+            args: &["--null", "-l", "needle", "proj/a.txt", "proj/src/main.rs"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "null files list",
+            args: &["--null", "--files", "proj/src"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedNul,
+        },
+        RgDiffCase {
+            name: "no heading wins",
+            args: &[
+                "--heading",
+                "--no-heading",
+                "needle",
+                "proj/a.txt",
+                "proj/src/main.rs",
+            ],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "json basic",
+            args: &["--json", "needle", "proj/offset.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::JsonEvents,
+        },
     ];
 
     fn require_real_rg() {
@@ -1778,6 +2122,18 @@ mod tests {
                 "stdout line-set mismatch for rg differential case {}",
                 case.name
             ),
+            RgDiffOutput::UnorderedNul => assert_eq!(
+                sorted_nul_items(&bashkit.stdout),
+                sorted_nul_items(&real_stdout),
+                "stdout NUL-item mismatch for rg differential case {}",
+                case.name
+            ),
+            RgDiffOutput::JsonEvents => assert_eq!(
+                normalize_rg_json(&bashkit.stdout),
+                normalize_rg_json(&real_stdout),
+                "stdout JSON-event mismatch for rg differential case {}",
+                case.name
+            ),
         }
         assert_eq!(
             bashkit.exit_code, real_code,
@@ -1790,6 +2146,44 @@ mod tests {
         let mut lines: Vec<&str> = output.lines().collect();
         lines.sort_unstable();
         lines
+    }
+
+    fn sorted_nul_items(output: &str) -> Vec<&str> {
+        let mut items: Vec<&str> = output.split('\0').filter(|item| !item.is_empty()).collect();
+        items.sort_unstable();
+        items
+    }
+
+    fn normalize_rg_json(output: &str) -> Vec<serde_json::Value> {
+        output
+            .lines()
+            .map(|line| {
+                let mut value: serde_json::Value =
+                    serde_json::from_str(line).expect("valid rg JSON line");
+                normalize_rg_json_value(&mut value);
+                value
+            })
+            .collect()
+    }
+
+    fn normalize_rg_json_value(value: &mut serde_json::Value) {
+        let Some(obj) = value.as_object_mut() else {
+            return;
+        };
+        if obj.get("type").and_then(|t| t.as_str()) == Some("summary")
+            && let Some(data) = obj.get_mut("data").and_then(|data| data.as_object_mut())
+        {
+            data.remove("elapsed_total");
+        }
+        if let Some(stats) = obj
+            .get_mut("data")
+            .and_then(|data| data.as_object_mut())
+            .and_then(|data| data.get_mut("stats"))
+            .and_then(|stats| stats.as_object_mut())
+        {
+            stats.remove("elapsed");
+            stats.remove("bytes_printed");
+        }
     }
 
     struct IndexedTestFs {
