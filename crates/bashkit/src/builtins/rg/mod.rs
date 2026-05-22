@@ -2604,6 +2604,9 @@ fn decode_rg_content(content: &[u8], opts: &RgOptions) -> String {
     }
 }
 
+const RG_GZIP_MAX_DECOMPRESSED_BYTES: usize = 10 * 1024 * 1024;
+const RG_GZIP_MAX_DECOMPRESSION_RATIO: usize = 100;
+
 fn rg_search_bytes(
     path: &Path,
     content: &[u8],
@@ -2615,9 +2618,35 @@ fn rg_search_bytes(
 
     let mut decoder = flate2::read::GzDecoder::new(content);
     let mut decompressed = Vec::new();
-    decoder
-        .read_to_end(&mut decompressed)
-        .map_err(|e| format!("gzip decompression failed: {e}"))?;
+    let mut chunk = [0u8; 8192];
+
+    loop {
+        let n = decoder
+            .read(&mut chunk)
+            .map_err(|e| format!("gzip decompression failed: {e}"))?;
+        if n == 0 {
+            break;
+        }
+
+        decompressed.extend_from_slice(&chunk[..n]);
+
+        if decompressed.len() > RG_GZIP_MAX_DECOMPRESSED_BYTES {
+            return Err(format!(
+                "gzip decompression exceeds {} byte limit",
+                RG_GZIP_MAX_DECOMPRESSED_BYTES
+            ));
+        }
+
+        if !content.is_empty()
+            && decompressed.len() > content.len() * RG_GZIP_MAX_DECOMPRESSION_RATIO
+        {
+            return Err(format!(
+                "gzip decompression ratio exceeds {}:1",
+                RG_GZIP_MAX_DECOMPRESSION_RATIO
+            ));
+        }
+    }
+
     Ok(decompressed)
 }
 
@@ -5572,7 +5601,10 @@ mod tests {
         FileSystem, FileSystemExt, InMemoryFs, SearchCapabilities, SearchCapable, SearchMatch,
         SearchProvider, SearchQuery, SearchResults,
     };
+    use flate2::Compression;
+    use flate2::write::GzEncoder;
     use std::collections::HashMap;
+    use std::io::Write;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
 
@@ -6219,6 +6251,39 @@ mod tests {
         ("/proj/compressed.txt", GZIP_NEEDLE),
         ("/proj/fake.gz", b"needle\n"),
     ];
+
+    fn gzip_bytes(payload: &[u8]) -> Vec<u8> {
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(payload).expect("write gzip payload");
+        encoder.finish().expect("finish gzip payload")
+    }
+
+    fn search_zip_opts() -> RgOptions {
+        let args = vec!["needle".to_string()];
+        let mut opts = RgOptions::parse(&args).expect("parse rg options");
+        opts.search_zip = true;
+        opts
+    }
+
+    #[test]
+    fn rg_search_zip_rejects_large_gzip_decompression() {
+        let opts = search_zip_opts();
+        let payload = vec![b'a'; RG_GZIP_MAX_DECOMPRESSED_BYTES + 1];
+        let compressed = gzip_bytes(&payload);
+        let err = rg_search_bytes(Path::new("/payload.gz"), &compressed, &opts)
+            .expect_err("must reject oversized gzip");
+        assert!(err.contains("exceeds"));
+    }
+
+    #[test]
+    fn rg_search_zip_rejects_suspicious_decompression_ratio() {
+        let opts = search_zip_opts();
+        let payload = vec![b'a'; 300_000];
+        let compressed = gzip_bytes(&payload);
+        let err = rg_search_bytes(Path::new("/payload.gz"), &compressed, &opts)
+            .expect_err("must reject suspicious ratio");
+        assert!(err.contains("ratio exceeds"));
+    }
 
     const DIFF_SYMLINK_FILES: &[(&str, &[u8])] = &[
         ("/targets/file.txt", b"needle\n"),
