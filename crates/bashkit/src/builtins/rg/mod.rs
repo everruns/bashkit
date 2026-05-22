@@ -50,6 +50,8 @@ struct RgOptions {
     text: bool,
     binary: bool,
     max_count: Option<usize>,
+    max_columns: Option<usize>,
+    max_columns_preview: bool,
     max_depth: Option<usize>,
     before_context: usize,
     after_context: usize,
@@ -141,6 +143,8 @@ impl RgOptions {
             text: false,
             binary: false,
             max_count: None,
+            max_columns: None,
+            max_columns_preview: false,
             max_depth: None,
             before_context: 0,
             after_context: 0,
@@ -201,6 +205,15 @@ impl RgOptions {
             } else if let Some(val) = long_value(&mut p, "--max-count")? {
                 opts.max_count = Some(val.parse().map_err(|_| {
                     Error::Execution(format!("rg: invalid --max-count value: {val}"))
+                })?);
+            } else if let Some(val) = p.flag_value("-M", "rg").map_err(Error::Execution)? {
+                opts.max_columns = Some(
+                    val.parse()
+                        .map_err(|_| Error::Execution(format!("rg: invalid -M value: {val}")))?,
+                );
+            } else if let Some(val) = long_value(&mut p, "--max-columns")? {
+                opts.max_columns = Some(val.parse().map_err(|_| {
+                    Error::Execution(format!("rg: invalid --max-columns value: {val}"))
                 })?);
             } else if let Some(val) = long_value(&mut p, "--max-depth")? {
                 opts.max_depth = Some(val.parse().map_err(|_| {
@@ -305,6 +318,8 @@ impl RgOptions {
                 opts.passthru = true;
             } else if p.flag("--trim") {
                 opts.trim = true;
+            } else if p.flag("--max-columns-preview") {
+                opts.max_columns_preview = true;
             } else if p.flag("--include-zero") {
                 opts.include_zero = true;
             } else if p.flag("--heading") {
@@ -447,6 +462,25 @@ impl RgOptions {
                             };
                             opts.max_count = Some(num_str.parse().map_err(|_| {
                                 Error::Execution(format!("rg: invalid -m value: {num_str}"))
+                            })?);
+                            break;
+                        }
+                        'M' => {
+                            let rest: String = chars[j + 1..].iter().collect();
+                            let num_str = if !rest.is_empty() {
+                                rest
+                            } else {
+                                match p.positional() {
+                                    Some(v) => v.to_string(),
+                                    None => {
+                                        return Err(Error::Execution(
+                                            "rg: -M requires an argument".to_string(),
+                                        ));
+                                    }
+                                }
+                            };
+                            opts.max_columns = Some(num_str.parse().map_err(|_| {
+                                Error::Execution(format!("rg: invalid -M value: {num_str}"))
                             })?);
                             break;
                         }
@@ -1505,6 +1539,24 @@ fn format_rg_line(line: &str, regex: &Regex, opts: &RgOptions, matched: bool) ->
     }
 }
 
+fn format_rg_output_line(line: &str, regex: &Regex, opts: &RgOptions, matched: bool) -> String {
+    let line = format_rg_line(line, regex, opts, matched);
+    let Some(max_columns) = opts.max_columns else {
+        return line;
+    };
+    if max_columns == 0 || line.chars().count() <= max_columns {
+        return line;
+    }
+    if opts.max_columns_preview {
+        let preview: String = line.chars().take(max_columns).collect();
+        format!("{preview} [... omitted end of long line]")
+    } else if matched {
+        "[Omitted long matching line]".to_string()
+    } else {
+        "[Omitted long context line]".to_string()
+    }
+}
+
 fn write_rg_context(
     output: &mut String,
     filename: &str,
@@ -1560,7 +1612,12 @@ fn write_rg_context(
                 null_path_separator: opts.null,
             },
         );
-        output.push_str(&format_rg_line(lines[line_idx].text, regex, opts, matched));
+        output.push_str(&format_rg_output_line(
+            lines[line_idx].text,
+            regex,
+            opts,
+            matched,
+        ));
         output.push('\n');
     }
 }
@@ -1662,7 +1719,7 @@ fn write_rg_json_summary(
 #[async_trait]
 impl Builtin for Rg {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        let help_text = "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i, --ignore-case\tcase insensitive\n  -S, --smart-case\tcase insensitive if pattern is lowercase\n  -s, --case-sensitive\tcase sensitive\n  -n, --line-number\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  --column\tshow column numbers\n  -b, --byte-offset\tshow byte offsets\n  --vimgrep\tshow file:line:column:match lines\n  --json\tshow JSON Lines events\n  --null\tterminate path fields with NUL\n  -c, --count\tcount matching lines\n  --count-matches\tcount individual matches\n  --include-zero\tinclude zero counts\n  -l, --files-with-matches\tfiles with matches\n  --files-without-match\tfiles without matches\n  --files\tprint files that would be searched\n  -v, --invert-match\tinvert match\n  -w, --word-regexp\tword boundary\n  -x, --line-regexp\tmatch whole lines\n  -F, --fixed-strings\tfixed strings (literal)\n  -a, --text\tsearch binary files as text\n  --binary\tsearch binary files and print binary-match summaries\n  -o, --only-matching\tshow only matching text\n  -q, --quiet\tsuppress output; exit status only\n  -e, --regexp PATTERN\tuse PATTERN for matching\n  -f, --file PATTERNFILE\tread patterns from file\n  -r, --replace REPLACEMENT\treplace matches in output\n  --passthru\tprint matching and non-matching lines\n  --trim\ttrim whitespace from output lines\n  -m, --max-count NUM\tmax count per file\n  --max-depth NUM\tlimit recursive directory depth\n  -A, --after-context NUM\tshow trailing context\n  -B, --before-context NUM\tshow leading context\n  -C, --context NUM\tshow leading and trailing context\n  --context-separator SEP\tset context group separator\n  --field-match-separator SEP\tset match field separator\n  --field-context-separator SEP\tset context field separator\n  --heading\tgroup matches by file\n  --no-heading\tdisable heading output\n  --sort SORTBY\tsort paths (path only)\n  --sortr SORTBY\tsort paths in reverse (path only)\n  --sort-files\tsort --files output\n  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  -t, --type TYPE\tinclude files matching TYPE\n  -T, --type-not TYPE\texclude files matching TYPE\n  --type-add TYPE:GLOB\tadd a file type glob\n  --type-clear TYPE\tclear a file type definition\n  --type-list\tshow file type definitions\n  --ignore-file FILE\tuse additional ignore file\n  --no-ignore\tdo not use ignore files\n  --no-ignore-dot\tdo not use .ignore files\n  --no-ignore-vcs\tdo not use .gitignore files\n  --hidden\tsearch hidden files and directories\n  --no-hidden\tdo not search hidden files and directories\n  -H, --with-filename\tshow filename\n  -I, --no-filename\tsuppress filename\n  --color MODE\tcolor output (no-op)\n  -h, --help\tdisplay this help and exit\n  -V, --version\toutput version information and exit\n";
+        let help_text = "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i, --ignore-case\tcase insensitive\n  -S, --smart-case\tcase insensitive if pattern is lowercase\n  -s, --case-sensitive\tcase sensitive\n  -n, --line-number\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  --column\tshow column numbers\n  -b, --byte-offset\tshow byte offsets\n  --vimgrep\tshow file:line:column:match lines\n  --json\tshow JSON Lines events\n  --null\tterminate path fields with NUL\n  -c, --count\tcount matching lines\n  --count-matches\tcount individual matches\n  --include-zero\tinclude zero counts\n  -l, --files-with-matches\tfiles with matches\n  --files-without-match\tfiles without matches\n  --files\tprint files that would be searched\n  -v, --invert-match\tinvert match\n  -w, --word-regexp\tword boundary\n  -x, --line-regexp\tmatch whole lines\n  -F, --fixed-strings\tfixed strings (literal)\n  -a, --text\tsearch binary files as text\n  --binary\tsearch binary files and print binary-match summaries\n  -o, --only-matching\tshow only matching text\n  -q, --quiet\tsuppress output; exit status only\n  -e, --regexp PATTERN\tuse PATTERN for matching\n  -f, --file PATTERNFILE\tread patterns from file\n  -r, --replace REPLACEMENT\treplace matches in output\n  --passthru\tprint matching and non-matching lines\n  --trim\ttrim whitespace from output lines\n  -m, --max-count NUM\tmax count per file\n  -M, --max-columns NUM\tomit lines longer than NUM columns\n  --max-columns-preview\tshow prefixes of long lines\n  --max-depth NUM\tlimit recursive directory depth\n  -A, --after-context NUM\tshow trailing context\n  -B, --before-context NUM\tshow leading context\n  -C, --context NUM\tshow leading and trailing context\n  --context-separator SEP\tset context group separator\n  --field-match-separator SEP\tset match field separator\n  --field-context-separator SEP\tset context field separator\n  --heading\tgroup matches by file\n  --no-heading\tdisable heading output\n  --sort SORTBY\tsort paths (path only)\n  --sortr SORTBY\tsort paths in reverse (path only)\n  --sort-files\tsort --files output\n  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  -t, --type TYPE\tinclude files matching TYPE\n  -T, --type-not TYPE\texclude files matching TYPE\n  --type-add TYPE:GLOB\tadd a file type glob\n  --type-clear TYPE\tclear a file type definition\n  --type-list\tshow file type definitions\n  --ignore-file FILE\tuse additional ignore file\n  --no-ignore\tdo not use ignore files\n  --no-ignore-dot\tdo not use .ignore files\n  --no-ignore-vcs\tdo not use .gitignore files\n  --hidden\tsearch hidden files and directories\n  --no-hidden\tdo not search hidden files and directories\n  -H, --with-filename\tshow filename\n  -I, --no-filename\tsuppress filename\n  --color MODE\tcolor output (no-op)\n  -h, --help\tdisplay this help and exit\n  -V, --version\toutput version information and exit\n";
         if ctx.args.iter().any(|arg| arg == "-h") {
             return Ok(ExecResult::ok(help_text.to_string()));
         }
@@ -1940,7 +1997,7 @@ impl Builtin for Rg {
                             null_path_separator: opts.null,
                         },
                     );
-                    output.push_str(&format_rg_line(line.text, &regex, &opts, matched));
+                    output.push_str(&format_rg_output_line(line.text, &regex, &opts, matched));
                     output.push('\n');
                 }
             } else if opts.vimgrep && !opts.invert_match {
@@ -1962,7 +2019,7 @@ impl Builtin for Rg {
                         if opts.only_matching {
                             output.push_str(mat.as_str());
                         } else {
-                            output.push_str(&format_rg_line(
+                            output.push_str(&format_rg_output_line(
                                 lines[line_idx].text,
                                 &regex,
                                 &opts,
@@ -2041,7 +2098,12 @@ impl Builtin for Rg {
                             null_path_separator: opts.null,
                         },
                     );
-                    output.push_str(&format_rg_line(lines[line_idx].text, &regex, &opts, true));
+                    output.push_str(&format_rg_output_line(
+                        lines[line_idx].text,
+                        &regex,
+                        &opts,
+                        true,
+                    ));
                     output.push('\n');
                 }
             }
@@ -2210,6 +2272,11 @@ mod tests {
         ("/proj/bin.dat", b"abc\0needle\n"),
         ("/proj/text.txt", b"needle\n"),
     ];
+
+    const DIFF_MAX_COLUMNS_FILES: &[(&str, &[u8])] = &[(
+        "/proj/long.txt",
+        b"short needle\ncontext line is long\n0123456789 needle\nnomatch\n",
+    )];
 
     const RG_DIFF_CASES: &[RgDiffCase] = &[
         RgDiffCase {
@@ -2770,6 +2837,44 @@ mod tests {
             cwd: "/",
             output: RgDiffOutput::UnorderedLines,
         },
+        RgDiffCase {
+            name: "max columns omits long matches",
+            args: &["--max-columns", "10", "needle", "proj/long.txt"],
+            stdin: None,
+            files: DIFF_MAX_COLUMNS_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "max columns preview",
+            args: &[
+                "--max-columns",
+                "10",
+                "--max-columns-preview",
+                "needle",
+                "proj/long.txt",
+            ],
+            stdin: None,
+            files: DIFF_MAX_COLUMNS_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "max columns context",
+            args: &["-C1", "--max-columns", "10", "needle", "proj/long.txt"],
+            stdin: None,
+            files: DIFF_MAX_COLUMNS_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "max columns passthru",
+            args: &["--passthru", "-M10", "needle", "proj/long.txt"],
+            stdin: None,
+            files: DIFF_MAX_COLUMNS_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
     ];
 
     fn require_real_rg() {
@@ -3104,6 +3209,52 @@ mod tests {
             binary.stdout,
             "binary file matches (found \"\\0\" byte around offset 3)\n"
         );
+    }
+
+    #[tokio::test]
+    async fn test_rg_max_columns_modes() {
+        let files: &[(&str, &[u8])] = &[(
+            "/proj/long.txt",
+            b"short needle\ncontext line is long\n0123456789 needle\nnomatch\n",
+        )];
+
+        let omitted = run_rg(
+            &["--max-columns", "10", "needle", "/proj/long.txt"],
+            None,
+            files,
+        )
+        .await;
+        assert_eq!(omitted.exit_code, 0);
+        assert_eq!(
+            omitted.stdout,
+            "[Omitted long matching line]\n[Omitted long matching line]\n"
+        );
+
+        let preview = run_rg(
+            &["-M10", "--max-columns-preview", "needle", "/proj/long.txt"],
+            None,
+            files,
+        )
+        .await;
+        assert_eq!(preview.exit_code, 0);
+        assert_eq!(
+            preview.stdout,
+            "short need [... omitted end of long line]\n0123456789 [... omitted end of long line]\n"
+        );
+
+        let disabled = run_rg(&["-M", "0", "needle", "/proj/long.txt"], None, files).await;
+        assert_eq!(disabled.exit_code, 0);
+        assert_eq!(disabled.stdout, "short needle\n0123456789 needle\n");
+    }
+
+    #[tokio::test]
+    async fn test_rg_max_columns_requires_value() {
+        let args: Vec<String> = vec!["needle".to_string(), "-M".to_string()];
+        let result = RgOptions::parse(&args);
+        assert!(matches!(
+            result,
+            Err(Error::Execution(msg)) if msg == "rg: -M requires an argument"
+        ));
     }
 
     #[tokio::test]
