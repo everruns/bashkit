@@ -1666,7 +1666,8 @@ async fn collect_rg_inputs(
     let mut inputs = Vec::new();
     for p in &opts.paths {
         let path = resolve_path(ctx.cwd, p);
-        if let Some((actual_path, meta)) = resolve_rg_explicit_path(&*ctx.fs, &path).await
+        if let Some((actual_path, meta)) =
+            resolve_rg_explicit_path(&*ctx.fs, &path, opts.follow_symlinks).await
             && meta.file_type.is_dir()
         {
             let root = RgSearchRoot {
@@ -1681,7 +1682,7 @@ async fn collect_rg_inputs(
         if !opts.matches_globs(&path, ctx.cwd) {
             continue;
         }
-        let actual_path = resolve_rg_explicit_path(&*ctx.fs, &path)
+        let actual_path = resolve_rg_explicit_path(&*ctx.fs, &path, opts.follow_symlinks)
             .await
             .map(|(actual, _)| actual)
             .unwrap_or_else(|| path.clone());
@@ -1855,10 +1856,15 @@ async fn has_git_dir_in_ancestors(fs: &dyn crate::fs::FileSystem, dir: &Path, ro
     false
 }
 
-async fn has_directory_path(fs: &dyn crate::fs::FileSystem, cwd: &Path, paths: &[String]) -> bool {
+async fn has_directory_path(
+    fs: &dyn crate::fs::FileSystem,
+    cwd: &Path,
+    paths: &[String],
+    follow_symlinks: bool,
+) -> bool {
     for p in paths {
         let path = resolve_path(cwd, p);
-        if let Some((_, meta)) = resolve_rg_explicit_path(fs, &path).await
+        if let Some((_, meta)) = resolve_rg_explicit_path(fs, &path, follow_symlinks).await
             && meta.file_type.is_dir()
         {
             return true;
@@ -1905,9 +1911,10 @@ async fn resolve_rg_symlink_target(
 async fn resolve_rg_explicit_path(
     fs: &dyn crate::fs::FileSystem,
     path: &Path,
+    follow_symlinks: bool,
 ) -> Option<(PathBuf, crate::fs::Metadata)> {
     let meta = fs.stat(path).await.ok()?;
-    if meta.file_type.is_symlink() {
+    if meta.file_type.is_symlink() && follow_symlinks {
         resolve_rg_symlink_target(fs, path).await
     } else {
         Some((path.to_path_buf(), meta))
@@ -2037,7 +2044,8 @@ async fn collect_rg_file_list(
     let mut result = Vec::new();
     for p in &opts.paths {
         let path = resolve_path(cwd, p);
-        if let Some((actual_path, meta)) = resolve_rg_explicit_path(fs, &path).await
+        if let Some((actual_path, meta)) =
+            resolve_rg_explicit_path(fs, &path, opts.follow_symlinks).await
             && meta.file_type.is_dir()
         {
             let root = RgSearchRoot {
@@ -2067,7 +2075,7 @@ async fn meta_is_file_and_matches(
     opts: &RgOptions,
     cwd: &Path,
 ) -> bool {
-    resolve_rg_explicit_path(fs, path)
+    resolve_rg_explicit_path(fs, path, opts.follow_symlinks)
         .await
         .is_some_and(|(_, meta)| meta.file_type.is_file() && opts.matches_globs(path, cwd))
 }
@@ -2715,7 +2723,8 @@ impl Builtin for Rg {
         let stdin_input =
             opts.paths.is_empty() && ctx.stdin.is_some() && !opts.stdin_consumed_for_patterns;
         let recursive_output = !stdin_input
-            && (opts.paths.is_empty() || has_directory_path(&*ctx.fs, ctx.cwd, &opts.paths).await);
+            && (opts.paths.is_empty()
+                || has_directory_path(&*ctx.fs, ctx.cwd, &opts.paths, opts.follow_symlinks).await);
 
         let collected_inputs = match collect_rg_inputs(ctx, &opts).await {
             Ok(inputs) => inputs,
@@ -3820,16 +3829,16 @@ mod tests {
             output: RgDiffOutput::UnorderedLines,
         },
         RgSymlinkDiffCase {
-            name: "explicit file symlink is searched",
-            args: &["needle", "proj/link.txt"],
+            name: "explicit file symlink requires follow",
+            args: &["-L", "needle", "proj/link.txt"],
             files: DIFF_SYMLINK_FILES,
             symlinks: DIFF_SYMLINKS,
             cwd: "/",
             output: RgDiffOutput::Exact,
         },
         RgSymlinkDiffCase {
-            name: "explicit directory symlink is searched",
-            args: &["needle", "proj/linkdir"],
+            name: "explicit directory symlink requires follow",
+            args: &["-L", "needle", "proj/linkdir"],
             files: DIFF_SYMLINK_FILES,
             symlinks: DIFF_SYMLINKS,
             cwd: "/",
