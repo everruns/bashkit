@@ -93,6 +93,7 @@ struct RgOptions {
     require_git: bool,
     follow_symlinks: bool,
     ignore_file_case_insensitive: bool,
+    unicode: bool,
     messages: bool,
     context_separator: String,
     no_context_separator: bool,
@@ -229,6 +230,7 @@ impl RgOptions {
             require_git: true,
             follow_symlinks: false,
             ignore_file_case_insensitive: false,
+            unicode: true,
             messages: true,
             context_separator: "--".to_string(),
             no_context_separator: false,
@@ -582,6 +584,10 @@ impl RgOptions {
                 // no-op: hyperlink hostname discovery is not modeled.
             } else if long_value(&mut p, "--hyperlink-format")?.is_some() {
                 // no-op: bashkit rg does not emit terminal hyperlinks.
+            } else if p.flag("--unicode") {
+                opts.unicode = true;
+            } else if p.flag("--no-unicode") {
+                opts.unicode = false;
             } else if p.flag_any(&[
                 "--no-config",
                 "--line-buffered",
@@ -594,8 +600,6 @@ impl RgOptions {
                 "--no-mmap",
                 "--pcre2",
                 "--no-pcre2",
-                "--unicode",
-                "--no-unicode",
                 "--pcre2-unicode",
                 "--no-pcre2-unicode",
                 "--auto-hybrid-regex",
@@ -962,6 +966,7 @@ impl RgOptions {
             .join("|");
         RegexBuilder::new(&combined)
             .case_insensitive(self.effective_ignore_case())
+            .unicode(self.unicode)
             .dot_matches_new_line(self.multiline && self.multiline_dotall)
             .size_limit(super::search_common::REGEX_SIZE_LIMIT)
             .dfa_size_limit(super::search_common::REGEX_DFA_SIZE_LIMIT)
@@ -2139,6 +2144,7 @@ async fn try_indexed_search(
         || !opts.type_excludes.is_empty()
         || opts.follow_symlinks
         || opts.search_zip
+        || (!opts.unicode && !opts.fixed_strings)
     {
         return None;
     }
@@ -2725,7 +2731,7 @@ fn rg_generate_output(kind: &str, help_text: &str) -> Result<String> {
 #[async_trait]
 impl Builtin for Rg {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        let help_text = "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i, --ignore-case\tcase insensitive\n  -S, --smart-case\tcase insensitive if pattern is lowercase\n  -s, --case-sensitive\tcase sensitive\n  -n, --line-number\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  --column\tshow column numbers\n  -b, --byte-offset\tshow byte offsets\n  --vimgrep\tshow file:line:column:match lines\n  --json\tshow JSON Lines events\n  --stats\tshow search statistics\n  --null\tterminate path fields with NUL\n  -c, --count\tcount matching lines\n  --count-matches\tcount individual matches\n  --include-zero\tinclude zero counts\n  -l, --files-with-matches\tfiles with matches\n  --files-without-match\tfiles without matches\n  --files\tprint files that would be searched\n  -v, --invert-match\tinvert match\n  -w, --word-regexp\tword boundary\n  -x, --line-regexp\tmatch whole lines\n  -F, --fixed-strings\tfixed strings (literal)\n  -a, --text\tsearch binary files as text\n  --binary\tsearch binary files and print binary-match summaries\n  -z, --search-zip\tsearch gzip-compressed files\n  --no-search-zip\tdisable compressed file search\n  --pre COMMAND\trun a preprocessor before searching (cat/empty supported)\n  --pre-glob GLOB\tlimit preprocessor paths by glob\n  --no-pre\tdisable preprocessing\n  --crlf\ttreat CRLF as line terminators for $ anchors\n  --no-crlf\tdisable CRLF line terminator mode\n  -U, --multiline\tenable matching across line boundaries\n  --no-multiline\tdisable multiline matching\n  --multiline-dotall\tmake . match line terminators in multiline mode\n  --no-multiline-dotall\tdisable multiline dotall mode\n  -o, --only-matching\tshow only matching text\n  -q, --quiet\tsuppress output; exit status only\n  -e, --regexp PATTERN\tuse PATTERN for matching\n  -f, --file PATTERNFILE\tread patterns from file\n  -E, --encoding ENCODING\tdecode searched files using ENCODING\n  -r, --replace REPLACEMENT\treplace matches in output\n  --passthru\tprint matching and non-matching lines\n  --trim\ttrim whitespace from output lines\n  -m, --max-count NUM\tmax count per file\n  -M, --max-columns NUM\tomit lines longer than NUM columns\n  --max-columns-preview\tshow prefixes of long lines\n  -j, --threads NUM\tset number of search threads (no-op)\n  --regex-size-limit NUM\tset regex size limit (no-op)\n  --dfa-size-limit NUM\tset DFA size limit (no-op)\n  --max-depth NUM\tlimit recursive directory depth\n  -A, --after-context NUM\tshow trailing context\n  -B, --before-context NUM\tshow leading context\n  -C, --context NUM\tshow leading and trailing context\n  --context-separator SEP\tset context group separator\n  --field-match-separator SEP\tset match field separator\n  --field-context-separator SEP\tset context field separator\n  -p, --pretty\talias for heading plus line numbers\n  --heading\tgroup matches by file\n  --no-heading\tdisable heading output\n  --sort SORTBY\tsort paths (path only)\n  --sortr SORTBY\tsort paths in reverse (path only)\n  --sort-files\tsort --files output\n  --path-separator SEP\tset displayed path separator\n  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  -t, --type TYPE\tinclude files matching TYPE\n  -T, --type-not TYPE\texclude files matching TYPE\n  --type-add TYPE:GLOB\tadd a file type glob\n  --type-clear TYPE\tclear a file type definition\n  --type-list\tshow file type definitions\n  --ignore-file FILE\tuse additional ignore file\n  --no-ignore\tdo not use ignore files\n  --no-ignore-dot\tdo not use .ignore files\n  --no-ignore-vcs\tdo not use .gitignore files\n  --no-require-git\tuse .gitignore outside git repositories\n  --require-git\trequire a git repository for .gitignore files\n  -u, --unrestricted\treduce filtering (repeatable)\n  --messages\tshow file read diagnostics\n  --no-messages\tsuppress file read diagnostics\n  --hidden\tsearch hidden files and directories\n  --no-hidden\tdo not search hidden files and directories\n  -H, --with-filename\tshow filename\n  -I, --no-filename\tsuppress filename\n  --line-buffered\tforce line buffering (no-op)\n  --block-buffered\tforce block buffering (no-op)\n  --no-config\tdo not read config files (no-op)\n  --mmap\tsearch using memory maps when possible (no-op)\n  --no-mmap\tdisable memory maps (no-op)\n  -P, --pcre2\tuse PCRE2 regex engine for supported patterns (no-op)\n  --no-pcre2\tdisable PCRE2 regex engine (no-op)\n  --pcre2-version\tshow PCRE2 version information\n  --unicode\tenable Unicode mode (no-op)\n  --no-unicode\tdisable Unicode mode (no-op)\n  --pcre2-unicode\tenable PCRE2 Unicode mode (no-op)\n  --no-pcre2-unicode\tdisable PCRE2 Unicode mode (no-op)\n  --engine ENGINE\tselect regex engine: default, auto, pcre2 (no-op)\n  --auto-hybrid-regex\tuse PCRE2 when needed (no-op)\n  --no-auto-hybrid-regex\tdisable auto hybrid regex (no-op)\n  --color MODE\tcolor output (no-op)\n  --colors SPEC\tconfigure colors (no-op)\n  -h, --help\tdisplay this help and exit\n  -V, --version\toutput version information and exit\n";
+        let help_text = "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i, --ignore-case\tcase insensitive\n  -S, --smart-case\tcase insensitive if pattern is lowercase\n  -s, --case-sensitive\tcase sensitive\n  -n, --line-number\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  --column\tshow column numbers\n  -b, --byte-offset\tshow byte offsets\n  --vimgrep\tshow file:line:column:match lines\n  --json\tshow JSON Lines events\n  --stats\tshow search statistics\n  --null\tterminate path fields with NUL\n  -c, --count\tcount matching lines\n  --count-matches\tcount individual matches\n  --include-zero\tinclude zero counts\n  -l, --files-with-matches\tfiles with matches\n  --files-without-match\tfiles without matches\n  --files\tprint files that would be searched\n  -v, --invert-match\tinvert match\n  -w, --word-regexp\tword boundary\n  -x, --line-regexp\tmatch whole lines\n  -F, --fixed-strings\tfixed strings (literal)\n  -a, --text\tsearch binary files as text\n  --binary\tsearch binary files and print binary-match summaries\n  -z, --search-zip\tsearch gzip-compressed files\n  --no-search-zip\tdisable compressed file search\n  --pre COMMAND\trun a preprocessor before searching (cat/empty supported)\n  --pre-glob GLOB\tlimit preprocessor paths by glob\n  --no-pre\tdisable preprocessing\n  --crlf\ttreat CRLF as line terminators for $ anchors\n  --no-crlf\tdisable CRLF line terminator mode\n  -U, --multiline\tenable matching across line boundaries\n  --no-multiline\tdisable multiline matching\n  --multiline-dotall\tmake . match line terminators in multiline mode\n  --no-multiline-dotall\tdisable multiline dotall mode\n  -o, --only-matching\tshow only matching text\n  -q, --quiet\tsuppress output; exit status only\n  -e, --regexp PATTERN\tuse PATTERN for matching\n  -f, --file PATTERNFILE\tread patterns from file\n  -E, --encoding ENCODING\tdecode searched files using ENCODING\n  -r, --replace REPLACEMENT\treplace matches in output\n  --passthru\tprint matching and non-matching lines\n  --trim\ttrim whitespace from output lines\n  -m, --max-count NUM\tmax count per file\n  -M, --max-columns NUM\tomit lines longer than NUM columns\n  --max-columns-preview\tshow prefixes of long lines\n  -j, --threads NUM\tset number of search threads (no-op)\n  --regex-size-limit NUM\tset regex size limit (no-op)\n  --dfa-size-limit NUM\tset DFA size limit (no-op)\n  --max-depth NUM\tlimit recursive directory depth\n  -A, --after-context NUM\tshow trailing context\n  -B, --before-context NUM\tshow leading context\n  -C, --context NUM\tshow leading and trailing context\n  --context-separator SEP\tset context group separator\n  --field-match-separator SEP\tset match field separator\n  --field-context-separator SEP\tset context field separator\n  -p, --pretty\talias for heading plus line numbers\n  --heading\tgroup matches by file\n  --no-heading\tdisable heading output\n  --sort SORTBY\tsort paths (path only)\n  --sortr SORTBY\tsort paths in reverse (path only)\n  --sort-files\tsort --files output\n  --path-separator SEP\tset displayed path separator\n  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  -t, --type TYPE\tinclude files matching TYPE\n  -T, --type-not TYPE\texclude files matching TYPE\n  --type-add TYPE:GLOB\tadd a file type glob\n  --type-clear TYPE\tclear a file type definition\n  --type-list\tshow file type definitions\n  --ignore-file FILE\tuse additional ignore file\n  --no-ignore\tdo not use ignore files\n  --no-ignore-dot\tdo not use .ignore files\n  --no-ignore-vcs\tdo not use .gitignore files\n  --no-require-git\tuse .gitignore outside git repositories\n  --require-git\trequire a git repository for .gitignore files\n  -u, --unrestricted\treduce filtering (repeatable)\n  --messages\tshow file read diagnostics\n  --no-messages\tsuppress file read diagnostics\n  --hidden\tsearch hidden files and directories\n  --no-hidden\tdo not search hidden files and directories\n  -H, --with-filename\tshow filename\n  -I, --no-filename\tsuppress filename\n  --line-buffered\tforce line buffering (no-op)\n  --block-buffered\tforce block buffering (no-op)\n  --no-config\tdo not read config files (no-op)\n  --mmap\tsearch using memory maps when possible (no-op)\n  --no-mmap\tdisable memory maps (no-op)\n  -P, --pcre2\tuse PCRE2 regex engine for supported patterns (no-op)\n  --no-pcre2\tdisable PCRE2 regex engine (no-op)\n  --pcre2-version\tshow PCRE2 version information\n  --unicode\tenable Unicode regex mode\n  --no-unicode\tdisable Unicode regex mode\n  --pcre2-unicode\tenable PCRE2 Unicode mode (no-op)\n  --no-pcre2-unicode\tdisable PCRE2 Unicode mode (no-op)\n  --engine ENGINE\tselect regex engine: default, auto, pcre2 (no-op)\n  --auto-hybrid-regex\tuse PCRE2 when needed (no-op)\n  --no-auto-hybrid-regex\tdisable auto hybrid regex (no-op)\n  --color MODE\tcolor output (no-op)\n  --colors SPEC\tconfigure colors (no-op)\n  -h, --help\tdisplay this help and exit\n  -V, --version\toutput version information and exit\n";
         let help_text = help_text.replace(
             "  --max-depth NUM\tlimit recursive directory depth\n",
             "  -d, --max-depth NUM\tlimit recursive directory depth\n  --maxdepth NUM\talias for --max-depth\n",
@@ -3868,6 +3874,9 @@ mod tests {
     ];
 
     const DIFF_CRLF_FILES: &[(&str, &[u8])] = &[("/proj/crlf.txt", b"needle\r\nother\r\n")];
+
+    const DIFF_UNICODE_FILES: &[(&str, &[u8])] =
+        &[("/proj/unicode.txt", "cafe\ncafé\nκαφες\n".as_bytes())];
 
     const DIFF_MULTILINE_FILES: &[(&str, &[u8])] =
         &[("/proj/multi.txt", b"foo\nbar\nbaz\nxxfoo\nbar\nfoo bar\n")];
@@ -5477,6 +5486,30 @@ mod tests {
             output: RgDiffOutput::Exact,
         },
         RgDiffCase {
+            name: "unicode word class default",
+            args: &[r"\w+", "-o", "-n", "proj/unicode.txt"],
+            stdin: None,
+            files: DIFF_UNICODE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "no unicode word class is ascii",
+            args: &["--no-unicode", r"\w+", "-o", "-n", "proj/unicode.txt"],
+            stdin: None,
+            files: DIFF_UNICODE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "no unicode word boundary is ascii",
+            args: &["--no-unicode", "-w", "caf", "-n", "proj/unicode.txt"],
+            stdin: None,
+            files: DIFF_UNICODE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
             name: "pretty with color disabled",
             args: &[
                 "--pretty",
@@ -6118,6 +6151,7 @@ mod tests {
         assert!(long_help.stdout.contains("--mmap"));
         assert!(long_help.stdout.contains("--pcre2"));
         assert!(long_help.stdout.contains("--pcre2-version"));
+        assert!(long_help.stdout.contains("--no-unicode"));
         assert!(long_help.stdout.contains("-j, --threads"));
         assert!(long_help.stdout.contains("--colors"));
         assert!(long_help.stdout.contains("-p, --pretty"));
@@ -6170,6 +6204,33 @@ mod tests {
             pcre2_version.stdout,
             "PCRE2 10.45 is available (JIT is available)\n"
         );
+    }
+
+    #[tokio::test]
+    async fn test_rg_no_unicode_ascii_regex_mode() {
+        let files = [("/proj/unicode.txt", "cafe\ncafé\nκαφες\n".as_bytes())];
+
+        let default = run_rg(&[r"\w+", "-o", "-n", "/proj/unicode.txt"], None, &files).await;
+        assert_eq!(default.exit_code, 0);
+        assert_eq!(default.stdout, "1:cafe\n2:café\n3:καφες\n");
+
+        let no_unicode = run_rg(
+            &["--no-unicode", r"\w+", "-o", "-n", "/proj/unicode.txt"],
+            None,
+            &files,
+        )
+        .await;
+        assert_eq!(no_unicode.exit_code, 0);
+        assert_eq!(no_unicode.stdout, "1:cafe\n2:caf\n");
+
+        let ascii_word_boundary = run_rg(
+            &["--no-unicode", "-w", "caf", "-n", "/proj/unicode.txt"],
+            None,
+            &files,
+        )
+        .await;
+        assert_eq!(ascii_word_boundary.exit_code, 0);
+        assert_eq!(ascii_word_boundary.stdout, "2:café\n");
     }
 
     #[tokio::test]
