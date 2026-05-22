@@ -64,11 +64,14 @@ struct RgOptions {
     heading: bool,
     null: bool,
     sort_reverse: bool,
+    hidden: bool,
     context_separator: String,
     field_match_separator: String,
     field_context_separator: String,
     stdin_consumed_for_patterns: bool,
     glob_rules: Vec<RgGlobRule>,
+    type_includes: Vec<RgFileType>,
+    type_excludes: Vec<RgFileType>,
 }
 
 #[derive(Clone)]
@@ -78,6 +81,26 @@ struct RgGlobRule {
     has_slash: bool,
     anchored: bool,
     regex: Regex,
+}
+
+#[derive(Clone, Copy)]
+enum RgFileType {
+    C,
+    Cpp,
+    Css,
+    Go,
+    Html,
+    Java,
+    Json,
+    Markdown,
+    Python,
+    Rust,
+    Shell,
+    Text,
+    Toml,
+    TypeScript,
+    JavaScript,
+    Yaml,
 }
 
 impl RgOptions {
@@ -117,11 +140,14 @@ impl RgOptions {
             heading: false,
             null: false,
             sort_reverse: false,
+            hidden: false,
             context_separator: "--".to_string(),
             field_match_separator: ":".to_string(),
             field_context_separator: "-".to_string(),
             stdin_consumed_for_patterns: false,
             glob_rules: Vec::new(),
+            type_includes: Vec::new(),
+            type_excludes: Vec::new(),
         };
 
         let mut positional = Vec::new();
@@ -182,6 +208,14 @@ impl RgOptions {
                 opts.glob_rules.push(RgGlobRule::parse(val)?);
             } else if let Some(val) = long_value(&mut p, "--glob")? {
                 opts.glob_rules.push(RgGlobRule::parse(&val)?);
+            } else if let Some(val) = p.flag_value("-t", "rg").map_err(Error::Execution)? {
+                opts.type_includes.push(RgFileType::parse(val)?);
+            } else if let Some(val) = p.flag_value("-T", "rg").map_err(Error::Execution)? {
+                opts.type_excludes.push(RgFileType::parse(val)?);
+            } else if let Some(val) = long_value(&mut p, "--type")? {
+                opts.type_includes.push(RgFileType::parse(&val)?);
+            } else if let Some(val) = long_value(&mut p, "--type-not")? {
+                opts.type_excludes.push(RgFileType::parse(&val)?);
             } else if p.flag_any(&["-I", "--no-filename"]) {
                 opts.no_filename = true;
             } else if p.flag("--with-filename") {
@@ -255,9 +289,11 @@ impl RgOptions {
             } else if p.current().is_some_and(|s| s.starts_with("--color=")) {
                 // --color=VALUE is a no-op
                 p.advance();
+            } else if p.flag("--hidden") {
+                opts.hidden = true;
+            } else if p.flag("--no-hidden") {
+                opts.hidden = false;
             } else if p.flag_any(&[
-                "--hidden",
-                "--no-hidden",
                 "--no-ignore",
                 "--no-ignore-vcs",
                 "--no-ignore-parent",
@@ -441,6 +477,40 @@ impl RgOptions {
                             opts.glob_rules.push(RgGlobRule::parse(&glob)?);
                             break;
                         }
+                        't' => {
+                            let rest: String = chars[j + 1..].iter().collect();
+                            let file_type = if !rest.is_empty() {
+                                rest
+                            } else {
+                                match p.positional() {
+                                    Some(v) => v.to_string(),
+                                    None => {
+                                        return Err(Error::Execution(
+                                            "rg: -t requires an argument".to_string(),
+                                        ));
+                                    }
+                                }
+                            };
+                            opts.type_includes.push(RgFileType::parse(&file_type)?);
+                            break;
+                        }
+                        'T' => {
+                            let rest: String = chars[j + 1..].iter().collect();
+                            let file_type = if !rest.is_empty() {
+                                rest
+                            } else {
+                                match p.positional() {
+                                    Some(v) => v.to_string(),
+                                    None => {
+                                        return Err(Error::Execution(
+                                            "rg: -T requires an argument".to_string(),
+                                        ));
+                                    }
+                                }
+                            };
+                            opts.type_excludes.push(RgFileType::parse(&file_type)?);
+                            break;
+                        }
                         _ => {
                             return Err(Error::Execution(format!(
                                 "rg: unrecognized option '-{}'",
@@ -517,11 +587,82 @@ impl RgOptions {
             .any(|g| g.matches(path, cwd))
     }
 
+    fn matches_type_filters(&self, path: &Path) -> bool {
+        if !self.type_includes.is_empty()
+            && !self
+                .type_includes
+                .iter()
+                .any(|file_type| file_type.matches(path))
+        {
+            return false;
+        }
+        !self
+            .type_excludes
+            .iter()
+            .any(|file_type| file_type.matches(path))
+    }
+
     fn first_positive_glob(&self) -> Option<String> {
         self.glob_rules
             .iter()
             .find(|g| g.include)
             .map(|g| g.raw.clone())
+    }
+}
+
+impl RgFileType {
+    fn parse(name: &str) -> Result<Self> {
+        match name {
+            "c" => Ok(Self::C),
+            "cpp" | "c++" => Ok(Self::Cpp),
+            "css" => Ok(Self::Css),
+            "go" => Ok(Self::Go),
+            "html" | "htm" => Ok(Self::Html),
+            "java" => Ok(Self::Java),
+            "json" => Ok(Self::Json),
+            "md" | "markdown" => Ok(Self::Markdown),
+            "py" | "python" => Ok(Self::Python),
+            "rs" | "rust" => Ok(Self::Rust),
+            "sh" | "shell" => Ok(Self::Shell),
+            "text" | "txt" => Ok(Self::Text),
+            "toml" => Ok(Self::Toml),
+            "ts" | "typescript" => Ok(Self::TypeScript),
+            "js" | "javascript" => Ok(Self::JavaScript),
+            "yaml" | "yml" => Ok(Self::Yaml),
+            _ => Err(Error::Execution(format!(
+                "rg: unrecognized file type: {}",
+                name
+            ))),
+        }
+    }
+
+    fn matches(self, path: &Path) -> bool {
+        let extension = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .unwrap_or("");
+        self.extensions().contains(&extension)
+    }
+
+    fn extensions(self) -> &'static [&'static str] {
+        match self {
+            Self::C => &["c", "h"],
+            Self::Cpp => &["cc", "cpp", "cxx", "c++", "hpp", "hh", "hxx", "h++"],
+            Self::Css => &["css"],
+            Self::Go => &["go"],
+            Self::Html => &["html", "htm"],
+            Self::Java => &["java"],
+            Self::Json => &["json", "jsonl"],
+            Self::Markdown => &["md", "markdown", "mdown", "mkdn"],
+            Self::Python => &["py", "pyw"],
+            Self::Rust => &["rs"],
+            Self::Shell => &["sh", "bash", "zsh"],
+            Self::Text => &["txt"],
+            Self::Toml => &["toml"],
+            Self::TypeScript => &["ts", "tsx"],
+            Self::JavaScript => &["js", "jsx", "mjs", "cjs"],
+            Self::Yaml => &["yaml", "yml"],
+        }
     }
 }
 
@@ -741,11 +882,18 @@ async fn collect_rg_files_recursive(
     cwd: &Path,
 ) -> Vec<PathBuf> {
     let mut result = Vec::new();
-    let mut stack: Vec<(PathBuf, usize)> = roots.iter().cloned().map(|root| (root, 0)).collect();
+    let mut stack: Vec<(PathBuf, PathBuf, usize)> = roots
+        .iter()
+        .cloned()
+        .map(|root| (root.clone(), root, 0))
+        .collect();
 
-    while let Some((current, depth)) = stack.pop() {
+    while let Some((current, root, depth)) = stack.pop() {
         if let Ok(entries) = fs.read_dir(&current).await {
             for entry in entries {
+                if !opts.hidden && is_hidden_name(&entry.name) {
+                    continue;
+                }
                 let path = current.join(&entry.name);
                 let entry_depth = depth + 1;
                 if entry.metadata.file_type.is_dir() {
@@ -753,13 +901,14 @@ async fn collect_rg_files_recursive(
                         .max_depth
                         .is_none_or(|max_depth| entry_depth < max_depth)
                     {
-                        stack.push((path, entry_depth));
+                        stack.push((path, root.clone(), entry_depth));
                     }
                 } else if entry.metadata.file_type.is_file()
                     && opts
                         .max_depth
                         .is_none_or(|max_depth| entry_depth <= max_depth)
                     && opts.matches_globs(&path, cwd)
+                    && opts.matches_type_filters(&path)
                 {
                     result.push(path);
                 }
@@ -777,6 +926,10 @@ async fn collect_rg_files_recursive(
         result.reverse();
     }
     result
+}
+
+fn is_hidden_name(name: &str) -> bool {
+    name.starts_with('.') && name != "." && name != ".."
 }
 
 async fn collect_rg_file_list(
@@ -851,7 +1004,12 @@ async fn try_indexed_search(
     opts: &RgOptions,
     cwd: &Path,
 ) -> Option<Vec<(String, String)>> {
-    if opts.invert_match || opts.files_without_matches || opts.patterns.len() != 1 {
+    if opts.invert_match
+        || opts.files_without_matches
+        || opts.patterns.len() != 1
+        || !opts.type_includes.is_empty()
+        || !opts.type_excludes.is_empty()
+    {
         return None;
     }
 
@@ -911,6 +1069,7 @@ async fn try_indexed_search(
             if !candidate.starts_with(&root)
                 || !seen_paths.insert(candidate.clone())
                 || !opts.matches_globs(&candidate, cwd)
+                || (!opts.hidden && path_has_hidden_component_relative_to(&candidate, &root))
             {
                 continue;
             }
@@ -924,6 +1083,13 @@ async fn try_indexed_search(
     }
 
     Some(inputs)
+}
+
+fn path_has_hidden_component_relative_to(path: &Path, root: &Path) -> bool {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .components()
+        .any(|component| component.as_os_str().to_str().is_some_and(is_hidden_name))
 }
 
 struct RgPrefix<'a> {
@@ -1159,7 +1325,7 @@ fn write_rg_json_summary(
 #[async_trait]
 impl Builtin for Rg {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        let help_text = "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i, --ignore-case\tcase insensitive\n  -S, --smart-case\tcase insensitive if pattern is lowercase\n  -s, --case-sensitive\tcase sensitive\n  -n, --line-number\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  --column\tshow column numbers\n  -b, --byte-offset\tshow byte offsets\n  --vimgrep\tshow file:line:column:match lines\n  --json\tshow JSON Lines events\n  --null\tterminate path fields with NUL\n  -c, --count\tcount matching lines\n  --count-matches\tcount individual matches\n  --include-zero\tinclude zero counts\n  -l, --files-with-matches\tfiles with matches\n  --files-without-match\tfiles without matches\n  --files\tprint files that would be searched\n  -v, --invert-match\tinvert match\n  -w, --word-regexp\tword boundary\n  -x, --line-regexp\tmatch whole lines\n  -F, --fixed-strings\tfixed strings (literal)\n  -o, --only-matching\tshow only matching text\n  -q, --quiet\tsuppress output; exit status only\n  -e, --regexp PATTERN\tuse PATTERN for matching\n  -f, --file PATTERNFILE\tread patterns from file\n  -r, --replace REPLACEMENT\treplace matches in output\n  --passthru\tprint matching and non-matching lines\n  --trim\ttrim whitespace from output lines\n  -m, --max-count NUM\tmax count per file\n  --max-depth NUM\tlimit recursive directory depth\n  -A, --after-context NUM\tshow trailing context\n  -B, --before-context NUM\tshow leading context\n  -C, --context NUM\tshow leading and trailing context\n  --context-separator SEP\tset context group separator\n  --field-match-separator SEP\tset match field separator\n  --field-context-separator SEP\tset context field separator\n  --heading\tgroup matches by file\n  --no-heading\tdisable heading output\n  --sort SORTBY\tsort paths (path only)\n  --sortr SORTBY\tsort paths in reverse (path only)\n  --sort-files\tsort --files output\n  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  -H, --with-filename\tshow filename\n  -I, --no-filename\tsuppress filename\n  --color MODE\tcolor output (no-op)\n  -h, --help\tdisplay this help and exit\n  -V, --version\toutput version information and exit\n";
+        let help_text = "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i, --ignore-case\tcase insensitive\n  -S, --smart-case\tcase insensitive if pattern is lowercase\n  -s, --case-sensitive\tcase sensitive\n  -n, --line-number\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  --column\tshow column numbers\n  -b, --byte-offset\tshow byte offsets\n  --vimgrep\tshow file:line:column:match lines\n  --json\tshow JSON Lines events\n  --null\tterminate path fields with NUL\n  -c, --count\tcount matching lines\n  --count-matches\tcount individual matches\n  --include-zero\tinclude zero counts\n  -l, --files-with-matches\tfiles with matches\n  --files-without-match\tfiles without matches\n  --files\tprint files that would be searched\n  -v, --invert-match\tinvert match\n  -w, --word-regexp\tword boundary\n  -x, --line-regexp\tmatch whole lines\n  -F, --fixed-strings\tfixed strings (literal)\n  -o, --only-matching\tshow only matching text\n  -q, --quiet\tsuppress output; exit status only\n  -e, --regexp PATTERN\tuse PATTERN for matching\n  -f, --file PATTERNFILE\tread patterns from file\n  -r, --replace REPLACEMENT\treplace matches in output\n  --passthru\tprint matching and non-matching lines\n  --trim\ttrim whitespace from output lines\n  -m, --max-count NUM\tmax count per file\n  --max-depth NUM\tlimit recursive directory depth\n  -A, --after-context NUM\tshow trailing context\n  -B, --before-context NUM\tshow leading context\n  -C, --context NUM\tshow leading and trailing context\n  --context-separator SEP\tset context group separator\n  --field-match-separator SEP\tset match field separator\n  --field-context-separator SEP\tset context field separator\n  --heading\tgroup matches by file\n  --no-heading\tdisable heading output\n  --sort SORTBY\tsort paths (path only)\n  --sortr SORTBY\tsort paths in reverse (path only)\n  --sort-files\tsort --files output\n  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  -t, --type TYPE\tinclude files matching TYPE\n  -T, --type-not TYPE\texclude files matching TYPE\n  --hidden\tsearch hidden files and directories\n  --no-hidden\tdo not search hidden files and directories\n  -H, --with-filename\tshow filename\n  -I, --no-filename\tsuppress filename\n  --color MODE\tcolor output (no-op)\n  -h, --help\tdisplay this help and exit\n  -V, --version\toutput version information and exit\n";
         if ctx.args.iter().any(|arg| arg == "-h") {
             return Ok(ExecResult::ok(help_text.to_string()));
         }
@@ -1606,6 +1772,11 @@ mod tests {
         ("/proj/patterns.txt", b"needle\nHello\n"),
         ("/proj/trim.txt", b"  needle one  \n  none  \n"),
         ("/proj/offset.txt", b"abc needle\nxx needle yy\n"),
+        ("/proj/.hidden.txt", b"needle\n"),
+        ("/proj/.hidden/secret.txt", b"needle\n"),
+        ("/proj/lang/lib.rs", b"needle\n"),
+        ("/proj/lang/lib.py", b"needle\n"),
+        ("/proj/lang/readme.md", b"needle\n"),
     ];
 
     const DIFF_TWO_CONTEXT_FILES: &[(&str, &[u8])] = &[
@@ -1655,7 +1826,7 @@ mod tests {
             stdin: None,
             files: DIFF_BASIC_FILES,
             cwd: "/proj",
-            output: RgDiffOutput::Exact,
+            output: RgDiffOutput::UnorderedLines,
         },
         RgDiffCase {
             name: "relative root glob keeps nested vendor",
@@ -2030,6 +2201,46 @@ mod tests {
             files: DIFF_BASIC_FILES,
             cwd: "/",
             output: RgDiffOutput::JsonEvents,
+        },
+        RgDiffCase {
+            name: "hidden recursive",
+            args: &["--hidden", "needle", "proj"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "no hidden wins",
+            args: &["--hidden", "--no-hidden", "needle", "proj"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "type rust",
+            args: &["-t", "rust", "needle", "proj/lang"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type not rust",
+            args: &["-T", "rust", "needle", "proj/lang"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "long type python",
+            args: &["--type=python", "needle", "proj/lang"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
         },
     ];
 
