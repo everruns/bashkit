@@ -2282,10 +2282,145 @@ impl Builtin for Rg {
             json_searches += 1;
             stats.bytes_searched += content.len();
 
-            if opts.multiline && !opts.invert_match {
+            if opts.multiline {
                 let matches = collect_rg_multiline_matches(&regex, content, &lines, opts.max_count);
                 let match_line_indices = rg_multiline_match_lines(&matches);
                 let context_match_lines = rg_unique_sorted_lines(&match_line_indices);
+
+                if opts.invert_match {
+                    let matched_line_set: HashSet<usize> =
+                        context_match_lines.iter().copied().collect();
+                    let inverted_match_lines: Vec<usize> = lines
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(line_idx, _)| {
+                            (!matched_line_set.contains(&line_idx)).then_some(line_idx)
+                        })
+                        .collect();
+                    match_count = inverted_match_lines.len();
+                    count_value = inverted_match_lines.len();
+                    json_matches += inverted_match_lines.len();
+                    json_matched_lines += inverted_match_lines.len();
+                    stats.matches += inverted_match_lines.len();
+                    stats.matched_lines += inverted_match_lines.len();
+
+                    if match_count > 0 {
+                        stats.files_with_matches += 1;
+                        if !opts.files_without_matches {
+                            any_match = true;
+                        }
+                    }
+
+                    if opts.quiet && match_count > 0 && !opts.stats {
+                        return Ok(ExecResult::ok(String::new()));
+                    }
+                    if opts.files_with_matches && match_count > 0 {
+                        output.push_str(filename);
+                        output.push(if opts.null { '\0' } else { '\n' });
+                        continue;
+                    }
+                    if opts.files_without_matches {
+                        if match_count == 0 {
+                            any_match = true;
+                            output.push_str(filename);
+                            output.push(if opts.null { '\0' } else { '\n' });
+                        }
+                        continue;
+                    }
+                    if json_output {
+                        if match_count > 0 {
+                            write_rg_json_begin(&mut output, filename);
+                            for &line_idx in &inverted_match_lines {
+                                write_rg_json_match(
+                                    &mut output,
+                                    filename,
+                                    lines[line_idx],
+                                    line_idx,
+                                    &regex,
+                                );
+                            }
+                            write_rg_json_end(
+                                &mut output,
+                                filename,
+                                content.len(),
+                                inverted_match_lines.len(),
+                                inverted_match_lines.len(),
+                            );
+                        }
+                        continue;
+                    }
+                    if opts.count_only || opts.count_matches {
+                        if count_value == 0 && !opts.include_zero {
+                            continue;
+                        }
+                        if show_filename {
+                            output.push_str(filename);
+                            output.push(if opts.null { '\0' } else { ':' });
+                        }
+                        output.push_str(&count_value.to_string());
+                        output.push('\n');
+                        continue;
+                    }
+                    if opts.quiet {
+                        continue;
+                    }
+
+                    let line_show_filename = if opts.heading && show_filename && match_count > 0 {
+                        if !output.is_empty() {
+                            output.push('\n');
+                        }
+                        output.push_str(filename);
+                        output.push('\n');
+                        false
+                    } else {
+                        show_filename
+                    };
+                    if has_context {
+                        if !opts.heading && !output.is_empty() && !inverted_match_lines.is_empty() {
+                            output.push_str(&opts.context_separator);
+                            output.push('\n');
+                        }
+                        write_rg_context(
+                            &mut output,
+                            filename,
+                            &regex,
+                            &lines,
+                            &inverted_match_lines,
+                            &opts,
+                            line_show_filename,
+                        );
+                    } else {
+                        for &line_idx in &inverted_match_lines {
+                            write_rg_prefix(
+                                &mut output,
+                                RgPrefix {
+                                    filename,
+                                    show_filename: line_show_filename,
+                                    line_numbers: opts.line_numbers,
+                                    line_idx,
+                                    column: None,
+                                    byte_offset: if opts.byte_offset {
+                                        Some(lines[line_idx].start_offset)
+                                    } else {
+                                        None
+                                    },
+                                    separator: opts.field_match_separator.as_str(),
+                                    null_path_separator: opts.null,
+                                },
+                            );
+                            output.push_str(&format_rg_output_line(
+                                lines[line_idx].text,
+                                lines[line_idx].match_text,
+                                &regex,
+                                &opts,
+                                true,
+                            ));
+                            output.push('\n');
+                        }
+                    }
+                    continue;
+                }
+
                 match_count = matches.len();
                 count_value = matches.len();
                 json_matches += matches.len();
@@ -2992,6 +3127,8 @@ mod tests {
 
     const DIFF_MULTILINE_FILES: &[(&str, &[u8])] =
         &[("/proj/multi.txt", b"foo\nbar\nbaz\nxxfoo\nbar\nfoo bar\n")];
+    const DIFF_MULTILINE_ALL_MATCH_FILES: &[(&str, &[u8])] =
+        &[("/proj/all-multiline.txt", b"foo\nbar\nxxfoo\nbar\n")];
 
     const DIFF_UNRESTRICTED_FILES: &[(&str, &[u8])] = &[
         ("/proj/.git/config", b"[core]\n"),
@@ -3737,6 +3874,68 @@ mod tests {
             args: &["-U", "-r", "X", "foo\nbar", "proj/multi.txt"],
             stdin: None,
             files: DIFF_MULTILINE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "multiline invert excludes matched spans",
+            args: &["-v", "-U", "foo\nbar", "proj/multi.txt"],
+            stdin: None,
+            files: DIFF_MULTILINE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "multiline invert count",
+            args: &["-c", "-v", "-U", "foo\nbar", "proj/multi.txt"],
+            stdin: None,
+            files: DIFF_MULTILINE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "multiline invert files without match",
+            args: &[
+                "--files-without-match",
+                "-v",
+                "-U",
+                "foo\nbar",
+                "proj/all-multiline.txt",
+            ],
+            stdin: None,
+            files: DIFF_MULTILINE_ALL_MATCH_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "multiline column and byte offset",
+            args: &["-n", "--column", "-b", "-U", "foo\nbar", "proj/multi.txt"],
+            stdin: None,
+            files: DIFF_MULTILINE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "multiline vimgrep",
+            args: &["--vimgrep", "-U", "foo\nbar", "proj/multi.txt"],
+            stdin: None,
+            files: DIFF_MULTILINE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "multiline json",
+            args: &["--json", "-U", "foo\nbar", "proj/multi.txt"],
+            stdin: None,
+            files: DIFF_MULTILINE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::JsonEvents,
+        },
+        RgDiffCase {
+            name: "multiline stdin",
+            args: &["-n", "-U", "foo\nbar"],
+            stdin: Some("foo\nbar\nbaz\n"),
+            files: &[],
             cwd: "/",
             output: RgDiffOutput::Exact,
         },
