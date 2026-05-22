@@ -103,6 +103,7 @@ struct RgOptions {
     stdin_consumed_for_patterns: bool,
     ignore_file_paths: Vec<String>,
     explicit_ignore_rules: Vec<RgIgnoreRule>,
+    global_ignore_rules: Vec<RgIgnoreRule>,
     glob_rules: Vec<RgGlobRule>,
     glob_case_insensitive: bool,
     type_database: RgTypeDatabase,
@@ -241,6 +242,7 @@ impl RgOptions {
             stdin_consumed_for_patterns: false,
             ignore_file_paths: Vec::new(),
             explicit_ignore_rules: Vec::new(),
+            global_ignore_rules: Vec::new(),
             glob_rules: Vec::new(),
             glob_case_insensitive: false,
             type_database: RgTypeDatabase::default(),
@@ -1832,6 +1834,116 @@ async fn load_rg_ignore_files(
     Ok(())
 }
 
+async fn load_rg_global_ignore_files(
+    fs: &dyn crate::fs::FileSystem,
+    env: &std::collections::HashMap<String, String>,
+    opts: &mut RgOptions,
+) -> Result<()> {
+    if opts.no_ignore || opts.no_ignore_global {
+        return Ok(());
+    }
+
+    let mut configured_paths = Vec::new();
+    if let Some(home) = non_empty_env_path(env, "HOME") {
+        configured_paths.extend(git_config_excludes_files(fs, &home.join(".gitconfig")).await?);
+    }
+
+    if configured_paths.is_empty() {
+        if let Some(path) = default_git_global_ignore_path(env) {
+            load_optional_ignore_file(
+                fs,
+                &path,
+                Path::new("/"),
+                opts.ignore_file_case_insensitive,
+                &mut opts.global_ignore_rules,
+            )
+            .await?;
+        }
+    } else {
+        for path in configured_paths {
+            load_optional_ignore_file(
+                fs,
+                &path,
+                Path::new("/"),
+                opts.ignore_file_case_insensitive,
+                &mut opts.global_ignore_rules,
+            )
+            .await?;
+        }
+    }
+
+    Ok(())
+}
+
+fn non_empty_env_path(
+    env: &std::collections::HashMap<String, String>,
+    key: &str,
+) -> Option<PathBuf> {
+    env.get(key)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
+fn default_git_global_ignore_path(
+    env: &std::collections::HashMap<String, String>,
+) -> Option<PathBuf> {
+    non_empty_env_path(env, "XDG_CONFIG_HOME")
+        .map(|path| path.join("git/ignore"))
+        .or_else(|| non_empty_env_path(env, "HOME").map(|path| path.join(".config/git/ignore")))
+}
+
+async fn git_config_excludes_files(
+    fs: &dyn crate::fs::FileSystem,
+    config_path: &Path,
+) -> Result<Vec<PathBuf>> {
+    let Ok(content) = fs.read_file(config_path).await else {
+        return Ok(Vec::new());
+    };
+    let content = String::from_utf8_lossy(&content);
+    let home = config_path.parent().unwrap_or(Path::new("/"));
+    Ok(parse_git_config_excludes_files(&content, home))
+}
+
+fn parse_git_config_excludes_files(content: &str, home: &Path) -> Vec<PathBuf> {
+    let mut in_core = false;
+    let mut paths = Vec::new();
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            in_core = line
+                .trim_matches(['[', ']'])
+                .split_whitespace()
+                .next()
+                .is_some_and(|section| section.eq_ignore_ascii_case("core"));
+            continue;
+        }
+        if !in_core {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        if key.trim().eq_ignore_ascii_case("excludesFile") {
+            paths.push(expand_git_config_path(value.trim(), home));
+        }
+    }
+    paths
+}
+
+fn expand_git_config_path(value: &str, home: &Path) -> PathBuf {
+    let value = value.trim_matches('"');
+    if value == "~" {
+        return home.to_path_buf();
+    }
+    if let Some(rest) = value.strip_prefix("~/") {
+        return home.join(rest);
+    }
+    PathBuf::from(value)
+}
+
 fn parse_rg_ignore_rules(
     content: &str,
     base: &Path,
@@ -1918,6 +2030,22 @@ async fn load_parent_ignore_rules(
         load_local_ignore_rules(fs, &ancestor, Path::new("/"), opts, rules).await?;
     }
     Ok(())
+}
+
+async fn append_global_ignore_rules_for_root(
+    fs: &dyn crate::fs::FileSystem,
+    root: &Path,
+    opts: &RgOptions,
+    rules: &mut Vec<RgIgnoreRule>,
+) {
+    if opts.no_ignore
+        || opts.no_ignore_global
+        || opts.global_ignore_rules.is_empty()
+        || (opts.require_git && !has_git_dir_in_ancestors(fs, root, Path::new("/")).await)
+    {
+        return;
+    }
+    rules.extend(opts.global_ignore_rules.clone());
 }
 
 async fn load_optional_ignore_file(
@@ -2020,7 +2148,9 @@ async fn collect_rg_files_recursive(
     let mut result = Vec::new();
     let mut stack = Vec::new();
     for root in roots {
-        let mut rules = opts.explicit_ignore_rules.clone();
+        let mut rules = Vec::new();
+        append_global_ignore_rules_for_root(fs, &root.actual, opts, &mut rules).await;
+        rules.extend(opts.explicit_ignore_rules.clone());
         let _ = load_parent_ignore_rules(fs, &root.actual, opts, &mut rules).await;
         stack.push(RgWalkItem {
             logical: root.logical.clone(),
@@ -2842,7 +2972,7 @@ impl Builtin for Rg {
         );
         let help_text = help_text.replace(
             "  --no-ignore\tdo not use ignore files\n  --no-ignore-dot\tdo not use .ignore files\n  --no-ignore-vcs\tdo not use .gitignore files\n",
-            "  --no-ignore\tdo not use ignore files\n  --ignore\tuse ignore files\n  --no-ignore-dot\tdo not use .ignore files\n  --ignore-dot\tuse .ignore files\n  --no-ignore-exclude\tdo not use .git/info/exclude files\n  --ignore-exclude\tuse .git/info/exclude files\n  --no-ignore-global\tdo not use global ignore files (no-op)\n  --ignore-global\tuse global ignore files (no-op)\n  --no-ignore-parent\tdo not use parent ignore files (no-op)\n  --ignore-parent\tuse parent ignore files (no-op)\n  --no-ignore-vcs\tdo not use .gitignore files\n  --ignore-vcs\tuse .gitignore files\n",
+            "  --no-ignore\tdo not use ignore files\n  --ignore\tuse ignore files\n  --no-ignore-dot\tdo not use .ignore files\n  --ignore-dot\tuse .ignore files\n  --no-ignore-exclude\tdo not use .git/info/exclude files\n  --ignore-exclude\tuse .git/info/exclude files\n  --no-ignore-global\tdo not use global ignore files\n  --ignore-global\tuse global ignore files\n  --no-ignore-parent\tdo not use parent ignore files\n  --ignore-parent\tuse parent ignore files\n  --no-ignore-vcs\tdo not use .gitignore files\n  --ignore-vcs\tuse .gitignore files\n",
         );
         let help_text = help_text.replace(
             "  --no-auto-hybrid-regex\tdisable auto hybrid regex (no-op)\n",
@@ -2877,6 +3007,7 @@ impl Builtin for Rg {
         if opts.type_list {
             return Ok(ExecResult::ok(opts.type_database.list()));
         }
+        load_rg_global_ignore_files(&*ctx.fs, ctx.env, &mut opts).await?;
         if let Err(result) = load_rg_ignore_files(&*ctx.fs, ctx.cwd, &mut opts).await {
             return Ok(result);
         }
@@ -3764,6 +3895,17 @@ mod tests {
         symlinks: &[(&str, &str)],
         cwd: &str,
     ) -> ExecResult {
+        run_rg_fixture_with_cwd_and_env(args, stdin, files, symlinks, cwd, &[]).await
+    }
+
+    async fn run_rg_fixture_with_cwd_and_env(
+        args: &[&str],
+        stdin: Option<&str>,
+        files: &[(&str, &[u8])],
+        symlinks: &[(&str, &str)],
+        cwd: &str,
+        env: &[(&str, &str)],
+    ) -> ExecResult {
         let fs = Arc::new(InMemoryFs::new());
         for (path, content) in files {
             let p = Path::new(path);
@@ -3789,7 +3931,7 @@ mod tests {
             fs_trait.symlink(Path::new(target), p).await.unwrap();
         }
 
-        run_rg_with_fs_and_cwd(args, stdin, fs, cwd).await
+        run_rg_with_fs_and_cwd_and_env(args, stdin, fs, cwd, env).await
     }
 
     async fn run_rg_with_fs<F>(args: &[&str], stdin: Option<&str>, fs: Arc<F>) -> ExecResult
@@ -3808,8 +3950,24 @@ mod tests {
     where
         F: FileSystem + 'static,
     {
+        run_rg_with_fs_and_cwd_and_env(args, stdin, fs, cwd, &[]).await
+    }
+
+    async fn run_rg_with_fs_and_cwd_and_env<F>(
+        args: &[&str],
+        stdin: Option<&str>,
+        fs: Arc<F>,
+        cwd: &str,
+        env: &[(&str, &str)],
+    ) -> ExecResult
+    where
+        F: FileSystem + 'static,
+    {
         let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-        let env = HashMap::new();
+        let env: HashMap<String, String> = env
+            .iter()
+            .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+            .collect();
         let mut variables = HashMap::new();
         let mut cwd = PathBuf::from(cwd);
         let fs_dyn = fs as Arc<dyn FileSystem>;
@@ -3857,6 +4015,16 @@ mod tests {
         files: &'static [(&'static str, &'static [u8])],
         symlinks: &'static [(&'static str, &'static str)],
         cwd: &'static str,
+        output: RgDiffOutput,
+    }
+
+    struct RgEnvDiffCase {
+        name: &'static str,
+        args: &'static [&'static str],
+        stdin: Option<&'static str>,
+        files: &'static [(&'static str, &'static [u8])],
+        cwd: &'static str,
+        env: &'static [(&'static str, &'static str)],
         output: RgDiffOutput,
     }
 
@@ -3935,6 +4103,28 @@ mod tests {
         ("/proj/sub/keep.txt", b"needle\n"),
         ("/proj/sub/vcs.txt", b"needle\n"),
     ];
+
+    const DIFF_GLOBAL_IGNORE_FILES: &[(&str, &[u8])] = &[
+        ("/home/.config/git/ignore", b"global.txt\n"),
+        (
+            "/home/.gitconfig",
+            b"[core]\n\texcludesFile = ~/custom-global.ignore\n",
+        ),
+        ("/home/custom-global.ignore", b"custom.txt\n"),
+        ("/proj/.git/config", b"[core]\n"),
+        ("/proj/global.txt", b"needle\n"),
+        ("/proj/custom.txt", b"needle\n"),
+        ("/proj/keep.txt", b"needle\n"),
+    ];
+
+    const DIFF_DEFAULT_GLOBAL_IGNORE_FILES: &[(&str, &[u8])] = &[
+        ("/home/.config/git/ignore", b"global.txt\n"),
+        ("/proj/.git/config", b"[core]\n"),
+        ("/proj/global.txt", b"needle\n"),
+        ("/proj/keep.txt", b"needle\n"),
+    ];
+
+    const DIFF_GLOBAL_IGNORE_ENV: &[(&str, &str)] = &[("HOME", "/home"), ("XDG_CONFIG_HOME", "")];
 
     const DIFF_BINARY_FILES: &[(&str, &[u8])] = &[
         ("/proj/bin.dat", b"abc\0needle\n"),
@@ -5845,6 +6035,36 @@ mod tests {
         },
     ];
 
+    const RG_ENV_DIFF_CASES: &[RgEnvDiffCase] = &[
+        RgEnvDiffCase {
+            name: "default global git ignore file applies in git repo",
+            args: &["needle", "proj"],
+            stdin: None,
+            files: DIFF_DEFAULT_GLOBAL_IGNORE_FILES,
+            cwd: "/",
+            env: DIFF_GLOBAL_IGNORE_ENV,
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgEnvDiffCase {
+            name: "configured global git ignore file overrides default",
+            args: &["needle", "proj"],
+            stdin: None,
+            files: DIFF_GLOBAL_IGNORE_FILES,
+            cwd: "/",
+            env: DIFF_GLOBAL_IGNORE_ENV,
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgEnvDiffCase {
+            name: "no ignore global disables global git ignore files",
+            args: &["--no-ignore-global", "needle", "proj"],
+            stdin: None,
+            files: DIFF_GLOBAL_IGNORE_FILES,
+            cwd: "/",
+            env: DIFF_GLOBAL_IGNORE_ENV,
+            output: RgDiffOutput::UnorderedLines,
+        },
+    ];
+
     fn require_real_rg() {
         let output = std::process::Command::new("rg")
             .arg("--version")
@@ -5919,6 +6139,81 @@ mod tests {
         (stdout, output.status.code().unwrap_or(-1))
     }
 
+    fn run_real_rg_env(case: &RgEnvDiffCase) -> (String, i32) {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+
+        require_real_rg();
+
+        let tempdir = tempfile::tempdir().expect("tempdir for rg env differential test");
+        for (path, content) in case.files {
+            let host_path = tempdir.path().join(path.trim_start_matches('/'));
+            if let Some(parent) = host_path.parent() {
+                std::fs::create_dir_all(parent).expect("create parent dir for rg fixture");
+            }
+            std::fs::write(host_path, content).expect("write rg fixture file");
+        }
+
+        let host_cwd = tempdir.path().join(case.cwd.trim_start_matches('/'));
+        let mapped_args: Vec<String> = case
+            .args
+            .iter()
+            .map(|arg| {
+                if arg.starts_with('/') {
+                    tempdir
+                        .path()
+                        .join(arg.trim_start_matches('/'))
+                        .to_string_lossy()
+                        .into_owned()
+                } else {
+                    (*arg).to_string()
+                }
+            })
+            .collect();
+
+        let mut command = Command::new("rg");
+        command
+            .args(["--threads", "1"])
+            .args(&mapped_args)
+            .current_dir(host_cwd)
+            .env("LC_ALL", "C");
+        for (key, value) in case.env {
+            let mapped = if value.starts_with('/') {
+                tempdir
+                    .path()
+                    .join(value.trim_start_matches('/'))
+                    .to_string_lossy()
+                    .into_owned()
+            } else {
+                (*value).to_string()
+            };
+            command.env(key, mapped);
+        }
+
+        let output = if let Some(stdin) = case.stdin {
+            let mut child = command
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()
+                .expect("spawn real rg for env differential test");
+            child
+                .stdin
+                .as_mut()
+                .expect("real rg stdin pipe")
+                .write_all(stdin.as_bytes())
+                .expect("write stdin to real rg");
+            child
+                .wait_with_output()
+                .expect("wait for real rg env differential test")
+        } else {
+            command.output().expect("run real rg env differential test")
+        };
+
+        let stdout = String::from_utf8_lossy(&output.stdout)
+            .replace(&tempdir.path().to_string_lossy().to_string(), "");
+        (stdout, output.status.code().unwrap_or(-1))
+    }
+
     #[cfg(unix)]
     fn run_real_rg_symlink(case: &RgSymlinkDiffCase) -> (String, i32) {
         use std::os::unix::fs::symlink;
@@ -5980,57 +6275,81 @@ mod tests {
     async fn assert_rg_diff_case(case: &RgDiffCase) {
         let (real_stdout, real_code) = run_real_rg(case);
         let bashkit = run_rg_with_cwd(case.args, case.stdin, case.files, case.cwd).await;
-        match case.output {
+        assert_rg_outputs_match(case.name, case.output, &bashkit, &real_stdout, real_code);
+    }
+
+    async fn assert_rg_env_diff_case(case: &RgEnvDiffCase) {
+        let (real_stdout, real_code) = run_real_rg_env(case);
+        let bashkit = run_rg_fixture_with_cwd_and_env(
+            case.args,
+            case.stdin,
+            case.files,
+            &[],
+            case.cwd,
+            case.env,
+        )
+        .await;
+        assert_rg_outputs_match(case.name, case.output, &bashkit, &real_stdout, real_code);
+    }
+
+    fn assert_rg_outputs_match(
+        name: &str,
+        output: RgDiffOutput,
+        bashkit: &ExecResult,
+        real_stdout: &str,
+        real_code: i32,
+    ) {
+        match output {
             RgDiffOutput::Exact => assert_eq!(
                 bashkit.stdout, real_stdout,
                 "stdout mismatch for rg differential case {}",
-                case.name
+                name
             ),
             RgDiffOutput::UnorderedLines => assert_eq!(
                 sorted_lines(&bashkit.stdout),
-                sorted_lines(&real_stdout),
+                sorted_lines(real_stdout),
                 "stdout line-set mismatch for rg differential case {}",
-                case.name
+                name
             ),
             RgDiffOutput::UnorderedNul => assert_eq!(
                 sorted_nul_items(&bashkit.stdout),
-                sorted_nul_items(&real_stdout),
+                sorted_nul_items(real_stdout),
                 "stdout NUL-item mismatch for rg differential case {}",
-                case.name
+                name
             ),
             RgDiffOutput::JsonEvents => assert_eq!(
                 normalize_rg_json(&bashkit.stdout),
-                normalize_rg_json(&real_stdout),
+                normalize_rg_json(real_stdout),
                 "stdout JSON-event mismatch for rg differential case {}",
-                case.name
+                name
             ),
             RgDiffOutput::Stats => assert_eq!(
                 normalize_rg_stats(&bashkit.stdout),
-                normalize_rg_stats(&real_stdout),
+                normalize_rg_stats(real_stdout),
                 "stdout stats mismatch for rg differential case {}",
-                case.name
+                name
             ),
             RgDiffOutput::ContainsAll(needles) => {
                 assert!(
                     !bashkit.stdout.is_empty(),
                     "bashkit stdout unexpectedly empty for rg differential case {}",
-                    case.name
+                    name
                 );
                 assert!(
                     !real_stdout.is_empty(),
                     "real rg stdout unexpectedly empty for rg differential case {}",
-                    case.name
+                    name
                 );
                 for needle in needles {
                     assert!(
                         bashkit.stdout.contains(needle),
                         "bashkit stdout for rg differential case {} did not contain {needle}",
-                        case.name
+                        name
                     );
                     assert!(
                         real_stdout.contains(needle),
                         "real rg stdout for rg differential case {} did not contain {needle}",
-                        case.name
+                        name
                     );
                 }
             }
@@ -6038,7 +6357,7 @@ mod tests {
         assert_eq!(
             bashkit.exit_code, real_code,
             "exit-code mismatch for rg differential case {}",
-            case.name
+            name
         );
     }
 
@@ -6510,6 +6829,59 @@ mod tests {
         assert!(no_parent.stdout.contains("ignored.txt"));
         assert!(no_parent.stdout.contains("keep.txt"));
         assert!(no_parent.stdout.contains("vcs.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_rg_global_ignore_files() {
+        let default_global = run_rg_fixture_with_cwd_and_env(
+            &["needle", "/proj"],
+            None,
+            DIFF_DEFAULT_GLOBAL_IGNORE_FILES,
+            &[],
+            "/",
+            DIFF_GLOBAL_IGNORE_ENV,
+        )
+        .await;
+        assert_eq!(default_global.exit_code, 0);
+        assert!(default_global.stdout.contains("keep.txt"));
+        assert!(!default_global.stdout.contains("global.txt"));
+
+        let default = run_rg_fixture_with_cwd_and_env(
+            &["needle", "/proj"],
+            None,
+            DIFF_GLOBAL_IGNORE_FILES,
+            &[],
+            "/",
+            DIFF_GLOBAL_IGNORE_ENV,
+        )
+        .await;
+        assert_eq!(default.exit_code, 0);
+        assert!(default.stdout.contains("keep.txt"));
+        assert!(default.stdout.contains("global.txt"));
+        assert!(!default.stdout.contains("custom.txt"));
+
+        let no_global = run_rg_fixture_with_cwd_and_env(
+            &["--no-ignore-global", "needle", "/proj"],
+            None,
+            DIFF_GLOBAL_IGNORE_FILES,
+            &[],
+            "/",
+            DIFF_GLOBAL_IGNORE_ENV,
+        )
+        .await;
+        assert_eq!(no_global.exit_code, 0);
+        assert!(no_global.stdout.contains("global.txt"));
+        assert!(no_global.stdout.contains("custom.txt"));
+        assert!(no_global.stdout.contains("keep.txt"));
+    }
+
+    #[test]
+    fn test_rg_git_config_excludes_file_parsing() {
+        let paths = parse_git_config_excludes_files(
+            "[core]\n\texcludesFile = ~/custom.ignore\n[other]\n\texcludesFile = /skip\n",
+            Path::new("/home"),
+        );
+        assert_eq!(paths, vec![PathBuf::from("/home/custom.ignore")]);
     }
 
     #[tokio::test]
@@ -7173,6 +7545,9 @@ mod tests {
     async fn diff_rg_matches_real_rg_cases() {
         for case in RG_DIFF_CASES {
             assert_rg_diff_case(case).await;
+        }
+        for case in RG_ENV_DIFF_CASES {
+            assert_rg_env_diff_case(case).await;
         }
     }
 
