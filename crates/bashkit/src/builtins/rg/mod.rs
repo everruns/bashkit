@@ -69,6 +69,7 @@ struct RgOptions {
     heading: bool,
     null: bool,
     sort_reverse: bool,
+    path_separator: String,
     hidden: bool,
     type_list: bool,
     no_ignore: bool,
@@ -175,6 +176,7 @@ impl RgOptions {
             heading: false,
             null: false,
             sort_reverse: false,
+            path_separator: "/".to_string(),
             hidden: false,
             type_list: false,
             no_ignore: false,
@@ -352,6 +354,8 @@ impl RgOptions {
                 opts.sort_reverse = false;
             } else if long_value(&mut p, "--sortr")?.is_some() {
                 opts.sort_reverse = true;
+            } else if let Some(val) = long_value(&mut p, "--path-separator")? {
+                opts.path_separator = parse_path_separator(&val)?;
             } else if p.flag("--color") {
                 // no-op (may have separate value arg like "never", skip it)
                 let _ = p.positional();
@@ -1032,8 +1036,8 @@ fn relative_path_to_slash(path: &Path, cwd: &Path) -> String {
     path_to_slash(relative).trim_start_matches('/').to_string()
 }
 
-fn display_path_for(path: &Path, cwd: &Path, root_arg: Option<&str>) -> String {
-    match root_arg {
+fn display_path_for(path: &Path, cwd: &Path, root_arg: Option<&str>, opts: &RgOptions) -> String {
+    let display = match root_arg {
         Some(arg) if arg.starts_with('/') => path_to_slash(path),
         Some(".") | Some("./") => {
             let relative = relative_path_to_slash(path, cwd);
@@ -1052,6 +1056,15 @@ fn display_path_for(path: &Path, cwd: &Path, root_arg: Option<&str>) -> String {
             }
         }
         _ => relative_path_to_slash(path, cwd),
+    };
+    apply_path_separator_to_display(&display, opts)
+}
+
+fn apply_path_separator_to_display(display: &str, opts: &RgOptions) -> String {
+    if opts.path_separator == "/" {
+        display.to_string()
+    } else {
+        display.replace('/', &opts.path_separator)
     }
 }
 
@@ -1089,6 +1102,16 @@ fn parse_context_value(value: &str, flag: &str) -> Result<usize> {
     value
         .parse()
         .map_err(|_| Error::Execution(format!("rg: invalid {} value: {}", flag, value)))
+}
+
+fn parse_path_separator(value: &str) -> Result<String> {
+    if value.len() == 1 {
+        Ok(value.to_string())
+    } else {
+        Err(Error::Execution(format!(
+            "rg: error parsing flag --path-separator: path separator must be exactly one byte: {value}"
+        )))
+    }
 }
 
 fn long_value(p: &mut super::arg_parser::ArgParser<'_>, name: &str) -> Result<Option<String>> {
@@ -1134,7 +1157,7 @@ async fn collect_rg_inputs(
             collect_rg_files_recursive(&*ctx.fs, std::slice::from_ref(ctx.cwd), opts, ctx.cwd)
                 .await;
         return Ok(RgCollectedInputs::new(
-            read_rg_files(&*ctx.fs, files, ctx.cwd, None).await,
+            read_rg_files(&*ctx.fs, files, ctx.cwd, None, opts).await,
         ));
     }
 
@@ -1152,7 +1175,7 @@ async fn collect_rg_inputs(
             let files =
                 collect_rg_files_recursive(&*ctx.fs, std::slice::from_ref(&path), opts, ctx.cwd)
                     .await;
-            inputs.extend(read_rg_files(&*ctx.fs, files, ctx.cwd, Some(p)).await);
+            inputs.extend(read_rg_files(&*ctx.fs, files, ctx.cwd, Some(p), opts).await);
             continue;
         }
 
@@ -1169,7 +1192,7 @@ async fn collect_rg_inputs(
                 continue;
             }
         };
-        inputs.push((p.clone(), text));
+        inputs.push((apply_path_separator_to_display(p, opts), text));
     }
     collected.inputs = inputs;
     Ok(collected)
@@ -1373,7 +1396,7 @@ async fn collect_rg_file_list(
         let files = collect_rg_files_recursive(fs, std::slice::from_ref(&root), opts, cwd).await;
         return files
             .iter()
-            .map(|path| display_path_for(path, cwd, None))
+            .map(|path| display_path_for(path, cwd, None, opts))
             .collect();
     }
 
@@ -1388,10 +1411,10 @@ async fn collect_rg_file_list(
             result.extend(
                 files
                     .iter()
-                    .map(|path| display_path_for(path, cwd, Some(p))),
+                    .map(|path| display_path_for(path, cwd, Some(p), opts)),
             );
         } else if meta_is_file_and_matches(fs, &path, opts, cwd).await {
-            result.push(display_path_for(&path, cwd, Some(p)));
+            result.push(display_path_for(&path, cwd, Some(p), opts));
         }
     }
     result.sort();
@@ -1417,12 +1440,13 @@ async fn read_rg_files(
     files: Vec<PathBuf>,
     cwd: &Path,
     root_arg: Option<&str>,
+    opts: &RgOptions,
 ) -> Vec<(String, String)> {
     let mut inputs = Vec::new();
     for path in files {
         if let Ok(content) = fs.read_file(&path).await {
             inputs.push((
-                display_path_for(&path, cwd, root_arg),
+                display_path_for(&path, cwd, root_arg, opts),
                 String::from_utf8_lossy(&content).into_owned(),
             ));
         }
@@ -1507,7 +1531,7 @@ async fn try_indexed_search(
             }
             if let Ok(content) = fs.read_file(&candidate).await {
                 inputs.push((
-                    display_path_for(&candidate, cwd, root_arg.as_deref()),
+                    display_path_for(&candidate, cwd, root_arg.as_deref(), opts),
                     String::from_utf8_lossy(&content).into_owned(),
                 ));
             }
@@ -1808,7 +1832,7 @@ fn append_rg_stats(output: &mut String, stats: &RgSearchStats, bytes_printed: us
 #[async_trait]
 impl Builtin for Rg {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        let help_text = "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i, --ignore-case\tcase insensitive\n  -S, --smart-case\tcase insensitive if pattern is lowercase\n  -s, --case-sensitive\tcase sensitive\n  -n, --line-number\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  --column\tshow column numbers\n  -b, --byte-offset\tshow byte offsets\n  --vimgrep\tshow file:line:column:match lines\n  --json\tshow JSON Lines events\n  --stats\tshow search statistics\n  --null\tterminate path fields with NUL\n  -c, --count\tcount matching lines\n  --count-matches\tcount individual matches\n  --include-zero\tinclude zero counts\n  -l, --files-with-matches\tfiles with matches\n  --files-without-match\tfiles without matches\n  --files\tprint files that would be searched\n  -v, --invert-match\tinvert match\n  -w, --word-regexp\tword boundary\n  -x, --line-regexp\tmatch whole lines\n  -F, --fixed-strings\tfixed strings (literal)\n  -a, --text\tsearch binary files as text\n  --binary\tsearch binary files and print binary-match summaries\n  -o, --only-matching\tshow only matching text\n  -q, --quiet\tsuppress output; exit status only\n  -e, --regexp PATTERN\tuse PATTERN for matching\n  -f, --file PATTERNFILE\tread patterns from file\n  -r, --replace REPLACEMENT\treplace matches in output\n  --passthru\tprint matching and non-matching lines\n  --trim\ttrim whitespace from output lines\n  -m, --max-count NUM\tmax count per file\n  -M, --max-columns NUM\tomit lines longer than NUM columns\n  --max-columns-preview\tshow prefixes of long lines\n  --max-depth NUM\tlimit recursive directory depth\n  -A, --after-context NUM\tshow trailing context\n  -B, --before-context NUM\tshow leading context\n  -C, --context NUM\tshow leading and trailing context\n  --context-separator SEP\tset context group separator\n  --field-match-separator SEP\tset match field separator\n  --field-context-separator SEP\tset context field separator\n  --heading\tgroup matches by file\n  --no-heading\tdisable heading output\n  --sort SORTBY\tsort paths (path only)\n  --sortr SORTBY\tsort paths in reverse (path only)\n  --sort-files\tsort --files output\n  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  -t, --type TYPE\tinclude files matching TYPE\n  -T, --type-not TYPE\texclude files matching TYPE\n  --type-add TYPE:GLOB\tadd a file type glob\n  --type-clear TYPE\tclear a file type definition\n  --type-list\tshow file type definitions\n  --ignore-file FILE\tuse additional ignore file\n  --no-ignore\tdo not use ignore files\n  --no-ignore-dot\tdo not use .ignore files\n  --no-ignore-vcs\tdo not use .gitignore files\n  --no-require-git\tuse .gitignore outside git repositories\n  --require-git\trequire a git repository for .gitignore files\n  -u, --unrestricted\treduce filtering (repeatable)\n  --messages\tshow file read diagnostics\n  --no-messages\tsuppress file read diagnostics\n  --hidden\tsearch hidden files and directories\n  --no-hidden\tdo not search hidden files and directories\n  -H, --with-filename\tshow filename\n  -I, --no-filename\tsuppress filename\n  --line-buffered\tforce line buffering (no-op)\n  --block-buffered\tforce block buffering (no-op)\n  --no-config\tdo not read config files (no-op)\n  --color MODE\tcolor output (no-op)\n  -h, --help\tdisplay this help and exit\n  -V, --version\toutput version information and exit\n";
+        let help_text = "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i, --ignore-case\tcase insensitive\n  -S, --smart-case\tcase insensitive if pattern is lowercase\n  -s, --case-sensitive\tcase sensitive\n  -n, --line-number\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  --column\tshow column numbers\n  -b, --byte-offset\tshow byte offsets\n  --vimgrep\tshow file:line:column:match lines\n  --json\tshow JSON Lines events\n  --stats\tshow search statistics\n  --null\tterminate path fields with NUL\n  -c, --count\tcount matching lines\n  --count-matches\tcount individual matches\n  --include-zero\tinclude zero counts\n  -l, --files-with-matches\tfiles with matches\n  --files-without-match\tfiles without matches\n  --files\tprint files that would be searched\n  -v, --invert-match\tinvert match\n  -w, --word-regexp\tword boundary\n  -x, --line-regexp\tmatch whole lines\n  -F, --fixed-strings\tfixed strings (literal)\n  -a, --text\tsearch binary files as text\n  --binary\tsearch binary files and print binary-match summaries\n  -o, --only-matching\tshow only matching text\n  -q, --quiet\tsuppress output; exit status only\n  -e, --regexp PATTERN\tuse PATTERN for matching\n  -f, --file PATTERNFILE\tread patterns from file\n  -r, --replace REPLACEMENT\treplace matches in output\n  --passthru\tprint matching and non-matching lines\n  --trim\ttrim whitespace from output lines\n  -m, --max-count NUM\tmax count per file\n  -M, --max-columns NUM\tomit lines longer than NUM columns\n  --max-columns-preview\tshow prefixes of long lines\n  --max-depth NUM\tlimit recursive directory depth\n  -A, --after-context NUM\tshow trailing context\n  -B, --before-context NUM\tshow leading context\n  -C, --context NUM\tshow leading and trailing context\n  --context-separator SEP\tset context group separator\n  --field-match-separator SEP\tset match field separator\n  --field-context-separator SEP\tset context field separator\n  --heading\tgroup matches by file\n  --no-heading\tdisable heading output\n  --sort SORTBY\tsort paths (path only)\n  --sortr SORTBY\tsort paths in reverse (path only)\n  --sort-files\tsort --files output\n  --path-separator SEP\tset displayed path separator\n  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  -t, --type TYPE\tinclude files matching TYPE\n  -T, --type-not TYPE\texclude files matching TYPE\n  --type-add TYPE:GLOB\tadd a file type glob\n  --type-clear TYPE\tclear a file type definition\n  --type-list\tshow file type definitions\n  --ignore-file FILE\tuse additional ignore file\n  --no-ignore\tdo not use ignore files\n  --no-ignore-dot\tdo not use .ignore files\n  --no-ignore-vcs\tdo not use .gitignore files\n  --no-require-git\tuse .gitignore outside git repositories\n  --require-git\trequire a git repository for .gitignore files\n  -u, --unrestricted\treduce filtering (repeatable)\n  --messages\tshow file read diagnostics\n  --no-messages\tsuppress file read diagnostics\n  --hidden\tsearch hidden files and directories\n  --no-hidden\tdo not search hidden files and directories\n  -H, --with-filename\tshow filename\n  -I, --no-filename\tsuppress filename\n  --line-buffered\tforce line buffering (no-op)\n  --block-buffered\tforce block buffering (no-op)\n  --no-config\tdo not read config files (no-op)\n  --color MODE\tcolor output (no-op)\n  -h, --help\tdisplay this help and exit\n  -V, --version\toutput version information and exit\n";
         if ctx.args.iter().any(|arg| arg == "-h") {
             return Ok(ExecResult::ok(help_text.to_string()));
         }
@@ -2776,6 +2800,30 @@ mod tests {
             output: RgDiffOutput::Exact,
         },
         RgDiffCase {
+            name: "path separator explicit file",
+            args: &["-H", "--path-separator", "_", "needle", "proj/src/main.rs"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "path separator dot relative file",
+            args: &["-H", "--path-separator=@", "needle", "./proj/src/main.rs"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "path separator files list",
+            args: &["--files", "--path-separator", "_", "proj/src"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
             name: "byte offset",
             args: &["-n", "--column", "-b", "needle", "proj/offset.txt"],
             stdin: None,
@@ -3413,6 +3461,7 @@ mod tests {
         assert!(long_help.stdout.contains("--unrestricted"));
         assert!(long_help.stdout.contains("--no-require-git"));
         assert!(long_help.stdout.contains("--no-config"));
+        assert!(long_help.stdout.contains("--path-separator"));
 
         let short_help = run_rg(&["-h"], None, &[]).await;
         assert_eq!(short_help.exit_code, 0);
@@ -3440,6 +3489,13 @@ mod tests {
 
         let invalid = RgOptions::parse(&["--type-add".to_string(), "foo".to_string()]);
         assert!(invalid.is_err());
+
+        let invalid_separator = RgOptions::parse(&[
+            "--path-separator".to_string(),
+            "xy".to_string(),
+            "needle".to_string(),
+        ]);
+        assert!(invalid_separator.is_err());
     }
 
     #[tokio::test]
