@@ -79,6 +79,9 @@ struct RgOptions {
     type_list: bool,
     no_ignore: bool,
     no_ignore_dot: bool,
+    no_ignore_exclude: bool,
+    no_ignore_global: bool,
+    no_ignore_parent: bool,
     no_ignore_files: bool,
     no_ignore_vcs: bool,
     require_git: bool,
@@ -205,6 +208,9 @@ impl RgOptions {
             type_list: false,
             no_ignore: false,
             no_ignore_dot: false,
+            no_ignore_exclude: false,
+            no_ignore_global: false,
+            no_ignore_parent: false,
             no_ignore_files: false,
             no_ignore_vcs: false,
             require_git: true,
@@ -428,15 +434,48 @@ impl RgOptions {
             } else if p.flag("--no-ignore") {
                 opts.no_ignore = true;
                 opts.no_ignore_dot = true;
+                opts.no_ignore_exclude = true;
+                opts.no_ignore_global = true;
+                opts.no_ignore_parent = true;
                 opts.no_ignore_vcs = true;
+            } else if p.flag("--ignore") {
+                opts.no_ignore = false;
+                opts.no_ignore_dot = false;
+                opts.no_ignore_exclude = false;
+                opts.no_ignore_global = false;
+                opts.no_ignore_parent = false;
+                opts.no_ignore_vcs = false;
             } else if p.flag("--no-ignore-dot") {
                 opts.no_ignore_dot = true;
+            } else if p.flag("--ignore-dot") {
+                opts.no_ignore = false;
+                opts.no_ignore_dot = false;
             } else if p.flag("--no-ignore-files") {
                 opts.no_ignore_files = true;
             } else if p.flag("--ignore-files") {
                 opts.no_ignore_files = false;
+            } else if p.flag("--no-ignore-exclude") {
+                opts.no_ignore_exclude = true;
+            } else if p.flag("--ignore-exclude") {
+                opts.no_ignore = false;
+                opts.no_ignore_exclude = false;
+            } else if p.flag("--no-ignore-global") {
+                opts.no_ignore_global = true;
+            } else if p.flag("--ignore-global") {
+                opts.no_ignore = false;
+                opts.no_ignore_global = false;
+            } else if p.flag("--no-ignore-parent") {
+                opts.no_ignore_parent = true;
+            } else if p.flag("--ignore-parent") {
+                opts.no_ignore = false;
+                opts.no_ignore_parent = false;
             } else if p.flag("--no-ignore-vcs") {
                 opts.no_ignore_vcs = true;
+                opts.no_ignore_parent = true;
+            } else if p.flag("--ignore-vcs") {
+                opts.no_ignore = false;
+                opts.no_ignore_vcs = false;
+                opts.no_ignore_parent = false;
             } else if p.flag("--ignore-file-case-insensitive") {
                 opts.ignore_file_case_insensitive = true;
             } else if p.flag("--no-ignore-file-case-insensitive") {
@@ -455,7 +494,6 @@ impl RgOptions {
                 "--no-config",
                 "--line-buffered",
                 "--block-buffered",
-                "--no-ignore-parent",
                 "--follow",
                 "--mmap",
                 "--no-mmap",
@@ -1574,6 +1612,16 @@ async fn load_local_ignore_rules(
             rules,
         )
         .await?;
+        if !opts.no_ignore_exclude {
+            load_optional_ignore_file(
+                fs,
+                &dir.join(".git/info/exclude"),
+                dir,
+                opts.ignore_file_case_insensitive,
+                rules,
+            )
+            .await?;
+        }
     }
     Ok(())
 }
@@ -2287,6 +2335,10 @@ impl Builtin for Rg {
         let help_text = help_text.replace(
             "  --ignore-file FILE\tuse additional ignore file\n",
             "  --ignore-file FILE\tuse additional ignore file\n  --ignore-file-case-insensitive\tprocess ignore files case-insensitively\n  --no-ignore-file-case-insensitive\tdisable case-insensitive ignore files\n  --no-ignore-files\tdo not use --ignore-file paths\n  --ignore-files\tuse --ignore-file paths\n",
+        );
+        let help_text = help_text.replace(
+            "  --no-ignore\tdo not use ignore files\n  --no-ignore-dot\tdo not use .ignore files\n  --no-ignore-vcs\tdo not use .gitignore files\n",
+            "  --no-ignore\tdo not use ignore files\n  --ignore\tuse ignore files\n  --no-ignore-dot\tdo not use .ignore files\n  --ignore-dot\tuse .ignore files\n  --no-ignore-exclude\tdo not use .git/info/exclude files\n  --ignore-exclude\tuse .git/info/exclude files\n  --no-ignore-global\tdo not use global ignore files (no-op)\n  --ignore-global\tuse global ignore files (no-op)\n  --no-ignore-parent\tdo not use parent ignore files (no-op)\n  --ignore-parent\tuse parent ignore files (no-op)\n  --no-ignore-vcs\tdo not use .gitignore files\n  --ignore-vcs\tuse .gitignore files\n",
         );
         let help_text = help_text.replace(
             "  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n",
@@ -3266,6 +3318,7 @@ mod tests {
 
     const DIFF_IGNORE_FILES: &[(&str, &[u8])] = &[
         ("/proj/.git/config", b"[core]\n"),
+        ("/proj/.git/info/exclude", b"local.txt\n"),
         (
             "/proj/.gitignore",
             b"target/\n*.log\n!keep.log\nvendor/**\n",
@@ -3279,6 +3332,7 @@ mod tests {
         ("/proj/target/out.txt", b"needle\n"),
         ("/proj/src/ignored.txt", b"needle\n"),
         ("/proj/rgonly.txt", b"needle\n"),
+        ("/proj/local.txt", b"needle\n"),
         ("/proj/vendor/lib.rs", b"needle\n"),
         ("/proj/scratch.tmp", b"needle\n"),
     ];
@@ -3956,6 +4010,14 @@ mod tests {
             output: RgDiffOutput::UnorderedLines,
         },
         RgDiffCase {
+            name: "ignore reenables auto ignore files",
+            args: &["--no-ignore", "--ignore", "needle", "proj"],
+            stdin: None,
+            files: DIFF_IGNORE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
             name: "no ignore vcs keeps dot ignore",
             args: &["--no-ignore-vcs", "needle", "proj"],
             stdin: None,
@@ -3964,8 +4026,48 @@ mod tests {
             output: RgDiffOutput::UnorderedLines,
         },
         RgDiffCase {
+            name: "ignore vcs reenables vcs ignore",
+            args: &["--no-ignore-vcs", "--ignore-vcs", "needle", "proj"],
+            stdin: None,
+            files: DIFF_IGNORE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
             name: "no ignore dot keeps vcs ignore",
             args: &["--no-ignore-dot", "needle", "proj"],
+            stdin: None,
+            files: DIFF_IGNORE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "ignore dot reenables dot ignore",
+            args: &["--no-ignore-dot", "--ignore-dot", "needle", "proj"],
+            stdin: None,
+            files: DIFF_IGNORE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "no ignore exclude keeps vcs ignore",
+            args: &["--no-ignore-exclude", "needle", "proj"],
+            stdin: None,
+            files: DIFF_IGNORE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "ignore exclude reenables local exclude",
+            args: &["--no-ignore-exclude", "--ignore-exclude", "needle", "proj"],
+            stdin: None,
+            files: DIFF_IGNORE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "no ignore partial dot reenable",
+            args: &["--no-ignore", "--ignore-dot", "needle", "proj"],
             stdin: None,
             files: DIFF_IGNORE_FILES,
             cwd: "/",
@@ -4796,6 +4898,9 @@ mod tests {
         assert!(long_help.stdout.contains("--multiline-dotall"));
         assert!(long_help.stdout.contains("--no-ignore-files"));
         assert!(long_help.stdout.contains("--ignore-file-case-insensitive"));
+        assert!(long_help.stdout.contains("--ignore-dot"));
+        assert!(long_help.stdout.contains("--no-ignore-exclude"));
+        assert!(long_help.stdout.contains("--ignore-vcs"));
         assert!(long_help.stdout.contains("-d, --max-depth"));
         assert!(long_help.stdout.contains("--maxdepth"));
 
