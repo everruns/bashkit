@@ -30,32 +30,6 @@ pub(crate) fn build_regex_opts(
         .build()
 }
 
-/// Build a regex from a single pattern with common options.
-///
-/// Handles fixed-string escaping, word-boundary wrapping, and case insensitivity.
-pub(crate) fn build_search_regex(
-    pattern: &str,
-    fixed_strings: bool,
-    word_boundary: bool,
-    ignore_case: bool,
-    cmd_name: &str,
-) -> Result<Regex> {
-    let pat = if fixed_strings {
-        regex::escape(pattern)
-    } else {
-        pattern.to_string()
-    };
-
-    let pat = if word_boundary {
-        format!(r"\b{}\b", pat)
-    } else {
-        pat
-    };
-
-    build_regex_opts(&pat, ignore_case)
-        .map_err(|e| Error::Execution(format!("{}: invalid pattern: {}", cmd_name, e)))
-}
-
 /// Parse a numeric flag argument from short-flag character stream.
 ///
 /// Handles both `-m5` (value in same arg) and `-m 5` (value in next arg) forms.
