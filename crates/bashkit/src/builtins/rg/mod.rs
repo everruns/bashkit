@@ -70,6 +70,7 @@ struct RgOptions {
     null: bool,
     sort_reverse: bool,
     path_separator: String,
+    encoding: RgEncoding,
     hidden: bool,
     type_list: bool,
     no_ignore: bool,
@@ -87,6 +88,15 @@ struct RgOptions {
     type_database: RgTypeDatabase,
     type_includes: Vec<RgFileType>,
     type_excludes: Vec<RgFileType>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RgEncoding {
+    Auto,
+    None,
+    Utf8,
+    Utf16Le,
+    Utf16Be,
 }
 
 #[derive(Clone)]
@@ -177,6 +187,7 @@ impl RgOptions {
             null: false,
             sort_reverse: false,
             path_separator: "/".to_string(),
+            encoding: RgEncoding::Auto,
             hidden: false,
             type_list: false,
             no_ignore: false,
@@ -356,6 +367,10 @@ impl RgOptions {
                 opts.sort_reverse = true;
             } else if let Some(val) = long_value(&mut p, "--path-separator")? {
                 opts.path_separator = parse_path_separator(&val)?;
+            } else if let Some(val) = p.flag_value("-E", "rg").map_err(Error::Execution)? {
+                opts.encoding = parse_encoding(val)?;
+            } else if let Some(val) = long_value(&mut p, "--encoding")? {
+                opts.encoding = parse_encoding(&val)?;
             } else if let Some(val) = long_equals_value(&mut p, "--engine") {
                 parse_regex_engine(&val)?;
             } else if p.flag("--color") {
@@ -444,6 +459,23 @@ impl RgOptions {
                         'q' => opts.quiet = true,
                         'b' => opts.byte_offset = true,
                         'P' => {}
+                        'E' => {
+                            let rest: String = chars[j + 1..].iter().collect();
+                            let encoding = if !rest.is_empty() {
+                                rest
+                            } else {
+                                match p.positional() {
+                                    Some(v) => v.to_string(),
+                                    None => {
+                                        return Err(Error::Execution(
+                                            "rg: -E requires an argument".to_string(),
+                                        ));
+                                    }
+                                }
+                            };
+                            opts.encoding = parse_encoding(&encoding)?;
+                            break;
+                        }
                         'e' => {
                             let rest: String = chars[j + 1..].iter().collect();
                             let pattern = if !rest.is_empty() {
@@ -1124,6 +1156,65 @@ fn parse_path_separator(value: &str) -> Result<String> {
     }
 }
 
+fn parse_encoding(value: &str) -> Result<RgEncoding> {
+    match value.to_ascii_lowercase().as_str() {
+        "auto" => Ok(RgEncoding::Auto),
+        "none" => Ok(RgEncoding::None),
+        "utf-8" | "utf8" => Ok(RgEncoding::Utf8),
+        "utf-16le" | "utf16le" => Ok(RgEncoding::Utf16Le),
+        "utf-16be" | "utf16be" => Ok(RgEncoding::Utf16Be),
+        _ => Err(Error::Execution(format!(
+            "rg: error parsing flag --encoding: grep config error: unknown encoding: {value}"
+        ))),
+    }
+}
+
+fn decode_rg_content(content: &[u8], opts: &RgOptions) -> String {
+    match opts.encoding {
+        RgEncoding::None | RgEncoding::Utf8 => decode_utf8_lossy_strip_bom(content),
+        RgEncoding::Utf16Le => decode_utf16_bytes(strip_utf16le_bom(content), false),
+        RgEncoding::Utf16Be => decode_utf16_bytes(strip_utf16be_bom(content), true),
+        RgEncoding::Auto => {
+            if let Some(rest) = content.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
+                String::from_utf8_lossy(rest).into_owned()
+            } else if let Some(rest) = content.strip_prefix(&[0xFF, 0xFE]) {
+                decode_utf16_bytes(rest, false)
+            } else if let Some(rest) = content.strip_prefix(&[0xFE, 0xFF]) {
+                decode_utf16_bytes(rest, true)
+            } else {
+                String::from_utf8_lossy(content).into_owned()
+            }
+        }
+    }
+}
+
+fn decode_utf8_lossy_strip_bom(content: &[u8]) -> String {
+    let content = content.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(content);
+    String::from_utf8_lossy(content).into_owned()
+}
+
+fn strip_utf16le_bom(content: &[u8]) -> &[u8] {
+    content.strip_prefix(&[0xFF, 0xFE]).unwrap_or(content)
+}
+
+fn strip_utf16be_bom(content: &[u8]) -> &[u8] {
+    content.strip_prefix(&[0xFE, 0xFF]).unwrap_or(content)
+}
+
+fn decode_utf16_bytes(content: &[u8], big_endian: bool) -> String {
+    let mut units = Vec::with_capacity(content.len().div_ceil(2));
+    for chunk in content.chunks(2) {
+        let bytes = [chunk[0], *chunk.get(1).unwrap_or(&0)];
+        let unit = if big_endian {
+            u16::from_be_bytes(bytes)
+        } else {
+            u16::from_le_bytes(bytes)
+        };
+        units.push(unit);
+    }
+    String::from_utf16_lossy(&units)
+}
+
 fn parse_regex_engine(value: &str) -> Result<()> {
     match value {
         "default" | "auto" | "pcre2" => Ok(()),
@@ -1162,6 +1253,19 @@ fn long_value(p: &mut super::arg_parser::ArgParser<'_>, name: &str) -> Result<Op
     } else {
         Ok(None)
     }
+}
+
+async fn read_rg_text_file(
+    fs: &dyn crate::fs::FileSystem,
+    path: &Path,
+    opts: &RgOptions,
+) -> std::result::Result<String, ExecResult> {
+    let content = fs
+        .read_file(path)
+        .await
+        .map_err(|e| ExecResult::err(format!("rg: {}: {e}\n", path.display()), 1))?;
+
+    Ok(decode_rg_content(&content, opts))
 }
 
 async fn collect_rg_inputs(
@@ -1211,7 +1315,7 @@ async fn collect_rg_inputs(
         if !opts.matches_globs(&path, ctx.cwd) {
             continue;
         }
-        let text = match read_text_file(&*ctx.fs, &path, "rg").await {
+        let text = match read_rg_text_file(&*ctx.fs, &path, opts).await {
             Ok(t) => t,
             Err(e) => {
                 collected.had_errors = true;
@@ -1476,7 +1580,7 @@ async fn read_rg_files(
         if let Ok(content) = fs.read_file(&path).await {
             inputs.push((
                 display_path_for(&path, cwd, root_arg, opts),
-                String::from_utf8_lossy(&content).into_owned(),
+                decode_rg_content(&content, opts),
             ));
         }
     }
@@ -1561,7 +1665,7 @@ async fn try_indexed_search(
             if let Ok(content) = fs.read_file(&candidate).await {
                 inputs.push((
                     display_path_for(&candidate, cwd, root_arg.as_deref(), opts),
-                    String::from_utf8_lossy(&content).into_owned(),
+                    decode_rg_content(&content, opts),
                 ));
             }
         }
@@ -1861,7 +1965,7 @@ fn append_rg_stats(output: &mut String, stats: &RgSearchStats, bytes_printed: us
 #[async_trait]
 impl Builtin for Rg {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        let help_text = "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i, --ignore-case\tcase insensitive\n  -S, --smart-case\tcase insensitive if pattern is lowercase\n  -s, --case-sensitive\tcase sensitive\n  -n, --line-number\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  --column\tshow column numbers\n  -b, --byte-offset\tshow byte offsets\n  --vimgrep\tshow file:line:column:match lines\n  --json\tshow JSON Lines events\n  --stats\tshow search statistics\n  --null\tterminate path fields with NUL\n  -c, --count\tcount matching lines\n  --count-matches\tcount individual matches\n  --include-zero\tinclude zero counts\n  -l, --files-with-matches\tfiles with matches\n  --files-without-match\tfiles without matches\n  --files\tprint files that would be searched\n  -v, --invert-match\tinvert match\n  -w, --word-regexp\tword boundary\n  -x, --line-regexp\tmatch whole lines\n  -F, --fixed-strings\tfixed strings (literal)\n  -a, --text\tsearch binary files as text\n  --binary\tsearch binary files and print binary-match summaries\n  -o, --only-matching\tshow only matching text\n  -q, --quiet\tsuppress output; exit status only\n  -e, --regexp PATTERN\tuse PATTERN for matching\n  -f, --file PATTERNFILE\tread patterns from file\n  -r, --replace REPLACEMENT\treplace matches in output\n  --passthru\tprint matching and non-matching lines\n  --trim\ttrim whitespace from output lines\n  -m, --max-count NUM\tmax count per file\n  -M, --max-columns NUM\tomit lines longer than NUM columns\n  --max-columns-preview\tshow prefixes of long lines\n  --max-depth NUM\tlimit recursive directory depth\n  -A, --after-context NUM\tshow trailing context\n  -B, --before-context NUM\tshow leading context\n  -C, --context NUM\tshow leading and trailing context\n  --context-separator SEP\tset context group separator\n  --field-match-separator SEP\tset match field separator\n  --field-context-separator SEP\tset context field separator\n  --heading\tgroup matches by file\n  --no-heading\tdisable heading output\n  --sort SORTBY\tsort paths (path only)\n  --sortr SORTBY\tsort paths in reverse (path only)\n  --sort-files\tsort --files output\n  --path-separator SEP\tset displayed path separator\n  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  -t, --type TYPE\tinclude files matching TYPE\n  -T, --type-not TYPE\texclude files matching TYPE\n  --type-add TYPE:GLOB\tadd a file type glob\n  --type-clear TYPE\tclear a file type definition\n  --type-list\tshow file type definitions\n  --ignore-file FILE\tuse additional ignore file\n  --no-ignore\tdo not use ignore files\n  --no-ignore-dot\tdo not use .ignore files\n  --no-ignore-vcs\tdo not use .gitignore files\n  --no-require-git\tuse .gitignore outside git repositories\n  --require-git\trequire a git repository for .gitignore files\n  -u, --unrestricted\treduce filtering (repeatable)\n  --messages\tshow file read diagnostics\n  --no-messages\tsuppress file read diagnostics\n  --hidden\tsearch hidden files and directories\n  --no-hidden\tdo not search hidden files and directories\n  -H, --with-filename\tshow filename\n  -I, --no-filename\tsuppress filename\n  --line-buffered\tforce line buffering (no-op)\n  --block-buffered\tforce block buffering (no-op)\n  --no-config\tdo not read config files (no-op)\n  --mmap\tsearch using memory maps when possible (no-op)\n  --no-mmap\tdisable memory maps (no-op)\n  -P, --pcre2\tuse PCRE2 regex engine for supported patterns (no-op)\n  --no-pcre2\tdisable PCRE2 regex engine (no-op)\n  --engine ENGINE\tselect regex engine: default, auto, pcre2 (no-op)\n  --auto-hybrid-regex\tuse PCRE2 when needed (no-op)\n  --no-auto-hybrid-regex\tdisable auto hybrid regex (no-op)\n  --color MODE\tcolor output (no-op)\n  -h, --help\tdisplay this help and exit\n  -V, --version\toutput version information and exit\n";
+        let help_text = "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i, --ignore-case\tcase insensitive\n  -S, --smart-case\tcase insensitive if pattern is lowercase\n  -s, --case-sensitive\tcase sensitive\n  -n, --line-number\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  --column\tshow column numbers\n  -b, --byte-offset\tshow byte offsets\n  --vimgrep\tshow file:line:column:match lines\n  --json\tshow JSON Lines events\n  --stats\tshow search statistics\n  --null\tterminate path fields with NUL\n  -c, --count\tcount matching lines\n  --count-matches\tcount individual matches\n  --include-zero\tinclude zero counts\n  -l, --files-with-matches\tfiles with matches\n  --files-without-match\tfiles without matches\n  --files\tprint files that would be searched\n  -v, --invert-match\tinvert match\n  -w, --word-regexp\tword boundary\n  -x, --line-regexp\tmatch whole lines\n  -F, --fixed-strings\tfixed strings (literal)\n  -a, --text\tsearch binary files as text\n  --binary\tsearch binary files and print binary-match summaries\n  -o, --only-matching\tshow only matching text\n  -q, --quiet\tsuppress output; exit status only\n  -e, --regexp PATTERN\tuse PATTERN for matching\n  -f, --file PATTERNFILE\tread patterns from file\n  -E, --encoding ENCODING\tdecode searched files using ENCODING\n  -r, --replace REPLACEMENT\treplace matches in output\n  --passthru\tprint matching and non-matching lines\n  --trim\ttrim whitespace from output lines\n  -m, --max-count NUM\tmax count per file\n  -M, --max-columns NUM\tomit lines longer than NUM columns\n  --max-columns-preview\tshow prefixes of long lines\n  --max-depth NUM\tlimit recursive directory depth\n  -A, --after-context NUM\tshow trailing context\n  -B, --before-context NUM\tshow leading context\n  -C, --context NUM\tshow leading and trailing context\n  --context-separator SEP\tset context group separator\n  --field-match-separator SEP\tset match field separator\n  --field-context-separator SEP\tset context field separator\n  --heading\tgroup matches by file\n  --no-heading\tdisable heading output\n  --sort SORTBY\tsort paths (path only)\n  --sortr SORTBY\tsort paths in reverse (path only)\n  --sort-files\tsort --files output\n  --path-separator SEP\tset displayed path separator\n  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  -t, --type TYPE\tinclude files matching TYPE\n  -T, --type-not TYPE\texclude files matching TYPE\n  --type-add TYPE:GLOB\tadd a file type glob\n  --type-clear TYPE\tclear a file type definition\n  --type-list\tshow file type definitions\n  --ignore-file FILE\tuse additional ignore file\n  --no-ignore\tdo not use ignore files\n  --no-ignore-dot\tdo not use .ignore files\n  --no-ignore-vcs\tdo not use .gitignore files\n  --no-require-git\tuse .gitignore outside git repositories\n  --require-git\trequire a git repository for .gitignore files\n  -u, --unrestricted\treduce filtering (repeatable)\n  --messages\tshow file read diagnostics\n  --no-messages\tsuppress file read diagnostics\n  --hidden\tsearch hidden files and directories\n  --no-hidden\tdo not search hidden files and directories\n  -H, --with-filename\tshow filename\n  -I, --no-filename\tsuppress filename\n  --line-buffered\tforce line buffering (no-op)\n  --block-buffered\tforce block buffering (no-op)\n  --no-config\tdo not read config files (no-op)\n  --mmap\tsearch using memory maps when possible (no-op)\n  --no-mmap\tdisable memory maps (no-op)\n  -P, --pcre2\tuse PCRE2 regex engine for supported patterns (no-op)\n  --no-pcre2\tdisable PCRE2 regex engine (no-op)\n  --engine ENGINE\tselect regex engine: default, auto, pcre2 (no-op)\n  --auto-hybrid-regex\tuse PCRE2 when needed (no-op)\n  --no-auto-hybrid-regex\tdisable auto hybrid regex (no-op)\n  --color MODE\tcolor output (no-op)\n  -h, --help\tdisplay this help and exit\n  -V, --version\toutput version information and exit\n";
         if ctx.args.iter().any(|arg| arg == "-h") {
             return Ok(ExecResult::ok(help_text.to_string()));
         }
@@ -2453,6 +2557,11 @@ mod tests {
     const DIFF_BINARY_FILES: &[(&str, &[u8])] = &[
         ("/proj/bin.dat", b"abc\0needle\n"),
         ("/proj/text.txt", b"needle\n"),
+    ];
+
+    const DIFF_ENCODING_FILES: &[(&str, &[u8])] = &[
+        ("/proj/utf16le.txt", b"n\0e\0e\0d\0l\0e\0\n\0"),
+        ("/proj/utf16bom.txt", b"\xff\xfen\0e\0e\0d\0l\0e\0\n\0"),
     ];
 
     const DIFF_UNRESTRICTED_FILES: &[(&str, &[u8])] = &[
@@ -3083,6 +3192,38 @@ mod tests {
             output: RgDiffOutput::UnorderedLines,
         },
         RgDiffCase {
+            name: "encoding utf16le long",
+            args: &["--encoding=utf-16le", "needle", "proj/utf16le.txt"],
+            stdin: None,
+            files: DIFF_ENCODING_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "encoding utf16le short",
+            args: &["-E", "utf-16le", "needle", "proj/utf16le.txt"],
+            stdin: None,
+            files: DIFF_ENCODING_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "encoding auto sniffs utf16 bom",
+            args: &["needle", "proj/utf16bom.txt"],
+            stdin: None,
+            files: DIFF_ENCODING_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "encoding none disables bom sniffing",
+            args: &["--encoding=none", "needle", "proj/utf16bom.txt"],
+            stdin: None,
+            files: DIFF_ENCODING_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
             name: "unrestricted disables ignore files",
             args: &["-u", "needle", "proj"],
             stdin: None,
@@ -3574,6 +3715,7 @@ mod tests {
         assert!(long_help.stdout.contains("--engine"));
         assert!(long_help.stdout.contains("--mmap"));
         assert!(long_help.stdout.contains("--pcre2"));
+        assert!(long_help.stdout.contains("--encoding"));
 
         let short_help = run_rg(&["-h"], None, &[]).await;
         assert_eq!(short_help.exit_code, 0);
@@ -3615,6 +3757,13 @@ mod tests {
             "a.txt".to_string(),
         ]);
         assert!(invalid_engine.is_err());
+
+        let invalid_encoding = RgOptions::parse(&[
+            "--encoding=unknown".to_string(),
+            "needle".to_string(),
+            "a.txt".to_string(),
+        ]);
+        assert!(invalid_encoding.is_err());
     }
 
     #[tokio::test]
