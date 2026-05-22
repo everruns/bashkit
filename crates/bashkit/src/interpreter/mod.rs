@@ -261,7 +261,7 @@ pub(crate) struct ShellRef<'a> {
     /// Direct mutable access to trap handlers.
     pub(crate) traps: &'a mut HashMap<String, String>,
     /// Registered builtin commands (read-only, accessed via `has_builtin`).
-    pub(crate) builtins: &'a HashMap<String, Box<dyn Builtin>>,
+    pub(crate) builtins: &'a HashMap<String, Arc<dyn Builtin>>,
     /// Defined shell functions (read-only, accessed via `has_function`).
     pub(crate) functions: &'a HashMap<String, FunctionDef>,
     /// Call stack frames (read-only, accessed via `call_stack_depth`/`call_stack_frame_name`).
@@ -748,8 +748,18 @@ pub struct Interpreter {
     assoc_arrays: HashMap<String, HashMap<String, String>>,
     cwd: PathBuf,
     last_exit_code: i32,
-    /// Built-in commands (default + custom)
-    builtins: HashMap<String, Box<dyn Builtin>>,
+    /// Built-in commands (default + custom).
+    ///
+    /// Stored as `Arc` so the dispatcher can clone the handle out of the map
+    /// and execute the builtin without keeping a borrow on `self.builtins`,
+    /// which lets it freely take `&mut self` for `self.variables`,
+    /// `self.cwd`, etc. during execution.
+    builtins: HashMap<String, Arc<dyn Builtin>>,
+    /// Optional host-owned mutable registry. Consulted after shell functions
+    /// and special builtins but before `builtins` — so host entries can
+    /// override baked-in commands. Survives `reset_transient_state` because
+    /// it lives behind an `Arc<RwLock>` shared with the embedder.
+    host_builtins: Option<crate::builtins::BuiltinRegistry>,
     /// Defined functions
     functions: HashMap<String, FunctionDef>,
     /// Call stack for local variable scoping
@@ -885,6 +895,7 @@ impl Interpreter {
             None,
             None,
             HashMap::new(),
+            None,
             ShellProfile::Full,
         )
     }
@@ -897,6 +908,7 @@ impl Interpreter {
     /// * `username` - Optional custom username for virtual identity
     /// * `hostname` - Optional custom hostname for virtual identity
     /// * `custom_builtins` - Custom builtins to register (override defaults if same name)
+    #[allow(clippy::too_many_arguments)]
     pub fn with_config(
         fs: Arc<dyn FileSystem>,
         username: Option<String>,
@@ -904,17 +916,18 @@ impl Interpreter {
         fixed_epoch: Option<i64>,
         epoch_offset: Option<i64>,
         custom_builtins: HashMap<String, Box<dyn Builtin>>,
+        host_builtins: Option<crate::builtins::BuiltinRegistry>,
         shell_profile: ShellProfile,
     ) -> Self {
         // Macro to reduce boilerplate for simple zero-arg builtin registration.
         // Custom-construction builtins (date, source, hostname, etc.) are registered below.
         macro_rules! register_builtins {
             ($map:ident, $( $name:literal => $type:ident ),+ $(,)?) => {
-                $( $map.insert($name.to_string(), Box::new(builtins::$type) as Box<dyn Builtin>); )+
+                $( $map.insert($name.to_string(), Arc::new(builtins::$type) as Arc<dyn Builtin>); )+
             };
         }
 
-        let mut builtins: HashMap<String, Box<dyn Builtin>> = HashMap::new();
+        let mut builtins: HashMap<String, Arc<dyn Builtin>> = HashMap::new();
 
         register_builtins!(builtins,
             // Core shell builtins
@@ -1074,22 +1087,22 @@ impl Interpreter {
 
         // jq builtin (requires jq feature)
         #[cfg(feature = "jq")]
-        builtins.insert("jq".to_string(), Box::new(builtins::Jq));
+        builtins.insert("jq".to_string(), Arc::new(builtins::Jq));
 
         // Custom-construction builtins that need parameters
 
         // source/. requires filesystem access
         builtins.insert(
             "source".to_string(),
-            Box::new(builtins::Source::new(fs.clone())),
+            Arc::new(builtins::Source::new(fs.clone())),
         );
-        builtins.insert(".".to_string(), Box::new(builtins::Source::new(fs.clone())));
+        builtins.insert(".".to_string(), Arc::new(builtins::Source::new(fs.clone())));
 
         // THREAT[TM-INF-018]: Resolve the virtual clock mode for `date`.
         // Priority: fixed_epoch > epoch_offset > real clock.
         builtins.insert(
             "date".to_string(),
-            Box::new(if let Some(epoch) = fixed_epoch {
+            Arc::new(if let Some(epoch) = fixed_epoch {
                 use chrono::DateTime;
                 builtins::Date::with_fixed_epoch(
                     DateTime::from_timestamp(epoch, 0).unwrap_or_default(),
@@ -1106,40 +1119,41 @@ impl Interpreter {
         let username_val = username.unwrap_or_else(|| builtins::DEFAULT_USERNAME.to_string());
         builtins.insert(
             "hostname".to_string(),
-            Box::new(builtins::Hostname::with_hostname(&hostname_val)),
+            Arc::new(builtins::Hostname::with_hostname(&hostname_val)),
         );
         builtins.insert(
             "uname".to_string(),
-            Box::new(builtins::Uname::with_hostname(&hostname_val)),
+            Arc::new(builtins::Uname::with_hostname(&hostname_val)),
         );
         builtins.insert(
             "whoami".to_string(),
-            Box::new(builtins::Whoami::with_username(&username_val)),
+            Arc::new(builtins::Whoami::with_username(&username_val)),
         );
         builtins.insert(
             "id".to_string(),
-            Box::new(builtins::Id::with_username(&username_val)),
+            Arc::new(builtins::Id::with_username(&username_val)),
         );
 
         // Git builtin (requires git feature and configuration at runtime)
         #[cfg(feature = "git")]
-        builtins.insert("git".to_string(), Box::new(builtins::Git));
+        builtins.insert("git".to_string(), Arc::new(builtins::Git));
 
         // SSH builtins (requires ssh feature and configuration at runtime)
         #[cfg(feature = "ssh")]
         {
-            builtins.insert("ssh".to_string(), Box::new(builtins::Ssh));
-            builtins.insert("scp".to_string(), Box::new(builtins::Scp));
-            builtins.insert("sftp".to_string(), Box::new(builtins::Sftp));
+            builtins.insert("ssh".to_string(), Arc::new(builtins::Ssh));
+            builtins.insert("scp".to_string(), Arc::new(builtins::Scp));
+            builtins.insert("sftp".to_string(), Arc::new(builtins::Sftp));
         }
 
         if shell_profile.is_logic_only() {
             builtins.retain(|name, _| logic_only_builtin_allowed(name));
         }
 
-        // Merge custom builtins (override defaults if same name)
+        // Merge custom builtins (override defaults if same name).
+        // `Arc::from(Box<dyn Builtin>)` reuses the existing allocation.
         for (name, builtin) in custom_builtins {
-            builtins.insert(name, builtin);
+            builtins.insert(name, Arc::from(builtin));
         }
 
         // Initialize default shell variables
@@ -1171,6 +1185,7 @@ impl Interpreter {
             cwd: PathBuf::from("/home/user"),
             last_exit_code: 0,
             builtins,
+            host_builtins,
             functions: HashMap::new(),
             call_stack: Vec::new(),
             bash_source_stack: Vec::new(),
@@ -4727,6 +4742,34 @@ impl Interpreter {
         stdin: Option<&'a str>,
         redirects: &'a [Redirect],
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
+        // Clone the Arc out of the map so the call doesn't hold a borrow on
+        // self.builtins while we take &mut self for the execution body.
+        let builtin = self.builtins.get(name).unwrap().clone();
+        self.execute_builtin_arc(name, builtin, args, stdin, redirects)
+    }
+
+    /// Execute a builtin resolved via the host-owned [`BuiltinRegistry`].
+    fn execute_host_builtin<'a>(
+        &'a mut self,
+        name: &'a str,
+        builtin: Arc<dyn Builtin>,
+        args: &'a [String],
+        stdin: Option<&'a str>,
+        redirects: &'a [Redirect],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
+        self.execute_builtin_arc(name, builtin, args, stdin, redirects)
+    }
+
+    /// Shared execution path for builtins regardless of source
+    /// (baked-in, builder-`builtin`, or host registry).
+    fn execute_builtin_arc<'a>(
+        &'a mut self,
+        name: &'a str,
+        builtin: Arc<dyn Builtin>,
+        args: &'a [String],
+        stdin: Option<&'a str>,
+        redirects: &'a [Redirect],
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
         Box::pin(async move {
             // Fire before_tool hooks — may modify args or cancel the invocation
             let args = if !self.hooks.before_tool.is_empty() {
@@ -4748,8 +4791,6 @@ impl Interpreter {
                 std::borrow::Cow::Borrowed(args)
             };
             let args: &[String] = &args;
-
-            let builtin = self.builtins.get(name).unwrap();
 
             // Check for execution plan first
             {
@@ -4804,7 +4845,6 @@ impl Interpreter {
                 }
             }
 
-            let builtin = self.builtins.get(name).unwrap();
             let execution_extensions = self.current_execution_extensions();
             let shell_ref = ShellRef {
                 builtins: &self.builtins,
@@ -4918,6 +4958,13 @@ impl Interpreter {
         }
     }
 
+    /// True if `name` resolves through the host-owned builtin registry.
+    fn has_host_builtin(&self, name: &str) -> bool {
+        self.host_builtins
+            .as_ref()
+            .is_some_and(|reg| reg.lookup(name).is_some())
+    }
+
     // THREAT[TM-DOS-089]: Box the final dispatch split so function lookup,
     // special builtin handling, registered builtin execution, and path search
     // do not contribute another large async frame per nested substitution level.
@@ -4942,6 +4989,19 @@ impl Interpreter {
                 .await
             {
                 return result;
+            }
+
+            // Host-registered builtins (mutable, may override baked-in builtins).
+            if let Some(builtin) = self.host_builtins.as_ref().and_then(|reg| reg.lookup(name)) {
+                return self
+                    .execute_host_builtin(
+                        name,
+                        builtin,
+                        &args,
+                        stdin.as_deref(),
+                        &command.redirects,
+                    )
+                    .await;
             }
 
             // Registered builtins
@@ -4974,12 +5034,18 @@ impl Interpreter {
             }
 
             // Command not found
+            let host_names: Vec<String> = self
+                .host_builtins
+                .as_ref()
+                .map(|reg| reg.names())
+                .unwrap_or_default();
             let known: Vec<&str> = self
                 .builtins
                 .keys()
                 .map(|s| s.as_str())
                 .chain(self.functions.keys().map(|s| s.as_str()))
                 .chain(self.aliases.keys().map(|s| s.as_str()))
+                .chain(host_names.iter().map(|s| s.as_str()))
                 .collect();
             let msg = command_not_found_message(name, &known);
             Ok(ExecResult::err(msg, 127))
@@ -6227,6 +6293,7 @@ impl Interpreter {
                 // command -v: print name/path if it's a known command
                 let output = if self.functions.contains_key(cmd_name.as_str())
                     || self.builtins.contains_key(cmd_name.as_str())
+                    || self.has_host_builtin(cmd_name)
                     || is_keyword(cmd_name)
                 {
                     Some(cmd_name.to_string())
@@ -6251,7 +6318,9 @@ impl Interpreter {
                 // command -V: verbose description
                 let description = if self.functions.contains_key(cmd_name.as_str()) {
                     format!("{} is a function\n", cmd_name)
-                } else if self.builtins.contains_key(cmd_name.as_str()) {
+                } else if self.has_host_builtin(cmd_name)
+                    || self.builtins.contains_key(cmd_name.as_str())
+                {
                     format!("{} is a shell builtin\n", cmd_name)
                 } else if is_keyword(cmd_name) {
                     format!("{} is a shell keyword\n", cmd_name)
@@ -6271,7 +6340,14 @@ impl Interpreter {
                 // command name args...: run bypassing functions (use builtin only)
                 // Build a synthetic simple command and execute it, skipping function lookup
                 let remaining = &args[cmd_args_start..];
-                if let Some(builtin) = self.builtins.get(remaining[0].as_str()) {
+                let target = remaining[0].as_str();
+                // Resolve host-registered builtins first (same precedence as dispatch_command).
+                let builtin = self
+                    .host_builtins
+                    .as_ref()
+                    .and_then(|reg| reg.lookup(target))
+                    .or_else(|| self.builtins.get(target).cloned());
+                if let Some(builtin) = builtin {
                     let builtin_args = &remaining[1..];
                     let execution_extensions = self.current_execution_extensions();
                     let shell_ref = ShellRef {
