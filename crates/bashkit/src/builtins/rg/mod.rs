@@ -79,8 +79,10 @@ struct RgOptions {
     type_list: bool,
     no_ignore: bool,
     no_ignore_dot: bool,
+    no_ignore_files: bool,
     no_ignore_vcs: bool,
     require_git: bool,
+    ignore_file_case_insensitive: bool,
     messages: bool,
     context_separator: String,
     field_match_separator: String,
@@ -203,8 +205,10 @@ impl RgOptions {
             type_list: false,
             no_ignore: false,
             no_ignore_dot: false,
+            no_ignore_files: false,
             no_ignore_vcs: false,
             require_git: true,
+            ignore_file_case_insensitive: false,
             messages: true,
             context_separator: "--".to_string(),
             field_match_separator: ":".to_string(),
@@ -425,8 +429,16 @@ impl RgOptions {
                 opts.no_ignore_vcs = true;
             } else if p.flag("--no-ignore-dot") {
                 opts.no_ignore_dot = true;
+            } else if p.flag("--no-ignore-files") {
+                opts.no_ignore_files = true;
+            } else if p.flag("--ignore-files") {
+                opts.no_ignore_files = false;
             } else if p.flag("--no-ignore-vcs") {
                 opts.no_ignore_vcs = true;
+            } else if p.flag("--ignore-file-case-insensitive") {
+                opts.ignore_file_case_insensitive = true;
+            } else if p.flag("--no-ignore-file-case-insensitive") {
+                opts.ignore_file_case_insensitive = false;
             } else if p.flag("--no-require-git") {
                 opts.require_git = false;
             } else if p.flag("--require-git") {
@@ -831,7 +843,7 @@ impl RgOptions {
     }
 
     fn uses_ignore_files(&self) -> bool {
-        !self.no_ignore || !self.ignore_file_paths.is_empty()
+        !self.no_ignore || (!self.no_ignore_files && !self.ignore_file_paths.is_empty())
     }
 
     fn set_glob_case_insensitive(&mut self, case_insensitive: bool) -> Result<()> {
@@ -855,7 +867,7 @@ impl RgOptions {
 }
 
 impl RgIgnoreRule {
-    fn parse(line: &str, base: &Path) -> Result<Option<Self>> {
+    fn parse(line: &str, base: &Path, case_insensitive: bool) -> Result<Option<Self>> {
         let mut pattern = line.trim();
         if pattern.is_empty() || pattern.starts_with('#') {
             return Ok(None);
@@ -881,7 +893,7 @@ impl RgIgnoreRule {
         let anchored = pattern.starts_with('/');
         let normalized = pattern.trim_start_matches('/');
         let has_slash = normalized.contains('/');
-        let regex = build_regex_opts(&glob_to_regex(normalized), false)
+        let regex = build_regex_opts(&glob_to_regex(normalized), case_insensitive)
             .map_err(|e| Error::Execution(format!("rg: invalid ignore pattern: {}", e)))?;
         Ok(Some(Self {
             include,
@@ -1471,20 +1483,28 @@ async fn load_rg_ignore_files(
     cwd: &Path,
     opts: &mut RgOptions,
 ) -> std::result::Result<(), ExecResult> {
+    if opts.no_ignore_files {
+        return Ok(());
+    }
+
     for ignore_file in opts.ignore_file_paths.clone() {
         let path = resolve_path(cwd, &ignore_file);
         let content = read_text_file(fs, &path, "rg").await?;
-        let rules = parse_rg_ignore_rules(&content, cwd)
+        let rules = parse_rg_ignore_rules(&content, cwd, opts.ignore_file_case_insensitive)
             .map_err(|e| ExecResult::err(format!("{}\n", e), 2))?;
         opts.explicit_ignore_rules.extend(rules);
     }
     Ok(())
 }
 
-fn parse_rg_ignore_rules(content: &str, base: &Path) -> Result<Vec<RgIgnoreRule>> {
+fn parse_rg_ignore_rules(
+    content: &str,
+    base: &Path,
+    case_insensitive: bool,
+) -> Result<Vec<RgIgnoreRule>> {
     let mut rules = Vec::new();
     for line in content.lines() {
-        if let Some(rule) = RgIgnoreRule::parse(line, base)? {
+        if let Some(rule) = RgIgnoreRule::parse(line, base, case_insensitive)? {
             rules.push(rule);
         }
     }
@@ -1503,10 +1523,32 @@ async fn load_local_ignore_rules(
     }
 
     if !opts.no_ignore_dot {
-        load_optional_ignore_file(fs, &dir.join(".ignore"), dir, rules).await?;
+        load_optional_ignore_file(
+            fs,
+            &dir.join(".ignore"),
+            dir,
+            opts.ignore_file_case_insensitive,
+            rules,
+        )
+        .await?;
+        load_optional_ignore_file(
+            fs,
+            &dir.join(".rgignore"),
+            dir,
+            opts.ignore_file_case_insensitive,
+            rules,
+        )
+        .await?;
     }
     if !opts.no_ignore_vcs && (!opts.require_git || has_git_dir_in_ancestors(fs, dir, root).await) {
-        load_optional_ignore_file(fs, &dir.join(".gitignore"), dir, rules).await?;
+        load_optional_ignore_file(
+            fs,
+            &dir.join(".gitignore"),
+            dir,
+            opts.ignore_file_case_insensitive,
+            rules,
+        )
+        .await?;
     }
     Ok(())
 }
@@ -1515,13 +1557,14 @@ async fn load_optional_ignore_file(
     fs: &dyn crate::fs::FileSystem,
     path: &Path,
     base: &Path,
+    case_insensitive: bool,
     rules: &mut Vec<RgIgnoreRule>,
 ) -> Result<()> {
     let Ok(content) = fs.read_file(path).await else {
         return Ok(());
     };
     let content = String::from_utf8_lossy(&content);
-    rules.extend(parse_rg_ignore_rules(&content, base)?);
+    rules.extend(parse_rg_ignore_rules(&content, base, case_insensitive)?);
     Ok(())
 }
 
@@ -2211,6 +2254,10 @@ impl Builtin for Rg {
         let help_text = help_text.replace(
             "  --max-columns-preview\tshow prefixes of long lines\n",
             "  --max-columns-preview\tshow prefixes of long lines\n  --max-filesize NUM\tignore files larger than NUM bytes, K, M, or G\n",
+        );
+        let help_text = help_text.replace(
+            "  --ignore-file FILE\tuse additional ignore file\n",
+            "  --ignore-file FILE\tuse additional ignore file\n  --ignore-file-case-insensitive\tprocess ignore files case-insensitively\n  --no-ignore-file-case-insensitive\tdisable case-insensitive ignore files\n  --no-ignore-files\tdo not use --ignore-file paths\n  --ignore-files\tuse --ignore-file paths\n",
         );
         let help_text = help_text.replace(
             "  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n",
@@ -3195,12 +3242,14 @@ mod tests {
             b"target/\n*.log\n!keep.log\nvendor/**\n",
         ),
         ("/proj/.ignore", b"src/ignored.txt\n"),
+        ("/proj/.rgignore", b"rgonly.txt\n"),
         ("/proj/custom.ignore", b"*.tmp\n"),
         ("/proj/a.txt", b"needle\n"),
         ("/proj/a.log", b"needle\n"),
         ("/proj/keep.log", b"needle\n"),
         ("/proj/target/out.txt", b"needle\n"),
         ("/proj/src/ignored.txt", b"needle\n"),
+        ("/proj/rgonly.txt", b"needle\n"),
         ("/proj/vendor/lib.rs", b"needle\n"),
         ("/proj/scratch.tmp", b"needle\n"),
     ];
@@ -3864,6 +3913,35 @@ mod tests {
         RgDiffCase {
             name: "explicit ignore file",
             args: &["--ignore-file", "proj/custom.ignore", "needle", "proj"],
+            stdin: None,
+            files: DIFF_IGNORE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "no ignore files disables explicit ignore file",
+            args: &[
+                "--no-ignore-files",
+                "--ignore-file",
+                "proj/custom.ignore",
+                "needle",
+                "proj",
+            ],
+            stdin: None,
+            files: DIFF_IGNORE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "ignore files reenables explicit ignore file",
+            args: &[
+                "--no-ignore-files",
+                "--ignore-files",
+                "--ignore-file",
+                "proj/custom.ignore",
+                "needle",
+                "proj",
+            ],
             stdin: None,
             files: DIFF_IGNORE_FILES,
             cwd: "/",
@@ -4655,6 +4733,8 @@ mod tests {
         assert!(long_help.stdout.contains("--crlf"));
         assert!(long_help.stdout.contains("--multiline"));
         assert!(long_help.stdout.contains("--multiline-dotall"));
+        assert!(long_help.stdout.contains("--no-ignore-files"));
+        assert!(long_help.stdout.contains("--ignore-file-case-insensitive"));
 
         let short_help = run_rg(&["-h"], None, &[]).await;
         assert_eq!(short_help.exit_code, 0);
@@ -4711,11 +4791,13 @@ mod tests {
             ("/proj/.git/config", b"[core]\n"),
             ("/proj/.gitignore", b"target/\n*.log\n!keep.log\n"),
             ("/proj/.ignore", b"src/ignored.txt\n"),
+            ("/proj/.rgignore", b"rgonly.txt\n"),
             ("/proj/a.txt", b"needle\n"),
             ("/proj/a.log", b"needle\n"),
             ("/proj/keep.log", b"needle\n"),
             ("/proj/target/out.txt", b"needle\n"),
             ("/proj/src/ignored.txt", b"needle\n"),
+            ("/proj/rgonly.txt", b"needle\n"),
         ];
 
         let default = run_rg(&["needle", "/proj"], None, files).await;
@@ -4725,17 +4807,86 @@ mod tests {
         assert!(!default.stdout.contains("a.log"));
         assert!(!default.stdout.contains("target/out.txt"));
         assert!(!default.stdout.contains("src/ignored.txt"));
+        assert!(!default.stdout.contains("rgonly.txt"));
 
         let no_ignore = run_rg(&["--no-ignore", "needle", "/proj"], None, files).await;
         assert_eq!(no_ignore.exit_code, 0);
         assert!(no_ignore.stdout.contains("a.log"));
         assert!(no_ignore.stdout.contains("target/out.txt"));
         assert!(no_ignore.stdout.contains("src/ignored.txt"));
+        assert!(no_ignore.stdout.contains("rgonly.txt"));
 
         let no_vcs = run_rg(&["--no-ignore-vcs", "needle", "/proj"], None, files).await;
         assert_eq!(no_vcs.exit_code, 0);
         assert!(no_vcs.stdout.contains("a.log"));
         assert!(!no_vcs.stdout.contains("src/ignored.txt"));
+        assert!(!no_vcs.stdout.contains("rgonly.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_rg_ignore_file_control_flags() {
+        let files: &[(&str, &[u8])] = &[
+            ("/proj/custom.ignore", b"*.tmp\n"),
+            ("/proj/case.ignore", b"*.log\n"),
+            ("/proj/a.tmp", b"needle\n"),
+            ("/proj/Foo.LOG", b"needle\n"),
+            ("/proj/keep.txt", b"needle\n"),
+        ];
+
+        let disabled = run_rg(
+            &[
+                "--no-ignore-files",
+                "--ignore-file",
+                "/proj/custom.ignore",
+                "needle",
+                "/proj",
+            ],
+            None,
+            files,
+        )
+        .await;
+        assert_eq!(disabled.exit_code, 0);
+        assert!(disabled.stdout.contains("a.tmp"));
+
+        let reenabled = run_rg(
+            &[
+                "--no-ignore-files",
+                "--ignore-files",
+                "--ignore-file",
+                "/proj/custom.ignore",
+                "needle",
+                "/proj",
+            ],
+            None,
+            files,
+        )
+        .await;
+        assert_eq!(reenabled.exit_code, 0);
+        assert!(!reenabled.stdout.contains("a.tmp"));
+
+        let case_sensitive = run_rg(
+            &["--ignore-file", "/proj/case.ignore", "needle", "/proj"],
+            None,
+            files,
+        )
+        .await;
+        assert_eq!(case_sensitive.exit_code, 0);
+        assert!(case_sensitive.stdout.contains("Foo.LOG"));
+
+        let case_insensitive = run_rg(
+            &[
+                "--ignore-file-case-insensitive",
+                "--ignore-file",
+                "/proj/case.ignore",
+                "needle",
+                "/proj",
+            ],
+            None,
+            files,
+        )
+        .await;
+        assert_eq!(case_insensitive.exit_code, 0);
+        assert!(!case_insensitive.stdout.contains("Foo.LOG"));
     }
 
     #[tokio::test]
