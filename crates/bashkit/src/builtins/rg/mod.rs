@@ -2721,7 +2721,7 @@ fn rg_generate_kind(args: &[String]) -> Result<Option<String>> {
 }
 
 fn rg_generate_output(kind: &str, help_text: &str) -> Result<String> {
-    const FLAGS: &str = "--regexp -e --file -f --after-context -A --before-context -B --binary --no-binary --byte-offset -b --case-sensitive -s --color --colors --column --context -C --count -c --count-matches --encoding -E --no-encoding --files --files-with-matches -l --files-without-match --fixed-strings -F --follow -L --generate --glob -g --heading --help -h --hidden -. --ignore-case -i --ignore-file --include-zero --invert-match -v --no-invert-match --json --line-number -n --no-line-number -N --line-regexp -x --max-columns -M --max-count -m --max-depth -d --multiline -U --no-ignore --no-messages --null -0 --only-matching -o --passthru --pcre2 -P --pre --pre-glob --pretty -p --quiet -q --replace -r --search-zip -z --smart-case -S --sort --sortr --stats --text -a --threads -j --trim --type -t --type-not -T --type-add --type-clear --type-list --unrestricted -u --version -V --vimgrep --with-filename -H --no-filename -I --word-regexp -w";
+    const FLAGS: &str = "--regexp -e --file -f --after-context -A --before-context -B --binary --no-binary --block-buffered --no-block-buffered --byte-offset -b --no-byte-offset --case-sensitive -s --color --colors --column --no-column --context -C --context-separator --no-context-separator --count -c --count-matches --crlf --no-crlf --debug --dfa-size-limit --encoding -E --no-encoding --engine --field-context-separator --field-match-separator --files --files-with-matches -l --files-without-match --fixed-strings -F --no-fixed-strings --follow -L --no-follow --generate --glob -g --glob-case-insensitive --no-glob-case-insensitive --heading --no-heading --help -h --hidden -. --no-hidden --hostname-bin --hyperlink-format --iglob --ignore-case -i --ignore-file --ignore-file-case-insensitive --no-ignore-file-case-insensitive --include-zero --no-include-zero --invert-match -v --no-invert-match --json --no-json --line-buffered --no-line-buffered --line-number -n --no-line-number -N --line-regexp -x --max-columns -M --max-columns-preview --no-max-columns-preview --max-count -m --max-depth -d --max-filesize --mmap --no-mmap --multiline -U --no-multiline --multiline-dotall --no-multiline-dotall --no-config --no-ignore --ignore --no-ignore-dot --ignore-dot --no-ignore-exclude --ignore-exclude --no-ignore-files --ignore-files --no-ignore-global --ignore-global --no-ignore-messages --ignore-messages --no-ignore-parent --ignore-parent --no-ignore-vcs --ignore-vcs --no-messages --messages --no-require-git --require-git --no-unicode --unicode --null -0 --null-data --one-file-system --no-one-file-system --only-matching -o --path-separator --passthru --pcre2 -P --no-pcre2 --pcre2-version --pre --no-pre --pre-glob --pretty -p --quiet -q --regex-size-limit --replace -r --search-zip -z --no-search-zip --smart-case -S --sort --sortr --stats --no-stats --stop-on-nonmatch --text -a --no-text --threads -j --trace --trim --no-trim --type -t --type-not -T --type-add --type-clear --type-list --unrestricted -u --version -V --vimgrep --with-filename -H --no-filename -I --word-regexp -w --auto-hybrid-regex --no-auto-hybrid-regex --no-pcre2-unicode --pcre2-unicode --sort-files --no-sort-files";
 
     match kind {
         "man" => Ok(format!(
@@ -4037,7 +4037,15 @@ mod tests {
             stdin: None,
             files: &[],
             cwd: "/",
-            output: RgDiffOutput::ContainsAll(&["_rg()", "--generate", "--regexp", "--glob"]),
+            output: RgDiffOutput::ContainsAll(&[
+                "_rg()",
+                "--generate",
+                "--regexp",
+                "--glob",
+                "--no-pre",
+                "--null-data",
+                "--glob-case-insensitive",
+            ]),
         },
         RgDiffCase {
             name: "generate fish completion",
@@ -4053,7 +4061,12 @@ mod tests {
             stdin: None,
             files: &[],
             cwd: "/",
-            output: RgDiffOutput::ContainsAll(&["#compdef rg", "_rg()", "--generate"]),
+            output: RgDiffOutput::ContainsAll(&[
+                "#compdef rg",
+                "_rg()",
+                "--generate",
+                "--no-search-zip",
+            ]),
         },
         RgDiffCase {
             name: "generate powershell completion",
@@ -6294,11 +6307,32 @@ mod tests {
         assert_eq!(bash.exit_code, 0);
         assert!(bash.stdout.contains("_rg()"));
         assert!(bash.stdout.contains("--generate"));
+        for flag in [
+            "--no-byte-offset",
+            "--no-column",
+            "--crlf",
+            "--no-crlf",
+            "--debug",
+            "--dfa-size-limit",
+            "--no-fixed-strings",
+            "--glob-case-insensitive",
+            "--no-glob-case-insensitive",
+            "--ignore-file-case-insensitive",
+            "--no-ignore-files",
+            "--null-data",
+            "--no-pre",
+            "--no-search-zip",
+            "--stop-on-nonmatch",
+            "--no-text",
+        ] {
+            assert!(bash.stdout.contains(flag), "missing {flag}");
+        }
 
         let zsh = run_rg(&["--generate", "complete-zsh"], None, &[]).await;
         assert_eq!(zsh.exit_code, 0);
         assert!(zsh.stdout.contains("#compdef rg"));
         assert!(zsh.stdout.contains("--regexp"));
+        assert!(zsh.stdout.contains("--no-search-zip"));
 
         let fish = run_rg(&["--generate=complete-fish"], None, &[]).await;
         assert_eq!(fish.exit_code, 0);
