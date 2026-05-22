@@ -213,6 +213,7 @@ def create_bash_tool(
     mounts: list[dict[str, Any]] | None = None,
     allowed_mount_paths: list[str] | None = None,
     readonly_filesystem: bool = False,
+    max_output_length: int = 100_000,
 ) -> BashkitTool:
     """Create a LangChain-compatible Bashkit tool.
 
@@ -232,6 +233,8 @@ def create_bash_tool(
             paths under a user home directory.
         readonly_filesystem: Deny all filesystem mutations after configured
             files and mounts are applied.
+        max_output_length: Maximum number of characters returned to the
+            LangChain agent from one bash tool call before truncation.
 
     Returns:
         BashkitTool instance for use with LangChain agents
@@ -259,6 +262,7 @@ def create_bash_tool(
         mounts=mounts,
         allowed_mount_paths=allowed_mount_paths,
         readonly_filesystem=readonly_filesystem,
+        max_output_length=max_output_length,
     )
 
 

@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "bashkit-docs-grep-agent"
 version = "0.1.0"
-description = "Minimal LangGraph console agent for answering Bashkit docs questions with read-only bashkit grep."
+description = "Minimal LangGraph console agent for answering Bashkit docs questions with read-only bashkit search."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
