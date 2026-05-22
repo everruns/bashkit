@@ -14,8 +14,11 @@ from langchain_openai import ChatOpenAI
 from bashkit.langchain import create_bash_tool
 
 DEFAULT_MODEL = "gpt-5.5-low"
-MAX_CONTEXT_CHARS = 12000
+# Public docs chat should retrieve snippets first; this cap is a backstop, not
+# a substitute for narrow searches.
+MAX_CONTEXT_CHARS = 8000
 SPINNER_INTERVAL_SECONDS = 0.25
+EXCLUDED_EXAMPLE_FILES = {"package-lock.json", "uv.lock"}
 
 SYSTEM_PROMPT = """You answer questions about Bashkit from documentation snippets.
 
@@ -35,12 +38,14 @@ Rules:
 - Write the bash script yourself.
 - Use one multi-command bash script, or make multiple bash tool calls when separate searches are useful.
 - Only inspect files under /docs/public, /docs/rustdoc, and /docs/examples.
-- Generated local artifacts such as .venv, .ruff_cache, and __pycache__ are intentionally not mounted.
-- Keep tool output compact. Bound every broad search with `head`, `-m`, `-l`, or a narrow `sed -n` range, and aim to keep total tool output under 12000 characters.
+- Generated local artifacts such as .venv, .ruff_cache, __pycache__, and lockfiles are intentionally not mounted.
+- Keep tool output compact. Bound every broad search with `head`, `-m`, `-l`, or a narrow `sed -n` range, and aim to keep total tool output under 8000 characters.
 - Search progressively:
   1. Use `rg -i -n PATTERN PATH... | head -20` for broad discovery.
-  2. Use `grep -R -i -n -C 1 -m 3 -- PATTERN PATH...` when you need context around matches.
-  3. Use `sed -n 'START,ENDp' FILE` after finding the best file and line range.
+  2. Use `rg -i -l PATTERN PATH... | head -10` before reading content for broad questions.
+  3. Use `grep -R -i -n -C 1 -m 3 -- PATTERN PATH...` when you need context around matches.
+  4. Use `sed -n 'START,ENDp' FILE` after finding the best file and line range.
+- Never use `cat` for docs or examples. Read focused excerpts with `sed -n`, and keep each range under 120 lines.
 - Use `grep` instead of `rg` when you need context flags (`-A`, `-B`, `-C`) or include/exclude filters. Bashkit `rg` is intentionally simpler than full ripgrep.
 - Use `-F` with `rg` or `grep` for exact strings.
 - For multi-topic questions, print short section labels and run one compact search per topic.
@@ -73,13 +78,12 @@ def build_example_files(root: Path) -> dict[str, str]:
     files = {
         f"/docs/examples/{path.name}": path.read_text(encoding="utf-8")
         for path in sorted(examples.iterdir())
-        if path.is_file()
+        if path.is_file() and path.name not in EXCLUDED_EXAMPLE_FILES
     }
     for rel in [
         "docs-grep-agent/.gitignore",
         "docs-grep-agent/README.md",
         "docs-grep-agent/pyproject.toml",
-        "docs-grep-agent/uv.lock",
         "docs-grep-agent/docs_grep_agent/__init__.py",
         "docs-grep-agent/docs_grep_agent/__main__.py",
         "docs-grep-agent/docs_grep_agent/app.py",
@@ -112,6 +116,10 @@ def create_docs_bash_tool(root: Path):
         readonly_filesystem=True,
         max_output_length=MAX_CONTEXT_CHARS,
     )
+
+
+def approx_tokens(text: str) -> int:
+    return (len(text) + 3) // 4
 
 
 async def spinner(stop: asyncio.Event) -> None:
@@ -212,12 +220,21 @@ def self_test(root: Path) -> None:
     examples = bash_tool.invoke(
         {"commands": "find /docs/examples -maxdepth 2 -type f | head"}
     )
+    shortlist = bash_tool.invoke(
+        {
+            "commands": "rg -i -l 'cli' /docs/public /docs/rustdoc /docs/examples | head -10"
+        }
+    )
+    focused_cli = bash_tool.invoke({"commands": "sed -n '1,80p' /docs/public/cli.md"})
+    full_cli = bash_tool.invoke({"commands": "cat /docs/public/cli.md"})
     generated = bash_tool.invoke(
         {
             "commands": (
                 "find /docs/examples -maxdepth 4 -name .venv -print; "
                 "find /docs/examples -maxdepth 4 -name .ruff_cache -print; "
-                "find /docs/examples -maxdepth 4 -name __pycache__ -print"
+                "find /docs/examples -maxdepth 4 -name __pycache__ -print; "
+                "find /docs/examples -maxdepth 4 -name uv.lock -print; "
+                "find /docs/examples -maxdepth 4 -name package-lock.json -print"
             )
         }
     )
@@ -229,7 +246,16 @@ def self_test(root: Path) -> None:
     assert "[Exit code:" in readonly
     assert "[Exit code:" in copy
     assert "/docs/examples/" in examples
+    assert len(shortlist) < 1000
+    assert len(focused_cli) < len(full_cli)
     assert generated.strip() == ""
+    print(
+        "token-efficiency "
+        f"shortlist~{approx_tokens(shortlist)}t "
+        f"focused~{approx_tokens(focused_cli)}t "
+        f"full-file~{approx_tokens(full_cli)}t "
+        f"avoided~{approx_tokens(full_cli) - approx_tokens(focused_cli)}t"
+    )
     print("self-test ok")
 
 
