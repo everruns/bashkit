@@ -20,7 +20,7 @@ use regex::Regex;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use super::search_common::{build_regex_opts, build_search_regex};
+use super::search_common::build_regex_opts;
 use super::{Builtin, Context, read_text_file, resolve_path};
 use crate::error::{Error, Result};
 use crate::interpreter::ExecResult;
@@ -30,15 +30,21 @@ pub struct Rg;
 
 struct RgOptions {
     patterns: Vec<String>,
+    pattern_files: Vec<String>,
     paths: Vec<String>,
     ignore_case: bool,
+    smart_case: bool,
     line_numbers: bool,
+    line_regexp: bool,
     count_only: bool,
+    count_matches: bool,
+    column: bool,
     files_with_matches: bool,
     invert_match: bool,
     word_boundary: bool,
     fixed_strings: bool,
     max_count: Option<usize>,
+    max_depth: Option<usize>,
     before_context: usize,
     after_context: usize,
     no_filename: bool,
@@ -46,6 +52,17 @@ struct RgOptions {
     only_matching: bool,
     quiet: bool,
     files_without_matches: bool,
+    list_files: bool,
+    replacement: Option<String>,
+    passthru: bool,
+    trim: bool,
+    include_zero: bool,
+    heading: bool,
+    sort_reverse: bool,
+    context_separator: String,
+    field_match_separator: String,
+    field_context_separator: String,
+    stdin_consumed_for_patterns: bool,
     glob_rules: Vec<RgGlobRule>,
 }
 
@@ -62,15 +79,21 @@ impl RgOptions {
     fn parse(args: &[String]) -> Result<Self> {
         let mut opts = RgOptions {
             patterns: Vec::new(),
+            pattern_files: Vec::new(),
             paths: Vec::new(),
             ignore_case: false,
+            smart_case: false,
             line_numbers: false, // non-tty: suppress line numbers (real rg behavior)
+            line_regexp: false,
             count_only: false,
+            count_matches: false,
+            column: false,
             files_with_matches: false,
             invert_match: false,
             word_boundary: false,
             fixed_strings: false,
             max_count: None,
+            max_depth: None,
             before_context: 0,
             after_context: 0,
             no_filename: false,
@@ -78,6 +101,17 @@ impl RgOptions {
             only_matching: false,
             quiet: false,
             files_without_matches: false,
+            list_files: false,
+            replacement: None,
+            passthru: false,
+            trim: false,
+            include_zero: false,
+            heading: false,
+            sort_reverse: false,
+            context_separator: "--".to_string(),
+            field_match_separator: ":".to_string(),
+            field_context_separator: "-".to_string(),
+            stdin_consumed_for_patterns: false,
             glob_rules: Vec::new(),
         };
 
@@ -92,6 +126,14 @@ impl RgOptions {
                 opts.patterns.push(val.to_string());
             } else if let Some(val) = long_value(&mut p, "--regexp")? {
                 opts.patterns.push(val.to_string());
+            } else if let Some(val) = p.flag_value("-f", "rg").map_err(Error::Execution)? {
+                opts.pattern_files.push(val.to_string());
+            } else if let Some(val) = long_value(&mut p, "--file")? {
+                opts.pattern_files.push(val);
+            } else if let Some(val) = p.flag_value("-r", "rg").map_err(Error::Execution)? {
+                opts.replacement = Some(val.to_string());
+            } else if let Some(val) = long_value(&mut p, "--replace")? {
+                opts.replacement = Some(val);
             } else if let Some(val) = p.flag_value("-m", "rg").map_err(Error::Execution)? {
                 opts.max_count = Some(
                     val.parse()
@@ -100,6 +142,10 @@ impl RgOptions {
             } else if let Some(val) = long_value(&mut p, "--max-count")? {
                 opts.max_count = Some(val.parse().map_err(|_| {
                     Error::Execution(format!("rg: invalid --max-count value: {val}"))
+                })?);
+            } else if let Some(val) = long_value(&mut p, "--max-depth")? {
+                opts.max_depth = Some(val.parse().map_err(|_| {
+                    Error::Execution(format!("rg: invalid --max-depth value: {val}"))
                 })?);
             } else if let Some(val) = p.flag_value("-A", "rg").map_err(Error::Execution)? {
                 opts.after_context = parse_context_value(val, "-A")?;
@@ -117,6 +163,12 @@ impl RgOptions {
                 let context = parse_context_value(&val, "--context")?;
                 opts.before_context = context;
                 opts.after_context = context;
+            } else if let Some(val) = long_value(&mut p, "--context-separator")? {
+                opts.context_separator = val;
+            } else if let Some(val) = long_value(&mut p, "--field-match-separator")? {
+                opts.field_match_separator = val;
+            } else if let Some(val) = long_value(&mut p, "--field-context-separator")? {
+                opts.field_context_separator = val;
             } else if let Some(val) = p.flag_value("-g", "rg").map_err(Error::Execution)? {
                 opts.glob_rules.push(RgGlobRule::parse(val)?);
             } else if let Some(val) = long_value(&mut p, "--glob")? {
@@ -131,10 +183,17 @@ impl RgOptions {
                 opts.line_numbers = true;
             } else if p.flag_any(&["--ignore-case"]) {
                 opts.ignore_case = true;
+                opts.smart_case = false;
             } else if p.flag_any(&["--case-sensitive"]) {
                 opts.ignore_case = false;
+                opts.smart_case = false;
+            } else if p.flag_any(&["--smart-case"]) {
+                opts.ignore_case = false;
+                opts.smart_case = true;
             } else if p.flag_any(&["--count"]) {
                 opts.count_only = true;
+            } else if p.flag_any(&["--count-matches"]) {
+                opts.count_matches = true;
             } else if p.flag_any(&["--files-with-matches"]) {
                 opts.files_with_matches = true;
             } else if p.flag_any(&["--files-without-match"]) {
@@ -143,12 +202,33 @@ impl RgOptions {
                 opts.invert_match = true;
             } else if p.flag_any(&["--word-regexp"]) {
                 opts.word_boundary = true;
+            } else if p.flag_any(&["--line-regexp"]) {
+                opts.line_regexp = true;
             } else if p.flag_any(&["--fixed-strings"]) {
                 opts.fixed_strings = true;
             } else if p.flag_any(&["--only-matching"]) {
                 opts.only_matching = true;
             } else if p.flag_any(&["--quiet", "--silent"]) {
                 opts.quiet = true;
+            } else if p.flag("--column") {
+                opts.column = true;
+                opts.line_numbers = true;
+            } else if p.flag("--files") {
+                opts.list_files = true;
+            } else if p.flag("--passthru") {
+                opts.passthru = true;
+            } else if p.flag("--trim") {
+                opts.trim = true;
+            } else if p.flag("--include-zero") {
+                opts.include_zero = true;
+            } else if p.flag("--heading") {
+                opts.heading = true;
+            } else if p.flag("--sort-files") {
+                // no-op: bashkit's recursive walker already sorts paths.
+            } else if long_value(&mut p, "--sort")?.is_some() {
+                opts.sort_reverse = false;
+            } else if long_value(&mut p, "--sortr")?.is_some() {
+                opts.sort_reverse = true;
             } else if p.flag("--color") {
                 // no-op (may have separate value arg like "never", skip it)
                 let _ = p.positional();
@@ -169,21 +249,34 @@ impl RgOptions {
                 // Safe: is_flag() guarantees current() is Some
                 let arg = p.current().expect("is_flag guarantees Some");
                 if arg.starts_with("--") {
-                    // Unknown long option, skip
-                    p.advance();
-                    continue;
+                    return Err(Error::Execution(format!(
+                        "rg: unrecognized option '{}'",
+                        arg
+                    )));
                 }
                 let chars: Vec<char> = arg[1..].chars().collect();
                 p.advance();
                 for (j, &c) in chars.iter().enumerate() {
                     match c {
-                        'i' => opts.ignore_case = true,
+                        'i' => {
+                            opts.ignore_case = true;
+                            opts.smart_case = false;
+                        }
+                        's' => {
+                            opts.ignore_case = false;
+                            opts.smart_case = false;
+                        }
+                        'S' => {
+                            opts.ignore_case = false;
+                            opts.smart_case = true;
+                        }
                         'n' => opts.line_numbers = true,
                         'N' => opts.line_numbers = false,
                         'c' => opts.count_only = true,
                         'l' => opts.files_with_matches = true,
                         'v' => opts.invert_match = true,
                         'w' => opts.word_boundary = true,
+                        'x' => opts.line_regexp = true,
                         'F' => opts.fixed_strings = true,
                         'H' => opts.show_filename = true,
                         'I' => opts.no_filename = true,
@@ -204,6 +297,40 @@ impl RgOptions {
                                 }
                             };
                             opts.patterns.push(pattern);
+                            break;
+                        }
+                        'f' => {
+                            let rest: String = chars[j + 1..].iter().collect();
+                            let pattern_file = if !rest.is_empty() {
+                                rest
+                            } else {
+                                match p.positional() {
+                                    Some(v) => v.to_string(),
+                                    None => {
+                                        return Err(Error::Execution(
+                                            "rg: -f requires an argument".to_string(),
+                                        ));
+                                    }
+                                }
+                            };
+                            opts.pattern_files.push(pattern_file);
+                            break;
+                        }
+                        'r' => {
+                            let rest: String = chars[j + 1..].iter().collect();
+                            let replacement = if !rest.is_empty() {
+                                rest
+                            } else {
+                                match p.positional() {
+                                    Some(v) => v.to_string(),
+                                    None => {
+                                        return Err(Error::Execution(
+                                            "rg: -r requires an argument".to_string(),
+                                        ));
+                                    }
+                                }
+                            };
+                            opts.replacement = Some(replacement);
                             break;
                         }
                         'm' => {
@@ -293,7 +420,12 @@ impl RgOptions {
                             opts.glob_rules.push(RgGlobRule::parse(&glob)?);
                             break;
                         }
-                        _ => {} // ignore unknown
+                        _ => {
+                            return Err(Error::Execution(format!(
+                                "rg: unrecognized option '-{}'",
+                                c
+                            )));
+                        }
                     }
                 }
             } else if let Some(arg) = p.positional() {
@@ -302,10 +434,10 @@ impl RgOptions {
         }
 
         if positional.is_empty() {
-            if opts.patterns.is_empty() {
+            if opts.patterns.is_empty() && opts.pattern_files.is_empty() && !opts.list_files {
                 return Err(Error::Execution("rg: missing pattern".to_string()));
             }
-        } else if opts.patterns.is_empty() {
+        } else if opts.patterns.is_empty() && opts.pattern_files.is_empty() && !opts.list_files {
             opts.patterns.push(positional.remove(0));
         }
 
@@ -315,36 +447,41 @@ impl RgOptions {
     }
 
     fn build_regex(&self) -> Result<Regex> {
-        if self.patterns.len() == 1 {
-            return build_search_regex(
-                &self.patterns[0],
-                self.fixed_strings,
-                self.word_boundary,
-                self.ignore_case,
-                "rg",
-            );
-        }
-
         let combined = self
             .patterns
             .iter()
-            .map(|pattern| {
-                let pat = if self.fixed_strings {
-                    regex::escape(pattern)
-                } else {
-                    pattern.clone()
-                };
-                let pat = if self.word_boundary {
-                    format!(r"\b{}\b", pat)
-                } else {
-                    pat
-                };
-                format!("(?:{})", pat)
-            })
+            .map(|pattern| format!("(?:{})", self.prepare_pattern(pattern)))
             .collect::<Vec<_>>()
             .join("|");
-        build_regex_opts(&combined, self.ignore_case)
+        build_regex_opts(&combined, self.effective_ignore_case())
             .map_err(|e| Error::Execution(format!("rg: invalid pattern: {}", e)))
+    }
+
+    fn prepare_pattern(&self, pattern: &str) -> String {
+        let pat = if self.fixed_strings {
+            regex::escape(pattern)
+        } else {
+            pattern.to_string()
+        };
+        let pat = if self.word_boundary {
+            format!(r"\b{}\b", pat)
+        } else {
+            pat
+        };
+        if self.line_regexp {
+            format!("^(?:{})$", pat)
+        } else {
+            pat
+        }
+    }
+
+    fn effective_ignore_case(&self) -> bool {
+        self.ignore_case
+            || (self.smart_case
+                && !self
+                    .patterns
+                    .iter()
+                    .any(|pattern| pattern.chars().any(|c| c.is_uppercase())))
     }
 
     fn matches_globs(&self, path: &Path, cwd: &Path) -> bool {
@@ -498,7 +635,9 @@ async fn collect_rg_inputs(
     opts: &RgOptions,
 ) -> std::result::Result<Vec<(String, String)>, ExecResult> {
     if opts.paths.is_empty() {
-        if let Some(stdin) = ctx.stdin {
+        if !opts.stdin_consumed_for_patterns
+            && let Some(stdin) = ctx.stdin
+        {
             return Ok(vec![("(stdin)".to_string(), stdin.to_string())]);
         }
 
@@ -541,6 +680,27 @@ async fn collect_rg_inputs(
     Ok(inputs)
 }
 
+async fn load_rg_pattern_files(
+    fs: &dyn crate::fs::FileSystem,
+    cwd: &Path,
+    stdin: Option<&str>,
+    opts: &mut RgOptions,
+) -> std::result::Result<(), ExecResult> {
+    for pattern_file in opts.pattern_files.clone() {
+        let content = if pattern_file == "-" {
+            opts.stdin_consumed_for_patterns = true;
+            stdin.unwrap_or("").to_string()
+        } else {
+            let path = resolve_path(cwd, &pattern_file);
+            read_text_file(fs, &path, "rg").await?
+        };
+
+        opts.patterns
+            .extend(content.lines().map(std::string::ToString::to_string));
+    }
+    Ok(())
+}
+
 async fn has_directory_path(fs: &dyn crate::fs::FileSystem, cwd: &Path, paths: &[String]) -> bool {
     for p in paths {
         let path = resolve_path(cwd, p);
@@ -560,15 +720,26 @@ async fn collect_rg_files_recursive(
     cwd: &Path,
 ) -> Vec<PathBuf> {
     let mut result = Vec::new();
-    let mut stack: Vec<PathBuf> = roots.to_vec();
+    let mut stack: Vec<(PathBuf, usize)> = roots.iter().cloned().map(|root| (root, 0)).collect();
 
-    while let Some(current) = stack.pop() {
+    while let Some((current, depth)) = stack.pop() {
         if let Ok(entries) = fs.read_dir(&current).await {
             for entry in entries {
                 let path = current.join(&entry.name);
+                let entry_depth = depth + 1;
                 if entry.metadata.file_type.is_dir() {
-                    stack.push(path);
-                } else if entry.metadata.file_type.is_file() && opts.matches_globs(&path, cwd) {
+                    if opts
+                        .max_depth
+                        .is_none_or(|max_depth| entry_depth < max_depth)
+                    {
+                        stack.push((path, entry_depth));
+                    }
+                } else if entry.metadata.file_type.is_file()
+                    && opts
+                        .max_depth
+                        .is_none_or(|max_depth| entry_depth <= max_depth)
+                    && opts.matches_globs(&path, cwd)
+                {
                     result.push(path);
                 }
             }
@@ -581,7 +752,59 @@ async fn collect_rg_files_recursive(
     }
 
     result.sort();
+    if opts.sort_reverse {
+        result.reverse();
+    }
     result
+}
+
+async fn collect_rg_file_list(
+    fs: &dyn crate::fs::FileSystem,
+    opts: &RgOptions,
+    cwd: &Path,
+) -> Vec<String> {
+    if opts.paths.is_empty() {
+        let root = cwd.to_path_buf();
+        let files = collect_rg_files_recursive(fs, std::slice::from_ref(&root), opts, cwd).await;
+        return files
+            .iter()
+            .map(|path| display_path_for(path, cwd, None))
+            .collect();
+    }
+
+    let mut result = Vec::new();
+    for p in &opts.paths {
+        let path = resolve_path(cwd, p);
+        if let Ok(meta) = fs.stat(&path).await
+            && meta.file_type.is_dir()
+        {
+            let files =
+                collect_rg_files_recursive(fs, std::slice::from_ref(&path), opts, cwd).await;
+            result.extend(
+                files
+                    .iter()
+                    .map(|path| display_path_for(path, cwd, Some(p))),
+            );
+        } else if meta_is_file_and_matches(fs, &path, opts, cwd).await {
+            result.push(display_path_for(&path, cwd, Some(p)));
+        }
+    }
+    result.sort();
+    if opts.sort_reverse {
+        result.reverse();
+    }
+    result
+}
+
+async fn meta_is_file_and_matches(
+    fs: &dyn crate::fs::FileSystem,
+    path: &Path,
+    opts: &RgOptions,
+    cwd: &Path,
+) -> bool {
+    fs.stat(path)
+        .await
+        .is_ok_and(|meta| meta.file_type.is_file() && opts.matches_globs(path, cwd))
 }
 
 async fn read_rg_files(
@@ -637,19 +860,16 @@ async fn try_indexed_search(
         if !caps.content_search || (!opts.fixed_strings && !caps.regex) {
             return None;
         }
-        let pattern = if opts.fixed_strings {
+        let index_can_use_literal = opts.fixed_strings && !opts.word_boundary && !opts.line_regexp;
+        let pattern = if index_can_use_literal {
             opts.patterns[0].clone()
         } else {
-            if opts.word_boundary {
-                format!(r"\b{}\b", opts.patterns[0])
-            } else {
-                opts.patterns[0].clone()
-            }
+            opts.prepare_pattern(&opts.patterns[0])
         };
         let query = crate::fs::SearchQuery {
             pattern,
-            is_regex: !opts.fixed_strings,
-            case_insensitive: opts.ignore_case,
+            is_regex: !index_can_use_literal,
+            case_insensitive: opts.effective_ignore_case(),
             root: root.clone(),
             glob_filter: if caps.glob_filter {
                 opts.first_positive_glob()
@@ -691,21 +911,44 @@ fn write_rg_prefix(
     show_filename: bool,
     line_numbers: bool,
     line_idx: usize,
-    separator: char,
+    column: Option<usize>,
+    separator: &str,
 ) {
     if show_filename {
         output.push_str(filename);
-        output.push(separator);
+        output.push_str(separator);
     }
     if line_numbers {
         output.push_str(&(line_idx + 1).to_string());
-        output.push(separator);
+        output.push_str(separator);
+    }
+    if let Some(column) = column {
+        output.push_str(&column.to_string());
+        output.push_str(separator);
+    }
+}
+
+fn format_rg_line(line: &str, regex: &Regex, opts: &RgOptions, matched: bool) -> String {
+    let line = if matched {
+        if let Some(replacement) = &opts.replacement {
+            regex.replace_all(line, replacement.as_str()).into_owned()
+        } else {
+            line.to_string()
+        }
+    } else {
+        line.to_string()
+    };
+    if opts.trim {
+        line.trim_start().to_string()
+    } else {
+        line
     }
 }
 
 fn write_rg_context(
     output: &mut String,
     filename: &str,
+    regex: &Regex,
     lines: &[&str],
     match_lines: &[usize],
     opts: &RgOptions,
@@ -729,14 +972,16 @@ fn write_rg_context(
         if let Some(prev) = prev_line
             && line_idx > prev + 1
         {
-            output.push_str("--\n");
+            output.push_str(&opts.context_separator);
+            output.push('\n');
         }
         prev_line = Some(line_idx);
 
-        let separator = if match_set.contains(&line_idx) {
-            ':'
+        let matched = match_set.contains(&line_idx);
+        let separator = if matched {
+            opts.field_match_separator.as_str()
         } else {
-            '-'
+            opts.field_context_separator.as_str()
         };
         write_rg_prefix(
             output,
@@ -744,9 +989,10 @@ fn write_rg_context(
             show_filename,
             opts.line_numbers,
             line_idx,
+            None,
             separator,
         );
-        output.push_str(lines[line_idx]);
+        output.push_str(&format_rg_line(lines[line_idx], regex, opts, matched));
         output.push('\n');
     }
 }
@@ -754,16 +1000,35 @@ fn write_rg_context(
 #[async_trait]
 impl Builtin for Rg {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        let help_text = "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i, --ignore-case\tcase insensitive\n  -n, --line-number\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  -c, --count\tcount matches\n  -l, --files-with-matches\tfiles with matches\n  --files-without-match\tfiles without matches\n  -v, --invert-match\tinvert match\n  -w, --word-regexp\tword boundary\n  -F, --fixed-strings\tfixed strings (literal)\n  -o, --only-matching\tshow only matching text\n  -q, --quiet\tsuppress output; exit status only\n  -e, --regexp PATTERN\tuse PATTERN for matching\n  -m, --max-count NUM\tmax count per file\n  -A, --after-context NUM\tshow trailing context\n  -B, --before-context NUM\tshow leading context\n  -C, --context NUM\tshow leading and trailing context\n  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  -H, --with-filename\tshow filename\n  -I, --no-filename\tsuppress filename\n  --color MODE\tcolor output (no-op)\n  -h, --help\tdisplay this help and exit\n  --version\toutput version information and exit\n";
+        let help_text = "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i, --ignore-case\tcase insensitive\n  -S, --smart-case\tcase insensitive if pattern is lowercase\n  -s, --case-sensitive\tcase sensitive\n  -n, --line-number\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  --column\tshow column numbers\n  -c, --count\tcount matching lines\n  --count-matches\tcount individual matches\n  --include-zero\tinclude zero counts\n  -l, --files-with-matches\tfiles with matches\n  --files-without-match\tfiles without matches\n  --files\tprint files that would be searched\n  -v, --invert-match\tinvert match\n  -w, --word-regexp\tword boundary\n  -x, --line-regexp\tmatch whole lines\n  -F, --fixed-strings\tfixed strings (literal)\n  -o, --only-matching\tshow only matching text\n  -q, --quiet\tsuppress output; exit status only\n  -e, --regexp PATTERN\tuse PATTERN for matching\n  -f, --file PATTERNFILE\tread patterns from file\n  -r, --replace REPLACEMENT\treplace matches in output\n  --passthru\tprint matching and non-matching lines\n  --trim\ttrim whitespace from output lines\n  -m, --max-count NUM\tmax count per file\n  --max-depth NUM\tlimit recursive directory depth\n  -A, --after-context NUM\tshow trailing context\n  -B, --before-context NUM\tshow leading context\n  -C, --context NUM\tshow leading and trailing context\n  --context-separator SEP\tset context group separator\n  --field-match-separator SEP\tset match field separator\n  --field-context-separator SEP\tset context field separator\n  --heading\tgroup matches by file\n  --sort SORTBY\tsort paths (path only)\n  --sortr SORTBY\tsort paths in reverse (path only)\n  --sort-files\tsort --files output\n  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  -H, --with-filename\tshow filename\n  -I, --no-filename\tsuppress filename\n  --color MODE\tcolor output (no-op)\n  -h, --help\tdisplay this help and exit\n  -V, --version\toutput version information and exit\n";
         if ctx.args.iter().any(|arg| arg == "-h") {
             return Ok(ExecResult::ok(help_text.to_string()));
+        }
+        if ctx.args.iter().any(|arg| arg == "-V") {
+            return Ok(ExecResult::ok("rg (bashkit) 0.1\n".to_string()));
         }
         if let Some(r) = super::check_help_version(ctx.args, help_text, Some("rg (bashkit) 0.1")) {
             return Ok(r);
         }
-        let opts = RgOptions::parse(ctx.args)?;
+        let mut opts = RgOptions::parse(ctx.args)?;
+        if opts.list_files {
+            let files = collect_rg_file_list(&*ctx.fs, &opts, ctx.cwd).await;
+            let output = if files.is_empty() {
+                String::new()
+            } else {
+                format!("{}\n", files.join("\n"))
+            };
+            return Ok(ExecResult::ok(output));
+        }
+        if let Err(result) = load_rg_pattern_files(&*ctx.fs, ctx.cwd, ctx.stdin, &mut opts).await {
+            return Ok(result);
+        }
+        if opts.patterns.is_empty() {
+            return Ok(ExecResult::with_code(String::new(), 1));
+        }
         let regex = opts.build_regex()?;
-        let stdin_input = opts.paths.is_empty() && ctx.stdin.is_some();
+        let stdin_input =
+            opts.paths.is_empty() && ctx.stdin.is_some() && !opts.stdin_consumed_for_patterns;
         let recursive_output = !stdin_input
             && (opts.paths.is_empty() || has_directory_path(&*ctx.fs, ctx.cwd, &opts.paths).await);
 
@@ -786,6 +1051,7 @@ impl Builtin for Rg {
 
         for (filename, content) in &inputs {
             let mut match_count = 0usize;
+            let mut count_value = 0usize;
             let mut match_lines = Vec::new();
 
             for (line_idx, line) in content.lines().enumerate() {
@@ -803,6 +1069,11 @@ impl Builtin for Rg {
                 }
 
                 match_count += 1;
+                if opts.count_matches && !opts.invert_match {
+                    count_value += regex.find_iter(line).count();
+                } else {
+                    count_value += 1;
+                }
                 match_lines.push(line_idx);
                 if !opts.files_without_matches {
                     any_match = true;
@@ -829,15 +1100,15 @@ impl Builtin for Rg {
                 }
                 continue;
             }
-            if opts.count_only {
-                if match_count == 0 {
+            if opts.count_only || opts.count_matches {
+                if count_value == 0 && !opts.include_zero {
                     continue;
                 }
                 if show_filename {
                     output.push_str(filename);
                     output.push(':');
                 }
-                output.push_str(&match_count.to_string());
+                output.push_str(&count_value.to_string());
                 output.push('\n');
                 continue;
             }
@@ -846,44 +1117,95 @@ impl Builtin for Rg {
             }
 
             let lines: Vec<&str> = content.lines().collect();
-            if opts.only_matching && !opts.invert_match {
+            let line_show_filename = if opts.heading && show_filename && match_count > 0 {
+                if !output.is_empty() {
+                    output.push('\n');
+                }
+                output.push_str(filename);
+                output.push('\n');
+                false
+            } else {
+                show_filename
+            };
+            if opts.passthru {
+                let match_set: HashSet<usize> = match_lines.iter().copied().collect();
+                for (line_idx, line) in lines.iter().enumerate() {
+                    let matched = match_set.contains(&line_idx);
+                    let separator = if matched {
+                        opts.field_match_separator.as_str()
+                    } else {
+                        opts.field_context_separator.as_str()
+                    };
+                    write_rg_prefix(
+                        &mut output,
+                        filename,
+                        line_show_filename,
+                        opts.line_numbers,
+                        line_idx,
+                        if opts.column && matched && !opts.invert_match {
+                            regex.find(line).map(|mat| mat.start() + 1)
+                        } else {
+                            None
+                        },
+                        separator,
+                    );
+                    output.push_str(&format_rg_line(line, &regex, &opts, matched));
+                    output.push('\n');
+                }
+            } else if opts.only_matching && !opts.invert_match {
                 for &line_idx in &match_lines {
                     for mat in regex.find_iter(lines[line_idx]) {
                         write_rg_prefix(
                             &mut output,
                             filename,
-                            show_filename,
+                            line_show_filename,
                             opts.line_numbers,
                             line_idx,
-                            ':',
+                            if opts.column {
+                                Some(mat.start() + 1)
+                            } else {
+                                None
+                            },
+                            opts.field_match_separator.as_str(),
                         );
-                        output.push_str(mat.as_str());
+                        if let Some(replacement) = &opts.replacement {
+                            output.push_str(&regex.replace(mat.as_str(), replacement.as_str()));
+                        } else {
+                            output.push_str(mat.as_str());
+                        }
                         output.push('\n');
                     }
                 }
             } else if has_context {
-                if !output.is_empty() && !match_lines.is_empty() {
-                    output.push_str("--\n");
+                if !opts.heading && !output.is_empty() && !match_lines.is_empty() {
+                    output.push_str(&opts.context_separator);
+                    output.push('\n');
                 }
                 write_rg_context(
                     &mut output,
                     filename,
+                    &regex,
                     &lines,
                     &match_lines,
                     &opts,
-                    show_filename,
+                    line_show_filename,
                 );
             } else {
                 for &line_idx in &match_lines {
                     write_rg_prefix(
                         &mut output,
                         filename,
-                        show_filename,
+                        line_show_filename,
                         opts.line_numbers,
                         line_idx,
-                        ':',
+                        if opts.column && !opts.invert_match {
+                            regex.find(lines[line_idx]).map(|mat| mat.start() + 1)
+                        } else {
+                            None
+                        },
+                        opts.field_match_separator.as_str(),
                     );
-                    output.push_str(lines[line_idx]);
+                    output.push_str(&format_rg_line(lines[line_idx], &regex, &opts, true));
                     output.push('\n');
                 }
             }
@@ -1000,12 +1322,17 @@ mod tests {
         ("/proj/fixed.txt", b"a.b\naxb\n"),
         ("/proj/words.txt", b"cat\ncatch\nmy cat\n"),
         ("/proj/context.txt", b"before\nneedle\nafter\n"),
+        ("/proj/patterns.txt", b"needle\nHello\n"),
+        ("/proj/trim.txt", b"  needle one  \n  none  \n"),
     ];
 
     const DIFF_TWO_CONTEXT_FILES: &[(&str, &[u8])] = &[
         ("/proj/a.txt", b"before\nneedle\nafter\n"),
         ("/proj/b.txt", b"x\nneedle\ny\n"),
     ];
+
+    const DIFF_SORT_FILES: &[(&str, &[u8])] =
+        &[("/proj/a.txt", b"needle\n"), ("/proj/b.txt", b"needle\n")];
 
     const RG_DIFF_CASES: &[RgDiffCase] = &[
         RgDiffCase {
@@ -1194,6 +1521,169 @@ mod tests {
             args: &["-nN", "needle", "proj/a.txt"],
             stdin: None,
             files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "pattern file",
+            args: &["-f", "proj/patterns.txt", "proj/a.txt", "proj/case.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "smart case lowercase",
+            args: &["-S", "hello", "proj/case.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "smart case uppercase",
+            args: &["-S", "Hello", "proj/case.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "line regexp",
+            args: &["-x", "needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "count matches",
+            args: &["--count-matches", "needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "column",
+            args: &["--column", "needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "max depth",
+            args: &["--max-depth", "1", "needle", "proj"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "files list max depth",
+            args: &["--files", "--max-depth", "1", "proj"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "replace",
+            args: &["--replace", "X", "needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "replace only matching",
+            args: &["-o", "-r", "X", "needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "passthru",
+            args: &["--passthru", "needle", "proj/a.txt", "proj/b.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "trim",
+            args: &["--trim", "needle", "proj/trim.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "include zero count",
+            args: &["-c", "--include-zero", "needle", "proj/a.txt", "proj/b.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "heading",
+            args: &["--heading", "needle", "proj/a.txt", "proj/src/main.rs"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "context separator",
+            args: &[
+                "-n",
+                "-C1",
+                "--context-separator=@@",
+                "needle",
+                "proj/a.txt",
+                "proj/b.txt",
+            ],
+            stdin: None,
+            files: DIFF_TWO_CONTEXT_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "field match separator",
+            args: &[
+                "-n",
+                "--field-match-separator=|",
+                "needle",
+                "proj/a.txt",
+                "proj/src/main.rs",
+            ],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "field context separator",
+            args: &[
+                "-n",
+                "-C1",
+                "--field-context-separator=~",
+                "needle",
+                "proj/context.txt",
+            ],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "reverse sort path",
+            args: &["--sortr", "path", "needle", "proj"],
+            stdin: None,
+            files: DIFF_SORT_FILES,
             cwd: "/",
             output: RgDiffOutput::Exact,
         },
@@ -1405,6 +1895,36 @@ mod tests {
         let version = run_rg(&["--version"], None, &[]).await;
         assert_eq!(version.exit_code, 0);
         assert_eq!(version.stdout, "rg (bashkit) 0.1\n");
+
+        let short_version = run_rg(&["-V"], None, &[]).await;
+        assert_eq!(short_version.exit_code, 0);
+        assert_eq!(short_version.stdout, version.stdout);
+    }
+
+    #[tokio::test]
+    async fn test_rg_unknown_option_errors() {
+        let fs = Arc::new(InMemoryFs::new()) as Arc<dyn FileSystem>;
+        let args = vec!["--definitely-not-rg".to_string()];
+        let env = HashMap::new();
+        let mut variables = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs,
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+        let result = Rg.execute(ctx).await;
+        assert!(result.is_err());
     }
 
     #[tokio::test]
