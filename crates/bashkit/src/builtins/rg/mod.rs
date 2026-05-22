@@ -141,8 +141,11 @@ struct RgColorScheme {
 struct RgColorStyle {
     enabled: bool,
     bold: bool,
-    fg: Option<&'static str>,
-    bg: Option<&'static str>,
+    intense: bool,
+    underline: bool,
+    italic: bool,
+    fg: Option<String>,
+    bg: Option<String>,
 }
 
 impl Default for RgColorScheme {
@@ -154,7 +157,10 @@ impl Default for RgColorScheme {
             matches: RgColorStyle {
                 enabled: true,
                 bold: true,
-                fg: Some("31"),
+                intense: false,
+                underline: false,
+                italic: false,
+                fg: Some("31".to_string()),
                 bg: None,
             },
         }
@@ -180,6 +186,12 @@ impl RgColorScheme {
             "style" => match parts[2] {
                 "bold" => style.set_bold(true),
                 "nobold" => style.set_bold(false),
+                "intense" => style.set_intense(true),
+                "nointense" => style.set_intense(false),
+                "underline" => style.set_underline(true),
+                "nounderline" => style.set_underline(false),
+                "italic" => style.set_italic(true),
+                "noitalic" => style.set_italic(false),
                 _ => {
                     return Err(Error::Execution(format!(
                         "rg: error parsing flag --colors: invalid style '{}'",
@@ -214,16 +226,22 @@ impl RgColorStyle {
         Self {
             enabled: true,
             bold: false,
+            intense: false,
+            underline: false,
+            italic: false,
             fg: None,
             bg: None,
         }
     }
 
-    fn fg(code: &'static str) -> Self {
+    fn fg(code: &str) -> Self {
         Self {
             enabled: true,
             bold: false,
-            fg: Some(code),
+            intense: false,
+            underline: false,
+            italic: false,
+            fg: Some(code.to_string()),
             bg: None,
         }
     }
@@ -231,16 +249,19 @@ impl RgColorStyle {
     fn disable(&mut self) {
         self.enabled = false;
         self.bold = false;
+        self.intense = false;
+        self.underline = false;
+        self.italic = false;
         self.fg = None;
         self.bg = None;
     }
 
-    fn set_fg(&mut self, code: &'static str) {
+    fn set_fg(&mut self, code: String) {
         self.enabled = true;
         self.fg = Some(code);
     }
 
-    fn set_bg(&mut self, code: &'static str) {
+    fn set_bg(&mut self, code: String) {
         self.enabled = true;
         self.bg = Some(code);
     }
@@ -248,6 +269,21 @@ impl RgColorStyle {
     fn set_bold(&mut self, bold: bool) {
         self.enabled = true;
         self.bold = bold;
+    }
+
+    fn set_intense(&mut self, intense: bool) {
+        self.enabled = true;
+        self.intense = intense;
+    }
+
+    fn set_underline(&mut self, underline: bool) {
+        self.enabled = true;
+        self.underline = underline;
+    }
+
+    fn set_italic(&mut self, italic: bool) {
+        self.enabled = true;
+        self.italic = italic;
     }
 }
 
@@ -1664,36 +1700,53 @@ fn parse_color_mode(value: &str) -> Result<RgColorMode> {
     }
 }
 
-fn parse_ansi_fg(value: &str) -> Result<&'static str> {
+fn parse_ansi_fg(value: &str) -> Result<String> {
+    if let Some(rgb) = parse_rgb_color(value) {
+        return Ok(format!("38;2;{};{};{}", rgb.0, rgb.1, rgb.2));
+    }
     match value {
-        "black" => Ok("30"),
-        "red" => Ok("31"),
-        "green" => Ok("32"),
-        "yellow" => Ok("33"),
-        "blue" => Ok("34"),
-        "magenta" => Ok("35"),
-        "cyan" => Ok("36"),
-        "white" => Ok("37"),
+        "black" => Ok("30".to_string()),
+        "red" => Ok("31".to_string()),
+        "green" => Ok("32".to_string()),
+        "yellow" => Ok("33".to_string()),
+        "blue" => Ok("34".to_string()),
+        "magenta" => Ok("35".to_string()),
+        "cyan" => Ok("36".to_string()),
+        "white" => Ok("37".to_string()),
         _ => Err(Error::Execution(format!(
             "rg: error parsing flag --colors: invalid foreground color '{value}'"
         ))),
     }
 }
 
-fn parse_ansi_bg(value: &str) -> Result<&'static str> {
+fn parse_ansi_bg(value: &str) -> Result<String> {
+    if let Some(rgb) = parse_rgb_color(value) {
+        return Ok(format!("48;2;{};{};{}", rgb.0, rgb.1, rgb.2));
+    }
     match value {
-        "black" => Ok("40"),
-        "red" => Ok("41"),
-        "green" => Ok("42"),
-        "yellow" => Ok("43"),
-        "blue" => Ok("44"),
-        "magenta" => Ok("45"),
-        "cyan" => Ok("46"),
-        "white" => Ok("47"),
+        "black" => Ok("40".to_string()),
+        "red" => Ok("41".to_string()),
+        "green" => Ok("42".to_string()),
+        "yellow" => Ok("43".to_string()),
+        "blue" => Ok("44".to_string()),
+        "magenta" => Ok("45".to_string()),
+        "cyan" => Ok("46".to_string()),
+        "white" => Ok("47".to_string()),
         _ => Err(Error::Execution(format!(
             "rg: error parsing flag --colors: invalid background color '{value}'"
         ))),
     }
+}
+
+fn parse_rgb_color(value: &str) -> Option<(u8, u8, u8)> {
+    let parts: Vec<&str> = value.split(',').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    let r = parts[0].parse().ok()?;
+    let g = parts[1].parse().ok()?;
+    let b = parts[2].parse().ok()?;
+    Some((r, g, b))
 }
 
 fn parse_rg_separator(value: &str) -> String {
@@ -2651,19 +2704,36 @@ fn color_text(text: &str, style: &RgColorStyle, reset_when_disabled: bool) -> St
     if style.bold {
         output.push_str("\x1b[1m");
     }
-    if let Some(fg) = style.fg {
+    if style.italic {
+        output.push_str("\x1b[3m");
+    }
+    if style.underline {
+        output.push_str("\x1b[4m");
+    }
+    if let Some(fg) = style.fg.as_deref() {
         output.push_str("\x1b[");
-        output.push_str(fg);
+        output.push_str(&intense_ansi_code(fg, style.intense));
         output.push('m');
     }
-    if let Some(bg) = style.bg {
+    if let Some(bg) = style.bg.as_deref() {
         output.push_str("\x1b[");
-        output.push_str(bg);
+        output.push_str(&intense_ansi_code(bg, style.intense));
         output.push('m');
     }
     output.push_str(text);
     output.push_str(RG_ANSI_RESET);
     output
+}
+
+fn intense_ansi_code(code: &str, intense: bool) -> String {
+    if !intense {
+        return code.to_string();
+    }
+    match code.parse::<u8>() {
+        Ok(code @ 30..=37) => format!("38;5;{}", code - 22),
+        Ok(code @ 40..=47) => format!("48;5;{}", code - 32),
+        _ => code.to_string(),
+    }
 }
 
 fn color_matches(text: &str, regex: &Regex, opts: &RgOptions) -> String {
@@ -4889,6 +4959,64 @@ mod tests {
                 "--color=always",
                 "--colors",
                 "match:none",
+                "needle",
+                "proj/a.txt",
+            ],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "colors style underline",
+            args: &[
+                "--color=always",
+                "--colors",
+                "match:style:underline",
+                "needle",
+                "proj/a.txt",
+            ],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "colors style italic",
+            args: &[
+                "--color=always",
+                "--colors",
+                "match:style:italic",
+                "needle",
+                "proj/a.txt",
+            ],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "colors style intense",
+            args: &[
+                "--color=always",
+                "--colors",
+                "match:fg:blue",
+                "--colors",
+                "match:style:intense",
+                "needle",
+                "proj/a.txt",
+            ],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "colors rgb foreground",
+            args: &[
+                "--color=always",
+                "--colors",
+                "match:fg:200,100,50",
                 "needle",
                 "proj/a.txt",
             ],
@@ -8001,6 +8129,28 @@ mod tests {
         .await;
         assert_eq!(custom.exit_code, 0);
         assert_eq!(custom.stdout, "\x1b[0m\x1b[34mneedle\x1b[0m again\n");
+
+        let custom_style = run_rg(
+            &[
+                "--color=always",
+                "--colors",
+                "match:style:underline",
+                "--colors",
+                "match:style:italic",
+                "--colors",
+                "match:fg:200,100,50",
+                "needle",
+                "/file.txt",
+            ],
+            None,
+            files,
+        )
+        .await;
+        assert_eq!(custom_style.exit_code, 0);
+        assert_eq!(
+            custom_style.stdout,
+            "\x1b[0m\x1b[1m\x1b[3m\x1b[4m\x1b[38;2;200;100;50mneedle\x1b[0m again\n"
+        );
     }
 
     #[tokio::test]
