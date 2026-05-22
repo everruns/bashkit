@@ -33,9 +33,14 @@ use std::mem::{MaybeUninit, size_of};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::ptr;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use tokio::sync::Mutex;
+
+/// Registry for in-flight async custom builtin calls.
+type BuiltinCallRegistry =
+    StdMutex<HashMap<String, tokio::sync::oneshot::Sender<Result<String, String>>>>;
 
 // ---------------------------------------------------------------------------
 // Shared tokio runtime + concurrency limiter for JS tool callbacks (issue #982).
@@ -1075,6 +1080,11 @@ struct SharedState {
     /// Custom JS builtin callbacks registered at construction time.
     /// Wrapped in a Mutex so `add_builtin` can append without `&mut self`.
     custom_builtins: std::sync::Mutex<Vec<JsCustomBuiltinEntry>>,
+    /// Registry for in-flight async custom builtin calls.
+    /// Keyed by unique call ID, resolved via `respondToBuiltin`/`respondToBuiltinError`.
+    builtin_call_registry: Arc<BuiltinCallRegistry>,
+    /// Monotonic counter for generating unique builtin call IDs.
+    builtin_call_counter: Arc<AtomicU64>,
 }
 
 /// Wrapper for the external handler that can be stored and cloned.
@@ -1295,13 +1305,13 @@ impl Bash {
     /// Custom builtins survive `reset()` and are available to all subsequent
     /// `execute*()` calls. Call this before first use to avoid rebuilding
     /// the interpreter with existing VFS state.
-    #[napi(ts_args_type = "name: string, callback: (request: string) => string")]
+    #[napi(ts_args_type = "name: string, callback: (payload: string) => void")]
     pub fn add_builtin(
         &self,
         name: String,
-        callback: napi::bindgen_prelude::Function<(String,), String>,
+        callback: napi::bindgen_prelude::Function<(String,), ()>,
     ) -> napi::Result<()> {
-        let tsfn: ToolTsfn = callback
+        let tsfn: BuiltinDispatchTsfn = callback
             .build_threadsafe_function::<(String,)>()
             .weak::<true>()
             .build()?;
@@ -1320,6 +1330,28 @@ impl Bash {
             *s.cancelled.lock().unwrap() = bash.cancellation_token();
             Ok(())
         })
+    }
+
+    /// Called by JS to resolve an async custom builtin callback.
+    /// Delivers the result string to the Rust-side waiter.
+    #[napi]
+    pub fn respond_to_builtin(&self, call_id: String, result: String) {
+        if let Ok(mut reg) = self.state.builtin_call_registry.lock()
+            && let Some(sender) = reg.remove(&call_id)
+        {
+            let _ = sender.send(Ok(result));
+        }
+    }
+
+    /// Called by JS to reject an async custom builtin callback.
+    /// Delivers the error string to the Rust-side waiter.
+    #[napi]
+    pub fn respond_to_builtin_error(&self, call_id: String, error: String) {
+        if let Ok(mut reg) = self.state.builtin_call_registry.lock()
+            && let Some(sender) = reg.remove(&call_id)
+        {
+            let _ = sender.send(Err(error));
+        }
     }
 
     /// Reset interpreter to fresh state, preserving configuration.
@@ -1779,13 +1811,13 @@ impl BashTool {
     ///
     /// Custom builtins survive `reset()` and are available to all subsequent
     /// `execute*()` calls.
-    #[napi(ts_args_type = "name: string, callback: (request: string) => string")]
+    #[napi(ts_args_type = "name: string, callback: (payload: string) => void")]
     pub fn add_builtin(
         &self,
         name: String,
-        callback: napi::bindgen_prelude::Function<(String,), String>,
+        callback: napi::bindgen_prelude::Function<(String,), ()>,
     ) -> napi::Result<()> {
-        let tsfn: ToolTsfn = callback
+        let tsfn: BuiltinDispatchTsfn = callback
             .build_threadsafe_function::<(String,)>()
             .weak::<true>()
             .build()?;
@@ -1803,6 +1835,26 @@ impl BashTool {
             *s.cancelled.lock().unwrap() = bash.cancellation_token();
             Ok(())
         })
+    }
+
+    /// Called by JS to resolve an async custom builtin callback.
+    #[napi]
+    pub fn respond_to_builtin(&self, call_id: String, result: String) {
+        if let Ok(mut reg) = self.state.builtin_call_registry.lock()
+            && let Some(sender) = reg.remove(&call_id)
+        {
+            let _ = sender.send(Ok(result));
+        }
+    }
+
+    /// Called by JS to reject an async custom builtin callback.
+    #[napi]
+    pub fn respond_to_builtin_error(&self, call_id: String, error: String) {
+        if let Ok(mut reg) = self.state.builtin_call_registry.lock()
+            && let Some(sender) = reg.remove(&call_id)
+        {
+            let _ = sender.send(Err(error));
+        }
     }
 
     /// Reset interpreter to fresh state, preserving configuration.
@@ -2185,16 +2237,36 @@ struct JsToolEntry {
     callback: Arc<ToolTsfn>,
 }
 
+/// TSFN for custom builtin dispatch (fire-and-forget).
+/// JS receives a JSON string `{"callId": "...", "request": ...}`
+/// and responds via respondToBuiltin.
+type BuiltinDispatchTsfn = napi::threadsafe_function::ThreadsafeFunction<
+    (String,),
+    (),
+    (String,),
+    napi::Status,
+    false,
+    true,
+>;
+
 /// Entry for a registered JS custom builtin callback.
 struct JsCustomBuiltinEntry {
     name: String,
-    callback: Arc<ToolTsfn>,
+    callback: Arc<BuiltinDispatchTsfn>,
 }
 
 /// Adapter that implements `Builtin` for JS custom builtin callbacks.
+///
+/// Uses a two-phase protocol to support async JS callbacks:
+/// 1. Send (callId, requestJson) to JS via TSFN (fire-and-forget)
+/// 2. JS invokes the callback (sync or async), then calls
+///    `respondToBuiltin(callId, result)` or `respondToBuiltinError(callId, err)`
+/// 3. The registry oneshot completes and we return the result
 struct JsCustomBuiltinAdapter {
     name: String,
-    callback: Arc<ToolTsfn>,
+    callback: Arc<BuiltinDispatchTsfn>,
+    registry: Arc<BuiltinCallRegistry>,
+    call_counter: Arc<AtomicU64>,
 }
 
 #[async_trait]
@@ -2207,26 +2279,40 @@ impl Builtin for JsCustomBuiltinAdapter {
             "env": ctx.env,
             "cwd": ctx.cwd.to_string_lossy(),
         });
-        let request_str = serde_json::to_string(&request)
+
+        let call_id = self
+            .call_counter
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            .to_string();
+
+        let (tx, rx) = tokio::sync::oneshot::channel::<Result<String, String>>();
+
+        // Encode callId + request as a single JSON payload for TSFN
+        let payload = serde_json::json!({
+            "callId": call_id,
+            "request": request,
+        });
+        let payload_str = serde_json::to_string(&payload)
             .map_err(|e| bashkit::Error::Execution(format!("{}: {}", self.name, e)))?;
 
+        {
+            let mut reg = self.registry.lock().unwrap();
+            reg.insert(call_id.clone(), tx);
+        }
+
         let tsfn = self.callback.clone();
-        let (tx, rx) = tokio::sync::oneshot::channel();
+        let sem = callback_semaphore();
 
         tokio::task::spawn(async move {
-            let sem = callback_semaphore();
-            let result = match sem.acquire().await {
-                Ok(_permit) => tsfn.call_async((request_str,)).await,
-                Err(e) => Err(napi::Error::from_reason(format!("semaphore error: {}", e))),
-            };
-            let _ = tx.send(result);
+            let _permit = sem.acquire().await;
+            let _ = tsfn.call_async((payload_str,)).await;
         });
 
         match rx.await {
             Ok(Ok(stdout)) => Ok(RustExecResult::ok(stdout)),
-            Ok(Err(err)) => Ok(RustExecResult::err(err.to_string(), 1)),
+            Ok(Err(err)) => Ok(RustExecResult::err(err, 1)),
             Err(_) => Ok(RustExecResult::err(
-                format!("{}: callback channel closed", self.name),
+                format!("{}: builtin call cancelled (instance destroyed)", self.name),
                 1,
             )),
         }
@@ -2614,12 +2700,16 @@ fn build_bash_from_state(state: &SharedState, files: Option<&HashMap<String, Str
 
     // Register JS custom builtin callbacks.
     if let Ok(custom_builtins) = state.custom_builtins.lock() {
+        let registry = state.builtin_call_registry.clone();
+        let call_counter = state.builtin_call_counter.clone();
         for entry in custom_builtins.iter() {
             builder = builder.builtin(
                 entry.name.clone(),
                 Box::new(JsCustomBuiltinAdapter {
                     name: entry.name.clone(),
                     callback: entry.callback.clone(),
+                    registry: registry.clone(),
+                    call_counter: call_counter.clone(),
                 }),
             );
         }
@@ -2672,6 +2762,8 @@ fn shared_state_from_opts(
         external_functions: ext_fns.clone(),
         external_handler: external_handler.clone(),
         custom_builtins: std::sync::Mutex::new(Vec::new()),
+        builtin_call_registry: Arc::new(std::sync::Mutex::new(HashMap::new())),
+        builtin_call_counter: Arc::new(AtomicU64::new(1)),
     };
 
     if let Some(ref mounts) = mounts {
@@ -2719,6 +2811,8 @@ fn shared_state_from_opts(
         external_functions: ext_fns,
         external_handler,
         custom_builtins: std::sync::Mutex::new(Vec::new()),
+        builtin_call_registry: tmp.builtin_call_registry.clone(),
+        builtin_call_counter: tmp.builtin_call_counter.clone(),
     })
 }
 

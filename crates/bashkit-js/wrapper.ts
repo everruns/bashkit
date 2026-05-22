@@ -121,7 +121,7 @@ export interface BuiltinContext {
  * Receives a `BuiltinContext` with `name`, `argv`, `stdin`, `env`, `cwd`.
  * Must return a string result (stdout).
  */
-export type BuiltinCallback = (ctx: BuiltinContext) => string;
+export type BuiltinCallback = (ctx: BuiltinContext) => string | Promise<string>;
 
 /**
  * Options for creating a Bash or BashTool instance.
@@ -299,6 +299,35 @@ function cancelledExecResult(): ExecResult {
     stderrTruncated: false,
     finalEnv: undefined,
     success: false,
+  };
+}
+
+function makeBuiltinDispatcher(
+  callback: BuiltinCallback,
+  respondToBuiltin: (callId: string, result: string) => void,
+  respondToBuiltinError: (callId: string, error: string) => void,
+): (payload: string) => void {
+  return (payload: string): void => {
+    try {
+      const { callId, request } = JSON.parse(payload) as {
+        callId: string;
+        request: BuiltinContext;
+      };
+      const result = callback(request);
+      if (isPromiseLike(result)) {
+        Promise.resolve(result).then(
+          (v) => respondToBuiltin(callId, v as string),
+          (e) => respondToBuiltinError(callId, (e as Error)?.message ?? String(e)),
+        );
+      } else {
+        respondToBuiltin(callId, result);
+      }
+    } catch (e) {
+      respondToBuiltinError(
+        "?",
+        (e as Error)?.message ?? String(e),
+      );
+    }
   };
 }
 
@@ -650,12 +679,20 @@ export class Bash {
   ): void {
     if (!builtins) return;
     for (const [name, callback] of Object.entries(builtins)) {
-      const wrapped = (requestJson: string): string => {
-        const ctx = JSON.parse(requestJson) as BuiltinContext;
-        return callback(ctx);
-      };
-      this.native.addBuiltin(name, wrapped);
+      this._addBuiltinToNative(name, callback);
     }
+  }
+
+  private _addBuiltinToNative(
+    name: string,
+    callback: BuiltinCallback,
+  ): void {
+    const dispatch = makeBuiltinDispatcher(
+      callback,
+      (callId, result) => this.native.respondToBuiltin(callId, result),
+      (callId, error) => this.native.respondToBuiltinError(callId, error),
+    );
+    this.native.addBuiltin(name, dispatch);
   }
 
   /**
@@ -804,11 +841,7 @@ export class Bash {
    * ```
    */
   addBuiltin(name: string, callback: BuiltinCallback): void {
-    const wrapped = (requestJson: string): string => {
-      const ctx = JSON.parse(requestJson) as BuiltinContext;
-      return callback(ctx);
-    };
-    this.native.addBuiltin(name, wrapped);
+    this._addBuiltinToNative(name, callback);
   }
 
   /**
@@ -1036,12 +1069,20 @@ export class BashTool {
   ): void {
     if (!builtins) return;
     for (const [name, callback] of Object.entries(builtins)) {
-      const wrapped = (requestJson: string): string => {
-        const ctx = JSON.parse(requestJson) as BuiltinContext;
-        return callback(ctx);
-      };
-      this.native.addBuiltin(name, wrapped);
+      this._addBuiltinToNative(name, callback);
     }
+  }
+
+  private _addBuiltinToNative(
+    name: string,
+    callback: BuiltinCallback,
+  ): void {
+    const dispatch = makeBuiltinDispatcher(
+      callback,
+      (callId, result) => this.native.respondToBuiltin(callId, result),
+      (callId, error) => this.native.respondToBuiltinError(callId, error),
+    );
+    this.native.addBuiltin(name, dispatch);
   }
 
   /**
@@ -1176,11 +1217,7 @@ export class BashTool {
    * ```
    */
   addBuiltin(name: string, callback: BuiltinCallback): void {
-    const wrapped = (requestJson: string): string => {
-      const ctx = JSON.parse(requestJson) as BuiltinContext;
-      return callback(ctx);
-    };
-    this.native.addBuiltin(name, wrapped);
+    this._addBuiltinToNative(name, callback);
   }
 
   /**

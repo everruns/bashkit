@@ -328,6 +328,57 @@ Custom builtins survive `reset()`. They are host-side config, so
 `fromSnapshot()` and `restoreSnapshot()` do not preserve them —
 pass `customBuiltins` again when restoring.
 
+### Async Callbacks
+
+Callbacks can be async — return a `Promise<string>`:
+
+```typescript
+import { Bash } from "@everruns/bashkit";
+
+const bash = new Bash({
+  customBuiltins: {
+    fetch: async (ctx) => {
+      // Simulate async work (fetch, DB query, etc.)
+      await new Promise((r) => setTimeout(r, 10));
+      return `result for ${ctx.argv[0]}\n`;
+    },
+    double: async (ctx) => `${Number(ctx.stdin.trim()) * 2}\n`,
+  },
+});
+
+// Pipe through async builtin
+const r1 = await bash.execute("echo 21 | double");
+console.log(r1.stdout); // 42
+
+// Chain sync + async builtins
+const r2 = await bash.execute(
+  "echo hello | tr a-z A-Z | double",
+);
+console.log(r2.stdout); // HELLO HELLO
+```
+
+Custom builtins support both sync and async callbacks. The adapter uses
+a two-phase dispatch: JS calls the callback, awaits the Promise if
+needed, then sends the result back via `respondToBuiltin`.
+
+### Error Handling
+
+Both sync and async callbacks that throw are caught and reported via
+stderr with exit code 1:
+
+```typescript
+const bash = new Bash({
+  customBuiltins: {
+    fail: async (ctx) => {
+      throw new Error(`unknown id: ${ctx.argv[0]}`);
+    },
+  },
+});
+const r = await bash.execute("fail 42");
+console.log(r.exitCode); // 1
+console.log(r.stderr);   // unknown id: 42
+```
+
 ## Snapshot / Restore
 
 State snapshots are available on both `Bash` and `BashTool` instances:
@@ -472,7 +523,9 @@ import {
 
 ### BuiltinCallback
 
-`(ctx: BuiltinContext) => string` — must return the stdout result.
+`(ctx: BuiltinContext) => string | Promise<string>` — must return the stdout
+result. Async callbacks (returning a Promise) are supported — the adapter
+awaits the Promise before sending the result back to the interpreter.
 
 ### ExecuteOptions
 
