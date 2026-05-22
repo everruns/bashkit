@@ -71,7 +71,7 @@ for sandbox security reasons. See the compliance spec for details.
 | `readonly` | `VAR[=value]`, `-p` | POSIX mark variable read-only |
 | `times` | - | POSIX display process times |
 | `grep` | `-i`, `-v`, `-c`, `-n`, `-E`, `-q` | Pattern matching |
-| `rg` | `-i/-S/-s`, `-n/-N`, `--column`, `-c`, `--count-matches`, `--include-zero`, `-l`, `--files-without-match`, `--files`, `-F`, `-w`, `-x`, `-m`, `--max-depth`, `-A`, `-B`, `-C`, separator flags, `--heading`, `--sort/--sortr`, `-g/--glob`, `-o`, `-q`, `-e`, `-f`, `-r`, `--passthru`, `--trim`, `-H/-I`, `--help`, `--version` | Recursive ripgrep-style search |
+| `rg` | `-i/-S/-s`, `-n/-N`, `--column`, `-b/--byte-offset`, `--vimgrep`, basic `--json`, `--null`, `-c`, `--count-matches`, `--include-zero`, `-l`, `--files-without-match`, `--files`, `-F`, `-w`, `-x`, `-m`, `--max-depth`, `-A`, `-B`, `-C`, separator flags, `--heading/--no-heading`, `--sort/--sortr`, `-g/--glob`, `-o`, `-q`, `-e`, `-f`, `-r`, `--passthru`, `--trim`, `-H/-I`, `--help`, `--version` | Recursive ripgrep-style search |
 | `sed` | `s///[g]`, `d`, `p`, `q`, `a`, `i`, `c`, `h/H/g/G/x`, `-E`, `-n`, `!` | Stream editing |
 | `awk` | `'{print}'`, `-F`, `-v`, loops, arrays, increment, ternary | Text processing |
 | `jq` | `.field`, `.[n]`, pipes, file args, `-r`, `-c`, `-n`, `-s`, `-S`, `-e`, `-j`, `--tab`, `--arg`, `--argjson`, `-V`, combined flags | JSON processing |
