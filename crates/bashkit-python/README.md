@@ -489,6 +489,7 @@ tool = create_bash_tool(
     ],
     allowed_mount_paths=["/path/to/docs"],
     readonly_filesystem=True,
+    max_output_length=12_000,
 )
 ```
 

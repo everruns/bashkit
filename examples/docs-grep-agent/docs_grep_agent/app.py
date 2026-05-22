@@ -36,7 +36,14 @@ Rules:
 - Use one multi-command bash script, or make multiple bash tool calls when separate searches are useful.
 - Only inspect files under /docs/public, /docs/rustdoc, and /docs/examples.
 - Generated local artifacts such as .venv, .ruff_cache, and __pycache__ are intentionally not mounted.
-- Prefer grep commands over broad file dumps.
+- Keep tool output compact. Bound every broad search with `head`, `-m`, `-l`, or a narrow `sed -n` range, and aim to keep total tool output under 12000 characters.
+- Search progressively:
+  1. Use `rg -i -n PATTERN PATH... | head -20` for broad discovery.
+  2. Use `grep -R -i -n -C 1 -m 3 -- PATTERN PATH...` when you need context around matches.
+  3. Use `sed -n 'START,ENDp' FILE` after finding the best file and line range.
+- Use `grep` instead of `rg` when you need context flags (`-A`, `-B`, `-C`) or include/exclude filters. Bashkit `rg` is intentionally simpler than full ripgrep.
+- Use `-F` with `rg` or `grep` for exact strings.
+- For multi-topic questions, print short section labels and run one compact search per topic.
 - Do not act as a filesystem browser. If the user asks to list, tree, enumerate, dump, or browse directories/files, do not return raw listings. Say that the agent answers Bashkit docs questions and mention the mounted entrypoint categories instead.
 - Use ls/find only as an internal discovery step for a specific Bashkit docs question, not as the final answer.
 - Use only facts present in bash tool output.
@@ -44,7 +51,7 @@ Rules:
 - Bashkit find supports common simple predicates but not every GNU find expression; prefer separate `find ... -name PATTERN` calls over `-o`.
 - If a successful command produces no output, say that it produced no output instead of returning an empty answer.
 - Keep answers concise and practical.
-- For CLI or code questions, grep for the relevant docs and include a runnable example when the output contains one.
+- For CLI or code questions, search the relevant docs and examples, then include a runnable example when the output contains one.
 - If the bash output does not answer the question, say the docs snippets do not show it.
 """
 
@@ -103,6 +110,7 @@ def create_docs_bash_tool(root: Path):
         files=build_example_files(root),
         allowed_mount_paths=[str(host_path) for host_path, _ in docs_mounts],
         readonly_filesystem=True,
+        max_output_length=MAX_CONTEXT_CHARS,
     )
 
 
@@ -189,10 +197,15 @@ async def answer(
 def self_test(root: Path) -> None:
     bash_tool = create_docs_bash_tool(root)
     what = bash_tool.invoke(
-        {"commands": "grep -R -i -n -C 1 -m 3 -- 'bashkit' /docs/public /docs/rustdoc"}
+        {"commands": "rg -i -n 'bashkit' /docs/public /docs/rustdoc | head -10"}
     )
     cli = bash_tool.invoke(
         {"commands": "grep -R -i -n -C 1 -m 3 -- 'cli' /docs/public"}
+    )
+    bounded = bash_tool.invoke(
+        {
+            "commands": "yes bashkit | head -20000",
+        }
     )
     readonly = bash_tool.invoke({"commands": "printf nope > /docs/public/nope.txt"})
     copy = bash_tool.invoke({"commands": "cp /docs/public/cli.md /tmp/cli-copy.md"})
@@ -211,6 +224,8 @@ def self_test(root: Path) -> None:
 
     assert "sandboxed" in what.lower() or "bashkit" in what.lower()
     assert "bashkit-cli" in cli.lower()
+    assert len(bounded) <= MAX_CONTEXT_CHARS + len("\n[truncated]")
+    assert bounded.endswith("[truncated]")
     assert "[Exit code:" in readonly
     assert "[Exit code:" in copy
     assert "/docs/examples/" in examples
@@ -220,7 +235,7 @@ def self_test(root: Path) -> None:
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Answer Bashkit docs questions with a LangGraph + bashkit grep agent."
+        description="Answer Bashkit docs questions with a LangGraph + bashkit search agent."
     )
     parser.add_argument(
         "question", nargs="*", help="Question to answer. Omit for interactive mode."
@@ -237,7 +252,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--show-tools",
         action="store_true",
-        help="Print one-line grep commands to stderr.",
+        help="Print one-line bash search scripts to stderr.",
     )
     parser.add_argument(
         "--no-spinner",
