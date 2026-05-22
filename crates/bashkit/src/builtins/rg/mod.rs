@@ -53,6 +53,7 @@ struct RgOptions {
     binary: bool,
     search_zip: bool,
     preprocessor: Option<String>,
+    pre_glob_rules: Vec<RgGlobRule>,
     crlf: bool,
     multiline: bool,
     multiline_dotall: bool,
@@ -190,6 +191,7 @@ impl RgOptions {
             binary: false,
             search_zip: false,
             preprocessor: None,
+            pre_glob_rules: Vec::new(),
             crlf: false,
             multiline: false,
             multiline_dotall: false,
@@ -409,7 +411,11 @@ impl RgOptions {
             } else if p.flag("--no-pre") {
                 opts.preprocessor = None;
             } else if let Some(val) = long_value(&mut p, "--pre-glob")? {
-                let _ = RgGlobRule::parse(&val, false, opts.glob_case_insensitive)?;
+                opts.pre_glob_rules.push(RgGlobRule::parse(
+                    &val,
+                    false,
+                    opts.glob_case_insensitive,
+                )?);
             } else if p.flag("--crlf") {
                 opts.crlf = true;
                 opts.null_data = false;
@@ -940,15 +946,6 @@ impl RgOptions {
         }
 
         opts.paths = positional;
-        if let Some(preprocessor) = &opts.preprocessor
-            && !preprocessor.is_empty()
-            && preprocessor != "cat"
-        {
-            return Err(Error::Execution(format!(
-                "rg: unsupported --pre command: {preprocessor}"
-            )));
-        }
-
         Ok(opts)
     }
 
@@ -1030,6 +1027,42 @@ impl RgOptions {
 
     fn matches_max_filesize(&self, size: u64) -> bool {
         self.max_filesize.is_none_or(|max| size <= max)
+    }
+
+    fn preprocessor_applies_to(&self, path: &Path, cwd: &Path) -> bool {
+        if self.preprocessor.is_none() || self.pre_glob_rules.is_empty() {
+            return self.preprocessor.is_some();
+        }
+
+        let mut matched = None;
+        let mut has_include = false;
+        for rule in &self.pre_glob_rules {
+            has_include |= rule.include;
+            if rule.matches(path, cwd) {
+                matched = Some(rule.include);
+            }
+        }
+        matched.unwrap_or(!has_include)
+    }
+
+    fn validate_preprocessor_for(
+        &self,
+        path: &Path,
+        cwd: &Path,
+    ) -> std::result::Result<(), String> {
+        let Some(preprocessor) = &self.preprocessor else {
+            return Ok(());
+        };
+        if preprocessor.is_empty()
+            || preprocessor == "cat"
+            || !self.preprocessor_applies_to(path, cwd)
+        {
+            return Ok(());
+        }
+        Err(format!(
+            "preprocessor command could not start: '\"{preprocessor}\" \"{}\"': No such file or directory (os error 2)",
+            path.display()
+        ))
     }
 
     fn first_positive_glob(&self) -> Option<String> {
@@ -1654,15 +1687,20 @@ fn long_value(p: &mut super::arg_parser::ArgParser<'_>, name: &str) -> Result<Op
 async fn read_rg_text_file(
     fs: &dyn crate::fs::FileSystem,
     path: &Path,
+    cwd: &Path,
+    display_path: &str,
     opts: &RgOptions,
 ) -> std::result::Result<String, ExecResult> {
     let content = fs
         .read_file(path)
         .await
-        .map_err(|e| ExecResult::err(format!("rg: {}: {e}\n", path.display()), 1))?;
+        .map_err(|e| ExecResult::err(format!("rg: {display_path}: {e}\n"), 1))?;
+
+    opts.validate_preprocessor_for(path, cwd)
+        .map_err(|e| ExecResult::err(format!("rg: {display_path}: {e}\n"), 1))?;
 
     let content = rg_search_bytes(&content, opts)
-        .map_err(|e| ExecResult::err(format!("rg: {}: {e}\n", path.display()), 1))?;
+        .map_err(|e| ExecResult::err(format!("rg: {display_path}: {e}\n"), 1))?;
     Ok(decode_rg_content(&content, opts))
 }
 
@@ -1689,9 +1727,7 @@ async fn collect_rg_inputs(
             actual: ctx.cwd.to_path_buf(),
         };
         let files = collect_rg_files_recursive(&*ctx.fs, &[root], opts, ctx.cwd).await;
-        return Ok(RgCollectedInputs::new(
-            read_rg_files(&*ctx.fs, files, ctx.cwd, None, opts).await,
-        ));
+        return Ok(read_rg_files(&*ctx.fs, files, ctx.cwd, None, opts).await);
     }
 
     if let Some(inputs) = try_indexed_search(&*ctx.fs, opts, ctx.cwd).await {
@@ -1710,7 +1746,10 @@ async fn collect_rg_inputs(
                 actual: actual_path,
             };
             let files = collect_rg_files_recursive(&*ctx.fs, &[root], opts, ctx.cwd).await;
-            inputs.extend(read_rg_files(&*ctx.fs, files, ctx.cwd, Some(p), opts).await);
+            let read = read_rg_files(&*ctx.fs, files, ctx.cwd, Some(p), opts).await;
+            collected.had_errors |= read.had_errors;
+            collected.stderr.push_str(&read.stderr);
+            inputs.extend(read.inputs);
             continue;
         }
 
@@ -1721,7 +1760,7 @@ async fn collect_rg_inputs(
             .await
             .map(|(actual, _)| actual)
             .unwrap_or_else(|| path.clone());
-        let text = match read_rg_text_file(&*ctx.fs, &actual_path, opts).await {
+        let text = match read_rg_text_file(&*ctx.fs, &actual_path, ctx.cwd, p, opts).await {
             Ok(t) => t,
             Err(e) => {
                 collected.had_errors = true;
@@ -2114,20 +2153,21 @@ async fn read_rg_files(
     cwd: &Path,
     root_arg: Option<&str>,
     opts: &RgOptions,
-) -> Vec<(String, String)> {
-    let mut inputs = Vec::new();
+) -> RgCollectedInputs {
+    let mut collected = RgCollectedInputs::default();
     for file in files {
-        if let Ok(content) = fs.read_file(&file.actual).await {
-            let Ok(content) = rg_search_bytes(&content, opts) else {
-                continue;
-            };
-            inputs.push((
-                display_path_for(&file.logical, cwd, root_arg, opts),
-                decode_rg_content(&content, opts),
-            ));
+        let display = display_path_for(&file.logical, cwd, root_arg, opts);
+        match read_rg_text_file(fs, &file.actual, cwd, &display, opts).await {
+            Ok(text) => collected.inputs.push((display, text)),
+            Err(e) => {
+                collected.had_errors = true;
+                if opts.messages {
+                    collected.stderr.push_str(&e.stderr);
+                }
+            }
         }
     }
-    inputs
+    collected
 }
 
 async fn try_indexed_search(
@@ -2144,6 +2184,7 @@ async fn try_indexed_search(
         || !opts.type_excludes.is_empty()
         || opts.follow_symlinks
         || opts.search_zip
+        || opts.preprocessor.is_some()
         || (!opts.unicode && !opts.fixed_strings)
     {
         return None;
@@ -5656,6 +5697,20 @@ mod tests {
             output: RgDiffOutput::UnorderedLines,
         },
         RgDiffCase {
+            name: "pre glob skips unsupported preprocessor",
+            args: &[
+                "--pre=definitely-not-a-command",
+                "--pre-glob",
+                "*.md",
+                "needle",
+                "proj/a.txt",
+            ],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
             name: "no pre disables pre command",
             args: &["--pre=false", "--no-pre", "needle", "proj/a.txt"],
             stdin: None,
@@ -6515,17 +6570,60 @@ mod tests {
 
     #[tokio::test]
     async fn test_rg_unsupported_preprocessor_errors() {
-        let args: Vec<String> = vec![
-            "--pre".to_string(),
-            "sed s/x/y/".to_string(),
-            "needle".to_string(),
-            "file.txt".to_string(),
-        ];
-        let result = RgOptions::parse(&args);
-        assert!(matches!(
-            result,
-            Err(Error::Execution(msg)) if msg == "rg: unsupported --pre command: sed s/x/y/"
-        ));
+        let result = run_rg(
+            &["--pre", "sed s/x/y/", "needle", "/file.txt"],
+            None,
+            &[("/file.txt", b"needle\n")],
+        )
+        .await;
+        assert_eq!(result.exit_code, 2);
+        assert!(result.stdout.is_empty());
+        assert!(
+            result
+                .stderr
+                .contains("preprocessor command could not start")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_rg_pre_glob_skips_unsupported_preprocessor() {
+        let excluded = run_rg(
+            &[
+                "--pre",
+                "sed s/x/y/",
+                "--pre-glob",
+                "*.md",
+                "needle",
+                "/file.txt",
+            ],
+            None,
+            &[("/file.txt", b"needle\n")],
+        )
+        .await;
+        assert_eq!(excluded.exit_code, 0);
+        assert_eq!(excluded.stdout, "needle\n");
+        assert!(excluded.stderr.is_empty());
+
+        let included = run_rg(
+            &[
+                "--pre",
+                "sed s/x/y/",
+                "--pre-glob",
+                "*.txt",
+                "needle",
+                "/file.txt",
+            ],
+            None,
+            &[("/file.txt", b"needle\n")],
+        )
+        .await;
+        assert_eq!(included.exit_code, 2);
+        assert!(included.stdout.is_empty());
+        assert!(
+            included
+                .stderr
+                .contains("preprocessor command could not start")
+        );
     }
 
     #[tokio::test]
