@@ -43,6 +43,7 @@ struct RgOptions {
     byte_offset: bool,
     vimgrep: bool,
     json: bool,
+    stats: bool,
     files_with_matches: bool,
     invert_match: bool,
     word_boundary: bool,
@@ -137,6 +138,7 @@ impl RgOptions {
             byte_offset: false,
             vimgrep: false,
             json: false,
+            stats: false,
             files_with_matches: false,
             invert_match: false,
             word_boundary: false,
@@ -314,6 +316,8 @@ impl RgOptions {
                 opts.show_filename = true;
             } else if p.flag("--json") {
                 opts.json = true;
+            } else if p.flag("--stats") {
+                opts.stats = true;
             } else if p.flag("--files") {
                 opts.list_files = true;
             } else if p.flag("--passthru") {
@@ -1751,10 +1755,34 @@ fn write_rg_json_summary(
     );
 }
 
+#[derive(Default)]
+struct RgSearchStats {
+    matches: usize,
+    matched_lines: usize,
+    files_with_matches: usize,
+    files_searched: usize,
+    bytes_searched: usize,
+}
+
+fn append_rg_stats(output: &mut String, stats: &RgSearchStats, bytes_printed: usize) {
+    output.push('\n');
+    output.push_str(&format!("{} matches\n", stats.matches));
+    output.push_str(&format!("{} matched lines\n", stats.matched_lines));
+    output.push_str(&format!(
+        "{} files contained matches\n",
+        stats.files_with_matches
+    ));
+    output.push_str(&format!("{} files searched\n", stats.files_searched));
+    output.push_str(&format!("{bytes_printed} bytes printed\n"));
+    output.push_str(&format!("{} bytes searched\n", stats.bytes_searched));
+    output.push_str("0.000000 seconds spent searching\n");
+    output.push_str("0.000000 seconds total\n");
+}
+
 #[async_trait]
 impl Builtin for Rg {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        let help_text = "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i, --ignore-case\tcase insensitive\n  -S, --smart-case\tcase insensitive if pattern is lowercase\n  -s, --case-sensitive\tcase sensitive\n  -n, --line-number\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  --column\tshow column numbers\n  -b, --byte-offset\tshow byte offsets\n  --vimgrep\tshow file:line:column:match lines\n  --json\tshow JSON Lines events\n  --null\tterminate path fields with NUL\n  -c, --count\tcount matching lines\n  --count-matches\tcount individual matches\n  --include-zero\tinclude zero counts\n  -l, --files-with-matches\tfiles with matches\n  --files-without-match\tfiles without matches\n  --files\tprint files that would be searched\n  -v, --invert-match\tinvert match\n  -w, --word-regexp\tword boundary\n  -x, --line-regexp\tmatch whole lines\n  -F, --fixed-strings\tfixed strings (literal)\n  -a, --text\tsearch binary files as text\n  --binary\tsearch binary files and print binary-match summaries\n  -o, --only-matching\tshow only matching text\n  -q, --quiet\tsuppress output; exit status only\n  -e, --regexp PATTERN\tuse PATTERN for matching\n  -f, --file PATTERNFILE\tread patterns from file\n  -r, --replace REPLACEMENT\treplace matches in output\n  --passthru\tprint matching and non-matching lines\n  --trim\ttrim whitespace from output lines\n  -m, --max-count NUM\tmax count per file\n  -M, --max-columns NUM\tomit lines longer than NUM columns\n  --max-columns-preview\tshow prefixes of long lines\n  --max-depth NUM\tlimit recursive directory depth\n  -A, --after-context NUM\tshow trailing context\n  -B, --before-context NUM\tshow leading context\n  -C, --context NUM\tshow leading and trailing context\n  --context-separator SEP\tset context group separator\n  --field-match-separator SEP\tset match field separator\n  --field-context-separator SEP\tset context field separator\n  --heading\tgroup matches by file\n  --no-heading\tdisable heading output\n  --sort SORTBY\tsort paths (path only)\n  --sortr SORTBY\tsort paths in reverse (path only)\n  --sort-files\tsort --files output\n  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  -t, --type TYPE\tinclude files matching TYPE\n  -T, --type-not TYPE\texclude files matching TYPE\n  --type-add TYPE:GLOB\tadd a file type glob\n  --type-clear TYPE\tclear a file type definition\n  --type-list\tshow file type definitions\n  --ignore-file FILE\tuse additional ignore file\n  --no-ignore\tdo not use ignore files\n  --no-ignore-dot\tdo not use .ignore files\n  --no-ignore-vcs\tdo not use .gitignore files\n  --messages\tshow file read diagnostics\n  --no-messages\tsuppress file read diagnostics\n  --hidden\tsearch hidden files and directories\n  --no-hidden\tdo not search hidden files and directories\n  -H, --with-filename\tshow filename\n  -I, --no-filename\tsuppress filename\n  --color MODE\tcolor output (no-op)\n  -h, --help\tdisplay this help and exit\n  -V, --version\toutput version information and exit\n";
+        let help_text = "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i, --ignore-case\tcase insensitive\n  -S, --smart-case\tcase insensitive if pattern is lowercase\n  -s, --case-sensitive\tcase sensitive\n  -n, --line-number\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  --column\tshow column numbers\n  -b, --byte-offset\tshow byte offsets\n  --vimgrep\tshow file:line:column:match lines\n  --json\tshow JSON Lines events\n  --stats\tshow search statistics\n  --null\tterminate path fields with NUL\n  -c, --count\tcount matching lines\n  --count-matches\tcount individual matches\n  --include-zero\tinclude zero counts\n  -l, --files-with-matches\tfiles with matches\n  --files-without-match\tfiles without matches\n  --files\tprint files that would be searched\n  -v, --invert-match\tinvert match\n  -w, --word-regexp\tword boundary\n  -x, --line-regexp\tmatch whole lines\n  -F, --fixed-strings\tfixed strings (literal)\n  -a, --text\tsearch binary files as text\n  --binary\tsearch binary files and print binary-match summaries\n  -o, --only-matching\tshow only matching text\n  -q, --quiet\tsuppress output; exit status only\n  -e, --regexp PATTERN\tuse PATTERN for matching\n  -f, --file PATTERNFILE\tread patterns from file\n  -r, --replace REPLACEMENT\treplace matches in output\n  --passthru\tprint matching and non-matching lines\n  --trim\ttrim whitespace from output lines\n  -m, --max-count NUM\tmax count per file\n  -M, --max-columns NUM\tomit lines longer than NUM columns\n  --max-columns-preview\tshow prefixes of long lines\n  --max-depth NUM\tlimit recursive directory depth\n  -A, --after-context NUM\tshow trailing context\n  -B, --before-context NUM\tshow leading context\n  -C, --context NUM\tshow leading and trailing context\n  --context-separator SEP\tset context group separator\n  --field-match-separator SEP\tset match field separator\n  --field-context-separator SEP\tset context field separator\n  --heading\tgroup matches by file\n  --no-heading\tdisable heading output\n  --sort SORTBY\tsort paths (path only)\n  --sortr SORTBY\tsort paths in reverse (path only)\n  --sort-files\tsort --files output\n  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  -t, --type TYPE\tinclude files matching TYPE\n  -T, --type-not TYPE\texclude files matching TYPE\n  --type-add TYPE:GLOB\tadd a file type glob\n  --type-clear TYPE\tclear a file type definition\n  --type-list\tshow file type definitions\n  --ignore-file FILE\tuse additional ignore file\n  --no-ignore\tdo not use ignore files\n  --no-ignore-dot\tdo not use .ignore files\n  --no-ignore-vcs\tdo not use .gitignore files\n  --messages\tshow file read diagnostics\n  --no-messages\tsuppress file read diagnostics\n  --hidden\tsearch hidden files and directories\n  --no-hidden\tdo not search hidden files and directories\n  -H, --with-filename\tshow filename\n  -I, --no-filename\tsuppress filename\n  --color MODE\tcolor output (no-op)\n  -h, --help\tdisplay this help and exit\n  -V, --version\toutput version information and exit\n";
         if ctx.args.iter().any(|arg| arg == "-h") {
             return Ok(ExecResult::ok(help_text.to_string()));
         }
@@ -1825,17 +1853,20 @@ impl Builtin for Rg {
         let mut json_matched_lines = 0usize;
         let mut json_matches = 0usize;
         let mut json_searches = 0usize;
+        let mut stats = RgSearchStats::default();
 
         for (filename, content) in &inputs {
             let mut match_count = 0usize;
             let mut count_value = 0usize;
             let mut match_lines = Vec::new();
+            stats.files_searched += 1;
             if let Some(nul_offset) = first_nul_offset(content)
                 && !opts.text
             {
                 if !opts.binary {
                     continue;
                 }
+                stats.bytes_searched += content.len();
 
                 let matched = regex.is_match(content);
                 let matched = if opts.invert_match { !matched } else { matched };
@@ -1855,8 +1886,14 @@ impl Builtin for Rg {
                 }
 
                 any_match = true;
+                stats.matches += 1;
+                stats.matched_lines += 1;
+                stats.files_with_matches += 1;
                 if opts.quiet {
-                    return Ok(ExecResult::ok(String::new()));
+                    if !opts.stats {
+                        return Ok(ExecResult::ok(String::new()));
+                    }
+                    continue;
                 }
                 if opts.files_without_matches {
                     continue;
@@ -1891,6 +1928,7 @@ impl Builtin for Rg {
             let lines = split_rg_lines(content);
             json_bytes_searched += content.len();
             json_searches += 1;
+            stats.bytes_searched += content.len();
 
             for (line_idx, line) in lines.iter().enumerate() {
                 let matched = regex.is_match(line.text);
@@ -1918,17 +1956,25 @@ impl Builtin for Rg {
                     count_value += 1;
                 }
                 json_matches += matches_on_line;
+                stats.matches += matches_on_line;
+                stats.matched_lines += 1;
                 match_lines.push(line_idx);
                 if !opts.files_without_matches {
                     any_match = true;
                 }
 
-                if opts.files_with_matches || opts.files_without_matches || opts.quiet {
+                if (opts.files_with_matches || opts.files_without_matches || opts.quiet)
+                    && !opts.stats
+                {
                     break;
                 }
             }
 
-            if opts.quiet && match_count > 0 {
+            if match_count > 0 {
+                stats.files_with_matches += 1;
+            }
+
+            if opts.quiet && match_count > 0 && !opts.stats {
                 return Ok(ExecResult::ok(String::new()));
             }
             if opts.files_with_matches && match_count > 0 {
@@ -2153,6 +2199,18 @@ impl Builtin for Rg {
                 json_matches,
                 json_searches,
             );
+        } else if opts.stats {
+            let bytes_printed = if opts.count_only
+                || opts.count_matches
+                || opts.files_with_matches
+                || opts.files_without_matches
+                || opts.quiet
+            {
+                0
+            } else {
+                output.len()
+            };
+            append_rg_stats(&mut output, &stats, bytes_printed);
         }
 
         let exit_code = if collected_inputs.had_errors {
@@ -2255,6 +2313,7 @@ mod tests {
         UnorderedLines,
         UnorderedNul,
         JsonEvents,
+        Stats,
     }
 
     struct RgDiffCase {
@@ -2738,6 +2797,30 @@ mod tests {
             output: RgDiffOutput::JsonEvents,
         },
         RgDiffCase {
+            name: "stats explicit file",
+            args: &["--stats", "needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Stats,
+        },
+        RgDiffCase {
+            name: "stats no match",
+            args: &["--stats", "missing", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Stats,
+        },
+        RgDiffCase {
+            name: "stats quiet scans all matches",
+            args: &["--stats", "-q", "needle", "proj/a.txt", "proj/src/main.rs"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Stats,
+        },
+        RgDiffCase {
             name: "hidden recursive",
             args: &["--hidden", "needle", "proj"],
             stdin: None,
@@ -3038,6 +3121,12 @@ mod tests {
                 "stdout JSON-event mismatch for rg differential case {}",
                 case.name
             ),
+            RgDiffOutput::Stats => assert_eq!(
+                normalize_rg_stats(&bashkit.stdout),
+                normalize_rg_stats(&real_stdout),
+                "stdout stats mismatch for rg differential case {}",
+                case.name
+            ),
         }
         assert_eq!(
             bashkit.exit_code, real_code,
@@ -3088,6 +3177,15 @@ mod tests {
             stats.remove("elapsed");
             stats.remove("bytes_printed");
         }
+    }
+
+    fn normalize_rg_stats(output: &str) -> Vec<&str> {
+        output
+            .lines()
+            .filter(|line| {
+                !line.contains("seconds spent searching") && !line.contains("seconds total")
+            })
+            .collect()
     }
 
     struct IndexedTestFs {
@@ -3185,6 +3283,7 @@ mod tests {
         );
         assert!(long_help.stdout.contains("-h, --help"));
         assert!(long_help.stdout.contains("--version"));
+        assert!(long_help.stdout.contains("--stats"));
 
         let short_help = run_rg(&["-h"], None, &[]).await;
         assert_eq!(short_help.exit_code, 0);
@@ -3564,6 +3663,25 @@ mod tests {
         .await;
         assert_eq!(reenabled.exit_code, 2);
         assert!(reenabled.stderr.contains("rg: /missing.txt:"));
+    }
+
+    #[tokio::test]
+    async fn test_rg_stats() {
+        let result = run_rg(
+            &["--stats", "needle", "/a.txt"],
+            None,
+            &[("/a.txt", b"needle\nnone\nneedle again\n")],
+        )
+        .await;
+
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.starts_with("needle\nneedle again\n\n"));
+        assert!(result.stdout.contains("2 matches\n"));
+        assert!(result.stdout.contains("2 matched lines\n"));
+        assert!(result.stdout.contains("1 files contained matches\n"));
+        assert!(result.stdout.contains("1 files searched\n"));
+        assert!(result.stdout.contains("20 bytes printed\n"));
+        assert!(result.stdout.contains("25 bytes searched\n"));
     }
 
     #[tokio::test]
