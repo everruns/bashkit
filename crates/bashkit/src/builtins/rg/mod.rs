@@ -88,6 +88,7 @@ struct RgOptions {
     ignore_file_paths: Vec<String>,
     explicit_ignore_rules: Vec<RgIgnoreRule>,
     glob_rules: Vec<RgGlobRule>,
+    glob_case_insensitive: bool,
     type_database: RgTypeDatabase,
     type_includes: Vec<RgFileType>,
     type_excludes: Vec<RgFileType>,
@@ -108,6 +109,8 @@ struct RgGlobRule {
     include: bool,
     has_slash: bool,
     anchored: bool,
+    iglob: bool,
+    case_insensitive: bool,
     regex: Regex,
 }
 
@@ -208,6 +211,7 @@ impl RgOptions {
             ignore_file_paths: Vec::new(),
             explicit_ignore_rules: Vec::new(),
             glob_rules: Vec::new(),
+            glob_case_insensitive: false,
             type_database: RgTypeDatabase::default(),
             type_includes: Vec::new(),
             type_excludes: Vec::new(),
@@ -277,9 +281,19 @@ impl RgOptions {
             } else if let Some(val) = long_value(&mut p, "--field-context-separator")? {
                 opts.field_context_separator = val;
             } else if let Some(val) = p.flag_value("-g", "rg").map_err(Error::Execution)? {
-                opts.glob_rules.push(RgGlobRule::parse(val)?);
+                opts.glob_rules
+                    .push(RgGlobRule::parse(val, false, opts.glob_case_insensitive)?);
             } else if let Some(val) = long_value(&mut p, "--glob")? {
-                opts.glob_rules.push(RgGlobRule::parse(&val)?);
+                opts.glob_rules
+                    .push(RgGlobRule::parse(&val, false, opts.glob_case_insensitive)?);
+            } else if let Some(val) = long_value(&mut p, "--iglob")? {
+                opts.glob_rules.push(RgGlobRule::parse(&val, true, true)?);
+            } else if p.flag("--glob-case-insensitive") {
+                opts.glob_case_insensitive = true;
+                opts.set_glob_case_insensitive(true)?;
+            } else if p.flag("--no-glob-case-insensitive") {
+                opts.glob_case_insensitive = false;
+                opts.set_glob_case_insensitive(false)?;
             } else if let Some(val) = long_value(&mut p, "--ignore-file")? {
                 opts.ignore_file_paths.push(val);
             } else if let Some(val) = p.flag_value("-t", "rg").map_err(Error::Execution)? {
@@ -649,7 +663,11 @@ impl RgOptions {
                                     }
                                 }
                             };
-                            opts.glob_rules.push(RgGlobRule::parse(&glob)?);
+                            opts.glob_rules.push(RgGlobRule::parse(
+                                &glob,
+                                false,
+                                opts.glob_case_insensitive,
+                            )?);
                             break;
                         }
                         't' => {
@@ -771,15 +789,15 @@ impl RgOptions {
     }
 
     fn matches_globs(&self, path: &Path, cwd: &Path) -> bool {
-        let includes: Vec<&RgGlobRule> = self.glob_rules.iter().filter(|g| g.include).collect();
-        if !includes.is_empty() && !includes.iter().any(|g| g.matches(path, cwd)) {
-            return false;
+        let mut matched = None;
+        let mut has_include = false;
+        for rule in &self.glob_rules {
+            has_include |= rule.include;
+            if rule.matches(path, cwd) {
+                matched = Some(rule.include);
+            }
         }
-        !self
-            .glob_rules
-            .iter()
-            .filter(|g| !g.include)
-            .any(|g| g.matches(path, cwd))
+        matched.unwrap_or(!has_include)
     }
 
     fn matches_type_filters(&self, path: &Path) -> bool {
@@ -806,6 +824,15 @@ impl RgOptions {
 
     fn uses_ignore_files(&self) -> bool {
         !self.no_ignore || !self.ignore_file_paths.is_empty()
+    }
+
+    fn set_glob_case_insensitive(&mut self, case_insensitive: bool) -> Result<()> {
+        for rule in &mut self.glob_rules {
+            if !rule.iglob {
+                rule.set_case_insensitive(case_insensitive)?;
+            }
+        }
+        Ok(())
     }
 
     fn is_ignored_by_rules(&self, path: &Path, is_dir: bool, rules: &[RgIgnoreRule]) -> bool {
@@ -1062,7 +1089,7 @@ impl RgTypeGlob {
 }
 
 impl RgGlobRule {
-    fn parse(pattern: &str) -> Result<Self> {
+    fn parse(pattern: &str, iglob: bool, case_insensitive: bool) -> Result<Self> {
         let (include, raw_pattern) = match pattern.strip_prefix('!') {
             Some(rest) => (false, rest),
             None => (true, pattern),
@@ -1070,15 +1097,24 @@ impl RgGlobRule {
         let normalized = raw_pattern.strip_prefix("./").unwrap_or(raw_pattern);
         let has_slash = normalized.contains('/');
         let anchored = normalized.starts_with('/');
-        let regex = build_regex_opts(&glob_to_regex(normalized), false)
+        let regex = build_regex_opts(&glob_to_regex(normalized), case_insensitive)
             .map_err(|e| Error::Execution(format!("rg: invalid --glob value: {}", e)))?;
         Ok(Self {
             raw: normalized.to_string(),
             include,
             has_slash,
             anchored,
+            iglob,
+            case_insensitive,
             regex,
         })
+    }
+
+    fn set_case_insensitive(&mut self, case_insensitive: bool) -> Result<()> {
+        self.regex = build_regex_opts(&glob_to_regex(&self.raw), case_insensitive)
+            .map_err(|e| Error::Execution(format!("rg: invalid --glob value: {}", e)))?;
+        self.case_insensitive = case_insensitive;
+        Ok(())
     }
 
     fn matches(&self, path: &Path, cwd: &Path) -> bool {
@@ -2135,13 +2171,17 @@ fn append_rg_stats(output: &mut String, stats: &RgSearchStats, bytes_printed: us
 impl Builtin for Rg {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         let help_text = "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i, --ignore-case\tcase insensitive\n  -S, --smart-case\tcase insensitive if pattern is lowercase\n  -s, --case-sensitive\tcase sensitive\n  -n, --line-number\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  --column\tshow column numbers\n  -b, --byte-offset\tshow byte offsets\n  --vimgrep\tshow file:line:column:match lines\n  --json\tshow JSON Lines events\n  --stats\tshow search statistics\n  --null\tterminate path fields with NUL\n  -c, --count\tcount matching lines\n  --count-matches\tcount individual matches\n  --include-zero\tinclude zero counts\n  -l, --files-with-matches\tfiles with matches\n  --files-without-match\tfiles without matches\n  --files\tprint files that would be searched\n  -v, --invert-match\tinvert match\n  -w, --word-regexp\tword boundary\n  -x, --line-regexp\tmatch whole lines\n  -F, --fixed-strings\tfixed strings (literal)\n  -a, --text\tsearch binary files as text\n  --binary\tsearch binary files and print binary-match summaries\n  --crlf\ttreat CRLF as line terminators for $ anchors\n  --no-crlf\tdisable CRLF line terminator mode\n  -U, --multiline\tenable matching across line boundaries\n  --no-multiline\tdisable multiline matching\n  --multiline-dotall\tmake . match line terminators in multiline mode\n  --no-multiline-dotall\tdisable multiline dotall mode\n  -o, --only-matching\tshow only matching text\n  -q, --quiet\tsuppress output; exit status only\n  -e, --regexp PATTERN\tuse PATTERN for matching\n  -f, --file PATTERNFILE\tread patterns from file\n  -E, --encoding ENCODING\tdecode searched files using ENCODING\n  -r, --replace REPLACEMENT\treplace matches in output\n  --passthru\tprint matching and non-matching lines\n  --trim\ttrim whitespace from output lines\n  -m, --max-count NUM\tmax count per file\n  -M, --max-columns NUM\tomit lines longer than NUM columns\n  --max-columns-preview\tshow prefixes of long lines\n  --max-depth NUM\tlimit recursive directory depth\n  -A, --after-context NUM\tshow trailing context\n  -B, --before-context NUM\tshow leading context\n  -C, --context NUM\tshow leading and trailing context\n  --context-separator SEP\tset context group separator\n  --field-match-separator SEP\tset match field separator\n  --field-context-separator SEP\tset context field separator\n  --heading\tgroup matches by file\n  --no-heading\tdisable heading output\n  --sort SORTBY\tsort paths (path only)\n  --sortr SORTBY\tsort paths in reverse (path only)\n  --sort-files\tsort --files output\n  --path-separator SEP\tset displayed path separator\n  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  -t, --type TYPE\tinclude files matching TYPE\n  -T, --type-not TYPE\texclude files matching TYPE\n  --type-add TYPE:GLOB\tadd a file type glob\n  --type-clear TYPE\tclear a file type definition\n  --type-list\tshow file type definitions\n  --ignore-file FILE\tuse additional ignore file\n  --no-ignore\tdo not use ignore files\n  --no-ignore-dot\tdo not use .ignore files\n  --no-ignore-vcs\tdo not use .gitignore files\n  --no-require-git\tuse .gitignore outside git repositories\n  --require-git\trequire a git repository for .gitignore files\n  -u, --unrestricted\treduce filtering (repeatable)\n  --messages\tshow file read diagnostics\n  --no-messages\tsuppress file read diagnostics\n  --hidden\tsearch hidden files and directories\n  --no-hidden\tdo not search hidden files and directories\n  -H, --with-filename\tshow filename\n  -I, --no-filename\tsuppress filename\n  --line-buffered\tforce line buffering (no-op)\n  --block-buffered\tforce block buffering (no-op)\n  --no-config\tdo not read config files (no-op)\n  --mmap\tsearch using memory maps when possible (no-op)\n  --no-mmap\tdisable memory maps (no-op)\n  -P, --pcre2\tuse PCRE2 regex engine for supported patterns (no-op)\n  --no-pcre2\tdisable PCRE2 regex engine (no-op)\n  --engine ENGINE\tselect regex engine: default, auto, pcre2 (no-op)\n  --auto-hybrid-regex\tuse PCRE2 when needed (no-op)\n  --no-auto-hybrid-regex\tdisable auto hybrid regex (no-op)\n  --color MODE\tcolor output (no-op)\n  -h, --help\tdisplay this help and exit\n  -V, --version\toutput version information and exit\n";
+        let help_text = help_text.replace(
+            "  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n",
+            "  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  --iglob GLOB\tcase-insensitive include/exclude path glob\n  --glob-case-insensitive\tmake -g/--glob rules case-insensitive\n  --no-glob-case-insensitive\tdisable case-insensitive -g/--glob rules\n",
+        );
         if ctx.args.iter().any(|arg| arg == "-h") {
-            return Ok(ExecResult::ok(help_text.to_string()));
+            return Ok(ExecResult::ok(help_text));
         }
         if ctx.args.iter().any(|arg| arg == "-V") {
             return Ok(ExecResult::ok("rg (bashkit) 0.1\n".to_string()));
         }
-        if let Some(r) = super::check_help_version(ctx.args, help_text, Some("rg (bashkit) 0.1")) {
+        if let Some(r) = super::check_help_version(ctx.args, &help_text, Some("rg (bashkit) 0.1")) {
             return Ok(r);
         }
         let mut opts = RgOptions::parse(ctx.args)?;
@@ -2153,6 +2193,7 @@ impl Builtin for Rg {
         }
         if opts.list_files {
             let files = collect_rg_file_list(&*ctx.fs, &opts, ctx.cwd).await;
+            let found_files = !files.is_empty();
             let output = if opts.null {
                 let mut output = String::new();
                 for file in files {
@@ -2165,7 +2206,11 @@ impl Builtin for Rg {
             } else {
                 format!("{}\n", files.join("\n"))
             };
-            return Ok(ExecResult::ok(output));
+            return Ok(ExecResult {
+                stdout: output,
+                exit_code: if found_files { 0 } else { 1 },
+                ..Default::default()
+            });
         }
         if let Err(result) = load_rg_pattern_files(&*ctx.fs, ctx.cwd, ctx.stdin, &mut opts).await {
             return Ok(result);
@@ -3096,6 +3141,12 @@ mod tests {
     const DIFF_SORT_FILES: &[(&str, &[u8])] =
         &[("/proj/a.txt", b"needle\n"), ("/proj/b.txt", b"needle\n")];
 
+    const DIFF_GLOB_CASE_FILES: &[(&str, &[u8])] = &[
+        ("/proj/Foo.RS", b"needle\n"),
+        ("/proj/a.rs", b"needle\n"),
+        ("/proj/a.txt", b"needle\n"),
+    ];
+
     const DIFF_IGNORE_FILES: &[(&str, &[u8])] = &[
         ("/proj/.git/config", b"[core]\n"),
         (
@@ -3204,6 +3255,53 @@ mod tests {
             args: &["--glob=*.rs", "needle", "proj"],
             stdin: None,
             files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "glob last include wins",
+            args: &["--files", "-g", "!*.rs", "-g", "*.rs", "proj"],
+            stdin: None,
+            files: DIFF_GLOB_CASE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "glob last exclude wins",
+            args: &["--files", "-g", "*.rs", "-g", "!*.rs", "proj"],
+            stdin: None,
+            files: DIFF_GLOB_CASE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "iglob is case insensitive",
+            args: &["--files", "--iglob", "*.rs", "proj"],
+            stdin: None,
+            files: DIFF_GLOB_CASE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "glob case insensitive applies after glob",
+            args: &["--files", "-g", "*.rs", "--glob-case-insensitive", "proj"],
+            stdin: None,
+            files: DIFF_GLOB_CASE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "glob case insensitive can be disabled",
+            args: &[
+                "--files",
+                "-g",
+                "*.rs",
+                "--glob-case-insensitive",
+                "--no-glob-case-insensitive",
+                "proj",
+            ],
+            stdin: None,
+            files: DIFF_GLOB_CASE_FILES,
             cwd: "/",
             output: RgDiffOutput::UnorderedLines,
         },
