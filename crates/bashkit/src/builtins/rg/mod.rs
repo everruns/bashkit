@@ -73,6 +73,7 @@ struct RgOptions {
     no_ignore: bool,
     no_ignore_dot: bool,
     no_ignore_vcs: bool,
+    messages: bool,
     context_separator: String,
     field_match_separator: String,
     field_context_separator: String,
@@ -166,6 +167,7 @@ impl RgOptions {
             no_ignore: false,
             no_ignore_dot: false,
             no_ignore_vcs: false,
+            messages: true,
             context_separator: "--".to_string(),
             field_match_separator: ":".to_string(),
             field_context_separator: "-".to_string(),
@@ -352,6 +354,10 @@ impl RgOptions {
                 opts.no_ignore_dot = true;
             } else if p.flag("--no-ignore-vcs") {
                 opts.no_ignore_vcs = true;
+            } else if p.flag("--no-messages") {
+                opts.messages = false;
+            } else if p.flag("--messages") {
+                opts.messages = true;
             } else if p.flag_any(&["--no-ignore-parent", "--follow"]) {
                 // no-op: parent ignore discovery and symlink following are not modeled.
             } else if p.is_flag() {
@@ -1079,28 +1085,34 @@ fn long_value(p: &mut super::arg_parser::ArgParser<'_>, name: &str) -> Result<Op
 async fn collect_rg_inputs(
     ctx: Context<'_>,
     opts: &RgOptions,
-) -> std::result::Result<Vec<(String, String)>, ExecResult> {
+) -> std::result::Result<RgCollectedInputs, ExecResult> {
     if opts.paths.is_empty() {
         if !opts.stdin_consumed_for_patterns
             && let Some(stdin) = ctx.stdin
         {
-            return Ok(vec![("(stdin)".to_string(), stdin.to_string())]);
+            return Ok(RgCollectedInputs::new(vec![(
+                "(stdin)".to_string(),
+                stdin.to_string(),
+            )]));
         }
 
         if let Some(inputs) = try_indexed_search(&*ctx.fs, opts, ctx.cwd).await {
-            return Ok(inputs);
+            return Ok(RgCollectedInputs::new(inputs));
         }
 
         let files =
             collect_rg_files_recursive(&*ctx.fs, std::slice::from_ref(ctx.cwd), opts, ctx.cwd)
                 .await;
-        return Ok(read_rg_files(&*ctx.fs, files, ctx.cwd, None).await);
+        return Ok(RgCollectedInputs::new(
+            read_rg_files(&*ctx.fs, files, ctx.cwd, None).await,
+        ));
     }
 
     if let Some(inputs) = try_indexed_search(&*ctx.fs, opts, ctx.cwd).await {
-        return Ok(inputs);
+        return Ok(RgCollectedInputs::new(inputs));
     }
 
+    let mut collected = RgCollectedInputs::default();
     let mut inputs = Vec::new();
     for p in &opts.paths {
         let path = resolve_path(ctx.cwd, p);
@@ -1119,11 +1131,34 @@ async fn collect_rg_inputs(
         }
         let text = match read_text_file(&*ctx.fs, &path, "rg").await {
             Ok(t) => t,
-            Err(e) => return Err(e),
+            Err(e) => {
+                collected.had_errors = true;
+                if opts.messages {
+                    collected.stderr.push_str(&e.stderr);
+                }
+                continue;
+            }
         };
         inputs.push((p.clone(), text));
     }
-    Ok(inputs)
+    collected.inputs = inputs;
+    Ok(collected)
+}
+
+#[derive(Default)]
+struct RgCollectedInputs {
+    inputs: Vec<(String, String)>,
+    stderr: String,
+    had_errors: bool,
+}
+
+impl RgCollectedInputs {
+    fn new(inputs: Vec<(String, String)>) -> Self {
+        Self {
+            inputs,
+            ..Default::default()
+        }
+    }
 }
 
 async fn load_rg_pattern_files(
@@ -1719,7 +1754,7 @@ fn write_rg_json_summary(
 #[async_trait]
 impl Builtin for Rg {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        let help_text = "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i, --ignore-case\tcase insensitive\n  -S, --smart-case\tcase insensitive if pattern is lowercase\n  -s, --case-sensitive\tcase sensitive\n  -n, --line-number\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  --column\tshow column numbers\n  -b, --byte-offset\tshow byte offsets\n  --vimgrep\tshow file:line:column:match lines\n  --json\tshow JSON Lines events\n  --null\tterminate path fields with NUL\n  -c, --count\tcount matching lines\n  --count-matches\tcount individual matches\n  --include-zero\tinclude zero counts\n  -l, --files-with-matches\tfiles with matches\n  --files-without-match\tfiles without matches\n  --files\tprint files that would be searched\n  -v, --invert-match\tinvert match\n  -w, --word-regexp\tword boundary\n  -x, --line-regexp\tmatch whole lines\n  -F, --fixed-strings\tfixed strings (literal)\n  -a, --text\tsearch binary files as text\n  --binary\tsearch binary files and print binary-match summaries\n  -o, --only-matching\tshow only matching text\n  -q, --quiet\tsuppress output; exit status only\n  -e, --regexp PATTERN\tuse PATTERN for matching\n  -f, --file PATTERNFILE\tread patterns from file\n  -r, --replace REPLACEMENT\treplace matches in output\n  --passthru\tprint matching and non-matching lines\n  --trim\ttrim whitespace from output lines\n  -m, --max-count NUM\tmax count per file\n  -M, --max-columns NUM\tomit lines longer than NUM columns\n  --max-columns-preview\tshow prefixes of long lines\n  --max-depth NUM\tlimit recursive directory depth\n  -A, --after-context NUM\tshow trailing context\n  -B, --before-context NUM\tshow leading context\n  -C, --context NUM\tshow leading and trailing context\n  --context-separator SEP\tset context group separator\n  --field-match-separator SEP\tset match field separator\n  --field-context-separator SEP\tset context field separator\n  --heading\tgroup matches by file\n  --no-heading\tdisable heading output\n  --sort SORTBY\tsort paths (path only)\n  --sortr SORTBY\tsort paths in reverse (path only)\n  --sort-files\tsort --files output\n  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  -t, --type TYPE\tinclude files matching TYPE\n  -T, --type-not TYPE\texclude files matching TYPE\n  --type-add TYPE:GLOB\tadd a file type glob\n  --type-clear TYPE\tclear a file type definition\n  --type-list\tshow file type definitions\n  --ignore-file FILE\tuse additional ignore file\n  --no-ignore\tdo not use ignore files\n  --no-ignore-dot\tdo not use .ignore files\n  --no-ignore-vcs\tdo not use .gitignore files\n  --hidden\tsearch hidden files and directories\n  --no-hidden\tdo not search hidden files and directories\n  -H, --with-filename\tshow filename\n  -I, --no-filename\tsuppress filename\n  --color MODE\tcolor output (no-op)\n  -h, --help\tdisplay this help and exit\n  -V, --version\toutput version information and exit\n";
+        let help_text = "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i, --ignore-case\tcase insensitive\n  -S, --smart-case\tcase insensitive if pattern is lowercase\n  -s, --case-sensitive\tcase sensitive\n  -n, --line-number\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  --column\tshow column numbers\n  -b, --byte-offset\tshow byte offsets\n  --vimgrep\tshow file:line:column:match lines\n  --json\tshow JSON Lines events\n  --null\tterminate path fields with NUL\n  -c, --count\tcount matching lines\n  --count-matches\tcount individual matches\n  --include-zero\tinclude zero counts\n  -l, --files-with-matches\tfiles with matches\n  --files-without-match\tfiles without matches\n  --files\tprint files that would be searched\n  -v, --invert-match\tinvert match\n  -w, --word-regexp\tword boundary\n  -x, --line-regexp\tmatch whole lines\n  -F, --fixed-strings\tfixed strings (literal)\n  -a, --text\tsearch binary files as text\n  --binary\tsearch binary files and print binary-match summaries\n  -o, --only-matching\tshow only matching text\n  -q, --quiet\tsuppress output; exit status only\n  -e, --regexp PATTERN\tuse PATTERN for matching\n  -f, --file PATTERNFILE\tread patterns from file\n  -r, --replace REPLACEMENT\treplace matches in output\n  --passthru\tprint matching and non-matching lines\n  --trim\ttrim whitespace from output lines\n  -m, --max-count NUM\tmax count per file\n  -M, --max-columns NUM\tomit lines longer than NUM columns\n  --max-columns-preview\tshow prefixes of long lines\n  --max-depth NUM\tlimit recursive directory depth\n  -A, --after-context NUM\tshow trailing context\n  -B, --before-context NUM\tshow leading context\n  -C, --context NUM\tshow leading and trailing context\n  --context-separator SEP\tset context group separator\n  --field-match-separator SEP\tset match field separator\n  --field-context-separator SEP\tset context field separator\n  --heading\tgroup matches by file\n  --no-heading\tdisable heading output\n  --sort SORTBY\tsort paths (path only)\n  --sortr SORTBY\tsort paths in reverse (path only)\n  --sort-files\tsort --files output\n  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  -t, --type TYPE\tinclude files matching TYPE\n  -T, --type-not TYPE\texclude files matching TYPE\n  --type-add TYPE:GLOB\tadd a file type glob\n  --type-clear TYPE\tclear a file type definition\n  --type-list\tshow file type definitions\n  --ignore-file FILE\tuse additional ignore file\n  --no-ignore\tdo not use ignore files\n  --no-ignore-dot\tdo not use .ignore files\n  --no-ignore-vcs\tdo not use .gitignore files\n  --messages\tshow file read diagnostics\n  --no-messages\tsuppress file read diagnostics\n  --hidden\tsearch hidden files and directories\n  --no-hidden\tdo not search hidden files and directories\n  -H, --with-filename\tshow filename\n  -I, --no-filename\tsuppress filename\n  --color MODE\tcolor output (no-op)\n  -h, --help\tdisplay this help and exit\n  -V, --version\toutput version information and exit\n";
         if ctx.args.iter().any(|arg| arg == "-h") {
             return Ok(ExecResult::ok(help_text.to_string()));
         }
@@ -1764,17 +1799,18 @@ impl Builtin for Rg {
         let recursive_output = !stdin_input
             && (opts.paths.is_empty() || has_directory_path(&*ctx.fs, ctx.cwd, &opts.paths).await);
 
-        let inputs = match collect_rg_inputs(ctx, &opts).await {
+        let collected_inputs = match collect_rg_inputs(ctx, &opts).await {
             Ok(inputs) => inputs,
             Err(result) => return Ok(result),
         };
+        let inputs = collected_inputs.inputs;
 
         let show_filename = if opts.no_filename {
             false
         } else if opts.show_filename {
             true
         } else {
-            recursive_output || inputs.len() > 1
+            recursive_output || inputs.len() > 1 || opts.paths.len() > 1
         };
         let has_context = opts.before_context > 0 || opts.after_context > 0;
         let json_output = opts.json
@@ -2119,11 +2155,19 @@ impl Builtin for Rg {
             );
         }
 
-        if any_match {
-            Ok(ExecResult::ok(output))
+        let exit_code = if collected_inputs.had_errors {
+            2
+        } else if any_match {
+            0
         } else {
-            Ok(ExecResult::with_code(String::new(), 1))
-        }
+            1
+        };
+        Ok(ExecResult {
+            stdout: output,
+            stderr: collected_inputs.stderr,
+            exit_code,
+            ..Default::default()
+        })
     }
 }
 
@@ -2875,6 +2919,22 @@ mod tests {
             cwd: "/",
             output: RgDiffOutput::Exact,
         },
+        RgDiffCase {
+            name: "missing file keeps stdout and exits 2",
+            args: &["needle", "proj/a.txt", "proj/missing.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "no messages missing file keeps stdout and exits 2",
+            args: &["--no-messages", "needle", "proj/a.txt", "proj/missing.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
     ];
 
     fn require_real_rg() {
@@ -3467,8 +3527,43 @@ mod tests {
     #[tokio::test]
     async fn test_rg_file_not_found() {
         let result = run_rg(&["pattern", "/nonexistent"], None, &[]).await;
-        assert_eq!(result.exit_code, 1);
+        assert_eq!(result.exit_code, 2);
         assert!(result.stderr.contains("rg:"));
+    }
+
+    #[tokio::test]
+    async fn test_rg_messages_flags() {
+        let files: &[(&str, &[u8])] = &[("/a.txt", b"needle\n")];
+
+        let default = run_rg(&["needle", "/a.txt", "/missing.txt"], None, files).await;
+        assert_eq!(default.exit_code, 2);
+        assert_eq!(default.stdout, "/a.txt:needle\n");
+        assert!(default.stderr.contains("rg: /missing.txt:"));
+
+        let suppressed = run_rg(
+            &["--no-messages", "needle", "/a.txt", "/missing.txt"],
+            None,
+            files,
+        )
+        .await;
+        assert_eq!(suppressed.exit_code, 2);
+        assert_eq!(suppressed.stdout, "/a.txt:needle\n");
+        assert!(suppressed.stderr.is_empty());
+
+        let reenabled = run_rg(
+            &[
+                "--no-messages",
+                "--messages",
+                "needle",
+                "/a.txt",
+                "/missing.txt",
+            ],
+            None,
+            files,
+        )
+        .await;
+        assert_eq!(reenabled.exit_code, 2);
+        assert!(reenabled.stderr.contains("rg: /missing.txt:"));
     }
 
     #[tokio::test]
