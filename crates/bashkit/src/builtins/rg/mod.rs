@@ -1369,6 +1369,8 @@ impl RgTypeDatabase {
         db.insert_defaults("ada", &["*.adb", "*.ads"]);
         db.insert_defaults("agda", &["*.agda", "*.lagda"]);
         db.insert_defaults("aidl", &["*.aidl"]);
+        db.insert_defaults("alire", &["alire.toml"]);
+        db.insert_defaults("amake", &["*.bp", "*.mk"]);
         db.insert_defaults("asciidoc", &["*.adoc", "*.asc", "*.asciidoc"]);
         db.insert_defaults("asm", &["*.S", "*.asm", "*.s"]);
         db.insert_defaults(
@@ -1404,8 +1406,16 @@ impl RgTypeDatabase {
             "bitbake",
             &["*.bb", "*.bbappend", "*.bbclass", "*.conf", "*.inc"],
         );
+        db.insert_defaults("boxlang", &["*.bx", "*.bxm", "*.bxs"]);
+        db.insert_defaults("brotli", &["*.br"]);
+        db.insert_defaults("buildstream", &["*.bst"]);
+        db.insert_defaults("bzip2", &["*.bz2", "*.tbz2"]);
         db.insert_defaults("c", &["*.c", "*.h"]);
         db.insert_defaults("cabal", &["*.cabal"]);
+        db.insert_defaults("candid", &["*.did"]);
+        db.insert_defaults("carp", &["*.carp"]);
+        db.insert_defaults("cbor", &["*.cbor"]);
+        db.insert_defaults("ceylon", &["*.ceylon"]);
         db.insert_defaults("coffeescript", &["*.coffee"]);
         db.insert_defaults(
             "cpp",
@@ -1436,18 +1446,22 @@ impl RgTypeDatabase {
         db.insert_defaults("cmd", &["*.bat", "*.cmd"]);
         db.insert_defaults("cfml", &["*.cfc", "*.cfm"]);
         db.insert_defaults("cmake", &["*.cmake", "CMakeLists.txt"]);
+        db.insert_defaults("cml", &["*.cml"]);
         db.insert_defaults("config", &["*.cfg", "*.conf", "*.config", "*.ini"]);
         db.insert_defaults("coq", &["*.v"]);
+        db.insert_defaults("creole", &["*.creole"]);
         db.insert_defaults("cuda", &["*.cu", "*.cuh"]);
         db.insert_defaults("d", &["*.d"]);
         db.insert_defaults("dhall", &["*.dhall"]);
         db.insert_defaults("diff", &["*.diff", "*.patch"]);
+        db.insert_defaults("dita", &["*.dita", "*.ditamap", "*.ditaval"]);
         db.insert_defaults("docker", &["*Dockerfile*"]);
         db.insert_defaults(
             "dockercompose",
             &["docker-compose.*.yml", "docker-compose.yml"],
         );
         db.insert_defaults("dts", &["*.dts", "*.dtsi"]);
+        db.insert_defaults("dvc", &["*.dvc", "Dvcfile"]);
         db.insert_defaults("edn", &["*.edn"]);
         db.insert_defaults(
             "elixir",
@@ -5203,6 +5217,24 @@ mod tests {
         ("/proj/a.txt", b"needle\n"),
     ];
 
+    const DIFF_FORMAT_TYPE_FILES: &[(&str, &[u8])] = &[
+        ("/proj/alire.toml", b"needle\n"),
+        ("/proj/Android.bp", b"needle\n"),
+        ("/proj/source.bx", b"needle\n"),
+        ("/proj/archive.br", b"needle\n"),
+        ("/proj/pipeline.bst", b"needle\n"),
+        ("/proj/archive.tbz2", b"needle\n"),
+        ("/proj/service.did", b"needle\n"),
+        ("/proj/game.carp", b"needle\n"),
+        ("/proj/data.cbor", b"needle\n"),
+        ("/proj/app.ceylon", b"needle\n"),
+        ("/proj/model.cml", b"needle\n"),
+        ("/proj/page.creole", b"needle\n"),
+        ("/proj/topic.ditamap", b"needle\n"),
+        ("/proj/cache.dvc", b"needle\n"),
+        ("/proj/a.txt", b"needle\n"),
+    ];
+
     const DIFF_IGNORE_FILES: &[(&str, &[u8])] = &[
         ("/proj/.git/config", b"[core]\n"),
         ("/proj/.git/info/exclude", b"local.txt\n"),
@@ -7275,6 +7307,118 @@ mod tests {
             args: &["-t", "haml", "needle", "proj"],
             stdin: None,
             files: DIFF_COMMON_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type alire",
+            args: &["-t", "alire", "needle", "proj"],
+            stdin: None,
+            files: DIFF_FORMAT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type amake",
+            args: &["-t", "amake", "needle", "proj"],
+            stdin: None,
+            files: DIFF_FORMAT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type boxlang",
+            args: &["-t", "boxlang", "needle", "proj"],
+            stdin: None,
+            files: DIFF_FORMAT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type brotli",
+            args: &["-t", "brotli", "needle", "proj"],
+            stdin: None,
+            files: DIFF_FORMAT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type buildstream",
+            args: &["-t", "buildstream", "needle", "proj"],
+            stdin: None,
+            files: DIFF_FORMAT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type bzip2",
+            args: &["-t", "bzip2", "needle", "proj"],
+            stdin: None,
+            files: DIFF_FORMAT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type candid",
+            args: &["-t", "candid", "needle", "proj"],
+            stdin: None,
+            files: DIFF_FORMAT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type carp",
+            args: &["-t", "carp", "needle", "proj"],
+            stdin: None,
+            files: DIFF_FORMAT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type cbor",
+            args: &["-t", "cbor", "needle", "proj"],
+            stdin: None,
+            files: DIFF_FORMAT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type ceylon",
+            args: &["-t", "ceylon", "needle", "proj"],
+            stdin: None,
+            files: DIFF_FORMAT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type cml",
+            args: &["-t", "cml", "needle", "proj"],
+            stdin: None,
+            files: DIFF_FORMAT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type creole",
+            args: &["-t", "creole", "needle", "proj"],
+            stdin: None,
+            files: DIFF_FORMAT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type dita",
+            args: &["-t", "dita", "needle", "proj"],
+            stdin: None,
+            files: DIFF_FORMAT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type dvc",
+            args: &["-t", "dvc", "needle", "proj"],
+            stdin: None,
+            files: DIFF_FORMAT_TYPE_FILES,
             cwd: "/",
             output: RgDiffOutput::Exact,
         },
