@@ -1713,6 +1713,15 @@ fn glob_to_regex(pattern: &str) -> String {
                     i += 1;
                 }
             }
+            '{' => {
+                if let Some((alternation, next)) = glob_alternation_to_regex(&chars, i) {
+                    out.push_str(&alternation);
+                    i = next;
+                } else {
+                    out.push_str(r"\{");
+                    i += 1;
+                }
+            }
             c => {
                 out.push_str(&regex::escape(&c.to_string()));
                 i += 1;
@@ -1721,6 +1730,50 @@ fn glob_to_regex(pattern: &str) -> String {
     }
     out.push('$');
     out
+}
+
+fn glob_alternation_to_regex(chars: &[char], start: usize) -> Option<(String, usize)> {
+    let mut alts = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0usize;
+    let mut saw_comma = false;
+    let mut i = start + 1;
+
+    while i < chars.len() {
+        match chars[i] {
+            '{' => {
+                depth += 1;
+                current.push('{');
+            }
+            '}' if depth == 0 => {
+                if !saw_comma {
+                    return None;
+                }
+                alts.push(current);
+                let mut out = String::from("(?:");
+                for (idx, alt) in alts.iter().enumerate() {
+                    if idx > 0 {
+                        out.push('|');
+                    }
+                    let alt_regex = glob_to_regex(alt);
+                    out.push_str(&alt_regex[1..alt_regex.len() - 1]);
+                }
+                out.push(')');
+                return Some((out, i + 1));
+            }
+            '}' => {
+                depth -= 1;
+                current.push('}');
+            }
+            ',' if depth == 0 => {
+                saw_comma = true;
+                alts.push(std::mem::take(&mut current));
+            }
+            c => current.push(c),
+        }
+        i += 1;
+    }
+    None
 }
 
 fn glob_class_to_regex(chars: &[char], start: usize) -> Option<(String, usize)> {
@@ -4859,6 +4912,12 @@ mod tests {
         ("/proj/a.rs", b"needle\n"),
     ];
 
+    const DIFF_GLOB_BRACE_FILES: &[(&str, &[u8])] = &[
+        ("/proj/a.rs", b"needle\n"),
+        ("/proj/Cargo.toml", b"needle\n"),
+        ("/proj/a.txt", b"needle\n"),
+    ];
+
     const DIFF_COMMON_TYPE_FILES: &[(&str, &[u8])] = &[
         ("/proj/data.csv", b"needle\n"),
         ("/proj/Dockerfile", b"needle\n"),
@@ -5225,6 +5284,14 @@ mod tests {
             args: &["--files", "-g", "[!a].txt", "proj"],
             stdin: None,
             files: DIFF_GLOB_CLASS_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "glob brace alternation",
+            args: &["--files", "-g", "*.{rs,toml}", "proj"],
+            stdin: None,
+            files: DIFF_GLOB_BRACE_FILES,
             cwd: "/",
             output: RgDiffOutput::UnorderedLines,
         },
@@ -6351,6 +6418,21 @@ mod tests {
             ],
             stdin: None,
             files: DIFF_GLOB_CLASS_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "type add brace alternation",
+            args: &[
+                "--type-add",
+                "code:*.{rs,toml}",
+                "-t",
+                "code",
+                "needle",
+                "proj",
+            ],
+            stdin: None,
+            files: DIFF_GLOB_BRACE_FILES,
             cwd: "/",
             output: RgDiffOutput::UnorderedLines,
         },
