@@ -660,9 +660,11 @@ impl RgOptions {
                 opts.multiline = false;
             } else if p.flag_any(&["--sort-files", "--no-sort-files"]) {
                 // no-op: bashkit's recursive walker already sorts paths.
-            } else if long_value(&mut p, "--sort")?.is_some() {
+            } else if let Some(val) = long_value(&mut p, "--sort")? {
+                parse_sort_value(&val, "--sort")?;
                 opts.sort_reverse = false;
-            } else if long_value(&mut p, "--sortr")?.is_some() {
+            } else if let Some(val) = long_value(&mut p, "--sortr")? {
+                parse_sort_value(&val, "--sortr")?;
                 opts.sort_reverse = true;
             } else if let Some(val) = long_value(&mut p, "--path-separator")? {
                 opts.path_separator = parse_path_separator(&val)?;
@@ -1702,6 +1704,15 @@ fn parse_path_separator(value: &str) -> Result<String> {
         Err(Error::Execution(format!(
             "rg: error parsing flag --path-separator: path separator must be exactly one byte: {value}"
         )))
+    }
+}
+
+fn parse_sort_value(value: &str, flag: &str) -> Result<()> {
+    match value {
+        "path" | "modified" | "accessed" | "created" | "none" => Ok(()),
+        _ => Err(Error::Execution(format!(
+            "rg: error parsing flag {flag}: choice '{value}' is unrecognized"
+        ))),
     }
 }
 
@@ -3457,7 +3468,13 @@ impl Builtin for Rg {
         if let Some(kind) = rg_generate_kind(ctx.args)? {
             return Ok(ExecResult::ok(rg_generate_output(&kind, &help_text)?));
         }
-        let mut opts = RgOptions::parse(ctx.args)?;
+        let mut opts = match RgOptions::parse(ctx.args) {
+            Ok(opts) => opts,
+            Err(Error::Execution(message)) => {
+                return Ok(ExecResult::err(format!("{message}\n"), 2));
+            }
+            Err(err) => return Err(err),
+        };
         if opts.type_list {
             return Ok(ExecResult::ok(opts.type_database.list()));
         }
@@ -5657,6 +5674,22 @@ mod tests {
             output: RgDiffOutput::Exact,
         },
         RgDiffCase {
+            name: "invalid sort value",
+            args: &["--sort", "junk", "needle", "proj"],
+            stdin: None,
+            files: DIFF_SORT_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "invalid reverse sort value",
+            args: &["--sortr", "junk", "needle", "proj"],
+            stdin: None,
+            files: DIFF_SORT_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
             name: "path separator explicit file",
             args: &["-H", "--path-separator", "_", "needle", "proj/src/main.rs"],
             stdin: None,
@@ -7517,6 +7550,25 @@ mod tests {
         assert!(man.stdout.contains(".SH NAME"));
     }
 
+    #[tokio::test]
+    async fn test_rg_invalid_sort_values_exit_two() {
+        let invalid = run_rg(&["--sort", "junk", "needle", "/file.txt"], None, &[]).await;
+        assert_eq!(invalid.exit_code, 2);
+        assert_eq!(invalid.stdout, "");
+        assert_eq!(
+            invalid.stderr,
+            "rg: error parsing flag --sort: choice 'junk' is unrecognized\n"
+        );
+
+        let invalid_reverse = run_rg(&["--sortr", "junk", "needle", "/file.txt"], None, &[]).await;
+        assert_eq!(invalid_reverse.exit_code, 2);
+        assert_eq!(invalid_reverse.stdout, "");
+        assert_eq!(
+            invalid_reverse.stderr,
+            "rg: error parsing flag --sortr: choice 'junk' is unrecognized\n"
+        );
+    }
+
     #[test]
     fn test_rg_generate_errors() {
         let args = vec!["--generate".to_string()];
@@ -7822,28 +7874,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_rg_unknown_option_errors() {
-        let fs = Arc::new(InMemoryFs::new()) as Arc<dyn FileSystem>;
-        let args = vec!["--definitely-not-rg".to_string()];
-        let env = HashMap::new();
-        let mut variables = HashMap::new();
-        let mut cwd = PathBuf::from("/");
-        let ctx = Context {
-            args: &args,
-            env: &env,
-            variables: &mut variables,
-            cwd: &mut cwd,
-            fs,
-            stdin: None,
-            #[cfg(feature = "http_client")]
-            http_client: None,
-            #[cfg(feature = "git")]
-            git_client: None,
-            #[cfg(feature = "ssh")]
-            ssh_client: None,
-            shell: None,
-        };
-        let result = Rg.execute(ctx).await;
-        assert!(result.is_err());
+        let result = run_rg(&["--definitely-not-rg"], None, &[]).await;
+        assert_eq!(result.exit_code, 2);
+        assert_eq!(result.stdout, "");
+        assert_eq!(
+            result.stderr,
+            "rg: unrecognized option '--definitely-not-rg'\n"
+        );
     }
 
     #[tokio::test]
@@ -8061,28 +8098,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_rg_missing_pattern() {
-        let fs = Arc::new(InMemoryFs::new()) as Arc<dyn FileSystem>;
-        let args: Vec<String> = vec![];
-        let env = HashMap::new();
-        let mut variables = HashMap::new();
-        let mut cwd = PathBuf::from("/");
-        let ctx = Context {
-            args: &args,
-            env: &env,
-            variables: &mut variables,
-            cwd: &mut cwd,
-            fs,
-            stdin: None,
-            #[cfg(feature = "http_client")]
-            http_client: None,
-            #[cfg(feature = "git")]
-            git_client: None,
-            #[cfg(feature = "ssh")]
-            ssh_client: None,
-            shell: None,
-        };
-        let result = Rg.execute(ctx).await;
-        assert!(result.is_err());
+        let result = run_rg(&[], None, &[]).await;
+        assert_eq!(result.exit_code, 2);
+        assert_eq!(result.stdout, "");
+        assert_eq!(result.stderr, "rg: missing pattern\n");
     }
 
     #[tokio::test]
