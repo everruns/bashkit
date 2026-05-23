@@ -1705,6 +1705,10 @@ fn glob_to_regex(pattern: &str) -> String {
     let mut i = 0;
     while i < chars.len() {
         match chars[i] {
+            '*' if i + 2 < chars.len() && chars[i + 1] == '*' && chars[i + 2] == '/' => {
+                out.push_str("(?:.*/)?");
+                i += 3;
+            }
             '*' if i + 1 < chars.len() && chars[i + 1] == '*' => {
                 out.push_str(".*");
                 i += 2;
@@ -4950,6 +4954,12 @@ mod tests {
         ("/proj/x.txt", b"needle\n"),
     ];
 
+    const DIFF_GLOB_GLOBSTAR_FILES: &[(&str, &[u8])] = &[
+        ("/proj/foo.txt", b"needle\n"),
+        ("/proj/dir/foo.txt", b"needle\n"),
+        ("/proj/dir/bar.txt", b"needle\n"),
+    ];
+
     const DIFF_COMMON_TYPE_FILES: &[(&str, &[u8])] = &[
         ("/proj/data.csv", b"needle\n"),
         ("/proj/Dockerfile", b"needle\n"),
@@ -5369,6 +5379,14 @@ mod tests {
             stdin: None,
             files: DIFF_GLOB_ESCAPE_FILES,
             cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "globstar slash matches zero or more directories",
+            args: &["--files", "-g", "**/foo.txt", "."],
+            stdin: None,
+            files: DIFF_GLOB_GLOBSTAR_FILES,
+            cwd: "/proj",
             output: RgDiffOutput::UnorderedLines,
         },
         RgDiffCase {
