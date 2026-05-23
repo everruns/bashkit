@@ -1422,6 +1422,8 @@ impl RgTypeDatabase {
         db.insert_defaults("css", &["*.css"]);
         db.insert_defaults("cs", &["*.cs"]);
         db.insert_defaults("csharp", &["*.cs"]);
+        db.insert_defaults("cshtml", &["*.cshtml"]);
+        db.insert_defaults("csproj", &["*.csproj"]);
         db.insert_defaults("clojure", &["*.clj", "*.cljc", "*.cljs", "*.cljx"]);
         db.insert_defaults("crystal", &["*.cr", "*.ecr", "Projectfile", "shard.yml"]);
         db.insert_defaults("csv", &["*.csv"]);
@@ -1431,6 +1433,8 @@ impl RgTypeDatabase {
         db.insert_defaults("elm", &["*.elm"]);
         db.insert_defaults("bat", &["*.bat"]);
         db.insert_defaults("batch", &["*.bat"]);
+        db.insert_defaults("cmd", &["*.bat", "*.cmd"]);
+        db.insert_defaults("cfml", &["*.cfc", "*.cfm"]);
         db.insert_defaults("cmake", &["*.cmake", "CMakeLists.txt"]);
         db.insert_defaults("config", &["*.cfg", "*.conf", "*.config", "*.ini"]);
         db.insert_defaults("coq", &["*.v"]);
@@ -1443,16 +1447,41 @@ impl RgTypeDatabase {
             "dockercompose",
             &["docker-compose.*.yml", "docker-compose.yml"],
         );
+        db.insert_defaults("dts", &["*.dts", "*.dtsi"]);
+        db.insert_defaults("edn", &["*.edn"]);
         db.insert_defaults(
             "elixir",
             &["*.eex", "*.ex", "*.exs", "*.heex", "*.leex", "*.livemd"],
         );
         db.insert_defaults("erlang", &["*.erl", "*.hrl"]);
+        db.insert_defaults("erb", &["*.erb"]);
         db.insert_defaults("fish", &["*.fish"]);
+        db.insert_defaults("flatbuffers", &["*.fbs"]);
+        db.insert_defaults(
+            "fortran",
+            &[
+                "*.F", "*.F77", "*.F90", "*.F95", "*.f", "*.f77", "*.f90", "*.f95", "*.pfo",
+            ],
+        );
         db.insert_defaults("fsharp", &["*.fs", "*.fsi", "*.fsx"]);
+        db.insert_defaults("gdscript", &["*.gd"]);
+        db.insert_defaults("gleam", &["*.gleam"]);
+        db.insert_defaults("gn", &["*.gn", "*.gni"]);
         db.insert_defaults("go", &["*.go"]);
+        db.insert_defaults(
+            "gradle",
+            &[
+                "*.gradle",
+                "*.gradle.kts",
+                "gradle-wrapper.*",
+                "gradle.properties",
+                "gradlew",
+                "gradlew.bat",
+            ],
+        );
         db.insert_defaults("groovy", &["*.gradle", "*.groovy"]);
         db.insert_defaults("graphql", &["*.graphql", "*.graphqls"]);
+        db.insert_defaults("haml", &["*.haml"]);
         db.insert_defaults("haskell", &["*.c2hs", "*.cpphs", "*.hs", "*.hsc", "*.lhs"]);
         db.insert_defaults("hs", &["*.hs", "*.lhs"]);
         db.insert_defaults("html", &["*.htm", "*.html"]);
@@ -5156,6 +5185,24 @@ mod tests {
         ("/proj/a.txt", b"needle\n"),
     ];
 
+    const DIFF_COMMON_LANGUAGE_TYPE_FILES: &[(&str, &[u8])] = &[
+        ("/proj/run.cmd", b"needle\n"),
+        ("/proj/component.cfc", b"needle\n"),
+        ("/proj/view.cshtml", b"needle\n"),
+        ("/proj/app.csproj", b"needle\n"),
+        ("/proj/board.dtsi", b"needle\n"),
+        ("/proj/data.edn", b"needle\n"),
+        ("/proj/template.erb", b"needle\n"),
+        ("/proj/schema.fbs", b"needle\n"),
+        ("/proj/solver.f90", b"needle\n"),
+        ("/proj/player.gd", b"needle\n"),
+        ("/proj/main.gleam", b"needle\n"),
+        ("/proj/BUILD.gn", b"needle\n"),
+        ("/proj/settings.gradle.kts", b"needle\n"),
+        ("/proj/page.haml", b"needle\n"),
+        ("/proj/a.txt", b"needle\n"),
+    ];
+
     const DIFF_IGNORE_FILES: &[(&str, &[u8])] = &[
         ("/proj/.git/config", b"[core]\n"),
         ("/proj/.git/info/exclude", b"local.txt\n"),
@@ -7116,6 +7163,118 @@ mod tests {
             args: &["-t", "dockercompose", "needle", "proj"],
             stdin: None,
             files: DIFF_EARLY_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type cmd",
+            args: &["-t", "cmd", "needle", "proj"],
+            stdin: None,
+            files: DIFF_COMMON_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type cfml",
+            args: &["-t", "cfml", "needle", "proj"],
+            stdin: None,
+            files: DIFF_COMMON_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type cshtml",
+            args: &["-t", "cshtml", "needle", "proj"],
+            stdin: None,
+            files: DIFF_COMMON_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type csproj",
+            args: &["-t", "csproj", "needle", "proj"],
+            stdin: None,
+            files: DIFF_COMMON_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type dts",
+            args: &["-t", "dts", "needle", "proj"],
+            stdin: None,
+            files: DIFF_COMMON_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type edn",
+            args: &["-t", "edn", "needle", "proj"],
+            stdin: None,
+            files: DIFF_COMMON_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type erb",
+            args: &["-t", "erb", "needle", "proj"],
+            stdin: None,
+            files: DIFF_COMMON_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type flatbuffers",
+            args: &["-t", "flatbuffers", "needle", "proj"],
+            stdin: None,
+            files: DIFF_COMMON_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type fortran",
+            args: &["-t", "fortran", "needle", "proj"],
+            stdin: None,
+            files: DIFF_COMMON_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type gdscript",
+            args: &["-t", "gdscript", "needle", "proj"],
+            stdin: None,
+            files: DIFF_COMMON_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type gleam",
+            args: &["-t", "gleam", "needle", "proj"],
+            stdin: None,
+            files: DIFF_COMMON_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type gn",
+            args: &["-t", "gn", "needle", "proj"],
+            stdin: None,
+            files: DIFF_COMMON_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type gradle",
+            args: &["-t", "gradle", "needle", "proj"],
+            stdin: None,
+            files: DIFF_COMMON_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type haml",
+            args: &["-t", "haml", "needle", "proj"],
+            stdin: None,
+            files: DIFF_COMMON_LANGUAGE_TYPE_FILES,
             cwd: "/",
             output: RgDiffOutput::Exact,
         },
