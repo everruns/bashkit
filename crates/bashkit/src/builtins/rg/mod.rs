@@ -1380,11 +1380,36 @@ impl RgTypeDatabase {
             ],
         );
         db.insert_defaults("css", &["*.css"]);
+        db.insert_defaults("cs", &["*.cs"]);
+        db.insert_defaults("csharp", &["*.cs"]);
+        db.insert_defaults("csv", &["*.csv"]);
+        db.insert_defaults("dart", &["*.dart"]);
+        db.insert_defaults("docker", &["*Dockerfile*"]);
         db.insert_defaults("go", &["*.go"]);
         db.insert_defaults("html", &["*.htm", "*.html"]);
         db.insert_defaults("htm", &["*.htm", "*.html"]);
         db.insert_defaults("java", &["*.java"]);
         db.insert_defaults("json", &["*.json", "*.jsonl"]);
+        db.insert_defaults("jsonl", &["*.jsonl"]);
+        db.insert_defaults("kotlin", &["*.kt", "*.kts"]);
+        db.insert_defaults("lua", &["*.lua"]);
+        db.insert_defaults(
+            "make",
+            &[
+                "*.mak",
+                "*.mk",
+                "GNUmakefile",
+                "GNUmakefile.am",
+                "GNUmakefile.in",
+                "Makefile",
+                "Makefile.*",
+                "Makefile.am",
+                "Makefile.in",
+                "makefile",
+                "makefile.am",
+                "makefile.in",
+            ],
+        );
         db.insert_defaults(
             "markdown",
             &[
@@ -1410,9 +1435,30 @@ impl RgTypeDatabase {
             ],
         );
         db.insert_defaults("py", &["*.py", "*.pyi", "*.pyw"]);
+        db.insert_defaults(
+            "php",
+            &[
+                "*.php", "*.php3", "*.php4", "*.php5", "*.php7", "*.php8", "*.pht", "*.phtml",
+            ],
+        );
+        db.insert_defaults("protobuf", &["*.proto"]);
         db.insert_defaults("python", &["*.py", "*.pyi", "*.pyw"]);
+        db.insert_defaults(
+            "ruby",
+            &[
+                "*.gemspec",
+                "*.rake",
+                "*.rb",
+                "*.rbw",
+                ".irbrc",
+                "Gemfile",
+                "Rakefile",
+                "config.ru",
+            ],
+        );
         db.insert_defaults("rs", &["*.rs"]);
         db.insert_defaults("rust", &["*.rs"]);
+        db.insert_defaults("scala", &["*.sbt", "*.scala"]);
         db.insert_defaults(
             "sh",
             &[
@@ -1432,8 +1478,26 @@ impl RgTypeDatabase {
         db.insert_defaults("toml", &["*.toml"]);
         db.insert_defaults("ts", &["*.cts", "*.mts", "*.ts", "*.tsx"]);
         db.insert_defaults("typescript", &["*.cts", "*.mts", "*.ts", "*.tsx"]);
+        db.insert_defaults("sql", &["*.psql", "*.sql"]);
+        db.insert_defaults("swift", &["*.swift"]);
         db.insert_defaults("js", &["*.cjs", "*.js", "*.jsx", "*.mjs", "*.vue"]);
         db.insert_defaults("javascript", &["*.cjs", "*.js", "*.jsx", "*.mjs", "*.vue"]);
+        db.insert_defaults("vue", &["*.vue"]);
+        db.insert_defaults(
+            "xml",
+            &[
+                "*.dtd",
+                "*.rng",
+                "*.sch",
+                "*.xhtml",
+                "*.xjb",
+                "*.xml",
+                "*.xml.dist",
+                "*.xsd",
+                "*.xsl",
+                "*.xslt",
+            ],
+        );
         db.insert_defaults("yaml", &["*.yaml", "*.yml"]);
         db.insert_defaults("yml", &["*.yaml", "*.yml"]);
         db
@@ -4728,6 +4792,19 @@ mod tests {
         ("/proj/a.txt", b"needle\n"),
     ];
 
+    const DIFF_COMMON_TYPE_FILES: &[(&str, &[u8])] = &[
+        ("/proj/data.csv", b"needle\n"),
+        ("/proj/Dockerfile", b"needle\n"),
+        ("/proj/Makefile", b"needle\n"),
+        ("/proj/app.rb", b"needle\n"),
+        ("/proj/index.php", b"needle\n"),
+        ("/proj/schema.xml", b"needle\n"),
+        ("/proj/query.sql", b"needle\n"),
+        ("/proj/Main.kt", b"needle\n"),
+        ("/proj/View.swift", b"needle\n"),
+        ("/proj/a.txt", b"needle\n"),
+    ];
+
     const DIFF_IGNORE_FILES: &[(&str, &[u8])] = &[
         ("/proj/.git/config", b"[core]\n"),
         ("/proj/.git/info/exclude", b"local.txt\n"),
@@ -6082,6 +6159,78 @@ mod tests {
             files: DIFF_BASIC_FILES,
             cwd: "/",
             output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "type csv",
+            args: &["-t", "csv", "needle", "proj"],
+            stdin: None,
+            files: DIFF_COMMON_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type docker",
+            args: &["-t", "docker", "needle", "proj"],
+            stdin: None,
+            files: DIFF_COMMON_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type make",
+            args: &["-t", "make", "needle", "proj"],
+            stdin: None,
+            files: DIFF_COMMON_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type ruby",
+            args: &["-t", "ruby", "needle", "proj"],
+            stdin: None,
+            files: DIFF_COMMON_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type php",
+            args: &["-t", "php", "needle", "proj"],
+            stdin: None,
+            files: DIFF_COMMON_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type xml",
+            args: &["-t", "xml", "needle", "proj"],
+            stdin: None,
+            files: DIFF_COMMON_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type sql",
+            args: &["-t", "sql", "needle", "proj"],
+            stdin: None,
+            files: DIFF_COMMON_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type kotlin",
+            args: &["-t", "kotlin", "needle", "proj"],
+            stdin: None,
+            files: DIFF_COMMON_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type swift",
+            args: &["-t", "swift", "needle", "proj"],
+            stdin: None,
+            files: DIFF_COMMON_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
         },
         RgDiffCase {
             name: "long type python",
