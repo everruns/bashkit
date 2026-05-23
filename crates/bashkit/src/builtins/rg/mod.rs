@@ -748,6 +748,10 @@ impl RgOptions {
                 opts.messages = false;
             } else if p.flag("--messages") {
                 opts.messages = true;
+            } else if p.flag("--") {
+                while let Some(arg) = p.positional() {
+                    positional.push(arg.to_string());
+                }
             } else if p.flag_any(&[
                 "--debug",
                 "--trace",
@@ -4591,6 +4595,8 @@ mod tests {
         ("/proj/lang/custom.foo", b"needle\n"),
     ];
 
+    const DIFF_DASH_PATTERN_FILES: &[(&str, &[u8])] = &[("/proj/dash.txt", b"-needle\nneedle\n")];
+
     const DIFF_NULL_DATA_FILES: &[(&str, &[u8])] = &[
         ("/proj/a.bin", b"a\0needle\0b\0"),
         ("/proj/b.bin", b"none\0needle again\0"),
@@ -4792,6 +4798,14 @@ mod tests {
             args: &["-n", "needle"],
             stdin: Some("x\nneedle\n"),
             files: &[],
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "dash delimiter permits pattern starting with dash",
+            args: &["--", "-needle", "proj/dash.txt"],
+            stdin: None,
+            files: DIFF_DASH_PATTERN_FILES,
             cwd: "/",
             output: RgDiffOutput::Exact,
         },
