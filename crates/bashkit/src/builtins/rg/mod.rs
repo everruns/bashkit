@@ -111,6 +111,7 @@ struct RgOptions {
     type_excludes: Vec<RgFileType>,
     color: RgColorMode,
     color_scheme: RgColorScheme,
+    hyperlink_format: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -417,6 +418,7 @@ impl RgOptions {
             type_excludes: Vec::new(),
             color: RgColorMode::Auto,
             color_scheme: RgColorScheme::default(),
+            hyperlink_format: None,
         };
 
         let mut positional = Vec::new();
@@ -755,8 +757,8 @@ impl RgOptions {
                 // no-op: these flags only affect real rg's diagnostic stderr.
             } else if long_value(&mut p, "--hostname-bin")?.is_some() {
                 // no-op: hyperlink hostname discovery is not modeled.
-            } else if long_value(&mut p, "--hyperlink-format")?.is_some() {
-                // no-op: bashkit rg does not emit terminal hyperlinks.
+            } else if let Some(val) = long_value(&mut p, "--hyperlink-format")? {
+                opts.hyperlink_format = parse_hyperlink_format(&val)?;
             } else if p.flag("--unicode") {
                 opts.unicode = true;
             } else if p.flag("--no-unicode") {
@@ -1698,6 +1700,43 @@ fn parse_color_mode(value: &str) -> Result<RgColorMode> {
             "rg: error parsing flag --color: invalid choice '{value}'"
         ))),
     }
+}
+
+fn parse_hyperlink_format(value: &str) -> Result<Option<String>> {
+    let template = match value {
+        "none" => return Ok(None),
+        "default" | "file" | "kitty" => "file://{path}",
+        "cursor" => "cursor://file{path}:{line}:{column}",
+        "macvim" => "mvim://open?url=file://{path}&line={line}&column={column}",
+        "textmate" => "txmt://open?url=file://{path}&line={line}&column={column}",
+        "vscode" => "vscode://file{path}:{line}:{column}",
+        "vscode-insiders" => "vscode-insiders://file{path}:{line}:{column}",
+        "vscodium" => "vscodium://file{path}:{line}:{column}",
+        "grep+" => "grep+://{path}:{line}:{column}",
+        custom if is_valid_hyperlink_template(custom) => custom,
+        _ => {
+            return Err(Error::Execution(format!(
+                "rg: error parsing flag --hyperlink-format: invalid hyperlink format: {value}"
+            )));
+        }
+    };
+    Ok(Some(template.to_string()))
+}
+
+fn is_valid_hyperlink_template(value: &str) -> bool {
+    value.contains("{path}")
+        && value
+            .split_once(':')
+            .is_some_and(|(scheme, _)| is_valid_url_scheme(scheme))
+}
+
+fn is_valid_url_scheme(scheme: &str) -> bool {
+    let mut chars = scheme.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    first.is_ascii_alphabetic()
+        && chars.all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '-' | '.'))
 }
 
 fn parse_ansi_fg(value: &str) -> Result<String> {
@@ -2662,6 +2701,7 @@ struct RgPrefix<'a> {
     null_path_separator: bool,
     color: bool,
     color_scheme: &'a RgColorScheme,
+    hyperlink_format: Option<&'a str>,
 }
 
 const RG_ANSI_RESET: &str = "\x1b[0m";
@@ -2748,7 +2788,28 @@ fn color_matches(text: &str, regex: &Regex, opts: &RgOptions) -> String {
 }
 
 fn write_rg_prefix(output: &mut String, prefix: RgPrefix<'_>) {
+    let hyperlink_url = if prefix.show_filename
+        && prefix.color
+        && !prefix.null_path_separator
+        && let Some(format) = prefix.hyperlink_format
+    {
+        Some(format_hyperlink_url(
+            format,
+            prefix.filename,
+            prefix.line_idx + 1,
+            prefix.column.unwrap_or(1),
+        ))
+    } else {
+        None
+    };
+    let hyperlink_open = hyperlink_url.is_some();
+
     if prefix.show_filename {
+        if let Some(url) = &hyperlink_url {
+            output.push_str("\x1b]8;;");
+            output.push_str(url);
+            output.push_str("\x1b\\");
+        }
         if prefix.color {
             output.push_str(&color_path(prefix.filename, true, prefix.color_scheme));
         } else {
@@ -2756,6 +2817,13 @@ fn write_rg_prefix(output: &mut String, prefix: RgPrefix<'_>) {
         }
         if prefix.null_path_separator {
             output.push('\0');
+        } else if hyperlink_open
+            && !prefix.line_numbers
+            && prefix.column.is_none()
+            && prefix.byte_offset.is_none()
+        {
+            output.push_str("\x1b]8;;\x1b\\");
+            output.push_str(prefix.separator);
         } else {
             output.push_str(prefix.separator);
         }
@@ -2767,7 +2835,12 @@ fn write_rg_prefix(output: &mut String, prefix: RgPrefix<'_>) {
             true,
             prefix.color_scheme,
         ));
-        output.push_str(prefix.separator);
+        if hyperlink_open && prefix.column.is_none() && prefix.byte_offset.is_none() {
+            output.push_str("\x1b]8;;\x1b\\");
+            output.push_str(prefix.separator);
+        } else {
+            output.push_str(prefix.separator);
+        }
     }
     if let Some(column) = prefix.column {
         output.push_str(&color_numeric(
@@ -2776,7 +2849,12 @@ fn write_rg_prefix(output: &mut String, prefix: RgPrefix<'_>) {
             false,
             prefix.color_scheme,
         ));
-        output.push_str(prefix.separator);
+        if hyperlink_open && prefix.byte_offset.is_none() {
+            output.push_str("\x1b]8;;\x1b\\");
+            output.push_str(prefix.separator);
+        } else {
+            output.push_str(prefix.separator);
+        }
     }
     if let Some(byte_offset) = prefix.byte_offset {
         output.push_str(&color_numeric(
@@ -2785,7 +2863,26 @@ fn write_rg_prefix(output: &mut String, prefix: RgPrefix<'_>) {
             false,
             prefix.color_scheme,
         ));
+        if hyperlink_open {
+            output.push_str("\x1b]8;;\x1b\\");
+        }
         output.push_str(prefix.separator);
+    }
+}
+
+fn format_hyperlink_url(format: &str, filename: &str, line: usize, column: usize) -> String {
+    let path = hyperlink_path(filename);
+    format
+        .replace("{path}", &path)
+        .replace("{line}", &line.to_string())
+        .replace("{column}", &column.to_string())
+}
+
+fn hyperlink_path(filename: &str) -> String {
+    if filename.starts_with('/') {
+        filename.to_string()
+    } else {
+        format!("/{}", filename.trim_start_matches("./"))
     }
 }
 
@@ -3030,6 +3127,7 @@ fn write_rg_context(
                 null_path_separator: opts.null,
                 color: opts.color_enabled(),
                 color_scheme: &opts.color_scheme,
+                hyperlink_format: opts.hyperlink_format.as_deref(),
             },
         );
         output.push_str(&format_rg_output_line(
@@ -3285,7 +3383,7 @@ impl Builtin for Rg {
         );
         let help_text = help_text.replace(
             "  --colors SPEC\tconfigure color styles\n",
-            "  --colors SPEC\tconfigure color styles\n  --hostname-bin COMMAND\tcommand for hyperlink hostname discovery (no-op)\n  --hyperlink-format FORMAT\tconfigure hyperlink output (no-op)\n",
+            "  --colors SPEC\tconfigure color styles\n  --hostname-bin COMMAND\tcommand for hyperlink hostname discovery (no-op)\n  --hyperlink-format FORMAT\tconfigure hyperlink output\n",
         );
         let help_text = help_text.replace(
             "  --context-separator SEP\tset context group separator\n",
@@ -3663,6 +3761,7 @@ impl Builtin for Rg {
                                     null_path_separator: opts.null,
                                     color: opts.color_enabled(),
                                     color_scheme: &opts.color_scheme,
+                                    hyperlink_format: opts.hyperlink_format.as_deref(),
                                 },
                             );
                             output.push_str(&format_rg_output_line(
@@ -3800,6 +3899,7 @@ impl Builtin for Rg {
                                 null_path_separator: opts.null,
                                 color: opts.color_enabled(),
                                 color_scheme: &opts.color_scheme,
+                                hyperlink_format: opts.hyperlink_format.as_deref(),
                             },
                         );
                         output.push_str(&format_rg_output_line(
@@ -3826,6 +3926,7 @@ impl Builtin for Rg {
                                 null_path_separator: opts.null,
                                 color: opts.color_enabled(),
                                 color_scheme: &opts.color_scheme,
+                                hyperlink_format: opts.hyperlink_format.as_deref(),
                             },
                         );
                         if opts.only_matching {
@@ -3860,6 +3961,7 @@ impl Builtin for Rg {
                                 null_path_separator: opts.null,
                                 color: opts.color_enabled(),
                                 color_scheme: &opts.color_scheme,
+                                hyperlink_format: opts.hyperlink_format.as_deref(),
                             },
                         );
                         if let Some(replacement) = &opts.replacement {
@@ -3902,6 +4004,7 @@ impl Builtin for Rg {
                                 null_path_separator: opts.null,
                                 color: opts.color_enabled(),
                                 color_scheme: &opts.color_scheme,
+                                hyperlink_format: opts.hyperlink_format.as_deref(),
                             },
                         );
                         output.push_str(&format_rg_multiline_replacement(
@@ -3937,6 +4040,7 @@ impl Builtin for Rg {
                                     null_path_separator: opts.null,
                                     color: opts.color_enabled(),
                                     color_scheme: &opts.color_scheme,
+                                    hyperlink_format: opts.hyperlink_format.as_deref(),
                                 },
                             );
                             output.push_str(&format_rg_output_line(
@@ -4129,6 +4233,7 @@ impl Builtin for Rg {
                             null_path_separator: opts.null,
                             color: opts.color_enabled(),
                             color_scheme: &opts.color_scheme,
+                            hyperlink_format: opts.hyperlink_format.as_deref(),
                         },
                     );
                     output.push_str(&format_rg_output_line(
@@ -4156,6 +4261,7 @@ impl Builtin for Rg {
                                 null_path_separator: opts.null,
                                 color: opts.color_enabled(),
                                 color_scheme: &opts.color_scheme,
+                                hyperlink_format: opts.hyperlink_format.as_deref(),
                             },
                         );
                         if opts.only_matching {
@@ -4196,6 +4302,7 @@ impl Builtin for Rg {
                                 null_path_separator: opts.null,
                                 color: opts.color_enabled(),
                                 color_scheme: &opts.color_scheme,
+                                hyperlink_format: opts.hyperlink_format.as_deref(),
                             },
                         );
                         if let Some(replacement) = &opts.replacement {
@@ -4245,6 +4352,7 @@ impl Builtin for Rg {
                             null_path_separator: opts.null,
                             color: opts.color_enabled(),
                             color_scheme: &opts.color_scheme,
+                            hyperlink_format: opts.hyperlink_format.as_deref(),
                         },
                     );
                     output.push_str(&format_rg_output_line(
@@ -6598,6 +6706,22 @@ mod tests {
             output: RgDiffOutput::Exact,
         },
         RgDiffCase {
+            name: "hyperlink custom format",
+            args: &[
+                "--color=always",
+                "--hyperlink-format=file://{path}:{line}:{column}",
+                "-H",
+                "-n",
+                "--column",
+                "needle",
+                "proj/a.txt",
+            ],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
             name: "hostname bin accepted",
             args: &["--hostname-bin", "hostname", "needle", "proj/a.txt"],
             stdin: None,
@@ -6664,6 +6788,15 @@ mod tests {
         );
     }
 
+    fn normalize_real_rg_temp_paths(output: &[u8], tempdir: &tempfile::TempDir) -> String {
+        let mut stdout = String::from_utf8_lossy(output).into_owned();
+        if let Ok(canonical) = std::fs::canonicalize(tempdir.path()) {
+            stdout = stdout.replace(&canonical.to_string_lossy().to_string(), "");
+        }
+        stdout = stdout.replace(&tempdir.path().to_string_lossy().to_string(), "");
+        stdout
+    }
+
     fn run_real_rg(case: &RgDiffCase) -> (String, i32) {
         use std::io::Write;
         use std::process::{Command, Stdio};
@@ -6722,8 +6855,7 @@ mod tests {
             command.output().expect("run real rg differential test")
         };
 
-        let stdout = String::from_utf8_lossy(&output.stdout)
-            .replace(&tempdir.path().to_string_lossy().to_string(), "");
+        let stdout = normalize_real_rg_temp_paths(&output.stdout, &tempdir);
         (stdout, output.status.code().unwrap_or(-1))
     }
 
@@ -6797,8 +6929,7 @@ mod tests {
             command.output().expect("run real rg env differential test")
         };
 
-        let stdout = String::from_utf8_lossy(&output.stdout)
-            .replace(&tempdir.path().to_string_lossy().to_string(), "");
+        let stdout = normalize_real_rg_temp_paths(&output.stdout, &tempdir);
         (stdout, output.status.code().unwrap_or(-1))
     }
 
@@ -6855,8 +6986,7 @@ mod tests {
             .output()
             .expect("run real rg symlink differential test");
 
-        let stdout = String::from_utf8_lossy(&output.stdout)
-            .replace(&tempdir.path().to_string_lossy().to_string(), "");
+        let stdout = normalize_real_rg_temp_paths(&output.stdout, &tempdir);
         (stdout, output.status.code().unwrap_or(-1))
     }
 
@@ -8150,6 +8280,26 @@ mod tests {
         assert_eq!(
             custom_style.stdout,
             "\x1b[0m\x1b[1m\x1b[3m\x1b[4m\x1b[38;2;200;100;50mneedle\x1b[0m again\n"
+        );
+
+        let hyperlink = run_rg(
+            &[
+                "--color=always",
+                "--hyperlink-format=file://{path}:{line}:{column}",
+                "-H",
+                "-n",
+                "--column",
+                "needle",
+                "/file.txt",
+            ],
+            None,
+            files,
+        )
+        .await;
+        assert_eq!(hyperlink.exit_code, 0);
+        assert_eq!(
+            hyperlink.stdout,
+            "\x1b]8;;file:///file.txt:1:1\x1b\\\x1b[0m\x1b[35m/file.txt\x1b[0m:\x1b[0m\x1b[32m1\x1b[0m:\x1b[0m1\x1b[0m\x1b]8;;\x1b\\:\x1b[0m\x1b[1m\x1b[31mneedle\x1b[0m again\n"
         );
     }
 
