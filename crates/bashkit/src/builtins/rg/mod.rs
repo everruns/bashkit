@@ -1382,6 +1382,7 @@ impl RgTypeDatabase {
         db.insert_defaults("css", &["*.css"]);
         db.insert_defaults("cs", &["*.cs"]);
         db.insert_defaults("csharp", &["*.cs"]);
+        db.insert_defaults("clojure", &["*.clj", "*.cljc", "*.cljs", "*.cljx"]);
         db.insert_defaults("csv", &["*.csv"]);
         db.insert_defaults("dart", &["*.dart"]);
         db.insert_defaults("bat", &["*.bat"]);
@@ -1390,6 +1391,11 @@ impl RgTypeDatabase {
         db.insert_defaults("config", &["*.cfg", "*.conf", "*.config", "*.ini"]);
         db.insert_defaults("diff", &["*.diff", "*.patch"]);
         db.insert_defaults("docker", &["*Dockerfile*"]);
+        db.insert_defaults(
+            "elixir",
+            &["*.eex", "*.ex", "*.exs", "*.heex", "*.leex", "*.livemd"],
+        );
+        db.insert_defaults("erlang", &["*.erl", "*.hrl"]);
         db.insert_defaults("fish", &["*.fish"]);
         db.insert_defaults("go", &["*.go"]);
         db.insert_defaults("graphql", &["*.graphql", "*.graphqls"]);
@@ -1400,6 +1406,7 @@ impl RgTypeDatabase {
         db.insert_defaults("java", &["*.java"]);
         db.insert_defaults("json", &["*.json", "*.jsonl"]);
         db.insert_defaults("jsonl", &["*.jsonl"]);
+        db.insert_defaults("julia", &["*.jl"]);
         db.insert_defaults("kotlin", &["*.kt", "*.kts"]);
         db.insert_defaults("lua", &["*.lua"]);
         db.insert_defaults(
@@ -1440,6 +1447,8 @@ impl RgTypeDatabase {
                 "*.mkdn",
             ],
         );
+        db.insert_defaults("nim", &["*.nim", "*.nimble", "*.nimf", "*.nims"]);
+        db.insert_defaults("nix", &["*.nix"]);
         db.insert_defaults("py", &["*.py", "*.pyi", "*.pyw"]);
         db.insert_defaults(
             "php",
@@ -1453,6 +1462,7 @@ impl RgTypeDatabase {
         );
         db.insert_defaults("protobuf", &["*.proto"]);
         db.insert_defaults("python", &["*.py", "*.pyi", "*.pyw"]);
+        db.insert_defaults("r", &["*.R", "*.Rmd", "*.Rnw", "*.r", "*.rmd", "*.rnw"]);
         db.insert_defaults(
             "ruby",
             &[
@@ -1486,10 +1496,29 @@ impl RgTypeDatabase {
         db.insert_defaults("text", &["*.txt"]);
         db.insert_defaults("txt", &["*.txt"]);
         db.insert_defaults("toml", &["*.toml"]);
+        db.insert_defaults(
+            "tf",
+            &[
+                "*.terraform.lock.hcl",
+                "*.terraformrc",
+                "*.tf",
+                "*.tf.json",
+                "*.tfrc",
+                "*.tfvars",
+                "*.tfvars.json",
+                "terraform.rc",
+            ],
+        );
         db.insert_defaults("ts", &["*.cts", "*.mts", "*.ts", "*.tsx"]);
         db.insert_defaults("typescript", &["*.cts", "*.mts", "*.ts", "*.tsx"]);
         db.insert_defaults("sql", &["*.psql", "*.sql"]);
         db.insert_defaults("swift", &["*.swift"]);
+        db.insert_defaults(
+            "vim",
+            &[
+                "*.vim", ".gvimrc", ".vimrc", "_gvimrc", "_vimrc", "gvimrc", "vimrc",
+            ],
+        );
         db.insert_defaults("js", &["*.cjs", "*.js", "*.jsx", "*.mjs", "*.vue"]);
         db.insert_defaults("javascript", &["*.cjs", "*.js", "*.jsx", "*.mjs", "*.vue"]);
         db.insert_defaults("vue", &["*.vue"]);
@@ -1510,6 +1539,7 @@ impl RgTypeDatabase {
         );
         db.insert_defaults("yaml", &["*.yaml", "*.yml"]);
         db.insert_defaults("yml", &["*.yaml", "*.yml"]);
+        db.insert_defaults("zig", &["*.zig"]);
         db
     }
 
@@ -4986,6 +5016,20 @@ mod tests {
         ("/proj/a.txt", b"needle\n"),
     ];
 
+    const DIFF_LANGUAGE_TYPE_FILES: &[(&str, &[u8])] = &[
+        ("/proj/core.clj", b"needle\n"),
+        ("/proj/app.ex", b"needle\n"),
+        ("/proj/mod.erl", b"needle\n"),
+        ("/proj/math.jl", b"needle\n"),
+        ("/proj/lib.nim", b"needle\n"),
+        ("/proj/shell.nix", b"needle\n"),
+        ("/proj/stats.R", b"needle\n"),
+        ("/proj/main.tf", b"needle\n"),
+        ("/proj/plugin.vim", b"needle\n"),
+        ("/proj/app.zig", b"needle\n"),
+        ("/proj/a.txt", b"needle\n"),
+    ];
+
     const DIFF_IGNORE_FILES: &[(&str, &[u8])] = &[
         ("/proj/.git/config", b"[core]\n"),
         ("/proj/.git/info/exclude", b"local.txt\n"),
@@ -5384,6 +5428,14 @@ mod tests {
         RgDiffCase {
             name: "globstar slash matches zero or more directories",
             args: &["--files", "-g", "**/foo.txt", "."],
+            stdin: None,
+            files: DIFF_GLOB_GLOBSTAR_FILES,
+            cwd: "/proj",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "glob anchored to cwd",
+            args: &["--files", "-g", "/foo.txt", "."],
             stdin: None,
             files: DIFF_GLOB_GLOBSTAR_FILES,
             cwd: "/proj",
@@ -6538,6 +6590,86 @@ mod tests {
             args: &["-t", "perl", "needle", "proj"],
             stdin: None,
             files: DIFF_MORE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type clojure",
+            args: &["-t", "clojure", "needle", "proj"],
+            stdin: None,
+            files: DIFF_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type elixir",
+            args: &["-t", "elixir", "needle", "proj"],
+            stdin: None,
+            files: DIFF_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type erlang",
+            args: &["-t", "erlang", "needle", "proj"],
+            stdin: None,
+            files: DIFF_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type julia",
+            args: &["-t", "julia", "needle", "proj"],
+            stdin: None,
+            files: DIFF_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type nim",
+            args: &["-t", "nim", "needle", "proj"],
+            stdin: None,
+            files: DIFF_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type nix",
+            args: &["-t", "nix", "needle", "proj"],
+            stdin: None,
+            files: DIFF_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type r",
+            args: &["-t", "r", "needle", "proj"],
+            stdin: None,
+            files: DIFF_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type terraform alias",
+            args: &["-t", "tf", "needle", "proj"],
+            stdin: None,
+            files: DIFF_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type vim",
+            args: &["-t", "vim", "needle", "proj"],
+            stdin: None,
+            files: DIFF_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type zig",
+            args: &["-t", "zig", "needle", "proj"],
+            stdin: None,
+            files: DIFF_LANGUAGE_TYPE_FILES,
             cwd: "/",
             output: RgDiffOutput::Exact,
         },
