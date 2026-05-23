@@ -135,6 +135,7 @@ struct RgColorScheme {
     path: RgColorStyle,
     line: RgColorStyle,
     column: RgColorStyle,
+    highlight: RgColorStyle,
     matches: RgColorStyle,
 }
 
@@ -155,6 +156,7 @@ impl Default for RgColorScheme {
             path: RgColorStyle::fg("35"),
             line: RgColorStyle::fg("32"),
             column: RgColorStyle::plain(),
+            highlight: RgColorStyle::disabled(),
             matches: RgColorStyle {
                 enabled: true,
                 bold: true,
@@ -214,6 +216,7 @@ impl RgColorScheme {
             "path" => Ok(&mut self.path),
             "line" => Ok(&mut self.line),
             "column" => Ok(&mut self.column),
+            "highlight" => Ok(&mut self.highlight),
             "match" => Ok(&mut self.matches),
             _ => Err(Error::Execution(format!(
                 "rg: error parsing flag --colors: unrecognized color type '{name}'"
@@ -245,6 +248,12 @@ impl RgColorStyle {
             fg: Some(code.to_string()),
             bg: None,
         }
+    }
+
+    fn disabled() -> Self {
+        let mut style = Self::plain();
+        style.disable();
+        style
     }
 
     fn disable(&mut self) {
@@ -2791,6 +2800,37 @@ fn color_text(text: &str, style: &RgColorStyle, reset_when_disabled: bool) -> St
     output
 }
 
+fn color_prefix(style: &RgColorStyle, reset_first: bool) -> String {
+    if !style.enabled {
+        return String::new();
+    }
+    let mut output = if reset_first {
+        String::from(RG_ANSI_RESET)
+    } else {
+        String::new()
+    };
+    if style.bold {
+        output.push_str("\x1b[1m");
+    }
+    if style.italic {
+        output.push_str("\x1b[3m");
+    }
+    if style.underline {
+        output.push_str("\x1b[4m");
+    }
+    if let Some(fg) = style.fg.as_deref() {
+        output.push_str("\x1b[");
+        output.push_str(&intense_ansi_code(fg, style.intense));
+        output.push('m');
+    }
+    if let Some(bg) = style.bg.as_deref() {
+        output.push_str("\x1b[");
+        output.push_str(&intense_ansi_code(bg, style.intense));
+        output.push('m');
+    }
+    output
+}
+
 fn intense_ansi_code(code: &str, intense: bool) -> String {
     if !intense {
         return code.to_string();
@@ -2805,6 +2845,25 @@ fn intense_ansi_code(code: &str, intense: bool) -> String {
 fn color_matches(text: &str, regex: &Regex, opts: &RgOptions) -> String {
     if !opts.color_enabled() {
         return text.to_string();
+    }
+    if opts.color_scheme.highlight.enabled {
+        let mut output = color_prefix(&opts.color_scheme.highlight, true);
+        let mut last = 0;
+        let mut matched = false;
+        for mat in regex.find_iter(text) {
+            matched = true;
+            output.push_str(&text[last..mat.start()]);
+            output.push_str(&color_text(mat.as_str(), &opts.color_scheme.matches, false));
+            output.push_str(&color_prefix(&opts.color_scheme.highlight, false));
+            last = mat.end();
+        }
+        if !matched {
+            output.push_str(text);
+        } else {
+            output.push_str(&text[last..]);
+        }
+        output.push_str(RG_ANSI_RESET);
+        return output;
     }
     regex
         .replace_all(text, |captures: &regex::Captures<'_>| {
@@ -5058,6 +5117,20 @@ mod tests {
                 "--color=always",
                 "--colors",
                 "match:fg:blue",
+                "needle",
+                "proj/a.txt",
+            ],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "colors custom highlight fg",
+            args: &[
+                "--color=always",
+                "--colors",
+                "highlight:fg:blue",
                 "needle",
                 "proj/a.txt",
             ],
