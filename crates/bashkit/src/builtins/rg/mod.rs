@@ -1730,6 +1730,9 @@ impl RgTypeDatabase {
         db.insert_defaults("text", &["*.txt"]);
         db.insert_defaults("txt", &["*.txt"]);
         db.insert_defaults("toml", &["*.toml"]);
+        db.insert_defaults("spark", &["*.spark"]);
+        db.insert_defaults("spec", &["*.spec"]);
+        db.insert_defaults("ssa", &["*.ssa"]);
         db.insert_defaults(
             "tf",
             &[
@@ -1749,18 +1752,65 @@ impl RgTypeDatabase {
         db.insert_defaults("solidity", &["*.sol"]);
         db.insert_defaults("soy", &["*.soy"]);
         db.insert_defaults("stylus", &["*.styl"]);
+        db.insert_defaults("sv", &["*.h", "*.sv", "*.svh", "*.v", "*.vg"]);
+        db.insert_defaults("svg", &["*.svg"]);
         db.insert_defaults("swift", &["*.swift"]);
+        db.insert_defaults("swig", &["*.def", "*.i"]);
+        db.insert_defaults(
+            "systemd",
+            &[
+                "*.automount",
+                "*.conf",
+                "*.device",
+                "*.link",
+                "*.mount",
+                "*.path",
+                "*.scope",
+                "*.service",
+                "*.slice",
+                "*.socket",
+                "*.swap",
+                "*.target",
+                "*.timer",
+            ],
+        );
         db.insert_defaults("svelte", &["*.svelte", "*.svelte.ts"]);
+        db.insert_defaults("taskpaper", &["*.taskpaper"]);
+        db.insert_defaults("tcl", &["*.tcl"]);
+        db.insert_defaults(
+            "tex",
+            &[
+                "*.bib", "*.cls", "*.dtx", "*.ins", "*.ltx", "*.sty", "*.tex",
+            ],
+        );
+        db.insert_defaults("texinfo", &["*.texi"]);
+        db.insert_defaults("textile", &["*.textile"]);
         db.insert_defaults("thrift", &["*.thrift"]);
+        db.insert_defaults("twig", &["*.twig"]);
+        db.insert_defaults("typoscript", &["*.ts", "*.typoscript"]);
+        db.insert_defaults("typst", &["*.typ"]);
+        db.insert_defaults("usd", &["*.usd", "*.usda", "*.usdc"]);
+        db.insert_defaults("v", &["*.v", "*.vsh"]);
         db.insert_defaults("vala", &["*.vala"]);
+        db.insert_defaults("vb", &["*.vb"]);
+        db.insert_defaults("vcl", &["*.vcl"]);
+        db.insert_defaults("verilog", &["*.sv", "*.svh", "*.v", "*.vh"]);
+        db.insert_defaults("vhdl", &["*.vhd", "*.vhdl"]);
         db.insert_defaults(
             "vim",
             &[
                 "*.vim", ".gvimrc", ".vimrc", "_gvimrc", "_vimrc", "gvimrc", "vimrc",
             ],
         );
+        db.insert_defaults(
+            "vimscript",
+            &[
+                "*.vim", ".gvimrc", ".vimrc", "_gvimrc", "_vimrc", "gvimrc", "vimrc",
+            ],
+        );
         db.insert_defaults("webidl", &["*.idl", "*.webidl", "*.widl"]);
         db.insert_defaults("wgsl", &["*.wgsl"]);
+        db.insert_defaults("wiki", &["*.mediawiki", "*.wiki"]);
         db.insert_defaults("js", &["*.cjs", "*.js", "*.jsx", "*.mjs", "*.vue"]);
         db.insert_defaults("javascript", &["*.cjs", "*.js", "*.jsx", "*.mjs", "*.vue"]);
         db.insert_defaults("vue", &["*.vue"]);
@@ -1780,8 +1830,29 @@ impl RgTypeDatabase {
             ],
         );
         db.insert_defaults("yaml", &["*.yaml", "*.yml"]);
+        db.insert_defaults("xz", &["*.txz", "*.xz"]);
+        db.insert_defaults("yacc", &["*.y"]);
+        db.insert_defaults("yang", &["*.yang"]);
         db.insert_defaults("yml", &["*.yaml", "*.yml"]);
+        db.insert_defaults("z", &["*.Z"]);
         db.insert_defaults("zig", &["*.zig"]);
+        db.insert_defaults(
+            "zsh",
+            &[
+                "*.zsh",
+                ".zlogin",
+                ".zlogout",
+                ".zprofile",
+                ".zshenv",
+                ".zshrc",
+                "zlogin",
+                "zlogout",
+                "zprofile",
+                "zshenv",
+                "zshrc",
+            ],
+        );
+        db.insert_defaults("zstd", &["*.zst", "*.zstd"]);
         db
     }
 
@@ -5440,6 +5511,39 @@ mod tests {
         ("/proj/a.txt", b"needle\n"),
     ];
 
+    const DIFF_TAIL_TYPE_FILES: &[(&str, &[u8])] = &[
+        ("/proj/job.spark", b"needle\n"),
+        ("/proj/package.spec", b"needle\n"),
+        ("/proj/subtitle.ssa", b"needle\n"),
+        ("/proj/design.sv", b"needle\n"),
+        ("/proj/icon.svg", b"needle\n"),
+        ("/proj/bindings.i", b"needle\n"),
+        ("/proj/app.service", b"needle\n"),
+        ("/proj/tasks.taskpaper", b"needle\n"),
+        ("/proj/script.tcl", b"needle\n"),
+        ("/proj/paper.tex", b"needle\n"),
+        ("/proj/manual.texi", b"needle\n"),
+        ("/proj/article.textile", b"needle\n"),
+        ("/proj/view.twig", b"needle\n"),
+        ("/proj/setup.typoscript", b"needle\n"),
+        ("/proj/doc.typ", b"needle\n"),
+        ("/proj/scene.usda", b"needle\n"),
+        ("/proj/source.vsh", b"needle\n"),
+        ("/proj/form.vb", b"needle\n"),
+        ("/proj/cache.vcl", b"needle\n"),
+        ("/proj/cell.vh", b"needle\n"),
+        ("/proj/entity.vhdl", b"needle\n"),
+        ("/proj/plugin.vim", b"needle\n"),
+        ("/proj/page.mediawiki", b"needle\n"),
+        ("/proj/archive.txz", b"needle\n"),
+        ("/proj/parser.y", b"needle\n"),
+        ("/proj/model.yang", b"needle\n"),
+        ("/proj/archive.Z", b"needle\n"),
+        ("/proj/init.zsh", b"needle\n"),
+        ("/proj/archive.zstd", b"needle\n"),
+        ("/proj/a.txt", b"needle\n"),
+    ];
+
     const DIFF_IGNORE_FILES: &[(&str, &[u8])] = &[
         ("/proj/.git/config", b"[core]\n"),
         ("/proj/.git/info/exclude", b"local.txt\n"),
@@ -8136,6 +8240,238 @@ mod tests {
             args: &["-t", "soy", "needle", "proj"],
             stdin: None,
             files: DIFF_DOC_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type spark",
+            args: &["-t", "spark", "needle", "proj"],
+            stdin: None,
+            files: DIFF_TAIL_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type spec",
+            args: &["-t", "spec", "needle", "proj"],
+            stdin: None,
+            files: DIFF_TAIL_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type ssa",
+            args: &["-t", "ssa", "needle", "proj"],
+            stdin: None,
+            files: DIFF_TAIL_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type sv",
+            args: &["-t", "sv", "needle", "proj"],
+            stdin: None,
+            files: DIFF_TAIL_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type svg",
+            args: &["-t", "svg", "needle", "proj"],
+            stdin: None,
+            files: DIFF_TAIL_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type swig",
+            args: &["-t", "swig", "needle", "proj"],
+            stdin: None,
+            files: DIFF_TAIL_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type systemd",
+            args: &["-t", "systemd", "needle", "proj"],
+            stdin: None,
+            files: DIFF_TAIL_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type taskpaper",
+            args: &["-t", "taskpaper", "needle", "proj"],
+            stdin: None,
+            files: DIFF_TAIL_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type tcl",
+            args: &["-t", "tcl", "needle", "proj"],
+            stdin: None,
+            files: DIFF_TAIL_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type tex",
+            args: &["-t", "tex", "needle", "proj"],
+            stdin: None,
+            files: DIFF_TAIL_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type texinfo",
+            args: &["-t", "texinfo", "needle", "proj"],
+            stdin: None,
+            files: DIFF_TAIL_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type textile",
+            args: &["-t", "textile", "needle", "proj"],
+            stdin: None,
+            files: DIFF_TAIL_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type twig",
+            args: &["-t", "twig", "needle", "proj"],
+            stdin: None,
+            files: DIFF_TAIL_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type typoscript",
+            args: &["-t", "typoscript", "needle", "proj"],
+            stdin: None,
+            files: DIFF_TAIL_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type typst",
+            args: &["-t", "typst", "needle", "proj"],
+            stdin: None,
+            files: DIFF_TAIL_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type usd",
+            args: &["-t", "usd", "needle", "proj"],
+            stdin: None,
+            files: DIFF_TAIL_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type v",
+            args: &["-t", "v", "needle", "proj"],
+            stdin: None,
+            files: DIFF_TAIL_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type vb",
+            args: &["-t", "vb", "needle", "proj"],
+            stdin: None,
+            files: DIFF_TAIL_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type vcl",
+            args: &["-t", "vcl", "needle", "proj"],
+            stdin: None,
+            files: DIFF_TAIL_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type verilog",
+            args: &["--sort", "path", "-t", "verilog", "needle", "proj"],
+            stdin: None,
+            files: DIFF_TAIL_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type vhdl",
+            args: &["-t", "vhdl", "needle", "proj"],
+            stdin: None,
+            files: DIFF_TAIL_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type vimscript",
+            args: &["-t", "vimscript", "needle", "proj"],
+            stdin: None,
+            files: DIFF_TAIL_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type wiki",
+            args: &["-t", "wiki", "needle", "proj"],
+            stdin: None,
+            files: DIFF_TAIL_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type xz",
+            args: &["-t", "xz", "needle", "proj"],
+            stdin: None,
+            files: DIFF_TAIL_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type yacc",
+            args: &["-t", "yacc", "needle", "proj"],
+            stdin: None,
+            files: DIFF_TAIL_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type yang",
+            args: &["-t", "yang", "needle", "proj"],
+            stdin: None,
+            files: DIFF_TAIL_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type z",
+            args: &["-t", "z", "needle", "proj"],
+            stdin: None,
+            files: DIFF_TAIL_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type zsh",
+            args: &["-t", "zsh", "needle", "proj"],
+            stdin: None,
+            files: DIFF_TAIL_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type zstd",
+            args: &["-t", "zstd", "needle", "proj"],
+            stdin: None,
+            files: DIFF_TAIL_TYPE_FILES,
             cwd: "/",
             output: RgDiffOutput::Exact,
         },
