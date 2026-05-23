@@ -1384,8 +1384,17 @@ impl RgTypeDatabase {
         db.insert_defaults("csharp", &["*.cs"]);
         db.insert_defaults("csv", &["*.csv"]);
         db.insert_defaults("dart", &["*.dart"]);
+        db.insert_defaults("bat", &["*.bat"]);
+        db.insert_defaults("batch", &["*.bat"]);
+        db.insert_defaults("cmake", &["*.cmake", "CMakeLists.txt"]);
+        db.insert_defaults("config", &["*.cfg", "*.conf", "*.config", "*.ini"]);
+        db.insert_defaults("diff", &["*.diff", "*.patch"]);
         db.insert_defaults("docker", &["*Dockerfile*"]);
+        db.insert_defaults("fish", &["*.fish"]);
         db.insert_defaults("go", &["*.go"]);
+        db.insert_defaults("graphql", &["*.graphql", "*.graphqls"]);
+        db.insert_defaults("haskell", &["*.c2hs", "*.cpphs", "*.hs", "*.hsc", "*.lhs"]);
+        db.insert_defaults("hs", &["*.hs", "*.lhs"]);
         db.insert_defaults("html", &["*.htm", "*.html"]);
         db.insert_defaults("htm", &["*.htm", "*.html"]);
         db.insert_defaults("java", &["*.java"]);
@@ -1437,6 +1446,10 @@ impl RgTypeDatabase {
             &[
                 "*.php", "*.php3", "*.php4", "*.php5", "*.php7", "*.php8", "*.pht", "*.phtml",
             ],
+        );
+        db.insert_defaults(
+            "perl",
+            &["*.PL", "*.perl", "*.pl", "*.plh", "*.plx", "*.pm", "*.t"],
         );
         db.insert_defaults("protobuf", &["*.proto"]);
         db.insert_defaults("python", &["*.py", "*.pyi", "*.pyw"]);
@@ -4951,6 +4964,18 @@ mod tests {
         ("/proj/a.txt", b"needle\n"),
     ];
 
+    const DIFF_MORE_TYPE_FILES: &[(&str, &[u8])] = &[
+        ("/proj/CMakeLists.txt", b"needle\n"),
+        ("/proj/patch.diff", b"needle\n"),
+        ("/proj/app.ini", b"needle\n"),
+        ("/proj/build.bat", b"needle\n"),
+        ("/proj/config.fish", b"needle\n"),
+        ("/proj/schema.graphql", b"needle\n"),
+        ("/proj/Main.hs", b"needle\n"),
+        ("/proj/script.pl", b"needle\n"),
+        ("/proj/a.txt", b"needle\n"),
+    ];
+
     const DIFF_IGNORE_FILES: &[(&str, &[u8])] = &[
         ("/proj/.git/config", b"[core]\n"),
         ("/proj/.git/info/exclude", b"local.txt\n"),
@@ -6431,6 +6456,70 @@ mod tests {
             args: &["-t", "swift", "needle", "proj"],
             stdin: None,
             files: DIFF_COMMON_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type cmake",
+            args: &["-t", "cmake", "needle", "proj"],
+            stdin: None,
+            files: DIFF_MORE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type diff",
+            args: &["-t", "diff", "needle", "proj"],
+            stdin: None,
+            files: DIFF_MORE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type config",
+            args: &["-t", "config", "needle", "proj"],
+            stdin: None,
+            files: DIFF_MORE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type bat",
+            args: &["-t", "bat", "needle", "proj"],
+            stdin: None,
+            files: DIFF_MORE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type fish",
+            args: &["-t", "fish", "needle", "proj"],
+            stdin: None,
+            files: DIFF_MORE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type graphql",
+            args: &["-t", "graphql", "needle", "proj"],
+            stdin: None,
+            files: DIFF_MORE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type haskell",
+            args: &["-t", "haskell", "needle", "proj"],
+            stdin: None,
+            files: DIFF_MORE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type perl",
+            args: &["-t", "perl", "needle", "proj"],
+            stdin: None,
+            files: DIFF_MORE_TYPE_FILES,
             cwd: "/",
             output: RgDiffOutput::Exact,
         },
