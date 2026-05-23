@@ -1777,6 +1777,9 @@ fn parse_ansi_fg(value: &str) -> Result<String> {
     if let Some(rgb) = parse_rgb_color(value) {
         return Ok(format!("38;2;{};{};{}", rgb.0, rgb.1, rgb.2));
     }
+    if let Some(number) = parse_ansi_color_number(value) {
+        return Ok(format!("38;5;{number}"));
+    }
     match value {
         "black" => Ok("30".to_string()),
         "red" => Ok("31".to_string()),
@@ -1795,6 +1798,9 @@ fn parse_ansi_fg(value: &str) -> Result<String> {
 fn parse_ansi_bg(value: &str) -> Result<String> {
     if let Some(rgb) = parse_rgb_color(value) {
         return Ok(format!("48;2;{};{};{}", rgb.0, rgb.1, rgb.2));
+    }
+    if let Some(number) = parse_ansi_color_number(value) {
+        return Ok(format!("48;5;{number}"));
     }
     match value {
         "black" => Ok("40".to_string()),
@@ -1820,6 +1826,14 @@ fn parse_rgb_color(value: &str) -> Option<(u8, u8, u8)> {
     let g = parts[1].parse().ok()?;
     let b = parts[2].parse().ok()?;
     Some((r, g, b))
+}
+
+fn parse_ansi_color_number(value: &str) -> Option<u8> {
+    if value.chars().all(|ch| ch.is_ascii_digit()) {
+        value.parse().ok()
+    } else {
+        None
+    }
 }
 
 fn parse_rg_separator(value: &str) -> String {
@@ -5240,6 +5254,34 @@ mod tests {
                 "--color=always",
                 "--colors",
                 "match:fg:200,100,50",
+                "needle",
+                "proj/a.txt",
+            ],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "colors ansi foreground number",
+            args: &[
+                "--color=always",
+                "--colors",
+                "match:fg:5",
+                "needle",
+                "proj/a.txt",
+            ],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "colors ansi background number",
+            args: &[
+                "--color=always",
+                "--colors",
+                "match:bg:5",
                 "needle",
                 "proj/a.txt",
             ],
