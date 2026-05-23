@@ -1621,11 +1621,31 @@ impl RgTypeDatabase {
         );
         db.insert_defaults("minified", &["*.min.css", "*.min.html", "*.min.js"]);
         db.insert_defaults("mint", &["*.mint"]);
+        db.insert_defaults("mk", &["mkfile"]);
+        db.insert_defaults("ml", &["*.ml"]);
+        db.insert_defaults("motoko", &["*.mo"]);
+        db.insert_defaults(
+            "msbuild",
+            &[
+                "*.csproj",
+                "*.fsproj",
+                "*.proj",
+                "*.props",
+                "*.sln",
+                "*.slnf",
+                "*.targets",
+                "*.vcxproj",
+            ],
+        );
         db.insert_defaults("nim", &["*.nim", "*.nimble", "*.nimf", "*.nims"]);
         db.insert_defaults("nix", &["*.nix"]);
+        db.insert_defaults("objc", &["*.h", "*.m"]);
+        db.insert_defaults("objcpp", &["*.h", "*.mm"]);
         db.insert_defaults("ocaml", &["*.ml", "*.mli", "*.mll", "*.mly"]);
         db.insert_defaults("org", &["*.org", "*.org_archive"]);
+        db.insert_defaults("pants", &["BUILD"]);
         db.insert_defaults("pascal", &["*.dpr", "*.inc", "*.lpr", "*.pas", "*.pp"]);
+        db.insert_defaults("pdf", &["*.pdf"]);
         db.insert_defaults("py", &["*.py", "*.pyi", "*.pyw"]);
         db.insert_defaults(
             "php",
@@ -1637,8 +1657,16 @@ impl RgTypeDatabase {
             "perl",
             &["*.PL", "*.perl", "*.pl", "*.plh", "*.plx", "*.pm", "*.t"],
         );
+        db.insert_defaults("po", &["*.po"]);
+        db.insert_defaults("pod", &["*.pod"]);
+        db.insert_defaults("postscript", &["*.eps", "*.ps"]);
+        db.insert_defaults("prolog", &["*.P", "*.pl", "*.pro", "*.prolog"]);
         db.insert_defaults("protobuf", &["*.proto"]);
+        db.insert_defaults("ps", &["*.cdxml", "*.ps1", "*.ps1xml", "*.psd1", "*.psm1"]);
+        db.insert_defaults("puppet", &["*.epp", "*.erb", "*.pp", "*.rb"]);
+        db.insert_defaults("purs", &["*.purs"]);
         db.insert_defaults("python", &["*.py", "*.pyi", "*.pyw"]);
+        db.insert_defaults("qmake", &["*.prf", "*.pri", "*.pro"]);
         db.insert_defaults("qml", &["*.qml"]);
         db.insert_defaults("r", &["*.R", "*.Rmd", "*.Rnw", "*.r", "*.rmd", "*.rnw"]);
         db.insert_defaults("rescript", &["*.res", "*.resi"]);
@@ -5345,6 +5373,26 @@ mod tests {
         ("/proj/a.txt", b"needle\n"),
     ];
 
+    const DIFF_PROJECT_TYPE_FILES: &[(&str, &[u8])] = &[
+        ("/proj/mkfile", b"needle\n"),
+        ("/proj/model.ml", b"needle\n"),
+        ("/proj/canister.mo", b"needle\n"),
+        ("/proj/app.sln", b"needle\n"),
+        ("/proj/view.m", b"needle\n"),
+        ("/proj/view.mm", b"needle\n"),
+        ("/proj/BUILD", b"needle\n"),
+        ("/proj/spec.pdf", b"needle\n"),
+        ("/proj/messages.po", b"needle\n"),
+        ("/proj/module.pod", b"needle\n"),
+        ("/proj/figure.eps", b"needle\n"),
+        ("/proj/facts.prolog", b"needle\n"),
+        ("/proj/profile.ps1", b"needle\n"),
+        ("/proj/site.pp", b"needle\n"),
+        ("/proj/lib.purs", b"needle\n"),
+        ("/proj/project.pri", b"needle\n"),
+        ("/proj/a.txt", b"needle\n"),
+    ];
+
     const DIFF_IGNORE_FILES: &[(&str, &[u8])] = &[
         ("/proj/.git/config", b"[core]\n"),
         ("/proj/.git/info/exclude", b"local.txt\n"),
@@ -7785,6 +7833,134 @@ mod tests {
             args: &["-t", "mint", "needle", "proj"],
             stdin: None,
             files: DIFF_METADATA_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type mk",
+            args: &["-t", "mk", "needle", "proj"],
+            stdin: None,
+            files: DIFF_PROJECT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type ml",
+            args: &["-t", "ml", "needle", "proj"],
+            stdin: None,
+            files: DIFF_PROJECT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type motoko",
+            args: &["-t", "motoko", "needle", "proj"],
+            stdin: None,
+            files: DIFF_PROJECT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type msbuild",
+            args: &["-t", "msbuild", "needle", "proj"],
+            stdin: None,
+            files: DIFF_PROJECT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type objc",
+            args: &["-t", "objc", "needle", "proj"],
+            stdin: None,
+            files: DIFF_PROJECT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type objcpp",
+            args: &["-t", "objcpp", "needle", "proj"],
+            stdin: None,
+            files: DIFF_PROJECT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type pants",
+            args: &["-t", "pants", "needle", "proj"],
+            stdin: None,
+            files: DIFF_PROJECT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type pdf",
+            args: &["-t", "pdf", "needle", "proj"],
+            stdin: None,
+            files: DIFF_PROJECT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type po",
+            args: &["-t", "po", "needle", "proj"],
+            stdin: None,
+            files: DIFF_PROJECT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type pod",
+            args: &["-t", "pod", "needle", "proj"],
+            stdin: None,
+            files: DIFF_PROJECT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type postscript",
+            args: &["-t", "postscript", "needle", "proj"],
+            stdin: None,
+            files: DIFF_PROJECT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type prolog",
+            args: &["-t", "prolog", "needle", "proj"],
+            stdin: None,
+            files: DIFF_PROJECT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type ps",
+            args: &["-t", "ps", "needle", "proj"],
+            stdin: None,
+            files: DIFF_PROJECT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type puppet",
+            args: &["-t", "puppet", "needle", "proj"],
+            stdin: None,
+            files: DIFF_PROJECT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type purs",
+            args: &["-t", "purs", "needle", "proj"],
+            stdin: None,
+            files: DIFF_PROJECT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type qmake",
+            args: &["-t", "qmake", "needle", "proj"],
+            stdin: None,
+            files: DIFF_PROJECT_TYPE_FILES,
             cwd: "/",
             output: RgDiffOutput::Exact,
         },
