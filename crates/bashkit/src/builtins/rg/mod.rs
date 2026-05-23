@@ -1722,6 +1722,10 @@ fn glob_to_regex(pattern: &str) -> String {
                     i += 1;
                 }
             }
+            '\\' if i + 1 < chars.len() => {
+                out.push_str(&regex::escape(&chars[i + 1].to_string()));
+                i += 2;
+            }
             c => {
                 out.push_str(&regex::escape(&c.to_string()));
                 i += 1;
@@ -1741,6 +1745,12 @@ fn glob_alternation_to_regex(chars: &[char], start: usize) -> Option<(String, us
 
     while i < chars.len() {
         match chars[i] {
+            '\\' if i + 1 < chars.len() => {
+                current.push('\\');
+                current.push(chars[i + 1]);
+                i += 2;
+                continue;
+            }
             '{' => {
                 depth += 1;
                 current.push('{');
@@ -4918,6 +4928,15 @@ mod tests {
         ("/proj/a.txt", b"needle\n"),
     ];
 
+    const DIFF_GLOB_ESCAPE_FILES: &[(&str, &[u8])] = &[
+        ("/proj/*.txt", b"needle\n"),
+        ("/proj/?.txt", b"needle\n"),
+        ("/proj/[x].txt", b"needle\n"),
+        ("/proj/{a,b}.txt", b"needle\n"),
+        ("/proj/a.txt", b"needle\n"),
+        ("/proj/x.txt", b"needle\n"),
+    ];
+
     const DIFF_COMMON_TYPE_FILES: &[(&str, &[u8])] = &[
         ("/proj/data.csv", b"needle\n"),
         ("/proj/Dockerfile", b"needle\n"),
@@ -5292,6 +5311,38 @@ mod tests {
             args: &["--files", "-g", "*.{rs,toml}", "proj"],
             stdin: None,
             files: DIFF_GLOB_BRACE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "glob escaped star",
+            args: &["--files", "-g", r"\*.txt", "proj"],
+            stdin: None,
+            files: DIFF_GLOB_ESCAPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "glob escaped question",
+            args: &["--files", "-g", r"\?.txt", "proj"],
+            stdin: None,
+            files: DIFF_GLOB_ESCAPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "glob escaped class brackets",
+            args: &["--files", "-g", r"\[x\].txt", "proj"],
+            stdin: None,
+            files: DIFF_GLOB_ESCAPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "glob escaped brace alternation",
+            args: &["--files", "-g", r"\{a,b\}.txt", "proj"],
+            stdin: None,
+            files: DIFF_GLOB_ESCAPE_FILES,
             cwd: "/",
             output: RgDiffOutput::UnorderedLines,
         },
