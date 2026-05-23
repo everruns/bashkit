@@ -1439,6 +1439,16 @@ impl RgTypeDatabase {
     }
 
     fn parse(&self, name: &str) -> Result<RgFileType> {
+        if name == "all" {
+            return Ok(RgFileType {
+                globs: self
+                    .definitions
+                    .values()
+                    .flat_map(|globs| globs.iter().cloned())
+                    .collect(),
+            });
+        }
+
         let Some(globs) = self.definitions.get(name) else {
             return Err(Error::Execution(format!(
                 "rg: unrecognized file type: {}",
@@ -5851,6 +5861,37 @@ mod tests {
             files: DIFF_BASIC_FILES,
             cwd: "/",
             output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type all searches recognized types",
+            args: &["--type", "all", "needle", "proj/lang"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "type all includes added custom types",
+            args: &[
+                "--type-add",
+                "foo:*.foo",
+                "--type",
+                "all",
+                "needle",
+                "proj/lang",
+            ],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "type not all searches unrecognized types",
+            args: &["--type-not", "all", "needle", "proj/lang"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
         },
         RgDiffCase {
             name: "type not rust",
