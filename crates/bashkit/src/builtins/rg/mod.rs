@@ -1462,13 +1462,17 @@ impl RgTypeDatabase {
         );
         db.insert_defaults("dts", &["*.dts", "*.dtsi"]);
         db.insert_defaults("dvc", &["*.dvc", "Dvcfile"]);
+        db.insert_defaults("ebuild", &["*.ebuild", "*.eclass"]);
         db.insert_defaults("edn", &["*.edn"]);
+        db.insert_defaults("elisp", &["*.el"]);
         db.insert_defaults(
             "elixir",
             &["*.eex", "*.ex", "*.exs", "*.heex", "*.leex", "*.livemd"],
         );
         db.insert_defaults("erlang", &["*.erl", "*.hrl"]);
         db.insert_defaults("erb", &["*.erb"]);
+        db.insert_defaults("fennel", &["*.fnl"]);
+        db.insert_defaults("fidl", &["*.fidl"]);
         db.insert_defaults("fish", &["*.fish"]);
         db.insert_defaults("flatbuffers", &["*.fbs"]);
         db.insert_defaults(
@@ -1478,10 +1482,13 @@ impl RgTypeDatabase {
             ],
         );
         db.insert_defaults("fsharp", &["*.fs", "*.fsi", "*.fsx"]);
+        db.insert_defaults("fut", &["*.fut"]);
+        db.insert_defaults("gap", &["*.g", "*.gap", "*.gd", "*.gi", "*.tst"]);
         db.insert_defaults("gdscript", &["*.gd"]);
         db.insert_defaults("gleam", &["*.gleam"]);
         db.insert_defaults("gn", &["*.gn", "*.gni"]);
         db.insert_defaults("go", &["*.go"]);
+        db.insert_defaults("gprbuild", &["*.gpr"]);
         db.insert_defaults(
             "gradle",
             &[
@@ -1495,16 +1502,25 @@ impl RgTypeDatabase {
         );
         db.insert_defaults("groovy", &["*.gradle", "*.groovy"]);
         db.insert_defaults("graphql", &["*.graphql", "*.graphqls"]);
+        db.insert_defaults("gzip", &["*.gz", "*.tgz"]);
+        db.insert_defaults("h", &["*.h", "*.hh", "*.hpp"]);
         db.insert_defaults("haml", &["*.haml"]);
+        db.insert_defaults("hare", &["*.ha"]);
         db.insert_defaults("haskell", &["*.c2hs", "*.cpphs", "*.hs", "*.hsc", "*.lhs"]);
+        db.insert_defaults("hbs", &["*.hbs"]);
         db.insert_defaults("hs", &["*.hs", "*.lhs"]);
         db.insert_defaults("html", &["*.htm", "*.html"]);
         db.insert_defaults("htm", &["*.htm", "*.html"]);
+        db.insert_defaults("hy", &["*.hy"]);
         db.insert_defaults("idris", &["*.idr", "*.lidr"]);
+        db.insert_defaults("janet", &["*.janet"]);
         db.insert_defaults("java", &["*.java"]);
+        db.insert_defaults("jinja", &["*.j2", "*.jinja", "*.jinja2"]);
+        db.insert_defaults("jl", &["*.jl"]);
         db.insert_defaults("json", &["*.json", "*.jsonl"]);
         db.insert_defaults("jsonl", &["*.jsonl"]);
         db.insert_defaults("julia", &["*.jl"]);
+        db.insert_defaults("jupyter", &["*.ipynb", "*.jpynb"]);
         db.insert_defaults("kotlin", &["*.kt", "*.kts"]);
         db.insert_defaults("lean", &["*.lean"]);
         db.insert_defaults("lua", &["*.lua"]);
@@ -5235,6 +5251,26 @@ mod tests {
         ("/proj/a.txt", b"needle\n"),
     ];
 
+    const DIFF_ADDITIONAL_FORMAT_TYPE_FILES: &[(&str, &[u8])] = &[
+        ("/proj/package.ebuild", b"needle\n"),
+        ("/proj/init.el", b"needle\n"),
+        ("/proj/script.fnl", b"needle\n"),
+        ("/proj/device.fidl", b"needle\n"),
+        ("/proj/kernel.fut", b"needle\n"),
+        ("/proj/algebra.gap", b"needle\n"),
+        ("/proj/project.gpr", b"needle\n"),
+        ("/proj/archive.tgz", b"needle\n"),
+        ("/proj/header.hh", b"needle\n"),
+        ("/proj/main.ha", b"needle\n"),
+        ("/proj/template.hbs", b"needle\n"),
+        ("/proj/macro.hy", b"needle\n"),
+        ("/proj/app.janet", b"needle\n"),
+        ("/proj/page.jinja2", b"needle\n"),
+        ("/proj/notebook.jl", b"needle\n"),
+        ("/proj/analysis.ipynb", b"needle\n"),
+        ("/proj/a.txt", b"needle\n"),
+    ];
+
     const DIFF_IGNORE_FILES: &[(&str, &[u8])] = &[
         ("/proj/.git/config", b"[core]\n"),
         ("/proj/.git/info/exclude", b"local.txt\n"),
@@ -7419,6 +7455,134 @@ mod tests {
             args: &["-t", "dvc", "needle", "proj"],
             stdin: None,
             files: DIFF_FORMAT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type ebuild",
+            args: &["-t", "ebuild", "needle", "proj"],
+            stdin: None,
+            files: DIFF_ADDITIONAL_FORMAT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type elisp",
+            args: &["-t", "elisp", "needle", "proj"],
+            stdin: None,
+            files: DIFF_ADDITIONAL_FORMAT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type fennel",
+            args: &["-t", "fennel", "needle", "proj"],
+            stdin: None,
+            files: DIFF_ADDITIONAL_FORMAT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type fidl",
+            args: &["-t", "fidl", "needle", "proj"],
+            stdin: None,
+            files: DIFF_ADDITIONAL_FORMAT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type fut",
+            args: &["-t", "fut", "needle", "proj"],
+            stdin: None,
+            files: DIFF_ADDITIONAL_FORMAT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type gap",
+            args: &["-t", "gap", "needle", "proj"],
+            stdin: None,
+            files: DIFF_ADDITIONAL_FORMAT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type gprbuild",
+            args: &["-t", "gprbuild", "needle", "proj"],
+            stdin: None,
+            files: DIFF_ADDITIONAL_FORMAT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type gzip",
+            args: &["-t", "gzip", "needle", "proj"],
+            stdin: None,
+            files: DIFF_ADDITIONAL_FORMAT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type h",
+            args: &["-t", "h", "needle", "proj"],
+            stdin: None,
+            files: DIFF_ADDITIONAL_FORMAT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type hare",
+            args: &["-t", "hare", "needle", "proj"],
+            stdin: None,
+            files: DIFF_ADDITIONAL_FORMAT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type hbs",
+            args: &["-t", "hbs", "needle", "proj"],
+            stdin: None,
+            files: DIFF_ADDITIONAL_FORMAT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type hy",
+            args: &["-t", "hy", "needle", "proj"],
+            stdin: None,
+            files: DIFF_ADDITIONAL_FORMAT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type janet",
+            args: &["-t", "janet", "needle", "proj"],
+            stdin: None,
+            files: DIFF_ADDITIONAL_FORMAT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type jinja",
+            args: &["-t", "jinja", "needle", "proj"],
+            stdin: None,
+            files: DIFF_ADDITIONAL_FORMAT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type jl",
+            args: &["-t", "jl", "needle", "proj"],
+            stdin: None,
+            files: DIFF_ADDITIONAL_FORMAT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type jupyter",
+            args: &["-t", "jupyter", "needle", "proj"],
+            stdin: None,
+            files: DIFF_ADDITIONAL_FORMAT_TYPE_FILES,
             cwd: "/",
             output: RgDiffOutput::Exact,
         },
