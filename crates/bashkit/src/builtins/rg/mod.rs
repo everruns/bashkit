@@ -1521,9 +1521,55 @@ impl RgTypeDatabase {
         db.insert_defaults("jsonl", &["*.jsonl"]);
         db.insert_defaults("julia", &["*.jl"]);
         db.insert_defaults("jupyter", &["*.ipynb", "*.jpynb"]);
+        db.insert_defaults("k", &["*.k"]);
+        db.insert_defaults("kconfig", &["Kconfig", "Kconfig.*"]);
         db.insert_defaults("kotlin", &["*.kt", "*.kts"]);
         db.insert_defaults("lean", &["*.lean"]);
+        db.insert_defaults("less", &["*.less"]);
+        db.insert_defaults(
+            "license",
+            &[
+                "*[.-]LICEN[CS]E*",
+                "AGPL-*[0-9]*",
+                "APACHE-*[0-9]*",
+                "BSD-*[0-9]*",
+                "CC-BY-*",
+                "COPYING",
+                "COPYING[.-]*",
+                "COPYRIGHT",
+                "COPYRIGHT[.-]*",
+                "EULA",
+                "EULA[.-]*",
+                "GFDL-*[0-9]*",
+                "GNU-*[0-9]*",
+                "GPL-*[0-9]*",
+                "LGPL-*[0-9]*",
+                "LICEN[CS]E",
+                "LICEN[CS]E[.-]*",
+                "MIT-*[0-9]*",
+                "MPL-*[0-9]*",
+                "NOTICE",
+                "NOTICE[.-]*",
+                "OFL-*[0-9]*",
+                "PATENTS",
+                "PATENTS[.-]*",
+                "UNLICEN[CS]E",
+                "UNLICEN[CS]E[.-]*",
+                "agpl[.-]*",
+                "gpl[.-]*",
+                "lgpl[.-]*",
+                "licen[cs]e",
+                "licen[cs]e.*",
+            ],
+        );
+        db.insert_defaults("lilypond", &["*.ily", "*.ly"]);
         db.insert_defaults("lua", &["*.lua"]);
+        db.insert_defaults("llvm", &["*.ll"]);
+        db.insert_defaults("lock", &["*.lock", "package-lock.json"]);
+        db.insert_defaults("log", &["*.log"]);
+        db.insert_defaults("lz4", &["*.lz4"]);
+        db.insert_defaults("lzma", &["*.lzma"]);
+        db.insert_defaults("m4", &["*.ac", "*.m4"]);
         db.insert_defaults(
             "lisp",
             &["*.el", "*.jl", "*.lisp", "*.lsp", "*.sc", "*.scm"],
@@ -1542,6 +1588,8 @@ impl RgTypeDatabase {
                 "[Mm]akefile.in",
             ],
         );
+        db.insert_defaults("mako", &["*.mako", "*.mao"]);
+        db.insert_defaults("man", &["*.[0-9][cEFMmpSx]", "*.[0-9lnpx]"]);
         db.insert_defaults(
             "markdown",
             &[
@@ -1567,6 +1615,12 @@ impl RgTypeDatabase {
             ],
         );
         db.insert_defaults("matlab", &["*.m"]);
+        db.insert_defaults(
+            "meson",
+            &["meson.build", "meson.options", "meson_options.txt"],
+        );
+        db.insert_defaults("minified", &["*.min.css", "*.min.html", "*.min.js"]);
+        db.insert_defaults("mint", &["*.mint"]);
         db.insert_defaults("nim", &["*.nim", "*.nimble", "*.nimf", "*.nims"]);
         db.insert_defaults("nix", &["*.nix"]);
         db.insert_defaults("ocaml", &["*.ml", "*.mli", "*.mll", "*.mly"]);
@@ -5271,6 +5325,26 @@ mod tests {
         ("/proj/a.txt", b"needle\n"),
     ];
 
+    const DIFF_METADATA_TYPE_FILES: &[(&str, &[u8])] = &[
+        ("/proj/rule.k", b"needle\n"),
+        ("/proj/Kconfig", b"needle\n"),
+        ("/proj/theme.less", b"needle\n"),
+        ("/proj/LICENSE", b"needle\n"),
+        ("/proj/music.ly", b"needle\n"),
+        ("/proj/ir.ll", b"needle\n"),
+        ("/proj/package-lock.json", b"needle\n"),
+        ("/proj/server.log", b"needle\n"),
+        ("/proj/archive.lz4", b"needle\n"),
+        ("/proj/archive.lzma", b"needle\n"),
+        ("/proj/configure.ac", b"needle\n"),
+        ("/proj/page.mako", b"needle\n"),
+        ("/proj/tool.1", b"needle\n"),
+        ("/proj/meson.build", b"needle\n"),
+        ("/proj/app.min.js", b"needle\n"),
+        ("/proj/main.mint", b"needle\n"),
+        ("/proj/a.txt", b"needle\n"),
+    ];
+
     const DIFF_IGNORE_FILES: &[(&str, &[u8])] = &[
         ("/proj/.git/config", b"[core]\n"),
         ("/proj/.git/info/exclude", b"local.txt\n"),
@@ -7583,6 +7657,134 @@ mod tests {
             args: &["-t", "jupyter", "needle", "proj"],
             stdin: None,
             files: DIFF_ADDITIONAL_FORMAT_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type k",
+            args: &["-t", "k", "needle", "proj"],
+            stdin: None,
+            files: DIFF_METADATA_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type kconfig",
+            args: &["-t", "kconfig", "needle", "proj"],
+            stdin: None,
+            files: DIFF_METADATA_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type less",
+            args: &["-t", "less", "needle", "proj"],
+            stdin: None,
+            files: DIFF_METADATA_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type license",
+            args: &["-t", "license", "needle", "proj"],
+            stdin: None,
+            files: DIFF_METADATA_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type lilypond",
+            args: &["-t", "lilypond", "needle", "proj"],
+            stdin: None,
+            files: DIFF_METADATA_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type llvm",
+            args: &["-t", "llvm", "needle", "proj"],
+            stdin: None,
+            files: DIFF_METADATA_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type lock",
+            args: &["-t", "lock", "needle", "proj"],
+            stdin: None,
+            files: DIFF_METADATA_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type log",
+            args: &["-t", "log", "needle", "proj"],
+            stdin: None,
+            files: DIFF_METADATA_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type lz4",
+            args: &["-t", "lz4", "needle", "proj"],
+            stdin: None,
+            files: DIFF_METADATA_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type lzma",
+            args: &["-t", "lzma", "needle", "proj"],
+            stdin: None,
+            files: DIFF_METADATA_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type m4",
+            args: &["-t", "m4", "needle", "proj"],
+            stdin: None,
+            files: DIFF_METADATA_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type mako",
+            args: &["-t", "mako", "needle", "proj"],
+            stdin: None,
+            files: DIFF_METADATA_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type man",
+            args: &["-t", "man", "needle", "proj"],
+            stdin: None,
+            files: DIFF_METADATA_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type meson",
+            args: &["-t", "meson", "needle", "proj"],
+            stdin: None,
+            files: DIFF_METADATA_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type minified",
+            args: &["-t", "minified", "needle", "proj"],
+            stdin: None,
+            files: DIFF_METADATA_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type mint",
+            args: &["-t", "mint", "needle", "proj"],
+            stdin: None,
+            files: DIFF_METADATA_TYPE_FILES,
             cwd: "/",
             output: RgDiffOutput::Exact,
         },
