@@ -1393,6 +1393,10 @@ impl RgTypeDatabase {
         db.insert_defaults("batch", &["*.bat"]);
         db.insert_defaults("cmake", &["*.cmake", "CMakeLists.txt"]);
         db.insert_defaults("config", &["*.cfg", "*.conf", "*.config", "*.ini"]);
+        db.insert_defaults("coq", &["*.v"]);
+        db.insert_defaults("cuda", &["*.cu", "*.cuh"]);
+        db.insert_defaults("d", &["*.d"]);
+        db.insert_defaults("dhall", &["*.dhall"]);
         db.insert_defaults("diff", &["*.diff", "*.patch"]);
         db.insert_defaults("docker", &["*Dockerfile*"]);
         db.insert_defaults(
@@ -1409,11 +1413,13 @@ impl RgTypeDatabase {
         db.insert_defaults("hs", &["*.hs", "*.lhs"]);
         db.insert_defaults("html", &["*.htm", "*.html"]);
         db.insert_defaults("htm", &["*.htm", "*.html"]);
+        db.insert_defaults("idris", &["*.idr", "*.lidr"]);
         db.insert_defaults("java", &["*.java"]);
         db.insert_defaults("json", &["*.json", "*.jsonl"]);
         db.insert_defaults("jsonl", &["*.jsonl"]);
         db.insert_defaults("julia", &["*.jl"]);
         db.insert_defaults("kotlin", &["*.kt", "*.kts"]);
+        db.insert_defaults("lean", &["*.lean"]);
         db.insert_defaults("lua", &["*.lua"]);
         db.insert_defaults(
             "lisp",
@@ -1457,10 +1463,12 @@ impl RgTypeDatabase {
                 "*.mkdn",
             ],
         );
+        db.insert_defaults("matlab", &["*.m"]);
         db.insert_defaults("nim", &["*.nim", "*.nimble", "*.nimf", "*.nims"]);
         db.insert_defaults("nix", &["*.nix"]);
         db.insert_defaults("ocaml", &["*.ml", "*.mli", "*.mll", "*.mly"]);
         db.insert_defaults("org", &["*.org", "*.org_archive"]);
+        db.insert_defaults("pascal", &["*.dpr", "*.inc", "*.lpr", "*.pas", "*.pp"]);
         db.insert_defaults("py", &["*.py", "*.pyi", "*.pyw"]);
         db.insert_defaults(
             "php",
@@ -1474,6 +1482,7 @@ impl RgTypeDatabase {
         );
         db.insert_defaults("protobuf", &["*.proto"]);
         db.insert_defaults("python", &["*.py", "*.pyi", "*.pyw"]);
+        db.insert_defaults("qml", &["*.qml"]);
         db.insert_defaults("r", &["*.R", "*.Rmd", "*.Rnw", "*.r", "*.rmd", "*.rnw"]);
         db.insert_defaults("rescript", &["*.res", "*.resi"]);
         db.insert_defaults(
@@ -1491,6 +1500,7 @@ impl RgTypeDatabase {
         );
         db.insert_defaults("rs", &["*.rs"]);
         db.insert_defaults("rust", &["*.rs"]);
+        db.insert_defaults("sass", &["*.sass", "*.scss"]);
         db.insert_defaults("scala", &["*.sbt", "*.scala"]);
         db.insert_defaults(
             "sh",
@@ -1526,8 +1536,10 @@ impl RgTypeDatabase {
         db.insert_defaults("typescript", &["*.cts", "*.mts", "*.ts", "*.tsx"]);
         db.insert_defaults("sql", &["*.psql", "*.sql"]);
         db.insert_defaults("solidity", &["*.sol"]);
+        db.insert_defaults("stylus", &["*.styl"]);
         db.insert_defaults("swift", &["*.swift"]);
         db.insert_defaults("svelte", &["*.svelte", "*.svelte.ts"]);
+        db.insert_defaults("thrift", &["*.thrift"]);
         db.insert_defaults("vala", &["*.vala"]);
         db.insert_defaults(
             "vim",
@@ -1535,6 +1547,8 @@ impl RgTypeDatabase {
                 "*.vim", ".gvimrc", ".vimrc", "_gvimrc", "_vimrc", "gvimrc", "vimrc",
             ],
         );
+        db.insert_defaults("webidl", &["*.idl", "*.webidl", "*.widl"]);
+        db.insert_defaults("wgsl", &["*.wgsl"]);
         db.insert_defaults("js", &["*.cjs", "*.js", "*.jsx", "*.mjs", "*.vue"]);
         db.insert_defaults("javascript", &["*.cjs", "*.js", "*.jsx", "*.mjs", "*.vue"]);
         db.insert_defaults("vue", &["*.vue"]);
@@ -5062,6 +5076,24 @@ mod tests {
         ("/proj/a.txt", b"needle\n"),
     ];
 
+    const DIFF_EXTRA_LANGUAGE_TYPE_FILES: &[(&str, &[u8])] = &[
+        ("/proj/proof.v", b"needle\n"),
+        ("/proj/kernel.cu", b"needle\n"),
+        ("/proj/app.d", b"needle\n"),
+        ("/proj/config.dhall", b"needle\n"),
+        ("/proj/Main.idr", b"needle\n"),
+        ("/proj/Theorem.lean", b"needle\n"),
+        ("/proj/model.m", b"needle\n"),
+        ("/proj/unit.pas", b"needle\n"),
+        ("/proj/View.qml", b"needle\n"),
+        ("/proj/style.scss", b"needle\n"),
+        ("/proj/theme.styl", b"needle\n"),
+        ("/proj/api.thrift", b"needle\n"),
+        ("/proj/dom.webidl", b"needle\n"),
+        ("/proj/shader.wgsl", b"needle\n"),
+        ("/proj/a.txt", b"needle\n"),
+    ];
+
     const DIFF_IGNORE_FILES: &[(&str, &[u8])] = &[
         ("/proj/.git/config", b"[core]\n"),
         ("/proj/.git/info/exclude", b"local.txt\n"),
@@ -6798,6 +6830,118 @@ mod tests {
             args: &["-t", "vala", "needle", "proj"],
             stdin: None,
             files: DIFF_MORE_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type coq",
+            args: &["-t", "coq", "needle", "proj"],
+            stdin: None,
+            files: DIFF_EXTRA_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type cuda",
+            args: &["-t", "cuda", "needle", "proj"],
+            stdin: None,
+            files: DIFF_EXTRA_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type d",
+            args: &["-t", "d", "needle", "proj"],
+            stdin: None,
+            files: DIFF_EXTRA_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type dhall",
+            args: &["-t", "dhall", "needle", "proj"],
+            stdin: None,
+            files: DIFF_EXTRA_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type idris",
+            args: &["-t", "idris", "needle", "proj"],
+            stdin: None,
+            files: DIFF_EXTRA_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type lean",
+            args: &["-t", "lean", "needle", "proj"],
+            stdin: None,
+            files: DIFF_EXTRA_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type matlab",
+            args: &["-t", "matlab", "needle", "proj"],
+            stdin: None,
+            files: DIFF_EXTRA_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type pascal",
+            args: &["-t", "pascal", "needle", "proj"],
+            stdin: None,
+            files: DIFF_EXTRA_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type qml",
+            args: &["-t", "qml", "needle", "proj"],
+            stdin: None,
+            files: DIFF_EXTRA_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type sass",
+            args: &["-t", "sass", "needle", "proj"],
+            stdin: None,
+            files: DIFF_EXTRA_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type stylus",
+            args: &["-t", "stylus", "needle", "proj"],
+            stdin: None,
+            files: DIFF_EXTRA_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type thrift",
+            args: &["-t", "thrift", "needle", "proj"],
+            stdin: None,
+            files: DIFF_EXTRA_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type webidl",
+            args: &["-t", "webidl", "needle", "proj"],
+            stdin: None,
+            files: DIFF_EXTRA_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type wgsl",
+            args: &["-t", "wgsl", "needle", "proj"],
+            stdin: None,
+            files: DIFF_EXTRA_LANGUAGE_TYPE_FILES,
             cwd: "/",
             output: RgDiffOutput::Exact,
         },
