@@ -1398,16 +1398,13 @@ impl RgTypeDatabase {
             &[
                 "*.mak",
                 "*.mk",
-                "GNUmakefile",
-                "GNUmakefile.am",
-                "GNUmakefile.in",
-                "Makefile",
                 "Makefile.*",
-                "Makefile.am",
-                "Makefile.in",
-                "makefile",
-                "makefile.am",
-                "makefile.in",
+                "[Gg][Nn][Uu]makefile",
+                "[Gg][Nn][Uu]makefile.am",
+                "[Gg][Nn][Uu]makefile.in",
+                "[Mm]akefile",
+                "[Mm]akefile.am",
+                "[Mm]akefile.in",
             ],
         );
         db.insert_defaults(
@@ -1707,6 +1704,15 @@ fn glob_to_regex(pattern: &str) -> String {
                 out.push_str("[^/]");
                 i += 1;
             }
+            '[' => {
+                if let Some((class, next)) = glob_class_to_regex(&chars, i) {
+                    out.push_str(&class);
+                    i = next;
+                } else {
+                    out.push_str(r"\[");
+                    i += 1;
+                }
+            }
             c => {
                 out.push_str(&regex::escape(&c.to_string()));
                 i += 1;
@@ -1715,6 +1721,60 @@ fn glob_to_regex(pattern: &str) -> String {
     }
     out.push('$');
     out
+}
+
+fn glob_class_to_regex(chars: &[char], start: usize) -> Option<(String, usize)> {
+    let mut i = start + 1;
+    let mut negated = false;
+    if i >= chars.len() {
+        return None;
+    }
+    if matches!(chars[i], '!' | '^') {
+        negated = true;
+        i += 1;
+    }
+    if i >= chars.len() {
+        return None;
+    }
+
+    let mut body = String::new();
+    let mut saw_member = false;
+    if chars[i] == ']' {
+        body.push_str(r"\]");
+        saw_member = true;
+        i += 1;
+    }
+
+    while i < chars.len() {
+        let c = chars[i];
+        if c == ']' {
+            if !saw_member {
+                return None;
+            }
+            let mut out = String::from("[");
+            if negated {
+                out.push('^');
+            }
+            out.push_str(&body);
+            out.push(']');
+            return Some((out, i + 1));
+        }
+        saw_member = true;
+        push_glob_class_char(&mut body, c, chars.get(i + 1).copied());
+        i += 1;
+    }
+    None
+}
+
+fn push_glob_class_char(out: &mut String, c: char, next: Option<char>) {
+    match c {
+        '\\' => out.push_str(r"\\"),
+        '[' => out.push_str(r"\["),
+        ']' => out.push_str(r"\]"),
+        '^' if out.is_empty() => out.push_str(r"\^"),
+        '-' if out.is_empty() || next == Some(']') => out.push_str(r"\-"),
+        _ => out.push(c),
+    }
 }
 
 fn parse_context_value(value: &str, flag: &str) -> Result<usize> {
@@ -4792,10 +4852,18 @@ mod tests {
         ("/proj/a.txt", b"needle\n"),
     ];
 
+    const DIFF_GLOB_CLASS_FILES: &[(&str, &[u8])] = &[
+        ("/proj/a.txt", b"needle\n"),
+        ("/proj/b.txt", b"needle\n"),
+        ("/proj/c.txt", b"needle\n"),
+        ("/proj/a.rs", b"needle\n"),
+    ];
+
     const DIFF_COMMON_TYPE_FILES: &[(&str, &[u8])] = &[
         ("/proj/data.csv", b"needle\n"),
         ("/proj/Dockerfile", b"needle\n"),
         ("/proj/Makefile", b"needle\n"),
+        ("/proj/gnumakefile", b"needle\n"),
         ("/proj/app.rb", b"needle\n"),
         ("/proj/index.php", b"needle\n"),
         ("/proj/schema.xml", b"needle\n"),
@@ -5141,6 +5209,22 @@ mod tests {
             ],
             stdin: None,
             files: DIFF_GLOB_CASE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "glob bracket class",
+            args: &["--files", "-g", "[ab].txt", "proj"],
+            stdin: None,
+            files: DIFF_GLOB_CLASS_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "glob negated bracket class",
+            args: &["--files", "-g", "[!a].txt", "proj"],
+            stdin: None,
+            files: DIFF_GLOB_CLASS_FILES,
             cwd: "/",
             output: RgDiffOutput::UnorderedLines,
         },
@@ -6182,7 +6266,7 @@ mod tests {
             stdin: None,
             files: DIFF_COMMON_TYPE_FILES,
             cwd: "/",
-            output: RgDiffOutput::Exact,
+            output: RgDiffOutput::UnorderedLines,
         },
         RgDiffCase {
             name: "type ruby",
@@ -6254,6 +6338,21 @@ mod tests {
             files: DIFF_BASIC_FILES,
             cwd: "/",
             output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type add bracket class",
+            args: &[
+                "--type-add",
+                "letters:[ab].txt",
+                "-t",
+                "letters",
+                "needle",
+                "proj",
+            ],
+            stdin: None,
+            files: DIFF_GLOB_CLASS_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
         },
         RgDiffCase {
             name: "type clear then redefine",
