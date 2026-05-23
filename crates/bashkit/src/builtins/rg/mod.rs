@@ -1789,24 +1789,25 @@ fn parse_rgb_color(value: &str) -> Option<(u8, u8, u8)> {
 }
 
 fn parse_rg_separator(value: &str) -> String {
-    let mut output = String::new();
+    let mut output = Vec::new();
     let mut chars = value.chars().peekable();
     while let Some(ch) = chars.next() {
         if ch != '\\' {
-            output.push(ch);
+            let mut buf = [0; 4];
+            output.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
             continue;
         }
 
         let Some(escaped) = chars.next() else {
-            output.push('\\');
+            output.push(b'\\');
             break;
         };
 
         match escaped {
-            'n' => output.push('\n'),
-            'r' => output.push('\r'),
-            't' => output.push('\t'),
-            '\\' => output.push('\\'),
+            'n' => output.push(b'\n'),
+            'r' => output.push(b'\r'),
+            't' => output.push(b'\t'),
+            '\\' => output.push(b'\\'),
             'x' => {
                 let first = chars.peek().copied();
                 let second = {
@@ -1822,20 +1823,20 @@ fn parse_rg_separator(value: &str) -> String {
                     chars.next();
                     let hex = format!("{a}{b}");
                     if let Ok(byte) = u8::from_str_radix(&hex, 16) {
-                        output.push(byte as char);
+                        output.push(byte);
                     }
                 } else {
-                    output.push('\\');
-                    output.push('x');
+                    output.extend_from_slice(b"\\x");
                 }
             }
             other => {
-                output.push('\\');
-                output.push(other);
+                output.push(b'\\');
+                let mut buf = [0; 4];
+                output.extend_from_slice(other.encode_utf8(&mut buf).as_bytes());
             }
         }
     }
-    output
+    String::from_utf8_lossy(&output).into_owned()
 }
 
 fn parse_encoding(value: &str) -> Result<RgEncoding> {
@@ -5561,6 +5562,32 @@ mod tests {
             args: &[
                 "-n",
                 r"--field-match-separator=\x7F",
+                "needle",
+                "proj/a.txt",
+            ],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "field match separator high byte escape",
+            args: &[
+                "-n",
+                r"--field-match-separator=\x80",
+                "needle",
+                "proj/a.txt",
+            ],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "field match separator utf8 byte escape",
+            args: &[
+                "-n",
+                r"--field-match-separator=\xC2\xA9",
                 "needle",
                 "proj/a.txt",
             ],
