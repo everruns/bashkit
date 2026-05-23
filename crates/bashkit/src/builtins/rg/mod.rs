@@ -16,6 +16,7 @@
 //!   rg --color never PATTERN    # disable ANSI color output
 
 use async_trait::async_trait;
+use fancy_regex::RegexBuilder as FancyRegexBuilder;
 use regex::{Regex, RegexBuilder};
 use serde_json::json;
 use std::collections::{BTreeMap, HashSet};
@@ -95,6 +96,7 @@ struct RgOptions {
     follow_symlinks: bool,
     ignore_file_case_insensitive: bool,
     unicode: bool,
+    pcre2: bool,
     messages: bool,
     context_separator: String,
     no_context_separator: bool,
@@ -334,6 +336,93 @@ struct RgTypeGlob {
     regex: Regex,
 }
 
+enum RgMatcher {
+    Rust(Regex),
+    Fancy(fancy_regex::Regex),
+}
+
+#[derive(Clone, Copy)]
+struct RgMatch<'a> {
+    text: &'a str,
+    start: usize,
+    end: usize,
+}
+
+impl<'a> RgMatch<'a> {
+    fn as_str(self) -> &'a str {
+        self.text
+    }
+
+    fn start(self) -> usize {
+        self.start
+    }
+
+    fn end(self) -> usize {
+        self.end
+    }
+}
+
+impl RgMatcher {
+    fn is_match(&self, text: &str) -> bool {
+        match self {
+            Self::Rust(regex) => regex.is_match(text),
+            Self::Fancy(regex) => regex.is_match(text).unwrap_or(false),
+        }
+    }
+
+    fn find<'a>(&self, text: &'a str) -> Option<RgMatch<'a>> {
+        match self {
+            Self::Rust(regex) => regex.find(text).map(|mat| RgMatch {
+                text: mat.as_str(),
+                start: mat.start(),
+                end: mat.end(),
+            }),
+            Self::Fancy(regex) => regex.find(text).ok().flatten().map(|mat| RgMatch {
+                text: mat.as_str(),
+                start: mat.start(),
+                end: mat.end(),
+            }),
+        }
+    }
+
+    fn find_iter<'a>(&self, text: &'a str) -> Vec<RgMatch<'a>> {
+        match self {
+            Self::Rust(regex) => regex
+                .find_iter(text)
+                .map(|mat| RgMatch {
+                    text: mat.as_str(),
+                    start: mat.start(),
+                    end: mat.end(),
+                })
+                .collect(),
+            Self::Fancy(regex) => regex
+                .find_iter(text)
+                .filter_map(|mat| {
+                    mat.ok().map(|mat| RgMatch {
+                        text: mat.as_str(),
+                        start: mat.start(),
+                        end: mat.end(),
+                    })
+                })
+                .collect(),
+        }
+    }
+
+    fn replace_all(&self, text: &str, replacement: &str) -> String {
+        match self {
+            Self::Rust(regex) => regex.replace_all(text, replacement).into_owned(),
+            Self::Fancy(regex) => regex.replace_all(text, replacement).into_owned(),
+        }
+    }
+
+    fn replace_first(&self, text: &str, replacement: &str) -> String {
+        match self {
+            Self::Rust(regex) => regex.replace(text, replacement).into_owned(),
+            Self::Fancy(regex) => regex.replacen(text, 1, replacement).into_owned(),
+        }
+    }
+}
+
 impl RgOptions {
     fn apply_unrestricted(&mut self) {
         if !self.no_ignore {
@@ -411,6 +500,7 @@ impl RgOptions {
             follow_symlinks: false,
             ignore_file_case_insensitive: false,
             unicode: true,
+            pcre2: false,
             messages: true,
             context_separator: "--".to_string(),
             no_context_separator: false,
@@ -683,8 +773,8 @@ impl RgOptions {
                 opts.encoding = parse_encoding(&val)?;
             } else if p.flag("--no-encoding") {
                 opts.encoding = RgEncoding::Auto;
-            } else if let Some(val) = long_equals_value(&mut p, "--engine") {
-                parse_regex_engine(&val)?;
+            } else if let Some(val) = long_value(&mut p, "--engine")? {
+                opts.pcre2 = parse_regex_engine(&val)?;
             } else if let Some(val) = long_value(&mut p, "--color")? {
                 opts.color = parse_color_mode(&val)?;
             } else if let Some(val) = long_value(&mut p, "--colors")? {
@@ -788,16 +878,20 @@ impl RgOptions {
                 "--no-one-file-system",
                 "--mmap",
                 "--no-mmap",
-                "--pcre2",
-                "--no-pcre2",
                 "--pcre2-unicode",
                 "--no-pcre2-unicode",
-                "--auto-hybrid-regex",
-                "--no-auto-hybrid-regex",
             ]) {
                 // no-op: these flags affect host config, buffering, parent ignore
                 // discovery, symlink walking, IO strategy, or regex engine
                 // selection, none of which are modeled here for simple searches.
+            } else if p.flag("--pcre2") {
+                opts.pcre2 = true;
+            } else if p.flag("--no-pcre2") {
+                opts.pcre2 = false;
+            } else if p.flag("--auto-hybrid-regex") {
+                opts.pcre2 = true;
+            } else if p.flag("--no-auto-hybrid-regex") {
+                opts.pcre2 = false;
             } else if p.is_flag() {
                 // Combined short flags like -inFw
                 // Safe: is_flag() guarantees current() is Some
@@ -867,7 +961,7 @@ impl RgOptions {
                         'o' => opts.only_matching = true,
                         'q' => opts.quiet = true,
                         'b' => opts.byte_offset = true,
-                        'P' => {}
+                        'P' => opts.pcre2 = true,
                         'U' => opts.multiline = true,
                         'E' => {
                             let rest: String = chars[j + 1..].iter().collect();
@@ -1133,7 +1227,7 @@ impl RgOptions {
         Ok(opts)
     }
 
-    fn build_regex(&self) -> Result<Regex> {
+    fn build_regex(&self) -> Result<RgMatcher> {
         if !self.multiline && self.patterns.iter().any(|pattern| pattern.contains('\n')) {
             return Err(Error::Execution(
                 "rg: the literal \"\\n\" is not allowed in a regex\n\nConsider enabling multiline mode with the --multiline flag (or -U for short).\nWhen multiline mode is enabled, new line characters can be matched.".to_string(),
@@ -1145,6 +1239,16 @@ impl RgOptions {
             .map(|pattern| format!("(?:{})", self.prepare_pattern(pattern)))
             .collect::<Vec<_>>()
             .join("|");
+        if self.pcre2 {
+            return FancyRegexBuilder::new(&combined)
+                .case_insensitive(self.effective_ignore_case())
+                .unicode_mode(self.unicode)
+                .dot_matches_new_line(self.multiline && self.multiline_dotall)
+                .backtrack_limit(super::search_common::REGEX_DFA_SIZE_LIMIT)
+                .build()
+                .map(RgMatcher::Fancy)
+                .map_err(|e| Error::Execution(format!("rg: invalid pattern: {}", e)));
+        }
         RegexBuilder::new(&combined)
             .case_insensitive(self.effective_ignore_case())
             .unicode(self.unicode)
@@ -1152,6 +1256,7 @@ impl RgOptions {
             .size_limit(super::search_common::REGEX_SIZE_LIMIT)
             .dfa_size_limit(super::search_common::REGEX_DFA_SIZE_LIMIT)
             .build()
+            .map(RgMatcher::Rust)
             .map_err(|e| Error::Execution(format!("rg: invalid pattern: {}", e)))
     }
 
@@ -2516,22 +2621,13 @@ fn decode_utf16_bytes(content: &[u8], big_endian: bool) -> String {
     String::from_utf16_lossy(&units)
 }
 
-fn parse_regex_engine(value: &str) -> Result<()> {
+fn parse_regex_engine(value: &str) -> Result<bool> {
     match value {
-        "default" | "auto" | "pcre2" => Ok(()),
+        "default" | "auto" => Ok(false),
+        "pcre2" => Ok(true),
         _ => Err(Error::Execution(format!(
             "rg: error parsing flag --engine: unrecognized regex engine '{value}'"
         ))),
-    }
-}
-
-fn long_equals_value(p: &mut super::arg_parser::ArgParser<'_>, name: &str) -> Option<String> {
-    let current = p.current()?;
-    if let Some(value) = current.strip_prefix(&format!("{name}=")) {
-        p.advance();
-        Some(value.to_string())
-    } else {
-        None
     }
 }
 
@@ -3409,7 +3505,7 @@ fn intense_ansi_code(code: &str, intense: bool) -> String {
     }
 }
 
-fn color_matches(text: &str, regex: &Regex, opts: &RgOptions) -> String {
+fn color_matches(text: &str, regex: &RgMatcher, opts: &RgOptions) -> String {
     if !opts.color_enabled() {
         return text.to_string();
     }
@@ -3432,11 +3528,19 @@ fn color_matches(text: &str, regex: &Regex, opts: &RgOptions) -> String {
         output.push_str(RG_ANSI_RESET);
         return output;
     }
-    regex
-        .replace_all(text, |captures: &regex::Captures<'_>| {
-            color_text(&captures[0], &opts.color_scheme.matches, false)
-        })
-        .into_owned()
+    let mut output = String::new();
+    let mut last = 0;
+    for mat in regex.find_iter(text) {
+        output.push_str(&text[last..mat.start()]);
+        output.push_str(&color_text(mat.as_str(), &opts.color_scheme.matches, false));
+        last = mat.end();
+    }
+    if last == 0 {
+        text.to_string()
+    } else {
+        output.push_str(&text[last..]);
+        output
+    }
 }
 
 fn write_rg_prefix(output: &mut String, prefix: RgPrefix<'_>) {
@@ -3595,7 +3699,7 @@ fn rg_line_index_for_offset(lines: &[RgLine<'_>], offset: usize) -> usize {
 }
 
 fn collect_rg_multiline_matches<'a>(
-    regex: &Regex,
+    regex: &RgMatcher,
     content: &'a str,
     lines: &[RgLine<'a>],
     max_count: Option<usize>,
@@ -3640,7 +3744,7 @@ fn rg_unique_sorted_lines(line_indices: &[usize]) -> Vec<usize> {
 }
 
 fn format_rg_multiline_replacement(
-    regex: &Regex,
+    regex: &RgMatcher,
     lines: &[RgLine<'_>],
     mat: RgMultilineMatch<'_>,
     replacement: &str,
@@ -3654,7 +3758,7 @@ fn format_rg_multiline_replacement(
     format!(
         "{}{}{}",
         prefix,
-        regex.replace(mat.text, replacement),
+        regex.replace_first(mat.text, replacement),
         suffix
     )
 }
@@ -3666,15 +3770,13 @@ fn first_nul_offset(content: &str) -> Option<usize> {
 fn format_rg_line(
     line: &str,
     match_line: &str,
-    regex: &Regex,
+    regex: &RgMatcher,
     opts: &RgOptions,
     matched: bool,
 ) -> String {
     let line = if matched {
         if let Some(replacement) = &opts.replacement {
-            let mut replaced = regex
-                .replace_all(match_line, replacement.as_str())
-                .into_owned();
+            let mut replaced = regex.replace_all(match_line, replacement.as_str());
             if line.len() > match_line.len() {
                 replaced.push_str(&line[match_line.len()..]);
             }
@@ -3695,7 +3797,7 @@ fn format_rg_line(
 fn format_rg_output_line(
     line: &str,
     match_line: &str,
-    regex: &Regex,
+    regex: &RgMatcher,
     opts: &RgOptions,
     matched: bool,
 ) -> String {
@@ -3725,7 +3827,7 @@ fn format_rg_output_line(
 fn write_rg_context(
     output: &mut String,
     filename: &str,
-    regex: &Regex,
+    regex: &RgMatcher,
     lines: &[RgLine<'_>],
     match_lines: &[usize],
     opts: &RgOptions,
@@ -3810,10 +3912,11 @@ fn write_rg_json_match(
     filename: &str,
     line: RgLine<'_>,
     line_idx: usize,
-    regex: &Regex,
+    regex: &RgMatcher,
 ) {
     let submatches: Vec<_> = regex
         .find_iter(line.match_text)
+        .into_iter()
         .map(|mat| json!({"match":{"text":mat.as_str()},"start":mat.start(),"end":mat.end()}))
         .collect();
     write_rg_json_event(
@@ -4016,7 +4119,7 @@ fn rg_generate_output(kind: &str, help_text: &str) -> Result<String> {
 #[async_trait]
 impl Builtin for Rg {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        let help_text = "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i, --ignore-case\tcase insensitive\n  -S, --smart-case\tcase insensitive if pattern is lowercase\n  -s, --case-sensitive\tcase sensitive\n  -n, --line-number\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  --column\tshow column numbers\n  -b, --byte-offset\tshow byte offsets\n  --vimgrep\tshow file:line:column:match lines\n  --json\tshow JSON Lines events\n  --stats\tshow search statistics\n  --null\tterminate path fields with NUL\n  -c, --count\tcount matching lines\n  --count-matches\tcount individual matches\n  --include-zero\tinclude zero counts\n  -l, --files-with-matches\tfiles with matches\n  --files-without-match\tfiles without matches\n  --files\tprint files that would be searched\n  -v, --invert-match\tinvert match\n  -w, --word-regexp\tword boundary\n  -x, --line-regexp\tmatch whole lines\n  -F, --fixed-strings\tfixed strings (literal)\n  -a, --text\tsearch binary files as text\n  --binary\tsearch binary files and print binary-match summaries\n  -z, --search-zip\tsearch gzip-compressed files\n  --no-search-zip\tdisable compressed file search\n  --pre COMMAND\trun a preprocessor before searching (cat/empty supported)\n  --pre-glob GLOB\tlimit preprocessor paths by glob\n  --no-pre\tdisable preprocessing\n  --crlf\ttreat CRLF as line terminators for $ anchors\n  --no-crlf\tdisable CRLF line terminator mode\n  -U, --multiline\tenable matching across line boundaries\n  --no-multiline\tdisable multiline matching\n  --multiline-dotall\tmake . match line terminators in multiline mode\n  --no-multiline-dotall\tdisable multiline dotall mode\n  -o, --only-matching\tshow only matching text\n  -q, --quiet\tsuppress output; exit status only\n  -e, --regexp PATTERN\tuse PATTERN for matching\n  -f, --file PATTERNFILE\tread patterns from file\n  -E, --encoding ENCODING\tdecode searched files using ENCODING\n  -r, --replace REPLACEMENT\treplace matches in output\n  --passthru\tprint matching and non-matching lines\n  --trim\ttrim whitespace from output lines\n  -m, --max-count NUM\tmax count per file\n  -M, --max-columns NUM\tomit lines longer than NUM columns\n  --max-columns-preview\tshow prefixes of long lines\n  -j, --threads NUM\tset number of search threads (no-op)\n  --regex-size-limit NUM\tset regex size limit (no-op)\n  --dfa-size-limit NUM\tset DFA size limit (no-op)\n  --max-depth NUM\tlimit recursive directory depth\n  -A, --after-context NUM\tshow trailing context\n  -B, --before-context NUM\tshow leading context\n  -C, --context NUM\tshow leading and trailing context\n  --context-separator SEP\tset context group separator\n  --field-match-separator SEP\tset match field separator\n  --field-context-separator SEP\tset context field separator\n  -p, --pretty\talias for heading plus line numbers\n  --heading\tgroup matches by file\n  --no-heading\tdisable heading output\n  --sort SORTBY\tsort paths (path only)\n  --sortr SORTBY\tsort paths in reverse (path only)\n  --sort-files\tsort --files output\n  --path-separator SEP\tset displayed path separator\n  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  -t, --type TYPE\tinclude files matching TYPE\n  -T, --type-not TYPE\texclude files matching TYPE\n  --type-add TYPE:GLOB\tadd a file type glob\n  --type-clear TYPE\tclear a file type definition\n  --type-list\tshow file type definitions\n  --ignore-file FILE\tuse additional ignore file\n  --no-ignore\tdo not use ignore files\n  --no-ignore-dot\tdo not use .ignore files\n  --no-ignore-vcs\tdo not use .gitignore files\n  --no-require-git\tuse .gitignore outside git repositories\n  --require-git\trequire a git repository for .gitignore files\n  -u, --unrestricted\treduce filtering (repeatable)\n  --messages\tshow file read diagnostics\n  --no-messages\tsuppress file read diagnostics\n  --hidden\tsearch hidden files and directories\n  --no-hidden\tdo not search hidden files and directories\n  -H, --with-filename\tshow filename\n  -I, --no-filename\tsuppress filename\n  --line-buffered\tforce line buffering (no-op)\n  --block-buffered\tforce block buffering (no-op)\n  --no-config\tdo not read config files (no-op)\n  --mmap\tsearch using memory maps when possible (no-op)\n  --no-mmap\tdisable memory maps (no-op)\n  -P, --pcre2\tuse PCRE2 regex engine for supported patterns (no-op)\n  --no-pcre2\tdisable PCRE2 regex engine (no-op)\n  --pcre2-version\tshow PCRE2 version information\n  --unicode\tenable Unicode regex mode\n  --no-unicode\tdisable Unicode regex mode\n  --pcre2-unicode\tenable PCRE2 Unicode mode (no-op)\n  --no-pcre2-unicode\tdisable PCRE2 Unicode mode (no-op)\n  --engine ENGINE\tselect regex engine: default, auto, pcre2 (no-op)\n  --auto-hybrid-regex\tuse PCRE2 when needed (no-op)\n  --no-auto-hybrid-regex\tdisable auto hybrid regex (no-op)\n  --color MODE\tcolor output: never, auto, always, ansi\n  --colors SPEC\tconfigure color styles\n  -h, --help\tdisplay this help and exit\n  -V, --version\toutput version information and exit\n";
+        let help_text = "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i, --ignore-case\tcase insensitive\n  -S, --smart-case\tcase insensitive if pattern is lowercase\n  -s, --case-sensitive\tcase sensitive\n  -n, --line-number\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  --column\tshow column numbers\n  -b, --byte-offset\tshow byte offsets\n  --vimgrep\tshow file:line:column:match lines\n  --json\tshow JSON Lines events\n  --stats\tshow search statistics\n  --null\tterminate path fields with NUL\n  -c, --count\tcount matching lines\n  --count-matches\tcount individual matches\n  --include-zero\tinclude zero counts\n  -l, --files-with-matches\tfiles with matches\n  --files-without-match\tfiles without matches\n  --files\tprint files that would be searched\n  -v, --invert-match\tinvert match\n  -w, --word-regexp\tword boundary\n  -x, --line-regexp\tmatch whole lines\n  -F, --fixed-strings\tfixed strings (literal)\n  -a, --text\tsearch binary files as text\n  --binary\tsearch binary files and print binary-match summaries\n  -z, --search-zip\tsearch gzip-compressed files\n  --no-search-zip\tdisable compressed file search\n  --pre COMMAND\trun a preprocessor before searching (cat/empty supported)\n  --pre-glob GLOB\tlimit preprocessor paths by glob\n  --no-pre\tdisable preprocessing\n  --crlf\ttreat CRLF as line terminators for $ anchors\n  --no-crlf\tdisable CRLF line terminator mode\n  -U, --multiline\tenable matching across line boundaries\n  --no-multiline\tdisable multiline matching\n  --multiline-dotall\tmake . match line terminators in multiline mode\n  --no-multiline-dotall\tdisable multiline dotall mode\n  -o, --only-matching\tshow only matching text\n  -q, --quiet\tsuppress output; exit status only\n  -e, --regexp PATTERN\tuse PATTERN for matching\n  -f, --file PATTERNFILE\tread patterns from file\n  -E, --encoding ENCODING\tdecode searched files using ENCODING\n  -r, --replace REPLACEMENT\treplace matches in output\n  --passthru\tprint matching and non-matching lines\n  --trim\ttrim whitespace from output lines\n  -m, --max-count NUM\tmax count per file\n  -M, --max-columns NUM\tomit lines longer than NUM columns\n  --max-columns-preview\tshow prefixes of long lines\n  -j, --threads NUM\tset number of search threads (no-op)\n  --regex-size-limit NUM\tset regex size limit (no-op)\n  --dfa-size-limit NUM\tset DFA size limit (no-op)\n  --max-depth NUM\tlimit recursive directory depth\n  -A, --after-context NUM\tshow trailing context\n  -B, --before-context NUM\tshow leading context\n  -C, --context NUM\tshow leading and trailing context\n  --context-separator SEP\tset context group separator\n  --field-match-separator SEP\tset match field separator\n  --field-context-separator SEP\tset context field separator\n  -p, --pretty\talias for heading plus line numbers\n  --heading\tgroup matches by file\n  --no-heading\tdisable heading output\n  --sort SORTBY\tsort paths (path only)\n  --sortr SORTBY\tsort paths in reverse (path only)\n  --sort-files\tsort --files output\n  --path-separator SEP\tset displayed path separator\n  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  -t, --type TYPE\tinclude files matching TYPE\n  -T, --type-not TYPE\texclude files matching TYPE\n  --type-add TYPE:GLOB\tadd a file type glob\n  --type-clear TYPE\tclear a file type definition\n  --type-list\tshow file type definitions\n  --ignore-file FILE\tuse additional ignore file\n  --no-ignore\tdo not use ignore files\n  --no-ignore-dot\tdo not use .ignore files\n  --no-ignore-vcs\tdo not use .gitignore files\n  --no-require-git\tuse .gitignore outside git repositories\n  --require-git\trequire a git repository for .gitignore files\n  -u, --unrestricted\treduce filtering (repeatable)\n  --messages\tshow file read diagnostics\n  --no-messages\tsuppress file read diagnostics\n  --hidden\tsearch hidden files and directories\n  --no-hidden\tdo not search hidden files and directories\n  -H, --with-filename\tshow filename\n  -I, --no-filename\tsuppress filename\n  --line-buffered\tforce line buffering (no-op)\n  --block-buffered\tforce block buffering (no-op)\n  --no-config\tdo not read config files (no-op)\n  --mmap\tsearch using memory maps when possible (no-op)\n  --no-mmap\tdisable memory maps (no-op)\n  -P, --pcre2\tuse PCRE2-compatible regex engine\n  --no-pcre2\tdisable PCRE2-compatible regex engine\n  --pcre2-version\tshow PCRE2 version information\n  --unicode\tenable Unicode regex mode\n  --no-unicode\tdisable Unicode regex mode\n  --pcre2-unicode\tenable PCRE2 Unicode mode (no-op)\n  --no-pcre2-unicode\tdisable PCRE2 Unicode mode (no-op)\n  --engine ENGINE\tselect regex engine: default, auto, pcre2\n  --auto-hybrid-regex\tuse PCRE2-compatible regex when needed\n  --no-auto-hybrid-regex\tdisable auto hybrid regex\n  --color MODE\tcolor output: never, auto, always, ansi\n  --colors SPEC\tconfigure color styles\n  -h, --help\tdisplay this help and exit\n  -V, --version\toutput version information and exit\n";
         let help_text = help_text.replace(
             "  --max-depth NUM\tlimit recursive directory depth\n",
             "  -d, --max-depth NUM\tlimit recursive directory depth\n  --maxdepth NUM\talias for --max-depth\n",
@@ -4066,8 +4169,8 @@ impl Builtin for Rg {
             "  --no-ignore\tdo not use ignore files\n  --ignore\tuse ignore files\n  --no-ignore-dot\tdo not use .ignore files\n  --ignore-dot\tuse .ignore files\n  --no-ignore-exclude\tdo not use .git/info/exclude files\n  --ignore-exclude\tuse .git/info/exclude files\n  --no-ignore-global\tdo not use global ignore files\n  --ignore-global\tuse global ignore files\n  --no-ignore-parent\tdo not use parent ignore files\n  --ignore-parent\tuse parent ignore files\n  --no-ignore-vcs\tdo not use .gitignore files\n  --ignore-vcs\tuse .gitignore files\n",
         );
         let help_text = help_text.replace(
-            "  --no-auto-hybrid-regex\tdisable auto hybrid regex (no-op)\n",
-            "  --no-auto-hybrid-regex\tdisable auto hybrid regex (no-op)\n  --stop-on-nonmatch\tstop after a non-matching line follows a match\n",
+            "  --no-auto-hybrid-regex\tdisable auto hybrid regex\n",
+            "  --no-auto-hybrid-regex\tdisable auto hybrid regex\n  --stop-on-nonmatch\tstop after a non-matching line follows a match\n",
         );
         let help_text = help_text.replace(
             "  --files\tprint files that would be searched\n",
@@ -4623,7 +4726,7 @@ impl Builtin for Rg {
                             },
                         );
                         if let Some(replacement) = &opts.replacement {
-                            output.push_str(&regex.replace(mat.text, replacement.as_str()));
+                            output.push_str(&regex.replace_first(mat.text, replacement.as_str()));
                         } else {
                             output.push_str(&color_matches(mat.text, &regex, &opts));
                         }
@@ -4734,7 +4837,7 @@ impl Builtin for Rg {
 
                 match_count += 1;
                 let matches_on_line = if !opts.invert_match {
-                    regex.find_iter(line.match_text).count()
+                    regex.find_iter(line.match_text).len()
                 } else {
                     1
                 };
@@ -4813,7 +4916,7 @@ impl Builtin for Rg {
                         match_lines.len(),
                         match_lines
                             .iter()
-                            .map(|&line_idx| regex.find_iter(lines[line_idx].match_text).count())
+                            .map(|&line_idx| regex.find_iter(lines[line_idx].match_text).len())
                             .sum(),
                     );
                     json_matched_lines += match_lines.len();
@@ -4964,7 +5067,8 @@ impl Builtin for Rg {
                             },
                         );
                         if let Some(replacement) = &opts.replacement {
-                            output.push_str(&regex.replace(mat.as_str(), replacement.as_str()));
+                            output
+                                .push_str(&regex.replace_first(mat.as_str(), replacement.as_str()));
                         } else {
                             output.push_str(&color_matches(mat.as_str(), &regex, &opts));
                         }
@@ -5249,6 +5353,11 @@ mod tests {
     ];
 
     const DIFF_DASH_PATTERN_FILES: &[(&str, &[u8])] = &[("/proj/dash.txt", b"-needle\nneedle\n")];
+
+    const DIFF_PCRE2_FILES: &[(&str, &[u8])] = &[(
+        "/proj/pcre.txt",
+        b"foobar\nfoobaz\nmirror mirror\nmirror window\n",
+    )];
 
     const DIFF_NULL_DATA_FILES: &[(&str, &[u8])] = &[
         ("/proj/a.bin", b"a\0needle\0b\0"),
@@ -9049,6 +9158,30 @@ mod tests {
             args: &["--pcre2", "needle", "proj/a.txt"],
             stdin: None,
             files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "pcre2 lookahead",
+            args: &["-P", "foo(?=bar)", "proj/pcre.txt"],
+            stdin: None,
+            files: DIFF_PCRE2_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "pcre2 lookbehind only matching",
+            args: &["--pcre2", "-o", "(?<=foo)bar", "proj/pcre.txt"],
+            stdin: None,
+            files: DIFF_PCRE2_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "pcre2 backreference",
+            args: &["--engine=pcre2", r"(\w+) \1", "proj/pcre.txt"],
+            stdin: None,
+            files: DIFF_PCRE2_FILES,
             cwd: "/",
             output: RgDiffOutput::Exact,
         },
