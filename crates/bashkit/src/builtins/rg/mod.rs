@@ -1366,7 +1366,9 @@ impl RgTypeDatabase {
         let mut db = Self {
             definitions: BTreeMap::new(),
         };
+        db.insert_defaults("asciidoc", &["*.adoc", "*.asc", "*.asciidoc"]);
         db.insert_defaults("c", &["*.c", "*.h"]);
+        db.insert_defaults("cabal", &["*.cabal"]);
         db.insert_defaults(
             "cpp",
             &[
@@ -1383,8 +1385,10 @@ impl RgTypeDatabase {
         db.insert_defaults("cs", &["*.cs"]);
         db.insert_defaults("csharp", &["*.cs"]);
         db.insert_defaults("clojure", &["*.clj", "*.cljc", "*.cljs", "*.cljx"]);
+        db.insert_defaults("crystal", &["*.cr", "*.ecr", "Projectfile", "shard.yml"]);
         db.insert_defaults("csv", &["*.csv"]);
         db.insert_defaults("dart", &["*.dart"]);
+        db.insert_defaults("elm", &["*.elm"]);
         db.insert_defaults("bat", &["*.bat"]);
         db.insert_defaults("batch", &["*.bat"]);
         db.insert_defaults("cmake", &["*.cmake", "CMakeLists.txt"]);
@@ -1397,7 +1401,9 @@ impl RgTypeDatabase {
         );
         db.insert_defaults("erlang", &["*.erl", "*.hrl"]);
         db.insert_defaults("fish", &["*.fish"]);
+        db.insert_defaults("fsharp", &["*.fs", "*.fsi", "*.fsx"]);
         db.insert_defaults("go", &["*.go"]);
+        db.insert_defaults("groovy", &["*.gradle", "*.groovy"]);
         db.insert_defaults("graphql", &["*.graphql", "*.graphqls"]);
         db.insert_defaults("haskell", &["*.c2hs", "*.cpphs", "*.hs", "*.hsc", "*.lhs"]);
         db.insert_defaults("hs", &["*.hs", "*.lhs"]);
@@ -1409,6 +1415,10 @@ impl RgTypeDatabase {
         db.insert_defaults("julia", &["*.jl"]);
         db.insert_defaults("kotlin", &["*.kt", "*.kts"]);
         db.insert_defaults("lua", &["*.lua"]);
+        db.insert_defaults(
+            "lisp",
+            &["*.el", "*.jl", "*.lisp", "*.lsp", "*.sc", "*.scm"],
+        );
         db.insert_defaults(
             "make",
             &[
@@ -1449,6 +1459,8 @@ impl RgTypeDatabase {
         );
         db.insert_defaults("nim", &["*.nim", "*.nimble", "*.nimf", "*.nims"]);
         db.insert_defaults("nix", &["*.nix"]);
+        db.insert_defaults("ocaml", &["*.ml", "*.mli", "*.mll", "*.mly"]);
+        db.insert_defaults("org", &["*.org", "*.org_archive"]);
         db.insert_defaults("py", &["*.py", "*.pyi", "*.pyw"]);
         db.insert_defaults(
             "php",
@@ -1463,6 +1475,7 @@ impl RgTypeDatabase {
         db.insert_defaults("protobuf", &["*.proto"]);
         db.insert_defaults("python", &["*.py", "*.pyi", "*.pyw"]);
         db.insert_defaults("r", &["*.R", "*.Rmd", "*.Rnw", "*.r", "*.rmd", "*.rnw"]);
+        db.insert_defaults("rescript", &["*.res", "*.resi"]);
         db.insert_defaults(
             "ruby",
             &[
@@ -1512,7 +1525,10 @@ impl RgTypeDatabase {
         db.insert_defaults("ts", &["*.cts", "*.mts", "*.ts", "*.tsx"]);
         db.insert_defaults("typescript", &["*.cts", "*.mts", "*.ts", "*.tsx"]);
         db.insert_defaults("sql", &["*.psql", "*.sql"]);
+        db.insert_defaults("solidity", &["*.sol"]);
         db.insert_defaults("swift", &["*.swift"]);
+        db.insert_defaults("svelte", &["*.svelte", "*.svelte.ts"]);
+        db.insert_defaults("vala", &["*.vala"]);
         db.insert_defaults(
             "vim",
             &[
@@ -5030,6 +5046,22 @@ mod tests {
         ("/proj/a.txt", b"needle\n"),
     ];
 
+    const DIFF_MORE_LANGUAGE_TYPE_FILES: &[(&str, &[u8])] = &[
+        ("/proj/guide.adoc", b"needle\n"),
+        ("/proj/pkg.cabal", b"needle\n"),
+        ("/proj/server.cr", b"needle\n"),
+        ("/proj/Main.elm", b"needle\n"),
+        ("/proj/Lib.fs", b"needle\n"),
+        ("/proj/build.gradle", b"needle\n"),
+        ("/proj/source.ml", b"needle\n"),
+        ("/proj/notes.org", b"needle\n"),
+        ("/proj/App.res", b"needle\n"),
+        ("/proj/Token.sol", b"needle\n"),
+        ("/proj/Page.svelte", b"needle\n"),
+        ("/proj/widget.vala", b"needle\n"),
+        ("/proj/a.txt", b"needle\n"),
+    ];
+
     const DIFF_IGNORE_FILES: &[(&str, &[u8])] = &[
         ("/proj/.git/config", b"[core]\n"),
         ("/proj/.git/info/exclude", b"local.txt\n"),
@@ -6670,6 +6702,102 @@ mod tests {
             args: &["-t", "zig", "needle", "proj"],
             stdin: None,
             files: DIFF_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type asciidoc",
+            args: &["-t", "asciidoc", "needle", "proj"],
+            stdin: None,
+            files: DIFF_MORE_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type cabal",
+            args: &["-t", "cabal", "needle", "proj"],
+            stdin: None,
+            files: DIFF_MORE_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type crystal",
+            args: &["-t", "crystal", "needle", "proj"],
+            stdin: None,
+            files: DIFF_MORE_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type elm",
+            args: &["-t", "elm", "needle", "proj"],
+            stdin: None,
+            files: DIFF_MORE_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type fsharp",
+            args: &["-t", "fsharp", "needle", "proj"],
+            stdin: None,
+            files: DIFF_MORE_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type groovy",
+            args: &["-t", "groovy", "needle", "proj"],
+            stdin: None,
+            files: DIFF_MORE_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type ocaml",
+            args: &["-t", "ocaml", "needle", "proj"],
+            stdin: None,
+            files: DIFF_MORE_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type org",
+            args: &["-t", "org", "needle", "proj"],
+            stdin: None,
+            files: DIFF_MORE_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type rescript",
+            args: &["-t", "rescript", "needle", "proj"],
+            stdin: None,
+            files: DIFF_MORE_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type solidity",
+            args: &["-t", "solidity", "needle", "proj"],
+            stdin: None,
+            files: DIFF_MORE_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type svelte",
+            args: &["-t", "svelte", "needle", "proj"],
+            stdin: None,
+            files: DIFF_MORE_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type vala",
+            args: &["-t", "vala", "needle", "proj"],
+            stdin: None,
+            files: DIFF_MORE_LANGUAGE_TYPE_FILES,
             cwd: "/",
             output: RgDiffOutput::Exact,
         },
