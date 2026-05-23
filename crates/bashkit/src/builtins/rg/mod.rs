@@ -1366,9 +1366,47 @@ impl RgTypeDatabase {
         let mut db = Self {
             definitions: BTreeMap::new(),
         };
+        db.insert_defaults("ada", &["*.adb", "*.ads"]);
+        db.insert_defaults("agda", &["*.agda", "*.lagda"]);
+        db.insert_defaults("aidl", &["*.aidl"]);
         db.insert_defaults("asciidoc", &["*.adoc", "*.asc", "*.asciidoc"]);
+        db.insert_defaults("asm", &["*.S", "*.asm", "*.s"]);
+        db.insert_defaults(
+            "asp",
+            &[
+                "*.ascx",
+                "*.ascx.cs",
+                "*.ascx.vb",
+                "*.asp",
+                "*.aspx",
+                "*.aspx.cs",
+                "*.aspx.vb",
+            ],
+        );
+        db.insert_defaults("ats", &["*.ats", "*.dats", "*.hats", "*.sats"]);
+        db.insert_defaults("avro", &["*.avdl", "*.avpr", "*.avsc"]);
+        db.insert_defaults("awk", &["*.awk"]);
+        db.insert_defaults(
+            "bazel",
+            &[
+                "*.BUILD",
+                "*.bazel",
+                "*.bazelrc",
+                "*.bzl",
+                "BUILD",
+                "MODULE.bazel",
+                "WORKSPACE",
+                "WORKSPACE.bazel",
+                "WORKSPACE.bzlmod",
+            ],
+        );
+        db.insert_defaults(
+            "bitbake",
+            &["*.bb", "*.bbappend", "*.bbclass", "*.conf", "*.inc"],
+        );
         db.insert_defaults("c", &["*.c", "*.h"]);
         db.insert_defaults("cabal", &["*.cabal"]);
+        db.insert_defaults("coffeescript", &["*.coffee"]);
         db.insert_defaults(
             "cpp",
             &[
@@ -1387,7 +1425,9 @@ impl RgTypeDatabase {
         db.insert_defaults("clojure", &["*.clj", "*.cljc", "*.cljs", "*.cljx"]);
         db.insert_defaults("crystal", &["*.cr", "*.ecr", "Projectfile", "shard.yml"]);
         db.insert_defaults("csv", &["*.csv"]);
+        db.insert_defaults("cython", &["*.pxd", "*.pxi", "*.pyx"]);
         db.insert_defaults("dart", &["*.dart"]);
+        db.insert_defaults("devicetree", &["*.dts", "*.dtsi", "*.dtso"]);
         db.insert_defaults("elm", &["*.elm"]);
         db.insert_defaults("bat", &["*.bat"]);
         db.insert_defaults("batch", &["*.bat"]);
@@ -1399,6 +1439,10 @@ impl RgTypeDatabase {
         db.insert_defaults("dhall", &["*.dhall"]);
         db.insert_defaults("diff", &["*.diff", "*.patch"]);
         db.insert_defaults("docker", &["*Dockerfile*"]);
+        db.insert_defaults(
+            "dockercompose",
+            &["docker-compose.*.yml", "docker-compose.yml"],
+        );
         db.insert_defaults(
             "elixir",
             &["*.eex", "*.ex", "*.exs", "*.heex", "*.leex", "*.livemd"],
@@ -5094,6 +5138,24 @@ mod tests {
         ("/proj/a.txt", b"needle\n"),
     ];
 
+    const DIFF_EARLY_LANGUAGE_TYPE_FILES: &[(&str, &[u8])] = &[
+        ("/proj/pkg.ads", b"needle\n"),
+        ("/proj/proof.agda", b"needle\n"),
+        ("/proj/iface.aidl", b"needle\n"),
+        ("/proj/start.S", b"needle\n"),
+        ("/proj/page.aspx", b"needle\n"),
+        ("/proj/main.dats", b"needle\n"),
+        ("/proj/schema.avsc", b"needle\n"),
+        ("/proj/script.awk", b"needle\n"),
+        ("/proj/BUILD", b"needle\n"),
+        ("/proj/recipe.bb", b"needle\n"),
+        ("/proj/view.coffee", b"needle\n"),
+        ("/proj/ext.pyx", b"needle\n"),
+        ("/proj/board.dts", b"needle\n"),
+        ("/proj/docker-compose.yml", b"needle\n"),
+        ("/proj/a.txt", b"needle\n"),
+    ];
+
     const DIFF_IGNORE_FILES: &[(&str, &[u8])] = &[
         ("/proj/.git/config", b"[core]\n"),
         ("/proj/.git/info/exclude", b"local.txt\n"),
@@ -6942,6 +7004,118 @@ mod tests {
             args: &["-t", "wgsl", "needle", "proj"],
             stdin: None,
             files: DIFF_EXTRA_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type ada",
+            args: &["-t", "ada", "needle", "proj"],
+            stdin: None,
+            files: DIFF_EARLY_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type agda",
+            args: &["-t", "agda", "needle", "proj"],
+            stdin: None,
+            files: DIFF_EARLY_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type aidl",
+            args: &["-t", "aidl", "needle", "proj"],
+            stdin: None,
+            files: DIFF_EARLY_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type asm",
+            args: &["-t", "asm", "needle", "proj"],
+            stdin: None,
+            files: DIFF_EARLY_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type asp",
+            args: &["-t", "asp", "needle", "proj"],
+            stdin: None,
+            files: DIFF_EARLY_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type ats",
+            args: &["-t", "ats", "needle", "proj"],
+            stdin: None,
+            files: DIFF_EARLY_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type avro",
+            args: &["-t", "avro", "needle", "proj"],
+            stdin: None,
+            files: DIFF_EARLY_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type awk",
+            args: &["-t", "awk", "needle", "proj"],
+            stdin: None,
+            files: DIFF_EARLY_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type bazel",
+            args: &["-t", "bazel", "needle", "proj"],
+            stdin: None,
+            files: DIFF_EARLY_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type bitbake",
+            args: &["-t", "bitbake", "needle", "proj"],
+            stdin: None,
+            files: DIFF_EARLY_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type coffeescript",
+            args: &["-t", "coffeescript", "needle", "proj"],
+            stdin: None,
+            files: DIFF_EARLY_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type cython",
+            args: &["-t", "cython", "needle", "proj"],
+            stdin: None,
+            files: DIFF_EARLY_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type devicetree",
+            args: &["-t", "devicetree", "needle", "proj"],
+            stdin: None,
+            files: DIFF_EARLY_LANGUAGE_TYPE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "type dockercompose",
+            args: &["-t", "dockercompose", "needle", "proj"],
+            stdin: None,
+            files: DIFF_EARLY_LANGUAGE_TYPE_FILES,
             cwd: "/",
             output: RgDiffOutput::Exact,
         },
