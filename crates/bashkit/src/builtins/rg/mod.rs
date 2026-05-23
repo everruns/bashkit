@@ -1829,6 +1829,12 @@ fn parse_rgb_color(value: &str) -> Option<(u8, u8, u8)> {
 }
 
 fn parse_ansi_color_number(value: &str) -> Option<u8> {
+    if let Some(hex) = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    {
+        return u8::from_str_radix(hex, 16).ok();
+    }
     if value.chars().all(|ch| ch.is_ascii_digit()) {
         value.parse().ok()
     } else {
@@ -5282,6 +5288,34 @@ mod tests {
                 "--color=always",
                 "--colors",
                 "match:bg:5",
+                "needle",
+                "proj/a.txt",
+            ],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "colors ansi foreground hex number",
+            args: &[
+                "--color=always",
+                "--colors",
+                "match:fg:0xff",
+                "needle",
+                "proj/a.txt",
+            ],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "colors ansi background hex number",
+            args: &[
+                "--color=always",
+                "--colors",
+                "match:bg:0x05",
                 "needle",
                 "proj/a.txt",
             ],
