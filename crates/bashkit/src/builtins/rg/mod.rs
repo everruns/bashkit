@@ -31,6 +31,12 @@ use crate::interpreter::ExecResult;
 /// rg command - recursive pattern search (simplified ripgrep)
 pub struct Rg;
 
+/// Upper bound on replacement output produced per call to
+/// [`RgMatcher::replace_all`] / [`RgMatcher::replace_first`]. Guards the
+/// `--replace` path against memory amplification from attacker-controlled
+/// replacement text combined with many matches (TM-DOS-RG-REPLACE).
+const RG_MAX_REPLACEMENT_OUTPUT_BYTES: usize = 1_048_576;
+
 struct RgOptions {
     patterns: Vec<String>,
     pattern_files: Vec<String>,
@@ -419,6 +425,21 @@ impl RgMatcher {
     }
 
     fn replace_all(&self, text: &str, replacement: &str) -> String {
+        // THREAT[TM-DOS-RG-REPLACE]: attacker-controlled `--replace` text combined
+        // with many matches can allocate output ≈ matches × replacement_len before
+        // interpreter stdout truncation, enabling memory amplification / OOM.
+        // Project the size up front and refuse to allocate past the cap; surface a
+        // visible marker in the output instead of silently truncating.
+        let match_count = self.find_iter(text).len();
+        let projected = text
+            .len()
+            .saturating_add(match_count.saturating_mul(replacement.len()));
+        if projected > RG_MAX_REPLACEMENT_OUTPUT_BYTES {
+            return format!(
+                "[rg: replacement output capped at {} bytes]",
+                RG_MAX_REPLACEMENT_OUTPUT_BYTES
+            );
+        }
         match self {
             Self::Rust(regex) => regex.replace_all(text, replacement).into_owned(),
             Self::Fancy(regex) => regex.replace_all(text, replacement).into_owned(),
@@ -426,6 +447,16 @@ impl RgMatcher {
     }
 
     fn replace_first(&self, text: &str, replacement: &str) -> String {
+        // Same cap as replace_all — for a single match the worst case is
+        // text.len() + replacement.len(), so the cap mainly guards against
+        // an attacker-supplied giant replacement string.
+        let projected = text.len().saturating_add(replacement.len());
+        if projected > RG_MAX_REPLACEMENT_OUTPUT_BYTES {
+            return format!(
+                "[rg: replacement output capped at {} bytes]",
+                RG_MAX_REPLACEMENT_OUTPUT_BYTES
+            );
+        }
         match self {
             Self::Rust(regex) => regex.replace(text, replacement).into_owned(),
             Self::Fancy(regex) => regex.replacen(text, 1, replacement).into_owned(),
@@ -12074,6 +12105,37 @@ mod tests {
         assert!(result.stdout.contains("./src/main.rs:needle"));
         assert!(!result.stdout.contains("main.txt"));
         assert!(!result.stdout.contains("vendor"));
+    }
+
+    #[tokio::test]
+    async fn test_rg_replace_caps_amplified_output() {
+        // A line with many matches × a giant replacement string would otherwise
+        // allocate proportional to matches × replacement.len() — well past the
+        // 1 MiB cap. The cap surfaces as a visible marker in the output instead
+        // of silently truncating.
+        let payload = "a".repeat(10_000);
+        let replacement = "x".repeat(2048);
+        let files: &[(&str, &[u8])] = &[("/big.txt", payload.as_bytes())];
+
+        let all = run_rg(
+            &["--replace", replacement.as_str(), "a", "/big.txt"],
+            None,
+            files,
+        )
+        .await;
+        assert_eq!(all.exit_code, 0);
+        assert!(
+            all.stdout.contains("replacement output capped"),
+            "expected cap marker, got: {:?}", // debug-ok: assert-failure message
+            &all.stdout[..all.stdout.len().min(200)]
+        );
+        // The cap must actually prevent allocation past the threshold (plus
+        // some framing overhead like filename + colon + the marker itself).
+        assert!(
+            all.stdout.len() < 2 * RG_MAX_REPLACEMENT_OUTPUT_BYTES,
+            "replace_all output bypassed the cap: {} bytes",
+            all.stdout.len()
+        );
     }
 
     #[test]
