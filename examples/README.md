@@ -104,6 +104,18 @@ Wire BashTool into any AI framework: tool definition, simulated tool-call loop, 
 node examples/llm_tool.mjs
 ```
 
+### custom_builtins.mjs
+
+Register JS callbacks as persistent bash builtins via `customBuiltins` and
+`addBuiltin()`. Covers sync + async callbacks, VFS persistence across
+`execute()` calls, post-construction registration without rebuilding the
+interpreter, override precedence (shell function > custom builtin >
+baked-in builtin), error handling, and `BashTool` integration.
+
+```bash
+node examples/custom_builtins.mjs
+```
+
 ### openai_tool.mjs
 
 OpenAI function calling with manual tool-call loop.

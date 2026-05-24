@@ -221,6 +221,71 @@ restored.restore_snapshot(&shell_only)?;
 See [docs/snapshotting.md](docs/snapshotting.md) for Rust, Python, and Node examples,
 plus snapshot security notes.
 
+## Custom Builtins
+
+Register your own commands as bash builtins. They share the interpreter's VFS
+and shell state, so `mybuiltin > /scratch/out.json` writes through and the
+next call sees the file.
+
+Rust (any embedder):
+
+```rust
+use bashkit::{Bash, Builtin, BuiltinContext, BuiltinRegistry, ExecResult, async_trait};
+use std::sync::Arc;
+
+struct Greet;
+
+#[async_trait]
+impl Builtin for Greet {
+    async fn execute(&self, ctx: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {
+        let who = ctx.args.first().map(String::as_str).unwrap_or("world");
+        Ok(ExecResult::ok(format!("hello {}\n", who)))
+    }
+}
+
+# #[tokio::main]
+# async fn main() -> bashkit::Result<()> {
+let registry = BuiltinRegistry::new();
+let mut bash = Bash::builder().builtin_registry(registry.clone()).build();
+
+// Register after construction — visible immediately, VFS untouched.
+registry.insert("greet", Arc::new(Greet));
+assert_eq!(bash.exec("greet Alice").await?.stdout, "hello Alice\n");
+# Ok(())
+# }
+```
+
+Node (`@everruns/bashkit`):
+
+```typescript
+import { Bash } from "@everruns/bashkit";
+
+const bash = new Bash({
+  customBuiltins: {
+    "get-order": (ctx) =>
+      JSON.stringify({ id: ctx.argv[0], status: "shipped" }) + "\n",
+  },
+});
+
+await bash.execute("mkdir -p /scratch");
+await bash.execute("get-order 42 > /scratch/order.json");
+console.log((await bash.execute("cat /scratch/order.json")).stdout);
+// {"id":"42","status":"shipped"}
+
+// Post-construction registration / removal too:
+bash.addBuiltin("greet", (ctx) => `hello ${ctx.argv[0] ?? "world"}\n`);
+bash.removeBuiltin("greet");
+```
+
+Resolution order: shell function → POSIX special builtin → custom builtin →
+baked-in builtin → `$PATH` — so custom builtins can override baked-ins
+(e.g. wrap `cat` with tracing) but a shell function defined in the script
+still wins.
+
+See [docs/custom_builtins.md](docs/custom_builtins.md) for the full guide
+(sync vs async, `BashTool`, error handling, snapshot/restore behavior).
+Working example: [`examples/custom_builtins.mjs`](examples/custom_builtins.mjs).
+
 ## Experimental: Git Support
 
 Enable the `git` feature for virtual git operations on the virtual filesystem.
