@@ -183,6 +183,7 @@ jobs:
           ${{ matrix.run }} llm_tool.mjs
           ${{ matrix.run }} k8s_orchestrator.mjs
           ${{ matrix.run }} langchain_integration.mjs
+          ${{ matrix.run }} custom_builtins.mjs
 
       - name: Install Doppler CLI
         if: env.DOPPLER_TOKEN != ''

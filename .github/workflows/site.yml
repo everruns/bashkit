@@ -1,0 +1,87 @@
+# Site CI — builds bashkit.sh (Astro + Cloudflare Workers) and runs the
+# postbuild verify-* checks (route metadata, public link integrity, sitemap,
+# robots, agent skills, link headers). Heavy enough that we path-filter it
+# to runs that actually touch site sources.
+#
+# Mirrors what Cloudflare Workers deploys, so a failure here means
+# bashkit.sh deploy will also fail.
+
+name: Site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "site/**"
+      - "crates/bashkit/docs/**"
+      - "crates/bashkit-js/README.md"
+      - ".github/workflows/site.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "site/**"
+      - "crates/bashkit/docs/**"
+      - "crates/bashkit-js/README.md"
+      - ".github/workflows/site.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Fast pre-check: just the doc-routes metadata. Runs in ~1s without
+  # installing dependencies, so the most common failure mode (a new
+  # docs/*.md not registered in _meta.ts) surfaces immediately.
+  docs-routes:
+    name: Docs Routes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - name: Verify docs route metadata
+        run: node site/scripts/verify-doc-routes.mjs
+
+  # Full astro build + postbuild verify scripts. Mirrors the Cloudflare
+  # Workers deploy: route metadata, public link integrity, sitemap, robots,
+  # agent skills, link headers. Catches things the source-level pre-check
+  # can't (e.g. unregistered markdown link targets in generated HTML).
+  site-build:
+    name: Site Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - name: Install dependencies
+        working-directory: site
+        run: npm ci
+      - name: Build site (runs all verify-* postbuild checks)
+        working-directory: site
+        run: npm run build
+
+  # Gate job for branch protection
+  site-check:
+    name: Site Check
+    if: always()
+    needs: [docs-routes, site-build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify all jobs passed
+        run: |
+          if [[ "${{ needs.docs-routes.result }}" != "success" ]]; then
+            echo "Docs Routes failed"
+            exit 1
+          fi
+          if [[ "${{ needs.site-build.result }}" != "success" ]]; then
+            echo "Site Build failed"
+            exit 1
+          fi

@@ -119,6 +119,17 @@ export const DOC_META: DocMeta[] = [
     editPath: "crates/bashkit/docs/custom_builtins.md",
   },
   {
+    slug: "custom-builtins-js",
+    title: "Custom builtins (JavaScript)",
+    summary: "Register JS callbacks as persistent bash builtins from Node, Deno, or Bun.",
+    seoTitle: "Add custom Bashkit builtins from JavaScript",
+    seoDescription:
+      "Use customBuiltins and addBuiltin in @everruns/bashkit to register JS callbacks as persistent bash commands with virtual filesystem access and async support.",
+    section: "Extending",
+    sourceId: "custom_builtins_js",
+    editPath: "docs/custom_builtins_js.md",
+  },
+  {
     slug: "clap-builtins",
     title: "Clap builtins",
     summary: "Use clap parser structs to build typed custom commands.",
