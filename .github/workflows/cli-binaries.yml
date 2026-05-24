@@ -164,8 +164,11 @@ jobs:
           TAG="${{ inputs.tag }}"
           VERSION="${TAG#v}"
 
-          # Fetch the GitHub PAT from Doppler (has push access to homebrew-tap)
-          GH_PAT=$(doppler secrets get GITHUB_TOKEN --plain)
+          # Fetch the homebrew-tap PAT from Doppler. This token is a
+          # fine-grained PAT scoped to `everruns/homebrew-tap` only
+          # (Contents: read+write, Metadata: read), so a leak cannot
+          # touch the main bashkit repo.
+          GH_PAT=$(doppler secrets get HOMEBREW_TAP_GITHUB_TOKEN --plain)
           export GH_PAT
           echo "::add-mask::$GH_PAT"
 
