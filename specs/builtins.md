@@ -129,6 +129,61 @@ Current extension:
 - `TypeScriptExtension` registers `ts`/`typescript` and, when enabled by
   `TypeScriptConfig`, `node`/`deno`/`bun`
 
+### BuiltinRegistry — Host-Owned Mutable Builtins
+
+`BashBuilder::builtin(name, ...)` and `Extension::builtins()` are both
+*build-time* registration: the set of builtins is frozen once the `Bash`
+instance is built. For embedders that need to register or remove builtins
+*after* construction (FFI bindings, REPLs, plugin systems),
+`BuiltinRegistry` provides a host-owned mutable registry consulted at
+command-dispatch time.
+
+```rust
+#[derive(Clone, Default)]
+pub struct BuiltinRegistry {
+    inner: Arc<RwLock<HashMap<String, Arc<dyn Builtin>>>>,
+}
+
+impl BuiltinRegistry {
+    pub fn new() -> Self;
+    pub fn insert(&self, name: impl Into<String>, builtin: Arc<dyn Builtin>);
+    pub fn remove(&self, name: &str) -> Option<Arc<dyn Builtin>>;
+    pub fn lookup(&self, name: &str) -> Option<Arc<dyn Builtin>>;
+    pub fn names(&self) -> Vec<String>;
+    pub fn is_empty(&self) -> bool;
+}
+```
+
+Wired in via `BashBuilder::builtin_registry(registry)`. The handle is
+`Clone`; clones share the same underlying storage, so the embedder keeps a
+clone for runtime mutation while the builder takes another.
+
+Command-resolution order (see `Interpreter::dispatch_command`):
+
+1. Shell functions (defined in scripts)
+2. POSIX special builtins (`exec`, `set`, `:`, `eval`, …)
+3. **Host registry** (`BuiltinRegistry::lookup`)
+4. Baked-in + builder-registered builtins
+5. Script execution by path / `$PATH` search
+
+So registry entries can override baked-in commands (e.g. wrap `cat` with
+tracing) but shell functions still win — matching standard bash
+precedence. `command -v` / `command -V` / `command name args…` consult
+the registry too.
+
+Implementation notes:
+
+- Storage is `Arc<RwLock<HashMap<String, Arc<dyn Builtin>>>>` (std only,
+  no extra deps). Lookup clones the `Arc` out of the lock, releasing it
+  before execution.
+- `Interpreter::builtins` was migrated from `HashMap<String, Box<dyn Builtin>>`
+  to `HashMap<String, Arc<dyn Builtin>>` so registered and host-registry
+  paths share one execution helper (`execute_builtin_arc`).
+- The registry is host-owned: not part of interpreter state, so
+  `reset_transient_state` leaves it untouched and snapshots do not
+  serialize it. Restoring from a snapshot requires re-attaching the
+  registry handle.
+
 ### Execution Extensions
 
 `Bash::exec_with_extensions()` and `Bash::exec_streaming_with_extensions()`

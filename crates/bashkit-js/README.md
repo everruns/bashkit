@@ -285,6 +285,71 @@ const result = tool.executeSync("get_user --id 1 | jq -r '.name'");
 console.log(result.stdout); // Alice
 ```
 
+## Custom Builtins
+
+Register JS callbacks as bash builtins that share the `Bash` / `BashTool`
+instance's VFS — files created in one call persist across `execute()` calls.
+
+```typescript
+import { Bash } from "@everruns/bashkit";
+
+// Constructor-time registration
+const bash = new Bash({
+  customBuiltins: {
+    "get-order": (ctx) =>
+      JSON.stringify({ id: ctx.argv[0], status: "shipped" }) + "\n",
+  },
+});
+
+// Or post-construction (safe to call at any time — no interpreter rebuild)
+bash.addBuiltin("greet", (ctx) => `hello ${ctx.argv[0] ?? "world"}\n`);
+
+// Tool output flows through the shared VFS
+await bash.execute("mkdir -p /scratch");
+await bash.execute("get-order 42 > /scratch/order.json");
+console.log((await bash.execute("cat /scratch/order.json")).stdout);
+// {"id":"42","status":"shipped"}
+
+bash.removeBuiltin("greet"); // when you no longer need it
+```
+
+Callbacks can be sync (`string` return) or async (`Promise<string>`). Both
+are awaited uniformly by the Rust side. Exceptions / rejections become
+stderr with exit code 1.
+
+```typescript
+const bash = new Bash({
+  customBuiltins: {
+    fetch: async (ctx) => {
+      const data = await fetchSomething(ctx.argv[0]);
+      return JSON.stringify(data) + "\n";
+    },
+    fail: () => {
+      throw new Error("nope");   // → stderr, exit 1
+    },
+  },
+});
+```
+
+The callback receives a `BuiltinContext`:
+
+- `name: string` — command name as invoked
+- `argv: string[]` — arguments (not including the command name)
+- `stdin: string | null` — piped input, or `null` if no pipe
+- `env: Record<string, string>` — environment variables (only exported names)
+- `cwd: string` — current working directory
+
+Override precedence: shell function > POSIX special builtin > custom builtin
+> baked-in builtin > `PATH`. Custom builtins can override baked-in commands
+(e.g. wrap `cat`), but shell functions defined in the script still win.
+
+Custom builtins survive `reset()`. They are host-side configuration and are
+**not** preserved by `snapshot()` / `restoreSnapshot()` — pass
+`customBuiltins` again or call `addBuiltin` after restoring.
+
+Use `execute()` (async). `executeSync()` will deadlock if the script invokes
+a custom builtin — same caveat as `ScriptedTool.executeSync()`.
+
 ## Snapshot / Restore
 
 State snapshots are available on both `Bash` and `BashTool` instances:
@@ -374,6 +439,7 @@ import {
 - `cancel()`
 - `clearCancel()`
 - `reset()`
+- `addBuiltin(name, callback)` / `removeBuiltin(name)` — register/unregister persistent JS builtins
 - `snapshot()`
 - `restoreSnapshot(data)`
 - `Bash.fromSnapshot(data)`
@@ -381,7 +447,7 @@ import {
 
 ### BashTool
 
-- All execution, cancellation (`cancel()`, `clearCancel()`), reset, snapshot, restore, and direct VFS helpers from `Bash`
+- All execution, cancellation (`cancel()`, `clearCancel()`), reset, custom builtins, snapshot, restore, and direct VFS helpers from `Bash`
 - Tool metadata: `name`, `version`, `shortDescription`
 - `snapshot()`
 - `restoreSnapshot(data)`
@@ -415,6 +481,15 @@ import {
 - `mounts?: Array<{ path: string; root: string; writable?: boolean }>`
 - `python?: boolean`
 - `externalFunctions?: string[]`
+- `customBuiltins?: Record<string, (ctx: BuiltinContext) => string | Promise<string>>` — JS callbacks registered as bash builtins (see [Custom Builtins](#custom-builtins))
+
+### BuiltinContext
+
+- `name: string` — command name as invoked
+- `argv: string[]` — arguments (not including the command name)
+- `stdin: string | null` — piped input, `null` if no pipe
+- `env: Record<string, string>` — exported environment variables
+- `cwd: string` — current working directory
 
 ### ExecuteOptions
 
