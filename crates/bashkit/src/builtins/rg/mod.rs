@@ -19,7 +19,7 @@ use async_trait::async_trait;
 use fancy_regex::RegexBuilder as FancyRegexBuilder;
 use regex::{Regex, RegexBuilder};
 use serde_json::json;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
@@ -4048,11 +4048,27 @@ fn write_rg_json_match(
     line: RgLine<'_>,
     line_idx: usize,
     regex: &RgMatcher,
+    replacement: Option<&str>,
 ) {
     let submatches: Vec<_> = regex
         .find_iter(line.match_text)
         .into_iter()
-        .map(|mat| json!({"match":{"text":mat.as_str()},"start":mat.start(),"end":mat.end()}))
+        .map(|mat| {
+            let mut value = json!({
+                "match":{"text":mat.as_str()},
+                "start":mat.start(),
+                "end":mat.end()
+            });
+            if let Some(replacement) = replacement
+                && let Some(obj) = value.as_object_mut()
+            {
+                obj.insert(
+                    "replacement".to_string(),
+                    json!({"text":regex.replace_first(mat.as_str(), replacement)}),
+                );
+            }
+            value
+        })
         .collect();
     write_rg_json_event(
         output,
@@ -4069,17 +4085,48 @@ fn write_rg_json_match(
     );
 }
 
+fn write_rg_json_context(output: &mut String, filename: &str, line: RgLine<'_>, line_idx: usize) {
+    write_rg_json_event(
+        output,
+        json!({
+            "type":"context",
+            "data":{
+                "path":{"text":filename},
+                "lines":{"text":line.raw},
+                "line_number":line_idx + 1,
+                "absolute_offset":line.start_offset,
+                "submatches":[],
+            }
+        }),
+    );
+}
+
 fn write_rg_json_multiline_match(
     output: &mut String,
     filename: &str,
     lines: &[RgLine<'_>],
     mat: RgMultilineMatch<'_>,
+    regex: &RgMatcher,
+    replacement: Option<&str>,
 ) {
     let start_line_offset = lines[mat.line_idx].start_offset;
     let line_text = lines[mat.line_idx..=mat.end_line_idx]
         .iter()
         .map(|line| line.raw)
         .collect::<String>();
+    let mut submatch = json!({
+        "match":{"text":mat.text},
+        "start":mat.start_offset - start_line_offset,
+        "end":mat.end_offset - start_line_offset
+    });
+    if let Some(replacement) = replacement
+        && let Some(obj) = submatch.as_object_mut()
+    {
+        obj.insert(
+            "replacement".to_string(),
+            json!({"text":regex.replace_first(mat.text, replacement)}),
+        );
+    }
     write_rg_json_event(
         output,
         json!({
@@ -4089,11 +4136,7 @@ fn write_rg_json_multiline_match(
                 "lines":{"text":line_text},
                 "line_number":mat.line_idx + 1,
                 "absolute_offset":start_line_offset,
-                "submatches":[{
-                    "match":{"text":mat.text},
-                    "start":mat.start_offset - start_line_offset,
-                    "end":mat.end_offset - start_line_offset
-                }],
+                "submatches":[submatch],
             }
         }),
     );
@@ -4113,7 +4156,7 @@ fn write_rg_json_end(
             "data":{
                 "path":{"text":filename},
                 "binary_offset":null,
-                "stats":rg_json_stats(bytes_searched, matched_lines, matches, 1),
+                "stats":rg_json_stats(bytes_searched, matched_lines, matches, 1, usize::from(matches > 0)),
             }
         }),
     );
@@ -4124,11 +4167,12 @@ fn rg_json_stats(
     matched_lines: usize,
     matches: usize,
     searches: usize,
+    searches_with_match: usize,
 ) -> serde_json::Value {
     json!({
         "elapsed":{"secs":0,"nanos":0,"human":"0.000000s"},
         "searches":searches,
-        "searches_with_match":usize::from(matched_lines > 0),
+        "searches_with_match":searches_with_match,
         "bytes_searched":bytes_searched,
         "bytes_printed":0,
         "matched_lines":matched_lines,
@@ -4142,6 +4186,7 @@ fn write_rg_json_summary(
     matched_lines: usize,
     matches: usize,
     searches: usize,
+    searches_with_match: usize,
 ) {
     write_rg_json_event(
         output,
@@ -4149,7 +4194,7 @@ fn write_rg_json_summary(
             "type":"summary",
             "data":{
                 "elapsed_total":{"secs":0,"nanos":0,"human":"0.000000s"},
-                "stats":rg_json_stats(bytes_searched, matched_lines, matches, searches),
+                "stats":rg_json_stats(bytes_searched, matched_lines, matches, searches, searches_with_match),
             }
         }),
     );
@@ -4413,6 +4458,7 @@ impl Builtin for Rg {
         let mut json_matched_lines = 0usize;
         let mut json_matches = 0usize;
         let mut json_searches = 0usize;
+        let mut json_searches_with_match = 0usize;
         let mut stats = RgSearchStats::default();
 
         for (filename, content) in &inputs {
@@ -4582,6 +4628,7 @@ impl Builtin for Rg {
                                     lines[line_idx],
                                     line_idx,
                                     &regex,
+                                    opts.replacement.as_deref(),
                                 );
                             }
                             write_rg_json_end(
@@ -4591,6 +4638,7 @@ impl Builtin for Rg {
                                 inverted_match_lines.len(),
                                 inverted_match_lines.len(),
                             );
+                            json_searches_with_match += 1;
                         }
                         continue;
                     }
@@ -4726,8 +4774,63 @@ impl Builtin for Rg {
                 if json_output {
                     if match_count > 0 {
                         write_rg_json_begin(&mut output, filename);
-                        for &mat in &matches {
-                            write_rg_json_multiline_match(&mut output, filename, &lines, mat);
+                        let match_line_set: HashSet<usize> =
+                            context_match_lines.iter().copied().collect();
+                        let mut context_lines = BTreeSet::new();
+                        if opts.passthru {
+                            for line_idx in 0..lines.len() {
+                                if !match_line_set.contains(&line_idx) {
+                                    context_lines.insert(line_idx);
+                                }
+                            }
+                        } else if has_context {
+                            for &match_idx in &context_match_lines {
+                                let start = match_idx.saturating_sub(opts.before_context);
+                                let end = (match_idx + opts.after_context + 1).min(lines.len());
+                                for line_idx in start..end {
+                                    if !match_line_set.contains(&line_idx) {
+                                        context_lines.insert(line_idx);
+                                    }
+                                }
+                            }
+                        }
+                        if context_lines.is_empty() {
+                            for &mat in &matches {
+                                write_rg_json_multiline_match(
+                                    &mut output,
+                                    filename,
+                                    &lines,
+                                    mat,
+                                    &regex,
+                                    opts.replacement.as_deref(),
+                                );
+                            }
+                        } else {
+                            let mut match_by_start_line = BTreeMap::new();
+                            for &mat in &matches {
+                                match_by_start_line.entry(mat.line_idx).or_insert(mat);
+                            }
+                            let mut event_lines: BTreeSet<usize> = context_lines;
+                            event_lines.extend(match_by_start_line.keys().copied());
+                            for line_idx in event_lines {
+                                if let Some(mat) = match_by_start_line.get(&line_idx).copied() {
+                                    write_rg_json_multiline_match(
+                                        &mut output,
+                                        filename,
+                                        &lines,
+                                        mat,
+                                        &regex,
+                                        opts.replacement.as_deref(),
+                                    );
+                                } else {
+                                    write_rg_json_context(
+                                        &mut output,
+                                        filename,
+                                        lines[line_idx],
+                                        line_idx,
+                                    );
+                                }
+                            }
                         }
                         write_rg_json_end(
                             &mut output,
@@ -4736,6 +4839,7 @@ impl Builtin for Rg {
                             match_line_indices.len(),
                             matches.len(),
                         );
+                        json_searches_with_match += 1;
                     }
                     continue;
                 }
@@ -5086,14 +5190,58 @@ impl Builtin for Rg {
             if json_output {
                 if match_count > 0 {
                     write_rg_json_begin(&mut output, filename);
-                    for &line_idx in &match_lines {
-                        write_rg_json_match(
-                            &mut output,
-                            filename,
-                            lines[line_idx],
-                            line_idx,
-                            &regex,
-                        );
+                    let match_line_set: HashSet<usize> = match_lines.iter().copied().collect();
+                    let mut context_lines = BTreeSet::new();
+                    if opts.passthru {
+                        for line_idx in 0..lines.len() {
+                            if !match_line_set.contains(&line_idx) {
+                                context_lines.insert(line_idx);
+                            }
+                        }
+                    } else if has_context {
+                        for &match_idx in &match_lines {
+                            let start = match_idx.saturating_sub(opts.before_context);
+                            let end = (match_idx + opts.after_context + 1).min(lines.len());
+                            for line_idx in start..end {
+                                if !match_line_set.contains(&line_idx) {
+                                    context_lines.insert(line_idx);
+                                }
+                            }
+                        }
+                    }
+                    if context_lines.is_empty() {
+                        for &line_idx in &match_lines {
+                            write_rg_json_match(
+                                &mut output,
+                                filename,
+                                lines[line_idx],
+                                line_idx,
+                                &regex,
+                                opts.replacement.as_deref(),
+                            );
+                        }
+                    } else {
+                        let mut event_lines: BTreeSet<usize> = context_lines;
+                        event_lines.extend(match_lines.iter().copied());
+                        for line_idx in event_lines {
+                            if match_line_set.contains(&line_idx) {
+                                write_rg_json_match(
+                                    &mut output,
+                                    filename,
+                                    lines[line_idx],
+                                    line_idx,
+                                    &regex,
+                                    opts.replacement.as_deref(),
+                                );
+                            } else {
+                                write_rg_json_context(
+                                    &mut output,
+                                    filename,
+                                    lines[line_idx],
+                                    line_idx,
+                                );
+                            }
+                        }
                     }
                     write_rg_json_end(
                         &mut output,
@@ -5106,6 +5254,7 @@ impl Builtin for Rg {
                             .sum(),
                     );
                     json_matched_lines += match_lines.len();
+                    json_searches_with_match += 1;
                 }
                 continue;
             }
@@ -5334,6 +5483,7 @@ impl Builtin for Rg {
                 json_matched_lines,
                 json_matches,
                 json_searches,
+                json_searches_with_match,
             );
         } else if opts.stats {
             let bytes_printed = if opts.count_only
@@ -5999,6 +6149,11 @@ mod tests {
 
     const DIFF_OUTPUT_MODE_FILES: &[(&str, &[u8])] =
         &[("/proj/output.txt", b"foo1 bar\nnone\nfoo2 baz\n")];
+
+    const DIFF_JSON_MODE_FILES: &[(&str, &[u8])] = &[
+        ("/proj/a.txt", b"before\nfoo bar foo\nafter\n"),
+        ("/proj/b.txt", b"foo\n"),
+    ];
 
     const GZIP_NEEDLE: &[u8] = &[
         0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x13, 0x4b, 0xcc, 0x29, 0xc8, 0x48,
@@ -7236,6 +7391,38 @@ mod tests {
             args: &["--json", "needle", "proj/offset.txt"],
             stdin: None,
             files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::JsonEvents,
+        },
+        RgDiffCase {
+            name: "json replacement submatches",
+            args: &["--json", "-r", "<$0>", "foo", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_JSON_MODE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::JsonEvents,
+        },
+        RgDiffCase {
+            name: "json context events",
+            args: &["--json", "-n", "-C1", "foo", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_JSON_MODE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::JsonEvents,
+        },
+        RgDiffCase {
+            name: "json passthru context events",
+            args: &["--json", "--passthru", "foo", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_JSON_MODE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::JsonEvents,
+        },
+        RgDiffCase {
+            name: "json summary counts files with matches",
+            args: &["--json", "foo", "proj/a.txt", "proj/b.txt"],
+            stdin: None,
+            files: DIFF_JSON_MODE_FILES,
             cwd: "/",
             output: RgDiffOutput::JsonEvents,
         },
@@ -9255,6 +9442,30 @@ mod tests {
         RgDiffCase {
             name: "multiline json",
             args: &["--json", "-U", "foo\nbar", "proj/multi.txt"],
+            stdin: None,
+            files: DIFF_MULTILINE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::JsonEvents,
+        },
+        RgDiffCase {
+            name: "multiline json replacement submatches",
+            args: &["--json", "-U", "-r", "<$0>", "foo\nbar", "proj/multi.txt"],
+            stdin: None,
+            files: DIFF_MULTILINE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::JsonEvents,
+        },
+        RgDiffCase {
+            name: "multiline json context events",
+            args: &["--json", "-U", "-C1", "foo\nbar", "proj/multi.txt"],
+            stdin: None,
+            files: DIFF_MULTILINE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::JsonEvents,
+        },
+        RgDiffCase {
+            name: "multiline json passthru context events",
+            args: &["--json", "-U", "--passthru", "foo\nbar", "proj/multi.txt"],
             stdin: None,
             files: DIFF_MULTILINE_FILES,
             cwd: "/",
