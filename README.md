@@ -282,7 +282,7 @@ baked-in builtin → `$PATH` — so custom builtins can override baked-ins
 (e.g. wrap `cat` with tracing) but a shell function defined in the script
 still wins.
 
-See [docs/custom_builtins.md](docs/custom_builtins.md) for the full guide
+See [docs/custom_builtins_js.md](docs/custom_builtins_js.md) for the full JS guide
 (sync vs async, `BashTool`, error handling, snapshot/restore behavior).
 Working example: [`examples/custom_builtins.mjs`](examples/custom_builtins.mjs).
 

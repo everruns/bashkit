@@ -221,11 +221,26 @@ jobs:
         working-directory: crates/bashkit
         run: cargo +nightly fuzz build
 
+  # Catch docs/*.md files that aren't registered in the site's docs route
+  # metadata (site/src/pages/docs/_meta.ts). Without this the breakage only
+  # surfaces in the Cloudflare Workers preview build, well after CI.
+  site-docs-check:
+    name: Site Docs Routes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - name: Verify docs route metadata
+        run: node site/scripts/verify-doc-routes.mjs
+
   # Gate job for branch protection — name must stay "Check"
   check:
     name: Check
     if: always()
-    needs: [lint, audit, test, examples, fuzz-check]
+    needs: [lint, audit, test, examples, fuzz-check, site-docs-check]
     runs-on: ubuntu-latest
     steps:
       - name: Verify all jobs passed
@@ -234,7 +249,8 @@ jobs:
              [[ "${{ needs.audit.result }}" != "success" ]] || \
              [[ "${{ needs.test.result }}" != "success" ]] || \
              [[ "${{ needs.examples.result }}" != "success" ]] || \
-             [[ "${{ needs.fuzz-check.result }}" != "success" ]]; then
+             [[ "${{ needs.fuzz-check.result }}" != "success" ]] || \
+             [[ "${{ needs.site-docs-check.result }}" != "success" ]]; then
             echo "One or more required jobs failed"
             exit 1
           fi
