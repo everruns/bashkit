@@ -8,13 +8,14 @@
 use bashkit::interop::fs::{BashkitFsAbiOwnedHandleV1, export_filesystem, import_owned_filesystem};
 use bashkit::tool::VERSION;
 use bashkit::{
-    Bash, BashTool as RustBashTool, Builtin, BuiltinContext, Credential, DirEntry as FsDirEntry,
-    ExcType, ExecResult as RustExecResult, ExecutionExtensions, ExecutionLimits, ExtFunctionResult,
-    FileSystem, FileSystemExt, FileType as FsFileType, InMemoryFs, Metadata as FsMetadata,
-    MontyException, MontyObject, NetworkAllowlist, OutputCallback as RustOutputCallback, OverlayFs,
-    PosixFs, PythonExternalFnHandler, PythonLimits, RealFs, RealFsMode,
-    ScriptedTool as RustScriptedTool, ShellStateView as RustShellStateView,
-    SnapshotOptions as RustSnapshotOptions, Tool, ToolArgs, ToolDef, ToolRequest, async_trait,
+    Bash, BashTool as RustBashTool, Builtin, BuiltinContext, BuiltinRegistry, Credential,
+    DirEntry as FsDirEntry, ExcType, ExecResult as RustExecResult, ExecutionExtensions,
+    ExecutionLimits, ExtFunctionResult, FileSystem, FileSystemExt, FileType as FsFileType,
+    InMemoryFs, Metadata as FsMetadata, MontyException, MontyObject, NetworkAllowlist,
+    OutputCallback as RustOutputCallback, OverlayFs, PosixFs, PythonExternalFnHandler,
+    PythonLimits, RealFs, RealFsMode, ScriptedTool as RustScriptedTool,
+    ShellStateView as RustShellStateView, SnapshotOptions as RustSnapshotOptions, Tool, ToolArgs,
+    ToolDef, ToolRequest, async_trait,
 };
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
@@ -2665,31 +2666,41 @@ fn build_runtime_custom_builtin_impls(
         .collect()
 }
 
-fn apply_custom_builtins_to_builder(
+/// Populate a host-owned [`BuiltinRegistry`] from the per-instance entry list.
+///
+/// The registry is the live dispatch source — the same handle is threaded into
+/// the bashkit builder *and* retained on `PyBash`/`BashTool` so post-construction
+/// `add_builtin` / `remove_builtin` calls modify the in-flight interpreter
+/// without rebuilding it.
+fn populate_registry_from_entries(
     py: Python<'_>,
-    mut builder: bashkit::BashBuilder,
+    registry: &BuiltinRegistry,
     builtins: &[PyCustomBuiltinEntry],
-) -> bashkit::BashBuilder {
+) {
     for builtin in build_runtime_custom_builtin_impls(py, builtins) {
-        let name = builtin.name.clone();
-        builder = builder.builtin(name, Box::new(builtin));
+        registry.insert(builtin.name.clone(), Arc::new(builtin));
     }
-    builder
 }
 
 fn capture_custom_builtin_session(
     py: Python<'_>,
-    builtins: &[PyCustomBuiltinEntry],
+    builtins: &StdMutex<Vec<PyCustomBuiltinEntry>>,
     engine: &Arc<PyCallbackEngine>,
     use_caller_loop: bool,
 ) -> PyResult<Option<Arc<PyCallbackSession>>> {
-    if builtins.is_empty() {
+    let (is_empty, has_async) = {
+        let guard = builtins
+            .lock()
+            .map_err(|_| PyRuntimeError::new_err("custom_builtins lock poisoned"))?;
+        (guard.is_empty(), guard.iter().any(|entry| entry.is_async))
+    };
+    if is_empty {
         return Ok(None);
     }
     PyCallbackSession::capture(
         py,
         engine.clone(),
-        builtins.iter().any(|entry| entry.is_async),
+        has_async,
         use_caller_loop,
         PySyncLoopMode::SharedAcrossSessions,
     )
@@ -2967,7 +2978,16 @@ pub struct PyBash {
     /// Async Python callable invoked when Monty calls an external function.
     external_handler: Option<Py<PyAny>>,
     external_handler_reentry_depth: Arc<AtomicUsize>,
-    custom_builtins: Vec<PyCustomBuiltinEntry>,
+    /// Tracking list for `is_async` flag detection (used by session capture).
+    /// Kept in sync with `host_registry` by `add_builtin` / `remove_builtin`.
+    /// Wrapped in `Arc<StdMutex<_>>` so post-construction registration works
+    /// through `&self` like the rest of `PyBash`'s API.
+    custom_builtins: Arc<StdMutex<Vec<PyCustomBuiltinEntry>>>,
+    /// Host-owned live registry of custom builtins. Cloned into the bashkit
+    /// builder and retained here so post-construction registrations take
+    /// effect without rebuilding the interpreter (and without disturbing the
+    /// VFS). Survives `reset()` by being passed to every rebuild.
+    host_registry: BuiltinRegistry,
     builtin_engine: Arc<PyCallbackEngine>,
     files: Vec<PyFileMount>,
     real_mounts: Vec<RealMountConfig>,
@@ -3033,11 +3053,8 @@ impl PyBash {
         let files = clone_file_mounts(py, &self.files);
         let mut builder = apply_fs_config(builder, &files, &self.real_mounts)?;
         builder = builder.readonly_filesystem(self.readonly_filesystem);
-        Ok(apply_custom_builtins_to_builder(
-            py,
-            builder,
-            &self.custom_builtins,
-        ))
+        let _ = py;
+        Ok(builder.builtin_registry(self.host_registry.clone()))
     }
 }
 
@@ -3156,7 +3173,9 @@ impl PyBash {
         builder = apply_fs_config(builder, &files, &real_mounts)?;
         builder = builder.readonly_filesystem(readonly_filesystem);
         let builtin_engine = PyCallbackEngine::new(py)?;
-        builder = apply_custom_builtins_to_builder(py, builder, &custom_builtins);
+        let host_registry = BuiltinRegistry::new();
+        populate_registry_from_entries(py, &host_registry, &custom_builtins);
+        builder = builder.builtin_registry(host_registry.clone());
 
         let bash = builder.build();
         let cancelled = Arc::new(RwLock::new(bash.cancellation_token()));
@@ -3174,7 +3193,8 @@ impl PyBash {
             external_functions: external_functions.unwrap_or_default(),
             external_handler,
             external_handler_reentry_depth,
-            custom_builtins,
+            custom_builtins: Arc::new(StdMutex::new(custom_builtins)),
+            host_registry,
             builtin_engine,
             files,
             real_mounts,
@@ -3341,6 +3361,49 @@ impl PyBash {
             return wrap_future_with_cancel(py, future, cancel_session);
         }
         Ok(future)
+    }
+
+    /// Register a Python callback as a custom bash builtin.
+    ///
+    /// Inserts into the host-owned `BuiltinRegistry` consulted on every
+    /// dispatch, so subsequent `execute*` calls pick up the new builtin
+    /// without rebuilding the interpreter or disturbing the VFS. The
+    /// registration also survives `reset()` because the registry is the live
+    /// source threaded into every rebuild.
+    ///
+    /// Override precedence matches `custom_builtins` at construction time:
+    /// shell function > POSIX special builtin > custom builtin > baked-in
+    /// builtin > `PATH`.
+    fn add_builtin(&self, py: Python<'_>, name: String, callback: Py<PyAny>) -> PyResult<()> {
+        let entry = build_py_custom_builtin_entry(py, name.clone(), callback)?;
+        let adapter = PyCustomBuiltinAdapter {
+            name: entry.name.clone(),
+            callback: entry.callback.clone_ref(py),
+            is_async: entry.is_async,
+        };
+        {
+            let mut guard = self
+                .custom_builtins
+                .lock()
+                .map_err(|_| PyRuntimeError::new_err("custom_builtins lock poisoned"))?;
+            guard.retain(|e| e.name != name);
+            guard.push(entry);
+        }
+        self.host_registry.insert(name, Arc::new(adapter));
+        Ok(())
+    }
+
+    /// Remove a previously registered custom builtin. No-op if not present.
+    fn remove_builtin(&self, name: String) -> PyResult<()> {
+        {
+            let mut guard = self
+                .custom_builtins
+                .lock()
+                .map_err(|_| PyRuntimeError::new_err("custom_builtins lock poisoned"))?;
+            guard.retain(|e| e.name != name);
+        }
+        self.host_registry.remove(&name);
+        Ok(())
     }
 
     /// Reset interpreter to fresh state, preserving all configuration including
@@ -3635,7 +3698,13 @@ pub struct BashTool {
     cancelled: Arc<RwLock<Arc<AtomicBool>>>,
     username: Option<String>,
     hostname: Option<String>,
-    custom_builtins: Vec<PyCustomBuiltinEntry>,
+    /// Tracking list for `is_async` flag detection (used by session capture).
+    /// Kept in sync with `host_registry` by `add_builtin` / `remove_builtin`.
+    /// Wrapped in `Arc<StdMutex<_>>` so post-construction registration works
+    /// through `&self` like the rest of `BashTool`'s API.
+    custom_builtins: Arc<StdMutex<Vec<PyCustomBuiltinEntry>>>,
+    /// Host-owned live registry of custom builtins; see [`PyBash::host_registry`].
+    host_registry: BuiltinRegistry,
     builtin_engine: Arc<PyCallbackEngine>,
     files: Vec<PyFileMount>,
     real_mounts: Vec<RealMountConfig>,
@@ -3686,11 +3755,7 @@ impl BashTool {
         let files = clone_file_mounts(py, &self.files);
         let mut builder = apply_fs_config(builder, &files, &self.real_mounts)?;
         builder = builder.readonly_filesystem(self.readonly_filesystem);
-        Ok(apply_custom_builtins_to_builder(
-            py,
-            builder,
-            &self.custom_builtins,
-        ))
+        Ok(builder.builtin_registry(self.host_registry.clone()))
     }
 
     fn build_rust_tool(&self) -> PyResult<RustBashTool> {
@@ -3714,13 +3779,20 @@ impl BashTool {
             limits = limits.timeout(parse_timeout_seconds(ts)?);
         }
 
-        if !self.custom_builtins.is_empty() {
-            let builtins =
-                Python::attach(|py| build_runtime_custom_builtin_impls(py, &self.custom_builtins));
-            for builtin in builtins {
-                let name = builtin.name.clone();
-                builder = builder.builtin(name, Box::new(builtin));
+        let builtins = {
+            let guard = self
+                .custom_builtins
+                .lock()
+                .map_err(|_| PyRuntimeError::new_err("custom_builtins lock poisoned"))?;
+            if guard.is_empty() {
+                Vec::new()
+            } else {
+                Python::attach(|py| build_runtime_custom_builtin_impls(py, &guard))
             }
+        };
+        for builtin in builtins {
+            let name = builtin.name.clone();
+            builder = builder.builtin(name, Box::new(builtin));
         }
 
         Ok(builder.limits(limits).build())
@@ -3798,7 +3870,9 @@ impl BashTool {
         builder = apply_fs_config(builder, &files, &real_mounts)?;
         builder = builder.readonly_filesystem(readonly_filesystem);
         let builtin_engine = PyCallbackEngine::new(py)?;
-        builder = apply_custom_builtins_to_builder(py, builder, &custom_builtins);
+        let host_registry = BuiltinRegistry::new();
+        populate_registry_from_entries(py, &host_registry, &custom_builtins);
+        builder = builder.builtin_registry(host_registry.clone());
 
         let bash = builder.build();
         let cancelled = Arc::new(RwLock::new(bash.cancellation_token()));
@@ -3811,7 +3885,8 @@ impl BashTool {
             cancelled,
             username,
             hostname,
-            custom_builtins,
+            custom_builtins: Arc::new(StdMutex::new(custom_builtins)),
+            host_registry,
             builtin_engine,
             files,
             real_mounts,
@@ -3955,6 +4030,40 @@ impl BashTool {
             return wrap_future_with_cancel(py, future, cancel_session);
         }
         Ok(future)
+    }
+
+    /// Register a Python callback as a custom bash builtin.
+    /// See [`PyBash::add_builtin`] for semantics.
+    fn add_builtin(&self, py: Python<'_>, name: String, callback: Py<PyAny>) -> PyResult<()> {
+        let entry = build_py_custom_builtin_entry(py, name.clone(), callback)?;
+        let adapter = PyCustomBuiltinAdapter {
+            name: entry.name.clone(),
+            callback: entry.callback.clone_ref(py),
+            is_async: entry.is_async,
+        };
+        {
+            let mut guard = self
+                .custom_builtins
+                .lock()
+                .map_err(|_| PyRuntimeError::new_err("custom_builtins lock poisoned"))?;
+            guard.retain(|e| e.name != name);
+            guard.push(entry);
+        }
+        self.host_registry.insert(name, Arc::new(adapter));
+        Ok(())
+    }
+
+    /// Remove a previously registered custom builtin. No-op if not present.
+    fn remove_builtin(&self, name: String) -> PyResult<()> {
+        {
+            let mut guard = self
+                .custom_builtins
+                .lock()
+                .map_err(|_| PyRuntimeError::new_err("custom_builtins lock poisoned"))?;
+            guard.retain(|e| e.name != name);
+        }
+        self.host_registry.remove(&name);
+        Ok(())
     }
 
     /// Releases GIL before blocking on tokio to prevent deadlock.
