@@ -320,6 +320,63 @@ pub trait Extension: Send + Sync {
     fn builtins(&self) -> Vec<(String, Box<dyn Builtin>)>;
 }
 
+/// Host-owned, mutable registry of builtin commands.
+///
+/// Unlike [`BashBuilder::builtin`](crate::BashBuilder::builtin), entries can be
+/// inserted and removed at any point during the lifetime of the `Bash`
+/// instance — the interpreter consults the registry at command-dispatch time.
+///
+/// Cloning the registry produces a new handle that shares the same underlying
+/// storage; mutations made via any handle are visible to all others. This
+/// lets embedders (FFI bindings, REPLs, plugin systems) hand a handle to the
+/// builder and retain another for runtime registration.
+///
+/// In the command-resolution order, host-registered builtins are checked
+/// after shell functions and POSIX special builtins, but before baked-in
+/// builtins — so embedders can override baked-in commands.
+#[derive(Clone, Default)]
+pub struct BuiltinRegistry {
+    inner: Arc<std::sync::RwLock<HashMap<String, Arc<dyn Builtin>>>>,
+}
+
+impl BuiltinRegistry {
+    /// Create an empty registry.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register or replace a builtin under `name`.
+    pub fn insert(&self, name: impl Into<String>, builtin: Arc<dyn Builtin>) {
+        if let Ok(mut guard) = self.inner.write() {
+            guard.insert(name.into(), builtin);
+        }
+    }
+
+    /// Remove the entry for `name`, returning the previously registered
+    /// builtin if any.
+    pub fn remove(&self, name: &str) -> Option<Arc<dyn Builtin>> {
+        self.inner.write().ok().and_then(|mut g| g.remove(name))
+    }
+
+    /// Look up the builtin registered under `name`, returning a cloned handle.
+    pub fn lookup(&self, name: &str) -> Option<Arc<dyn Builtin>> {
+        self.inner.read().ok().and_then(|g| g.get(name).cloned())
+    }
+
+    /// Return the set of currently registered builtin names.
+    pub fn names(&self) -> Vec<String> {
+        self.inner
+            .read()
+            .map(|g| g.keys().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// True if no builtins are registered.
+    pub fn is_empty(&self) -> bool {
+        self.inner.read().map(|g| g.is_empty()).unwrap_or(true)
+    }
+}
+
 /// Typed, per-execution data exposed to builtin implementations.
 ///
 /// This is intentionally separate from shell state: extensions live for one

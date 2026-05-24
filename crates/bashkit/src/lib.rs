@@ -440,7 +440,8 @@ pub use async_trait::async_trait;
 pub use builtins::git::GitConfig;
 pub use builtins::ssh::{SshAllowlist, SshConfig, TrustedHostKey};
 pub use builtins::{
-    BashkitContext, Builtin, ClapBuiltin, Context as BuiltinContext, ExecutionExtensions, Extension,
+    BashkitContext, Builtin, BuiltinRegistry, ClapBuiltin, Context as BuiltinContext,
+    ExecutionExtensions, Extension,
 };
 pub use clap;
 #[cfg(feature = "http_client")]
@@ -1213,6 +1214,9 @@ pub struct BashBuilder {
     epoch_offset: Option<i64>,
     shell_profile: interpreter::ShellProfile,
     custom_builtins: HashMap<String, Box<dyn Builtin>>,
+    /// Optional host-owned mutable registry. Entries here are consulted at
+    /// dispatch time, so embedders can register/remove builtins after build.
+    host_builtins: Option<BuiltinRegistry>,
     /// Files to mount in the virtual filesystem
     mounted_files: Vec<MountedFile>,
     /// Lazy files to mount (loaded on first read)
@@ -1887,6 +1891,27 @@ impl BashBuilder {
         self
     }
 
+    /// Attach a host-owned mutable builtin registry.
+    ///
+    /// Unlike [`BashBuilder::builtin`], entries in a [`BuiltinRegistry`] can
+    /// be inserted and removed after the `Bash` instance has been built. The
+    /// registry is host-owned, so its contents survive `exec()` calls
+    /// unchanged. This is intended for embedders (FFI bindings, REPLs) that
+    /// want to register host callbacks at runtime without rebuilding the
+    /// interpreter.
+    ///
+    /// The registry is consulted during command dispatch after shell
+    /// functions and POSIX special builtins, but before baked-in builtins —
+    /// so entries can override baked-in commands of the same name.
+    ///
+    /// The registry handle is `Clone`; clones share the same underlying
+    /// storage. Keep a clone after calling this method to retain
+    /// post-build mutation access.
+    pub fn builtin_registry(mut self, registry: BuiltinRegistry) -> Self {
+        self.host_builtins = Some(registry);
+        self
+    }
+
     /// Register a capability extension.
     ///
     /// Extensions contribute a related set of builtins as one unit. Commands
@@ -2478,6 +2503,7 @@ impl BashBuilder {
             self.trace_mode,
             self.trace_callback,
             self.custom_builtins,
+            self.host_builtins,
             self.history_file,
             #[cfg(feature = "http_client")]
             self.network_allowlist,
@@ -2719,6 +2745,7 @@ impl BashBuilder {
         trace_mode: TraceMode,
         trace_callback: Option<TraceCallback>,
         custom_builtins: HashMap<String, Box<dyn Builtin>>,
+        host_builtins: Option<BuiltinRegistry>,
         history_file: Option<PathBuf>,
         #[cfg(feature = "http_client")] network_allowlist: Option<NetworkAllowlist>,
         #[cfg(feature = "http_client")] http_handler: Option<Box<dyn network::HttpHandler>>,
@@ -2746,6 +2773,7 @@ impl BashBuilder {
             fixed_epoch,
             epoch_offset,
             custom_builtins,
+            host_builtins,
             shell_profile,
         );
 

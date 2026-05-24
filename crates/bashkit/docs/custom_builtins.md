@@ -147,6 +147,59 @@ The same extension can be added to `BashTool::builder().extension(...)`.
 `TypeScriptExtension` uses this model to register the embedded
 TypeScript/JavaScript builtins.
 
+## BuiltinRegistry — Runtime-Mutable Builtins
+
+`BashBuilder::builtin` and `Extension` are both *build-time*: the set of
+builtins is frozen when `Bash::builder().build()` returns. For embedders
+that need to register or remove builtins after construction without
+rebuilding the interpreter, use `BuiltinRegistry`.
+
+```rust,ignore
+use bashkit::{Bash, Builtin, BuiltinContext, BuiltinRegistry, ExecResult, async_trait};
+use std::sync::Arc;
+
+struct Greet;
+
+#[async_trait]
+impl Builtin for Greet {
+    async fn execute(&self, ctx: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {
+        let who = ctx.args.first().map(String::as_str).unwrap_or("world");
+        Ok(ExecResult::ok(format!("hello {}\n", who)))
+    }
+}
+
+// Keep a clone of the registry handle so the embedder can mutate it later.
+let registry = BuiltinRegistry::new();
+let mut bash = Bash::builder()
+    .builtin_registry(registry.clone())
+    .build();
+
+// Run something first — VFS state accumulates.
+bash.exec("mkdir -p /scratch && echo seed > /scratch/seed.txt").await?;
+
+// Register a builtin after the interpreter is live. No rebuild, no VFS reset.
+registry.insert("greet", Arc::new(Greet));
+let r = bash.exec("greet Alice").await?;
+assert_eq!(r.stdout, "hello Alice\n");
+
+// Pre-existing files are still there.
+let r = bash.exec("cat /scratch/seed.txt").await?;
+assert_eq!(r.stdout, "seed\n");
+```
+
+The registry handle is `Clone`; clones share the same underlying storage,
+so mutations made via any clone are visible to all others (including the
+interpreter that owns one).
+
+**Resolution order**: shell function → POSIX special builtin → registry
+entry → baked-in builtin → `$PATH`. Registry entries can override
+baked-in commands (e.g. wrap `cat` with tracing) but shell functions
+still win — matching standard bash precedence.
+
+The registry is host-owned: not part of interpreter state, so it survives
+`exec()` calls automatically and is not serialized by `Bash::snapshot()`.
+Re-attach the handle after restoring from a snapshot.
+
 ### Arguments
 
 Arguments are passed as a slice of strings, excluding the command name itself:

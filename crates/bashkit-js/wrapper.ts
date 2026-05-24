@@ -102,6 +102,32 @@ export type FileValue = string | (() => string) | (() => Promise<string>);
 const MAX_JSON_NESTING_DEPTH = 64;
 
 /**
+ * Execution context passed to a custom builtin registered via
+ * `customBuiltins` or `addBuiltin`.
+ *
+ * All fields are snapshots of the shell state at invocation time.
+ */
+export interface BuiltinContext {
+  /** The command name as invoked. */
+  readonly name: string;
+  /** Arguments (not including the command name). */
+  readonly argv: string[];
+  /** Piped input, or `null` if there is no pipe. */
+  readonly stdin: string | null;
+  /** Environment variables visible at the call site. */
+  readonly env: Record<string, string>;
+  /** Current working directory. */
+  readonly cwd: string;
+}
+
+/**
+ * Callback signature for custom builtins. Return the stdout to emit.
+ * Both sync (`string`) and async (`Promise<string>`) returns are supported.
+ * Exceptions / rejections surface as stderr with exit code 1.
+ */
+export type BuiltinCallback = (ctx: BuiltinContext) => string | Promise<string>;
+
+/**
  * Options for creating a Bash or BashTool instance.
  */
 export interface BashOptions {
@@ -197,6 +223,35 @@ export interface BashOptions {
    * the embedded interpreter. When called, they invoke the external handler.
    */
   externalFunctions?: string[];
+  /**
+   * Custom JS callbacks registered as bash builtins.
+   *
+   * Each entry becomes a bash command that shares the instance's VFS — files
+   * created by the callback persist across `execute()` calls. Callbacks can be
+   * sync (`string` return) or async (`Promise<string>`); exceptions surface as
+   * stderr with exit code 1.
+   *
+   * Equivalent to calling `addBuiltin(name, cb)` for each entry. Survives
+   * `reset()`; not preserved through `snapshot()`/`restoreSnapshot()` — pass
+   * the option again after restoring.
+   *
+   * Override precedence: shell function > POSIX special builtin > custom
+   * builtin > baked-in builtin > PATH.
+   *
+   * @example
+   * ```typescript
+   * const bash = new Bash({
+   *   customBuiltins: {
+   *     "get-order": (ctx) =>
+   *       JSON.stringify({ id: ctx.argv[0], status: "shipped" }) + "\n",
+   *   },
+   * });
+   * await bash.execute("mkdir -p /scratch");
+   * await bash.execute("get-order 42 > /scratch/order.json");
+   * console.log((await bash.execute("cat /scratch/order.json")).stdout);
+   * ```
+   */
+  customBuiltins?: Record<string, BuiltinCallback>;
 }
 
 export interface SnapshotOptions {
@@ -552,6 +607,42 @@ export class FileSystem {
 }
 
 /**
+ * Wrap a {@link BuiltinCallback} for the native `addBuiltin` ABI.
+ *
+ * The Rust side expects a uniform `Promise<string>` return, so we always
+ * route the callback result through `Promise.resolve` — sync `string`
+ * returns get wrapped, native `Promise<string>` returns pass through, and
+ * synchronous throws become rejected promises. Either way, the Rust adapter
+ * sees one shape: a Promise it can `.await`.
+ */
+function makeBuiltinDispatcher(
+  callback: BuiltinCallback,
+): (payload: string) => Promise<string> {
+  return (payload: string) => {
+    try {
+      const ctx = JSON.parse(payload) as BuiltinContext;
+      return Promise.resolve(callback(ctx));
+    } catch (e) {
+      return Promise.reject(e);
+    }
+  };
+}
+
+/**
+ * Register each entry of `builtins` on `native` via `addBuiltin`.
+ * Idempotent for empty/undefined input.
+ */
+function registerCustomBuiltins(
+  native: { addBuiltin(name: string, dispatch: (payload: string) => Promise<string>): void },
+  builtins: Record<string, BuiltinCallback> | undefined,
+): void {
+  if (!builtins) return;
+  for (const [name, cb] of Object.entries(builtins)) {
+    native.addBuiltin(name, makeBuiltinDispatcher(cb));
+  }
+}
+
+/**
  * Core bash interpreter with virtual filesystem.
  *
  * State persists between calls — files created in one `execute()` are
@@ -572,6 +663,7 @@ export class Bash {
   constructor(options?: BashOptions) {
     const resolved = resolveFilesSync(options?.files);
     this.native = new NativeBash(toNativeOptions(options, resolved));
+    registerCustomBuiltins(this.native, options?.customBuiltins);
   }
 
   /**
@@ -592,7 +684,28 @@ export class Bash {
     const resolved = await resolveFiles(options?.files);
     const instance = Object.create(Bash.prototype) as Bash;
     instance.native = new NativeBash(toNativeOptions(options, resolved));
+    registerCustomBuiltins(instance.native, options?.customBuiltins);
     return instance;
+  }
+
+  /**
+   * Register a JS callback as a custom bash builtin.
+   *
+   * The callback receives a {@link BuiltinContext} and returns the stdout to
+   * emit. Sync (`string`) and async (`Promise<string>`) returns are both
+   * supported. Exceptions become stderr + exit code 1.
+   *
+   * Safe to call at any time — the new builtin is visible to the next
+   * `execute*()` invocation with no interpreter rebuild or VFS disturbance.
+   * Survives `reset()`.
+   */
+  addBuiltin(name: string, callback: BuiltinCallback): void {
+    this.native.addBuiltin(name, makeBuiltinDispatcher(callback));
+  }
+
+  /** Remove a previously registered custom builtin. */
+  removeBuiltin(name: string): void {
+    this.native.removeBuiltin(name);
   }
 
   /**
@@ -930,6 +1043,7 @@ export class BashTool {
   constructor(options?: BashOptions) {
     const resolved = resolveFilesSync(options?.files);
     this.native = new NativeBashTool(toNativeOptions(options, resolved));
+    registerCustomBuiltins(this.native, options?.customBuiltins);
   }
 
   /**
@@ -939,7 +1053,18 @@ export class BashTool {
     const resolved = await resolveFiles(options?.files);
     const instance = Object.create(BashTool.prototype) as BashTool;
     instance.native = new NativeBashTool(toNativeOptions(options, resolved));
+    registerCustomBuiltins(instance.native, options?.customBuiltins);
     return instance;
+  }
+
+  /** Register a JS callback as a custom builtin. See {@link Bash.addBuiltin}. */
+  addBuiltin(name: string, callback: BuiltinCallback): void {
+    this.native.addBuiltin(name, makeBuiltinDispatcher(callback));
+  }
+
+  /** Remove a previously registered custom builtin. */
+  removeBuiltin(name: string): void {
+    this.native.removeBuiltin(name);
   }
 
   /**

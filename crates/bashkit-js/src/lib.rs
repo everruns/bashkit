@@ -18,11 +18,11 @@ use bashkit::interop::fs::{
 };
 use bashkit::tool::VERSION;
 use bashkit::{
-    Bash as RustBash, BashTool as RustBashTool, ExecResult as RustExecResult, ExecutionLimits,
-    ExtFunctionResult, FileSystem as BashFileSystem, FileType, InMemoryFs, Metadata, MontyObject,
-    OutputCallback, PosixFs, PythonExternalFnHandler, PythonLimits, RealFs, RealFsMode,
-    ScriptedTool as RustScriptedTool, SnapshotOptions as RustSnapshotOptions, Tool, ToolArgs,
-    ToolDef, ToolRequest,
+    Bash as RustBash, BashTool as RustBashTool, Builtin, BuiltinContext, BuiltinRegistry,
+    ExecResult as RustExecResult, ExecutionLimits, ExtFunctionResult, FileSystem as BashFileSystem,
+    FileType, InMemoryFs, Metadata, MontyObject, OutputCallback, PosixFs, PythonExternalFnHandler,
+    PythonLimits, RealFs, RealFsMode, ScriptedTool as RustScriptedTool,
+    SnapshotOptions as RustSnapshotOptions, Tool, ToolArgs, ToolDef, ToolRequest, async_trait,
 };
 use napi::bindgen_prelude::External;
 use napi::{Env, JsValue, Unknown, ValueType, sys};
@@ -1072,6 +1072,11 @@ struct SharedState {
     sqlite: bool,
     external_functions: Vec<String>,
     external_handler: Option<ExternalHandlerArc>,
+    /// Host-owned mutable registry of custom builtins. The same handle is
+    /// passed to the bashkit builder *and* retained here so JS-side
+    /// `addBuiltin()` calls insert into the live interpreter without rebuilding
+    /// it (and without disturbing the VFS).
+    host_registry: BuiltinRegistry,
 }
 
 /// Wrapper for the external handler that can be stored and cloned.
@@ -1283,7 +1288,52 @@ impl Bash {
         arc.store(false, Ordering::SeqCst);
     }
 
+    /// Register a JS callback as a custom bash builtin.
+    ///
+    /// The callback receives a JSON-serialized `BuiltinContext`
+    /// (`{name, argv, stdin, env, cwd}`) and returns the stdout to emit —
+    /// either as a string (sync) or a `Promise<string>` (async). Exceptions
+    /// surface as stderr with exit code 1.
+    ///
+    /// Unlike `customBuiltins` at construction time, this can be called at
+    /// any point in the instance's lifetime — the interpreter consults the
+    /// shared registry on every dispatch, so subsequent `execute*()` calls
+    /// pick up the new builtin without rebuilding the interpreter or
+    /// disturbing the VFS.
+    #[napi(ts_args_type = "name: string, callback: (request: string) => Promise<string>")]
+    pub fn add_builtin(
+        &self,
+        name: String,
+        callback: napi::bindgen_prelude::Function<
+            (String,),
+            napi::bindgen_prelude::Promise<String>,
+        >,
+    ) -> napi::Result<()> {
+        let tsfn: BuiltinTsfn = callback
+            .build_threadsafe_function::<(String,)>()
+            .weak::<true>()
+            .build()?;
+        self.state.host_registry.insert(
+            name.clone(),
+            Arc::new(JsCustomBuiltinAdapter {
+                name,
+                callback: Arc::new(tsfn),
+            }),
+        );
+        Ok(())
+    }
+
+    /// Remove a previously registered custom builtin. No-op if not present.
+    #[napi]
+    pub fn remove_builtin(&self, name: String) {
+        self.state.host_registry.remove(&name);
+    }
+
     /// Reset interpreter to fresh state, preserving configuration.
+    ///
+    /// Custom builtins registered via `addBuiltin` or `customBuiltins` are
+    /// preserved (the registry is host-owned, separate from the interpreter
+    /// state that `reset()` discards).
     #[napi]
     pub fn reset(&self) -> napi::Result<()> {
         block_on_with(&self.state, |s| async move {
@@ -1732,7 +1782,42 @@ impl BashTool {
         arc.store(false, Ordering::SeqCst);
     }
 
+    /// Register a JS callback as a custom bash builtin.
+    /// See [`Bash::add_builtin`] for semantics.
+    #[napi(ts_args_type = "name: string, callback: (request: string) => Promise<string>")]
+    pub fn add_builtin(
+        &self,
+        name: String,
+        callback: napi::bindgen_prelude::Function<
+            (String,),
+            napi::bindgen_prelude::Promise<String>,
+        >,
+    ) -> napi::Result<()> {
+        let tsfn: BuiltinTsfn = callback
+            .build_threadsafe_function::<(String,)>()
+            .weak::<true>()
+            .build()?;
+        self.state.host_registry.insert(
+            name.clone(),
+            Arc::new(JsCustomBuiltinAdapter {
+                name,
+                callback: Arc::new(tsfn),
+            }),
+        );
+        Ok(())
+    }
+
+    /// Remove a previously registered custom builtin. No-op if not present.
+    #[napi]
+    pub fn remove_builtin(&self, name: String) {
+        self.state.host_registry.remove(&name);
+    }
+
     /// Reset interpreter to fresh state, preserving configuration.
+    ///
+    /// Custom builtins registered via `addBuiltin` or `customBuiltins` are
+    /// preserved (the registry is host-owned, separate from the interpreter
+    /// state that `reset()` discards).
     #[napi]
     pub fn reset(&self) -> napi::Result<()> {
         block_on_with(&self.state, |s| async move {
@@ -2098,6 +2183,64 @@ type ToolTsfn = napi::threadsafe_function::ThreadsafeFunction<
     false,
     true,
 >;
+
+/// Threadsafe callback used by custom builtins registered via `addBuiltin`.
+///
+/// The JS dispatcher always wraps its result in `Promise.resolve(...)`, so
+/// the TSFN return is uniformly `Promise<String>` regardless of whether the
+/// user's callback was sync or async. Both branches resolve via the same
+/// `.await` on the returned `Promise<String>` future.
+type BuiltinTsfn = napi::threadsafe_function::ThreadsafeFunction<
+    (String,),
+    napi::bindgen_prelude::Promise<String>,
+    (String,),
+    napi::Status,
+    false,
+    true,
+>;
+
+/// Adapts a JS callback into a bashkit [`Builtin`].
+///
+/// The callback receives a JSON string `{"name", "argv", "stdin", "env", "cwd"}`
+/// and resolves with the stdout to emit. Exceptions/rejections surface as
+/// stderr + exit-code-1 (real-shell semantics).
+struct JsCustomBuiltinAdapter {
+    name: String,
+    callback: Arc<BuiltinTsfn>,
+}
+
+#[async_trait]
+impl Builtin for JsCustomBuiltinAdapter {
+    async fn execute(&self, ctx: BuiltinContext<'_>) -> bashkit::Result<RustExecResult> {
+        let request = serde_json::json!({
+            "name": self.name,
+            "argv": ctx.args,
+            "stdin": ctx.stdin,
+            "env": ctx.env,
+            "cwd": ctx.cwd.to_string_lossy(),
+        });
+        let request_str = serde_json::to_string(&request)
+            .map_err(|e| bashkit::Error::Execution(format!("{}: {}", self.name, e)))?;
+
+        // Bound concurrent JS callbacks across all instances (issue #982).
+        let sem = callback_semaphore();
+        let _permit = sem
+            .acquire()
+            .await
+            .map_err(|e| bashkit::Error::Execution(format!("{}: semaphore: {}", self.name, e)))?;
+
+        // Two-step await: first call_async returns the `Promise<String>`
+        // handle from JS, then awaiting the Promise resolves to its value.
+        let promise = match self.callback.call_async((request_str,)).await {
+            Ok(p) => p,
+            Err(e) => return Ok(RustExecResult::err(format!("{}\n", e), 1)),
+        };
+        match promise.await {
+            Ok(stdout) => Ok(RustExecResult::ok(stdout)),
+            Err(e) => Ok(RustExecResult::err(format!("{}\n", e), 1)),
+        }
+    }
+}
 
 /// Entry for a registered JS tool callback.
 ///
@@ -2491,6 +2634,10 @@ fn build_bash_from_state(state: &SharedState, files: Option<&HashMap<String, Str
         builder = builder.env("BASHKIT_ALLOW_INPROCESS_SQLITE", "1");
     }
 
+    // Attach the host-owned builtin registry. Entries inserted via JS
+    // `addBuiltin()` are visible to the running interpreter without rebuilding.
+    builder = builder.builtin_registry(state.host_registry.clone());
+
     builder.build()
 }
 
@@ -2504,6 +2651,9 @@ fn shared_state_from_opts(
     let ext_fns = opts.external_functions.clone().unwrap_or_default();
     let mounts = opts.mounts.clone();
     let allowed_mount_paths = opts.allowed_mount_paths.clone();
+    // A single registry handle threaded through the tmp + final SharedState
+    // *and* the built interpreter — all observe the same underlying storage.
+    let host_registry = BuiltinRegistry::new();
 
     // Build a temporary SharedState to pass to build_bash_from_state
     let tmp = SharedState {
@@ -2537,6 +2687,7 @@ fn shared_state_from_opts(
         sqlite: sql,
         external_functions: ext_fns.clone(),
         external_handler: external_handler.clone(),
+        host_registry: host_registry.clone(),
     };
 
     if let Some(ref mounts) = mounts {
@@ -2583,6 +2734,7 @@ fn shared_state_from_opts(
         sqlite: sql,
         external_functions: ext_fns,
         external_handler,
+        host_registry,
     })
 }
 
