@@ -2597,8 +2597,12 @@ fn decode_rg_content(content: &[u8], opts: &RgOptions) -> String {
     }
 }
 
-fn rg_search_bytes(content: &[u8], opts: &RgOptions) -> std::result::Result<Vec<u8>, String> {
-    if !opts.search_zip || !is_gzip_content(content) {
+fn rg_search_bytes(
+    path: &Path,
+    content: &[u8],
+    opts: &RgOptions,
+) -> std::result::Result<Vec<u8>, String> {
+    if !opts.search_zip || !is_gzip_path(path) {
         return Ok(content.to_vec());
     }
 
@@ -2610,8 +2614,15 @@ fn rg_search_bytes(content: &[u8], opts: &RgOptions) -> std::result::Result<Vec<
     Ok(decompressed)
 }
 
-fn is_gzip_content(content: &[u8]) -> bool {
-    content.starts_with(&[0x1f, 0x8b, 0x08])
+fn is_gzip_path(path: &Path) -> bool {
+    // Real rg's -z path decides decompression from recognized file names, not gzip magic bytes.
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| {
+            let name = name.to_ascii_lowercase();
+            name.ends_with(".gz") || name.ends_with(".tgz")
+        })
+        .unwrap_or(false)
 }
 
 fn decode_utf8_lossy_strip_bom(content: &[u8]) -> String {
@@ -2687,7 +2698,7 @@ async fn read_rg_text_file(
     opts.validate_preprocessor_for(path, cwd)
         .map_err(|e| ExecResult::err(format!("rg: {display_path}: {e}\n"), 1))?;
 
-    let content = rg_search_bytes(&content, opts)
+    let content = rg_search_bytes(path, &content, opts)
         .map_err(|e| ExecResult::err(format!("rg: {display_path}: {e}\n"), 1))?;
     Ok(decode_rg_content(&content, opts))
 }
@@ -4117,7 +4128,7 @@ fn rg_generate_kind(args: &[String]) -> Result<Option<String>> {
 }
 
 fn rg_generate_output(kind: &str, help_text: &str) -> Result<String> {
-    const FLAGS: &str = "--regexp -e --file -f --after-context -A --before-context -B --binary --no-binary --block-buffered --no-block-buffered --byte-offset -b --no-byte-offset --case-sensitive -s --color --colors --column --no-column --context -C --context-separator --no-context-separator --count -c --count-matches --crlf --no-crlf --debug --dfa-size-limit --encoding -E --no-encoding --engine --field-context-separator --field-match-separator --files --files-with-matches -l --files-without-match --fixed-strings -F --no-fixed-strings --follow -L --no-follow --generate --glob -g --glob-case-insensitive --no-glob-case-insensitive --heading --no-heading --help -h --hidden -. --no-hidden --hostname-bin --hyperlink-format --iglob --ignore-case -i --ignore-file --ignore-file-case-insensitive --no-ignore-file-case-insensitive --include-zero --no-include-zero --invert-match -v --no-invert-match --json --no-json --line-buffered --no-line-buffered --line-number -n --no-line-number -N --line-regexp -x --max-columns -M --max-columns-preview --no-max-columns-preview --max-count -m --max-depth -d --max-filesize --mmap --no-mmap --multiline -U --no-multiline --multiline-dotall --no-multiline-dotall --no-config --no-ignore --ignore --no-ignore-dot --ignore-dot --no-ignore-exclude --ignore-exclude --no-ignore-files --ignore-files --no-ignore-global --ignore-global --no-ignore-messages --ignore-messages --no-ignore-parent --ignore-parent --no-ignore-vcs --ignore-vcs --no-messages --messages --no-require-git --require-git --no-unicode --unicode --null -0 --null-data --one-file-system --no-one-file-system --only-matching -o --path-separator --passthru --pcre2 -P --no-pcre2 --pcre2-version --pre --no-pre --pre-glob --pretty -p --quiet -q --regex-size-limit --replace -r --search-zip -z --no-search-zip --smart-case -S --sort --sortr --stats --no-stats --stop-on-nonmatch --text -a --no-text --threads -j --trace --trim --no-trim --type -t --type-not -T --type-add --type-clear --type-list --unrestricted -u --version -V --vimgrep --with-filename -H --no-filename -I --word-regexp -w --auto-hybrid-regex --no-auto-hybrid-regex --no-pcre2-unicode --pcre2-unicode --sort-files --no-sort-files";
+    const FLAGS: &str = "--regexp -e --file -f --after-context -A --before-context -B --binary --no-binary --block-buffered --no-block-buffered --byte-offset -b --no-byte-offset --case-sensitive -s --color --colors --column --no-column --context -C --context-separator --no-context-separator --count -c --count-matches --crlf --no-crlf --debug --dfa-size-limit --encoding -E --no-encoding --engine --field-context-separator --field-match-separator --files --files-with-matches -l --files-without-match --fixed-strings -F --no-fixed-strings --follow -L --no-follow --generate --glob -g --glob-case-insensitive --no-glob-case-insensitive --heading --no-heading --help -h --hidden -. --no-hidden --hostname-bin --hyperlink-format --iglob --ignore-case -i --ignore-file --ignore-file-case-insensitive --no-ignore-file-case-insensitive --include-zero --no-include-zero --invert-match -v --no-invert-match --json --no-json --line-buffered --no-line-buffered --line-number -n --no-line-number -N --line-regexp -x --max-columns -M --max-columns-preview --no-max-columns-preview --max-count -m --max-depth --maxdepth -d --max-filesize --mmap --no-mmap --multiline -U --no-multiline --multiline-dotall --no-multiline-dotall --no-config --no-ignore --ignore --no-ignore-dot --ignore-dot --no-ignore-exclude --ignore-exclude --no-ignore-files --ignore-files --no-ignore-global --ignore-global --no-ignore-messages --ignore-messages --no-ignore-parent --ignore-parent --no-ignore-vcs --ignore-vcs --no-messages --messages --no-require-git --require-git --no-unicode --unicode --null -0 --null-data --one-file-system --no-one-file-system --only-matching -o --path-separator --passthru --passthrough --pcre2 -P --no-pcre2 --pcre2-version --pre --no-pre --pre-glob --pretty -p --quiet -q --regex-size-limit --replace -r --search-zip -z --no-search-zip --smart-case -S --sort --sortr --stats --no-stats --stop-on-nonmatch --text -a --no-text --threads -j --trace --trim --no-trim --type -t --type-not -T --type-add --type-clear --type-list --unrestricted -u --version -V --vimgrep --with-filename -H --no-filename -I --word-regexp -w --auto-hybrid-regex --no-auto-hybrid-regex --no-pcre2-unicode --pcre2-unicode --sort-files --no-sort-files";
 
     match kind {
         "man" => Ok(format!(
@@ -5861,6 +5872,10 @@ mod tests {
     const DIFF_GZIP_FILES: &[(&str, &[u8])] = &[
         ("/proj/plain.txt", b"needle\n"),
         ("/proj/compressed.txt.gz", GZIP_NEEDLE),
+    ];
+    const DIFF_GZIP_EXTENSION_FILES: &[(&str, &[u8])] = &[
+        ("/proj/compressed.txt", GZIP_NEEDLE),
+        ("/proj/fake.gz", b"needle\n"),
     ];
 
     const DIFF_SYMLINK_FILES: &[(&str, &[u8])] = &[
@@ -9537,6 +9552,38 @@ mod tests {
             args: &["-z", "--no-search-zip", "needle", "proj/compressed.txt.gz"],
             stdin: None,
             files: DIFF_GZIP_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "search zip ignores gzip magic without gzip extension",
+            args: &["-z", "needle", "proj/compressed.txt"],
+            stdin: None,
+            files: DIFF_GZIP_EXTENSION_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "search zip errors on invalid gzip extension",
+            args: &["-z", "needle", "proj/fake.gz"],
+            stdin: None,
+            files: DIFF_GZIP_EXTENSION_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "print0 is not a ripgrep flag",
+            args: &["--print0", "-l", "needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "short R is not a ripgrep flag",
+            args: &["-R", "needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
             cwd: "/",
             output: RgDiffOutput::Exact,
         },
