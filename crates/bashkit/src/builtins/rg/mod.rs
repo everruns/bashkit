@@ -687,10 +687,12 @@ impl RgOptions {
                 opts.binary = false;
             } else if p.flag("--search-zip") {
                 opts.search_zip = true;
+                opts.preprocessor = None;
             } else if p.flag("--no-search-zip") {
                 opts.search_zip = false;
             } else if let Some(val) = long_value(&mut p, "--pre")? {
                 opts.preprocessor = Some(val);
+                opts.search_zip = false;
             } else if p.flag("--no-pre") {
                 opts.preprocessor = None;
             } else if let Some(val) = long_value(&mut p, "--pre-glob")? {
@@ -941,7 +943,10 @@ impl RgOptions {
                         'x' => opts.line_regexp = true,
                         'F' => opts.fixed_strings = true,
                         'a' => opts.text = true,
-                        'z' => opts.search_zip = true,
+                        'z' => {
+                            opts.search_zip = true;
+                            opts.preprocessor = None;
+                        }
                         '0' => opts.null = true,
                         '.' => opts.hidden = true,
                         'j' => {
@@ -9530,6 +9535,32 @@ mod tests {
         RgDiffCase {
             name: "no search zip disables gzip search",
             args: &["-z", "--no-search-zip", "needle", "proj/compressed.txt.gz"],
+            stdin: None,
+            files: DIFF_GZIP_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "search zip overrides earlier pre",
+            args: &[
+                "--pre=definitely-not-a-command",
+                "-z",
+                "needle",
+                "proj/compressed.txt.gz",
+            ],
+            stdin: None,
+            files: DIFF_GZIP_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "later pre overrides search zip",
+            args: &[
+                "-z",
+                "--pre=definitely-not-a-command",
+                "needle",
+                "proj/compressed.txt.gz",
+            ],
             stdin: None,
             files: DIFF_GZIP_FILES,
             cwd: "/",
