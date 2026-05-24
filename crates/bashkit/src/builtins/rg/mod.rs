@@ -4151,23 +4151,39 @@ fn write_rg_json_match(
     // collecting them into a Vec<serde_json::Value> and then serializing the
     // whole tree. Avoids an O(matches_per_line) intermediate allocation on
     // attacker-controlled lines with many matches.
-    let header = json!({
-        "type":"match",
-        "data":{
-            "path":{"text":filename},
-            "lines":{"text":line.raw},
-            "line_number":line_idx + 1,
-            "absolute_offset":line.start_offset,
-        }
+    //
+    // serde_json serializes Object keys in lexicographic order, so the outer
+    // event looks like `{"data":{...},"type":"match"}` — only one trailing `}`.
+    // Build the inner `data` object on its own, strip its trailing `}`,
+    // append `"submatches":[...]` (which sorts last alphabetically after
+    // `path`), close `data`, then close the outer envelope by hand.
+    let data = json!({
+        "path":{"text":filename},
+        "lines":{"text":line.raw},
+        "line_number":line_idx + 1,
+        "absolute_offset":line.start_offset,
     });
-    let header_str = header.to_string();
-    let Some(stripped) = header_str.strip_suffix("}}") else {
-        // Defensive fallback — preserve the old behavior on any unexpected
-        // serializer output rather than emit malformed JSON.
-        write_rg_json_event(output, header);
+    let data_str = data.to_string();
+    let Some(data_open) = data_str.strip_suffix('}') else {
+        // Defensive fallback — preserve the previous semantics if serde_json
+        // ever produces an unexpected shape.
+        write_rg_json_event(
+            output,
+            json!({
+                "type":"match",
+                "data":{
+                    "path":{"text":filename},
+                    "lines":{"text":line.raw},
+                    "line_number":line_idx + 1,
+                    "absolute_offset":line.start_offset,
+                    "submatches":[],
+                }
+            }),
+        );
         return;
     };
-    output.push_str(stripped);
+    output.push_str("{\"data\":");
+    output.push_str(data_open);
     output.push_str(",\"submatches\":[");
     let mut first = true;
     for mat in regex.find_iter(line.match_text) {
@@ -4190,7 +4206,7 @@ fn write_rg_json_match(
         }
         output.push_str(&value.to_string());
     }
-    output.push_str("]}}\n");
+    output.push_str("]},\"type\":\"match\"}\n");
 }
 
 fn write_rg_json_context(output: &mut String, filename: &str, line: RgLine<'_>, line_idx: usize) {
