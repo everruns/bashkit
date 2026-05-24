@@ -189,13 +189,16 @@ jobs:
         if: env.DOPPLER_TOKEN != ''
         uses: dopplerhq/cli-action@v4
 
+      # `--only-secrets OPENAI_API_KEY` keeps the runtime env scoped to
+      # just the key these scripts need, instead of injecting every
+      # secret in the Doppler config.
       - name: Run AI examples
         if: env.DOPPLER_TOKEN != '' && github.event_name != 'pull_request'
         working-directory: examples
         run: |
-          doppler run -- ${{ matrix.run }} openai_tool.mjs
-          doppler run -- ${{ matrix.run }} vercel_ai_tool.mjs
-          doppler run -- ${{ matrix.run }} langchain_agent.mjs
+          doppler run --only-secrets OPENAI_API_KEY -- ${{ matrix.run }} openai_tool.mjs
+          doppler run --only-secrets OPENAI_API_KEY -- ${{ matrix.run }} vercel_ai_tool.mjs
+          doppler run --only-secrets OPENAI_API_KEY -- ${{ matrix.run }} langchain_agent.mjs
 
   # Gate job for branch protection
   js-check:
