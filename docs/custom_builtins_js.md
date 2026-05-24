@@ -249,8 +249,8 @@ const bash = new Bash({
 
 ## See also
 
-- Example script: [`examples/custom_builtins.mjs`](../examples/custom_builtins.mjs) — runnable, asserts at every step, exercised in CI.
-- API reference: [`crates/bashkit-js/README.md`](../crates/bashkit-js/README.md) — option/method signatures.
+- Example script: [`examples/custom_builtins.mjs`](https://github.com/everruns/bashkit/blob/main/examples/custom_builtins.mjs) — runnable, asserts at every step, exercised in CI.
+- API reference: [`@everruns/bashkit` README](https://github.com/everruns/bashkit/blob/main/crates/bashkit-js/README.md) — option/method signatures.
 - Rust core: [`bashkit::BuiltinRegistry`](https://docs.rs/bashkit/latest/bashkit/struct.BuiltinRegistry.html), [`BashBuilder::builtin_registry`](https://docs.rs/bashkit/latest/bashkit/struct.BashBuilder.html#method.builtin_registry).
 - Design rationale: PR [#1721](https://github.com/everruns/bashkit/pull/1721).
 - Python parity: tracked in [#1724](https://github.com/everruns/bashkit/issues/1724).
