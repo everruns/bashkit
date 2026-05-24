@@ -683,6 +683,7 @@ impl RgOptions {
                 opts.text = false;
             } else if p.flag("--binary") {
                 opts.binary = true;
+                opts.text = false;
             } else if p.flag("--no-binary") {
                 opts.binary = false;
             } else if p.flag("--search-zip") {
@@ -2747,8 +2748,8 @@ async fn collect_rg_inputs(
         if !opts.stdin_consumed_for_patterns
             && let Some(stdin) = ctx.stdin
         {
-            return Ok(RgCollectedInputs::new(vec![(
-                "(stdin)".to_string(),
+            return Ok(RgCollectedInputs::new(vec![RgInput::explicit(
+                "(stdin)",
                 stdin.to_string(),
             )]));
         }
@@ -2806,7 +2807,10 @@ async fn collect_rg_inputs(
                 continue;
             }
         };
-        inputs.push((apply_path_separator_to_display(p, opts), text));
+        inputs.push(RgInput::explicit(
+            apply_path_separator_to_display(p, opts),
+            text,
+        ));
     }
     collected.inputs = inputs;
     Ok(collected)
@@ -2814,13 +2818,37 @@ async fn collect_rg_inputs(
 
 #[derive(Default)]
 struct RgCollectedInputs {
-    inputs: Vec<(String, String)>,
+    inputs: Vec<RgInput>,
     stderr: String,
     had_errors: bool,
 }
 
+struct RgInput {
+    display: String,
+    content: String,
+    explicit: bool,
+}
+
+impl RgInput {
+    fn explicit(display: impl Into<String>, content: String) -> Self {
+        Self {
+            display: display.into(),
+            content,
+            explicit: true,
+        }
+    }
+
+    fn discovered(display: impl Into<String>, content: String) -> Self {
+        Self {
+            display: display.into(),
+            content,
+            explicit: false,
+        }
+    }
+}
+
 impl RgCollectedInputs {
-    fn new(inputs: Vec<(String, String)>) -> Self {
+    fn new(inputs: Vec<RgInput>) -> Self {
         Self {
             inputs,
             ..Default::default()
@@ -3380,7 +3408,7 @@ async fn read_rg_files(
     for file in files {
         let display = display_path_for(&file.logical, cwd, root_arg, opts);
         match read_rg_text_file(fs, &file.actual, cwd, &display, opts).await {
-            Ok(text) => collected.inputs.push((display, text)),
+            Ok(text) => collected.inputs.push(RgInput::discovered(display, text)),
             Err(e) => {
                 collected.had_errors = true;
                 if opts.messages {
@@ -3396,7 +3424,7 @@ async fn try_indexed_search(
     fs: &dyn crate::fs::FileSystem,
     opts: &RgOptions,
     cwd: &Path,
-) -> Option<Vec<(String, String)>> {
+) -> Option<Vec<RgInput>> {
     if opts.invert_match
         || opts.files_without_matches
         || opts.uses_ignore_files()
@@ -3474,7 +3502,7 @@ async fn try_indexed_search(
                 continue;
             }
             if let Ok(content) = fs.read_file(&candidate).await {
-                inputs.push((
+                inputs.push(RgInput::discovered(
                     display_path_for(&candidate, cwd, root_arg.as_deref(), opts),
                     decode_rg_content(&content, opts),
                 ));
@@ -4519,7 +4547,9 @@ impl Builtin for Rg {
         let mut json_searches_with_match = 0usize;
         let mut stats = RgSearchStats::default();
 
-        for (filename, content) in &inputs {
+        for input in &inputs {
+            let filename = input.display.as_str();
+            let content = input.content.as_str();
             let mut match_count = 0usize;
             let mut count_value = 0usize;
             let mut match_lines = Vec::new();
@@ -4527,7 +4557,7 @@ impl Builtin for Rg {
             if let Some(nul_offset) = first_nul_offset(content)
                 && !opts.text
             {
-                if !opts.binary {
+                if !opts.binary && !input.explicit {
                     continue;
                 }
                 stats.bytes_searched += content.len();
@@ -5761,6 +5791,7 @@ mod tests {
         UnorderedNul,
         JsonEvents,
         Stats,
+        StatsWithoutBytesSearched,
         ContainsAll(&'static [&'static str]),
     }
 
@@ -9470,8 +9501,40 @@ mod tests {
             output: RgDiffOutput::UnorderedLines,
         },
         RgDiffCase {
+            name: "explicit binary file reports match by default",
+            args: &["needle", "proj/bin.dat"],
+            stdin: None,
+            files: DIFF_BINARY_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "explicit binary no binary still reports match",
+            args: &["--no-binary", "needle", "proj/bin.dat"],
+            stdin: None,
+            files: DIFF_BINARY_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
             name: "binary as text",
             args: &["-a", "needle", "proj/bin.dat"],
+            stdin: None,
+            files: DIFF_BINARY_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "text then binary reports binary match",
+            args: &["--text", "--binary", "needle", "proj/bin.dat"],
+            stdin: None,
+            files: DIFF_BINARY_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "binary then text searches as text",
+            args: &["--binary", "--text", "needle", "proj/bin.dat"],
             stdin: None,
             files: DIFF_BINARY_FILES,
             cwd: "/",
@@ -9484,6 +9547,42 @@ mod tests {
             files: DIFF_BINARY_FILES,
             cwd: "/",
             output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "binary count",
+            args: &["--binary", "-c", "needle", "proj/bin.dat", "proj/text.txt"],
+            stdin: None,
+            files: DIFF_BINARY_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "binary files without match",
+            args: &[
+                "--binary",
+                "--files-without-match",
+                "missing",
+                "proj/bin.dat",
+                "proj/text.txt",
+            ],
+            stdin: None,
+            files: DIFF_BINARY_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "binary stats",
+            args: &[
+                "--binary",
+                "--stats",
+                "needle",
+                "proj/bin.dat",
+                "proj/text.txt",
+            ],
+            stdin: None,
+            files: DIFF_BINARY_FILES,
+            cwd: "/",
+            output: RgDiffOutput::StatsWithoutBytesSearched,
         },
         RgDiffCase {
             name: "encoding utf16le long",
@@ -10817,6 +10916,12 @@ mod tests {
                 "stdout stats mismatch for rg differential case {}",
                 name
             ),
+            RgDiffOutput::StatsWithoutBytesSearched => assert_eq!(
+                normalize_rg_stats_without_bytes_searched(&bashkit.stdout),
+                normalize_rg_stats_without_bytes_searched(real_stdout),
+                "stdout stats mismatch for rg differential case {}",
+                name
+            ),
             RgDiffOutput::ContainsAll(needles) => {
                 assert!(
                     !bashkit.stdout.is_empty(),
@@ -10881,6 +10986,12 @@ mod tests {
             RgDiffOutput::Stats => assert_eq!(
                 normalize_rg_stats(&bashkit.stdout),
                 normalize_rg_stats(&real_stdout),
+                "stdout stats mismatch for rg symlink differential case {}",
+                case.name
+            ),
+            RgDiffOutput::StatsWithoutBytesSearched => assert_eq!(
+                normalize_rg_stats_without_bytes_searched(&bashkit.stdout),
+                normalize_rg_stats_without_bytes_searched(&real_stdout),
                 "stdout stats mismatch for rg symlink differential case {}",
                 case.name
             ),
@@ -10966,6 +11077,13 @@ mod tests {
             .filter(|line| {
                 !line.contains("seconds spent searching") && !line.contains("seconds total")
             })
+            .collect()
+    }
+
+    fn normalize_rg_stats_without_bytes_searched(output: &str) -> Vec<&str> {
+        normalize_rg_stats(output)
+            .into_iter()
+            .filter(|line| !line.ends_with(" bytes searched"))
             .collect()
     }
 
