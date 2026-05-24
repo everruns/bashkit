@@ -1240,6 +1240,13 @@ impl RgOptions {
         }
 
         opts.paths = positional;
+
+        if opts.only_matching && opts.patterns.iter().any(|pattern| pattern.is_empty()) {
+            return Err(Error::Execution(
+                "rg: empty pattern is not allowed with --only-matching".to_string(),
+            ));
+        }
+
         Ok(opts)
     }
 
@@ -11872,6 +11879,23 @@ mod tests {
         assert!(result.stdout.contains("./src/main.rs:needle"));
         assert!(!result.stdout.contains("main.txt"));
         assert!(!result.stdout.contains("vendor"));
+    }
+
+    #[test]
+    fn test_rg_only_matching_rejects_empty_pattern() {
+        let args = vec![
+            "-o".to_string(),
+            "-e".to_string(),
+            "".to_string(),
+            "/test.txt".to_string(),
+        ];
+        match RgOptions::parse(&args) {
+            Err(Error::Execution(msg)) => {
+                assert_eq!(msg, "rg: empty pattern is not allowed with --only-matching")
+            }
+            Err(other) => panic!("unexpected error: {other}"),
+            Ok(_) => panic!("expected parse error"),
+        }
     }
 
     #[tokio::test]
