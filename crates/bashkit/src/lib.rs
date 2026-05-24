@@ -1894,10 +1894,11 @@ impl BashBuilder {
     /// Attach a host-owned mutable builtin registry.
     ///
     /// Unlike [`BashBuilder::builtin`], entries in a [`BuiltinRegistry`] can
-    /// be inserted and removed after the `Bash` instance has been built, and
-    /// they survive [`Bash::reset`]. This is intended for embedders (FFI
-    /// bindings, REPLs) that want to register host callbacks at runtime
-    /// without rebuilding the interpreter.
+    /// be inserted and removed after the `Bash` instance has been built. The
+    /// registry is host-owned, so its contents survive `exec()` calls
+    /// unchanged. This is intended for embedders (FFI bindings, REPLs) that
+    /// want to register host callbacks at runtime without rebuilding the
+    /// interpreter.
     ///
     /// The registry is consulted during command dispatch after shell
     /// functions and POSIX special builtins, but before baked-in builtins —
