@@ -347,8 +347,11 @@ Custom builtins survive `reset()`. They are host-side configuration and are
 **not** preserved by `snapshot()` / `restoreSnapshot()` — pass
 `customBuiltins` again or call `addBuiltin` after restoring.
 
-Use `execute()` (async). `executeSync()` will deadlock if the script invokes
-a custom builtin — same caveat as `ScriptedTool.executeSync()`.
+Use `execute()` (async). If the script invokes a custom builtin under
+`executeSync()` the builtin fails fast with exit code 1 and stderr
+`"<name>: custom builtins require execute() (async). ..."` instead of
+deadlocking — the JS event loop is blocked while the synchronous call is
+in flight, so the underlying `Promise<string>` callback could never run.
 
 ## Snapshot / Restore
 
