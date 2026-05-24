@@ -4147,39 +4147,50 @@ fn write_rg_json_match(
     regex: &RgMatcher,
     replacement: Option<&str>,
 ) {
-    let submatches: Vec<_> = regex
-        .find_iter(line.match_text)
-        .into_iter()
-        .map(|mat| {
-            let mut value = json!({
-                "match":{"text":mat.as_str()},
-                "start":mat.start(),
-                "end":mat.end()
-            });
-            if let Some(replacement) = replacement
-                && let Some(obj) = value.as_object_mut()
-            {
-                obj.insert(
-                    "replacement".to_string(),
-                    json!({"text":regex.replace_first(mat.as_str(), replacement)}),
-                );
-            }
-            value
-        })
-        .collect();
-    write_rg_json_event(
-        output,
-        json!({
-            "type":"match",
-            "data":{
-                "path":{"text":filename},
-                "lines":{"text":line.raw},
-                "line_number":line_idx + 1,
-                "absolute_offset":line.start_offset,
-                "submatches":submatches,
-            }
-        }),
-    );
+    // Stream submatches straight into the JSON output buffer instead of first
+    // collecting them into a Vec<serde_json::Value> and then serializing the
+    // whole tree. Avoids an O(matches_per_line) intermediate allocation on
+    // attacker-controlled lines with many matches.
+    let header = json!({
+        "type":"match",
+        "data":{
+            "path":{"text":filename},
+            "lines":{"text":line.raw},
+            "line_number":line_idx + 1,
+            "absolute_offset":line.start_offset,
+        }
+    });
+    let header_str = header.to_string();
+    let Some(stripped) = header_str.strip_suffix("}}") else {
+        // Defensive fallback — preserve the old behavior on any unexpected
+        // serializer output rather than emit malformed JSON.
+        write_rg_json_event(output, header);
+        return;
+    };
+    output.push_str(stripped);
+    output.push_str(",\"submatches\":[");
+    let mut first = true;
+    for mat in regex.find_iter(line.match_text) {
+        if !first {
+            output.push(',');
+        }
+        first = false;
+        let mut value = json!({
+            "match":{"text":mat.as_str()},
+            "start":mat.start(),
+            "end":mat.end()
+        });
+        if let Some(replacement) = replacement
+            && let Some(obj) = value.as_object_mut()
+        {
+            obj.insert(
+                "replacement".to_string(),
+                json!({"text":regex.replace_first(mat.as_str(), replacement)}),
+            );
+        }
+        output.push_str(&value.to_string());
+    }
+    output.push_str("]}}\n");
 }
 
 fn write_rg_json_context(output: &mut String, filename: &str, line: RgLine<'_>, line_idx: usize) {
