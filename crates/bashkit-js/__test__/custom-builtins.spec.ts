@@ -269,3 +269,66 @@ test("addBuiltin replaces an existing custom builtin", async (t) => {
   bash.addBuiltin("tag", () => "v2\n");
   t.is((await bash.execute("tag")).stdout, "v2\n");
 });
+
+// ----------------------------------------------------------------------------
+// executeSync + custom builtin: fail fast instead of deadlocking
+// ----------------------------------------------------------------------------
+
+test("executeSync with custom builtin returns error instead of deadlocking", (t) => {
+  let invoked = false;
+  const bash = new Bash({
+    customBuiltins: {
+      mybuiltin: () => {
+        invoked = true;
+        return "should-not-run\n";
+      },
+    },
+  });
+  const result = bash.executeSync("mybuiltin");
+  t.is(result.exitCode, 1);
+  t.false(invoked, "JS callback must not run when the loop is blocked");
+  t.regex(result.stderr, /mybuiltin: custom builtins require execute\(\) \(async\)/);
+});
+
+test("executeSync with addBuiltin custom builtin returns error", (t) => {
+  let invoked = false;
+  const bash = new Bash();
+  bash.addBuiltin("dyn", () => {
+    invoked = true;
+    return "should-not-run\n";
+  });
+  const result = bash.executeSync("dyn");
+  t.is(result.exitCode, 1);
+  t.false(invoked);
+  t.regex(result.stderr, /dyn: custom builtins require execute\(\) \(async\)/);
+});
+
+test("BashTool executeSync with custom builtin returns error", (t) => {
+  let invoked = false;
+  const tool = new BashTool({
+    customBuiltins: {
+      mybuiltin: () => {
+        invoked = true;
+        return "should-not-run\n";
+      },
+    },
+  });
+  const result = tool.executeSync("mybuiltin");
+  t.is(result.exitCode, 1);
+  t.false(invoked);
+  t.regex(result.stderr, /mybuiltin: custom builtins require execute\(\) \(async\)/);
+});
+
+test("async execute() still works after a guardrail-rejected executeSync", async (t) => {
+  const bash = new Bash({
+    customBuiltins: {
+      mybuiltin: () => "via-async\n",
+    },
+  });
+  const sync = bash.executeSync("mybuiltin");
+  t.is(sync.exitCode, 1);
+
+  const result = await bash.execute("mybuiltin");
+  t.is(result.exitCode, 0);
+  t.is(result.stdout, "via-async\n");
+});

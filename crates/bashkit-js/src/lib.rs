@@ -68,6 +68,14 @@ fn callback_semaphore() -> &'static tokio::sync::Semaphore {
 // sync paths fail with a JS error instead of deadlocking or panicking.
 const ON_OUTPUT_REENTRY_ERROR: &str = "onOutput cannot re-enter the same Bash instance; use collected output or another Bash instance for live access";
 
+// Decision: surface the executeSync+custom-builtin deadlock as a normal script
+// error instead of a silent hang. executeSync blocks the JS event loop via
+// block_on, but a JsCustomBuiltinAdapter dispatches its callback over a
+// threadsafe function that requires the loop to be free — the call would never
+// resolve. Detect that case and fail the builtin with exit 1 + a clear message
+// so the user sees a real error and can migrate to async execute().
+const SYNC_BUILTIN_DEADLOCK_ERROR: &str = "custom builtins require execute() (async). executeSync() would deadlock because the JS event loop is blocked while the synchronous call is in flight";
+
 struct OnOutputReentryScope {
     depth: Arc<AtomicUsize>,
 }
@@ -90,6 +98,23 @@ fn reject_on_output_reentry(state: &Arc<SharedState>) -> napi::Result<()> {
         return Err(napi::Error::from_reason(ON_OUTPUT_REENTRY_ERROR));
     }
     Ok(())
+}
+
+struct SyncExecuteScope {
+    depth: Arc<AtomicUsize>,
+}
+
+impl SyncExecuteScope {
+    fn enter(depth: Arc<AtomicUsize>) -> Self {
+        depth.fetch_add(1, Ordering::SeqCst);
+        Self { depth }
+    }
+}
+
+impl Drop for SyncExecuteScope {
+    fn drop(&mut self) {
+        self.depth.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 // ============================================================================
@@ -1051,6 +1076,11 @@ struct SharedState {
     rt: Mutex<tokio::runtime::Runtime>,
     cancelled: std::sync::Mutex<Arc<AtomicBool>>,
     on_output_reentry_depth: Arc<AtomicUsize>,
+    /// Tracks whether the JS event loop is currently blocked inside an
+    /// `executeSync` call. Custom builtins dispatched through a threadsafe
+    /// function check this and fail closed instead of deadlocking on a
+    /// callback the loop can never service. See [`SYNC_BUILTIN_DEADLOCK_ERROR`].
+    in_sync_execute_depth: Arc<AtomicUsize>,
     username: Option<String>,
     hostname: Option<String>,
     max_commands: Option<u32>,
@@ -1180,6 +1210,7 @@ impl Bash {
         commands: String,
         on_output: Option<napi::bindgen_prelude::Function<'_, (String, String), Option<String>>>,
     ) -> napi::Result<ExecResult> {
+        let _sync_scope = SyncExecuteScope::enter(self.state.in_sync_execute_depth.clone());
         let env_raw = on_output
             .as_ref()
             .map(|on_output| on_output.value().env as usize);
@@ -1318,6 +1349,7 @@ impl Bash {
             Arc::new(JsCustomBuiltinAdapter {
                 name,
                 callback: Arc::new(tsfn),
+                in_sync_execute_depth: self.state.in_sync_execute_depth.clone(),
             }),
         );
         Ok(())
@@ -1677,6 +1709,7 @@ impl BashTool {
         commands: String,
         on_output: Option<napi::bindgen_prelude::Function<'_, (String, String), Option<String>>>,
     ) -> napi::Result<ExecResult> {
+        let _sync_scope = SyncExecuteScope::enter(self.state.in_sync_execute_depth.clone());
         let env_raw = on_output
             .as_ref()
             .map(|on_output| on_output.value().env as usize);
@@ -1802,6 +1835,7 @@ impl BashTool {
             Arc::new(JsCustomBuiltinAdapter {
                 name,
                 callback: Arc::new(tsfn),
+                in_sync_execute_depth: self.state.in_sync_execute_depth.clone(),
             }),
         );
         Ok(())
@@ -2207,11 +2241,23 @@ type BuiltinTsfn = napi::threadsafe_function::ThreadsafeFunction<
 struct JsCustomBuiltinAdapter {
     name: String,
     callback: Arc<BuiltinTsfn>,
+    /// Shared depth counter incremented by the binding's `executeSync` entry
+    /// points. When non-zero the JS event loop is blocked, so dispatching the
+    /// TSFN callback would never resolve. We surface a real error in that case
+    /// instead of hanging.
+    in_sync_execute_depth: Arc<AtomicUsize>,
 }
 
 #[async_trait]
 impl Builtin for JsCustomBuiltinAdapter {
     async fn execute(&self, ctx: BuiltinContext<'_>) -> bashkit::Result<RustExecResult> {
+        if self.in_sync_execute_depth.load(Ordering::SeqCst) > 0 {
+            return Ok(RustExecResult::err(
+                format!("{}: {}\n", self.name, SYNC_BUILTIN_DEADLOCK_ERROR),
+                1,
+            ));
+        }
+
         let request = serde_json::json!({
             "name": self.name,
             "argv": ctx.args,
@@ -2666,6 +2712,7 @@ fn shared_state_from_opts(
         ),
         cancelled: std::sync::Mutex::new(Arc::new(AtomicBool::new(false))),
         on_output_reentry_depth: Arc::new(AtomicUsize::new(0)),
+        in_sync_execute_depth: Arc::new(AtomicUsize::new(0)),
         username: opts.username.clone(),
         hostname: opts.hostname.clone(),
         max_commands: opts.max_commands,
@@ -2713,6 +2760,7 @@ fn shared_state_from_opts(
         rt: Mutex::new(rt),
         cancelled: std::sync::Mutex::new(cancelled),
         on_output_reentry_depth: tmp.on_output_reentry_depth,
+        in_sync_execute_depth: tmp.in_sync_execute_depth,
         username: opts.username,
         hostname: opts.hostname,
         max_commands: opts.max_commands,
