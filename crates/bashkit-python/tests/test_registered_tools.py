@@ -324,3 +324,80 @@ def test_custom_builtins_support_subcommands(factory):
     assert get_result.stdout.strip() == "shipped"
     assert list_result.exit_code == 0
     assert list_result.stdout.splitlines() == ["42", "7"]
+
+
+# ---------------------------------------------------------------------------
+# Runtime add_builtin / remove_builtin — host-owned BuiltinRegistry parity
+# with the JS bindings. The interpreter (and VFS) are preserved.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
+def test_add_builtin_after_execute_preserves_vfs(factory):
+    shell = factory()
+    shell.execute_sync("mkdir -p /scratch && printf 'seed\\n' > /scratch/seed.txt")
+
+    shell.add_builtin("double", lambda ctx: f"{int(ctx.argv[0]) * 2}\n")
+
+    new_call = shell.execute_sync("double 21")
+    assert new_call.exit_code == 0
+    assert new_call.stdout == "42\n"
+
+    survived = shell.execute_sync("cat /scratch/seed.txt")
+    assert survived.exit_code == 0
+    assert survived.stdout == "seed\n"
+
+
+@pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
+def test_remove_builtin_makes_command_unavailable(factory):
+    shell = factory()
+    shell.add_builtin("tmp", lambda ctx: "ok\n")
+    assert shell.execute_sync("tmp").stdout == "ok\n"
+
+    shell.remove_builtin("tmp")
+    result = shell.execute_sync("tmp")
+    assert result.exit_code == 127
+
+
+@pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
+def test_add_builtin_replaces_existing_entry(factory):
+    shell = factory(custom_builtins={"tag": lambda ctx: "v1\n"})
+    assert shell.execute_sync("tag").stdout == "v1\n"
+
+    shell.add_builtin("tag", lambda ctx: "v2\n")
+    assert shell.execute_sync("tag").stdout == "v2\n"
+
+
+@pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
+def test_add_builtin_entries_survive_reset(factory):
+    shell = factory()
+    shell.add_builtin("ping", lambda ctx: "pong\n")
+    shell.reset()
+    assert shell.execute_sync("ping").stdout == "pong\n"
+
+
+@pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
+def test_add_builtin_supports_async_callback(factory):
+    async def slow(ctx):
+        await asyncio.sleep(0)
+        return f"async-{ctx.argv[0]}\n"
+
+    shell = factory()
+    shell.add_builtin("slow", slow)
+    result = shell.execute_sync("slow 5")
+    assert result.exit_code == 0
+    assert result.stdout == "async-5\n"
+
+
+@pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
+def test_remove_builtin_is_noop_when_missing(factory):
+    shell = factory()
+    # Should not raise even though no builtin with this name was ever added.
+    shell.remove_builtin("never-registered")
+
+
+@pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
+def test_add_builtin_rejects_non_callable(factory):
+    shell = factory()
+    with pytest.raises((TypeError, ValueError)):
+        shell.add_builtin("bad", 42)
