@@ -203,13 +203,16 @@ jobs:
         if: env.DOPPLER_TOKEN != ''
         uses: dopplerhq/cli-action@v4
 
+      # `--only-secrets OPENAI_API_KEY` keeps the runtime env scoped to
+      # just the key these scripts need, instead of injecting every
+      # secret in the Doppler config.
       - name: Run AI examples
         if: env.DOPPLER_TOKEN != ''
         shell: bash
         run: |
-          doppler run -- node examples/openai_tool.mjs
-          doppler run -- node examples/vercel_ai_tool.mjs
-          doppler run -- node examples/langchain_agent.mjs
+          doppler run --only-secrets OPENAI_API_KEY -- node examples/openai_tool.mjs
+          doppler run --only-secrets OPENAI_API_KEY -- node examples/vercel_ai_tool.mjs
+          doppler run --only-secrets OPENAI_API_KEY -- node examples/langchain_agent.mjs
 
   # ============================================================================
   # Test bindings on Linux
