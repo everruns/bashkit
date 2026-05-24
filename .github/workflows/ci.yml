@@ -202,20 +202,22 @@ jobs:
             echo "DOPPLER_AVAILABLE=true" >> "$GITHUB_ENV"
           fi
 
-      # External API dependency — don't block CI on Anthropic outages.
-      # Fork-PR guard: secret only injected on non-fork events.
-      - name: Run LLM agent example
-        if: github.event.pull_request.head.repo.fork != true
-        continue-on-error: true
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: cargo run --example agent_tool --features http_client
-
       - name: Install Doppler CLI
         if: env.DOPPLER_AVAILABLE == 'true'
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
         uses: dopplerhq/cli-action@v4
+
+      # External API dependency — don't block CI on Anthropic outages.
+      # ANTHROPIC_API_KEY is sourced from Doppler (single source of truth
+      # for non-GitHub secrets), so this step also requires Doppler to be
+      # available, which already implies a non-fork event.
+      - name: Run LLM agent example
+        if: env.DOPPLER_AVAILABLE == 'true'
+        continue-on-error: true
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+        run: doppler run -- cargo run --example agent_tool --features http_client
 
       - name: Run harness OpenAI joke example
         if: env.DOPPLER_AVAILABLE == 'true'
