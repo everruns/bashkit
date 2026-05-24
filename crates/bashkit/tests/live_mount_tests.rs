@@ -154,3 +154,17 @@ async fn live_mount_replace() {
     let result = bash.exec("cat /app/version").await.unwrap();
     assert_eq!(result.stdout, "v2");
 }
+
+#[tokio::test]
+async fn live_mount_is_readonly_when_builder_enables_readonly_filesystem() {
+    let mut bash = Bash::builder().readonly_filesystem(true).build();
+
+    let data_fs = Arc::new(InMemoryFs::new());
+    bash.mount("/mnt/data", data_fs).unwrap();
+
+    let result = bash
+        .exec("echo blocked > /mnt/data/new.txt 2>&1")
+        .await
+        .unwrap();
+    assert_ne!(result.exit_code, 0);
+}

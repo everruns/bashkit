@@ -554,6 +554,8 @@ pub struct Bash {
     fs: Arc<dyn FileSystem>,
     /// Outermost MountableFs layer for live mount/unmount after build.
     mountable: Arc<MountableFs>,
+    /// Whether runtime mounts are forced read-only.
+    readonly_filesystem: bool,
     interpreter: Interpreter,
     /// Parser timeout (stored separately for use before interpreter runs)
     parser_timeout: std::time::Duration,
@@ -594,6 +596,7 @@ impl Bash {
         Self {
             fs,
             mountable,
+            readonly_filesystem: false,
             interpreter,
             parser_timeout,
             max_input_bytes,
@@ -1033,6 +1036,11 @@ impl Bash {
         vfs_path: impl AsRef<std::path::Path>,
         fs: Arc<dyn FileSystem>,
     ) -> Result<()> {
+        let fs: Arc<dyn FileSystem> = if self.readonly_filesystem {
+            Arc::new(ReadOnlyFs::new(fs))
+        } else {
+            fs
+        };
         self.mountable.mount(vfs_path, fs)
     }
 
@@ -2490,6 +2498,7 @@ impl BashBuilder {
         let mut result = Self::build_with_fs(
             fs,
             mountable,
+            self.readonly_filesystem,
             self.env,
             self.username,
             self.hostname,
@@ -2732,6 +2741,7 @@ impl BashBuilder {
     fn build_with_fs(
         fs: Arc<dyn FileSystem>,
         mountable: Arc<MountableFs>,
+        readonly_filesystem: bool,
         env: HashMap<String, String>,
         username: Option<String>,
         hostname: Option<String>,
@@ -2851,6 +2861,7 @@ impl BashBuilder {
         Bash {
             fs,
             mountable,
+            readonly_filesystem,
             interpreter,
             parser_timeout,
             max_input_bytes,
