@@ -80,6 +80,7 @@ struct RgOptions {
     null: bool,
     null_data: bool,
     stop_on_nonmatch: bool,
+    sort: RgSort,
     sort_reverse: bool,
     path_separator: String,
     encoding: RgEncoding,
@@ -130,6 +131,15 @@ enum RgColorMode {
     Auto,
     Never,
     Always,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RgSort {
+    Path,
+    Modified,
+    Accessed,
+    Created,
+    None,
 }
 
 #[derive(Clone)]
@@ -484,6 +494,7 @@ impl RgOptions {
             null: false,
             null_data: false,
             stop_on_nonmatch: false,
+            sort: RgSort::Path,
             sort_reverse: false,
             path_separator: "/".to_string(),
             encoding: RgEncoding::Auto,
@@ -760,10 +771,10 @@ impl RgOptions {
             } else if p.flag_any(&["--sort-files", "--no-sort-files"]) {
                 // no-op: bashkit's recursive walker already sorts paths.
             } else if let Some(val) = long_value(&mut p, "--sort")? {
-                parse_sort_value(&val, "--sort")?;
+                opts.sort = parse_sort_value(&val, "--sort")?;
                 opts.sort_reverse = false;
             } else if let Some(val) = long_value(&mut p, "--sortr")? {
-                parse_sort_value(&val, "--sortr")?;
+                opts.sort = parse_sort_value(&val, "--sortr")?;
                 opts.sort_reverse = true;
             } else if let Some(val) = long_value(&mut p, "--path-separator")? {
                 opts.path_separator = parse_path_separator(&val)?;
@@ -2368,9 +2379,13 @@ fn parse_path_separator(value: &str) -> Result<String> {
     }
 }
 
-fn parse_sort_value(value: &str, flag: &str) -> Result<()> {
+fn parse_sort_value(value: &str, flag: &str) -> Result<RgSort> {
     match value {
-        "path" | "modified" | "accessed" | "created" | "none" => Ok(()),
+        "path" => Ok(RgSort::Path),
+        "modified" => Ok(RgSort::Modified),
+        "accessed" => Ok(RgSort::Accessed),
+        "created" => Ok(RgSort::Created),
+        "none" => Ok(RgSort::None),
         _ => Err(Error::Execution(format!(
             "rg: error parsing flag {flag}: choice '{value}' is unrecognized"
         ))),
@@ -3068,6 +3083,7 @@ struct RgSearchRoot {
 struct RgFileCandidate {
     logical: PathBuf,
     actual: PathBuf,
+    metadata: crate::fs::Metadata,
 }
 
 struct RgWalkItem {
@@ -3184,6 +3200,7 @@ async fn collect_rg_files_recursive(
                     result.push(RgFileCandidate {
                         logical: path,
                         actual: entry_actual_path,
+                        metadata: entry_metadata,
                     });
                 }
             }
@@ -3196,15 +3213,41 @@ async fn collect_rg_files_recursive(
             result.push(RgFileCandidate {
                 logical: item.logical,
                 actual: item.actual,
+                metadata: meta,
             });
         }
     }
 
-    result.sort_by(|a, b| a.logical.cmp(&b.logical));
-    if opts.sort_reverse {
-        result.reverse();
-    }
+    sort_rg_candidates(&mut result, opts);
     result
+}
+
+fn sort_rg_candidates(files: &mut [RgFileCandidate], opts: &RgOptions) {
+    match opts.sort {
+        RgSort::Path => files.sort_by(|a, b| a.logical.cmp(&b.logical)),
+        // The VFS metadata contract does not expose atime, so --sort accessed
+        // uses mtime until the filesystem layer grows access timestamps.
+        RgSort::Modified | RgSort::Accessed => {
+            files.sort_by(|a, b| {
+                a.metadata
+                    .modified
+                    .cmp(&b.metadata.modified)
+                    .then_with(|| a.logical.cmp(&b.logical))
+            });
+        }
+        RgSort::Created => {
+            files.sort_by(|a, b| {
+                a.metadata
+                    .created
+                    .cmp(&b.metadata.created)
+                    .then_with(|| a.logical.cmp(&b.logical))
+            });
+        }
+        RgSort::None => {}
+    }
+    if opts.sort_reverse && opts.sort != RgSort::None {
+        files.reverse();
+    }
 }
 
 fn is_hidden_name(name: &str) -> bool {
@@ -3305,6 +3348,7 @@ async fn try_indexed_search(
         || opts.search_zip
         || opts.preprocessor.is_some()
         || (!opts.unicode && !opts.fixed_strings)
+        || opts.sort != RgSort::Path
     {
         return None;
     }
@@ -4120,6 +4164,10 @@ fn rg_generate_output(kind: &str, help_text: &str) -> Result<String> {
 impl Builtin for Rg {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         let help_text = "Usage: rg [OPTIONS] PATTERN [PATH...]\nRecursively search for a pattern.\n\n  -i, --ignore-case\tcase insensitive\n  -S, --smart-case\tcase insensitive if pattern is lowercase\n  -s, --case-sensitive\tcase sensitive\n  -n, --line-number\tshow line numbers\n  -N, --no-line-number\tsuppress line numbers\n  --column\tshow column numbers\n  -b, --byte-offset\tshow byte offsets\n  --vimgrep\tshow file:line:column:match lines\n  --json\tshow JSON Lines events\n  --stats\tshow search statistics\n  --null\tterminate path fields with NUL\n  -c, --count\tcount matching lines\n  --count-matches\tcount individual matches\n  --include-zero\tinclude zero counts\n  -l, --files-with-matches\tfiles with matches\n  --files-without-match\tfiles without matches\n  --files\tprint files that would be searched\n  -v, --invert-match\tinvert match\n  -w, --word-regexp\tword boundary\n  -x, --line-regexp\tmatch whole lines\n  -F, --fixed-strings\tfixed strings (literal)\n  -a, --text\tsearch binary files as text\n  --binary\tsearch binary files and print binary-match summaries\n  -z, --search-zip\tsearch gzip-compressed files\n  --no-search-zip\tdisable compressed file search\n  --pre COMMAND\trun a preprocessor before searching (cat/empty supported)\n  --pre-glob GLOB\tlimit preprocessor paths by glob\n  --no-pre\tdisable preprocessing\n  --crlf\ttreat CRLF as line terminators for $ anchors\n  --no-crlf\tdisable CRLF line terminator mode\n  -U, --multiline\tenable matching across line boundaries\n  --no-multiline\tdisable multiline matching\n  --multiline-dotall\tmake . match line terminators in multiline mode\n  --no-multiline-dotall\tdisable multiline dotall mode\n  -o, --only-matching\tshow only matching text\n  -q, --quiet\tsuppress output; exit status only\n  -e, --regexp PATTERN\tuse PATTERN for matching\n  -f, --file PATTERNFILE\tread patterns from file\n  -E, --encoding ENCODING\tdecode searched files using ENCODING\n  -r, --replace REPLACEMENT\treplace matches in output\n  --passthru\tprint matching and non-matching lines\n  --trim\ttrim whitespace from output lines\n  -m, --max-count NUM\tmax count per file\n  -M, --max-columns NUM\tomit lines longer than NUM columns\n  --max-columns-preview\tshow prefixes of long lines\n  -j, --threads NUM\tset number of search threads (no-op)\n  --regex-size-limit NUM\tset regex size limit (no-op)\n  --dfa-size-limit NUM\tset DFA size limit (no-op)\n  --max-depth NUM\tlimit recursive directory depth\n  -A, --after-context NUM\tshow trailing context\n  -B, --before-context NUM\tshow leading context\n  -C, --context NUM\tshow leading and trailing context\n  --context-separator SEP\tset context group separator\n  --field-match-separator SEP\tset match field separator\n  --field-context-separator SEP\tset context field separator\n  -p, --pretty\talias for heading plus line numbers\n  --heading\tgroup matches by file\n  --no-heading\tdisable heading output\n  --sort SORTBY\tsort paths (path only)\n  --sortr SORTBY\tsort paths in reverse (path only)\n  --sort-files\tsort --files output\n  --path-separator SEP\tset displayed path separator\n  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  -t, --type TYPE\tinclude files matching TYPE\n  -T, --type-not TYPE\texclude files matching TYPE\n  --type-add TYPE:GLOB\tadd a file type glob\n  --type-clear TYPE\tclear a file type definition\n  --type-list\tshow file type definitions\n  --ignore-file FILE\tuse additional ignore file\n  --no-ignore\tdo not use ignore files\n  --no-ignore-dot\tdo not use .ignore files\n  --no-ignore-vcs\tdo not use .gitignore files\n  --no-require-git\tuse .gitignore outside git repositories\n  --require-git\trequire a git repository for .gitignore files\n  -u, --unrestricted\treduce filtering (repeatable)\n  --messages\tshow file read diagnostics\n  --no-messages\tsuppress file read diagnostics\n  --hidden\tsearch hidden files and directories\n  --no-hidden\tdo not search hidden files and directories\n  -H, --with-filename\tshow filename\n  -I, --no-filename\tsuppress filename\n  --line-buffered\tforce line buffering (no-op)\n  --block-buffered\tforce block buffering (no-op)\n  --no-config\tdo not read config files (no-op)\n  --mmap\tsearch using memory maps when possible (no-op)\n  --no-mmap\tdisable memory maps (no-op)\n  -P, --pcre2\tuse PCRE2-compatible regex engine\n  --no-pcre2\tdisable PCRE2-compatible regex engine\n  --pcre2-version\tshow PCRE2 version information\n  --unicode\tenable Unicode regex mode\n  --no-unicode\tdisable Unicode regex mode\n  --pcre2-unicode\tenable PCRE2 Unicode mode (no-op)\n  --no-pcre2-unicode\tdisable PCRE2 Unicode mode (no-op)\n  --engine ENGINE\tselect regex engine: default, auto, pcre2\n  --auto-hybrid-regex\tuse PCRE2-compatible regex when needed\n  --no-auto-hybrid-regex\tdisable auto hybrid regex\n  --color MODE\tcolor output: never, auto, always, ansi\n  --colors SPEC\tconfigure color styles\n  -h, --help\tdisplay this help and exit\n  -V, --version\toutput version information and exit\n";
+        let help_text = help_text.replace(
+            "  --sort SORTBY\tsort paths (path only)\n  --sortr SORTBY\tsort paths in reverse (path only)\n",
+            "  --sort SORTBY\tsort paths: path, modified, accessed, created, none\n  --sortr SORTBY\tsort paths in reverse\n",
+        );
         let help_text = help_text.replace(
             "  --max-depth NUM\tlimit recursive directory depth\n",
             "  -d, --max-depth NUM\tlimit recursive directory depth\n  --maxdepth NUM\talias for --max-depth\n",
@@ -5237,6 +5285,34 @@ mod tests {
         run_rg_with_fs_and_cwd_and_env(args, stdin, fs, cwd, env).await
     }
 
+    async fn run_rg_with_cwd_and_mtimes(
+        args: &[&str],
+        files: &[(&str, &[u8])],
+        mtimes: &[(&str, u64)],
+        cwd: &str,
+    ) -> ExecResult {
+        let fs = Arc::new(InMemoryFs::new());
+        let fs_trait: &dyn FileSystem = &*fs;
+        for (path, content) in files {
+            let p = Path::new(path);
+            if let Some(parent) = p.parent()
+                && parent != Path::new("/")
+            {
+                let _ = fs_trait.mkdir(parent, true).await;
+            }
+            fs_trait.write_file(p, content).await.unwrap();
+        }
+        for (path, secs) in mtimes {
+            let time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(*secs);
+            fs_trait
+                .set_modified_time(Path::new(path), time)
+                .await
+                .unwrap();
+        }
+
+        run_rg_with_fs_and_cwd(args, None, fs, cwd).await
+    }
+
     async fn run_rg_with_fs<F>(args: &[&str], stdin: Option<&str>, fs: Arc<F>) -> ExecResult
     where
         F: FileSystem + 'static,
@@ -5312,6 +5388,15 @@ mod tests {
         output: RgDiffOutput,
     }
 
+    struct RgTimedDiffCase {
+        name: &'static str,
+        args: &'static [&'static str],
+        files: &'static [(&'static str, &'static [u8])],
+        mtimes: &'static [(&'static str, u64)],
+        cwd: &'static str,
+        output: RgDiffOutput,
+    }
+
     struct RgSymlinkDiffCase {
         name: &'static str,
         args: &'static [&'static str],
@@ -5377,6 +5462,18 @@ mod tests {
 
     const DIFF_SORT_FILES: &[(&str, &[u8])] =
         &[("/proj/a.txt", b"needle\n"), ("/proj/b.txt", b"needle\n")];
+
+    const DIFF_TIMED_SORT_FILES: &[(&str, &[u8])] = &[
+        ("/proj/middle.txt", b"needle\n"),
+        ("/proj/new.txt", b"needle\n"),
+        ("/proj/old.txt", b"needle\n"),
+    ];
+
+    const DIFF_TIMED_SORT_MTIMES: &[(&str, u64)] = &[
+        ("/proj/old.txt", 1_700_000_000),
+        ("/proj/middle.txt", 1_700_000_100),
+        ("/proj/new.txt", 1_700_000_200),
+    ];
 
     const DIFF_GLOB_CASE_FILES: &[(&str, &[u8])] = &[
         ("/proj/Foo.RS", b"needle\n"),
@@ -9566,6 +9663,25 @@ mod tests {
         },
     ];
 
+    const RG_TIMED_DIFF_CASES: &[RgTimedDiffCase] = &[
+        RgTimedDiffCase {
+            name: "sort modified",
+            args: &["--sort", "modified", "needle", "proj"],
+            files: DIFF_TIMED_SORT_FILES,
+            mtimes: DIFF_TIMED_SORT_MTIMES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgTimedDiffCase {
+            name: "reverse sort modified",
+            args: &["--sortr", "modified", "needle", "proj"],
+            files: DIFF_TIMED_SORT_FILES,
+            mtimes: DIFF_TIMED_SORT_MTIMES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+    ];
+
     const RG_ENV_DIFF_CASES: &[RgEnvDiffCase] = &[
         RgEnvDiffCase {
             name: "default global git ignore file applies in git repo",
@@ -9673,6 +9789,57 @@ mod tests {
         } else {
             command.output().expect("run real rg differential test")
         };
+
+        let stdout = normalize_real_rg_temp_paths(&output.stdout, &tempdir);
+        (stdout, output.status.code().unwrap_or(-1))
+    }
+
+    fn run_real_rg_timed(case: &RgTimedDiffCase) -> (String, i32) {
+        use std::process::Command;
+
+        require_real_rg();
+
+        let tempdir = tempfile::tempdir().expect("tempdir for timed rg differential test");
+        for (path, content) in case.files {
+            let host_path = tempdir.path().join(path.trim_start_matches('/'));
+            if let Some(parent) = host_path.parent() {
+                std::fs::create_dir_all(parent).expect("create parent dir for timed rg fixture");
+            }
+            std::fs::write(host_path, content).expect("write timed rg fixture file");
+        }
+        for (path, secs) in case.mtimes {
+            let host_path = tempdir.path().join(path.trim_start_matches('/'));
+            let time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(*secs);
+            std::fs::File::open(host_path)
+                .expect("open timed rg fixture file")
+                .set_modified(time)
+                .expect("set timed rg fixture mtime");
+        }
+
+        let host_cwd = tempdir.path().join(case.cwd.trim_start_matches('/'));
+        let mapped_args: Vec<String> = case
+            .args
+            .iter()
+            .map(|arg| {
+                if arg.starts_with('/') {
+                    tempdir
+                        .path()
+                        .join(arg.trim_start_matches('/'))
+                        .to_string_lossy()
+                        .into_owned()
+                } else {
+                    (*arg).to_string()
+                }
+            })
+            .collect();
+
+        let output = Command::new("rg")
+            .args(["--threads", "1"])
+            .args(&mapped_args)
+            .current_dir(host_cwd)
+            .env("LC_ALL", "C")
+            .output()
+            .expect("run real timed rg differential test");
 
         let stdout = normalize_real_rg_temp_paths(&output.stdout, &tempdir);
         (stdout, output.status.code().unwrap_or(-1))
@@ -9812,6 +9979,13 @@ mod tests {
     async fn assert_rg_diff_case(case: &RgDiffCase) {
         let (real_stdout, real_code) = run_real_rg(case);
         let bashkit = run_rg_with_cwd(case.args, case.stdin, case.files, case.cwd).await;
+        assert_rg_outputs_match(case.name, case.output, &bashkit, &real_stdout, real_code);
+    }
+
+    async fn assert_rg_timed_diff_case(case: &RgTimedDiffCase) {
+        let (real_stdout, real_code) = run_real_rg_timed(case);
+        let bashkit =
+            run_rg_with_cwd_and_mtimes(case.args, case.files, case.mtimes, case.cwd).await;
         assert_rg_outputs_match(case.name, case.output, &bashkit, &real_stdout, real_code);
     }
 
@@ -11148,6 +11322,9 @@ mod tests {
     async fn diff_rg_matches_real_rg_cases() {
         for case in RG_DIFF_CASES {
             assert_rg_diff_case(case).await;
+        }
+        for case in RG_TIMED_DIFF_CASES {
+            assert_rg_timed_diff_case(case).await;
         }
         for case in RG_ENV_DIFF_CASES {
             assert_rg_env_diff_case(case).await;
