@@ -3884,6 +3884,81 @@ fn format_rg_output_line(
     }
 }
 
+fn format_rg_match_text(text: &str, regex: &RgMatcher, opts: &RgOptions) -> String {
+    if let Some(replacement) = &opts.replacement {
+        regex.replace_first(text, replacement.as_str())
+    } else {
+        color_matches(text, regex, opts)
+    }
+}
+
+fn rg_multiline_match_segments(
+    mat: RgMultilineMatch<'_>,
+    regex: &RgMatcher,
+    opts: &RgOptions,
+) -> Vec<String> {
+    let display = format_rg_match_text(mat.text, regex, opts);
+    if display.is_empty() {
+        Vec::new()
+    } else {
+        display
+            .split('\n')
+            .map(|segment| segment.to_string())
+            .collect()
+    }
+}
+
+struct RgMultilineMatchPrefix<'a> {
+    filename: &'a str,
+    show_filename: bool,
+    line_numbers: bool,
+    column: bool,
+    byte_offset: bool,
+    vimgrep: bool,
+    separator: &'a str,
+    null_path_separator: bool,
+    color: bool,
+    color_scheme: &'a RgColorScheme,
+    hyperlink_format: Option<&'a str>,
+}
+
+fn write_rg_multiline_match_segments(
+    output: &mut String,
+    mat: RgMultilineMatch<'_>,
+    segments: &[String],
+    prefix: RgMultilineMatchPrefix<'_>,
+    terminator: char,
+) {
+    for (offset, segment) in segments.iter().enumerate() {
+        write_rg_prefix(
+            output,
+            RgPrefix {
+                filename: prefix.filename,
+                show_filename: prefix.show_filename || prefix.vimgrep,
+                line_numbers: prefix.line_numbers || prefix.vimgrep,
+                line_idx: mat.line_idx + offset,
+                column: if prefix.column || prefix.vimgrep {
+                    Some(mat.column)
+                } else {
+                    None
+                },
+                byte_offset: if prefix.byte_offset {
+                    Some(mat.start_offset)
+                } else {
+                    None
+                },
+                separator: prefix.separator,
+                null_path_separator: prefix.null_path_separator,
+                color: prefix.color,
+                color_scheme: prefix.color_scheme,
+                hyperlink_format: prefix.hyperlink_format,
+            },
+        );
+        output.push_str(segment);
+        output.push(terminator);
+    }
+}
+
 fn write_rg_context(
     output: &mut String,
     filename: &str,
@@ -4699,9 +4774,42 @@ impl Builtin for Rg {
                     show_filename
                 };
                 if opts.passthru {
-                    let match_set: HashSet<usize> = context_match_lines.iter().copied().collect();
-                    for (line_idx, line) in lines.iter().enumerate() {
-                        let matched = match_set.contains(&line_idx);
+                    let mut match_by_start_line = BTreeMap::new();
+                    for mat in &matches {
+                        match_by_start_line.entry(mat.line_idx).or_insert(*mat);
+                    }
+                    let match_line_set: HashSet<usize> =
+                        context_match_lines.iter().copied().collect();
+                    let mut line_idx = 0usize;
+                    while line_idx < lines.len() {
+                        if opts.only_matching
+                            && let Some(mat) = match_by_start_line.get(&line_idx).copied()
+                        {
+                            let segments = rg_multiline_match_segments(mat, &regex, &opts);
+                            write_rg_multiline_match_segments(
+                                &mut output,
+                                mat,
+                                &segments,
+                                RgMultilineMatchPrefix {
+                                    filename,
+                                    show_filename: line_show_filename,
+                                    line_numbers: opts.line_numbers,
+                                    column: opts.column,
+                                    byte_offset: opts.byte_offset,
+                                    vimgrep: false,
+                                    separator: opts.field_match_separator.as_str(),
+                                    null_path_separator: opts.null,
+                                    color: opts.color_enabled(),
+                                    color_scheme: &opts.color_scheme,
+                                    hyperlink_format: opts.hyperlink_format.as_deref(),
+                                },
+                                record_terminator,
+                            );
+                            line_idx = (mat.end_line_idx + 1).max(line_idx + segments.len());
+                            continue;
+                        }
+                        let line = lines[line_idx];
+                        let matched = match_line_set.contains(&line_idx);
                         let separator = if matched {
                             opts.field_match_separator.as_str()
                         } else {
@@ -4735,9 +4843,33 @@ impl Builtin for Rg {
                             matched,
                         ));
                         output.push(record_terminator);
+                        line_idx += 1;
                     }
                 } else if opts.vimgrep {
                     for mat in &matches {
+                        if opts.only_matching {
+                            let segments = rg_multiline_match_segments(*mat, &regex, &opts);
+                            write_rg_multiline_match_segments(
+                                &mut output,
+                                *mat,
+                                &segments,
+                                RgMultilineMatchPrefix {
+                                    filename,
+                                    show_filename: true,
+                                    line_numbers: true,
+                                    column: true,
+                                    byte_offset: false,
+                                    vimgrep: true,
+                                    separator: opts.field_match_separator.as_str(),
+                                    null_path_separator: opts.null,
+                                    color: opts.color_enabled(),
+                                    color_scheme: &opts.color_scheme,
+                                    hyperlink_format: opts.hyperlink_format.as_deref(),
+                                },
+                                record_terminator,
+                            );
+                            continue;
+                        }
                         write_rg_prefix(
                             &mut output,
                             RgPrefix {
@@ -4754,47 +4886,37 @@ impl Builtin for Rg {
                                 hyperlink_format: opts.hyperlink_format.as_deref(),
                             },
                         );
-                        if opts.only_matching {
-                            output.push_str(&color_matches(mat.text, &regex, &opts));
-                        } else {
-                            output.push_str(&format_rg_output_line(
-                                lines[mat.line_idx].text,
-                                lines[mat.line_idx].match_text,
-                                &regex,
-                                &opts,
-                                true,
-                            ));
-                        }
+                        output.push_str(&format_rg_output_line(
+                            lines[mat.line_idx].text,
+                            lines[mat.line_idx].match_text,
+                            &regex,
+                            &opts,
+                            true,
+                        ));
                         output.push(record_terminator);
                     }
                 } else if opts.only_matching {
                     for mat in &matches {
-                        write_rg_prefix(
+                        let segments = rg_multiline_match_segments(*mat, &regex, &opts);
+                        write_rg_multiline_match_segments(
                             &mut output,
-                            RgPrefix {
+                            *mat,
+                            &segments,
+                            RgMultilineMatchPrefix {
                                 filename,
                                 show_filename: line_show_filename,
                                 line_numbers: opts.line_numbers,
-                                line_idx: mat.line_idx,
-                                column: if opts.column { Some(mat.column) } else { None },
-                                byte_offset: if opts.byte_offset {
-                                    Some(mat.start_offset)
-                                } else {
-                                    None
-                                },
+                                column: opts.column,
+                                byte_offset: opts.byte_offset,
+                                vimgrep: false,
                                 separator: opts.field_match_separator.as_str(),
                                 null_path_separator: opts.null,
                                 color: opts.color_enabled(),
                                 color_scheme: &opts.color_scheme,
                                 hyperlink_format: opts.hyperlink_format.as_deref(),
                             },
+                            record_terminator,
                         );
-                        if let Some(replacement) = &opts.replacement {
-                            output.push_str(&regex.replace_first(mat.text, replacement.as_str()));
-                        } else {
-                            output.push_str(&color_matches(mat.text, &regex, &opts));
-                        }
-                        output.push(record_terminator);
                     }
                 } else if has_context {
                     if !opts.heading && !output.is_empty() && !context_match_lines.is_empty() {
@@ -5022,9 +5144,15 @@ impl Builtin for Rg {
                 show_filename
             };
             if opts.passthru {
-                let match_set: HashSet<usize> = match_lines.iter().copied().collect();
+                let mut first_match_by_line = BTreeMap::new();
+                for &line_idx in &match_lines {
+                    if let Some(mat) = regex.find(lines[line_idx].match_text) {
+                        first_match_by_line.insert(line_idx, mat);
+                    }
+                }
                 for (line_idx, line) in lines.iter().enumerate() {
-                    let matched = match_set.contains(&line_idx);
+                    let match_for_line = first_match_by_line.get(&line_idx).copied();
+                    let matched = match_for_line.is_some();
                     let separator = if matched {
                         opts.field_match_separator.as_str()
                     } else {
@@ -5038,14 +5166,13 @@ impl Builtin for Rg {
                             line_numbers: opts.line_numbers,
                             line_idx,
                             column: if opts.column && matched && !opts.invert_match {
-                                regex.find(line.match_text).map(|mat| mat.start() + 1)
+                                match_for_line.map(|mat| mat.start() + 1)
                             } else {
                                 None
                             },
                             byte_offset: if opts.byte_offset {
                                 Some(if matched && opts.only_matching && !opts.invert_match {
-                                    regex
-                                        .find(line.match_text)
+                                    match_for_line
                                         .map(|mat| line.start_offset + mat.start())
                                         .unwrap_or(line.start_offset)
                                 } else {
@@ -5061,13 +5188,20 @@ impl Builtin for Rg {
                             hyperlink_format: opts.hyperlink_format.as_deref(),
                         },
                     );
-                    output.push_str(&format_rg_output_line(
-                        line.text,
-                        line.match_text,
-                        &regex,
-                        &opts,
-                        matched,
-                    ));
+                    if opts.only_matching
+                        && !opts.invert_match
+                        && let Some(mat) = match_for_line
+                    {
+                        output.push_str(&format_rg_match_text(mat.as_str(), &regex, &opts));
+                    } else {
+                        output.push_str(&format_rg_output_line(
+                            line.text,
+                            line.match_text,
+                            &regex,
+                            &opts,
+                            matched,
+                        ));
+                    }
                     output.push(record_terminator);
                 }
             } else if opts.vimgrep && !opts.invert_match {
@@ -5090,7 +5224,7 @@ impl Builtin for Rg {
                             },
                         );
                         if opts.only_matching {
-                            output.push_str(&color_matches(mat.as_str(), &regex, &opts));
+                            output.push_str(&format_rg_match_text(mat.as_str(), &regex, &opts));
                         } else {
                             output.push_str(&format_rg_output_line(
                                 lines[line_idx].text,
@@ -5862,6 +5996,9 @@ mod tests {
         ("/proj/small.txt", b"needle\n"),
         ("/proj/big.txt", b"needle long\n"),
     ];
+
+    const DIFF_OUTPUT_MODE_FILES: &[(&str, &[u8])] =
+        &[("/proj/output.txt", b"foo1 bar\nnone\nfoo2 baz\n")];
 
     const GZIP_NEEDLE: &[u8] = &[
         0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x13, 0x4b, 0xcc, 0x29, 0xc8, 0x48,
@@ -9528,6 +9665,132 @@ mod tests {
             args: &["--files", "--max-filesize", "1", "proj"],
             stdin: None,
             files: DIFF_MAX_FILESIZE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "passthru only matching prints match and context",
+            args: &["--passthru", "-n", "-o", r"foo[0-9]", "proj/output.txt"],
+            stdin: None,
+            files: DIFF_OUTPUT_MODE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "passthru only matching replacement",
+            args: &[
+                "--passthru",
+                "-n",
+                "-o",
+                "-r",
+                "<$0>",
+                r"foo[0-9]",
+                "proj/output.txt",
+            ],
+            stdin: None,
+            files: DIFF_OUTPUT_MODE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "passthru only matching column",
+            args: &[
+                "--passthru",
+                "-n",
+                "--column",
+                "-o",
+                r"foo[0-9]",
+                "proj/output.txt",
+            ],
+            stdin: None,
+            files: DIFF_OUTPUT_MODE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "vimgrep only matching replacement",
+            args: &[
+                "--vimgrep",
+                "-o",
+                "-r",
+                "<$0>",
+                r"foo[0-9]",
+                "proj/output.txt",
+            ],
+            stdin: None,
+            files: DIFF_OUTPUT_MODE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "multiline only matching prefixes each match line",
+            args: &["--multiline", "-n", "-o", "foo\nbar", "proj/multi.txt"],
+            stdin: None,
+            files: DIFF_MULTILINE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "multiline only matching replacement prefixes each output line",
+            args: &[
+                "--multiline",
+                "-n",
+                "-o",
+                "-r",
+                "<$0>",
+                "foo\nbar",
+                "proj/multi.txt",
+            ],
+            stdin: None,
+            files: DIFF_MULTILINE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "multiline passthru only matching keeps context lines",
+            args: &[
+                "--multiline",
+                "--passthru",
+                "-n",
+                "-o",
+                "foo\nbar",
+                "proj/multi.txt",
+            ],
+            stdin: None,
+            files: DIFF_MULTILINE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "multiline passthru only matching replacement keeps context lines",
+            args: &[
+                "--multiline",
+                "--passthru",
+                "-n",
+                "-o",
+                "-r",
+                "<$0>",
+                "foo\nbar",
+                "proj/multi.txt",
+            ],
+            stdin: None,
+            files: DIFF_MULTILINE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "multiline vimgrep only matching replacement",
+            args: &[
+                "--multiline",
+                "--vimgrep",
+                "-o",
+                "-r",
+                "<$0>",
+                "foo\nbar",
+                "proj/multi.txt",
+            ],
+            stdin: None,
+            files: DIFF_MULTILINE_FILES,
             cwd: "/",
             output: RgDiffOutput::Exact,
         },
