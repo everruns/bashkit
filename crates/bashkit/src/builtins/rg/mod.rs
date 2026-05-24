@@ -3791,15 +3791,9 @@ fn rg_record_terminator(opts: &RgOptions) -> char {
 }
 
 fn rg_line_index_for_offset(lines: &[RgLine<'_>], offset: usize) -> usize {
-    let mut idx = 0usize;
-    for (line_idx, line) in lines.iter().enumerate() {
-        if line.start_offset <= offset {
-            idx = line_idx;
-        } else {
-            break;
-        }
-    }
-    idx
+    lines
+        .partition_point(|line| line.start_offset <= offset)
+        .saturating_sub(1)
 }
 
 fn collect_rg_multiline_matches<'a>(
@@ -4628,7 +4622,16 @@ impl Builtin for Rg {
             stats.bytes_searched += content.len();
 
             if opts.multiline {
-                let matches = collect_rg_multiline_matches(&regex, content, &lines, opts.max_count);
+                // Early-exit modes only need to know whether any match exists, so cap
+                // collection to 1. Invert mode needs all matches to compute the inverse.
+                let collect_limit = if (opts.quiet && !opts.stats || opts.files_with_matches)
+                    && !opts.invert_match
+                {
+                    Some(opts.max_count.unwrap_or(usize::MAX).min(1))
+                } else {
+                    opts.max_count
+                };
+                let matches = collect_rg_multiline_matches(&regex, content, &lines, collect_limit);
                 let match_line_indices = rg_multiline_match_lines(&matches);
                 let context_match_lines = rg_unique_sorted_lines(&match_line_indices);
 
@@ -11991,6 +11994,27 @@ mod tests {
         .await;
         assert_eq!(quiet.exit_code, 0);
         assert_eq!(quiet.stdout, "");
+    }
+
+    #[tokio::test]
+    async fn test_rg_multiline_quiet_and_files_with_matches() {
+        let quiet = run_rg(
+            &["-q", "-U", "foo\nbar", "/test.txt"],
+            None,
+            &[("/test.txt", b"foo\nbar\nfoo\nbar\n")],
+        )
+        .await;
+        assert_eq!(quiet.exit_code, 0);
+        assert_eq!(quiet.stdout, "");
+
+        let files = run_rg(
+            &["-l", "-U", "foo\nbar", "/test.txt"],
+            None,
+            &[("/test.txt", b"foo\nbar\nfoo\nbar\n")],
+        )
+        .await;
+        assert_eq!(files.exit_code, 0);
+        assert_eq!(files.stdout, "/test.txt\n");
     }
 
     #[tokio::test]
