@@ -4224,6 +4224,25 @@ fn append_rg_stats(output: &mut String, stats: &RgSearchStats, bytes_printed: us
     output.push_str("0.000000 seconds total\n");
 }
 
+fn rg_quiet_result(
+    opts: &RgOptions,
+    match_count: usize,
+    any_match: &mut bool,
+) -> Option<ExecResult> {
+    let selected = if opts.files_without_matches {
+        match_count == 0
+    } else {
+        match_count > 0
+    };
+    if selected {
+        *any_match = true;
+        if !opts.stats {
+            return Some(ExecResult::ok(String::new()));
+        }
+    }
+    None
+}
+
 fn rg_generate_kind(args: &[String]) -> Result<Option<String>> {
     let mut i = 0;
     while i < args.len() {
@@ -4477,6 +4496,12 @@ impl Builtin for Rg {
                 let matched = regex.is_match(content);
                 let matched = if opts.invert_match { !matched } else { matched };
                 if !matched {
+                    if opts.quiet {
+                        if let Some(result) = rg_quiet_result(&opts, 0, &mut any_match) {
+                            return Ok(result);
+                        }
+                        continue;
+                    }
                     if opts.files_without_matches {
                         any_match = true;
                         output.push_str(&color_path(
@@ -4504,8 +4529,8 @@ impl Builtin for Rg {
                 stats.matched_lines += 1;
                 stats.files_with_matches += 1;
                 if opts.quiet {
-                    if !opts.stats {
-                        return Ok(ExecResult::ok(String::new()));
+                    if let Some(result) = rg_quiet_result(&opts, 1, &mut any_match) {
+                        return Ok(result);
                     }
                     continue;
                 }
@@ -4586,8 +4611,11 @@ impl Builtin for Rg {
                         }
                     }
 
-                    if opts.quiet && match_count > 0 && !opts.stats {
-                        return Ok(ExecResult::ok(String::new()));
+                    if opts.quiet {
+                        if let Some(result) = rg_quiet_result(&opts, match_count, &mut any_match) {
+                            return Ok(result);
+                        }
+                        continue;
                     }
                     if opts.files_with_matches && match_count > 0 {
                         output.push_str(&color_path(
@@ -4739,8 +4767,11 @@ impl Builtin for Rg {
                     }
                 }
 
-                if opts.quiet && match_count > 0 && !opts.stats {
-                    return Ok(ExecResult::ok(String::new()));
+                if opts.quiet {
+                    if let Some(result) = rg_quiet_result(&opts, match_count, &mut any_match) {
+                        return Ok(result);
+                    }
+                    continue;
                 }
                 if opts.files_with_matches && match_count > 0 {
                     output.push_str(&color_path(
@@ -5155,8 +5186,11 @@ impl Builtin for Rg {
                 stats.files_with_matches += 1;
             }
 
-            if opts.quiet && match_count > 0 && !opts.stats {
-                return Ok(ExecResult::ok(String::new()));
+            if opts.quiet {
+                if let Some(result) = rg_quiet_result(&opts, match_count, &mut any_match) {
+                    return Ok(result);
+                }
+                continue;
             }
             if opts.files_with_matches && match_count > 0 {
                 output.push_str(&color_path(
@@ -6739,6 +6773,44 @@ mod tests {
             output: RgDiffOutput::Exact,
         },
         RgDiffCase {
+            name: "quiet count suppresses output",
+            args: &["-q", "-c", "needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "quiet count matches suppresses output",
+            args: &["-q", "--count-matches", "needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "quiet files with matches suppresses output",
+            args: &["-q", "-l", "needle", "proj/a.txt", "proj/b.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "quiet files without match suppresses output",
+            args: &[
+                "-q",
+                "--files-without-match",
+                "needle",
+                "proj/a.txt",
+                "proj/b.txt",
+            ],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
             name: "multiple regexp explicit files",
             args: &["-e", "needle", "-e", "Hello", "proj/a.txt", "proj/case.txt"],
             stdin: None,
@@ -6797,6 +6869,30 @@ mod tests {
         RgDiffCase {
             name: "max count",
             args: &["-m", "1", "needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "max count only matching",
+            args: &["-m1", "-o", "needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "max count count matches",
+            args: &["-m1", "--count-matches", "needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "max count passthru",
+            args: &["-m1", "--passthru", "needle", "proj/a.txt"],
             stdin: None,
             files: DIFF_BASIC_FILES,
             cwd: "/",
@@ -7445,6 +7541,51 @@ mod tests {
         RgDiffCase {
             name: "stats quiet scans all matches",
             args: &["--stats", "-q", "needle", "proj/a.txt", "proj/src/main.rs"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Stats,
+        },
+        RgDiffCase {
+            name: "stats quiet count suppresses count output",
+            args: &["--stats", "-q", "-c", "needle", "proj/a.txt", "proj/b.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Stats,
+        },
+        RgDiffCase {
+            name: "stats files with matches",
+            args: &["--stats", "-l", "needle", "proj/a.txt", "proj/b.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Stats,
+        },
+        RgDiffCase {
+            name: "stats files without match",
+            args: &[
+                "--stats",
+                "--files-without-match",
+                "needle",
+                "proj/a.txt",
+                "proj/b.txt",
+            ],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Stats,
+        },
+        RgDiffCase {
+            name: "stats include zero count",
+            args: &[
+                "--stats",
+                "--include-zero",
+                "-c",
+                "needle",
+                "proj/a.txt",
+                "proj/b.txt",
+            ],
             stdin: None,
             files: DIFF_BASIC_FILES,
             cwd: "/",
