@@ -135,16 +135,26 @@ fn reverse_lines(raw: &str) -> String {
     if raw.is_empty() {
         return String::new();
     }
+    // GNU tac splits input into records by newline separators; each record
+    // keeps its own trailing separator (the last record has none when input
+    // is unterminated). Reversing records preserves that — so an
+    // unterminated last line concatenates directly with the previous one
+    // without an inserted newline.
     let has_trailing_newline = raw.ends_with('\n');
     let trimmed = if has_trailing_newline {
         &raw[..raw.len() - 1]
     } else {
         raw
     };
-    let mut lines: Vec<&str> = trimmed.split('\n').collect();
-    lines.reverse();
-    let mut out = lines.join("\n");
-    out.push('\n');
+    let lines: Vec<&str> = trimmed.split('\n').collect();
+    let last = lines.len() - 1;
+    let mut out = String::new();
+    for (i, line) in lines.iter().enumerate().rev() {
+        out.push_str(line);
+        if i != last || has_trailing_newline {
+            out.push('\n');
+        }
+    }
     out
 }
 
