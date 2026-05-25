@@ -125,3 +125,13 @@ codegen-units = 1
 # Keep release unwinding enabled so panic containment works.
 panic = "unwind"
 strip = "symbols"
+
+# Important decision: separate `bench` profile uses fat LTO for the most
+# aggressive cross-crate inlining. Criterion benches run rarely and we'd
+# rather spend extra compile time once than miss inlining opportunities
+# across the interpreter / parser / builtins boundary on every measurement.
+# `release` keeps `thin` LTO so day-to-day builds stay fast.
+[profile.bench]
+inherits = "release"
+lto = "fat"
+codegen-units = 1

@@ -256,10 +256,17 @@ fn is_keyword(name: &str) -> bool {
 /// All fields are disjoint from `Context`'s mutable borrows (variables, cwd),
 /// enabling safe split borrowing in `dispatch_command`.
 pub(crate) struct ShellRef<'a> {
-    /// Direct mutable access to shell aliases.
+    /// Direct mutable access to shell aliases. Backed by `Arc::make_mut` of
+    /// the parent's Arc-wrapped aliases map.
     pub(crate) aliases: &'a mut HashMap<String, String>,
     /// Direct mutable access to trap handlers.
     pub(crate) traps: &'a mut HashMap<String, String>,
+    /// Variable attribute table (readonly/integer/lower/upper). Mutable so
+    /// `readonly`/`declare`/`unset` builtins can update attributes without
+    /// re-allocating `_READONLY_X`-style marker strings.
+    pub(crate) var_attrs: &'a mut HashMap<String, VarAttrs>,
+    /// Nameref bindings (`declare -n`). Mutable so `unset -n` can clear them.
+    pub(crate) namerefs: &'a mut HashMap<String, String>,
     /// Registered builtin commands (read-only, accessed via `has_builtin`).
     pub(crate) builtins: &'a HashMap<String, Arc<dyn Builtin>>,
     /// Defined shell functions (read-only, accessed via `has_function`).
@@ -313,6 +320,33 @@ impl ShellRef<'_> {
     /// Get the shared job table for wait operations.
     pub(crate) fn jobs(&self) -> &SharedJobTable {
         self.jobs
+    }
+
+    /// Check if a variable is marked readonly via the attribute table.
+    pub(crate) fn is_var_readonly(&self, name: &str) -> bool {
+        self.var_attrs
+            .get(name)
+            .copied()
+            .unwrap_or_default()
+            .contains(VarAttrs::READONLY)
+    }
+
+    /// Mark a variable as readonly. The ShellRef already holds a `&mut HashMap`
+    /// borrowed via `Arc::make_mut` from the interpreter, so this touches the
+    /// HashMap directly with no extra refcount work.
+    pub(crate) fn mark_var_readonly(&mut self, name: &str) {
+        let entry = self.var_attrs.entry(name.to_string()).or_default();
+        entry.insert(VarAttrs::READONLY);
+    }
+
+    /// Iterator over names of variables currently marked readonly. Used by
+    /// `readonly -p` to render the marker list without scanning `variables`
+    /// for legacy `_READONLY_X` prefixes.
+    pub(crate) fn readonly_names(&self) -> impl Iterator<Item = &str> {
+        self.var_attrs
+            .iter()
+            .filter(|(_, attrs)| attrs.contains(VarAttrs::READONLY))
+            .map(|(name, _)| name.as_str())
     }
 }
 
@@ -737,15 +771,112 @@ fn deserialize_function_from_source(
     deserialize_function_from_source_with_limits(name, source, 100, 100_000)
 }
 
+// Important decision: variable attributes (readonly/integer/lower/upper) and
+// namerefs are stored in dedicated maps rather than the `variables` HashMap with
+// `_READONLY_X` / `_INTEGER_X` / `_LOWER_X` / `_UPPER_X` / `_NAMEREF_X` keys.
+// The legacy format!()-based marker scheme allocated 4-5 Strings per assignment
+// and per attribute read; the bitset/map approach removes those allocations
+// from the hot path. `is_internal_variable` no longer needs to filter these
+// prefixes because they never enter `variables` at runtime.
+bitflags::bitflags! {
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+    pub(crate) struct VarAttrs: u8 {
+        const READONLY = 0b0000_0001;
+        const INTEGER  = 0b0000_0010;
+        const LOWER    = 0b0000_0100;
+        const UPPER    = 0b0000_1000;
+        const EXPORT   = 0b0001_0000;
+    }
+}
+
+// Important decision: shell option flags (set -e, set -u, set -x, set -o
+// pipefail, etc.) are cached in a bitfield in addition to the SHOPT_X entries
+// in `variables`. Hot-path checks (errexit after every command, nounset on
+// every $VAR, etc.) read the bitfield directly instead of doing a HashMap
+// lookup + string compare. Writes go through `set_shopt_flag` which keeps
+// the bitfield and the SHOPT_X variable in sync.
+bitflags::bitflags! {
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+    pub(crate) struct BashFlags: u16 {
+        const ERREXIT      = 0b0000_0000_0000_0001; // set -e / SHOPT_e
+        const XTRACE       = 0b0000_0000_0000_0010; // set -x / SHOPT_x
+        const NOUNSET      = 0b0000_0000_0000_0100; // set -u / SHOPT_u
+        const NOGLOB       = 0b0000_0000_0000_1000; // set -f / SHOPT_f
+        const VERBOSE      = 0b0000_0000_0001_0000; // set -v / SHOPT_v
+        const ALLEXPORT    = 0b0000_0000_0010_0000; // set -a / SHOPT_a
+        const NOEXEC       = 0b0000_0000_0100_0000; // set -n / SHOPT_n
+        const NOCLOBBER    = 0b0000_0000_1000_0000; // set -C / SHOPT_C
+        const PIPEFAIL     = 0b0000_0001_0000_0000; // set -o pipefail / SHOPT_pipefail
+        const EXPAND_ALIAS = 0b0000_0010_0000_0000; // shopt expand_aliases
+    }
+}
+
+impl BashFlags {
+    /// Map a shell option variable name to its flag bit (None if unknown).
+    fn from_shopt_name(name: &str) -> Option<Self> {
+        match name {
+            "SHOPT_e" => Some(Self::ERREXIT),
+            "SHOPT_x" => Some(Self::XTRACE),
+            "SHOPT_u" => Some(Self::NOUNSET),
+            "SHOPT_f" => Some(Self::NOGLOB),
+            "SHOPT_v" => Some(Self::VERBOSE),
+            "SHOPT_a" => Some(Self::ALLEXPORT),
+            "SHOPT_n" => Some(Self::NOEXEC),
+            "SHOPT_C" => Some(Self::NOCLOBBER),
+            "SHOPT_pipefail" => Some(Self::PIPEFAIL),
+            "SHOPT_expand_aliases" => Some(Self::EXPAND_ALIAS),
+            _ => None,
+        }
+    }
+}
+
+/// All interpreter state mutated inside a `$(...)` / arithmetic substitution
+/// subshell. Captured before the substitution runs and restored after, so
+/// mutations don't leak to the parent. The `Arc<...>` fields snapshot in O(1)
+/// via a refcount bump; only mutations inside the subshell pay a clone
+/// (`Arc::make_mut`). For substitutions that don't mutate state at all (the
+/// common case — `$(echo $x)`, command queries) this saves an entire deep
+/// HashMap clone per substitution.
+struct SubshellSnapshot {
+    variables: Arc<HashMap<String, String>>,
+    arrays: Arc<HashMap<String, HashMap<usize, String>>>,
+    assoc_arrays: Arc<HashMap<String, HashMap<String, String>>>,
+    functions: Arc<HashMap<String, FunctionDef>>,
+    traps: Arc<HashMap<String, String>>,
+    aliases: Arc<HashMap<String, String>>,
+    var_attrs: Arc<HashMap<String, VarAttrs>>,
+    namerefs: Arc<HashMap<String, String>>,
+    flags: BashFlags,
+    cwd: PathBuf,
+    memory_budget: crate::limits::MemoryBudget,
+    exec_fd_table: HashMap<i32, FdTarget>,
+}
+
 /// Interpreter state.
 pub struct Interpreter {
     fs: Arc<dyn FileSystem>,
     env: HashMap<String, String>,
-    variables: HashMap<String, String>,
-    /// Arrays - stored as name -> index -> value
-    arrays: HashMap<String, HashMap<usize, String>>,
-    /// Associative arrays (declare -A) - stored as name -> key -> value
-    assoc_arrays: HashMap<String, HashMap<String, String>>,
+    // Important decision: the maps that get snapshotted by subshell ($(...))
+    // boundaries are wrapped in `Arc<HashMap>` so the snapshot is an O(1)
+    // refcount bump instead of an O(n) HashMap clone. Mutations go through
+    // `vars_mut()` / `arrays_mut()` / etc. which call `Arc::make_mut`; when
+    // the refcount is 1 (no live snapshot) this is just a `&mut` borrow with
+    // zero clone cost. When the refcount is 2 (a subshell is active and
+    // mutates), it pays one clone — the same cost the eager-clone scheme
+    // paid unconditionally, but only when actually needed.
+    variables: Arc<HashMap<String, String>>,
+    /// Variable attribute flags (readonly/integer/lower/upper/export). Keyed by
+    /// the *resolved* variable name (post-nameref). Empty entry == no attrs.
+    var_attrs: Arc<HashMap<String, VarAttrs>>,
+    /// Nameref bindings: name → target variable name. Used by `declare -n`.
+    namerefs: Arc<HashMap<String, String>>,
+    /// Cached shell option flags. Synchronized with `SHOPT_*` entries in
+    /// `variables` via `set_shopt_flag` / `set_shopt_value`.
+    flags: BashFlags,
+    /// Arrays - stored as name -> index -> value. Arc-wrapped for CoW subshell snapshots.
+    arrays: Arc<HashMap<String, HashMap<usize, String>>>,
+    /// Associative arrays (declare -A) - stored as name -> key -> value. Arc-wrapped for CoW subshell snapshots.
+    assoc_arrays: Arc<HashMap<String, HashMap<String, String>>>,
     cwd: PathBuf,
     last_exit_code: i32,
     /// Built-in commands (default + custom).
@@ -760,8 +891,8 @@ pub struct Interpreter {
     /// override baked-in commands. Survives `reset_transient_state` because
     /// it lives behind an `Arc<RwLock>` shared with the embedder.
     host_builtins: Option<crate::builtins::BuiltinRegistry>,
-    /// Defined functions
-    functions: HashMap<String, FunctionDef>,
+    /// Defined functions. Arc-wrapped for CoW subshell snapshots.
+    functions: Arc<HashMap<String, FunctionDef>>,
     /// Call stack for local variable scoping
     call_stack: Vec<CallFrame>,
     /// Source file stack for BASH_SOURCE array
@@ -807,12 +938,12 @@ pub struct Interpreter {
     output_emit_count: u64,
     /// Pending nounset (set -u) error message, consumed by execute_command.
     nounset_error: Option<String>,
-    /// Trap handlers: signal/event name -> command string
-    traps: HashMap<String, String>,
+    /// Trap handlers: signal/event name -> command string. Arc-wrapped for CoW subshell snapshots.
+    traps: Arc<HashMap<String, String>>,
     /// PIPESTATUS: exit codes of the last pipeline's commands
     pipestatus: Vec<i32>,
-    /// Shell aliases: name -> expansion value
-    aliases: HashMap<String, String>,
+    /// Shell aliases: name -> expansion value. Arc-wrapped for CoW subshell snapshots.
+    aliases: Arc<HashMap<String, String>>,
     /// Aliases currently being expanded (prevents infinite recursion).
     /// When alias `foo` expands to `foo bar`, the inner `foo` is not re-expanded.
     expanding_aliases: HashSet<String>,
@@ -1179,14 +1310,17 @@ impl Interpreter {
         Self {
             fs,
             env: HashMap::new(),
-            variables,
-            arrays,
-            assoc_arrays: HashMap::new(),
+            variables: Arc::new(variables),
+            var_attrs: Arc::new(HashMap::new()),
+            namerefs: Arc::new(HashMap::new()),
+            flags: BashFlags::empty(),
+            arrays: Arc::new(arrays),
+            assoc_arrays: Arc::new(HashMap::new()),
             cwd: PathBuf::from("/home/user"),
             last_exit_code: 0,
             builtins,
             host_builtins,
-            functions: HashMap::new(),
+            functions: Arc::new(HashMap::new()),
             call_stack: Vec::new(),
             bash_source_stack: Vec::new(),
             limits: ExecutionLimits::default(),
@@ -1210,9 +1344,9 @@ impl Interpreter {
             ))),
             output_emit_count: 0,
             nounset_error: None,
-            traps: HashMap::new(),
+            traps: Arc::new(HashMap::new()),
             pipestatus: Vec::new(),
-            aliases: HashMap::new(),
+            aliases: Arc::new(HashMap::new()),
             expanding_aliases: HashSet::new(),
             history: Vec::new(),
             history_file: None,
@@ -1274,6 +1408,58 @@ impl Interpreter {
         self.hooks = hooks;
     }
 
+    // === CoW accessors ===
+    // `Arc::make_mut` returns a `&mut HashMap`, cloning the inner map only
+    // when the Arc has more than one strong reference (i.e. a live subshell
+    // snapshot). In the steady state (refcount==1) this is just a plain
+    // mutable borrow with zero clone cost. The compiler can usually inline
+    // these into the call site.
+
+    #[inline]
+    fn vars_mut(&mut self) -> &mut HashMap<String, String> {
+        Arc::make_mut(&mut self.variables)
+    }
+
+    #[inline]
+    fn arrays_mut(&mut self) -> &mut HashMap<String, HashMap<usize, String>> {
+        Arc::make_mut(&mut self.arrays)
+    }
+
+    #[inline]
+    fn assoc_arrays_mut(&mut self) -> &mut HashMap<String, HashMap<String, String>> {
+        Arc::make_mut(&mut self.assoc_arrays)
+    }
+
+    #[inline]
+    fn functions_mut(&mut self) -> &mut HashMap<String, FunctionDef> {
+        Arc::make_mut(&mut self.functions)
+    }
+
+    #[inline]
+    fn traps_mut(&mut self) -> &mut HashMap<String, String> {
+        Arc::make_mut(&mut self.traps)
+    }
+
+    // Aliases are only mutated by builtins via ShellRef (which gets a
+    // `&mut HashMap` via Arc::make_mut inline at the construction site), so
+    // a parallel `aliases_mut` helper isn't called from the interpreter
+    // itself. Kept commented for symmetry — if a new interpreter call site
+    // ever needs &mut aliases, just uncomment.
+    // #[inline]
+    // fn aliases_mut(&mut self) -> &mut HashMap<String, String> {
+    //     Arc::make_mut(&mut self.aliases)
+    // }
+
+    #[inline]
+    fn var_attrs_mut(&mut self) -> &mut HashMap<String, VarAttrs> {
+        Arc::make_mut(&mut self.var_attrs)
+    }
+
+    #[inline]
+    fn namerefs_mut(&mut self) -> &mut HashMap<String, String> {
+        Arc::make_mut(&mut self.namerefs)
+    }
+
     /// Check if cancellation has been requested.
     fn check_cancelled(&self) -> Result<()> {
         if self.cancelled.load(Ordering::Relaxed) {
@@ -1293,22 +1479,115 @@ impl Interpreter {
             .enumerate()
             .map(|(i, s)| (i, s.clone()))
             .collect();
-        self.arrays.insert("BASH_SOURCE".to_string(), arr);
+        self.arrays_mut().insert("BASH_SOURCE".to_string(), arr);
     }
 
     fn is_errexit_enabled(&self) -> bool {
-        self.variables
-            .get("SHOPT_e")
-            .map(|v| v == "1")
-            .unwrap_or(false)
+        self.flags.contains(BashFlags::ERREXIT)
     }
 
     /// Check if xtrace (set -x) is enabled.
     fn is_xtrace_enabled(&self) -> bool {
-        self.variables
-            .get("SHOPT_x")
-            .map(|v| v == "1")
-            .unwrap_or(false)
+        self.flags.contains(BashFlags::XTRACE)
+    }
+
+    /// Cache-aware setter for `SHOPT_X` entries in `variables`. Mirrors the
+    /// scalar string write into the `flags` bitfield so hot-path checks don't
+    /// need a HashMap lookup + string compare. Use this whenever code writes
+    /// `SHOPT_<x>` or `SHOPT_expand_aliases`/etc.; plain `set -e`/`-u`/etc.
+    /// inputs flow through here from `execute_set_builtin` / `execute_shopt`.
+    #[allow(dead_code)] // exposed for builtin callers; unused in current tree
+    fn set_shopt_value(&mut self, name: &str, value: &str) {
+        if let Some(bit) = BashFlags::from_shopt_name(name) {
+            if value == "1" {
+                self.flags.insert(bit);
+            } else {
+                self.flags.remove(bit);
+            }
+        }
+        self.vars_mut().insert(name.to_string(), value.to_string());
+    }
+
+    /// Cache-aware remover for `SHOPT_X` entries in `variables`.
+    #[allow(dead_code)] // exposed for builtin callers; unused in current tree
+    fn remove_shopt_value(&mut self, name: &str) {
+        if let Some(bit) = BashFlags::from_shopt_name(name) {
+            self.flags.remove(bit);
+        }
+        self.vars_mut().remove(name);
+    }
+
+    /// Rehydrate the SHOPT flag cache from any `SHOPT_*` entries currently in
+    /// `self.variables`. Call after bulk-restoring `variables` from a snapshot
+    /// or builder so the cache doesn't drift.
+    fn refresh_shopt_flags(&mut self) {
+        self.flags = BashFlags::empty();
+        for (name, value) in self.variables.iter() {
+            if let Some(bit) = BashFlags::from_shopt_name(name)
+                && value == "1"
+            {
+                self.flags.insert(bit);
+            }
+        }
+    }
+
+    // === Variable attribute helpers ===
+    // Reading/writing readonly/integer/lower/upper attributes via the
+    // dedicated `var_attrs` HashMap. The old `_READONLY_X`/etc. format!()
+    // approach has been removed from the hot path; see VarAttrs above.
+
+    fn var_attrs_get(&self, name: &str) -> VarAttrs {
+        self.var_attrs.get(name).copied().unwrap_or_default()
+    }
+
+    fn is_var_readonly(&self, name: &str) -> bool {
+        self.var_attrs_get(name).contains(VarAttrs::READONLY)
+    }
+
+    #[allow(dead_code)] // sibling helper; kept symmetric with READONLY/LOWER/UPPER
+    fn is_var_integer(&self, name: &str) -> bool {
+        self.var_attrs_get(name).contains(VarAttrs::INTEGER)
+    }
+
+    #[allow(dead_code)] // sibling helper; kept symmetric with READONLY/INTEGER/UPPER
+    fn is_var_lower(&self, name: &str) -> bool {
+        self.var_attrs_get(name).contains(VarAttrs::LOWER)
+    }
+
+    #[allow(dead_code)] // sibling helper; kept symmetric with READONLY/INTEGER/LOWER
+    fn is_var_upper(&self, name: &str) -> bool {
+        self.var_attrs_get(name).contains(VarAttrs::UPPER)
+    }
+
+    fn add_var_attr(&mut self, name: &str, attr: VarAttrs) {
+        // entry-by-string-slice — only allocates when inserting new entry
+        match self.var_attrs_mut().get_mut(name) {
+            Some(existing) => existing.insert(attr),
+            None => {
+                self.var_attrs_mut().insert(name.to_string(), attr);
+            }
+        }
+    }
+
+    fn remove_var_attr(&mut self, name: &str, attr: VarAttrs) {
+        if let Some(existing) = self.var_attrs_mut().get_mut(name) {
+            existing.remove(attr);
+            if existing.is_empty() {
+                self.var_attrs_mut().remove(name);
+            }
+        }
+    }
+
+    fn clear_var_attrs(&mut self, name: &str) {
+        self.var_attrs_mut().remove(name);
+    }
+
+    fn set_nameref(&mut self, name: &str, target: String) {
+        self.namerefs_mut().insert(name.to_string(), target);
+    }
+
+    fn remove_nameref(&mut self, name: &str) {
+        self.namerefs_mut().remove(name);
     }
 
     /// Set execution limits.
@@ -1358,10 +1637,13 @@ impl Interpreter {
     /// `shopt` options (expand_aliases, extglob, etc.) are intentionally
     /// preserved — they are persistent session configuration.
     pub fn reset_transient_state(&mut self) {
-        self.traps.clear();
+        self.traps_mut().clear();
         self.last_exit_code = 0;
         for var in Self::SET_OPTION_VARS {
-            self.variables.remove(*var);
+            self.vars_mut().remove(*var);
+            if let Some(bit) = BashFlags::from_shopt_name(var) {
+                self.flags.remove(bit);
+            }
         }
     }
 
@@ -1372,7 +1654,14 @@ impl Interpreter {
 
     /// Set a shell variable (public API for builder).
     pub fn set_var(&mut self, key: &str, value: &str) {
-        self.variables.insert(key.to_string(), value.to_string());
+        if let Some(bit) = BashFlags::from_shopt_name(key) {
+            if value == "1" {
+                self.flags.insert(bit);
+            } else {
+                self.flags.remove(bit);
+            }
+        }
+        self.vars_mut().insert(key.to_string(), value.to_string());
     }
 
     /// Set the current working directory.
@@ -1484,20 +1773,23 @@ impl Interpreter {
     }
 
     pub(crate) fn shell_state_with_options(&self, options: ShellStateOptions) -> ShellState {
+        // Deref through Arc and clone the inner HashMap for the public
+        // ShellState struct (which holds plain HashMaps so users can mutate
+        // it freely).
         ShellState {
             env: self.env.clone(),
-            variables: self.variables.clone(),
-            arrays: self.arrays.clone(),
-            assoc_arrays: self.assoc_arrays.clone(),
+            variables: (*self.variables).clone(),
+            arrays: (*self.arrays).clone(),
+            assoc_arrays: (*self.assoc_arrays).clone(),
             cwd: self.cwd.clone(),
             last_exit_code: self.last_exit_code,
             functions: if options.include_functions {
-                self.functions.clone()
+                (*self.functions).clone()
             } else {
                 HashMap::new()
             },
-            aliases: self.aliases.clone(),
-            traps: self.traps.clone(),
+            aliases: (*self.aliases).clone(),
+            traps: (*self.traps).clone(),
         }
     }
 
@@ -1505,22 +1797,23 @@ impl Interpreter {
     pub fn shell_state_view(&self) -> ShellStateView {
         ShellStateView {
             env: self.env.clone(),
-            variables: self.variables.clone(),
-            arrays: self.arrays.clone(),
-            assoc_arrays: self.assoc_arrays.clone(),
+            variables: (*self.variables).clone(),
+            arrays: (*self.arrays).clone(),
+            assoc_arrays: (*self.assoc_arrays).clone(),
             cwd: self.cwd.clone(),
             last_exit_code: self.last_exit_code,
-            aliases: self.aliases.clone(),
-            traps: self.traps.clone(),
+            aliases: (*self.aliases).clone(),
+            traps: (*self.traps).clone(),
         }
     }
 
     /// Restore shell state from a snapshot.
     pub fn restore_shell_state(&mut self, state: &ShellState) {
         self.env = state.env.clone();
-        self.variables = state.variables.clone();
-        self.arrays = state.arrays.clone();
-        self.assoc_arrays = state.assoc_arrays.clone();
+        self.variables = Arc::new(state.variables.clone());
+        self.refresh_shopt_flags();
+        self.arrays = Arc::new(state.arrays.clone());
+        self.assoc_arrays = Arc::new(state.assoc_arrays.clone());
         self.cwd = state.cwd.clone();
         self.last_exit_code = state.last_exit_code;
         // THREAT[TM-DOS-061]: Re-parse and budget-check restored functions so
@@ -1558,9 +1851,9 @@ impl Interpreter {
             function_memory_budget.record_function_insert(body_bytes, true, 0);
             restored_functions.insert(name, parsed_func);
         }
-        self.functions = restored_functions;
-        self.aliases = state.aliases.clone();
-        self.traps = state.traps.clone();
+        self.functions = Arc::new(restored_functions);
+        self.aliases = Arc::new(state.aliases.clone());
+        self.traps = Arc::new(state.traps.clone());
         // Recompute memory budget from restored state to prevent desync
         let func_count = self.functions.len();
         let func_bytes: usize = self
@@ -2070,7 +2363,7 @@ impl Interpreter {
                             is_new,
                             old_body_bytes,
                         );
-                        self.functions
+                        self.functions_mut()
                             .insert(func_def.name.clone(), func_def.clone());
                     }
                     Ok(ExecResult::ok(String::new()))
@@ -2093,25 +2386,19 @@ impl Interpreter {
                 // Subshells run in fully isolated scope: variables, arrays,
                 // functions, cwd, traps, positional params, and options are
                 // all snapshot/restored so mutations don't leak to the parent.
-                let saved_vars = self.variables.clone();
-                let saved_arrays = self.arrays.clone();
-                let saved_assoc = self.assoc_arrays.clone();
-                let saved_functions = self.functions.clone();
-                let saved_cwd = self.cwd.clone();
-                let saved_traps = self.traps.clone();
+                // The Arc-wrapped maps make each snapshot an O(1) refcount
+                // bump; only mutations inside the subshell pay a clone.
+                let snap = self.snapshot_subshell_state();
                 let saved_call_stack = self.call_stack.clone();
                 let saved_exit = self.last_exit_code;
-                let saved_aliases = self.aliases.clone();
                 let saved_coproc = self.coproc_buffers.clone();
-                let saved_memory_budget = self.memory_budget.clone();
-                let saved_exec_fd_table = self.exec_fd_table.clone();
 
                 let mut result = self.execute_command_sequence(commands).await;
 
                 // Fire EXIT trap set inside the subshell before restoring parent state
                 if let Some(trap_cmd) = self.traps.get("EXIT").cloned() {
                     // Only fire if the subshell set its own EXIT trap (different from parent)
-                    let parent_had_same = saved_traps.get("EXIT") == Some(&trap_cmd);
+                    let parent_had_same = snap.traps.get("EXIT") == Some(&trap_cmd);
                     if !parent_had_same {
                         // THREAT[TM-DOS-030]: Propagate interpreter parser limits
                         if let Ok(trap_script) = Parser::with_limits(
@@ -2138,18 +2425,10 @@ impl Interpreter {
                     }
                 }
 
-                self.variables = saved_vars;
-                self.arrays = saved_arrays;
-                self.assoc_arrays = saved_assoc;
-                self.functions = saved_functions;
-                self.cwd = saved_cwd;
-                self.traps = saved_traps;
+                self.restore_subshell_state(snap);
                 self.call_stack = saved_call_stack;
                 self.last_exit_code = saved_exit;
-                self.aliases = saved_aliases;
                 self.coproc_buffers = saved_coproc;
-                self.memory_budget = saved_memory_budget;
-                self.exec_fd_table = saved_exec_fd_table;
 
                 // Consume Exit and Return control flow at subshell boundary —
                 // they only terminate the subshell, not the parent shell.
@@ -2282,8 +2561,10 @@ impl Interpreter {
                 // Check loop iteration limit
                 self.counters.tick_loop(&self.limits)?;
 
-                // Set loop variable (respects nameref)
-                self.set_variable(for_cmd.variable.clone(), value.clone());
+                // Set loop variable (respects nameref). `value` is moved
+                // straight into `set_variable` — previously we cloned it
+                // even though `values` already owned the String for us.
+                self.set_variable(for_cmd.variable.clone(), value);
 
                 // Execute body
                 let emit_before = self.output_emit_count;
@@ -2795,15 +3076,16 @@ impl Interpreter {
                     for (i, m) in captures.iter().enumerate() {
                         rematch.insert(i, m.map(|m| m.as_str().to_string()).unwrap_or_default());
                     }
-                    self.arrays.insert("BASH_REMATCH".to_string(), rematch);
+                    self.arrays_mut()
+                        .insert("BASH_REMATCH".to_string(), rematch);
                     true
                 } else {
-                    self.arrays.remove("BASH_REMATCH");
+                    self.arrays_mut().remove("BASH_REMATCH");
                     false
                 }
             }
             Err(_) => {
-                self.arrays.remove("BASH_REMATCH");
+                self.arrays_mut().remove("BASH_REMATCH");
                 false
             }
         }
@@ -3171,18 +3453,18 @@ impl Interpreter {
         let mut arr = HashMap::new();
         arr.insert(0, read_fd.to_string());
         arr.insert(1, write_fd.to_string());
-        self.arrays.insert(name.clone(), arr);
+        self.arrays_mut().insert(name.clone(), arr);
 
         // Set NAME_PID to a virtual PID (use job table counter)
         let virtual_pid = {
             let table = self.jobs.lock().await;
             table.last_job_id().unwrap_or(0) + 1000
         };
-        self.variables
+        self.vars_mut()
             .insert(format!("{}_PID", name), virtual_pid.to_string());
 
         // Also set $! (last background PID)
-        self.variables
+        self.vars_mut()
             .insert("_LAST_BG_PID".to_string(), virtual_pid.to_string());
 
         // Coproc itself returns success with empty output (stdout was captured)
@@ -3526,7 +3808,7 @@ impl Interpreter {
         let saved_optind = self.variables.get("OPTIND").cloned();
         let saved_optchar = self.variables.get("_OPTCHAR_IDX").cloned();
         self.insert_variable_checked("OPTIND".to_string(), "1".to_string());
-        self.variables.remove("_OPTCHAR_IDX");
+        self.vars_mut().remove("_OPTCHAR_IDX");
 
         // Forward piped stdin to child when executing a script file or -c command
         let saved_stdin = self.pipeline_stdin.take();
@@ -3555,18 +3837,18 @@ impl Interpreter {
         if let Some(val) = saved_optind {
             self.insert_variable_checked("OPTIND".to_string(), val);
         } else {
-            self.variables.remove("OPTIND");
+            self.vars_mut().remove("OPTIND");
         }
         if let Some(val) = saved_optchar {
             self.insert_variable_checked("_OPTCHAR_IDX".to_string(), val);
         } else {
-            self.variables.remove("_OPTCHAR_IDX");
+            self.vars_mut().remove("_OPTCHAR_IDX");
         }
         for (var, prev) in saved_opts {
             if let Some(val) = prev {
                 self.insert_variable_checked(var, val);
             } else {
-                self.variables.remove(&var);
+                self.vars_mut().remove(&var);
             }
         }
         self.call_stack.pop();
@@ -3795,7 +4077,7 @@ impl Interpreter {
         for (i, code) in pipe_statuses.iter().enumerate() {
             ps_arr.insert(i, code.to_string());
         }
-        self.arrays.insert("PIPESTATUS".to_string(), ps_arr);
+        self.arrays_mut().insert("PIPESTATUS".to_string(), ps_arr);
 
         // pipefail: return rightmost non-zero exit code from pipeline
         if self.is_pipefail()
@@ -3851,13 +4133,13 @@ impl Interpreter {
         let job_result = ExecResult::with_code(String::new(), exit_code);
         let handle = tokio::spawn(async move { job_result });
         let job_id = self.jobs.lock().await.spawn(handle);
-        self.variables
+        self.vars_mut()
             .insert("_LAST_BG_PID".to_string(), job_id.to_string());
 
         // Background commands always return exit code 0 to the parent
         self.last_exit_code = 0;
         // But store the real exit code for $? after wait
-        self.variables
+        self.vars_mut()
             .insert("_BG_EXIT_CODE".to_string(), exit_code.to_string());
         Ok(())
     }
@@ -4054,7 +4336,7 @@ impl Interpreter {
                                 if is_new_entry {
                                     self.memory_budget.record_array_insert(1);
                                 }
-                                let arr = self.assoc_arrays.entry(resolved_name).or_default();
+                                let arr = self.assoc_arrays_mut().entry(resolved_name).or_default();
                                 if assignment.append {
                                     let existing = arr.get(&key).cloned().unwrap_or_default();
                                     arr.insert(key, existing + &value);
@@ -4089,7 +4371,7 @@ impl Interpreter {
                                 if is_new_entry {
                                     self.memory_budget.record_array_insert(1);
                                 }
-                                let arr = self.arrays.entry(resolved_name).or_default();
+                                let arr = self.arrays_mut().entry(resolved_name).or_default();
                                 if assignment.append {
                                     let existing = arr.get(&index).cloned().unwrap_or_default();
                                     arr.insert(index, existing + &value);
@@ -4199,7 +4481,7 @@ impl Interpreter {
                     self.insert_variable_checked(vname, v);
                 }
                 None => {
-                    self.variables.remove(&vname);
+                    self.vars_mut().remove(&vname);
                 }
             }
         }
@@ -4298,7 +4580,7 @@ impl Interpreter {
                     self.insert_variable_checked(name, v);
                 }
                 None => {
-                    self.variables.remove(&name);
+                    self.vars_mut().remove(&name);
                 }
             }
         }
@@ -4798,8 +5080,10 @@ impl Interpreter {
                 let shell_ref = ShellRef {
                     builtins: &self.builtins,
                     functions: &self.functions,
-                    aliases: &mut self.aliases,
-                    traps: &mut self.traps,
+                    aliases: Arc::make_mut(&mut self.aliases),
+                    traps: Arc::make_mut(&mut self.traps),
+                    var_attrs: Arc::make_mut(&mut self.var_attrs),
+                    namerefs: Arc::make_mut(&mut self.namerefs),
                     call_stack: &self.call_stack,
                     history: &self.history,
                     jobs: &self.jobs,
@@ -4808,7 +5092,7 @@ impl Interpreter {
                 let plan_ctx = builtins::Context {
                     args,
                     env: &self.env,
-                    variables: &mut self.variables,
+                    variables: Arc::make_mut(&mut self.variables),
                     cwd: &mut self.cwd,
                     fs: Arc::clone(&self.fs),
                     stdin,
@@ -4849,8 +5133,10 @@ impl Interpreter {
             let shell_ref = ShellRef {
                 builtins: &self.builtins,
                 functions: &self.functions,
-                aliases: &mut self.aliases,
-                traps: &mut self.traps,
+                aliases: Arc::make_mut(&mut self.aliases),
+                traps: Arc::make_mut(&mut self.traps),
+                var_attrs: Arc::make_mut(&mut self.var_attrs),
+                namerefs: Arc::make_mut(&mut self.namerefs),
                 call_stack: &self.call_stack,
                 history: &self.history,
                 jobs: &self.jobs,
@@ -4859,7 +5145,7 @@ impl Interpreter {
             let ctx = builtins::Context {
                 args,
                 env: &self.env,
-                variables: &mut self.variables,
+                variables: Arc::make_mut(&mut self.variables),
                 cwd: &mut self.cwd,
                 fs: Arc::clone(&self.fs),
                 stdin,
@@ -4891,10 +5177,7 @@ impl Interpreter {
                 for arg in args {
                     if let Some(eq_pos) = arg.find('=') {
                         let var_name = &arg[..eq_pos];
-                        if self
-                            .variables
-                            .contains_key(&format!("_READONLY_{}", var_name))
-                        {
+                        if self.is_var_readonly(var_name) {
                             continue;
                         }
                         if let Some(value) = self.variables.get(var_name) {
@@ -5223,14 +5506,20 @@ impl Interpreter {
         // Subprocess isolation: path-based script execution only inherits
         // exported variables (env), not the full parent shell state.
         // This matches real bash behavior where ./script.sh spawns a subprocess.
-        let saved_vars = self.variables.clone();
-        let saved_arrays = self.arrays.clone();
-        let saved_assoc = self.assoc_arrays.clone();
-        let saved_functions = self.functions.clone();
-        let saved_traps = self.traps.clone();
+        // `bash -c '...'` subprocess: save then reset. Each Arc clone is an
+        // O(1) refcount bump now; the child resets its own state and the
+        // parent restores by dropping the child's Arcs and putting these back.
+        let saved_vars = Arc::clone(&self.variables);
+        let saved_arrays = Arc::clone(&self.arrays);
+        let saved_assoc = Arc::clone(&self.assoc_arrays);
+        let saved_functions = Arc::clone(&self.functions);
+        let saved_traps = Arc::clone(&self.traps);
+        let saved_aliases = Arc::clone(&self.aliases);
+        let saved_var_attrs = Arc::clone(&self.var_attrs);
+        let saved_namerefs = Arc::clone(&self.namerefs);
+        let saved_flags = self.flags;
         let saved_call_stack = self.call_stack.clone();
         let saved_exit = self.last_exit_code;
-        let saved_aliases = self.aliases.clone();
         let saved_coproc = self.coproc_buffers.clone();
         let saved_env = self.env.clone();
         let saved_memory_budget = self.memory_budget.clone();
@@ -5239,14 +5528,19 @@ impl Interpreter {
         // Child only sees exported variables (env), not all shell variables.
         // Reset last_exit_code so $? starts at 0 (matches real bash subprocess).
         // Clear nounset_error to prevent parent expansion errors from leaking.
-        self.variables = self.env.clone();
-        self.arrays.clear();
-        self.arrays
+        // Reset attributes/namerefs/flags too — the child gets a fresh option
+        // surface like real bash.
+        self.variables = Arc::new(self.env.clone());
+        self.arrays = Arc::new(HashMap::new());
+        self.arrays_mut()
             .insert("BASH_VERSINFO".to_string(), compat_bash_versinfo_array());
-        self.assoc_arrays.clear();
-        self.functions.clear();
-        self.traps.clear();
-        self.aliases.clear();
+        self.assoc_arrays = Arc::new(HashMap::new());
+        self.functions = Arc::new(HashMap::new());
+        self.traps = Arc::new(HashMap::new());
+        self.aliases = Arc::new(HashMap::new());
+        self.var_attrs = Arc::new(HashMap::new());
+        self.namerefs = Arc::new(HashMap::new());
+        self.flags = BashFlags::empty();
         self.coproc_buffers.clear();
         self.last_exit_code = 0;
         self.nounset_error = None;
@@ -5275,9 +5569,12 @@ impl Interpreter {
         self.assoc_arrays = saved_assoc;
         self.functions = saved_functions;
         self.traps = saved_traps;
+        self.aliases = saved_aliases;
+        self.var_attrs = saved_var_attrs;
+        self.namerefs = saved_namerefs;
+        self.flags = saved_flags;
         self.call_stack = saved_call_stack;
         self.last_exit_code = saved_exit;
-        self.aliases = saved_aliases;
         self.coproc_buffers = saved_coproc;
         self.env = saved_env;
         self.memory_budget = saved_memory_budget;
@@ -5715,7 +6012,9 @@ impl Interpreter {
             .enumerate()
             .map(|(i, f)| (i, f.name.clone()))
             .collect();
-        let prev_funcname = self.arrays.insert("FUNCNAME".to_string(), funcname_arr);
+        let prev_funcname = self
+            .arrays_mut()
+            .insert("FUNCNAME".to_string(), funcname_arr);
 
         // BASH_SOURCE: duplicate current top entry for function calls
         let current_source = self.bash_source_stack.last().cloned().unwrap_or_default();
@@ -5740,9 +6039,9 @@ impl Interpreter {
 
         // Restore previous FUNCNAME (or set from remaining stack)
         if self.call_stack.is_empty() {
-            self.arrays.remove("FUNCNAME");
+            self.arrays_mut().remove("FUNCNAME");
         } else if let Some(prev) = prev_funcname {
-            self.arrays.insert("FUNCNAME".to_string(), prev);
+            self.arrays_mut().insert("FUNCNAME".to_string(), prev);
         }
 
         let mut result = result?;
@@ -5796,7 +6095,10 @@ impl Interpreter {
                     if is_compound {
                         let inner = &value[1..value.len() - 1];
                         if flags.assoc {
-                            let arr = self.assoc_arrays.entry(var_name.to_string()).or_default();
+                            let arr = self
+                                .assoc_arrays_mut()
+                                .entry(var_name.to_string())
+                                .or_default();
                             arr.clear();
                             let mut rest = inner.trim();
                             while let Some(bracket_start) = rest.find('[') {
@@ -5833,7 +6135,7 @@ impl Interpreter {
                                 }
                             }
                         } else {
-                            let arr = self.arrays.entry(var_name.to_string()).or_default();
+                            let arr = self.arrays_mut().entry(var_name.to_string()).or_default();
                             arr.clear();
                             for (idx, val) in inner.split_whitespace().enumerate() {
                                 arr.insert(idx, val.trim_matches('"').to_string());
@@ -5846,21 +6148,19 @@ impl Interpreter {
                     } else if flags.integer {
                         let int_val = self.evaluate_arithmetic_with_assign(value);
                         self.insert_local_checked(var_name.to_string(), int_val.to_string());
-                        self.variables
-                            .insert(format!("_INTEGER_{}", var_name), "1".to_string());
+                        self.add_var_attr(var_name, VarAttrs::INTEGER);
                     } else {
                         self.insert_local_checked(var_name.to_string(), value.to_string());
                     }
                 } else if !is_internal_variable(arg) {
                     self.insert_local_checked(arg.to_string(), String::new());
                     if flags.assoc {
-                        self.assoc_arrays.entry(arg.to_string()).or_default();
+                        self.assoc_arrays_mut().entry(arg.to_string()).or_default();
                     } else if flags.array {
-                        self.arrays.entry(arg.to_string()).or_default();
+                        self.arrays_mut().entry(arg.to_string()).or_default();
                     }
                     if flags.integer {
-                        self.variables
-                            .insert(format!("_INTEGER_{}", arg), "1".to_string());
+                        self.add_var_attr(arg, VarAttrs::INTEGER);
                     }
                 }
             }
@@ -5871,8 +6171,7 @@ impl Interpreter {
                         let var_name = &arg[..eq_pos];
                         let value = &arg[eq_pos + 1..];
                         if !is_internal_variable(var_name) {
-                            self.variables
-                                .insert(format!("_NAMEREF_{}", var_name), value.to_string());
+                            self.set_nameref(var_name, value.to_string());
                         }
                     }
                 }
@@ -5891,7 +6190,10 @@ impl Interpreter {
                     if is_compound {
                         let inner = &value[1..value.len() - 1];
                         if flags.assoc {
-                            let arr = self.assoc_arrays.entry(var_name.to_string()).or_default();
+                            let arr = self
+                                .assoc_arrays_mut()
+                                .entry(var_name.to_string())
+                                .or_default();
                             arr.clear();
                             let mut rest = inner.trim();
                             while let Some(bracket_start) = rest.find('[') {
@@ -5928,23 +6230,22 @@ impl Interpreter {
                                 }
                             }
                         } else {
-                            let arr = self.arrays.entry(var_name.to_string()).or_default();
+                            let arr = self.arrays_mut().entry(var_name.to_string()).or_default();
                             arr.clear();
                             for (idx, val) in inner.split_whitespace().enumerate() {
                                 arr.insert(idx, val.trim_matches('"').to_string());
                             }
                         }
                     } else if flags.nameref {
-                        self.variables
-                            .insert(format!("_NAMEREF_{}", var_name), value.to_string());
+                        self.set_nameref(var_name, value.to_string());
                     } else {
                         self.insert_variable_checked(var_name.to_string(), value.to_string());
                     }
                 } else if !is_internal_variable(arg) {
                     if flags.assoc {
-                        self.assoc_arrays.entry(arg.to_string()).or_default();
+                        self.assoc_arrays_mut().entry(arg.to_string()).or_default();
                     } else if flags.array {
-                        self.arrays.entry(arg.to_string()).or_default();
+                        self.arrays_mut().entry(arg.to_string()).or_default();
                     } else {
                         self.insert_variable_checked(arg.to_string(), String::new());
                     }
@@ -6001,7 +6302,7 @@ impl Interpreter {
 
         for arg in &var_args {
             if unset_function {
-                self.functions.remove(arg.as_str());
+                self.functions_mut().remove(arg.as_str());
                 continue;
             }
             if let Some(bracket) = arg.find('[')
@@ -6011,9 +6312,9 @@ impl Interpreter {
                 let key = &arg[bracket + 1..arg.len() - 1];
                 let expanded_key = self.expand_variable_or_literal(key);
                 let resolved_name = self.resolve_nameref(arr_name).to_string();
-                if let Some(arr) = self.assoc_arrays.get_mut(&resolved_name) {
+                if let Some(arr) = self.assoc_arrays_mut().get_mut(&resolved_name) {
                     arr.remove(&expanded_key);
-                } else if let Some(arr) = self.arrays.get_mut(&resolved_name)
+                } else if let Some(arr) = self.arrays_mut().get_mut(&resolved_name)
                     && let Ok(idx) = key.parse::<usize>()
                 {
                     arr.remove(&idx);
@@ -6021,7 +6322,7 @@ impl Interpreter {
                 continue;
             }
             if unset_nameref {
-                self.variables.remove(&format!("_NAMEREF_{}", arg));
+                self.remove_nameref(arg);
             } else {
                 let resolved = self.resolve_nameref(arg).to_string();
                 // THREAT[TM-INJ-009]: Block unset of internal marker variables
@@ -6034,20 +6335,19 @@ impl Interpreter {
                 }
                 // THREAT[TM-INJ-019]: Refuse to unset readonly variables and surface
                 // the error so callers cannot mistake a silent skip for success.
-                if self
-                    .variables
-                    .contains_key(&format!("_READONLY_{}", resolved))
-                {
+                if self.is_var_readonly(&resolved) {
                     stderr.push_str(&format!(
                         "bash: unset: {resolved}: cannot unset: readonly variable\n"
                     ));
                     exit_code = 1;
                     continue;
                 }
-                self.variables.remove(&resolved);
+                self.vars_mut().remove(&resolved);
                 self.env.remove(&resolved);
-                self.arrays.remove(&resolved);
-                self.assoc_arrays.remove(&resolved);
+                self.arrays_mut().remove(&resolved);
+                self.assoc_arrays_mut().remove(&resolved);
+                self.clear_var_attrs(&resolved);
+                self.remove_nameref(&resolved);
                 for frame in self.call_stack.iter_mut().rev() {
                     frame.locals.remove(&resolved);
                 }
@@ -6117,7 +6417,7 @@ impl Interpreter {
         if !current_arg.starts_with('-') || current_arg == "-" || current_arg == "--" {
             self.insert_variable_checked(varname.clone(), "?".to_string());
             if current_arg == "--" {
-                self.variables
+                self.vars_mut()
                     .insert("OPTIND".to_string(), (optind + 1).to_string());
             }
             return Ok(ExecResult {
@@ -6142,9 +6442,9 @@ impl Interpreter {
 
         if char_idx >= opt_chars.len() {
             // Should not happen, but advance
-            self.variables
+            self.vars_mut()
                 .insert("OPTIND".to_string(), (optind + 1).to_string());
-            self.variables.remove("_OPTCHAR_IDX");
+            self.vars_mut().remove("_OPTCHAR_IDX");
             self.insert_variable_checked(varname.clone(), "?".to_string());
             return Ok(ExecResult {
                 stdout: String::new(),
@@ -6170,25 +6470,25 @@ impl Interpreter {
                     // Rest of current arg is the argument
                     let arg_val: String = opt_chars[char_idx + 1..].iter().collect();
                     self.insert_variable_checked("OPTARG".to_string(), arg_val);
-                    self.variables
+                    self.vars_mut()
                         .insert("OPTIND".to_string(), (optind + 1).to_string());
-                    self.variables.remove("_OPTCHAR_IDX");
+                    self.vars_mut().remove("_OPTCHAR_IDX");
                 } else if optind < parse_args.len() {
                     // Next arg is the argument
-                    self.variables
+                    self.vars_mut()
                         .insert("OPTARG".to_string(), parse_args[optind].clone());
-                    self.variables
+                    self.vars_mut()
                         .insert("OPTIND".to_string(), (optind + 2).to_string());
-                    self.variables.remove("_OPTCHAR_IDX");
+                    self.vars_mut().remove("_OPTCHAR_IDX");
                 } else {
                     // Missing argument
-                    self.variables.remove("OPTARG");
-                    self.variables
+                    self.vars_mut().remove("OPTARG");
+                    self.vars_mut()
                         .insert("OPTIND".to_string(), (optind + 1).to_string());
-                    self.variables.remove("_OPTCHAR_IDX");
+                    self.vars_mut().remove("_OPTCHAR_IDX");
                     if silent {
                         self.insert_variable_checked(varname.clone(), ":".to_string());
-                        self.variables
+                        self.vars_mut()
                             .insert("OPTARG".to_string(), opt_char.to_string());
                     } else {
                         self.insert_variable_checked(varname.clone(), "?".to_string());
@@ -6203,33 +6503,33 @@ impl Interpreter {
                 }
             } else {
                 // No argument needed
-                self.variables.remove("OPTARG");
+                self.vars_mut().remove("OPTARG");
                 if char_idx + 1 < opt_chars.len() {
                     // More chars in this arg
-                    self.variables
+                    self.vars_mut()
                         .insert("_OPTCHAR_IDX".to_string(), (char_idx + 1).to_string());
                 } else {
                     // Move to next arg
-                    self.variables
+                    self.vars_mut()
                         .insert("OPTIND".to_string(), (optind + 1).to_string());
-                    self.variables.remove("_OPTCHAR_IDX");
+                    self.vars_mut().remove("_OPTCHAR_IDX");
                 }
             }
         } else {
             // Unknown option
-            self.variables.remove("OPTARG");
+            self.vars_mut().remove("OPTARG");
             if char_idx + 1 < opt_chars.len() {
-                self.variables
+                self.vars_mut()
                     .insert("_OPTCHAR_IDX".to_string(), (char_idx + 1).to_string());
             } else {
-                self.variables
+                self.vars_mut()
                     .insert("OPTIND".to_string(), (optind + 1).to_string());
-                self.variables.remove("_OPTCHAR_IDX");
+                self.vars_mut().remove("_OPTCHAR_IDX");
             }
 
             if silent {
                 self.insert_variable_checked(varname.clone(), "?".to_string());
-                self.variables
+                self.vars_mut()
                     .insert("OPTARG".to_string(), opt_char.to_string());
             } else {
                 self.insert_variable_checked(varname.clone(), "?".to_string());
@@ -6353,8 +6653,10 @@ impl Interpreter {
                     let shell_ref = ShellRef {
                         builtins: &self.builtins,
                         functions: &self.functions,
-                        aliases: &mut self.aliases,
-                        traps: &mut self.traps,
+                        aliases: Arc::make_mut(&mut self.aliases),
+                        traps: Arc::make_mut(&mut self.traps),
+                        var_attrs: Arc::make_mut(&mut self.var_attrs),
+                        namerefs: Arc::make_mut(&mut self.namerefs),
                         call_stack: &self.call_stack,
                         history: &self.history,
                         jobs: &self.jobs,
@@ -6363,7 +6665,7 @@ impl Interpreter {
                     let ctx = builtins::Context {
                         args: builtin_args,
                         env: &self.env,
-                        variables: &mut self.variables,
+                        variables: Arc::make_mut(&mut self.variables),
                         cwd: &mut self.cwd,
                         fs: Arc::clone(&self.fs),
                         stdin: _stdin.as_deref(),
@@ -6499,10 +6801,7 @@ impl Interpreter {
                     let var_name = name.split('=').next().unwrap_or(name);
                     if let Some(value) = self.variables.get(var_name) {
                         let mut attrs = String::from("--");
-                        if self
-                            .variables
-                            .contains_key(&format!("_READONLY_{}", var_name))
-                        {
+                        if self.is_var_readonly(var_name) {
                             attrs = String::from("-r");
                         }
                         output.push_str(&format!("declare {} {}=\"{}\"\n", attrs, var_name, value));
@@ -6556,10 +6855,7 @@ impl Interpreter {
 
                 // THREAT[TM-INJ-020]: Refuse to overwrite readonly variables and
                 // surface the error so callers cannot mistake a silent skip for success.
-                if self
-                    .variables
-                    .contains_key(&format!("_READONLY_{}", var_name))
-                {
+                if self.is_var_readonly(var_name) {
                     declare_stderr
                         .push_str(&format!("bash: declare: {var_name}: readonly variable\n"));
                     declare_exit_code = 1;
@@ -6570,7 +6866,10 @@ impl Interpreter {
                 if (flags.assoc || flags.array) && value.starts_with('(') && value.ends_with(')') {
                     let inner = &value[1..value.len() - 1];
                     if flags.assoc {
-                        let arr = self.assoc_arrays.entry(var_name.to_string()).or_default();
+                        let arr = self
+                            .assoc_arrays_mut()
+                            .entry(var_name.to_string())
+                            .or_default();
                         arr.clear();
                         // Parse [key]="value" pairs
                         let mut rest = inner.trim();
@@ -6609,7 +6908,7 @@ impl Interpreter {
                         }
                     } else {
                         // Indexed array: declare -a arr=(a b c)
-                        let arr = self.arrays.entry(var_name.to_string()).or_default();
+                        let arr = self.arrays_mut().entry(var_name.to_string()).or_default();
                         arr.clear();
                         for (idx, val) in inner.split_whitespace().enumerate() {
                             arr.insert(idx, val.trim_matches('"').to_string());
@@ -6617,15 +6916,13 @@ impl Interpreter {
                     }
                 } else if flags.nameref {
                     // declare -n ref=target: create nameref
-                    self.variables
-                        .insert(format!("_NAMEREF_{}", var_name), value.to_string());
+                    self.set_nameref(var_name, value.to_string());
                 } else if flags.integer {
                     // Evaluate as arithmetic expression
                     let int_val = self.evaluate_arithmetic_with_assign(value);
                     self.insert_variable_checked(var_name.to_string(), int_val.to_string());
                     // Set persistent integer attribute marker
-                    self.variables
-                        .insert(format!("_INTEGER_{}", var_name), "1".to_string());
+                    self.add_var_attr(var_name, VarAttrs::INTEGER);
                 } else {
                     // Apply case conversion attributes
                     let final_value = if is_lowercase {
@@ -6640,18 +6937,15 @@ impl Interpreter {
 
                 // Set case conversion attribute markers
                 if is_lowercase {
-                    self.variables
-                        .insert(format!("_LOWER_{}", var_name), "1".to_string());
-                    self.variables.remove(&format!("_UPPER_{}", var_name));
+                    self.add_var_attr(var_name, VarAttrs::LOWER);
+                    self.remove_var_attr(var_name, VarAttrs::UPPER);
                 }
                 if is_uppercase {
-                    self.variables
-                        .insert(format!("_UPPER_{}", var_name), "1".to_string());
-                    self.variables.remove(&format!("_LOWER_{}", var_name));
+                    self.add_var_attr(var_name, VarAttrs::UPPER);
+                    self.remove_var_attr(var_name, VarAttrs::LOWER);
                 }
                 if is_readonly {
-                    self.variables
-                        .insert(format!("_READONLY_{}", var_name), "1".to_string());
+                    self.add_var_attr(var_name, VarAttrs::READONLY);
                 }
                 if is_export {
                     self.env.insert(
@@ -6663,42 +6957,37 @@ impl Interpreter {
                 // Declare without value
                 if remove_nameref {
                     // typeset +n ref: remove nameref attribute
-                    self.variables.remove(&format!("_NAMEREF_{}", name));
+                    self.remove_nameref(name);
                 } else if flags.nameref {
                     // typeset -n ref (without =value): use existing variable value as target
                     if let Some(existing) = self.variables.get(name.as_str()).cloned()
                         && !existing.is_empty()
                     {
-                        self.variables
-                            .insert(format!("_NAMEREF_{}", name), existing);
+                        self.set_nameref(name, existing);
                     }
                 } else if flags.assoc {
                     // Initialize empty associative array
-                    self.assoc_arrays.entry(name.to_string()).or_default();
+                    self.assoc_arrays_mut().entry(name.to_string()).or_default();
                 } else if flags.array {
                     // Initialize empty indexed array
-                    self.arrays.entry(name.to_string()).or_default();
+                    self.arrays_mut().entry(name.to_string()).or_default();
                 } else if !self.variables.contains_key(name.as_str()) {
                     self.insert_variable_checked(name.to_string(), String::new());
                 }
                 // Set case conversion attribute markers
                 if is_lowercase {
-                    self.variables
-                        .insert(format!("_LOWER_{}", name), "1".to_string());
-                    self.variables.remove(&format!("_UPPER_{}", name));
+                    self.add_var_attr(name, VarAttrs::LOWER);
+                    self.remove_var_attr(name, VarAttrs::UPPER);
                 }
                 if is_uppercase {
-                    self.variables
-                        .insert(format!("_UPPER_{}", name), "1".to_string());
-                    self.variables.remove(&format!("_LOWER_{}", name));
+                    self.add_var_attr(name, VarAttrs::UPPER);
+                    self.remove_var_attr(name, VarAttrs::LOWER);
                 }
                 if is_readonly {
-                    self.variables
-                        .insert(format!("_READONLY_{}", name), "1".to_string());
+                    self.add_var_attr(name, VarAttrs::READONLY);
                 }
                 if flags.integer {
-                    self.variables
-                        .insert(format!("_INTEGER_{}", name), "1".to_string());
+                    self.add_var_attr(name, VarAttrs::INTEGER);
                 }
                 if is_export {
                     self.env.insert(
@@ -6978,7 +7267,7 @@ impl Interpreter {
         }
 
         if self.call_stack.is_empty() {
-            self.arrays.remove("FUNCNAME");
+            self.arrays_mut().remove("FUNCNAME");
         } else {
             let funcname_arr: HashMap<usize, String> = self
                 .call_stack
@@ -6987,12 +7276,20 @@ impl Interpreter {
                 .enumerate()
                 .map(|(i, f)| (i, f.name.clone()))
                 .collect();
-            self.arrays.insert("FUNCNAME".to_string(), funcname_arr);
+            self.arrays_mut()
+                .insert("FUNCNAME".to_string(), funcname_arr);
         }
     }
 
     /// Process structured side effects from builtin execution.
     fn apply_builtin_side_effects(&mut self, result: &ExecResult) {
+        // Builtins that mutate SHOPT_* directly via `ctx.variables` (e.g. the
+        // `set -e` / `set +u` paths in the `set` builtin) don't update the
+        // cached `flags` bitfield. Resync once after every builtin so the
+        // bit cache can stay authoritative on the hot path. The scan covers
+        // ~10 SHOPT_* entries — cheaper than threading a structured "shopt
+        // changed" channel through every builtin.
+        self.refresh_shopt_flags();
         for effect in &result.side_effects {
             match effect {
                 builtins::BuiltinSideEffect::SetArray { name, elements } => {
@@ -7007,13 +7304,13 @@ impl Interpreter {
                 builtins::BuiltinSideEffect::SetIndexedArray { name, entries } => {
                     let arr: HashMap<usize, String> = entries.iter().cloned().collect();
                     // Remove existing array first (mirrors mapfile behavior)
-                    self.arrays.remove(name);
+                    self.arrays_mut().remove(name);
                     if !arr.is_empty() {
                         self.insert_array_checked(name.clone(), arr);
                     }
                 }
                 builtins::BuiltinSideEffect::RemoveArray(name) => {
-                    self.arrays.remove(name);
+                    self.arrays_mut().remove(name);
                 }
                 builtins::BuiltinSideEffect::ShiftPositional(n) => {
                     if let Some(frame) = self.call_stack.last_mut() {
@@ -7497,7 +7794,7 @@ impl Interpreter {
             'K' => value.clone(),
             'a' => {
                 let mut attrs = String::new();
-                if self.variables.contains_key(&format!("_READONLY_{}", name)) {
+                if self.is_var_readonly(name) {
                     attrs.push('r');
                 }
                 if self.env.contains_key(name) {
@@ -7564,6 +7861,43 @@ impl Interpreter {
     // helper to cap per-level stack usage. Without this, each $(...) nesting level
     // adds the full expand_word state machine to the call stack, causing overflow
     // at moderate depths despite the logical depth limit.
+    /// Snapshot the subshell-isolated portion of interpreter state.
+    /// Used by `$(...)` and arithmetic substitution to undo any mutations the
+    /// substituted command performed. Each `Arc<HashMap>` clones in O(1)
+    /// (refcount bump); only a substitution that actually mutates state pays
+    /// for a real HashMap clone, and only the maps it actually touched.
+    fn snapshot_subshell_state(&self) -> SubshellSnapshot {
+        SubshellSnapshot {
+            variables: Arc::clone(&self.variables),
+            arrays: Arc::clone(&self.arrays),
+            assoc_arrays: Arc::clone(&self.assoc_arrays),
+            functions: Arc::clone(&self.functions),
+            traps: Arc::clone(&self.traps),
+            aliases: Arc::clone(&self.aliases),
+            var_attrs: Arc::clone(&self.var_attrs),
+            namerefs: Arc::clone(&self.namerefs),
+            flags: self.flags,
+            cwd: self.cwd.clone(),
+            memory_budget: self.memory_budget.clone(),
+            exec_fd_table: self.exec_fd_table.clone(),
+        }
+    }
+
+    fn restore_subshell_state(&mut self, snap: SubshellSnapshot) {
+        self.variables = snap.variables;
+        self.arrays = snap.arrays;
+        self.assoc_arrays = snap.assoc_arrays;
+        self.functions = snap.functions;
+        self.traps = snap.traps;
+        self.aliases = snap.aliases;
+        self.var_attrs = snap.var_attrs;
+        self.namerefs = snap.namerefs;
+        self.flags = snap.flags;
+        self.cwd = snap.cwd;
+        self.memory_budget = snap.memory_budget;
+        self.exec_fd_table = snap.exec_fd_table;
+    }
+
     fn execute_cmd_subst<'a>(
         &'a mut self,
         commands: &'a [Command],
@@ -7571,15 +7905,7 @@ impl Interpreter {
         Box::pin(async move {
             // Command substitution runs in a subshell: snapshot all
             // mutable state so mutations don't leak to the parent.
-            let saved_traps = self.traps.clone();
-            let saved_functions = self.functions.clone();
-            let saved_vars = self.variables.clone();
-            let saved_arrays = self.arrays.clone();
-            let saved_assoc = self.assoc_arrays.clone();
-            let saved_aliases = self.aliases.clone();
-            let saved_cwd = self.cwd.clone();
-            let saved_memory_budget = self.memory_budget.clone();
-            let saved_exec_fd_table = self.exec_fd_table.clone();
+            let snapshot = self.snapshot_subshell_state();
             let mut stdout = String::new();
             for cmd in commands {
                 let cmd_result = self.execute_command(cmd).await?;
@@ -7591,7 +7917,7 @@ impl Interpreter {
             }
             // Fire EXIT trap set inside the command substitution
             if let Some(trap_cmd) = self.traps.get("EXIT").cloned()
-                && saved_traps.get("EXIT") != Some(&trap_cmd)
+                && snapshot.traps.get("EXIT") != Some(&trap_cmd)
                 && let Ok(trap_script) = Parser::with_limits(
                     &trap_cmd,
                     self.limits.max_ast_depth,
@@ -7602,16 +7928,7 @@ impl Interpreter {
             {
                 stdout.push_str(&trap_result.stdout);
             }
-            // Restore parent state
-            self.traps = saved_traps;
-            self.functions = saved_functions;
-            self.variables = saved_vars;
-            self.arrays = saved_arrays;
-            self.assoc_arrays = saved_assoc;
-            self.aliases = saved_aliases;
-            self.cwd = saved_cwd;
-            self.memory_budget = saved_memory_budget;
-            self.exec_fd_table = saved_exec_fd_table;
+            self.restore_subshell_state(snapshot);
             self.counters.pop_subst();
             self.subst_generation += 1;
             let trimmed = stdout.trim_end_matches('\n');
@@ -7843,23 +8160,22 @@ impl Interpreter {
                     operand,
                     colon_variant,
                 } => {
-                    let nameref_key = format!("_NAMEREF_{}", name);
-                    let is_nameref = self.variables.contains_key(&nameref_key);
+                    let nameref_target = self.namerefs.get(name).cloned();
+                    let is_nameref = nameref_target.is_some();
 
                     if is_nameref && operator.is_none() {
                         // Nameref without operator: ${!ref} returns the
                         // name the nameref points to (original behavior).
-                        if let Some(target) = self.variables.get(&nameref_key).cloned() {
-                            result.push_str(&target);
+                        if let Some(ref target) = nameref_target {
+                            result.push_str(target);
                         }
                     } else {
                         // Resolve the indirect target variable name
-                        let resolved_name =
-                            if let Some(target) = self.variables.get(&nameref_key).cloned() {
-                                target
-                            } else {
-                                self.expand_variable(name)
-                            };
+                        let resolved_name = if let Some(target) = nameref_target {
+                            target
+                        } else {
+                            self.expand_variable(name)
+                        };
 
                         if let Some(op) = operator {
                             // Indirect + operator: resolve indirect, then
@@ -9856,82 +10172,82 @@ impl Interpreter {
         if Self::is_internal_variable(&name) {
             return;
         }
-        // Resolve nameref: if `name` is a nameref, assign to the target instead
-        let resolved = self.resolve_nameref(&name).to_string();
+        // Resolve nameref: if `name` is a nameref, assign to the target
+        // instead. The common case (no nameref) reuses `name` without
+        // allocating; only nameref hops allocate a fresh owned target.
+        let resolved_string: String = {
+            let resolved = self.resolve_nameref(&name);
+            if std::ptr::eq(resolved.as_ptr(), name.as_ptr()) {
+                name
+            } else {
+                resolved.to_string()
+            }
+        };
+        let resolved: &str = resolved_string.as_str();
         // RANDOM=N reseeds the PRNG (matches bash behavior)
         if resolved == "RANDOM" {
             self.random_state
                 .store(value.parse::<u32>().unwrap_or(0), Ordering::Relaxed);
             return;
         }
+        // Attribute lookup is now a single map probe + bit test.
+        let attrs = self.var_attrs_get(resolved);
         // THREAT[TM-INJ-019/020/021]: Block assignment to readonly variables
-        if self
-            .variables
-            .contains_key(&format!("_READONLY_{}", resolved))
-        {
+        if attrs.contains(VarAttrs::READONLY) {
             return;
         }
         // Apply integer attribute (declare -i): evaluate as arithmetic
-        let value = if self
-            .variables
-            .get(&format!("_INTEGER_{}", resolved))
-            .map(|v| v == "1")
-            .unwrap_or(false)
-        {
+        let value = if attrs.contains(VarAttrs::INTEGER) {
             self.evaluate_arithmetic_with_assign(&value).to_string()
         } else {
             value
         };
         // Apply case conversion attributes (declare -l / declare -u)
-        let value = if self
-            .variables
-            .get(&format!("_LOWER_{}", resolved))
-            .map(|v| v == "1")
-            .unwrap_or(false)
-        {
+        let value = if attrs.contains(VarAttrs::LOWER) {
             value.to_lowercase()
-        } else if self
-            .variables
-            .get(&format!("_UPPER_{}", resolved))
-            .map(|v| v == "1")
-            .unwrap_or(false)
-        {
+        } else if attrs.contains(VarAttrs::UPPER) {
             value.to_uppercase()
         } else {
             value
         };
-        // Check allexport (set -a): auto-export to env
-        let allexport = self
-            .variables
-            .get("SHOPT_a")
-            .map(|v| v == "1")
-            .unwrap_or(false);
+        // Check allexport (set -a): auto-export to env — now a bit test.
+        let allexport = self.flags.contains(BashFlags::ALLEXPORT);
 
-        for frame in self.call_stack.iter_mut().rev() {
-            if let std::collections::hash_map::Entry::Occupied(mut e) =
-                frame.locals.entry(resolved.clone())
-            {
-                // Local variable update — track byte delta but no count change
-                let old_val_len = e.get().len();
+        // Walk the call stack top-down looking for an existing local binding.
+        // The previous implementation cloned `resolved_string` for the
+        // `entry()` API in every frame even when the key was absent — for a
+        // tight `for i in {1..N}; do x=$((x+1)); done` inside a function this
+        // is one clone per iteration. Using `get_mut` skips the clone unless
+        // we actually have a local to update.
+        for frame_idx in (0..self.call_stack.len()).rev() {
+            if let Some(existing) = self.call_stack[frame_idx].locals.get_mut(resolved) {
+                let old_val_len = existing.len();
                 self.memory_budget.variable_bytes = self
                     .memory_budget
                     .variable_bytes
                     .saturating_add(value.len())
                     .saturating_sub(old_val_len);
                 if allexport {
-                    let env_key = resolved.clone();
                     let env_value = value.clone();
-                    e.insert(value);
-                    self.insert_env_checked(env_key, env_value);
+                    *existing = value;
+                    self.insert_env_checked(resolved_string, env_value);
                     return;
                 }
-                e.insert(value);
+                *existing = value;
                 return;
             }
         }
-        self.insert_variable_checked(resolved.clone(), value.clone());
-        if allexport && self.variables.contains_key(&resolved) {
-            self.insert_env_checked(resolved, value);
+        // No local frame matched — insert at global scope. Only allexport
+        // needs the extra clone for the env mirror; the common path moves
+        // `value` straight into `variables`.
+        if allexport {
+            let env_value = value.clone();
+            self.insert_variable_checked(resolved_string.clone(), value);
+            if self.variables.contains_key(&resolved_string) {
+                self.insert_env_checked(resolved_string, env_value);
+            }
+        } else {
+            self.insert_variable_checked(resolved_string, value);
         }
     }
 
@@ -9961,7 +10277,7 @@ impl Interpreter {
                 if is_new_entry {
                     self.memory_budget.record_array_insert(1);
                 }
-                self.assoc_arrays
+                self.assoc_arrays_mut()
                     .entry(resolved_name)
                     .or_default()
                     .insert(expanded_key, value);
@@ -9994,7 +10310,7 @@ impl Interpreter {
             if is_new_entry {
                 self.memory_budget.record_array_insert(1);
             }
-            self.arrays
+            self.arrays_mut()
                 .entry(resolved_name)
                 .or_default()
                 .insert(index, value);
@@ -10038,7 +10354,18 @@ impl Interpreter {
                 old_value_len,
             );
         }
-        self.variables.insert(key, value);
+        // Keep the SHOPT flag cache in sync whenever SHOPT_* gets written.
+        // Internal callers that bulk-insert variables (snapshot restore,
+        // SHOPT bookkeeping in `execute_shell`) go through this routine, so
+        // hooking it here is the single sync point.
+        if let Some(bit) = BashFlags::from_shopt_name(&key) {
+            if value == "1" {
+                self.flags.insert(bit);
+            } else {
+                self.flags.remove(bit);
+            }
+        }
+        self.vars_mut().insert(key, value);
     }
 
     /// Insert a variable into the current local frame with memory budget checking.
@@ -10119,7 +10446,7 @@ impl Interpreter {
         }
         self.memory_budget.array_entries =
             self.memory_budget.array_entries.saturating_sub(old_entries) + new_entries;
-        self.arrays.insert(name, arr);
+        self.arrays_mut().insert(name, arr);
         true
     }
 
@@ -10140,19 +10467,22 @@ impl Interpreter {
         }
         self.memory_budget.array_entries =
             self.memory_budget.array_entries.saturating_sub(old_entries) + new_entries;
-        self.assoc_arrays.insert(name, arr);
+        self.assoc_arrays_mut().insert(name, arr);
         true
     }
 
     /// Resolve nameref chains: if `name` has a `_NAMEREF_<name>` marker,
     /// follow the chain (up to 10 levels to prevent infinite loops).
     fn resolve_nameref<'a>(&'a self, name: &'a str) -> &'a str {
+        // Fast path: most variables aren't namerefs. One hashmap lookup decides.
+        if self.namerefs.is_empty() {
+            return name;
+        }
         let mut current = name;
         let mut visited = std::collections::HashSet::new();
         visited.insert(name);
         for _ in 0..10 {
-            let key = format!("_NAMEREF_{}", current);
-            if let Some(target) = self.variables.get(&key) {
+            if let Some(target) = self.namerefs.get(current) {
                 // THREAT[TM-INJ-011]: Detect cyclic namerefs and stop.
                 if !visited.insert(target.as_str()) {
                     // Cycle detected — return original name (Bash emits a warning)
@@ -10210,26 +10540,10 @@ impl Interpreter {
                         if self.counters.push_subst(&self.limits).is_err() {
                             result.push('0');
                         } else {
-                            let saved_vars = self.variables.clone();
-                            let saved_arrays = self.arrays.clone();
-                            let saved_assoc = self.assoc_arrays.clone();
-                            let saved_functions = self.functions.clone();
-                            let saved_traps = self.traps.clone();
-                            let saved_aliases = self.aliases.clone();
-                            let saved_cwd = self.cwd.clone();
-                            let saved_memory_budget = self.memory_budget.clone();
-                            let saved_exec_fd_table = self.exec_fd_table.clone();
+                            let snapshot = self.snapshot_subshell_state();
                             let cmd_result =
                                 self.execute_command_sequence(&script.commands).await?;
-                            self.variables = saved_vars;
-                            self.arrays = saved_arrays;
-                            self.assoc_arrays = saved_assoc;
-                            self.functions = saved_functions;
-                            self.traps = saved_traps;
-                            self.aliases = saved_aliases;
-                            self.cwd = saved_cwd;
-                            self.memory_budget = saved_memory_budget;
-                            self.exec_fd_table = saved_exec_fd_table;
+                            self.restore_subshell_state(snapshot);
                             self.counters.pop_subst();
                             let trimmed = cmd_result.stdout.trim_end_matches('\n');
                             if trimmed.is_empty() {
@@ -10470,18 +10784,12 @@ impl Interpreter {
 
     /// Check if nounset (`set -u`) is active.
     fn is_nounset(&self) -> bool {
-        self.variables
-            .get("SHOPT_u")
-            .map(|v| v == "1")
-            .unwrap_or(false)
+        self.flags.contains(BashFlags::NOUNSET)
     }
 
     /// Check if pipefail (`set -o pipefail`) is active.
     fn is_pipefail(&self) -> bool {
-        self.variables
-            .get("SHOPT_pipefail")
-            .map(|v| v == "1")
-            .unwrap_or(false)
+        self.flags.contains(BashFlags::PIPEFAIL)
     }
 
     /// Run ERR trap if registered. Appends trap output to stdout/stderr.
