@@ -406,26 +406,33 @@ impl RgMatcher {
         }
     }
 
-    fn find_iter<'a>(&self, text: &'a str) -> Vec<RgMatch<'a>> {
+    fn for_each_match<'a>(&self, text: &'a str, mut f: impl FnMut(RgMatch<'a>)) {
         match self {
-            Self::Rust(regex) => regex
-                .find_iter(text)
-                .map(|mat| RgMatch {
-                    text: mat.as_str(),
-                    start: mat.start(),
-                    end: mat.end(),
-                })
-                .collect(),
-            Self::Fancy(regex) => regex
-                .find_iter(text)
-                .filter_map(|mat| {
-                    mat.ok().map(|mat| RgMatch {
+            Self::Rust(regex) => {
+                for mat in regex.find_iter(text) {
+                    f(RgMatch {
                         text: mat.as_str(),
                         start: mat.start(),
                         end: mat.end(),
-                    })
-                })
-                .collect(),
+                    });
+                }
+            }
+            Self::Fancy(regex) => {
+                for mat in regex.find_iter(text).flatten() {
+                    f(RgMatch {
+                        text: mat.as_str(),
+                        start: mat.start(),
+                        end: mat.end(),
+                    });
+                }
+            }
+        }
+    }
+
+    fn count_matches(&self, text: &str) -> usize {
+        match self {
+            Self::Rust(regex) => regex.find_iter(text).count(),
+            Self::Fancy(regex) => regex.find_iter(text).flatten().count(),
         }
     }
 
@@ -435,7 +442,7 @@ impl RgMatcher {
         // interpreter stdout truncation, enabling memory amplification / OOM.
         // Project the size up front and refuse to allocate past the cap; surface a
         // visible marker in the output instead of silently truncating.
-        let match_count = self.find_iter(text).len();
+        let match_count = self.count_matches(text);
         let projected = text
             .len()
             .saturating_add(match_count.saturating_mul(replacement.len()));
@@ -3794,13 +3801,13 @@ fn color_matches(text: &str, regex: &RgMatcher, opts: &RgOptions) -> String {
         let mut output = color_prefix(&opts.color_scheme.highlight, true);
         let mut last = 0;
         let mut matched = false;
-        for mat in regex.find_iter(text) {
+        regex.for_each_match(text, |mat| {
             matched = true;
             output.push_str(&text[last..mat.start()]);
             output.push_str(&color_text(mat.as_str(), &opts.color_scheme.matches, false));
             output.push_str(&color_prefix(&opts.color_scheme.highlight, false));
             last = mat.end();
-        }
+        });
         if !matched {
             output.push_str(text);
         } else {
@@ -3811,11 +3818,11 @@ fn color_matches(text: &str, regex: &RgMatcher, opts: &RgOptions) -> String {
     }
     let mut output = String::new();
     let mut last = 0;
-    for mat in regex.find_iter(text) {
+    regex.for_each_match(text, |mat| {
         output.push_str(&text[last..mat.start()]);
         output.push_str(&color_text(mat.as_str(), &opts.color_scheme.matches, false));
         last = mat.end();
-    }
+    });
     if last == 0 {
         text.to_string()
     } else {
@@ -3983,11 +3990,11 @@ fn collect_rg_multiline_matches<'a>(
         return Vec::new();
     }
     let mut matches = Vec::new();
-    for mat in regex.find_iter(content) {
+    regex.for_each_match(content, |mat| {
         if let Some(max) = max_count
             && matches.len() >= max
         {
-            break;
+            return;
         }
         let line_idx = rg_line_index_for_offset(lines, mat.start());
         let end_line_idx = rg_line_index_for_offset(lines, mat.end().saturating_sub(1));
@@ -3999,7 +4006,7 @@ fn collect_rg_multiline_matches<'a>(
             end_line_idx,
             column: mat.start().saturating_sub(lines[line_idx].start_offset) + 1,
         });
-    }
+    });
     matches
 }
 
@@ -4324,7 +4331,7 @@ fn write_rg_json_match_with_text(
     output.push_str(data_open);
     output.push_str(",\"submatches\":[");
     let mut first = true;
-    for mat in regex.find_iter(match_text) {
+    regex.for_each_match(match_text, |mat| {
         if !first {
             output.push(',');
         }
@@ -4343,7 +4350,7 @@ fn write_rg_json_match_with_text(
             );
         }
         output.push_str(&value.to_string());
-    }
+    });
     output.push_str("]},\"type\":\"match\"}\n");
 }
 
@@ -4945,7 +4952,7 @@ impl Builtin for Rg {
 
                     match_count += 1;
                     let matches_on_line = if !opts.invert_match {
-                        regex.find_iter(line.match_text).len()
+                        regex.count_matches(line.match_text)
                     } else {
                         1
                     };
@@ -5625,7 +5632,7 @@ impl Builtin for Rg {
                         0
                     }
                 } else {
-                    regex.find_iter(line.match_text).len()
+                    regex.count_matches(line.match_text)
                 };
                 if opts.count_matches && !opts.invert_match {
                     count_value += matches_on_line;
@@ -5754,7 +5761,7 @@ impl Builtin for Rg {
                         match_lines.len(),
                         match_lines
                             .iter()
-                            .map(|&line_idx| regex.find_iter(lines[line_idx].match_text).len())
+                            .map(|&line_idx| regex.count_matches(lines[line_idx].match_text))
                             .sum(),
                     );
                     json_matched_lines += match_lines.len();
@@ -5859,7 +5866,7 @@ impl Builtin for Rg {
                 }
             } else if opts.vimgrep && !opts.invert_match {
                 for &line_idx in &match_lines {
-                    for mat in regex.find_iter(lines[line_idx].match_text) {
+                    regex.for_each_match(lines[line_idx].match_text, |mat| {
                         write_rg_prefix(
                             &mut output,
                             RgPrefix {
@@ -5888,11 +5895,11 @@ impl Builtin for Rg {
                             ));
                         }
                         output.push(record_terminator);
-                    }
+                    });
                 }
             } else if opts.only_matching && !opts.invert_match {
                 for &line_idx in &match_lines {
-                    for mat in regex.find_iter(lines[line_idx].match_text) {
+                    regex.for_each_match(lines[line_idx].match_text, |mat| {
                         write_rg_prefix(
                             &mut output,
                             RgPrefix {
@@ -5924,7 +5931,7 @@ impl Builtin for Rg {
                             output.push_str(&color_matches(mat.as_str(), &regex, &opts));
                         }
                         output.push(record_terminator);
-                    }
+                    });
                 }
             } else if has_context {
                 if !opts.no_context_separator
