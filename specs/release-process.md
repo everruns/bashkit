@@ -47,6 +47,8 @@ The flow is: **prepare → verify-can-publish → merge → monitor-published**.
 
 When asked to create a release, the agent:
 
+0. **Ensure full git history** — cloud agent sandboxes are commonly shallow-cloned (depth ≈ 50), which silently hides half the commits and yields a wrong commit count / changelog. Before counting or listing commits, run `git fetch --unshallow origin main 2>/dev/null || git fetch origin main` and cross-check with the GitHub compare API (`/repos/everruns/bashkit/compare/v<prev>...main` → `total_commits`); if local `git log v<prev>..HEAD | wc -l` disagrees, the local clone is still shallow.
+
 1. **Determine version**
    - Use version specified by human, OR
    - Suggest next version based on changes (patch/minor/major)

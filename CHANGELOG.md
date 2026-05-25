@@ -2,14 +2,119 @@
 
 ## [Unreleased]
 
-### Fixed
+## [0.7.0] - 2026-05-25
 
-* fix(interpreter): reject ${#name[…} without closing bracket in arithmetic
-* fix(deps): resolve dependabot alerts in JS/TS workspaces
+### Highlights
 
-### Documentation
+- **Ripgrep (`rg`) parity push** — ~80 PRs landed expanding the `rg` builtin to near-feature-parity with upstream ripgrep: pcre2, multiline, encoding, glob brace/character-class/globstar, comprehensive default file types, ignore-file precedence (parent + global git ignore), preprocessor controls, hyperlink prefixes, ansi/hex colour styles, sort-by-modified, stats, max-filesize, mmap/engine flags, gzip search, follow-symlinks, and many bug fixes for output-mode precedence and binary-search behaviour.
+- **Host-owned `BuiltinRegistry` API** — embedders (JS, Python, Rust) can now register and remove builtins at any point in the interpreter's lifetime via `Bash::builder().builtin_registry(...)` and `addBuiltin` / `removeBuiltin` on `Bash` / `BashTool`. Replaces the rebuild-on-register approach (which silently wiped the in-memory VFS). Brought to Python parity via `add_builtin` / `remove_builtin` ([#1721](https://github.com/everruns/bashkit/pull/1721), [#1732](https://github.com/everruns/bashkit/pull/1732), [#1733](https://github.com/everruns/bashkit/pull/1733)).
+- **VFS read-only enforcement for live mounts** — `readonly_filesystem` now reliably blocks runtime mount writes ([#1691](https://github.com/everruns/bashkit/pull/1691)).
+- **Maintenance pass** — turso 0.5.3→0.6.0, langchain examples to v1.x, fuzz leak-guard hardening, dependency-edge cleanup ([#1632](https://github.com/everruns/bashkit/pull/1632), [#1635](https://github.com/everruns/bashkit/pull/1635), [#1636](https://github.com/everruns/bashkit/pull/1636), [#1639](https://github.com/everruns/bashkit/pull/1639)).
 
-* chore(specs): drop resolved deferred items and add credential-injection to AGENTS.md
+### What's Changed
+
+* fix(rg): avoid eager rg allocations in low-output/search-json paths ([#1690](https://github.com/everruns/bashkit/pull/1690)) by @chaliy
+* fix(rg): cap replacement expansion output ([#1650](https://github.com/everruns/bashkit/pull/1650)) by @chaliy
+* feat(python): wire custom builtins through BuiltinRegistry ([#1733](https://github.com/everruns/bashkit/pull/1733)) by @chaliy
+* chore(ci): scope homebrew-tap push to dedicated PAT ([#1735](https://github.com/everruns/bashkit/pull/1735)) by @chaliy
+* fix(rg): match explicit binary search ([#1736](https://github.com/everruns/bashkit/pull/1736)) by @chaliy
+* test(js): benchmark customBuiltins callback overhead from bash ([#1734](https://github.com/everruns/bashkit/pull/1734)) by @chaliy
+* fix(ci): close fork-PR secret exfiltration in examples job (TM-INF-026) ([#1728](https://github.com/everruns/bashkit/pull/1728)) by @chaliy
+* docs(js): add customBuiltins example, README sections, and public guide ([#1726](https://github.com/everruns/bashkit/pull/1726)) by @chaliy
+* feat(js): guardrail against executeSync + custom builtin deadlock ([#1732](https://github.com/everruns/bashkit/pull/1732)) by @chaliy
+* fix(rg): avoid quadratic multiline matching hot path ([#1689](https://github.com/everruns/bashkit/pull/1689)) by @chaliy
+* fix(rg): bound gzip decompression in search-zip mode ([#1687](https://github.com/everruns/bashkit/pull/1687)) by @chaliy
+* fix(fs): enforce readonly_filesystem for runtime live mounts ([#1691](https://github.com/everruns/bashkit/pull/1691)) by @chaliy
+* fix(rg): gate explicit symlink dereference behind --follow ([#1688](https://github.com/everruns/bashkit/pull/1688)) by @chaliy
+* fix(rg): reject empty pattern with --only-matching ([#1649](https://github.com/everruns/bashkit/pull/1649)) by @chaliy
+* fix(rg): match quiet output precedence by @chaliy
+* fix(rg): match json event modes ([#1730](https://github.com/everruns/bashkit/pull/1730)) by @chaliy
+* fix(rg): match only-output modes ([#1729](https://github.com/everruns/bashkit/pull/1729)) by @chaliy
+* fix(rg): match zip extension behavior ([#1727](https://github.com/everruns/bashkit/pull/1727)) by @chaliy
+* feat(core,js): host-owned mutable BuiltinRegistry ([#1721](https://github.com/everruns/bashkit/pull/1721)) by @chaliy
+* fix(rg): match pre and zip precedence ([#1723](https://github.com/everruns/bashkit/pull/1723)) by @chaliy
+* feat(rg): sort by modified time ([#1720](https://github.com/everruns/bashkit/pull/1720)) by @chaliy
+* fix(ci): harden python wheel builds ([#1722](https://github.com/everruns/bashkit/pull/1722)) by @chaliy
+* feat(rg): support pcre2 patterns ([#1719](https://github.com/everruns/bashkit/pull/1719)) by @chaliy
+* feat(rg): complete real file types ([#1718](https://github.com/everruns/bashkit/pull/1718)) by @chaliy
+* feat(rg): add document file types ([#1717](https://github.com/everruns/bashkit/pull/1717)) by @chaliy
+* feat(rg): add project file types ([#1716](https://github.com/everruns/bashkit/pull/1716)) by @chaliy
+* feat(rg): add metadata file types ([#1715](https://github.com/everruns/bashkit/pull/1715)) by @chaliy
+* feat(rg): add more real file types ([#1714](https://github.com/everruns/bashkit/pull/1714)) by @chaliy
+* feat(rg): add format file types ([#1713](https://github.com/everruns/bashkit/pull/1713)) by @chaliy
+* feat(rg): add common real rg file types ([#1712](https://github.com/everruns/bashkit/pull/1712)) by @chaliy
+* feat(rg): add early real rg file types ([#1711](https://github.com/everruns/bashkit/pull/1711)) by @chaliy
+* feat(rg): add more real rg file types ([#1710](https://github.com/everruns/bashkit/pull/1710)) by @chaliy
+* feat(rg): add additional default file types ([#1709](https://github.com/everruns/bashkit/pull/1709)) by @chaliy
+* feat(rg): add more language file types ([#1708](https://github.com/everruns/bashkit/pull/1708)) by @chaliy
+* feat(rg): support globstar directory prefixes ([#1707](https://github.com/everruns/bashkit/pull/1707)) by @chaliy
+* feat(rg): add more default file types ([#1706](https://github.com/everruns/bashkit/pull/1706)) by @chaliy
+* feat(rg): support escaped glob metacharacters ([#1705](https://github.com/everruns/bashkit/pull/1705)) by @chaliy
+* feat(rg): support glob brace alternation ([#1704](https://github.com/everruns/bashkit/pull/1704)) by @chaliy
+* feat(rg): support glob character classes ([#1703](https://github.com/everruns/bashkit/pull/1703)) by @chaliy
+* feat(rg): add common file types ([#1702](https://github.com/everruns/bashkit/pull/1702)) by @chaliy
+* feat(rg): support hex ansi color numbers ([#1701](https://github.com/everruns/bashkit/pull/1701)) by @chaliy
+* feat(rg): support ansi color numbers ([#1700](https://github.com/everruns/bashkit/pull/1700)) by @chaliy
+* feat(rg): support highlight colors ([#1699](https://github.com/everruns/bashkit/pull/1699)) by @chaliy
+* feat(rg): validate sort choices ([#1698](https://github.com/everruns/bashkit/pull/1698)) by @chaliy
+* feat(rg): support all file types ([#1697](https://github.com/everruns/bashkit/pull/1697)) by @chaliy
+* feat(rg): honor option delimiter ([#1696](https://github.com/everruns/bashkit/pull/1696)) by @chaliy
+* feat(rg): parse separator escapes as bytes ([#1695](https://github.com/everruns/bashkit/pull/1695)) by @chaliy
+* feat(rg): emit hyperlink prefixes ([#1694](https://github.com/everruns/bashkit/pull/1694)) by @chaliy
+* feat(rg): expand custom color styles ([#1693](https://github.com/everruns/bashkit/pull/1693)) by @chaliy
+* feat(rg): honor custom color styles ([#1692](https://github.com/everruns/bashkit/pull/1692)) by @chaliy
+* feat(rg): add ansi color output ([#1686](https://github.com/everruns/bashkit/pull/1686)) by @chaliy
+* feat(rg): honor global git ignore files ([#1685](https://github.com/everruns/bashkit/pull/1685)) by @chaliy
+* feat(rg): honor parent ignore files ([#1684](https://github.com/everruns/bashkit/pull/1684)) by @chaliy
+* feat(rg): expand generated completion flags ([#1683](https://github.com/everruns/bashkit/pull/1683)) by @chaliy
+* feat(rg): gate preprocessors with pre-glob ([#1682](https://github.com/everruns/bashkit/pull/1682)) by @chaliy
+* feat(rg): honor ascii regex mode ([#1681](https://github.com/everruns/bashkit/pull/1681)) by @chaliy
+* feat(rg): add generate output mode ([#1680](https://github.com/everruns/bashkit/pull/1680)) by @chaliy
+* feat(rg): add reset compatibility flags ([#1679](https://github.com/everruns/bashkit/pull/1679)) by @chaliy
+* feat(rg): accept diagnostic controls ([#1678](https://github.com/everruns/bashkit/pull/1678)) by @chaliy
+* feat(rg): accept preprocessor controls ([#1677](https://github.com/everruns/bashkit/pull/1677)) by @chaliy
+* feat(rg): add gzip search mode ([#1676](https://github.com/everruns/bashkit/pull/1676)) by @chaliy
+* feat(rg): follow symlink search paths ([#1675](https://github.com/everruns/bashkit/pull/1675)) by @chaliy
+* feat(rg): add context separator controls ([#1674](https://github.com/everruns/bashkit/pull/1674)) by @chaliy
+* feat(rg): add null-data record search ([#1673](https://github.com/everruns/bashkit/pull/1673)) by @chaliy
+* feat(rg): add color and engine compatibility flags ([#1672](https://github.com/everruns/bashkit/pull/1672)) by @chaliy
+* feat(rg): add compatibility flag aliases ([#1671](https://github.com/everruns/bashkit/pull/1671)) by @chaliy
+* feat(rg): add ignore toggle parity ([#1670](https://github.com/everruns/bashkit/pull/1670)) by @chaliy
+* feat(rg): add max depth aliases ([#1669](https://github.com/everruns/bashkit/pull/1669)) by @chaliy
+* feat(rg): add ignore file control flags ([#1668](https://github.com/everruns/bashkit/pull/1668)) by @chaliy
+* feat(rg): add max-filesize filtering ([#1667](https://github.com/everruns/bashkit/pull/1667)) by @chaliy
+* feat(rg): add case-insensitive glob filters ([#1666](https://github.com/everruns/bashkit/pull/1666)) by @chaliy
+* fix(rg): handle multiline invert matches ([#1665](https://github.com/everruns/bashkit/pull/1665)) by @chaliy
+* feat(rg): add multiline mode ([#1664](https://github.com/everruns/bashkit/pull/1664)) by @chaliy
+* feat(rg): add crlf mode ([#1663](https://github.com/everruns/bashkit/pull/1663)) by @chaliy
+* feat(rg): add encoding support ([#1662](https://github.com/everruns/bashkit/pull/1662)) by @chaliy
+* feat(rg): add engine and mmap flags ([#1661](https://github.com/everruns/bashkit/pull/1661)) by @chaliy
+* feat(rg): add path separator output ([#1660](https://github.com/everruns/bashkit/pull/1660)) by @chaliy
+* feat(rg): add config and git ignore controls ([#1659](https://github.com/everruns/bashkit/pull/1659)) by @chaliy
+* feat(rg): add unrestricted filter mode ([#1658](https://github.com/everruns/bashkit/pull/1658)) by @chaliy
+* feat(rg): add stats output ([#1657](https://github.com/everruns/bashkit/pull/1657)) by @chaliy
+* feat(rg): add message controls ([#1656](https://github.com/everruns/bashkit/pull/1656)) by @chaliy
+* feat(rg): add max columns modes ([#1655](https://github.com/everruns/bashkit/pull/1655)) by @chaliy
+* feat(rg): add binary text modes ([#1654](https://github.com/everruns/bashkit/pull/1654)) by @chaliy
+* feat(examples): reduce docs agent token waste by @chaliy
+* feat(rg): add ignore file support ([#1652](https://github.com/everruns/bashkit/pull/1652)) by @chaliy
+* feat(rg): add type definition flags ([#1651](https://github.com/everruns/bashkit/pull/1651)) by @chaliy
+* feat(rg): add hidden and type filters ([#1648](https://github.com/everruns/bashkit/pull/1648)) by @chaliy
+* feat(rg): add output modes ([#1645](https://github.com/everruns/bashkit/pull/1645)) by @chaliy
+* feat(rg): add next parity flags ([#1644](https://github.com/everruns/bashkit/pull/1644)) by @chaliy
+* feat(examples): improve docs agent search by @chaliy
+* feat(rg): improve ripgrep parity by @chaliy
+* feat(rg): support context and glob search by @chaliy
+* feat(examples): add docs grep agent by @chaliy
+* refactor(deps): remove unused dependency edges ([#1639](https://github.com/everruns/bashkit/pull/1639)) by @chaliy
+* fix(date): force UTC formatting under virtual clock modes ([#1637](https://github.com/everruns/bashkit/pull/1637)) by @chaliy
+* chore(deps): bump turso_core 0.5.3 → 0.6.0 ([#1636](https://github.com/everruns/bashkit/pull/1636)) by @chaliy
+* fix(testing): prevent fuzz leak guard false negatives on clap invalid-value lines ([#1631](https://github.com/everruns/bashkit/pull/1631)) by @chaliy
+* chore: deep-maintenance follow-ups — just vet, count drift, TM-INF-018, deps ([#1635](https://github.com/everruns/bashkit/pull/1635)) by @chaliy
+* chore(examples): bump @langchain/* to v1.x major ([#1633](https://github.com/everruns/bashkit/pull/1633)) by @chaliy
+* chore: deep-maintenance pass — fuzz fix, dep bumps, doc sync ([#1632](https://github.com/everruns/bashkit/pull/1632)) by @chaliy
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.6.0...v0.7.0
 
 ## [0.6.0] - 2026-05-16
 
