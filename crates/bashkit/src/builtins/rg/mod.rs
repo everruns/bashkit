@@ -338,10 +338,8 @@ impl RgOptions {
                 opts.glob_rules.push(RgGlobRule::parse(&val, true, true)?);
             } else if p.flag("--glob-case-insensitive") {
                 opts.glob_case_insensitive = true;
-                opts.set_glob_case_insensitive(true)?;
             } else if p.flag("--no-glob-case-insensitive") {
                 opts.glob_case_insensitive = false;
-                opts.set_glob_case_insensitive(false)?;
             } else if let Some(val) = long_value(&mut p, "--ignore-file")? {
                 opts.ignore_file_paths.push(val);
             } else if let Some(val) = p.flag_value("-t", "rg").map_err(Error::Execution)? {
@@ -930,6 +928,8 @@ impl RgOptions {
                 positional.push(arg.to_string());
             }
         }
+
+        opts.set_glob_case_insensitive(opts.glob_case_insensitive)?;
 
         if positional.is_empty() {
             if opts.patterns.is_empty()
