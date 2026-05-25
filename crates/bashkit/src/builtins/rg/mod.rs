@@ -475,6 +475,60 @@ impl RgOptions {
         }
     }
 
+    fn set_count_only(&mut self) {
+        self.count_only = true;
+        self.count_matches = false;
+        self.files_with_matches = false;
+        self.files_without_matches = false;
+        self.list_files = false;
+        self.json = false;
+    }
+
+    fn set_count_matches(&mut self) {
+        self.count_only = false;
+        self.count_matches = true;
+        self.files_with_matches = false;
+        self.files_without_matches = false;
+        self.list_files = false;
+        self.json = false;
+    }
+
+    fn set_files_with_matches(&mut self) {
+        self.count_only = false;
+        self.count_matches = false;
+        self.files_with_matches = true;
+        self.files_without_matches = false;
+        self.list_files = false;
+        self.json = false;
+    }
+
+    fn set_files_without_matches(&mut self) {
+        self.count_only = false;
+        self.count_matches = false;
+        self.files_with_matches = false;
+        self.files_without_matches = true;
+        self.list_files = false;
+        self.json = false;
+    }
+
+    fn set_json(&mut self) {
+        self.count_only = false;
+        self.count_matches = false;
+        self.files_with_matches = false;
+        self.files_without_matches = false;
+        self.list_files = false;
+        self.json = true;
+    }
+
+    fn set_list_files(&mut self) {
+        self.count_only = false;
+        self.count_matches = false;
+        self.files_with_matches = false;
+        self.files_without_matches = false;
+        self.list_files = true;
+        self.json = false;
+    }
+
     fn parse(args: &[String]) -> Result<Self> {
         let mut opts = RgOptions {
             patterns: Vec::new(),
@@ -689,13 +743,13 @@ impl RgOptions {
                 opts.ignore_case = false;
                 opts.smart_case = true;
             } else if p.flag_any(&["--count"]) {
-                opts.count_only = true;
+                opts.set_count_only();
             } else if p.flag_any(&["--count-matches"]) {
-                opts.count_matches = true;
+                opts.set_count_matches();
             } else if p.flag_any(&["--files-with-matches"]) {
-                opts.files_with_matches = true;
+                opts.set_files_with_matches();
             } else if p.flag_any(&["--files-without-match"]) {
-                opts.files_without_matches = true;
+                opts.set_files_without_matches();
             } else if p.flag_any(&["--invert-match"]) {
                 opts.invert_match = true;
             } else if p.flag("--no-invert-match") {
@@ -766,7 +820,7 @@ impl RgOptions {
                 opts.vimgrep = true;
                 opts.show_filename = true;
             } else if p.flag("--json") {
-                opts.json = true;
+                opts.set_json();
             } else if p.flag("--no-json") {
                 opts.json = false;
             } else if p.flag("--stats") {
@@ -774,7 +828,7 @@ impl RgOptions {
             } else if p.flag("--no-stats") {
                 opts.stats = false;
             } else if p.flag("--files") {
-                opts.list_files = true;
+                opts.set_list_files();
             } else if p.flag_any(&["--passthru", "--passthrough"]) {
                 opts.passthru = true;
             } else if p.flag("--trim") {
@@ -968,8 +1022,8 @@ impl RgOptions {
                             opts.line_numbers_explicit = true;
                         }
                         'N' => opts.line_numbers = false,
-                        'c' => opts.count_only = true,
-                        'l' => opts.files_with_matches = true,
+                        'c' => opts.set_count_only(),
+                        'l' => opts.set_files_with_matches(),
                         'v' => opts.invert_match = true,
                         'w' => opts.word_boundary = true,
                         'x' => opts.line_regexp = true,
@@ -6823,6 +6877,158 @@ mod tests {
         RgDiffCase {
             name: "count suppresses zero-match files",
             args: &["-c", "needle", "proj"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "files with matches then count uses count",
+            args: &["-l", "-c", "needle", "proj"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "count then files with matches uses files",
+            args: &["-c", "-l", "needle", "proj"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "files with matches then count matches uses count matches",
+            args: &["-l", "--count-matches", "needle", "proj"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "count matches then files with matches uses files",
+            args: &["--count-matches", "-l", "needle", "proj"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "files without matches then count uses count",
+            args: &["--files-without-match", "-c", "needle", "proj"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "count then files without matches uses files",
+            args: &["-c", "--files-without-match", "needle", "proj"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "files without then files with uses files with",
+            args: &["--files-without-match", "-l", "needle", "proj"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "files with then files without uses files without",
+            args: &["-l", "--files-without-match", "needle", "proj"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "count then count matches uses count matches",
+            args: &["-c", "--count-matches", "needle", "proj"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "count matches then count uses count",
+            args: &["--count-matches", "-c", "needle", "proj"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "json then files with matches uses files",
+            args: &["--json", "-l", "needle", "proj"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "files with matches then json uses json",
+            args: &["-l", "--json", "needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::JsonEvents,
+        },
+        RgDiffCase {
+            name: "json then count uses count",
+            args: &["--json", "-c", "needle", "proj"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "count then json uses json",
+            args: &["-c", "--json", "needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::JsonEvents,
+        },
+        RgDiffCase {
+            name: "json then no json restores normal output",
+            args: &["--json", "--no-json", "needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "list files then count uses count",
+            args: &["--files", "-c", "needle", "proj"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "count then list files uses files",
+            args: &["-c", "--files", "proj"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "list files then json uses json",
+            args: &["--files", "--json", "needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::JsonEvents,
+        },
+        RgDiffCase {
+            name: "json then list files uses files",
+            args: &["--json", "--files", "proj"],
             stdin: None,
             files: DIFF_BASIC_FILES,
             cwd: "/",
