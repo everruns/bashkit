@@ -6,6 +6,7 @@
 use async_trait::async_trait;
 use std::time::Duration;
 
+use super::limits::TIMEOUT_MAX_SECONDS as MAX_TIMEOUT_SECONDS;
 use super::{Builtin, Context, ExecutionPlan, SubCommand};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
@@ -37,8 +38,6 @@ use crate::interpreter::ExecResult;
 /// the command execution in a tokio timeout. Max timeout is 300 seconds
 /// for safety.
 pub struct Timeout;
-
-const MAX_TIMEOUT_SECONDS: u64 = 300; // 5 minutes max
 
 /// Parse a duration string like "30", "30s", "5m", "1h", "1d"
 pub(crate) fn parse_duration(s: &str) -> Option<Duration> {

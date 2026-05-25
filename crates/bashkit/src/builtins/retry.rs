@@ -5,6 +5,7 @@
 
 use async_trait::async_trait;
 
+use super::limits::RETRY_MAX_ATTEMPTS as MAX_RETRY_ATTEMPTS;
 use super::{Builtin, Context};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
@@ -20,10 +21,6 @@ use crate::interpreter::ExecResult;
 ///   -q           Quiet mode (suppress retry messages)
 ///   -v           Verbose mode (show detailed retry info)
 pub struct Retry;
-
-// Security bound: prevent untrusted scripts from requesting effectively
-// unbounded verbose output/work inside a single builtin invocation.
-const MAX_RETRY_ATTEMPTS: u32 = 10_000;
 
 struct RetryConfig {
     max_attempts: u32,

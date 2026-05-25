@@ -5,12 +5,10 @@
 use async_trait::async_trait;
 use std::path::PathBuf;
 
+use super::limits::DIRSTACK_MAX_SIZE as MAX_DIRSTACK_SIZE;
 use super::{Builtin, Context};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
-
-// Security decision: bound mutable `_DIRSTACK_SIZE` to avoid unbounded builtin loops.
-const MAX_DIRSTACK_SIZE: usize = 4096;
 
 fn get_stack_size(ctx: &Context<'_>) -> usize {
     ctx.variables

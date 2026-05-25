@@ -2,6 +2,7 @@
 
 use async_trait::async_trait;
 
+use super::limits::{YES_MAX_LINES as MAX_LINES, YES_MAX_OUTPUT_BYTES as MAX_OUTPUT_BYTES};
 use super::{Builtin, BuiltinHelper, Context};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
@@ -17,12 +18,6 @@ pub struct Yes;
 impl BuiltinHelper for Yes {
     const NAME: &'static str = "yes";
 }
-
-/// Maximum number of lines to output (safety limit)
-const MAX_LINES: usize = 10_000;
-/// Maximum stdout bytes produced by yes.
-/// THREAT[TM-DOS-059]: Bound repeated output to prevent memory exhaustion.
-const MAX_OUTPUT_BYTES: usize = 1_048_576;
 
 fn truncate_to_char_boundary(s: &str, max_bytes: usize) -> &str {
     if s.len() <= max_bytes {

@@ -14,6 +14,8 @@
 
 use async_trait::async_trait;
 
+#[cfg(feature = "http_client")]
+use super::limits::CURL_MAX_REDIRECTS as MAX_REDIRECTS;
 use super::resolve_path;
 use super::{Builtin, Context};
 use crate::error::Result;
@@ -479,7 +481,6 @@ async fn execute_curl_request(
     let mut current_headers = header_pairs.clone();
     let mut current_url = url.to_string();
     let mut redirect_count = 0;
-    const MAX_REDIRECTS: u32 = 10;
 
     loop {
         if verbose {

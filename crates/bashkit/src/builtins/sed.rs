@@ -23,6 +23,7 @@ use regex::Regex;
 
 use super::search_common::{REGEX_DFA_SIZE_LIMIT, REGEX_SIZE_LIMIT, build_regex, build_regex_opts};
 
+use super::limits::SED_MAX_GROUP_NESTING_DEPTH as MAX_GROUP_NESTING_DEPTH;
 use super::{Builtin, Context, read_text_file};
 use crate::error::{Error, Result};
 use crate::interpreter::ExecResult;
@@ -489,8 +490,6 @@ fn parse_address(s: &str) -> Result<(Option<Address>, &str)> {
 
     Ok((None, s))
 }
-
-const MAX_GROUP_NESTING_DEPTH: usize = 128;
 
 fn validate_group_nesting(s: &str, base_depth: usize) -> Result<()> {
     let mut in_subst = false;

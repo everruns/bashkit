@@ -13,11 +13,10 @@ use async_trait::async_trait;
 use super::generated::format::{
     FormatArgument, FormatArguments, FormatError, FormatItem, parse_spec_and_escape,
 };
+use super::limits::PRINTF_MAX_DIAG_CHARS as MAX_PRINTF_DIAG_CHARS;
 use super::{Builtin, Context, MAX_FORMAT_WIDTH};
 use crate::error::Result;
 use crate::interpreter::{ExecResult, is_internal_variable};
-
-const MAX_PRINTF_DIAG_CHARS: usize = 1_024;
 
 /// printf builtin - formatted string output
 pub struct Printf;

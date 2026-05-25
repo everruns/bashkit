@@ -23,6 +23,12 @@ use super::search_common::build_regex;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use super::limits::{
+    AWK_MAX_CALL_DEPTH as MAX_AWK_CALL_DEPTH,
+    AWK_MAX_GETLINE_CACHED_FILES as MAX_GETLINE_CACHED_FILES,
+    AWK_MAX_OUTPUT_BYTES as MAX_AWK_OUTPUT_BYTES,
+    AWK_MAX_PARSER_DEPTH as MAX_AWK_PARSER_DEPTH,
+};
 use super::{Builtin, Context, read_text_file};
 use crate::error::{Error, Result};
 use crate::fs::FileSystem;
@@ -362,11 +368,8 @@ impl AwkState {
 }
 
 /// THREAT[TM-DOS-027]: Maximum recursion depth for awk expression parser.
-/// Prevents stack overflow from deeply nested expressions like `(((((...)))))`
-/// or deeply chained unary operators like `- - - - - x`.
-/// Set conservatively: each recursion level uses ~1-2KB stack in debug mode.
-/// 100 levels × ~2KB = ~200KB, well within typical stack limits.
-const MAX_AWK_PARSER_DEPTH: usize = 100;
+// Parser-depth limit moved to `super::limits::AWK_MAX_PARSER_DEPTH`
+// (TM-DOS guard against deeply nested expressions).
 
 /// Preprocess awk program: replace newlines with semicolons inside action blocks.
 /// This makes newlines act as statement separators per POSIX awk spec.
@@ -2079,16 +2082,10 @@ enum AwkFlow {
     Return(AwkValue),  // Return from user-defined function
 }
 
-/// THREAT[TM-DOS-027]: Maximum recursion depth for awk user-defined function calls.
-const MAX_AWK_CALL_DEPTH: usize = 64;
-
-/// THREAT[TM-DOS-027]: Maximum total AWK output size (stdout + stderr + file redirects)
-/// to prevent memory exhaustion. 10 MB.
-const MAX_AWK_OUTPUT_BYTES: usize = 10_000_000;
-
-/// THREAT[TM-DOS-028]: Maximum number of distinct files cached by `getline var < file`.
-/// Prevents memory exhaustion from opening hundreds of large files.
-const MAX_GETLINE_CACHED_FILES: usize = 100;
+// Awk runtime limits (TM-DOS-027, TM-DOS-028) live in `super::limits`:
+// - AWK_MAX_CALL_DEPTH (user-function recursion)
+// - AWK_MAX_OUTPUT_BYTES (total stdout+stderr+file redirects, 10 MB)
+// - AWK_MAX_GETLINE_CACHED_FILES (distinct files held open by `getline`).
 
 struct AwkInterpreter {
     state: AwkState,

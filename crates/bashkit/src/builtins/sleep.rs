@@ -3,12 +3,10 @@
 use async_trait::async_trait;
 use std::time::Duration;
 
+use super::limits::SLEEP_MAX_SECONDS as MAX_SLEEP_SECONDS;
 use super::{Builtin, BuiltinHelper, Context};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
-
-/// Maximum sleep duration in seconds (safety limit)
-const MAX_SLEEP_SECONDS: f64 = 60.0;
 
 /// The sleep builtin - pause execution for a specified number of seconds.
 ///
