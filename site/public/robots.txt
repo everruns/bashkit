@@ -1,6 +1,6 @@
 User-agent: *
 Allow: /
-# Content Signals: allow search indexing; disallow AI training and AI-input/RAG use.
-Content-Signal: ai-train=no, search=yes, ai-input=no
+# Content Signals: allow search indexing, AI training, and AI-input/RAG use.
+Content-Signal: ai-train=yes, search=yes, ai-input=yes
 
 Sitemap: https://bashkit.sh/sitemap.xml
