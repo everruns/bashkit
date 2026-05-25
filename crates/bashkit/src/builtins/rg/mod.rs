@@ -4147,6 +4147,26 @@ fn write_rg_json_match(
     regex: &RgMatcher,
     replacement: Option<&str>,
 ) {
+    write_rg_json_match_with_text(
+        output,
+        filename,
+        line,
+        line_idx,
+        regex,
+        replacement,
+        line.match_text,
+    );
+}
+
+fn write_rg_json_match_with_text(
+    output: &mut String,
+    filename: &str,
+    line: RgLine<'_>,
+    line_idx: usize,
+    regex: &RgMatcher,
+    replacement: Option<&str>,
+    match_text: &str,
+) {
     // Stream submatches straight into the JSON output buffer instead of first
     // collecting them into a Vec<serde_json::Value> and then serializing the
     // whole tree. Avoids an O(matches_per_line) intermediate allocation on
@@ -4186,7 +4206,7 @@ fn write_rg_json_match(
     output.push_str(data_open);
     output.push_str(",\"submatches\":[");
     let mut first = true;
-    for mat in regex.find_iter(line.match_text) {
+    for mat in regex.find_iter(match_text) {
         if !first {
             output.push(',');
         }
@@ -4269,6 +4289,7 @@ fn write_rg_json_multiline_match(
 fn write_rg_json_end(
     output: &mut String,
     filename: &str,
+    binary_offset: Option<usize>,
     bytes_searched: usize,
     matched_lines: usize,
     matches: usize,
@@ -4279,7 +4300,7 @@ fn write_rg_json_end(
             "type":"end",
             "data":{
                 "path":{"text":filename},
-                "binary_offset":null,
+                "binary_offset":binary_offset,
                 "stats":rg_json_stats(bytes_searched, matched_lines, matches, 1, usize::from(matches > 0)),
             }
         }),
@@ -4612,8 +4633,16 @@ impl Builtin for Rg {
             let mut count_value = 0usize;
             let mut match_lines = Vec::new();
             stats.files_searched += 1;
-            if let Some(nul_offset) = first_nul_offset(content)
-                && !opts.text
+            let binary_offset = first_nul_offset(content).filter(|_| !opts.text);
+            let json_binary_search = binary_offset.is_some() && json_output;
+            if json_binary_search {
+                json_searches += 1;
+                if !opts.binary && !input.explicit {
+                    continue;
+                }
+            }
+            if let Some(nul_offset) = binary_offset
+                && !json_output
             {
                 if !opts.binary && !input.explicit {
                     continue;
@@ -4703,10 +4732,91 @@ impl Builtin for Rg {
                 ));
                 continue;
             }
+            if let Some(nul_offset) = binary_offset
+                && json_output
+                && cfg!(target_os = "linux")
+                && !opts.binary
+            {
+                // ripgrep 15.1.0's JSON printer is platform-sensitive for
+                // explicit binary files: Linux matches the original line
+                // containing the NUL, but reports bytes searched only up to it.
+                let search_content = content;
+                let search_lines = split_rg_lines(search_content, opts.crlf, opts.null_data);
+                let display_lines = split_rg_lines(content, opts.crlf, opts.null_data);
+                let mut file_matches = 0usize;
+                json_bytes_searched += nul_offset;
+                stats.bytes_searched += nul_offset;
+
+                for (line_idx, line) in search_lines.iter().enumerate() {
+                    let matched = regex.is_match(line.match_text);
+                    let matched = if opts.invert_match { !matched } else { matched };
+                    if !matched {
+                        continue;
+                    }
+                    if let Some(max) = opts.max_count
+                        && match_count >= max
+                    {
+                        break;
+                    }
+
+                    match_count += 1;
+                    let matches_on_line = if !opts.invert_match {
+                        regex.find_iter(line.match_text).len()
+                    } else {
+                        1
+                    };
+                    file_matches += matches_on_line;
+                    json_matches += matches_on_line;
+                    json_matched_lines += 1;
+                    stats.matches += matches_on_line;
+                    stats.matched_lines += 1;
+                    match_lines.push(line_idx);
+                    any_match = true;
+                }
+
+                if match_count > 0 {
+                    stats.files_with_matches += 1;
+                    write_rg_json_begin(&mut output, filename);
+                    for &line_idx in &match_lines {
+                        let display_line = display_lines
+                            .get(line_idx)
+                            .copied()
+                            .unwrap_or(search_lines[line_idx]);
+                        write_rg_json_match_with_text(
+                            &mut output,
+                            filename,
+                            display_line,
+                            line_idx,
+                            &regex,
+                            opts.replacement.as_deref(),
+                            search_lines[line_idx].match_text,
+                        );
+                    }
+                    write_rg_json_end(
+                        &mut output,
+                        filename,
+                        binary_offset,
+                        nul_offset,
+                        match_count,
+                        file_matches,
+                    );
+                    json_searches_with_match += 1;
+                }
+                continue;
+            }
+            let binary_json_content;
+            let content = if json_binary_search {
+                binary_json_content = content.replace('\0', "\n");
+                binary_json_content.as_str()
+            } else {
+                content
+            };
             let lines = split_rg_lines(content, opts.crlf, opts.null_data);
             let record_terminator = rg_record_terminator(&opts);
             json_bytes_searched += content.len();
-            json_searches += 1;
+            if !json_binary_search {
+                json_searches += 1;
+            }
             stats.bytes_searched += content.len();
 
             if opts.multiline {
@@ -4798,6 +4908,7 @@ impl Builtin for Rg {
                             write_rg_json_end(
                                 &mut output,
                                 filename,
+                                binary_offset,
                                 content.len(),
                                 inverted_match_lines.len(),
                                 inverted_match_lines.len(),
@@ -5002,6 +5113,7 @@ impl Builtin for Rg {
                         write_rg_json_end(
                             &mut output,
                             filename,
+                            binary_offset,
                             content.len(),
                             match_line_indices.len(),
                             matches.len(),
@@ -5416,6 +5528,7 @@ impl Builtin for Rg {
                     write_rg_json_end(
                         &mut output,
                         filename,
+                        binary_offset,
                         content.len(),
                         match_lines.len(),
                         match_lines
@@ -5848,6 +5961,7 @@ mod tests {
         UnorderedLines,
         UnorderedNul,
         JsonEvents,
+        UnorderedJsonEvents,
         Stats,
         StatsWithoutBytesSearched,
         ContainsAll(&'static [&'static str]),
@@ -9643,6 +9757,38 @@ mod tests {
             output: RgDiffOutput::StatsWithoutBytesSearched,
         },
         RgDiffCase {
+            name: "binary json explicit before nul",
+            args: &["--json", "abc", "proj/bin.dat"],
+            stdin: None,
+            files: DIFF_BINARY_FILES,
+            cwd: "/",
+            output: RgDiffOutput::JsonEvents,
+        },
+        RgDiffCase {
+            name: "binary json explicit after nul",
+            args: &["--json", "needle", "proj/bin.dat"],
+            stdin: None,
+            files: DIFF_BINARY_FILES,
+            cwd: "/",
+            output: RgDiffOutput::JsonEvents,
+        },
+        RgDiffCase {
+            name: "binary json recursive skips default",
+            args: &["--json", "needle", "proj"],
+            stdin: None,
+            files: DIFF_BINARY_FILES,
+            cwd: "/",
+            output: RgDiffOutput::JsonEvents,
+        },
+        RgDiffCase {
+            name: "binary json recursive binary",
+            args: &["--json", "--binary", "needle", "proj"],
+            stdin: None,
+            files: DIFF_BINARY_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedJsonEvents,
+        },
+        RgDiffCase {
             name: "encoding utf16le long",
             args: &["--encoding=utf-16le", "needle", "proj/utf16le.txt"],
             stdin: None,
@@ -10968,6 +11114,12 @@ mod tests {
                 "stdout JSON-event mismatch for rg differential case {}",
                 name
             ),
+            RgDiffOutput::UnorderedJsonEvents => assert_eq!(
+                unordered_normalized_rg_json(&bashkit.stdout),
+                unordered_normalized_rg_json(real_stdout),
+                "stdout JSON-event set mismatch for rg differential case {}",
+                name
+            ),
             RgDiffOutput::Stats => assert_eq!(
                 normalize_rg_stats(&bashkit.stdout),
                 normalize_rg_stats(real_stdout),
@@ -11041,6 +11193,12 @@ mod tests {
                 "stdout JSON-event mismatch for rg symlink differential case {}",
                 case.name
             ),
+            RgDiffOutput::UnorderedJsonEvents => assert_eq!(
+                unordered_normalized_rg_json(&bashkit.stdout),
+                unordered_normalized_rg_json(&real_stdout),
+                "stdout JSON-event set mismatch for rg symlink differential case {}",
+                case.name
+            ),
             RgDiffOutput::Stats => assert_eq!(
                 normalize_rg_stats(&bashkit.stdout),
                 normalize_rg_stats(&real_stdout),
@@ -11107,6 +11265,15 @@ mod tests {
                 value
             })
             .collect()
+    }
+
+    fn unordered_normalized_rg_json(output: &str) -> Vec<String> {
+        let mut events: Vec<String> = normalize_rg_json(output)
+            .into_iter()
+            .map(|event| serde_json::to_string(&event).expect("serialize normalized rg JSON event"))
+            .collect();
+        events.sort_unstable();
+        events
     }
 
     fn normalize_rg_json_value(value: &mut serde_json::Value) {
