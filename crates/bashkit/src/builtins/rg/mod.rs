@@ -2269,7 +2269,17 @@ fn apply_path_separator_to_display(display: &str, opts: &RgOptions) -> String {
     }
 }
 
+const RG_GLOB_MAX_BRACE_DEPTH: usize = 32;
+
 fn glob_to_regex(pattern: &str) -> String {
+    glob_to_regex_with_depth(pattern, 0)
+}
+
+fn glob_to_regex_with_depth(pattern: &str, depth: usize) -> String {
+    if depth >= RG_GLOB_MAX_BRACE_DEPTH {
+        return format!("^{}$", regex::escape(pattern.trim_start_matches('/')));
+    }
+
     let mut out = String::new();
     out.push('^');
 
@@ -2303,7 +2313,7 @@ fn glob_to_regex(pattern: &str) -> String {
                 }
             }
             '{' => {
-                if let Some((alternation, next)) = glob_alternation_to_regex(&chars, i) {
+                if let Some((alternation, next)) = glob_alternation_to_regex(&chars, i, depth + 1) {
                     out.push_str(&alternation);
                     i = next;
                 } else {
@@ -2325,7 +2335,14 @@ fn glob_to_regex(pattern: &str) -> String {
     out
 }
 
-fn glob_alternation_to_regex(chars: &[char], start: usize) -> Option<(String, usize)> {
+fn glob_alternation_to_regex(
+    chars: &[char],
+    start: usize,
+    recursion_depth: usize,
+) -> Option<(String, usize)> {
+    if recursion_depth >= RG_GLOB_MAX_BRACE_DEPTH {
+        return None;
+    }
     let mut alts = Vec::new();
     let mut current = String::new();
     let mut depth = 0usize;
@@ -2354,7 +2371,7 @@ fn glob_alternation_to_regex(chars: &[char], start: usize) -> Option<(String, us
                     if idx > 0 {
                         out.push('|');
                     }
-                    let alt_regex = glob_to_regex(alt);
+                    let alt_regex = glob_to_regex_with_depth(alt, recursion_depth);
                     out.push_str(&alt_regex[1..alt_regex.len() - 1]);
                 }
                 out.push(')');
@@ -6019,6 +6036,12 @@ mod tests {
     use std::io::Write;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
+
+    #[test]
+    fn glob_brace_alternation_depth_limit_does_not_expand_nested_pattern() {
+        let regex = glob_to_regex_with_depth("{a,b}", RG_GLOB_MAX_BRACE_DEPTH);
+        assert_eq!(regex, r"^\{a,b\}$");
+    }
 
     #[test]
     fn rg_rejects_too_many_ignore_rules_per_file() {
