@@ -5044,7 +5044,11 @@ impl Builtin for Rg {
                         show_filename
                     };
                     if has_context {
-                        if !opts.heading && !output.is_empty() && !inverted_match_lines.is_empty() {
+                        if !opts.no_context_separator
+                            && !opts.heading
+                            && !output.is_empty()
+                            && !inverted_match_lines.is_empty()
+                        {
                             output.push_str(&opts.context_separator);
                             output.push(record_terminator);
                         }
@@ -5394,7 +5398,11 @@ impl Builtin for Rg {
                         );
                     }
                 } else if has_context {
-                    if !opts.heading && !output.is_empty() && !context_match_lines.is_empty() {
+                    if !opts.no_context_separator
+                        && !opts.heading
+                        && !output.is_empty()
+                        && !context_match_lines.is_empty()
+                    {
                         output.push_str(&opts.context_separator);
                         output.push(record_terminator);
                     }
@@ -5804,7 +5812,11 @@ impl Builtin for Rg {
                     }
                 }
             } else if has_context {
-                if !opts.heading && !output.is_empty() && !match_lines.is_empty() {
+                if !opts.no_context_separator
+                    && !opts.heading
+                    && !output.is_empty()
+                    && !match_lines.is_empty()
+                {
                     output.push_str(&opts.context_separator);
                     output.push(record_terminator);
                 }
@@ -7781,6 +7793,21 @@ mod tests {
             ],
             stdin: None,
             files: DIFF_CONTEXT_GAP_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "no context separator between files",
+            args: &[
+                "-n",
+                "-C1",
+                "--no-context-separator",
+                "needle",
+                "proj/a.txt",
+                "proj/b.txt",
+            ],
+            stdin: None,
+            files: DIFF_TWO_CONTEXT_FILES,
             cwd: "/",
             output: RgDiffOutput::Exact,
         },
