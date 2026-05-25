@@ -203,7 +203,7 @@ jobs:
           fi
 
       - name: Install Doppler CLI
-        if: env.DOPPLER_AVAILABLE == 'true'
+        if: github.event.pull_request.head.repo.fork != true && env.DOPPLER_AVAILABLE == 'true'
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
         uses: dopplerhq/cli-action@v4
@@ -216,14 +216,14 @@ jobs:
       # PR-controlled cargo step sees ANTHROPIC_API_KEY only, not every
       # secret in the Doppler config.
       - name: Run LLM agent example
-        if: env.DOPPLER_AVAILABLE == 'true'
+        if: github.event.pull_request.head.repo.fork != true && env.DOPPLER_AVAILABLE == 'true'
         continue-on-error: true
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
         run: doppler run --only-secrets ANTHROPIC_API_KEY -- cargo run --example agent_tool --features http_client
 
       - name: Run harness OpenAI joke example
-        if: env.DOPPLER_AVAILABLE == 'true'
+        if: github.event.pull_request.head.repo.fork != true && env.DOPPLER_AVAILABLE == 'true'
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
         run: |
