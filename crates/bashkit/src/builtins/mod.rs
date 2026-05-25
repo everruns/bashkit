@@ -116,6 +116,9 @@ mod zip_cmd;
 /// Shared by printf and AWK builtins.
 pub(crate) const MAX_FORMAT_WIDTH: usize = 10_000;
 
+mod helpers;
+pub(crate) use helpers::BuiltinHelper;
+
 pub(crate) mod git;
 
 pub(crate) mod ssh;

@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 
-use super::{Builtin, Context};
+use super::{Builtin, BuiltinHelper, Context};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
@@ -13,6 +13,10 @@ use crate::interpreter::ExecResult;
 /// Repeatedly outputs STRING (default: "y") followed by newline.
 /// In bashkit, output is limited to avoid infinite loops.
 pub struct Yes;
+
+impl BuiltinHelper for Yes {
+    const NAME: &'static str = "yes";
+}
 
 /// Maximum number of lines to output (safety limit)
 const MAX_LINES: usize = 10_000;
@@ -49,7 +53,7 @@ fn build_yes_output(text: &str) -> String {
 #[async_trait]
 impl Builtin for Yes {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        if let Some(r) = super::check_help_version(
+        if let Some(r) = Self::check_help(
             ctx.args,
             "Usage: yes [STRING]\nRepeatedly output a line with STRING, or 'y'.\n\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
             Some("yes (bashkit) 0.1"),

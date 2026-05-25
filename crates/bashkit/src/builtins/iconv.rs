@@ -10,12 +10,16 @@
 
 use async_trait::async_trait;
 
-use super::{Builtin, Context, resolve_path};
+use super::{Builtin, BuiltinHelper, Context, resolve_path};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
 /// iconv builtin - character encoding conversion.
 pub struct Iconv;
+
+impl BuiltinHelper for Iconv {
+    const NAME: &'static str = "iconv";
+}
 
 /// Parse an encoding spec like "ascii//translit" into (encoding, translit).
 fn parse_encoding_spec(spec: &str) -> (Option<&'static str>, bool) {
@@ -226,7 +230,7 @@ fn decode_from(input: &[u8], encoding: &str) -> std::result::Result<String, Stri
 #[async_trait]
 impl Builtin for Iconv {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        if let Some(r) = super::check_help_version(
+        if let Some(r) = Self::check_help(
             ctx.args,
             "Usage: iconv [OPTION]... [FILE]\nConvert text from one character encoding to another.\n\n  -f ENCODING\tconvert characters from ENCODING\n  -t ENCODING\tconvert characters to ENCODING (supports //TRANSLIT)\n  -l, --list\tlist known coded character sets\n  --help\t\tdisplay this help and exit\n  --version\toutput version information and exit\n",
             Some("iconv (bashkit) 0.1"),
@@ -247,28 +251,19 @@ impl Builtin for Iconv {
                 "-f" => {
                     i += 1;
                     if i >= ctx.args.len() {
-                        return Ok(ExecResult::err(
-                            "iconv: option '-f' requires an argument\n".to_string(),
-                            1,
-                        ));
+                        return Ok(Self::err("option '-f' requires an argument", 1));
                     }
                     from_enc = Some(ctx.args[i].clone());
                 }
                 "-t" => {
                     i += 1;
                     if i >= ctx.args.len() {
-                        return Ok(ExecResult::err(
-                            "iconv: option '-t' requires an argument\n".to_string(),
-                            1,
-                        ));
+                        return Ok(Self::err("option '-t' requires an argument", 1));
                     }
                     to_enc = Some(ctx.args[i].clone());
                 }
                 arg if arg.starts_with('-') => {
-                    return Ok(ExecResult::err(
-                        format!("iconv: unknown option '{arg}'\n"),
-                        1,
-                    ));
+                    return Ok(Self::err(format!("unknown option '{arg}'"), 1));
                 }
                 _ => {
                     file_arg = Some(ctx.args[i].clone());
@@ -289,37 +284,17 @@ impl Builtin for Iconv {
         let from = match &from_enc {
             Some(f) => match normalize_encoding(f) {
                 Some(e) => e,
-                None => {
-                    return Ok(ExecResult::err(
-                        format!("iconv: unsupported encoding '{}'\n", f),
-                        1,
-                    ));
-                }
+                None => return Ok(Self::err(format!("unsupported encoding '{}'", f), 1)),
             },
-            None => {
-                return Ok(ExecResult::err(
-                    "iconv: missing source encoding (-f)\n".to_string(),
-                    1,
-                ));
-            }
+            None => return Ok(Self::err("missing source encoding (-f)", 1)),
         };
 
         let (to, to_translit) = match &to_enc {
             Some(t) => match parse_encoding_spec(t) {
                 (Some(e), translit) => (e, translit),
-                (None, _) => {
-                    return Ok(ExecResult::err(
-                        format!("iconv: unsupported encoding '{}'\n", t),
-                        1,
-                    ));
-                }
+                (None, _) => return Ok(Self::err(format!("unsupported encoding '{}'", t), 1)),
             },
-            None => {
-                return Ok(ExecResult::err(
-                    "iconv: missing target encoding (-t)\n".to_string(),
-                    1,
-                ));
-            }
+            None => return Ok(Self::err("missing target encoding (-t)", 1)),
         };
 
         // Read input from file or stdin
@@ -327,15 +302,12 @@ impl Builtin for Iconv {
             let path = resolve_path(ctx.cwd, file);
             match ctx.fs.read_file(&path).await {
                 Ok(bytes) => bytes,
-                Err(e) => return Ok(ExecResult::err(format!("iconv: {}: {e}\n", file), 1)),
+                Err(e) => return Ok(Self::err_path(file, e.to_string(), 1)),
             }
         } else if let Some(stdin) = ctx.stdin {
             stdin.as_bytes().to_vec()
         } else {
-            return Ok(ExecResult::err(
-                "iconv: no input (provide file argument or pipe stdin)\n".to_string(),
-                1,
-            ));
+            return Ok(Self::err("no input (provide file argument or pipe stdin)", 1));
         };
 
         // Decode from source encoding to UTF-8 string

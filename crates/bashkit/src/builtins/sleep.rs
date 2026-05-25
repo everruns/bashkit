@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use std::time::Duration;
 
-use super::{Builtin, Context};
+use super::{Builtin, BuiltinHelper, Context};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
@@ -18,10 +18,14 @@ const MAX_SLEEP_SECONDS: f64 = 60.0;
 /// Maximum duration is capped at 60 seconds for safety.
 pub struct Sleep;
 
+impl BuiltinHelper for Sleep {
+    const NAME: &'static str = "sleep";
+}
+
 #[async_trait]
 impl Builtin for Sleep {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        if let Some(r) = super::check_help_version(
+        if let Some(r) = Self::check_help(
             ctx.args,
             "Usage: sleep SECONDS\nPause for SECONDS seconds.\nSECONDS may be a floating-point number. Maximum duration is 60 seconds.\n\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
             Some("sleep (bashkit) 0.1"),
@@ -31,10 +35,7 @@ impl Builtin for Sleep {
         let seconds = match ctx.args.first() {
             Some(arg) => match arg.parse::<f64>() {
                 Ok(s) if s < 0.0 => {
-                    return Ok(ExecResult::err(
-                        format!("sleep: invalid time interval '{}'\n", arg),
-                        1,
-                    ));
+                    return Ok(Self::err(format!("invalid time interval '{}'", arg), 1));
                 }
                 Ok(s) => s.min(MAX_SLEEP_SECONDS),
                 Err(_) => {
@@ -42,15 +43,12 @@ impl Builtin for Sleep {
                     if arg.parse::<i64>().is_ok() {
                         arg.parse::<f64>().unwrap_or(0.0).min(MAX_SLEEP_SECONDS)
                     } else {
-                        return Ok(ExecResult::err(
-                            format!("sleep: invalid time interval '{}'\n", arg),
-                            1,
-                        ));
+                        return Ok(Self::err(format!("invalid time interval '{}'", arg), 1));
                     }
                 }
             },
             None => {
-                return Ok(ExecResult::err("sleep: missing operand\n".to_string(), 1));
+                return Ok(Self::err("missing operand", 1));
             }
         };
 
