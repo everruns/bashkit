@@ -473,7 +473,14 @@ impl RgOptions {
     fn apply_unrestricted(&mut self) {
         self.unrestricted_level = self.unrestricted_level.saturating_add(1);
         match self.unrestricted_level {
-            1 => self.no_ignore = true,
+            1 => {
+                self.no_ignore = true;
+                self.no_ignore_dot = true;
+                self.no_ignore_exclude = true;
+                self.no_ignore_global = true;
+                self.no_ignore_parent = true;
+                self.no_ignore_vcs = true;
+            }
             2 => self.hidden = true,
             _ => self.binary = true,
         }
@@ -10495,6 +10502,14 @@ mod tests {
             args: &["--unrestricted", "--unrestricted", "needle", "proj"],
             stdin: None,
             files: DIFF_UNRESTRICTED_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "unrestricted and ignore-dot only restores dot ignores",
+            args: &["-u", "--ignore-dot", "needle", "proj"],
+            stdin: None,
+            files: DIFF_IGNORE_FILES,
             cwd: "/",
             output: RgDiffOutput::UnorderedLines,
         },
