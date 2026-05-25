@@ -23,6 +23,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 use super::search_common::build_regex_opts;
 use super::{Builtin, Context, read_text_file, resolve_path};
@@ -1599,6 +1600,11 @@ impl RgIgnoreRule {
 
 impl RgTypeDatabase {
     fn default() -> Self {
+        static DEFAULT: OnceLock<RgTypeDatabase> = OnceLock::new();
+        DEFAULT.get_or_init(Self::build_default).clone()
+    }
+
+    fn build_default() -> Self {
         let mut db = Self {
             definitions: BTreeMap::new(),
         };
@@ -2914,9 +2920,6 @@ async fn collect_rg_inputs(
             continue;
         }
 
-        if !opts.matches_globs(&path, ctx.cwd) {
-            continue;
-        }
         let actual_path = resolve_rg_explicit_path(&*ctx.fs, &path, opts.follow_symlinks)
             .await
             .map(|(actual, _)| actual)
@@ -3545,11 +3548,11 @@ async fn meta_is_file_and_matches(
     fs: &dyn crate::fs::FileSystem,
     path: &Path,
     opts: &RgOptions,
-    cwd: &Path,
+    _cwd: &Path,
 ) -> bool {
     resolve_rg_explicit_path(fs, path, opts.follow_symlinks)
         .await
-        .is_some_and(|(_, meta)| meta.file_type.is_file() && opts.matches_globs(path, cwd))
+        .is_some_and(|(_, meta)| meta.file_type.is_file())
 }
 
 async fn read_rg_files(
@@ -3624,6 +3627,12 @@ async fn try_indexed_search(
         if !caps.content_search || (!opts.fixed_strings && !caps.regex) {
             return None;
         }
+        let explicit_file_root = root_arg.is_some()
+            && fs
+                .stat(&root)
+                .await
+                .ok()
+                .is_some_and(|meta| meta.file_type.is_file());
         let pattern = if index_can_use_literal {
             opts.patterns[0].clone()
         } else {
@@ -3634,7 +3643,7 @@ async fn try_indexed_search(
             is_regex: !index_can_use_literal,
             case_insensitive: opts.effective_ignore_case(),
             root: root.clone(),
-            glob_filter: if caps.glob_filter {
+            glob_filter: if caps.glob_filter && !explicit_file_root {
                 opts.first_positive_glob()
             } else {
                 None
@@ -3649,11 +3658,14 @@ async fn try_indexed_search(
             } else {
                 crate::fs::normalize_path(&root.join(&m.path))
             };
+            let explicit_file_match = explicit_file_root && candidate == root;
 
             if !candidate.starts_with(&root)
                 || !seen_paths.insert(candidate.clone())
-                || !opts.matches_globs(&candidate, cwd)
-                || (!opts.hidden && path_has_hidden_component_relative_to(&candidate, &root))
+                || (!explicit_file_match && !opts.matches_globs(&candidate, cwd))
+                || (!explicit_file_match
+                    && !opts.hidden
+                    && path_has_hidden_component_relative_to(&candidate, &root))
             {
                 continue;
             }
@@ -6953,6 +6965,38 @@ mod tests {
         RgDiffCase {
             name: "relative root glob keeps nested vendor",
             args: &["-g", "*.rs", "-g", "!vendor/**", "needle", "proj"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "explicit file ignores exclude glob",
+            args: &["-g", "!*.txt", "needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "explicit file ignores include glob",
+            args: &["-g", "*.rs", "needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "files explicit file ignores exclude glob",
+            args: &["--files", "-g", "!*.txt", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "explicit directory still applies exclude glob",
+            args: &["-g", "!*.txt", "needle", "proj"],
             stdin: None,
             files: DIFF_BASIC_FILES,
             cwd: "/",
