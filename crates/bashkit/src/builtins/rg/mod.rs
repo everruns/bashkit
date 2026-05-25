@@ -4301,7 +4301,7 @@ fn write_rg_json_end(
             "data":{
                 "path":{"text":filename},
                 "binary_offset":binary_offset,
-                "stats":rg_json_stats(bytes_searched, matched_lines, matches, 1, usize::from(matches > 0)),
+                "stats":rg_json_stats(bytes_searched, matched_lines, matches, 1, usize::from(matched_lines > 0)),
             }
         }),
     );
@@ -4845,9 +4845,13 @@ impl Builtin for Rg {
                         .collect();
                     match_count = inverted_match_lines.len();
                     count_value = inverted_match_lines.len();
-                    json_matches += inverted_match_lines.len();
+                    let inverted_matches = if opts.count_only || opts.count_matches {
+                        inverted_match_lines.len()
+                    } else {
+                        0
+                    };
                     json_matched_lines += inverted_match_lines.len();
-                    stats.matches += inverted_match_lines.len();
+                    stats.matches += inverted_matches;
                     stats.matched_lines += inverted_match_lines.len();
 
                     if match_count > 0 {
@@ -4911,7 +4915,7 @@ impl Builtin for Rg {
                                 binary_offset,
                                 content.len(),
                                 inverted_match_lines.len(),
-                                inverted_match_lines.len(),
+                                0,
                             );
                             json_searches_with_match += 1;
                         }
@@ -5405,17 +5409,23 @@ impl Builtin for Rg {
                 }
 
                 match_count += 1;
-                let matches_on_line = if !opts.invert_match {
-                    regex.find_iter(line.match_text).len()
+                let matches_on_line = if opts.invert_match {
+                    if opts.count_only || opts.count_matches {
+                        1
+                    } else {
+                        0
+                    }
                 } else {
-                    1
+                    regex.find_iter(line.match_text).len()
                 };
                 if opts.count_matches && !opts.invert_match {
                     count_value += matches_on_line;
                 } else {
                     count_value += 1;
                 }
-                json_matches += matches_on_line;
+                if !opts.invert_match {
+                    json_matches += matches_on_line;
+                }
                 stats.matches += matches_on_line;
                 stats.matched_lines += 1;
                 match_lines.push(line_idx);
@@ -7144,6 +7154,30 @@ mod tests {
             files: DIFF_BASIC_FILES,
             cwd: "/",
             output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "invert match stats counts zero matches",
+            args: &["-v", "--stats", "needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Stats,
+        },
+        RgDiffCase {
+            name: "invert count stats counts inverted lines",
+            args: &["-v", "-c", "--stats", "needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Stats,
+        },
+        RgDiffCase {
+            name: "json invert match counts zero submatches",
+            args: &["--json", "-v", "foo", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_JSON_MODE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::JsonEvents,
         },
         RgDiffCase {
             name: "no invert match disables invert",
@@ -9998,6 +10032,22 @@ mod tests {
             files: DIFF_MULTILINE_FILES,
             cwd: "/",
             output: RgDiffOutput::JsonEvents,
+        },
+        RgDiffCase {
+            name: "multiline json invert counts zero submatches",
+            args: &["--json", "-U", "-v", "foo\nbar", "proj/multi.txt"],
+            stdin: None,
+            files: DIFF_MULTILINE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::JsonEvents,
+        },
+        RgDiffCase {
+            name: "multiline invert stats counts zero matches",
+            args: &["-U", "-v", "--stats", "foo\nbar", "proj/multi.txt"],
+            stdin: None,
+            files: DIFF_MULTILINE_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Stats,
         },
         RgDiffCase {
             name: "multiline stdin",
