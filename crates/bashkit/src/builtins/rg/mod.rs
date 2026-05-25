@@ -4972,6 +4972,8 @@ impl Builtin for Rg {
                     && !opts.invert_match
                 {
                     Some(opts.max_count.unwrap_or(usize::MAX).min(1))
+                } else if opts.invert_match {
+                    None
                 } else {
                     opts.max_count
                 };
@@ -4982,13 +4984,18 @@ impl Builtin for Rg {
                 if opts.invert_match {
                     let matched_line_set: HashSet<usize> =
                         context_match_lines.iter().copied().collect();
-                    let inverted_match_lines: Vec<usize> = lines
+                    let mut inverted_match_lines: Vec<usize> = lines
                         .iter()
                         .enumerate()
                         .filter_map(|(line_idx, _)| {
                             (!matched_line_set.contains(&line_idx)).then_some(line_idx)
                         })
                         .collect();
+                    if let Some(limit) = opts.max_count
+                        && inverted_match_lines.len() > limit
+                    {
+                        inverted_match_lines.truncate(limit);
+                    }
                     match_count = inverted_match_lines.len();
                     count_value = inverted_match_lines.len();
                     let inverted_matches = if opts.count_only || opts.count_matches {
@@ -12507,6 +12514,18 @@ mod tests {
         assert_eq!(result.exit_code, 0);
         let lines: Vec<&str> = result.stdout.trim().lines().collect();
         assert_eq!(lines.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_rg_multiline_invert_max_count() {
+        let result = run_rg(
+            &["-m", "1", "-v", "-U", "foo\nbar", "/test.txt"],
+            None,
+            &[("/test.txt", b"foo\nbar\nkeep1\nfoo\nbar\nkeep2\n")],
+        )
+        .await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "keep1\n");
     }
 
     #[tokio::test]
