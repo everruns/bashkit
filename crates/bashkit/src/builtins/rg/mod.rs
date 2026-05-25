@@ -740,6 +740,7 @@ impl RgOptions {
                 opts.show_filename = true;
             } else if p.flag("--no-line-number") {
                 opts.line_numbers = false;
+                opts.line_numbers_explicit = false;
             } else if p.flag("--line-number") {
                 opts.line_numbers = true;
                 opts.line_numbers_explicit = true;
@@ -1030,7 +1031,10 @@ impl RgOptions {
                             opts.line_numbers = true;
                             opts.line_numbers_explicit = true;
                         }
-                        'N' => opts.line_numbers = false,
+                        'N' => {
+                            opts.line_numbers = false;
+                            opts.line_numbers_explicit = false;
+                        }
                         'c' => opts.set_count_only(),
                         'l' => opts.set_files_with_matches(),
                         'v' => opts.invert_match = true,
@@ -12765,6 +12769,37 @@ mod tests {
         // --no-line-number flag explicitly disables line numbers
         let result = run_rg(
             &["--no-line-number", "world", "/test.txt"],
+            None,
+            &[("/test.txt", b"hello\nworld\n")],
+        )
+        .await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "world");
+    }
+
+    #[tokio::test]
+    async fn test_rg_no_line_number_clears_explicit_state_short() {
+        let result = run_rg(
+            &["-n", "-N", "--column", "--no-column", "world", "/test.txt"],
+            None,
+            &[("/test.txt", b"hello\nworld\n")],
+        )
+        .await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "world");
+    }
+
+    #[tokio::test]
+    async fn test_rg_no_line_number_clears_explicit_state_long() {
+        let result = run_rg(
+            &[
+                "--line-number",
+                "--no-line-number",
+                "--column",
+                "--no-column",
+                "world",
+                "/test.txt",
+            ],
             None,
             &[("/test.txt", b"hello\nworld\n")],
         )
