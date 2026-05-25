@@ -237,6 +237,14 @@ Scripts may attempt to leak sensitive information.
 | envsubst exposes env (TM-INF-019) | `envsubst` substitutes any `$VAR` | Caller controls env (same as TM-INF-001) | CALLER RISK |
 | template exposes env (TM-INF-020) | `{{var}}` falls back to env | Caller controls env (same as TM-INF-001) | CALLER RISK |
 
+**Build / CI Pipeline:**
+
+| Threat | Attack Example | Mitigation | Status |
+|--------|---------------|------------|--------|
+| Fork-PR secret exfil (TM-INF-026) | Fork PR edits `examples/*.rs` or `build.rs` to read `$DOPPLER_TOKEN` / `$ANTHROPIC_API_KEY` from the runner env and exfiltrate; first-time-contributor approval gate runs the workflow from PR head, and `DOPPLER_TOKEN` is the master key to every other secret in the Doppler config | Three-layer fix in `.github/workflows/{ci,js,publish-js}.yml`: (1) fork-guard gates secret-using steps on `head.repo.fork != true`, (2) job-level secrets removed — each step sets only the tokens it needs, (3) `doppler run --only-secrets <KEY>` limits each invocation to the single secret the script reads. `ANTHROPIC_API_KEY` migrated off GH Actions secrets onto Doppler so `DOPPLER_TOKEN` is the only secret CI needs from GitHub | **FIXED** |
+
+For the complete catalogue of TM-INF-021..025 (jq env probe, ssh known_hosts leak, builtin stderr Debug shapes, host env via clap `Arg::env`, untrusted generated Rust in drift CI) see `specs/threat-model.md`.
+
 **Caller Responsibility (TM-INF-001):**
 
 Do NOT pass sensitive environment variables to untrusted scripts:
