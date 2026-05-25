@@ -307,7 +307,10 @@ impl Builtin for Iconv {
         } else if let Some(stdin) = ctx.stdin {
             stdin.as_bytes().to_vec()
         } else {
-            return Ok(Self::err("no input (provide file argument or pipe stdin)", 1));
+            return Ok(Self::err(
+                "no input (provide file argument or pipe stdin)",
+                1,
+            ));
         };
 
         // Decode from source encoding to UTF-8 string
