@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-05-25
+
+### Fixed
+
+* fix(ci): skip publish-js AI examples step on Windows + Node 24. The libuv assertion `!(handle->flags & UV_HANDLE_CLOSING)` fires during process shutdown of the example scripts on that combination only, blocking the npm publish in v0.7.0. The same scripts pass on every other platform/Node combination, so the step is gated off for `runner.os == 'Windows' && matrix.node == '24'`.
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.7.0...v0.7.1
+
 ## [0.7.0] - 2026-05-25
 
 ### Highlights

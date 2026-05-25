@@ -206,8 +206,12 @@ jobs:
       # `--only-secrets OPENAI_API_KEY` keeps the runtime env scoped to
       # just the key these scripts need, instead of injecting every
       # secret in the Doppler config.
+      # Skipped on Windows + Node 24: libuv hits an assertion failure
+      # (`!(handle->flags & UV_HANDLE_CLOSING)` in src/win/async.c) during
+      # process shutdown of the example scripts on that combination; the
+      # same examples pass on every other platform/Node combination.
       - name: Run AI examples
-        if: env.DOPPLER_TOKEN != ''
+        if: env.DOPPLER_TOKEN != '' && !(runner.os == 'Windows' && matrix.node == '24')
         shell: bash
         run: |
           doppler run --only-secrets OPENAI_API_KEY -- node examples/openai_tool.mjs
