@@ -2,6 +2,7 @@
   "name": "@everruns/bashkit",
   "version": "0.7.1",
   "description": "Sandboxed bash interpreter for JavaScript/TypeScript",
+  "packageManager": "pnpm@10.33.0",
   "main": "wrapper.js",
   "browser": "bashkit.wasi-browser.js",
   "types": "wrapper.d.ts",
@@ -69,7 +70,7 @@
     "wasi-worker-browser.mjs"
   ],
   "scripts": {
-    "build": "npm run build:napi && npm run build:cjs && npm run build:ts",
+    "build": "pnpm run build:napi && pnpm run build:cjs && pnpm run build:ts",
     "build:napi": "napi build --platform --release",
     "build:test-fixtures": "node scripts/build-test-fixtures.mjs",
     "build:wasm": "napi build --platform --target wasm32-wasip1-threads --release",
@@ -77,7 +78,7 @@
     "build:ts": "tsc",
     "artifacts": "napi artifacts",
     "test": "ava",
-    "test:interop": "npm run build:test-fixtures && ava test-fixtures/random-fs/interop.spec.ts",
+    "test:interop": "pnpm run build:test-fixtures && ava test-fixtures/random-fs/interop.spec.ts",
     "lint": "oxlint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -113,6 +114,11 @@
   "overrides": {
     "langsmith": "^0.6.0",
     "uuid": "14.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
   },
   "ava": {
     "files": [

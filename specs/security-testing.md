@@ -176,7 +176,7 @@ scenarios across 18 categories:
 
 ```bash
 # Run JS security tests
-cd crates/bashkit-js && npm test
+cd crates/bashkit-js && pnpm test
 ```
 
 ## Related Files

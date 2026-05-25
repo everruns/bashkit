@@ -8,11 +8,11 @@ A sandboxed Bash interpreter running entirely in the browser via WebAssembly.
 
 ```bash
 # Requires: rustup target add wasm32-wasip1-threads
-npm install
-npm start
+pnpm install
+pnpm start
 ```
 
-`npm start` builds the WASM binary and starts the Vite dev server. Open http://localhost:5173.
+`pnpm start` builds the WASM binary and starts the Vite dev server. Open http://localhost:5173.
 
 ## How It Works
 
@@ -24,10 +24,10 @@ The terminal UI is a single `index.html` — no framework, no build step beyond 
 
 | Command | Description |
 |---------|-------------|
-| `npm start` | Build WASM + start dev server |
-| `npm run dev` | Start dev server (WASM must already be built) |
-| `npm run build` | Build WASM + production bundle |
-| `npm run build:wasm` | Build WASM only |
+| `pnpm start` | Build WASM + start dev server |
+| `pnpm run dev` | Start dev server (WASM must already be built) |
+| `pnpm run build` | Build WASM + production bundle |
+| `pnpm run build:wasm` | Build WASM only |
 
 ## Requirements
 

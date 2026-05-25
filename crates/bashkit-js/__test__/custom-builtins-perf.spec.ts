@@ -5,7 +5,7 @@
 //
 // These tests assert only very loose upper bounds so they don't flake on slow
 // CI hardware. The interesting output is the printed timings — run with
-// `npx ava __test__/custom-builtins-perf.spec.ts -v` to see them.
+// `pnpm exec ava __test__/custom-builtins-perf.spec.ts -v` to see them.
 
 import test from "ava";
 import { Bash } from "../wrapper.js";

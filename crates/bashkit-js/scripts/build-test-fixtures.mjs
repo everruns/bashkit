@@ -1,4 +1,4 @@
-// Build test fixtures from the package root so release artifact jobs can keep `npm test` Rust-free.
+// Build test fixtures from the package root so release artifact jobs can keep `pnpm test` Rust-free.
 
 import { spawnSync } from "node:child_process";
 import path from "node:path";

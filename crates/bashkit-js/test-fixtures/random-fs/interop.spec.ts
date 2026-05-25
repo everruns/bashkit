@@ -1,4 +1,4 @@
-// Kept outside the default AVA suite because release artifact jobs run `npm test` without Rust.
+// Kept outside the default AVA suite because release artifact jobs run `pnpm test` without Rust.
 
 import test from "ava";
 import { createRequire } from "node:module";

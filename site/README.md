@@ -7,15 +7,15 @@ hosted on Cloudflare Workers (Static Assets / Pages-style output) at
 ## Develop
 
 ```bash
-npm install
-npm run dev        # local dev server on :4321
+pnpm install
+pnpm run dev       # local dev server on :4321
 ```
 
 ## Build
 
 ```bash
-npm run build      # emits ./dist
-npm run preview    # serve dist/ via wrangler
+pnpm run build     # emits ./dist
+pnpm run preview   # serve dist/ via wrangler
 ```
 
 ## Deploy
@@ -24,7 +24,7 @@ Deployment is intended to run from CI against the Cloudflare account that owns
 the `bashkit.sh` zone. Manual deploy:
 
 ```bash
-npm run deploy     # astro build && wrangler deploy
+pnpm run deploy    # astro build && wrangler deploy
 ```
 
 Configure the worker/project name and route in `wrangler.toml` or the

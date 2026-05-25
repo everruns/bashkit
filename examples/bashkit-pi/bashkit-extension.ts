@@ -10,7 +10,7 @@
  * Both share the same Bash instance so VFS and shell state are always in sync.
  *
  * Usage:
- *   cd examples/bashkit-pi && npm install
+ *   cd examples/bashkit-pi && pnpm install
  *   pi -e examples/bashkit-pi/bashkit-extension.ts
  */
 
