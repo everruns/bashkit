@@ -1,5 +1,5 @@
-// Decision: verify Content Signals in generated robots.txt so AI usage
-// preferences stay declared for bashkit.sh after future site edits.
+// Decision: verify Content Signals in generated robots.txt so permissive AI
+// usage preferences stay declared for bashkit.sh after future site edits.
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -30,9 +30,9 @@ const preferences = new Map(
 );
 
 const expectedPreferences = new Map([
-  ["ai-train", "no"],
+  ["ai-train", "yes"],
   ["search", "yes"],
-  ["ai-input", "no"],
+  ["ai-input", "yes"],
 ]);
 
 for (const [key, expectedValue] of expectedPreferences) {
