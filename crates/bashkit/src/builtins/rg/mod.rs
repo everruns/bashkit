@@ -4470,6 +4470,7 @@ fn rg_quiet_result(
     opts: &RgOptions,
     match_count: usize,
     any_match: &mut bool,
+    stderr: &str,
 ) -> Option<ExecResult> {
     let selected = if opts.files_without_matches {
         match_count == 0
@@ -4479,7 +4480,12 @@ fn rg_quiet_result(
     if selected {
         *any_match = true;
         if !opts.stats {
-            return Some(ExecResult::ok(String::new()));
+            return Some(ExecResult {
+                stdout: String::new(),
+                stderr: stderr.to_string(),
+                exit_code: 0,
+                ..Default::default()
+            });
         }
     }
     None
@@ -4806,7 +4812,9 @@ impl Builtin for Rg {
                 let matched = if opts.invert_match { !matched } else { matched };
                 if !matched {
                     if opts.quiet {
-                        if let Some(result) = rg_quiet_result(&opts, 0, &mut any_match) {
+                        if let Some(result) =
+                            rg_quiet_result(&opts, 0, &mut any_match, &collected_inputs.stderr)
+                        {
                             return Ok(result);
                         }
                         continue;
@@ -4838,7 +4846,9 @@ impl Builtin for Rg {
                 stats.matched_lines += 1;
                 stats.files_with_matches += 1;
                 if opts.quiet {
-                    if let Some(result) = rg_quiet_result(&opts, 1, &mut any_match) {
+                    if let Some(result) =
+                        rg_quiet_result(&opts, 1, &mut any_match, &collected_inputs.stderr)
+                    {
                         return Ok(result);
                     }
                     continue;
@@ -5022,7 +5032,12 @@ impl Builtin for Rg {
                     }
 
                     if opts.quiet {
-                        if let Some(result) = rg_quiet_result(&opts, match_count, &mut any_match) {
+                        if let Some(result) = rg_quiet_result(
+                            &opts,
+                            match_count,
+                            &mut any_match,
+                            &collected_inputs.stderr,
+                        ) {
                             return Ok(result);
                         }
                         continue;
@@ -5183,7 +5198,12 @@ impl Builtin for Rg {
                 }
 
                 if opts.quiet {
-                    if let Some(result) = rg_quiet_result(&opts, match_count, &mut any_match) {
+                    if let Some(result) = rg_quiet_result(
+                        &opts,
+                        match_count,
+                        &mut any_match,
+                        &collected_inputs.stderr,
+                    ) {
                         return Ok(result);
                     }
                     continue;
@@ -5613,7 +5633,9 @@ impl Builtin for Rg {
             }
 
             if opts.quiet {
-                if let Some(result) = rg_quiet_result(&opts, match_count, &mut any_match) {
+                if let Some(result) =
+                    rg_quiet_result(&opts, match_count, &mut any_match, &collected_inputs.stderr)
+                {
                     return Ok(result);
                 }
                 continue;
@@ -6847,6 +6869,28 @@ mod tests {
             files: DIFF_BASIC_FILES,
             cwd: "/proj",
             output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "quiet keeps missing file diagnostics when match found",
+            args: &["-q", "needle", "proj/missing.txt", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "quiet no messages suppresses missing file diagnostics",
+            args: &[
+                "--no-messages",
+                "-q",
+                "needle",
+                "proj/missing.txt",
+                "proj/a.txt",
+            ],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
         },
         RgDiffCase {
             name: "relative recursive display",
