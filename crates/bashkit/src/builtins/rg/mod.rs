@@ -12184,6 +12184,20 @@ mod tests {
         assert!(default.stdout.contains("text.txt"));
         assert!(!default.stdout.contains("bin.dat"));
 
+        let explicit_default = run_rg(&["needle", "/proj/bin.dat"], None, files).await;
+        assert_eq!(explicit_default.exit_code, 0);
+        assert_eq!(
+            explicit_default.stdout,
+            "binary file matches (found \"\\0\" byte around offset 3)\n"
+        );
+
+        let stdin_default = run_rg(&["needle"], Some("abc\0needle\n"), files).await;
+        assert_eq!(stdin_default.exit_code, 0);
+        assert_eq!(
+            stdin_default.stdout,
+            "binary file matches (found \"\\0\" byte around offset 3)\n"
+        );
+
         let text = run_rg(&["--text", "needle", "/proj/bin.dat"], None, files).await;
         assert_eq!(text.exit_code, 0);
         assert_eq!(text.stdout, "abc\0needle\n");
