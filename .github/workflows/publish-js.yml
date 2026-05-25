@@ -38,34 +38,39 @@ jobs:
         settings:
           - host: macos-latest
             target: x86_64-apple-darwin
-            build: npm run build:napi -- --target x86_64-apple-darwin && npm run build:cjs && npm run build:ts
+            build: pnpm run build:napi -- --target x86_64-apple-darwin && pnpm run build:cjs && pnpm run build:ts
           - host: macos-latest
             target: aarch64-apple-darwin
-            build: npm run build:napi -- --target aarch64-apple-darwin && npm run build:cjs && npm run build:ts
+            build: pnpm run build:napi -- --target aarch64-apple-darwin && pnpm run build:cjs && pnpm run build:ts
           - host: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            build: npm run build:napi -- --target x86_64-unknown-linux-gnu --use-napi-cross && npm run build:cjs && npm run build:ts
+            build: pnpm run build:napi -- --target x86_64-unknown-linux-gnu --use-napi-cross && pnpm run build:cjs && pnpm run build:ts
           - host: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-            build: npm run build:napi -- --target aarch64-unknown-linux-gnu && npm run build:cjs && npm run build:ts
+            build: pnpm run build:napi -- --target aarch64-unknown-linux-gnu && pnpm run build:cjs && pnpm run build:ts
           - host: windows-latest
             target: x86_64-pc-windows-msvc
-            build: npm run build:napi -- --target x86_64-pc-windows-msvc && npm run build:cjs && npm run build:ts
+            build: pnpm run build:napi -- --target x86_64-pc-windows-msvc && pnpm run build:cjs && pnpm run build:ts
           # TODO: WASM disabled — tokio "full" features (from bashkit core) are
           # unsupported on wasm32. Needs architectural fix to gate tokio features.
           # - host: ubuntu-latest
           #   target: wasm32-wasip1-threads
-          #   build: npm run build:napi -- --target wasm32-wasip1-threads && npm run build:cjs && npm run build:ts
+          #   build: pnpm run build:napi -- --target wasm32-wasip1-threads && pnpm run build:cjs && pnpm run build:ts
 
     steps:
       - uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
 
       - name: Setup node
         uses: actions/setup-node@v6
         with:
           node-version: 24
-          cache: npm
-          cache-dependency-path: crates/bashkit-js/package-lock.json
+          cache: pnpm
+          cache-dependency-path: crates/bashkit-js/pnpm-lock.yaml
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@1.95.0
@@ -85,7 +90,7 @@ jobs:
           key: ${{ matrix.settings.target }}-cargo-${{ matrix.settings.host }}
 
       - name: Install dependencies
-        run: npm install
+        run: pnpm install --frozen-lockfile
         working-directory: crates/bashkit-js
 
       - name: Build
@@ -145,16 +150,21 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
       - name: Setup node
         uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node }}
-          cache: npm
-          cache-dependency-path: crates/bashkit-js/package-lock.json
+          cache: pnpm
+          cache-dependency-path: crates/bashkit-js/pnpm-lock.yaml
           architecture: ${{ matrix.settings.architecture }}
 
       - name: Install dependencies
-        run: npm install
+        run: pnpm install --frozen-lockfile
         working-directory: crates/bashkit-js
 
       - name: Download native binding
@@ -170,7 +180,7 @@ jobs:
           path: crates/bashkit-js
 
       - name: Test bindings
-        run: npm test
+        run: pnpm test
         working-directory: crates/bashkit-js
 
       - name: Run examples
@@ -190,7 +200,7 @@ jobs:
         shell: bash
         run: |
           echo '{"type":"module","private":true}' > package.json
-          npm install --no-save openai ai @ai-sdk/openai @langchain/core @langchain/langgraph @langchain/openai zod
+          pnpm add openai ai @ai-sdk/openai @langchain/core @langchain/langgraph @langchain/openai zod
           rm -rf node_modules/@everruns/bashkit
           mkdir -p node_modules/@everruns
           if [ "$RUNNER_OS" = "Windows" ]; then
@@ -235,12 +245,17 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
       - name: Setup node
         uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node }}
-          cache: npm
-          cache-dependency-path: crates/bashkit-js/package-lock.json
+          cache: pnpm
+          cache-dependency-path: crates/bashkit-js/pnpm-lock.yaml
 
       - name: Output docker params
         id: docker
@@ -261,7 +276,7 @@ jobs:
           " >> $GITHUB_OUTPUT
 
       - name: Install dependencies
-        run: npm install
+        run: pnpm install --frozen-lockfile
         working-directory: crates/bashkit-js
 
       - name: Download native binding
@@ -282,7 +297,7 @@ jobs:
           -w ${{ github.workspace }}/crates/bashkit-js
           --platform ${{ steps.docker.outputs.PLATFORM }}
           ${{ steps.docker.outputs.IMAGE }}
-          npm test
+          ./node_modules/.bin/ava
 
       - name: Link package for examples
         run: |
@@ -300,7 +315,7 @@ jobs:
       - name: Install AI SDK dependencies and re-link
         run: |
           echo '{"type":"module","private":true}' > package.json
-          npm install --no-save openai ai @ai-sdk/openai @langchain/core @langchain/langgraph @langchain/openai zod
+          pnpm add openai ai @ai-sdk/openai @langchain/core @langchain/langgraph @langchain/openai zod
           rm -rf node_modules/@everruns/bashkit
           mkdir -p node_modules/@everruns
           ln -s ${{ github.workspace }}/crates/bashkit-js node_modules/@everruns/bashkit
@@ -329,14 +344,18 @@ jobs:
   #   runs-on: ubuntu-latest
   #   steps:
   #     - uses: actions/checkout@v6
+  #     - name: Setup pnpm
+  #       uses: pnpm/action-setup@v4
+  #       with:
+  #         version: 10.33.0
   #     - name: Setup node
   #       uses: actions/setup-node@v6
   #       with:
   #         node-version: 24
-  #         cache: npm
-  #         cache-dependency-path: crates/bashkit-js/package-lock.json
+  #         cache: pnpm
+  #         cache-dependency-path: crates/bashkit-js/pnpm-lock.yaml
   #     - name: Install dependencies
-  #       run: npm install --cpu wasm32
+  #       run: pnpm install --frozen-lockfile --cpu wasm32
   #       working-directory: crates/bashkit-js
   #     - name: Download native binding
   #       uses: actions/download-artifact@v8
@@ -349,7 +368,7 @@ jobs:
   #         name: js-stubs
   #         path: crates/bashkit-js
   #     - name: Test bindings
-  #       run: npm test
+  #       run: pnpm test
   #       env:
   #         NAPI_RS_FORCE_WASI: 1
   #       working-directory: crates/bashkit-js
@@ -373,16 +392,21 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
       - name: Setup node
         uses: actions/setup-node@v6
         with:
           node-version: 24
-          cache: npm
-          cache-dependency-path: crates/bashkit-js/package-lock.json
+          cache: pnpm
+          cache-dependency-path: crates/bashkit-js/pnpm-lock.yaml
           registry-url: "https://registry.npmjs.org"
 
       - name: Install dependencies
-        run: npm install
+        run: pnpm install --frozen-lockfile
         working-directory: crates/bashkit-js
 
       - name: Download all native bindings

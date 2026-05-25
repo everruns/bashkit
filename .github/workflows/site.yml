@@ -55,18 +55,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.11.1
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: "22"
-          cache: npm
-          cache-dependency-path: site/package-lock.json
+          cache: pnpm
+          cache-dependency-path: site/pnpm-lock.yaml
       - name: Install dependencies
         working-directory: site
-        run: npm ci
+        run: pnpm install --frozen-lockfile
       - name: Build site (runs all verify-* postbuild checks)
         working-directory: site
-        run: npm run build
+        run: pnpm run build
 
   # Gate job for branch protection
   site-check:

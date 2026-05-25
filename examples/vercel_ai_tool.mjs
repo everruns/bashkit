@@ -7,7 +7,7 @@
  * automatically via `generateText` with `maxSteps`.
  *
  * Prerequisites:
- *   npm install ai @ai-sdk/openai
+ *   pnpm add ai @ai-sdk/openai
  *   export OPENAI_API_KEY=sk-...
  *
  * Run:

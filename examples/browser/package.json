@@ -2,11 +2,12 @@
   "name": "bashkit-browser-example",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@10.33.0",
   "scripts": {
-    "start": "npm run build:wasm && vite",
-    "build:wasm": "cd ../../crates/bashkit-js && npm run build:wasm",
+    "start": "pnpm run build:wasm && vite",
+    "build:wasm": "cd ../../crates/bashkit-js && pnpm run build:wasm",
     "dev": "vite",
-    "build": "npm run build:wasm && vite build",
+    "build": "pnpm run build:wasm && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -15,5 +16,10 @@
   },
   "devDependencies": {
     "vite": "^6.4.2"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
   }
 }

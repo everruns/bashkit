@@ -41,9 +41,9 @@ fn sync_package_json_version() {
     eprintln!("Updating package.json version to {cargo_version}");
     fs::write(package_json_path, &result).expect("failed to write package.json");
 
-    let status = Command::new("npm")
-        .args(["install", "--package-lock-only"])
+    let status = Command::new("pnpm")
+        .args(["install", "--lockfile-only"])
         .status()
-        .expect("failed to run npm");
-    assert!(status.success(), "npm install --package-lock-only failed");
+        .expect("failed to run pnpm");
+    assert!(status.success(), "pnpm install --lockfile-only failed");
 }

@@ -5,7 +5,7 @@ set -e
 cd "$(dirname "$0")/.."
 
 echo "=== Building ==="
-npm run build
+pnpm run build
 
 # Find the .node file
 NODE_FILE=$(ls bashkit.*.node 2>/dev/null | head -1)
@@ -20,7 +20,7 @@ PLATFORM=$(echo "$NODE_FILE" | sed 's/bashkit\.\(.*\)\.node/\1/')
 echo "Platform: $PLATFORM"
 
 echo "=== Creating npm dirs ==="
-npm run create-npm-dirs
+pnpm run create-npm-dirs
 
 # Copy binary to platform package
 PLATFORM_DIR="npm/${PLATFORM}"
@@ -31,14 +31,14 @@ fi
 cp "$NODE_FILE" "$PLATFORM_DIR/"
 
 echo "=== Preparing packages ==="
-npx napi prepublish --skip-gh-release
+pnpm exec napi prepublish --skip-gh-release
 
 # Pack platform package
-PLATFORM_TGZ=$(cd "$PLATFORM_DIR" && npm pack 2>/dev/null | tail -1)
+PLATFORM_TGZ=$(cd "$PLATFORM_DIR" && pnpm pack 2>/dev/null | tail -1)
 PLATFORM_TGZ_PATH="$(cd "$PLATFORM_DIR" && pwd)/$PLATFORM_TGZ"
 
 # Pack main package
-MAIN_TGZ=$(npm pack 2>/dev/null | tail -1)
+MAIN_TGZ=$(pnpm pack 2>/dev/null | tail -1)
 MAIN_TGZ_PATH="$(pwd)/$MAIN_TGZ"
 
 echo "=== Installing in smoke-test dir ==="
@@ -47,8 +47,8 @@ rm -rf "$SMOKE_DIR"
 mkdir -p "$SMOKE_DIR"
 cd "$SMOKE_DIR"
 
-npm init -y > /dev/null 2>&1
-npm install "$PLATFORM_TGZ_PATH" "$MAIN_TGZ_PATH"
+pnpm init > /dev/null 2>&1
+pnpm add "$PLATFORM_TGZ_PATH" "$MAIN_TGZ_PATH"
 
 echo "=== Running smoke test ==="
 node -e "

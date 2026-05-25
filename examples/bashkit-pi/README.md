@@ -17,10 +17,10 @@ No real filesystem access. No subprocess. Uses `@everruns/bashkit` Node.js nativ
 
 ```bash
 # 1. Build the Node.js bindings
-cd crates/bashkit-js && npm install && npm run build && cd -
+cd crates/bashkit-js && pnpm install && pnpm run build && cd -
 
 # 2. Install this example's dependencies
-cd examples/bashkit-pi && npm install && cd -
+cd examples/bashkit-pi && pnpm install && cd -
 
 # 3. Install pi
 npm install -g @mariozechner/pi-coding-agent

@@ -63,7 +63,6 @@ When asked to create a release, the agent:
    - `Cargo.toml` workspace `version`
    - `crates/bashkit-cli/Cargo.toml` path-dep version pin on `bashkit`
    - `crates/bashkit-js/package.json` `version`
-   - `crates/bashkit-js/package-lock.json` top-level `version` and `packages.""` `version`
    - `Cargo.lock` (regenerate via `cargo update -p bashkit -p bashkit-cli ...`)
 
 4. **Run local verification**
@@ -112,7 +111,7 @@ The agent verifies before creating a release PR:
 - [ ] `cargo clippy` - no warnings
 - [ ] `cargo test` - all tests pass
 - [ ] CHANGELOG.md has entries for changes since last release
-- [ ] Version is consistent across `Cargo.toml`, `crates/bashkit-cli/Cargo.toml`, `crates/bashkit-js/package.json`, `package-lock.json`, and `Cargo.lock`
+- [ ] Version is consistent across `Cargo.toml`, `crates/bashkit-cli/Cargo.toml`, `crates/bashkit-js/package.json`, and `Cargo.lock`
 - [ ] `cargo publish --dry-run -p bashkit` succeeds
 - [ ] `cargo publish --dry-run -p bashkit-cli` succeeds
 - [ ] New version > latest published version on each registry (crates.io, PyPI, npm)
