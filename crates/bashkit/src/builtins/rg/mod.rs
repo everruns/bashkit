@@ -923,7 +923,6 @@ impl RgOptions {
                 opts.no_ignore_parent = false;
             } else if p.flag("--no-ignore-vcs") {
                 opts.no_ignore_vcs = true;
-                opts.no_ignore_parent = true;
             } else if p.flag("--ignore-vcs") {
                 opts.no_ignore = false;
                 opts.no_ignore_vcs = false;
@@ -11935,6 +11934,12 @@ mod tests {
         assert!(no_parent.stdout.contains("ignored.txt"));
         assert!(no_parent.stdout.contains("keep.txt"));
         assert!(no_parent.stdout.contains("vcs.txt"));
+
+        let no_vcs = run_rg(&["--no-ignore-vcs", "needle", "/proj/sub"], None, files).await;
+        assert_eq!(no_vcs.exit_code, 0);
+        assert!(!no_vcs.stdout.contains("ignored.txt"));
+        assert!(no_vcs.stdout.contains("keep.txt"));
+        assert!(no_vcs.stdout.contains("vcs.txt"));
     }
 
     #[tokio::test]
