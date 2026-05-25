@@ -4478,12 +4478,68 @@ fn rg_quiet_result(
     None
 }
 
+fn rg_option_takes_value(arg: &str) -> bool {
+    matches!(
+        arg,
+        "-e" | "--regexp"
+            | "-f"
+            | "--file"
+            | "-r"
+            | "--replace"
+            | "-A"
+            | "--after-context"
+            | "-B"
+            | "--before-context"
+            | "-C"
+            | "--context"
+            | "-d"
+            | "--max-depth"
+            | "-E"
+            | "--encoding"
+            | "--engine"
+            | "--field-context-separator"
+            | "--field-match-separator"
+            | "-g"
+            | "--glob"
+            | "--iglob"
+            | "--ignore-file"
+            | "-M"
+            | "--max-columns"
+            | "-m"
+            | "--max-count"
+            | "--max-filesize"
+            | "--path-separator"
+            | "--pre"
+            | "--pre-glob"
+            | "--regex-size-limit"
+            | "--dfa-size-limit"
+            | "--sort"
+            | "--sortr"
+            | "-j"
+            | "--threads"
+            | "-t"
+            | "--type"
+            | "-T"
+            | "--type-not"
+            | "--type-add"
+            | "--type-clear"
+            | "--context-separator"
+            | "--hostname-bin"
+            | "--hyperlink-format"
+            | "--colors"
+    )
+}
+
 fn rg_generate_kind(args: &[String]) -> Result<Option<String>> {
     let mut i = 0;
     while i < args.len() {
         let arg = &args[i];
         if arg == "--" {
             break;
+        }
+        if rg_option_takes_value(arg) {
+            i += 2;
+            continue;
         }
         if arg == "--generate" {
             let Some(kind) = args.get(i + 1) else {
@@ -11912,6 +11968,29 @@ mod tests {
         assert_eq!(man.exit_code, 0);
         assert!(man.stdout.contains(".TH RG"));
         assert!(man.stdout.contains(".SH NAME"));
+    }
+
+    #[tokio::test]
+    async fn test_rg_generate_not_detected_inside_value_args() {
+        let files = [("/tmp/input.txt", b"--generate=complete-bash\n".as_slice())];
+
+        let with_short_regexp = run_rg(
+            &["-e", "--generate=complete-bash", "/tmp/input.txt"],
+            None,
+            &files,
+        )
+        .await;
+        assert_eq!(with_short_regexp.exit_code, 0);
+        assert_eq!(with_short_regexp.stdout, "--generate=complete-bash\n");
+
+        let with_long_regexp = run_rg(
+            &["--regexp", "--generate=complete-bash", "/tmp/input.txt"],
+            None,
+            &files,
+        )
+        .await;
+        assert_eq!(with_long_regexp.exit_code, 0);
+        assert_eq!(with_long_regexp.stdout, "--generate=complete-bash\n");
     }
 
     #[tokio::test]
