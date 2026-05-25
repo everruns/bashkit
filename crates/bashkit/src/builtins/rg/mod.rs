@@ -21,12 +21,16 @@ use serde_json::json;
 use std::collections::{BTreeMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use super::search_common::build_regex_opts;
 use super::{Builtin, Context, read_text_file, resolve_path};
 use crate::error::{Error, Result};
 use crate::interpreter::ExecResult;
 
+const RG_IGNORE_FILE_MAX_BYTES: usize = 1024 * 1024;
+const RG_IGNORE_RULES_MAX_PER_FILE: usize = 10_000;
+const RG_IGNORE_RULES_MAX_TOTAL: usize = 50_000;
 /// rg command - recursive pattern search (simplified ripgrep)
 pub struct Rg;
 
@@ -1952,6 +1956,12 @@ fn parse_rg_ignore_rules(
     let mut rules = Vec::new();
     for line in content.lines() {
         if let Some(rule) = RgIgnoreRule::parse(line, base, case_insensitive)? {
+            if rules.len() >= RG_IGNORE_RULES_MAX_PER_FILE {
+                return Err(Error::Execution(format!(
+                    "rg: ignore file has too many rules (max {})",
+                    RG_IGNORE_RULES_MAX_PER_FILE
+                )));
+            }
             rules.push(rule);
         }
     }
@@ -2058,9 +2068,34 @@ async fn load_optional_ignore_file(
     let Ok(content) = fs.read_file(path).await else {
         return Ok(());
     };
+    if content.len() > RG_IGNORE_FILE_MAX_BYTES {
+        return Err(Error::Execution(format!(
+            "rg: ignore file too large (max {} bytes): {}",
+            RG_IGNORE_FILE_MAX_BYTES,
+            path.display()
+        )));
+    }
     let content = String::from_utf8_lossy(&content);
-    rules.extend(parse_rg_ignore_rules(&content, base, case_insensitive)?);
+    let parsed = parse_rg_ignore_rules(&content, base, case_insensitive)?;
+    let Some(total) = rules.len().checked_add(parsed.len()) else {
+        return Err(Error::Execution("rg: too many ignore rules".to_string()));
+    };
+    if total > RG_IGNORE_RULES_MAX_TOTAL {
+        return Err(Error::Execution(format!(
+            "rg: too many ignore rules (max {})",
+            RG_IGNORE_RULES_MAX_TOTAL
+        )));
+    }
+    rules.extend(parsed);
     Ok(())
+}
+
+#[cfg(test)]
+fn test_ignore_content_with_n_rules(n: usize) -> String {
+    (0..n)
+        .map(|i| format!("rule-{i}"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 async fn has_git_dir_in_ancestors(fs: &dyn crate::fs::FileSystem, dir: &Path, root: &Path) -> bool {
@@ -2109,7 +2144,7 @@ struct RgWalkItem {
     actual: PathBuf,
     actual_root: PathBuf,
     depth: usize,
-    rules: Vec<RgIgnoreRule>,
+    rules: Arc<Vec<RgIgnoreRule>>,
     ancestors: Vec<PathBuf>,
 }
 
@@ -2157,13 +2192,13 @@ async fn collect_rg_files_recursive(
             actual: root.actual.clone(),
             actual_root: root.actual.clone(),
             depth: 0,
-            rules,
+            rules: Arc::new(rules),
             ancestors: vec![root.actual.clone()],
         });
     }
 
     while let Some(item) = stack.pop() {
-        let mut rules = item.rules;
+        let mut rules = (*item.rules).clone();
         let _ =
             load_local_ignore_rules(fs, &item.actual, &item.actual_root, opts, &mut rules).await;
         if let Ok(entries) = fs.read_dir(&item.actual).await {
@@ -2202,7 +2237,7 @@ async fn collect_rg_files_recursive(
                             actual: entry_actual_path,
                             actual_root: item.actual_root.clone(),
                             depth: entry_depth,
-                            rules: rules.clone(),
+                            rules: Arc::new(rules.clone()),
                             ancestors: child_ancestors,
                         });
                     }
@@ -3874,6 +3909,37 @@ mod tests {
     use std::collections::HashMap;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
+
+    #[test]
+    fn rg_rejects_too_many_ignore_rules_per_file() {
+        let content = test_ignore_content_with_n_rules(RG_IGNORE_RULES_MAX_PER_FILE + 1);
+        let err = match parse_rg_ignore_rules(&content, Path::new("/proj"), false) {
+            Ok(_) => panic!("expected error"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("too many rules"));
+    }
+
+    #[tokio::test]
+    async fn rg_rejects_oversized_ignore_files() {
+        let fs = InMemoryFs::new();
+        fs.mkdir(Path::new("/proj"), true).await.expect("mkdir");
+        let content = vec![b'a'; RG_IGNORE_FILE_MAX_BYTES + 1];
+        fs.write_file(Path::new("/proj/.ignore"), &content)
+            .await
+            .expect("write");
+        let mut rules = Vec::new();
+        let err = load_optional_ignore_file(
+            &fs,
+            Path::new("/proj/.ignore"),
+            Path::new("/proj"),
+            false,
+            &mut rules,
+        )
+        .await
+        .expect_err("error");
+        assert!(err.to_string().contains("ignore file too large"));
+    }
 
     async fn run_rg(args: &[&str], stdin: Option<&str>, files: &[(&str, &[u8])]) -> ExecResult {
         run_rg_with_cwd(args, stdin, files, "/").await
