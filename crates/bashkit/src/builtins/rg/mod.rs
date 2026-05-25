@@ -3544,6 +3544,7 @@ async fn try_indexed_search(
     opts: &RgOptions,
     cwd: &Path,
 ) -> Option<Vec<RgInput>> {
+    let index_can_use_literal = opts.fixed_strings && !opts.word_boundary && !opts.line_regexp;
     if opts.invert_match
         || opts.files_without_matches
         || opts.crlf
@@ -3555,7 +3556,7 @@ async fn try_indexed_search(
         || opts.follow_symlinks
         || opts.search_zip
         || opts.preprocessor.is_some()
-        || (!opts.unicode && !opts.fixed_strings)
+        || (!opts.unicode && !index_can_use_literal)
         || opts.sort != RgSort::Path
     {
         return None;
@@ -3587,7 +3588,6 @@ async fn try_indexed_search(
         if !caps.content_search || (!opts.fixed_strings && !caps.regex) {
             return None;
         }
-        let index_can_use_literal = opts.fixed_strings && !opts.word_boundary && !opts.line_regexp;
         let pattern = if index_can_use_literal {
             opts.patterns[0].clone()
         } else {
@@ -12874,6 +12874,30 @@ mod tests {
         let result = run_rg_with_fs(&["--crlf", "needle$", "/safe/crlf.txt"], None, fs).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "needle\r\n");
+    }
+
+    #[tokio::test]
+    async fn test_rg_indexed_search_skipped_for_no_unicode_non_literal_queries() {
+        let inner = InMemoryFs::new();
+        inner.mkdir(Path::new("/safe"), true).await.unwrap();
+        inner
+            .write_file(Path::new("/safe/unicode.txt"), b"cafe\ncafe\ncaf\xc3\xa9\n")
+            .await
+            .unwrap();
+
+        let fs = Arc::new(IndexedTestFs {
+            inner,
+            matches: vec![],
+        });
+
+        let result = run_rg_with_fs(
+            &["--no-ignore", "--no-unicode", "-F", "-w", "caf", "/safe"],
+            None,
+            fs,
+        )
+        .await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "/safe/unicode.txt:café\n");
     }
 
     #[test]
