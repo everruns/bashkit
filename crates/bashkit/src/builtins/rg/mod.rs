@@ -109,6 +109,7 @@ struct RgOptions {
     unicode: bool,
     pcre2: bool,
     messages: bool,
+    unrestricted_level: u8,
     context_separator: String,
     no_context_separator: bool,
     field_match_separator: String,
@@ -470,12 +471,11 @@ impl RgMatcher {
 
 impl RgOptions {
     fn apply_unrestricted(&mut self) {
-        if !self.no_ignore {
-            self.no_ignore = true;
-        } else if !self.hidden {
-            self.hidden = true;
-        } else {
-            self.binary = true;
+        self.unrestricted_level = self.unrestricted_level.saturating_add(1);
+        match self.unrestricted_level {
+            1 => self.no_ignore = true,
+            2 => self.hidden = true,
+            _ => self.binary = true,
         }
     }
 
@@ -602,6 +602,7 @@ impl RgOptions {
             unicode: true,
             pcre2: false,
             messages: true,
+            unrestricted_level: 0,
             context_separator: "--".to_string(),
             no_context_separator: false,
             field_match_separator: ":".to_string(),
@@ -10405,6 +10406,22 @@ mod tests {
         RgDiffCase {
             name: "unrestricted three times includes binary",
             args: &["-uuu", "needle", "proj"],
+            stdin: None,
+            files: DIFF_UNRESTRICTED_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "explicit no-ignore does not advance unrestricted level",
+            args: &["--no-ignore", "-u", "needle", "proj"],
+            stdin: None,
+            files: DIFF_UNRESTRICTED_FILES,
+            cwd: "/",
+            output: RgDiffOutput::UnorderedLines,
+        },
+        RgDiffCase {
+            name: "explicit hidden does not advance unrestricted level",
+            args: &["--hidden", "-uu", "needle", "proj"],
             stdin: None,
             files: DIFF_UNRESTRICTED_FILES,
             cwd: "/",
