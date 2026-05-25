@@ -7,7 +7,7 @@
  * commands to run and iterates until it has the answer.
  *
  * Prerequisites:
- *   npm install @langchain/core @langchain/langgraph @langchain/openai zod
+ *   pnpm add @langchain/core @langchain/langgraph @langchain/openai zod
  *   export OPENAI_API_KEY=sk-...
  *
  * Run:

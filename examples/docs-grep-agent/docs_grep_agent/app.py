@@ -18,7 +18,7 @@ DEFAULT_MODEL = "gpt-5.5-low"
 # a substitute for narrow searches.
 MAX_CONTEXT_CHARS = 8000
 SPINNER_INTERVAL_SECONDS = 0.25
-EXCLUDED_EXAMPLE_FILES = {"package-lock.json", "uv.lock"}
+EXCLUDED_EXAMPLE_FILES = {"package-lock.json", "pnpm-lock.yaml", "uv.lock"}
 
 SYSTEM_PROMPT = """You answer questions about Bashkit from documentation snippets.
 
@@ -232,7 +232,8 @@ def self_test(root: Path) -> None:
                 "find /docs/examples -maxdepth 4 -name .ruff_cache -print; "
                 "find /docs/examples -maxdepth 4 -name __pycache__ -print; "
                 "find /docs/examples -maxdepth 4 -name uv.lock -print; "
-                "find /docs/examples -maxdepth 4 -name package-lock.json -print"
+                "find /docs/examples -maxdepth 4 -name package-lock.json -print; "
+                "find /docs/examples -maxdepth 4 -name pnpm-lock.yaml -print"
             )
         }
     )

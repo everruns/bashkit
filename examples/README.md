@@ -77,7 +77,7 @@ JS examples install `@everruns/bashkit` from npm. All dependencies are in
 `examples/package.json`:
 
 ```bash
-cd examples && npm install
+cd examples && pnpm install
 ```
 
 ### bash_basics.mjs
@@ -154,6 +154,6 @@ headers for `SharedArrayBuffer` support (Vite config handles this).
 
 ```bash
 cd examples/browser
-npm install
-npm run dev
+pnpm install
+pnpm run dev
 ```

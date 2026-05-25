@@ -7,7 +7,7 @@
  * to execute bash commands, and results are fed back for the next turn.
  *
  * Prerequisites:
- *   npm install openai
+ *   pnpm add openai
  *   export OPENAI_API_KEY=sk-...
  *
  * Run:

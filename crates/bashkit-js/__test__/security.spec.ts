@@ -7,7 +7,7 @@
  *
  * Threat-model IDs reference specs/threat-model.md.
  *
- * Run: npx ava __test__/security.spec.ts
+ * Run: pnpm exec ava __test__/security.spec.ts
  */
 
 import test from "ava";

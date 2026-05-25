@@ -45,21 +45,28 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: "22"
+          cache: pnpm
+          cache-dependency-path: crates/bashkit-js/pnpm-lock.yaml
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
         working-directory: crates/bashkit-js
 
       - name: Build native binding (generates type declarations)
-        run: npm run build
+        run: pnpm run build
         working-directory: crates/bashkit-js
 
       - name: Type-check (including tests)
-        run: npx tsc --noEmit -p tsconfig.check.json
+        run: pnpm exec tsc --noEmit -p tsconfig.check.json
         working-directory: crates/bashkit-js
 
   build-and-test:
@@ -106,17 +113,30 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
       - name: Setup Node.js
         if: matrix.runtime == 'node'
         uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.version }}
+          cache: pnpm
+          cache-dependency-path: |
+            crates/bashkit-js/pnpm-lock.yaml
+            examples/pnpm-lock.yaml
 
       - name: Setup Node.js (for napi build)
         if: matrix.runtime != 'node'
         uses: actions/setup-node@v6
         with:
           node-version: "22"
+          cache: pnpm
+          cache-dependency-path: |
+            crates/bashkit-js/pnpm-lock.yaml
+            examples/pnpm-lock.yaml
 
       - name: Setup Bun
         if: matrix.runtime == 'bun'
@@ -131,21 +151,21 @@ jobs:
           deno-version: ${{ matrix.version }}
 
       - name: Install dependencies
-        run: npm install
+        run: pnpm install --frozen-lockfile
         working-directory: crates/bashkit-js
 
       - name: Build native binding
-        run: npm run build
+        run: pnpm run build
         working-directory: crates/bashkit-js
 
       - name: Run ava tests (Node only)
         if: matrix.runtime == 'node'
-        run: npm test
+        run: pnpm test
         working-directory: crates/bashkit-js
 
       - name: Run native filesystem interop fixture test (Node only)
         if: matrix.runtime == 'node'
-        run: npm run test:interop
+        run: pnpm run test:interop
         working-directory: crates/bashkit-js
 
       - name: Run runtime-compat tests (Node)
@@ -170,7 +190,7 @@ jobs:
       - name: Install example dependencies and link local build
         working-directory: examples
         run: |
-          npm install
+          pnpm install --frozen-lockfile
           rm -rf node_modules/@everruns/bashkit
           mkdir -p node_modules/@everruns
           ln -s ${{ github.workspace }}/crates/bashkit-js node_modules/@everruns/bashkit
