@@ -3546,6 +3546,7 @@ async fn try_indexed_search(
 ) -> Option<Vec<RgInput>> {
     if opts.invert_match
         || opts.files_without_matches
+        || opts.crlf
         || opts.uses_ignore_files()
         || opts.patterns.len() != 1
         || opts.max_filesize.is_some()
@@ -12854,6 +12855,25 @@ mod tests {
         let result = run_rg_with_fs(&["--no-ignore", "secret", "/safe"], None, fs).await;
         assert_eq!(result.exit_code, 1);
         assert_eq!(result.stdout, "");
+    }
+
+    #[tokio::test]
+    async fn test_rg_crlf_skips_indexed_prefilter_and_falls_back_to_linear_scan() {
+        let inner = InMemoryFs::new();
+        inner.mkdir(Path::new("/safe"), true).await.unwrap();
+        inner
+            .write_file(Path::new("/safe/crlf.txt"), b"needle\r\nother\r\n")
+            .await
+            .unwrap();
+
+        let fs = Arc::new(IndexedTestFs {
+            inner,
+            matches: Vec::new(),
+        });
+
+        let result = run_rg_with_fs(&["--crlf", "needle$", "/safe/crlf.txt"], None, fs).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "needle\r\n");
     }
 
     #[test]
