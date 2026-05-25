@@ -3,7 +3,7 @@
   "type": "module",
   "version": "0.1.0",
   "private": true,
-  "packageManager": "pnpm@10.33.0",
+  "packageManager": "pnpm@10.11.1",
   "description": "bashkit.sh homepage (Astro, Cloudflare)",
   "engines": {
     "node": ">=22.12.0"
