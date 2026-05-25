@@ -1,0 +1,13 @@
+// Decision: Cloudflare Workers Builds validates the Worker name in the configured
+// root directory. Keep a repo-root config for the connected `bashkit` Worker while
+// the Astro project and generated assets live under site/.
+{
+  "name": "bashkit",
+  "compatibility_date": "2025-10-01",
+  "assets": {
+    "directory": "./site/dist"
+  },
+  "observability": {
+    "enabled": true
+  }
+}
