@@ -1440,16 +1440,6 @@ impl Interpreter {
         Arc::make_mut(&mut self.traps)
     }
 
-    // Aliases are only mutated by builtins via ShellRef (which gets a
-    // `&mut HashMap` via Arc::make_mut inline at the construction site), so
-    // a parallel `aliases_mut` helper isn't called from the interpreter
-    // itself. Kept commented for symmetry — if a new interpreter call site
-    // ever needs &mut aliases, just uncomment.
-    // #[inline]
-    // fn aliases_mut(&mut self) -> &mut HashMap<String, String> {
-    //     Arc::make_mut(&mut self.aliases)
-    // }
-
     #[inline]
     fn var_attrs_mut(&mut self) -> &mut HashMap<String, VarAttrs> {
         Arc::make_mut(&mut self.var_attrs)
@@ -1491,32 +1481,6 @@ impl Interpreter {
         self.flags.contains(BashFlags::XTRACE)
     }
 
-    /// Cache-aware setter for `SHOPT_X` entries in `variables`. Mirrors the
-    /// scalar string write into the `flags` bitfield so hot-path checks don't
-    /// need a HashMap lookup + string compare. Use this whenever code writes
-    /// `SHOPT_<x>` or `SHOPT_expand_aliases`/etc.; plain `set -e`/`-u`/etc.
-    /// inputs flow through here from `execute_set_builtin` / `execute_shopt`.
-    #[allow(dead_code)] // exposed for builtin callers; unused in current tree
-    fn set_shopt_value(&mut self, name: &str, value: &str) {
-        if let Some(bit) = BashFlags::from_shopt_name(name) {
-            if value == "1" {
-                self.flags.insert(bit);
-            } else {
-                self.flags.remove(bit);
-            }
-        }
-        self.vars_mut().insert(name.to_string(), value.to_string());
-    }
-
-    /// Cache-aware remover for `SHOPT_X` entries in `variables`.
-    #[allow(dead_code)] // exposed for builtin callers; unused in current tree
-    fn remove_shopt_value(&mut self, name: &str) {
-        if let Some(bit) = BashFlags::from_shopt_name(name) {
-            self.flags.remove(bit);
-        }
-        self.vars_mut().remove(name);
-    }
-
     /// Rehydrate the SHOPT flag cache from any `SHOPT_*` entries currently in
     /// `self.variables`. Call after bulk-restoring `variables` from a snapshot
     /// or builder so the cache doesn't drift.
@@ -1542,21 +1506,6 @@ impl Interpreter {
 
     fn is_var_readonly(&self, name: &str) -> bool {
         self.var_attrs_get(name).contains(VarAttrs::READONLY)
-    }
-
-    #[allow(dead_code)] // sibling helper; kept symmetric with READONLY/LOWER/UPPER
-    fn is_var_integer(&self, name: &str) -> bool {
-        self.var_attrs_get(name).contains(VarAttrs::INTEGER)
-    }
-
-    #[allow(dead_code)] // sibling helper; kept symmetric with READONLY/INTEGER/UPPER
-    fn is_var_lower(&self, name: &str) -> bool {
-        self.var_attrs_get(name).contains(VarAttrs::LOWER)
-    }
-
-    #[allow(dead_code)] // sibling helper; kept symmetric with READONLY/INTEGER/LOWER
-    fn is_var_upper(&self, name: &str) -> bool {
-        self.var_attrs_get(name).contains(VarAttrs::UPPER)
     }
 
     fn add_var_attr(&mut self, name: &str, attr: VarAttrs) {
