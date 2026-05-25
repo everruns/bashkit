@@ -98,8 +98,6 @@ def create_docs_bash_tool(root: Path):
     docs_mounts = [
         (root / "docs", "/docs/public"),
         (root / "crates/bashkit/docs", "/docs/rustdoc"),
-        (root / "examples/bashkit-pi", "/docs/examples/bashkit-pi"),
-        (root / "examples/browser", "/docs/examples/browser"),
     ]
     return create_bash_tool(
         username="agent",
