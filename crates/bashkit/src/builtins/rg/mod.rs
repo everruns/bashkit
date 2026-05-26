@@ -637,6 +637,8 @@ impl RgOptions {
         };
 
         let mut positional = Vec::new();
+        let mut pending_type_includes = Vec::new();
+        let mut pending_type_excludes = Vec::new();
         let mut p = super::arg_parser::ArgParser::new(args);
 
         while !p.is_done() {
@@ -729,13 +731,13 @@ impl RgOptions {
             } else if let Some(val) = long_value(&mut p, "--ignore-file")? {
                 opts.ignore_file_paths.push(val);
             } else if let Some(val) = p.flag_value("-t", "rg").map_err(Error::Execution)? {
-                opts.type_includes.push(opts.type_database.parse(val)?);
+                pending_type_includes.push(val.to_string());
             } else if let Some(val) = p.flag_value("-T", "rg").map_err(Error::Execution)? {
-                opts.type_excludes.push(opts.type_database.parse(val)?);
+                pending_type_excludes.push(val.to_string());
             } else if let Some(val) = long_value(&mut p, "--type")? {
-                opts.type_includes.push(opts.type_database.parse(&val)?);
+                pending_type_includes.push(val);
             } else if let Some(val) = long_value(&mut p, "--type-not")? {
-                opts.type_excludes.push(opts.type_database.parse(&val)?);
+                pending_type_excludes.push(val);
             } else if let Some(val) = long_value(&mut p, "--type-add")? {
                 opts.type_database.add(&val)?;
             } else if let Some(val) = long_value(&mut p, "--type-clear")? {
@@ -1295,8 +1297,7 @@ impl RgOptions {
                                     }
                                 }
                             };
-                            opts.type_includes
-                                .push(opts.type_database.parse(&file_type)?);
+                            pending_type_includes.push(file_type);
                             break;
                         }
                         'T' => {
@@ -1313,8 +1314,7 @@ impl RgOptions {
                                     }
                                 }
                             };
-                            opts.type_excludes
-                                .push(opts.type_database.parse(&file_type)?);
+                            pending_type_excludes.push(file_type);
                             break;
                         }
                         _ => {
@@ -1349,6 +1349,14 @@ impl RgOptions {
         }
 
         opts.paths = positional;
+        opts.type_includes = pending_type_includes
+            .into_iter()
+            .map(|name| opts.type_database.parse(&name))
+            .collect::<Result<Vec<_>>>()?;
+        opts.type_excludes = pending_type_excludes
+            .into_iter()
+            .map(|name| opts.type_database.parse(&name))
+            .collect::<Result<Vec<_>>>()?;
 
         if opts.only_matching && opts.patterns.iter().any(|pattern| pattern.is_empty()) {
             return Err(Error::Execution(
@@ -12206,6 +12214,26 @@ mod tests {
             "a.txt".to_string(),
         ]);
         assert!(invalid_encoding.is_err());
+
+        let add_after_all = run_rg(
+            &[
+                "--type",
+                "all",
+                "--type-add",
+                "foo:*.foo",
+                "needle",
+                "/proj",
+            ],
+            None,
+            &[
+                ("/proj/main.rs", b"needle\n"),
+                ("/proj/main.foo", b"needle\n"),
+            ],
+        )
+        .await;
+        assert_eq!(add_after_all.exit_code, 0);
+        assert!(add_after_all.stdout.contains("main.rs"));
+        assert!(add_after_all.stdout.contains("main.foo"));
     }
 
     #[tokio::test]
