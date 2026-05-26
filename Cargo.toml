@@ -121,11 +121,13 @@ napi-build = "2"
 # Important decision: shrink test-binary link memory. `cargo test --all-features`
 # statically links every embedded interpreter (monty, zapcode, turso, russh, jaq,
 # reqwest+rustls, ed25519-dalek) into each of ~87 integration test binaries; with
-# default debuginfo and default codegen-units the parallel link step peaks well
-# above what the cloud sandbox tolerates. Line-tables-only keeps backtraces
-# readable while cutting per-binary size by an order of magnitude.
+# default `debug = "full"` the per-binary debuginfo dominates and the parallel
+# link step peaks well above what the cloud sandbox tolerates. Line-tables-only
+# keeps backtraces readable (function names + line numbers) while cutting
+# per-binary size by 50–80% for big crates. `codegen-units` left at the default
+# (16): forcing it to 1 explodes LLVM's per-crate object files on disk and made
+# CI's feature-sliced test job run out of space.
 [profile.test]
-codegen-units = 1
 debug = "line-tables-only"
 
 [profile.release]
