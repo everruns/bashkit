@@ -6622,52 +6622,38 @@ impl Interpreter {
                 // Build a synthetic simple command and execute it, skipping function lookup
                 let remaining = &args[cmd_args_start..];
                 let target = remaining[0].as_str();
+                let builtin_args = &remaining[1..];
                 // Resolve host-registered builtins first (same precedence as dispatch_command).
-                let builtin = self
+                if let Some(builtin) = self
                     .host_builtins
                     .as_ref()
                     .and_then(|reg| reg.lookup(target))
-                    .or_else(|| self.builtins.get(target).cloned());
-                if let Some(builtin) = builtin {
-                    let builtin_args = &remaining[1..];
-                    let execution_extensions = self.current_execution_extensions();
-                    let shell_ref = ShellRef {
-                        builtins: &self.builtins,
-                        functions: &self.functions,
-                        aliases: Arc::make_mut(&mut self.aliases),
-                        traps: Arc::make_mut(&mut self.traps),
-                        var_attrs: Arc::make_mut(&mut self.var_attrs),
-                        namerefs: Arc::make_mut(&mut self.namerefs),
-                        call_stack: &self.call_stack,
-                        history: &self.history,
-                        jobs: &self.jobs,
-                        execution_extensions,
-                    };
-                    let ctx = builtins::Context {
-                        args: builtin_args,
-                        env: &self.env,
-                        variables: Arc::make_mut(&mut self.variables),
-                        cwd: &mut self.cwd,
-                        fs: Arc::clone(&self.fs),
-                        stdin: _stdin.as_deref(),
-                        #[cfg(feature = "http_client")]
-                        http_client: self.http_client.as_ref(),
-                        #[cfg(feature = "git")]
-                        git_client: self.git_client.as_ref(),
-                        #[cfg(feature = "ssh")]
-                        ssh_client: self.ssh_client.as_ref(),
-                        shell: Some(shell_ref),
-                    };
-                    let mut result = builtin.execute(ctx).await?;
-                    self.apply_builtin_side_effects(&result);
-                    result = self.apply_redirections(result, redirects).await?;
-                    Ok(result)
-                } else {
-                    Ok(ExecResult::err(
-                        format!("bash: {}: command not found\n", remaining[0]),
-                        127,
-                    ))
+                {
+                    return self
+                        .execute_host_builtin(
+                            target,
+                            builtin,
+                            builtin_args,
+                            _stdin.as_deref(),
+                            redirects,
+                        )
+                        .await;
                 }
+                if let Some(builtin) = self.builtins.get(target).cloned() {
+                    return self
+                        .execute_builtin_arc(
+                            target,
+                            builtin,
+                            builtin_args,
+                            _stdin.as_deref(),
+                            redirects,
+                        )
+                        .await;
+                }
+                Ok(ExecResult::err(
+                    format!("bash: {}: command not found\n", remaining[0]),
+                    127,
+                ))
             }
         }
     }

@@ -6,7 +6,7 @@
 //! after the `Bash` instance has been built — without rebuilding it.
 
 use async_trait::async_trait;
-use bashkit::{Bash, Builtin, BuiltinContext, BuiltinRegistry, ExecResult};
+use bashkit::{Bash, Builtin, BuiltinContext, BuiltinRegistry, ExecResult, hooks};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -180,4 +180,29 @@ async fn command_v_finds_host_builtin() {
         "got: {}",
         result.stdout
     );
+}
+
+#[tokio::test]
+async fn command_respects_before_tool_for_host_builtin() {
+    let registry = BuiltinRegistry::new();
+    registry.insert("sensitive", Arc::new(EchoArgs));
+
+    let mut bash = Bash::builder()
+        .builtin_registry(registry)
+        .before_tool(Box::new(|event: hooks::ToolEvent| {
+            if event.name == "sensitive" {
+                hooks::HookAction::Cancel("sensitive blocked".to_string())
+            } else {
+                hooks::HookAction::Continue(event)
+            }
+        }))
+        .build();
+
+    let direct = bash.exec("sensitive direct").await.unwrap();
+    assert_eq!(direct.exit_code, 1);
+    assert!(direct.stderr.contains("cancelled by before_tool hook"));
+
+    let via_command = bash.exec("command sensitive via-command").await.unwrap();
+    assert_eq!(via_command.exit_code, 1);
+    assert!(via_command.stderr.contains("cancelled by before_tool hook"));
 }
