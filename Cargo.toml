@@ -118,6 +118,16 @@ napi = { version = "3.8.6", default-features = false, features = ["napi6", "comp
 napi-derive = "3.5.5"
 napi-build = "2"
 
+# Important decision: shrink test-binary link memory. `cargo test --all-features`
+# statically links every embedded interpreter (monty, zapcode, turso, russh, jaq,
+# reqwest+rustls, ed25519-dalek) into each of ~87 integration test binaries; with
+# default debuginfo and default codegen-units the parallel link step peaks well
+# above what the cloud sandbox tolerates. Line-tables-only keeps backtraces
+# readable while cutting per-binary size by an order of magnitude.
+[profile.test]
+codegen-units = 1
+debug = "line-tables-only"
+
 [profile.release]
 lto = "thin"
 codegen-units = 1
