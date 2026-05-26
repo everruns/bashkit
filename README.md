@@ -47,6 +47,23 @@ cargo add bashkit --features realfs           # Real filesystem backend
 cargo add bashkit --features scripted_tool    # Tool orchestration framework
 ```
 
+## Agent Development
+
+Install the Bashkit skill before asking a coding agent to build against the
+runtime:
+
+```bash
+npx skills add everruns/bashkit
+```
+
+Then ask your coding agent to wire Bashkit into the host project:
+
+```bash
+Using bashkit, add support for a bash tool
+```
+
+Enjoy :)
+
 ## Quick Start
 
 ```rust
