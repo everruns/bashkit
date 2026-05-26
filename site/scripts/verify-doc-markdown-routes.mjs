@@ -1,6 +1,5 @@
-// Decision: docs pages are dual-represented as HTML and canonical Markdown.
-// Verify the generated Markdown assets and Worker negotiation helpers together
-// so route metadata cannot drift from content negotiation behavior.
+// Decision: public site pages with Markdown representations are verified from
+// build output plus Worker helpers so static assets and negotiation cannot drift.
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -15,6 +14,25 @@ const rustDocsDir = path.join(repoRoot, "crates/bashkit/docs");
 const workerPath = path.join(siteRoot, "src/worker.js");
 
 const entries = parseDocEntries(readFileSync(metaPath, "utf8"));
+
+const homeMarkdownPath = path.join(distDir, "index.md");
+if (!existsSync(homeMarkdownPath)) {
+  throw new Error("Missing generated homepage Markdown route: dist/index.md");
+}
+
+const homeMarkdown = readFileSync(homeMarkdownPath, "utf8");
+assertYamlFrontmatter(homeMarkdown, "dist/index.md");
+for (const expectedLink of [
+  "[GitHub repository](https://github.com/everruns/bashkit)",
+  "[Bashkit agent skill](https://bashkit.sh/.well-known/agent-skills/index.json)",
+  "[Everruns](https://everruns.com)",
+  "[Docs](/docs/)",
+  "[Builtins](/builtins)",
+]) {
+  if (!homeMarkdown.includes(expectedLink)) {
+    throw new Error(`Homepage Markdown navigation missing: ${expectedLink}`);
+  }
+}
 
 const docsIndexPath = path.join(distDir, "docs.md");
 if (!existsSync(docsIndexPath)) {
@@ -84,6 +102,7 @@ for (const [accept, expected] of cases) {
 }
 
 const pathCases = [
+  ["/", "/index.md"],
   ["/docs", "/docs.md"],
   ["/docs/", "/docs.md"],
   ["/docs/cli", "/docs/cli.md"],

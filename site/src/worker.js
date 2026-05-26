@@ -27,6 +27,10 @@ export default {
 };
 
 export function markdownAssetPath(pathname) {
+  if (pathname === "/") {
+    return "/index.md";
+  }
+
   if (pathname === "/docs" || pathname === "/docs/") {
     return "/docs.md";
   }
