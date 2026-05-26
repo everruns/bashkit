@@ -1662,19 +1662,19 @@ The following components are fuzz-tested for robustness:
 > undiscovered crash or security bugs. Resource limits are enforced by Monty's
 > runtime. This integration should be treated as experimental.
 
-BashKit embeds the Monty Python interpreter (pydantic/monty) with VFS bridging.
-Python `pathlib.Path` operations are bridged to BashKit's virtual filesystem via
+Bashkit embeds the Monty Python interpreter (pydantic/monty) with VFS bridging.
+Python `pathlib.Path` operations are bridged to Bashkit's virtual filesystem via
 Monty's OsCall pause/resume mechanism. This section covers threats specific to
 the Python builtin.
 
 ### Architecture
 
 ```
-Python code → Monty VM → OsCall pause → BashKit VFS bridge → resume
+Python code → Monty VM → OsCall pause → Bashkit VFS bridge → resume
 ```
 
 Monty never touches the real filesystem. All `Path.*` operations yield `OsCall`
-events that BashKit intercepts and dispatches to the VFS.
+events that Bashkit intercepts and dispatches to the VFS.
 
 ### Threats
 
@@ -1686,8 +1686,8 @@ events that BashKit intercepts and dispatches to the VFS.
 | TM-PY-004 | Shell escape via os.system/subprocess | Critical | Monty has no os.system/subprocess implementation | `threat_python_no_os_operations` |
 | TM-PY-005 | Real filesystem access via open() | Critical | Monty has no open() builtin | `threat_python_no_filesystem` |
 | TM-PY-006 | Error info leakage via stdout | Medium | Errors go to stderr, not stdout | `threat_python_error_isolation` |
-| TM-PY-015 | Real filesystem read via pathlib | Critical | VFS bridge reads only from BashKit VFS, not host | `threat_python_vfs_no_real_fs` |
-| TM-PY-016 | Real filesystem write via pathlib | Critical | VFS bridge writes only to BashKit VFS | `threat_python_vfs_write_sandboxed` |
+| TM-PY-015 | Real filesystem read via pathlib | Critical | VFS bridge reads only from Bashkit VFS, not host | `threat_python_vfs_no_real_fs` |
+| TM-PY-016 | Real filesystem write via pathlib | Critical | VFS bridge writes only to Bashkit VFS | `threat_python_vfs_write_sandboxed` |
 | TM-PY-017 | Path traversal (../../etc/passwd) | High | VFS resolves paths within sandbox boundaries | `threat_python_vfs_path_traversal` |
 | TM-PY-018 | Bash/Python VFS isolation breach | Medium | Shared VFS by design; no cross-tenant access | `threat_python_vfs_bash_python_isolation` |
 | TM-PY-019 | Crash on missing file | Medium | FileNotFoundError raised, not panic | `threat_python_vfs_error_handling` |
@@ -1737,7 +1737,7 @@ and this information has low sensitivity. No filesystem or network access is gra
 
 ### VFS Bridge Security Properties
 
-1. **No real filesystem access**: All Path operations go through BashKit's VFS.
+1. **No real filesystem access**: All Path operations go through Bashkit's VFS.
    `/etc/passwd` in Python reads from VFS, not the host.
 2. **Shared VFS with bash**: Files written by `echo > file` are readable by
    Python's `Path(file).read_text()`, and vice versa. This is intentional.
@@ -1746,7 +1746,7 @@ and this information has low sensitivity. No filesystem or network access is gra
 4. **Error mapping**: VFS errors are mapped to standard Python exceptions
    (FileNotFoundError, IsADirectoryError, etc.), not raw panics.
 5. **Resource isolation**: Monty's own limits (time, memory, allocations,
-   recursion) are enforced independently of BashKit's shell limits.
+   recursion) are enforced independently of Bashkit's shell limits.
 
 ### Direct Integration
 
@@ -1791,7 +1791,7 @@ filesystem.
 > explicit `.typescript()` call on the builder. Without both, these commands
 > are unavailable.
 
-BashKit embeds the ZapCode TypeScript interpreter (zapcode-core) with VFS
+Bashkit embeds the ZapCode TypeScript interpreter (zapcode-core) with VFS
 bridging via external function suspend/resume. TypeScript code can access the
 virtual filesystem through registered external functions. This section covers
 threats specific to the TypeScript builtin.
@@ -1799,11 +1799,11 @@ threats specific to the TypeScript builtin.
 ### Architecture
 
 ```
-TypeScript code → ZapCode VM → ExternalFn suspend → BashKit VFS bridge → resume
+TypeScript code → ZapCode VM → ExternalFn suspend → Bashkit VFS bridge → resume
 ```
 
 ZapCode never touches the real filesystem. External function calls suspend the
-VM, BashKit intercepts and dispatches to the VFS, then resumes execution.
+VM, Bashkit intercepts and dispatches to the VFS, then resumes execution.
 
 ### Opt-in Design
 
@@ -1823,20 +1823,20 @@ are not available even if compiled. This matches the Python builtin pattern.
 | TM-TS-002 | Memory exhaustion via large allocation | High | ZapCode max_memory (64MB) + max_allocations (1M) | `threat_ts_memory_exhaustion` |
 | TM-TS-003 | Stack overflow via deep recursion | High | ZapCode max_stack_depth (512) | `threat_ts_stack_overflow` |
 | TM-TS-004 | Allocation bomb (many small objects) | High | ZapCode max_allocations (1M) | `threat_ts_allocation_bomb` |
-| TM-TS-005 | Real filesystem access via VFS | Critical | VFS bridge reads only from BashKit VFS, not host | `threat_ts_vfs_no_real_fs` |
-| TM-TS-006 | VFS write escapes to host | Critical | VFS bridge writes only to BashKit VFS | `threat_ts_vfs_write_sandboxed` |
+| TM-TS-005 | Real filesystem access via VFS | Critical | VFS bridge reads only from Bashkit VFS, not host | `threat_ts_vfs_no_real_fs` |
+| TM-TS-006 | VFS write escapes to host | Critical | VFS bridge writes only to Bashkit VFS | `threat_ts_vfs_write_sandboxed` |
 | TM-TS-007 | Path traversal (../../etc/passwd) | High | VFS resolves paths within sandbox boundaries | `threat_ts_vfs_path_traversal` |
 | TM-TS-008 | Bash/TypeScript VFS data corruption | Medium | Shared VFS by design; no cross-tenant access | `threat_ts_vfs_bash_ts_shared` |
 | TM-TS-009 | Crash on missing file | Medium | Error string returned, not panic | `threat_ts_vfs_error_handling` |
 | TM-TS-010 | VFS mkdir escape | Medium | mkdir operates only in VFS | `threat_ts_vfs_mkdir_sandboxed` |
-| TM-TS-011 | VFS operations escape to host /tmp | Critical | All operations go through BashKit VFS | `threat_ts_vfs_no_host_escape` |
+| TM-TS-011 | VFS operations escape to host /tmp | Critical | All operations go through Bashkit VFS | `threat_ts_vfs_no_host_escape` |
 | TM-TS-012 | Error info leakage via stdout | Medium | Errors go to stderr, not stdout | `threat_ts_error_isolation` |
 | TM-TS-013 | Syntax error crashes host | Medium | Non-zero exit code, error on stderr | `threat_ts_syntax_error_exit` |
 | TM-TS-014 | Exit code not propagated | Low | Exit code flows to bash $? | `threat_ts_exit_code_propagation` |
 | TM-TS-015 | Empty code crashes | Low | Non-zero exit, error message | `threat_ts_empty_code` |
 | TM-TS-016 | Pipeline error leakage | Medium | Errors on stderr, not passed to pipe | `threat_ts_pipeline_error_handling` |
 | TM-TS-017 | Unknown options accepted | Low | Unknown flags return non-zero | `threat_ts_unknown_options` |
-| TM-TS-018 | TypeScript bypasses BashKit limits | Medium | Command budget still enforced | `threat_ts_respects_bash_limits` |
+| TM-TS-018 | TypeScript bypasses Bashkit limits | Medium | Command budget still enforced | `threat_ts_respects_bash_limits` |
 | TM-TS-019 | Command subst captures errors | Medium | Only stdout captured by $() | `threat_ts_subst_captures_stdout` |
 | TM-TS-020 | Bash var expansion injection | Medium | By-design; use single quotes to prevent | `threat_ts_variable_expansion` |
 | TM-TS-021 | Shell command execution from TS | Critical | No process/subprocess/exec globals | `threat_ts_no_shell_exec` |
@@ -1860,7 +1860,7 @@ ZapCode blocks these at the language level (not just runtime):
 
 ### VFS Bridge Security Properties
 
-1. **No real filesystem access**: All VFS-bridged functions go through BashKit's
+1. **No real filesystem access**: All VFS-bridged functions go through Bashkit's
    VFS. `/etc/passwd` in TypeScript reads from VFS, not the host.
 2. **Shared VFS with bash**: Files written by `echo > file` are readable by
    TypeScript's `readFile()`, and vice versa. This is intentional.
@@ -1868,7 +1868,7 @@ ZapCode blocks these at the language level (not just runtime):
    Path traversal (`../..`) is constrained by VFS path normalization.
 4. **Error handling**: VFS errors return error strings to TypeScript, not panics.
 5. **Resource isolation**: ZapCode's own limits (time, memory, stack, allocations)
-   are enforced independently of BashKit's shell limits.
+   are enforced independently of Bashkit's shell limits.
 
 ### Supported VFS Operations
 

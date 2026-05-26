@@ -642,7 +642,7 @@ impl Builtin for TypeScript {
 /// Execute TypeScript code via ZapCode with resource limits and VFS bridging.
 ///
 /// Uses ZapCode's start/resume API: execution suspends at external function calls
-/// (VFS operations), we bridge them to BashKit's VFS, then resume.
+/// (VFS operations), we bridge them to Bashkit's VFS, then resume.
 async fn run_typescript(
     code: &str,
     fs: Arc<dyn FileSystem>,
@@ -769,7 +769,7 @@ async fn handle_external_call(
 }
 
 // ---------------------------------------------------------------------------
-// VFS bridging: ZapCode external functions → BashKit FileSystem
+// VFS bridging: ZapCode external functions → Bashkit FileSystem
 // ---------------------------------------------------------------------------
 
 /// Extract a path string from the first arg, resolve relative to cwd.

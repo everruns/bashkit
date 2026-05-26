@@ -563,8 +563,8 @@ Python `pathlib.Path` operations are bridged to Bashkit's virtual filesystem.
 | Shell escape (TM-PY-004) | `os.system()` | Monty has no os.system/subprocess | MITIGATED |
 | Real FS access (TM-PY-005) | `open()` | Monty has no open() builtin | MITIGATED |
 | Error info leak (TM-PY-006) | Errors go to stdout | Errors go to stderr, not stdout | MITIGATED |
-| Real FS read (TM-PY-015) | `Path.read_text()` | VFS bridge reads only from BashKit VFS | MITIGATED |
-| Real FS write (TM-PY-016) | `Path.write_text()` | VFS bridge writes only to BashKit VFS | MITIGATED |
+| Real FS read (TM-PY-015) | `Path.read_text()` | VFS bridge reads only from Bashkit VFS | MITIGATED |
+| Real FS write (TM-PY-016) | `Path.write_text()` | VFS bridge writes only to Bashkit VFS | MITIGATED |
 | Path traversal (TM-PY-017) | `../../etc/passwd` | VFS path normalization | MITIGATED |
 | Bash/Python VFS isolation (TM-PY-018) | Cross-tenant access | Shared VFS by design; no cross-tenant | MITIGATED |
 | Crash on missing file (TM-PY-019) | Missing file panic | FileNotFoundError raised, not panic | MITIGATED |
@@ -581,7 +581,7 @@ Python `pathlib.Path` operations are bridged to Bashkit's virtual filesystem.
 **Architecture:**
 
 ```text
-Python code → Monty VM → OsCall pause → BashKit VFS bridge → resume
+Python code → Monty VM → OsCall pause → Bashkit VFS bridge → resume
 ```
 
 Monty runs directly in the host process. Resource limits (memory, allocations,

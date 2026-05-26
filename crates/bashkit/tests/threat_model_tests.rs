@@ -1430,7 +1430,7 @@ mod python_security {
         assert_ne!(result.exit_code, 0);
     }
 
-    /// TM-PY-014: Python with BashKit resource limits
+    /// TM-PY-014: Python with Bashkit resource limits
     #[tokio::test]
     async fn threat_python_respects_bash_limits() {
         let limits = ExecutionLimits::new().max_commands(5);
@@ -1448,7 +1448,7 @@ mod python_security {
 
     // --- VFS Security Tests ---
 
-    /// TM-PY-015: Python VFS reads only from BashKit's virtual filesystem
+    /// TM-PY-015: Python VFS reads only from Bashkit's virtual filesystem
     #[tokio::test]
     async fn threat_python_vfs_no_real_fs() {
         let mut bash = bash_with_python();
@@ -1540,7 +1540,7 @@ mod python_security {
         );
     }
 
-    /// TM-PY-020: Python VFS operations respect BashKit sandbox boundaries
+    /// TM-PY-020: Python VFS operations respect Bashkit sandbox boundaries
     #[tokio::test]
     async fn threat_python_vfs_no_network() {
         let mut bash = bash_with_python();
@@ -4172,7 +4172,7 @@ mod typescript_security {
         assert_ne!(result.exit_code, 0, "Stack overflow should not succeed");
     }
 
-    /// TM-TS-005: TypeScript VFS reads only from BashKit VFS
+    /// TM-TS-005: TypeScript VFS reads only from Bashkit VFS
     #[tokio::test]
     async fn threat_ts_vfs_no_real_fs() {
         let mut bash = bash_with_ts();

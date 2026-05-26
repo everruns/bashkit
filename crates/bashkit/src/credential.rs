@@ -132,7 +132,7 @@ const PLACEHOLDER_PREFIX: &str = "bk_placeholder_";
 /// # Security
 ///
 /// The placeholder acts like a bearer capability inside scripts: if a script
-/// sends the placeholder value to a URL matching a credential rule, BashKit
+/// sends the placeholder value to a URL matching a credential rule, Bashkit
 /// injects the real credential-owned header. The token therefore must come
 /// from a security-grade RNG so it cannot be predicted, brute-forced, or
 /// reproduced from observed program state.
