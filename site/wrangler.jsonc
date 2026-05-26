@@ -1,8 +1,11 @@
 {
   "name": "bashkit",
+  "main": "./src/worker.js",
   "compatibility_date": "2025-10-01",
   "assets": {
-    "directory": "./dist"
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "run_worker_first": ["/docs", "/docs/*"]
   },
   "observability": {
     "enabled": true
