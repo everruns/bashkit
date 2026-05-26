@@ -2,8 +2,9 @@
 //!
 //! Targets the specific code paths flagged in the perf analysis:
 //!   - tight integer loops (set_variable + expand_variable)
-//!   - command substitution (subshell state snapshot cost)
-//!   - SHOPT flag checks (set -e, set -u, pipefail)
+//!   - command substitution (subshell state snapshot cost, CoW Arc maps)
+//!   - SHOPT flag checks (BashFlags bitfield: -e/-u/-x/pipefail/-a/aliases)
+//!   - variable attributes (VarAttrs bitset: -i/-u/-l/-r, namerefs map)
 //!   - parameter expansion / attribute lookups
 //!   - large pipelines
 //!
@@ -141,6 +142,102 @@ fn bench_shopt(c: &mut Criterion) {
             )
         })
     });
+    // set -x: highest-frequency BashFlags bit-test. Trace output redirected
+    // away so we measure the flag-check path, not stderr writes.
+    g.bench_function("xtrace_1k_loop", |b| {
+        b.iter(|| {
+            run_script(
+                &rt,
+                "exec 2>/dev/null; set -x\n\
+                 n=0; for ((i=0;i<1000;i++)); do n=$((n+i)); done; echo $n",
+            )
+        })
+    });
+    g.bench_function("pipefail_pipeline_200", |b| {
+        b.iter(|| {
+            run_script(
+                &rt,
+                "set -o pipefail\n\
+                 for i in $(seq 1 200); do echo $i; done | grep 5 | wc -l",
+            )
+        })
+    });
+    // set -a: every assignment also marks for export. Hits the attribute
+    // bitset + env-rebuild path that the perf commit reworked.
+    g.bench_function("allexport_assign_200", |b| {
+        let mut s = String::from("set -a\n");
+        for i in 0..200 {
+            s.push_str(&format!("v{i}={i}\n"));
+        }
+        s.push_str("echo done");
+        b.iter(|| run_script(&rt, &s));
+    });
+    g.bench_function("expand_aliases_500", |b| {
+        b.iter(|| {
+            run_script(
+                &rt,
+                "shopt -s expand_aliases\nalias e=echo\n\
+                 for i in $(seq 1 500); do e $i >/dev/null; done",
+            )
+        })
+    });
+    g.finish();
+}
+
+/// Variable-attribute hot paths reworked in the CoW/bitset commit:
+/// integer/lower/upper/readonly/nameref. Each loop forces the attribute
+/// lookup or coercion on every iteration.
+fn bench_attributes(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
+    let mut g = c.benchmark_group("attributes");
+    // declare -i: every assign goes through the integer-attr branch.
+    g.bench_function("integer_assign_1k", |b| {
+        b.iter(|| {
+            run_script(
+                &rt,
+                "declare -i n=0; for ((i=0;i<1000;i++)); do n+=$i; done; echo $n",
+            )
+        })
+    });
+    // declare -u / -l: case-coercion on assign. Exercises the typed
+    // VarAttrs path (was 4-5 format!() allocs per assign pre-commit).
+    g.bench_function("uppercase_attr_500", |b| {
+        let mut s = String::from("declare -u v\n");
+        for i in 0..500 {
+            s.push_str(&format!("v=hello{i}\n"));
+        }
+        s.push_str("echo $v");
+        b.iter(|| run_script(&rt, &s));
+    });
+    g.bench_function("lowercase_attr_500", |b| {
+        let mut s = String::from("declare -l v\n");
+        for i in 0..500 {
+            s.push_str(&format!("v=HELLO{i}\n"));
+        }
+        s.push_str("echo $v");
+        b.iter(|| run_script(&rt, &s));
+    });
+    // declare -n: dedicated namerefs map. Read + write per iter.
+    g.bench_function("nameref_rw_500", |b| {
+        b.iter(|| {
+            run_script(
+                &rt,
+                "target=0; declare -n ref=target\n\
+                 for i in $(seq 1 500); do ref=$i; x=$ref; done; echo $target",
+            )
+        })
+    });
+    // declare -r: readonly check is now a bit-test; the reassignment fails
+    // but the check itself is what we time.
+    g.bench_function("readonly_reassign_attempts_500", |b| {
+        b.iter(|| {
+            run_script(
+                &rt,
+                "declare -r v=fixed; exec 2>/dev/null\n\
+                 for i in $(seq 1 500); do v=$i; done; echo $v",
+            )
+        })
+    });
     g.finish();
 }
 
@@ -205,6 +302,7 @@ criterion_group!(
     bench_startup,
     bench_loops,
     bench_variables,
+    bench_attributes,
     bench_cmdsubst,
     bench_shopt,
     bench_pipelines,
