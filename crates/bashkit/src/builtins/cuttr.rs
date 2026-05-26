@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 
-use super::{Builtin, Context, read_text_file};
+use super::{Builtin, BuiltinHelper, Context, read_text_file};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
@@ -22,6 +22,10 @@ use crate::interpreter::ExecResult;
 ///   --output-delimiter  Use STRING as output delimiter
 pub struct Cut;
 
+impl BuiltinHelper for Cut {
+    const NAME: &'static str = "cut";
+}
+
 #[derive(PartialEq)]
 enum CutMode {
     Fields,
@@ -31,7 +35,7 @@ enum CutMode {
 #[async_trait]
 impl Builtin for Cut {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        if let Some(r) = super::check_help_version(
+        if let Some(r) = Self::check_help(
             ctx.args,
             "Usage: cut OPTION... [FILE]...\nPrint selected parts of lines from each FILE to standard output.\n\n  -d DELIM\t\tuse DELIM instead of TAB for field delimiter\n  -f FIELDS\t\tselect only these fields\n  -b BYTES\t\tselect only these bytes\n  -c CHARS\t\tselect only these characters\n  -s\t\t\tonly print lines containing delimiter\n  -z\t\t\tline delimiter is NUL, not newline\n  --complement\t\tcomplement the selection\n  --output-delimiter=STRING\tuse STRING as output delimiter\n  --help\t\tdisplay this help and exit\n  --version\t\toutput version information and exit\n",
             Some("cut (bashkit) 0.1"),
@@ -86,10 +90,7 @@ impl Builtin for Cut {
         }
 
         if spec.is_empty() {
-            return Ok(ExecResult::err(
-                "cut: you must specify a list of fields\n".to_string(),
-                1,
-            ));
+            return Ok(Self::err("you must specify a list of fields", 1));
         }
 
         // Parse position specification (supports open-ended ranges like "3-" and "-3")
@@ -280,10 +281,14 @@ fn resolve_positions(positions: &[Position], total: usize) -> Vec<usize> {
 /// [:alnum:], [:space:], [:blank:], [:punct:], [:xdigit:], [:print:], [:graph:]
 pub struct Tr;
 
+impl BuiltinHelper for Tr {
+    const NAME: &'static str = "tr";
+}
+
 #[async_trait]
 impl Builtin for Tr {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        if let Some(r) = super::check_help_version(
+        if let Some(r) = Self::check_help(
             ctx.args,
             "Usage: tr [OPTION]... SET1 [SET2]\nTranslate, squeeze, and/or delete characters from standard input.\n\n  -d\t\tdelete characters in SET1\n  -s\t\tsqueeze repeated output characters\n  -c, -C\tcomplement SET1\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
             Some("tr (bashkit) 0.1"),
@@ -314,7 +319,7 @@ impl Builtin for Tr {
         }
 
         if non_flag_args.is_empty() {
-            return Ok(ExecResult::err("tr: missing operand\n".to_string(), 1));
+            return Ok(Self::err("missing operand", 1));
         }
 
         let mut set1 = expand_char_set(&non_flag_args[0]);
@@ -350,10 +355,7 @@ impl Builtin for Tr {
             squeeze_chars(stdin, &set1)
         } else {
             if non_flag_args.len() < 2 {
-                return Ok(ExecResult::err(
-                    "tr: missing operand after SET1\n".to_string(),
-                    1,
-                ));
+                return Ok(Self::err("missing operand after SET1", 1));
             }
 
             let set2 = expand_char_set(&non_flag_args[1]);

@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use base64::Engine;
 
 use super::arg_parser::ArgParser;
-use super::{Builtin, Context, read_text_file};
+use super::{Builtin, BuiltinHelper, Context, read_text_file};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
@@ -17,10 +17,14 @@ use crate::interpreter::ExecResult;
 ///   -w COLS         Wrap encoded lines after COLS characters (default: 76, 0 = no wrap)
 pub struct Base64;
 
+impl BuiltinHelper for Base64 {
+    const NAME: &'static str = "base64";
+}
+
 #[async_trait]
 impl Builtin for Base64 {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        if let Some(r) = super::check_help_version(
+        if let Some(r) = Self::check_help(
             ctx.args,
             "Usage: base64 [OPTION]... [FILE]\nBase64 encode or decode FILE, or standard input.\n\n  -d, --decode\tdecode data\n  -w COLS, --wrap=COLS\twrap encoded lines after COLS characters (default 76)\n  -i, --ignore-garbage\twhen decoding, ignore non-alphabet characters\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
             Some("base64 (bashkit) 0.1"),
@@ -47,8 +51,7 @@ impl Builtin for Base64 {
                 // silently accept
             } else if parser.is_flag() {
                 if let Some(s) = parser.positional() {
-                    let msg = format!("base64: invalid option -- '{}'\n", &s[1..]);
-                    return Ok(ExecResult::err(msg, 1));
+                    return Ok(Self::err(format!("invalid option -- '{}'", &s[1..]), 1));
                 }
             } else if let Some(arg) = parser.positional() {
                 file = Some(arg.to_string());
@@ -64,10 +67,7 @@ impl Builtin for Base64 {
                 match read_text_file(ctx.fs.as_ref(), &resolved, "base64").await {
                     Ok(text) => text,
                     Err(_) => {
-                        return Ok(ExecResult::err(
-                            format!("base64: {}: No such file or directory\n", path),
-                            1,
-                        ));
+                        return Ok(Self::err_path(path, "No such file or directory", 1));
                     }
                 }
             }
@@ -84,7 +84,7 @@ impl Builtin for Base64 {
                     let output = String::from_utf8_lossy(&bytes).to_string();
                     Ok(ExecResult::ok(output))
                 }
-                Err(e) => Ok(ExecResult::err(format!("base64: invalid input: {e}\n"), 1)),
+                Err(e) => Ok(Self::err(format!("invalid input: {e}"), 1)),
             }
         } else {
             // Encode

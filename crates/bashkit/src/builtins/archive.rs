@@ -16,13 +16,10 @@ use flate2::write::GzEncoder;
 use std::io::{Read, Write};
 use std::path::Path;
 
+use super::limits::ARCHIVE_MAX_DECOMPRESSION_RATIO as MAX_DECOMPRESSION_RATIO;
 use super::{Builtin, Context, resolve_path};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
-
-/// Maximum decompression ratio to detect zip bombs.
-/// A ratio over 100:1 is suspicious.
-const MAX_DECOMPRESSION_RATIO: usize = 100;
 
 /// Read from a decoder with size limits to prevent zip bombs.
 ///

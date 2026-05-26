@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 
-use super::{Builtin, Context, read_text_file};
+use super::{Builtin, BuiltinHelper, Context, read_text_file};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
@@ -15,6 +15,10 @@ use crate::interpreter::ExecResult;
 ///   -2   Suppress lines unique to FILE2
 ///   -3   Suppress lines that appear in both files
 pub struct Comm;
+
+impl BuiltinHelper for Comm {
+    const NAME: &'static str = "comm";
+}
 
 struct CommOptions {
     suppress_1: bool,
@@ -51,7 +55,7 @@ fn parse_comm_args(args: &[String]) -> (CommOptions, Vec<String>) {
 #[async_trait]
 impl Builtin for Comm {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        if let Some(r) = super::check_help_version(
+        if let Some(r) = Self::check_help(
             ctx.args,
             "Usage: comm [OPTION]... FILE1 FILE2\nCompare two sorted files line by line.\n\n  -1\t\tsuppress column 1 (lines unique to FILE1)\n  -2\t\tsuppress column 2 (lines unique to FILE2)\n  -3\t\tsuppress column 3 (lines that appear in both files)\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
             Some("comm (bashkit) 0.1"),
@@ -61,7 +65,7 @@ impl Builtin for Comm {
         let (opts, files) = parse_comm_args(ctx.args);
 
         if files.len() < 2 {
-            return Ok(ExecResult::err("comm: missing operand\n".to_string(), 1));
+            return Ok(Self::err("missing operand", 1));
         }
 
         // Read both files

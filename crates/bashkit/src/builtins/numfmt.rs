@@ -5,13 +5,11 @@
 
 use async_trait::async_trait;
 
+use super::limits::NUMFMT_MAX_OUTPUT_BYTES as MAX_OUTPUT_BYTES;
 use super::{Builtin, Context};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
-/// Maximum output size to prevent memory exhaustion.
-/// THREAT[TM-DOS-059]: Bound numfmt output
-const MAX_OUTPUT_BYTES: usize = 1_048_576;
 const MAX_PADDING_WIDTH: usize = MAX_OUTPUT_BYTES;
 const MAX_FORMAT_PRECISION: usize = MAX_OUTPUT_BYTES;
 

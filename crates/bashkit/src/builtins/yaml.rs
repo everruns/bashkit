@@ -11,6 +11,7 @@
 
 use async_trait::async_trait;
 
+use super::limits::YAML_MAX_DEPTH as MAX_YAML_DEPTH;
 use super::{Builtin, Context, read_text_file, resolve_path};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
@@ -183,10 +184,6 @@ fn parse_yaml_scalar(s: &str) -> YamlValue {
 fn indent_level(line: &str) -> usize {
     line.len() - line.trim_start().len()
 }
-
-// THREAT[TM-DOS-051]: Maximum recursion depth for YAML parsing.
-// Prevents stack overflow from deeply nested YAML documents.
-const MAX_YAML_DEPTH: usize = 100;
 
 /// Parse YAML content into a value.
 /// Supports maps, lists, and scalars with 2-space indentation.

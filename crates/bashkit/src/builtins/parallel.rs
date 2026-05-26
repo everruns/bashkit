@@ -5,6 +5,7 @@
 
 use async_trait::async_trait;
 
+use super::limits::PARALLEL_MAX_CARTESIAN_PRODUCT as MAX_CARTESIAN_PRODUCT;
 use super::{Builtin, Context};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
@@ -105,10 +106,6 @@ fn parse_parallel_args(args: &[String]) -> std::result::Result<ParallelConfig, S
         arg_groups,
     })
 }
-
-/// Maximum number of cartesian product combinations allowed.
-/// Prevents exponential memory blowup with many `:::` groups.
-const MAX_CARTESIAN_PRODUCT: usize = 100_000;
 
 /// Generate the cartesian product of multiple argument groups.
 ///
