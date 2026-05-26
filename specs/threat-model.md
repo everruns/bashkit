@@ -286,6 +286,7 @@ max_ast_depth: 100,           // Parser recursion (TM-DOS-022)
 | TM-DOS-060 | Sparse array huge-index allocation | `arr[999999999]=x` could allocate ~1B empty slots if arrays are Vec-backed; negative indices could cause OOB | HashMap-based arrays; `max_array_entries` caps total entries | **MITIGATED** |
 | TM-DOS-061 | Snapshot function restore bypasses parser/function limits | Crafted snapshot restores prebuilt or deeply nested functions that exceed the current tenant's parser depth or function memory budget | Re-parse restored function source with current `ExecutionLimits`; re-apply function memory budget before insertion | **MITIGATED** |
 | TM-DOS-062 | jq file binding amplification | Repeated `--rawfile` / `--slurpfile` bindings to one max-sized VFS file multiply retained jq globals and `$ARGS.named` values without consuming more VFS quota | `MAX_FILE_VAR_REQUESTS` caps binding count; `MAX_FILE_VAR_BYTES` counts cumulative file bytes per binding before retaining globals | **MITIGATED** |
+| TM-DOS-063 | Persistent fd exhaustion | `exec N>/tmp/f` across many `N` values grows `exec_fd_table`/coproc fd buffers for the session | `ExecutionLimits::max_file_descriptors` (default 1024) caps persistent custom descriptors before inserts; reusing existing fd entries and standard fds 0/1/2 do not count | **MITIGATED** |
 
 **TM-DOS-051** (mitigated): `builtins/yaml.rs` — `parse_yaml_block`, `parse_yaml_map`,
 `parse_yaml_list` carry a `depth: usize` parameter. When `depth > MAX_YAML_DEPTH = 100`,
@@ -650,14 +651,15 @@ Regression test: `builtins::zip_cmd::tests::test_unzip_rejects_path_traversal_en
 
 | ID | Threat | Attack Vector | Mitigation | Status |
 |----|--------|--------------|------------|--------|
-| TM-INJ-007 | HTML in output | Script outputs `<script>` | N/A - CLI tool | **NOT APPLICABLE** |
+| TM-INJ-007 | HTML in output | Script outputs `<script>` and caller renders stdout/stderr in a web UI | Caller must HTML-escape rendered output and use a restrictive Content Security Policy | **CALLER RISK** |
 | TM-INJ-008 | Terminal escape | ANSI escape sequences | Caller should sanitize | **CALLER RISK** |
 
-**Current Risk**: LOW - Bashkit is not a web application
+**Current Risk**: LOW - Bashkit does not render output itself; embedding UIs own display sanitization.
 
-**Caller Responsibility** (TM-INJ-008): Sanitize output if displayed in terminal/web UI:
+**Caller Responsibility** (TM-INJ-007, TM-INJ-008): Escape or sanitize output before display:
 ```rust
 let result = bash.exec(script).await?;
+let safe_html = html_escape(&result.stdout);
 let safe_output = sanitize_terminal_escapes(&result.stdout);
 ```
 
@@ -1405,6 +1407,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Builtin parser depth limit (100) | TM-DOS-027 | `builtins/awk.rs`, `builtins/jq/` | Yes |
 | Execution timeout (30s) | TM-DOS-023 | `limits.rs` | Yes |
 | Builtin output pre-allocation caps | TM-DOS-058, TM-DOS-090 | `limits.rs`, `builtins/shuf.rs` | Yes |
+| Persistent custom fd cap | TM-DOS-063 | `limits.rs`, `interpreter/mod.rs` | Yes |
 | Virtual filesystem | TM-ESC-001, TM-ESC-003 | `fs/memory.rs` | Yes |
 | Filesystem limits | TM-DOS-005 to TM-DOS-010, TM-DOS-014 | `fs/limits.rs` | Yes |
 | Path depth limit (100) | TM-DOS-012 | `fs/limits.rs` | Yes |
