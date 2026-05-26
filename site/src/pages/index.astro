@@ -33,6 +33,7 @@ const heroStats = [
 ];
 
 const quickStarts = [
+  { label: "Agents", href: "#agent-development" },
   { label: "Rust", href: "#quickstart-rust" },
   { label: "Python", href: "#quickstart-python" },
   { label: "TypeScript", href: "#quickstart-typescript" },
@@ -81,6 +82,23 @@ const signals = [
     title: "Resource limits",
     detail:
       "Caps on commands, loops, output, input, and filesystem size. DoS-resistant by construction.",
+  },
+];
+
+const agentSteps = [
+  {
+    title: "Install the skill",
+    detail: "Give your coding agent Bashkit-specific usage notes and examples.",
+    command: "npx skills add everruns/bashkit",
+  },
+  {
+    title: "Ask agent to add it",
+    detail: "Prompt your coding agent to wire Bashkit into the host project.",
+    command: 'Using bashkit, add support for a bash tool',
+  },
+  {
+    title: "Enjoy :)",
+    detail: "Use the new bash tool in your agent workflow.",
   },
 ];
 
@@ -382,6 +400,41 @@ async fn main() -> anyhow::Result<()> {
           }
         </div>
       </aside>
+    </div>
+  </section>
+
+  <section id="agent-development" class="atlas-agent-dev section">
+    <div class="container">
+      <article class="atlas-panel atlas-agent-island">
+        <div class="atlas-agent-island__copy">
+          <span class="atlas-eyebrow">Agent development</span>
+          <h2>Start with the skill, then embed the runtime.</h2>
+          <p>
+            The Bashkit skill gives coding agents the right local context:
+            sandbox model, package APIs, builtins, examples, and agent-tool
+            patterns. Install it first, then add Bashkit to the host project.
+          </p>
+        </div>
+
+        <div class="atlas-agent-steps">
+          {
+            agentSteps.map((step, index) => (
+              <article class="atlas-agent-step">
+                <span class="atlas-agent-step__index">{index + 1}</span>
+                <div>
+                  <h3>{step.title}</h3>
+                  <p>{step.detail}</p>
+                  {
+                    step.command && (
+                      <pre class="atlas-agent-command"><code>{step.command}</code></pre>
+                    )
+                  }
+                </div>
+              </article>
+            ))
+          }
+        </div>
+      </article>
     </div>
   </section>
 
@@ -818,6 +871,76 @@ async fn main() -> anyhow::Result<()> {
   .atlas-inline-link:hover {
     text-decoration: underline;
   }
+  .atlas-agent-dev {
+    background: var(--color-white);
+  }
+  .atlas-agent-island {
+    display: grid;
+    grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+    gap: 1.4rem;
+    align-items: start;
+    padding: 1.35rem;
+    background: linear-gradient(135deg, #fffaf0 0%, #ffffff 56%, #eef4ff 100%);
+  }
+  .atlas-agent-island__copy {
+    display: grid;
+    gap: 0.75rem;
+  }
+  .atlas-agent-island__copy h2 {
+    max-width: 12ch;
+    font-size: clamp(1.9rem, 3.4vw, 3rem);
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+  }
+  .atlas-agent-island__copy p,
+  .atlas-agent-step p {
+    color: rgb(64 64 64 / 0.92);
+  }
+  .atlas-agent-steps {
+    display: grid;
+    gap: 0.8rem;
+  }
+  .atlas-agent-step {
+    display: grid;
+    grid-template-columns: 2.1rem minmax(0, 1fr);
+    gap: 0.85rem;
+    padding: 0.9rem;
+    border: 1px solid rgb(10 22 54 / 0.1);
+    background: rgb(255 255 255 / 0.78);
+  }
+  .atlas-agent-step__index {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.1rem;
+    height: 2.1rem;
+    background: #10151f;
+    color: #edf2fb;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    font-weight: 600;
+  }
+  .atlas-agent-step h3 {
+    font-size: 1.1rem;
+    font-weight: 600;
+  }
+  .atlas-agent-command {
+    margin-top: 0.55rem;
+    padding: 0.65rem 0.75rem;
+    background: #10151f;
+    color: #edf2fb;
+    overflow-x: auto;
+  }
+  .atlas-agent-command code {
+    display: block;
+    padding: 0;
+    background: transparent;
+    color: inherit;
+    font-family: var(--font-mono);
+    font-size: 0.86rem;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
   .atlas-signal-panel {
     display: grid;
     gap: 1.15rem;
@@ -1007,6 +1130,12 @@ async fn main() -> anyhow::Result<()> {
     .atlas-card-grid--reliability,
     .atlas-card-grid--resources {
       grid-template-columns: 1fr;
+    }
+    .atlas-agent-island {
+      grid-template-columns: 1fr;
+    }
+    .atlas-agent-island__copy h2 {
+      max-width: 18ch;
     }
     .atlas-hero-guide { grid-template-columns: 1fr; }
     .atlas-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
