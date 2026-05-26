@@ -196,21 +196,29 @@ impl Default for RgColorScheme {
 
 impl RgColorScheme {
     fn apply(&mut self, spec: &str) -> Result<()> {
-        let parts: Vec<&str> = spec.split(':').collect();
-        if parts.len() == 2 && parts[1] == "none" {
-            self.style_mut(parts[0])?.disable();
+        const MAX_COLOR_SPEC_LEN: usize = 256;
+        if spec.len() > MAX_COLOR_SPEC_LEN {
+            return Err(invalid_color_spec_error(spec));
+        }
+
+        let mut fields = spec.splitn(4, ':');
+        let field0 = fields.next().unwrap_or_default();
+        let field1 = fields.next();
+        let field2 = fields.next();
+        let extra = fields.next();
+
+        if field1 == Some("none") && field2.is_none() && extra.is_none() {
+            self.style_mut(field0)?.disable();
             return Ok(());
         }
-        if parts.len() != 3 {
-            return Err(Error::Execution(format!(
-                "rg: error parsing flag --colors: invalid color spec '{spec}'"
-            )));
+        if field1.is_none() || field2.is_none() || extra.is_some() {
+            return Err(invalid_color_spec_error(spec));
         }
-        let style = self.style_mut(parts[0])?;
-        match parts[1] {
-            "fg" => style.set_fg(parse_ansi_fg(parts[2])?),
-            "bg" => style.set_bg(parse_ansi_bg(parts[2])?),
-            "style" => match parts[2] {
+        let style = self.style_mut(field0)?;
+        match field1.unwrap_or_default() {
+            "fg" => style.set_fg(parse_ansi_fg(field2.unwrap_or_default())?),
+            "bg" => style.set_bg(parse_ansi_bg(field2.unwrap_or_default())?),
+            "style" => match field2.unwrap_or_default() {
                 "bold" => style.set_bold(true),
                 "nobold" => style.set_bold(false),
                 "intense" => style.set_intense(true),
@@ -222,15 +230,11 @@ impl RgColorScheme {
                 _ => {
                     return Err(Error::Execution(format!(
                         "rg: error parsing flag --colors: invalid style '{}'",
-                        parts[2]
+                        field2.unwrap_or_default()
                     )));
                 }
             },
-            _ => {
-                return Err(Error::Execution(format!(
-                    "rg: error parsing flag --colors: invalid color spec '{spec}'"
-                )));
-            }
+            _ => return Err(invalid_color_spec_error(spec)),
         }
         Ok(())
     }
@@ -247,6 +251,17 @@ impl RgColorScheme {
             ))),
         }
     }
+}
+
+fn invalid_color_spec_error(spec: &str) -> Error {
+    const MAX_SPEC_ECHO_CHARS: usize = 80;
+    let mut truncated = spec.chars().take(MAX_SPEC_ECHO_CHARS).collect::<String>();
+    if spec.chars().count() > MAX_SPEC_ECHO_CHARS {
+        truncated.push_str("...");
+    }
+    Error::Execution(format!(
+        "rg: error parsing flag --colors: invalid color spec '{truncated}'"
+    ))
 }
 
 impl RgColorStyle {
@@ -6091,6 +6106,26 @@ mod tests {
         .await
         .expect_err("error");
         assert!(err.to_string().contains("ignore file too large"));
+    }
+
+    #[test]
+    fn colors_rejects_too_long_spec_with_truncated_echo() {
+        let mut scheme = RgColorScheme::default();
+        let spec = "x".repeat(300);
+        let err = scheme.apply(&spec).expect_err("spec should be rejected");
+        let msg = err.to_string();
+        assert!(msg.contains("invalid color spec"));
+        assert!(msg.contains("..."));
+        assert!(!msg.contains(&spec));
+    }
+
+    #[test]
+    fn colors_rejects_extra_delimiters_without_split_collect_amplification() {
+        let mut scheme = RgColorScheme::default();
+        let err = scheme
+            .apply("match:fg:blue:extra")
+            .expect_err("spec with extra delimiter should be rejected");
+        assert!(err.to_string().contains("invalid color spec"));
     }
 
     async fn run_rg(args: &[&str], stdin: Option<&str>, files: &[(&str, &[u8])]) -> ExecResult {
