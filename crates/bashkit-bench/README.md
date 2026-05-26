@@ -143,4 +143,9 @@ When using `--save`, two files are generated in the working directory:
 1. **JSON** (`bench-{moniker}-{timestamp}.json`): Machine-readable results
 2. **Markdown** (`bench-{moniker}-{timestamp}.md`): Human-readable report
 
-Historical results are stored in `results/`.
+Historical results are stored in `results/` as
+`bench-<runner>-<moniker>-<timestamp>.{json,md}`.
+
+> **Not for criterion output.** Criterion `.md` files produced by
+> `cargo bench --bench <name>` against `crates/bashkit/benches/` live in
+> `crates/bashkit/benches/results/` instead. Don't mix the two streams.

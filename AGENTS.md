@@ -144,6 +144,23 @@ When adding a new builtin that wraps a library:
 2. If a cargo-fuzz target exists for the tool, ensure it uses
    `bashkit::testing::fuzz_exec(...)` — not bare `bash.exec(...)`.
 
+### Benches
+
+Two distinct harnesses, two distinct result locations — keep them separate.
+
+- **Criterion benches** for the `bashkit` crate live in `crates/bashkit/benches/`.
+  Run via `cargo bench --bench <name>` or `just bench-parallel` / `just bench-sqlite`.
+  Historical results go in **`crates/bashkit/benches/results/`**, named
+  `criterion-<bench>-<moniker>-<timestamp>.md`. The `bench-parallel.sh` and
+  `bench-sqlite.sh` scripts write there.
+- **`bashkit-bench` harness** (bashkit vs real bash) lives in `crates/bashkit-bench/`.
+  Run via `just bench`. Historical results go in **`crates/bashkit-bench/results/`**,
+  named `bench-<runner>-<moniker>-<timestamp>.{json,md}`.
+
+When adding a new criterion bench, save its first run under
+`crates/bashkit/benches/results/` so future runs have a baseline to diff against.
+Do not mix criterion `.md` files into `crates/bashkit-bench/results/`.
+
 ### Python
 
 - Python package in `crates/bashkit-python/`

@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Run the Criterion parallel_execution benchmark and save results to
-# crates/bashkit-bench/results/ alongside the bashkit-bench results.
+# crates/bashkit/benches/results/, next to the bench source.
 #
 # Usage:
 #   ./scripts/bench-parallel.sh          # run + save
 #   ./scripts/bench-parallel.sh --dry    # parse last run without re-running
 set -euo pipefail
 
-RESULTS_DIR="crates/bashkit-bench/results"
+RESULTS_DIR="crates/bashkit/benches/results"
 HOSTNAME=$(hostname 2>/dev/null || echo "unknown")
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m)
