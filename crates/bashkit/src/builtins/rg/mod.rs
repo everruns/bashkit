@@ -3970,18 +3970,52 @@ fn write_rg_prefix(output: &mut String, prefix: RgPrefix<'_>) {
 
 fn format_hyperlink_url(format: &str, filename: &str, line: usize, column: usize) -> String {
     let path = hyperlink_path(filename);
-    format
-        .replace("{path}", &path)
-        .replace("{line}", &line.to_string())
-        .replace("{column}", &column.to_string())
+    let line = line.to_string();
+    let column = column.to_string();
+    let mut out = String::with_capacity(format.len() + path.len());
+    let mut rest = format;
+
+    while let Some(start) = rest.find('{') {
+        out.push_str(&rest[..start]);
+        let tail = &rest[start..];
+        if let Some(remaining) = tail.strip_prefix("{path}") {
+            out.push_str(&path);
+            rest = remaining;
+        } else if let Some(remaining) = tail.strip_prefix("{line}") {
+            out.push_str(&line);
+            rest = remaining;
+        } else if let Some(remaining) = tail.strip_prefix("{column}") {
+            out.push_str(&column);
+            rest = remaining;
+        } else {
+            out.push('{');
+            rest = &tail[1..];
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 fn hyperlink_path(filename: &str) -> String {
-    if filename.starts_with('/') {
+    let normalized = if filename.starts_with('/') {
         filename.to_string()
     } else {
         format!("/{}", filename.trim_start_matches("./"))
+    };
+    percent_encode_url_path(&normalized)
+}
+
+fn percent_encode_url_path(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    for &b in path.as_bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~' | b'/') {
+            out.push(char::from(b));
+        } else {
+            out.push('%');
+            out.push_str(&format!("{b:02X}"));
+        }
     }
+    out
 }
 
 #[derive(Clone, Copy)]
@@ -13203,6 +13237,18 @@ mod tests {
             hyperlink.stdout,
             "\x1b]8;;file:///file.txt:1:1\x1b\\\x1b[0m\x1b[35m/file.txt\x1b[0m:\x1b[0m\x1b[32m1\x1b[0m:\x1b[0m1\x1b[0m\x1b]8;;\x1b\\:\x1b[0m\x1b[1m\x1b[31mneedle\x1b[0m again\n"
         );
+    }
+
+    #[test]
+    fn format_hyperlink_url_does_not_rewrite_placeholder_text_in_path() {
+        let url = format_hyperlink_url("file://{path}:{line}:{column}", "/proj/a{line}.txt", 12, 5);
+        assert_eq!(url, "file:///proj/a%7Bline%7D.txt:12:5");
+    }
+
+    #[test]
+    fn format_hyperlink_url_percent_encodes_url_delimiters_in_path() {
+        let url = format_hyperlink_url("file://{path}", "/proj/sp ace#q?.txt", 1, 1);
+        assert_eq!(url, "file:///proj/sp%20ace%23q%3F.txt");
     }
 
     #[tokio::test]
