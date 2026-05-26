@@ -102,6 +102,24 @@ just check        # fmt + clippy + test
 just pre-pr       # Pre-PR checks
 ```
 
+**Do not run `cargo test --all-features` as a single invocation.** It is
+not exercised in CI and statically links every embedded interpreter
+(monty, zapcode, turso, russh, jaq, reqwest+rustls, ed25519-dalek) into
+each of the ~87 integration test binaries. The parallel link step exceeds
+sandbox/cloud-runner memory limits and the supervisor kills the shell —
+often with output truncated to a single line, no useful failure signal.
+It also turns on `failpoints`, whose global state requires
+`--test-threads=1`. Use `just check` / `just pre-pr`, or slice by feature
+the way CI does (see `.github/workflows/ci.yml`):
+
+```bash
+cargo test --workspace --lib --bins --tests --features http_client,ssh,sqlite
+cargo test --features realfs      -p bashkit --test realfs_tests
+cargo test --features failpoints  --test security_failpoint_tests -- --test-threads=1
+cargo test --features python      -p bashkit
+cargo test --features typescript  -p bashkit
+```
+
 ### Rust
 
 - Stable Rust, version pinned in `rust-toolchain.toml` (bump deliberately;
