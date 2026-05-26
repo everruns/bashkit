@@ -113,12 +113,12 @@ done
 ### end
 
 ### bash_variable_export
-# Variables set in bash -c affect caller (shared interpreter)
-### bash_diff: real bash runs subshell, vars don't propagate
+# `bash -c` runs in a child process — variables it sets must not leak to the
+# caller (issue #1777). Aligned with real-bash semantics.
 bash -c 'FOO=bar'
 echo "FOO=$FOO"
 ### expect
-FOO=bar
+FOO=
 ### end
 
 ### bash_arithmetic

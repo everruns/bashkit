@@ -3736,6 +3736,15 @@ impl Interpreter {
             (shell_name.to_string(), Vec::new())
         };
 
+        // Real bash spawns a child process for `bash`/`sh`, so non-exportable
+        // state (arrays/assoc_arrays/functions/aliases/namerefs, plus
+        // non-exported scalars) must not be visible to the child, and
+        // mutations the child performs must not leak back to the parent.
+        // Snapshot first so a full restore handles both directions; then
+        // wipe the isolated state before running. See issue #1777.
+        let child_snapshot = self.snapshot_subshell_state();
+        self.reset_state_for_child_shell();
+
         // Push call frame, apply options, execute, restore, pop
         self.call_stack.push(CallFrame {
             name: name_arg,
@@ -3743,19 +3752,14 @@ impl Interpreter {
             positional: positional_args,
         });
 
-        let mut saved_opts: Vec<(String, Option<String>)> = Vec::new();
         let mut saved_opt_names: HashSet<&'static str> = HashSet::new();
         for (var, val) in &shell_opts {
             if !saved_opt_names.insert(*var) {
                 self.insert_variable_checked(var.to_string(), val.to_string());
                 continue;
             }
-            let prev = self.variables.get(*var).cloned();
-            saved_opts.push((var.to_string(), prev));
             self.insert_variable_checked(var.to_string(), val.to_string());
         }
-        let saved_optind = self.variables.get("OPTIND").cloned();
-        let saved_optchar = self.variables.get("_OPTCHAR_IDX").cloned();
         self.insert_variable_checked("OPTIND".to_string(), "1".to_string());
         self.vars_mut().remove("_OPTCHAR_IDX");
 
@@ -3782,39 +3786,74 @@ impl Interpreter {
         // Restore stdin
         self.pipeline_stdin = saved_stdin;
 
-        // Restore state
-        if let Some(val) = saved_optind {
-            self.insert_variable_checked("OPTIND".to_string(), val);
-        } else {
-            self.vars_mut().remove("OPTIND");
-        }
-        if let Some(val) = saved_optchar {
-            self.insert_variable_checked("_OPTCHAR_IDX".to_string(), val);
-        } else {
-            self.vars_mut().remove("_OPTCHAR_IDX");
-        }
-        // Restoring the parent's SHOPT_* values must also clear the cached
-        // `flags` bit when the parent had no entry — otherwise an inner
-        // `bash -e -c '...'` would leak errexit into the parent shell via
-        // the bitfield even though the `SHOPT_e` variable was correctly
-        // removed. `insert_variable_checked` handles the set case; for
-        // remove we go through `vars_mut().remove` *and* clear the bit.
-        for (var, prev) in saved_opts {
-            if let Some(val) = prev {
-                self.insert_variable_checked(var, val);
-            } else {
-                self.vars_mut().remove(&var);
-                if let Some(bit) = BashFlags::from_shopt_name(&var) {
-                    self.flags.remove(bit);
-                }
-            }
-        }
         self.call_stack.pop();
+
+        // Restore parent state — full revert of the snapshot since the child
+        // is process-isolated. This also undoes OPTIND/SHOPT_* writes above.
+        self.restore_subshell_state(child_snapshot);
 
         match result {
             Ok(exec_result) => self.apply_redirections(exec_result, redirects).await,
             Err(e) => Err(e),
         }
+    }
+
+    /// Reset interpreter state to what a freshly-forked `bash`/`sh` child
+    /// would see: drop arrays/assoc_arrays/functions/aliases/namerefs, and
+    /// keep only exported scalars in `variables`. The caller is expected to
+    /// have just taken a snapshot to undo this on return. See issue #1777.
+    fn reset_state_for_child_shell(&mut self) {
+        let exported_names: Vec<String> = self
+            .var_attrs
+            .iter()
+            .filter(|(_, attrs)| attrs.contains(VarAttrs::EXPORT))
+            .map(|(name, _)| name.clone())
+            .collect();
+        let mut next_vars: HashMap<String, String> = HashMap::with_capacity(exported_names.len());
+        for name in &exported_names {
+            if let Some(val) = self.variables.get(name) {
+                next_vars.insert(name.clone(), val.clone());
+            }
+        }
+        // Also preserve hidden/internal markers (e.g. SHOPT_* are set later
+        // by shell_opts; BASH_VERSION, IFS, etc. need to remain accessible).
+        for name in [
+            "BASH_VERSION",
+            "BASH_VERSINFO",
+            "IFS",
+            "PATH",
+            "PWD",
+            "SHELL",
+            "HOSTNAME",
+            "HOME",
+            "PS1",
+            "PS2",
+            "PS4",
+            "RANDOM",
+            "LINENO",
+            "SECONDS",
+            "UID",
+            "EUID",
+            "HOSTTYPE",
+            "OSTYPE",
+            "MACHTYPE",
+        ] {
+            if !next_vars.contains_key(name)
+                && let Some(val) = self.variables.get(name)
+            {
+                next_vars.insert(name.to_string(), val.clone());
+            }
+        }
+        *self.vars_mut() = next_vars;
+        self.arrays_mut().clear();
+        self.assoc_arrays_mut().clear();
+        self.functions_mut().clear();
+        self.namerefs_mut().clear();
+        // Aliases are parse-time anyway, but a fresh `bash -c` would not have
+        // user-defined aliases — drop them for consistency.
+        self.aliases = Arc::new(HashMap::new());
+        // Reset SHOPT_* flag bitfield so options from the parent don't leak.
+        self.flags = BashFlags::empty();
     }
 }
 
@@ -11542,12 +11581,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_bash_preserves_variables() {
-        // Variables set in bash -c should affect the parent
-        // (since we share the interpreter state)
-        let result = run_script("bash -c 'X=inner'; echo $X").await;
+    async fn test_bash_c_mutations_do_not_leak_to_parent() {
+        // `bash -c` runs as a child process — variables it sets must not
+        // become visible in the parent (real-bash semantics, see #1777).
+        let result = run_script("bash -c 'X=inner'; echo \"[$X]\"").await;
         assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "inner");
+        assert_eq!(result.stdout.trim(), "[]");
     }
 
     #[tokio::test]
@@ -11772,10 +11811,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_bash_c_with_variables() {
-        // Variables expand correctly in bash -c
-        let result = run_script("X=test; bash -c 'echo $X'").await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "test");
+        // Only *exported* variables are visible inside `bash -c` — a plain
+        // assignment in the parent is not inherited (real-bash semantics, #1777).
+        let unexported = run_script("X=test; bash -c 'echo \"[$X]\"'").await;
+        assert_eq!(unexported.exit_code, 0);
+        assert_eq!(unexported.stdout.trim(), "[]");
+
+        let exported = run_script("export X=test; bash -c 'echo $X'").await;
+        assert_eq!(exported.exit_code, 0);
+        assert_eq!(exported.stdout.trim(), "test");
     }
 
     #[tokio::test]
