@@ -3,9 +3,12 @@
 // the Astro project and generated assets live under site/.
 {
   "name": "bashkit",
+  "main": "./site/src/worker.js",
   "compatibility_date": "2025-10-01",
   "assets": {
-    "directory": "./site/dist"
+    "directory": "./site/dist",
+    "binding": "ASSETS",
+    "run_worker_first": ["/docs", "/docs/*"]
   },
   "observability": {
     "enabled": true
