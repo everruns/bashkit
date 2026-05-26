@@ -351,6 +351,7 @@ dependencies = [
  "async-trait",
  "base64",
  "bigdecimal",
+ "bitflags",
  "chrono",
  "clap",
  "criterion",

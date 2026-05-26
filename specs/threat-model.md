@@ -579,9 +579,9 @@ Bash::builder()
 
 | TM-INJ-011 | Cyclic nameref silent resolution | Cyclic namerefs (a→b→a) silently resolve after 10 iterations instead of erroring | `resolve_nameref()` tracks visited names in a `HashSet`; on cycle detection it returns the original name and the lookup sees no value | **MITIGATED** |
 | TM-INJ-018 | `dotenv` internal variable prefix injection | `.env` file with `_NAMEREF_x=target` sets internal interpreter variables via `ctx.variables.insert()` | `Dotenv::execute` calls `is_internal_variable(&full_key)` and skips injected internal-prefix keys (`builtins/dotenv.rs:138`) | **MITIGATED** |
-| TM-INJ-019 | `unset` removes readonly variables | `readonly X=v; unset X` removes the variable despite readonly attribute | `execute_unset_builtin` and `Unset` builtin both check `_READONLY_<name>` markers, emit `bash: unset: <name>: cannot unset: readonly variable`, and return exit 1 | **MITIGATED** |
-| TM-INJ-020 | `declare` overwrites readonly variables | `readonly X=v; declare X=new` overwrites without error | `declare` assignment path checks `_READONLY_<name>`, emits `bash: declare: <name>: readonly variable`, returns exit 1 | **MITIGATED** |
-| TM-INJ-021 | `export` overwrites readonly variables | `readonly X=v; export X=new` overwrites without error | `export NAME=VALUE` checks `_READONLY_<name>`, emits `bash: export: <name>: readonly variable`, returns exit 1 | **MITIGATED** |
+| TM-INJ-019 | `unset` removes readonly variables | `readonly X=v; unset X` removes the variable despite readonly attribute | `execute_unset_builtin` and `Unset` builtin both consult the `VarAttrs::READONLY` flag in the dedicated `var_attrs` map, emit `bash: unset: <name>: cannot unset: readonly variable`, and return exit 1 | **MITIGATED** |
+| TM-INJ-020 | `declare` overwrites readonly variables | `readonly X=v; declare X=new` overwrites without error | `declare` assignment path consults `VarAttrs::READONLY` via `is_var_readonly()`, emits `bash: declare: <name>: readonly variable`, returns exit 1 | **MITIGATED** |
+| TM-INJ-021 | `export` overwrites readonly variables | `readonly X=v; export X=new` overwrites without error | `export NAME=VALUE` consults `VarAttrs::READONLY` via `ShellRef::is_var_readonly()`, emits `bash: export: <name>: readonly variable`, returns exit 1 | **MITIGATED** |
 
 **TM-INJ-011** (mitigated): `interpreter/mod.rs::resolve_nameref` tracks visited names in a
 `HashSet`. When a cycle (e.g. `a→b→a`, `a→a`, or longer chains) is detected on the next hop,
@@ -592,17 +592,26 @@ silent traversal to a stale variable — is upheld. Regression tests:
 `tests/threat_model_tests.rs::tm_inj_011_*`.
 
 **TM-INJ-018** (mitigated): `builtins/dotenv.rs:138` — `Dotenv::execute` calls
-`is_internal_variable(&full_key)` and skips any key in the internal namespace (`_NAMEREF_*`,
-`_READONLY_*`, `_UPPER_*`, `_LOWER_*`, `_INTEGER_*`, `_ARRAY_READ_*`, `_SHIFT_COUNT`,
-`_SET_POSITIONAL`). Regression test:
-`tests/threat_model_tests.rs::tm_inj_018_dotenv_rejects_internal_prefixes`.
+`is_internal_variable(&full_key)` and skips any key in the historically-reserved namespace
+(`_NAMEREF_*`, `_READONLY_*`, `_UPPER_*`, `_LOWER_*`, `_INTEGER_*`, `_ARRAY_READ_*`,
+`_SHIFT_COUNT`, `_SET_POSITIONAL`). The interpreter no longer stores attribute markers in
+`variables` under these prefixes — readonly/integer/lower/upper attributes live in a
+dedicated `VarAttrs` bitset map and namerefs in a dedicated `namerefs: HashMap<String, String>`
+— so even a dotenv key that slipped past the filter could not influence interpreter behavior.
+The prefix block is kept as defense-in-depth (and to suppress confusing output like
+`echo $_NAMEREF_x`). Regression test: `tests/threat_model_tests.rs::tm_inj_018_dotenv_rejects_internal_prefixes`.
 
-**TM-INJ-009**: The interpreter uses magic variable prefixes as internal control signals:
-`_NAMEREF_<name>` (nameref), `_READONLY_<name>` (readonly), `_SHIFT_COUNT`, `_SET_POSITIONAL`,
-`_UPPER_<name>`, `_LOWER_<name>`. User scripts can set these directly to bypass readonly
-protection, create unauthorized namerefs, or manipulate builtins. `${!_NAMEREF_*}` also exposes
-all internal variables. Fix: use separate `HashMap` for internal state, or reject assignments
-to reserved prefixes.
+**TM-INJ-009** (mitigated): historically the interpreter used magic variable prefixes
+(`_NAMEREF_<name>`, `_READONLY_<name>`, `_INTEGER_<name>`, `_UPPER_<name>`, `_LOWER_<name>`)
+to record attributes inside the shared `variables` HashMap. That allowed user scripts to
+forge attributes by writing the prefixed key directly. The interpreter now stores
+attributes in a dedicated `var_attrs: HashMap<String, VarAttrs>` bitset and namerefs in a
+dedicated `namerefs` map; user scripts cannot reach these from bash. `is_internal_variable()`
+still rejects writes to the legacy prefixes from every write path (`set_variable`, `read`,
+`printf -v`, `local`, `declare`, `readonly`, `export`, `dotenv`, `unset`) as
+defense-in-depth, and `set` / `declare -p` filter the prefixes from listings (TM-INF-017).
+Regression tests live in `tests/security_audit_pocs.rs` (declare/readonly/export/local can
+not inject any of the legacy markers) and `tests/threat_model_tests.rs::tm_inj_009_*`.
 
 **Example**:
 ```bash

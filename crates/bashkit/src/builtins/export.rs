@@ -47,7 +47,12 @@ impl Builtin for Export {
                 }
                 // THREAT[TM-INJ-021]: Refuse to overwrite readonly variables and
                 // surface the error so callers cannot mistake a silent skip for success.
-                if ctx.variables.contains_key(&format!("_READONLY_{}", name)) {
+                if ctx
+                    .shell
+                    .as_ref()
+                    .map(|s| s.is_var_readonly(name))
+                    .unwrap_or(false)
+                {
                     stderr.push_str(&format!("bash: export: {name}: readonly variable\n"));
                     exit_code = 1;
                     continue;

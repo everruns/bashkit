@@ -707,7 +707,6 @@ impl Bash {
         let parser_timeout = self.parser_timeout;
         let max_ast_depth = self.max_ast_depth;
         let max_parser_operations = self.max_parser_operations;
-        let script_owned = script.to_owned();
 
         #[cfg(feature = "logging")]
         tracing::debug!(
@@ -718,12 +717,22 @@ impl Bash {
             "Parsing script"
         );
 
+        // Important decision: skip the tokio `spawn_blocking` + `time::timeout`
+        // round-trip for small scripts. The parser already enforces a fuel
+        // budget via `max_parser_operations`, so a runaway script still
+        // terminates without the timer-driven path. For ~99% of inline scripts
+        // (REPL, agent commands, short shell snippets) the threadpool hop
+        // dominated startup latency. The threshold matches the input byte
+        // size; above it we keep the original behavior so very large scripts
+        // can be pre-empted.
+        const SPAWN_BLOCKING_THRESHOLD: usize = 16 * 1024;
+
         // On WASM, tokio::task::spawn_blocking and tokio::time::timeout don't
         // work (no blocking thread pool, timer driver unreliable). Parse inline.
         #[cfg(target_family = "wasm")]
         let ast = {
             let parser = Parser::with_limits_and_timeout(
-                &script_owned,
+                script,
                 max_ast_depth,
                 max_parser_operations,
                 Some(parser_timeout),
@@ -731,10 +740,26 @@ impl Bash {
             parser.parse()?
         };
 
-        // On native targets, parse with timeout using spawn_blocking since
-        // parsing is sync and we don't want to block the async runtime.
+        // On native targets, parse inline for small scripts (avoid threadpool
+        // hop) and use spawn_blocking + timeout for larger ones so the async
+        // runtime can pre-empt a runaway parser.
         #[cfg(not(target_family = "wasm"))]
-        let ast = {
+        let ast = if input_len <= SPAWN_BLOCKING_THRESHOLD {
+            let parser = Parser::with_limits(script, max_ast_depth, max_parser_operations);
+            match parser.parse() {
+                Ok(ast) => {
+                    #[cfg(feature = "logging")]
+                    tracing::debug!(target: "bashkit::parser", "Parse completed (inline)");
+                    ast
+                }
+                Err(e) => {
+                    #[cfg(feature = "logging")]
+                    tracing::warn!(target: "bashkit::parser", error = %e, "Parse error (inline)");
+                    return Err(e);
+                }
+            }
+        } else {
+            let script_owned = script.to_owned();
             let parse_result = tokio::time::timeout(parser_timeout, async {
                 tokio::task::spawn_blocking(move || {
                     let parser =

@@ -51,6 +51,11 @@ fail = { workspace = true, optional = true }
 # URL parsing
 url = "2"
 
+# Compact flag bitsets used by the interpreter for variable attributes
+# (readonly/integer/lower/upper) and shell options (set -e/-u/-x/-o pipefail).
+# Stays the format!()-based `_READONLY_X`/`SHOPT_*` keys off the hot path.
+bitflags = "2"
+
 # JSON processing (jq) - optional, enabled with jq feature
 jaq-core = { workspace = true, optional = true }
 jaq-std = { workspace = true, optional = true }
@@ -166,6 +171,10 @@ serial_test = { workspace = true }
 
 [[bench]]
 name = "parallel_execution"
+harness = false
+
+[[bench]]
+name = "hotpath"
 harness = false
 
 [[bench]]
