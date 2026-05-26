@@ -15,6 +15,7 @@
 //! - **TM-DOS-023**: CPU exhaustion → `timeout`
 //! - **TM-DOS-024**: Parser hang → `parser_timeout`, `max_parser_operations`
 //! - **TM-DOS-027**: Builtin parser recursion → `MAX_AWK_PARSER_DEPTH`, `MAX_JQ_JSON_DEPTH` (in builtins)
+//! - **TM-DOS-063**: Persistent file descriptor exhaustion → `max_file_descriptors`
 //!
 //! # Fail Points (enabled with `failpoints` feature)
 //!
@@ -92,6 +93,11 @@ pub struct ExecutionLimits {
     /// Default: 32
     pub max_subst_depth: usize,
 
+    /// Maximum persistent custom file descriptors opened via `exec N>file`,
+    /// `exec N<file`, or fd duplication. Standard fds 0/1/2 do not count.
+    /// Default: 1024
+    pub max_file_descriptors: usize,
+
     /// Whether to capture the final environment state in ExecResult.
     /// Default: false (opt-in to avoid cloning cost when not needed)
     pub capture_final_env: bool,
@@ -112,6 +118,7 @@ impl Default for ExecutionLimits {
             max_stdout_bytes: 1_048_576, // 1MB
             max_stderr_bytes: 1_048_576, // 1MB
             max_subst_depth: 32,
+            max_file_descriptors: 1024,
             capture_final_env: false,
         }
     }
@@ -242,6 +249,15 @@ impl ExecutionLimits {
     pub fn max_subst_depth(mut self, depth: usize) -> Self {
         if depth > 0 {
             self.max_subst_depth = depth;
+        }
+        self
+    }
+
+    /// Set maximum persistent custom file descriptors.
+    /// Passing 0 is treated as "use default" (no-op) to prevent misconfiguration.
+    pub fn max_file_descriptors(mut self, count: usize) -> Self {
+        if count > 0 {
+            self.max_file_descriptors = count;
         }
         self
     }
@@ -551,6 +567,9 @@ pub enum LimitExceeded {
 
     #[error("maximum command substitution depth exceeded ({0})")]
     MaxSubstDepth(usize),
+
+    #[error("maximum file descriptors exceeded ({0})")]
+    MaxFileDescriptors(usize),
 
     #[error("execution timeout ({0:?})")]
     Timeout(Duration),
@@ -1039,7 +1058,8 @@ mod tests {
             .max_parser_operations(0)
             .max_stdout_bytes(0)
             .max_stderr_bytes(0)
-            .max_subst_depth(0);
+            .max_subst_depth(0)
+            .max_file_descriptors(0);
 
         assert_eq!(limits.max_commands, defaults.max_commands);
         assert_eq!(limits.max_loop_iterations, defaults.max_loop_iterations);
@@ -1054,6 +1074,7 @@ mod tests {
         assert_eq!(limits.max_stdout_bytes, defaults.max_stdout_bytes);
         assert_eq!(limits.max_stderr_bytes, defaults.max_stderr_bytes);
         assert_eq!(limits.max_subst_depth, defaults.max_subst_depth);
+        assert_eq!(limits.max_file_descriptors, defaults.max_file_descriptors);
     }
 
     #[test]
@@ -1068,7 +1089,8 @@ mod tests {
             .max_parser_operations(500)
             .max_stdout_bytes(2048)
             .max_stderr_bytes(4096)
-            .max_subst_depth(8);
+            .max_subst_depth(8)
+            .max_file_descriptors(16);
 
         assert_eq!(limits.max_commands, 5);
         assert_eq!(limits.max_loop_iterations, 7);
@@ -1080,6 +1102,7 @@ mod tests {
         assert_eq!(limits.max_stdout_bytes, 2048);
         assert_eq!(limits.max_stderr_bytes, 4096);
         assert_eq!(limits.max_subst_depth, 8);
+        assert_eq!(limits.max_file_descriptors, 16);
     }
 
     #[test]

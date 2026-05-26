@@ -123,10 +123,13 @@ pub enum Token {
     /// Duplicate fd to another (e.g., 2>&1)
     DupFd(i32, i32),
 
+    /// Close output fd (e.g., 4>&-)
+    DupFdCloseOut(i32),
+
     /// Duplicate input fd to another (e.g., 4<&0)
     DupFdIn(i32, i32),
 
-    /// Close fd (e.g., 4<&- or 4>&-)
+    /// Close input fd (e.g., 4<&-)
     DupFdClose(i32),
 
     /// Redirect input with file descriptor (e.g., 4<)

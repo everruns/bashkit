@@ -4899,6 +4899,7 @@ impl Interpreter {
                     let text = bytes_to_latin1_string(&content);
                     let fd = redirect.fd.or(resolved_fd_var);
                     if let Some(fd) = fd {
+                        self.ensure_persistent_fd_capacity(fd)?;
                         let lines: Vec<String> =
                             text.lines().rev().map(|l| l.to_string()).collect();
                         self.coproc_buffers.insert(fd, lines);
@@ -4910,7 +4911,7 @@ impl Interpreter {
                 RedirectKind::DupInput => {
                     let target = self.expand_word(&redirect.target).await?;
                     let fd = redirect.fd.or(resolved_fd_var);
-                    if target == "-"
+                    if (target == "-" || target == "&-")
                         && let Some(fd) = fd
                     {
                         self.coproc_buffers.remove(&fd);
@@ -4920,6 +4921,7 @@ impl Interpreter {
                     let fd = redirect.fd.or(resolved_fd_var).unwrap_or(1);
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
+                    self.ensure_persistent_fd_capacity(fd)?;
                     if is_dev_null(&path) {
                         self.exec_fd_table.insert(fd, FdTarget::DevNull);
                     } else {
@@ -4933,6 +4935,7 @@ impl Interpreter {
                     let fd = redirect.fd.or(resolved_fd_var).unwrap_or(1);
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
+                    self.ensure_persistent_fd_capacity(fd)?;
                     if is_dev_null(&path) {
                         self.exec_fd_table.insert(fd, FdTarget::DevNull);
                     } else {
@@ -4943,7 +4946,7 @@ impl Interpreter {
                 RedirectKind::DupOutput => {
                     let target = self.expand_word(&redirect.target).await?;
                     let fd = redirect.fd.or(resolved_fd_var).unwrap_or(1);
-                    if target == "-" {
+                    if target == "-" || target == "&-" {
                         // exec N>&- closes the fd
                         self.exec_fd_table.remove(&fd);
                     } else if let Ok(target_fd) = target.parse::<i32>() {
@@ -4958,6 +4961,7 @@ impl Interpreter {
                                 .cloned()
                                 .unwrap_or(FdTarget::Stdout)
                         };
+                        self.ensure_persistent_fd_capacity(fd)?;
                         self.exec_fd_table.insert(fd, target_entry);
                     }
                 }
@@ -4966,6 +4970,25 @@ impl Interpreter {
         }
         let result = ExecResult::default();
         self.apply_redirections(result, redirects).await
+    }
+
+    fn ensure_persistent_fd_capacity(&self, fd: i32) -> Result<()> {
+        if fd <= 2 || self.exec_fd_table.contains_key(&fd) || self.coproc_buffers.contains_key(&fd)
+        {
+            return Ok(());
+        }
+
+        let mut open_fds: HashSet<i32> = self.exec_fd_table.keys().copied().collect();
+        open_fds.extend(self.coproc_buffers.keys().copied());
+
+        if open_fds.len() >= self.limits.max_file_descriptors {
+            return Err(crate::limits::LimitExceeded::MaxFileDescriptors(
+                self.limits.max_file_descriptors,
+            )
+            .into());
+        }
+
+        Ok(())
     }
 
     /// Execute a registered (non-special) builtin with panic safety.

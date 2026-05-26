@@ -333,17 +333,23 @@ impl<'a> Lexer<'a> {
                 self.advance(); // consume >
                 self.advance(); // consume &
 
-                // Read the target fd number
+                // Read the target fd number or '-'
                 let mut target_str = String::new();
                 while let Some(c) = self.peek_char() {
-                    if c.is_ascii_digit() {
+                    if c.is_ascii_digit() || c == '-' {
                         target_str.push(c);
                         self.advance();
+                        if c == '-' {
+                            break;
+                        }
                     } else {
                         break;
                     }
                 }
 
+                if target_str == "-" {
+                    return Some(Token::DupFdCloseOut(fd));
+                }
                 if target_str.is_empty() {
                     // Just N>& without target - treat as DupOutput with fd
                     return Some(Token::RedirectFd(fd));
