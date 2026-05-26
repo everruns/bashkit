@@ -71,6 +71,25 @@ continuity anchors (5.3-codex is still the newest codex variant — no
 | Tokens | 372K in / 54K out | 413K in / 68K out | 440K in / 63K out | 118K in / 32K out | 91K in / 49K out |
 | Duration | **8.0 min** | 19.7 min | 22.6 min | 11.2 min | 13.7 min |
 
+#### Highlights
+
+1. **Opus 4.7 is the new leader** — 56/58 (98%), +6 tasks over Opus 4.6.
+   First model to hit 100% on `scripting` (7/7); only fails the two
+   persistently-hard tasks (`file_path_organizer`, `config_ini_merge`).
+2. **GPT-5.5 is a big jump** — +9 tasks over GPT-5.2 (41→50), matching
+   GPT-5.3-Codex's score (93%) via Chat Completions instead of Responses.
+   Highest tool-call success rate (92%) tied with Haiku.
+3. **Haiku 4.5 is still the value play** — same 54/58 (98%) as Opus 4.7,
+   in **8 min vs 22 min** wall clock and ~⅙ the tokens. If you don't
+   need Opus-level reasoning headroom, Haiku is hard to beat.
+4. **Sonnet 4.6 looks worse than it is** — its 9 failures cluster in a
+   few odd categories (`system_info` 50%, `code_search` 85%, `pipelines`
+   85%) where every other model passes. Looks like model-specific
+   quirks rather than bashkit gaps.
+5. **`config_ini_merge` resolved for GPT models** — previously all 5
+   failed; now both GPT-5.5 and GPT-5.3-Codex pass. Opus and Sonnet
+   still struggle with section-aware awk.
+
 #### Delta from 2026-02-28 (same 58-task dataset)
 
 | Model | Prior | Current | Delta |
