@@ -51,7 +51,114 @@ Smoke test dataset (`data/smoke-test.jsonl`) has 3 tasks for quick verification.
 
 ## Results
 
-### 2026-02-28 — Post v0.1.7 Interpreter Fixes (58 tasks, latest)
+### 2026-05-26 — Opus 4.7 + GPT-5.5 Lineup (58 tasks, latest)
+
+Refreshed model lineup: upgraded flagships to `claude-opus-4-7` (from 4.6) and
+`gpt-5.5` (from 5.2). Haiku 4.5, Sonnet 4.6, and GPT-5.3-Codex kept as
+continuity anchors (5.3-codex is still the newest codex variant — no
+`gpt-5.5-codex` exists).
+
+**Opus 4.7 takes the top spot at 56/58 (98%)**, a +6 task improvement over Opus
+4.6's 50/58. Haiku 4.5 holds steady at 54/58 (98%). GPT-5.5 jumps to 50/58
+(93%) — a +9 task gain over GPT-5.2's 41/58 (77%) on the same dataset.
+
+| Metric | Haiku 4.5 | Sonnet 4.6 | **Opus 4.7** | GPT-5.5 | GPT-5.3-Codex |
+|--------|-----------|------------|--------------|---------|---------------|
+| Tasks passed | 54/58 | 49/58 | **56/58** | 50/58 | 54/58 |
+| Score | **98%** | 94% | **98%** | 93% | 93% |
+| Tool calls | 195 (180 ok, 15 err) | 188 (171 ok, 17 err) | 175 (158 ok, 17 err) | 118 (108 ok, 10 err) | 114 (99 ok, 15 err) |
+| Tool call success | **92%** | 91% | 90% | **92%** | 87% |
+| Tokens | 372K in / 54K out | 413K in / 68K out | 440K in / 63K out | 118K in / 32K out | 91K in / 49K out |
+| Duration | **8.0 min** | 19.7 min | 22.6 min | 11.2 min | 13.7 min |
+
+#### Highlights
+
+1. **Opus 4.7 is the new leader** — 56/58 (98%), +6 tasks over Opus 4.6.
+   First model to hit 100% on `scripting` (7/7); only fails the two
+   persistently-hard tasks (`file_path_organizer`, `config_ini_merge`).
+2. **GPT-5.5 is a big jump** — +9 tasks over GPT-5.2 (41→50), matching
+   GPT-5.3-Codex's score (93%) via Chat Completions instead of Responses.
+   Highest tool-call success rate (92%) tied with Haiku.
+3. **Haiku 4.5 is still the value play** — same 54/58 (98%) as Opus 4.7,
+   in **8 min vs 22 min** wall clock and ~⅙ the tokens. If you don't
+   need Opus-level reasoning headroom, Haiku is hard to beat.
+4. **Sonnet 4.6 looks worse than it is** — its 9 failures cluster in a
+   few odd categories (`system_info` 50%, `code_search` 85%, `pipelines`
+   85%) where every other model passes. Looks like model-specific
+   quirks rather than bashkit gaps.
+5. **`config_ini_merge` resolved for GPT models** — previously all 5
+   failed; now both GPT-5.5 and GPT-5.3-Codex pass. Opus and Sonnet
+   still struggle with section-aware awk.
+
+#### Delta from 2026-02-28 (same 58-task dataset)
+
+| Model | Prior | Current | Delta |
+|-------|-------|---------|-------|
+| Opus 4.6 → **Opus 4.7** | 50/58 (91%) | **56/58 (98%)** | **+6 tasks** |
+| GPT-5.2 → **GPT-5.5** | 41/58 (77%) | **50/58 (93%)** | **+9 tasks** |
+| Haiku 4.5 | 54/58 (97%) | 54/58 (98%) | unchanged |
+| Sonnet 4.6 | 48/58 (93%) | 49/58 (94%) | +1 task |
+| GPT-5.3-Codex | 51/58 (91%) | 54/58 (93%) | +3 tasks |
+
+#### Per-Category Comparison
+
+| Category | Haiku 4.5 | Sonnet 4.6 | Opus 4.7 | GPT-5.5 | GPT-5.3-Codex |
+|----------|-----------|------------|----------|---------|---------------|
+| archive_operations | **100%** | **100%** | **100%** | **100%** | **100%** |
+| build_simulation | **100%** | **100%** | **100%** | **100%** | **100%** |
+| code_search | **100%** | 85% | **100%** | **100%** | **100%** |
+| complex_tasks | **100%** | **100%** | **100%** | **100%** | **100%** |
+| config_management | **100%** | 64% | 64% | **100%** | **100%** |
+| data_transformation | 97% | **100%** | **100%** | 91% | **100%** |
+| database_operations | **100%** | **100%** | **100%** | **100%** | **100%** |
+| environment | **100%** | **100%** | **100%** | **100%** | **100%** |
+| error_recovery | **100%** | **100%** | **100%** | **100%** | **100%** |
+| file_operations | 92% | **100%** | 92% | 67% | 67% |
+| json_processing | **100%** | **100%** | **100%** | 93% | **100%** |
+| pipelines | **100%** | 85% | **100%** | 90% | **100%** |
+| scripting | 94% | 91% | **100%** | 89% | 69% |
+| system_info | **100%** | 50% | **100%** | 67% | 50% |
+| text_processing | **100%** | 89% | **100%** | **100%** | **100%** |
+
+#### Failure Analysis
+
+| Task | Haiku 4.5 | Sonnet 4.6 | Opus 4.7 | GPT-5.5 | GPT-5.3-Codex | Root Cause |
+|------|-----------|------------|----------|---------|---------------|------------|
+| file_path_organizer | FAIL | PASS | FAIL | FAIL | FAIL | Models burn turns on edge cases (persistent from prior runs) |
+| config_ini_merge | PASS | FAIL | FAIL | PASS | PASS | Section-aware awk logic (resolved for GPT models, blocks Opus/Sonnet) |
+| script_assoc_array | FAIL | FAIL | PASS | PASS | FAIL | Associative array handling |
+| script_getopts_parser | FAIL | FAIL | PASS | PASS | PASS | getopts/wc interaction (Opus 4.7 now passes) |
+| sysinfo_env_report | PASS | FAIL | PASS | PASS | FAIL | Env output format |
+| script_array_stats | PASS | PASS | PASS | FAIL | FAIL | Array min/max/sum |
+| data_csv_join | FAIL | PASS | PASS | PASS | PASS | CSV join (Haiku-only regression) |
+| data_log_summarize | PASS | PASS | PASS | FAIL | PASS | Log aggregation |
+| sysinfo_date_calc | PASS | PASS | PASS | FAIL | PASS | Date arithmetic |
+| json_to_csv_export | PASS | PASS | PASS | FAIL | PASS | jq `@csv` quoting |
+| json_order_totals | PASS | PASS | PASS | FAIL | PASS | JSON aggregation |
+| pipe_xargs_batch | PASS | FAIL | PASS | FAIL | PASS | xargs batching |
+| pipe_process_sub | PASS | FAIL | PASS | PASS | PASS | Process substitution (Sonnet only) |
+| text_comm_setops | PASS | FAIL | PASS | PASS | PASS | `comm` set operations (Sonnet only) |
+| search_recursive_grep | PASS | FAIL | PASS | PASS | PASS | Recursive grep (Sonnet only) |
+| search_find_replace | PASS | FAIL | PASS | PASS | PASS | find+replace (Sonnet only) |
+| file_ops_find_and_delete | PASS | PASS | PASS | FAIL | PASS | find -delete (GPT-5.5 regression) |
+
+#### Model Behavior
+
+- **Opus 4.7** new leader at 56/58 (98%) — perfect on scripting (100%), only
+  fails on file_path_organizer and config_ini_merge. Biggest jump vs Opus 4.6.
+- **Haiku 4.5** holds tie at 54/58 (98%) — still the fastest run (8 min) and
+  most economical, perfect across 11 of 15 categories.
+- **GPT-5.3-Codex** at 54/58 (93%) — strong on complex tasks, weakest on
+  scripting (69%) and system_info (50%). Lowest token usage (91K in).
+- **GPT-5.5** at 50/58 (93%) — major jump from GPT-5.2 (+9 tasks), highest
+  tool-call success (92%) tied with Haiku. Weakest on file_operations (67%).
+- **Sonnet 4.6** at 49/58 (94%) — unchanged behavioral pattern vs prior eval,
+  still trips on system_info (50%) and code_search (85%).
+
+### Previous Results
+
+<details>
+<summary>2026-02-28 — Post v0.1.7 Interpreter Fixes (58 tasks)</summary>
 
 Dataset expanded from 52 to 58 tasks with 3 new categories (database_operations, config_management,
 build_simulation). 20+ interpreter fixes since v0.1.7 release: heredoc redirects (#370), xargs
@@ -132,7 +239,7 @@ GPT-5.2 gained 3 more tasks despite unchanged percentage due to rounding.
 - **Sonnet 4.6** at 48/58 (93%) — weakest on scripting (57%) and system_info (50%); triggers bashkit awk Unicode panic on some tasks
 - **GPT-5.2** at 41/58 (77%) — lowest tool call success (67%), weakest on build_simulation (0%), config_management (0%), scripting (43%)
 
-### Previous Results
+</details>
 
 <details>
 <summary>2026-02-27 — Expanded Dataset (52 tasks)</summary>

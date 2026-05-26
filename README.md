@@ -454,13 +454,13 @@ Bashkit includes an [eval harness](crates/bashkit-eval/) that measures how well 
 
 | Model | Score | Tasks Passed | Tool Call Success | Duration |
 |-------|-------|-------------|-------------------|----------|
-| Claude Haiku 4.5 | **97%** | **54/58** | 88% | 8.6 min |
-| Claude Sonnet 4.6 | 93% | 48/58 | 85% | 20.5 min |
-| Claude Opus 4.6 | 91% | 50/58 | 88% | 20.1 min |
-| GPT-5.3-Codex | 91% | 51/58 | 83% | 19.6 min |
-| GPT-5.2 | 77% | 41/58 | 67% | 7.0 min |
+| Claude Opus 4.7 | **98%** | **56/58** | 90% | 22.6 min |
+| Claude Haiku 4.5 | **98%** | 54/58 | 92% | **8.0 min** |
+| Claude Sonnet 4.6 | 94% | 49/58 | 91% | 19.7 min |
+| GPT-5.5 | 93% | 50/58 | 92% | 11.2 min |
+| GPT-5.3-Codex | 93% | 54/58 | 87% | 13.7 min |
 
-**Delta from v0.1.7** (on shared 37 tasks): Haiku 98%→100%, Opus 93%→96%, GPT-5.2 86%→86% (3 more tasks). Interpreter fixes unblocked `json_to_csv_export` and `script_function_lib` across models. See the [detailed analysis](crates/bashkit-eval/README.md#results).
+**Delta from 2026-02-28** (same 58 tasks): Opus 4.6→4.7 jumped +6 tasks (50→56), GPT-5.2→5.5 jumped +9 tasks (41→50). Haiku 4.5 ties with Opus 4.7 at 98% in ⅓ the wall-clock time. See the [detailed analysis](crates/bashkit-eval/README.md#results).
 
 ```bash
 just eval                    # Run eval with default model
