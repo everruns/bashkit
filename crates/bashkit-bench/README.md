@@ -22,30 +22,37 @@ Benchmark tool for comparing bashkit against bash and just-bash across multiple 
 
 ## Latest Results
 
-96 benchmarks across 12 categories. All runners: **0 errors, 100% output match**.
+### In-process / persistent-child lineup (vm, 4 CPUs, 2026-05-26)
 
-| Runner | Avg/Case (ms) | Total (ms) | vs bashkit |
-|--------|--------------|-----------|------------|
-| bashkit | 0.345 | 33.11 | 1x |
-| bashkit-py | 0.513 | 49.28 | 1.5x |
-| bashkit-js | 0.646 | 61.97 | 1.9x |
-| just-bash-inproc | 4.458 | 428.01 | 12.9x |
-| bashkit-cli | 8.186 | 785.83 | 23.7x |
-| bash | 8.204 | 787.61 | 23.8x |
-| just-bash | 367.538 | 35,283.69 | 1,065x |
+96 cases, 10 iterations. Apples-to-apples — interpreter cost only, no
+per-call process spawn (except `bash`, kept as the cold-start reference).
 
-### Apples-to-apples comparisons
+| Runner | Avg/Case (ms) | Total (ms) | vs bashkit | Errors | Output Match |
+|--------|--------------:|-----------:|-----------:|-------:|-------------:|
+| bashkit            | 0.457 |    43.85 |     1x | 0 | 100% |
+| gbash-server v0.0.38 | 6.286 |   603.49 |  13.8x | 130 (13.5%) | 86.5% |
+| just-bash-inproc 3.0.1 | 7.055 |   677.26 |  15.4x | 0 | 100% |
+| bash 5.2.21 (subprocess) | 9.277 |   890.56 |  20.3x | 0 | 100% |
 
-**In-process (warm interpreter):**
-bashkit-js (0.65ms) vs just-bash-inproc (4.46ms) — bashkit is **6.9x faster** in the same execution model (Node.js persistent child).
+Bashkit speedup (geometric mean / median across 96 cases):
 
-**Subprocess (cold start):**
-bashkit-cli (8.19ms) vs bash (8.20ms) — **roughly equivalent**; both dominated by process spawn overhead.
-bashkit-cli (8.19ms) vs just-bash (367.5ms) — bashkit is **44.9x faster**; just-bash pays ~360ms Node.js boot per invocation.
+| vs | geo-mean | median |
+|----|---------:|-------:|
+| bash | 24.7x | 31.1x |
+| just-bash-inproc | 25.4x | 34.2x |
+| gbash-server | 17.6x | 18.8x (N=83 — gbash failed 13 awk/jq cases with exit 127) |
 
-### Latest bashkit vs bash (runsc, 16 CPUs, 2026-04-13)
+Subprocess-mode lineup (`just-bash` CLI 380 ms/case, `gbash` CLI 12.6 ms/case)
+is dominated by per-call Node/Go startup, not interpreter cost — see commit
+`2223a72` for the raw numbers if you need the subprocess view. The in-process
+runners above are the fair comparison for steady-state workloads.
+
+### Historical: bashkit vs bash (runsc, 16 CPUs, 2026-04-13)
 
 96 cases, 10 iterations, **107.2x faster** overall. 0 errors, 100% output match.
+(Higher headline number than the vm run above because runsc + 16 CPUs makes
+host `bash`'s per-process spawn much more expensive — bashkit avoids spawn
+entirely, so its lead widens.)
 
 | Benchmark | bashkit | bash | Speedup | Description |
 |-----------|---------|------|---------|-------------|
@@ -79,13 +86,20 @@ bashkit-cli (8.19ms) vs just-bash (367.5ms) — bashkit is **44.9x faster**; jus
 # Build
 cargo build -p bashkit-bench --release
 
-# Run with all runners
-cargo run -p bashkit-bench --release -- \
-  --runners bashkit,bashkit-cli,bashkit-js,bashkit-py,bash,just-bash,just-bash-inproc \
-  --save --verbose
-
 # Run with default runners (bashkit + bash)
 cargo run -p bashkit-bench --release
+
+# Apples-to-apples cross-runtime comparison (warm interpreter, no per-call fork)
+# Use the in-process / persistent-child runners — not the *-cli / just-bash / gbash
+# subprocess runners, which mostly measure Node/Go process startup.
+cargo run -p bashkit-bench --release -- \
+  --runners bashkit,bashkit-js,bashkit-py,just-bash-inproc,gbash-server,bash \
+  --save --verbose
+
+# Run every available runner (mix of in-process, persistent-child, subprocess)
+cargo run -p bashkit-bench --release -- \
+  --runners bashkit,bashkit-cli,bashkit-js,bashkit-py,bash,gbash,gbash-server,just-bash,just-bash-inproc \
+  --save --verbose
 
 # Filter by category or name
 cargo run -p bashkit-bench --release -- --category large --verbose
