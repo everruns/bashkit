@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 
-use super::{Builtin, Context, read_text_file, resolve_path};
+use super::{Builtin, BuiltinHelper, Context, read_text_file, resolve_path};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
@@ -16,10 +16,14 @@ use crate::interpreter::ExecResult;
 ///   -b        Count bytes instead of columns
 pub struct Fold;
 
+impl BuiltinHelper for Fold {
+    const NAME: &'static str = "fold";
+}
+
 #[async_trait]
 impl Builtin for Fold {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        if let Some(r) = super::check_help_version(
+        if let Some(r) = Self::check_help(
             ctx.args,
             "Usage: fold [OPTION]... [FILE]...\nWrap each input line to fit in specified width.\n\n  -b\t\tcount bytes rather than columns\n  -s\t\tbreak at spaces\n  -w WIDTH\tuse WIDTH columns instead of 80\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
             Some("fold (bashkit) 0.1"),
@@ -38,10 +42,7 @@ impl Builtin for Fold {
                 "-w" => {
                     i += 1;
                     if i >= ctx.args.len() {
-                        return Ok(ExecResult::err(
-                            "fold: option requires an argument -- 'w'\n".to_string(),
-                            1,
-                        ));
+                        return Ok(Self::err("option requires an argument -- 'w'", 1));
                     }
                     width = ctx.args[i].parse().unwrap_or(80);
                 }
@@ -66,10 +67,7 @@ impl Builtin for Fold {
                 match read_text_file(ctx.fs.as_ref(), &path, "fold").await {
                     Ok(text) => buf.push_str(&text),
                     Err(_) => {
-                        return Ok(ExecResult::err(
-                            format!("fold: {}: No such file or directory\n", file),
-                            1,
-                        ));
+                        return Ok(Self::err_path(file, "No such file or directory", 1));
                     }
                 }
             }

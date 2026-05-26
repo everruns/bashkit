@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 
-use super::{Builtin, Context, read_text_file};
+use super::{Builtin, BuiltinHelper, Context, read_text_file};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
@@ -15,6 +15,10 @@ use crate::interpreter::ExecResult;
 ///   -s SEP     Specify input delimiter for -t mode (default: whitespace)
 ///   -o SEP     Specify output delimiter for -t mode (default: two spaces)
 pub struct Column;
+
+impl BuiltinHelper for Column {
+    const NAME: &'static str = "column";
+}
 
 struct ColumnOptions {
     table: bool,
@@ -141,7 +145,7 @@ fn format_columns(text: &str) -> String {
 #[async_trait]
 impl Builtin for Column {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        if let Some(r) = super::check_help_version(
+        if let Some(r) = Self::check_help(
             ctx.args,
             "Usage: column [OPTION]... [FILE]...\nColumnate lists.\n\n  -t\t\tcreate a table\n  -s SEP\tspecify input delimiter for -t mode\n  -o SEP\tspecify output delimiter for -t mode\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
             Some("column (bashkit) 0.1"),

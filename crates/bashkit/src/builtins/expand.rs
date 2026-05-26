@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 
-use super::{Builtin, Context, read_text_file, resolve_path};
+use super::{Builtin, BuiltinHelper, Context, read_text_file, resolve_path};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
@@ -13,10 +13,14 @@ use crate::interpreter::ExecResult;
 /// Converts tabs to spaces. Default tab stop is 8.
 pub struct Expand;
 
+impl BuiltinHelper for Expand {
+    const NAME: &'static str = "expand";
+}
+
 #[async_trait]
 impl Builtin for Expand {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        if let Some(r) = super::check_help_version(
+        if let Some(r) = Self::check_help(
             ctx.args,
             "Usage: expand [OPTION]... [FILE]...\nConvert tabs to spaces.\n\n  -t N\tuse N characters as tab size (default 8)\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
             Some("expand (bashkit) 0.1"),
@@ -32,10 +36,7 @@ impl Builtin for Expand {
                 "-t" => {
                     i += 1;
                     if i >= ctx.args.len() {
-                        return Ok(ExecResult::err(
-                            "expand: option requires an argument -- 't'\n".to_string(),
-                            1,
-                        ));
+                        return Ok(Self::err("option requires an argument -- 't'", 1));
                     }
                     tab_stops = parse_tab_stops(&ctx.args[i]);
                 }
@@ -56,10 +57,7 @@ impl Builtin for Expand {
                 match read_text_file(ctx.fs.as_ref(), &path, "expand").await {
                     Ok(text) => buf.push_str(&text),
                     Err(_) => {
-                        return Ok(ExecResult::err(
-                            format!("expand: {}: No such file or directory\n", file),
-                            1,
-                        ));
+                        return Ok(Self::err_path(file, "No such file or directory", 1));
                     }
                 }
             }
@@ -101,10 +99,14 @@ impl Builtin for Expand {
 /// Converts spaces to tabs. By default, only converts leading spaces.
 pub struct Unexpand;
 
+impl BuiltinHelper for Unexpand {
+    const NAME: &'static str = "unexpand";
+}
+
 #[async_trait]
 impl Builtin for Unexpand {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        if let Some(r) = super::check_help_version(
+        if let Some(r) = Self::check_help(
             ctx.args,
             "Usage: unexpand [OPTION]... [FILE]...\nConvert spaces to tabs.\n\n  -a, --all\tconvert all blanks, instead of just initial blanks\n  -t N\t\tuse N characters as tab size (default 8)\n  --help\t\tdisplay this help and exit\n  --version\toutput version information and exit\n",
             Some("unexpand (bashkit) 0.1"),
@@ -122,17 +124,11 @@ impl Builtin for Unexpand {
                 "-t" => {
                     i += 1;
                     if i >= ctx.args.len() {
-                        return Ok(ExecResult::err(
-                            "unexpand: option requires an argument -- 't'\n".to_string(),
-                            1,
-                        ));
+                        return Ok(Self::err("option requires an argument -- 't'", 1));
                     }
                     let parsed_tab_stops = parse_tab_stops(&ctx.args[i]);
                     if parsed_tab_stops.is_empty() {
-                        return Ok(ExecResult::err(
-                            format!("unexpand: invalid tab size: '{}'\n", ctx.args[i]),
-                            1,
-                        ));
+                        return Ok(Self::err(format!("invalid tab size: '{}'", ctx.args[i]), 1));
                     }
                     tab_stops = parsed_tab_stops;
                     all = true; // -t implies -a
@@ -151,10 +147,7 @@ impl Builtin for Unexpand {
                 match read_text_file(ctx.fs.as_ref(), &path, "unexpand").await {
                     Ok(text) => buf.push_str(&text),
                     Err(_) => {
-                        return Ok(ExecResult::err(
-                            format!("unexpand: {}: No such file or directory\n", file),
-                            1,
-                        ));
+                        return Ok(Self::err_path(file, "No such file or directory", 1));
                     }
                 }
             }

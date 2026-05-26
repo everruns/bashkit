@@ -6,6 +6,7 @@
 
 use async_trait::async_trait;
 
+use super::limits::TEMPLATE_MAX_DEPTH as MAX_TEMPLATE_DEPTH;
 use super::{Builtin, Context, read_text_file, resolve_path};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
@@ -138,10 +139,6 @@ fn is_truthy(
     }
     false
 }
-
-// THREAT[TM-DOS-052]: Maximum recursion depth for template rendering.
-// Prevents stack overflow from deeply nested {{#if}}/{{#each}} blocks.
-const MAX_TEMPLATE_DEPTH: usize = 100;
 
 /// Render a template string with the given data sources.
 fn render_template(

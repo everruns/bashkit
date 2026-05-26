@@ -7,6 +7,7 @@ use chrono::{Datelike, Local, LocalResult, NaiveDate, TimeZone};
 use std::path::Path;
 use std::time::SystemTime;
 
+use super::limits::MKTEMP_MAX_ATTEMPTS;
 use super::{Builtin, Context, resolve_path};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
@@ -848,8 +849,6 @@ impl Builtin for Kill {
 ///   --suffix=SUFFIX      Append SUFFIX after the template's `X`s.
 ///   -q, --quiet          Suppress error diagnostics on failure.
 pub struct Mktemp;
-
-const MKTEMP_MAX_ATTEMPTS: usize = 64;
 
 fn mktemp_suffix_for_attempt(attempt: usize) -> String {
     use std::collections::hash_map::RandomState;
