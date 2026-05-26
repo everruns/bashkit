@@ -3793,11 +3793,20 @@ impl Interpreter {
         } else {
             self.vars_mut().remove("_OPTCHAR_IDX");
         }
+        // Restoring the parent's SHOPT_* values must also clear the cached
+        // `flags` bit when the parent had no entry — otherwise an inner
+        // `bash -e -c '...'` would leak errexit into the parent shell via
+        // the bitfield even though the `SHOPT_e` variable was correctly
+        // removed. `insert_variable_checked` handles the set case; for
+        // remove we go through `vars_mut().remove` *and* clear the bit.
         for (var, prev) in saved_opts {
             if let Some(val) = prev {
                 self.insert_variable_checked(var, val);
             } else {
                 self.vars_mut().remove(&var);
+                if let Some(bit) = BashFlags::from_shopt_name(&var) {
+                    self.flags.remove(bit);
+                }
             }
         }
         self.call_stack.pop();
