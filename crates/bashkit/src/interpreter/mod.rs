@@ -9631,7 +9631,7 @@ impl Interpreter {
             match ch {
                 '%' => {
                     let name = &inner[..pos];
-                    let value = self.expand_variable(name);
+                    let value = self.expand_name_or_array_element(name);
                     if inner[pos..].starts_with("%%") {
                         let pattern = &inner[pos + 2..];
                         return self.remove_pattern(&value, pattern, false, true);
@@ -9641,7 +9641,7 @@ impl Interpreter {
                 }
                 '#' if pos > 0 => {
                     let name = &inner[..pos];
-                    let value = self.expand_variable(name);
+                    let value = self.expand_name_or_array_element(name);
                     if inner[pos..].starts_with("##") {
                         let pattern = &inner[pos + 2..];
                         return self.remove_pattern(&value, pattern, true, true);
@@ -9652,7 +9652,7 @@ impl Interpreter {
                 ':' if inner[pos..].starts_with(":-") => {
                     let name = &inner[..pos];
                     let default = &inner[pos + 2..];
-                    let value = self.expand_variable(name);
+                    let value = self.expand_name_or_array_element(name);
                     if value.is_empty() {
                         return default.to_string();
                     }
@@ -9662,7 +9662,32 @@ impl Interpreter {
             }
         }
         // Fallback
-        self.expand_variable(inner)
+        self.expand_name_or_array_element(inner)
+    }
+
+    /// Resolve `name` or `arr[idx]` to its current string value.
+    /// Used by parameter expansion inside arithmetic so `${arr[$key]:-N}` and
+    /// friends can read associative/indexed array elements — `expand_variable`
+    /// alone only handles scalar names. Fixes issue #1776.
+    fn expand_name_or_array_element(&self, name: &str) -> String {
+        if let Some(bracket) = name.find('[')
+            && name.ends_with(']')
+        {
+            let arr_name = &name[..bracket];
+            let resolved = self.resolve_nameref(arr_name);
+            let idx_str = &name[bracket + 1..name.len() - 1];
+            if let Some(arr) = self.assoc_arrays.get(resolved) {
+                let key = self.expand_variable_or_literal(idx_str);
+                return arr.get(&key).cloned().unwrap_or_default();
+            }
+            if let Some(arr) = self.arrays.get(resolved) {
+                let idx_val = self.evaluate_arithmetic(idx_str);
+                let idx_usize: usize = idx_val.try_into().unwrap_or(0);
+                return arr.get(&idx_usize).cloned().unwrap_or_default();
+            }
+            return String::new();
+        }
+        self.expand_variable(name)
     }
 
     /// Parse and evaluate a simple arithmetic expression with depth tracking.
