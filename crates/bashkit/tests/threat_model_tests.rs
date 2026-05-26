@@ -40,6 +40,40 @@ mod resource_exhaustion {
         );
     }
 
+    /// TM-DOS-063: Persistent custom file descriptors must be capped.
+    #[tokio::test]
+    async fn fd_exhaustion_blocked() {
+        let limits = ExecutionLimits::new().max_file_descriptors(2);
+        let mut bash = Bash::builder().limits(limits).build();
+
+        let result = bash
+            .exec("exec 3>/tmp/fd3; exec 4>/tmp/fd4; exec 5>/tmp/fd5")
+            .await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("file descriptors") && err.contains("exceeded"),
+            "Expected fd limit error, got: {}",
+            err
+        );
+    }
+
+    /// TM-DOS-063: Reusing or closing fds should not consume new slots.
+    #[tokio::test]
+    async fn fd_limit_allows_reuse_and_close() {
+        let limits = ExecutionLimits::new().max_file_descriptors(1);
+        let mut bash = Bash::builder().limits(limits).build();
+
+        let result = bash
+            .exec("exec 3>/tmp/a; exec 3>/tmp/b; exec 3>&-; exec 4>/tmp/c; echo ok >&4; cat /tmp/c")
+            .await
+            .unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "ok");
+    }
+
     /// Subsequent exec() calls recover after a prior call hits the command limit.
     /// Each exec() is a separate script invocation and gets its own budget.
     #[tokio::test]

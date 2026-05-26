@@ -503,6 +503,16 @@ impl<'a> Parser<'a> {
                         target: Word::literal(dst_fd.to_string()),
                     });
                 }
+                Some(tokens::Token::DupFdCloseOut(fd)) => {
+                    let fd = *fd;
+                    self.advance();
+                    redirects.push(Redirect {
+                        fd: Some(fd),
+                        fd_var: None,
+                        kind: RedirectKind::DupOutput,
+                        target: Word::literal("-"),
+                    });
+                }
                 Some(tokens::Token::DupInput) => {
                     self.advance();
                     if let Ok(target) = self.expect_word() {
@@ -2266,6 +2276,16 @@ impl<'a> Parser<'a> {
                         });
                     }
                 }
+                tokens::Token::DupFdCloseOut(fd) => {
+                    let fd = *fd;
+                    self.advance();
+                    redirects.push(Redirect {
+                        fd: Some(fd),
+                        fd_var: None,
+                        kind: RedirectKind::DupOutput,
+                        target: Word::literal("-"),
+                    });
+                }
                 tokens::Token::DupInput => {
                     self.advance();
                     if let Ok(target) = self.expect_word() {
@@ -2540,6 +2560,16 @@ impl<'a> Parser<'a> {
                         fd_var: None,
                         kind: RedirectKind::DupOutput,
                         target: Word::literal(dst_fd.to_string()),
+                    });
+                }
+                Some(tokens::Token::DupFdCloseOut(fd)) => {
+                    let fd = *fd;
+                    self.advance();
+                    redirects.push(Redirect {
+                        fd: Some(fd),
+                        fd_var: None,
+                        kind: RedirectKind::DupOutput,
+                        target: Word::literal("-"),
                     });
                 }
                 Some(tokens::Token::DupInput) => {

