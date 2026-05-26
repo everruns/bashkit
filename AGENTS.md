@@ -103,14 +103,14 @@ just pre-pr       # Pre-PR checks
 ```
 
 **Do not run `cargo test --all-features` as a single invocation.** It is
-not exercised in CI and statically links every embedded interpreter
-(monty, zapcode, turso, russh, jaq, reqwest+rustls, ed25519-dalek) into
-each of the ~87 integration test binaries. The parallel link step exceeds
-sandbox/cloud-runner memory limits and the supervisor kills the shell —
-often with output truncated to a single line, no useful failure signal.
-It also turns on `failpoints`, whose global state requires
-`--test-threads=1`. Use `just check` / `just pre-pr`, or slice by feature
-the way CI does (see `.github/workflows/ci.yml`):
+not exercised in CI, statically links every embedded interpreter (monty,
+zapcode, turso, russh, jaq, reqwest+rustls, ed25519-dalek), and turns on
+`failpoints` — whose global state requires `--test-threads=1`. Even with
+test files consolidated into one binary (see `specs/testing.md`), the
+parallel link step exceeds sandbox/cloud-runner memory limits and the
+supervisor kills the shell, often with output truncated to a single line.
+Use `just check` / `just pre-pr`, or slice by feature the way CI does
+(see `.github/workflows/ci.yml`):
 
 ```bash
 cargo test --workspace --lib --bins --tests --features http_client,ssh,sqlite
@@ -119,6 +119,13 @@ cargo test --features failpoints  --test security_failpoint_tests -- --test-thre
 cargo test --features python      -p bashkit
 cargo test --features typescript  -p bashkit
 ```
+
+Bashkit's integration tests live under `crates/bashkit/tests/integration/`
+and are aggregated by `tests/integration/main.rs` into a single binary.
+New behavioral tests go there. A small number of files stay as top-level
+`tests/*.rs` because they need their own binary (process-global env
+mutation, `--test-threads=1`, ssh-only feature isolation) — the list and
+criteria live in `specs/testing.md`.
 
 ### Rust
 

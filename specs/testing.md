@@ -53,11 +53,11 @@ false
 ## Running Tests
 
 ```bash
-# All spec tests
-cargo test --test spec_tests
+# All spec tests (live inside the consolidated `integration` binary)
+cargo test --test integration -- spec_tests::
 
 # Single category
-cargo test --test spec_tests -- bash_spec_tests
+cargo test --test integration -- spec_tests::bash_spec_tests
 
 # Check spec tests match real bash
 just check-bash-compat
@@ -65,6 +65,39 @@ just check-bash-compat
 # Generate comprehensive compatibility report
 just compat-report
 ```
+
+## Integration Test Binary Layout
+
+Cargo treats every file in `crates/bashkit/tests/*.rs` as its own
+integration-test binary, statically linking the whole interpreter (monty,
+zapcode, turso, russh, jaq, reqwest+rustls, ed25519-dalek) into each.
+With ~80 such files the link step alone exceeded the CI runner's disk
+(`rustc-LLVM ERROR: IO failure on output stream: No space left on
+device`). Bashkit consolidates those into one binary:
+
+- `tests/integration/main.rs` — declares every default integration test
+  as a `mod`. Built once, linked once. New behavioral tests go here.
+- `tests/integration/<name>.rs` — one module per concern area.
+- `tests/<name>.rs` — **only** for tests that genuinely need their own
+  binary. Today that list is:
+  - `realfs_tests.rs` — `realfs` feature, runs in a dedicated CI job.
+  - `security_failpoint_tests.rs` — `failpoints` global state, requires
+    `--test-threads=1`.
+  - `proptest_security.rs` — `--test-threads=1` and custom
+    `PROPTEST_CASES` env.
+  - `ssh_builtin_tests.rs`, `ssh_supabase_tests.rs` — feature-isolation
+    sweeps that build bashkit with `--features ssh` only.
+  - `logging_security_tests.rs` — mutates `BASHKIT_UNSAFE_LOGGING` in
+    the process env; cannot share a binary with other tests.
+
+When adding a new test file, default to placing it under
+`tests/integration/` and adding a `pub mod foo;` line to
+`tests/integration/main.rs`. Only promote to a top-level
+`tests/<name>.rs` if the test trips one of the criteria above; document
+the reason in the file's module docstring.
+
+Filtering still works as usual: `cargo test --test integration -- foo`
+matches `integration::*::foo*` test paths.
 
 ## Coverage
 
@@ -148,9 +181,10 @@ Future consideration: Would help find parser crashes via mutation.
 
 ```bash
 # Run what CI runs
-cargo test --features http_client
+cargo test --workspace --lib --bins --tests --features http_client,ssh,sqlite
 cargo test --features failpoints --test security_failpoint_tests -- --test-threads=1
+cargo test --test proptest_security -- --test-threads=1
 
-# Run differential fuzzing
-cargo test --test proptest_differential -- --nocapture
+# Run differential fuzzing (now part of the consolidated binary)
+cargo test --test integration -- proptest_differential:: --nocapture
 ```
