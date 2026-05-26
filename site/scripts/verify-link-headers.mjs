@@ -24,6 +24,7 @@ const linkValue = linkHeaders.join(", ");
 const expectedLinks = [
   '</.well-known/agent-skills/index.json>; rel="service-desc"; type="application/json"',
   '</docs/>; rel="service-doc"; type="text/html"',
+  '</docs.md>; rel="service-doc"; type="text/markdown"',
 ];
 
 for (const expectedLink of expectedLinks) {
