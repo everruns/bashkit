@@ -46,6 +46,11 @@ struct Args {
     moniker: Option<String>,
 
     /// Runners to use (comma-separated: bashkit,bashkit-cli,bashkit-js,bashkit-py,bash,gbash,gbash-server,just-bash,just-bash-inproc)
+    ///
+    /// For an apples-to-apples cross-runtime comparison, prefer the in-process /
+    /// persistent-child runners (bashkit, bashkit-js, just-bash-inproc, gbash-server)
+    /// over the subprocess CLIs of other runtimes — those mostly measure
+    /// Node/Go process startup rather than interpreter performance.
     #[arg(long, default_value = "bashkit,bash")]
     runners: String,
 

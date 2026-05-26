@@ -79,13 +79,20 @@ bashkit-cli (8.19ms) vs just-bash (367.5ms) — bashkit is **44.9x faster**; jus
 # Build
 cargo build -p bashkit-bench --release
 
-# Run with all runners
-cargo run -p bashkit-bench --release -- \
-  --runners bashkit,bashkit-cli,bashkit-js,bashkit-py,bash,just-bash,just-bash-inproc \
-  --save --verbose
-
 # Run with default runners (bashkit + bash)
 cargo run -p bashkit-bench --release
+
+# Apples-to-apples cross-runtime comparison (warm interpreter, no per-call fork)
+# Use the in-process / persistent-child runners — not the *-cli / just-bash / gbash
+# subprocess runners, which mostly measure Node/Go process startup.
+cargo run -p bashkit-bench --release -- \
+  --runners bashkit,bashkit-js,bashkit-py,just-bash-inproc,gbash-server,bash \
+  --save --verbose
+
+# Run every available runner (mix of in-process, persistent-child, subprocess)
+cargo run -p bashkit-bench --release -- \
+  --runners bashkit,bashkit-cli,bashkit-js,bashkit-py,bash,gbash,gbash-server,just-bash,just-bash-inproc \
+  --save --verbose
 
 # Filter by category or name
 cargo run -p bashkit-bench --release -- --category large --verbose
