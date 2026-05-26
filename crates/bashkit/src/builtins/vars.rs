@@ -14,7 +14,7 @@ pub struct Unset;
 #[async_trait]
 impl Builtin for Unset {
     // THREAT[TM-INJ-009]: Block unset of internal variables and readonly variables
-    async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+    async fn execute(&self, mut ctx: Context<'_>) -> Result<ExecResult> {
         let mut stderr = String::new();
         let mut exit_code = 0;
         for name in ctx.args {
@@ -26,9 +26,14 @@ impl Builtin for Unset {
                 exit_code = 1;
                 continue;
             }
-            // Block unsetting readonly variables
-            let readonly_key = format!("_READONLY_{name}");
-            if ctx.variables.contains_key(&readonly_key) {
+            // Block unsetting readonly variables — attribute lookup is now a
+            // single map probe instead of a format!("_READONLY_{}", ...).
+            let is_readonly = ctx
+                .shell
+                .as_ref()
+                .map(|s| s.is_var_readonly(name))
+                .unwrap_or(false);
+            if is_readonly {
                 stderr.push_str(&format!(
                     "bash: unset: {name}: cannot unset: readonly variable\n"
                 ));
@@ -36,6 +41,11 @@ impl Builtin for Unset {
                 continue;
             }
             ctx.variables.remove(name);
+            // Clear any non-readonly attributes / nameref binding for this name.
+            if let Some(shell) = ctx.shell.as_mut() {
+                shell.var_attrs.remove(name);
+                shell.namerefs.remove(name);
+            }
             // Note: env is immutable in our model - environment variables
             // are inherited and can't be unset by the shell
         }
@@ -263,15 +273,19 @@ pub struct Readonly;
 
 #[async_trait]
 impl Builtin for Readonly {
-    async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+    async fn execute(&self, mut ctx: Context<'_>) -> Result<ExecResult> {
         // Handle -p flag to print readonly variables
         if ctx.args.first().map(|s| s.as_str()) == Some("-p") {
             let mut output = String::new();
-            for (name, _) in ctx.variables.iter() {
-                if let Some(var_name) = name.strip_prefix("_READONLY_")
-                    && let Some(value) = ctx.variables.get(var_name)
-                {
-                    output.push_str(&format!("declare -r {}=\"{}\"\n", var_name, value));
+            // Readonly markers live in `shell.var_attrs` now, not in
+            // `variables` under the `_READONLY_X` prefix.
+            if let Some(shell) = ctx.shell.as_ref() {
+                let mut names: Vec<&str> = shell.readonly_names().collect();
+                names.sort_unstable();
+                for var_name in names {
+                    if let Some(value) = ctx.variables.get(var_name) {
+                        output.push_str(&format!("declare -r {}=\"{}\"\n", var_name, value));
+                    }
                 }
             }
             return Ok(ExecResult::ok(output));
@@ -287,17 +301,18 @@ impl Builtin for Readonly {
                 }
                 // Set the variable
                 ctx.variables.insert(name.to_string(), value.to_string());
-                // Mark as readonly
-                ctx.variables
-                    .insert(format!("_READONLY_{}", name), "1".to_string());
+                if let Some(shell) = ctx.shell.as_mut() {
+                    shell.mark_var_readonly(name);
+                }
             } else {
                 // THREAT[TM-INJ-013]: Block internal variable prefix injection via readonly
                 if is_internal_variable(arg) {
                     continue;
                 }
                 // Just mark existing variable as readonly
-                ctx.variables
-                    .insert(format!("_READONLY_{}", arg), "1".to_string());
+                if let Some(shell) = ctx.shell.as_mut() {
+                    shell.mark_var_readonly(arg);
+                }
             }
         }
         Ok(ExecResult::ok(String::new()))
