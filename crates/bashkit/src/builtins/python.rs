@@ -9,7 +9,7 @@
 //! # Overview
 //!
 //! Virtual Python execution with resource limits and VFS access.
-//! Python `pathlib.Path` operations are bridged to BashKit's virtual filesystem
+//! Python `pathlib.Path` operations are bridged to Bashkit's virtual filesystem
 //! via Monty's OsCall pause/resume mechanism. No real filesystem or network access.
 //!
 //! Supports: `python -c "code"`, `python script.py`, stdin piping.
@@ -181,7 +181,7 @@ impl std::fmt::Debug for PythonExternalFns {
 /// The python/python3 builtin command.
 ///
 /// Executes Python code using the embedded Monty interpreter (pydantic/monty).
-/// Python `pathlib.Path` operations are bridged to BashKit's VFS — files
+/// Python `pathlib.Path` operations are bridged to Bashkit's VFS — files
 /// created by bash (`cat > file`) are readable from Python, and vice versa.
 ///
 /// # Usage
@@ -456,7 +456,7 @@ impl Builtin for Python {
 /// Execute Python code via Monty with resource limits and VFS bridging.
 ///
 /// Uses Monty's start/resume API: execution pauses at filesystem operations
-/// (OsCall), we bridge them to BashKit's VFS, then resume.
+/// (OsCall), we bridge them to Bashkit's VFS, then resume.
 async fn run_python(
     code: &str,
     filename: &str,
@@ -598,7 +598,7 @@ async fn run_python(
 }
 
 // ---------------------------------------------------------------------------
-// VFS bridging: Monty OsCall → BashKit FileSystem
+// VFS bridging: Monty OsCall → Bashkit FileSystem
 // ---------------------------------------------------------------------------
 
 /// Dispatch a Monty OsCall to the appropriate VFS operation.
@@ -768,7 +768,7 @@ async fn handle_os_call(
             }
         }
         OsFunction::Resolve | OsFunction::Absolute => {
-            // No symlink resolution in BashKit VFS; just return absolute path
+            // No symlink resolution in Bashkit VFS; just return absolute path
             ExtFunctionResult::Return(MontyObject::Path(path.to_string_lossy().to_string()))
         }
         // Getenv/GetEnviron handled above
@@ -797,7 +797,7 @@ fn resolve_python_path(path_str: &str, cwd: &Path) -> PathBuf {
     }
 }
 
-/// Map a BashKit VFS error to a Python exception via ExtFunctionResult.
+/// Map a Bashkit VFS error to a Python exception via ExtFunctionResult.
 fn map_vfs_error(e: crate::Error, path: &Path) -> ExtFunctionResult {
     let msg = e.to_string();
     let path_str = path.display().to_string();

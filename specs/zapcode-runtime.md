@@ -9,7 +9,7 @@ Implemented (experimental)
 
 ## Decision
 
-BashKit provides sandboxed TypeScript/JavaScript execution via `typescript`,
+Bashkit provides sandboxed TypeScript/JavaScript execution via `typescript`,
 `ts`, `node`, `deno`, and `bun` builtins, powered by the
 [ZapCode](https://github.com/TheUncharted/zapcode) embedded TypeScript
 interpreter written in Rust.
@@ -114,7 +114,7 @@ The `-c` and `-e` flags are both accepted by all aliases for convenience.
 
 ### Resource Limits
 
-ZapCode enforces its own resource limits independent of BashKit's shell limits.
+ZapCode enforces its own resource limits independent of Bashkit's shell limits.
 All limits are configurable via `TypeScriptLimits`:
 
 | Limit | Default | Builder Method | Purpose |
@@ -162,7 +162,7 @@ ZapCode implements a TypeScript/JavaScript subset:
 
 ### VFS Bridging
 
-TypeScript code can access BashKit's virtual filesystem through external
+TypeScript code can access Bashkit's virtual filesystem through external
 functions registered by the builtin. These functions are available as globals
 in the TypeScript environment:
 
@@ -193,10 +193,10 @@ ts -c "const entries = await readDir('/tmp'); console.log(entries)"
 
 **Architecture:**
 ```
-TS code → ZapCode VM → ExternalFn("readFile", [path]) → BashKit VFS → resume
+TS code → ZapCode VM → ExternalFn("readFile", [path]) → Bashkit VFS → resume
 ```
 
-ZapCode suspends execution at external function calls, BashKit bridges the
+ZapCode suspends execution at external function calls, Bashkit bridges the
 call to the VFS, and resumes execution with the result.
 
 **Limitation: stdout after VFS calls.** `ZapcodeSnapshot::resume()` returns
@@ -273,12 +273,12 @@ by-design consistent with all other builtins. Use single quotes to prevent
 expansion: `ts -c 'console.log("hello")'`.
 
 #### Threat: Resource exhaustion
-ZapCode enforces independent resource limits. Even if BashKit's shell limits
+ZapCode enforces independent resource limits. Even if Bashkit's shell limits
 are generous, TypeScript code cannot exceed ZapCode's time/memory/stack caps.
 
 #### Threat: Sandbox escape via filesystem
 TypeScript code has no direct filesystem access. VFS-bridged functions go
-through BashKit's virtual filesystem. `/etc/passwd` reads from VFS, not host.
+through Bashkit's virtual filesystem. `/etc/passwd` reads from VFS, not host.
 
 #### Threat: Sandbox escape via eval/import
 ZapCode blocks `eval()`, `Function()`, `import`, and `require` at the language
@@ -305,7 +305,7 @@ contributes a hint to `help()` and `system_prompt()`:
 > File I/O via readFile()/writeFile() async functions. No npm/import/require.
 > No HTTP/network. No eval().
 
-### Integration with BashKit
+### Integration with Bashkit
 
 - `ts`/`typescript`/`node`/`deno`/`bun` all map to the same builtin
 - Works in pipelines: `echo "data" | ts -c "..."`

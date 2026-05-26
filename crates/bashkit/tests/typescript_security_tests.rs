@@ -315,7 +315,7 @@ mod whitebox_vfs_security {
             .await
             .unwrap();
         // Verify file doesn't exist on real host (we're in VFS)
-        // The bash `test -f` in BashKit also operates on VFS, so this
+        // The bash `test -f` in Bashkit also operates on VFS, so this
         // verifies the write went to VFS, not a real assertion about host fs
         let r = bash.exec("cat /tmp/ts_escape_test").await.unwrap();
         assert_eq!(r.exit_code, 0);
@@ -415,7 +415,7 @@ mod whitebox_error_handling {
 mod whitebox_bash_integration {
     use super::*;
 
-    /// TM-TS-018: TypeScript respects BashKit command limits
+    /// TM-TS-018: TypeScript respects Bashkit command limits
     #[tokio::test]
     async fn threat_ts_respects_bash_limits() {
         let limits = ExecutionLimits::new().max_commands(5);
