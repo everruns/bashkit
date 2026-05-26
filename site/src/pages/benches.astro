@@ -5,11 +5,30 @@ import performanceData from "../data/performance-timeline.json";
 // Decision: this page consumes the generated aggregate only. It must not import
 // raw eval traces or per-iteration benchmark samples into the browser bundle.
 const data = performanceData as typeof performanceData;
-const latestBench = data.summary.latestBench;
-const latestEval = data.summary.latestEval;
-const bestCriterion = data.summary.bestCriterionImprovement;
-const latestCriterion = data.criterionRuns.at(-1);
-const latestFullEvalRuns = data.evalRuns
+const historyMonths = 6;
+const generatedAt = new Date(data.generatedAt ?? new Date().toISOString());
+const historyStart = new Date(generatedAt);
+historyStart.setMonth(historyStart.getMonth() - historyMonths);
+const inWindow = (timestamp: string) => new Date(timestamp) >= historyStart;
+function latestByTime<T extends { timestamp: string }>(items: T[]) {
+  return items
+    .toSorted((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+    .at(-1);
+}
+
+const benchRuns = data.benchRuns.filter((run) => inWindow(run.timestamp));
+const evalRuns = data.evalRuns.filter((run) => inWindow(run.timestamp));
+const criterionRuns = data.criterionRuns.filter((run) => inWindow(run.timestamp));
+const milestones = data.milestones.filter((item) => inWindow(item.timestamp));
+
+const latestBench = latestByTime(benchRuns);
+const latestEval = latestByTime(evalRuns.filter((run) => run.tasks >= 10));
+const bestCriterion = criterionRuns
+  .filter((run) => typeof run.bestChangePct === "number")
+  .toSorted((a, b) => Math.abs(b.bestChangePct ?? 0) - Math.abs(a.bestChangePct ?? 0))
+  .at(0);
+const latestCriterion = latestByTime(criterionRuns);
+const latestFullEvalRuns = evalRuns
   .filter((run) => run.tasks >= 10)
   .toSorted((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
   .slice(0, 8);
@@ -22,6 +41,30 @@ const repoUrl = (source: string) =>
 const compactNumber = (value: number | null | undefined, suffix = "") =>
   typeof value === "number" ? `${value.toLocaleString()}${suffix}` : "n/a";
 
+const dateLabel = (date: Date) => date.toISOString().slice(0, 10);
+const resultLinks = [
+  {
+    title: "Criterion benches",
+    detail: `${criterionRuns.length} reports in window`,
+    href: "https://github.com/everruns/bashkit/tree/main/crates/bashkit/benches/results",
+  },
+  {
+    title: "bashkit-bench",
+    detail: `${benchRuns.length} bash-vs-bash runs`,
+    href: "https://github.com/everruns/bashkit/tree/main/crates/bashkit-bench/results",
+  },
+  {
+    title: "LLM evals",
+    detail: `${evalRuns.length} eval result files`,
+    href: "https://github.com/everruns/bashkit/tree/main/crates/bashkit-eval/results",
+  },
+  {
+    title: "Aggregation script",
+    detail: "How this page is generated",
+    href: "https://github.com/everruns/bashkit/blob/main/site/scripts/build-performance-data.mjs",
+  },
+];
+
 const pageDescription =
   "Interactive Bashkit benches history across criterion benches, bash-vs-bashkit benchmarks, and LLM evals.";
 ---
@@ -30,99 +73,115 @@ const pageDescription =
   title="Bashkit Benches History"
   description={pageDescription}
 >
-  <section class="perf-hero section">
-    <div class="container perf-hero__grid">
-      <div class="perf-hero__copy">
-        <span class="atlas-eyebrow">Benches history</span>
-        <h1>Benchmarks, benches, and evals over time.</h1>
-        <p class="perf-lede">
-          Aggregated from repo result artifacts at build time. The site keeps
-          trend points, category summaries, and highlights while leaving raw
-          traces in the repository.
-        </p>
+  <section class="benches-intro">
+    <div class="container benches-intro__grid">
+      <div>
+        <span class="atlas-eyebrow">Benches</span>
+        <h1>History for benchmarks and evals</h1>
       </div>
-
-      <div class="perf-snapshot" aria-label="Latest performance snapshot">
-        <article>
-          <span>Latest benchmark</span>
-          <strong>{compactNumber(latestBench?.speedup, "x")}</strong>
-          <small>{latestBench?.date ?? "n/a"} vs bash</small>
-        </article>
-        <article>
-          <span>Latest eval</span>
-          <strong>{compactNumber(latestEval?.scorePct, "%")}</strong>
-          <small>
-            {latestEval ? `${latestEval.passed}/${latestEval.tasks} tasks` : "n/a"}
-          </small>
-        </article>
-        <article>
-          <span>Best criterion delta</span>
-          <strong>
-            {
-              bestCriterion?.bestChangePct
-                ? `${Math.abs(bestCriterion.bestChangePct)}%`
-                : "n/a"
-            }
-          </strong>
-          <small>{bestCriterion?.bestImprovement?.name ?? "n/a"}</small>
-        </article>
-      </div>
+      <p>
+        Last {historyMonths} months only, from {dateLabel(historyStart)} to{" "}
+        {dateLabel(generatedAt)}. Raw result files stay in GitHub; this page
+        ships the compact aggregate.
+      </p>
     </div>
   </section>
 
-  <section class="perf-dashboard section section-alt">
-    <div class="container">
-      <div class="perf-toolbar" aria-label="Chart controls">
-        <div class="segmented-control" role="group" aria-label="Metric">
-          <button type="button" class="is-active" data-view="eval">Eval score</button>
-          <button type="button" data-view="bench">Speedup</button>
-          <button type="button" data-view="criterion">Criterion delta</button>
-        </div>
-
-        <label class="perf-select">
-          <span>Series</span>
-          <select id="perf-series-select" aria-label="Series"></select>
-        </label>
-      </div>
-
-      <article class="perf-chart-shell">
-        <div class="perf-chart-head">
-          <div>
-            <span class="atlas-eyebrow" id="perf-chart-kind">Eval score</span>
-            <h2 id="perf-chart-title">Full eval score trend</h2>
+  <section class="perf-dashboard section-alt">
+    <div class="container benches-grid">
+      <div class="benches-main">
+        <div class="perf-toolbar" aria-label="Chart controls">
+          <div class="segmented-control" role="group" aria-label="Metric">
+            <button type="button" class="is-active" data-view="eval">Eval score</button>
+            <button type="button" data-view="bench">Speedup</button>
+            <button type="button" data-view="criterion">Criterion delta</button>
           </div>
-          <p id="perf-chart-note"></p>
+
+          <label class="perf-select">
+            <span>Series</span>
+            <select id="perf-series-select" aria-label="Series"></select>
+          </label>
         </div>
 
-        <div class="perf-chart-wrap">
-          <svg
-            id="perf-chart"
-            viewBox="0 0 960 360"
-            role="img"
-            aria-labelledby="perf-chart-title"
-          ></svg>
-          <div id="perf-tooltip" class="perf-tooltip" hidden></div>
+        <article class="perf-chart-shell">
+          <div class="perf-chart-head">
+            <div>
+              <span class="atlas-eyebrow" id="perf-chart-kind">Eval score</span>
+              <h2 id="perf-chart-title">Full eval score trend</h2>
+            </div>
+            <p id="perf-chart-note"></p>
+          </div>
+
+          <div class="perf-chart-wrap">
+            <svg
+              id="perf-chart"
+              viewBox="0 0 960 340"
+              role="img"
+              aria-labelledby="perf-chart-title"
+            ></svg>
+            <div id="perf-tooltip" class="perf-tooltip" hidden></div>
+          </div>
+        </article>
+      </div>
+
+      <aside class="benches-side">
+        <div class="perf-snapshot" aria-label="Latest performance snapshot">
+          <a href={latestBench ? repoUrl(latestBench.source) : "#"} target="_blank" rel="noopener noreferrer">
+            <span>Latest benchmark</span>
+            <strong>{compactNumber(latestBench?.speedup, "x")}</strong>
+            <small>{latestBench?.date ?? "n/a"} vs bash</small>
+          </a>
+          <a href={latestEval ? repoUrl(latestEval.source) : "#"} target="_blank" rel="noopener noreferrer">
+            <span>Latest eval</span>
+            <strong>{compactNumber(latestEval?.scorePct, "%")}</strong>
+            <small>
+              {latestEval ? `${latestEval.passed}/${latestEval.tasks} tasks` : "n/a"}
+            </small>
+          </a>
+          <a href={bestCriterion ? repoUrl(bestCriterion.source) : "#"} target="_blank" rel="noopener noreferrer">
+            <span>Best criterion delta</span>
+            <strong>
+              {
+                bestCriterion?.bestChangePct
+                  ? `${Math.abs(bestCriterion.bestChangePct)}%`
+                  : "n/a"
+              }
+            </strong>
+            <small>{bestCriterion?.bestImprovement?.name ?? "n/a"}</small>
+          </a>
         </div>
-      </article>
+
+        <div class="bench-source-list">
+          <span class="atlas-eyebrow">Source files</span>
+          {
+            resultLinks.map((item) => (
+              <a href={item.href} target="_blank" rel="noopener noreferrer">
+                <strong>{item.title}</strong>
+                <small>{item.detail}</small>
+              </a>
+            ))
+          }
+        </div>
+      </aside>
     </div>
   </section>
 
-  <section class="perf-milestones section">
-    <div class="container">
+  <section class="perf-milestones">
+    <div class="container benches-grid benches-grid--timeline">
       <div class="atlas-section-heading">
         <div>
-          <span class="atlas-eyebrow">Timeline</span>
-          <h2>Milestones with highlights</h2>
+          <span class="atlas-eyebrow">Recent timeline</span>
+          <h2>Six-month milestones</h2>
         </div>
         <p>
-          Each point links back to the source artifact used by the aggregation
-          script.
+          Milestones are grouped to the current display window and link back to
+          the exact source artifact.
         </p>
       </div>
 
       <div class="perf-timeline">
         {
-          data.milestones.slice(-14).reverse().map((item) => (
+          milestones.slice(-10).reverse().map((item) => (
             <article class="perf-milestone">
               <time datetime={item.timestamp}>{item.date}</time>
               <div>
@@ -267,6 +326,19 @@ const pageDescription =
     const kind = document.getElementById("perf-chart-kind");
     const title = document.getElementById("perf-chart-title");
     const note = document.getElementById("perf-chart-note");
+    const generatedAt = new Date(perfData.generatedAt);
+    const historyStart = new Date(generatedAt);
+    historyStart.setMonth(historyStart.getMonth() - 6);
+    const inWindow = (run) => new Date(run.timestamp) >= historyStart;
+    const benchRuns = perfData.benchRuns.filter(inWindow);
+    const evalRuns = perfData.evalRuns.filter(inWindow);
+    const criterionRuns = perfData.criterionRuns.filter(inWindow);
+    const modelTrends = perfData.modelTrends
+      .map((trend) => ({
+        ...trend,
+        points: trend.points.filter(inWindow),
+      }))
+      .filter((trend) => trend.points.length > 0);
 
     const chartConfig = {
       eval: {
@@ -278,13 +350,13 @@ const pageDescription =
         note: "Full eval runs only; smaller scripting evals stay in the milestone stream.",
         options: () => [
           { value: "all", label: "Best run per day" },
-          ...perfData.modelTrends.map((trend) => ({
+          ...modelTrends.map((trend) => ({
             value: trend.model,
             label: trend.model,
           })),
         ],
         points: (series) => {
-          const runs = perfData.evalRuns.filter((run) => run.tasks >= 10);
+          const runs = evalRuns.filter((run) => run.tasks >= 10);
           const source =
             series === "all"
               ? bestPerDay(runs, (run) => run.scorePct)
@@ -306,7 +378,7 @@ const pageDescription =
         note: "Aggregated from bashkit-vs-bash result JSON, using total runtime per run.",
         options: () => [{ value: "all", label: "All benchmark runs" }],
         points: () =>
-          perfData.benchRuns.map((run) => ({
+          benchRuns.map((run) => ({
             x: new Date(run.timestamp).getTime(),
             y: run.speedup,
             label: `${run.speedup}x on ${run.label}`,
@@ -322,7 +394,7 @@ const pageDescription =
         note: "Before/after reports use improvement percent. Baseline-only reports show median case time separately in the tables.",
         options: () => [{ value: "all", label: "Improvement reports" }],
         points: () =>
-          perfData.criterionRuns
+          criterionRuns
             .filter((run) => Number.isFinite(run.medianChangePct))
             .map((run) => ({
               x: new Date(run.timestamp).getTime(),
@@ -375,9 +447,13 @@ const pageDescription =
       kind.textContent = config.label;
       title.textContent = config.title;
       note.textContent = config.note;
+      if (points.length === 0) {
+        chart.innerHTML = `<text x="58" y="160" class="axis-label">No results in this six-month window.</text>`;
+        return;
+      }
 
       const width = 960;
-      const height = 360;
+      const height = 340;
       const pad = { left: 58, right: 28, top: 28, bottom: 54 };
       const xs = points.map((point) => point.x);
       const ys = points.map((point) => point.y);
@@ -399,9 +475,12 @@ const pageDescription =
       }));
 
       const yTicks = [0, 0.25, 0.5, 0.75, 1].map((step) => minY + (yTop - minY) * step);
-      const xTicks = plotted.filter((_, index) =>
-        plotted.length < 6 ? true : index % Math.ceil(plotted.length / 5) === 0,
-      );
+      const tickIndexes = [...new Set([
+        0,
+        Math.floor((plotted.length - 1) / 2),
+        plotted.length - 1,
+      ])];
+      const xTicks = tickIndexes.map((index) => plotted[index]).filter(Boolean);
 
       chart.innerHTML = `
         <rect x="0" y="0" width="${width}" height="${height}" fill="transparent"></rect>
@@ -468,19 +547,20 @@ const pageDescription =
 </BaseLayout>
 
 <style>
-  .perf-hero {
-    background: var(--color-obsidian);
-    color: var(--color-white);
+  .benches-intro {
+    border-bottom: 1px solid #dddddd;
+    background: var(--color-white);
+    padding: 2.4rem 0 2rem;
   }
 
-  .perf-hero__grid {
+  .benches-intro__grid {
     display: grid;
-    grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
-    gap: var(--space-xl);
+    grid-template-columns: minmax(0, 0.9fr) minmax(320px, 0.8fr);
+    gap: var(--space-lg);
     align-items: end;
   }
 
-  .perf-hero .atlas-eyebrow,
+  .benches-intro .atlas-eyebrow,
   .perf-dashboard .atlas-eyebrow,
   .perf-milestones .atlas-eyebrow,
   .perf-tables .atlas-eyebrow {
@@ -493,17 +573,31 @@ const pageDescription =
     text-transform: uppercase;
   }
 
-  .perf-hero h1 {
-    max-width: 760px;
-    font-size: clamp(2.35rem, 5vw, 4.8rem);
-    line-height: 0.98;
+  .benches-intro h1 {
+    max-width: 640px;
+    font-size: clamp(2rem, 4vw, 3.2rem);
+    line-height: 1;
   }
 
-  .perf-lede {
-    max-width: 720px;
-    margin-top: var(--space-md);
-    color: var(--color-silver);
-    font-size: 1.08rem;
+  .benches-intro p {
+    color: var(--color-slate);
+    font-size: 1rem;
+  }
+
+  .perf-dashboard {
+    padding: var(--space-lg) 0;
+  }
+
+  .benches-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 22rem;
+    gap: var(--space-md);
+    align-items: start;
+  }
+
+  .benches-main,
+  .benches-side {
+    min-width: 0;
   }
 
   .perf-snapshot {
@@ -511,24 +605,60 @@ const pageDescription =
     gap: var(--space-sm);
   }
 
-  .perf-snapshot article {
-    border: 1px solid rgba(255, 255, 255, 0.16);
-    background: rgba(255, 255, 255, 0.05);
+  .perf-snapshot a {
+    display: block;
+    border: 1px solid #d7d7d7;
+    background: var(--color-white);
+    color: var(--color-obsidian);
     padding: var(--space-md);
+    text-decoration: none;
+    transition:
+      border-color 0.12s ease,
+      transform 0.12s ease;
+  }
+
+  .perf-snapshot a:hover,
+  .bench-source-list a:hover {
+    border-color: rgb(10 22 54 / 0.36);
+    text-decoration: none;
+    transform: translateY(-1px);
   }
 
   .perf-snapshot span,
   .perf-snapshot small {
     display: block;
-    color: var(--color-silver);
+    color: var(--color-slate);
   }
 
   .perf-snapshot strong {
     display: block;
     margin: 0.15rem 0;
-    color: var(--color-white);
-    font-size: 2rem;
+    color: var(--color-obsidian);
+    font-size: 1.65rem;
     line-height: 1.1;
+  }
+
+  .bench-source-list {
+    display: grid;
+    gap: var(--space-sm);
+    margin-top: var(--space-md);
+  }
+
+  .bench-source-list a {
+    display: grid;
+    gap: 0.15rem;
+    border: 1px solid #d7d7d7;
+    background: var(--color-white);
+    color: var(--color-obsidian);
+    padding: 0.85rem 1rem;
+    text-decoration: none;
+    transition:
+      border-color 0.12s ease,
+      transform 0.12s ease;
+  }
+
+  .bench-source-list small {
+    color: var(--color-slate);
   }
 
   .perf-toolbar {
@@ -595,7 +725,11 @@ const pageDescription =
     display: flex;
     justify-content: space-between;
     gap: var(--space-md);
-    padding: var(--space-lg) var(--space-lg) 0;
+    padding: 1.2rem 1.2rem 0;
+  }
+
+  .perf-chart-head h2 {
+    font-size: clamp(1.45rem, 2.4vw, 2rem);
   }
 
   .perf-chart-head p {
@@ -605,7 +739,7 @@ const pageDescription =
 
   .perf-chart-wrap {
     position: relative;
-    padding: var(--space-md) var(--space-lg) var(--space-lg);
+    padding: var(--space-sm) 1.2rem 1.2rem;
     overflow-x: auto;
   }
 
@@ -663,11 +797,11 @@ const pageDescription =
   }
 
   .atlas-section-heading {
-    display: flex;
-    justify-content: space-between;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 22rem;
     gap: var(--space-lg);
     align-items: end;
-    margin-bottom: var(--space-lg);
+    margin-bottom: 0;
   }
 
   .atlas-section-heading p {
@@ -677,7 +811,15 @@ const pageDescription =
 
   .perf-timeline {
     display: grid;
-    gap: var(--space-md);
+    gap: var(--space-sm);
+  }
+
+  .perf-milestones {
+    padding: var(--space-lg) 0;
+  }
+
+  .benches-grid--timeline {
+    align-items: start;
   }
 
   .perf-milestone {
@@ -685,7 +827,7 @@ const pageDescription =
     grid-template-columns: 8.5rem minmax(0, 1fr);
     gap: var(--space-md);
     border-top: 1px solid #dddddd;
-    padding-top: var(--space-md);
+    padding-top: var(--space-sm);
   }
 
   .perf-milestone time {
@@ -704,6 +846,7 @@ const pageDescription =
 
   .perf-milestone h3 {
     margin-top: 0.1rem;
+    font-size: 1.12rem;
   }
 
   .perf-milestone p {
@@ -786,16 +929,30 @@ const pageDescription =
   }
 
   @media (max-width: 900px) {
-    .perf-hero__grid,
+    .benches-intro__grid,
+    .benches-grid,
+    .atlas-section-heading,
     .perf-table-grid {
       grid-template-columns: 1fr;
     }
 
     .perf-toolbar,
-    .perf-chart-head,
-    .atlas-section-heading {
+    .perf-chart-head {
       align-items: stretch;
       flex-direction: column;
+    }
+
+    .benches-side {
+      order: -1;
+    }
+
+    .perf-snapshot,
+    .bench-source-list {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .bench-source-list .atlas-eyebrow {
+      grid-column: 1 / -1;
     }
 
     .segmented-control {
@@ -819,6 +976,11 @@ const pageDescription =
   }
 
   @media (max-width: 620px) {
+    .perf-snapshot,
+    .bench-source-list {
+      grid-template-columns: 1fr;
+    }
+
     .perf-milestone,
     .perf-definition-list div {
       grid-template-columns: 1fr;
