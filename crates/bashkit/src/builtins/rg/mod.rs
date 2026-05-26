@@ -3718,6 +3718,7 @@ struct RgPrefix<'a> {
 }
 
 const RG_ANSI_RESET: &str = "\x1b[0m";
+const RG_COLOR_MATCH_EXTRA_BYTES_LIMIT: usize = 64 * 1024;
 
 fn color_path(path: &str, color: bool, color_scheme: &RgColorScheme) -> String {
     if color {
@@ -3822,6 +3823,24 @@ fn intense_ansi_code(code: &str, intense: bool) -> String {
 
 fn color_matches(text: &str, regex: &RgMatcher, opts: &RgOptions) -> String {
     if !opts.color_enabled() {
+        return text.to_string();
+    }
+    let mut estimated_extra = 0usize;
+    let per_match_extra = 32usize;
+    let mut bailout = false;
+    regex.for_each_match(text, |mat| {
+        if bailout {
+            return;
+        }
+        estimated_extra = estimated_extra.saturating_add(per_match_extra);
+        if mat.start() == mat.end() {
+            estimated_extra = estimated_extra.saturating_add(1);
+        }
+        if estimated_extra > RG_COLOR_MATCH_EXTRA_BYTES_LIMIT {
+            bailout = true;
+        }
+    });
+    if bailout {
         return text.to_string();
     }
     if opts.color_scheme.highlight.enabled {
@@ -13156,6 +13175,15 @@ mod tests {
             hyperlink.stdout,
             "\x1b]8;;file:///file.txt:1:1\x1b\\\x1b[0m\x1b[35m/file.txt\x1b[0m:\x1b[0m\x1b[32m1\x1b[0m:\x1b[0m1\x1b[0m\x1b]8;;\x1b\\:\x1b[0m\x1b[1m\x1b[31mneedle\x1b[0m again\n"
         );
+    }
+
+    #[tokio::test]
+    async fn test_rg_color_always_falls_back_for_dense_matches() {
+        let dense = "a".repeat((RG_COLOR_MATCH_EXTRA_BYTES_LIMIT / 8) + 16);
+        let files = vec![("/file.txt", dense.as_bytes())];
+        let result = run_rg(&["--color=always", "a", "/file.txt"], None, &files).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, format!("{dense}\n"));
     }
 
     #[tokio::test]
