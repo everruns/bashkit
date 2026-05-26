@@ -2914,9 +2914,10 @@ async fn collect_rg_inputs(
         let root = RgSearchRoot {
             logical: ctx.cwd.to_path_buf(),
             actual: ctx.cwd.to_path_buf(),
+            root_arg: None,
         };
         let files = collect_rg_files_recursive(&*ctx.fs, &[root], opts, ctx.cwd).await;
-        return Ok(read_rg_files(&*ctx.fs, files, ctx.cwd, None, opts).await);
+        return Ok(read_rg_files(&*ctx.fs, files, ctx.cwd, opts).await);
     }
 
     if let Some(inputs) = try_indexed_search(&*ctx.fs, opts, ctx.cwd).await {
@@ -2925,21 +2926,18 @@ async fn collect_rg_inputs(
 
     let mut collected = RgCollectedInputs::default();
     let mut inputs = Vec::new();
+    let mut roots = Vec::new();
     for p in &opts.paths {
         let path = resolve_path(ctx.cwd, p);
         if let Some((actual_path, meta)) =
             resolve_rg_explicit_path(&*ctx.fs, &path, opts.follow_symlinks).await
             && meta.file_type.is_dir()
         {
-            let root = RgSearchRoot {
+            roots.push(RgSearchRoot {
                 logical: path.clone(),
                 actual: actual_path,
-            };
-            let files = collect_rg_files_recursive(&*ctx.fs, &[root], opts, ctx.cwd).await;
-            let read = read_rg_files(&*ctx.fs, files, ctx.cwd, Some(p), opts).await;
-            collected.had_errors |= read.had_errors;
-            collected.stderr.push_str(&read.stderr);
-            inputs.extend(read.inputs);
+                root_arg: Some(p.clone()),
+            });
             continue;
         }
 
@@ -2961,6 +2959,13 @@ async fn collect_rg_inputs(
             apply_path_separator_to_display(p, opts),
             text,
         ));
+    }
+    if !roots.is_empty() {
+        let files = collect_rg_files_recursive(&*ctx.fs, &roots, opts, ctx.cwd).await;
+        let read = read_rg_files(&*ctx.fs, files, ctx.cwd, opts).await;
+        collected.had_errors |= read.had_errors;
+        collected.stderr.push_str(&read.stderr);
+        inputs.extend(read.inputs);
     }
     collected.inputs = inputs;
     Ok(collected)
@@ -3344,6 +3349,10 @@ async fn has_directory_path(
 struct RgSearchRoot {
     logical: PathBuf,
     actual: PathBuf,
+    /// The original user-supplied path arg (e.g. "." or "src") that produced
+    /// this root, so `display_path_for` can format relative paths the same
+    /// way regardless of whether files are processed per-root or globally.
+    root_arg: Option<String>,
 }
 
 #[derive(Clone)]
@@ -3351,6 +3360,10 @@ struct RgFileCandidate {
     logical: PathBuf,
     actual: PathBuf,
     metadata: crate::fs::Metadata,
+    /// Carries the originating root's `root_arg` so a single global pass over
+    /// candidates from multiple roots can still format `./foo` vs `foo`
+    /// correctly per-file.
+    root_arg: Option<String>,
 }
 
 struct RgWalkItem {
@@ -3360,6 +3373,7 @@ struct RgWalkItem {
     depth: usize,
     rules: Arc<Vec<RgIgnoreRule>>,
     ancestors: Vec<PathBuf>,
+    root_arg: Option<String>,
 }
 
 async fn resolve_rg_symlink_target(
@@ -3409,6 +3423,7 @@ async fn collect_rg_files_recursive(
             depth: 0,
             rules: Arc::new(rules),
             ancestors: vec![root.actual.clone()],
+            root_arg: root.root_arg.clone(),
         });
     }
 
@@ -3454,6 +3469,7 @@ async fn collect_rg_files_recursive(
                             depth: entry_depth,
                             rules: Arc::new(rules.clone()),
                             ancestors: child_ancestors,
+                            root_arg: item.root_arg.clone(),
                         });
                     }
                 } else if entry_metadata.file_type.is_file()
@@ -3469,6 +3485,7 @@ async fn collect_rg_files_recursive(
                         logical: path,
                         actual: entry_actual_path,
                         metadata: entry_metadata,
+                        root_arg: item.root_arg.clone(),
                     });
                 }
             }
@@ -3482,6 +3499,7 @@ async fn collect_rg_files_recursive(
                 logical: item.logical,
                 actual: item.actual,
                 metadata: meta,
+                root_arg: item.root_arg.clone(),
             });
         }
     }
@@ -3531,15 +3549,17 @@ async fn collect_rg_file_list(
         let root = RgSearchRoot {
             logical: cwd.to_path_buf(),
             actual: cwd.to_path_buf(),
+            root_arg: None,
         };
         let files = collect_rg_files_recursive(fs, &[root], opts, cwd).await;
         return files
             .iter()
-            .map(|file| display_path_for(&file.logical, cwd, None, opts))
+            .map(|file| display_path_for(&file.logical, cwd, file.root_arg.as_deref(), opts))
             .collect();
     }
 
     let mut result = Vec::new();
+    let mut candidates = Vec::new();
     for p in &opts.paths {
         let path = resolve_path(cwd, p);
         if let Some((actual_path, meta)) =
@@ -3549,21 +3569,28 @@ async fn collect_rg_file_list(
             let root = RgSearchRoot {
                 logical: path.clone(),
                 actual: actual_path,
+                root_arg: Some(p.clone()),
             };
             let files = collect_rg_files_recursive(fs, &[root], opts, cwd).await;
-            result.extend(
-                files
-                    .iter()
-                    .map(|file| display_path_for(&file.logical, cwd, Some(p), opts)),
-            );
-        } else if meta_is_file_and_matches(fs, &path, opts, cwd).await {
-            result.push(display_path_for(&path, cwd, Some(p), opts));
+            candidates.extend(files);
+        } else if meta_is_file_and_matches(fs, &path, opts, cwd).await
+            && let Some((actual_path, meta)) =
+                resolve_rg_explicit_path(fs, &path, opts.follow_symlinks).await
+        {
+            candidates.push(RgFileCandidate {
+                logical: path,
+                actual: actual_path,
+                metadata: meta,
+                root_arg: Some(p.clone()),
+            });
         }
     }
-    result.sort();
-    if opts.sort_reverse {
-        result.reverse();
-    }
+    sort_rg_candidates(&mut candidates, opts);
+    result.extend(
+        candidates
+            .iter()
+            .map(|file| display_path_for(&file.logical, cwd, file.root_arg.as_deref(), opts)),
+    );
     result
 }
 
@@ -3582,12 +3609,11 @@ async fn read_rg_files(
     fs: &dyn crate::fs::FileSystem,
     files: Vec<RgFileCandidate>,
     cwd: &Path,
-    root_arg: Option<&str>,
     opts: &RgOptions,
 ) -> RgCollectedInputs {
     let mut collected = RgCollectedInputs::default();
     for file in files {
-        let display = display_path_for(&file.logical, cwd, root_arg, opts);
+        let display = display_path_for(&file.logical, cwd, file.root_arg.as_deref(), opts);
         match read_rg_text_file(fs, &file.actual, cwd, &display, opts).await {
             Ok(text) => collected.inputs.push(RgInput::discovered(display, text)),
             Err(e) => {
@@ -6438,6 +6464,12 @@ mod tests {
         ("/proj/old.txt", 1_700_000_000),
         ("/proj/middle.txt", 1_700_000_100),
         ("/proj/new.txt", 1_700_000_200),
+    ];
+    const DIFF_TIMED_MULTI_ROOT_SORT_FILES: &[(&str, &[u8])] =
+        &[("/d1/new.txt", b"needle\n"), ("/d2/old.txt", b"needle\n")];
+    const DIFF_TIMED_MULTI_ROOT_SORT_MTIMES: &[(&str, u64)] = &[
+        ("/d2/old.txt", 1_700_000_000),
+        ("/d1/new.txt", 1_700_000_200),
     ];
 
     const DIFF_GLOB_CASE_FILES: &[(&str, &[u8])] = &[
@@ -11419,6 +11451,22 @@ mod tests {
             args: &["--sortr", "modified", "needle", "proj"],
             files: DIFF_TIMED_SORT_FILES,
             mtimes: DIFF_TIMED_SORT_MTIMES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgTimedDiffCase {
+            name: "sort modified across explicit roots",
+            args: &["--sort", "modified", "needle", "d1", "d2"],
+            files: DIFF_TIMED_MULTI_ROOT_SORT_FILES,
+            mtimes: DIFF_TIMED_MULTI_ROOT_SORT_MTIMES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgTimedDiffCase {
+            name: "files sort modified across explicit roots",
+            args: &["--files", "--sort", "modified", "d1", "d2"],
+            files: DIFF_TIMED_MULTI_ROOT_SORT_FILES,
+            mtimes: DIFF_TIMED_MULTI_ROOT_SORT_MTIMES,
             cwd: "/",
             output: RgDiffOutput::Exact,
         },
