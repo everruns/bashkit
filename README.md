@@ -36,13 +36,6 @@ Homepage: [bashkit.sh](https://bashkit.sh)
 cargo add bashkit
 ```
 
-Or add to `Cargo.toml`:
-
-```toml
-[dependencies]
-bashkit = "0.1"
-```
-
 Optional features:
 
 ```bash
@@ -291,9 +284,8 @@ Working example: [`examples/custom_builtins.mjs`](examples/custom_builtins.mjs).
 Enable the `git` feature for virtual git operations on the virtual filesystem.
 All git data lives in the VFS — no host filesystem access.
 
-```toml
-[dependencies]
-bashkit = { version = "0.1", features = ["git"] }
+```bash
+cargo add bashkit --features git
 ```
 
 ```rust
@@ -317,9 +309,8 @@ Enable the `python` feature to embed the [Monty](https://github.com/pydantic/mon
 Python code runs in-memory with configurable resource limits and VFS bridging — files created
 by bash are readable from Python and vice versa.
 
-```toml
-[dependencies]
-bashkit = { version = "0.1", features = ["python"] }
+```bash
+cargo add bashkit --features python
 ```
 
 ```rust
@@ -351,9 +342,8 @@ See [crates/bashkit/docs/python.md](crates/bashkit/docs/python.md) for the full 
 Enable the `typescript` feature to embed the [ZapCode](https://github.com/TheUncharted/zapcode) TypeScript interpreter (pure Rust, no V8).
 TypeScript code runs in-memory with configurable resource limits and VFS bridging via external function suspend/resume.
 
-```toml
-[dependencies]
-bashkit = { version = "0.1", features = ["typescript"] }
+```bash
+cargo add bashkit --features typescript
 ```
 
 ```rust
