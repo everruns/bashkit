@@ -54,8 +54,7 @@
 //! - [ ] Monty dict literal in bash quoting needs single-quote support
 //! - [ ] export propagation to ctx.env may not work in spec test runner
 
-mod spec_runner;
-
+use super::spec_runner;
 use spec_runner::{TestSummary, load_spec_tests, run_spec_test, run_spec_test_with_comparison};
 use std::path::PathBuf;
 
