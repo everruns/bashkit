@@ -2,6 +2,8 @@
 name: ship
 description: Run the full ship flow — verify quality, ensure test coverage, update artifacts, smoke test, push, create PR, and merge when CI is green. Trigger when user says "ship", "ship it", "fix and ship", or asks to push and merge a branch.
 user_invocable: true
+metadata:
+  internal: true
 ---
 
 Run the full ship flow: verify quality, ensure test coverage, update artifacts, smoke test, then push, create PR, and merge when CI is green.
