@@ -178,6 +178,10 @@ name = "hotpath"
 harness = false
 
 [[bench]]
+name = "file_ops"
+harness = false
+
+[[bench]]
 name = "sqlite"
 harness = false
 required-features = ["sqlite"]
