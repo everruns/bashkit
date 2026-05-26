@@ -1,4 +1,4 @@
-# BashKit Eval
+# Bashkit Eval
 
 LLM evaluation harness for bashkit tool usage. Measures how well models use bashkit's bash tool in agentic workloads.
 

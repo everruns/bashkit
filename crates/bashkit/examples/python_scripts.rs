@@ -1,9 +1,9 @@
 //! Python Scripts Example
 //!
-//! Demonstrates running Python code inside BashKit's virtual environment using the
+//! Demonstrates running Python code inside Bashkit's virtual environment using the
 //! embedded Monty interpreter. Python runs entirely in-memory with
 //! resource limits. Python pathlib.Path operations are bridged to
-//! BashKit's virtual filesystem.
+//! Bashkit's virtual filesystem.
 //!
 //! Run with: cargo run --features python --example python_scripts
 
@@ -11,7 +11,7 @@ use bashkit::Bash;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    println!("=== BashKit Python Integration ===\n");
+    println!("=== Bashkit Python Integration ===\n");
 
     let mut bash = Bash::builder()
         .python()

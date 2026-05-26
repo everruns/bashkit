@@ -1,6 +1,6 @@
 //! TypeScript Scripts Example
 //!
-//! Demonstrates running TypeScript code inside BashKit's virtual environment
+//! Demonstrates running TypeScript code inside Bashkit's virtual environment
 //! using the embedded ZapCode interpreter. TypeScript runs entirely in-memory
 //! with resource limits. VFS operations are bridged via external function
 //! suspend/resume.
@@ -11,7 +11,7 @@ use bashkit::Bash;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    println!("=== BashKit TypeScript Integration ===\n");
+    println!("=== Bashkit TypeScript Integration ===\n");
 
     let mut bash = Bash::builder().typescript().build();
 

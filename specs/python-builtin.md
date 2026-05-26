@@ -10,7 +10,7 @@ Implemented (experimental)
 
 ## Decision
 
-BashKit provides sandboxed Python execution via `python` and `python3` builtins,
+Bashkit provides sandboxed Python execution via `python` and `python3` builtins,
 powered by the [Monty](https://github.com/pydantic/monty) embedded Python
 interpreter written in Rust.
 
@@ -82,7 +82,7 @@ python3 -V
 
 ### Resource Limits
 
-Monty enforces its own resource limits independent of BashKit's shell limits.
+Monty enforces its own resource limits independent of Bashkit's shell limits.
 All limits are configurable via `PythonLimits`:
 
 | Limit | Default | Builder Method | Purpose |
@@ -143,7 +143,7 @@ Monty implements a subset of Python 3.12:
 
 ### VFS Bridging
 
-Python `pathlib.Path` operations are bridged to BashKit's virtual filesystem
+Python `pathlib.Path` operations are bridged to Bashkit's virtual filesystem
 via Monty's OsCall pause/resume mechanism. This enables Python code to read
 and write files that are shared with the bash environment.
 
@@ -181,16 +181,16 @@ python3 -c "import os; print(os.getenv('HOME'))"
 
 **Architecture:**
 ```
-Python code → Monty VM → OsCall(ReadText, path) → BashKit VFS → resume
+Python code → Monty VM → OsCall(ReadText, path) → Bashkit VFS → resume
 ```
 
 Monty pauses execution at filesystem operations, yields an `OsCall` event
-with the operation type and arguments, BashKit bridges it to the VFS, and
+with the operation type and arguments, Bashkit bridges it to the VFS, and
 resumes execution with the result (or a Python exception).
 
 > **Note:** Monty 0.0.10+ includes native filesystem mounting (`MountTable`,
 > `MountDir`, `MountMode`) that can handle file operations directly against
-> host directories. BashKit uses the OsCall bridge instead because our VFS is
+> host directories. Bashkit uses the OsCall bridge instead because our VFS is
 > in-memory and may not be backed by host directories. The native mount system
 > is suited for real-filesystem use cases where Monty is used standalone.
 
@@ -277,11 +277,11 @@ by-design consistent with all other builtins. Use single quotes to prevent
 expansion: `python3 -c 'print("hello")'`.
 
 #### Threat: Resource exhaustion
-Monty enforces independent resource limits. Even if BashKit's shell limits
+Monty enforces independent resource limits. Even if Bashkit's shell limits
 are generous, Python code cannot exceed Monty's allocation/time/memory caps.
 
 #### Threat: Sandbox escape via filesystem
-All `pathlib.Path` operations go through BashKit's virtual filesystem.
+All `pathlib.Path` operations go through Bashkit's virtual filesystem.
 Python code cannot access the real host filesystem. `/etc/passwd` in Python
 reads from VFS (where it doesn't exist), not the host.
 
@@ -312,13 +312,13 @@ a hint to `help()` and `system_prompt()` documenting its limitations:
 
 > python/python3: Embedded Python (Monty). Stdlib: math, pathlib, os.getenv, sys, typing. File I/O via pathlib.Path only (no open()). No HTTP/network. No classes. No third-party imports.
 
-Regex module `re` is intentionally disabled in BashKit due to catastrophic
+Regex module `re` is intentionally disabled in Bashkit due to catastrophic
 backtracking DoS risk in untrusted code execution.
 
 This uses the general `Builtin::llm_hint()` mechanism — any builtin can provide
 hints that are automatically deduplicated and included in LLM-facing documentation.
 
-### Integration with BashKit
+### Integration with Bashkit
 
 - `python`/`python3` both map to the same builtin
 - Works in pipelines: `echo "data" | python3 -c "import sys; ..."`
