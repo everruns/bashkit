@@ -22,6 +22,7 @@ if (!homeHeaders) {
 const linkHeaders = homeHeaders.get("link") ?? [];
 const linkValue = linkHeaders.join(", ");
 const expectedLinks = [
+  '<https://bashkit.sh/>; rel="canonical"',
   '</index.md>; rel="alternate"; type="text/markdown"',
   '</.well-known/agent-skills/index.json>; rel="service-desc"; type="application/json"',
   '</docs/>; rel="service-doc"; type="text/html"',
