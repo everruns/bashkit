@@ -6,11 +6,7 @@
 
 ### Highlights
 
-- **Subshell performance** — copy-on-write subshell snapshots, attribute bitset, and flag cache cut allocation pressure in `(...)` / `$(...)` hot paths ([#1767](https://github.com/everruns/bashkit/pull/1767)).
-- **`rg` hardening pass** — ~25 fixes for output-mode precedence, ignore-file semantics, color/hyperlink parsing, glob recompilation, brace recursion bounds, prefilter behaviour, and explicit-path handling.
-- **Security tightening** — per-interpreter cap on persistent file descriptors ([#1780](https://github.com/everruns/bashkit/pull/1780)), tool-hook enforcement for `command`-invoked host builtins ([#1781](https://github.com/everruns/bashkit/pull/1781)), bounded `--colors` parsing and hyperlink URL interpolation ([#1782](https://github.com/everruns/bashkit/pull/1782), [#1784](https://github.com/everruns/bashkit/pull/1784)).
-- **Test/build hygiene** — integration tests consolidated into a single binary, `cargo test --all-features` hazard documented, slimmer test binaries ([#1793](https://github.com/everruns/bashkit/pull/1793), [#1794](https://github.com/everruns/bashkit/pull/1794), [#1795](https://github.com/everruns/bashkit/pull/1795)).
-- **`BuiltinHelper` refactor** — centralized limits, split `ls` and `awk` builtin modules ([#1788](https://github.com/everruns/bashkit/pull/1788)).
+- **Maintenance release** — rolls up ~25 `rg` hardening fixes, a CoW subshell-snapshot perf landmark ([#1767](https://github.com/everruns/bashkit/pull/1767)), security tightening (FD cap [#1780](https://github.com/everruns/bashkit/pull/1780), tool-hook enforcement for `command` [#1781](https://github.com/everruns/bashkit/pull/1781)), a `BuiltinHelper` refactor ([#1788](https://github.com/everruns/bashkit/pull/1788)), and test/build hygiene work.
 
 ### What's Changed
 
