@@ -345,7 +345,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
 name = "bashkit"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -398,7 +398,7 @@ dependencies = [
 
 [[package]]
 name = "bashkit-bench"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "anyhow",
  "bashkit",
@@ -412,7 +412,7 @@ dependencies = [
 
 [[package]]
 name = "bashkit-cli"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "anyhow",
  "bashkit",
@@ -426,7 +426,7 @@ dependencies = [
 
 [[package]]
 name = "bashkit-coreutils-port"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "anyhow",
  "prettyplease",
@@ -440,7 +440,7 @@ dependencies = [
 
 [[package]]
 name = "bashkit-eval"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -457,7 +457,7 @@ dependencies = [
 
 [[package]]
 name = "bashkit-js"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "bashkit",
  "napi",
@@ -469,7 +469,7 @@ dependencies = [
 
 [[package]]
 name = "bashkit-python"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "bashkit",
  "num-bigint",

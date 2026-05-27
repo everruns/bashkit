@@ -2,6 +2,71 @@
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-05-27
+
+### Highlights
+
+- **Subshell performance** — copy-on-write subshell snapshots, attribute bitset, and flag cache cut allocation pressure in `(...)` / `$(...)` hot paths ([#1767](https://github.com/everruns/bashkit/pull/1767)).
+- **`rg` hardening pass** — ~25 fixes for output-mode precedence, ignore-file semantics, color/hyperlink parsing, glob recompilation, brace recursion bounds, prefilter behaviour, and explicit-path handling.
+- **Security tightening** — per-interpreter cap on persistent file descriptors ([#1780](https://github.com/everruns/bashkit/pull/1780)), tool-hook enforcement for `command`-invoked host builtins ([#1781](https://github.com/everruns/bashkit/pull/1781)), bounded `--colors` parsing and hyperlink URL interpolation ([#1782](https://github.com/everruns/bashkit/pull/1782), [#1784](https://github.com/everruns/bashkit/pull/1784)).
+- **Test/build hygiene** — integration tests consolidated into a single binary, `cargo test --all-features` hazard documented, slimmer test binaries ([#1793](https://github.com/everruns/bashkit/pull/1793), [#1794](https://github.com/everruns/bashkit/pull/1794), [#1795](https://github.com/everruns/bashkit/pull/1795)).
+- **`BuiltinHelper` refactor** — centralized limits, split `ls` and `awk` builtin modules ([#1788](https://github.com/everruns/bashkit/pull/1788)).
+
+### What's Changed
+
+* chore(tests): move OverlayFs path-validation tests inline ([#1795](https://github.com/everruns/bashkit/pull/1795)) by @chaliy
+* chore(tests): consolidate integration test binaries into one ([#1794](https://github.com/everruns/bashkit/pull/1794)) by @chaliy
+* chore(build): slim test binaries, document cargo test --all-features hazard ([#1793](https://github.com/everruns/bashkit/pull/1793)) by @chaliy
+* feat(site): add homepage markdown negotiation by @chaliy
+* fix(interpreter): isolate bash -c / sh -c from parent shell state ([#1791](https://github.com/everruns/bashkit/pull/1791)) by @chaliy
+* fix(interpreter): resolve array elements in arithmetic param expansion ([#1790](https://github.com/everruns/bashkit/pull/1790)) by @chaliy
+* refactor(builtins): BuiltinHelper trait, centralized limits, split ls/awk ([#1788](https://github.com/everruns/bashkit/pull/1788)) by @chaliy
+* fix(rg): resolve type filters after type db mutations ([#1787](https://github.com/everruns/bashkit/pull/1787)) by @chaliy
+* chore: normalize Bashkit capitalization ([#1786](https://github.com/everruns/bashkit/pull/1786)) by @chaliy
+* fix(rg): apply global sort for explicit path sets ([#1785](https://github.com/everruns/bashkit/pull/1785)) by @chaliy
+* fix(rg): harden hyperlink URL interpolation ([#1784](https://github.com/everruns/bashkit/pull/1784)) by @chaliy
+* fix(rg): bound color match amplification for dense patterns ([#1783](https://github.com/everruns/bashkit/pull/1783)) by @chaliy
+* fix(rg): bound --colors parsing and sanitize invalid spec echo ([#1782](https://github.com/everruns/bashkit/pull/1782)) by @chaliy
+* fix(interpreter): enforce tool hooks for command host-builtins ([#1781](https://github.com/everruns/bashkit/pull/1781)) by @chaliy
+* fix(security): cap persistent file descriptors ([#1780](https://github.com/everruns/bashkit/pull/1780)) by @chaliy
+* chore(bench): refresh runtime comparison + add in-proc reminder ([#1778](https://github.com/everruns/bashkit/pull/1778)) by @chaliy
+* chore(bench): move criterion results to crates/bashkit/benches/results ([#1774](https://github.com/everruns/bashkit/pull/1774)) by @chaliy
+* chore(eval): refresh model lineup with Opus 4.7 and GPT-5.5 ([#1773](https://github.com/everruns/bashkit/pull/1773)) by @chaliy
+* chore(skills): hide private workflow skills ([#1772](https://github.com/everruns/bashkit/pull/1772)) by @chaliy
+* test(bench): cover VarAttrs/BashFlags + add VFS/rg/glob benches ([#1770](https://github.com/everruns/bashkit/pull/1770)) by @chaliy
+* chore(deps): bump serde_json to 1.0.150 and reqwest to 0.13.4 ([#1769](https://github.com/everruns/bashkit/pull/1769)) by @dependabot
+* chore(ci): bump pnpm/action-setup from 4 to 6 ([#1768](https://github.com/everruns/bashkit/pull/1768)) by @dependabot
+* perf(interpreter): CoW subshell snapshots, attribute bitset, flag cache ([#1767](https://github.com/everruns/bashkit/pull/1767)) by @chaliy
+* chore(js): migrate packages to pnpm ([#1766](https://github.com/everruns/bashkit/pull/1766)) by @chaliy
+* fix(rg): honor explicit file path parity ([#1765](https://github.com/everruns/bashkit/pull/1765)) by @chaliy
+* chore(deps): bump turso_core from 0.6.0 to 0.6.1 ([#1764](https://github.com/everruns/bashkit/pull/1764)) by @dependabot
+* ci(nightly): raise ASAN timeout to 90 minutes ([#1761](https://github.com/everruns/bashkit/pull/1761)) by @chaliy
+* fix(tac): preserve unterminated last line on reversal ([#1760](https://github.com/everruns/bashkit/pull/1760)) by @chaliy
+* fix(rg): match output mode precedence ([#1759](https://github.com/everruns/bashkit/pull/1759)) by @chaliy
+* chore(site): allow AI content signals ([#1758](https://github.com/everruns/bashkit/pull/1758)) by @chaliy
+* fix(docs-grep-agent): stop mounting lockfile-bearing example dirs ([#1757](https://github.com/everruns/bashkit/pull/1757)) by @chaliy
+* test(rg): cover binary default reporting for explicit inputs and stdin ([#1756](https://github.com/everruns/bashkit/pull/1756)) by @chaliy
+* fix(rg): preserve collected diagnostics in quiet match paths ([#1755](https://github.com/everruns/bashkit/pull/1755)) by @chaliy
+* fix(rg): count unrestricted flags independently ([#1754](https://github.com/everruns/bashkit/pull/1754)) by @chaliy
+* fix(rg): skip indexed prefilter for --crlf searches ([#1753](https://github.com/everruns/bashkit/pull/1753)) by @chaliy
+* fix(rg): apply max-count after multiline invert ([#1752](https://github.com/everruns/bashkit/pull/1752)) by @chaliy
+* fix(rg): align -u ignore classes with --no-ignore ([#1751](https://github.com/everruns/bashkit/pull/1751)) by @chaliy
+* fix(rg): clear explicit line-number state on negation ([#1750](https://github.com/everruns/bashkit/pull/1750)) by @chaliy
+* fix(rg): honor --no-context-separator between files ([#1749](https://github.com/everruns/bashkit/pull/1749)) by @chaliy
+* fix(rg): avoid false --generate detection in value arguments ([#1748](https://github.com/everruns/bashkit/pull/1748)) by @chaliy
+* fix(rg): skip indexed prefilter for --no-unicode non-literal queries ([#1747](https://github.com/everruns/bashkit/pull/1747)) by @chaliy
+* fix(rg): keep parent dot-ignore active for --no-ignore-vcs ([#1746](https://github.com/everruns/bashkit/pull/1746)) by @chaliy
+* fix(rg): bound ignore rule parsing and traversal memory ([#1745](https://github.com/everruns/bashkit/pull/1745)) by @chaliy
+* fix(rg): avoid quadratic glob toggle recompilation ([#1744](https://github.com/everruns/bashkit/pull/1744)) by @chaliy
+* fix(rg): cap brace alternation recursion depth ([#1743](https://github.com/everruns/bashkit/pull/1743)) by @chaliy
+* fix(rg): avoid eager match vector allocation ([#1742](https://github.com/everruns/bashkit/pull/1742)) by @chaliy
+* fix(ci): close DOPPLER_AVAILABLE bypass in examples workflow ([#1741](https://github.com/everruns/bashkit/pull/1741)) by @chaliy
+* feat(site): negotiate markdown docs by @chaliy
+* docs(site): add agent development quickstart by @chaliy
+* docs(readme): remove stale install version pins by @chaliy
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.7.1...v0.7.2
+
 ## [0.7.1] - 2026-05-25
 
 ### Fixed
