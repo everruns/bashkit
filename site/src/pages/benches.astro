@@ -88,81 +88,77 @@ const pageDescription =
   </section>
 
   <section class="perf-dashboard section-alt">
-    <div class="container benches-grid">
-      <div class="benches-main">
-        <div class="perf-toolbar" aria-label="Chart controls">
-          <div class="segmented-control" role="group" aria-label="Metric">
-            <button type="button" class="is-active" data-view="eval">Eval score</button>
-            <button type="button" data-view="bench">Speedup</button>
-            <button type="button" data-view="criterion">Criterion delta</button>
-          </div>
-
-          <label class="perf-select">
-            <span>Series</span>
-            <select id="perf-series-select" aria-label="Series"></select>
-          </label>
-        </div>
-
-        <article class="perf-chart-shell">
-          <div class="perf-chart-head">
-            <div>
-              <span class="atlas-eyebrow" id="perf-chart-kind">Eval score</span>
-              <h2 id="perf-chart-title">Full eval score trend</h2>
-            </div>
-            <p id="perf-chart-note"></p>
-          </div>
-
-          <div class="perf-chart-wrap">
-            <svg
-              id="perf-chart"
-              viewBox="0 0 960 340"
-              role="img"
-              aria-labelledby="perf-chart-title"
-            ></svg>
-            <div id="perf-tooltip" class="perf-tooltip" hidden></div>
-          </div>
-        </article>
+    <div class="container dashboard-stack">
+      <div class="perf-snapshot" aria-label="Latest performance snapshot">
+        <a href={latestBench ? repoUrl(latestBench.source) : "#"} target="_blank" rel="noopener noreferrer">
+          <span>Latest benchmark</span>
+          <strong>{compactNumber(latestBench?.speedup, "x")}</strong>
+          <small>{latestBench?.date ?? "n/a"} vs bash</small>
+        </a>
+        <a href={latestEval ? repoUrl(latestEval.source) : "#"} target="_blank" rel="noopener noreferrer">
+          <span>Latest eval</span>
+          <strong>{compactNumber(latestEval?.scorePct, "%")}</strong>
+          <small>
+            {latestEval ? `${latestEval.passed}/${latestEval.tasks} tasks` : "n/a"}
+          </small>
+        </a>
+        <a href={bestCriterion ? repoUrl(bestCriterion.source) : "#"} target="_blank" rel="noopener noreferrer">
+          <span>Best criterion delta</span>
+          <strong>
+            {
+              bestCriterion?.bestChangePct
+                ? `${Math.abs(bestCriterion.bestChangePct)}%`
+                : "n/a"
+            }
+          </strong>
+          <small>{bestCriterion?.bestImprovement?.name ?? "n/a"}</small>
+        </a>
       </div>
 
-      <aside class="benches-side">
-        <div class="perf-snapshot" aria-label="Latest performance snapshot">
-          <a href={latestBench ? repoUrl(latestBench.source) : "#"} target="_blank" rel="noopener noreferrer">
-            <span>Latest benchmark</span>
-            <strong>{compactNumber(latestBench?.speedup, "x")}</strong>
-            <small>{latestBench?.date ?? "n/a"} vs bash</small>
-          </a>
-          <a href={latestEval ? repoUrl(latestEval.source) : "#"} target="_blank" rel="noopener noreferrer">
-            <span>Latest eval</span>
-            <strong>{compactNumber(latestEval?.scorePct, "%")}</strong>
-            <small>
-              {latestEval ? `${latestEval.passed}/${latestEval.tasks} tasks` : "n/a"}
-            </small>
-          </a>
-          <a href={bestCriterion ? repoUrl(bestCriterion.source) : "#"} target="_blank" rel="noopener noreferrer">
-            <span>Best criterion delta</span>
-            <strong>
-              {
-                bestCriterion?.bestChangePct
-                  ? `${Math.abs(bestCriterion.bestChangePct)}%`
-                  : "n/a"
-              }
-            </strong>
-            <small>{bestCriterion?.bestImprovement?.name ?? "n/a"}</small>
-          </a>
+      <div class="perf-toolbar" aria-label="Chart controls">
+        <div class="segmented-control" role="group" aria-label="Metric">
+          <button type="button" class="is-active" data-view="eval">Eval score</button>
+          <button type="button" data-view="bench">Speedup</button>
+          <button type="button" data-view="criterion">Criterion delta</button>
         </div>
 
-        <div class="bench-source-list">
-          <span class="atlas-eyebrow">Source files</span>
-          {
-            resultLinks.map((item) => (
-              <a href={item.href} target="_blank" rel="noopener noreferrer">
-                <strong>{item.title}</strong>
-                <small>{item.detail}</small>
-              </a>
-            ))
-          }
+        <label class="perf-select">
+          <span>Series</span>
+          <select id="perf-series-select" aria-label="Series"></select>
+        </label>
+      </div>
+
+      <article class="perf-chart-shell">
+        <div class="perf-chart-head">
+          <div>
+            <span class="atlas-eyebrow" id="perf-chart-kind">Eval score</span>
+            <h2 id="perf-chart-title">Full eval score trend</h2>
+          </div>
+          <p id="perf-chart-note"></p>
         </div>
-      </aside>
+
+        <div class="perf-chart-wrap">
+          <svg
+            id="perf-chart"
+            viewBox="0 0 960 340"
+            role="img"
+            aria-labelledby="perf-chart-title"
+          ></svg>
+          <div id="perf-tooltip" class="perf-tooltip" hidden></div>
+        </div>
+      </article>
+
+      <div class="bench-source-list" aria-label="Source files">
+        <span class="atlas-eyebrow">Source files</span>
+        {
+          resultLinks.map((item) => (
+            <a href={item.href} target="_blank" rel="noopener noreferrer">
+              <strong>{item.title}</strong>
+              <small>{item.detail}</small>
+            </a>
+          ))
+        }
+      </div>
     </div>
   </section>
 
@@ -189,7 +185,7 @@ const pageDescription =
                 <h3>{item.title}</h3>
                 <p>{item.detail}</p>
                 <a href={repoUrl(item.source)} target="_blank" rel="noopener noreferrer">
-                  Source artifact
+                  Open result file
                 </a>
               </div>
             </article>
@@ -585,24 +581,22 @@ const pageDescription =
   }
 
   .perf-dashboard {
-    padding: var(--space-lg) 0;
+    padding: 1.25rem 0 var(--space-lg);
   }
 
-  .benches-grid {
+  .dashboard-stack {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 22rem;
-    gap: var(--space-md);
-    align-items: start;
+    gap: 0.8rem;
   }
 
-  .benches-main,
-  .benches-side {
+  .dashboard-stack > * {
     min-width: 0;
   }
 
   .perf-snapshot {
     display: grid;
-    gap: var(--space-sm);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.65rem;
   }
 
   .perf-snapshot a {
@@ -610,7 +604,7 @@ const pageDescription =
     border: 1px solid #d7d7d7;
     background: var(--color-white);
     color: var(--color-obsidian);
-    padding: var(--space-md);
+    padding: 0.85rem 1rem;
     text-decoration: none;
     transition:
       border-color 0.12s ease,
@@ -634,14 +628,22 @@ const pageDescription =
     display: block;
     margin: 0.15rem 0;
     color: var(--color-obsidian);
-    font-size: 1.65rem;
+    font-size: 1.45rem;
     line-height: 1.1;
   }
 
   .bench-source-list {
     display: grid;
-    gap: var(--space-sm);
-    margin-top: var(--space-md);
+    grid-template-columns: auto repeat(4, minmax(0, 1fr));
+    gap: 0.65rem;
+    align-items: stretch;
+    margin-top: 0.1rem;
+  }
+
+  .bench-source-list .atlas-eyebrow {
+    align-items: center;
+    margin-bottom: 0;
+    padding-right: 0.35rem;
   }
 
   .bench-source-list a {
@@ -650,7 +652,8 @@ const pageDescription =
     border: 1px solid #d7d7d7;
     background: var(--color-white);
     color: var(--color-obsidian);
-    padding: 0.85rem 1rem;
+    min-height: 3.8rem;
+    padding: 0.65rem 0.75rem;
     text-decoration: none;
     transition:
       border-color 0.12s ease,
@@ -666,7 +669,7 @@ const pageDescription =
     justify-content: space-between;
     gap: var(--space-md);
     align-items: center;
-    margin-bottom: var(--space-md);
+    margin-top: 0.35rem;
   }
 
   .segmented-control {
@@ -719,6 +722,7 @@ const pageDescription =
   .perf-table-card {
     background: var(--color-white);
     border: 1px solid #dddddd;
+    min-width: 0;
   }
 
   .perf-chart-head {
@@ -930,7 +934,6 @@ const pageDescription =
 
   @media (max-width: 900px) {
     .benches-intro__grid,
-    .benches-grid,
     .atlas-section-heading,
     .perf-table-grid {
       grid-template-columns: 1fr;
@@ -942,11 +945,6 @@ const pageDescription =
       flex-direction: column;
     }
 
-    .benches-side {
-      order: -1;
-    }
-
-    .perf-snapshot,
     .bench-source-list {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
@@ -976,7 +974,10 @@ const pageDescription =
   }
 
   @media (max-width: 620px) {
-    .perf-snapshot,
+    .perf-snapshot {
+      grid-template-columns: 1fr;
+    }
+
     .bench-source-list {
       grid-template-columns: 1fr;
     }
