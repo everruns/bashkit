@@ -3375,14 +3375,15 @@ struct RgWalkItem {
 enum RgDisplayHint {
     None,
     DotSlash,
+    Absolute,
 }
 
 impl RgDisplayHint {
     fn from_root_arg(root_arg: Option<&str>) -> Self {
-        if root_arg.is_some_and(|arg| arg == "." || arg.starts_with("./")) {
-            Self::DotSlash
-        } else {
-            Self::None
+        match root_arg {
+            Some(arg) if arg.starts_with('/') => Self::Absolute,
+            Some(arg) if arg == "." || arg.starts_with("./") => Self::DotSlash,
+            _ => Self::None,
         }
     }
 
@@ -3390,6 +3391,7 @@ impl RgDisplayHint {
         match self {
             Self::None => None,
             Self::DotSlash => Some("./"),
+            Self::Absolute => Some("/"),
         }
     }
 }
