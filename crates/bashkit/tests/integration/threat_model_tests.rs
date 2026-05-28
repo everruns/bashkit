@@ -1340,12 +1340,12 @@ mod python_security {
     async fn threat_python_no_filesystem() {
         let mut bash = bash_with_python();
 
-        // open() builtin should not be available (Monty doesn't expose it)
+        // open() resolves through Bashkit VFS, not the host filesystem.
         let result = bash
             .exec("python3 -c \"f = open('/etc/passwd')\nprint(f.read())\"")
             .await
             .unwrap();
-        assert_ne!(result.exit_code, 0, "file open should fail");
+        assert_ne!(result.exit_code, 0, "host file open should fail");
         assert!(
             !result.stdout.contains("root:"),
             "Should not read real /etc/passwd"
@@ -2189,6 +2189,7 @@ mod builtin_parser_depth {
     }
 
     /// TM-DOS-027: Deeply nested JSON input to jq must not crash
+    #[cfg(feature = "jq")]
     #[tokio::test]
     async fn threat_jq_deep_json_nesting_safe() {
         let mut bash = Bash::new();
@@ -2222,6 +2223,7 @@ mod builtin_parser_depth {
     }
 
     /// TM-DOS-027: Moderate nesting in jq still works
+    #[cfg(feature = "jq")]
     #[tokio::test]
     async fn threat_jq_moderate_nesting_works() {
         let mut bash = Bash::new();

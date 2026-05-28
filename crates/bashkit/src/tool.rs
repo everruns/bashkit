@@ -1856,8 +1856,8 @@ mod tests {
         let helptext = tool.help();
         assert!(helptext.contains("python"), "help should mention python");
         assert!(
-            helptext.contains("no open()"),
-            "help should document open() limitation"
+            helptext.contains("open() against the VFS"),
+            "help should document VFS-scoped open() support"
         );
         assert!(
             helptext.contains("No HTTP"),

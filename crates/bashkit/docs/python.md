@@ -73,16 +73,15 @@ echo "print('piped')" | python3
 
 ## Virtual Filesystem (VFS) Bridging
 
-Python `pathlib.Path` operations are bridged to Bashkit's virtual filesystem.
-Files created by bash are readable from Python and vice versa.
+Python `open()` and `pathlib.Path` operations are bridged to Bashkit's virtual
+filesystem. Files created by bash are readable from Python and vice versa.
 
 ### Bash → Python
 
 ```bash
 echo "important data" > /tmp/shared.txt
 python3 -c "
-from pathlib import Path
-content = Path('/tmp/shared.txt').read_text()
+content = open('/tmp/shared.txt').read()
 print(f'Got: {content.strip()}')
 "
 ```
@@ -91,16 +90,20 @@ print(f'Got: {content.strip()}')
 
 ```bash
 python3 -c "
-from pathlib import Path
-_ = Path('/tmp/result.txt').write_text('computed by python\n')
+with open('/tmp/result.txt', 'w') as f:
+    _ = f.write('computed by python\n')
 "
 cat /tmp/result.txt
 ```
 
-### Supported Path Operations
+### Supported File Operations
 
 | Operation | Example |
 |-----------|---------|
+| Open/read | `open('f.txt').read()` |
+| Open/write | `open('f.txt', 'w').write('data')` |
+| Open/append | `open('f.txt', 'a').write('more')` |
+| Path open | `Path('f.txt').open('r')` |
 | Read text | `Path('f.txt').read_text()` |
 | Read bytes | `Path('f.txt').read_bytes()` |
 | Write text | `Path('f.txt').write_text('data')` |
@@ -117,7 +120,7 @@ cat /tmp/result.txt
 ### Architecture
 
 ```text
-Python code → Monty VM → OsCall(ReadText, path) → Bashkit VFS → resume
+Python code → Monty VM → OsCall(Open/ReadText, path) → Bashkit VFS → resume
 ```
 
 Monty pauses at filesystem operations, Bashkit bridges them to the VFS, then
@@ -169,19 +172,20 @@ let help = tool.help();  // Includes a Markdown Notes section with Python hints
 ```
 
 The builtin's `llm_hint()` is automatically included in the tool's documentation,
-so LLMs know not to generate code using `open()`, HTTP requests, or classes.
+so LLMs know file I/O is VFS-scoped and HTTP requests/classes are unavailable.
 
 ## Limitations
 
-**No `open()` builtin.** Monty does not implement Python's `open()`. Use `pathlib.Path` instead:
+**VFS-only file I/O.** `open()` and `pathlib.Path` read/write Bashkit's virtual
+filesystem, not the host filesystem:
 
 ```python
-# Won't work:
-# f = open('data.txt')
-
-# Use instead:
 from pathlib import Path
-content = Path('data.txt').read_text()
+
+with open('/tmp/data.txt', 'w') as f:
+    f.write('hello')
+
+content = Path('/tmp/data.txt').read_text()
 ```
 
 **No HTTP/network.** No `socket`, `urllib`, `requests`, or `http.client` modules.
