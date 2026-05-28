@@ -341,17 +341,17 @@ bash.exec("python3 -c \"print(2 ** 10)\"").await?;
 // Script files from VFS
 bash.exec("python3 /tmp/script.py").await?;
 
-// VFS bridging: pathlib.Path operations work with the virtual filesystem
+// VFS bridging: open() and pathlib.Path work with the virtual filesystem
 bash.exec(r#"python3 -c "
-from pathlib import Path
-Path('/tmp/data.txt').write_text('hello from python')
+with open('/tmp/data.txt', 'w') as f:
+    f.write('hello from python')
 ""#).await?;
 bash.exec("cat /tmp/data.txt").await?; // "hello from python"
 ```
 
 Stdlib modules: `math`, `pathlib`, `os` (getenv/environ), `sys`, `typing`.
 Security note: `re` is intentionally disabled due to regex backtracking DoS risk.
-Limitations: no `open()` (use `pathlib.Path`), no network, no classes, no third-party imports.
+Limitations: file I/O is VFS-scoped, no network, no classes, no third-party imports.
 See [crates/bashkit/docs/python.md](crates/bashkit/docs/python.md) for the full guide.
 
 ## Experimental: TypeScript Support

@@ -192,13 +192,13 @@ mod blackbox_builtins {
     }
 
     #[tokio::test]
-    async fn no_open_builtin() {
+    async fn open_builtin_stays_in_vfs() {
         let mut bash = bash_python();
         let r = bash
             .exec("python3 -c \"f = open('/etc/passwd', 'r')\nprint(f.read())\"")
             .await
             .unwrap();
-        assert_ne!(r.exit_code, 0, "open() should not be available");
+        assert_ne!(r.exit_code, 0, "open() must not read the host filesystem");
         assert!(!r.stdout.contains("root:"));
     }
 

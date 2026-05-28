@@ -680,6 +680,102 @@ mod vfs_bridging {
     }
 
     #[tokio::test]
+    async fn open_reads_vfs_file() {
+        let mut bash = bash_python();
+        bash.exec("printf 'from vfs' > /tmp/open-read.txt")
+            .await
+            .unwrap();
+        let r = bash
+            .exec("python3 -c \"with open('/tmp/open-read.txt', 'r') as f:\n    print(f.read())\"")
+            .await
+            .unwrap();
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout, "from vfs\n");
+    }
+
+    #[tokio::test]
+    async fn open_writes_vfs_file() {
+        let mut bash = bash_python();
+        let r = bash
+            .exec(
+                "python3 -c \"with open('/tmp/open-write.txt', 'w') as f:\n    print(f.write('from open'))\"\ncat /tmp/open-write.txt",
+            )
+            .await
+            .unwrap();
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout, "9\nfrom open");
+    }
+
+    #[tokio::test]
+    async fn open_write_text_returns_character_count() {
+        let mut bash = bash_python();
+        let r = bash
+            .exec(
+                "python3 -c \"with open('/tmp/open-unicode.txt', 'w') as f:\n    print(f.write('βeta'))\"\nwc -c /tmp/open-unicode.txt",
+            )
+            .await
+            .unwrap();
+        assert_eq!(r.exit_code, 0);
+        assert!(r.stdout.starts_with("4\n"));
+        assert!(r.stdout.contains("5 /tmp/open-unicode.txt"));
+    }
+
+    #[tokio::test]
+    async fn path_open_writes_vfs_file() {
+        let mut bash = bash_python();
+        let r = bash
+            .exec(
+                "python3 -c \"from pathlib import Path\nwith Path('/tmp/path-open.txt').open('w') as f:\n    f.write('via path')\"\ncat /tmp/path-open.txt",
+            )
+            .await
+            .unwrap();
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout, "via path");
+    }
+
+    #[tokio::test]
+    async fn open_append_text_preserves_existing_content() {
+        let mut bash = bash_python();
+        bash.exec("printf 'first' > /tmp/open-append.txt")
+            .await
+            .unwrap();
+        let r = bash
+            .exec(
+                "python3 -c \"with open('/tmp/open-append.txt', 'a') as f:\n    f.write('+second')\"\ncat /tmp/open-append.txt",
+            )
+            .await
+            .unwrap();
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout, "first+second");
+    }
+
+    #[tokio::test]
+    async fn open_append_text_creates_missing_file() {
+        let mut bash = bash_python();
+        let r = bash
+            .exec(
+                "python3 -c \"with open('/tmp/open-append-new.txt', 'a') as f:\n    f.write('created')\"\ncat /tmp/open-append-new.txt",
+            )
+            .await
+            .unwrap();
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout, "created");
+    }
+
+    #[tokio::test]
+    async fn open_append_bytes_preserves_existing_content() {
+        let mut bash = bash_python();
+        let r = bash
+            .exec(
+                "python3 -c \"open('/tmp/open-append.bin', 'wb').write(b'\\x00\\x01')\nopen('/tmp/open-append.bin', 'ab').write(b'\\x02')\nprint(len(open('/tmp/open-append.bin', 'rb').read()))\"",
+            )
+            .await
+            .unwrap();
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout, "3\n");
+    }
+
+    #[tokio::test]
     async fn path_exists() {
         let mut bash = bash_python();
         bash.exec("echo 'data' > /tmp/exists.txt").await.unwrap();

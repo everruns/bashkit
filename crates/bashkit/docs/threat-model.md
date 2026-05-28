@@ -554,7 +554,7 @@ attacks:
 ### Python / Monty Security (TM-PY-*)
 
 The `python`/`python3` builtins embed the Monty Python interpreter with VFS bridging.
-Python `pathlib.Path` operations are bridged to Bashkit's virtual filesystem.
+Python `pathlib.Path` and `open()` operations are bridged to Bashkit's virtual filesystem.
 
 | Threat | Attack Example | Mitigation | Status |
 |--------|---------------|------------|--------|
@@ -562,7 +562,7 @@ Python `pathlib.Path` operations are bridged to Bashkit's virtual filesystem.
 | Memory exhaustion (TM-PY-002) | Large allocation | Monty max_memory (64MB) + max_allocations (1M) | MITIGATED |
 | Stack overflow (TM-PY-003) | Deep recursion | Monty max_recursion (200) | MITIGATED |
 | Shell escape (TM-PY-004) | `os.system()` | Monty has no os.system/subprocess | MITIGATED |
-| Real FS access (TM-PY-005) | `open()` | Monty has no open() builtin | MITIGATED |
+| Real FS access (TM-PY-005) | `open()` | VFS bridge opens only Bashkit VFS files | MITIGATED |
 | Error info leak (TM-PY-006) | Errors go to stdout | Errors go to stderr, not stdout | MITIGATED |
 | Real FS read (TM-PY-015) | `Path.read_text()` | VFS bridge reads only from Bashkit VFS | MITIGATED |
 | Real FS write (TM-PY-016) | `Path.write_text()` | VFS bridge writes only to Bashkit VFS | MITIGATED |

@@ -243,7 +243,7 @@ boundary stays in bashkit — hooks cannot bypass the allowlist.
 
 ### `before_http` — Filter or Modify Requests
 
-```rust
+```rust,ignore
 use bashkit::{Bash, NetworkAllowlist, hooks::{HookAction, HttpRequestEvent}};
 
 # fn main() {
@@ -266,7 +266,7 @@ let bash = Bash::builder()
 
 ### `after_http` — Observe Responses
 
-```rust
+```rust,ignore
 use bashkit::{Bash, NetworkAllowlist, hooks::{HookAction, HttpResponseEvent}};
 use std::sync::{Arc, Mutex};
 

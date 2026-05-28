@@ -124,7 +124,7 @@ Monty implements a subset of Python 3.12:
 - String operations, f-strings
 - Exception handling: try/except/finally/raise
 - Property descriptors (`@property`) (since Monty 0.0.4)
-- Built-in functions: print, len, range, enumerate, zip, map, filter, sorted, reversed, sum, min, max, abs, round, int, float, str, bool, list, dict, tuple, set, type, isinstance, hasattr, getattr, id, repr, ord, chr, hex, oct, bin, all, any, input
+- Built-in functions: print, len, range, enumerate, zip, map, filter, sorted, reversed, sum, min, max, abs, round, int, float, str, bool, list, dict, tuple, set, type, isinstance, hasattr, getattr, id, repr, ord, chr, hex, oct, bin, all, any, input, open
 - Standard modules: sys, typing, math (~50 functions), pathlib, os (getenv/environ), json, datetime
 - `datetime.date.today()`, `datetime.datetime.now()` with optional timezone (since Monty 0.0.11)
 - JSON: `json.dumps()`, `json.loads()` (since Monty 0.0.9)
@@ -135,25 +135,23 @@ Monty implements a subset of Python 3.12:
 - Classes (planned upstream)
 - Match statements
 - Import of third-party libraries
-- `open()` builtin — Monty does not implement `open()`. Use `pathlib.Path` instead:
-  `Path('f.txt').read_text()` not `open('f.txt').read()`
 - HTTP/network I/O — no `socket`, `urllib`, `requests`, `http.client` modules.
   Monty has no OsCall variants for network operations, so there is no way to bridge these.
 - Most standard library modules
 
 ### VFS Bridging
 
-Python `pathlib.Path` operations are bridged to Bashkit's virtual filesystem
-via Monty's OsCall pause/resume mechanism. This enables Python code to read
-and write files that are shared with the bash environment.
+Python `pathlib.Path` and `open()` operations are bridged to Bashkit's virtual
+filesystem via Monty's OsCall pause/resume mechanism. This enables Python code
+to read and write files that are shared with the bash environment.
 
 ```bash
 # Write from bash, read from Python
 echo "data" > /tmp/shared.txt
-python3 -c "from pathlib import Path; print(Path('/tmp/shared.txt').read_text())"
+python3 -c "print(open('/tmp/shared.txt').read())"
 
 # Write from Python, read from bash
-python3 -c "from pathlib import Path; Path('/tmp/out.txt').write_text('hello\n')"
+python3 -c "with open('/tmp/out.txt', 'w') as f: f.write('hello\n')"
 cat /tmp/out.txt
 
 # Create directories, check existence
@@ -168,6 +166,7 @@ python3 -c "import os; print(os.getenv('HOME'))"
 **Supported operations:**
 - `Path.read_text()`, `Path.read_bytes()` — read from VFS
 - `Path.write_text()`, `Path.write_bytes()` — write to VFS
+- `open()`, `Path.open()` — read, write, and append files in the VFS
 - `Path.exists()`, `Path.is_file()`, `Path.is_dir()`, `Path.is_symlink()`
 - `Path.mkdir()` (with `parents=True`, `exist_ok=True` kwargs)
 - `Path.unlink()`, `Path.rmdir()` — delete from VFS
@@ -181,7 +180,7 @@ python3 -c "import os; print(os.getenv('HOME'))"
 
 **Architecture:**
 ```
-Python code → Monty VM → OsCall(ReadText, path) → Bashkit VFS → resume
+Python code → Monty VM → OsCall(Open/ReadText, path) → Bashkit VFS → resume
 ```
 
 Monty pauses execution at filesystem operations, yields an `OsCall` event
@@ -310,7 +309,7 @@ Relative paths are resolved against the shell's cwd. Path traversal via
 When Python is registered via `BashToolBuilder::python()`, the builtin contributes
 a hint to `help()` and `system_prompt()` documenting its limitations:
 
-> python/python3: Embedded Python (Monty). Stdlib: math, pathlib, os.getenv, sys, typing. File I/O via pathlib.Path only (no open()). No HTTP/network. No classes. No third-party imports.
+> python/python3: Embedded Python (Monty). Stdlib: math, pathlib, os.getenv, sys, typing. File I/O via pathlib.Path and open() against the VFS. No HTTP/network. No classes. No third-party imports.
 
 Regex module `re` is intentionally disabled in Bashkit due to catastrophic
 backtracking DoS risk in untrusted code execution.

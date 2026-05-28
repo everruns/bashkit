@@ -1666,9 +1666,9 @@ The following components are fuzz-tested for robustness:
 > runtime. This integration should be treated as experimental.
 
 Bashkit embeds the Monty Python interpreter (pydantic/monty) with VFS bridging.
-Python `pathlib.Path` operations are bridged to Bashkit's virtual filesystem via
-Monty's OsCall pause/resume mechanism. This section covers threats specific to
-the Python builtin.
+Python `pathlib.Path` and `open()` operations are bridged to Bashkit's virtual
+filesystem via Monty's OsCall pause/resume mechanism. This section covers
+threats specific to the Python builtin.
 
 ### Architecture
 
@@ -1676,8 +1676,8 @@ the Python builtin.
 Python code → Monty VM → OsCall pause → Bashkit VFS bridge → resume
 ```
 
-Monty never touches the real filesystem. All `Path.*` operations yield `OsCall`
-events that Bashkit intercepts and dispatches to the VFS.
+Monty never touches the real filesystem. All `Path.*` and `open()` operations
+yield `OsCall` events that Bashkit intercepts and dispatches to the VFS.
 
 ### Threats
 
@@ -1687,7 +1687,7 @@ events that Bashkit intercepts and dispatches to the VFS.
 | TM-PY-002 | Memory exhaustion via large allocation | High | Monty max_memory (64MB) + max_allocations (1M) | `threat_python_memory_exhaustion` |
 | TM-PY-003 | Stack overflow via deep recursion | High | Monty max_recursion (200) + parser depth limit (200, since 0.0.4) | `threat_python_recursion_bomb` |
 | TM-PY-004 | Shell escape via os.system/subprocess | Critical | Monty has no os.system/subprocess implementation | `threat_python_no_os_operations` |
-| TM-PY-005 | Real filesystem access via open() | Critical | Monty has no open() builtin | `threat_python_no_filesystem` |
+| TM-PY-005 | Real filesystem access via open() | Critical | VFS bridge opens only Bashkit VFS files, not host files | `threat_python_no_filesystem` |
 | TM-PY-006 | Error info leakage via stdout | Medium | Errors go to stderr, not stdout | `threat_python_error_isolation` |
 | TM-PY-015 | Real filesystem read via pathlib | Critical | VFS bridge reads only from Bashkit VFS, not host | `threat_python_vfs_no_real_fs` |
 | TM-PY-016 | Real filesystem write via pathlib | Critical | VFS bridge writes only to Bashkit VFS | `threat_python_vfs_write_sandboxed` |
@@ -1740,10 +1740,11 @@ and this information has low sensitivity. No filesystem or network access is gra
 
 ### VFS Bridge Security Properties
 
-1. **No real filesystem access**: All Path operations go through Bashkit's VFS.
+1. **No real filesystem access**: All Path and open operations go through Bashkit's VFS.
    `/etc/passwd` in Python reads from VFS, not the host.
 2. **Shared VFS with bash**: Files written by `echo > file` are readable by
-   Python's `Path(file).read_text()`, and vice versa. This is intentional.
+   Python's `open(file).read()` / `Path(file).read_text()`, and vice versa.
+   This is intentional.
 3. **Path resolution**: Relative paths are resolved against the shell's cwd.
    Path traversal (`../..`) is constrained by VFS path normalization.
 4. **Error mapping**: VFS errors are mapped to standard Python exceptions
@@ -1766,10 +1767,12 @@ filesystem.
 | Path.is_file() | fs.stat() | bool |
 | Path.is_dir() | fs.stat() | bool |
 | Path.is_symlink() | fs.stat() | bool |
+| open(), Path.open() | fs.stat() / fs.write_file() | file handle |
 | Path.read_text() | fs.read_file() | str |
 | Path.read_bytes() | fs.read_file() | bytes |
 | Path.write_text() | fs.write_file() | int |
 | Path.write_bytes() | fs.write_file() | int |
+| file.write() append mode | fs.read_file() + fs.write_file() | int |
 | Path.mkdir() | fs.mkdir() | None |
 | Path.unlink() | fs.remove() | None |
 | Path.rmdir() | fs.remove() | None |
