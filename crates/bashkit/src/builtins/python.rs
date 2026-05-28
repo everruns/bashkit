@@ -9,17 +9,21 @@
 //! # Overview
 //!
 //! Virtual Python execution with resource limits and VFS access.
-//! Python `pathlib.Path` operations are bridged to Bashkit's virtual filesystem
-//! via Monty's OsCall pause/resume mechanism. No real filesystem or network access.
+//! Python `pathlib.Path` operations and `open()` file handles are bridged to
+//! Bashkit's virtual filesystem via Monty's OsCall pause/resume mechanism.
+//! No real filesystem or network access.
+//!
+//! Decision: `open()` performs only VFS open-time effects and returns Monty's
+//! virtual file handle. Bashkit never holds host/native Python file handles.
 //!
 //! Supports: `python -c "code"`, `python script.py`, stdin piping.
 
 use async_trait::async_trait;
 use chrono::{Datelike, Timelike};
 use monty::{
-    ExcType, ExtFunctionResult, LimitedTracker, MontyDate, MontyDateTime, MontyException,
-    MontyObject, MontyRun, NameLookupResult, OsFunction, PrintWriter, ResourceLimits, RunProgress,
-    dir_stat, file_stat, symlink_stat,
+    ExcType, ExtFunctionResult, FileMode, LimitedTracker, MontyDate, MontyDateTime, MontyException,
+    MontyFileHandle, MontyObject, MontyRun, NameLookupResult, OsFunction, PrintWriter,
+    ResourceLimits, RunProgress, dir_stat, file_stat, symlink_stat,
 };
 use std::collections::HashMap;
 use std::future::Future;
@@ -181,8 +185,9 @@ impl std::fmt::Debug for PythonExternalFns {
 /// The python/python3 builtin command.
 ///
 /// Executes Python code using the embedded Monty interpreter (pydantic/monty).
-/// Python `pathlib.Path` operations are bridged to Bashkit's VFS — files
-/// created by bash (`cat > file`) are readable from Python, and vice versa.
+/// Python `pathlib.Path` and `open()` operations are bridged to Bashkit's VFS
+/// — files created by bash (`cat > file`) are readable from Python, and vice
+/// versa.
 ///
 /// # Usage
 ///
@@ -192,7 +197,7 @@ impl std::fmt::Debug for PythonExternalFns {
 /// echo "print('hello')" | python3
 /// python3 -c "2 + 2"              # expression result printed
 /// python3 --version
-/// python3 -c "from pathlib import Path; print(Path('/tmp/f.txt').read_text())"
+/// python3 -c "print(open('/tmp/f.txt').read())"
 /// ```
 pub struct Python {
     /// Resource limits for the Monty interpreter.
@@ -306,7 +311,7 @@ impl Builtin for Python {
         Some(
             "python/python3: Embedded Python (Monty). \
              Stdlib: math, pathlib, os.getenv, sys, typing. \
-             File I/O via pathlib.Path only (no open()). \
+             File I/O via pathlib.Path and open() against the VFS. \
              No HTTP/network. No classes. No third-party imports.",
         )
     }
@@ -631,6 +636,20 @@ async fn handle_os_call(
     };
 
     match function {
+        OsFunction::Open => {
+            let mode = match parse_open_mode(args) {
+                Ok(mode) => mode,
+                Err(err) => return err,
+            };
+            match open_vfs_file(&path, mode, fs).await {
+                Ok(()) => ExtFunctionResult::Return(MontyObject::FileHandle(MontyFileHandle {
+                    path: path.to_string_lossy().to_string(),
+                    mode,
+                    position: 0,
+                })),
+                Err(e) => map_vfs_error(e, &path),
+            }
+        }
         OsFunction::Exists => {
             let exists = fs.exists(&path).await.unwrap_or(false);
             ExtFunctionResult::Return(MontyObject::Bool(exists))
@@ -674,7 +693,10 @@ async fn handle_os_call(
                     ));
                 }
             };
-            let len = content.len();
+            let len = match args.get(1) {
+                Some(MontyObject::String(s)) => s.chars().count(),
+                _ => 0,
+            };
             match fs.write_file(&path, &content).await {
                 Ok(()) => ExtFunctionResult::Return(MontyObject::Int(len as i64)),
                 Err(e) => map_vfs_error(e, &path),
@@ -692,6 +714,41 @@ async fn handle_os_call(
             };
             let len = content.len();
             match fs.write_file(&path, &content).await {
+                Ok(()) => ExtFunctionResult::Return(MontyObject::Int(len as i64)),
+                Err(e) => map_vfs_error(e, &path),
+            }
+        }
+        OsFunction::AppendText => {
+            let content = match args.get(1) {
+                Some(MontyObject::String(s)) => s.as_bytes().to_vec(),
+                _ => {
+                    return ExtFunctionResult::Error(MontyException::new(
+                        ExcType::TypeError,
+                        Some("append_text() requires a string argument".into()),
+                    ));
+                }
+            };
+            let len = match args.get(1) {
+                Some(MontyObject::String(s)) => s.chars().count(),
+                _ => 0,
+            };
+            match append_vfs_file(&path, &content, fs).await {
+                Ok(()) => ExtFunctionResult::Return(MontyObject::Int(len as i64)),
+                Err(e) => map_vfs_error(e, &path),
+            }
+        }
+        OsFunction::AppendBytes => {
+            let content = match args.get(1) {
+                Some(MontyObject::Bytes(b)) => b.clone(),
+                _ => {
+                    return ExtFunctionResult::Error(MontyException::new(
+                        ExcType::TypeError,
+                        Some("append_bytes() requires a bytes argument".into()),
+                    ));
+                }
+            };
+            let len = content.len();
+            match append_vfs_file(&path, &content, fs).await {
                 Ok(()) => ExtFunctionResult::Return(MontyObject::Int(len as i64)),
                 Err(e) => map_vfs_error(e, &path),
             }
@@ -783,8 +840,62 @@ async fn handle_os_call(
 fn extract_path(args: &[MontyObject], cwd: &Path) -> Option<PathBuf> {
     match args.first()? {
         MontyObject::Path(s) | MontyObject::String(s) => Some(resolve_python_path(s, cwd)),
+        MontyObject::FileHandle(handle) => Some(resolve_python_path(&handle.path, cwd)),
         _ => None,
     }
+}
+
+fn parse_open_mode(args: &[MontyObject]) -> std::result::Result<FileMode, ExtFunctionResult> {
+    let Some(MontyObject::String(mode)) = args.get(1) else {
+        return Err(ExtFunctionResult::Error(MontyException::new(
+            ExcType::TypeError,
+            Some("open() missing mode argument".into()),
+        )));
+    };
+
+    mode.parse::<FileMode>().map_err(|msg| {
+        ExtFunctionResult::Error(MontyException::new(
+            ExcType::ValueError,
+            Some(msg.into_owned()),
+        ))
+    })
+}
+
+async fn open_vfs_file(path: &Path, mode: FileMode, fs: &Arc<dyn FileSystem>) -> Result<()> {
+    match mode {
+        FileMode::Read(_) | FileMode::ReadUpdate(_) => {
+            let meta = fs.stat(path).await?;
+            if meta.file_type.is_dir() {
+                return Err(std::io::Error::other("is a directory").into());
+            }
+        }
+        FileMode::Write(_) | FileMode::WriteUpdate(_) => {
+            fs.write_file(path, b"").await?;
+        }
+        FileMode::Append(_) | FileMode::AppendUpdate(_) => {
+            if fs.exists(path).await.unwrap_or(false) {
+                let meta = fs.stat(path).await?;
+                if meta.file_type.is_dir() {
+                    return Err(std::io::Error::other("is a directory").into());
+                }
+            } else {
+                fs.write_file(path, b"").await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn append_vfs_file(path: &Path, content: &[u8], fs: &Arc<dyn FileSystem>) -> Result<()> {
+    let mut existing = match fs.read_file(path).await {
+        Ok(bytes) => bytes,
+        Err(e) if e.to_string().contains("not found") || e.to_string().contains("No such file") => {
+            Vec::new()
+        }
+        Err(e) => return Err(e),
+    };
+    existing.extend_from_slice(content);
+    fs.write_file(path, &existing).await
 }
 
 /// Resolve a Python path string against cwd if relative.

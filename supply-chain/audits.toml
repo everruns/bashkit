@@ -53,6 +53,18 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 version = "2.4.0"
 
+[[audits.get-size-derive2]]
+who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
+criteria = "safe-to-deploy"
+delta = "0.7.4 -> 0.9.0"
+notes = "Reviewed delta: published crate changes only version metadata; derive macro source is unchanged and introduces no new generated code behavior or ambient capabilities."
+
+[[audits.get-size2]]
+who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
+criteria = "safe-to-deploy"
+delta = "0.7.4 -> 0.9.0"
+notes = "Reviewed delta: adds optional GetSize impls for dashmap, half, and parking_lot plus test refactors; no filesystem/process/network capabilities, and lock access is limited to normal Mutex/RwLock guards."
+
 [[audits.hybrid-array]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
@@ -62,6 +74,12 @@ version = "0.4.9"
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 version = "0.7.12"
+
+[[audits.jiter]]
+who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
+criteria = "safe-to-deploy"
+delta = "0.13.0 -> 0.15.0"
+notes = "Reviewed delta: number parsing API refactor, NumberFloat export, Rust 2024 explicit unsafe blocks, and string-cache allocation moved off stack; no new filesystem/process/network capabilities, existing SIMD/PyString unsafe paths remain bounded by parser checks and ASCII preconditions."
 
 [[audits.napi]]
 who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
@@ -103,6 +121,12 @@ who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
 delta = "0.103.12 -> 0.103.13"
 notes = "Reviewed delta: fixes BIT STRING/CRL parsing edge cases and preserves fail-closed URI constraint handling; no new unsafe code or ambient capability changes."
+
+[[audits.thin-vec]]
+who = "Mykhailo Chalyi <mykhailo.chalyi-contractor@procore.com>"
+criteria = "safe-to-deploy"
+delta = "0.2.16 -> 0.2.18"
+notes = "Reviewed delta: no_std feature compatibility fixes and std-to-core path changes in gecko-ffi code; no new allocation semantics, unsafe behavior, or ambient capabilities."
 
 [[audits.tokio]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
