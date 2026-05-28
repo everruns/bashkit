@@ -41,6 +41,7 @@ pub struct Rg;
 /// `--replace` path against memory amplification from attacker-controlled
 /// replacement text combined with many matches (TM-DOS-RG-REPLACE).
 const RG_MAX_REPLACEMENT_OUTPUT_BYTES: usize = 1_048_576;
+const RG_MAX_JSON_CONTEXT_EVENTS: usize = 100_000;
 
 struct RgOptions {
     patterns: Vec<String>,
@@ -5422,6 +5423,12 @@ impl Builtin for Rg {
                                 }
                             }
                         }
+                        if context_lines.len() > RG_MAX_JSON_CONTEXT_EVENTS {
+                            return Ok(ExecResult::err(
+                                "rg: too many JSON context events (output capped)\n".to_string(),
+                                2,
+                            ));
+                        }
                         if context_lines.is_empty() {
                             for &mat in &matches {
                                 write_rg_json_multiline_match(
@@ -5852,6 +5859,12 @@ impl Builtin for Rg {
                                 }
                             }
                         }
+                    }
+                    if context_lines.len() > RG_MAX_JSON_CONTEXT_EVENTS {
+                        return Ok(ExecResult::err(
+                            "rg: too many JSON context events (output capped)\n".to_string(),
+                            2,
+                        ));
                     }
                     if context_lines.is_empty() {
                         for &line_idx in &match_lines {
