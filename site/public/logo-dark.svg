@@ -1,5 +1,7 @@
-<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Bashkit">
-  <!-- Decision: favicon uses the same Everruns navy/gold tile as the primary mark. -->
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <!-- Decision: dark-surface variant removes the tile and keeps Everruns gold plus white/gold prompt contrast. -->
+  <title id="title">Bashkit dark logo</title>
+  <desc id="desc">Three gold speed lines and a shell prompt arrow for dark backgrounds.</desc>
   <defs>
     <linearGradient id="prompt" x1="212" y1="154" x2="368" y2="358" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#FFFFFF"/>
@@ -7,7 +9,6 @@
       <stop offset="1" stop-color="#D4A43A"/>
     </linearGradient>
   </defs>
-  <rect width="512" height="512" rx="112" fill="#0A1636"/>
   <rect x="112" y="177" width="74" height="18" rx="9" fill="#D4A43A"/>
   <rect x="82" y="247" width="104" height="18" rx="9" fill="#D4A43A"/>
   <rect x="122" y="317" width="64" height="18" rx="9" fill="#D4A43A"/>

@@ -6,7 +6,7 @@ const currentYear = new Date().getFullYear();
   <div class="container">
     <div class="footer-top">
       <a href="/" class="logo-link">
-        <span class="logo-mark">$_</span>
+        <img src="/logo-dark.svg" alt="" class="logo-mark" width="32" height="32" aria-hidden="true" />
         <span class="logo-text">bashkit</span>
       </a>
       <nav class="footer-nav">
@@ -69,14 +69,10 @@ const currentYear = new Date().getFullYear();
   }
   .logo-link:hover { text-decoration: none; }
   .logo-mark {
-    font-family: var(--font-mono);
-    font-weight: 700;
-    font-size: 1rem;
-    color: var(--color-gold);
-    background: var(--color-obsidian);
-    padding: 0.18rem 0.4rem;
-    line-height: 1;
-    border: 1px solid var(--color-slate);
+    display: block;
+    width: 2rem;
+    height: 2rem;
+    flex: 0 0 auto;
   }
   .logo-text {
     font-size: 1.125rem;

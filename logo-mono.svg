@@ -1,0 +1,15 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <!-- Decision: mono uses the exact final geometry for one-color package, print, and mask surfaces. -->
+  <title id="title">Bashkit mono logo</title>
+  <desc id="desc">Three speed lines and a shell prompt arrow in one color.</desc>
+  <rect x="112" y="177" width="74" height="18" rx="9" fill="#0A0A0A"/>
+  <rect x="82" y="247" width="104" height="18" rx="9" fill="#0A0A0A"/>
+  <rect x="122" y="317" width="64" height="18" rx="9" fill="#0A0A0A"/>
+  <path
+    d="M212 154L368 256L212 358"
+    stroke="#0A0A0A"
+    stroke-width="52"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>
