@@ -5012,7 +5012,16 @@ impl Interpreter {
     }
 
     fn ensure_persistent_fd_capacity(&self, fd: i32) -> Result<()> {
-        if fd <= 2 || self.exec_fd_table.contains_key(&fd) || self.coproc_buffers.contains_key(&fd)
+        if fd < 0 {
+            return Err(crate::error::Error::Execution(format!(
+                "invalid file descriptor: {}",
+                fd
+            )));
+        }
+
+        if (0..=2).contains(&fd)
+            || self.exec_fd_table.contains_key(&fd)
+            || self.coproc_buffers.contains_key(&fd)
         {
             return Ok(());
         }

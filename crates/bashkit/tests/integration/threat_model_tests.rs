@@ -74,6 +74,41 @@ mod resource_exhaustion {
         assert_eq!(result.stdout.trim(), "ok");
     }
 
+    /// TM-DOS-063: Negative fd vars must be rejected and must not bypass fd limits.
+    #[tokio::test]
+    async fn fd_limit_rejects_negative_fd_var_output() {
+        let limits = ExecutionLimits::new().max_file_descriptors(1);
+        let mut bash = Bash::builder().limits(limits).build();
+
+        let result = bash.exec("v=-1; exec {v}>/tmp/neg-out").await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("invalid file descriptor"),
+            "Expected invalid file descriptor error, got: {}",
+            err
+        );
+    }
+
+    /// TM-DOS-063: Negative fd vars for input must be rejected.
+    #[tokio::test]
+    async fn fd_limit_rejects_negative_fd_var_input() {
+        let limits = ExecutionLimits::new().max_file_descriptors(1);
+        let mut bash = Bash::builder().limits(limits).build();
+        bash.exec("echo hi >/tmp/neg-in").await.unwrap();
+
+        let result = bash.exec("v=-1; exec {v}</tmp/neg-in").await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("invalid file descriptor"),
+            "Expected invalid file descriptor error, got: {}",
+            err
+        );
+    }
+
     /// Subsequent exec() calls recover after a prior call hits the command limit.
     /// Each exec() is a separate script invocation and gets its own budget.
     #[tokio::test]
