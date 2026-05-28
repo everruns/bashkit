@@ -1935,7 +1935,7 @@ impl RgTypeDatabase {
         db.insert_defaults("qml", &["*.qml"]);
         db.insert_defaults("qrc", &["*.qrc"]);
         db.insert_defaults("qui", &["*.ui"]);
-        db.insert_defaults("r", &["*.R", "*.Rmd", "*.Rnw", "*.r", "*.rmd", "*.rnw"]);
+        db.insert_defaults("r", &["*.R", "*.Rmd", "*.Rnw", "*.r"]);
         db.insert_defaults("racket", &["*.rkt"]);
         db.insert_defaults(
             "raku",
@@ -2006,9 +2006,11 @@ impl RgTypeDatabase {
                 "*.tf",
                 "*.tf.json",
                 "*.tfrc",
-                "*.tfvars",
-                "*.tfvars.json",
+                "*.auto.tfvars",
+                "*.auto.tfvars.json",
                 "terraform.rc",
+                "terraform.tfvars",
+                "terraform.tfvars.json",
             ],
         );
         db.insert_defaults("ts", &["*.cts", "*.mts", "*.ts", "*.tsx"]);
