@@ -593,6 +593,14 @@ pub struct ShellState {
     pub env: HashMap<String, String>,
     /// Shell variables
     pub variables: HashMap<String, String>,
+    /// Variable attribute bitset per variable name.
+    ///
+    /// Serialized as raw bits for forward/backward compatibility.
+    #[serde(default)]
+    pub var_attrs: HashMap<String, u8>,
+    /// Nameref bindings (`declare -n`): name -> target variable name.
+    #[serde(default)]
+    pub namerefs: HashMap<String, String>,
     /// Indexed arrays
     pub arrays: HashMap<String, HashMap<usize, String>>,
     /// Associative arrays
@@ -1728,6 +1736,12 @@ impl Interpreter {
         ShellState {
             env: self.env.clone(),
             variables: (*self.variables).clone(),
+            var_attrs: self
+                .var_attrs
+                .iter()
+                .map(|(name, attrs)| (name.clone(), attrs.bits()))
+                .collect(),
+            namerefs: (*self.namerefs).clone(),
             arrays: (*self.arrays).clone(),
             assoc_arrays: (*self.assoc_arrays).clone(),
             cwd: self.cwd.clone(),
@@ -1759,7 +1773,21 @@ impl Interpreter {
     /// Restore shell state from a snapshot.
     pub fn restore_shell_state(&mut self, state: &ShellState) {
         self.env = state.env.clone();
-        self.variables = Arc::new(state.variables.clone());
+        let mut restored_variables = state.variables.clone();
+        let mut restored_var_attrs: HashMap<String, VarAttrs> = state
+            .var_attrs
+            .iter()
+            .map(|(name, bits)| (name.clone(), VarAttrs::from_bits_truncate(*bits)))
+            .collect();
+        let mut restored_namerefs = state.namerefs.clone();
+        self.migrate_legacy_attr_markers(
+            &mut restored_variables,
+            &mut restored_var_attrs,
+            &mut restored_namerefs,
+        );
+        self.variables = Arc::new(restored_variables);
+        self.var_attrs = Arc::new(restored_var_attrs);
+        self.namerefs = Arc::new(restored_namerefs);
         self.refresh_shopt_flags();
         self.arrays = Arc::new(state.arrays.clone());
         self.assoc_arrays = Arc::new(state.assoc_arrays.clone());
@@ -1818,6 +1846,54 @@ impl Interpreter {
             func_bytes,
             Self::is_internal_variable,
         );
+    }
+
+    fn migrate_legacy_attr_markers(
+        &self,
+        variables: &mut HashMap<String, String>,
+        var_attrs: &mut HashMap<String, VarAttrs>,
+        namerefs: &mut HashMap<String, String>,
+    ) {
+        fn take_prefixed(variables: &mut HashMap<String, String>, prefix: &str) -> Vec<String> {
+            let keys = variables
+                .keys()
+                .filter_map(|key| key.strip_prefix(prefix).map(str::to_string))
+                .collect::<Vec<_>>();
+            for key in &keys {
+                variables.remove(&format!("{prefix}{key}"));
+            }
+            keys
+        }
+
+        for key in take_prefixed(variables, "_READONLY_") {
+            var_attrs
+                .entry(key)
+                .and_modify(|attrs| attrs.insert(VarAttrs::READONLY))
+                .or_insert(VarAttrs::READONLY);
+        }
+        for key in take_prefixed(variables, "_INTEGER_") {
+            var_attrs
+                .entry(key)
+                .and_modify(|attrs| attrs.insert(VarAttrs::INTEGER))
+                .or_insert(VarAttrs::INTEGER);
+        }
+        for key in take_prefixed(variables, "_LOWER_") {
+            var_attrs
+                .entry(key)
+                .and_modify(|attrs| attrs.insert(VarAttrs::LOWER))
+                .or_insert(VarAttrs::LOWER);
+        }
+        for key in take_prefixed(variables, "_UPPER_") {
+            var_attrs
+                .entry(key)
+                .and_modify(|attrs| attrs.insert(VarAttrs::UPPER))
+                .or_insert(VarAttrs::UPPER);
+        }
+        for key in take_prefixed(variables, "_NAMEREF_") {
+            if !namerefs.contains_key(&key) {
+                namerefs.insert(key.clone(), key);
+            }
+        }
     }
 
     /// Validate restored shell state against configured memory limits.
@@ -13520,5 +13596,48 @@ cat /tmp/test_fd_leak.txt"#,
                 "is_internal_variable() should return false for regular variable {name}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn test_shell_state_restore_preserves_readonly_attrs() {
+        let mut interp = Interpreter::new(Arc::new(InMemoryFs::new()));
+        let ast = Parser::new("readonly POLICY=safe").parse().unwrap();
+        let result = interp.execute(&ast).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+
+        let state = interp.shell_state();
+        let mut restored = Interpreter::new(Arc::new(InMemoryFs::new()));
+        restored.restore_shell_state(&state);
+
+        let assign = Parser::new("POLICY=unsafe; echo $POLICY").parse().unwrap();
+        let out = restored.execute(&assign).await.unwrap();
+        assert_eq!(out.exit_code, 0);
+        assert_eq!(out.stdout.trim(), "safe");
+    }
+
+    #[test]
+    fn test_restore_shell_state_clears_stale_attrs_and_namerefs() {
+        let mut interp = Interpreter::new(Arc::new(InMemoryFs::new()));
+        interp.add_var_attr("POLICY", VarAttrs::READONLY);
+        interp.set_nameref("alias_var", "POLICY".to_string());
+
+        let clean_state = ShellState {
+            env: HashMap::new(),
+            variables: HashMap::from([("POLICY".to_string(), "safe".to_string())]),
+            var_attrs: HashMap::new(),
+            namerefs: HashMap::new(),
+            arrays: HashMap::new(),
+            assoc_arrays: HashMap::new(),
+            cwd: PathBuf::from("/"),
+            last_exit_code: 0,
+            functions: HashMap::new(),
+            aliases: HashMap::new(),
+            traps: HashMap::new(),
+        };
+
+        interp.restore_shell_state(&clean_state);
+
+        assert!(!interp.is_var_readonly("POLICY"));
+        assert!(interp.resolve_nameref("alias_var").eq("alias_var"));
     }
 }
