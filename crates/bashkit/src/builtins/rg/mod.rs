@@ -2914,7 +2914,7 @@ async fn collect_rg_inputs(
         let root = RgSearchRoot {
             logical: ctx.cwd.to_path_buf(),
             actual: ctx.cwd.to_path_buf(),
-            root_arg: None,
+            display_hint: RgDisplayHint::None,
         };
         let files = collect_rg_files_recursive(&*ctx.fs, &[root], opts, ctx.cwd).await;
         return Ok(read_rg_files(&*ctx.fs, files, ctx.cwd, opts).await);
@@ -2936,7 +2936,7 @@ async fn collect_rg_inputs(
             roots.push(RgSearchRoot {
                 logical: path.clone(),
                 actual: actual_path,
-                root_arg: Some(p.clone()),
+                display_hint: RgDisplayHint::from_root_arg(Some(p)),
             });
             continue;
         }
@@ -3349,10 +3349,8 @@ async fn has_directory_path(
 struct RgSearchRoot {
     logical: PathBuf,
     actual: PathBuf,
-    /// The original user-supplied path arg (e.g. "." or "src") that produced
-    /// this root, so `display_path_for` can format relative paths the same
-    /// way regardless of whether files are processed per-root or globally.
-    root_arg: Option<String>,
+    /// Compact display hint derived from user arg; avoids per-file String clones.
+    display_hint: RgDisplayHint,
 }
 
 #[derive(Clone)]
@@ -3360,10 +3358,7 @@ struct RgFileCandidate {
     logical: PathBuf,
     actual: PathBuf,
     metadata: crate::fs::Metadata,
-    /// Carries the originating root's `root_arg` so a single global pass over
-    /// candidates from multiple roots can still format `./foo` vs `foo`
-    /// correctly per-file.
-    root_arg: Option<String>,
+    display_hint: RgDisplayHint,
 }
 
 struct RgWalkItem {
@@ -3373,7 +3368,30 @@ struct RgWalkItem {
     depth: usize,
     rules: Arc<Vec<RgIgnoreRule>>,
     ancestors: Vec<PathBuf>,
-    root_arg: Option<String>,
+    display_hint: RgDisplayHint,
+}
+
+#[derive(Clone, Copy)]
+enum RgDisplayHint {
+    None,
+    DotSlash,
+}
+
+impl RgDisplayHint {
+    fn from_root_arg(root_arg: Option<&str>) -> Self {
+        if root_arg.is_some_and(|arg| arg == "." || arg.starts_with("./")) {
+            Self::DotSlash
+        } else {
+            Self::None
+        }
+    }
+
+    fn root_arg(self) -> Option<&'static str> {
+        match self {
+            Self::None => None,
+            Self::DotSlash => Some("./"),
+        }
+    }
 }
 
 async fn resolve_rg_symlink_target(
@@ -3423,7 +3441,7 @@ async fn collect_rg_files_recursive(
             depth: 0,
             rules: Arc::new(rules),
             ancestors: vec![root.actual.clone()],
-            root_arg: root.root_arg.clone(),
+            display_hint: root.display_hint,
         });
     }
 
@@ -3469,7 +3487,7 @@ async fn collect_rg_files_recursive(
                             depth: entry_depth,
                             rules: Arc::new(rules.clone()),
                             ancestors: child_ancestors,
-                            root_arg: item.root_arg.clone(),
+                            display_hint: item.display_hint,
                         });
                     }
                 } else if entry_metadata.file_type.is_file()
@@ -3485,7 +3503,7 @@ async fn collect_rg_files_recursive(
                         logical: path,
                         actual: entry_actual_path,
                         metadata: entry_metadata,
-                        root_arg: item.root_arg.clone(),
+                        display_hint: item.display_hint,
                     });
                 }
             }
@@ -3499,7 +3517,7 @@ async fn collect_rg_files_recursive(
                 logical: item.logical,
                 actual: item.actual,
                 metadata: meta,
-                root_arg: item.root_arg.clone(),
+                display_hint: item.display_hint,
             });
         }
     }
@@ -3549,12 +3567,12 @@ async fn collect_rg_file_list(
         let root = RgSearchRoot {
             logical: cwd.to_path_buf(),
             actual: cwd.to_path_buf(),
-            root_arg: None,
+            display_hint: RgDisplayHint::None,
         };
         let files = collect_rg_files_recursive(fs, &[root], opts, cwd).await;
         return files
             .iter()
-            .map(|file| display_path_for(&file.logical, cwd, file.root_arg.as_deref(), opts))
+            .map(|file| display_path_for(&file.logical, cwd, file.display_hint.root_arg(), opts))
             .collect();
     }
 
@@ -3569,7 +3587,7 @@ async fn collect_rg_file_list(
             let root = RgSearchRoot {
                 logical: path.clone(),
                 actual: actual_path,
-                root_arg: Some(p.clone()),
+                display_hint: RgDisplayHint::from_root_arg(Some(p)),
             };
             let files = collect_rg_files_recursive(fs, &[root], opts, cwd).await;
             candidates.extend(files);
@@ -3581,7 +3599,7 @@ async fn collect_rg_file_list(
                 logical: path,
                 actual: actual_path,
                 metadata: meta,
-                root_arg: Some(p.clone()),
+                display_hint: RgDisplayHint::from_root_arg(Some(p)),
             });
         }
     }
@@ -3589,7 +3607,7 @@ async fn collect_rg_file_list(
     result.extend(
         candidates
             .iter()
-            .map(|file| display_path_for(&file.logical, cwd, file.root_arg.as_deref(), opts)),
+            .map(|file| display_path_for(&file.logical, cwd, file.display_hint.root_arg(), opts)),
     );
     result
 }
@@ -3613,7 +3631,7 @@ async fn read_rg_files(
 ) -> RgCollectedInputs {
     let mut collected = RgCollectedInputs::default();
     for file in files {
-        let display = display_path_for(&file.logical, cwd, file.root_arg.as_deref(), opts);
+        let display = display_path_for(&file.logical, cwd, file.display_hint.root_arg(), opts);
         match read_rg_text_file(fs, &file.actual, cwd, &display, opts).await {
             Ok(text) => collected.inputs.push(RgInput::discovered(display, text)),
             Err(e) => {
