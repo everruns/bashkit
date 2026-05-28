@@ -50,6 +50,12 @@ jobs:
           path: bashkit
           persist-credentials: false
 
+      # Two Cargo workspaces (bashkit + uutils) plus a release multicall
+      # build share one volume on ubuntu-latest. Reclaim ~25 GiB of unused
+      # preinstalled tooling before any cargo step touches target/.
+      - name: Free disk space
+        uses: ./bashkit/.github/actions/free-disk-space
+
       - name: Checkout uutils/coreutils
         uses: actions/checkout@v6
         with:

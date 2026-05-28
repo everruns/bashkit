@@ -80,6 +80,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # `-Z build-std` rebuilds std + every dep + every bashkit test with
+      # ASAN instrumentation. Target dir grows past the default runner's
+      # ~14-21 GiB free volume; reclaim ~25 GiB of unused tooling first.
+      - name: Free disk space
+        uses: ./.github/actions/free-disk-space
+
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@nightly
         with:

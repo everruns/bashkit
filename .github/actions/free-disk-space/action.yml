@@ -1,0 +1,40 @@
+name: Free disk space
+description: >
+  Remove preinstalled tooling we never use to give cargo room to breathe.
+  `ubuntu-latest` ships with ~14-21 GB free on the data volume; periodic
+  jobs that build two Cargo workspaces (coreutils-args-drift) or rebuild
+  std with sanitizer instrumentation (-Z build-std + ASAN) exhaust that.
+  This frees roughly 25 GiB by deleting tooling sitting on the same volume
+  as $RUNNER_TEMP and the cargo target dir — runs in seconds, no apt-get,
+  so it's effectively free if a later step doesn't need disk pressure.
+
+runs:
+  using: composite
+  steps:
+    - name: Reclaim runner disk space
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "Before:"
+        df -h /
+        # Each removal is best-effort: image layouts shift between
+        # ubuntu-latest releases and we'd rather skip a missing path
+        # than fail the whole workflow over disk hygiene.
+        sudo rm -rf \
+          /usr/local/lib/android \
+          /usr/share/dotnet \
+          /usr/local/.ghcup \
+          /opt/ghc \
+          /opt/hostedtoolcache/CodeQL \
+          /opt/microsoft \
+          /usr/share/swift \
+          /usr/local/share/powershell \
+          /usr/local/share/chromium \
+          /usr/lib/jvm 2>/dev/null || true
+        # Docker images preloaded by the runner image (Node, MySQL, etc.)
+        # are large and unused by our cargo builds.
+        if command -v docker >/dev/null 2>&1; then
+          sudo docker image prune --all --force >/dev/null 2>&1 || true
+        fi
+        echo "After:"
+        df -h /
