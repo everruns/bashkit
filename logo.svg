@@ -1,5 +1,7 @@
-<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Bashkit">
-  <!-- Decision: favicon uses the same Everruns navy/gold tile as the primary mark. -->
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <!-- Decision: final Bashkit primary mark uses Everruns navy/gold on the approved fast-prompt geometry. -->
+  <title id="title">Bashkit logo</title>
+  <desc id="desc">A rounded navy tile with three gold speed lines and a shell prompt arrow.</desc>
   <defs>
     <linearGradient id="prompt" x1="212" y1="154" x2="368" y2="358" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#FFFFFF"/>

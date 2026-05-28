@@ -5,7 +5,7 @@
 <header class="header">
   <div class="container header-inner">
     <a href="/" class="logo-link">
-      <span class="logo-mark">$_</span>
+      <img src="/logo.svg" alt="" class="logo-mark" width="32" height="32" aria-hidden="true" />
       <span class="logo-text">bashkit</span>
     </a>
     <button class="menu-toggle" aria-label="Open menu" aria-expanded="false">
@@ -105,13 +105,10 @@
     text-decoration: none;
   }
   .logo-mark {
-    font-family: var(--font-mono);
-    font-weight: 700;
-    font-size: 1.15rem;
-    color: var(--color-gold);
-    background: var(--color-obsidian);
-    padding: 0.2rem 0.45rem;
-    line-height: 1;
+    display: block;
+    width: 2rem;
+    height: 2rem;
+    flex: 0 0 auto;
   }
   .logo-text {
     font-size: 1.25rem;
