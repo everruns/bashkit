@@ -734,6 +734,23 @@ mod vfs_bridging {
     }
 
     #[tokio::test]
+    async fn bash_path_open_and_open_share_same_vfs_path() {
+        let mut bash = bash_python();
+        let r = bash
+            .exec(
+                "printf 'bash-1\\n' > /tmp/shared-open.txt\n\
+                 python3 -c \"from pathlib import Path\nwith Path('/tmp/shared-open.txt').open('a') as f:\n    f.write('path-open\\n')\"\n\
+                 python3 -c \"with open('/tmp/shared-open.txt', 'a') as f:\n    f.write('open\\n')\"\n\
+                 printf 'bash-2\\n' >> /tmp/shared-open.txt\n\
+                 cat /tmp/shared-open.txt",
+            )
+            .await
+            .unwrap();
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout, "bash-1\npath-open\nopen\nbash-2\n");
+    }
+
+    #[tokio::test]
     async fn open_append_text_preserves_existing_content() {
         let mut bash = bash_python();
         bash.exec("printf 'first' > /tmp/open-append.txt")
