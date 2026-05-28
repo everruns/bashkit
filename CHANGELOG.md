@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-05-28
+
+### Highlights
+
+- **Python `open()` support** — VFS-backed `open()` / `Path.open()` read, write, and append now work in the embedded Python builtin, so LLM-generated `with open("/tmp/...")` scripts run instead of failing. Host filesystem and network stay unavailable to Python ([#1800](https://github.com/everruns/bashkit/pull/1800)).
+- Further `rg` parity and hardening fixes (default type globs, JSON context fanout cap, root-arg allocation) plus interpreter fixes for variable attribute/nameref persistence and persistent file descriptor validation.
+
+### What's Changed
+
+* ci: reclaim runner disk before disk-hungry scheduled jobs ([#1807](https://github.com/everruns/bashkit/pull/1807)) by @chaliy
+* fix(rg): align r and tf default type globs with ripgrep ([#1805](https://github.com/everruns/bashkit/pull/1805)) by @chaliy
+* fix(rg): cap JSON context event fanout ([#1804](https://github.com/everruns/bashkit/pull/1804)) by @chaliy
+* fix(interpreter): persist var attrs and namerefs across shell state restore ([#1803](https://github.com/everruns/bashkit/pull/1803)) by @chaliy
+* fix(interpreter): reject negative persistent file descriptors ([#1802](https://github.com/everruns/bashkit/pull/1802)) by @chaliy
+* fix(rg): avoid root arg string cloning across candidates ([#1801](https://github.com/everruns/bashkit/pull/1801)) by @chaliy
+* feat(python): support vfs-backed open ([#1800](https://github.com/everruns/bashkit/pull/1800)) by @chaliy
+* feat(site): add bashkit logo assets ([#1799](https://github.com/everruns/bashkit/pull/1799)) by @chaliy
+* fix(ci): bypass pnpm `--` separator that breaks napi build flag forwarding ([#1798](https://github.com/everruns/bashkit/pull/1798)) by @chaliy
+* fix(site): add homepage canonical link header ([#1797](https://github.com/everruns/bashkit/pull/1797)) by @chaliy
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.7.2...v0.8.0
+
 ## [0.7.2] - 2026-05-27
 
 ### Highlights
