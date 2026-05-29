@@ -11548,6 +11548,40 @@ mod tests {
         );
     }
 
+    /// CI pins ripgrep to this version (see `RG_VERSION` in
+    /// `.github/workflows/ci.yml` and `scripts/install-ripgrep-ci.sh`). The
+    /// differential tests compare byte-for-byte against real ripgrep, whose
+    /// output, accepted `--colors` specs, and built-in file types vary across
+    /// releases, so they only run against the pinned version.
+    const PINNED_RG_VERSION: &str = "15.1.0";
+
+    fn real_rg_matches_pinned_version() -> bool {
+        let Ok(output) = std::process::Command::new("rg").arg("--version").output() else {
+            return false;
+        };
+        if !output.status.success() {
+            return false;
+        }
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .next()
+            .is_some_and(|line| line.contains(&format!("ripgrep {PINNED_RG_VERSION}")))
+    }
+
+    /// Returns `true` (and prints a skip notice) when the local `rg` is not the
+    /// pinned version, so differential tests can early-return instead of
+    /// emitting confusing byte-mismatch failures against an unexpected release.
+    fn skip_if_rg_version_mismatch(test: &str) -> bool {
+        if real_rg_matches_pinned_version() {
+            return false;
+        }
+        eprintln!(
+            "skipping {test}: differential tests require pinned ripgrep \
+             {PINNED_RG_VERSION} (install via scripts/install-ripgrep-ci.sh)"
+        );
+        true
+    }
+
     fn normalize_real_rg_temp_paths(output: &[u8], tempdir: &tempfile::TempDir) -> String {
         let mut stdout = String::from_utf8_lossy(output).into_owned();
         if let Ok(canonical) = std::fs::canonicalize(tempdir.path()) {
@@ -13419,11 +13453,17 @@ mod tests {
 
     #[test]
     fn real_rg_binary_is_available_for_differential_tests() {
+        if skip_if_rg_version_mismatch("real_rg_binary_is_available_for_differential_tests") {
+            return;
+        }
         require_real_rg();
     }
 
     #[tokio::test]
     async fn diff_rg_matches_real_rg_cases() {
+        if skip_if_rg_version_mismatch("diff_rg_matches_real_rg_cases") {
+            return;
+        }
         for case in RG_DIFF_CASES {
             assert_rg_diff_case(case).await;
         }
@@ -13438,6 +13478,9 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn diff_rg_matches_real_rg_symlink_cases() {
+        if skip_if_rg_version_mismatch("diff_rg_matches_real_rg_symlink_cases") {
+            return;
+        }
         for case in RG_SYMLINK_DIFF_CASES {
             assert_rg_symlink_diff_case(case).await;
         }

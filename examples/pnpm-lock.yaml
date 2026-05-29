@@ -4,13 +4,18 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  langsmith: ^0.6.0
+  uuid: 14.0.0
+  jsondiffpatch: '>=0.7.2'
+
 importers:
 
   .:
     dependencies:
       '@everruns/bashkit':
         specifier: latest
-        version: 0.6.0(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)(@langchain/core@1.1.48(@opentelemetry/api@1.9.1)(openai@5.23.2(zod@3.25.76)))(zod@3.25.76)
+        version: 0.8.0(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)(@langchain/core@1.1.48(@opentelemetry/api@1.9.1)(openai@5.23.2(zod@3.25.76)))(zod@3.25.76)
     devDependencies:
       '@ai-sdk/openai':
         specifier: ^3.0.50
@@ -70,8 +75,8 @@ packages:
   '@emnapi/wasi-threads@1.2.1':
     resolution: {integrity: sha512-uTII7OYF+/Mes/MrcIOYp5yOtSMLBWSIoLPpcgwipoiKbli6k322tcoFsxoIIxPDqW01SQGAgko4EzZi2BNv2w==}
 
-  '@everruns/bashkit@0.6.0':
-    resolution: {integrity: sha512-H/msJkXIqeeIuG68PE6rnOUy/4jOoobi0obaGVm1GNyMBuEyHoLpAQVlC1jASCUHORPmINAC1XVrfWFg13mBvg==}
+  '@everruns/bashkit@0.8.0':
+    resolution: {integrity: sha512-HrbBj7pW7wCGrzMeRJutd/oU4DIKggJ5bbI2hH5Domt/wSRNrFbUWLINxQ/wxd54Nc0yzm3Qa6ieYCytEm+sHQ==}
     engines: {node: '>= 18'}
     peerDependencies:
       '@langchain/core': '>=0.3'
@@ -182,8 +187,8 @@ packages:
   json-schema@0.4.0:
     resolution: {integrity: sha512-es94M3nTIfsEPisRafak+HDLfHXnKBhV3vU5eqPcS3flIWqcxJWgXHXiey3YrpaNsanY5ei1VoYEbOzijuq9BA==}
 
-  langsmith@0.7.2:
-    resolution: {integrity: sha512-3dZUwQDJluxi2ih5eIygFODtlrQKrs3Tua0Ck3l+DAUkSGFkB1Dc0JPqkGbqiVSN+TQDElnkev/ydAOAz6jndA==}
+  langsmith@0.6.3:
+    resolution: {integrity: sha512-pXrQ4/4myQvjFFOAUmt5pWRrLEZR20gzIJD7MNdUH+5/S5nLI4ZRBo/SYKC6coaYj9pYTfQdBIzcs+3kfJ5uDA==}
     peerDependencies:
       '@opentelemetry/api': '*'
       '@opentelemetry/exporter-trace-otlp-proto': '*'
@@ -257,13 +262,8 @@ packages:
   tslib@2.8.1:
     resolution: {integrity: sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==}
 
-  uuid@10.0.0:
-    resolution: {integrity: sha512-8XkAphELsDnEGrDxUOHB3RGvXz6TeuYSGEZBOjtTtPm2lwhGBjLgOzLHB63IUWfBpNucQjND6d3AOudO+H3RWQ==}
-    deprecated: uuid@10 and below is no longer supported.  For ESM codebases, update to uuid@latest.  For CommonJS codebases, use uuid@11 (but be aware this version will likely be deprecated in 2028).
-    hasBin: true
-
-  uuid@13.0.2:
-    resolution: {integrity: sha512-vzi9uRZ926x4XV73S/4qQaTwPXM2JBj6/6lI/byHH1jOpCzb0zDbfytgA9LcN/hzb2l7WQSQnxITOVx5un/wGw==}
+  uuid@14.0.0:
+    resolution: {integrity: sha512-Qo+uWgilfSmAhXCMav1uYFynlQO7fMFiMVZsQqZRMIXp0O7rR7qjkj+cPvBHLgBqi960QCoo/PH2/6ZtVqKvrg==}
     hasBin: true
 
   zod@3.25.76:
@@ -313,7 +313,7 @@ snapshots:
       tslib: 2.8.1
     optional: true
 
-  '@everruns/bashkit@0.6.0(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)(@langchain/core@1.1.48(@opentelemetry/api@1.9.1)(openai@5.23.2(zod@3.25.76)))(zod@3.25.76)':
+  '@everruns/bashkit@0.8.0(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)(@langchain/core@1.1.48(@opentelemetry/api@1.9.1)(openai@5.23.2(zod@3.25.76)))(zod@3.25.76)':
     optionalDependencies:
       '@langchain/core': 1.1.48(@opentelemetry/api@1.9.1)(openai@5.23.2(zod@3.25.76))
       '@napi-rs/wasm-runtime': 1.1.4(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)
@@ -327,7 +327,7 @@ snapshots:
       '@cfworker/json-schema': 4.1.1
       '@standard-schema/spec': 1.1.0
       js-tiktoken: 1.0.21
-      langsmith: 0.7.2(@opentelemetry/api@1.9.1)(openai@5.23.2(zod@3.25.76))
+      langsmith: 0.6.3(@opentelemetry/api@1.9.1)(openai@5.23.2(zod@3.25.76))
       mustache: 4.2.0
       p-queue: 6.6.2
       zod: 3.25.76
@@ -341,7 +341,7 @@ snapshots:
   '@langchain/langgraph-checkpoint@1.0.2(@langchain/core@1.1.48(@opentelemetry/api@1.9.1)(openai@5.23.2(zod@3.25.76)))':
     dependencies:
       '@langchain/core': 1.1.48(@opentelemetry/api@1.9.1)(openai@5.23.2(zod@3.25.76))
-      uuid: 10.0.0
+      uuid: 14.0.0
 
   '@langchain/langgraph-sdk@1.9.5(@langchain/core@1.1.48(@opentelemetry/api@1.9.1)(openai@5.23.2(zod@3.25.76)))':
     dependencies:
@@ -350,7 +350,7 @@ snapshots:
       '@types/json-schema': 7.0.15
       p-queue: 9.3.0
       p-retry: 7.1.1
-      uuid: 13.0.2
+      uuid: 14.0.0
 
   '@langchain/langgraph@1.3.2(@langchain/core@1.1.48(@opentelemetry/api@1.9.1)(openai@5.23.2(zod@3.25.76)))(zod@3.25.76)':
     dependencies:
@@ -359,7 +359,7 @@ snapshots:
       '@langchain/langgraph-sdk': 1.9.5(@langchain/core@1.1.48(@opentelemetry/api@1.9.1)(openai@5.23.2(zod@3.25.76)))
       '@langchain/protocol': 0.0.15
       '@standard-schema/spec': 1.1.0
-      uuid: 10.0.0
+      uuid: 14.0.0
       zod: 3.25.76
     transitivePeerDependencies:
       - react
@@ -422,7 +422,7 @@ snapshots:
 
   json-schema@0.4.0: {}
 
-  langsmith@0.7.2(@opentelemetry/api@1.9.1)(openai@5.23.2(zod@3.25.76)):
+  langsmith@0.6.3(@opentelemetry/api@1.9.1)(openai@5.23.2(zod@3.25.76)):
     dependencies:
       p-queue: 6.6.2
     optionalDependencies:
@@ -464,8 +464,6 @@ snapshots:
   tslib@2.8.1:
     optional: true
 
-  uuid@10.0.0: {}
-
-  uuid@13.0.2: {}
+  uuid@14.0.0: {}
 
   zod@3.25.76: {}
