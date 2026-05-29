@@ -2811,8 +2811,8 @@ dependencies = [
 
 [[package]]
 name = "monty"
-version = "0.0.17"
-source = "git+https://github.com/pydantic/monty?rev=9b5f478#9b5f478288e8c1c0198ec4af60049738f93652c1"
+version = "0.0.18"
+source = "git+https://github.com/pydantic/monty?tag=v0.0.18#45a3b2d57e6ce723fed4166fb032242ece74a663"
 dependencies = [
  "ahash",
  "chrono",
@@ -2822,6 +2822,7 @@ dependencies = [
  "itertools 0.14.0",
  "jiter",
  "libm",
+ "monty-macros",
  "num-bigint",
  "num-integer",
  "num-traits",
@@ -2835,6 +2836,16 @@ dependencies = [
  "smallvec",
  "speedate",
  "strum 0.27.2",
+]
+
+[[package]]
+name = "monty-macros"
+version = "0.0.18"
+source = "git+https://github.com/pydantic/monty?tag=v0.0.18#45a3b2d57e6ce723fed4166fb032242ece74a663"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
