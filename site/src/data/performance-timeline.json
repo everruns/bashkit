@@ -1,0 +1,4854 @@
+{
+  "generatedAt": "2026-05-26T03:01:00.000Z",
+  "sources": {
+    "bench": "crates/bashkit-bench/results/*.json",
+    "criterion": "crates/bashkit/benches/results/*.md",
+    "evals": "crates/bashkit-eval/results/*.json"
+  },
+  "summary": {
+    "benchRuns": 6,
+    "criterionRuns": 5,
+    "evalRuns": 38,
+    "latestBench": {
+      "id": "bench-vm-linux-x86_64-1779764460",
+      "kind": "bashkit-bench",
+      "label": "vm-linux-x86_64",
+      "date": "2026-05-26",
+      "timestamp": "2026-05-26T03:01:00.000Z",
+      "source": "crates/bashkit-bench/results/bench-vm-linux-x86_64-1779764460.json",
+      "reportSource": "crates/bashkit-bench/results/bench-vm-linux-x86_64-1779764460.md",
+      "cases": 96,
+      "speedup": 20.9,
+      "bashkitMs": 42.95,
+      "bashMs": 898.83,
+      "errorRate": 0,
+      "matchRate": 100,
+      "categories": [
+        {
+          "category": "startup",
+          "description": "Small commands where interpreter startup dominates runtime.",
+          "cases": 4,
+          "bashkitMedianMs": 0.053,
+          "bashMedianMs": 1.662,
+          "speedup": 32.1
+        },
+        {
+          "category": "strings",
+          "description": "String expansion, pattern handling, and text manipulation.",
+          "cases": 8,
+          "bashkitMedianMs": 0.057,
+          "bashMedianMs": 1.791,
+          "speedup": 31.2
+        },
+        {
+          "category": "variables",
+          "description": "Variable assignment, lookup, expansion, and environment handling.",
+          "cases": 8,
+          "bashkitMedianMs": 0.058,
+          "bashMedianMs": 1.688,
+          "speedup": 30.2
+        },
+        {
+          "category": "arrays",
+          "description": "Indexed array reads, writes, expansion, and iteration.",
+          "cases": 6,
+          "bashkitMedianMs": 0.059,
+          "bashMedianMs": 1.713,
+          "speedup": 29
+        },
+        {
+          "category": "subshell",
+          "description": "Command substitution and nested shell execution paths.",
+          "cases": 6,
+          "bashkitMedianMs": 0.061,
+          "bashMedianMs": 3.143,
+          "speedup": 40.3
+        },
+        {
+          "category": "arithmetic",
+          "description": "Integer math, substitutions, and expression-heavy shell snippets.",
+          "cases": 6,
+          "bashkitMedianMs": 0.062,
+          "bashMedianMs": 1.703,
+          "speedup": 28.8
+        },
+        {
+          "category": "pipes",
+          "description": "Pipeline construction, streaming, and command chaining.",
+          "cases": 6,
+          "bashkitMedianMs": 0.065,
+          "bashMedianMs": 3.131,
+          "speedup": 36.3
+        },
+        {
+          "category": "control",
+          "description": "Conditionals, loops, case statements, and branching scripts.",
+          "cases": 9,
+          "bashkitMedianMs": 0.076,
+          "bashMedianMs": 1.711,
+          "speedup": 26.6
+        },
+        {
+          "category": "io",
+          "description": "File reads, writes, redirects, and filesystem-facing commands.",
+          "cases": 6,
+          "bashkitMedianMs": 0.08,
+          "bashMedianMs": 2.681,
+          "speedup": 37.7
+        },
+        {
+          "category": "tools",
+          "description": "Builtin and external-tool style command workloads.",
+          "cases": 21,
+          "bashkitMedianMs": 0.093,
+          "bashMedianMs": 3.537,
+          "speedup": 37
+        },
+        {
+          "category": "complex",
+          "description": "Mixed shell workflows that combine multiple language features.",
+          "cases": 7,
+          "bashkitMedianMs": 0.118,
+          "bashMedianMs": 3.207,
+          "speedup": 16.5
+        },
+        {
+          "category": "large",
+          "description": "Bigger scripts and higher-volume data paths.",
+          "cases": 9,
+          "bashkitMedianMs": 1.789,
+          "bashMedianMs": 3.289,
+          "speedup": 4.4
+        }
+      ]
+    },
+    "latestEval": {
+      "id": "eval-openresponses-gpt-5.3-codex-2026-05-26-023642",
+      "kind": "llm-eval",
+      "provider": "openresponses",
+      "model": "gpt-5.3-codex",
+      "baseline": null,
+      "label": "openresponses/gpt-5.3-codex",
+      "date": "2026-05-26",
+      "timestamp": "2026-05-26T02:36:42Z",
+      "source": "crates/bashkit-eval/results/eval-openresponses-gpt-5.3-codex-2026-05-26-023642.json",
+      "reportSource": "crates/bashkit-eval/results/eval-openresponses-gpt-5.3-codex-2026-05-26-023642.md",
+      "tasks": 58,
+      "passed": 54,
+      "scorePct": 93,
+      "toolSuccessPct": 86.8,
+      "avgTurns": 2.97,
+      "avgToolCalls": 1.97,
+      "avgDurationMs": 14127,
+      "inputTokens": 91068,
+      "outputTokens": 48606,
+      "categories": [
+        {
+          "category": "system_info",
+          "tasks": 2,
+          "passed": 1,
+          "rate": 50
+        },
+        {
+          "category": "file_operations",
+          "tasks": 4,
+          "passed": 3,
+          "rate": 66.7
+        },
+        {
+          "category": "scripting",
+          "tasks": 7,
+          "passed": 5,
+          "rate": 68.6
+        },
+        {
+          "category": "json_processing",
+          "tasks": 8,
+          "passed": 8,
+          "rate": 100
+        },
+        {
+          "category": "data_transformation",
+          "tasks": 6,
+          "passed": 6,
+          "rate": 100
+        },
+        {
+          "category": "complex_tasks",
+          "tasks": 6,
+          "passed": 6,
+          "rate": 100
+        },
+        {
+          "category": "text_processing",
+          "tasks": 6,
+          "passed": 6,
+          "rate": 100
+        },
+        {
+          "category": "pipelines",
+          "tasks": 5,
+          "passed": 5,
+          "rate": 100
+        },
+        {
+          "category": "database_operations",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "build_simulation",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "archive_operations",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "config_management",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "environment",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "error_recovery",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "code_search",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        }
+      ]
+    },
+    "bestEval": {
+      "id": "eval-anthropic-claude-opus-4-6-2026-02-27-043856",
+      "kind": "llm-eval",
+      "provider": "anthropic",
+      "model": "claude-opus-4-6",
+      "baseline": null,
+      "label": "anthropic/claude-opus-4-6",
+      "date": "2026-02-27",
+      "timestamp": "2026-02-27T04:38:56Z",
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-6-2026-02-27-043856.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-6-2026-02-27-043856.md",
+      "tasks": 23,
+      "passed": 23,
+      "scorePct": 100,
+      "toolSuccessPct": 90.5,
+      "avgTurns": 4.65,
+      "avgToolCalls": 4.13,
+      "avgDurationMs": 15994,
+      "inputTokens": 143073,
+      "outputTokens": 16086,
+      "categories": [
+        {
+          "category": "file_operations",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "text_processing",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "scripting",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "data_transformation",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "system_info",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "json_processing",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "error_recovery",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "pipelines",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "archive_operations",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "complex_tasks",
+          "tasks": 1,
+          "passed": 1,
+          "rate": 100
+        }
+      ]
+    },
+    "bestBenchmark": {
+      "id": "bench-runsc-linux-x86_64-1770093060",
+      "kind": "bashkit-bench",
+      "label": "runsc-linux-x86_64",
+      "date": "2026-02-03",
+      "timestamp": "2026-02-03T04:31:00.000Z",
+      "source": "crates/bashkit-bench/results/bench-runsc-linux-x86_64-1770093060.json",
+      "reportSource": "crates/bashkit-bench/results/bench-runsc-linux-x86_64-1770093060.md",
+      "cases": 75,
+      "speedup": 200.9,
+      "bashkitMs": 8.97,
+      "bashMs": 1802.42,
+      "errorRate": 0,
+      "matchRate": 89.33,
+      "categories": [
+        {
+          "category": "startup",
+          "description": "Small commands where interpreter startup dominates runtime.",
+          "cases": 4,
+          "bashkitMedianMs": 0.039,
+          "bashMedianMs": 8.474,
+          "speedup": 216.4
+        },
+        {
+          "category": "strings",
+          "description": "String expansion, pattern handling, and text manipulation.",
+          "cases": 8,
+          "bashkitMedianMs": 0.047,
+          "bashMedianMs": 9.218,
+          "speedup": 201.4
+        },
+        {
+          "category": "pipes",
+          "description": "Pipeline construction, streaming, and command chaining.",
+          "cases": 6,
+          "bashkitMedianMs": 0.047,
+          "bashMedianMs": 19.375,
+          "speedup": 367
+        },
+        {
+          "category": "arithmetic",
+          "description": "Integer math, substitutions, and expression-heavy shell snippets.",
+          "cases": 6,
+          "bashkitMedianMs": 0.052,
+          "bashMedianMs": 8.68,
+          "speedup": 177.6
+        },
+        {
+          "category": "arrays",
+          "description": "Indexed array reads, writes, expansion, and iteration.",
+          "cases": 6,
+          "bashkitMedianMs": 0.053,
+          "bashMedianMs": 9.096,
+          "speedup": 172.3
+        },
+        {
+          "category": "variables",
+          "description": "Variable assignment, lookup, expansion, and environment handling.",
+          "cases": 8,
+          "bashkitMedianMs": 0.055,
+          "bashMedianMs": 8.665,
+          "speedup": 162.2
+        },
+        {
+          "category": "control",
+          "description": "Conditionals, loops, case statements, and branching scripts.",
+          "cases": 9,
+          "bashkitMedianMs": 0.065,
+          "bashMedianMs": 9.822,
+          "speedup": 153.8
+        },
+        {
+          "category": "tools",
+          "description": "Builtin and external-tool style command workloads.",
+          "cases": 21,
+          "bashkitMedianMs": 0.094,
+          "bashMedianMs": 23.62,
+          "speedup": 239.9
+        },
+        {
+          "category": "complex",
+          "description": "Mixed shell workflows that combine multiple language features.",
+          "cases": 7,
+          "bashkitMedianMs": 0.097,
+          "bashMedianMs": 22.169,
+          "speedup": 131.5
+        }
+      ]
+    },
+    "bestCriterionImprovement": {
+      "id": "criterion-hotpath-perf-linux-x86_64-1779744742",
+      "kind": "criterion",
+      "family": "hotpath",
+      "label": "Hot-path Performance: Before / After",
+      "date": "2026-05-25",
+      "timestamp": "2026-05-25T21:32:22.000Z",
+      "source": "crates/bashkit/benches/results/criterion-hotpath-perf-linux-x86_64-1779744742.md",
+      "reportSource": "crates/bashkit/benches/results/criterion-hotpath-perf-linux-x86_64-1779744742.md",
+      "cases": 23,
+      "medianUs": null,
+      "p95Us": null,
+      "medianChangePct": -36.6,
+      "meanChangePct": -39.7,
+      "bestChangePct": -64.9,
+      "fastestCase": null,
+      "bestImprovement": {
+        "name": "startup/empty",
+        "changePct": -64.9
+      }
+    }
+  },
+  "benchRuns": [
+    {
+      "id": "bench-runsc-linux-x86_64-1769970640",
+      "kind": "bashkit-bench",
+      "label": "runsc-linux-x86_64",
+      "date": "2026-02-01",
+      "timestamp": "2026-02-01T18:30:40.000Z",
+      "source": "crates/bashkit-bench/results/bench-runsc-linux-x86_64-1769970640.json",
+      "reportSource": "crates/bashkit-bench/results/bench-runsc-linux-x86_64-1769970640.md",
+      "cases": 75,
+      "speedup": 0.4,
+      "bashkitMs": 4004.73,
+      "bashMs": 1663.26,
+      "errorRate": 5.33,
+      "matchRate": 80,
+      "categories": [
+        {
+          "category": "startup",
+          "description": "Small commands where interpreter startup dominates runtime.",
+          "cases": 4,
+          "bashkitMedianMs": 0.004,
+          "bashMedianMs": 9.144,
+          "speedup": 2401.9
+        },
+        {
+          "category": "variables",
+          "description": "Variable assignment, lookup, expansion, and environment handling.",
+          "cases": 8,
+          "bashkitMedianMs": 0.006,
+          "bashMedianMs": 8.654,
+          "speedup": 1611.5
+        },
+        {
+          "category": "strings",
+          "description": "String expansion, pattern handling, and text manipulation.",
+          "cases": 8,
+          "bashkitMedianMs": 0.006,
+          "bashMedianMs": 9.038,
+          "speedup": 1652.9
+        },
+        {
+          "category": "pipes",
+          "description": "Pipeline construction, streaming, and command chaining.",
+          "cases": 6,
+          "bashkitMedianMs": 0.006,
+          "bashMedianMs": 17.435,
+          "speedup": 3767.5
+        },
+        {
+          "category": "arithmetic",
+          "description": "Integer math, substitutions, and expression-heavy shell snippets.",
+          "cases": 6,
+          "bashkitMedianMs": 0.007,
+          "bashMedianMs": 8.839,
+          "speedup": 1307.2
+        },
+        {
+          "category": "arrays",
+          "description": "Indexed array reads, writes, expansion, and iteration.",
+          "cases": 6,
+          "bashkitMedianMs": 0.009,
+          "bashMedianMs": 10.939,
+          "speedup": 1260.4
+        },
+        {
+          "category": "control",
+          "description": "Conditionals, loops, case statements, and branching scripts.",
+          "cases": 9,
+          "bashkitMedianMs": 0.011,
+          "bashMedianMs": 8.81,
+          "speedup": 958.1
+        },
+        {
+          "category": "tools",
+          "description": "Builtin and external-tool style command workloads.",
+          "cases": 21,
+          "bashkitMedianMs": 0.028,
+          "bashMedianMs": 22.573,
+          "speedup": 725.9
+        },
+        {
+          "category": "complex",
+          "description": "Mixed shell workflows that combine multiple language features.",
+          "cases": 7,
+          "bashkitMedianMs": 0.116,
+          "bashMedianMs": 17.902,
+          "speedup": 408.7
+        }
+      ]
+    },
+    {
+      "id": "bench-runsc-linux-x86_64-1770093060",
+      "kind": "bashkit-bench",
+      "label": "runsc-linux-x86_64",
+      "date": "2026-02-03",
+      "timestamp": "2026-02-03T04:31:00.000Z",
+      "source": "crates/bashkit-bench/results/bench-runsc-linux-x86_64-1770093060.json",
+      "reportSource": "crates/bashkit-bench/results/bench-runsc-linux-x86_64-1770093060.md",
+      "cases": 75,
+      "speedup": 200.9,
+      "bashkitMs": 8.97,
+      "bashMs": 1802.42,
+      "errorRate": 0,
+      "matchRate": 89.33,
+      "categories": [
+        {
+          "category": "startup",
+          "description": "Small commands where interpreter startup dominates runtime.",
+          "cases": 4,
+          "bashkitMedianMs": 0.039,
+          "bashMedianMs": 8.474,
+          "speedup": 216.4
+        },
+        {
+          "category": "strings",
+          "description": "String expansion, pattern handling, and text manipulation.",
+          "cases": 8,
+          "bashkitMedianMs": 0.047,
+          "bashMedianMs": 9.218,
+          "speedup": 201.4
+        },
+        {
+          "category": "pipes",
+          "description": "Pipeline construction, streaming, and command chaining.",
+          "cases": 6,
+          "bashkitMedianMs": 0.047,
+          "bashMedianMs": 19.375,
+          "speedup": 367
+        },
+        {
+          "category": "arithmetic",
+          "description": "Integer math, substitutions, and expression-heavy shell snippets.",
+          "cases": 6,
+          "bashkitMedianMs": 0.052,
+          "bashMedianMs": 8.68,
+          "speedup": 177.6
+        },
+        {
+          "category": "arrays",
+          "description": "Indexed array reads, writes, expansion, and iteration.",
+          "cases": 6,
+          "bashkitMedianMs": 0.053,
+          "bashMedianMs": 9.096,
+          "speedup": 172.3
+        },
+        {
+          "category": "variables",
+          "description": "Variable assignment, lookup, expansion, and environment handling.",
+          "cases": 8,
+          "bashkitMedianMs": 0.055,
+          "bashMedianMs": 8.665,
+          "speedup": 162.2
+        },
+        {
+          "category": "control",
+          "description": "Conditionals, loops, case statements, and branching scripts.",
+          "cases": 9,
+          "bashkitMedianMs": 0.065,
+          "bashMedianMs": 9.822,
+          "speedup": 153.8
+        },
+        {
+          "category": "tools",
+          "description": "Builtin and external-tool style command workloads.",
+          "cases": 21,
+          "bashkitMedianMs": 0.094,
+          "bashMedianMs": 23.62,
+          "speedup": 239.9
+        },
+        {
+          "category": "complex",
+          "description": "Mixed shell workflows that combine multiple language features.",
+          "cases": 7,
+          "bashkitMedianMs": 0.097,
+          "bashMedianMs": 22.169,
+          "speedup": 131.5
+        }
+      ]
+    },
+    {
+      "id": "bench-none-linux-x86_64-1773464548",
+      "kind": "bashkit-bench",
+      "label": "none-linux-x86_64",
+      "date": "2026-03-14",
+      "timestamp": "2026-03-14T05:02:28.000Z",
+      "source": "crates/bashkit-bench/results/bench-none-linux-x86_64-1773464548.json",
+      "reportSource": "crates/bashkit-bench/results/bench-none-linux-x86_64-1773464548.md",
+      "cases": 96,
+      "speedup": 23.8,
+      "bashkitMs": 33.11,
+      "bashMs": 787.61,
+      "errorRate": 0,
+      "matchRate": 100,
+      "categories": [
+        {
+          "category": "startup",
+          "description": "Small commands where interpreter startup dominates runtime.",
+          "cases": 4,
+          "bashkitMedianMs": 0.054,
+          "bashMedianMs": 1.436,
+          "speedup": 26.2
+        },
+        {
+          "category": "pipes",
+          "description": "Pipeline construction, streaming, and command chaining.",
+          "cases": 6,
+          "bashkitMedianMs": 0.06,
+          "bashMedianMs": 2.691,
+          "speedup": 43.1
+        },
+        {
+          "category": "variables",
+          "description": "Variable assignment, lookup, expansion, and environment handling.",
+          "cases": 8,
+          "bashkitMedianMs": 0.063,
+          "bashMedianMs": 1.343,
+          "speedup": 21.3
+        },
+        {
+          "category": "arithmetic",
+          "description": "Integer math, substitutions, and expression-heavy shell snippets.",
+          "cases": 6,
+          "bashkitMedianMs": 0.063,
+          "bashMedianMs": 1.442,
+          "speedup": 22.4
+        },
+        {
+          "category": "strings",
+          "description": "String expansion, pattern handling, and text manipulation.",
+          "cases": 8,
+          "bashkitMedianMs": 0.066,
+          "bashMedianMs": 1.454,
+          "speedup": 21.7
+        },
+        {
+          "category": "arrays",
+          "description": "Indexed array reads, writes, expansion, and iteration.",
+          "cases": 6,
+          "bashkitMedianMs": 0.066,
+          "bashMedianMs": 1.408,
+          "speedup": 21.5
+        },
+        {
+          "category": "io",
+          "description": "File reads, writes, redirects, and filesystem-facing commands.",
+          "cases": 6,
+          "bashkitMedianMs": 0.067,
+          "bashMedianMs": 2.172,
+          "speedup": 31.8
+        },
+        {
+          "category": "subshell",
+          "description": "Command substitution and nested shell execution paths.",
+          "cases": 6,
+          "bashkitMedianMs": 0.068,
+          "bashMedianMs": 2.716,
+          "speedup": 31.7
+        },
+        {
+          "category": "control",
+          "description": "Conditionals, loops, case statements, and branching scripts.",
+          "cases": 9,
+          "bashkitMedianMs": 0.076,
+          "bashMedianMs": 1.481,
+          "speedup": 20
+        },
+        {
+          "category": "tools",
+          "description": "Builtin and external-tool style command workloads.",
+          "cases": 21,
+          "bashkitMedianMs": 0.106,
+          "bashMedianMs": 2.998,
+          "speedup": 28.1
+        },
+        {
+          "category": "complex",
+          "description": "Mixed shell workflows that combine multiple language features.",
+          "cases": 7,
+          "bashkitMedianMs": 0.144,
+          "bashMedianMs": 3.069,
+          "speedup": 11.8
+        },
+        {
+          "category": "large",
+          "description": "Bigger scripts and higher-volume data paths.",
+          "cases": 9,
+          "bashkitMedianMs": 0.857,
+          "bashMedianMs": 2.667,
+          "speedup": 3.7
+        }
+      ]
+    },
+    {
+      "id": "bench-runsc-linux-x86_64-1776121540",
+      "kind": "bashkit-bench",
+      "label": "runsc-linux-x86_64",
+      "date": "2026-04-13",
+      "timestamp": "2026-04-13T23:05:40.000Z",
+      "source": "crates/bashkit-bench/results/bench-runsc-linux-x86_64-1776121540.json",
+      "reportSource": "crates/bashkit-bench/results/bench-runsc-linux-x86_64-1776121540.md",
+      "cases": 96,
+      "speedup": 107.2,
+      "bashkitMs": 41.52,
+      "bashMs": 4449.32,
+      "errorRate": 0,
+      "matchRate": 100,
+      "categories": [
+        {
+          "category": "startup",
+          "description": "Small commands where interpreter startup dominates runtime.",
+          "cases": 4,
+          "bashkitMedianMs": 0.07,
+          "bashMedianMs": 8.238,
+          "speedup": 116.7
+        },
+        {
+          "category": "pipes",
+          "description": "Pipeline construction, streaming, and command chaining.",
+          "cases": 6,
+          "bashkitMedianMs": 0.083,
+          "bashMedianMs": 17.156,
+          "speedup": 220.4
+        },
+        {
+          "category": "strings",
+          "description": "String expansion, pattern handling, and text manipulation.",
+          "cases": 8,
+          "bashkitMedianMs": 0.085,
+          "bashMedianMs": 8.256,
+          "speedup": 98.9
+        },
+        {
+          "category": "io",
+          "description": "File reads, writes, redirects, and filesystem-facing commands.",
+          "cases": 6,
+          "bashkitMedianMs": 0.087,
+          "bashMedianMs": 14.647,
+          "speedup": 162.5
+        },
+        {
+          "category": "variables",
+          "description": "Variable assignment, lookup, expansion, and environment handling.",
+          "cases": 8,
+          "bashkitMedianMs": 0.089,
+          "bashMedianMs": 8.357,
+          "speedup": 93.5
+        },
+        {
+          "category": "arithmetic",
+          "description": "Integer math, substitutions, and expression-heavy shell snippets.",
+          "cases": 6,
+          "bashkitMedianMs": 0.091,
+          "bashMedianMs": 8.119,
+          "speedup": 88.5
+        },
+        {
+          "category": "control",
+          "description": "Conditionals, loops, case statements, and branching scripts.",
+          "cases": 9,
+          "bashkitMedianMs": 0.094,
+          "bashMedianMs": 8.163,
+          "speedup": 89.4
+        },
+        {
+          "category": "arrays",
+          "description": "Indexed array reads, writes, expansion, and iteration.",
+          "cases": 6,
+          "bashkitMedianMs": 0.094,
+          "bashMedianMs": 8.109,
+          "speedup": 89.3
+        },
+        {
+          "category": "subshell",
+          "description": "Command substitution and nested shell execution paths.",
+          "cases": 6,
+          "bashkitMedianMs": 0.1,
+          "bashMedianMs": 16.778,
+          "speedup": 133.5
+        },
+        {
+          "category": "tools",
+          "description": "Builtin and external-tool style command workloads.",
+          "cases": 21,
+          "bashkitMedianMs": 0.118,
+          "bashMedianMs": 21.723,
+          "speedup": 167.5
+        },
+        {
+          "category": "complex",
+          "description": "Mixed shell workflows that combine multiple language features.",
+          "cases": 7,
+          "bashkitMedianMs": 0.185,
+          "bashMedianMs": 17.53,
+          "speedup": 72.3
+        },
+        {
+          "category": "large",
+          "description": "Bigger scripts and higher-volume data paths.",
+          "cases": 9,
+          "bashkitMedianMs": 0.84,
+          "bashMedianMs": 9.895,
+          "speedup": 19.8
+        }
+      ]
+    },
+    {
+      "id": "bench-after-perf-linux-x86_64",
+      "kind": "bashkit-bench",
+      "label": "vm-linux-x86_64",
+      "date": "2026-05-25",
+      "timestamp": "2026-05-25T21:35:05.000Z",
+      "source": "crates/bashkit-bench/results/bench-after-perf-linux-x86_64.json",
+      "reportSource": "crates/bashkit-bench/results/bench-after-perf-linux-x86_64.md",
+      "cases": 96,
+      "speedup": 25.4,
+      "bashkitMs": 43.16,
+      "bashMs": 1095.06,
+      "errorRate": 0,
+      "matchRate": 100,
+      "categories": [
+        {
+          "category": "startup",
+          "description": "Small commands where interpreter startup dominates runtime.",
+          "cases": 4,
+          "bashkitMedianMs": 0.044,
+          "bashMedianMs": 1.911,
+          "speedup": 43.5
+        },
+        {
+          "category": "strings",
+          "description": "String expansion, pattern handling, and text manipulation.",
+          "cases": 8,
+          "bashkitMedianMs": 0.044,
+          "bashMedianMs": 2.328,
+          "speedup": 51.3
+        },
+        {
+          "category": "arrays",
+          "description": "Indexed array reads, writes, expansion, and iteration.",
+          "cases": 6,
+          "bashkitMedianMs": 0.045,
+          "bashMedianMs": 2.3,
+          "speedup": 49.7
+        },
+        {
+          "category": "arithmetic",
+          "description": "Integer math, substitutions, and expression-heavy shell snippets.",
+          "cases": 6,
+          "bashkitMedianMs": 0.046,
+          "bashMedianMs": 2.91,
+          "speedup": 52.7
+        },
+        {
+          "category": "variables",
+          "description": "Variable assignment, lookup, expansion, and environment handling.",
+          "cases": 8,
+          "bashkitMedianMs": 0.049,
+          "bashMedianMs": 2.318,
+          "speedup": 49.8
+        },
+        {
+          "category": "subshell",
+          "description": "Command substitution and nested shell execution paths.",
+          "cases": 6,
+          "bashkitMedianMs": 0.05,
+          "bashMedianMs": 3.232,
+          "speedup": 60.6
+        },
+        {
+          "category": "pipes",
+          "description": "Pipeline construction, streaming, and command chaining.",
+          "cases": 6,
+          "bashkitMedianMs": 0.055,
+          "bashMedianMs": 4.574,
+          "speedup": 83.1
+        },
+        {
+          "category": "control",
+          "description": "Conditionals, loops, case statements, and branching scripts.",
+          "cases": 9,
+          "bashkitMedianMs": 0.056,
+          "bashMedianMs": 2.362,
+          "speedup": 36.8
+        },
+        {
+          "category": "io",
+          "description": "File reads, writes, redirects, and filesystem-facing commands.",
+          "cases": 6,
+          "bashkitMedianMs": 0.071,
+          "bashMedianMs": 3.232,
+          "speedup": 50.6
+        },
+        {
+          "category": "tools",
+          "description": "Builtin and external-tool style command workloads.",
+          "cases": 21,
+          "bashkitMedianMs": 0.075,
+          "bashMedianMs": 5.143,
+          "speedup": 62.9
+        },
+        {
+          "category": "complex",
+          "description": "Mixed shell workflows that combine multiple language features.",
+          "cases": 7,
+          "bashkitMedianMs": 0.117,
+          "bashMedianMs": 3.226,
+          "speedup": 22.3
+        },
+        {
+          "category": "large",
+          "description": "Bigger scripts and higher-volume data paths.",
+          "cases": 9,
+          "bashkitMedianMs": 1.554,
+          "bashMedianMs": 3.005,
+          "speedup": 8.6
+        }
+      ]
+    },
+    {
+      "id": "bench-vm-linux-x86_64-1779764460",
+      "kind": "bashkit-bench",
+      "label": "vm-linux-x86_64",
+      "date": "2026-05-26",
+      "timestamp": "2026-05-26T03:01:00.000Z",
+      "source": "crates/bashkit-bench/results/bench-vm-linux-x86_64-1779764460.json",
+      "reportSource": "crates/bashkit-bench/results/bench-vm-linux-x86_64-1779764460.md",
+      "cases": 96,
+      "speedup": 20.9,
+      "bashkitMs": 42.95,
+      "bashMs": 898.83,
+      "errorRate": 0,
+      "matchRate": 100,
+      "categories": [
+        {
+          "category": "startup",
+          "description": "Small commands where interpreter startup dominates runtime.",
+          "cases": 4,
+          "bashkitMedianMs": 0.053,
+          "bashMedianMs": 1.662,
+          "speedup": 32.1
+        },
+        {
+          "category": "strings",
+          "description": "String expansion, pattern handling, and text manipulation.",
+          "cases": 8,
+          "bashkitMedianMs": 0.057,
+          "bashMedianMs": 1.791,
+          "speedup": 31.2
+        },
+        {
+          "category": "variables",
+          "description": "Variable assignment, lookup, expansion, and environment handling.",
+          "cases": 8,
+          "bashkitMedianMs": 0.058,
+          "bashMedianMs": 1.688,
+          "speedup": 30.2
+        },
+        {
+          "category": "arrays",
+          "description": "Indexed array reads, writes, expansion, and iteration.",
+          "cases": 6,
+          "bashkitMedianMs": 0.059,
+          "bashMedianMs": 1.713,
+          "speedup": 29
+        },
+        {
+          "category": "subshell",
+          "description": "Command substitution and nested shell execution paths.",
+          "cases": 6,
+          "bashkitMedianMs": 0.061,
+          "bashMedianMs": 3.143,
+          "speedup": 40.3
+        },
+        {
+          "category": "arithmetic",
+          "description": "Integer math, substitutions, and expression-heavy shell snippets.",
+          "cases": 6,
+          "bashkitMedianMs": 0.062,
+          "bashMedianMs": 1.703,
+          "speedup": 28.8
+        },
+        {
+          "category": "pipes",
+          "description": "Pipeline construction, streaming, and command chaining.",
+          "cases": 6,
+          "bashkitMedianMs": 0.065,
+          "bashMedianMs": 3.131,
+          "speedup": 36.3
+        },
+        {
+          "category": "control",
+          "description": "Conditionals, loops, case statements, and branching scripts.",
+          "cases": 9,
+          "bashkitMedianMs": 0.076,
+          "bashMedianMs": 1.711,
+          "speedup": 26.6
+        },
+        {
+          "category": "io",
+          "description": "File reads, writes, redirects, and filesystem-facing commands.",
+          "cases": 6,
+          "bashkitMedianMs": 0.08,
+          "bashMedianMs": 2.681,
+          "speedup": 37.7
+        },
+        {
+          "category": "tools",
+          "description": "Builtin and external-tool style command workloads.",
+          "cases": 21,
+          "bashkitMedianMs": 0.093,
+          "bashMedianMs": 3.537,
+          "speedup": 37
+        },
+        {
+          "category": "complex",
+          "description": "Mixed shell workflows that combine multiple language features.",
+          "cases": 7,
+          "bashkitMedianMs": 0.118,
+          "bashMedianMs": 3.207,
+          "speedup": 16.5
+        },
+        {
+          "category": "large",
+          "description": "Bigger scripts and higher-volume data paths.",
+          "cases": 9,
+          "bashkitMedianMs": 1.789,
+          "bashMedianMs": 3.289,
+          "speedup": 4.4
+        }
+      ]
+    }
+  ],
+  "criterionRuns": [
+    {
+      "id": "criterion-parallel-(none)-linux-x86_64-1773469129",
+      "kind": "criterion",
+      "family": "parallel",
+      "label": "Criterion Parallel Execution Benchmark",
+      "date": "2026-03-14",
+      "timestamp": "2026-03-14T06:18:49.000Z",
+      "source": "crates/bashkit/benches/results/criterion-parallel-(none)-linux-x86_64-1773469129.md",
+      "reportSource": "crates/bashkit/benches/results/criterion-parallel-(none)-linux-x86_64-1773469129.md",
+      "cases": 9,
+      "medianUs": 160.05,
+      "p95Us": 1122.24,
+      "medianChangePct": null,
+      "meanChangePct": null,
+      "bestChangePct": null,
+      "fastestCase": {
+        "name": "single_bash_new",
+        "us": 23.77
+      },
+      "bestImprovement": null
+    },
+    {
+      "id": "criterion-sqlite-vm-linux-x86_64-1777865268",
+      "kind": "criterion",
+      "family": "sqlite",
+      "label": "Criterion SQLite Builtin Benchmark",
+      "date": "2026-05-04",
+      "timestamp": "2026-05-04T03:27:48.000Z",
+      "source": "crates/bashkit/benches/results/criterion-sqlite-vm-linux-x86_64-1777865268.md",
+      "reportSource": "crates/bashkit/benches/results/criterion-sqlite-vm-linux-x86_64-1777865268.md",
+      "cases": 44,
+      "medianUs": 799.27,
+      "p95Us": 7677.82,
+      "medianChangePct": null,
+      "meanChangePct": null,
+      "bestChangePct": null,
+      "fastestCase": {
+        "name": "sqlite_query/aggregate_in_memory/1000",
+        "us": 739.46
+      },
+      "bestImprovement": null
+    },
+    {
+      "id": "criterion-hotpath-perf-linux-x86_64-1779744742",
+      "kind": "criterion",
+      "family": "hotpath",
+      "label": "Hot-path Performance: Before / After",
+      "date": "2026-05-25",
+      "timestamp": "2026-05-25T21:32:22.000Z",
+      "source": "crates/bashkit/benches/results/criterion-hotpath-perf-linux-x86_64-1779744742.md",
+      "reportSource": "crates/bashkit/benches/results/criterion-hotpath-perf-linux-x86_64-1779744742.md",
+      "cases": 23,
+      "medianUs": null,
+      "p95Us": null,
+      "medianChangePct": -36.6,
+      "meanChangePct": -39.7,
+      "bestChangePct": -64.9,
+      "fastestCase": null,
+      "bestImprovement": {
+        "name": "startup/empty",
+        "changePct": -64.9
+      }
+    },
+    {
+      "id": "criterion-file_ops-linux-x86_64-1779759850",
+      "kind": "criterion",
+      "family": "file-ops",
+      "label": "VFS / File-Ops Bench: Initial Baseline",
+      "date": "2026-05-26",
+      "timestamp": "2026-05-26T01:44:10.000Z",
+      "source": "crates/bashkit/benches/results/criterion-file_ops-linux-x86_64-1779759850.md",
+      "reportSource": "crates/bashkit/benches/results/criterion-file_ops-linux-x86_64-1779759850.md",
+      "cases": 11,
+      "medianUs": 2000,
+      "p95Us": 3590,
+      "medianChangePct": null,
+      "meanChangePct": null,
+      "bestChangePct": null,
+      "fastestCase": {
+        "name": "`for f in /work/d00/*` (shallow glob)",
+        "us": 267
+      },
+      "bestImprovement": null
+    },
+    {
+      "id": "criterion-hotpath-attrs+shopt-linux-x86_64-1779759850",
+      "kind": "criterion",
+      "family": "hotpath",
+      "label": "Hot-path Bench: Attributes + SHOPT Extensions",
+      "date": "2026-05-26",
+      "timestamp": "2026-05-26T01:44:10.000Z",
+      "source": "crates/bashkit/benches/results/criterion-hotpath-attrs+shopt-linux-x86_64-1779759850.md",
+      "reportSource": "crates/bashkit/benches/results/criterion-hotpath-attrs+shopt-linux-x86_64-1779759850.md",
+      "cases": 43,
+      "medianUs": 624,
+      "p95Us": 2713,
+      "medianChangePct": null,
+      "meanChangePct": null,
+      "bestChangePct": null,
+      "fastestCase": {
+        "name": "`startup/empty`",
+        "us": 34.4
+      },
+      "bestImprovement": null
+    }
+  ],
+  "evalRuns": [
+    {
+      "id": "eval-anthropic-claude-haiku-4-5-2026-02-07-052023",
+      "kind": "llm-eval",
+      "provider": "anthropic",
+      "model": "claude-haiku-4-5",
+      "baseline": null,
+      "label": "anthropic/claude-haiku-4-5",
+      "date": "2026-02-07",
+      "timestamp": "2026-02-07T05:20:23Z",
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-haiku-4-5-2026-02-07-052023.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-haiku-4-5-2026-02-07-052023.md",
+      "tasks": 25,
+      "passed": 19,
+      "scorePct": 91.5,
+      "toolSuccessPct": 80.2,
+      "avgTurns": 5.4,
+      "avgToolCalls": 4.64,
+      "avgDurationMs": 9881,
+      "inputTokens": 312188,
+      "outputTokens": 29393,
+      "categories": [
+        {
+          "category": "text_processing",
+          "tasks": 3,
+          "passed": 1,
+          "rate": 50
+        },
+        {
+          "category": "complex_tasks",
+          "tasks": 3,
+          "passed": 0,
+          "rate": 75
+        },
+        {
+          "category": "data_transformation",
+          "tasks": 3,
+          "passed": 2,
+          "rate": 93.8
+        },
+        {
+          "category": "file_operations",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "scripting",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "archive_operations",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "system_info",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "jq_mastery",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "error_recovery",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "pipelines",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        }
+      ]
+    },
+    {
+      "id": "eval-openai-gpt-5.2-2026-02-07-052037",
+      "kind": "llm-eval",
+      "provider": "openai",
+      "model": "gpt-5.2",
+      "baseline": null,
+      "label": "openai/gpt-5.2",
+      "date": "2026-02-07",
+      "timestamp": "2026-02-07T05:20:37Z",
+      "source": "crates/bashkit-eval/results/eval-openai-gpt-5.2-2026-02-07-052037.json",
+      "reportSource": "crates/bashkit-eval/results/eval-openai-gpt-5.2-2026-02-07-052037.md",
+      "tasks": 25,
+      "passed": 19,
+      "scorePct": 86.8,
+      "toolSuccessPct": 57.1,
+      "avgTurns": 4.2,
+      "avgToolCalls": 3.36,
+      "avgDurationMs": 10059,
+      "inputTokens": 147871,
+      "outputTokens": 15067,
+      "categories": [
+        {
+          "category": "complex_tasks",
+          "tasks": 3,
+          "passed": 1,
+          "rate": 56.3
+        },
+        {
+          "category": "scripting",
+          "tasks": 3,
+          "passed": 1,
+          "rate": 66.7
+        },
+        {
+          "category": "text_processing",
+          "tasks": 3,
+          "passed": 2,
+          "rate": 87.5
+        },
+        {
+          "category": "data_transformation",
+          "tasks": 3,
+          "passed": 2,
+          "rate": 93.8
+        },
+        {
+          "category": "file_operations",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "error_recovery",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "archive_operations",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "pipelines",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "jq_mastery",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "system_info",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        }
+      ]
+    },
+    {
+      "id": "eval-anthropic-claude-opus-4-6-2026-02-07-052536",
+      "kind": "llm-eval",
+      "provider": "anthropic",
+      "model": "claude-opus-4-6",
+      "baseline": null,
+      "label": "anthropic/claude-opus-4-6",
+      "date": "2026-02-07",
+      "timestamp": "2026-02-07T05:25:36Z",
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-6-2026-02-07-052536.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-6-2026-02-07-052536.md",
+      "tasks": 25,
+      "passed": 17,
+      "scorePct": 86.8,
+      "toolSuccessPct": 75.2,
+      "avgTurns": 6.2,
+      "avgToolCalls": 5.64,
+      "avgDurationMs": 22480,
+      "inputTokens": 319405,
+      "outputTokens": 27106,
+      "categories": [
+        {
+          "category": "complex_tasks",
+          "tasks": 3,
+          "passed": 0,
+          "rate": 56.3
+        },
+        {
+          "category": "system_info",
+          "tasks": 2,
+          "passed": 1,
+          "rate": 71.4
+        },
+        {
+          "category": "pipelines",
+          "tasks": 2,
+          "passed": 1,
+          "rate": 80
+        },
+        {
+          "category": "scripting",
+          "tasks": 3,
+          "passed": 2,
+          "rate": 86.7
+        },
+        {
+          "category": "text_processing",
+          "tasks": 3,
+          "passed": 2,
+          "rate": 87.5
+        },
+        {
+          "category": "data_transformation",
+          "tasks": 3,
+          "passed": 2,
+          "rate": 93.8
+        },
+        {
+          "category": "file_operations",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "jq_mastery",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "archive_operations",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "error_recovery",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        }
+      ]
+    },
+    {
+      "id": "eval-anthropic-claude-haiku-4-5-2026-02-08-061414",
+      "kind": "llm-eval",
+      "provider": "anthropic",
+      "model": "claude-haiku-4-5",
+      "baseline": null,
+      "label": "anthropic/claude-haiku-4-5",
+      "date": "2026-02-08",
+      "timestamp": "2026-02-08T06:14:14Z",
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-haiku-4-5-2026-02-08-061414.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-haiku-4-5-2026-02-08-061414.md",
+      "tasks": 25,
+      "passed": 23,
+      "scorePct": 98.1,
+      "toolSuccessPct": 87.1,
+      "avgTurns": 4.48,
+      "avgToolCalls": 3.72,
+      "avgDurationMs": 6893,
+      "inputTokens": 166538,
+      "outputTokens": 19473,
+      "categories": [
+        {
+          "category": "scripting",
+          "tasks": 3,
+          "passed": 2,
+          "rate": 93.3
+        },
+        {
+          "category": "file_operations",
+          "tasks": 3,
+          "passed": 2,
+          "rate": 93.8
+        },
+        {
+          "category": "text_processing",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "data_transformation",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "complex_tasks",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "system_info",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "archive_operations",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "pipelines",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "jq_mastery",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "error_recovery",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        }
+      ]
+    },
+    {
+      "id": "eval-openai-gpt-5.2-2026-02-08-061445",
+      "kind": "llm-eval",
+      "provider": "openai",
+      "model": "gpt-5.2",
+      "baseline": null,
+      "label": "openai/gpt-5.2",
+      "date": "2026-02-08",
+      "timestamp": "2026-02-08T06:14:45Z",
+      "source": "crates/bashkit-eval/results/eval-openai-gpt-5.2-2026-02-08-061445.json",
+      "reportSource": "crates/bashkit-eval/results/eval-openai-gpt-5.2-2026-02-08-061445.md",
+      "tasks": 25,
+      "passed": 18,
+      "scorePct": 81.1,
+      "toolSuccessPct": 77.7,
+      "avgTurns": 4.84,
+      "avgToolCalls": 4.12,
+      "avgDurationMs": 8202,
+      "inputTokens": 84322,
+      "outputTokens": 9621,
+      "categories": [
+        {
+          "category": "archive_operations",
+          "tasks": 2,
+          "passed": 1,
+          "rate": 50
+        },
+        {
+          "category": "scripting",
+          "tasks": 3,
+          "passed": 1,
+          "rate": 53.3
+        },
+        {
+          "category": "data_transformation",
+          "tasks": 3,
+          "passed": 2,
+          "rate": 62.5
+        },
+        {
+          "category": "pipelines",
+          "tasks": 2,
+          "passed": 1,
+          "rate": 80
+        },
+        {
+          "category": "error_recovery",
+          "tasks": 2,
+          "passed": 1,
+          "rate": 85.7
+        },
+        {
+          "category": "complex_tasks",
+          "tasks": 3,
+          "passed": 2,
+          "rate": 87.5
+        },
+        {
+          "category": "text_processing",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "file_operations",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "system_info",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "jq_mastery",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        }
+      ]
+    },
+    {
+      "id": "eval-anthropic-claude-opus-4-6-2026-02-08-062003",
+      "kind": "llm-eval",
+      "provider": "anthropic",
+      "model": "claude-opus-4-6",
+      "baseline": null,
+      "label": "anthropic/claude-opus-4-6",
+      "date": "2026-02-08",
+      "timestamp": "2026-02-08T06:20:03Z",
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-6-2026-02-08-062003.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-6-2026-02-08-062003.md",
+      "tasks": 25,
+      "passed": 21,
+      "scorePct": 93.4,
+      "toolSuccessPct": 87.4,
+      "avgTurns": 6.12,
+      "avgToolCalls": 5.72,
+      "avgDurationMs": 20885,
+      "inputTokens": 242338,
+      "outputTokens": 26325,
+      "categories": [
+        {
+          "category": "complex_tasks",
+          "tasks": 3,
+          "passed": 1,
+          "rate": 68.8
+        },
+        {
+          "category": "scripting",
+          "tasks": 3,
+          "passed": 2,
+          "rate": 93.3
+        },
+        {
+          "category": "data_transformation",
+          "tasks": 3,
+          "passed": 2,
+          "rate": 93.8
+        },
+        {
+          "category": "file_operations",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "text_processing",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "pipelines",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "jq_mastery",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "system_info",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "error_recovery",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "archive_operations",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        }
+      ]
+    },
+    {
+      "id": "eval-openai-gpt-5.2-2026-02-09-054424",
+      "kind": "llm-eval",
+      "provider": "openai",
+      "model": "gpt-5.2",
+      "baseline": null,
+      "label": "openai/gpt-5.2",
+      "date": "2026-02-09",
+      "timestamp": "2026-02-09T05:44:24Z",
+      "source": "crates/bashkit-eval/results/eval-openai-gpt-5.2-2026-02-09-054424.json",
+      "reportSource": "crates/bashkit-eval/results/eval-openai-gpt-5.2-2026-02-09-054424.md",
+      "tasks": 37,
+      "passed": 23,
+      "scorePct": 79.9,
+      "toolSuccessPct": 71.3,
+      "avgTurns": 3.78,
+      "avgToolCalls": 2.92,
+      "avgDurationMs": 7805,
+      "inputTokens": 119122,
+      "outputTokens": 16864,
+      "categories": [
+        {
+          "category": "archive_operations",
+          "tasks": 2,
+          "passed": 0,
+          "rate": 16.7
+        },
+        {
+          "category": "scripting",
+          "tasks": 4,
+          "passed": 1,
+          "rate": 52.6
+        },
+        {
+          "category": "complex_tasks",
+          "tasks": 4,
+          "passed": 2,
+          "rate": 66.7
+        },
+        {
+          "category": "text_processing",
+          "tasks": 4,
+          "passed": 3,
+          "rate": 69.2
+        },
+        {
+          "category": "pipelines",
+          "tasks": 3,
+          "passed": 1,
+          "rate": 80
+        },
+        {
+          "category": "json_processing",
+          "tasks": 8,
+          "passed": 5,
+          "rate": 88.7
+        },
+        {
+          "category": "data_transformation",
+          "tasks": 5,
+          "passed": 4,
+          "rate": 89.7
+        },
+        {
+          "category": "file_operations",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "error_recovery",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "system_info",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        }
+      ]
+    },
+    {
+      "id": "eval-anthropic-claude-haiku-4-5-20251001-2026-02-09-054558",
+      "kind": "llm-eval",
+      "provider": "anthropic",
+      "model": "claude-haiku-4-5-20251001",
+      "baseline": null,
+      "label": "anthropic/claude-haiku-4-5-20251001",
+      "date": "2026-02-09",
+      "timestamp": "2026-02-09T05:45:58Z",
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-haiku-4-5-20251001-2026-02-09-054558.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-haiku-4-5-20251001-2026-02-09-054558.md",
+      "tasks": 37,
+      "passed": 32,
+      "scorePct": 94.6,
+      "toolSuccessPct": 80.7,
+      "avgTurns": 4.84,
+      "avgToolCalls": 4.05,
+      "avgDurationMs": 10345,
+      "inputTokens": 285917,
+      "outputTokens": 35290,
+      "categories": [
+        {
+          "category": "complex_tasks",
+          "tasks": 4,
+          "passed": 3,
+          "rate": 91.7
+        },
+        {
+          "category": "text_processing",
+          "tasks": 4,
+          "passed": 3,
+          "rate": 92.3
+        },
+        {
+          "category": "json_processing",
+          "tasks": 8,
+          "passed": 7,
+          "rate": 92.5
+        },
+        {
+          "category": "data_transformation",
+          "tasks": 5,
+          "passed": 4,
+          "rate": 93.1
+        },
+        {
+          "category": "scripting",
+          "tasks": 4,
+          "passed": 3,
+          "rate": 94.7
+        },
+        {
+          "category": "file_operations",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "pipelines",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "error_recovery",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "system_info",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "archive_operations",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        }
+      ]
+    },
+    {
+      "id": "eval-anthropic-claude-opus-4-6-2026-02-09-142736",
+      "kind": "llm-eval",
+      "provider": "anthropic",
+      "model": "claude-opus-4-6",
+      "baseline": null,
+      "label": "anthropic/claude-opus-4-6",
+      "date": "2026-02-09",
+      "timestamp": "2026-02-09T14:27:36Z",
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-6-2026-02-09-142736.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-6-2026-02-09-142736.md",
+      "tasks": 37,
+      "passed": 29,
+      "scorePct": 87,
+      "toolSuccessPct": 82.3,
+      "avgTurns": 5.57,
+      "avgToolCalls": 5.35,
+      "avgDurationMs": 40907,
+      "inputTokens": 315328,
+      "outputTokens": 30847,
+      "categories": [
+        {
+          "category": "complex_tasks",
+          "tasks": 4,
+          "passed": 1,
+          "rate": 54.2
+        },
+        {
+          "category": "text_processing",
+          "tasks": 4,
+          "passed": 3,
+          "rate": 69.2
+        },
+        {
+          "category": "data_transformation",
+          "tasks": 5,
+          "passed": 3,
+          "rate": 89.7
+        },
+        {
+          "category": "json_processing",
+          "tasks": 8,
+          "passed": 7,
+          "rate": 90.6
+        },
+        {
+          "category": "scripting",
+          "tasks": 4,
+          "passed": 3,
+          "rate": 94.7
+        },
+        {
+          "category": "pipelines",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "file_operations",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "error_recovery",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "system_info",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "archive_operations",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        }
+      ]
+    },
+    {
+      "id": "eval-anthropic-claude-sonnet-4-20250514-2026-02-17-230312",
+      "kind": "llm-eval",
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-20250514",
+      "baseline": null,
+      "label": "anthropic/claude-sonnet-4-20250514",
+      "date": "2026-02-17",
+      "timestamp": "2026-02-17T23:03:12Z",
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-sonnet-4-20250514-2026-02-17-230312.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-sonnet-4-20250514-2026-02-17-230312.md",
+      "tasks": 3,
+      "passed": 3,
+      "scorePct": 100,
+      "toolSuccessPct": 100,
+      "avgTurns": 2.33,
+      "avgToolCalls": 1.33,
+      "avgDurationMs": 4522,
+      "inputTokens": 4468,
+      "outputTokens": 489,
+      "categories": [
+        {
+          "category": "basic",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        }
+      ]
+    },
+    {
+      "id": "eval-anthropic-claude-sonnet-4-20250514-2026-02-17-231336",
+      "kind": "llm-eval",
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-20250514",
+      "baseline": null,
+      "label": "anthropic/claude-sonnet-4-20250514",
+      "date": "2026-02-17",
+      "timestamp": "2026-02-17T23:13:36Z",
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-sonnet-4-20250514-2026-02-17-231336.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-sonnet-4-20250514-2026-02-17-231336.md",
+      "tasks": 37,
+      "passed": 32,
+      "scorePct": 92.9,
+      "toolSuccessPct": 89,
+      "avgTurns": 5.73,
+      "avgToolCalls": 4.92,
+      "avgDurationMs": 16511,
+      "inputTokens": 248295,
+      "outputTokens": 30238,
+      "categories": [
+        {
+          "category": "complex_tasks",
+          "tasks": 4,
+          "passed": 2,
+          "rate": 62.5
+        },
+        {
+          "category": "text_processing",
+          "tasks": 4,
+          "passed": 3,
+          "rate": 92.3
+        },
+        {
+          "category": "scripting",
+          "tasks": 4,
+          "passed": 3,
+          "rate": 94.7
+        },
+        {
+          "category": "json_processing",
+          "tasks": 8,
+          "passed": 7,
+          "rate": 96.2
+        },
+        {
+          "category": "data_transformation",
+          "tasks": 5,
+          "passed": 5,
+          "rate": 100
+        },
+        {
+          "category": "file_operations",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "pipelines",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "archive_operations",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "system_info",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "error_recovery",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        }
+      ]
+    },
+    {
+      "id": "eval-anthropic-claude-haiku-4-5-20251001-2026-02-25-044801",
+      "kind": "llm-eval",
+      "provider": "anthropic",
+      "model": "claude-haiku-4-5-20251001",
+      "baseline": null,
+      "label": "anthropic/claude-haiku-4-5-20251001",
+      "date": "2026-02-25",
+      "timestamp": "2026-02-25T04:48:01Z",
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-haiku-4-5-20251001-2026-02-25-044801.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-haiku-4-5-20251001-2026-02-25-044801.md",
+      "tasks": 37,
+      "passed": 35,
+      "scorePct": 97.8,
+      "toolSuccessPct": 96.2,
+      "avgTurns": 3.76,
+      "avgToolCalls": 2.81,
+      "avgDurationMs": 5195,
+      "inputTokens": 171357,
+      "outputTokens": 21399,
+      "categories": [
+        {
+          "category": "scripting",
+          "tasks": 4,
+          "passed": 3,
+          "rate": 89.5
+        },
+        {
+          "category": "json_processing",
+          "tasks": 8,
+          "passed": 7,
+          "rate": 96.2
+        },
+        {
+          "category": "data_transformation",
+          "tasks": 5,
+          "passed": 5,
+          "rate": 100
+        },
+        {
+          "category": "complex_tasks",
+          "tasks": 4,
+          "passed": 4,
+          "rate": 100
+        },
+        {
+          "category": "text_processing",
+          "tasks": 4,
+          "passed": 4,
+          "rate": 100
+        },
+        {
+          "category": "file_operations",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "pipelines",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "error_recovery",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "archive_operations",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "system_info",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        }
+      ]
+    },
+    {
+      "id": "eval-openai-gpt-5.2-2026-02-25-044904",
+      "kind": "llm-eval",
+      "provider": "openai",
+      "model": "gpt-5.2",
+      "baseline": null,
+      "label": "openai/gpt-5.2",
+      "date": "2026-02-25",
+      "timestamp": "2026-02-25T04:49:04Z",
+      "source": "crates/bashkit-eval/results/eval-openai-gpt-5.2-2026-02-25-044904.json",
+      "reportSource": "crates/bashkit-eval/results/eval-openai-gpt-5.2-2026-02-25-044904.md",
+      "tasks": 37,
+      "passed": 27,
+      "scorePct": 86.4,
+      "toolSuccessPct": 72.5,
+      "avgTurns": 3.65,
+      "avgToolCalls": 2.76,
+      "avgDurationMs": 6598,
+      "inputTokens": 87447,
+      "outputTokens": 13514,
+      "categories": [
+        {
+          "category": "archive_operations",
+          "tasks": 2,
+          "passed": 0,
+          "rate": 50
+        },
+        {
+          "category": "scripting",
+          "tasks": 4,
+          "passed": 2,
+          "rate": 63.2
+        },
+        {
+          "category": "text_processing",
+          "tasks": 4,
+          "passed": 3,
+          "rate": 69.2
+        },
+        {
+          "category": "complex_tasks",
+          "tasks": 4,
+          "passed": 2,
+          "rate": 87.5
+        },
+        {
+          "category": "data_transformation",
+          "tasks": 5,
+          "passed": 4,
+          "rate": 89.7
+        },
+        {
+          "category": "pipelines",
+          "tasks": 3,
+          "passed": 2,
+          "rate": 90
+        },
+        {
+          "category": "json_processing",
+          "tasks": 8,
+          "passed": 7,
+          "rate": 92.5
+        },
+        {
+          "category": "file_operations",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "system_info",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "error_recovery",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        }
+      ]
+    },
+    {
+      "id": "eval-anthropic-claude-sonnet-4-20250514-2026-02-25-045328",
+      "kind": "llm-eval",
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-20250514",
+      "baseline": null,
+      "label": "anthropic/claude-sonnet-4-20250514",
+      "date": "2026-02-25",
+      "timestamp": "2026-02-25T04:53:28Z",
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-sonnet-4-20250514-2026-02-25-045328.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-sonnet-4-20250514-2026-02-25-045328.md",
+      "tasks": 37,
+      "passed": 34,
+      "scorePct": 97.3,
+      "toolSuccessPct": 95.4,
+      "avgTurns": 4.97,
+      "avgToolCalls": 4.08,
+      "avgDurationMs": 14049,
+      "inputTokens": 196792,
+      "outputTokens": 24758,
+      "categories": [
+        {
+          "category": "scripting",
+          "tasks": 4,
+          "passed": 2,
+          "rate": 84.2
+        },
+        {
+          "category": "json_processing",
+          "tasks": 8,
+          "passed": 7,
+          "rate": 96.2
+        },
+        {
+          "category": "data_transformation",
+          "tasks": 5,
+          "passed": 5,
+          "rate": 100
+        },
+        {
+          "category": "complex_tasks",
+          "tasks": 4,
+          "passed": 4,
+          "rate": 100
+        },
+        {
+          "category": "text_processing",
+          "tasks": 4,
+          "passed": 4,
+          "rate": 100
+        },
+        {
+          "category": "file_operations",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "pipelines",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "error_recovery",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "archive_operations",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "system_info",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        }
+      ]
+    },
+    {
+      "id": "eval-anthropic-claude-opus-4-6-2026-02-25-045611",
+      "kind": "llm-eval",
+      "provider": "anthropic",
+      "model": "claude-opus-4-6",
+      "baseline": null,
+      "label": "anthropic/claude-opus-4-6",
+      "date": "2026-02-25",
+      "timestamp": "2026-02-25T04:56:11Z",
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-6-2026-02-25-045611.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-6-2026-02-25-045611.md",
+      "tasks": 37,
+      "passed": 33,
+      "scorePct": 92.9,
+      "toolSuccessPct": 89.9,
+      "avgTurns": 4.97,
+      "avgToolCalls": 4.57,
+      "avgDurationMs": 18138,
+      "inputTokens": 275924,
+      "outputTokens": 32578,
+      "categories": [
+        {
+          "category": "complex_tasks",
+          "tasks": 4,
+          "passed": 3,
+          "rate": 70.8
+        },
+        {
+          "category": "scripting",
+          "tasks": 4,
+          "passed": 2,
+          "rate": 89.5
+        },
+        {
+          "category": "json_processing",
+          "tasks": 8,
+          "passed": 7,
+          "rate": 92.5
+        },
+        {
+          "category": "data_transformation",
+          "tasks": 5,
+          "passed": 5,
+          "rate": 100
+        },
+        {
+          "category": "text_processing",
+          "tasks": 4,
+          "passed": 4,
+          "rate": 100
+        },
+        {
+          "category": "pipelines",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "file_operations",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "archive_operations",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "system_info",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "error_recovery",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        }
+      ]
+    },
+    {
+      "id": "eval-anthropic-claude-haiku-4-5-20251001-2026-02-27-040636",
+      "kind": "llm-eval",
+      "provider": "anthropic",
+      "model": "claude-haiku-4-5-20251001",
+      "baseline": null,
+      "label": "anthropic/claude-haiku-4-5-20251001",
+      "date": "2026-02-27",
+      "timestamp": "2026-02-27T04:06:36Z",
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-haiku-4-5-20251001-2026-02-27-040636.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-haiku-4-5-20251001-2026-02-27-040636.md",
+      "tasks": 52,
+      "passed": 43,
+      "scorePct": 91.7,
+      "toolSuccessPct": 92.8,
+      "avgTurns": 5.08,
+      "avgToolCalls": 4.29,
+      "avgDurationMs": 8366,
+      "inputTokens": 397596,
+      "outputTokens": 46276,
+      "categories": [
+        {
+          "category": "file_operations",
+          "tasks": 4,
+          "passed": 3,
+          "rate": 70.8
+        },
+        {
+          "category": "text_processing",
+          "tasks": 6,
+          "passed": 5,
+          "rate": 75
+        },
+        {
+          "category": "scripting",
+          "tasks": 7,
+          "passed": 4,
+          "rate": 86.5
+        },
+        {
+          "category": "code_search",
+          "tasks": 2,
+          "passed": 1,
+          "rate": 92.3
+        },
+        {
+          "category": "environment",
+          "tasks": 2,
+          "passed": 1,
+          "rate": 93.3
+        },
+        {
+          "category": "data_transformation",
+          "tasks": 6,
+          "passed": 5,
+          "rate": 94.6
+        },
+        {
+          "category": "pipelines",
+          "tasks": 5,
+          "passed": 4,
+          "rate": 95
+        },
+        {
+          "category": "json_processing",
+          "tasks": 8,
+          "passed": 8,
+          "rate": 100
+        },
+        {
+          "category": "complex_tasks",
+          "tasks": 6,
+          "passed": 6,
+          "rate": 100
+        },
+        {
+          "category": "error_recovery",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "archive_operations",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "system_info",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        }
+      ]
+    },
+    {
+      "id": "eval-openai-gpt-5.2-2026-02-27-043813",
+      "kind": "llm-eval",
+      "provider": "openai",
+      "model": "gpt-5.2",
+      "baseline": null,
+      "label": "openai/gpt-5.2",
+      "date": "2026-02-27",
+      "timestamp": "2026-02-27T04:38:13Z",
+      "source": "crates/bashkit-eval/results/eval-openai-gpt-5.2-2026-02-27-043813.json",
+      "reportSource": "crates/bashkit-eval/results/eval-openai-gpt-5.2-2026-02-27-043813.md",
+      "tasks": 52,
+      "passed": 32,
+      "scorePct": 79.4,
+      "toolSuccessPct": 88.2,
+      "avgTurns": 3.38,
+      "avgToolCalls": 2.44,
+      "avgDurationMs": 6753,
+      "inputTokens": 123013,
+      "outputTokens": 20725,
+      "categories": [
+        {
+          "category": "archive_operations",
+          "tasks": 2,
+          "passed": 1,
+          "rate": 50
+        },
+        {
+          "category": "code_search",
+          "tasks": 2,
+          "passed": 0,
+          "rate": 53.8
+        },
+        {
+          "category": "scripting",
+          "tasks": 7,
+          "passed": 3,
+          "rate": 64.9
+        },
+        {
+          "category": "pipelines",
+          "tasks": 5,
+          "passed": 2,
+          "rate": 65
+        },
+        {
+          "category": "file_operations",
+          "tasks": 4,
+          "passed": 2,
+          "rate": 66.7
+        },
+        {
+          "category": "text_processing",
+          "tasks": 6,
+          "passed": 5,
+          "rate": 78.6
+        },
+        {
+          "category": "data_transformation",
+          "tasks": 6,
+          "passed": 4,
+          "rate": 80
+        },
+        {
+          "category": "environment",
+          "tasks": 2,
+          "passed": 1,
+          "rate": 86.7
+        },
+        {
+          "category": "complex_tasks",
+          "tasks": 6,
+          "passed": 4,
+          "rate": 89.5
+        },
+        {
+          "category": "json_processing",
+          "tasks": 8,
+          "passed": 6,
+          "rate": 94.6
+        },
+        {
+          "category": "error_recovery",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "system_info",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        }
+      ]
+    },
+    {
+      "id": "eval-anthropic-claude-sonnet-4-6-2026-02-27-043854",
+      "kind": "llm-eval",
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "baseline": null,
+      "label": "anthropic/claude-sonnet-4-6",
+      "date": "2026-02-27",
+      "timestamp": "2026-02-27T04:38:54Z",
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-sonnet-4-6-2026-02-27-043854.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-sonnet-4-6-2026-02-27-043854.md",
+      "tasks": 26,
+      "passed": 23,
+      "scorePct": 93.9,
+      "toolSuccessPct": 86.5,
+      "avgTurns": 4.5,
+      "avgToolCalls": 4,
+      "avgDurationMs": 15066,
+      "inputTokens": 211595,
+      "outputTokens": 27426,
+      "categories": [
+        {
+          "category": "archive_operations",
+          "tasks": 2,
+          "passed": 1,
+          "rate": 50
+        },
+        {
+          "category": "system_info",
+          "tasks": 2,
+          "passed": 1,
+          "rate": 57.1
+        },
+        {
+          "category": "complex_tasks",
+          "tasks": 3,
+          "passed": 2,
+          "rate": 93.8
+        },
+        {
+          "category": "text_processing",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "scripting",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "data_transformation",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "file_operations",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "json_processing",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "pipelines",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "error_recovery",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        }
+      ]
+    },
+    {
+      "id": "eval-anthropic-claude-opus-4-6-2026-02-27-043856",
+      "kind": "llm-eval",
+      "provider": "anthropic",
+      "model": "claude-opus-4-6",
+      "baseline": null,
+      "label": "anthropic/claude-opus-4-6",
+      "date": "2026-02-27",
+      "timestamp": "2026-02-27T04:38:56Z",
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-6-2026-02-27-043856.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-6-2026-02-27-043856.md",
+      "tasks": 23,
+      "passed": 23,
+      "scorePct": 100,
+      "toolSuccessPct": 90.5,
+      "avgTurns": 4.65,
+      "avgToolCalls": 4.13,
+      "avgDurationMs": 15994,
+      "inputTokens": 143073,
+      "outputTokens": 16086,
+      "categories": [
+        {
+          "category": "file_operations",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "text_processing",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "scripting",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "data_transformation",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "system_info",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "json_processing",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "error_recovery",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "pipelines",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "archive_operations",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "complex_tasks",
+          "tasks": 1,
+          "passed": 1,
+          "rate": 100
+        }
+      ]
+    },
+    {
+      "id": "eval-openai-responses-gpt-5.3-codex-2026-02-27-055543",
+      "kind": "llm-eval",
+      "provider": "openai-responses",
+      "model": "gpt-5.3-codex",
+      "baseline": null,
+      "label": "openai-responses/gpt-5.3-codex",
+      "date": "2026-02-27",
+      "timestamp": "2026-02-27T05:55:43Z",
+      "source": "crates/bashkit-eval/results/eval-openai-responses-gpt-5.3-codex-2026-02-27-055543.json",
+      "reportSource": "crates/bashkit-eval/results/eval-openai-responses-gpt-5.3-codex-2026-02-27-055543.md",
+      "tasks": 37,
+      "passed": 30,
+      "scorePct": 93,
+      "toolSuccessPct": 71.6,
+      "avgTurns": 3.46,
+      "avgToolCalls": 2.57,
+      "avgDurationMs": 17155,
+      "inputTokens": 96511,
+      "outputTokens": 32865,
+      "categories": [
+        {
+          "category": "scripting",
+          "tasks": 4,
+          "passed": 3,
+          "rate": 78.9
+        },
+        {
+          "category": "error_recovery",
+          "tasks": 2,
+          "passed": 1,
+          "rate": 85.7
+        },
+        {
+          "category": "data_transformation",
+          "tasks": 5,
+          "passed": 3,
+          "rate": 86.2
+        },
+        {
+          "category": "complex_tasks",
+          "tasks": 4,
+          "passed": 2,
+          "rate": 87.5
+        },
+        {
+          "category": "file_operations",
+          "tasks": 3,
+          "passed": 2,
+          "rate": 93.8
+        },
+        {
+          "category": "json_processing",
+          "tasks": 8,
+          "passed": 8,
+          "rate": 100
+        },
+        {
+          "category": "text_processing",
+          "tasks": 4,
+          "passed": 4,
+          "rate": 100
+        },
+        {
+          "category": "pipelines",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        },
+        {
+          "category": "system_info",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "archive_operations",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        }
+      ]
+    },
+    {
+      "id": "eval-openai-gpt-5.2-2026-02-28-204052",
+      "kind": "llm-eval",
+      "provider": "openai",
+      "model": "gpt-5.2",
+      "baseline": null,
+      "label": "openai/gpt-5.2",
+      "date": "2026-02-28",
+      "timestamp": "2026-02-28T20:40:52Z",
+      "source": "crates/bashkit-eval/results/eval-openai-gpt-5.2-2026-02-28-204052.json",
+      "reportSource": "crates/bashkit-eval/results/eval-openai-gpt-5.2-2026-02-28-204052.md",
+      "tasks": 58,
+      "passed": 41,
+      "scorePct": 77.3,
+      "toolSuccessPct": 67.3,
+      "avgTurns": 3.55,
+      "avgToolCalls": 2.69,
+      "avgDurationMs": 7194,
+      "inputTokens": 200797,
+      "outputTokens": 28751,
+      "categories": [
+        {
+          "category": "config_management",
+          "tasks": 2,
+          "passed": 0,
+          "rate": 7.1
+        },
+        {
+          "category": "archive_operations",
+          "tasks": 2,
+          "passed": 1,
+          "rate": 33.3
+        },
+        {
+          "category": "build_simulation",
+          "tasks": 2,
+          "passed": 0,
+          "rate": 36.4
+        },
+        {
+          "category": "complex_tasks",
+          "tasks": 6,
+          "passed": 3,
+          "rate": 45.9
+        },
+        {
+          "category": "scripting",
+          "tasks": 7,
+          "passed": 3,
+          "rate": 64.9
+        },
+        {
+          "category": "file_operations",
+          "tasks": 4,
+          "passed": 3,
+          "rate": 70.8
+        },
+        {
+          "category": "text_processing",
+          "tasks": 6,
+          "passed": 5,
+          "rate": 85.7
+        },
+        {
+          "category": "pipelines",
+          "tasks": 5,
+          "passed": 4,
+          "rate": 90
+        },
+        {
+          "category": "json_processing",
+          "tasks": 8,
+          "passed": 7,
+          "rate": 96.4
+        },
+        {
+          "category": "data_transformation",
+          "tasks": 6,
+          "passed": 5,
+          "rate": 97.1
+        },
+        {
+          "category": "database_operations",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "code_search",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "system_info",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "error_recovery",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "environment",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        }
+      ]
+    },
+    {
+      "id": "eval-anthropic-claude-haiku-4-5-20251001-2026-02-28-204232",
+      "kind": "llm-eval",
+      "provider": "anthropic",
+      "model": "claude-haiku-4-5-20251001",
+      "baseline": null,
+      "label": "anthropic/claude-haiku-4-5-20251001",
+      "date": "2026-02-28",
+      "timestamp": "2026-02-28T20:42:32Z",
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-haiku-4-5-20251001-2026-02-28-204232.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-haiku-4-5-20251001-2026-02-28-204232.md",
+      "tasks": 58,
+      "passed": 54,
+      "scorePct": 97.2,
+      "toolSuccessPct": 87.8,
+      "avgTurns": 4.9,
+      "avgToolCalls": 4.1,
+      "avgDurationMs": 8912,
+      "inputTokens": 546648,
+      "outputTokens": 69289,
+      "categories": [
+        {
+          "category": "config_management",
+          "tasks": 2,
+          "passed": 1,
+          "rate": 64.3
+        },
+        {
+          "category": "file_operations",
+          "tasks": 4,
+          "passed": 3,
+          "rate": 91.7
+        },
+        {
+          "category": "database_operations",
+          "tasks": 2,
+          "passed": 1,
+          "rate": 91.7
+        },
+        {
+          "category": "scripting",
+          "tasks": 7,
+          "passed": 6,
+          "rate": 97.3
+        },
+        {
+          "category": "json_processing",
+          "tasks": 8,
+          "passed": 8,
+          "rate": 100
+        },
+        {
+          "category": "data_transformation",
+          "tasks": 6,
+          "passed": 6,
+          "rate": 100
+        },
+        {
+          "category": "complex_tasks",
+          "tasks": 6,
+          "passed": 6,
+          "rate": 100
+        },
+        {
+          "category": "text_processing",
+          "tasks": 6,
+          "passed": 6,
+          "rate": 100
+        },
+        {
+          "category": "pipelines",
+          "tasks": 5,
+          "passed": 5,
+          "rate": 100
+        },
+        {
+          "category": "error_recovery",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "build_simulation",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "system_info",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "archive_operations",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "environment",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "code_search",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        }
+      ]
+    },
+    {
+      "id": "eval-openresponses-gpt-5.3-codex-2026-02-28-205331",
+      "kind": "llm-eval",
+      "provider": "openresponses",
+      "model": "gpt-5.3-codex",
+      "baseline": null,
+      "label": "openresponses/gpt-5.3-codex",
+      "date": "2026-02-28",
+      "timestamp": "2026-02-28T20:53:31Z",
+      "source": "crates/bashkit-eval/results/eval-openresponses-gpt-5.3-codex-2026-02-28-205331.json",
+      "reportSource": "crates/bashkit-eval/results/eval-openresponses-gpt-5.3-codex-2026-02-28-205331.md",
+      "tasks": 58,
+      "passed": 51,
+      "scorePct": 91,
+      "toolSuccessPct": 82.8,
+      "avgTurns": 4.1,
+      "avgToolCalls": 3.21,
+      "avgDurationMs": 20302,
+      "inputTokens": 238948,
+      "outputTokens": 68519,
+      "categories": [
+        {
+          "category": "config_management",
+          "tasks": 2,
+          "passed": 0,
+          "rate": 21.4
+        },
+        {
+          "category": "file_operations",
+          "tasks": 4,
+          "passed": 3,
+          "rate": 66.7
+        },
+        {
+          "category": "build_simulation",
+          "tasks": 2,
+          "passed": 1,
+          "rate": 72.7
+        },
+        {
+          "category": "scripting",
+          "tasks": 7,
+          "passed": 6,
+          "rate": 89.2
+        },
+        {
+          "category": "data_transformation",
+          "tasks": 6,
+          "passed": 4,
+          "rate": 91.4
+        },
+        {
+          "category": "json_processing",
+          "tasks": 8,
+          "passed": 8,
+          "rate": 100
+        },
+        {
+          "category": "text_processing",
+          "tasks": 6,
+          "passed": 6,
+          "rate": 100
+        },
+        {
+          "category": "complex_tasks",
+          "tasks": 6,
+          "passed": 6,
+          "rate": 100
+        },
+        {
+          "category": "pipelines",
+          "tasks": 5,
+          "passed": 5,
+          "rate": 100
+        },
+        {
+          "category": "code_search",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "error_recovery",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "system_info",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "environment",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "database_operations",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "archive_operations",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        }
+      ]
+    },
+    {
+      "id": "eval-anthropic-claude-opus-4-6-2026-02-28-205358",
+      "kind": "llm-eval",
+      "provider": "anthropic",
+      "model": "claude-opus-4-6",
+      "baseline": null,
+      "label": "anthropic/claude-opus-4-6",
+      "date": "2026-02-28",
+      "timestamp": "2026-02-28T20:53:58Z",
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-6-2026-02-28-205358.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-6-2026-02-28-205358.md",
+      "tasks": 58,
+      "passed": 50,
+      "scorePct": 91,
+      "toolSuccessPct": 87.7,
+      "avgTurns": 4.98,
+      "avgToolCalls": 4.64,
+      "avgDurationMs": 20817,
+      "inputTokens": 517521,
+      "outputTokens": 61283,
+      "categories": [
+        {
+          "category": "config_management",
+          "tasks": 2,
+          "passed": 1,
+          "rate": 57.1
+        },
+        {
+          "category": "build_simulation",
+          "tasks": 2,
+          "passed": 1,
+          "rate": 63.6
+        },
+        {
+          "category": "file_operations",
+          "tasks": 4,
+          "passed": 3,
+          "rate": 70.8
+        },
+        {
+          "category": "database_operations",
+          "tasks": 2,
+          "passed": 1,
+          "rate": 83.3
+        },
+        {
+          "category": "complex_tasks",
+          "tasks": 6,
+          "passed": 4,
+          "rate": 86.5
+        },
+        {
+          "category": "scripting",
+          "tasks": 7,
+          "passed": 6,
+          "rate": 91.9
+        },
+        {
+          "category": "json_processing",
+          "tasks": 8,
+          "passed": 7,
+          "rate": 96.4
+        },
+        {
+          "category": "text_processing",
+          "tasks": 6,
+          "passed": 6,
+          "rate": 100
+        },
+        {
+          "category": "data_transformation",
+          "tasks": 6,
+          "passed": 6,
+          "rate": 100
+        },
+        {
+          "category": "pipelines",
+          "tasks": 5,
+          "passed": 5,
+          "rate": 100
+        },
+        {
+          "category": "system_info",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "error_recovery",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "environment",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "archive_operations",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "code_search",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        }
+      ]
+    },
+    {
+      "id": "eval-anthropic-claude-sonnet-4-6-2026-02-28-211120",
+      "kind": "llm-eval",
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "baseline": null,
+      "label": "anthropic/claude-sonnet-4-6",
+      "date": "2026-02-28",
+      "timestamp": "2026-02-28T21:11:20Z",
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-sonnet-4-6-2026-02-28-211120.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-sonnet-4-6-2026-02-28-211120.md",
+      "tasks": 58,
+      "passed": 48,
+      "scorePct": 92.5,
+      "toolSuccessPct": 85.1,
+      "avgTurns": 5.16,
+      "avgToolCalls": 4.5,
+      "avgDurationMs": 21165,
+      "inputTokens": 561128,
+      "outputTokens": 67103,
+      "categories": [
+        {
+          "category": "archive_operations",
+          "tasks": 2,
+          "passed": 1,
+          "rate": 33.3
+        },
+        {
+          "category": "system_info",
+          "tasks": 2,
+          "passed": 1,
+          "rate": 57.1
+        },
+        {
+          "category": "config_management",
+          "tasks": 2,
+          "passed": 1,
+          "rate": 64.3
+        },
+        {
+          "category": "build_simulation",
+          "tasks": 2,
+          "passed": 1,
+          "rate": 72.7
+        },
+        {
+          "category": "scripting",
+          "tasks": 7,
+          "passed": 4,
+          "rate": 86.5
+        },
+        {
+          "category": "file_operations",
+          "tasks": 4,
+          "passed": 2,
+          "rate": 87.5
+        },
+        {
+          "category": "pipelines",
+          "tasks": 5,
+          "passed": 4,
+          "rate": 95
+        },
+        {
+          "category": "json_processing",
+          "tasks": 8,
+          "passed": 8,
+          "rate": 100
+        },
+        {
+          "category": "text_processing",
+          "tasks": 6,
+          "passed": 6,
+          "rate": 100
+        },
+        {
+          "category": "complex_tasks",
+          "tasks": 6,
+          "passed": 6,
+          "rate": 100
+        },
+        {
+          "category": "data_transformation",
+          "tasks": 6,
+          "passed": 6,
+          "rate": 100
+        },
+        {
+          "category": "code_search",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "environment",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "database_operations",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "error_recovery",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        }
+      ]
+    },
+    {
+      "id": "scripting-eval-scripted-openai-gpt-5.4-2026-03-14-174422",
+      "kind": "scripting-eval",
+      "provider": "openai",
+      "model": "gpt-5.4",
+      "baseline": false,
+      "label": "openai/gpt-5.4",
+      "date": "2026-03-14",
+      "timestamp": "2026-03-14T17:44:22Z",
+      "source": "crates/bashkit-eval/results/scripting-eval-scripted-openai-gpt-5.4-2026-03-14-174422.json",
+      "reportSource": "crates/bashkit-eval/results/scripting-eval-scripted-openai-gpt-5.4-2026-03-14-174422.md",
+      "tasks": 4,
+      "passed": 3,
+      "scorePct": 93.1,
+      "toolSuccessPct": 92.9,
+      "avgTurns": 3.75,
+      "avgToolCalls": 3.5,
+      "avgDurationMs": 9262,
+      "inputTokens": 21808,
+      "outputTokens": 1830,
+      "categories": [
+        {
+          "category": "many_tools",
+          "tasks": 4,
+          "passed": 3,
+          "rate": 93.1
+        }
+      ]
+    },
+    {
+      "id": "scripting-eval-scripted-openai-gpt-5.4-2026-03-14-174433",
+      "kind": "scripting-eval",
+      "provider": "openai",
+      "model": "gpt-5.4",
+      "baseline": false,
+      "label": "openai/gpt-5.4",
+      "date": "2026-03-14",
+      "timestamp": "2026-03-14T17:44:33Z",
+      "source": "crates/bashkit-eval/results/scripting-eval-scripted-openai-gpt-5.4-2026-03-14-174433.json",
+      "reportSource": "crates/bashkit-eval/results/scripting-eval-scripted-openai-gpt-5.4-2026-03-14-174433.md",
+      "tasks": 3,
+      "passed": 3,
+      "scorePct": 100,
+      "toolSuccessPct": 75,
+      "avgTurns": 2.33,
+      "avgToolCalls": 1.33,
+      "avgDurationMs": 3586,
+      "inputTokens": 5250,
+      "outputTokens": 540,
+      "categories": [
+        {
+          "category": "large_output",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        }
+      ]
+    },
+    {
+      "id": "scripting-eval-scripted-openai-gpt-5.4-2026-03-14-174446",
+      "kind": "scripting-eval",
+      "provider": "openai",
+      "model": "gpt-5.4",
+      "baseline": false,
+      "label": "openai/gpt-5.4",
+      "date": "2026-03-14",
+      "timestamp": "2026-03-14T17:44:46Z",
+      "source": "crates/bashkit-eval/results/scripting-eval-scripted-openai-gpt-5.4-2026-03-14-174446.json",
+      "reportSource": "crates/bashkit-eval/results/scripting-eval-scripted-openai-gpt-5.4-2026-03-14-174446.md",
+      "tasks": 3,
+      "passed": 2,
+      "scorePct": 84.6,
+      "toolSuccessPct": 100,
+      "avgTurns": 2,
+      "avgToolCalls": 1,
+      "avgDurationMs": 4256,
+      "inputTokens": 4136,
+      "outputTokens": 779,
+      "categories": [
+        {
+          "category": "paginated_responses",
+          "tasks": 3,
+          "passed": 2,
+          "rate": 84.6
+        }
+      ]
+    },
+    {
+      "id": "scripting-eval-scripted-openai-gpt-5.4-2026-03-14-174458",
+      "kind": "scripting-eval",
+      "provider": "openai",
+      "model": "gpt-5.4",
+      "baseline": false,
+      "label": "openai/gpt-5.4",
+      "date": "2026-03-14",
+      "timestamp": "2026-03-14T17:44:58Z",
+      "source": "crates/bashkit-eval/results/scripting-eval-scripted-openai-gpt-5.4-2026-03-14-174458.json",
+      "reportSource": "crates/bashkit-eval/results/scripting-eval-scripted-openai-gpt-5.4-2026-03-14-174458.md",
+      "tasks": 4,
+      "passed": 0,
+      "scorePct": 75,
+      "toolSuccessPct": 100,
+      "avgTurns": 2.25,
+      "avgToolCalls": 1.5,
+      "avgDurationMs": 2898,
+      "inputTokens": 7151,
+      "outputTokens": 471,
+      "categories": [
+        {
+          "category": "discovery",
+          "tasks": 4,
+          "passed": 0,
+          "rate": 75
+        }
+      ]
+    },
+    {
+      "id": "scripting-eval-baseline-openai-gpt-5.4-2026-03-14-174521",
+      "kind": "scripting-eval",
+      "provider": "openai",
+      "model": "gpt-5.4",
+      "baseline": true,
+      "label": "openai/gpt-5.4",
+      "date": "2026-03-14",
+      "timestamp": "2026-03-14T17:45:21Z",
+      "source": "crates/bashkit-eval/results/scripting-eval-baseline-openai-gpt-5.4-2026-03-14-174521.json",
+      "reportSource": "crates/bashkit-eval/results/scripting-eval-baseline-openai-gpt-5.4-2026-03-14-174521.md",
+      "tasks": 4,
+      "passed": 3,
+      "scorePct": 96.6,
+      "toolSuccessPct": 100,
+      "avgTurns": 3,
+      "avgToolCalls": 3.75,
+      "avgDurationMs": 5574,
+      "inputTokens": 12002,
+      "outputTokens": 1090,
+      "categories": [
+        {
+          "category": "many_tools",
+          "tasks": 4,
+          "passed": 3,
+          "rate": 96.6
+        }
+      ]
+    },
+    {
+      "id": "scripting-eval-baseline-openai-gpt-5.4-2026-03-14-174530",
+      "kind": "scripting-eval",
+      "provider": "openai",
+      "model": "gpt-5.4",
+      "baseline": true,
+      "label": "openai/gpt-5.4",
+      "date": "2026-03-14",
+      "timestamp": "2026-03-14T17:45:30Z",
+      "source": "crates/bashkit-eval/results/scripting-eval-baseline-openai-gpt-5.4-2026-03-14-174530.json",
+      "reportSource": "crates/bashkit-eval/results/scripting-eval-baseline-openai-gpt-5.4-2026-03-14-174530.md",
+      "tasks": 3,
+      "passed": 2,
+      "scorePct": 90,
+      "toolSuccessPct": 100,
+      "avgTurns": 2,
+      "avgToolCalls": 1,
+      "avgDurationMs": 2889,
+      "inputTokens": 8019,
+      "outputTokens": 336,
+      "categories": [
+        {
+          "category": "large_output",
+          "tasks": 3,
+          "passed": 2,
+          "rate": 90
+        }
+      ]
+    },
+    {
+      "id": "scripting-eval-baseline-openai-gpt-5.4-2026-03-14-174541",
+      "kind": "scripting-eval",
+      "provider": "openai",
+      "model": "gpt-5.4",
+      "baseline": true,
+      "label": "openai/gpt-5.4",
+      "date": "2026-03-14",
+      "timestamp": "2026-03-14T17:45:41Z",
+      "source": "crates/bashkit-eval/results/scripting-eval-baseline-openai-gpt-5.4-2026-03-14-174541.json",
+      "reportSource": "crates/bashkit-eval/results/scripting-eval-baseline-openai-gpt-5.4-2026-03-14-174541.md",
+      "tasks": 3,
+      "passed": 3,
+      "scorePct": 100,
+      "toolSuccessPct": 100,
+      "avgTurns": 3.33,
+      "avgToolCalls": 6.33,
+      "avgDurationMs": 3626,
+      "inputTokens": 5673,
+      "outputTokens": 472,
+      "categories": [
+        {
+          "category": "paginated_responses",
+          "tasks": 3,
+          "passed": 3,
+          "rate": 100
+        }
+      ]
+    },
+    {
+      "id": "scripting-eval-scripted-openai-gpt-4o-2026-03-24-003610",
+      "kind": "scripting-eval",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "baseline": false,
+      "label": "openai/gpt-4o",
+      "date": "2026-03-24",
+      "timestamp": "2026-03-24T00:36:10Z",
+      "source": "crates/bashkit-eval/results/scripting-eval-scripted-openai-gpt-4o-2026-03-24-003610.json",
+      "reportSource": "crates/bashkit-eval/results/scripting-eval-scripted-openai-gpt-4o-2026-03-24-003610.md",
+      "tasks": 4,
+      "passed": 3,
+      "scorePct": 91.7,
+      "toolSuccessPct": 100,
+      "avgTurns": 4,
+      "avgToolCalls": 3.25,
+      "avgDurationMs": 5151,
+      "inputTokens": 12253,
+      "outputTokens": 516,
+      "categories": [
+        {
+          "category": "discovery",
+          "tasks": 4,
+          "passed": 3,
+          "rate": 91.7
+        }
+      ]
+    },
+    {
+      "id": "eval-anthropic-claude-haiku-4-5-20251001-2026-05-26-012523",
+      "kind": "llm-eval",
+      "provider": "anthropic",
+      "model": "claude-haiku-4-5-20251001",
+      "baseline": null,
+      "label": "anthropic/claude-haiku-4-5-20251001",
+      "date": "2026-05-26",
+      "timestamp": "2026-05-26T01:25:23Z",
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-haiku-4-5-20251001-2026-05-26-012523.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-haiku-4-5-20251001-2026-05-26-012523.md",
+      "tasks": 58,
+      "passed": 54,
+      "scorePct": 98.4,
+      "toolSuccessPct": 92.3,
+      "avgTurns": 4.28,
+      "avgToolCalls": 3.36,
+      "avgDurationMs": 8262,
+      "inputTokens": 372316,
+      "outputTokens": 53645,
+      "categories": [
+        {
+          "category": "file_operations",
+          "tasks": 4,
+          "passed": 3,
+          "rate": 91.7
+        },
+        {
+          "category": "scripting",
+          "tasks": 7,
+          "passed": 5,
+          "rate": 94.3
+        },
+        {
+          "category": "data_transformation",
+          "tasks": 6,
+          "passed": 5,
+          "rate": 97.1
+        },
+        {
+          "category": "json_processing",
+          "tasks": 8,
+          "passed": 8,
+          "rate": 100
+        },
+        {
+          "category": "text_processing",
+          "tasks": 6,
+          "passed": 6,
+          "rate": 100
+        },
+        {
+          "category": "complex_tasks",
+          "tasks": 6,
+          "passed": 6,
+          "rate": 100
+        },
+        {
+          "category": "pipelines",
+          "tasks": 5,
+          "passed": 5,
+          "rate": 100
+        },
+        {
+          "category": "environment",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "archive_operations",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "database_operations",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "config_management",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "error_recovery",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "system_info",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "build_simulation",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "code_search",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        }
+      ]
+    },
+    {
+      "id": "eval-anthropic-claude-sonnet-4-6-2026-05-26-014508",
+      "kind": "llm-eval",
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "baseline": null,
+      "label": "anthropic/claude-sonnet-4-6",
+      "date": "2026-05-26",
+      "timestamp": "2026-05-26T01:45:08Z",
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-sonnet-4-6-2026-05-26-014508.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-sonnet-4-6-2026-05-26-014508.md",
+      "tasks": 58,
+      "passed": 49,
+      "scorePct": 94,
+      "toolSuccessPct": 91,
+      "avgTurns": 4.12,
+      "avgToolCalls": 3.24,
+      "avgDurationMs": 20426,
+      "inputTokens": 413200,
+      "outputTokens": 68169,
+      "categories": [
+        {
+          "category": "system_info",
+          "tasks": 2,
+          "passed": 1,
+          "rate": 50
+        },
+        {
+          "category": "config_management",
+          "tasks": 2,
+          "passed": 1,
+          "rate": 64.3
+        },
+        {
+          "category": "code_search",
+          "tasks": 2,
+          "passed": 0,
+          "rate": 84.6
+        },
+        {
+          "category": "pipelines",
+          "tasks": 5,
+          "passed": 3,
+          "rate": 85
+        },
+        {
+          "category": "text_processing",
+          "tasks": 6,
+          "passed": 5,
+          "rate": 89.3
+        },
+        {
+          "category": "scripting",
+          "tasks": 7,
+          "passed": 5,
+          "rate": 91.4
+        },
+        {
+          "category": "json_processing",
+          "tasks": 8,
+          "passed": 8,
+          "rate": 100
+        },
+        {
+          "category": "complex_tasks",
+          "tasks": 6,
+          "passed": 6,
+          "rate": 100
+        },
+        {
+          "category": "data_transformation",
+          "tasks": 6,
+          "passed": 6,
+          "rate": 100
+        },
+        {
+          "category": "file_operations",
+          "tasks": 4,
+          "passed": 4,
+          "rate": 100
+        },
+        {
+          "category": "database_operations",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "environment",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "error_recovery",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "build_simulation",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "archive_operations",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        }
+      ]
+    },
+    {
+      "id": "eval-anthropic-claude-opus-4-7-2026-05-26-020742",
+      "kind": "llm-eval",
+      "provider": "anthropic",
+      "model": "claude-opus-4-7",
+      "baseline": null,
+      "label": "anthropic/claude-opus-4-7",
+      "date": "2026-05-26",
+      "timestamp": "2026-05-26T02:07:42Z",
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-7-2026-05-26-020742.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-7-2026-05-26-020742.md",
+      "tasks": 58,
+      "passed": 56,
+      "scorePct": 97.8,
+      "toolSuccessPct": 90.3,
+      "avgTurns": 3.95,
+      "avgToolCalls": 3.02,
+      "avgDurationMs": 23349,
+      "inputTokens": 439514,
+      "outputTokens": 62545,
+      "categories": [
+        {
+          "category": "config_management",
+          "tasks": 2,
+          "passed": 1,
+          "rate": 64.3
+        },
+        {
+          "category": "file_operations",
+          "tasks": 4,
+          "passed": 3,
+          "rate": 91.7
+        },
+        {
+          "category": "json_processing",
+          "tasks": 8,
+          "passed": 8,
+          "rate": 100
+        },
+        {
+          "category": "scripting",
+          "tasks": 7,
+          "passed": 7,
+          "rate": 100
+        },
+        {
+          "category": "complex_tasks",
+          "tasks": 6,
+          "passed": 6,
+          "rate": 100
+        },
+        {
+          "category": "text_processing",
+          "tasks": 6,
+          "passed": 6,
+          "rate": 100
+        },
+        {
+          "category": "data_transformation",
+          "tasks": 6,
+          "passed": 6,
+          "rate": 100
+        },
+        {
+          "category": "pipelines",
+          "tasks": 5,
+          "passed": 5,
+          "rate": 100
+        },
+        {
+          "category": "error_recovery",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "database_operations",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "archive_operations",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "build_simulation",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "environment",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "code_search",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "system_info",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        }
+      ]
+    },
+    {
+      "id": "eval-openai-gpt-5.5-2026-05-26-021853",
+      "kind": "llm-eval",
+      "provider": "openai",
+      "model": "gpt-5.5",
+      "baseline": null,
+      "label": "openai/gpt-5.5",
+      "date": "2026-05-26",
+      "timestamp": "2026-05-26T02:18:53Z",
+      "source": "crates/bashkit-eval/results/eval-openai-gpt-5.5-2026-05-26-021853.json",
+      "reportSource": "crates/bashkit-eval/results/eval-openai-gpt-5.5-2026-05-26-021853.md",
+      "tasks": 58,
+      "passed": 50,
+      "scorePct": 92.7,
+      "toolSuccessPct": 91.5,
+      "avgTurns": 3.02,
+      "avgToolCalls": 2.03,
+      "avgDurationMs": 11560,
+      "inputTokens": 117599,
+      "outputTokens": 32240,
+      "categories": [
+        {
+          "category": "file_operations",
+          "tasks": 4,
+          "passed": 2,
+          "rate": 66.7
+        },
+        {
+          "category": "system_info",
+          "tasks": 2,
+          "passed": 1,
+          "rate": 66.7
+        },
+        {
+          "category": "scripting",
+          "tasks": 7,
+          "passed": 6,
+          "rate": 88.6
+        },
+        {
+          "category": "pipelines",
+          "tasks": 5,
+          "passed": 4,
+          "rate": 90
+        },
+        {
+          "category": "data_transformation",
+          "tasks": 6,
+          "passed": 5,
+          "rate": 91.4
+        },
+        {
+          "category": "json_processing",
+          "tasks": 8,
+          "passed": 6,
+          "rate": 92.9
+        },
+        {
+          "category": "text_processing",
+          "tasks": 6,
+          "passed": 6,
+          "rate": 100
+        },
+        {
+          "category": "complex_tasks",
+          "tasks": 6,
+          "passed": 6,
+          "rate": 100
+        },
+        {
+          "category": "error_recovery",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "build_simulation",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "config_management",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "archive_operations",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "code_search",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "environment",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "database_operations",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        }
+      ]
+    },
+    {
+      "id": "eval-openresponses-gpt-5.3-codex-2026-05-26-023642",
+      "kind": "llm-eval",
+      "provider": "openresponses",
+      "model": "gpt-5.3-codex",
+      "baseline": null,
+      "label": "openresponses/gpt-5.3-codex",
+      "date": "2026-05-26",
+      "timestamp": "2026-05-26T02:36:42Z",
+      "source": "crates/bashkit-eval/results/eval-openresponses-gpt-5.3-codex-2026-05-26-023642.json",
+      "reportSource": "crates/bashkit-eval/results/eval-openresponses-gpt-5.3-codex-2026-05-26-023642.md",
+      "tasks": 58,
+      "passed": 54,
+      "scorePct": 93,
+      "toolSuccessPct": 86.8,
+      "avgTurns": 2.97,
+      "avgToolCalls": 1.97,
+      "avgDurationMs": 14127,
+      "inputTokens": 91068,
+      "outputTokens": 48606,
+      "categories": [
+        {
+          "category": "system_info",
+          "tasks": 2,
+          "passed": 1,
+          "rate": 50
+        },
+        {
+          "category": "file_operations",
+          "tasks": 4,
+          "passed": 3,
+          "rate": 66.7
+        },
+        {
+          "category": "scripting",
+          "tasks": 7,
+          "passed": 5,
+          "rate": 68.6
+        },
+        {
+          "category": "json_processing",
+          "tasks": 8,
+          "passed": 8,
+          "rate": 100
+        },
+        {
+          "category": "data_transformation",
+          "tasks": 6,
+          "passed": 6,
+          "rate": 100
+        },
+        {
+          "category": "complex_tasks",
+          "tasks": 6,
+          "passed": 6,
+          "rate": 100
+        },
+        {
+          "category": "text_processing",
+          "tasks": 6,
+          "passed": 6,
+          "rate": 100
+        },
+        {
+          "category": "pipelines",
+          "tasks": 5,
+          "passed": 5,
+          "rate": 100
+        },
+        {
+          "category": "database_operations",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "build_simulation",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "archive_operations",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "config_management",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "environment",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "error_recovery",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        },
+        {
+          "category": "code_search",
+          "tasks": 2,
+          "passed": 2,
+          "rate": 100
+        }
+      ]
+    }
+  ],
+  "modelTrends": [
+    {
+      "model": "anthropic/claude-haiku-4-5",
+      "points": [
+        {
+          "date": "2026-02-07",
+          "timestamp": "2026-02-07T05:20:23Z",
+          "scorePct": 91.5,
+          "passed": 19,
+          "tasks": 25
+        },
+        {
+          "date": "2026-02-08",
+          "timestamp": "2026-02-08T06:14:14Z",
+          "scorePct": 98.1,
+          "passed": 23,
+          "tasks": 25
+        }
+      ]
+    },
+    {
+      "model": "anthropic/claude-haiku-4-5-20251001",
+      "points": [
+        {
+          "date": "2026-02-09",
+          "timestamp": "2026-02-09T05:45:58Z",
+          "scorePct": 94.6,
+          "passed": 32,
+          "tasks": 37
+        },
+        {
+          "date": "2026-02-25",
+          "timestamp": "2026-02-25T04:48:01Z",
+          "scorePct": 97.8,
+          "passed": 35,
+          "tasks": 37
+        },
+        {
+          "date": "2026-02-27",
+          "timestamp": "2026-02-27T04:06:36Z",
+          "scorePct": 91.7,
+          "passed": 43,
+          "tasks": 52
+        },
+        {
+          "date": "2026-02-28",
+          "timestamp": "2026-02-28T20:42:32Z",
+          "scorePct": 97.2,
+          "passed": 54,
+          "tasks": 58
+        },
+        {
+          "date": "2026-05-26",
+          "timestamp": "2026-05-26T01:25:23Z",
+          "scorePct": 98.4,
+          "passed": 54,
+          "tasks": 58
+        }
+      ]
+    },
+    {
+      "model": "anthropic/claude-opus-4-6",
+      "points": [
+        {
+          "date": "2026-02-07",
+          "timestamp": "2026-02-07T05:25:36Z",
+          "scorePct": 86.8,
+          "passed": 17,
+          "tasks": 25
+        },
+        {
+          "date": "2026-02-08",
+          "timestamp": "2026-02-08T06:20:03Z",
+          "scorePct": 93.4,
+          "passed": 21,
+          "tasks": 25
+        },
+        {
+          "date": "2026-02-09",
+          "timestamp": "2026-02-09T14:27:36Z",
+          "scorePct": 87,
+          "passed": 29,
+          "tasks": 37
+        },
+        {
+          "date": "2026-02-25",
+          "timestamp": "2026-02-25T04:56:11Z",
+          "scorePct": 92.9,
+          "passed": 33,
+          "tasks": 37
+        },
+        {
+          "date": "2026-02-27",
+          "timestamp": "2026-02-27T04:38:56Z",
+          "scorePct": 100,
+          "passed": 23,
+          "tasks": 23
+        },
+        {
+          "date": "2026-02-28",
+          "timestamp": "2026-02-28T20:53:58Z",
+          "scorePct": 91,
+          "passed": 50,
+          "tasks": 58
+        }
+      ]
+    },
+    {
+      "model": "anthropic/claude-opus-4-7",
+      "points": [
+        {
+          "date": "2026-05-26",
+          "timestamp": "2026-05-26T02:07:42Z",
+          "scorePct": 97.8,
+          "passed": 56,
+          "tasks": 58
+        }
+      ]
+    },
+    {
+      "model": "anthropic/claude-sonnet-4-20250514",
+      "points": [
+        {
+          "date": "2026-02-17",
+          "timestamp": "2026-02-17T23:13:36Z",
+          "scorePct": 92.9,
+          "passed": 32,
+          "tasks": 37
+        },
+        {
+          "date": "2026-02-25",
+          "timestamp": "2026-02-25T04:53:28Z",
+          "scorePct": 97.3,
+          "passed": 34,
+          "tasks": 37
+        }
+      ]
+    },
+    {
+      "model": "anthropic/claude-sonnet-4-6",
+      "points": [
+        {
+          "date": "2026-02-27",
+          "timestamp": "2026-02-27T04:38:54Z",
+          "scorePct": 93.9,
+          "passed": 23,
+          "tasks": 26
+        },
+        {
+          "date": "2026-02-28",
+          "timestamp": "2026-02-28T21:11:20Z",
+          "scorePct": 92.5,
+          "passed": 48,
+          "tasks": 58
+        },
+        {
+          "date": "2026-05-26",
+          "timestamp": "2026-05-26T01:45:08Z",
+          "scorePct": 94,
+          "passed": 49,
+          "tasks": 58
+        }
+      ]
+    },
+    {
+      "model": "openai-responses/gpt-5.3-codex",
+      "points": [
+        {
+          "date": "2026-02-27",
+          "timestamp": "2026-02-27T05:55:43Z",
+          "scorePct": 93,
+          "passed": 30,
+          "tasks": 37
+        }
+      ]
+    },
+    {
+      "model": "openai/gpt-5.2",
+      "points": [
+        {
+          "date": "2026-02-07",
+          "timestamp": "2026-02-07T05:20:37Z",
+          "scorePct": 86.8,
+          "passed": 19,
+          "tasks": 25
+        },
+        {
+          "date": "2026-02-08",
+          "timestamp": "2026-02-08T06:14:45Z",
+          "scorePct": 81.1,
+          "passed": 18,
+          "tasks": 25
+        },
+        {
+          "date": "2026-02-09",
+          "timestamp": "2026-02-09T05:44:24Z",
+          "scorePct": 79.9,
+          "passed": 23,
+          "tasks": 37
+        },
+        {
+          "date": "2026-02-25",
+          "timestamp": "2026-02-25T04:49:04Z",
+          "scorePct": 86.4,
+          "passed": 27,
+          "tasks": 37
+        },
+        {
+          "date": "2026-02-27",
+          "timestamp": "2026-02-27T04:38:13Z",
+          "scorePct": 79.4,
+          "passed": 32,
+          "tasks": 52
+        },
+        {
+          "date": "2026-02-28",
+          "timestamp": "2026-02-28T20:40:52Z",
+          "scorePct": 77.3,
+          "passed": 41,
+          "tasks": 58
+        }
+      ]
+    },
+    {
+      "model": "openai/gpt-5.5",
+      "points": [
+        {
+          "date": "2026-05-26",
+          "timestamp": "2026-05-26T02:18:53Z",
+          "scorePct": 92.7,
+          "passed": 50,
+          "tasks": 58
+        }
+      ]
+    },
+    {
+      "model": "openresponses/gpt-5.3-codex",
+      "points": [
+        {
+          "date": "2026-02-28",
+          "timestamp": "2026-02-28T20:53:31Z",
+          "scorePct": 91,
+          "passed": 51,
+          "tasks": 58
+        },
+        {
+          "date": "2026-05-26",
+          "timestamp": "2026-05-26T02:36:42Z",
+          "scorePct": 93,
+          "passed": 54,
+          "tasks": 58
+        }
+      ]
+    }
+  ],
+  "milestones": [
+    {
+      "date": "2026-02-01",
+      "timestamp": "2026-02-01T18:30:40.000Z",
+      "kind": "Benchmark",
+      "title": "0.4x faster than bash",
+      "detail": "75 parity/perf cases on runsc-linux-x86_64; output match 80%.",
+      "metric": 0.4,
+      "source": "crates/bashkit-bench/results/bench-runsc-linux-x86_64-1769970640.json"
+    },
+    {
+      "date": "2026-02-03",
+      "timestamp": "2026-02-03T04:31:00.000Z",
+      "kind": "Benchmark",
+      "title": "200.9x faster than bash",
+      "detail": "75 parity/perf cases on runsc-linux-x86_64; output match 89.33%.",
+      "metric": 200.9,
+      "source": "crates/bashkit-bench/results/bench-runsc-linux-x86_64-1770093060.json"
+    },
+    {
+      "date": "2026-02-07",
+      "timestamp": "2026-02-07T05:20:23Z",
+      "kind": "Eval",
+      "title": "claude-haiku-4-5: 91.5%",
+      "detail": "19/25 tasks passed. Weakest category: text_processing (50%).",
+      "metric": 91.5,
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-haiku-4-5-2026-02-07-052023.json"
+    },
+    {
+      "date": "2026-02-07",
+      "timestamp": "2026-02-07T05:20:37Z",
+      "kind": "Eval",
+      "title": "gpt-5.2: 86.8%",
+      "detail": "19/25 tasks passed. Weakest category: complex_tasks (56.3%).",
+      "metric": 86.8,
+      "source": "crates/bashkit-eval/results/eval-openai-gpt-5.2-2026-02-07-052037.json"
+    },
+    {
+      "date": "2026-02-07",
+      "timestamp": "2026-02-07T05:25:36Z",
+      "kind": "Eval",
+      "title": "claude-opus-4-6: 86.8%",
+      "detail": "17/25 tasks passed. Weakest category: complex_tasks (56.3%).",
+      "metric": 86.8,
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-6-2026-02-07-052536.json"
+    },
+    {
+      "date": "2026-02-08",
+      "timestamp": "2026-02-08T06:14:14Z",
+      "kind": "Eval",
+      "title": "claude-haiku-4-5: 98.1%",
+      "detail": "23/25 tasks passed. Weakest category: scripting (93.3%).",
+      "metric": 98.1,
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-haiku-4-5-2026-02-08-061414.json"
+    },
+    {
+      "date": "2026-02-08",
+      "timestamp": "2026-02-08T06:14:45Z",
+      "kind": "Eval",
+      "title": "gpt-5.2: 81.1%",
+      "detail": "18/25 tasks passed. Weakest category: archive_operations (50%).",
+      "metric": 81.1,
+      "source": "crates/bashkit-eval/results/eval-openai-gpt-5.2-2026-02-08-061445.json"
+    },
+    {
+      "date": "2026-02-08",
+      "timestamp": "2026-02-08T06:20:03Z",
+      "kind": "Eval",
+      "title": "claude-opus-4-6: 93.4%",
+      "detail": "21/25 tasks passed. Weakest category: complex_tasks (68.8%).",
+      "metric": 93.4,
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-6-2026-02-08-062003.json"
+    },
+    {
+      "date": "2026-02-09",
+      "timestamp": "2026-02-09T05:44:24Z",
+      "kind": "Eval",
+      "title": "gpt-5.2: 79.9%",
+      "detail": "23/37 tasks passed. Weakest category: archive_operations (16.7%).",
+      "metric": 79.9,
+      "source": "crates/bashkit-eval/results/eval-openai-gpt-5.2-2026-02-09-054424.json"
+    },
+    {
+      "date": "2026-02-09",
+      "timestamp": "2026-02-09T05:45:58Z",
+      "kind": "Eval",
+      "title": "claude-haiku-4-5-20251001: 94.6%",
+      "detail": "32/37 tasks passed. Weakest category: complex_tasks (91.7%).",
+      "metric": 94.6,
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-haiku-4-5-20251001-2026-02-09-054558.json"
+    },
+    {
+      "date": "2026-02-09",
+      "timestamp": "2026-02-09T14:27:36Z",
+      "kind": "Eval",
+      "title": "claude-opus-4-6: 87%",
+      "detail": "29/37 tasks passed. Weakest category: complex_tasks (54.2%).",
+      "metric": 87,
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-6-2026-02-09-142736.json"
+    },
+    {
+      "date": "2026-02-17",
+      "timestamp": "2026-02-17T23:13:36Z",
+      "kind": "Eval",
+      "title": "claude-sonnet-4-20250514: 92.9%",
+      "detail": "32/37 tasks passed. Weakest category: complex_tasks (62.5%).",
+      "metric": 92.9,
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-sonnet-4-20250514-2026-02-17-231336.json"
+    },
+    {
+      "date": "2026-02-25",
+      "timestamp": "2026-02-25T04:48:01Z",
+      "kind": "Eval",
+      "title": "claude-haiku-4-5-20251001: 97.8%",
+      "detail": "35/37 tasks passed. Weakest category: scripting (89.5%).",
+      "metric": 97.8,
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-haiku-4-5-20251001-2026-02-25-044801.json"
+    },
+    {
+      "date": "2026-02-25",
+      "timestamp": "2026-02-25T04:49:04Z",
+      "kind": "Eval",
+      "title": "gpt-5.2: 86.4%",
+      "detail": "27/37 tasks passed. Weakest category: archive_operations (50%).",
+      "metric": 86.4,
+      "source": "crates/bashkit-eval/results/eval-openai-gpt-5.2-2026-02-25-044904.json"
+    },
+    {
+      "date": "2026-02-25",
+      "timestamp": "2026-02-25T04:53:28Z",
+      "kind": "Eval",
+      "title": "claude-sonnet-4-20250514: 97.3%",
+      "detail": "34/37 tasks passed. Weakest category: scripting (84.2%).",
+      "metric": 97.3,
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-sonnet-4-20250514-2026-02-25-045328.json"
+    },
+    {
+      "date": "2026-02-25",
+      "timestamp": "2026-02-25T04:56:11Z",
+      "kind": "Eval",
+      "title": "claude-opus-4-6: 92.9%",
+      "detail": "33/37 tasks passed. Weakest category: complex_tasks (70.8%).",
+      "metric": 92.9,
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-6-2026-02-25-045611.json"
+    },
+    {
+      "date": "2026-02-27",
+      "timestamp": "2026-02-27T04:06:36Z",
+      "kind": "Eval",
+      "title": "claude-haiku-4-5-20251001: 91.7%",
+      "detail": "43/52 tasks passed. Weakest category: file_operations (70.8%).",
+      "metric": 91.7,
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-haiku-4-5-20251001-2026-02-27-040636.json"
+    },
+    {
+      "date": "2026-02-27",
+      "timestamp": "2026-02-27T04:38:13Z",
+      "kind": "Eval",
+      "title": "gpt-5.2: 79.4%",
+      "detail": "32/52 tasks passed. Weakest category: archive_operations (50%).",
+      "metric": 79.4,
+      "source": "crates/bashkit-eval/results/eval-openai-gpt-5.2-2026-02-27-043813.json"
+    },
+    {
+      "date": "2026-02-27",
+      "timestamp": "2026-02-27T04:38:54Z",
+      "kind": "Eval",
+      "title": "claude-sonnet-4-6: 93.9%",
+      "detail": "23/26 tasks passed. Weakest category: archive_operations (50%).",
+      "metric": 93.9,
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-sonnet-4-6-2026-02-27-043854.json"
+    },
+    {
+      "date": "2026-02-27",
+      "timestamp": "2026-02-27T04:38:56Z",
+      "kind": "Eval",
+      "title": "claude-opus-4-6: 100%",
+      "detail": "23/23 tasks passed. Weakest category: file_operations (100%).",
+      "metric": 100,
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-6-2026-02-27-043856.json"
+    },
+    {
+      "date": "2026-02-27",
+      "timestamp": "2026-02-27T05:55:43Z",
+      "kind": "Eval",
+      "title": "gpt-5.3-codex: 93%",
+      "detail": "30/37 tasks passed. Weakest category: scripting (78.9%).",
+      "metric": 93,
+      "source": "crates/bashkit-eval/results/eval-openai-responses-gpt-5.3-codex-2026-02-27-055543.json"
+    },
+    {
+      "date": "2026-02-28",
+      "timestamp": "2026-02-28T20:40:52Z",
+      "kind": "Eval",
+      "title": "gpt-5.2: 77.3%",
+      "detail": "41/58 tasks passed. Weakest category: config_management (7.1%).",
+      "metric": 77.3,
+      "source": "crates/bashkit-eval/results/eval-openai-gpt-5.2-2026-02-28-204052.json"
+    },
+    {
+      "date": "2026-02-28",
+      "timestamp": "2026-02-28T20:42:32Z",
+      "kind": "Eval",
+      "title": "claude-haiku-4-5-20251001: 97.2%",
+      "detail": "54/58 tasks passed. Weakest category: config_management (64.3%).",
+      "metric": 97.2,
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-haiku-4-5-20251001-2026-02-28-204232.json"
+    },
+    {
+      "date": "2026-02-28",
+      "timestamp": "2026-02-28T20:53:31Z",
+      "kind": "Eval",
+      "title": "gpt-5.3-codex: 91%",
+      "detail": "51/58 tasks passed. Weakest category: config_management (21.4%).",
+      "metric": 91,
+      "source": "crates/bashkit-eval/results/eval-openresponses-gpt-5.3-codex-2026-02-28-205331.json"
+    },
+    {
+      "date": "2026-02-28",
+      "timestamp": "2026-02-28T20:53:58Z",
+      "kind": "Eval",
+      "title": "claude-opus-4-6: 91%",
+      "detail": "50/58 tasks passed. Weakest category: config_management (57.1%).",
+      "metric": 91,
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-6-2026-02-28-205358.json"
+    },
+    {
+      "date": "2026-02-28",
+      "timestamp": "2026-02-28T21:11:20Z",
+      "kind": "Eval",
+      "title": "claude-sonnet-4-6: 92.5%",
+      "detail": "48/58 tasks passed. Weakest category: archive_operations (33.3%).",
+      "metric": 92.5,
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-sonnet-4-6-2026-02-28-211120.json"
+    },
+    {
+      "date": "2026-03-14",
+      "timestamp": "2026-03-14T05:02:28.000Z",
+      "kind": "Benchmark",
+      "title": "23.8x faster than bash",
+      "detail": "96 parity/perf cases on none-linux-x86_64; output match 100%.",
+      "metric": 23.8,
+      "source": "crates/bashkit-bench/results/bench-none-linux-x86_64-1773464548.json"
+    },
+    {
+      "date": "2026-03-14",
+      "timestamp": "2026-03-14T06:18:49.000Z",
+      "kind": "Criterion",
+      "title": "parallel",
+      "detail": "single_bash_new at 23.77 us median",
+      "metric": 160.05,
+      "source": "crates/bashkit/benches/results/criterion-parallel-(none)-linux-x86_64-1773469129.md"
+    },
+    {
+      "date": "2026-03-14",
+      "timestamp": "2026-03-14T17:44:22Z",
+      "kind": "Eval",
+      "title": "gpt-5.4: 93.1%",
+      "detail": "3/4 tasks passed. Weakest category: many_tools (93.1%).",
+      "metric": 93.1,
+      "source": "crates/bashkit-eval/results/scripting-eval-scripted-openai-gpt-5.4-2026-03-14-174422.json"
+    },
+    {
+      "date": "2026-03-14",
+      "timestamp": "2026-03-14T17:44:33Z",
+      "kind": "Eval",
+      "title": "gpt-5.4: 100%",
+      "detail": "3/3 tasks passed. Weakest category: large_output (100%).",
+      "metric": 100,
+      "source": "crates/bashkit-eval/results/scripting-eval-scripted-openai-gpt-5.4-2026-03-14-174433.json"
+    },
+    {
+      "date": "2026-03-14",
+      "timestamp": "2026-03-14T17:44:46Z",
+      "kind": "Eval",
+      "title": "gpt-5.4: 84.6%",
+      "detail": "2/3 tasks passed. Weakest category: paginated_responses (84.6%).",
+      "metric": 84.6,
+      "source": "crates/bashkit-eval/results/scripting-eval-scripted-openai-gpt-5.4-2026-03-14-174446.json"
+    },
+    {
+      "date": "2026-03-14",
+      "timestamp": "2026-03-14T17:44:58Z",
+      "kind": "Eval",
+      "title": "gpt-5.4: 75%",
+      "detail": "0/4 tasks passed. Weakest category: discovery (75%).",
+      "metric": 75,
+      "source": "crates/bashkit-eval/results/scripting-eval-scripted-openai-gpt-5.4-2026-03-14-174458.json"
+    },
+    {
+      "date": "2026-03-14",
+      "timestamp": "2026-03-14T17:45:21Z",
+      "kind": "Eval",
+      "title": "gpt-5.4: 96.6%",
+      "detail": "3/4 tasks passed. Weakest category: many_tools (96.6%).",
+      "metric": 96.6,
+      "source": "crates/bashkit-eval/results/scripting-eval-baseline-openai-gpt-5.4-2026-03-14-174521.json"
+    },
+    {
+      "date": "2026-03-14",
+      "timestamp": "2026-03-14T17:45:30Z",
+      "kind": "Eval",
+      "title": "gpt-5.4: 90%",
+      "detail": "2/3 tasks passed. Weakest category: large_output (90%).",
+      "metric": 90,
+      "source": "crates/bashkit-eval/results/scripting-eval-baseline-openai-gpt-5.4-2026-03-14-174530.json"
+    },
+    {
+      "date": "2026-03-14",
+      "timestamp": "2026-03-14T17:45:41Z",
+      "kind": "Eval",
+      "title": "gpt-5.4: 100%",
+      "detail": "3/3 tasks passed. Weakest category: paginated_responses (100%).",
+      "metric": 100,
+      "source": "crates/bashkit-eval/results/scripting-eval-baseline-openai-gpt-5.4-2026-03-14-174541.json"
+    },
+    {
+      "date": "2026-03-24",
+      "timestamp": "2026-03-24T00:36:10Z",
+      "kind": "Eval",
+      "title": "gpt-4o: 91.7%",
+      "detail": "3/4 tasks passed. Weakest category: discovery (91.7%).",
+      "metric": 91.7,
+      "source": "crates/bashkit-eval/results/scripting-eval-scripted-openai-gpt-4o-2026-03-24-003610.json"
+    },
+    {
+      "date": "2026-04-13",
+      "timestamp": "2026-04-13T23:05:40.000Z",
+      "kind": "Benchmark",
+      "title": "107.2x faster than bash",
+      "detail": "96 parity/perf cases on runsc-linux-x86_64; output match 100%.",
+      "metric": 107.2,
+      "source": "crates/bashkit-bench/results/bench-runsc-linux-x86_64-1776121540.json"
+    },
+    {
+      "date": "2026-05-04",
+      "timestamp": "2026-05-04T03:27:48.000Z",
+      "kind": "Criterion",
+      "title": "sqlite",
+      "detail": "sqlite_query/aggregate_in_memory/1000 at 739.46 us median",
+      "metric": 799.27,
+      "source": "crates/bashkit/benches/results/criterion-sqlite-vm-linux-x86_64-1777865268.md"
+    },
+    {
+      "date": "2026-05-25",
+      "timestamp": "2026-05-25T21:32:22.000Z",
+      "kind": "Criterion",
+      "title": "hotpath",
+      "detail": "64.9% faster in startup/empty",
+      "metric": -36.6,
+      "source": "crates/bashkit/benches/results/criterion-hotpath-perf-linux-x86_64-1779744742.md"
+    },
+    {
+      "date": "2026-05-25",
+      "timestamp": "2026-05-25T21:35:05.000Z",
+      "kind": "Benchmark",
+      "title": "25.4x faster than bash",
+      "detail": "96 parity/perf cases on vm-linux-x86_64; output match 100%.",
+      "metric": 25.4,
+      "source": "crates/bashkit-bench/results/bench-after-perf-linux-x86_64.json"
+    },
+    {
+      "date": "2026-05-26",
+      "timestamp": "2026-05-26T01:25:23Z",
+      "kind": "Eval",
+      "title": "claude-haiku-4-5-20251001: 98.4%",
+      "detail": "54/58 tasks passed. Weakest category: file_operations (91.7%).",
+      "metric": 98.4,
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-haiku-4-5-20251001-2026-05-26-012523.json"
+    },
+    {
+      "date": "2026-05-26",
+      "timestamp": "2026-05-26T01:44:10.000Z",
+      "kind": "Criterion",
+      "title": "file-ops",
+      "detail": "`for f in /work/d00/*` (shallow glob) at 267 us median",
+      "metric": 2000,
+      "source": "crates/bashkit/benches/results/criterion-file_ops-linux-x86_64-1779759850.md"
+    },
+    {
+      "date": "2026-05-26",
+      "timestamp": "2026-05-26T01:44:10.000Z",
+      "kind": "Criterion",
+      "title": "hotpath",
+      "detail": "`startup/empty` at 34.4 us median",
+      "metric": 624,
+      "source": "crates/bashkit/benches/results/criterion-hotpath-attrs+shopt-linux-x86_64-1779759850.md"
+    },
+    {
+      "date": "2026-05-26",
+      "timestamp": "2026-05-26T01:45:08Z",
+      "kind": "Eval",
+      "title": "claude-sonnet-4-6: 94%",
+      "detail": "49/58 tasks passed. Weakest category: system_info (50%).",
+      "metric": 94,
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-sonnet-4-6-2026-05-26-014508.json"
+    },
+    {
+      "date": "2026-05-26",
+      "timestamp": "2026-05-26T02:07:42Z",
+      "kind": "Eval",
+      "title": "claude-opus-4-7: 97.8%",
+      "detail": "56/58 tasks passed. Weakest category: config_management (64.3%).",
+      "metric": 97.8,
+      "source": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-7-2026-05-26-020742.json"
+    },
+    {
+      "date": "2026-05-26",
+      "timestamp": "2026-05-26T02:18:53Z",
+      "kind": "Eval",
+      "title": "gpt-5.5: 92.7%",
+      "detail": "50/58 tasks passed. Weakest category: file_operations (66.7%).",
+      "metric": 92.7,
+      "source": "crates/bashkit-eval/results/eval-openai-gpt-5.5-2026-05-26-021853.json"
+    },
+    {
+      "date": "2026-05-26",
+      "timestamp": "2026-05-26T02:36:42Z",
+      "kind": "Eval",
+      "title": "gpt-5.3-codex: 93%",
+      "detail": "54/58 tasks passed. Weakest category: system_info (50%).",
+      "metric": 93,
+      "source": "crates/bashkit-eval/results/eval-openresponses-gpt-5.3-codex-2026-05-26-023642.json"
+    },
+    {
+      "date": "2026-05-26",
+      "timestamp": "2026-05-26T03:01:00.000Z",
+      "kind": "Benchmark",
+      "title": "20.9x faster than bash",
+      "detail": "96 parity/perf cases on vm-linux-x86_64; output match 100%.",
+      "metric": 20.9,
+      "source": "crates/bashkit-bench/results/bench-vm-linux-x86_64-1779764460.json"
+    }
+  ]
+}

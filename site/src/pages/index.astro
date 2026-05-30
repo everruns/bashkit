@@ -4,6 +4,7 @@ import { Code } from "astro:components";
 import {
   agentSteps,
   apiSnippet,
+  benchesHref,
   builtinPreview,
   defense,
   evalSnapshot,
@@ -301,6 +302,9 @@ import {
           </a>{" "}
           run:
         </p>
+        <a href={benchesHref} class="atlas-inline-link">
+          Explore historical trends
+        </a>
       </div>
 
       <article class="atlas-panel atlas-table-panel">
@@ -343,8 +347,8 @@ import {
             <a
               href={item.href}
               class="atlas-panel atlas-card atlas-resource-card"
-              target="_blank"
-              rel="noopener noreferrer"
+              target={item.href.startsWith("http") ? "_blank" : undefined}
+              rel={item.href.startsWith("http") ? "noopener noreferrer" : undefined}
             >
               <span class="atlas-eyebrow">{item.cta}</span>
               <h3>{item.title}</h3>

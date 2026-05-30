@@ -1,0 +1,489 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import performanceData from "../data/performance-timeline.json";
+
+// Decision: show the latest aggregated snapshot instead of a time-series UI.
+// Raw result files remain linked so benchmark details stay inspectable.
+const data = performanceData as typeof performanceData;
+
+const latestBench = data.summary.latestBench;
+const latestEval = data.summary.latestEval;
+const latestCriterion = data.criterionRuns
+  .toSorted((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+  .at(0);
+const latestFullEvalRuns = data.evalRuns
+  .filter((run) => run.tasks >= 10)
+  .toSorted((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+  .slice(0, 6);
+const topBenchCategories = latestBench?.categories.slice(0, 8) ?? [];
+const evalCategories = latestEval?.categories.slice(0, 8) ?? [];
+
+const repoUrl = (source: string) =>
+  `https://github.com/everruns/bashkit/blob/main/${source}`;
+
+const compactNumber = (value: number | null | undefined, suffix = "") =>
+  typeof value === "number" ? `${value.toLocaleString()}${suffix}` : "n/a";
+
+const formatMs = (value: number | null | undefined) =>
+  typeof value === "number" ? `${value.toLocaleString()} ms` : "n/a";
+
+const latestReports = [
+  ...(latestBench
+    ? [
+        {
+          title: "bashkit-bench report",
+          detail: `${latestBench.cases} cases on ${latestBench.label}`,
+          href: repoUrl(latestBench.reportSource ?? latestBench.source),
+        },
+      ]
+    : []),
+  ...(latestEval
+    ? [
+        {
+          title: "LLM eval report",
+          detail: `${latestEval.model}, ${latestEval.passed}/${latestEval.tasks} tasks`,
+          href: repoUrl(latestEval.reportSource ?? latestEval.source),
+        },
+      ]
+    : []),
+  ...(latestCriterion
+    ? [
+        {
+          title: "Criterion report",
+          detail: `${latestCriterion.family}, ${latestCriterion.cases} cases`,
+          href: repoUrl(latestCriterion.reportSource ?? latestCriterion.source),
+        },
+      ]
+    : []),
+];
+
+const resultIndexes = [
+  {
+    title: "Criterion results",
+    href: "https://github.com/everruns/bashkit/tree/main/crates/bashkit/benches/results",
+  },
+  {
+    title: "bashkit-bench results",
+    href: "https://github.com/everruns/bashkit/tree/main/crates/bashkit-bench/results",
+  },
+  {
+    title: "Eval results",
+    href: "https://github.com/everruns/bashkit/tree/main/crates/bashkit-eval/results",
+  },
+  {
+    title: "Aggregation script",
+    href: "https://github.com/everruns/bashkit/blob/main/site/scripts/build-performance-data.mjs",
+  },
+];
+
+const benchmarkResultsUrl =
+  "https://github.com/everruns/bashkit/tree/main/crates/bashkit-bench/results";
+const criterionResultsUrl =
+  "https://github.com/everruns/bashkit/tree/main/crates/bashkit/benches/results";
+const evalResultsUrl =
+  "https://github.com/everruns/bashkit/tree/main/crates/bashkit-eval/results";
+
+const pageDescription =
+  "Latest Bashkit benchmark, criterion bench, and LLM eval snapshot.";
+---
+
+<BaseLayout title="Bashkit Benches" description={pageDescription}>
+  <section class="bench-page">
+    <div class="container">
+      <header class="bench-header">
+        <div>
+          <span class="bench-eyebrow">Benches</span>
+          <h1>Latest benchmark snapshot</h1>
+        </div>
+        <p>
+          Static aggregate generated from repository result artifacts. Use the
+          linked files for raw measurements and full eval traces.
+        </p>
+      </header>
+
+      <section class="artifact-strip" aria-label="Latest reports">
+        <div>
+          <span class="bench-eyebrow">Latest reports</span>
+          <h2>Open Markdown reports</h2>
+          <div class="section-links" aria-label="Report folders">
+            <a href={benchmarkResultsUrl} target="_blank" rel="noopener noreferrer">
+              Benchmark folder
+            </a>
+            <a href={evalResultsUrl} target="_blank" rel="noopener noreferrer">
+              Eval folder
+            </a>
+            <a href={criterionResultsUrl} target="_blank" rel="noopener noreferrer">
+              Criterion folder
+            </a>
+          </div>
+        </div>
+        <div class="artifact-links">
+          {
+            latestReports.map((item) => (
+              <a href={item.href} target="_blank" rel="noopener noreferrer">
+                <strong>{item.title}</strong>
+                <small>{item.detail}</small>
+              </a>
+            ))
+          }
+        </div>
+      </section>
+
+      <section class="snapshot-columns">
+        <article class="snapshot-panel">
+          <div class="panel-head">
+            <span class="bench-eyebrow">Runtime snapshot</span>
+            <h2>Latest benchmark categories</h2>
+            <a
+              class="section-link"
+              href={benchmarkResultsUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Browse benchmark runs
+            </a>
+          </div>
+          <table>
+            <thead>
+              <tr><th>Category</th><th>Cases</th><th>Last run</th></tr>
+            </thead>
+            <tbody>
+              {
+                topBenchCategories.map((row) => (
+                  <tr>
+                    <td>
+                      <strong>{row.category}</strong>
+                      <small>{row.description}</small>
+                    </td>
+                    <td>{row.cases}</td>
+                    <td>
+                      <strong class="score">{formatMs(row.bashkitMedianMs)}</strong>
+                      <small>bash median: {formatMs(row.bashMedianMs)}</small>
+                    </td>
+                  </tr>
+                ))
+              }
+            </tbody>
+          </table>
+        </article>
+
+        <article class="snapshot-panel">
+          <div class="panel-head">
+            <span class="bench-eyebrow">Eval pressure</span>
+            <h2>Lowest eval categories</h2>
+            <a
+              class="section-link"
+              href={evalResultsUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Browse eval runs
+            </a>
+          </div>
+          <a
+            href={latestEval ? repoUrl(latestEval.source) : "#"}
+            class="panel-metric"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <span>Latest LLM eval</span>
+            <strong>{compactNumber(latestEval?.scorePct, "%")}</strong>
+            <small>
+              {latestEval ? `${latestEval.passed}/${latestEval.tasks} tasks` : "No run"}
+            </small>
+          </a>
+          <table>
+            <thead>
+              <tr><th>Category</th><th>Passed</th><th>Pass rate</th></tr>
+            </thead>
+            <tbody>
+              {
+                evalCategories.map((row) => (
+                  <tr>
+                    <td>{row.category}</td>
+                    <td>{row.passed}/{row.tasks}</td>
+                    <td>
+                      <strong class="score">{row.rate}%</strong>
+                      <small>tasks passed</small>
+                    </td>
+                  </tr>
+                ))
+              }
+            </tbody>
+          </table>
+        </article>
+      </section>
+
+      <section class="snapshot-columns snapshot-columns--bottom">
+        <article class="snapshot-panel">
+          <div class="panel-head">
+            <span class="bench-eyebrow">Latest full evals</span>
+            <h2>Recent model snapshots</h2>
+            <a
+              class="section-link"
+              href={evalResultsUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Browse eval runs
+            </a>
+          </div>
+          <table>
+            <thead>
+              <tr><th>Run</th><th>Score</th><th>Tools</th></tr>
+            </thead>
+            <tbody>
+              {
+                latestFullEvalRuns.map((run) => (
+                  <tr>
+                    <td>
+                      <a href={repoUrl(run.source)} target="_blank" rel="noopener noreferrer">
+                        {run.model}
+                      </a>
+                      <small>{run.date}</small>
+                    </td>
+                    <td class="score">{run.scorePct}%</td>
+                    <td>{run.toolSuccessPct}%</td>
+                  </tr>
+                ))
+              }
+            </tbody>
+          </table>
+        </article>
+
+        <article class="snapshot-panel source-panel">
+          <div class="panel-head">
+            <span class="bench-eyebrow">Indexes</span>
+            <h2>Browse all result sets</h2>
+          </div>
+          <div class="index-links">
+            {
+              resultIndexes.map((item) => (
+                <a href={item.href} target="_blank" rel="noopener noreferrer">
+                  {item.title}
+                </a>
+              ))
+            }
+          </div>
+        </article>
+      </section>
+    </div>
+  </section>
+</BaseLayout>
+
+<style>
+  .bench-page {
+    background: #f6f6f6;
+    padding: 2.25rem 0 3rem;
+  }
+
+  .bench-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(20rem, 0.65fr);
+    gap: var(--space-lg);
+    align-items: end;
+    margin-bottom: var(--space-lg);
+  }
+
+  .bench-eyebrow {
+    display: inline-flex;
+    margin-bottom: var(--space-xs);
+    color: var(--color-gold);
+    font-size: 0.76rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .bench-header h1 {
+    font-size: clamp(2rem, 4.5vw, 3.6rem);
+    line-height: 1;
+  }
+
+  .bench-header p {
+    color: var(--color-slate);
+  }
+
+  .snapshot-columns {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-md);
+  }
+
+  .snapshot-columns {
+    margin-top: var(--space-md);
+  }
+
+  .snapshot-panel,
+  .artifact-strip {
+    border: 1px solid #dddddd;
+    background: var(--color-white);
+  }
+
+  .panel-metric {
+    display: grid;
+    gap: 0.2rem;
+    margin: 0 1.1rem 1rem;
+    border: 1px solid #dddddd;
+    padding: 1.1rem;
+    color: var(--color-obsidian);
+    text-decoration: none;
+    transition:
+      border-color 0.12s ease,
+      transform 0.12s ease;
+  }
+
+  .panel-metric:hover,
+  .artifact-links a:hover,
+  .index-links a:hover {
+    border-color: rgb(10 22 54 / 0.36);
+    text-decoration: none;
+    transform: translateY(-1px);
+  }
+
+  .panel-metric span,
+  .panel-metric small,
+  td small {
+    color: var(--color-slate);
+  }
+
+  .panel-metric strong {
+    font-size: 2rem;
+    line-height: 1;
+  }
+
+  .artifact-strip {
+    display: grid;
+    grid-template-columns: minmax(14rem, 0.32fr) minmax(0, 1fr);
+    gap: var(--space-md);
+    align-items: stretch;
+    margin-top: var(--space-md);
+    padding: 1.1rem;
+  }
+
+  .artifact-strip h2,
+  .panel-head h2 {
+    font-size: 1.35rem;
+  }
+
+  .section-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 0.65rem;
+    margin-top: var(--space-xs);
+  }
+
+  .section-link,
+  .section-links a {
+    color: var(--color-navy);
+    font-size: 0.9rem;
+    font-weight: 700;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.16em;
+  }
+
+  .section-link {
+    display: inline-flex;
+    margin-top: var(--space-xs);
+  }
+
+  .artifact-links {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-sm);
+  }
+
+  .artifact-links a,
+  .index-links a {
+    display: grid;
+    gap: 0.15rem;
+    border: 1px solid #dddddd;
+    padding: 0.85rem;
+    color: var(--color-obsidian);
+    text-decoration: none;
+    transition:
+      border-color 0.12s ease,
+      transform 0.12s ease;
+  }
+
+  .artifact-links small {
+    color: var(--color-slate);
+  }
+
+  .snapshot-panel {
+    overflow: hidden;
+  }
+
+  .panel-head {
+    padding: 1rem 1.1rem 0.7rem;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  th,
+  td {
+    border-top: 1px solid #eeeeee;
+    padding: 0.75rem 1.1rem;
+    text-align: left;
+    vertical-align: top;
+  }
+
+  th {
+    color: var(--color-slate);
+    font-size: 0.76rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  td a {
+    font-weight: 700;
+  }
+
+  td small {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+  }
+
+  .score {
+    color: #0f7b58;
+    font-weight: 800;
+  }
+
+  .source-panel {
+    display: grid;
+    align-content: start;
+  }
+
+  .index-links {
+    display: grid;
+    gap: var(--space-sm);
+    padding: 0 1.1rem 1.1rem;
+  }
+
+  @media (max-width: 900px) {
+    .bench-header,
+    .artifact-strip,
+    .artifact-links,
+    .snapshot-columns {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (max-width: 620px) {
+    .bench-page {
+      padding-top: 1.5rem;
+    }
+
+    .snapshot-panel {
+      overflow-x: auto;
+    }
+
+    table {
+      min-width: 420px;
+    }
+  }
+</style>

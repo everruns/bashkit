@@ -391,21 +391,15 @@ async fn main() -> Result<()> {
 
     // Save if requested
     if let Some(ref save_arg) = args.save {
-        let base_name = if save_arg.is_empty() {
-            // Auto-generate filename with moniker and timestamp
-            let timestamp = chrono_lite_now();
-            format!("bench-{}-{}", system_info.moniker, timestamp)
-        } else {
-            // Use provided name, strip extension if present
-            let path = PathBuf::from(save_arg);
-            path.file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("bench-results")
-                .to_string()
-        };
+        let timestamp = chrono_lite_now();
+        let base_path = save_base_path(save_arg, &system_info.moniker, &timestamp);
 
-        let json_path = format!("{}.json", base_name);
-        let md_path = format!("{}.md", base_name);
+        let json_path = base_path.with_extension("json");
+        let md_path = base_path.with_extension("md");
+
+        if let Some(parent) = json_path.parent() {
+            std::fs::create_dir_all(parent).context("Failed to create results directory")?;
+        }
 
         // Save JSON
         let json = serde_json::to_string_pretty(&report)?;
@@ -418,12 +412,28 @@ async fn main() -> Result<()> {
         println!(
             "\n{} results to:\n  - {}\n  - {}",
             "Saved".green(),
-            json_path,
-            md_path
+            json_path.display(),
+            md_path.display()
         );
     }
 
     Ok(())
+}
+
+fn save_base_path(save_arg: &str, moniker: &str, timestamp: &str) -> PathBuf {
+    if save_arg.is_empty() {
+        // Auto-generate inside the repo-tracked results folder so site builds
+        // can pick up fresh benchmark runs.
+        return PathBuf::from("crates/bashkit-bench/results")
+            .join(format!("bench-{}-{}", moniker, timestamp));
+    }
+
+    let path = PathBuf::from(save_arg);
+    if path.extension().is_some() {
+        path.with_extension("")
+    } else {
+        path
+    }
 }
 
 async fn run_benchmark(
@@ -778,5 +788,31 @@ fn print_summary(summary: &BenchSummary) {
             stats.output_match_rate * 100.0
         );
         println!();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::save_base_path;
+    use std::path::PathBuf;
+
+    #[test]
+    fn save_base_path_defaults_to_site_indexed_results_dir() {
+        assert_eq!(
+            save_base_path("", "vm-linux-x86_64", "1779764460"),
+            PathBuf::from("crates/bashkit-bench/results/bench-vm-linux-x86_64-1779764460")
+        );
+    }
+
+    #[test]
+    fn save_base_path_preserves_custom_directory_and_strips_extension() {
+        assert_eq!(
+            save_base_path(
+                "crates/bashkit-bench/results/manual-test.json",
+                "ignored",
+                "ignored"
+            ),
+            PathBuf::from("crates/bashkit-bench/results/manual-test")
+        );
     }
 }
