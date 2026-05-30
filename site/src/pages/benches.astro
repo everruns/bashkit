@@ -2,38 +2,21 @@
 import BaseLayout from "../layouts/BaseLayout.astro";
 import performanceData from "../data/performance-timeline.json";
 
-// Decision: this page consumes the generated aggregate only. It must not import
-// raw eval traces or per-iteration benchmark samples into the browser bundle.
+// Decision: show the latest aggregated snapshot instead of a time-series UI.
+// Raw result files remain linked so benchmark details stay inspectable.
 const data = performanceData as typeof performanceData;
-const historyMonths = 6;
-const generatedAt = new Date(data.generatedAt ?? new Date().toISOString());
-const historyStart = new Date(generatedAt);
-historyStart.setMonth(historyStart.getMonth() - historyMonths);
-const inWindow = (timestamp: string) => new Date(timestamp) >= historyStart;
-function latestByTime<T extends { timestamp: string }>(items: T[]) {
-  return items
-    .toSorted((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-    .at(-1);
-}
 
-const benchRuns = data.benchRuns.filter((run) => inWindow(run.timestamp));
-const evalRuns = data.evalRuns.filter((run) => inWindow(run.timestamp));
-const criterionRuns = data.criterionRuns.filter((run) => inWindow(run.timestamp));
-const milestones = data.milestones.filter((item) => inWindow(item.timestamp));
-
-const latestBench = latestByTime(benchRuns);
-const latestEval = latestByTime(evalRuns.filter((run) => run.tasks >= 10));
-const bestCriterion = criterionRuns
-  .filter((run) => typeof run.bestChangePct === "number")
-  .toSorted((a, b) => Math.abs(b.bestChangePct ?? 0) - Math.abs(a.bestChangePct ?? 0))
+const latestBench = data.summary.latestBench;
+const latestEval = data.summary.latestEval;
+const latestCriterion = data.criterionRuns
+  .toSorted((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
   .at(0);
-const latestCriterion = latestByTime(criterionRuns);
-const latestFullEvalRuns = evalRuns
+const latestFullEvalRuns = data.evalRuns
   .filter((run) => run.tasks >= 10)
   .toSorted((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-  .slice(0, 8);
+  .slice(0, 6);
 const topBenchCategories = latestBench?.categories.slice(0, 8) ?? [];
-const weakestEvalCategories = latestEval?.categories.slice(0, 8) ?? [];
+const evalCategories = latestEval?.categories.slice(0, 8) ?? [];
 
 const repoUrl = (source: string) =>
   `https://github.com/everruns/bashkit/blob/main/${source}`;
@@ -41,866 +24,384 @@ const repoUrl = (source: string) =>
 const compactNumber = (value: number | null | undefined, suffix = "") =>
   typeof value === "number" ? `${value.toLocaleString()}${suffix}` : "n/a";
 
-const dateLabel = (date: Date) => date.toISOString().slice(0, 10);
-const resultLinks = [
+const latestArtifacts = [
+  ...(latestBench
+    ? [
+        {
+          title: "Latest bashkit-bench run",
+          detail: `${latestBench.cases} cases on ${latestBench.label}`,
+          href: repoUrl(latestBench.source),
+        },
+      ]
+    : []),
+  ...(latestEval
+    ? [
+        {
+          title: "Latest LLM eval run",
+          detail: `${latestEval.model}, ${latestEval.passed}/${latestEval.tasks} tasks`,
+          href: repoUrl(latestEval.source),
+        },
+      ]
+    : []),
+  ...(latestCriterion
+    ? [
+        {
+          title: "Latest criterion bench",
+          detail: `${latestCriterion.family}, ${latestCriterion.cases} cases`,
+          href: repoUrl(latestCriterion.source),
+        },
+      ]
+    : []),
+];
+
+const resultIndexes = [
   {
-    title: "Criterion benches",
-    detail: `${criterionRuns.length} reports in window`,
+    title: "Criterion results",
     href: "https://github.com/everruns/bashkit/tree/main/crates/bashkit/benches/results",
   },
   {
-    title: "bashkit-bench",
-    detail: `${benchRuns.length} bash-vs-bash runs`,
+    title: "bashkit-bench results",
     href: "https://github.com/everruns/bashkit/tree/main/crates/bashkit-bench/results",
   },
   {
-    title: "LLM evals",
-    detail: `${evalRuns.length} eval result files`,
+    title: "Eval results",
     href: "https://github.com/everruns/bashkit/tree/main/crates/bashkit-eval/results",
   },
   {
     title: "Aggregation script",
-    detail: "How this page is generated",
     href: "https://github.com/everruns/bashkit/blob/main/site/scripts/build-performance-data.mjs",
   },
 ];
 
 const pageDescription =
-  "Interactive Bashkit benches history across criterion benches, bash-vs-bashkit benchmarks, and LLM evals.";
+  "Latest Bashkit benchmark, criterion bench, and LLM eval snapshot.";
 ---
 
-<BaseLayout
-  title="Bashkit Benches History"
-  description={pageDescription}
->
-  <section class="benches-intro">
-    <div class="container benches-intro__grid">
-      <div>
-        <span class="atlas-eyebrow">Benches</span>
-        <h1>History for benchmarks and evals</h1>
-      </div>
-      <p>
-        Last {historyMonths} months only, from {dateLabel(historyStart)} to{" "}
-        {dateLabel(generatedAt)}. Raw result files stay in GitHub; this page
-        ships the compact aggregate.
-      </p>
-    </div>
-  </section>
-
-  <section class="perf-dashboard section-alt">
-    <div class="container dashboard-stack">
-      <div class="perf-snapshot" aria-label="Latest performance snapshot">
-        <a href={latestBench ? repoUrl(latestBench.source) : "#"} target="_blank" rel="noopener noreferrer">
-          <span>Latest benchmark</span>
-          <strong>{compactNumber(latestBench?.speedup, "x")}</strong>
-          <small>{latestBench?.date ?? "n/a"} vs bash</small>
-        </a>
-        <a href={latestEval ? repoUrl(latestEval.source) : "#"} target="_blank" rel="noopener noreferrer">
-          <span>Latest eval</span>
-          <strong>{compactNumber(latestEval?.scorePct, "%")}</strong>
-          <small>
-            {latestEval ? `${latestEval.passed}/${latestEval.tasks} tasks` : "n/a"}
-          </small>
-        </a>
-        <a href={bestCriterion ? repoUrl(bestCriterion.source) : "#"} target="_blank" rel="noopener noreferrer">
-          <span>Best criterion delta</span>
-          <strong>
-            {
-              bestCriterion?.bestChangePct
-                ? `${Math.abs(bestCriterion.bestChangePct)}%`
-                : "n/a"
-            }
-          </strong>
-          <small>{bestCriterion?.bestImprovement?.name ?? "n/a"}</small>
-        </a>
-      </div>
-
-      <div class="perf-toolbar" aria-label="Chart controls">
-        <div class="segmented-control" role="group" aria-label="Metric">
-          <button type="button" class="is-active" data-view="eval">Eval score</button>
-          <button type="button" data-view="bench">Speedup</button>
-          <button type="button" data-view="criterion">Criterion delta</button>
-        </div>
-
-        <label class="perf-select">
-          <span>Series</span>
-          <select id="perf-series-select" aria-label="Series"></select>
-        </label>
-      </div>
-
-      <article class="perf-chart-shell">
-        <div class="perf-chart-head">
-          <div>
-            <span class="atlas-eyebrow" id="perf-chart-kind">Eval score</span>
-            <h2 id="perf-chart-title">Full eval score trend</h2>
-          </div>
-          <p id="perf-chart-note"></p>
-        </div>
-
-        <div class="perf-chart-wrap">
-          <svg
-            id="perf-chart"
-            viewBox="0 0 960 340"
-            role="img"
-            aria-labelledby="perf-chart-title"
-          ></svg>
-          <div id="perf-tooltip" class="perf-tooltip" hidden></div>
-        </div>
-      </article>
-
-      <div class="bench-source-list" aria-label="Source files">
-        <span class="atlas-eyebrow">Source files</span>
-        {
-          resultLinks.map((item) => (
-            <a href={item.href} target="_blank" rel="noopener noreferrer">
-              <strong>{item.title}</strong>
-              <small>{item.detail}</small>
-            </a>
-          ))
-        }
-      </div>
-    </div>
-  </section>
-
-  <section class="perf-milestones">
-    <div class="container benches-grid benches-grid--timeline">
-      <div class="atlas-section-heading">
+<BaseLayout title="Bashkit Benches" description={pageDescription}>
+  <section class="bench-page">
+    <div class="container">
+      <header class="bench-header">
         <div>
-          <span class="atlas-eyebrow">Recent timeline</span>
-          <h2>Six-month milestones</h2>
+          <span class="bench-eyebrow">Benches</span>
+          <h1>Latest benchmark snapshot</h1>
         </div>
         <p>
-          Milestones are grouped to the current display window and link back to
-          the exact source artifact.
+          Static aggregate generated from repository result artifacts. Use the
+          linked files for raw measurements and full eval traces.
         </p>
-      </div>
+      </header>
 
-      <div class="perf-timeline">
-        {
-          milestones.slice(-10).reverse().map((item) => (
-            <article class="perf-milestone">
-              <time datetime={item.timestamp}>{item.date}</time>
-              <div>
-                <span>{item.kind}</span>
-                <h3>{item.title}</h3>
-                <p>{item.detail}</p>
-                <a href={repoUrl(item.source)} target="_blank" rel="noopener noreferrer">
-                  Open result file
-                </a>
-              </div>
-            </article>
-          ))
-        }
-      </div>
-    </div>
-  </section>
+      <section class="snapshot-grid" aria-label="Latest snapshot">
+        <a
+          href={latestBench ? repoUrl(latestBench.source) : "#"}
+          class="metric-card"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <span>bashkit-bench</span>
+          <strong>{compactNumber(latestBench?.speedup, "x")}</strong>
+          <small>
+            {latestBench
+              ? `${latestBench.cases} cases, ${latestBench.matchRate}% match`
+              : "No run"}
+          </small>
+        </a>
+        <a
+          href={latestEval ? repoUrl(latestEval.source) : "#"}
+          class="metric-card"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <span>LLM eval</span>
+          <strong>{compactNumber(latestEval?.scorePct, "%")}</strong>
+          <small>
+            {latestEval ? `${latestEval.passed}/${latestEval.tasks} tasks` : "No run"}
+          </small>
+        </a>
+        <a
+          href={latestCriterion ? repoUrl(latestCriterion.source) : "#"}
+          class="metric-card"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <span>Criterion</span>
+          <strong>{compactNumber(latestCriterion?.medianUs, " us")}</strong>
+          <small>
+            {latestCriterion?.fastestCase
+              ? `fastest: ${latestCriterion.fastestCase.name}`
+              : `${latestCriterion?.cases ?? 0} cases`}
+          </small>
+        </a>
+      </section>
 
-  <section class="perf-tables section section-alt">
-    <div class="container perf-table-grid">
-      <article class="perf-table-card">
-        <div class="perf-table-card__head">
-          <span class="atlas-eyebrow">Latest eval runs</span>
-          <h2>Model progress</h2>
+      <section class="artifact-strip" aria-label="Result artifacts">
+        <div>
+          <span class="bench-eyebrow">Latest files</span>
+          <h2>Open the source results</h2>
         </div>
-        <table>
-          <thead>
-            <tr><th>Run</th><th>Score</th><th>Tasks</th><th>Tools</th></tr>
-          </thead>
-          <tbody>
-            {
-              latestFullEvalRuns.map((run) => (
-                <tr>
-                  <td>
-                    <a href={repoUrl(run.source)} target="_blank" rel="noopener noreferrer">
-                      {run.model}
-                    </a>
-                    <small>{run.date}</small>
-                  </td>
-                  <td class="score">{run.scorePct}%</td>
-                  <td>{run.passed}/{run.tasks}</td>
-                  <td>{run.toolSuccessPct}%</td>
-                </tr>
-              ))
-            }
-          </tbody>
-        </table>
-      </article>
-
-      <article class="perf-table-card">
-        <div class="perf-table-card__head">
-          <span class="atlas-eyebrow">Latest benchmark categories</span>
-          <h2>Where bashkit is fastest</h2>
+        <div class="artifact-links">
+          {
+            latestArtifacts.map((item) => (
+              <a href={item.href} target="_blank" rel="noopener noreferrer">
+                <strong>{item.title}</strong>
+                <small>{item.detail}</small>
+              </a>
+            ))
+          }
         </div>
-        <table>
-          <thead>
-            <tr><th>Category</th><th>Cases</th><th>Median speedup</th></tr>
-          </thead>
-          <tbody>
-            {
-              topBenchCategories.map((row) => (
-                <tr>
-                  <td>{row.category}</td>
-                  <td>{row.cases}</td>
-                  <td class="score">{row.speedup}x</td>
-                </tr>
-              ))
-            }
-          </tbody>
-        </table>
-      </article>
+      </section>
 
-      <article class="perf-table-card">
-        <div class="perf-table-card__head">
-          <span class="atlas-eyebrow">Latest eval pressure</span>
-          <h2>Weakest categories</h2>
-        </div>
-        <table>
-          <thead>
-            <tr><th>Category</th><th>Tasks</th><th>Rate</th></tr>
-          </thead>
-          <tbody>
-            {
-              weakestEvalCategories.map((row) => (
-                <tr>
-                  <td>{row.category}</td>
-                  <td>{row.passed}/{row.tasks}</td>
-                  <td class="score">{row.rate}%</td>
-                </tr>
-              ))
-            }
-          </tbody>
-        </table>
-      </article>
-
-      <article class="perf-table-card">
-        <div class="perf-table-card__head">
-          <span class="atlas-eyebrow">Criterion coverage</span>
-          <h2>Latest microbench set</h2>
-        </div>
-        <dl class="perf-definition-list">
-          <div>
-            <dt>Run</dt>
-            <dd>{latestCriterion?.label ?? "n/a"}</dd>
+      <section class="snapshot-columns">
+        <article class="snapshot-panel">
+          <div class="panel-head">
+            <span class="bench-eyebrow">Runtime speed</span>
+            <h2>Fastest benchmark categories</h2>
           </div>
-          <div>
-            <dt>Cases</dt>
-            <dd>{compactNumber(latestCriterion?.cases)}</dd>
-          </div>
-          <div>
-            <dt>Median time</dt>
-            <dd>{compactNumber(latestCriterion?.medianUs, " us")}</dd>
-          </div>
-          <div>
-            <dt>Fastest case</dt>
-            <dd>
+          <table>
+            <thead>
+              <tr><th>Category</th><th>Cases</th><th>Speedup</th></tr>
+            </thead>
+            <tbody>
               {
-                latestCriterion?.fastestCase
-                  ? `${latestCriterion.fastestCase.name} (${latestCriterion.fastestCase.us} us)`
-                  : "n/a"
+                topBenchCategories.map((row) => (
+                  <tr>
+                    <td>{row.category}</td>
+                    <td>{row.cases}</td>
+                    <td class="score">{row.speedup}x</td>
+                  </tr>
+                ))
               }
-            </dd>
+            </tbody>
+          </table>
+        </article>
+
+        <article class="snapshot-panel">
+          <div class="panel-head">
+            <span class="bench-eyebrow">Eval pressure</span>
+            <h2>Lowest eval categories</h2>
           </div>
-        </dl>
-      </article>
+          <table>
+            <thead>
+              <tr><th>Category</th><th>Tasks</th><th>Rate</th></tr>
+            </thead>
+            <tbody>
+              {
+                evalCategories.map((row) => (
+                  <tr>
+                    <td>{row.category}</td>
+                    <td>{row.passed}/{row.tasks}</td>
+                    <td class="score">{row.rate}%</td>
+                  </tr>
+                ))
+              }
+            </tbody>
+          </table>
+        </article>
+      </section>
+
+      <section class="snapshot-columns snapshot-columns--bottom">
+        <article class="snapshot-panel">
+          <div class="panel-head">
+            <span class="bench-eyebrow">Latest full evals</span>
+            <h2>Recent model snapshots</h2>
+          </div>
+          <table>
+            <thead>
+              <tr><th>Run</th><th>Score</th><th>Tools</th></tr>
+            </thead>
+            <tbody>
+              {
+                latestFullEvalRuns.map((run) => (
+                  <tr>
+                    <td>
+                      <a href={repoUrl(run.source)} target="_blank" rel="noopener noreferrer">
+                        {run.model}
+                      </a>
+                      <small>{run.date}</small>
+                    </td>
+                    <td class="score">{run.scorePct}%</td>
+                    <td>{run.toolSuccessPct}%</td>
+                  </tr>
+                ))
+              }
+            </tbody>
+          </table>
+        </article>
+
+        <article class="snapshot-panel source-panel">
+          <div class="panel-head">
+            <span class="bench-eyebrow">Indexes</span>
+            <h2>Browse all result sets</h2>
+          </div>
+          <div class="index-links">
+            {
+              resultIndexes.map((item) => (
+                <a href={item.href} target="_blank" rel="noopener noreferrer">
+                  {item.title}
+                </a>
+              ))
+            }
+          </div>
+        </article>
+      </section>
     </div>
   </section>
-
-  <script
-    id="performance-data"
-    type="application/json"
-    is:inline
-    set:html={JSON.stringify(data)}
-  />
-
-  <script is:inline>
-    const dataEl = document.getElementById("performance-data");
-    const perfData = JSON.parse(dataEl.textContent);
-    const chart = document.getElementById("perf-chart");
-    const tooltip = document.getElementById("perf-tooltip");
-    const buttons = [...document.querySelectorAll("[data-view]")];
-    const select = document.getElementById("perf-series-select");
-    const kind = document.getElementById("perf-chart-kind");
-    const title = document.getElementById("perf-chart-title");
-    const note = document.getElementById("perf-chart-note");
-    const generatedAt = new Date(perfData.generatedAt);
-    const historyStart = new Date(generatedAt);
-    historyStart.setMonth(historyStart.getMonth() - 6);
-    const inWindow = (run) => new Date(run.timestamp) >= historyStart;
-    const benchRuns = perfData.benchRuns.filter(inWindow);
-    const evalRuns = perfData.evalRuns.filter(inWindow);
-    const criterionRuns = perfData.criterionRuns.filter(inWindow);
-    const modelTrends = perfData.modelTrends
-      .map((trend) => ({
-        ...trend,
-        points: trend.points.filter(inWindow),
-      }))
-      .filter((trend) => trend.points.length > 0);
-
-    const chartConfig = {
-      eval: {
-        label: "Eval score",
-        title: "Full eval score trend",
-        unit: "%",
-        maxY: 100,
-        color: "#1769aa",
-        note: "Full eval runs only; smaller scripting evals stay in the milestone stream.",
-        options: () => [
-          { value: "all", label: "Best run per day" },
-          ...modelTrends.map((trend) => ({
-            value: trend.model,
-            label: trend.model,
-          })),
-        ],
-        points: (series) => {
-          const runs = evalRuns.filter((run) => run.tasks >= 10);
-          const source =
-            series === "all"
-              ? bestPerDay(runs, (run) => run.scorePct)
-              : runs.filter((run) => `${run.provider}/${run.model}` === series);
-          return source.map((run) => ({
-            x: new Date(run.timestamp).getTime(),
-            y: run.scorePct,
-            label: `${run.model}: ${run.scorePct}%`,
-            detail: `${run.passed}/${run.tasks} tasks, ${run.toolSuccessPct}% tool success`,
-            date: run.date,
-          }));
-        },
-      },
-      bench: {
-        label: "Speedup",
-        title: "bashkit-bench speedup vs bash",
-        unit: "x",
-        color: "#0f7b58",
-        note: "Aggregated from bashkit-vs-bash result JSON, using total runtime per run.",
-        options: () => [{ value: "all", label: "All benchmark runs" }],
-        points: () =>
-          benchRuns.map((run) => ({
-            x: new Date(run.timestamp).getTime(),
-            y: run.speedup,
-            label: `${run.speedup}x on ${run.label}`,
-            detail: `${run.cases} cases, ${run.matchRate}% output match`,
-            date: run.date,
-          })),
-      },
-      criterion: {
-        label: "Criterion delta",
-        title: "Criterion improvements and microbench coverage",
-        unit: "%",
-        color: "#a35f00",
-        note: "Before/after reports use improvement percent. Baseline-only reports show median case time separately in the tables.",
-        options: () => [{ value: "all", label: "Improvement reports" }],
-        points: () =>
-          criterionRuns
-            .filter((run) => Number.isFinite(run.medianChangePct))
-            .map((run) => ({
-              x: new Date(run.timestamp).getTime(),
-              y: Math.abs(run.medianChangePct),
-              label: `${run.family}: ${Math.abs(run.medianChangePct)}% median improvement`,
-              detail: run.bestImprovement
-                ? `${Math.abs(run.bestImprovement.changePct)}% best in ${run.bestImprovement.name}`
-                : `${run.cases} cases`,
-              date: run.date,
-            })),
-      },
-    };
-
-    function bestPerDay(runs, score) {
-      const byDay = new Map();
-      for (const run of runs) {
-        const current = byDay.get(run.date);
-        if (!current || score(run) > score(current)) byDay.set(run.date, run);
-      }
-      return [...byDay.values()].sort(
-        (a, b) => new Date(a.timestamp) - new Date(b.timestamp),
-      );
-    }
-
-    function setOptions(view) {
-      const previous = select.value;
-      const options = chartConfig[view].options();
-      select.innerHTML = options
-        .map((option) => `<option value="${option.value}">${option.label}</option>`)
-        .join("");
-      if (options.some((option) => option.value === previous)) {
-        select.value = previous;
-      }
-    }
-
-    function pathFrom(points) {
-      return points
-        .map((point, index) => `${index === 0 ? "M" : "L"} ${point.sx} ${point.sy}`)
-        .join(" ");
-    }
-
-    function renderChart() {
-      const view = document.querySelector("[data-view].is-active").dataset.view;
-      const config = chartConfig[view];
-      const points = config
-        .points(select.value)
-        .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
-        .sort((a, b) => a.x - b.x);
-
-      kind.textContent = config.label;
-      title.textContent = config.title;
-      note.textContent = config.note;
-      if (points.length === 0) {
-        chart.innerHTML = `<text x="58" y="160" class="axis-label">No results in this six-month window.</text>`;
-        return;
-      }
-
-      const width = 960;
-      const height = 340;
-      const pad = { left: 58, right: 28, top: 28, bottom: 54 };
-      const xs = points.map((point) => point.x);
-      const ys = points.map((point) => point.y);
-      const minX = Math.min(...xs);
-      const maxX = Math.max(...xs);
-      const minY = Math.min(0, ...ys);
-      const maxY = Math.max(...ys, 1);
-      const yTop = Math.max(config.maxY ?? maxY * 1.12, maxY);
-
-      const scaleX = (x) =>
-        pad.left + ((x - minX) / Math.max(1, maxX - minX)) * (width - pad.left - pad.right);
-      const scaleY = (y) =>
-        height - pad.bottom - ((y - minY) / Math.max(1, yTop - minY)) * (height - pad.top - pad.bottom);
-
-      const plotted = points.map((point) => ({
-        ...point,
-        sx: scaleX(point.x),
-        sy: scaleY(point.y),
-      }));
-
-      const yTicks = [0, 0.25, 0.5, 0.75, 1].map((step) => minY + (yTop - minY) * step);
-      const tickIndexes = [...new Set([
-        0,
-        Math.floor((plotted.length - 1) / 2),
-        plotted.length - 1,
-      ])];
-      const xTicks = tickIndexes.map((index) => plotted[index]).filter(Boolean);
-
-      chart.innerHTML = `
-        <rect x="0" y="0" width="${width}" height="${height}" fill="transparent"></rect>
-        ${yTicks
-          .map((tick) => {
-            const y = scaleY(tick);
-            return `<line x1="${pad.left}" x2="${width - pad.right}" y1="${y}" y2="${y}" class="grid-line"></line>
-              <text x="${pad.left - 12}" y="${y + 4}" class="axis-label" text-anchor="end">${formatMetric(tick, config.unit)}</text>`;
-          })
-          .join("")}
-        <path d="${pathFrom(plotted)}" fill="none" stroke="${config.color}" stroke-width="3" stroke-linecap="round"></path>
-        ${plotted
-          .map(
-            (point, index) => `<circle cx="${point.sx}" cy="${point.sy}" r="6" fill="${config.color}" data-index="${index}" tabindex="0"></circle>`,
-          )
-          .join("")}
-        ${xTicks
-          .map(
-            (point) => `<text x="${point.sx}" y="${height - 18}" class="axis-label" text-anchor="middle">${point.date.slice(5)}</text>`,
-          )
-          .join("")}
-      `;
-
-      chart.querySelectorAll("circle").forEach((circle) => {
-        const point = plotted[Number(circle.dataset.index)];
-        circle.addEventListener("mouseenter", () => showTooltip(circle, point, config.unit));
-        circle.addEventListener("focus", () => showTooltip(circle, point, config.unit));
-        circle.addEventListener("mouseleave", hideTooltip);
-        circle.addEventListener("blur", hideTooltip);
-      });
-    }
-
-    function formatMetric(value, unit) {
-      const rounded = Math.round(value * 10) / 10;
-      return `${rounded}${unit}`;
-    }
-
-    function showTooltip(node, point, unit) {
-      const chartBox = chart.getBoundingClientRect();
-      const nodeBox = node.getBoundingClientRect();
-      tooltip.innerHTML = `<strong>${point.label}</strong><span>${point.date}</span><p>${point.detail}</p><b>${formatMetric(point.y, unit)}</b>`;
-      tooltip.hidden = false;
-      tooltip.style.left = `${nodeBox.left - chartBox.left + 18}px`;
-      tooltip.style.top = `${nodeBox.top - chartBox.top - 18}px`;
-    }
-
-    function hideTooltip() {
-      tooltip.hidden = true;
-    }
-
-    buttons.forEach((button) => {
-      button.addEventListener("click", () => {
-        buttons.forEach((item) => item.classList.remove("is-active"));
-        button.classList.add("is-active");
-        setOptions(button.dataset.view);
-        renderChart();
-      });
-    });
-
-    select.addEventListener("change", renderChart);
-    setOptions("eval");
-    renderChart();
-  </script>
 </BaseLayout>
 
 <style>
-  .benches-intro {
-    border-bottom: 1px solid #dddddd;
-    background: var(--color-white);
-    padding: 2.4rem 0 2rem;
+  .bench-page {
+    background: #f6f6f6;
+    padding: 2.25rem 0 3rem;
   }
 
-  .benches-intro__grid {
+  .bench-header {
     display: grid;
-    grid-template-columns: minmax(0, 0.9fr) minmax(320px, 0.8fr);
+    grid-template-columns: minmax(0, 1fr) minmax(20rem, 0.65fr);
     gap: var(--space-lg);
     align-items: end;
+    margin-bottom: var(--space-lg);
   }
 
-  .benches-intro .atlas-eyebrow,
-  .perf-dashboard .atlas-eyebrow,
-  .perf-milestones .atlas-eyebrow,
-  .perf-tables .atlas-eyebrow {
+  .bench-eyebrow {
     display: inline-flex;
-    margin-bottom: var(--space-sm);
+    margin-bottom: var(--space-xs);
     color: var(--color-gold);
-    font-size: 0.78rem;
+    font-size: 0.76rem;
     font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
 
-  .benches-intro h1 {
-    max-width: 640px;
-    font-size: clamp(2rem, 4vw, 3.2rem);
+  .bench-header h1 {
+    font-size: clamp(2rem, 4.5vw, 3.6rem);
     line-height: 1;
   }
 
-  .benches-intro p {
+  .bench-header p {
     color: var(--color-slate);
-    font-size: 1rem;
   }
 
-  .perf-dashboard {
-    padding: 1.25rem 0 var(--space-lg);
-  }
-
-  .dashboard-stack {
-    display: grid;
-    gap: 0.8rem;
-  }
-
-  .dashboard-stack > * {
-    min-width: 0;
-  }
-
-  .perf-snapshot {
+  .snapshot-grid,
+  .snapshot-columns {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 0.65rem;
+    gap: var(--space-md);
   }
 
-  .perf-snapshot a {
-    display: block;
-    border: 1px solid #d7d7d7;
+  .snapshot-columns {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-top: var(--space-md);
+  }
+
+  .metric-card,
+  .snapshot-panel,
+  .artifact-strip {
+    border: 1px solid #dddddd;
     background: var(--color-white);
+  }
+
+  .metric-card {
+    display: grid;
+    gap: 0.2rem;
+    min-height: 8rem;
+    padding: 1.1rem;
     color: var(--color-obsidian);
-    padding: 0.85rem 1rem;
     text-decoration: none;
     transition:
       border-color 0.12s ease,
       transform 0.12s ease;
   }
 
-  .perf-snapshot a:hover,
-  .bench-source-list a:hover {
+  .metric-card:hover,
+  .artifact-links a:hover,
+  .index-links a:hover {
     border-color: rgb(10 22 54 / 0.36);
     text-decoration: none;
     transform: translateY(-1px);
   }
 
-  .perf-snapshot span,
-  .perf-snapshot small {
-    display: block;
+  .metric-card span,
+  .metric-card small,
+  td small {
     color: var(--color-slate);
   }
 
-  .perf-snapshot strong {
-    display: block;
-    margin: 0.15rem 0;
-    color: var(--color-obsidian);
-    font-size: 1.45rem;
-    line-height: 1.1;
+  .metric-card strong {
+    font-size: 2rem;
+    line-height: 1;
   }
 
-  .bench-source-list {
+  .artifact-strip {
     display: grid;
-    grid-template-columns: auto repeat(4, minmax(0, 1fr));
-    gap: 0.65rem;
+    grid-template-columns: minmax(14rem, 0.32fr) minmax(0, 1fr);
+    gap: var(--space-md);
     align-items: stretch;
-    margin-top: 0.1rem;
+    margin-top: var(--space-md);
+    padding: 1.1rem;
   }
 
-  .bench-source-list .atlas-eyebrow {
-    align-items: center;
-    margin-bottom: 0;
-    padding-right: 0.35rem;
+  .artifact-strip h2,
+  .panel-head h2 {
+    font-size: 1.35rem;
   }
 
-  .bench-source-list a {
+  .artifact-links {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-sm);
+  }
+
+  .artifact-links a,
+  .index-links a {
     display: grid;
     gap: 0.15rem;
-    border: 1px solid #d7d7d7;
-    background: var(--color-white);
+    border: 1px solid #dddddd;
+    padding: 0.85rem;
     color: var(--color-obsidian);
-    min-height: 3.8rem;
-    padding: 0.65rem 0.75rem;
     text-decoration: none;
     transition:
       border-color 0.12s ease,
       transform 0.12s ease;
   }
 
-  .bench-source-list small {
+  .artifact-links small {
     color: var(--color-slate);
   }
 
-  .perf-toolbar {
-    display: flex;
-    justify-content: space-between;
-    gap: var(--space-md);
-    align-items: center;
-    margin-top: 0.35rem;
-  }
-
-  .segmented-control {
-    display: inline-grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    border: 1px solid #d7d7d7;
-    background: var(--color-white);
-  }
-
-  .segmented-control button {
-    min-width: 9.5rem;
-    min-height: 2.65rem;
-    border: 0;
-    border-right: 1px solid #d7d7d7;
-    background: transparent;
-    color: var(--color-slate);
-    cursor: pointer;
-    font: inherit;
-    font-weight: 600;
-  }
-
-  .segmented-control button:last-child {
-    border-right: 0;
-  }
-
-  .segmented-control button.is-active {
-    background: var(--color-obsidian);
-    color: var(--color-white);
-  }
-
-  .perf-select {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-sm);
-    color: var(--color-slate);
-    font-weight: 600;
-  }
-
-  .perf-select select {
-    min-width: 260px;
-    min-height: 2.65rem;
-    border: 1px solid #d7d7d7;
-    background: var(--color-white);
-    color: var(--color-obsidian);
-    padding: 0 var(--space-sm);
-    font: inherit;
-  }
-
-  .perf-chart-shell,
-  .perf-table-card {
-    background: var(--color-white);
-    border: 1px solid #dddddd;
-    min-width: 0;
-  }
-
-  .perf-chart-head {
-    display: flex;
-    justify-content: space-between;
-    gap: var(--space-md);
-    padding: 1.2rem 1.2rem 0;
-  }
-
-  .perf-chart-head h2 {
-    font-size: clamp(1.45rem, 2.4vw, 2rem);
-  }
-
-  .perf-chart-head p {
-    max-width: 420px;
-    color: var(--color-slate);
-  }
-
-  .perf-chart-wrap {
-    position: relative;
-    padding: var(--space-sm) 1.2rem 1.2rem;
-    overflow-x: auto;
-  }
-
-  .perf-chart-wrap svg {
-    display: block;
-    width: 100%;
-    min-width: 720px;
-    height: auto;
-  }
-
-  .perf-chart-wrap :global(.grid-line) {
-    stroke: #e5e5e5;
-    stroke-width: 1;
-  }
-
-  .perf-chart-wrap :global(.axis-label) {
-    fill: #5d5d5d;
-    font-family: var(--font-mono);
-    font-size: 0.78rem;
-  }
-
-  .perf-chart-wrap :global(circle) {
-    cursor: pointer;
-    stroke: var(--color-white);
-    stroke-width: 2;
-  }
-
-  .perf-tooltip {
-    position: absolute;
-    z-index: 5;
-    width: min(280px, 80vw);
-    border: 1px solid #d7d7d7;
-    background: var(--color-white);
-    color: var(--color-obsidian);
-    padding: var(--space-sm);
-    box-shadow: 0 16px 36px rgba(0, 0, 0, 0.16);
-    pointer-events: none;
-  }
-
-  .perf-tooltip strong,
-  .perf-tooltip span,
-  .perf-tooltip b {
-    display: block;
-  }
-
-  .perf-tooltip span,
-  .perf-tooltip p {
-    color: var(--color-slate);
-    font-size: 0.9rem;
-  }
-
-  .perf-tooltip b {
-    margin-top: var(--space-xs);
-    color: var(--color-gold);
-  }
-
-  .atlas-section-heading {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 22rem;
-    gap: var(--space-lg);
-    align-items: end;
-    margin-bottom: 0;
-  }
-
-  .atlas-section-heading p {
-    max-width: 520px;
-    color: var(--color-slate);
-  }
-
-  .perf-timeline {
-    display: grid;
-    gap: var(--space-sm);
-  }
-
-  .perf-milestones {
-    padding: var(--space-lg) 0;
-  }
-
-  .benches-grid--timeline {
-    align-items: start;
-  }
-
-  .perf-milestone {
-    display: grid;
-    grid-template-columns: 8.5rem minmax(0, 1fr);
-    gap: var(--space-md);
-    border-top: 1px solid #dddddd;
-    padding-top: var(--space-sm);
-  }
-
-  .perf-milestone time {
-    color: var(--color-slate);
-    font-family: var(--font-mono);
-    font-size: 0.9rem;
-  }
-
-  .perf-milestone span {
-    color: var(--color-gold);
-    font-size: 0.72rem;
-    font-weight: 800;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
-
-  .perf-milestone h3 {
-    margin-top: 0.1rem;
-    font-size: 1.12rem;
-  }
-
-  .perf-milestone p {
-    color: var(--color-slate);
-    max-width: 760px;
-  }
-
-  .perf-milestone a {
-    display: inline-flex;
-    margin-top: var(--space-xs);
-    font-weight: 700;
-  }
-
-  .perf-table-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--space-md);
-  }
-
-  .perf-table-card {
+  .snapshot-panel {
     overflow: hidden;
   }
 
-  .perf-table-card__head {
-    padding: var(--space-lg) var(--space-lg) var(--space-sm);
+  .panel-head {
+    padding: 1rem 1.1rem 0.7rem;
   }
 
-  .perf-table-card table {
+  table {
     width: 100%;
     border-collapse: collapse;
   }
 
-  .perf-table-card th,
-  .perf-table-card td {
+  th,
+  td {
     border-top: 1px solid #eeeeee;
-    padding: 0.85rem var(--space-lg);
+    padding: 0.75rem 1.1rem;
     text-align: left;
     vertical-align: top;
   }
 
-  .perf-table-card th {
+  th {
     color: var(--color-slate);
-    font-size: 0.78rem;
-    letter-spacing: 0.04em;
+    font-size: 0.76rem;
+    letter-spacing: 0.05em;
     text-transform: uppercase;
   }
 
-  .perf-table-card td small {
+  td a {
+    font-weight: 700;
+  }
+
+  td small {
     display: block;
-    color: var(--color-slate);
     font-family: var(--font-mono);
     font-size: 0.8rem;
   }
@@ -910,90 +411,42 @@ const pageDescription =
     font-weight: 800;
   }
 
-  .perf-definition-list {
+  .source-panel {
     display: grid;
-    gap: 0;
+    align-content: start;
   }
 
-  .perf-definition-list div {
+  .index-links {
     display: grid;
-    grid-template-columns: 9rem minmax(0, 1fr);
-    gap: var(--space-md);
-    border-top: 1px solid #eeeeee;
-    padding: 0.85rem var(--space-lg);
-  }
-
-  .perf-definition-list dt {
-    color: var(--color-slate);
-    font-weight: 700;
-  }
-
-  .perf-definition-list dd {
-    min-width: 0;
+    gap: var(--space-sm);
+    padding: 0 1.1rem 1.1rem;
   }
 
   @media (max-width: 900px) {
-    .benches-intro__grid,
-    .atlas-section-heading,
-    .perf-table-grid {
+    .bench-header,
+    .snapshot-grid,
+    .artifact-strip,
+    .artifact-links,
+    .snapshot-columns {
       grid-template-columns: 1fr;
-    }
-
-    .perf-toolbar,
-    .perf-chart-head {
-      align-items: stretch;
-      flex-direction: column;
-    }
-
-    .bench-source-list {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .bench-source-list .atlas-eyebrow {
-      grid-column: 1 / -1;
-    }
-
-    .segmented-control {
-      width: 100%;
-    }
-
-    .segmented-control button {
-      min-width: 0;
-      padding: 0 var(--space-xs);
-    }
-
-    .perf-select {
-      align-items: stretch;
-      flex-direction: column;
-    }
-
-    .perf-select select {
-      min-width: 0;
-      width: 100%;
     }
   }
 
   @media (max-width: 620px) {
-    .perf-snapshot {
-      grid-template-columns: 1fr;
+    .bench-page {
+      padding-top: 1.5rem;
     }
 
-    .bench-source-list {
-      grid-template-columns: 1fr;
+    .metric-card {
+      min-height: 0;
     }
 
-    .perf-milestone,
-    .perf-definition-list div {
-      grid-template-columns: 1fr;
-      gap: var(--space-xs);
-    }
-
-    .perf-table-card {
+    .snapshot-panel {
       overflow-x: auto;
     }
 
-    .perf-table-card table {
-      min-width: 520px;
+    table {
+      min-width: 420px;
     }
   }
 </style>
