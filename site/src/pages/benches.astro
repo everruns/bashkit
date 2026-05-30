@@ -24,31 +24,34 @@ const repoUrl = (source: string) =>
 const compactNumber = (value: number | null | undefined, suffix = "") =>
   typeof value === "number" ? `${value.toLocaleString()}${suffix}` : "n/a";
 
-const latestArtifacts = [
+const formatMs = (value: number | null | undefined) =>
+  typeof value === "number" ? `${value.toLocaleString()} ms` : "n/a";
+
+const latestReports = [
   ...(latestBench
     ? [
         {
-          title: "Latest bashkit-bench run",
+          title: "bashkit-bench report",
           detail: `${latestBench.cases} cases on ${latestBench.label}`,
-          href: repoUrl(latestBench.source),
+          href: repoUrl(latestBench.reportSource ?? latestBench.source),
         },
       ]
     : []),
   ...(latestEval
     ? [
         {
-          title: "Latest LLM eval run",
+          title: "LLM eval report",
           detail: `${latestEval.model}, ${latestEval.passed}/${latestEval.tasks} tasks`,
-          href: repoUrl(latestEval.source),
+          href: repoUrl(latestEval.reportSource ?? latestEval.source),
         },
       ]
     : []),
   ...(latestCriterion
     ? [
         {
-          title: "Latest criterion bench",
+          title: "Criterion report",
           detail: `${latestCriterion.family}, ${latestCriterion.cases} cases`,
-          href: repoUrl(latestCriterion.source),
+          href: repoUrl(latestCriterion.reportSource ?? latestCriterion.source),
         },
       ]
     : []),
@@ -73,6 +76,13 @@ const resultIndexes = [
   },
 ];
 
+const benchmarkResultsUrl =
+  "https://github.com/everruns/bashkit/tree/main/crates/bashkit-bench/results";
+const criterionResultsUrl =
+  "https://github.com/everruns/bashkit/tree/main/crates/bashkit/benches/results";
+const evalResultsUrl =
+  "https://github.com/everruns/bashkit/tree/main/crates/bashkit-eval/results";
+
 const pageDescription =
   "Latest Bashkit benchmark, criterion bench, and LLM eval snapshot.";
 ---
@@ -91,57 +101,25 @@ const pageDescription =
         </p>
       </header>
 
-      <section class="snapshot-grid" aria-label="Latest snapshot">
-        <a
-          href={latestBench ? repoUrl(latestBench.source) : "#"}
-          class="metric-card"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <span>bashkit-bench</span>
-          <strong>{compactNumber(latestBench?.speedup, "x")}</strong>
-          <small>
-            {latestBench
-              ? `${latestBench.cases} cases, ${latestBench.matchRate}% match`
-              : "No run"}
-          </small>
-        </a>
-        <a
-          href={latestEval ? repoUrl(latestEval.source) : "#"}
-          class="metric-card"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <span>LLM eval</span>
-          <strong>{compactNumber(latestEval?.scorePct, "%")}</strong>
-          <small>
-            {latestEval ? `${latestEval.passed}/${latestEval.tasks} tasks` : "No run"}
-          </small>
-        </a>
-        <a
-          href={latestCriterion ? repoUrl(latestCriterion.source) : "#"}
-          class="metric-card"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <span>Criterion</span>
-          <strong>{compactNumber(latestCriterion?.medianUs, " us")}</strong>
-          <small>
-            {latestCriterion?.fastestCase
-              ? `fastest: ${latestCriterion.fastestCase.name}`
-              : `${latestCriterion?.cases ?? 0} cases`}
-          </small>
-        </a>
-      </section>
-
-      <section class="artifact-strip" aria-label="Result artifacts">
+      <section class="artifact-strip" aria-label="Latest reports">
         <div>
-          <span class="bench-eyebrow">Latest files</span>
-          <h2>Open the source results</h2>
+          <span class="bench-eyebrow">Latest reports</span>
+          <h2>Open Markdown reports</h2>
+          <div class="section-links" aria-label="Report folders">
+            <a href={benchmarkResultsUrl} target="_blank" rel="noopener noreferrer">
+              Benchmark folder
+            </a>
+            <a href={evalResultsUrl} target="_blank" rel="noopener noreferrer">
+              Eval folder
+            </a>
+            <a href={criterionResultsUrl} target="_blank" rel="noopener noreferrer">
+              Criterion folder
+            </a>
+          </div>
         </div>
         <div class="artifact-links">
           {
-            latestArtifacts.map((item) => (
+            latestReports.map((item) => (
               <a href={item.href} target="_blank" rel="noopener noreferrer">
                 <strong>{item.title}</strong>
                 <small>{item.detail}</small>
@@ -154,20 +132,34 @@ const pageDescription =
       <section class="snapshot-columns">
         <article class="snapshot-panel">
           <div class="panel-head">
-            <span class="bench-eyebrow">Runtime speed</span>
-            <h2>Fastest benchmark categories</h2>
+            <span class="bench-eyebrow">Runtime snapshot</span>
+            <h2>Latest benchmark categories</h2>
+            <a
+              class="section-link"
+              href={benchmarkResultsUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Browse benchmark runs
+            </a>
           </div>
           <table>
             <thead>
-              <tr><th>Category</th><th>Cases</th><th>Speedup</th></tr>
+              <tr><th>Category</th><th>Cases</th><th>Last run</th></tr>
             </thead>
             <tbody>
               {
                 topBenchCategories.map((row) => (
                   <tr>
-                    <td>{row.category}</td>
+                    <td>
+                      <strong>{row.category}</strong>
+                      <small>{row.description}</small>
+                    </td>
                     <td>{row.cases}</td>
-                    <td class="score">{row.speedup}x</td>
+                    <td>
+                      <strong class="score">{formatMs(row.bashkitMedianMs)}</strong>
+                      <small>bash median: {formatMs(row.bashMedianMs)}</small>
+                    </td>
                   </tr>
                 ))
               }
@@ -179,10 +171,30 @@ const pageDescription =
           <div class="panel-head">
             <span class="bench-eyebrow">Eval pressure</span>
             <h2>Lowest eval categories</h2>
+            <a
+              class="section-link"
+              href={evalResultsUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Browse eval runs
+            </a>
           </div>
+          <a
+            href={latestEval ? repoUrl(latestEval.source) : "#"}
+            class="panel-metric"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <span>Latest LLM eval</span>
+            <strong>{compactNumber(latestEval?.scorePct, "%")}</strong>
+            <small>
+              {latestEval ? `${latestEval.passed}/${latestEval.tasks} tasks` : "No run"}
+            </small>
+          </a>
           <table>
             <thead>
-              <tr><th>Category</th><th>Tasks</th><th>Rate</th></tr>
+              <tr><th>Category</th><th>Passed</th><th>Pass rate</th></tr>
             </thead>
             <tbody>
               {
@@ -190,7 +202,10 @@ const pageDescription =
                   <tr>
                     <td>{row.category}</td>
                     <td>{row.passed}/{row.tasks}</td>
-                    <td class="score">{row.rate}%</td>
+                    <td>
+                      <strong class="score">{row.rate}%</strong>
+                      <small>tasks passed</small>
+                    </td>
                   </tr>
                 ))
               }
@@ -204,6 +219,14 @@ const pageDescription =
           <div class="panel-head">
             <span class="bench-eyebrow">Latest full evals</span>
             <h2>Recent model snapshots</h2>
+            <a
+              class="section-link"
+              href={evalResultsUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Browse eval runs
+            </a>
           </div>
           <table>
             <thead>
@@ -281,29 +304,27 @@ const pageDescription =
     color: var(--color-slate);
   }
 
-  .snapshot-grid,
   .snapshot-columns {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: var(--space-md);
   }
 
   .snapshot-columns {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
     margin-top: var(--space-md);
   }
 
-  .metric-card,
   .snapshot-panel,
   .artifact-strip {
     border: 1px solid #dddddd;
     background: var(--color-white);
   }
 
-  .metric-card {
+  .panel-metric {
     display: grid;
     gap: 0.2rem;
-    min-height: 8rem;
+    margin: 0 1.1rem 1rem;
+    border: 1px solid #dddddd;
     padding: 1.1rem;
     color: var(--color-obsidian);
     text-decoration: none;
@@ -312,7 +333,7 @@ const pageDescription =
       transform 0.12s ease;
   }
 
-  .metric-card:hover,
+  .panel-metric:hover,
   .artifact-links a:hover,
   .index-links a:hover {
     border-color: rgb(10 22 54 / 0.36);
@@ -320,13 +341,13 @@ const pageDescription =
     transform: translateY(-1px);
   }
 
-  .metric-card span,
-  .metric-card small,
+  .panel-metric span,
+  .panel-metric small,
   td small {
     color: var(--color-slate);
   }
 
-  .metric-card strong {
+  .panel-metric strong {
     font-size: 2rem;
     line-height: 1;
   }
@@ -343,6 +364,27 @@ const pageDescription =
   .artifact-strip h2,
   .panel-head h2 {
     font-size: 1.35rem;
+  }
+
+  .section-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 0.65rem;
+    margin-top: var(--space-xs);
+  }
+
+  .section-link,
+  .section-links a {
+    color: var(--color-navy);
+    font-size: 0.9rem;
+    font-weight: 700;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.16em;
+  }
+
+  .section-link {
+    display: inline-flex;
+    margin-top: var(--space-xs);
   }
 
   .artifact-links {
@@ -424,7 +466,6 @@ const pageDescription =
 
   @media (max-width: 900px) {
     .bench-header,
-    .snapshot-grid,
     .artifact-strip,
     .artifact-links,
     .snapshot-columns {
@@ -435,10 +476,6 @@ const pageDescription =
   @media (max-width: 620px) {
     .bench-page {
       padding-top: 1.5rem;
-    }
-
-    .metric-card {
-      min-height: 0;
     }
 
     .snapshot-panel {

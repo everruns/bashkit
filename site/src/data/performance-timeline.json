@@ -16,6 +16,7 @@
       "date": "2026-05-26",
       "timestamp": "2026-05-26T03:01:00.000Z",
       "source": "crates/bashkit-bench/results/bench-vm-linux-x86_64-1779764460.json",
+      "reportSource": "crates/bashkit-bench/results/bench-vm-linux-x86_64-1779764460.md",
       "cases": 96,
       "speedup": 20.9,
       "bashkitMs": 42.95,
@@ -24,63 +25,99 @@
       "matchRate": 100,
       "categories": [
         {
-          "category": "subshell",
-          "cases": 6,
-          "speedup": 40.3
-        },
-        {
-          "category": "io",
-          "cases": 6,
-          "speedup": 37.7
-        },
-        {
-          "category": "tools",
-          "cases": 21,
-          "speedup": 37
-        },
-        {
-          "category": "pipes",
-          "cases": 6,
-          "speedup": 36.3
-        },
-        {
           "category": "startup",
+          "description": "Small commands where interpreter startup dominates runtime.",
           "cases": 4,
+          "bashkitMedianMs": 0.053,
+          "bashMedianMs": 1.662,
           "speedup": 32.1
         },
         {
           "category": "strings",
+          "description": "String expansion, pattern handling, and text manipulation.",
           "cases": 8,
+          "bashkitMedianMs": 0.057,
+          "bashMedianMs": 1.791,
           "speedup": 31.2
         },
         {
           "category": "variables",
+          "description": "Variable assignment, lookup, expansion, and environment handling.",
           "cases": 8,
+          "bashkitMedianMs": 0.058,
+          "bashMedianMs": 1.688,
           "speedup": 30.2
         },
         {
           "category": "arrays",
+          "description": "Indexed array reads, writes, expansion, and iteration.",
           "cases": 6,
+          "bashkitMedianMs": 0.059,
+          "bashMedianMs": 1.713,
           "speedup": 29
         },
         {
-          "category": "arithmetic",
+          "category": "subshell",
+          "description": "Command substitution and nested shell execution paths.",
           "cases": 6,
+          "bashkitMedianMs": 0.061,
+          "bashMedianMs": 3.143,
+          "speedup": 40.3
+        },
+        {
+          "category": "arithmetic",
+          "description": "Integer math, substitutions, and expression-heavy shell snippets.",
+          "cases": 6,
+          "bashkitMedianMs": 0.062,
+          "bashMedianMs": 1.703,
           "speedup": 28.8
         },
         {
+          "category": "pipes",
+          "description": "Pipeline construction, streaming, and command chaining.",
+          "cases": 6,
+          "bashkitMedianMs": 0.065,
+          "bashMedianMs": 3.131,
+          "speedup": 36.3
+        },
+        {
           "category": "control",
+          "description": "Conditionals, loops, case statements, and branching scripts.",
           "cases": 9,
+          "bashkitMedianMs": 0.076,
+          "bashMedianMs": 1.711,
           "speedup": 26.6
         },
         {
+          "category": "io",
+          "description": "File reads, writes, redirects, and filesystem-facing commands.",
+          "cases": 6,
+          "bashkitMedianMs": 0.08,
+          "bashMedianMs": 2.681,
+          "speedup": 37.7
+        },
+        {
+          "category": "tools",
+          "description": "Builtin and external-tool style command workloads.",
+          "cases": 21,
+          "bashkitMedianMs": 0.093,
+          "bashMedianMs": 3.537,
+          "speedup": 37
+        },
+        {
           "category": "complex",
+          "description": "Mixed shell workflows that combine multiple language features.",
           "cases": 7,
+          "bashkitMedianMs": 0.118,
+          "bashMedianMs": 3.207,
           "speedup": 16.5
         },
         {
           "category": "large",
+          "description": "Bigger scripts and higher-volume data paths.",
           "cases": 9,
+          "bashkitMedianMs": 1.789,
+          "bashMedianMs": 3.289,
           "speedup": 4.4
         }
       ]
@@ -95,6 +132,7 @@
       "date": "2026-05-26",
       "timestamp": "2026-05-26T02:36:42Z",
       "source": "crates/bashkit-eval/results/eval-openresponses-gpt-5.3-codex-2026-05-26-023642.json",
+      "reportSource": "crates/bashkit-eval/results/eval-openresponses-gpt-5.3-codex-2026-05-26-023642.md",
       "tasks": 58,
       "passed": 54,
       "scorePct": 93,
@@ -207,6 +245,7 @@
       "date": "2026-02-27",
       "timestamp": "2026-02-27T04:38:56Z",
       "source": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-6-2026-02-27-043856.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-6-2026-02-27-043856.md",
       "tasks": 23,
       "passed": 23,
       "scorePct": 100,
@@ -286,6 +325,7 @@
       "date": "2026-02-03",
       "timestamp": "2026-02-03T04:31:00.000Z",
       "source": "crates/bashkit-bench/results/bench-runsc-linux-x86_64-1770093060.json",
+      "reportSource": "crates/bashkit-bench/results/bench-runsc-linux-x86_64-1770093060.md",
       "cases": 75,
       "speedup": 200.9,
       "bashkitMs": 8.97,
@@ -294,48 +334,75 @@
       "matchRate": 89.33,
       "categories": [
         {
-          "category": "pipes",
-          "cases": 6,
-          "speedup": 367
-        },
-        {
-          "category": "tools",
-          "cases": 21,
-          "speedup": 239.9
-        },
-        {
           "category": "startup",
+          "description": "Small commands where interpreter startup dominates runtime.",
           "cases": 4,
+          "bashkitMedianMs": 0.039,
+          "bashMedianMs": 8.474,
           "speedup": 216.4
         },
         {
           "category": "strings",
+          "description": "String expansion, pattern handling, and text manipulation.",
           "cases": 8,
+          "bashkitMedianMs": 0.047,
+          "bashMedianMs": 9.218,
           "speedup": 201.4
         },
         {
-          "category": "arithmetic",
+          "category": "pipes",
+          "description": "Pipeline construction, streaming, and command chaining.",
           "cases": 6,
+          "bashkitMedianMs": 0.047,
+          "bashMedianMs": 19.375,
+          "speedup": 367
+        },
+        {
+          "category": "arithmetic",
+          "description": "Integer math, substitutions, and expression-heavy shell snippets.",
+          "cases": 6,
+          "bashkitMedianMs": 0.052,
+          "bashMedianMs": 8.68,
           "speedup": 177.6
         },
         {
           "category": "arrays",
+          "description": "Indexed array reads, writes, expansion, and iteration.",
           "cases": 6,
+          "bashkitMedianMs": 0.053,
+          "bashMedianMs": 9.096,
           "speedup": 172.3
         },
         {
           "category": "variables",
+          "description": "Variable assignment, lookup, expansion, and environment handling.",
           "cases": 8,
+          "bashkitMedianMs": 0.055,
+          "bashMedianMs": 8.665,
           "speedup": 162.2
         },
         {
           "category": "control",
+          "description": "Conditionals, loops, case statements, and branching scripts.",
           "cases": 9,
+          "bashkitMedianMs": 0.065,
+          "bashMedianMs": 9.822,
           "speedup": 153.8
         },
         {
+          "category": "tools",
+          "description": "Builtin and external-tool style command workloads.",
+          "cases": 21,
+          "bashkitMedianMs": 0.094,
+          "bashMedianMs": 23.62,
+          "speedup": 239.9
+        },
+        {
           "category": "complex",
+          "description": "Mixed shell workflows that combine multiple language features.",
           "cases": 7,
+          "bashkitMedianMs": 0.097,
+          "bashMedianMs": 22.169,
           "speedup": 131.5
         }
       ]
@@ -348,6 +415,7 @@
       "date": "2026-05-25",
       "timestamp": "2026-05-25T21:32:22.000Z",
       "source": "crates/bashkit/benches/results/criterion-hotpath-perf-linux-x86_64-1779744742.md",
+      "reportSource": "crates/bashkit/benches/results/criterion-hotpath-perf-linux-x86_64-1779744742.md",
       "cases": 23,
       "medianUs": null,
       "p95Us": null,
@@ -369,6 +437,7 @@
       "date": "2026-02-01",
       "timestamp": "2026-02-01T18:30:40.000Z",
       "source": "crates/bashkit-bench/results/bench-runsc-linux-x86_64-1769970640.json",
+      "reportSource": "crates/bashkit-bench/results/bench-runsc-linux-x86_64-1769970640.md",
       "cases": 75,
       "speedup": 0.4,
       "bashkitMs": 4004.73,
@@ -377,48 +446,75 @@
       "matchRate": 80,
       "categories": [
         {
-          "category": "pipes",
-          "cases": 6,
-          "speedup": 3767.5
-        },
-        {
           "category": "startup",
+          "description": "Small commands where interpreter startup dominates runtime.",
           "cases": 4,
+          "bashkitMedianMs": 0.004,
+          "bashMedianMs": 9.144,
           "speedup": 2401.9
         },
         {
-          "category": "strings",
-          "cases": 8,
-          "speedup": 1652.9
-        },
-        {
           "category": "variables",
+          "description": "Variable assignment, lookup, expansion, and environment handling.",
           "cases": 8,
+          "bashkitMedianMs": 0.006,
+          "bashMedianMs": 8.654,
           "speedup": 1611.5
         },
         {
-          "category": "arithmetic",
+          "category": "strings",
+          "description": "String expansion, pattern handling, and text manipulation.",
+          "cases": 8,
+          "bashkitMedianMs": 0.006,
+          "bashMedianMs": 9.038,
+          "speedup": 1652.9
+        },
+        {
+          "category": "pipes",
+          "description": "Pipeline construction, streaming, and command chaining.",
           "cases": 6,
+          "bashkitMedianMs": 0.006,
+          "bashMedianMs": 17.435,
+          "speedup": 3767.5
+        },
+        {
+          "category": "arithmetic",
+          "description": "Integer math, substitutions, and expression-heavy shell snippets.",
+          "cases": 6,
+          "bashkitMedianMs": 0.007,
+          "bashMedianMs": 8.839,
           "speedup": 1307.2
         },
         {
           "category": "arrays",
+          "description": "Indexed array reads, writes, expansion, and iteration.",
           "cases": 6,
+          "bashkitMedianMs": 0.009,
+          "bashMedianMs": 10.939,
           "speedup": 1260.4
         },
         {
           "category": "control",
+          "description": "Conditionals, loops, case statements, and branching scripts.",
           "cases": 9,
+          "bashkitMedianMs": 0.011,
+          "bashMedianMs": 8.81,
           "speedup": 958.1
         },
         {
           "category": "tools",
+          "description": "Builtin and external-tool style command workloads.",
           "cases": 21,
+          "bashkitMedianMs": 0.028,
+          "bashMedianMs": 22.573,
           "speedup": 725.9
         },
         {
           "category": "complex",
+          "description": "Mixed shell workflows that combine multiple language features.",
           "cases": 7,
+          "bashkitMedianMs": 0.116,
+          "bashMedianMs": 17.902,
           "speedup": 408.7
         }
       ]
@@ -430,6 +526,7 @@
       "date": "2026-02-03",
       "timestamp": "2026-02-03T04:31:00.000Z",
       "source": "crates/bashkit-bench/results/bench-runsc-linux-x86_64-1770093060.json",
+      "reportSource": "crates/bashkit-bench/results/bench-runsc-linux-x86_64-1770093060.md",
       "cases": 75,
       "speedup": 200.9,
       "bashkitMs": 8.97,
@@ -438,48 +535,75 @@
       "matchRate": 89.33,
       "categories": [
         {
-          "category": "pipes",
-          "cases": 6,
-          "speedup": 367
-        },
-        {
-          "category": "tools",
-          "cases": 21,
-          "speedup": 239.9
-        },
-        {
           "category": "startup",
+          "description": "Small commands where interpreter startup dominates runtime.",
           "cases": 4,
+          "bashkitMedianMs": 0.039,
+          "bashMedianMs": 8.474,
           "speedup": 216.4
         },
         {
           "category": "strings",
+          "description": "String expansion, pattern handling, and text manipulation.",
           "cases": 8,
+          "bashkitMedianMs": 0.047,
+          "bashMedianMs": 9.218,
           "speedup": 201.4
         },
         {
-          "category": "arithmetic",
+          "category": "pipes",
+          "description": "Pipeline construction, streaming, and command chaining.",
           "cases": 6,
+          "bashkitMedianMs": 0.047,
+          "bashMedianMs": 19.375,
+          "speedup": 367
+        },
+        {
+          "category": "arithmetic",
+          "description": "Integer math, substitutions, and expression-heavy shell snippets.",
+          "cases": 6,
+          "bashkitMedianMs": 0.052,
+          "bashMedianMs": 8.68,
           "speedup": 177.6
         },
         {
           "category": "arrays",
+          "description": "Indexed array reads, writes, expansion, and iteration.",
           "cases": 6,
+          "bashkitMedianMs": 0.053,
+          "bashMedianMs": 9.096,
           "speedup": 172.3
         },
         {
           "category": "variables",
+          "description": "Variable assignment, lookup, expansion, and environment handling.",
           "cases": 8,
+          "bashkitMedianMs": 0.055,
+          "bashMedianMs": 8.665,
           "speedup": 162.2
         },
         {
           "category": "control",
+          "description": "Conditionals, loops, case statements, and branching scripts.",
           "cases": 9,
+          "bashkitMedianMs": 0.065,
+          "bashMedianMs": 9.822,
           "speedup": 153.8
         },
         {
+          "category": "tools",
+          "description": "Builtin and external-tool style command workloads.",
+          "cases": 21,
+          "bashkitMedianMs": 0.094,
+          "bashMedianMs": 23.62,
+          "speedup": 239.9
+        },
+        {
           "category": "complex",
+          "description": "Mixed shell workflows that combine multiple language features.",
           "cases": 7,
+          "bashkitMedianMs": 0.097,
+          "bashMedianMs": 22.169,
           "speedup": 131.5
         }
       ]
@@ -491,6 +615,7 @@
       "date": "2026-03-14",
       "timestamp": "2026-03-14T05:02:28.000Z",
       "source": "crates/bashkit-bench/results/bench-none-linux-x86_64-1773464548.json",
+      "reportSource": "crates/bashkit-bench/results/bench-none-linux-x86_64-1773464548.md",
       "cases": 96,
       "speedup": 23.8,
       "bashkitMs": 33.11,
@@ -499,63 +624,99 @@
       "matchRate": 100,
       "categories": [
         {
-          "category": "pipes",
-          "cases": 6,
-          "speedup": 43.1
-        },
-        {
-          "category": "io",
-          "cases": 6,
-          "speedup": 31.8
-        },
-        {
-          "category": "subshell",
-          "cases": 6,
-          "speedup": 31.7
-        },
-        {
-          "category": "tools",
-          "cases": 21,
-          "speedup": 28.1
-        },
-        {
           "category": "startup",
+          "description": "Small commands where interpreter startup dominates runtime.",
           "cases": 4,
+          "bashkitMedianMs": 0.054,
+          "bashMedianMs": 1.436,
           "speedup": 26.2
         },
         {
-          "category": "arithmetic",
+          "category": "pipes",
+          "description": "Pipeline construction, streaming, and command chaining.",
           "cases": 6,
+          "bashkitMedianMs": 0.06,
+          "bashMedianMs": 2.691,
+          "speedup": 43.1
+        },
+        {
+          "category": "variables",
+          "description": "Variable assignment, lookup, expansion, and environment handling.",
+          "cases": 8,
+          "bashkitMedianMs": 0.063,
+          "bashMedianMs": 1.343,
+          "speedup": 21.3
+        },
+        {
+          "category": "arithmetic",
+          "description": "Integer math, substitutions, and expression-heavy shell snippets.",
+          "cases": 6,
+          "bashkitMedianMs": 0.063,
+          "bashMedianMs": 1.442,
           "speedup": 22.4
         },
         {
           "category": "strings",
+          "description": "String expansion, pattern handling, and text manipulation.",
           "cases": 8,
+          "bashkitMedianMs": 0.066,
+          "bashMedianMs": 1.454,
           "speedup": 21.7
         },
         {
           "category": "arrays",
+          "description": "Indexed array reads, writes, expansion, and iteration.",
           "cases": 6,
+          "bashkitMedianMs": 0.066,
+          "bashMedianMs": 1.408,
           "speedup": 21.5
         },
         {
-          "category": "variables",
-          "cases": 8,
-          "speedup": 21.3
+          "category": "io",
+          "description": "File reads, writes, redirects, and filesystem-facing commands.",
+          "cases": 6,
+          "bashkitMedianMs": 0.067,
+          "bashMedianMs": 2.172,
+          "speedup": 31.8
+        },
+        {
+          "category": "subshell",
+          "description": "Command substitution and nested shell execution paths.",
+          "cases": 6,
+          "bashkitMedianMs": 0.068,
+          "bashMedianMs": 2.716,
+          "speedup": 31.7
         },
         {
           "category": "control",
+          "description": "Conditionals, loops, case statements, and branching scripts.",
           "cases": 9,
+          "bashkitMedianMs": 0.076,
+          "bashMedianMs": 1.481,
           "speedup": 20
         },
         {
+          "category": "tools",
+          "description": "Builtin and external-tool style command workloads.",
+          "cases": 21,
+          "bashkitMedianMs": 0.106,
+          "bashMedianMs": 2.998,
+          "speedup": 28.1
+        },
+        {
           "category": "complex",
+          "description": "Mixed shell workflows that combine multiple language features.",
           "cases": 7,
+          "bashkitMedianMs": 0.144,
+          "bashMedianMs": 3.069,
           "speedup": 11.8
         },
         {
           "category": "large",
+          "description": "Bigger scripts and higher-volume data paths.",
           "cases": 9,
+          "bashkitMedianMs": 0.857,
+          "bashMedianMs": 2.667,
           "speedup": 3.7
         }
       ]
@@ -567,6 +728,7 @@
       "date": "2026-04-13",
       "timestamp": "2026-04-13T23:05:40.000Z",
       "source": "crates/bashkit-bench/results/bench-runsc-linux-x86_64-1776121540.json",
+      "reportSource": "crates/bashkit-bench/results/bench-runsc-linux-x86_64-1776121540.md",
       "cases": 96,
       "speedup": 107.2,
       "bashkitMs": 41.52,
@@ -575,63 +737,99 @@
       "matchRate": 100,
       "categories": [
         {
-          "category": "pipes",
-          "cases": 6,
-          "speedup": 220.4
-        },
-        {
-          "category": "tools",
-          "cases": 21,
-          "speedup": 167.5
-        },
-        {
-          "category": "io",
-          "cases": 6,
-          "speedup": 162.5
-        },
-        {
-          "category": "subshell",
-          "cases": 6,
-          "speedup": 133.5
-        },
-        {
           "category": "startup",
+          "description": "Small commands where interpreter startup dominates runtime.",
           "cases": 4,
+          "bashkitMedianMs": 0.07,
+          "bashMedianMs": 8.238,
           "speedup": 116.7
         },
         {
+          "category": "pipes",
+          "description": "Pipeline construction, streaming, and command chaining.",
+          "cases": 6,
+          "bashkitMedianMs": 0.083,
+          "bashMedianMs": 17.156,
+          "speedup": 220.4
+        },
+        {
           "category": "strings",
+          "description": "String expansion, pattern handling, and text manipulation.",
           "cases": 8,
+          "bashkitMedianMs": 0.085,
+          "bashMedianMs": 8.256,
           "speedup": 98.9
         },
         {
+          "category": "io",
+          "description": "File reads, writes, redirects, and filesystem-facing commands.",
+          "cases": 6,
+          "bashkitMedianMs": 0.087,
+          "bashMedianMs": 14.647,
+          "speedup": 162.5
+        },
+        {
           "category": "variables",
+          "description": "Variable assignment, lookup, expansion, and environment handling.",
           "cases": 8,
+          "bashkitMedianMs": 0.089,
+          "bashMedianMs": 8.357,
           "speedup": 93.5
         },
         {
+          "category": "arithmetic",
+          "description": "Integer math, substitutions, and expression-heavy shell snippets.",
+          "cases": 6,
+          "bashkitMedianMs": 0.091,
+          "bashMedianMs": 8.119,
+          "speedup": 88.5
+        },
+        {
           "category": "control",
+          "description": "Conditionals, loops, case statements, and branching scripts.",
           "cases": 9,
+          "bashkitMedianMs": 0.094,
+          "bashMedianMs": 8.163,
           "speedup": 89.4
         },
         {
           "category": "arrays",
+          "description": "Indexed array reads, writes, expansion, and iteration.",
           "cases": 6,
+          "bashkitMedianMs": 0.094,
+          "bashMedianMs": 8.109,
           "speedup": 89.3
         },
         {
-          "category": "arithmetic",
+          "category": "subshell",
+          "description": "Command substitution and nested shell execution paths.",
           "cases": 6,
-          "speedup": 88.5
+          "bashkitMedianMs": 0.1,
+          "bashMedianMs": 16.778,
+          "speedup": 133.5
+        },
+        {
+          "category": "tools",
+          "description": "Builtin and external-tool style command workloads.",
+          "cases": 21,
+          "bashkitMedianMs": 0.118,
+          "bashMedianMs": 21.723,
+          "speedup": 167.5
         },
         {
           "category": "complex",
+          "description": "Mixed shell workflows that combine multiple language features.",
           "cases": 7,
+          "bashkitMedianMs": 0.185,
+          "bashMedianMs": 17.53,
           "speedup": 72.3
         },
         {
           "category": "large",
+          "description": "Bigger scripts and higher-volume data paths.",
           "cases": 9,
+          "bashkitMedianMs": 0.84,
+          "bashMedianMs": 9.895,
           "speedup": 19.8
         }
       ]
@@ -643,6 +841,7 @@
       "date": "2026-05-25",
       "timestamp": "2026-05-25T21:35:05.000Z",
       "source": "crates/bashkit-bench/results/bench-after-perf-linux-x86_64.json",
+      "reportSource": "crates/bashkit-bench/results/bench-after-perf-linux-x86_64.md",
       "cases": 96,
       "speedup": 25.4,
       "bashkitMs": 43.16,
@@ -651,63 +850,99 @@
       "matchRate": 100,
       "categories": [
         {
-          "category": "pipes",
-          "cases": 6,
-          "speedup": 83.1
-        },
-        {
-          "category": "tools",
-          "cases": 21,
-          "speedup": 62.9
-        },
-        {
-          "category": "subshell",
-          "cases": 6,
-          "speedup": 60.6
-        },
-        {
-          "category": "arithmetic",
-          "cases": 6,
-          "speedup": 52.7
-        },
-        {
-          "category": "strings",
-          "cases": 8,
-          "speedup": 51.3
-        },
-        {
-          "category": "io",
-          "cases": 6,
-          "speedup": 50.6
-        },
-        {
-          "category": "variables",
-          "cases": 8,
-          "speedup": 49.8
-        },
-        {
-          "category": "arrays",
-          "cases": 6,
-          "speedup": 49.7
-        },
-        {
           "category": "startup",
+          "description": "Small commands where interpreter startup dominates runtime.",
           "cases": 4,
+          "bashkitMedianMs": 0.044,
+          "bashMedianMs": 1.911,
           "speedup": 43.5
         },
         {
+          "category": "strings",
+          "description": "String expansion, pattern handling, and text manipulation.",
+          "cases": 8,
+          "bashkitMedianMs": 0.044,
+          "bashMedianMs": 2.328,
+          "speedup": 51.3
+        },
+        {
+          "category": "arrays",
+          "description": "Indexed array reads, writes, expansion, and iteration.",
+          "cases": 6,
+          "bashkitMedianMs": 0.045,
+          "bashMedianMs": 2.3,
+          "speedup": 49.7
+        },
+        {
+          "category": "arithmetic",
+          "description": "Integer math, substitutions, and expression-heavy shell snippets.",
+          "cases": 6,
+          "bashkitMedianMs": 0.046,
+          "bashMedianMs": 2.91,
+          "speedup": 52.7
+        },
+        {
+          "category": "variables",
+          "description": "Variable assignment, lookup, expansion, and environment handling.",
+          "cases": 8,
+          "bashkitMedianMs": 0.049,
+          "bashMedianMs": 2.318,
+          "speedup": 49.8
+        },
+        {
+          "category": "subshell",
+          "description": "Command substitution and nested shell execution paths.",
+          "cases": 6,
+          "bashkitMedianMs": 0.05,
+          "bashMedianMs": 3.232,
+          "speedup": 60.6
+        },
+        {
+          "category": "pipes",
+          "description": "Pipeline construction, streaming, and command chaining.",
+          "cases": 6,
+          "bashkitMedianMs": 0.055,
+          "bashMedianMs": 4.574,
+          "speedup": 83.1
+        },
+        {
           "category": "control",
+          "description": "Conditionals, loops, case statements, and branching scripts.",
           "cases": 9,
+          "bashkitMedianMs": 0.056,
+          "bashMedianMs": 2.362,
           "speedup": 36.8
         },
         {
+          "category": "io",
+          "description": "File reads, writes, redirects, and filesystem-facing commands.",
+          "cases": 6,
+          "bashkitMedianMs": 0.071,
+          "bashMedianMs": 3.232,
+          "speedup": 50.6
+        },
+        {
+          "category": "tools",
+          "description": "Builtin and external-tool style command workloads.",
+          "cases": 21,
+          "bashkitMedianMs": 0.075,
+          "bashMedianMs": 5.143,
+          "speedup": 62.9
+        },
+        {
           "category": "complex",
+          "description": "Mixed shell workflows that combine multiple language features.",
           "cases": 7,
+          "bashkitMedianMs": 0.117,
+          "bashMedianMs": 3.226,
           "speedup": 22.3
         },
         {
           "category": "large",
+          "description": "Bigger scripts and higher-volume data paths.",
           "cases": 9,
+          "bashkitMedianMs": 1.554,
+          "bashMedianMs": 3.005,
           "speedup": 8.6
         }
       ]
@@ -719,6 +954,7 @@
       "date": "2026-05-26",
       "timestamp": "2026-05-26T03:01:00.000Z",
       "source": "crates/bashkit-bench/results/bench-vm-linux-x86_64-1779764460.json",
+      "reportSource": "crates/bashkit-bench/results/bench-vm-linux-x86_64-1779764460.md",
       "cases": 96,
       "speedup": 20.9,
       "bashkitMs": 42.95,
@@ -727,63 +963,99 @@
       "matchRate": 100,
       "categories": [
         {
-          "category": "subshell",
-          "cases": 6,
-          "speedup": 40.3
-        },
-        {
-          "category": "io",
-          "cases": 6,
-          "speedup": 37.7
-        },
-        {
-          "category": "tools",
-          "cases": 21,
-          "speedup": 37
-        },
-        {
-          "category": "pipes",
-          "cases": 6,
-          "speedup": 36.3
-        },
-        {
           "category": "startup",
+          "description": "Small commands where interpreter startup dominates runtime.",
           "cases": 4,
+          "bashkitMedianMs": 0.053,
+          "bashMedianMs": 1.662,
           "speedup": 32.1
         },
         {
           "category": "strings",
+          "description": "String expansion, pattern handling, and text manipulation.",
           "cases": 8,
+          "bashkitMedianMs": 0.057,
+          "bashMedianMs": 1.791,
           "speedup": 31.2
         },
         {
           "category": "variables",
+          "description": "Variable assignment, lookup, expansion, and environment handling.",
           "cases": 8,
+          "bashkitMedianMs": 0.058,
+          "bashMedianMs": 1.688,
           "speedup": 30.2
         },
         {
           "category": "arrays",
+          "description": "Indexed array reads, writes, expansion, and iteration.",
           "cases": 6,
+          "bashkitMedianMs": 0.059,
+          "bashMedianMs": 1.713,
           "speedup": 29
         },
         {
-          "category": "arithmetic",
+          "category": "subshell",
+          "description": "Command substitution and nested shell execution paths.",
           "cases": 6,
+          "bashkitMedianMs": 0.061,
+          "bashMedianMs": 3.143,
+          "speedup": 40.3
+        },
+        {
+          "category": "arithmetic",
+          "description": "Integer math, substitutions, and expression-heavy shell snippets.",
+          "cases": 6,
+          "bashkitMedianMs": 0.062,
+          "bashMedianMs": 1.703,
           "speedup": 28.8
         },
         {
+          "category": "pipes",
+          "description": "Pipeline construction, streaming, and command chaining.",
+          "cases": 6,
+          "bashkitMedianMs": 0.065,
+          "bashMedianMs": 3.131,
+          "speedup": 36.3
+        },
+        {
           "category": "control",
+          "description": "Conditionals, loops, case statements, and branching scripts.",
           "cases": 9,
+          "bashkitMedianMs": 0.076,
+          "bashMedianMs": 1.711,
           "speedup": 26.6
         },
         {
+          "category": "io",
+          "description": "File reads, writes, redirects, and filesystem-facing commands.",
+          "cases": 6,
+          "bashkitMedianMs": 0.08,
+          "bashMedianMs": 2.681,
+          "speedup": 37.7
+        },
+        {
+          "category": "tools",
+          "description": "Builtin and external-tool style command workloads.",
+          "cases": 21,
+          "bashkitMedianMs": 0.093,
+          "bashMedianMs": 3.537,
+          "speedup": 37
+        },
+        {
           "category": "complex",
+          "description": "Mixed shell workflows that combine multiple language features.",
           "cases": 7,
+          "bashkitMedianMs": 0.118,
+          "bashMedianMs": 3.207,
           "speedup": 16.5
         },
         {
           "category": "large",
+          "description": "Bigger scripts and higher-volume data paths.",
           "cases": 9,
+          "bashkitMedianMs": 1.789,
+          "bashMedianMs": 3.289,
           "speedup": 4.4
         }
       ]
@@ -798,6 +1070,7 @@
       "date": "2026-03-14",
       "timestamp": "2026-03-14T06:18:49.000Z",
       "source": "crates/bashkit/benches/results/criterion-parallel-(none)-linux-x86_64-1773469129.md",
+      "reportSource": "crates/bashkit/benches/results/criterion-parallel-(none)-linux-x86_64-1773469129.md",
       "cases": 9,
       "medianUs": 160.05,
       "p95Us": 1122.24,
@@ -818,6 +1091,7 @@
       "date": "2026-05-04",
       "timestamp": "2026-05-04T03:27:48.000Z",
       "source": "crates/bashkit/benches/results/criterion-sqlite-vm-linux-x86_64-1777865268.md",
+      "reportSource": "crates/bashkit/benches/results/criterion-sqlite-vm-linux-x86_64-1777865268.md",
       "cases": 44,
       "medianUs": 799.27,
       "p95Us": 7677.82,
@@ -838,6 +1112,7 @@
       "date": "2026-05-25",
       "timestamp": "2026-05-25T21:32:22.000Z",
       "source": "crates/bashkit/benches/results/criterion-hotpath-perf-linux-x86_64-1779744742.md",
+      "reportSource": "crates/bashkit/benches/results/criterion-hotpath-perf-linux-x86_64-1779744742.md",
       "cases": 23,
       "medianUs": null,
       "p95Us": null,
@@ -858,6 +1133,7 @@
       "date": "2026-05-26",
       "timestamp": "2026-05-26T01:44:10.000Z",
       "source": "crates/bashkit/benches/results/criterion-file_ops-linux-x86_64-1779759850.md",
+      "reportSource": "crates/bashkit/benches/results/criterion-file_ops-linux-x86_64-1779759850.md",
       "cases": 11,
       "medianUs": 2000,
       "p95Us": 3590,
@@ -878,6 +1154,7 @@
       "date": "2026-05-26",
       "timestamp": "2026-05-26T01:44:10.000Z",
       "source": "crates/bashkit/benches/results/criterion-hotpath-attrs+shopt-linux-x86_64-1779759850.md",
+      "reportSource": "crates/bashkit/benches/results/criterion-hotpath-attrs+shopt-linux-x86_64-1779759850.md",
       "cases": 43,
       "medianUs": 624,
       "p95Us": 2713,
@@ -902,6 +1179,7 @@
       "date": "2026-02-07",
       "timestamp": "2026-02-07T05:20:23Z",
       "source": "crates/bashkit-eval/results/eval-anthropic-claude-haiku-4-5-2026-02-07-052023.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-haiku-4-5-2026-02-07-052023.md",
       "tasks": 25,
       "passed": 19,
       "scorePct": 91.5,
@@ -984,6 +1262,7 @@
       "date": "2026-02-07",
       "timestamp": "2026-02-07T05:20:37Z",
       "source": "crates/bashkit-eval/results/eval-openai-gpt-5.2-2026-02-07-052037.json",
+      "reportSource": "crates/bashkit-eval/results/eval-openai-gpt-5.2-2026-02-07-052037.md",
       "tasks": 25,
       "passed": 19,
       "scorePct": 86.8,
@@ -1066,6 +1345,7 @@
       "date": "2026-02-07",
       "timestamp": "2026-02-07T05:25:36Z",
       "source": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-6-2026-02-07-052536.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-6-2026-02-07-052536.md",
       "tasks": 25,
       "passed": 17,
       "scorePct": 86.8,
@@ -1148,6 +1428,7 @@
       "date": "2026-02-08",
       "timestamp": "2026-02-08T06:14:14Z",
       "source": "crates/bashkit-eval/results/eval-anthropic-claude-haiku-4-5-2026-02-08-061414.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-haiku-4-5-2026-02-08-061414.md",
       "tasks": 25,
       "passed": 23,
       "scorePct": 98.1,
@@ -1230,6 +1511,7 @@
       "date": "2026-02-08",
       "timestamp": "2026-02-08T06:14:45Z",
       "source": "crates/bashkit-eval/results/eval-openai-gpt-5.2-2026-02-08-061445.json",
+      "reportSource": "crates/bashkit-eval/results/eval-openai-gpt-5.2-2026-02-08-061445.md",
       "tasks": 25,
       "passed": 18,
       "scorePct": 81.1,
@@ -1312,6 +1594,7 @@
       "date": "2026-02-08",
       "timestamp": "2026-02-08T06:20:03Z",
       "source": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-6-2026-02-08-062003.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-6-2026-02-08-062003.md",
       "tasks": 25,
       "passed": 21,
       "scorePct": 93.4,
@@ -1394,6 +1677,7 @@
       "date": "2026-02-09",
       "timestamp": "2026-02-09T05:44:24Z",
       "source": "crates/bashkit-eval/results/eval-openai-gpt-5.2-2026-02-09-054424.json",
+      "reportSource": "crates/bashkit-eval/results/eval-openai-gpt-5.2-2026-02-09-054424.md",
       "tasks": 37,
       "passed": 23,
       "scorePct": 79.9,
@@ -1476,6 +1760,7 @@
       "date": "2026-02-09",
       "timestamp": "2026-02-09T05:45:58Z",
       "source": "crates/bashkit-eval/results/eval-anthropic-claude-haiku-4-5-20251001-2026-02-09-054558.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-haiku-4-5-20251001-2026-02-09-054558.md",
       "tasks": 37,
       "passed": 32,
       "scorePct": 94.6,
@@ -1558,6 +1843,7 @@
       "date": "2026-02-09",
       "timestamp": "2026-02-09T14:27:36Z",
       "source": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-6-2026-02-09-142736.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-6-2026-02-09-142736.md",
       "tasks": 37,
       "passed": 29,
       "scorePct": 87,
@@ -1640,6 +1926,7 @@
       "date": "2026-02-17",
       "timestamp": "2026-02-17T23:03:12Z",
       "source": "crates/bashkit-eval/results/eval-anthropic-claude-sonnet-4-20250514-2026-02-17-230312.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-sonnet-4-20250514-2026-02-17-230312.md",
       "tasks": 3,
       "passed": 3,
       "scorePct": 100,
@@ -1668,6 +1955,7 @@
       "date": "2026-02-17",
       "timestamp": "2026-02-17T23:13:36Z",
       "source": "crates/bashkit-eval/results/eval-anthropic-claude-sonnet-4-20250514-2026-02-17-231336.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-sonnet-4-20250514-2026-02-17-231336.md",
       "tasks": 37,
       "passed": 32,
       "scorePct": 92.9,
@@ -1750,6 +2038,7 @@
       "date": "2026-02-25",
       "timestamp": "2026-02-25T04:48:01Z",
       "source": "crates/bashkit-eval/results/eval-anthropic-claude-haiku-4-5-20251001-2026-02-25-044801.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-haiku-4-5-20251001-2026-02-25-044801.md",
       "tasks": 37,
       "passed": 35,
       "scorePct": 97.8,
@@ -1832,6 +2121,7 @@
       "date": "2026-02-25",
       "timestamp": "2026-02-25T04:49:04Z",
       "source": "crates/bashkit-eval/results/eval-openai-gpt-5.2-2026-02-25-044904.json",
+      "reportSource": "crates/bashkit-eval/results/eval-openai-gpt-5.2-2026-02-25-044904.md",
       "tasks": 37,
       "passed": 27,
       "scorePct": 86.4,
@@ -1914,6 +2204,7 @@
       "date": "2026-02-25",
       "timestamp": "2026-02-25T04:53:28Z",
       "source": "crates/bashkit-eval/results/eval-anthropic-claude-sonnet-4-20250514-2026-02-25-045328.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-sonnet-4-20250514-2026-02-25-045328.md",
       "tasks": 37,
       "passed": 34,
       "scorePct": 97.3,
@@ -1996,6 +2287,7 @@
       "date": "2026-02-25",
       "timestamp": "2026-02-25T04:56:11Z",
       "source": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-6-2026-02-25-045611.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-6-2026-02-25-045611.md",
       "tasks": 37,
       "passed": 33,
       "scorePct": 92.9,
@@ -2078,6 +2370,7 @@
       "date": "2026-02-27",
       "timestamp": "2026-02-27T04:06:36Z",
       "source": "crates/bashkit-eval/results/eval-anthropic-claude-haiku-4-5-20251001-2026-02-27-040636.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-haiku-4-5-20251001-2026-02-27-040636.md",
       "tasks": 52,
       "passed": 43,
       "scorePct": 91.7,
@@ -2172,6 +2465,7 @@
       "date": "2026-02-27",
       "timestamp": "2026-02-27T04:38:13Z",
       "source": "crates/bashkit-eval/results/eval-openai-gpt-5.2-2026-02-27-043813.json",
+      "reportSource": "crates/bashkit-eval/results/eval-openai-gpt-5.2-2026-02-27-043813.md",
       "tasks": 52,
       "passed": 32,
       "scorePct": 79.4,
@@ -2266,6 +2560,7 @@
       "date": "2026-02-27",
       "timestamp": "2026-02-27T04:38:54Z",
       "source": "crates/bashkit-eval/results/eval-anthropic-claude-sonnet-4-6-2026-02-27-043854.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-sonnet-4-6-2026-02-27-043854.md",
       "tasks": 26,
       "passed": 23,
       "scorePct": 93.9,
@@ -2348,6 +2643,7 @@
       "date": "2026-02-27",
       "timestamp": "2026-02-27T04:38:56Z",
       "source": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-6-2026-02-27-043856.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-6-2026-02-27-043856.md",
       "tasks": 23,
       "passed": 23,
       "scorePct": 100,
@@ -2430,6 +2726,7 @@
       "date": "2026-02-27",
       "timestamp": "2026-02-27T05:55:43Z",
       "source": "crates/bashkit-eval/results/eval-openai-responses-gpt-5.3-codex-2026-02-27-055543.json",
+      "reportSource": "crates/bashkit-eval/results/eval-openai-responses-gpt-5.3-codex-2026-02-27-055543.md",
       "tasks": 37,
       "passed": 30,
       "scorePct": 93,
@@ -2512,6 +2809,7 @@
       "date": "2026-02-28",
       "timestamp": "2026-02-28T20:40:52Z",
       "source": "crates/bashkit-eval/results/eval-openai-gpt-5.2-2026-02-28-204052.json",
+      "reportSource": "crates/bashkit-eval/results/eval-openai-gpt-5.2-2026-02-28-204052.md",
       "tasks": 58,
       "passed": 41,
       "scorePct": 77.3,
@@ -2624,6 +2922,7 @@
       "date": "2026-02-28",
       "timestamp": "2026-02-28T20:42:32Z",
       "source": "crates/bashkit-eval/results/eval-anthropic-claude-haiku-4-5-20251001-2026-02-28-204232.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-haiku-4-5-20251001-2026-02-28-204232.md",
       "tasks": 58,
       "passed": 54,
       "scorePct": 97.2,
@@ -2736,6 +3035,7 @@
       "date": "2026-02-28",
       "timestamp": "2026-02-28T20:53:31Z",
       "source": "crates/bashkit-eval/results/eval-openresponses-gpt-5.3-codex-2026-02-28-205331.json",
+      "reportSource": "crates/bashkit-eval/results/eval-openresponses-gpt-5.3-codex-2026-02-28-205331.md",
       "tasks": 58,
       "passed": 51,
       "scorePct": 91,
@@ -2848,6 +3148,7 @@
       "date": "2026-02-28",
       "timestamp": "2026-02-28T20:53:58Z",
       "source": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-6-2026-02-28-205358.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-6-2026-02-28-205358.md",
       "tasks": 58,
       "passed": 50,
       "scorePct": 91,
@@ -2960,6 +3261,7 @@
       "date": "2026-02-28",
       "timestamp": "2026-02-28T21:11:20Z",
       "source": "crates/bashkit-eval/results/eval-anthropic-claude-sonnet-4-6-2026-02-28-211120.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-sonnet-4-6-2026-02-28-211120.md",
       "tasks": 58,
       "passed": 48,
       "scorePct": 92.5,
@@ -3072,6 +3374,7 @@
       "date": "2026-03-14",
       "timestamp": "2026-03-14T17:44:22Z",
       "source": "crates/bashkit-eval/results/scripting-eval-scripted-openai-gpt-5.4-2026-03-14-174422.json",
+      "reportSource": "crates/bashkit-eval/results/scripting-eval-scripted-openai-gpt-5.4-2026-03-14-174422.md",
       "tasks": 4,
       "passed": 3,
       "scorePct": 93.1,
@@ -3100,6 +3403,7 @@
       "date": "2026-03-14",
       "timestamp": "2026-03-14T17:44:33Z",
       "source": "crates/bashkit-eval/results/scripting-eval-scripted-openai-gpt-5.4-2026-03-14-174433.json",
+      "reportSource": "crates/bashkit-eval/results/scripting-eval-scripted-openai-gpt-5.4-2026-03-14-174433.md",
       "tasks": 3,
       "passed": 3,
       "scorePct": 100,
@@ -3128,6 +3432,7 @@
       "date": "2026-03-14",
       "timestamp": "2026-03-14T17:44:46Z",
       "source": "crates/bashkit-eval/results/scripting-eval-scripted-openai-gpt-5.4-2026-03-14-174446.json",
+      "reportSource": "crates/bashkit-eval/results/scripting-eval-scripted-openai-gpt-5.4-2026-03-14-174446.md",
       "tasks": 3,
       "passed": 2,
       "scorePct": 84.6,
@@ -3156,6 +3461,7 @@
       "date": "2026-03-14",
       "timestamp": "2026-03-14T17:44:58Z",
       "source": "crates/bashkit-eval/results/scripting-eval-scripted-openai-gpt-5.4-2026-03-14-174458.json",
+      "reportSource": "crates/bashkit-eval/results/scripting-eval-scripted-openai-gpt-5.4-2026-03-14-174458.md",
       "tasks": 4,
       "passed": 0,
       "scorePct": 75,
@@ -3184,6 +3490,7 @@
       "date": "2026-03-14",
       "timestamp": "2026-03-14T17:45:21Z",
       "source": "crates/bashkit-eval/results/scripting-eval-baseline-openai-gpt-5.4-2026-03-14-174521.json",
+      "reportSource": "crates/bashkit-eval/results/scripting-eval-baseline-openai-gpt-5.4-2026-03-14-174521.md",
       "tasks": 4,
       "passed": 3,
       "scorePct": 96.6,
@@ -3212,6 +3519,7 @@
       "date": "2026-03-14",
       "timestamp": "2026-03-14T17:45:30Z",
       "source": "crates/bashkit-eval/results/scripting-eval-baseline-openai-gpt-5.4-2026-03-14-174530.json",
+      "reportSource": "crates/bashkit-eval/results/scripting-eval-baseline-openai-gpt-5.4-2026-03-14-174530.md",
       "tasks": 3,
       "passed": 2,
       "scorePct": 90,
@@ -3240,6 +3548,7 @@
       "date": "2026-03-14",
       "timestamp": "2026-03-14T17:45:41Z",
       "source": "crates/bashkit-eval/results/scripting-eval-baseline-openai-gpt-5.4-2026-03-14-174541.json",
+      "reportSource": "crates/bashkit-eval/results/scripting-eval-baseline-openai-gpt-5.4-2026-03-14-174541.md",
       "tasks": 3,
       "passed": 3,
       "scorePct": 100,
@@ -3268,6 +3577,7 @@
       "date": "2026-03-24",
       "timestamp": "2026-03-24T00:36:10Z",
       "source": "crates/bashkit-eval/results/scripting-eval-scripted-openai-gpt-4o-2026-03-24-003610.json",
+      "reportSource": "crates/bashkit-eval/results/scripting-eval-scripted-openai-gpt-4o-2026-03-24-003610.md",
       "tasks": 4,
       "passed": 3,
       "scorePct": 91.7,
@@ -3296,6 +3606,7 @@
       "date": "2026-05-26",
       "timestamp": "2026-05-26T01:25:23Z",
       "source": "crates/bashkit-eval/results/eval-anthropic-claude-haiku-4-5-20251001-2026-05-26-012523.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-haiku-4-5-20251001-2026-05-26-012523.md",
       "tasks": 58,
       "passed": 54,
       "scorePct": 98.4,
@@ -3408,6 +3719,7 @@
       "date": "2026-05-26",
       "timestamp": "2026-05-26T01:45:08Z",
       "source": "crates/bashkit-eval/results/eval-anthropic-claude-sonnet-4-6-2026-05-26-014508.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-sonnet-4-6-2026-05-26-014508.md",
       "tasks": 58,
       "passed": 49,
       "scorePct": 94,
@@ -3520,6 +3832,7 @@
       "date": "2026-05-26",
       "timestamp": "2026-05-26T02:07:42Z",
       "source": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-7-2026-05-26-020742.json",
+      "reportSource": "crates/bashkit-eval/results/eval-anthropic-claude-opus-4-7-2026-05-26-020742.md",
       "tasks": 58,
       "passed": 56,
       "scorePct": 97.8,
@@ -3632,6 +3945,7 @@
       "date": "2026-05-26",
       "timestamp": "2026-05-26T02:18:53Z",
       "source": "crates/bashkit-eval/results/eval-openai-gpt-5.5-2026-05-26-021853.json",
+      "reportSource": "crates/bashkit-eval/results/eval-openai-gpt-5.5-2026-05-26-021853.md",
       "tasks": 58,
       "passed": 50,
       "scorePct": 92.7,
@@ -3744,6 +4058,7 @@
       "date": "2026-05-26",
       "timestamp": "2026-05-26T02:36:42Z",
       "source": "crates/bashkit-eval/results/eval-openresponses-gpt-5.3-codex-2026-05-26-023642.json",
+      "reportSource": "crates/bashkit-eval/results/eval-openresponses-gpt-5.3-codex-2026-05-26-023642.md",
       "tasks": 58,
       "passed": 54,
       "scorePct": 93,

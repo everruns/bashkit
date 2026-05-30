@@ -18,6 +18,10 @@ pnpm run build     # emits ./dist
 pnpm run preview   # serve dist/ via wrangler
 ```
 
+`pnpm run build` regenerates `src/data/performance-timeline.json` from saved
+benchmark and eval artifacts before Astro builds. The `/benches` page contract is
+specified in `../specs/performance-results.md`.
+
 ## Deploy
 
 Deployment is intended to run from CI against the Cloudflare account that owns

@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -12,6 +12,21 @@ const outputPath = path.join(siteDir, "src/data/performance-timeline.json");
 const benchDir = path.join(repoRoot, "crates/bashkit-bench/results");
 const criterionDir = path.join(repoRoot, "crates/bashkit/benches/results");
 const evalDir = path.join(repoRoot, "crates/bashkit-eval/results");
+
+const benchmarkCategoryDescriptions = {
+  arithmetic: "Integer math, substitutions, and expression-heavy shell snippets.",
+  arrays: "Indexed array reads, writes, expansion, and iteration.",
+  complex: "Mixed shell workflows that combine multiple language features.",
+  control: "Conditionals, loops, case statements, and branching scripts.",
+  io: "File reads, writes, redirects, and filesystem-facing commands.",
+  large: "Bigger scripts and higher-volume data paths.",
+  pipes: "Pipeline construction, streaming, and command chaining.",
+  startup: "Small commands where interpreter startup dominates runtime.",
+  strings: "String expansion, pattern handling, and text manipulation.",
+  subshell: "Command substitution and nested shell execution paths.",
+  tools: "Builtin and external-tool style command workloads.",
+  variables: "Variable assignment, lookup, expansion, and environment handling.",
+};
 
 function round(value, digits = 2) {
   if (!Number.isFinite(value)) return null;
@@ -110,6 +125,18 @@ async function readJson(filePath) {
   return JSON.parse(await readFile(filePath, "utf8"));
 }
 
+async function existingMarkdownReport(relativeSource) {
+  if (relativeSource.endsWith(".md")) return relativeSource;
+
+  const reportSource = relativeSource.replace(/\.[^.]+$/, ".md");
+  try {
+    await access(path.join(repoRoot, reportSource));
+    return reportSource;
+  } catch {
+    return null;
+  }
+}
+
 async function listFiles(dir, extension) {
   return (await readdir(dir))
     .filter((file) => file.endsWith(extension))
@@ -143,7 +170,14 @@ async function buildBenchRuns() {
       if (!Number.isFinite(row.bashkit) || !Number.isFinite(row.bash) || row.bashkit <= 0) {
         continue;
       }
-      const bucket = byCategory.get(row.category) ?? { ratios: [], cases: 0 };
+      const bucket = byCategory.get(row.category) ?? {
+        bashkitMs: [],
+        bashMs: [],
+        ratios: [],
+        cases: 0,
+      };
+      bucket.bashkitMs.push(row.bashkit);
+      bucket.bashMs.push(row.bash);
       bucket.ratios.push(row.bash / row.bashkit);
       bucket.cases += 1;
       byCategory.set(row.category, bucket);
@@ -152,19 +186,24 @@ async function buildBenchRuns() {
     const categories = [...byCategory.entries()]
       .map(([category, bucket]) => ({
         category,
+        description: benchmarkCategoryDescriptions[category] ?? "Benchmarks grouped by harness category.",
         cases: bucket.cases,
+        bashkitMedianMs: round(percentile(bucket.bashkitMs, 0.5), 3),
+        bashMedianMs: round(percentile(bucket.bashMs, 0.5), 3),
         speedup: round(percentile(bucket.ratios, 0.5), 1),
       }))
-      .sort((a, b) => b.speedup - a.speedup);
+      .sort((a, b) => a.bashkitMedianMs - b.bashkitMedianMs);
 
     const speedup = bashkit.total_time_ms > 0 ? bash.total_time_ms / bashkit.total_time_ms : null;
+    const source = `crates/bashkit-bench/results/${file}`;
     runs.push({
       id: file.replace(/\.json$/, ""),
       kind: "bashkit-bench",
       label: data.moniker ?? data.system?.moniker ?? file,
       date: dateLabel(timestamp),
       timestamp,
-      source: `crates/bashkit-bench/results/${file}`,
+      source,
+      reportSource: await existingMarkdownReport(source),
       cases: data.summary?.total_cases ?? categories.reduce((sum, item) => sum + item.cases, 0),
       speedup: round(speedup, 1),
       bashkitMs: round(bashkit.total_time_ms, 2),
@@ -225,6 +264,7 @@ async function buildCriterionRuns() {
     const summaryMedianMatch = content.match(/median change:\s*\*\*(-?[0-9.]+)%\*\*/i);
     const summaryMeanMatch = content.match(/mean change:\s*\*\*(-?[0-9.]+)%\*\*/i);
 
+    const source = `crates/bashkit/benches/results/${file}`;
     runs.push({
       id: file.replace(/\.md$/, ""),
       kind: "criterion",
@@ -232,7 +272,8 @@ async function buildCriterionRuns() {
       label: title,
       date: dateLabel(timestamp),
       timestamp,
-      source: `crates/bashkit/benches/results/${file}`,
+      source,
+      reportSource: source,
       cases: Math.max(changes.length, timesUs.length),
       medianUs: round(percentile(timesUs, 0.5), 2),
       p95Us: round(percentile(timesUs, 0.95), 2),
@@ -273,6 +314,7 @@ async function buildEvalRuns() {
       }))
       .sort((a, b) => a.rate - b.rate || b.tasks - a.tasks);
 
+    const source = `crates/bashkit-eval/results/${file}`;
     runs.push({
       id: file.replace(/\.json$/, ""),
       kind: file.startsWith("scripting-eval") ? "scripting-eval" : "llm-eval",
@@ -282,7 +324,8 @@ async function buildEvalRuns() {
       label: `${data.provider ?? "unknown"}/${data.model ?? "unknown"}`,
       date: dateLabel(timestamp),
       timestamp,
-      source: `crates/bashkit-eval/results/${file}`,
+      source,
+      reportSource: await existingMarkdownReport(source),
       tasks: summary.total_tasks,
       passed: summary.total_passed,
       scorePct: round(summary.overall_rate * 100, 1),

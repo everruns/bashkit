@@ -165,6 +165,10 @@ After running evals with `--save`, update `crates/bashkit-eval/README.md` with:
 
 Keep README highlights concise. Full per-task details live in the saved markdown reports under `crates/bashkit-eval/results/`.
 
+Saved eval JSON/Markdown reports are also consumed by the site `/benches` page.
+See `specs/performance-results.md` for the result-location and aggregation
+contract.
+
 ## Scripting Tool Eval Mode
 
 In addition to the default "bash" eval (testing direct bash tool usage), there is a

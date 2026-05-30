@@ -127,6 +127,10 @@ cargo run -p bashkit-bench --release -- --list
 | `--verbose` | Show per-benchmark timing details |
 | `--list` | List available benchmarks |
 
+Saved JSON/Markdown reports in `crates/bashkit-bench/results/` feed the site
+`/benches` page. See `specs/performance-results.md` for the aggregation
+contract.
+
 ## Prerequisites
 
 | Runner | Setup |
