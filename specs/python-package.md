@@ -65,6 +65,11 @@ The version chain: `Cargo.toml` (workspace) → `Cargo.toml` (bashkit-python, in
 
 Total: ~42 wheels (7 platforms × 6 Python versions).
 
+In addition, a **reduced-feature Pyodide/Emscripten wheel**
+(`wasm32-unknown-emscripten`) ships for browser / JupyterLite use. It is built and
+published separately (different toolchain, single Python version, no async/network/
+sqlite/realfs). See `specs/emscripten-wheels.md`.
+
 ## PyPI Publishing
 
 ### Workflow

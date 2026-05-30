@@ -724,7 +724,9 @@ impl Bash {
         // (REPL, agent commands, short shell snippets) the threadpool hop
         // dominated startup latency. The threshold matches the input byte
         // size; above it we keep the original behavior so very large scripts
-        // can be pre-empted.
+        // can be pre-empted. Only consulted on native targets (the wasm path
+        // below always parses inline).
+        #[cfg(not(target_family = "wasm"))]
         const SPAWN_BLOCKING_THRESHOLD: usize = 16 * 1024;
 
         // On WASM, tokio::task::spawn_blocking and tokio::time::timeout don't
@@ -818,7 +820,9 @@ impl Bash {
         self.interpreter.load_history().await;
 
         let exec_start = std::time::Instant::now();
-        // THREAT[TM-DOS-057]: Wrap execution with timeout to prevent sleep/blocking bypass
+        // THREAT[TM-DOS-057]: Wrap execution with timeout to prevent sleep/blocking bypass.
+        // Only the native path arms the tokio timeout; wasm has no reliable timer driver.
+        #[cfg(not(target_family = "wasm"))]
         let execution_timeout = self.interpreter.limits().timeout;
         #[cfg(not(target_family = "wasm"))]
         let result =

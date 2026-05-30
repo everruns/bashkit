@@ -36,3 +36,6 @@ node_modules/
 
 # WASM build artifacts
 *.wasm
+
+# Pyodide / Emscripten cross-build environment (downloaded by `pyodide xbuildenv`)
+.pyodide-xbuildenv/

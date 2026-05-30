@@ -111,10 +111,52 @@ jobs:
           name: pypi_files-${{ matrix.os }}-${{ matrix.target }}-${{ matrix.manylinux || 'manylinux' }}
           path: crates/bashkit-python/dist
 
+  # Reduced-feature Pyodide/Emscripten wheel (browser / JupyterLite).
+  # Separate job: distinct toolchain (nightly Rust + emsdk + pyodide-build) and a
+  # single Python version dictated by the pyodide-build ABI lockstep.
+  # See specs/emscripten-wheels.md.
+  build-emscripten:
+    name: Build wheel - emscripten (Pyodide)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # Python 3.13 -> pyodide-build's modern config (Pyodide 0.29.x, Emscripten
+      # 4.0.9), whose binaryen understands modern LLVM's wasm target-features and
+      # whose runtime supports wasm exception handling. See specs/emscripten-wheels.md.
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      # nightly satisfies our deps' MSRV (monty needs 1.95) + edition 2024;
+      # its LLVM matches Emscripten 4.0.9's binaryen. pyodide-build manages its
+      # own matching emsdk via the cross-build env (no setup-emsdk needed).
+      - name: Install nightly Rust with the Emscripten target
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: wasm32-unknown-emscripten
+
+      - name: Install pyodide-build
+        run: pip install pyodide-build
+
+      - name: Install pyodide cross-build environment
+        run: pyodide xbuildenv install
+
+      - name: Build Pyodide wheel
+        working-directory: crates/bashkit-python
+        env:
+          RUSTUP_TOOLCHAIN: nightly
+        run: pyodide build --outdir dist
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: pypi_files-emscripten
+          path: crates/bashkit-python/dist
+
   # Verify built artifacts
   inspect:
     name: Inspect artifacts
-    needs: [build, build-sdist]
+    needs: [build, build-sdist, build-emscripten]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8

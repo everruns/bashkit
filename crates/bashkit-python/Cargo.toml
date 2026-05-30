@@ -16,19 +16,34 @@ name = "bashkit"
 doc = false  # Python extension, no Rust docs needed
 
 [dependencies]
-# Bashkit core
-# realfs: always-on so Python callers can use mount_real_* APIs
-bashkit = { path = "../bashkit", features = ["scripted_tool", "python", "realfs", "jq", "interop", "http_client", "sqlite"] }
-
 # PyO3 native extension
 pyo3 = { workspace = true }
-pyo3-async-runtimes = { workspace = true }
-
-# Async runtime
-tokio = { workspace = true, features = ["rt-multi-thread"] }
 
 # Serialization
 serde_json = { workspace = true }
 
 # Big-integer support for py_to_monty BigInt extraction
 num-bigint = "^0.4.6"  # must be compatible with the version pulled in by bashkit core
+
+# Native (non-wasm) targets: full feature set.
+# realfs: always-on so Python callers can use mount_real_* APIs.
+# http_client/sqlite/interop pull mio/tokio-net/rt-multi-thread/tokio::fs,
+# none of which compile on wasm32-unknown-emscripten — see the wasm block
+# below and specs/emscripten-wheels.md.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+bashkit = { path = "../bashkit", features = ["scripted_tool", "python", "realfs", "jq", "interop", "http_client", "sqlite"] }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+# pyo3-async-runtimes hard-pulls tokio `rt-multi-thread` + `net` (mio), which
+# `compile_error!`s on wasm. Native-only; the wasm build exposes `execute_sync`
+# (current-thread runtime) and omits the async `execute()` coroutine bridge.
+pyo3-async-runtimes = { workspace = true }
+
+# wasm32 (Pyodide/Emscripten) target: reduced feature set.
+# Drops http_client, sqlite, realfs, interop — each requires threads, sockets,
+# or host filesystem access that Pyodide does not provide. Keeps the in-VFS
+# shell plus the embedded jq and Monty Python interpreters. tokio stays on its
+# wasm-safe base features (sync, macros, io-util, rt, time) — current-thread
+# runtime only. See specs/emscripten-wheels.md.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+bashkit = { path = "../bashkit", features = ["scripted_tool", "python", "jq"] }
+tokio = { workspace = true }

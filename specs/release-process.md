@@ -199,7 +199,9 @@ Crates must be published in dependency order:
 1. `bashkit` (core library, no internal deps)
 2. `bashkit-cli` (depends on bashkit)
 
-Python wheels are published independently (no crates.io dependency).
+Python wheels are published independently (no crates.io dependency). This
+includes the native platform matrix plus a reduced-feature Pyodide/Emscripten
+wheel (`wasm32-unknown-emscripten`); see `specs/emscripten-wheels.md`.
 
 npm packages are published independently (no crates.io dependency).
 
