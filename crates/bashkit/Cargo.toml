@@ -98,7 +98,7 @@ unit-prefix = "0.5"
 os_display = "0.1.3"
 
 # Embedded Python interpreter (optional)
-monty = { git = "https://github.com/pydantic/monty", rev = "9b5f478", optional = true }
+monty = { git = "https://github.com/pydantic/monty", tag = "v0.0.18", optional = true }
 
 # Embedded TypeScript interpreter (optional)
 zapcode-core = { version = "1.5", optional = true }

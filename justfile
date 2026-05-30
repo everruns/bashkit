@@ -124,63 +124,75 @@ run-script file:
 
 # === Benchmarks ===
 
-# Run benchmarks comparing bashkit to bash
+# Run benchmarks comparing bashkit to bash and save site-indexed JSON/Markdown results
 bench:
-    cargo run -p bashkit-bench --release
+    cargo run -p bashkit-bench --release -- --save
+    pnpm --dir site run data:performance
 
-# Run benchmarks and save results to JSON
-bench-save file="bench-results.json":
+# Run benchmarks and save results to JSON/Markdown
+bench-save file="":
     cargo run -p bashkit-bench --release -- --save {{file}}
+    pnpm --dir site run data:performance
 
-# Run benchmarks with verbose output
+# Run benchmarks with verbose output and save site-indexed JSON/Markdown results
 bench-verbose:
-    cargo run -p bashkit-bench --release -- --verbose
+    cargo run -p bashkit-bench --release -- --verbose --save
+    pnpm --dir site run data:performance
 
-# Run specific benchmark category (startup, variables, arithmetic, control, strings, arrays, pipes, tools, complex)
+# Exploratory: run specific benchmark category without updating site results (startup, variables, arithmetic, control, strings, arrays, pipes, tools, complex)
 bench-category cat:
     cargo run -p bashkit-bench --release -- --category {{cat}}
 
-# Run benchmarks with more iterations for accuracy
+# Run benchmarks with more iterations for accuracy and save site-indexed JSON/Markdown results
 bench-accurate:
-    cargo run -p bashkit-bench --release -- --iterations 50 --warmup 5
+    cargo run -p bashkit-bench --release -- --iterations 50 --warmup 5 --save
+    pnpm --dir site run data:performance
 
 # List available benchmarks
 bench-list:
     cargo run -p bashkit-bench --release -- --list
 
-# Run benchmarks with all runners (including just-bash if available)
+# Run benchmarks with all runners and save site-indexed JSON/Markdown results (including just-bash if available)
 bench-all:
-    cargo run -p bashkit-bench --release -- --runners bashkit,bash,just-bash
+    cargo run -p bashkit-bench --release -- --runners bashkit,bash,just-bash --save
+    pnpm --dir site run data:performance
 
 # Run Criterion parallel_execution benchmark and save results
 bench-parallel:
     ./scripts/bench-parallel.sh
+    pnpm --dir site run data:performance
 
 # Run Criterion sqlite builtin benchmark and save results
 bench-sqlite:
     ./scripts/bench-sqlite.sh
+    pnpm --dir site run data:performance
 
 # === Eval ===
 
-# Run LLM eval (requires ANTHROPIC_API_KEY or OPENAI_API_KEY)
+# Run LLM eval and save site-indexed JSON/Markdown results (requires ANTHROPIC_API_KEY or OPENAI_API_KEY)
 eval dataset="crates/bashkit-eval/data/eval-tasks.jsonl" provider="anthropic" model="claude-sonnet-4-20250514":
-    cargo run -p bashkit-eval --release -- run --dataset {{dataset}} --provider {{provider}} --model {{model}}
+    cargo run -p bashkit-eval --release -- run --dataset {{dataset}} --provider {{provider}} --model {{model}} --save
+    pnpm --dir site run data:performance
 
 # Run eval and save results
 eval-save dataset="crates/bashkit-eval/data/eval-tasks.jsonl" provider="anthropic" model="claude-sonnet-4-20250514":
     cargo run -p bashkit-eval --release -- run --dataset {{dataset}} --provider {{provider}} --model {{model}} --save
+    pnpm --dir site run data:performance
 
-# Run scripting-tool eval (scripted mode)
+# Run scripting-tool eval (scripted mode) and save site-indexed JSON/Markdown results
 eval-scripting dataset="crates/bashkit-eval/data/scripting-tool/many-tools.jsonl" provider="openai" model="gpt-5.4":
-    cargo run -p bashkit-eval --release -- run --eval-type scripting-tool --dataset {{dataset}} --provider {{provider}} --model {{model}}
+    cargo run -p bashkit-eval --release -- run --eval-type scripting-tool --dataset {{dataset}} --provider {{provider}} --model {{model}} --save
+    pnpm --dir site run data:performance
 
-# Run scripting-tool eval (baseline mode — individual tools, no ScriptedTool)
+# Run scripting-tool eval (baseline mode — individual tools, no ScriptedTool) and save site-indexed JSON/Markdown results
 eval-scripting-baseline dataset="crates/bashkit-eval/data/scripting-tool/many-tools.jsonl" provider="openai" model="gpt-5.4":
-    cargo run -p bashkit-eval --release -- run --eval-type scripting-tool --baseline --dataset {{dataset}} --provider {{provider}} --model {{model}}
+    cargo run -p bashkit-eval --release -- run --eval-type scripting-tool --baseline --dataset {{dataset}} --provider {{provider}} --model {{model}} --save
+    pnpm --dir site run data:performance
 
 # Run scripting-tool eval and save results
 eval-scripting-save dataset="crates/bashkit-eval/data/scripting-tool/many-tools.jsonl" provider="openai" model="gpt-5.4":
     cargo run -p bashkit-eval --release -- run --eval-type scripting-tool --dataset {{dataset}} --provider {{provider}} --model {{model}} --save
+    pnpm --dir site run data:performance
 
 # === Security ===
 

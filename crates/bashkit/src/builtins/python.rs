@@ -22,7 +22,7 @@ use async_trait::async_trait;
 use chrono::{Datelike, Timelike};
 use monty::{
     ExcType, ExtFunctionResult, FileMode, LimitedTracker, MontyDate, MontyDateTime, MontyException,
-    MontyFileHandle, MontyObject, MontyRun, NameLookupResult, OsFunction, PrintWriter,
+    MontyFileHandle, MontyObject, MontyRun, NameLookupResult, OsFunctionCall, PrintWriter,
     ResourceLimits, RunProgress, dir_stat, file_stat, symlink_stat,
 };
 use std::collections::HashMap;
@@ -508,16 +508,8 @@ async fn run_python(
 
     loop {
         match progress {
-            RunProgress::OsCall(os_call) => {
-                let result = handle_os_call(
-                    os_call.function,
-                    &os_call.args,
-                    &os_call.kwargs,
-                    &fs,
-                    cwd,
-                    env,
-                )
-                .await;
+            RunProgress::OsCall(mut os_call) => {
+                let result = handle_os_call(os_call.take_function_call(), &fs, cwd, env).await;
                 match os_call.resume(result, PrintWriter::CollectString(&mut buf)) {
                     Ok(next) => {
                         progress = next;
@@ -607,20 +599,29 @@ async fn run_python(
 // ---------------------------------------------------------------------------
 
 /// Dispatch a Monty OsCall to the appropriate VFS operation.
+///
+/// Monty's `OsFunctionCall` is a tagged enum carrying typed args. We project it
+/// to the generic `(positional, keyword)` `MontyObject` view via the public
+/// `to_args()` and dispatch on the stable `name()` string (kept byte-identical
+/// across monty releases for snapshot compatibility), keeping the per-op VFS
+/// logic unchanged.
 async fn handle_os_call(
-    function: OsFunction,
-    args: &[MontyObject],
-    kwargs: &[(MontyObject, MontyObject)],
+    function: OsFunctionCall,
     fs: &Arc<dyn FileSystem>,
     cwd: &Path,
     env: &HashMap<String, String>,
 ) -> ExtFunctionResult {
+    let name = function.name();
+    let (args, kwargs) = function.to_args();
+    let args = args.as_slice();
+    let kwargs = kwargs.as_slice();
+
     // Non-filesystem operations: env access, date/time
-    match function {
-        OsFunction::Getenv => return handle_getenv(args, env),
-        OsFunction::GetEnviron => return handle_get_environ(env),
-        OsFunction::DateToday => return handle_date_today(),
-        OsFunction::DateTimeNow => return handle_datetime_now(args),
+    match name {
+        "os.getenv" => return handle_getenv(args, env),
+        "os.environ" => return handle_get_environ(env),
+        "date.today" => return handle_date_today(),
+        "datetime.now" => return handle_datetime_now(args),
         _ => {}
     }
 
@@ -635,8 +636,8 @@ async fn handle_os_call(
         }
     };
 
-    match function {
-        OsFunction::Open => {
+    match name {
+        "Open" => {
             let mode = match parse_open_mode(args) {
                 Ok(mode) => mode,
                 Err(err) => return err,
@@ -650,23 +651,23 @@ async fn handle_os_call(
                 Err(e) => map_vfs_error(e, &path),
             }
         }
-        OsFunction::Exists => {
+        "Path.exists" => {
             let exists = fs.exists(&path).await.unwrap_or(false);
             ExtFunctionResult::Return(MontyObject::Bool(exists))
         }
-        OsFunction::IsFile => match fs.stat(&path).await {
+        "Path.is_file" => match fs.stat(&path).await {
             Ok(meta) => ExtFunctionResult::Return(MontyObject::Bool(meta.file_type.is_file())),
             Err(_) => ExtFunctionResult::Return(MontyObject::Bool(false)),
         },
-        OsFunction::IsDir => match fs.stat(&path).await {
+        "Path.is_dir" => match fs.stat(&path).await {
             Ok(meta) => ExtFunctionResult::Return(MontyObject::Bool(meta.file_type.is_dir())),
             Err(_) => ExtFunctionResult::Return(MontyObject::Bool(false)),
         },
-        OsFunction::IsSymlink => match fs.stat(&path).await {
+        "Path.is_symlink" => match fs.stat(&path).await {
             Ok(meta) => ExtFunctionResult::Return(MontyObject::Bool(meta.file_type.is_symlink())),
             Err(_) => ExtFunctionResult::Return(MontyObject::Bool(false)),
         },
-        OsFunction::ReadText => match fs.read_file(&path).await {
+        "Path.read_text" => match fs.read_file(&path).await {
             Ok(bytes) => match String::from_utf8(bytes) {
                 Ok(s) => ExtFunctionResult::Return(MontyObject::String(s)),
                 Err(_) => ExtFunctionResult::Error(MontyException::new(
@@ -679,11 +680,11 @@ async fn handle_os_call(
             },
             Err(e) => map_vfs_error(e, &path),
         },
-        OsFunction::ReadBytes => match fs.read_file(&path).await {
+        "Path.read_bytes" => match fs.read_file(&path).await {
             Ok(bytes) => ExtFunctionResult::Return(MontyObject::Bytes(bytes)),
             Err(e) => map_vfs_error(e, &path),
         },
-        OsFunction::WriteText => {
+        "Path.write_text" => {
             let content = match args.get(1) {
                 Some(MontyObject::String(s)) => s.as_bytes().to_vec(),
                 _ => {
@@ -702,7 +703,7 @@ async fn handle_os_call(
                 Err(e) => map_vfs_error(e, &path),
             }
         }
-        OsFunction::WriteBytes => {
+        "Path.write_bytes" => {
             let content = match args.get(1) {
                 Some(MontyObject::Bytes(b)) => b.clone(),
                 _ => {
@@ -718,7 +719,7 @@ async fn handle_os_call(
                 Err(e) => map_vfs_error(e, &path),
             }
         }
-        OsFunction::AppendText => {
+        "Path.append_text" => {
             let content = match args.get(1) {
                 Some(MontyObject::String(s)) => s.as_bytes().to_vec(),
                 _ => {
@@ -737,7 +738,7 @@ async fn handle_os_call(
                 Err(e) => map_vfs_error(e, &path),
             }
         }
-        OsFunction::AppendBytes => {
+        "Path.append_bytes" => {
             let content = match args.get(1) {
                 Some(MontyObject::Bytes(b)) => b.clone(),
                 _ => {
@@ -753,7 +754,7 @@ async fn handle_os_call(
                 Err(e) => map_vfs_error(e, &path),
             }
         }
-        OsFunction::Mkdir => {
+        "Path.mkdir" => {
             let parents = get_bool_kwarg(kwargs, "parents").unwrap_or(false);
             let exist_ok = get_bool_kwarg(kwargs, "exist_ok").unwrap_or(false);
             match fs.mkdir(&path, parents).await {
@@ -768,15 +769,15 @@ async fn handle_os_call(
                 }
             }
         }
-        OsFunction::Unlink => match fs.remove(&path, false).await {
+        "Path.unlink" => match fs.remove(&path, false).await {
             Ok(()) => ExtFunctionResult::Return(MontyObject::None),
             Err(e) => map_vfs_error(e, &path),
         },
-        OsFunction::Rmdir => match fs.remove(&path, false).await {
+        "Path.rmdir" => match fs.remove(&path, false).await {
             Ok(()) => ExtFunctionResult::Return(MontyObject::None),
             Err(e) => map_vfs_error(e, &path),
         },
-        OsFunction::Iterdir => match fs.read_dir(&path).await {
+        "Path.iterdir" => match fs.read_dir(&path).await {
             Ok(entries) => {
                 let items: Vec<MontyObject> = entries
                     .into_iter()
@@ -789,7 +790,7 @@ async fn handle_os_call(
             }
             Err(e) => map_vfs_error(e, &path),
         },
-        OsFunction::Stat => match fs.stat(&path).await {
+        "Path.stat" => match fs.stat(&path).await {
             Ok(meta) => {
                 let mtime = meta
                     .modified
@@ -805,7 +806,7 @@ async fn handle_os_call(
             }
             Err(e) => map_vfs_error(e, &path),
         },
-        OsFunction::Rename => {
+        "Path.rename" => {
             let target = match args.get(1) {
                 Some(MontyObject::Path(p)) | Some(MontyObject::String(p)) => {
                     resolve_python_path(p, cwd)
@@ -824,14 +825,14 @@ async fn handle_os_call(
                 Err(e) => map_vfs_error(e, &path),
             }
         }
-        OsFunction::Resolve | OsFunction::Absolute => {
+        "Path.resolve" | "Path.absolute" => {
             // No symlink resolution in Bashkit VFS; just return absolute path
             ExtFunctionResult::Return(MontyObject::Path(path.to_string_lossy().to_string()))
         }
         // Getenv/GetEnviron handled above
         _ => ExtFunctionResult::Error(MontyException::new(
             ExcType::OSError,
-            Some(format!("{function} not supported in virtual mode")),
+            Some(format!("{name} not supported in virtual mode")),
         )),
     }
 }

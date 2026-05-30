@@ -17,10 +17,12 @@
     "openai": "^5",
     "zod": "^3"
   },
-  "overrides": {
-    "langsmith": "^0.6.0",
-    "uuid": "14.0.0",
-    "jsondiffpatch": ">=0.7.2"
+  "pnpm": {
+    "overrides": {
+      "langsmith": "^0.6.0",
+      "uuid": "14.0.0",
+      "jsondiffpatch": ">=0.7.2"
+    }
   },
   "scripts": {
     "examples": "node bash_basics.mjs && node data_pipeline.mjs && node llm_tool.mjs && node k8s_orchestrator.mjs && node langchain_integration.mjs && node custom_builtins.mjs",
