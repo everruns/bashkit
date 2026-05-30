@@ -1854,45 +1854,52 @@ impl Interpreter {
         var_attrs: &mut HashMap<String, VarAttrs>,
         namerefs: &mut HashMap<String, String>,
     ) {
-        fn take_prefixed(variables: &mut HashMap<String, String>, prefix: &str) -> Vec<String> {
-            let keys = variables
+        // Preserve marker values: legacy `_NAMEREF_<name>` stores its target in the value.
+        fn take_prefixed(
+            variables: &mut HashMap<String, String>,
+            prefix: &str,
+        ) -> Vec<(String, String)> {
+            let markers = variables
                 .keys()
-                .filter_map(|key| key.strip_prefix(prefix).map(str::to_string))
+                .filter_map(|key| {
+                    key.strip_prefix(prefix)
+                        .map(|stripped| (key.clone(), stripped.to_string()))
+                })
                 .collect::<Vec<_>>();
-            for key in &keys {
-                variables.remove(&format!("{prefix}{key}"));
-            }
-            keys
+            markers
+                .into_iter()
+                .filter_map(|(marker_key, stripped)| {
+                    variables.remove(&marker_key).map(|value| (stripped, value))
+                })
+                .collect()
         }
 
-        for key in take_prefixed(variables, "_READONLY_") {
+        for (key, _) in take_prefixed(variables, "_READONLY_") {
             var_attrs
                 .entry(key)
                 .and_modify(|attrs| attrs.insert(VarAttrs::READONLY))
                 .or_insert(VarAttrs::READONLY);
         }
-        for key in take_prefixed(variables, "_INTEGER_") {
+        for (key, _) in take_prefixed(variables, "_INTEGER_") {
             var_attrs
                 .entry(key)
                 .and_modify(|attrs| attrs.insert(VarAttrs::INTEGER))
                 .or_insert(VarAttrs::INTEGER);
         }
-        for key in take_prefixed(variables, "_LOWER_") {
+        for (key, _) in take_prefixed(variables, "_LOWER_") {
             var_attrs
                 .entry(key)
                 .and_modify(|attrs| attrs.insert(VarAttrs::LOWER))
                 .or_insert(VarAttrs::LOWER);
         }
-        for key in take_prefixed(variables, "_UPPER_") {
+        for (key, _) in take_prefixed(variables, "_UPPER_") {
             var_attrs
                 .entry(key)
                 .and_modify(|attrs| attrs.insert(VarAttrs::UPPER))
                 .or_insert(VarAttrs::UPPER);
         }
-        for key in take_prefixed(variables, "_NAMEREF_") {
-            if !namerefs.contains_key(&key) {
-                namerefs.insert(key.clone(), key);
-            }
+        for (key, target) in take_prefixed(variables, "_NAMEREF_") {
+            namerefs.entry(key).or_insert(target);
         }
     }
 
@@ -13613,6 +13620,43 @@ cat /tmp/test_fd_leak.txt"#,
         let out = restored.execute(&assign).await.unwrap();
         assert_eq!(out.exit_code, 0);
         assert_eq!(out.stdout.trim(), "safe");
+    }
+
+    #[tokio::test]
+    async fn test_restore_shell_state_migrates_legacy_nameref_targets() {
+        let state = ShellState {
+            env: HashMap::new(),
+            variables: HashMap::from([
+                ("POLICY".to_string(), "safe".to_string()),
+                ("_READONLY_POLICY".to_string(), String::new()),
+                ("_NAMEREF_alias_var".to_string(), "POLICY".to_string()),
+            ]),
+            var_attrs: HashMap::new(),
+            namerefs: HashMap::new(),
+            arrays: HashMap::new(),
+            assoc_arrays: HashMap::new(),
+            cwd: PathBuf::from("/"),
+            last_exit_code: 0,
+            functions: HashMap::new(),
+            aliases: HashMap::new(),
+            traps: HashMap::new(),
+        };
+
+        let mut restored = Interpreter::new(Arc::new(InMemoryFs::new()));
+        restored.restore_shell_state(&state);
+
+        assert_eq!(restored.resolve_nameref("alias_var"), "POLICY");
+        assert!(!restored.variables.contains_key("_NAMEREF_alias_var"));
+
+        let ast = Parser::new("alias_var=unsafe; echo $POLICY")
+            .parse()
+            .unwrap();
+        let result = restored.execute(&ast).await.unwrap();
+        assert_eq!(result.stdout.trim(), "safe");
+        assert_eq!(
+            restored.variables.get("POLICY").map(String::as_str),
+            Some("safe")
+        );
     }
 
     #[test]
