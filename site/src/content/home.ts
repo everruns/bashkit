@@ -40,6 +40,8 @@ export const evalSnapshot = {
   href: "https://github.com/everruns/bashkit/blob/main/crates/bashkit-eval/README.md",
 };
 
+export const benchesHref = "/benches";
+
 export const heroStats = [
   { label: "Built-in commands", value: "160", href: "/builtins" },
   {
@@ -282,6 +284,12 @@ export const resources = [
     detail: "268 documented threat cases across parser, VFS, network, and runtimes.",
     href: "https://github.com/everruns/bashkit/blob/main/specs/threat-model.md",
     cta: "Security spec",
+  },
+  {
+    title: "Benches history",
+    detail: "Interactive trends across benchmarks, criterion benches, and evals.",
+    href: benchesHref,
+    cta: "Benches",
   },
   {
     title: "CLI reference",
