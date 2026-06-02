@@ -390,6 +390,33 @@ test("integration: BashTool snapshots require and verify HMAC", (t) => {
   );
 });
 
+test("integration: Bash snapshot with hmacKey roundtrip preserves state", (t) => {
+  const key = new TextEncoder().encode("bash-hmac-roundtrip-key");
+  const bash = new Bash();
+  bash.executeSync("export HMAC_VAR=hello; mkdir -p /hmac && echo data > /hmac/f.txt");
+
+  const snapshot = bash.snapshot({ hmacKey: key });
+  const restored = Bash.fromSnapshot(snapshot, { hmacKey: key });
+
+  t.is(restored.executeSync("echo $HMAC_VAR").stdout.trim(), "hello");
+  t.is(restored.executeSync("cat /hmac/f.txt").stdout.trim(), "data");
+});
+
+test("integration: Bash snapshot with hmacKey rejects wrong key and tampering", (t) => {
+  const key = new TextEncoder().encode("correct-hmac-key");
+  const wrongKey = new TextEncoder().encode("wrong-hmac-key");
+  const bash = new Bash();
+  bash.executeSync("export X=1");
+
+  const snapshot = bash.snapshot({ hmacKey: key });
+
+  t.throws(() => Bash.fromSnapshot(snapshot, { hmacKey: wrongKey }));
+
+  const tampered = new Uint8Array(snapshot);
+  tampered[tampered.length - 1] ^= 0xff;
+  t.throws(() => Bash.fromSnapshot(tampered, { hmacKey: key }));
+});
+
 test("integration: Bash keyed snapshot rejects wrong key", (t) => {
   const key = Buffer.from("correct-key");
   const wrongKey = Buffer.from("wrong-key");

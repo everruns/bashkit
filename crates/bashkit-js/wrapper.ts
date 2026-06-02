@@ -1257,7 +1257,7 @@ export class BashTool {
    * HMAC-authenticated Uint8Array. BashTool snapshots require `hmacKey` because
    * they include tenant-controlled shell state, VFS contents, and counters.
    */
-  snapshot(options?: SnapshotOptions): Uint8Array {
+  snapshot(options: SnapshotOptions & { hmacKey: Uint8Array }): Uint8Array {
     requireSnapshotHmacKey(options);
     return this.native.snapshot(toNativeSnapshotOptions(options));
   }
@@ -1267,7 +1267,10 @@ export class BashTool {
    * Preserves current configuration (limits, identity) but replaces
    * shell state and VFS contents.
    */
-  restoreSnapshot(data: Uint8Array, options?: SnapshotOptions): void {
+  restoreSnapshot(
+    data: Uint8Array,
+    options: SnapshotOptions & { hmacKey: Uint8Array },
+  ): void {
     requireSnapshotHmacKey(options);
     this.native.restoreSnapshot(
       Buffer.from(data),
@@ -1300,8 +1303,8 @@ export class BashTool {
    */
   static fromSnapshot(
     data: Uint8Array,
-    options?: BashOptions,
-    snapshotOptions?: SnapshotOptions,
+    options: BashOptions | undefined,
+    snapshotOptions: SnapshotOptions & { hmacKey: Uint8Array },
   ): BashTool {
     requireSnapshotHmacKey(snapshotOptions);
     const resolved = resolveFilesSync(options?.files);

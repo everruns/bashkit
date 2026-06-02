@@ -462,7 +462,7 @@ import {
 - `addBuiltin(name, callback)` / `removeBuiltin(name)` — register/unregister persistent JS builtins
 - `snapshot(options?)` / `snapshotKeyed(key, options?)`
 - `restoreSnapshot(data, options?)` / `restoreSnapshotKeyed(data, key)`
-- `Bash.fromSnapshot(data, options?)` / `Bash.fromSnapshotKeyed(data, key, options?)`
+- `Bash.fromSnapshot(data, options?)` / `Bash.fromSnapshotKeyed(data, key)`
 - Direct VFS helpers: `readFile`, `writeFile`, `appendFile`, `mkdir`, `remove`, `exists`, `stat`, `readDir`, `ls`, `glob`, `mount`, `unmount`, `fs`
 
 ### BashTool
