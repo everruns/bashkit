@@ -179,6 +179,27 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
+    /// Consume multiple parser fuel units for lexer work that can scale with input size.
+    /// THREAT[TM-DOS-064]: Heredoc rest-of-line re-injection copies command suffixes;
+    /// charge each copied character so repeated heredocs cannot hide quadratic work
+    /// outside parser fuel accounting.
+    fn tick_units(&mut self, units: usize) -> Result<()> {
+        if let Some(timeout) = self.timeout
+            && self.started_at.elapsed() > timeout
+        {
+            return Err(Error::ResourceLimit(LimitExceeded::ParserTimeout(timeout)));
+        }
+        if self.fuel < units {
+            let used = self.max_fuel;
+            return Err(Error::parse(format!(
+                "parser fuel exhausted ({} operations, max {})",
+                used, self.max_fuel
+            )));
+        }
+        self.fuel -= units;
+        Ok(())
+    }
+
     /// Push nesting depth and check limit
     fn push_depth(&mut self) -> Result<()> {
         self.current_depth += 1;
@@ -404,7 +425,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Parse redirections that follow a compound command (>, >>, 2>, etc.)
-    fn parse_trailing_redirects(&mut self) -> Vec<Redirect> {
+    fn parse_trailing_redirects(&mut self) -> Result<Vec<Redirect>> {
         let mut redirects = Vec::new();
         loop {
             match &self.current_token {
@@ -579,7 +600,10 @@ impl<'a> Parser<'a> {
                         | Some(tokens::Token::QuotedGlobWord(w)) => (w.clone(), true),
                         _ => break,
                     };
-                    let content = self.lexer.read_heredoc_with_strip(&delimiter, strip_tabs);
+                    let (content, rest_of_line_chars) = self
+                        .lexer
+                        .read_heredoc_with_strip_metered(&delimiter, strip_tabs);
+                    self.tick_units(rest_of_line_chars)?;
                     let content = if strip_tabs {
                         let had_trailing_newline = content.ends_with('\n');
                         let mut stripped: String = content
@@ -618,7 +642,7 @@ impl<'a> Parser<'a> {
                 _ => break,
             }
         }
-        redirects
+        Ok(redirects)
     }
 
     /// Parse a compound command and any trailing redirections
@@ -627,7 +651,7 @@ impl<'a> Parser<'a> {
         parser: impl FnOnce(&mut Self) -> Result<CompoundCommand>,
     ) -> Result<Option<Command>> {
         let compound = parser(self)?;
-        let redirects = self.parse_trailing_redirects();
+        let redirects = self.parse_trailing_redirects()?;
         Ok(Some(Command::Compound(compound, redirects)))
     }
 
@@ -2188,7 +2212,10 @@ impl<'a> Parser<'a> {
             _ => return Err(Error::parse("expected delimiter after <<".to_string())),
         };
 
-        let content = self.lexer.read_heredoc_with_strip(&delimiter, strip_tabs);
+        let (content, rest_of_line_chars) = self
+            .lexer
+            .read_heredoc_with_strip_metered(&delimiter, strip_tabs);
+        self.tick_units(rest_of_line_chars)?;
 
         // Strip leading tabs for <<-
         let content = if strip_tabs {
@@ -3948,6 +3975,16 @@ mod tests {
             AssignmentValue::Scalar(word) => assert_eq!(word.to_string(), "a+=b"),
             AssignmentValue::Array(_) => panic!("expected scalar assignment"),
         }
+    }
+
+    #[test]
+    fn test_chained_heredoc_reinjection_consumes_parser_fuel() {
+        let script = ": <<E && : <<E && : <<E\nE\nE\nE\n";
+        let err = Parser::with_fuel(script, 12).parse().unwrap_err();
+        assert!(
+            err.to_string().contains("parser fuel exhausted"),
+            "expected heredoc rest-of-line reinjection to consume parser fuel, got: {err}"
+        );
     }
 
     #[test]
