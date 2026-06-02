@@ -1790,6 +1790,20 @@ impl<'a> Lexer<'a> {
     /// Read here document content with optional leading-tab stripping on the
     /// delimiter match (for `<<-`).
     pub fn read_heredoc_with_strip(&mut self, delimiter: &str, strip_tabs: bool) -> String {
+        self.read_heredoc_with_strip_metered(delimiter, strip_tabs)
+            .0
+    }
+
+    /// Read here document content and report rest-of-line work for parser fuel.
+    /// THREAT[TM-DOS-064]: Long heredoc command-line suffixes are re-injected so
+    /// list/pipeline tokens after `<<EOF` stay visible. Charging the suffix length
+    /// to parser fuel prevents chained heredocs from repeatedly copying suffixes
+    /// outside resource accounting.
+    pub(crate) fn read_heredoc_with_strip_metered(
+        &mut self,
+        delimiter: &str,
+        strip_tabs: bool,
+    ) -> (String, usize) {
         let mut content = String::new();
         let mut current_line = String::new();
 
@@ -1866,6 +1880,7 @@ impl<'a> Lexer<'a> {
 
         // Re-inject saved rest-of-line so subsequent tokens (pipes, commands, etc.)
         // are visible to the parser. Add a newline so the tokenizer sees the line break.
+        let rest_of_line_chars = rest_of_line.chars().count();
         if !rest_of_line.is_empty() {
             for ch in rest_of_line.chars() {
                 self.reinject_buf.push_back(ch);
@@ -1873,7 +1888,7 @@ impl<'a> Lexer<'a> {
             self.reinject_buf.push_back('\n');
         }
 
-        content
+        (content, rest_of_line_chars)
     }
 }
 

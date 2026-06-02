@@ -242,6 +242,7 @@ runaway scripts without permanently breaking the session.
 | TM-DOS-021 | Command sub nesting | `$($($($())))` | Child parsers inherit remaining depth budget + fuel from parent | **MITIGATED** |
 | TM-DOS-022 | Parser recursion | Deeply nested `(((())))` | `max_ast_depth` limit (100) + `HARD_MAX_AST_DEPTH` cap (100) | **MITIGATED** |
 | TM-DOS-026 | Arithmetic recursion | `$(((((((...)))))))` deeply nested parens | `MAX_ARITHMETIC_DEPTH` limit (50) | **MITIGATED** |
+| TM-DOS-064 | Heredoc suffix re-injection CPU amplification | Many `: <<E && : <<E ...` heredocs on one logical line repeatedly copy command-line suffixes | `read_heredoc_with_strip_metered` reports re-injected suffix length; parser charges it to `max_parser_operations` fuel | **MITIGATED** |
 
 **Current Risk**: LOW - Both execution and parser protected
 
@@ -253,6 +254,7 @@ max_ast_depth: 100,           // Parser recursion (TM-DOS-022)
 // depth budget and fuel from parent parser (parser/mod.rs lines 1553, 1670)
 // TM-DOS-026: Arithmetic evaluator tracks recursion depth, capped at 50
 // (interpreter/mod.rs MAX_ARITHMETIC_DEPTH)
+// TM-DOS-064: Heredoc rest-of-line re-injection is charged to parser fuel
 ```
 
 **History** (TM-DOS-021): Previously marked MITIGATED but child parsers created via
@@ -1487,6 +1489,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Session-level cumulative counters | TM-ISO-005 | `SessionLimits` caps cumulative commands and `exec()` calls across the lifetime of a `Bash` instance | **MITIGATED** |
 | Per-instance memory budget | TM-ISO-006 | `MemoryLimits` capping variable count, total bytes, array entries, function count, function body bytes | **MITIGATED** |
 | jq file binding amplification | TM-DOS-062 | `MAX_FILE_VAR_REQUESTS` and `MAX_FILE_VAR_BYTES` bound `--rawfile` / `--slurpfile` globals | **MITIGATED** |
+| Heredoc suffix re-injection CPU amplification | TM-DOS-064 | Charge re-injected heredoc rest-of-line suffix length to parser fuel | **MITIGATED** |
 
 ---
 
