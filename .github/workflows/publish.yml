@@ -19,24 +19,41 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Verify publish source is on main
+        run: |
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          SOURCE_SHA=$(git rev-parse HEAD)
+          if ! git merge-base --is-ancestor "$SOURCE_SHA" origin/main; then
+            echo "Error: publish source $SOURCE_SHA is not reachable from origin/main"
+            exit 1
+          fi
+          echo "Publish source verified on origin/main: $SOURCE_SHA"
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@1.95.0
 
       - name: Verify version matches tag
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          # Get tag from release event or skip check for workflow_dispatch
-          TAG_VERSION="${{ github.event.release.tag_name }}"
-          if [ -n "$TAG_VERSION" ]; then
-            TAG_VERSION="${TAG_VERSION#v}"  # Remove 'v' prefix
-            CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
-            if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
-              echo "Error: Tag version ($TAG_VERSION) does not match Cargo.toml version ($CARGO_VERSION)"
+          if [ "$EVENT_NAME" = "release" ]; then
+            TAG_VERSION="$RELEASE_TAG"
+          else
+            if [[ ! "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Error: manual publish must run from a stable release tag"
               exit 1
             fi
-            echo "Version verified: $TAG_VERSION"
-          else
-            echo "Manual dispatch - skipping tag verification"
+            TAG_VERSION="${GITHUB_REF#refs/tags/}"
           fi
+
+          TAG_VERSION="${TAG_VERSION#v}"  # Remove 'v' prefix
+          CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
+            echo "Error: Tag version ($TAG_VERSION) does not match Cargo.toml version ($CARGO_VERSION)"
+            exit 1
+          fi
+          echo "Version verified: $TAG_VERSION"
 
       - name: Strip git-only dependencies for publishing
         # monty is a git dep (not yet on crates.io) — remove before publish.

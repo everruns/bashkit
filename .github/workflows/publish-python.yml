@@ -117,6 +117,38 @@ jobs:
     needs: [build, build-sdist]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v6
+
+      - name: Verify publish source is on main release tag
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          SOURCE_SHA=$(git rev-parse HEAD)
+          if ! git merge-base --is-ancestor "$SOURCE_SHA" origin/main; then
+            echo "Error: publish source $SOURCE_SHA is not reachable from origin/main"
+            exit 1
+          fi
+
+          if [ "$EVENT_NAME" = "release" ]; then
+            TAG_VERSION="$RELEASE_TAG"
+          else
+            if [[ ! "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Error: manual publish must run from a stable release tag"
+              exit 1
+            fi
+            TAG_VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+
+          TAG_VERSION="${TAG_VERSION#v}"
+          CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
+            echo "Error: Tag version ($TAG_VERSION) does not match Cargo.toml version ($CARGO_VERSION)"
+            exit 1
+          fi
+          echo "Publish source verified: $SOURCE_SHA at v$TAG_VERSION"
+
       - uses: actions/download-artifact@v8
         with:
           pattern: pypi_files-*
