@@ -181,11 +181,85 @@ jobs:
           path: crates/bashkit-python/dist
           retention-days: 5
 
+  # Build the reduced-feature Pyodide/Emscripten wheel and smoke-test it in a
+  # Pyodide venv. See specs/emscripten-wheels.md for the feature matrix and the
+  # pyodide-build <-> Emscripten <-> Python <-> Rust version lockstep.
+  wasm:
+    name: Build wheel (Pyodide/Emscripten)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # Python 3.13 selects pyodide-build's modern config (Pyodide 0.29.x,
+      # Emscripten 4.0.9), whose binaryen understands the wasm target-features
+      # modern LLVM emits and whose runtime supports wasm exception handling.
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      # Pyodide passes `-Z link-native-libraries=no` (nightly-only). The nightly
+      # must satisfy our deps' MSRV (monty needs rustc 1.95) and edition 2024,
+      # so it has to be recent; its LLVM (19+) matches Emscripten 4.0.9's
+      # binaryen, which is what avoids the wasm-opt target-feature skew that
+      # older Emscripten (3.1.x) hit. See specs/emscripten-wheels.md.
+      - name: Install nightly Rust with the Emscripten target
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: wasm32-unknown-emscripten
+
+      - uses: Swatinem/rust-cache@v2
+
+      # pyodide-build manages its own matching emsdk via the cross-build env, so
+      # no separate setup-emsdk step is needed.
+      - name: Install pyodide-build
+        run: pip install pyodide-build
+
+      - name: Install pyodide cross-build environment
+        run: pyodide xbuildenv install
+
+      - name: Build Pyodide wheel
+        working-directory: crates/bashkit-python
+        env:
+          RUSTUP_TOOLCHAIN: nightly
+        run: pyodide build --outdir dist
+
+      - name: Smoke test in a Pyodide venv
+        working-directory: crates/bashkit-python
+        # Run the import test from a scratch dir: the crate's own `bashkit/`
+        # source package would otherwise shadow the installed extension module.
+        run: |
+          pyodide venv .venv-pyodide
+          .venv-pyodide/bin/pip install dist/*.whl
+          venv_python="$(pwd)/.venv-pyodide/bin/python"
+          cd "$(mktemp -d)"
+          "$venv_python" -c "
+          from bashkit import Bash
+          b = Bash(python=True)
+          r = b.execute_sync('echo hello && echo 1 | jq .')
+          print(r.stdout)
+          assert r.exit_code == 0, r
+          assert r.stdout == 'hello\n1\n', r.stdout
+          # Reduced-feature build: unavailable config must fail loudly.
+          try:
+              Bash(sqlite=True)
+          except RuntimeError:
+              pass
+          else:
+              raise AssertionError('expected sqlite=True to raise on wasm')
+          print('wasm smoke test OK')
+          "
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: python-wheel-emscripten
+          path: crates/bashkit-python/dist
+          retention-days: 5
+
   # Gate job for branch protection
   python-check:
     name: Python Check
     if: always()
-    needs: [lint, test, examples, build-wheel]
+    needs: [lint, test, examples, build-wheel, wasm]
     runs-on: ubuntu-latest
     steps:
       - name: Verify all jobs passed
@@ -193,7 +267,8 @@ jobs:
           if [[ "${{ needs.lint.result }}" != "success" ]] || \
              [[ "${{ needs.test.result }}" != "success" ]] || \
              [[ "${{ needs.examples.result }}" != "success" ]] || \
-             [[ "${{ needs.build-wheel.result }}" != "success" ]]; then
+             [[ "${{ needs.build-wheel.result }}" != "success" ]] || \
+             [[ "${{ needs.wasm.result }}" != "success" ]]; then
             echo "One or more Python CI jobs failed"
             exit 1
           fi

@@ -49,6 +49,7 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 | coreutils-args-port | Port uutils `uu_app()` clap definitions (args mode) and platform-clean uucore modules (module mode, manifest-driven) into bashkit via codegen |
 | credential-injection | Transparent per-host credential injection for outbound HTTP requests, without exposing secrets to sandboxed scripts |
 | performance-results | Benchmark/eval result locations and `/benches` site aggregation contract |
+| emscripten-wheels | Reduced-feature Pyodide/Emscripten (`wasm32-unknown-emscripten`) Python wheel: feature gating, toolchain, CI/publish |
 
 ### Documentation
 
