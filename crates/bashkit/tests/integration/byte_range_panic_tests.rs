@@ -79,3 +79,49 @@ async fn array_slice_huge_length_no_panic() {
     // Should not panic — either Ok with clamped slice or a graceful error.
     let _ = result;
 }
+
+/// Regression: arithmetic_fuzz crash (Jun 1 2026) — null bytes inside
+/// arithmetic context with command substitution caused a panic.
+/// Artifact: crash-f87fe9f09e5a5a307ed625dfc86d1003031c70ae
+#[tokio::test]
+async fn arith_fuzz_crash_null_bytes_cmdsub_shopt() {
+    // Raw bytes: )&)h$,\n\0\0$(shopt\t8\t\t\0$\0\0(shop\0t
+    let input_bytes: &[u8] = b")&)h$,\n\x00\x00$(shopt\t8\t\t\x00$\x00\x00(shop\x00t";
+    let input = String::from_utf8_lossy(input_bytes);
+    let script = format!("echo $(({input})) 2>/dev/null");
+    let mut bash = Bash::builder()
+        .limits(
+            ExecutionLimits::new()
+                .max_commands(100)
+                .max_function_depth(10)
+                .max_subst_depth(5)
+                .max_stdout_bytes(4096)
+                .max_stderr_bytes(4096)
+                .timeout(std::time::Duration::from_millis(500)),
+        )
+        .build();
+    let _ = bash.exec(&script).await;
+}
+
+/// Regression: arithmetic_fuzz crash (May 28 2026) — null bytes and SOH in
+/// arithmetic context with array subscript substitution caused a panic.
+/// Artifact: crash-b9727354157e9576ec4380c5febb7168f8c1d999
+#[tokio::test]
+async fn arith_fuzz_crash_null_bytes_array_subscript() {
+    // Raw bytes: \x01\0$(b=[${?\0Range\x01"e {D$PWD
+    let input_bytes: &[u8] = b"\x01\x00$(b=[${?\x00Range\x01\"e {D$PWD";
+    let input = String::from_utf8_lossy(input_bytes);
+    let script = format!("echo $(({input})) 2>/dev/null");
+    let mut bash = Bash::builder()
+        .limits(
+            ExecutionLimits::new()
+                .max_commands(100)
+                .max_function_depth(10)
+                .max_subst_depth(5)
+                .max_stdout_bytes(4096)
+                .max_stderr_bytes(4096)
+                .timeout(std::time::Duration::from_millis(500)),
+        )
+        .build();
+    let _ = bash.exec(&script).await;
+}
