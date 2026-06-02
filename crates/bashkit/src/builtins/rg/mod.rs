@@ -30,6 +30,8 @@ use super::{Builtin, Context, read_text_file, resolve_path};
 use crate::error::{Error, Result};
 use crate::interpreter::ExecResult;
 
+// Ignore files are repository input. Keep parsing/matching bounded so a large
+// ignore file cannot force unbounded regex compilation or per-path scans.
 const RG_IGNORE_FILE_MAX_BYTES: usize = 1024 * 1024;
 const RG_IGNORE_RULES_MAX_PER_FILE: usize = 10_000;
 const RG_IGNORE_RULES_MAX_TOTAL: usize = 50_000;
@@ -356,6 +358,12 @@ struct RgIgnoreRule {
     has_slash: bool,
     anchored: bool,
     regex: Regex,
+}
+
+struct RgIgnoreRuleSet {
+    parent: Option<Arc<RgIgnoreRuleSet>>,
+    local: Vec<RgIgnoreRule>,
+    len: usize,
 }
 
 #[derive(Clone)]
@@ -1530,18 +1538,53 @@ impl RgOptions {
         Ok(())
     }
 
-    fn is_ignored_by_rules(&self, path: &Path, is_dir: bool, rules: &[RgIgnoreRule]) -> bool {
-        let mut ignored = false;
-        for rule in rules {
-            if rule.matches(path, is_dir) || (!is_dir && rule.matches_parent_dir(path)) {
-                ignored = !rule.include;
-            }
-        }
-        ignored
+    fn is_ignored_by_rules(&self, path: &Path, is_dir: bool, rules: &RgIgnoreRuleSet) -> bool {
+        rules.is_ignored(path, is_dir)
     }
 
     fn color_enabled(&self) -> bool {
         self.color == RgColorMode::Always
+    }
+}
+
+impl RgIgnoreRuleSet {
+    fn root(local: Vec<RgIgnoreRule>) -> Self {
+        let len = local.len();
+        Self {
+            parent: None,
+            local,
+            len,
+        }
+    }
+
+    fn child(parent: Arc<Self>, local: Vec<RgIgnoreRule>) -> Self {
+        let len = parent.len + local.len();
+        Self {
+            parent: Some(parent),
+            local,
+            len,
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    fn is_ignored(&self, path: &Path, is_dir: bool) -> bool {
+        let mut ignored = false;
+        self.apply_matches(path, is_dir, &mut ignored);
+        ignored
+    }
+
+    fn apply_matches(&self, path: &Path, is_dir: bool, ignored: &mut bool) {
+        if let Some(parent) = &self.parent {
+            parent.apply_matches(path, is_dir, ignored);
+        }
+        for rule in &self.local {
+            if rule.matches(path, is_dir) || (!is_dir && rule.matches_parent_dir(path)) {
+                *ignored = !rule.include;
+            }
+        }
     }
 }
 
@@ -3046,10 +3089,27 @@ async fn load_rg_ignore_files(
 
     for ignore_file in opts.ignore_file_paths.clone() {
         let path = resolve_path(cwd, &ignore_file);
-        let content = read_text_file(fs, &path, "rg").await?;
+        let content = match read_rg_ignore_file(fs, &path).await {
+            Ok(content) => content,
+            Err(Error::Execution(message)) if message.starts_with("rg: ignore file") => {
+                return Err(ExecResult::err(format!("{message}\n"), 2));
+            }
+            Err(err) => {
+                return Err(ExecResult::err(
+                    format!("rg: {}: {err}\n", path.display()),
+                    1,
+                ));
+            }
+        };
+        let content = String::from_utf8_lossy(&content);
         let rules = parse_rg_ignore_rules(&content, cwd, opts.ignore_file_case_insensitive)
             .map_err(|e| ExecResult::err(format!("{}\n", e), 2))?;
-        opts.explicit_ignore_rules.extend(rules);
+        append_rg_ignore_rules_with_base(
+            &mut opts.explicit_ignore_rules,
+            rules,
+            opts.global_ignore_rules.len(),
+        )
+        .map_err(|e| ExecResult::err(format!("{}\n", e), 2))?;
     }
     Ok(())
 }
@@ -3189,6 +3249,7 @@ async fn load_local_ignore_rules(
     dir: &Path,
     root: &Path,
     opts: &RgOptions,
+    inherited_rule_count: usize,
     rules: &mut Vec<RgIgnoreRule>,
 ) -> Result<()> {
     if opts.no_ignore {
@@ -3196,38 +3257,42 @@ async fn load_local_ignore_rules(
     }
 
     if !opts.no_ignore_dot {
-        load_optional_ignore_file(
+        load_optional_ignore_file_with_rule_base(
             fs,
             &dir.join(".ignore"),
             dir,
             opts.ignore_file_case_insensitive,
+            inherited_rule_count,
             rules,
         )
         .await?;
-        load_optional_ignore_file(
+        load_optional_ignore_file_with_rule_base(
             fs,
             &dir.join(".rgignore"),
             dir,
             opts.ignore_file_case_insensitive,
+            inherited_rule_count,
             rules,
         )
         .await?;
     }
     if !opts.no_ignore_vcs && (!opts.require_git || has_git_dir_in_ancestors(fs, dir, root).await) {
-        load_optional_ignore_file(
+        load_optional_ignore_file_with_rule_base(
             fs,
             &dir.join(".gitignore"),
             dir,
             opts.ignore_file_case_insensitive,
+            inherited_rule_count,
             rules,
         )
         .await?;
         if !opts.no_ignore_exclude {
-            load_optional_ignore_file(
+            load_optional_ignore_file_with_rule_base(
                 fs,
                 &dir.join(".git/info/exclude"),
                 dir,
                 opts.ignore_file_case_insensitive,
+                inherited_rule_count,
                 rules,
             )
             .await?;
@@ -3253,7 +3318,7 @@ async fn load_parent_ignore_rules(
     ancestors.reverse();
 
     for ancestor in ancestors {
-        load_local_ignore_rules(fs, &ancestor, Path::new("/"), opts, rules).await?;
+        load_local_ignore_rules(fs, &ancestor, Path::new("/"), opts, 0, rules).await?;
     }
     Ok(())
 }
@@ -3281,19 +3346,58 @@ async fn load_optional_ignore_file(
     case_insensitive: bool,
     rules: &mut Vec<RgIgnoreRule>,
 ) -> Result<()> {
-    let Ok(content) = fs.read_file(path).await else {
-        return Ok(());
+    load_optional_ignore_file_with_rule_base(fs, path, base, case_insensitive, 0, rules).await
+}
+
+async fn load_optional_ignore_file_with_rule_base(
+    fs: &dyn crate::fs::FileSystem,
+    path: &Path,
+    base: &Path,
+    case_insensitive: bool,
+    inherited_rule_count: usize,
+    rules: &mut Vec<RgIgnoreRule>,
+) -> Result<()> {
+    let content = match read_rg_ignore_file(fs, path).await {
+        Ok(content) => content,
+        Err(Error::Execution(message)) if message.starts_with("rg: ignore file") => {
+            return Err(Error::Execution(message));
+        }
+        Err(_) => return Ok(()),
     };
-    if content.len() > RG_IGNORE_FILE_MAX_BYTES {
+    let content = String::from_utf8_lossy(&content);
+    let parsed = parse_rg_ignore_rules(&content, base, case_insensitive)?;
+    append_rg_ignore_rules_with_base(rules, parsed, inherited_rule_count)
+}
+
+async fn read_rg_ignore_file(fs: &dyn crate::fs::FileSystem, path: &Path) -> Result<Vec<u8>> {
+    if let Ok(meta) = fs.stat(path).await {
+        validate_rg_ignore_file_size(path, meta.size)?;
+    }
+    let content = fs.read_file(path).await?;
+    validate_rg_ignore_file_size(path, content.len() as u64)?;
+    Ok(content)
+}
+
+fn validate_rg_ignore_file_size(path: &Path, len: u64) -> Result<()> {
+    if len > RG_IGNORE_FILE_MAX_BYTES as u64 {
         return Err(Error::Execution(format!(
             "rg: ignore file too large (max {} bytes): {}",
             RG_IGNORE_FILE_MAX_BYTES,
             path.display()
         )));
     }
-    let content = String::from_utf8_lossy(&content);
-    let parsed = parse_rg_ignore_rules(&content, base, case_insensitive)?;
-    let Some(total) = rules.len().checked_add(parsed.len()) else {
+    Ok(())
+}
+
+fn append_rg_ignore_rules_with_base(
+    rules: &mut Vec<RgIgnoreRule>,
+    parsed: Vec<RgIgnoreRule>,
+    inherited_rule_count: usize,
+) -> Result<()> {
+    let Some(total) = inherited_rule_count
+        .checked_add(rules.len())
+        .and_then(|count| count.checked_add(parsed.len()))
+    else {
         return Err(Error::Execution("rg: too many ignore rules".to_string()));
     };
     if total > RG_IGNORE_RULES_MAX_TOTAL {
@@ -3369,7 +3473,7 @@ struct RgWalkItem {
     actual: PathBuf,
     actual_root: PathBuf,
     depth: usize,
-    rules: Arc<Vec<RgIgnoreRule>>,
+    rules: Arc<RgIgnoreRuleSet>,
     ancestors: Vec<PathBuf>,
     display_hint: RgDisplayHint,
 }
@@ -3444,16 +3548,28 @@ async fn collect_rg_files_recursive(
             actual: root.actual.clone(),
             actual_root: root.actual.clone(),
             depth: 0,
-            rules: Arc::new(rules),
+            rules: Arc::new(RgIgnoreRuleSet::root(rules)),
             ancestors: vec![root.actual.clone()],
             display_hint: root.display_hint,
         });
     }
 
     while let Some(item) = stack.pop() {
-        let mut rules = (*item.rules).clone();
-        let _ =
-            load_local_ignore_rules(fs, &item.actual, &item.actual_root, opts, &mut rules).await;
+        let mut local_rules = Vec::new();
+        let _ = load_local_ignore_rules(
+            fs,
+            &item.actual,
+            &item.actual_root,
+            opts,
+            item.rules.len(),
+            &mut local_rules,
+        )
+        .await;
+        let rules = if local_rules.is_empty() {
+            item.rules.clone()
+        } else {
+            Arc::new(RgIgnoreRuleSet::child(item.rules.clone(), local_rules))
+        };
         if let Ok(entries) = fs.read_dir(&item.actual).await {
             for entry in entries {
                 if !opts.hidden && is_hidden_name(&entry.name) {
@@ -3490,7 +3606,7 @@ async fn collect_rg_files_recursive(
                             actual: entry_actual_path,
                             actual_root: item.actual_root.clone(),
                             depth: entry_depth,
-                            rules: Arc::new(rules.clone()),
+                            rules: rules.clone(),
                             ancestors: child_ancestors,
                             display_hint: item.display_hint,
                         });
@@ -6197,6 +6313,27 @@ mod tests {
     fn glob_brace_alternation_depth_limit_does_not_expand_nested_pattern() {
         let regex = glob_to_regex_with_depth("{a,b}", RG_GLOB_MAX_BRACE_DEPTH);
         assert_eq!(regex, r"^\{a,b\}$");
+    }
+
+    #[test]
+    fn rg_ignore_rule_set_preserves_parent_then_child_precedence() {
+        let parent = Arc::new(RgIgnoreRuleSet::root(vec![
+            RgIgnoreRule::parse("*.log", Path::new("/proj"), false)
+                .expect("parse")
+                .expect("rule"),
+        ]));
+        let child = RgIgnoreRuleSet::child(
+            parent,
+            vec![
+                RgIgnoreRule::parse("!keep.log", Path::new("/proj/sub"), false)
+                    .expect("parse")
+                    .expect("rule"),
+            ],
+        );
+
+        assert!(child.is_ignored(Path::new("/proj/sub/drop.log"), false));
+        assert!(!child.is_ignored(Path::new("/proj/sub/keep.log"), false));
+        assert_eq!(child.len(), 2);
     }
 
     #[test]
