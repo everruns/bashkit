@@ -221,6 +221,22 @@ fn test_awk_parser_depth_limit_unary() {
     );
 }
 
+/// TM-DOS-027: Range patterns must not recursively parse comma chains.
+#[test]
+fn test_awk_parser_rejects_chained_range_pattern() {
+    let operands = std::iter::repeat_n("1", 150).collect::<Vec<_>>().join(",");
+    let program = format!("{operands}{{print}}");
+
+    let mut parser = AwkParser::new(&program);
+    let result = parser.parse();
+    assert!(result.is_err(), "comma-chained ranges must be rejected");
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("unexpected ',' after range pattern"),
+        "error should mention unexpected comma after range: {err}"
+    );
+}
+
 /// TM-DOS-027: Moderate nesting within limit still works
 #[test]
 fn test_awk_parser_moderate_nesting_ok() {

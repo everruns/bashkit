@@ -261,6 +261,37 @@ impl<'a> AwkParser<'a> {
     }
 
     fn parse_pattern(&mut self) -> Result<Option<AwkPattern>> {
+        let Some(first_pat) = self.parse_single_pattern()? else {
+            return Ok(None);
+        };
+
+        self.skip_whitespace();
+        if self.pos >= self.input.len() || self.current_char().unwrap() != ',' {
+            return Ok(Some(first_pat));
+        }
+
+        // THREAT[TM-DOS-027]: awk ranges contain exactly two operands. Do not
+        // recursively parse comma chains (`1,1,1,...`) because attacker-sized
+        // chains can exhaust the host stack before runtime limits apply.
+        self.pos += 1; // consume ','
+        let second_pat = self
+            .parse_single_pattern()?
+            .ok_or_else(|| Error::Execution("awk: expected second pattern in range".to_string()))?;
+
+        self.skip_whitespace();
+        if self.pos < self.input.len() && self.current_char().unwrap() == ',' {
+            return Err(Error::Execution(
+                "awk: unexpected ',' after range pattern".to_string(),
+            ));
+        }
+
+        Ok(Some(AwkPattern::Range(
+            Box::new(first_pat),
+            Box::new(second_pat),
+        )))
+    }
+
+    fn parse_single_pattern(&mut self) -> Result<Option<AwkPattern>> {
         self.skip_whitespace();
 
         if self.pos >= self.input.len() {
@@ -269,36 +300,13 @@ impl<'a> AwkParser<'a> {
 
         let c = self.current_char().unwrap();
 
-        // Check for regex pattern
-        let first: Option<AwkPattern> = if c == '/' {
-            Some(self.parse_regex_pattern()?)
+        if c == '/' {
+            Ok(Some(self.parse_regex_pattern()?))
         } else if c == '{' {
-            // Check for opening brace (no pattern)
-            return Ok(None);
-        } else {
-            // Expression pattern
-            let expr = self.parse_expression()?;
-            Some(AwkPattern::Expression(expr))
-        };
-
-        // Check for range pattern: pattern1 , pattern2
-        if let Some(first_pat) = first {
-            self.skip_whitespace();
-            if self.pos < self.input.len() && self.current_char().unwrap() == ',' {
-                self.pos += 1; // consume ','
-                let second = self.parse_pattern()?;
-                let second_pat = second.ok_or_else(|| {
-                    Error::Execution("awk: expected second pattern in range".to_string())
-                })?;
-                Ok(Some(AwkPattern::Range(
-                    Box::new(first_pat),
-                    Box::new(second_pat),
-                )))
-            } else {
-                Ok(Some(first_pat))
-            }
-        } else {
             Ok(None)
+        } else {
+            let expr = self.parse_expression()?;
+            Ok(Some(AwkPattern::Expression(expr)))
         }
     }
 
