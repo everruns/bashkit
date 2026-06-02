@@ -779,6 +779,13 @@ fn deserialize_function_from_source(
     deserialize_function_from_source_with_limits(name, source, 100, 100_000)
 }
 
+fn function_storage_bytes(func: &FunctionDef) -> usize {
+    func.source.as_ref().map_or_else(
+        || func.span.end.offset.saturating_sub(func.span.start.offset),
+        |source| source.len(),
+    )
+}
+
 // Important decision: variable attributes (readonly/integer/lower/upper) and
 // namerefs are stored in dedicated maps rather than the `variables` HashMap with
 // `_READONLY_X` / `_INTEGER_X` / `_LOWER_X` / `_UPPER_X` / `_NAMEREF_X` keys.
@@ -1831,11 +1838,7 @@ impl Interpreter {
             ) else {
                 continue;
             };
-            let body_bytes = parsed_func
-                .span
-                .end
-                .offset
-                .saturating_sub(parsed_func.span.start.offset);
+            let body_bytes = function_storage_bytes(&parsed_func);
             if function_memory_budget
                 .check_function_insert(body_bytes, true, 0, &self.memory_limits)
                 .is_err()
@@ -1850,11 +1853,7 @@ impl Interpreter {
         self.traps = Arc::new(state.traps.clone());
         // Recompute memory budget from restored state to prevent desync
         let func_count = self.functions.len();
-        let func_bytes: usize = self
-            .functions
-            .values()
-            .map(|f| f.span.end.offset.saturating_sub(f.span.start.offset))
-            .sum();
+        let func_bytes: usize = self.functions.values().map(function_storage_bytes).sum();
         self.memory_budget = crate::limits::MemoryBudget::recompute_from_state(
             &self.variables,
             &self.arrays,
@@ -2383,18 +2382,14 @@ impl Interpreter {
                 }
                 Command::Function(func_def) => {
                     // THREAT[TM-DOS-060]: Check function count/size budget
-                    let body_bytes = func_def
-                        .span
-                        .end
-                        .offset
-                        .saturating_sub(func_def.span.start.offset);
+                    let body_bytes = function_storage_bytes(func_def);
                     let is_new = !self.functions.contains_key(&func_def.name);
                     let old_body_bytes = if is_new {
                         0
                     } else {
                         self.functions
                             .get(&func_def.name)
-                            .map(|f| f.span.end.offset.saturating_sub(f.span.start.offset))
+                            .map(function_storage_bytes)
                             .unwrap_or(0)
                     };
                     if self
