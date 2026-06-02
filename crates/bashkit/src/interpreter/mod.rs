@@ -8879,13 +8879,26 @@ impl Interpreter {
                 | ParameterOp::LowerAll
         );
         if needs_per_element && let Some(elems) = self.resolve_param_expansion_elements(name) {
-            let results: Vec<String> = elems
-                .iter()
-                .map(|elem| {
-                    self.apply_parameter_op(elem, name, operator, operand, colon_variant, is_set)
-                })
-                .collect();
-            return results.join(" ");
+            let mut result = String::new();
+            for elem in &elems {
+                let expanded =
+                    self.apply_parameter_op(elem, name, operator, operand, colon_variant, is_set);
+                let next_len = result
+                    .len()
+                    .checked_add(usize::from(!result.is_empty()))
+                    .and_then(|len| len.checked_add(expanded.len()));
+                let Some(next_len) = next_len else {
+                    return value.to_string();
+                };
+                if next_len > Self::MAX_EXPANSION_RESULT_BYTES {
+                    return value.to_string();
+                }
+                if !result.is_empty() {
+                    result.push(' ');
+                }
+                result.push_str(&expanded);
+            }
+            return result;
         }
         self.apply_parameter_op(value, name, operator, operand, colon_variant, is_set)
     }
@@ -9032,21 +9045,40 @@ impl Interpreter {
             return value.to_string();
         }
 
+        let concat_or_original = |parts: &[&str]| {
+            let mut total_len = 0usize;
+            for part in parts {
+                total_len = total_len.checked_add(part.len())?;
+                if total_len > Self::MAX_EXPANSION_RESULT_BYTES {
+                    return None;
+                }
+            }
+
+            let mut result = String::with_capacity(total_len);
+            for part in parts {
+                result.push_str(part);
+            }
+            Some(result)
+        };
+
         // Handle # prefix anchor (match at start only)
         if let Some(rest) = pattern.strip_prefix('#') {
             if rest.is_empty() {
                 // ${var/#/rep} with empty pattern: prepend replacement
-                return format!("{}{}", replacement, value);
+                return concat_or_original(&[replacement, value])
+                    .unwrap_or_else(|| value.to_string());
             }
             if let Some(stripped) = value.strip_prefix(rest) {
-                return format!("{}{}", replacement, stripped);
+                return concat_or_original(&[replacement, stripped])
+                    .unwrap_or_else(|| value.to_string());
             }
             // Try glob match at prefix
             if rest.contains('*') {
                 let matched = self.remove_pattern(value, rest, true, false);
                 if matched != value {
                     let prefix_len = value.len() - matched.len();
-                    return format!("{}{}", replacement, &value[prefix_len..]);
+                    return concat_or_original(&[replacement, &value[prefix_len..]])
+                        .unwrap_or_else(|| value.to_string());
                 }
             }
             return value.to_string();
@@ -9056,16 +9088,19 @@ impl Interpreter {
         if let Some(rest) = pattern.strip_prefix('%') {
             if rest.is_empty() {
                 // ${var/%/rep} with empty pattern: append replacement
-                return format!("{}{}", value, replacement);
+                return concat_or_original(&[value, replacement])
+                    .unwrap_or_else(|| value.to_string());
             }
             if let Some(stripped) = value.strip_suffix(rest) {
-                return format!("{}{}", stripped, replacement);
+                return concat_or_original(&[stripped, replacement])
+                    .unwrap_or_else(|| value.to_string());
             }
             // Try glob match at suffix
             if rest.contains('*') {
                 let matched = self.remove_pattern(value, rest, false, false);
                 if matched != value {
-                    return format!("{}{}", matched, replacement);
+                    return concat_or_original(&[&matched, replacement])
+                        .unwrap_or_else(|| value.to_string());
                 }
             }
             return value.to_string();
@@ -9077,6 +9112,9 @@ impl Interpreter {
             // For simplicity, we'll handle basic cases: prefix*, *suffix, *middle*
             if pattern == "*" {
                 // Replace everything
+                if replacement.len() > Self::MAX_EXPANSION_RESULT_BYTES {
+                    return value.to_string();
+                }
                 return replacement.to_string();
             }
 
@@ -9096,12 +9134,16 @@ impl Interpreter {
                             }
                             return result;
                         } else {
-                            return replacement.to_string() + after;
+                            return concat_or_original(&[replacement, after])
+                                .unwrap_or_else(|| value.to_string());
                         }
                     }
                 } else if !prefix.is_empty() && suffix.is_empty() {
                     // prefix* - match prefix and anything after
                     if value.starts_with(prefix) {
+                        if replacement.len() > Self::MAX_EXPANSION_RESULT_BYTES {
+                            return value.to_string();
+                        }
                         return replacement.to_string();
                     }
                 }
@@ -9118,7 +9160,11 @@ impl Interpreter {
             }
             result
         } else {
-            value.replacen(pattern, replacement, 1)
+            let result = value.replacen(pattern, replacement, 1);
+            if result.len() > Self::MAX_EXPANSION_RESULT_BYTES {
+                return value.to_string();
+            }
+            result
         }
     }
 
@@ -11218,6 +11264,45 @@ mod tests {
     use super::*;
     use crate::fs::InMemoryFs;
     use crate::parser::Parser;
+
+    #[test]
+    fn test_empty_anchored_replacement_respects_expansion_limit() {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        let interp = Interpreter::new(Arc::clone(&fs));
+        let replacement = "a".repeat(Interpreter::MAX_EXPANSION_RESULT_BYTES + 1);
+
+        assert_eq!(interp.replace_pattern("x", "#", &replacement, false), "x");
+        assert_eq!(interp.replace_pattern("x", "%", &replacement, false), "x");
+    }
+
+    #[test]
+    fn test_per_element_param_expansion_respects_aggregate_limit() {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        let mut interp = Interpreter::new(Arc::clone(&fs));
+        let replacement = "a".repeat(2048);
+        interp.set_variable("p".to_string(), replacement);
+        interp.call_stack.push(CallFrame {
+            name: "f".to_string(),
+            locals: HashMap::new(),
+            positional: vec!["x".to_string(); 6000],
+        });
+
+        let value = interp.resolve_param_expansion_name("@").1;
+        let expanded = interp.apply_param_op_maybe_per_element(
+            &value,
+            "@",
+            &ParameterOp::ReplaceFirst {
+                pattern: "#".to_string(),
+                replacement: "$p".to_string(),
+            },
+            "",
+            false,
+            true,
+        );
+
+        assert_eq!(expanded, value);
+        assert!(expanded.len() < Interpreter::MAX_EXPANSION_RESULT_BYTES);
+    }
 
     #[test]
     fn test_try_expand_range_alpha_large_step_does_not_loop() {
