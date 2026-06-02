@@ -12,12 +12,34 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
+  validate-tag:
+    name: Validate release tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.validate.outputs.tag }}
+    steps:
+      - name: Validate workflow input
+        id: validate
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          if [[ ! "$INPUT_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Error: tag must match vMAJOR.MINOR.PATCH (for example, v0.1.13)." >&2
+            exit 1
+          fi
+          echo "tag=$INPUT_TAG" >> "$GITHUB_OUTPUT"
+
   build:
     name: Build CLI (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
+    needs: validate-tag
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -35,7 +57,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ needs.validate-tag.outputs.tag }}
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@1.95.0
@@ -60,15 +83,16 @@ jobs:
       - name: Upload to release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.validate-tag.outputs.tag }}
         run: |
-          gh release upload "${{ inputs.tag }}" \
+          gh release upload "$RELEASE_TAG" \
             "${{ matrix.archive }}" \
             "${{ matrix.archive }}.sha256" \
             --clobber
 
   update-homebrew:
     name: Update Homebrew formula
-    needs: build
+    needs: [validate-tag, build]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -76,8 +100,9 @@ jobs:
       - name: Download SHA256 checksums from release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.validate-tag.outputs.tag }}
         run: |
-          TAG="${{ inputs.tag }}"
+          TAG="$RELEASE_TAG"
           for target in aarch64-apple-darwin x86_64-apple-darwin x86_64-unknown-linux-gnu; do
             gh release download "$TAG" \
               --repo "${{ github.repository }}" \
@@ -85,8 +110,10 @@ jobs:
           done
 
       - name: Generate Homebrew formula
+        env:
+          RELEASE_TAG: ${{ needs.validate-tag.outputs.tag }}
         run: |
-          TAG="${{ inputs.tag }}"
+          TAG="$RELEASE_TAG"
           VERSION="${TAG#v}"
 
           # Validate checksum files exist and are non-empty
@@ -160,8 +187,9 @@ jobs:
       - name: Push formula to homebrew-tap
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+          RELEASE_TAG: ${{ needs.validate-tag.outputs.tag }}
         run: |
-          TAG="${{ inputs.tag }}"
+          TAG="$RELEASE_TAG"
           VERSION="${TAG#v}"
 
           # Fetch the homebrew-tap PAT from Doppler. This token is a
