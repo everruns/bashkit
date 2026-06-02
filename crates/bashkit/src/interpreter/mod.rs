@@ -10743,17 +10743,34 @@ impl Interpreter {
 
     /// Get the separator for `[*]` array joins: first char of IFS, or space if IFS unset.
     fn get_ifs_separator(&self) -> String {
-        let ifs = self.expand_variable("IFS");
-        if ifs.is_empty() && !self.is_variable_set("IFS") {
-            // IFS unset: default separator is space
-            " ".to_string()
-        } else {
-            // IFS set (possibly empty): first char or empty
+        // THREAT[TM-DOS-036]: IFS separator lookup must not use generic
+        // expansion. Namerefs can point IFS at special parameters like `*`,
+        // whose expansion re-enters this function. Resolve only regular
+        // variable storage so local IFS and valid nameref targets still work.
+        let name = self.resolve_nameref("IFS");
+        if let Some(ifs) = self.lookup_regular_variable(name) {
             ifs.chars()
                 .next()
                 .map(|c| c.to_string())
                 .unwrap_or_default()
+        } else {
+            // IFS unset: default separator is space
+            " ".to_string()
         }
+    }
+
+    fn lookup_regular_variable(&self, name: &str) -> Option<String> {
+        for frame in self.call_stack.iter().rev() {
+            if let Some(value) = frame.locals.get(name) {
+                return Some(value.clone());
+            }
+        }
+
+        if let Some(value) = self.variables.get(name) {
+            return Some(value.clone());
+        }
+
+        self.env.get(name).cloned()
     }
 
     fn expand_variable(&self, name: &str) -> String {
@@ -10889,25 +10906,7 @@ impl Interpreter {
             return String::new();
         }
 
-        // Check local variables in call stack (top to bottom)
-        for frame in self.call_stack.iter().rev() {
-            if let Some(value) = frame.locals.get(name) {
-                return value.clone();
-            }
-        }
-
-        // Check shell variables
-        if let Some(value) = self.variables.get(name) {
-            return value.clone();
-        }
-
-        // Check environment
-        if let Some(value) = self.env.get(name) {
-            return value.clone();
-        }
-
-        // Not found - expand to empty string (bash behavior)
-        String::new()
+        self.lookup_regular_variable(name).unwrap_or_default()
     }
 
     /// Check if a variable is set (for `set -u` / nounset).
@@ -13405,6 +13404,26 @@ echo "count=$COUNT"
         // ${arr[@]} should NOT use IFS, keeps elements separate
         let result = run_script(r#"arr=(a b c); IFS=,; echo "${arr[@]}""#).await;
         assert_eq!(result.stdout.trim(), "a b c");
+    }
+
+    #[tokio::test]
+    async fn test_ifs_nameref_to_star_does_not_recurse() {
+        // THREAT[TM-DOS-036]: IFS may be a nameref to a special parameter.
+        // Separator lookup must not recursively expand `$*` through IFS.
+        let result =
+            run_script(r#"f() { local -n IFS='*'; local arr=(a b c); echo "${arr[*]}"; }; f"#)
+                .await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "a b c");
+    }
+
+    #[tokio::test]
+    async fn test_ifs_nameref_to_regular_variable_array_join() {
+        let result = run_script(
+            r#"f() { local sep=:; local -n IFS=sep; local arr=(a b c); echo "${arr[*]}"; }; f"#,
+        )
+        .await;
+        assert_eq!(result.stdout.trim(), "a:b:c");
     }
 
     #[tokio::test]
