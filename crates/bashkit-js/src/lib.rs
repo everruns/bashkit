@@ -1071,7 +1071,7 @@ fn snapshot_hmac_key(options: Option<&SnapshotOptions>) -> Option<&[u8]> {
     options.and_then(|options| options.hmac_key.as_deref())
 }
 
-fn require_snapshot_hmac_key<'a>(options: Option<&'a SnapshotOptions>) -> napi::Result<&'a [u8]> {
+fn require_snapshot_hmac_key(options: Option<&SnapshotOptions>) -> napi::Result<&[u8]> {
     let Some(key) = snapshot_hmac_key(options) else {
         return Err(napi::Error::from_reason(
             "BashTool snapshots require SnapshotOptions.hmacKey for HMAC authentication",
