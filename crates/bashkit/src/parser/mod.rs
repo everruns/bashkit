@@ -153,7 +153,10 @@ impl<'a> Parser<'a> {
         if self.current_token.is_some() {
             self.current_span.start.offset
         } else {
-            self.input.len()
+            // Important decision: EOF keeps `current_span` on the last real token;
+            // use that token end so skipped trailing comments are not retained in
+            // persistent function source snapshots.
+            self.current_span.end.offset
         }
     }
 

@@ -404,6 +404,46 @@ async fn snapshot_without_functions_skips_function_restore() {
 }
 
 #[tokio::test]
+async fn snapshot_function_source_excludes_trailing_eof_comment() {
+    let mut bash = Bash::new();
+    let trailing = "x".repeat(2048);
+    bash.exec(&format!("trimmed() {{ :; }} #{trailing}"))
+        .await
+        .unwrap();
+
+    let bytes = bash.snapshot().unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&bytes[32..]).unwrap();
+    let source = json["shell"]["functions"]["trimmed"]["source"]
+        .as_str()
+        .unwrap();
+
+    assert_eq!(source, "trimmed() { :; }");
+}
+
+#[tokio::test]
+async fn snapshot_restore_counts_source_bytes_against_function_limit() {
+    let mut src = Bash::new();
+    src.exec("large_source() { :; }").await.unwrap();
+    let bytes = src.snapshot().unwrap();
+    let mut json: serde_json::Value = serde_json::from_slice(&bytes[32..]).unwrap();
+    json["shell"]["functions"]["large_source"] = serde_json::json!({
+        "source": format!("large_source() {{ :; }} #{}", "x".repeat(2048))
+    });
+
+    let rewritten: Snapshot = serde_json::from_value(json).unwrap();
+    let bytes = rewritten.to_bytes().unwrap();
+    let limits = MemoryLimits::new().max_function_body_bytes(256);
+    let mut restored = Bash::builder().memory_limits(limits).build();
+    restored.restore_snapshot(&bytes).unwrap();
+
+    let result = restored
+        .exec("type large_source >/dev/null 2>&1; echo $?")
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "1\n");
+}
+
+#[tokio::test]
 async fn snapshot_restore_enforces_function_limits() {
     let mut src = Bash::new();
     src.exec("a() { echo a; }; b() { echo b; }").await.unwrap();
