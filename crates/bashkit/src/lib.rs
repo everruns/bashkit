@@ -824,9 +824,12 @@ impl Bash {
         let result =
             match tokio::time::timeout(execution_timeout, self.interpreter.execute(&ast)).await {
                 Ok(r) => r,
-                Err(_elapsed) => Err(Error::ResourceLimit(LimitExceeded::Timeout(
-                    execution_timeout,
-                ))),
+                Err(_elapsed) => {
+                    self.interpreter.clear_transient_stdin();
+                    Err(Error::ResourceLimit(LimitExceeded::Timeout(
+                        execution_timeout,
+                    )))
+                }
             };
         #[cfg(target_family = "wasm")]
         let result = self.interpreter.execute(&ast).await;
@@ -3132,6 +3135,21 @@ mod tests {
         let mut bash = Bash::new();
         let result = bash.exec("echo hello | cat").await.unwrap();
         assert_eq!(result.stdout, "hello\n");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_timed_out_bash_c_does_not_leak_stdin_to_next_exec() {
+        let limits = ExecutionLimits::new().timeout(std::time::Duration::from_millis(1));
+        let mut bash = Bash::builder().limits(limits).build();
+
+        let timed_out = bash.exec("printf secret | bash -c 'sleep 10'").await;
+        assert!(matches!(
+            timed_out,
+            Err(Error::ResourceLimit(LimitExceeded::Timeout(_)))
+        ));
+
+        let result = bash.exec("cat").await.unwrap();
+        assert_eq!(result.stdout, "");
     }
 
     #[tokio::test]
