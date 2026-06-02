@@ -373,7 +373,8 @@ test("integration: BashTool invalid snapshot throws", (t) => {
 test("integration: BashTool snapshots require and verify HMAC", (t) => {
   const tool = new BashTool();
 
-  t.throws(() => tool.snapshot(), {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  t.throws(() => (tool as any).snapshot(), {
     message: /hmacKey/,
   });
 
@@ -381,7 +382,8 @@ test("integration: BashTool snapshots require and verify HMAC", (t) => {
   const tampered = new Uint8Array(snapshot);
   tampered[tampered.length - 1] ^= 1;
 
-  t.throws(() => tool.restoreSnapshot(snapshot));
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  t.throws(() => (tool as any).restoreSnapshot(snapshot));
   t.throws(() => tool.restoreSnapshot(tampered, { hmacKey: snapshotKey }));
   t.throws(() =>
     BashTool.fromSnapshot(snapshot, undefined, {
