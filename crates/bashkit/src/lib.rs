@@ -1166,10 +1166,11 @@ impl Bash {
         (c.session_commands, c.session_exec_calls)
     }
 
-    /// Restore session-level counters to resume a session across Bash instances.
+    /// Merge session-level counters to resume a session across Bash instances.
     ///
     /// This is used by external tool hosts to persist cumulative session counters
-    /// across fresh Bash instances created per tool call.
+    /// across fresh Bash instances created per tool call. Counters are monotonic:
+    /// restoring lower values never reduces already-consumed session budget.
     pub fn restore_session_counters(&mut self, session_commands: u64, session_exec_calls: u64) {
         self.interpreter
             .restore_session_counters(session_commands, session_exec_calls);

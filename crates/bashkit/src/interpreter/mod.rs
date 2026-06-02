@@ -1963,10 +1963,10 @@ impl Interpreter {
         &self.counters
     }
 
-    /// Restore session-level counters from a snapshot.
+    /// Merge session-level counters from a snapshot without lowering live usage.
     pub fn restore_session_counters(&mut self, session_commands: u64, session_exec_calls: u64) {
-        self.counters.session_commands = session_commands;
-        self.counters.session_exec_calls = session_exec_calls;
+        self.counters.session_commands = self.counters.session_commands.max(session_commands);
+        self.counters.session_exec_calls = self.counters.session_exec_calls.max(session_exec_calls);
     }
 
     /// Set an output callback for streaming output during execution.
