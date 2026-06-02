@@ -1304,44 +1304,52 @@ impl<'a> Parser<'a> {
     /// name. Otherwise the command starts immediately and the default name
     /// "COPROC" is used.
     fn parse_coproc(&mut self) -> Result<CompoundCommand> {
-        let start_span = self.current_span;
-        self.advance(); // consume 'coproc'
-        self.skip_newlines()?;
+        self.tick()?;
+        self.push_depth()?;
 
-        // Determine if next token is a NAME (simple word that is NOT a compound-
-        // command keyword and is followed by a compound command start).
-        let (name, consumed_name) = if let Some(tokens::Token::Word(w)) = &self.current_token {
-            let word = w.clone();
-            let is_compound_keyword = matches!(
-                word.as_str(),
-                "if" | "for" | "while" | "until" | "case" | "select" | "time" | "coproc"
-            );
-            let next_is_compound_start = matches!(
-                self.peek_next(),
-                Some(tokens::Token::LeftBrace) | Some(tokens::Token::LeftParen)
-            );
-            if !is_compound_keyword && next_is_compound_start {
-                self.advance(); // consume the NAME
-                self.skip_newlines()?;
-                (word, true)
+        let result = (|| {
+            let start_span = self.current_span;
+            self.advance(); // consume 'coproc'
+            self.skip_newlines()?;
+
+            // Determine if next token is a NAME (simple word that is NOT a compound-
+            // command keyword and is followed by a compound command start).
+            let (name, consumed_name) = if let Some(tokens::Token::Word(w)) = &self.current_token {
+                let word = w.clone();
+                let is_compound_keyword = matches!(
+                    word.as_str(),
+                    "if" | "for" | "while" | "until" | "case" | "select" | "time" | "coproc"
+                );
+                let next_is_compound_start = matches!(
+                    self.peek_next(),
+                    Some(tokens::Token::LeftBrace) | Some(tokens::Token::LeftParen)
+                );
+                if !is_compound_keyword && next_is_compound_start {
+                    self.advance(); // consume the NAME
+                    self.skip_newlines()?;
+                    (word, true)
+                } else {
+                    ("COPROC".to_string(), false)
+                }
             } else {
                 ("COPROC".to_string(), false)
-            }
-        } else {
-            ("COPROC".to_string(), false)
-        };
+            };
 
-        let _ = consumed_name;
+            let _ = consumed_name;
 
-        // Parse the command body (could be simple, compound, or pipeline)
-        let body = self.parse_pipeline()?;
-        let body = body.ok_or_else(|| self.error("coproc: missing command"))?;
+            // Parse the command body (could be simple, compound, or pipeline)
+            let body = self.parse_pipeline()?;
+            let body = body.ok_or_else(|| self.error("coproc: missing command"))?;
 
-        Ok(CompoundCommand::Coproc(ast::CoprocCommand {
-            name,
-            body: Box::new(body),
-            span: start_span.merge(self.current_span),
-        }))
+            Ok(CompoundCommand::Coproc(ast::CoprocCommand {
+                name,
+                body: Box::new(body),
+                span: start_span.merge(self.current_span),
+            }))
+        })();
+
+        self.pop_depth();
+        result
     }
 
     /// Check if current token is ;; (case terminator)
@@ -3948,6 +3956,26 @@ mod tests {
             AssignmentValue::Scalar(word) => assert_eq!(word.to_string(), "a+=b"),
             AssignmentValue::Array(_) => panic!("expected scalar assignment"),
         }
+    }
+
+    #[test]
+    fn test_nested_coproc_respects_ast_depth_limit() {
+        let parser = Parser::with_limits("coproc coproc echo x", 1, usize::MAX);
+        let err = parser.parse().unwrap_err();
+        assert!(
+            err.to_string().contains("AST nesting too deep"),
+            "expected controlled AST depth error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_nested_coproc_consumes_parser_fuel() {
+        let parser = Parser::with_limits("coproc coproc echo x", 100, 3);
+        let err = parser.parse().unwrap_err();
+        assert!(
+            err.to_string().contains("parser fuel exhausted"),
+            "expected controlled parser fuel error, got: {err}"
+        );
     }
 
     #[test]
