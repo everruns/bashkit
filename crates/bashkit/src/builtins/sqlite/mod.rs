@@ -21,6 +21,8 @@
 //! Limits enforced (see [`SqliteLimits`]):
 //! - SQL script length capped at `max_script_bytes` (4 MiB default).
 //! - Per-result-set row count capped at `max_rows_per_query` (1M default).
+//! - Per-cell, raw result, and rendered-output bytes capped before values can
+//!   grow beyond the builtin's memory budget.
 //! - Per-database file size capped at `max_db_bytes` (256 MiB default).
 //! - Wall-clock budget per invocation at `max_duration` (30 s default; pass
 //!   [`std::time::Duration::ZERO`] to opt out).
@@ -47,7 +49,7 @@ use crate::interpreter::ExecResult;
 
 use super::{Builtin, Context, check_help_version, resolve_path};
 use dot_commands::{DotError, DotOutcome};
-use engine::SqliteEngine;
+use engine::{QueryLimits, SqliteEngine};
 use formatter::{OutputMode, OutputOpts, render};
 use parser::Stmt;
 
@@ -58,6 +60,14 @@ const SQLITE_OPT_IN_ENV: &str = "BASHKIT_ALLOW_INPROCESS_SQLITE";
 const DEFAULT_MAX_SCRIPT_BYTES: usize = 4 * 1024 * 1024; // 4 MiB
 /// Default cap on rows materialised per query, beyond which the query aborts.
 const DEFAULT_MAX_ROWS_PER_QUERY: usize = 1_000_000;
+/// Default cap on one returned SQLite value before Bashkit clones/renders it.
+const DEFAULT_MAX_VALUE_BYTES: usize = 8 * 1024 * 1024; // 8 MiB
+/// Default cap on raw result values materialised for one SQL statement.
+/// Equal to the per-value cap so hex/blob rendering remains bounded by
+/// `max_output_bytes` under the default limits.
+const DEFAULT_MAX_RESULT_BYTES: usize = 8 * 1024 * 1024; // 8 MiB
+/// Default cap on rendered stdout produced by one sqlite invocation.
+const DEFAULT_MAX_OUTPUT_BYTES: usize = 32 * 1024 * 1024; // 32 MiB
 /// Default cap on the size of a single database file when loaded from VFS.
 const DEFAULT_MAX_DB_BYTES: usize = 256 * 1024 * 1024; // 256 MiB
 /// Default per-script wall-clock cap. Each individual statement is checked
@@ -128,6 +138,12 @@ pub struct SqliteLimits {
     pub max_script_bytes: usize,
     /// Maximum rows materialised per query before aborting.
     pub max_rows_per_query: usize,
+    /// Maximum bytes allowed in one returned SQLite value before cloning it.
+    pub max_value_bytes: usize,
+    /// Maximum raw bytes materialised across one query result.
+    pub max_result_bytes: usize,
+    /// Maximum rendered stdout bytes produced by one sqlite invocation.
+    pub max_output_bytes: usize,
     /// Maximum database file size loadable from the VFS.
     pub max_db_bytes: usize,
     /// Wall-clock budget for the whole invocation (every statement shares
@@ -153,6 +169,9 @@ impl Default for SqliteLimits {
         Self {
             max_script_bytes: DEFAULT_MAX_SCRIPT_BYTES,
             max_rows_per_query: DEFAULT_MAX_ROWS_PER_QUERY,
+            max_value_bytes: DEFAULT_MAX_VALUE_BYTES,
+            max_result_bytes: DEFAULT_MAX_RESULT_BYTES,
+            max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES,
             max_db_bytes: DEFAULT_MAX_DB_BYTES,
             max_duration: DEFAULT_MAX_DURATION,
             max_statements: DEFAULT_MAX_STATEMENTS,
@@ -176,6 +195,24 @@ impl SqliteLimits {
     #[must_use]
     pub fn max_rows_per_query(mut self, n: usize) -> Self {
         self.max_rows_per_query = n;
+        self
+    }
+    /// Set max bytes for one returned SQLite value.
+    #[must_use]
+    pub fn max_value_bytes(mut self, n: usize) -> Self {
+        self.max_value_bytes = n;
+        self
+    }
+    /// Set max raw bytes materialised across one query result.
+    #[must_use]
+    pub fn max_result_bytes(mut self, n: usize) -> Self {
+        self.max_result_bytes = n;
+        self
+    }
+    /// Set max rendered stdout bytes for one sqlite invocation.
+    #[must_use]
+    pub fn max_output_bytes(mut self, n: usize) -> Self {
+        self.max_output_bytes = n;
         self
     }
     /// Set max DB file bytes.
@@ -746,21 +783,18 @@ async fn run_statements(
             Stmt::Sql(sql) => {
                 check_sql_policy(&sql, limits)?;
                 let outcome = engine
-                    .execute(&sql, deadline, limits.max_rows_per_query)
+                    .execute(&sql, deadline, query_limits(limits))
                     .map_err(|e| sanitize(&e))?;
                 let rendered = render(&outcome.columns, &outcome.rows, opts);
-                stdout.push_str(&rendered);
+                push_stdout_bounded(stdout, &rendered, limits.max_output_bytes)?;
             }
             Stmt::Dot(line) => {
-                let result = dot_commands::dispatch(
-                    &line,
-                    engine,
-                    opts,
-                    deadline,
-                    limits.max_rows_per_query,
-                );
+                let result =
+                    dot_commands::dispatch(&line, engine, opts, deadline, query_limits(limits));
                 match result {
-                    Ok(DotOutcome::Stdout(s)) => stdout.push_str(&s),
+                    Ok(DotOutcome::Stdout(s)) => {
+                        push_stdout_bounded(stdout, &s, limits.max_output_bytes)?;
+                    }
                     Ok(DotOutcome::Configured) => {}
                     Ok(DotOutcome::Quit) => return Ok(()),
                     Ok(DotOutcome::Read(p)) => {
@@ -816,6 +850,27 @@ async fn run_statements(
 ///   sandbox-safe way to express it today.
 /// * `PRAGMA <name>` is rejected when `<name>` (case-insensitive) is in
 ///   `limits.pragma_deny`. Defaults are listed in [`DEFAULT_PRAGMA_DENY`].
+fn query_limits(limits: &SqliteLimits) -> QueryLimits {
+    QueryLimits {
+        max_rows: limits.max_rows_per_query,
+        max_value_bytes: limits.max_value_bytes,
+        max_result_bytes: limits.max_result_bytes,
+    }
+}
+
+fn push_stdout_bounded(
+    stdout: &mut String,
+    chunk: &str,
+    max: usize,
+) -> std::result::Result<(), String> {
+    let next = stdout.len().saturating_add(chunk.len());
+    if next > max {
+        return Err(format!("sqlite output exceeds byte cap ({next} > {max})"));
+    }
+    stdout.push_str(chunk);
+    Ok(())
+}
+
 fn check_sql_policy(sql: &str, limits: &SqliteLimits) -> std::result::Result<(), String> {
     match parser::leading_keyword(sql).as_deref() {
         Some("ATTACH") | Some("DETACH") => {
