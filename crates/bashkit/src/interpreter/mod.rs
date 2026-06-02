@@ -1016,6 +1016,40 @@ pub struct Interpreter {
     shell_profile: ShellProfile,
 }
 
+struct ArithmeticExpansionState {
+    resolving_vars: Vec<String>,
+    fuel: usize,
+}
+
+impl ArithmeticExpansionState {
+    fn new(fuel: usize) -> Self {
+        Self {
+            resolving_vars: Vec::new(),
+            fuel,
+        }
+    }
+
+    fn spend(&mut self, amount: usize) -> bool {
+        if self.fuel < amount {
+            return false;
+        }
+        self.fuel -= amount;
+        true
+    }
+
+    fn enter_var(&mut self, name: &str) -> bool {
+        if self.resolving_vars.iter().any(|var| var == name) {
+            return false;
+        }
+        self.resolving_vars.push(name.to_string());
+        true
+    }
+
+    fn exit_var(&mut self) {
+        self.resolving_vars.pop();
+    }
+}
+
 impl Interpreter {
     fn utf8_prefix_at_most(s: &str, max_bytes: usize) -> &str {
         if s.len() <= max_bytes {
@@ -9449,6 +9483,12 @@ impl Interpreter {
     /// THREAT[TM-DOS-026]: Prevents stack overflow via deeply nested arithmetic like
     /// $(((((((...)))))))
     const MAX_ARITHMETIC_DEPTH: usize = 50;
+    /// Shared recursion fuel for arithmetic variable expansion.
+    /// THREAT[TM-DOS-026]: Bounds branching recursive variable expressions before they allocate exponentially.
+    const MAX_ARITHMETIC_EXPANSION_FUEL: usize = 8192;
+    /// Maximum expanded arithmetic expression size accepted before fallback to 0.
+    /// THREAT[TM-DOS-026]: Prevents attacker-controlled multi-megabyte arithmetic strings.
+    const MAX_ARITHMETIC_EXPANSION_BYTES: usize = 64 * 1024;
 
     /// Evaluate arithmetic with assignment support (e.g. `X = X + 1`).
     /// Assignment must be handled before variable expansion so the LHS
@@ -9598,14 +9638,27 @@ impl Interpreter {
     /// Evaluate arithmetic while carrying recursion depth from caller contexts.
     /// THREAT[TM-DOS-026]: Preserves the recursion guard across nested array index eval.
     fn evaluate_arithmetic_depth(&self, expr: &str, depth: usize) -> i64 {
-        if depth >= Self::MAX_ARITHMETIC_DEPTH {
+        let mut state = ArithmeticExpansionState::new(Self::MAX_ARITHMETIC_EXPANSION_FUEL);
+        self.evaluate_arithmetic_depth_state(expr, depth, &mut state)
+    }
+
+    fn evaluate_arithmetic_depth_state(
+        &self,
+        expr: &str,
+        depth: usize,
+        state: &mut ArithmeticExpansionState,
+    ) -> i64 {
+        if depth >= Self::MAX_ARITHMETIC_DEPTH || !state.spend(expr.len().max(1)) {
             return 0;
         }
         // Simple arithmetic evaluation - handles basic operations
         let expr = expr.trim();
 
         // First expand any variables in the expression
-        let expanded = self.expand_arithmetic_vars_depth(expr, depth + 1);
+        let expanded = self.expand_arithmetic_vars_depth_state(expr, depth + 1, state);
+        if expanded.len() > Self::MAX_ARITHMETIC_EXPANSION_BYTES {
+            return 0;
+        }
 
         // Parse and evaluate with depth tracking (TM-DOS-026)
         self.parse_arithmetic_impl(&expanded, depth + 1)
@@ -9616,8 +9669,13 @@ impl Interpreter {
     /// if b=a and a=3, then $((b)) evaluates b -> "a" -> 3.
     /// If x='1 + 2', then $((x)) evaluates x -> "1 + 2" -> 3 (as sub-expression).
     /// THREAT[TM-DOS-026]: `depth` prevents infinite recursion.
-    fn resolve_arith_var(&self, value: &str, depth: usize) -> String {
-        if depth >= Self::MAX_ARITHMETIC_DEPTH {
+    fn resolve_arith_var(
+        &self,
+        value: &str,
+        depth: usize,
+        state: &mut ArithmeticExpansionState,
+    ) -> String {
+        if depth >= Self::MAX_ARITHMETIC_DEPTH || !state.spend(value.len().max(1)) {
             return "0".to_string();
         }
         let trimmed = value.trim();
@@ -9631,18 +9689,41 @@ impl Interpreter {
         // If value looks like a variable name, recursively dereference
         if is_valid_var_name(trimmed) {
             let inner = self.expand_variable(trimmed);
-            return self.resolve_arith_var(&inner, depth + 1);
+            return self.resolve_arith_named_var(trimmed, &inner, depth + 1, state);
         }
         // Value contains an expression (e.g. "1 + 2") — expand vars in it
         // and wrap in parens to preserve grouping
-        let expanded = self.expand_arithmetic_vars_depth(trimmed, depth + 1);
+        let expanded = self.expand_arithmetic_vars_depth_state(trimmed, depth + 1, state);
+        if expanded.len() > Self::MAX_ARITHMETIC_EXPANSION_BYTES {
+            return "0".to_string();
+        }
         format!("({})", expanded)
+    }
+
+    fn resolve_arith_named_var(
+        &self,
+        name: &str,
+        value: &str,
+        depth: usize,
+        state: &mut ArithmeticExpansionState,
+    ) -> String {
+        if !state.enter_var(name) {
+            return "0".to_string();
+        }
+        let resolved = self.resolve_arith_var(value, depth, state);
+        state.exit_var();
+        resolved
     }
 
     /// Expand variables in arithmetic expression (no $ needed in $((...))).
     /// THREAT[TM-DOS-026]: `depth` prevents stack overflow via recursive variable values.
-    fn expand_arithmetic_vars_depth(&self, expr: &str, depth: usize) -> String {
-        if depth >= Self::MAX_ARITHMETIC_DEPTH {
+    fn expand_arithmetic_vars_depth_state(
+        &self,
+        expr: &str,
+        depth: usize,
+        state: &mut ArithmeticExpansionState,
+    ) -> String {
+        if depth >= Self::MAX_ARITHMETIC_DEPTH || !state.spend(expr.len().max(1)) {
             return "0".to_string();
         }
 
@@ -9677,7 +9758,8 @@ impl Interpreter {
                             brace_content.push(c);
                         }
                     }
-                    let expanded = self.expand_brace_expr_in_arithmetic(&brace_content);
+                    let expanded =
+                        self.expand_brace_expr_in_arithmetic(&brace_content, depth + 1, state);
                     if expanded.is_empty() {
                         result.push('0');
                     } else {
@@ -9768,17 +9850,17 @@ impl Interpreter {
                         }
                     }
                     // Evaluate the index expression as arithmetic
-                    let idx = self.evaluate_arithmetic_depth(&index_expr, depth + 1);
+                    let idx = self.evaluate_arithmetic_depth_state(&index_expr, depth + 1, state);
                     // Look up array element
                     if let Some(arr) = self.arrays.get(&name) {
                         let idx_usize: usize = idx.try_into().unwrap_or(0);
                         let value = arr.get(&idx_usize).cloned().unwrap_or_default();
-                        result.push_str(&self.resolve_arith_var(&value, depth));
+                        result.push_str(&self.resolve_arith_var(&value, depth, state));
                     } else {
                         // Not an array — treat as scalar (index 0 returns the var value)
                         let value = self.expand_variable(&name);
                         if idx == 0 {
-                            result.push_str(&self.resolve_arith_var(&value, depth));
+                            result.push_str(&self.resolve_arith_var(&value, depth, state));
                         } else {
                             result.push('0');
                         }
@@ -9786,11 +9868,14 @@ impl Interpreter {
                 } else {
                     // Expand the variable with recursive arithmetic resolution
                     let value = self.expand_variable(&name);
-                    result.push_str(&self.resolve_arith_var(&value, depth));
+                    result.push_str(&self.resolve_arith_named_var(&name, &value, depth, state));
                 }
             } else {
                 in_numeric_literal = false;
                 result.push(ch);
+            }
+            if result.len() > Self::MAX_ARITHMETIC_EXPANSION_BYTES {
+                return "0".to_string();
             }
         }
 
@@ -9799,7 +9884,12 @@ impl Interpreter {
 
     /// Expand a `${...}` expression encountered inside arithmetic context.
     /// Handles: `${#arr[@]}`, `${#arr[*]}`, `${#var}`, `${arr[idx]}`, `${var}`.
-    fn expand_brace_expr_in_arithmetic(&self, inner: &str) -> String {
+    fn expand_brace_expr_in_arithmetic(
+        &self,
+        inner: &str,
+        depth: usize,
+        state: &mut ArithmeticExpansionState,
+    ) -> String {
         // ${#arr[@]} or ${#arr[*]} — array length
         if let Some(rest) = inner.strip_prefix('#') {
             if let Some(bracket) = rest.find('[') {
@@ -9828,7 +9918,7 @@ impl Interpreter {
                     return "0".to_string();
                 }
                 // ${#arr[n]} — length of element
-                let idx_val = self.evaluate_arithmetic(idx);
+                let idx_val = self.evaluate_arithmetic_depth_state(idx, depth + 1, state);
                 let idx_usize: usize = idx_val.try_into().unwrap_or(0);
                 if let Some(arr) = self.arrays.get(arr_name) {
                     return arr
@@ -9854,7 +9944,7 @@ impl Interpreter {
                 return arr.get(&key).cloned().unwrap_or_default();
             }
             if let Some(arr) = self.arrays.get(arr_name) {
-                let idx_val = self.evaluate_arithmetic(idx_str);
+                let idx_val = self.evaluate_arithmetic_depth_state(idx_str, depth + 1, state);
                 let idx_usize: usize = idx_val.try_into().unwrap_or(0);
                 return arr.get(&idx_usize).cloned().unwrap_or_default();
             }
@@ -12858,6 +12948,30 @@ mod tests {
         let result = run_script(&script).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout.trim(), "0");
+    }
+
+    #[tokio::test]
+    async fn test_arithmetic_self_referential_expression_is_bounded() {
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            run_script("a='a+a'; echo $((a))"),
+        )
+        .await
+        .expect("self-referential arithmetic expression should be bounded");
+
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_arithmetic_self_referential_array_index_is_bounded() {
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            run_script("arr[0]=1; i='arr[i]'; echo $((arr[i]))"),
+        )
+        .await
+        .expect("self-referential arithmetic array index should be bounded");
+
+        assert_eq!(result.exit_code, 0);
     }
 
     #[tokio::test]

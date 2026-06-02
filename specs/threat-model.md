@@ -241,7 +241,7 @@ runaway scripts without permanently breaking the session.
 | TM-DOS-020 | Function recursion | `f() { f; }; f` | Depth limit (100) | **MITIGATED** |
 | TM-DOS-021 | Command sub nesting | `$($($($())))` | Child parsers inherit remaining depth budget + fuel from parent | **MITIGATED** |
 | TM-DOS-022 | Parser recursion | Deeply nested `(((())))` | `max_ast_depth` limit (100) + `HARD_MAX_AST_DEPTH` cap (100) | **MITIGATED** |
-| TM-DOS-026 | Arithmetic recursion | `$(((((((...)))))))` deeply nested parens | `MAX_ARITHMETIC_DEPTH` limit (50) | **MITIGATED** |
+| TM-DOS-026 | Arithmetic recursion and expansion amplification | `$((((...))))`, `a=a+a; $((a))`, `i=arr[i]; $((arr[i]))` | `MAX_ARITHMETIC_DEPTH` limit (50), shared expansion fuel, cycle detection, expanded-size cap | **MITIGATED** |
 | TM-DOS-064 | Heredoc suffix re-injection CPU amplification | Many `: <<E && : <<E ...` heredocs on one logical line repeatedly copy command-line suffixes | `read_heredoc_with_strip_metered` reports re-injected suffix length; parser charges it to `max_parser_operations` fuel | **MITIGATED** |
 
 **Current Risk**: LOW - Both execution and parser protected
@@ -252,8 +252,13 @@ max_function_depth: 100,      // Runtime recursion (TM-DOS-020, TM-DOS-021)
 max_ast_depth: 100,           // Parser recursion (TM-DOS-022)
 // TM-DOS-021: Child parsers in command/process substitution inherit remaining
 // depth budget and fuel from parent parser (parser/mod.rs lines 1553, 1670)
+<<<<<<< HEAD
 // TM-DOS-026: Arithmetic evaluator tracks recursion depth, capped at 50
 // (interpreter/mod.rs MAX_ARITHMETIC_DEPTH)
+// TM-DOS-026: Arithmetic evaluator tracks recursion depth, capped at 50.
+// Recursive variable expansion shares fuel, rejects variable cycles, and caps
+// generated arithmetic expression bytes.
+// (interpreter/mod.rs MAX_ARITHMETIC_DEPTH / MAX_ARITHMETIC_EXPANSION_*)
 // TM-DOS-064: Heredoc rest-of-line re-injection is charged to parser fuel
 ```
 
