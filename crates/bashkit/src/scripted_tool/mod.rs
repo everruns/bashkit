@@ -131,7 +131,7 @@ mod execute;
 mod extension;
 mod toolset;
 
-pub use extension::{ToolDefExtension, ToolDefExtensionBuilder};
+pub use extension::{ToolDefExtension, ToolDefExtensionBuilder, ToolDefInvocationTrace};
 pub use toolset::{DiscoverTool, DiscoveryMode, ScriptingToolSet, ScriptingToolSetBuilder};
 
 // Re-export foundational types from tool_def (they used to live here).
@@ -1477,8 +1477,8 @@ mod tests {
             });
         let ext_a = builder.build();
         let ext_b = builder.build();
-        let handle_a = ext_a.clone();
-        let handle_b = ext_b.clone();
+        let handle_a = ext_a.invocation_trace();
+        let handle_b = ext_b.invocation_trace();
 
         let mut bash_a = crate::Bash::builder().extension(ext_a).build();
         let mut bash_b = crate::Bash::builder().extension(ext_b).build();
@@ -1506,26 +1506,40 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_tool_def_extension_clones_share_invocation_log() {
-        // Cloning is the supported way to retain a `take_invocations` handle
-        // after passing the extension to a `Bash`.
+    async fn test_tool_def_extension_clones_have_isolated_invocation_logs() {
+        // Cloning copies command configuration only; trace sharing requires an
+        // explicit ToolDefInvocationTrace handle.
         let extension = ToolDefExtension::builder()
             .tool_fn(ToolDef::new("echo_arg", "Echo"), |args: &ToolArgs| {
                 Ok(format!("{}\n", args.param_str("msg").unwrap_or_default()))
             })
             .build();
-        let handle = extension.clone();
+        let clone = extension.clone();
+        let extension_trace = extension.invocation_trace();
+        let clone_trace = clone.invocation_trace();
 
-        let mut bash = crate::Bash::builder().extension(extension).build();
-        bash.exec("echo_arg --msg gamma")
+        let mut bash_a = crate::Bash::builder().extension(extension).build();
+        let mut bash_b = crate::Bash::builder().extension(clone).build();
+        bash_a
+            .exec("echo_arg --msg gamma")
             .await
-            .expect("bash should execute");
+            .expect("bash a should execute");
+        bash_b
+            .exec("echo_arg --msg delta")
+            .await
+            .expect("bash b should execute");
 
-        let trace = handle.take_invocations();
-        assert_eq!(trace.len(), 1);
+        let trace_a = extension_trace.take_invocations();
+        let trace_b = clone_trace.take_invocations();
+        assert_eq!(trace_a.len(), 1);
         assert_eq!(
-            trace[0].args,
+            trace_a[0].args,
             vec!["--msg".to_string(), "gamma".to_string()]
+        );
+        assert_eq!(trace_b.len(), 1);
+        assert_eq!(
+            trace_b[0].args,
+            vec!["--msg".to_string(), "delta".to_string()]
         );
     }
 
@@ -1536,7 +1550,7 @@ mod tests {
                 Ok("ok\n".to_string())
             })
             .build();
-        let handle = extension.clone();
+        let handle = extension.invocation_trace();
         let mut bash = crate::Bash::builder().extension(extension).build();
 
         for _ in 0..300 {
@@ -1562,7 +1576,7 @@ mod tests {
                 Ok("ok\n".to_string())
             })
             .build();
-        let handle = extension.clone();
+        let handle = extension.invocation_trace();
         let mut bash = crate::Bash::builder().extension(extension).build();
 
         let big = "\u{1F600}".repeat(400);

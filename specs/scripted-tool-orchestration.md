@@ -169,6 +169,13 @@ The extension contributes:
 `ScriptedTool` builds its per-call logic-only shell by installing this extension,
 so plain `Bash` and `ScriptedTool` use one command adapter path.
 
+Invocation tracing is isolated by default. Every `ToolDefExtensionBuilder::build()`
+call mints a fresh bounded trace log, and `Clone` for `ToolDefExtension` copies
+command configuration into a new empty log rather than sharing trace state. Hosts
+that intentionally need to read traces after moving an extension into a `Bash`
+must call `ToolDefExtension::invocation_trace()` first and retain the returned
+`ToolDefInvocationTrace` handle. Do not share one trace handle across tenants.
+
 ### ContextVar propagation (Python)
 
 Python callbacks (both sync and async) automatically see `contextvars.ContextVar`

@@ -130,9 +130,10 @@ impl ToolDefExtensionBuilder {
     /// Build the extension.
     ///
     /// Each call mints a fresh, isolated invocation log. Clones of the
-    /// returned extension share the log with the original — keep a clone
-    /// before passing the extension to a `Bash` if you intend to call
-    /// [`ToolDefExtension::take_invocations`] later.
+    /// returned extension also get a fresh log so cloned configuration can be
+    /// reused across tenants without sharing traces. Use
+    /// [`ToolDefExtension::invocation_trace`] before registration when a caller
+    /// intentionally wants a handle for this extension's trace.
     pub fn build(&self) -> ToolDefExtension {
         ToolDefExtension {
             tools: self.tools.clone(),
@@ -145,14 +146,46 @@ impl ToolDefExtensionBuilder {
 /// Bash extension that registers ToolDef-backed commands plus `help` and `discover`.
 ///
 /// Each [`ToolDefExtensionBuilder::build`] mints a fresh invocation log, so
-/// distinct builds (e.g. per tenant) never share traces. Cloning shares the
-/// log with the original — that is the supported pattern for retaining a
-/// `take_invocations` handle after passing the extension to a `Bash`.
-#[derive(Clone)]
+/// distinct builds (e.g. per tenant) never share traces. Cloning also creates
+/// a fresh log, allowing cloned configuration to be installed into separate
+/// `Bash` instances without cross-tenant trace leakage. Use
+/// [`ToolDefExtension::invocation_trace`] to intentionally retain a trace
+/// handle before registering an extension.
 pub struct ToolDefExtension {
     tools: Vec<RegisteredTool>,
     sanitize_errors: bool,
     invocation_log: InvocationLog,
+}
+
+/// Explicit handle for reading and clearing one extension's invocation trace.
+///
+/// Cloning this handle intentionally shares trace state with the source
+/// extension. Clone [`ToolDefExtension`] itself only for reusable command
+/// configuration; extension clones receive fresh, isolated logs.
+#[derive(Clone)]
+pub struct ToolDefInvocationTrace {
+    invocation_log: InvocationLog,
+}
+
+impl ToolDefInvocationTrace {
+    /// Return and clear accumulated command invocation trace entries.
+    pub fn take_invocations(&self) -> Vec<ScriptedCommandInvocation> {
+        let mut invocations = self
+            .invocation_log
+            .lock()
+            .expect("tool-def invocation log poisoned");
+        std::mem::take(&mut *invocations).into()
+    }
+}
+
+impl Clone for ToolDefExtension {
+    fn clone(&self) -> Self {
+        Self {
+            tools: self.tools.clone(),
+            sanitize_errors: self.sanitize_errors,
+            invocation_log: Arc::new(Mutex::new(VecDeque::new())),
+        }
+    }
 }
 
 impl ToolDefExtension {
@@ -180,13 +213,20 @@ impl ToolDefExtension {
         self
     }
 
+    /// Return an explicit handle for this extension's invocation trace.
+    ///
+    /// The handle intentionally shares trace state with this extension and can
+    /// be retained after moving the extension into a `Bash` builder. Prefer a
+    /// distinct extension/handle pair per tenant.
+    pub fn invocation_trace(&self) -> ToolDefInvocationTrace {
+        ToolDefInvocationTrace {
+            invocation_log: Arc::clone(&self.invocation_log),
+        }
+    }
+
     /// Return and clear accumulated command invocation trace entries.
     pub fn take_invocations(&self) -> Vec<ScriptedCommandInvocation> {
-        let mut invocations = self
-            .invocation_log
-            .lock()
-            .expect("tool-def invocation log poisoned");
-        std::mem::take(&mut *invocations).into()
+        self.invocation_trace().take_invocations()
     }
 
     fn snapshots(&self) -> Vec<ToolDefSnapshot> {
