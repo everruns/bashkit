@@ -246,6 +246,15 @@ pub(crate) fn parse_flags(
     raw_args: &[String],
     schema: &serde_json::Value,
 ) -> std::result::Result<serde_json::Value, String> {
+    let mut budget = FlagParseBudget::default();
+    parse_flags_with_budget(raw_args, schema, &mut budget)
+}
+
+fn parse_flags_with_budget(
+    raw_args: &[String],
+    schema: &serde_json::Value,
+    budget: &mut FlagParseBudget,
+) -> std::result::Result<serde_json::Value, String> {
     let properties = schema
         .get("properties")
         .and_then(|p| p.as_object())
@@ -264,6 +273,7 @@ pub(crate) fn parse_flags(
 
         // --key=value
         if let Some((key, raw_value)) = flag.split_once('=') {
+            budget.add_bytes(raw_value.len(), key)?;
             let value = coerce_value(raw_value, properties.get(key), schema);
             result.insert(key.to_string(), value);
             i += 1;
@@ -297,14 +307,17 @@ pub(crate) fn parse_flags(
                     items_effective,
                     schema,
                     &key,
+                    budget,
                 )? {
                     ArrayInput::Items(items) => {
                         let entry = result
-                            .entry(key)
+                            .entry(key.clone())
                             .or_insert_with(|| serde_json::Value::Array(Vec::new()));
                         if let serde_json::Value::Array(arr) = entry {
+                            ensure_array_item_limit(&key, arr.len(), items.len())?;
                             arr.extend(items);
                         } else {
+                            ensure_array_item_limit(&key, 0, items.len())?;
                             *entry = serde_json::Value::Array(items);
                         }
                     }
@@ -316,13 +329,20 @@ pub(crate) fn parse_flags(
                 }
             }
             EffectiveType::Object => {
-                let value =
-                    consume_object_value(raw_args, &mut i, prop_schema.as_ref(), schema, &key)?;
+                let value = consume_object_value(
+                    raw_args,
+                    &mut i,
+                    prop_schema.as_ref(),
+                    schema,
+                    &key,
+                    budget,
+                )?;
                 result.insert(key, value);
             }
             _ => {
                 if i < raw_args.len() && !raw_args[i].starts_with("--") {
                     let raw_value = &raw_args[i];
+                    budget.add_bytes(raw_value.len(), &key)?;
                     let value = coerce_value(raw_value, prop_schema.as_ref(), schema);
                     result.insert(key, value);
                     i += 1;
@@ -376,6 +396,7 @@ fn collect_object_from_pairs(
     object_schema: Option<&serde_json::Value>,
     root_schema: &serde_json::Value,
     flag_name: &str,
+    budget: &mut FlagParseBudget,
 ) -> std::result::Result<serde_json::Map<String, serde_json::Value>, String> {
     let mut obj = serde_json::Map::new();
     let inner_props = object_schema
@@ -402,6 +423,7 @@ fn collect_object_from_pairs(
             ));
         }
 
+        budget.add_bytes(k.len().saturating_add(v.len()), flag_name)?;
         let nested_schema = inner_props.get(k);
         let value = coerce_value(v, nested_schema, root_schema);
         obj.insert(k.to_string(), value);
@@ -429,6 +451,7 @@ fn consume_array_value(
     items_effective: EffectiveType,
     root_schema: &serde_json::Value,
     flag_name: &str,
+    budget: &mut FlagParseBudget,
 ) -> std::result::Result<ArrayInput, String> {
     if *i >= args.len() || args[*i].starts_with("--") {
         return Err(format!("--{flag_name}: missing value"));
@@ -438,6 +461,8 @@ fn consume_array_value(
 
     if trimmed.starts_with('[') {
         if let Some(serde_json::Value::Array(arr)) = parse_aggregate_json_value(next) {
+            ensure_array_item_limit(flag_name, 0, arr.len())?;
+            budget.add_bytes(next.len(), flag_name)?;
             *i += 1;
             return Ok(ArrayInput::Items(arr));
         }
@@ -448,6 +473,7 @@ fn consume_array_value(
     if items_effective == EffectiveType::Object {
         if trimmed.starts_with('{') {
             if let Some(parsed) = parse_aggregate_json_value(next) {
+                budget.add_bytes(next.len(), flag_name)?;
                 *i += 1;
                 return Ok(ArrayInput::Items(vec![parsed]));
             }
@@ -455,7 +481,8 @@ fn consume_array_value(
             return Ok(ArrayInput::Raw(serde_json::Value::String(next.clone())));
         }
         if next.contains('=') {
-            let obj = collect_object_from_pairs(args, i, items_schema, root_schema, flag_name)?;
+            let obj =
+                collect_object_from_pairs(args, i, items_schema, root_schema, flag_name, budget)?;
             return Ok(ArrayInput::Items(vec![serde_json::Value::Object(obj)]));
         }
         return Err(format!(
@@ -464,7 +491,10 @@ fn consume_array_value(
     }
 
     // Scalar items: comma-split.
-    let mut out = Vec::new();
+    let item_count = next.split(',').count();
+    ensure_array_item_limit(flag_name, 0, item_count)?;
+    budget.add_bytes(next.len(), flag_name)?;
+    let mut out = Vec::with_capacity(item_count);
     for part in next.split(',') {
         out.push(coerce_value(part, items_schema, root_schema));
     }
@@ -480,6 +510,7 @@ fn consume_object_value(
     prop_schema: Option<&serde_json::Value>,
     root_schema: &serde_json::Value,
     flag_name: &str,
+    budget: &mut FlagParseBudget,
 ) -> std::result::Result<serde_json::Value, String> {
     if *i >= args.len() || args[*i].starts_with("--") {
         return Ok(serde_json::Value::Bool(true));
@@ -488,16 +519,18 @@ fn consume_object_value(
     let trimmed = next.trim_start();
 
     if trimmed.starts_with('{') || trimmed.starts_with('[') {
+        budget.add_bytes(next.len(), flag_name)?;
         let value = coerce_value(next, prop_schema, root_schema);
         *i += 1;
         return Ok(value);
     }
 
     if next.contains('=') {
-        let obj = collect_object_from_pairs(args, i, prop_schema, root_schema, flag_name)?;
+        let obj = collect_object_from_pairs(args, i, prop_schema, root_schema, flag_name, budget)?;
         return Ok(serde_json::Value::Object(obj));
     }
 
+    budget.add_bytes(next.len(), flag_name)?;
     let value = coerce_value(next, prop_schema, root_schema);
     *i += 1;
     Ok(value)
@@ -520,6 +553,39 @@ enum EffectiveType {
 
 const MAX_REF_DEPTH: usize = 16;
 const MAX_AGGREGATE_FLAG_JSON_BYTES: usize = 64 * 1024;
+const MAX_PARSED_FLAG_BYTES: usize = 64 * 1024;
+const MAX_ARRAY_FLAG_ITEMS: usize = 4096;
+
+#[derive(Default)]
+struct FlagParseBudget {
+    bytes: usize,
+}
+
+impl FlagParseBudget {
+    fn add_bytes(&mut self, bytes: usize, flag_name: &str) -> std::result::Result<(), String> {
+        self.bytes = self.bytes.saturating_add(bytes);
+        if self.bytes > MAX_PARSED_FLAG_BYTES {
+            return Err(format!(
+                "--{flag_name}: parsed flag data exceeds {MAX_PARSED_FLAG_BYTES} bytes"
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn ensure_array_item_limit(
+    flag_name: &str,
+    existing: usize,
+    adding: usize,
+) -> std::result::Result<(), String> {
+    let total = existing.saturating_add(adding);
+    if total > MAX_ARRAY_FLAG_ITEMS {
+        return Err(format!(
+            "--{flag_name}: array flag has {total} items; maximum is {MAX_ARRAY_FLAG_ITEMS}"
+        ));
+    }
+    Ok(())
+}
 
 fn type_str_to_effective(s: &str) -> EffectiveType {
     match s {
@@ -1168,6 +1234,48 @@ mod tests {
         let args = vec!["--ids".to_string(), "1,2,3".to_string()];
         let result = parse_flags(&args, &schema).unwrap();
         assert_eq!(result["ids"], serde_json::json!([1, 2, 3]));
+    }
+
+    #[test]
+    fn test_parse_flags_comma_split_array_item_limit() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {"tags": {"type": "array", "items": {"type": "string"}}}
+        });
+        let too_many_empty_items = ",".repeat(MAX_ARRAY_FLAG_ITEMS);
+        let args = vec!["--tags".to_string(), too_many_empty_items];
+        let err = parse_flags(&args, &schema).unwrap_err();
+        assert!(err.contains("maximum"), "got: {err}");
+    }
+
+    #[test]
+    fn test_parse_flags_repeated_array_item_limit() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {"tags": {"type": "array", "items": {"type": "string"}}}
+        });
+        let at_limit = std::iter::repeat_n("x", MAX_ARRAY_FLAG_ITEMS)
+            .collect::<Vec<_>>()
+            .join(",");
+        let args = vec![
+            "--tags".to_string(),
+            at_limit,
+            "--tags".to_string(),
+            "overflow".to_string(),
+        ];
+        let err = parse_flags(&args, &schema).unwrap_err();
+        assert!(err.contains("maximum"), "got: {err}");
+    }
+
+    #[test]
+    fn test_parse_flags_total_parsed_bytes_limit() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {"name": {"type": "string"}}
+        });
+        let args = vec!["--name".to_string(), "x".repeat(MAX_PARSED_FLAG_BYTES + 1)];
+        let err = parse_flags(&args, &schema).unwrap_err();
+        assert!(err.contains("parsed flag data exceeds"), "got: {err}");
     }
 
     #[test]

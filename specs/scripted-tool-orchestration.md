@@ -219,6 +219,11 @@ Bash command args are parsed into a JSON object:
 Type coercion follows the `input_schema` property types: `integer`, `number`, `boolean`, `string`,
 `array`, `object`. Unknown flags (not in schema) are kept as strings.
 
+Flag parsing is bounded before callback execution. Parsed flag value bytes are capped at
+64 KiB per command invocation, and array-typed flags are capped at 4096 parsed items after
+JSON parsing, comma splitting, and repeated-invocation appends. Oversized inputs fail before
+allocating the full `ToolArgs.params` value.
+
 Aggregate types (`array`, `object`) are resolved through `$ref`, `oneOf`/`anyOf`/`allOf` branches,
 nullable shorthand (`type: ["array","null"]`), and implicit signals (`items` ⇒ array, `properties`
 ⇒ object). When the resolved type is aggregate and the raw value starts with `[` or `{`,
