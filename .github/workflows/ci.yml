@@ -145,6 +145,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # The example binaries statically link the full feature set (turso,
+      # reqwest+rustls, ring, russh, …). On a near-full runner the `rust-lld`
+      # link step has OOM'd/SIGBUS'd mid-link (e.g. `sqlite_basic`), reddening
+      # main on otherwise-passing commits. Reclaim disk before any cargo step
+      # writes to `target/`, mirroring the scheduled disk-hungry jobs.
+      - uses: ./.github/actions/free-disk-space
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@1.95.0
 
