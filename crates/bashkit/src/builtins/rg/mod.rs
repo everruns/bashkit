@@ -408,6 +408,34 @@ impl<'a> RgMatch<'a> {
     }
 }
 
+fn rg_replacement_cap_marker() -> String {
+    format!(
+        "[rg: replacement output capped at {} bytes]",
+        RG_MAX_REPLACEMENT_OUTPUT_BYTES
+    )
+}
+
+fn replacement_output_exceeds_cap(
+    haystack_len: usize,
+    replacement: &str,
+    match_count: usize,
+    include_unmatched_text: bool,
+) -> bool {
+    let capture_ref_count = replacement.bytes().filter(|&byte| byte == b'$').count();
+    let per_match = replacement
+        .len()
+        .saturating_add(capture_ref_count.saturating_mul(haystack_len));
+    let projected =
+        match_count
+            .saturating_mul(per_match)
+            .saturating_add(if include_unmatched_text {
+                haystack_len
+            } else {
+                0
+            });
+    projected > RG_MAX_REPLACEMENT_OUTPUT_BYTES
+}
+
 impl RgMatcher {
     fn is_match(&self, text: &str) -> bool {
         match self {
@@ -463,19 +491,12 @@ impl RgMatcher {
 
     fn replace_all(&self, text: &str, replacement: &str) -> String {
         // THREAT[TM-DOS-RG-REPLACE]: attacker-controlled `--replace` text combined
-        // with many matches can allocate output ≈ matches × replacement_len before
-        // interpreter stdout truncation, enabling memory amplification / OOM.
-        // Project the size up front and refuse to allocate past the cap; surface a
-        // visible marker in the output instead of silently truncating.
+        // with many matches can allocate output before interpreter stdout
+        // truncation. Budget on a conservative expansion upper bound so capture
+        // references like `$1` cannot bypass the plain replacement length check.
         let match_count = self.count_matches(text);
-        let projected = text
-            .len()
-            .saturating_add(match_count.saturating_mul(replacement.len()));
-        if projected > RG_MAX_REPLACEMENT_OUTPUT_BYTES {
-            return format!(
-                "[rg: replacement output capped at {} bytes]",
-                RG_MAX_REPLACEMENT_OUTPUT_BYTES
-            );
+        if replacement_output_exceeds_cap(text.len(), replacement, match_count, true) {
+            return rg_replacement_cap_marker();
         }
         match self {
             Self::Rust(regex) => regex.replace_all(text, replacement).into_owned(),
@@ -484,20 +505,17 @@ impl RgMatcher {
     }
 
     fn replace_first(&self, text: &str, replacement: &str) -> String {
-        // Same cap as replace_all — for a single match the worst case is
-        // text.len() + replacement.len(), so the cap mainly guards against
-        // an attacker-supplied giant replacement string.
-        let projected = text.len().saturating_add(replacement.len());
-        if projected > RG_MAX_REPLACEMENT_OUTPUT_BYTES {
-            return format!(
-                "[rg: replacement output capped at {} bytes]",
-                RG_MAX_REPLACEMENT_OUTPUT_BYTES
-            );
+        if replacement_output_exceeds_cap(text.len(), replacement, 1, true) {
+            return rg_replacement_cap_marker();
         }
         match self {
             Self::Rust(regex) => regex.replace(text, replacement).into_owned(),
             Self::Fancy(regex) => regex.replacen(text, 1, replacement).into_owned(),
         }
+    }
+
+    fn replacement_matches_exceed_cap(&self, text: &str, replacement: &str) -> bool {
+        replacement_output_exceeds_cap(text.len(), replacement, self.count_matches(text), false)
     }
 }
 
@@ -6317,6 +6335,17 @@ impl Builtin for Rg {
                 }
             } else if opts.vimgrep && !opts.invert_match {
                 for &line_idx in &match_lines {
+                    if opts.only_matching
+                        && let Some(replacement) = &opts.replacement
+                        && regex.replacement_matches_exceed_cap(
+                            lines[line_idx].match_text,
+                            replacement.as_str(),
+                        )
+                    {
+                        output.push_str(&rg_replacement_cap_marker());
+                        output.push(record_terminator);
+                        continue;
+                    }
                     regex.for_each_match(lines[line_idx].match_text, |mat| {
                         write_rg_prefix(
                             &mut output,
@@ -6350,6 +6379,16 @@ impl Builtin for Rg {
                 }
             } else if opts.only_matching && !opts.invert_match {
                 for &line_idx in &match_lines {
+                    if let Some(replacement) = &opts.replacement
+                        && regex.replacement_matches_exceed_cap(
+                            lines[line_idx].match_text,
+                            replacement.as_str(),
+                        )
+                    {
+                        output.push_str(&rg_replacement_cap_marker());
+                        output.push(record_terminator);
+                        continue;
+                    }
                     regex.for_each_match(lines[line_idx].match_text, |mat| {
                         write_rg_prefix(
                             &mut output,
@@ -13573,6 +13612,71 @@ mod tests {
             all.stdout.len() < 2 * RG_MAX_REPLACEMENT_OUTPUT_BYTES,
             "replace_all output bypassed the cap: {} bytes",
             all.stdout.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_rg_only_matching_replace_caps_amplified_output() {
+        let payload = "a".repeat(10_000);
+        let replacement = "x".repeat(2048);
+        let files: &[(&str, &[u8])] = &[("/big.txt", payload.as_bytes())];
+
+        for args in [
+            vec![
+                "--only-matching",
+                "--replace",
+                replacement.as_str(),
+                "a",
+                "/big.txt",
+            ],
+            vec![
+                "--vimgrep",
+                "--only-matching",
+                "--replace",
+                replacement.as_str(),
+                "a",
+                "/big.txt",
+            ],
+        ] {
+            let result = run_rg(&args, None, files).await;
+
+            assert_eq!(result.exit_code, 0);
+            assert!(
+                result.stdout.contains("replacement output capped"),
+                "expected cap marker, got: {:?}", // debug-ok: assert-failure message
+                &result.stdout[..result.stdout.len().min(200)]
+            );
+            assert!(
+                result.stdout.len() < 2 * RG_MAX_REPLACEMENT_OUTPUT_BYTES,
+                "only-matching replacement output bypassed the cap: {} bytes",
+                result.stdout.len()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_rg_replace_caps_capture_amplified_output() {
+        let payload = "a".repeat(500_000);
+        let replacement = "$1$1$1$1";
+        let files: &[(&str, &[u8])] = &[("/big.txt", payload.as_bytes())];
+
+        let result = run_rg(
+            &["--replace", replacement, "(a{1000})", "/big.txt"],
+            None,
+            files,
+        )
+        .await;
+
+        assert_eq!(result.exit_code, 0);
+        assert!(
+            result.stdout.contains("replacement output capped"),
+            "expected cap marker, got: {:?}", // debug-ok: assert-failure message
+            &result.stdout[..result.stdout.len().min(200)]
+        );
+        assert!(
+            result.stdout.len() < 2 * RG_MAX_REPLACEMENT_OUTPUT_BYTES,
+            "capture replacement output bypassed the cap: {} bytes",
+            result.stdout.len()
         );
     }
 
