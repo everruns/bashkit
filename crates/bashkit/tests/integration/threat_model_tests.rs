@@ -4431,10 +4431,9 @@ echo ${#arr[@]}
         let result = bash.exec(script).await.unwrap();
         assert_eq!(result.exit_code, 0);
         let count: usize = result.stdout.trim().parse().unwrap_or(0);
-        assert!(
-            count <= 100,
-            "Word-split array assignment should be capped at max_array_entries, got {}",
-            count
+        assert_eq!(
+            count, 100,
+            "Word-split array assignment should stop at max_array_entries"
         );
     }
 
