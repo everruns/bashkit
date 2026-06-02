@@ -187,6 +187,14 @@ jobs:
   wasm:
     name: Build wheel (Pyodide/Emscripten)
     runs-on: ubuntu-latest
+    env:
+      # Pinned for reproducibility: this trio must stay aligned on the wasm
+      # feature set + exception-handling ABI (see specs/emscripten-wheels.md
+      # "version triangle"). pyodide-build 0.34.x (under Python 3.13) selects
+      # Pyodide 0.29.x / Emscripten 4.0.9; the nightly's LLVM must match that
+      # binaryen. Bump all three together and re-verify the wheel imports.
+      RUST_NIGHTLY: "nightly-2026-05-29"
+      PYODIDE_BUILD_VERSION: "0.34.4"
     steps:
       - uses: actions/checkout@v6
 
@@ -203,8 +211,11 @@ jobs:
       # binaryen, which is what avoids the wasm-opt target-feature skew that
       # older Emscripten (3.1.x) hit. See specs/emscripten-wheels.md.
       - name: Install nightly Rust with the Emscripten target
+        # @nightly matches the repo's other nightly jobs (fuzz.yml, nightly.yml,
+        # ci.yml); the exact nightly is pinned via the toolchain: input below.
         uses: dtolnay/rust-toolchain@nightly
         with:
+          toolchain: ${{ env.RUST_NIGHTLY }}
           targets: wasm32-unknown-emscripten
 
       - uses: Swatinem/rust-cache@v2
@@ -212,7 +223,7 @@ jobs:
       # pyodide-build manages its own matching emsdk via the cross-build env, so
       # no separate setup-emsdk step is needed.
       - name: Install pyodide-build
-        run: pip install pyodide-build
+        run: pip install "pyodide-build==${PYODIDE_BUILD_VERSION}"
 
       - name: Install pyodide cross-build environment
         run: pyodide xbuildenv install
@@ -220,7 +231,7 @@ jobs:
       - name: Build Pyodide wheel
         working-directory: crates/bashkit-python
         env:
-          RUSTUP_TOOLCHAIN: nightly
+          RUSTUP_TOOLCHAIN: ${{ env.RUST_NIGHTLY }}
         run: pyodide build --outdir dist
 
       - name: Smoke test in a Pyodide venv
