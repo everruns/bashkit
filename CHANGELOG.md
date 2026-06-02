@@ -2,6 +2,55 @@
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-06-02
+
+### Highlights
+
+- **Pyodide/Emscripten (wasm32) Python wheel** — a reduced-feature `wasm32-unknown-emscripten` Python wheel now ships, enabling the embedded Python builtin in browser/wasm hosts ([#1811](https://github.com/everruns/bashkit/pull/1811)).
+- **Broad resource-safety hardening sweep** — fuel/budget enforcement and memory caps across the interpreter, parser, `rg`, `sqlite`, snapshot, and expansion paths (arithmetic expansion bounds, coproc/process-substitution budgets, heredoc reinjection fuel, brace-step overflow, compound-array limits, replacement-growth caps, sqlite result memory cap).
+- **JS BashTool snapshot authentication** plus keyed snapshot APIs and snapshot counter/byte-accounting fixes for correct resume.
+- Benches snapshot site page and CI hardening for the release/publish workflows.
+
+### What's Changed
+
+* chore(ci): pin Pyodide wheel toolchain and document browser verification ([#1843](https://github.com/everruns/bashkit/pull/1843)) by @chaliy
+* fix(js): authenticate BashTool snapshots ([#1838](https://github.com/everruns/bashkit/pull/1838)) by @chaliy
+* fix(interpreter): bound arithmetic variable expansion ([#1828](https://github.com/everruns/bashkit/pull/1828)) by @chaliy
+* fix(streaming): clear output callback on cancellation by @chaliy
+* fix(snapshot): account function source bytes by @chaliy
+* fix(awk): reject chained range patterns by @chaliy
+* fix(snapshot): preserve counters on resume by @chaliy
+* fix(sqlite): cap result memory growth by @chaliy
+* fix(sqlite): invalidate engine cache on snapshot restore by @chaliy
+* fix(scripted-tool): isolate extension invocation traces by @chaliy
+* fix(tool_def): bound parsed array flag inputs by @chaliy
+* fix(rg): cap replacement expansion by @chaliy
+* fix(rg): stream summary scans to avoid eager line allocation by @chaliy
+* fix(parser): charge heredoc reinjection to parser fuel by @chaliy
+* fix(ci): scope Doppler token to secret fetch steps by @chaliy
+* fix(interpreter): prevent brace step overflow by @chaliy
+* fix(parser): enforce coproc parser limits by @chaliy
+* fix(limits): enforce budgets for local compound arrays by @chaliy
+* fix(interpreter): scope deferred process substitutions by @chaliy
+* fix(interpreter): gate allexport env updates by @chaliy
+* fix(interpreter): cap word-split array assignments by @chaliy
+* fix(ci): validate CLI release tag input by @chaliy
+* fix(interpreter): avoid IFS nameref recursion by @chaliy
+* fix(js): expose keyed snapshot APIs by @chaliy
+* fix(interpreter): clear transient stdin after timeouts by @chaliy
+* fix(ci): verify release publish refs by @chaliy
+* fix(parser): debit nested process substitution budgets by @chaliy
+* fix(expansion): cap per-element replacement growth by @chaliy
+* fix(rg): bound ignore rule resource use by @chaliy
+* fix(ci): use integration test binary for cat/tac spec tests in drift workflow by @chaliy
+* feat(python): add Pyodide/Emscripten (wasm32) wheel ([#1811](https://github.com/everruns/bashkit/pull/1811)) by @chaliy
+* chore(deps): bump the rust-dependencies group with 3 updates by @dependabot
+* fix(interpreter): preserve legacy nameref targets ([#1810](https://github.com/everruns/bashkit/pull/1810)) by @chaliy
+* feat(site): add benches snapshot page ([#1789](https://github.com/everruns/bashkit/pull/1789)) by @chaliy
+* chore(python): bump monty to v0.0.18 ([#1809](https://github.com/everruns/bashkit/pull/1809)) by @chaliy
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.8.0...v0.9.0
+
 ## [0.8.0] - 2026-05-28
 
 ### Highlights
