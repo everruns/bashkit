@@ -3702,6 +3702,58 @@ printf "%s\n" "${a:-unset}" "${b:-unset}" "${c:-unset}"
         assert_eq!(lines[2], "unset");
     }
 
+    /// TM-DOS-060: local builtin assignments in functions must honor variable count budget.
+    #[tokio::test]
+    async fn tm_dos_060_function_local_assignment_respects_budget() {
+        let mem = MemoryLimits::new().max_variable_count(2);
+        let mut bash = Bash::builder()
+            .memory_limits(mem)
+            .session_limits(SessionLimits::unlimited())
+            .build();
+
+        let script = r#"
+f() {
+    local a=1 b=2
+    printf "%s\n" "${a:-unset}" "${b:-unset}"
+}
+f
+"#;
+        let result = bash.exec(script).await.unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        let lines: Vec<&str> = result.stdout.lines().collect();
+        assert_eq!(lines, vec!["1", "unset"]);
+    }
+
+    /// TM-DOS-060: local compound array assignments must honor array entry budget.
+    #[tokio::test]
+    async fn tm_dos_060_local_compound_array_respects_budget() {
+        let mem = MemoryLimits::new().max_array_entries(1);
+        let mut bash = Bash::builder()
+            .memory_limits(mem)
+            .session_limits(SessionLimits::unlimited())
+            .build();
+
+        let script = r#"
+local arr=(a b c)
+printf "%s\n" "${#arr[@]}"
+f() {
+    local inner=(x y z)
+    printf "%s\n" "${#inner[@]}"
+}
+f
+"#;
+        let result = bash.exec(script).await.unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        let counts: Vec<usize> = result
+            .stdout
+            .lines()
+            .map(|line| line.parse::<usize>().unwrap())
+            .collect();
+        assert_eq!(counts, vec![0, 0]);
+    }
+
     /// TM-DOS-060: Array entry bomb — indexed array with many entries.
     #[tokio::test]
     async fn tm_dos_060_array_entry_bomb() {

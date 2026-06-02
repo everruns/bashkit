@@ -6206,12 +6206,8 @@ impl Interpreter {
                     let is_compound = value.starts_with('(') && value.ends_with(')');
                     if is_compound {
                         let inner = &value[1..value.len() - 1];
-                        if flags.assoc {
-                            let arr = self
-                                .assoc_arrays_mut()
-                                .entry(var_name.to_string())
-                                .or_default();
-                            arr.clear();
+                        let inserted = if flags.assoc {
+                            let mut arr = HashMap::new();
                             let mut rest = inner.trim();
                             while let Some(bracket_start) = rest.find('[') {
                                 if let Some(bracket_end) = rest[bracket_start..].find(']') {
@@ -6246,15 +6242,18 @@ impl Interpreter {
                                     break;
                                 }
                             }
+                            self.insert_assoc_array_checked(var_name.to_string(), arr)
                         } else {
-                            let arr = self.arrays_mut().entry(var_name.to_string()).or_default();
-                            arr.clear();
+                            let mut arr = HashMap::new();
                             for (idx, val) in inner.split_whitespace().enumerate() {
                                 arr.insert(idx, val.trim_matches('"').to_string());
                             }
+                            self.insert_array_checked(var_name.to_string(), arr)
+                        };
+                        // Mark local only when the backing array fit the memory budget.
+                        if inserted {
+                            self.insert_local_checked(var_name.to_string(), String::new());
                         }
-                        // Mark local
-                        self.insert_local_checked(var_name.to_string(), String::new());
                     } else if flags.nameref {
                         self.insert_local_checked(var_name.to_string(), String::new());
                     } else if flags.integer {
@@ -6302,11 +6301,7 @@ impl Interpreter {
                     if is_compound {
                         let inner = &value[1..value.len() - 1];
                         if flags.assoc {
-                            let arr = self
-                                .assoc_arrays_mut()
-                                .entry(var_name.to_string())
-                                .or_default();
-                            arr.clear();
+                            let mut arr = HashMap::new();
                             let mut rest = inner.trim();
                             while let Some(bracket_start) = rest.find('[') {
                                 if let Some(bracket_end) = rest[bracket_start..].find(']') {
@@ -6341,12 +6336,13 @@ impl Interpreter {
                                     break;
                                 }
                             }
+                            let _ = self.insert_assoc_array_checked(var_name.to_string(), arr);
                         } else {
-                            let arr = self.arrays_mut().entry(var_name.to_string()).or_default();
-                            arr.clear();
+                            let mut arr = HashMap::new();
                             for (idx, val) in inner.split_whitespace().enumerate() {
                                 arr.insert(idx, val.trim_matches('"').to_string());
                             }
+                            let _ = self.insert_array_checked(var_name.to_string(), arr);
                         }
                     } else if flags.nameref {
                         self.set_nameref(var_name, value.to_string());
