@@ -1,7 +1,7 @@
 // Decision: Snapshot format uses serde_json for Phase 1 (debuggable, human-readable).
 // Phase 2 can add bincode/postcard for compactness.
 // VFS contents are included by default; SnapshotOptions can opt out for shell-only restores.
-// Session counters are serialized for observability; restore paths do not trust them.
+// Session counters are serialized and restored monotonically so snapshot/resume cannot reset budgets.
 
 //! Snapshot/resume — serialize interpreter state between `exec()` calls.
 //!
@@ -335,6 +335,11 @@ impl crate::Bash {
         // Shell state cannot fail past validation, and the VFS has already
         // been restored atomically (or rejected) above.
         self.interpreter.restore_shell_state(&snap.shell);
+        // Session counters are part of session accounting. Merge them
+        // monotonically: authenticated snapshot/resume carries used budget
+        // forward, while tampered unkeyed bytes cannot lower live counters.
+        self.interpreter
+            .restore_session_counters(snap.session_commands, snap.session_exec_calls);
         Ok(())
     }
 
