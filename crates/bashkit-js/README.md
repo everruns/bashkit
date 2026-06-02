@@ -357,9 +357,12 @@ in flight, so the underlying `Promise<string>` callback could never run.
 ## Snapshot / Restore
 
 State snapshots are available on both `Bash` and `BashTool` instances.
-The default snapshot methods use an unkeyed checksum for accidental-corruption
-checks only; use the `*Keyed` methods with a secret key for snapshots that cross
-trust boundaries such as user uploads, shared storage, or network transport.
+
+Security: unkeyed `Bash` snapshots use a public corruption-detection digest and
+are forgeable. Use `hmacKey` whenever snapshot bytes cross a trust boundary
+(network, user uploads, shared storage). `BashTool` snapshots require `hmacKey`
+because they include tool session state, VFS contents, and counters that may be
+restored in multi-tenant agent services.
 
 ```typescript
 import { Bash, BashTool } from "@everruns/bashkit";
@@ -392,15 +395,20 @@ console.log(restored.executeSync("pwd").stdout); // /workspace\n
 const tool = new BashTool({ username: "agent", maxCommands: 5 });
 tool.executeSync("export TOOL_STATE=ready");
 
-const toolSnapshot = tool.snapshot();
-const toolShellOnly = tool.snapshot({ excludeFilesystem: true });
-const restoredTool = BashTool.fromSnapshot(toolSnapshot, {
-  username: "agent",
-  maxCommands: 5,
-});
+const hmacKey = new TextEncoder().encode(process.env.SNAPSHOT_SECRET!);
+const toolSnapshot = tool.snapshot({ hmacKey });
+const toolShellOnly = tool.snapshot({ excludeFilesystem: true, hmacKey });
+const restoredTool = BashTool.fromSnapshot(
+  toolSnapshot,
+  {
+    username: "agent",
+    maxCommands: 5,
+  },
+  { hmacKey },
+);
 
 console.log(restoredTool.executeSync("echo $TOOL_STATE").stdout); // ready\n
-restoredTool.restoreSnapshot(toolShellOnly);
+restoredTool.restoreSnapshot(toolShellOnly, { hmacKey });
 ```
 
 ## Framework Integrations
@@ -452,18 +460,18 @@ import {
 - `clearCancel()`
 - `reset()`
 - `addBuiltin(name, callback)` / `removeBuiltin(name)` — register/unregister persistent JS builtins
-- `snapshot()` / `snapshotKeyed(key, options?)`
-- `restoreSnapshot(data)` / `restoreSnapshotKeyed(data, key)`
-- `Bash.fromSnapshot(data)` / `Bash.fromSnapshotKeyed(data, key, options?)`
+- `snapshot(options?)` / `snapshotKeyed(key, options?)`
+- `restoreSnapshot(data, options?)` / `restoreSnapshotKeyed(data, key)`
+- `Bash.fromSnapshot(data, options?)` / `Bash.fromSnapshotKeyed(data, key)`
 - Direct VFS helpers: `readFile`, `writeFile`, `appendFile`, `mkdir`, `remove`, `exists`, `stat`, `readDir`, `ls`, `glob`, `mount`, `unmount`, `fs`
 
 ### BashTool
 
 - All execution, cancellation (`cancel()`, `clearCancel()`), reset, custom builtins, snapshot, restore, and direct VFS helpers from `Bash`
 - Tool metadata: `name`, `version`, `shortDescription`
-- `snapshot()` / `snapshotKeyed(key, options?)`
-- `restoreSnapshot(data)` / `restoreSnapshotKeyed(data, key)`
-- `BashTool.fromSnapshot(data, options?)` / `BashTool.fromSnapshotKeyed(data, key, options?)`
+- `snapshot({ hmacKey, ...options })`
+- `restoreSnapshot(data, { hmacKey })`
+- `BashTool.fromSnapshot(data, options?, { hmacKey })`
 - `description()`
 - `help()`
 - `systemPrompt()`

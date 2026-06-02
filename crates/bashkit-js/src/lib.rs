@@ -1027,6 +1027,7 @@ pub struct BashOptions {
 pub struct SnapshotOptions {
     pub exclude_filesystem: Option<bool>,
     pub exclude_functions: Option<bool>,
+    pub hmac_key: Option<napi::bindgen_prelude::Buffer>,
 }
 
 fn default_opts() -> BashOptions {
@@ -1055,16 +1056,33 @@ fn default_opts() -> BashOptions {
     }
 }
 
-fn to_snapshot_options(options: Option<SnapshotOptions>) -> RustSnapshotOptions {
+fn to_snapshot_options(options: Option<&SnapshotOptions>) -> RustSnapshotOptions {
     RustSnapshotOptions {
         exclude_filesystem: options
-            .as_ref()
             .and_then(|options| options.exclude_filesystem)
             .unwrap_or(false),
         exclude_functions: options
             .and_then(|options| options.exclude_functions)
             .unwrap_or(false),
     }
+}
+
+fn snapshot_hmac_key(options: Option<&SnapshotOptions>) -> Option<&[u8]> {
+    options.and_then(|options| options.hmac_key.as_deref())
+}
+
+fn require_snapshot_hmac_key(options: Option<&SnapshotOptions>) -> napi::Result<&[u8]> {
+    let Some(key) = snapshot_hmac_key(options) else {
+        return Err(napi::Error::from_reason(
+            "BashTool snapshots require SnapshotOptions.hmacKey for HMAC authentication",
+        ));
+    };
+    if key.is_empty() {
+        return Err(napi::Error::from_reason(
+            "BashTool snapshots require a non-empty SnapshotOptions.hmacKey",
+        ));
+    }
+    Ok(key)
 }
 
 // ============================================================================
@@ -1389,23 +1407,36 @@ impl Bash {
         &self,
         options: Option<SnapshotOptions>,
     ) -> napi::Result<napi::bindgen_prelude::Buffer> {
-        let options = to_snapshot_options(options);
+        let snapshot_options = to_snapshot_options(options.as_ref());
+        let hmac_key = snapshot_hmac_key(options.as_ref()).map(Vec::from);
         block_on_with(&self.state, |s| async move {
             let bash = s.inner.lock().await;
-            let bytes = bash
-                .snapshot_with_options(options)
-                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+            let bytes = if let Some(key) = hmac_key.as_deref() {
+                bash.snapshot_to_bytes_keyed_with_options(key, snapshot_options)
+            } else {
+                bash.snapshot_with_options(snapshot_options)
+            }
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
             Ok(napi::bindgen_prelude::Buffer::from(bytes))
         })
     }
 
     /// Restore interpreter state from a snapshot previously created with `snapshot()`.
     #[napi]
-    pub fn restore_snapshot(&self, data: napi::bindgen_prelude::Buffer) -> napi::Result<()> {
+    pub fn restore_snapshot(
+        &self,
+        data: napi::bindgen_prelude::Buffer,
+        options: Option<SnapshotOptions>,
+    ) -> napi::Result<()> {
+        let hmac_key = snapshot_hmac_key(options.as_ref()).map(Vec::from);
         block_on_with(&self.state, |s| async move {
             let mut bash = s.inner.lock().await;
-            bash.restore_snapshot(&data)
-                .map_err(|e| napi::Error::from_reason(e.to_string()))
+            if let Some(key) = hmac_key.as_deref() {
+                bash.restore_snapshot_keyed(&data, key)
+            } else {
+                bash.restore_snapshot(&data)
+            }
+            .map_err(|e| napi::Error::from_reason(e.to_string()))
         })
     }
 
@@ -1418,7 +1449,7 @@ impl Bash {
         key: napi::bindgen_prelude::Buffer,
         options: Option<SnapshotOptions>,
     ) -> napi::Result<napi::bindgen_prelude::Buffer> {
-        let options = to_snapshot_options(options);
+        let options = to_snapshot_options(options.as_ref());
         block_on_with(&self.state, |s| async move {
             let bash = s.inner.lock().await;
             let bytes = bash
@@ -1450,16 +1481,18 @@ impl Bash {
     pub fn from_snapshot(
         data: napi::bindgen_prelude::Buffer,
         options: Option<BashOptions>,
+        snapshot_options: Option<SnapshotOptions>,
     ) -> napi::Result<Self> {
         let opts = options.unwrap_or_else(default_opts);
         let mut state = shared_state_from_opts(opts, None)?;
 
         // restore_snapshot preserves the instance's limits while restoring shell state
-        state
-            .inner
-            .get_mut()
-            .restore_snapshot(&data)
-            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        if let Some(key) = snapshot_hmac_key(snapshot_options.as_ref()) {
+            state.inner.get_mut().restore_snapshot_keyed(&data, key)
+        } else {
+            state.inner.get_mut().restore_snapshot(&data)
+        }
+        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
         Ok(Self {
             state: Arc::new(state),
@@ -1928,11 +1961,12 @@ impl BashTool {
         &self,
         options: Option<SnapshotOptions>,
     ) -> napi::Result<napi::bindgen_prelude::Buffer> {
-        let options = to_snapshot_options(options);
+        let key = require_snapshot_hmac_key(options.as_ref())?.to_vec();
+        let snapshot_options = to_snapshot_options(options.as_ref());
         block_on_with(&self.state, |s| async move {
             let bash = s.inner.lock().await;
             let bytes = bash
-                .snapshot_with_options(options)
+                .snapshot_to_bytes_keyed_with_options(&key, snapshot_options)
                 .map_err(|e| napi::Error::from_reason(e.to_string()))?;
             Ok(napi::bindgen_prelude::Buffer::from(bytes))
         })
@@ -1940,10 +1974,15 @@ impl BashTool {
 
     /// Restore interpreter state from a snapshot previously created with `snapshot()`.
     #[napi]
-    pub fn restore_snapshot(&self, data: napi::bindgen_prelude::Buffer) -> napi::Result<()> {
+    pub fn restore_snapshot(
+        &self,
+        data: napi::bindgen_prelude::Buffer,
+        options: Option<SnapshotOptions>,
+    ) -> napi::Result<()> {
+        let key = require_snapshot_hmac_key(options.as_ref())?.to_vec();
         block_on_with(&self.state, |s| async move {
             let mut bash = s.inner.lock().await;
-            bash.restore_snapshot(&data)
+            bash.restore_snapshot_keyed(&data, &key)
                 .map_err(|e| napi::Error::from_reason(e.to_string()))
         })
     }
@@ -1955,7 +1994,7 @@ impl BashTool {
         key: napi::bindgen_prelude::Buffer,
         options: Option<SnapshotOptions>,
     ) -> napi::Result<napi::bindgen_prelude::Buffer> {
-        let options = to_snapshot_options(options);
+        let options = to_snapshot_options(options.as_ref());
         block_on_with(&self.state, |s| async move {
             let bash = s.inner.lock().await;
             let bytes = bash
@@ -1987,14 +2026,16 @@ impl BashTool {
     pub fn from_snapshot(
         data: napi::bindgen_prelude::Buffer,
         options: Option<BashOptions>,
+        snapshot_options: Option<SnapshotOptions>,
     ) -> napi::Result<Self> {
         let opts = options.unwrap_or_else(default_opts);
+        let key = require_snapshot_hmac_key(snapshot_options.as_ref())?.to_vec();
         let mut state = shared_state_from_opts(opts, None)?;
 
         state
             .inner
             .get_mut()
-            .restore_snapshot(&data)
+            .restore_snapshot_keyed(&data, &key)
             .map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
         Ok(Self {
