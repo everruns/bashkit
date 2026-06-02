@@ -325,7 +325,7 @@ const bash = new Bash({
       return JSON.stringify(data) + "\n";
     },
     fail: () => {
-      throw new Error("nope");   // → stderr, exit 1
+      throw new Error("nope"); // → stderr, exit 1
     },
   },
 });
@@ -340,8 +340,9 @@ The callback receives a `BuiltinContext`:
 - `cwd: string` — current working directory
 
 Override precedence: shell function > POSIX special builtin > custom builtin
+
 > baked-in builtin > `PATH`. Custom builtins can override baked-in commands
-(e.g. wrap `cat`), but shell functions defined in the script still win.
+> (e.g. wrap `cat`), but shell functions defined in the script still win.
 
 Custom builtins survive `reset()`. They are host-side configuration and are
 **not** preserved by `snapshot()` / `restoreSnapshot()` — pass
@@ -355,7 +356,10 @@ in flight, so the underlying `Promise<string>` callback could never run.
 
 ## Snapshot / Restore
 
-State snapshots are available on both `Bash` and `BashTool` instances:
+State snapshots are available on both `Bash` and `BashTool` instances.
+The default snapshot methods use an unkeyed checksum for accidental-corruption
+checks only; use the `*Keyed` methods with a secret key for snapshots that cross
+trust boundaries such as user uploads, shared storage, or network transport.
 
 ```typescript
 import { Bash, BashTool } from "@everruns/bashkit";
@@ -372,12 +376,17 @@ const promptOnly = bash.snapshot({
   excludeFunctions: true,
 });
 
+const secretKey = Buffer.from(process.env.BASHKIT_SNAPSHOT_KEY!, "hex");
+const keyedSnapshot = bash.snapshotKeyed(secretKey);
+const keyedRestored = Bash.fromSnapshotKeyed(keyedSnapshot, secretKey);
+
 const restored = Bash.fromSnapshot(snapshot);
 console.log((await restored.execute("echo $BUILD_ID")).stdout); // 42\n
 
 restored.reset();
 restored.restoreSnapshot(snapshot);
 restored.restoreSnapshot(shellOnly);
+restored.restoreSnapshotKeyed(keyedSnapshot, secretKey);
 console.log(restored.executeSync("pwd").stdout); // /workspace\n
 
 const tool = new BashTool({ username: "agent", maxCommands: 5 });
@@ -443,18 +452,18 @@ import {
 - `clearCancel()`
 - `reset()`
 - `addBuiltin(name, callback)` / `removeBuiltin(name)` — register/unregister persistent JS builtins
-- `snapshot()`
-- `restoreSnapshot(data)`
-- `Bash.fromSnapshot(data)`
+- `snapshot()` / `snapshotKeyed(key, options?)`
+- `restoreSnapshot(data)` / `restoreSnapshotKeyed(data, key)`
+- `Bash.fromSnapshot(data)` / `Bash.fromSnapshotKeyed(data, key, options?)`
 - Direct VFS helpers: `readFile`, `writeFile`, `appendFile`, `mkdir`, `remove`, `exists`, `stat`, `readDir`, `ls`, `glob`, `mount`, `unmount`, `fs`
 
 ### BashTool
 
 - All execution, cancellation (`cancel()`, `clearCancel()`), reset, custom builtins, snapshot, restore, and direct VFS helpers from `Bash`
 - Tool metadata: `name`, `version`, `shortDescription`
-- `snapshot()`
-- `restoreSnapshot(data)`
-- `BashTool.fromSnapshot(data, options?)`
+- `snapshot()` / `snapshotKeyed(key, options?)`
+- `restoreSnapshot(data)` / `restoreSnapshotKeyed(data, key)`
+- `BashTool.fromSnapshot(data, options?)` / `BashTool.fromSnapshotKeyed(data, key, options?)`
 - `description()`
 - `help()`
 - `systemPrompt()`
