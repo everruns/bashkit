@@ -1596,6 +1596,7 @@ impl Interpreter {
     pub fn reset_transient_state(&mut self) {
         self.traps_mut().clear();
         self.last_exit_code = 0;
+        self.deferred_proc_subs.clear();
         for var in Self::SET_OPTION_VARS {
             self.vars_mut().remove(*var);
             if let Some(bit) = BashFlags::from_shopt_name(var) {
@@ -4650,12 +4651,23 @@ impl Interpreter {
         Some(result)
     }
 
-    /// Execute deferred output process substitutions (`>(cmd)`).
-    async fn run_deferred_proc_subs(&mut self, result: &mut Result<ExecResult>) -> Result<()> {
-        if self.deferred_proc_subs.is_empty() {
+    /// Discard deferred output process substitutions queued by the current simple command.
+    fn discard_deferred_proc_subs_from(&mut self, start: usize) {
+        self.deferred_proc_subs.truncate(start);
+    }
+
+    /// Execute deferred output process substitutions (`>(cmd)`) queued by the
+    /// current simple command. Older entries belong to an outer expansion frame
+    /// and must not be drained by nested command substitutions.
+    async fn run_deferred_proc_subs_from(
+        &mut self,
+        start: usize,
+        result: &mut Result<ExecResult>,
+    ) -> Result<()> {
+        if self.deferred_proc_subs.len() <= start {
             return Ok(());
         }
-        let deferred = std::mem::take(&mut self.deferred_proc_subs);
+        let deferred = self.deferred_proc_subs.split_off(start);
         for (path_str, commands) in deferred {
             let path = Path::new(&path_str);
             let stdin_data = if let Ok(bytes) = self.fs.read_file(path).await {
@@ -4728,12 +4740,20 @@ impl Interpreter {
         stdin: Option<String>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
         Box::pin(async move {
+            let deferred_proc_sub_start = self.deferred_proc_subs.len();
             let (_debug_stdout, _debug_stderr) = self.run_debug_trap().await;
 
-            let name = self.expand_word(&command.name).await?;
+            let name = match self.expand_word(&command.name).await {
+                Ok(name) => name,
+                Err(err) => {
+                    self.discard_deferred_proc_subs_from(deferred_proc_sub_start);
+                    return Err(err);
+                }
+            };
 
             if let Some(err_msg) = self.nounset_error.take() {
                 self.last_exit_code = 1;
+                self.discard_deferred_proc_subs_from(deferred_proc_sub_start);
                 return Ok(ExecResult {
                     stdout: String::new(),
                     stderr: err_msg,
@@ -4744,7 +4764,13 @@ impl Interpreter {
             }
 
             let pre_expanded_args = if !name.is_empty() {
-                Some(self.expand_command_args(command).await?)
+                match self.expand_command_args(command).await {
+                    Ok(args) => Some(args),
+                    Err(err) => {
+                        self.discard_deferred_proc_subs_from(deferred_proc_sub_start);
+                        return Err(err);
+                    }
+                }
             } else {
                 None
             };
@@ -4757,14 +4783,17 @@ impl Interpreter {
 
             let pre_assign_subst_gen = self.subst_generation;
 
-            self.process_command_assignments(&command.assignments)
-                .await?;
+            if let Err(err) = self.process_command_assignments(&command.assignments).await {
+                self.discard_deferred_proc_subs_from(deferred_proc_sub_start);
+                return Err(err);
+            }
 
             // Alias expansion
             if let Some(result) = self
                 .try_alias_expansion(&name, command, stdin.clone(), var_saves.clone())
                 .await
             {
+                self.discard_deferred_proc_subs_from(deferred_proc_sub_start);
                 return result;
             }
 
@@ -4772,6 +4801,7 @@ impl Interpreter {
             if name.is_empty() {
                 if command.name.quoted && command.assignments.is_empty() {
                     self.last_exit_code = 127;
+                    self.discard_deferred_proc_subs_from(deferred_proc_sub_start);
                     return Ok(ExecResult::err(
                         "bash: : command not found\n".to_string(),
                         127,
@@ -4785,6 +4815,7 @@ impl Interpreter {
                     self.last_exit_code
                 };
                 self.last_exit_code = exit_code;
+                self.discard_deferred_proc_subs_from(deferred_proc_sub_start);
                 return Ok(ExecResult {
                     stdout: String::new(),
                     stderr: String::new(),
@@ -4818,6 +4849,7 @@ impl Interpreter {
                 let err_msg = first.trim_start_matches("\x00ERR\x00").to_string();
                 self.last_exit_code = 1;
                 self.restore_variables(var_saves);
+                self.discard_deferred_proc_subs_from(deferred_proc_sub_start);
                 let result = ExecResult::err(err_msg, 1);
                 return self.apply_redirections(result, &command.redirects).await;
             }
@@ -4853,7 +4885,8 @@ impl Interpreter {
                 result
             };
 
-            self.run_deferred_proc_subs(&mut result).await?;
+            self.run_deferred_proc_subs_from(deferred_proc_sub_start, &mut result)
+                .await?;
 
             result
         })
@@ -13601,6 +13634,33 @@ echo "count=$COUNT"
         // (( )) inside process substitution must be preserved
         let result = run_script(r#"cat <( x=5; (( x > 3 )) && echo YES )"#).await;
         assert_eq!(result.stdout.trim(), "YES");
+    }
+
+    #[tokio::test]
+    async fn test_output_process_sub_cleared_after_failglob_in_same_exec() {
+        let result =
+            run_script(r#"shopt -s failglob; echo >(echo STALE) ./missing_*; echo VICTIM"#).await;
+        assert!(
+            !result.stdout.contains("STALE"),
+            "deferred output process substitution leaked after failglob"
+        );
+        assert!(result.stdout.contains("VICTIM"));
+    }
+
+    #[tokio::test]
+    async fn test_output_process_sub_cleared_between_bash_exec_calls() {
+        let mut bash = crate::Bash::new();
+        let first = bash
+            .exec(r#"shopt -s failglob; echo >(cat /secret) ./missing_*"#)
+            .await
+            .unwrap();
+        assert_eq!(first.exit_code, 1);
+
+        let second = bash
+            .exec("echo SECRET > /secret; echo VICTIM")
+            .await
+            .unwrap();
+        assert_eq!(second.stdout, "VICTIM\n");
     }
 
     #[tokio::test]
