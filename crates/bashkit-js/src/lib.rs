@@ -1449,7 +1449,7 @@ impl Bash {
         key: napi::bindgen_prelude::Buffer,
         options: Option<SnapshotOptions>,
     ) -> napi::Result<napi::bindgen_prelude::Buffer> {
-        let options = to_snapshot_options(options);
+        let options = to_snapshot_options(options.as_ref());
         block_on_with(&self.state, |s| async move {
             let bash = s.inner.lock().await;
             let bytes = bash
@@ -1994,7 +1994,7 @@ impl BashTool {
         key: napi::bindgen_prelude::Buffer,
         options: Option<SnapshotOptions>,
     ) -> napi::Result<napi::bindgen_prelude::Buffer> {
-        let options = to_snapshot_options(options);
+        let options = to_snapshot_options(options.as_ref());
         block_on_with(&self.state, |s| async move {
             let bash = s.inner.lock().await;
             let bytes = bash
