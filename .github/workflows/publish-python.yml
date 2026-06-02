@@ -138,7 +138,9 @@ jobs:
       # its LLVM matches Emscripten 4.0.9's binaryen. pyodide-build manages its
       # own matching emsdk via the cross-build env (no setup-emsdk needed).
       - name: Install nightly Rust with the Emscripten target
-        uses: dtolnay/rust-toolchain@master
+        # @nightly matches the repo's other nightly jobs; the exact nightly is
+        # pinned via the toolchain: input below.
+        uses: dtolnay/rust-toolchain@nightly
         with:
           toolchain: ${{ env.RUST_NIGHTLY }}
           targets: wasm32-unknown-emscripten

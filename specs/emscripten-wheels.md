@@ -112,17 +112,19 @@ host Python. **Python 3.11/3.12 pin pyodide-build ≤0.25.1 → Emscripten 3.1.x
 whose binaryen is too old for modern LLVM (see "version triangle" below) — use
 Python 3.13.
 
+Use the same pinned versions as CI (above) so a local build matches:
+
 ```bash
 # 1. nightly Rust (Pyodide passes -Z link-native-libraries=no)
-rustup toolchain install nightly --target wasm32-unknown-emscripten
+rustup toolchain install nightly-2026-05-29 --target wasm32-unknown-emscripten
 
 # 2. pyodide-build (under Python 3.13) — manages its own matching emsdk
-python3.13 -m pip install pyodide-build
+python3.13 -m pip install "pyodide-build==0.34.4"
 pyodide xbuildenv install            # downloads Emscripten 4.0.9 + ABI
 
 # 3. build (no RUSTFLAGS hacks, no separate emsdk needed)
 cd crates/bashkit-python
-RUSTUP_TOOLCHAIN=nightly pyodide build
+RUSTUP_TOOLCHAIN=nightly-2026-05-29 pyodide build
 
 # 4. smoke test — run from a scratch dir so the crate's own bashkit/ source
 #    package doesn't shadow the installed extension module

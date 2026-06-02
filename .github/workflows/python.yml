@@ -211,7 +211,9 @@ jobs:
       # binaryen, which is what avoids the wasm-opt target-feature skew that
       # older Emscripten (3.1.x) hit. See specs/emscripten-wheels.md.
       - name: Install nightly Rust with the Emscripten target
-        uses: dtolnay/rust-toolchain@master
+        # @nightly matches the repo's other nightly jobs (fuzz.yml, nightly.yml,
+        # ci.yml); the exact nightly is pinned via the toolchain: input below.
+        uses: dtolnay/rust-toolchain@nightly
         with:
           toolchain: ${{ env.RUST_NIGHTLY }}
           targets: wasm32-unknown-emscripten
