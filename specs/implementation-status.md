@@ -510,6 +510,7 @@ PyO3 bindings in `crates/bashkit-python/`. See [python-package.md](python-packag
 | ContextVar propagation | Done | `execute()` captures caller loop + `copy_context()`; callbacks re-enter via `ctx.run()` |
 | LangGraph integration | Done | Example + integration tests |
 | FastAPI integration | Done | Example + integration tests |
+| Emscripten/wasm32 wheel | Done | Reduced-feature Pyodide wheel (browser / JupyterLite); `execute_sync` + callbacks. Unavailable config (async, network, sqlite, realfs, interop) raises `RuntimeError`. See [emscripten-wheels.md](emscripten-wheels.md) |
 
 ### Examples
 

@@ -94,12 +94,18 @@ Decision comments are inline at each gate; this spec is the index.
 
 ### Toolchain matrix (verified)
 
-| Component | Version | Why |
+| Component | Version (pinned in CI) | Why |
 |---|---|---|
 | Python (host for build) | **3.13** | Selects pyodide-build's modern config |
-| pyodide-build | 0.34.x (latest) | → Pyodide 0.29.x ABI |
+| pyodide-build | **0.34.4** | → Pyodide 0.29.x / Emscripten 4.0.9 ABI |
 | Emscripten | **4.0.9** | Managed by pyodide-build; binaryen knows modern LLVM wasm features |
-| Rust | **nightly** (≥1.95-equivalent) | `-Z link-native-libraries=no`; satisfies monty's MSRV + edition 2024 |
+| Rust | **nightly-2026-05-29** | `-Z link-native-libraries=no`; satisfies monty's MSRV + edition 2024 |
+
+Both CI workflows (`python.yml` `wasm` job, `publish-python.yml` `build-emscripten`)
+pin the nightly date and `pyodide-build` version via job-level `RUST_NIGHTLY` /
+`PYODIDE_BUILD_VERSION` env vars. **Bump the trio together** — they must agree on
+the wasm feature set and exception-handling ABI (see "version triangle") — and
+re-verify the wheel *imports* (not just builds) after any bump.
 
 The Emscripten/ABI versions are dictated by the installed `pyodide-build` for the
 host Python. **Python 3.11/3.12 pin pyodide-build ≤0.25.1 → Emscripten 3.1.x**,
@@ -132,6 +138,27 @@ For a fast Rust-only type check without the full wheel build:
 PYO3_CROSS_PYTHON_VERSION=3.13 \
   cargo check -p bashkit-python --target wasm32-unknown-emscripten
 ```
+
+### Browser / JupyterLite verification
+
+The CI `pyodide venv` smoke test runs the wheel in real Pyodide-CPython but
+installs via `pip`. A browser / JupyterLite user instead installs via `micropip`
+into a freshly loaded Pyodide. To verify *that* path (the actual end-user flow),
+load the real runtime under Node and `micropip.install` the wheel — this is a
+one-off manual check, deliberately not a CI job (it pulls `micropip` from the
+jsdelivr CDN, which would add network flakiness; the venv test already exercises
+the wasm runtime + EH ABI):
+
+```bash
+mkdir pyodide-browser-test && cd pyodide-browser-test
+npm install pyodide@0.29.4          # match the wheel's Pyodide ABI
+# test.mjs: loadPyodide() -> loadPackage('micropip') ->
+#   micropip.install(pathToFileURL(wheel)) -> import bashkit -> execute_sync(...)
+node test.mjs /path/to/dist/bashkit-*-wasm32.whl
+```
+
+Confirmed working: `Bash(python=True).execute_sync('echo hello && echo 1 | jq .')`
+→ `'hello\n1\n'`, and `Bash(sqlite=True)` raises `RuntimeError`.
 
 ### The version triangle (the hard part)
 
