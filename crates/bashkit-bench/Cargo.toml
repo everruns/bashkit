@@ -24,4 +24,4 @@ anyhow.workspace = true
 
 # Terminal output
 colored = "3"
-tabled = "0.20"
+tabled = "0.21"
