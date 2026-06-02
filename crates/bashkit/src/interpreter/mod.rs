@@ -11262,22 +11262,24 @@ impl Interpreter {
             }
 
             let mut results = Vec::new();
-            // Bash behavior: direction is determined by start/end,
-            // step sign determines actual increment direction
+            // Bash behavior: direction is determined by start/end. Keep stepping in i128 so
+            // huge but valid i64 steps cannot overflow after the precomputed range cap passes.
+            let step_magnitude = step.unsigned_abs() as i128;
             let effective_step = if start_num <= end_num {
-                step.abs()
+                step_magnitude
             } else {
-                -(step.abs())
+                -step_magnitude
             };
 
-            let mut i = start_num;
+            let mut i = start_num as i128;
+            let end = end_num as i128;
             if effective_step > 0 {
-                while i <= end_num {
+                while i <= end {
                     results.push(i.to_string());
                     i += effective_step;
                 }
             } else {
-                while i >= end_num {
+                while i >= end {
                     results.push(i.to_string());
                     i += effective_step;
                 }
@@ -11419,6 +11421,24 @@ mod tests {
         assert_eq!(
             interp.try_expand_range("z..a..-256"),
             Some(vec!["z".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_try_expand_range_numeric_large_step_does_not_overflow() {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        let interp = Interpreter::new(Arc::clone(&fs));
+
+        assert_eq!(
+            interp
+                .try_expand_range("9223372036854775802..9223372036854775807..9223372036854775807"),
+            Some(vec!["9223372036854775802".to_string()])
+        );
+        assert_eq!(
+            interp.try_expand_range(
+                "-9223372036854775803..-9223372036854775808..-9223372036854775808"
+            ),
+            Some(vec!["-9223372036854775803".to_string()])
         );
     }
 
