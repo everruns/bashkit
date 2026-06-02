@@ -24,8 +24,15 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           COMMIT_MSG: ${{ github.event.head_commit.message }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
         run: |
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            # Manual releases must be dispatched from protected main; downstream
+            # publish workflows intentionally run from the verified release tag.
+            if [ "$GITHUB_REF_NAME" != "main" ]; then
+              echo "Error: manual releases must be dispatched from main"
+              exit 1
+            fi
             # Manual trigger: read version from Cargo.toml
             VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
           else
@@ -72,11 +79,21 @@ jobs:
           draft: false
           prerelease: false
 
+      - name: Verify release tag points to this commit
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+          TAG_SHA=$(git rev-list -n 1 "$TAG")
+          if [ "$TAG_SHA" != "$GITHUB_SHA" ]; then
+            echo "Error: release tag $TAG points to $TAG_SHA, expected $GITHUB_SHA"
+            exit 1
+          fi
+          echo "Release tag $TAG verified at $TAG_SHA"
+
       # Note: the `release: [published]` event does NOT trigger other
       # workflows when the release is created with GITHUB_TOKEN (GitHub
       # prevents recursive workflow triggers). We must dispatch explicitly.
-      # Use --ref to set GITHUB_REF to the tag so publish-js correctly
-      # identifies stable releases.
+      # Use --ref only after verifying the release tag points at this commit.
       - name: Trigger publish workflows
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

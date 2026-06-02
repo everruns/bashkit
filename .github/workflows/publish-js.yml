@@ -392,6 +392,16 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Verify publish source is on main
+        run: |
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          SOURCE_SHA=$(git rev-parse HEAD)
+          if ! git merge-base --is-ancestor "$SOURCE_SHA" origin/main; then
+            echo "Error: publish source $SOURCE_SHA is not reachable from origin/main"
+            exit 1
+          fi
+          echo "Publish source verified on origin/main: $SOURCE_SHA"
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
         with:
@@ -433,11 +443,14 @@ jobs:
           PKG_VERSION=$(node -p "require('./package.json').version")
           echo "version=$PKG_VERSION"
 
-          # Stable if triggered by a release tag, OR if workflow_dispatch
-          # and the version looks like a stable semver (no pre-release suffix).
+          # Only verified release tags may publish as npm latest. Branch or
+          # manually selected refs must not become the default install target.
           if [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "tag=latest" >> "$GITHUB_OUTPUT"
-          elif [[ "$PKG_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+            if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+              echo "Error: Tag version ($TAG_VERSION) does not match package.json version ($PKG_VERSION)"
+              exit 1
+            fi
             echo "tag=latest" >> "$GITHUB_OUTPUT"
           else
             echo "tag=next" >> "$GITHUB_OUTPUT"
