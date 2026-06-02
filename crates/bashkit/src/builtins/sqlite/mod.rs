@@ -39,6 +39,7 @@ mod tests;
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::error::Result;
 use crate::fs::FileSystem;
@@ -310,6 +311,13 @@ impl Builtin for Sqlite {
              Supports :memory:. No ATTACH/DETACH/VACUUM. \
              Set BASHKIT_ALLOW_INPROCESS_SQLITE=1 to enable.",
         )
+    }
+
+    fn reset_session_state(&self) {
+        self.engine_cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
     }
 
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
@@ -687,10 +695,23 @@ async fn open_file_engine(
             SqliteEngine::open_memory(initial.as_deref())
         }
         SqliteBackend::Vfs => {
+            static VFS_OPEN_COUNTER: AtomicU64 = AtomicU64::new(0);
             let handle = vfs_io::current_handle_or_default();
-            let io = vfs_io::BashkitVfsIO::new_with_cap(fs.clone(), handle, limits.max_db_bytes);
-            let path_str = path.to_string_lossy().into_owned();
-            SqliteEngine::open_vfs(io, &path_str)
+            // Security: use a unique Turso-internal path so dropped engines cannot
+            // be resurrected from Turso's process-wide database registry after
+            // Bashkit snapshot restore. The IO maps this path back to `path`.
+            let io_path = format!(
+                ":memory:bashkit-vfs-{}",
+                VFS_OPEN_COUNTER.fetch_add(1, Ordering::Relaxed)
+            );
+            let io = vfs_io::BashkitVfsIO::new_with_cap_and_path_alias(
+                fs.clone(),
+                handle,
+                limits.max_db_bytes,
+                io_path.clone(),
+                path.to_path_buf(),
+            );
+            SqliteEngine::open_vfs(io, &io_path)
         }
     }
 }

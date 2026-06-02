@@ -156,12 +156,20 @@ Consequences worth knowing:
   owns the `Sqlite` trait object) drops, taking the engines with it.
   Each `Bash::builder().sqlite()` produces its own cache, so two
   parallel `Bash` instances do not cross-contaminate.
+- **Snapshot restore invalidates caches.** `Bash::restore_snapshot()`
+  clears sqlite engine caches in the existing `Bash` after restoring the
+  VFS and before running another command. Cached connections therefore
+  cannot leak rows from the previous VFS image or flush stale bytes back
+  over restored files. Tested by
+  `snapshot_restore_into_existing_bash_clears_sqlite_cache_memory_backend`
+  and `snapshot_restore_into_existing_bash_clears_sqlite_cache_vfs_backend`.
 
 Snapshot integration is automatic: because we always flush after every
 exec, the on-disk image (within the VFS) is current at every point a
-caller could legitimately call `bash.snapshot()`. Restore creates a
-fresh `Bash` with an empty cache; the first `sqlite` call re-opens
-the engine from the restored VFS bytes.
+caller could legitimately call `bash.snapshot()`. Restoring into a
+fresh `Bash` starts with an empty cache, and restoring into an existing
+`Bash` invalidates its cache; the first `sqlite` call after restore
+re-opens the engine from the restored VFS bytes.
 
 ### SQL policy: ATTACH / DETACH / VACUUM and PRAGMA deny list
 

@@ -150,6 +150,8 @@ impl File for VfsFile {
 /// IO adapter exposing bashkit's [`FileSystem`] to turso.
 pub(super) struct BashkitVfsIO {
     fs: Arc<dyn FileSystem>,
+    /// Optional alias from Turso's process-local open path to the caller's VFS path.
+    path_alias: Option<(String, PathBuf)>,
     /// All currently-open files keyed by path string. Used to flush dirty
     /// buffers back to the VFS after SQL execution.
     open_files: Mutex<HashMap<String, Arc<VfsFile>>>,
@@ -162,16 +164,17 @@ pub(super) struct BashkitVfsIO {
 }
 
 impl BashkitVfsIO {
-    /// Override the file-size cap. The builtin passes
-    /// `SqliteLimits::max_db_bytes` here so both VFS reads and writes share
-    /// the same per-database cap.
-    pub(super) fn new_with_cap(
+    /// Create an IO whose Turso-internal path is mapped back to a real VFS path.
+    pub(super) fn new_with_cap_and_path_alias(
         fs: Arc<dyn FileSystem>,
         handle: Handle,
         max_file_bytes: usize,
+        io_path: String,
+        vfs_path: PathBuf,
     ) -> Arc<Self> {
         Arc::new(Self {
             fs,
+            path_alias: Some((io_path, vfs_path)),
             open_files: Mutex::new(HashMap::new()),
             handle,
             max_file_bytes,
@@ -180,6 +183,23 @@ impl BashkitVfsIO {
 
     fn open_files_lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Arc<VfsFile>>> {
         self.open_files.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn real_path_for(&self, path: &str) -> PathBuf {
+        if let Some((io_prefix, vfs_prefix)) = &self.path_alias
+            && let Some(suffix) = path.strip_prefix(io_prefix)
+        {
+            let mut mapped = vfs_prefix.as_os_str().to_os_string();
+            mapped.push(suffix);
+            return PathBuf::from(mapped);
+        }
+        PathBuf::from(path)
+    }
+
+    /// Return bytes currently held for an opened Turso path.
+    pub(super) fn file_bytes(&self, path: &str) -> Option<Vec<u8>> {
+        let file = self.open_files_lock().get(path).cloned()?;
+        Some(lock_bytes(&file.bytes).clone())
     }
 
     /// Persist any dirty in-memory buffers back to the underlying `FileSystem`.
@@ -234,7 +254,7 @@ impl IO for BashkitVfsIO {
         if let Some(existing) = self.open_files_lock().get(path).cloned() {
             return Ok(existing as Arc<dyn File>);
         }
-        let pb = PathBuf::from(path);
+        let pb = self.real_path_for(path);
         let cap = self.max_file_bytes;
         let bytes_opt = run_async(&self.handle, {
             let fs = self.fs.clone();
@@ -270,7 +290,7 @@ impl IO for BashkitVfsIO {
         self.open_files_lock().remove(path);
         run_async(&self.handle, {
             let fs = self.fs.clone();
-            let pb = PathBuf::from(path);
+            let pb = self.real_path_for(path);
             move || async move {
                 let _ = fs.remove(&pb, false).await;
             }

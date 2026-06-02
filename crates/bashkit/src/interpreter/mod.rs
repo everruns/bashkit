@@ -1394,6 +1394,17 @@ impl Interpreter {
             .clone()
     }
 
+    /// Drop builtin-owned hidden state after snapshot restore.
+    ///
+    /// Security: snapshots define the shell/VFS boundary. Builtin caches (for
+    /// example SQLite engines) must not retain stale state that can be read or
+    /// flushed back after the VFS has been restored.
+    pub(crate) fn reset_builtin_session_state(&self) {
+        for builtin in self.builtins.values() {
+            builtin.reset_session_state();
+        }
+    }
+
     pub(crate) fn scoped_execution_extensions(
         &self,
         extensions: builtins::ExecutionExtensions,
