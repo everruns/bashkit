@@ -10442,20 +10442,43 @@ impl Interpreter {
         // is one clone per iteration. Using `get_mut` skips the clone unless
         // we actually have a local to update.
         for frame_idx in (0..self.call_stack.len()).rev() {
-            if let Some(existing) = self.call_stack[frame_idx].locals.get_mut(resolved) {
-                let old_val_len = existing.len();
-                self.memory_budget.variable_bytes = self
+            if let Some(old_val_len) = self.call_stack[frame_idx]
+                .locals
+                .get(resolved)
+                .map(String::len)
+            {
+                if self
                     .memory_budget
-                    .variable_bytes
-                    .saturating_add(value.len())
-                    .saturating_sub(old_val_len);
+                    .check_variable_insert(
+                        resolved.len(),
+                        value.len(),
+                        false,
+                        resolved.len(),
+                        old_val_len,
+                        &self.memory_limits,
+                    )
+                    .is_err()
+                {
+                    return;
+                }
+                self.memory_budget.record_variable_insert(
+                    resolved.len(),
+                    value.len(),
+                    false,
+                    resolved.len(),
+                    old_val_len,
+                );
                 if allexport {
                     let env_value = value.clone();
-                    *existing = value;
+                    self.call_stack[frame_idx]
+                        .locals
+                        .insert(resolved_string.clone(), value);
                     self.insert_env_checked(resolved_string, env_value);
                     return;
                 }
-                *existing = value;
+                self.call_stack[frame_idx]
+                    .locals
+                    .insert(resolved_string, value);
                 return;
             }
         }
@@ -10464,8 +10487,7 @@ impl Interpreter {
         // `value` straight into `variables`.
         if allexport {
             let env_value = value.clone();
-            self.insert_variable_checked(resolved_string.clone(), value);
-            if self.variables.contains_key(&resolved_string) {
+            if self.insert_variable_checked(resolved_string.clone(), value) {
                 self.insert_env_checked(resolved_string, env_value);
             }
         } else {
@@ -10545,7 +10567,7 @@ impl Interpreter {
     /// Insert a variable into the global variables map with memory budget checking.
     /// Silently drops the insert if the budget would be exceeded.
     /// Internal marker variables (_READONLY_, _NAMEREF_, etc.) bypass budget checks.
-    fn insert_variable_checked(&mut self, key: String, value: String) {
+    fn insert_variable_checked(&mut self, key: String, value: String) -> bool {
         let is_internal = Self::is_internal_variable(&key);
         if !is_internal {
             let is_new = !self.variables.contains_key(&key);
@@ -10566,7 +10588,7 @@ impl Interpreter {
                 )
                 .is_err()
             {
-                return; // silently reject — budget exceeded
+                return false; // silently reject — budget exceeded
             }
             self.memory_budget.record_variable_insert(
                 key.len(),
@@ -10588,6 +10610,7 @@ impl Interpreter {
             }
         }
         self.vars_mut().insert(key, value);
+        true
     }
 
     /// Insert a variable into the current local frame with memory budget checking.
@@ -11518,6 +11541,45 @@ mod tests {
         let result = run_script_with_limits(&script, limits, memory_limits).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout.trim(), "4");
+    }
+
+    #[test]
+    fn test_allexport_rejected_global_update_does_not_mutate_env() {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        let mut interp = Interpreter::new(Arc::clone(&fs));
+        interp.set_memory_limits(crate::limits::MemoryLimits::new().max_total_variable_bytes(20));
+
+        interp.set_variable("FILL".to_string(), "123456789012".to_string());
+        interp.flags.insert(BashFlags::ALLEXPORT);
+        interp.set_variable("A".to_string(), "1".to_string());
+        interp.set_variable("A".to_string(), "1234567890".to_string());
+
+        assert_eq!(interp.variables.get("A").map(String::as_str), Some("1"));
+        assert_eq!(interp.env.get("A").map(String::as_str), Some("1"));
+    }
+
+    #[test]
+    fn test_allexport_rejected_local_update_does_not_mutate_env() {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        let mut interp = Interpreter::new(Arc::clone(&fs));
+        interp.set_memory_limits(crate::limits::MemoryLimits::new().max_total_variable_bytes(20));
+        interp.call_stack.push(CallFrame {
+            name: "f".to_string(),
+            locals: HashMap::from([("A".to_string(), "1".to_string())]),
+            positional: Vec::new(),
+        });
+        interp
+            .memory_budget
+            .record_variable_insert(1, 1, true, 0, 0);
+        interp.set_variable("FILL".to_string(), "123456789012".to_string());
+        interp.flags.insert(BashFlags::ALLEXPORT);
+        interp.insert_env_checked("A".to_string(), "1".to_string());
+
+        interp.set_variable("A".to_string(), "1234567890".to_string());
+
+        let frame = interp.call_stack.last().unwrap();
+        assert_eq!(frame.locals.get("A").map(String::as_str), Some("1"));
+        assert_eq!(interp.env.get("A").map(String::as_str), Some("1"));
     }
 
     #[tokio::test]
