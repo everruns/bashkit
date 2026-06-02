@@ -4473,11 +4473,27 @@ impl Interpreter {
                     }
                 }
                 AssignmentValue::Array(words) => {
-                    // Expand each word, applying IFS word splitting for unquoted
-                    // variable expansions: x="a b"; arr=($x) → arr=([0]="a" [1]="b")
-                    // Quoted words (e.g., '' or "foo") are kept as single elements.
-                    let mut all_fields = Vec::new();
-                    for word in words.iter() {
+                    // Expand directly into the replacement array so word-split expansions cannot
+                    // accumulate an unbounded temporary Vec before max_array_entries is enforced.
+                    let arr_name = self.resolve_nameref(&assignment.name).to_string();
+                    let old_entries = self.arrays.get(&arr_name).map_or(0, |arr| arr.len());
+                    let remaining_entries = self
+                        .memory_limits
+                        .max_array_entries
+                        .saturating_sub(self.memory_budget.array_entries);
+                    let max_new_entries = old_entries.saturating_add(remaining_entries);
+                    let mut next_arr = if assignment.append {
+                        self.arrays.get(&arr_name).cloned().unwrap_or_default()
+                    } else {
+                        HashMap::new()
+                    };
+                    let mut idx = if assignment.append {
+                        next_arr.keys().max().map(|k| k + 1).unwrap_or(0)
+                    } else {
+                        0
+                    };
+
+                    'array_words: for word in words.iter() {
                         let is_unquoted_expansion = !word.quoted
                             && word.parts.iter().any(|p| {
                                 matches!(
@@ -4503,31 +4519,36 @@ impl Interpreter {
                                 &word.parts[0],
                                 WordPart::Variable(name) if name == "@"
                             );
-                        if is_unquoted_expansion || is_quoted_splat || is_quoted_positional_splat {
-                            let fields = self.expand_word_to_fields(word).await?;
-                            all_fields.extend(fields);
+
+                        if is_unquoted_expansion {
+                            let remaining = max_new_entries.saturating_sub(next_arr.len());
+                            if remaining == 0 {
+                                break;
+                            }
+                            let expanded = self.expand_word(word).await?;
+                            for field in self.ifs_split_limited(&expanded, remaining) {
+                                next_arr.insert(idx, field);
+                                idx += 1;
+                            }
+                            if next_arr.len() >= max_new_entries {
+                                break 'array_words;
+                            }
+                        } else if is_quoted_splat || is_quoted_positional_splat {
+                            for field in self.expand_word_to_fields(word).await? {
+                                if next_arr.len() >= max_new_entries {
+                                    break 'array_words;
+                                }
+                                next_arr.insert(idx, field);
+                                idx += 1;
+                            }
                         } else {
                             let value = self.expand_word(word).await?;
-                            all_fields.push(value);
+                            if next_arr.len() >= max_new_entries {
+                                break;
+                            }
+                            next_arr.insert(idx, value);
+                            idx += 1;
                         }
-                    }
-
-                    // Resolve nameref for array assignments and apply
-                    // max_array_entries accounting over the whole replacement.
-                    let arr_name = self.resolve_nameref(&assignment.name).to_string();
-                    let mut next_arr = if assignment.append {
-                        self.arrays.get(&arr_name).cloned().unwrap_or_default()
-                    } else {
-                        HashMap::new()
-                    };
-                    let start_idx = if assignment.append {
-                        next_arr.keys().max().map(|k| k + 1).unwrap_or(0)
-                    } else {
-                        0
-                    };
-
-                    for (idx, field) in (start_idx..).zip(all_fields) {
-                        next_arr.insert(idx, field);
                     }
 
                     let _ = self.insert_array_checked(arr_name, next_arr);
@@ -8616,6 +8637,15 @@ impl Interpreter {
     /// - `<ws><nws><ws>` = single delimiter (ws absorbed into the nws delimiter).
     /// - Empty IFS → no splitting. Unset IFS → default " \t\n".
     fn ifs_split(&self, s: &str) -> Vec<String> {
+        self.ifs_split_limited(s, usize::MAX)
+    }
+
+    /// Split a string on IFS characters, returning at most `limit` fields.
+    fn ifs_split_limited(&self, s: &str, limit: usize) -> Vec<String> {
+        if limit == 0 {
+            return Vec::new();
+        }
+
         let ifs = self
             .variables
             .get("IFS")
@@ -8636,6 +8666,7 @@ impl Interpreter {
             return s
                 .split(|c: char| is_ifs(c))
                 .filter(|f| !f.is_empty())
+                .take(limit)
                 .map(|f| f.to_string())
                 .collect();
         }
@@ -8653,6 +8684,9 @@ impl Interpreter {
         // Leading non-whitespace IFS produces an empty first field
         if i < chars.len() && is_ifs_nws(chars[i]) {
             fields.push(String::new());
+            if fields.len() >= limit {
+                return fields;
+            }
             i += 1;
             while i < chars.len() && is_ifs_ws(chars[i]) {
                 i += 1;
@@ -8664,6 +8698,9 @@ impl Interpreter {
             if is_ifs_nws(c) {
                 // Non-whitespace IFS delimiter: finalize current field
                 fields.push(std::mem::take(&mut current));
+                if fields.len() >= limit {
+                    return fields;
+                }
                 i += 1;
                 // Consume trailing IFS whitespace
                 while i < chars.len() && is_ifs_ws(chars[i]) {
@@ -8677,6 +8714,9 @@ impl Interpreter {
                 if i < chars.len() && is_ifs_nws(chars[i]) {
                     // <ws><nws> = single delimiter. Push current field.
                     fields.push(std::mem::take(&mut current));
+                    if fields.len() >= limit {
+                        return fields;
+                    }
                     i += 1; // consume the nws char
                     while i < chars.len() && is_ifs_ws(chars[i]) {
                         i += 1;
@@ -8684,6 +8724,9 @@ impl Interpreter {
                 } else if i < chars.len() {
                     // ws alone as delimiter (no nws follows)
                     fields.push(std::mem::take(&mut current));
+                    if fields.len() >= limit {
+                        return fields;
+                    }
                 }
                 // trailing ws at end → ignore (don't push empty field)
             } else {
@@ -8692,7 +8735,7 @@ impl Interpreter {
             }
         }
 
-        if !current.is_empty() {
+        if !current.is_empty() && fields.len() < limit {
             fields.push(current);
         }
 
