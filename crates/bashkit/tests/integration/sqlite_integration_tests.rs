@@ -319,6 +319,45 @@ async fn snapshot_and_restore_round_trips_sqlite_state() {
     assert_eq!(r.stdout.trim(), "preserved");
 }
 
+async fn assert_restore_into_existing_bash_clears_sqlite_cache(mut bash: Bash) {
+    let clean = Bash::builder().sqlite().env(OPT_IN.0, OPT_IN.1).build();
+    let clean_snap = clean.snapshot().expect("clean snapshot");
+
+    let setup = bash
+        .exec(r#"sqlite /tmp/leak.sqlite 'CREATE TABLE t(v); INSERT INTO t VALUES ("old-secret")'"#)
+        .await
+        .unwrap();
+    assert_eq!(setup.exit_code, 0, "stderr: {}", setup.stderr);
+
+    bash.restore_snapshot(&clean_snap)
+        .expect("restore clean snapshot");
+
+    let query = bash
+        .exec(r#"sqlite /tmp/leak.sqlite 'SELECT v FROM t'"#)
+        .await
+        .unwrap();
+    assert_ne!(
+        query.exit_code, 0,
+        "stale sqlite cache survived restore: stdout={} stderr={}",
+        query.stdout, query.stderr
+    );
+    assert!(
+        !query.stdout.contains("old-secret"),
+        "restored Bash leaked stale sqlite row: {}",
+        query.stdout
+    );
+}
+
+#[tokio::test]
+async fn snapshot_restore_into_existing_bash_clears_sqlite_cache_memory_backend() {
+    assert_restore_into_existing_bash_clears_sqlite_cache(make_bash()).await;
+}
+
+#[tokio::test]
+async fn snapshot_restore_into_existing_bash_clears_sqlite_cache_vfs_backend() {
+    assert_restore_into_existing_bash_clears_sqlite_cache(make_bash_vfs()).await;
+}
+
 #[tokio::test]
 async fn cached_engine_respects_deleted_db_between_exec_calls() {
     let mut bash = make_bash();

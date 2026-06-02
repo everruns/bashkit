@@ -736,6 +736,13 @@ pub trait Builtin: Send + Sync {
     fn llm_hint(&self) -> Option<&'static str> {
         None
     }
+
+    /// Clear hidden per-instance state that must not survive snapshot restore.
+    ///
+    /// Most builtins are stateless and keep the default no-op. Builtins with
+    /// session caches must override this so [`Bash::restore_snapshot`](crate::Bash::restore_snapshot)
+    /// restores the full observable boundary, not just shell variables and VFS bytes.
+    fn reset_session_state(&self) {}
 }
 
 /// Trait for custom builtins that parse arguments with [`clap`].
@@ -794,6 +801,13 @@ pub trait ClapBuiltin: Send + Sync {
     fn llm_hint(&self) -> Option<&'static str> {
         None
     }
+
+    /// Clear hidden per-instance state that must not survive snapshot restore.
+    ///
+    /// Most builtins are stateless and keep the default no-op. Builtins with
+    /// session caches must override this so [`Bash::restore_snapshot`](crate::Bash::restore_snapshot)
+    /// restores the full observable boundary, not just shell variables and VFS bytes.
+    fn reset_session_state(&self) {}
 }
 
 /// Mutable execution context for [`ClapBuiltin`] implementations.
@@ -924,6 +938,10 @@ where
 
     fn llm_hint(&self) -> Option<&'static str> {
         ClapBuiltin::llm_hint(self)
+    }
+
+    fn reset_session_state(&self) {
+        ClapBuiltin::reset_session_state(self);
     }
 }
 

@@ -332,6 +332,10 @@ impl crate::Bash {
         if let Some(ref vfs) = snap.vfs {
             self.fs.vfs_restore(vfs)?;
         }
+        // Security: restore invalidates builtin caches after the VFS swap so
+        // hidden state cannot leak across snapshot boundaries or overwrite the
+        // restored filesystem on the next command.
+        self.interpreter.reset_builtin_session_state();
         // Shell state cannot fail past validation, and the VFS has already
         // been restored atomically (or rejected) above.
         self.interpreter.restore_shell_state(&snap.shell);

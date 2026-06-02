@@ -150,7 +150,7 @@ impl SqliteEngine {
             backend: Backend::Vfs(io),
             _db: db,
             conn,
-            memory_path: None,
+            memory_path: Some(path_in_io.to_string()),
         })
     }
 
@@ -211,27 +211,27 @@ impl SqliteEngine {
         }
     }
 
-    /// Snapshot the database file bytes. Only meaningful for the memory
-    /// backend (which is what the Phase 1 path uses). Returns `None` for
-    /// the VFS backend, since persistence happens via the IO directly.
+    /// Snapshot the current database file bytes for cache invalidation.
     ///
     /// We force a TRUNCATE-mode checkpoint before reading so that any pages
     /// still in the WAL are folded into the main file. Without this step the
     /// snapshot would be missing the just-written transaction.
     pub(super) fn snapshot_bytes(&self) -> Option<Vec<u8>> {
-        let Backend::Memory(io) = &self.backend else {
-            return None;
-        };
         let path = self.memory_path.as_deref()?;
         let _ = self.conn.checkpoint(turso_core::CheckpointMode::Truncate {
             upper_bound_inclusive: None,
         });
-        let file = io.open_file(path, OpenFlags::None, false).ok()?;
-        let size = file.size().ok()? as usize;
-        if size == 0 {
-            return Some(Vec::new());
+        match &self.backend {
+            Backend::Memory(io) => {
+                let file = io.open_file(path, OpenFlags::None, false).ok()?;
+                let size = file.size().ok()? as usize;
+                if size == 0 {
+                    return Some(Vec::new());
+                }
+                Some(read_all(&file, size))
+            }
+            Backend::Vfs(io) => io.file_bytes(path),
         }
-        Some(read_all(&file, size))
     }
 
     /// For the VFS backend, flush any pages dirtied in memory back to the
