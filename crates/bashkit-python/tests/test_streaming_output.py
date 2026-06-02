@@ -205,3 +205,25 @@ async def test_execute_on_output_error_does_not_poison_future_calls(factory):
 
     assert result.exit_code == 0
     assert result.stdout == "after-error\n"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
+async def test_execute_on_output_cancel_does_not_poison_future_calls(factory):
+    shell = factory()
+    chunks = []
+
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(
+            shell.execute(
+                "sleep 1; echo should-not-run",
+                on_output=lambda stdout, stderr: chunks.append((stdout, stderr)),
+            ),
+            timeout=0.01,
+        )
+
+    result = await shell.execute("echo later-run")
+
+    assert result.exit_code == 0
+    assert result.stdout == "later-run\n"
+    assert chunks == []
