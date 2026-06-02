@@ -547,6 +547,34 @@ fn env_opt_in_enabled(env: &HashMap<String, String>, key: &str) -> bool {
         .is_some_and(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
 }
 
+// Keep streaming callback cleanup cancellation-safe: Python bindings expose this
+// future to cancellable asyncio tasks, so cleanup must run from Drop.
+struct OutputCallbackGuard {
+    interpreter: *mut Interpreter,
+}
+
+// SAFETY: the guard only clears the callback through the unique Bash execution
+// borrow that created it; moving the future between executor threads does not
+// create shared access to the interpreter.
+unsafe impl Send for OutputCallbackGuard {}
+
+impl OutputCallbackGuard {
+    fn install(interpreter: &mut Interpreter, callback: OutputCallback) -> Self {
+        interpreter.set_output_callback(callback);
+        Self { interpreter }
+    }
+}
+
+impl Drop for OutputCallbackGuard {
+    fn drop(&mut self) {
+        // SAFETY: the guard is created from `&mut self.interpreter` inside a
+        // Bash execution future. That future keeps exclusive access to the same
+        // Bash until it is completed or dropped, so clearing this field here does
+        // not race with another mutable interpreter access.
+        unsafe { (*self.interpreter).clear_output_callback() };
+    }
+}
+
 /// Main entry point for Bashkit.
 ///
 /// Provides a virtual bash interpreter with an in-memory virtual filesystem.
@@ -956,10 +984,8 @@ impl Bash {
         output_callback: OutputCallback,
         extensions: ExecutionExtensions,
     ) -> Result<ExecResult> {
-        self.interpreter.set_output_callback(output_callback);
-        let result = self.exec_with_extensions(script, extensions).await;
-        self.interpreter.clear_output_callback();
-        result
+        let _guard = OutputCallbackGuard::install(&mut self.interpreter, output_callback);
+        self.exec_with_extensions(script, extensions).await
     }
 
     /// Return a shared cancellation token.
@@ -6295,6 +6321,40 @@ echo missing fi"#,
         let mut bash = Bash::new();
         let result = bash.exec("for i in a b c; do echo $i; done").await.unwrap();
         assert_eq!(result.stdout, "a\nb\nc\n");
+    }
+
+    #[tokio::test]
+    async fn test_exec_streaming_cancel_clears_callback() {
+        use std::time::Duration;
+
+        let chunks = Arc::new(Mutex::new(Vec::new()));
+        let chunks_cb = chunks.clone();
+        let mut bash = Bash::new();
+
+        let timed_out = tokio::time::timeout(
+            Duration::from_millis(10),
+            bash.exec_streaming(
+                "sleep 1; echo should-not-run",
+                Box::new(move |stdout, stderr| {
+                    chunks_cb
+                        .lock()
+                        .unwrap()
+                        .push((stdout.to_string(), stderr.to_string()));
+                }),
+            ),
+        )
+        .await;
+
+        assert!(timed_out.is_err(), "streaming execution should time out");
+
+        let result = bash.exec("echo later-run").await.unwrap();
+
+        assert_eq!(result.stdout, "later-run\n");
+        assert_eq!(
+            *chunks.lock().unwrap(),
+            Vec::<(String, String)>::new(),
+            "cancelled streaming callback must not receive later output"
+        );
     }
 
     #[tokio::test]
