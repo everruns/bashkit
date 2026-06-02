@@ -257,6 +257,13 @@ export interface BashOptions {
 export interface SnapshotOptions {
   excludeFilesystem?: boolean;
   excludeFunctions?: boolean;
+  /**
+   * Secret key used to authenticate snapshot bytes with HMAC-SHA256.
+   * Required for BashTool snapshots because tool snapshots may cross tenant
+   * or network trust boundaries. Recommended for any snapshot accepted from
+   * users, shared storage, or remote callers.
+   */
+  hmacKey?: Uint8Array;
 }
 
 export interface OutputChunk {
@@ -461,7 +468,16 @@ function toNativeSnapshotOptions(
   return {
     excludeFilesystem: options.excludeFilesystem,
     excludeFunctions: options.excludeFunctions,
+    hmacKey: options.hmacKey ? Buffer.from(options.hmacKey) : undefined,
   };
+}
+
+function requireSnapshotHmacKey(options?: SnapshotOptions): void {
+  if (!options?.hmacKey || options.hmacKey.byteLength === 0) {
+    throw new Error(
+      "BashTool snapshots require SnapshotOptions.hmacKey for HMAC authentication",
+    );
+  }
 }
 
 function isFileSystemLike(value: unknown): value is { toExternal(): unknown } {
@@ -854,8 +870,9 @@ export class Bash {
   /**
    * Serialize interpreter state (variables, VFS, counters) to a Uint8Array.
    *
-   * The snapshot can be persisted to disk, sent over the network, and later
-   * used with `Bash.fromSnapshot()` to restore the session.
+   * Use `hmacKey` when snapshots are stored outside the current trust boundary
+   * (network, user uploads, shared storage). Without `hmacKey`, the snapshot
+   * digest only detects accidental corruption and is forgeable.
    *
    * @example
    * ```typescript
@@ -876,8 +893,11 @@ export class Bash {
    * Preserves current configuration (limits, builtins) but replaces
    * shell state and VFS contents.
    */
-  restoreSnapshot(data: Uint8Array): void {
-    this.native.restoreSnapshot(Buffer.from(data));
+  restoreSnapshot(data: Uint8Array, options?: SnapshotOptions): void {
+    this.native.restoreSnapshot(
+      Buffer.from(data),
+      toNativeSnapshotOptions(options),
+    );
   }
 
   /**
@@ -907,9 +927,13 @@ export class Bash {
    * const restored = Bash.fromSnapshot(snapshot);
    * ```
    */
-  static fromSnapshot(data: Uint8Array): Bash {
+  static fromSnapshot(data: Uint8Array, options?: SnapshotOptions): Bash {
     const instance = new Bash();
-    instance.native = NativeBash.fromSnapshot(Buffer.from(data));
+    instance.native = NativeBash.fromSnapshot(
+      Buffer.from(data),
+      undefined,
+      toNativeSnapshotOptions(options),
+    );
     return instance;
   }
 
@@ -1229,19 +1253,26 @@ export class BashTool {
   }
 
   /**
-   * Serialize interpreter state (variables, VFS, counters) to a Uint8Array.
+   * Serialize interpreter state (variables, VFS, counters) to an
+   * HMAC-authenticated Uint8Array. BashTool snapshots require `hmacKey` because
+   * they include tenant-controlled shell state, VFS contents, and counters.
    */
   snapshot(options?: SnapshotOptions): Uint8Array {
+    requireSnapshotHmacKey(options);
     return this.native.snapshot(toNativeSnapshotOptions(options));
   }
 
   /**
-   * Restore interpreter state from a previously captured snapshot.
+   * Restore interpreter state from an HMAC-authenticated snapshot.
    * Preserves current configuration (limits, identity) but replaces
    * shell state and VFS contents.
    */
-  restoreSnapshot(data: Uint8Array): void {
-    this.native.restoreSnapshot(Buffer.from(data));
+  restoreSnapshot(data: Uint8Array, options?: SnapshotOptions): void {
+    requireSnapshotHmacKey(options);
+    this.native.restoreSnapshot(
+      Buffer.from(data),
+      toNativeSnapshotOptions(options),
+    );
   }
 
   /**
@@ -1262,17 +1293,23 @@ export class BashTool {
   }
 
   /**
-   * Create a new BashTool instance from a snapshot.
+   * Create a new BashTool instance from an HMAC-authenticated snapshot.
    *
-   * Any provided options are applied before restoring the snapshot so limits
-   * and identity settings survive round-trips.
+   * Any provided Bash options are applied before restoring the snapshot so
+   * limits and identity settings survive round-trips.
    */
-  static fromSnapshot(data: Uint8Array, options?: BashOptions): BashTool {
+  static fromSnapshot(
+    data: Uint8Array,
+    options?: BashOptions,
+    snapshotOptions?: SnapshotOptions,
+  ): BashTool {
+    requireSnapshotHmacKey(snapshotOptions);
     const resolved = resolveFilesSync(options?.files);
     const instance = Object.create(BashTool.prototype) as BashTool;
     instance.native = NativeBashTool.fromSnapshot(
       Buffer.from(data),
       toNativeOptions(options, resolved),
+      toNativeSnapshotOptions(snapshotOptions),
     );
     return instance;
   }

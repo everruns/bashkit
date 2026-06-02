@@ -269,6 +269,8 @@ test("integration: BashTool reset clears state", (t) => {
   t.is(tool.executeSync("whoami").stdout.trim(), "testuser");
 });
 
+const snapshotKey = new TextEncoder().encode("integration snapshot hmac key");
+
 test("integration: BashTool snapshot roundtrip preserves state and config", (t) => {
   const tool = new BashTool({
     username: "agent",
@@ -279,12 +281,16 @@ test("integration: BashTool snapshot roundtrip preserves state and config", (t) 
     "export BUILD_ID=42; mkdir -p /workspace && cd /workspace && echo ready > state.txt",
   );
 
-  const snapshot = tool.snapshot();
-  const restored = BashTool.fromSnapshot(snapshot, {
-    username: "agent",
-    maxCommands: 5,
-    maxLoopIterations: 50,
-  });
+  const snapshot = tool.snapshot({ hmacKey: snapshotKey });
+  const restored = BashTool.fromSnapshot(
+    snapshot,
+    {
+      username: "agent",
+      maxCommands: 5,
+      maxLoopIterations: 50,
+    },
+    { hmacKey: snapshotKey },
+  );
 
   t.is(restored.executeSync("echo $BUILD_ID").stdout.trim(), "42");
   t.is(restored.executeSync("cat /workspace/state.txt").stdout.trim(), "ready");
@@ -302,12 +308,12 @@ test("integration: BashTool restoreSnapshot after reset restores original state"
   const tool = new BashTool({ username: "agent" });
   tool.executeSync("export SNAP=yes; mkdir -p /tmp/restore && cd /tmp/restore");
 
-  const snapshot = tool.snapshot();
+  const snapshot = tool.snapshot({ hmacKey: snapshotKey });
 
   tool.reset();
   t.is(tool.executeSync("echo ${SNAP:-missing}").stdout.trim(), "missing");
 
-  tool.restoreSnapshot(snapshot);
+  tool.restoreSnapshot(snapshot, { hmacKey: snapshotKey });
   t.is(tool.executeSync("echo $SNAP").stdout.trim(), "yes");
   t.is(tool.executeSync("pwd").stdout.trim(), "/tmp/restore");
   t.is(tool.executeSync("whoami").stdout.trim(), "agent");
@@ -330,10 +336,13 @@ test("integration: BashTool snapshot can exclude filesystem", (t) => {
   const tool = new BashTool();
   tool.executeSync("export KEEP=1; echo saved > /tmp/tool.txt");
 
-  const snapshot = tool.snapshot({ excludeFilesystem: true });
+  const snapshot = tool.snapshot({
+    excludeFilesystem: true,
+    hmacKey: snapshotKey,
+  });
 
   tool.executeSync("export KEEP=2; echo changed > /tmp/tool.txt");
-  tool.restoreSnapshot(snapshot);
+  tool.restoreSnapshot(snapshot, { hmacKey: snapshotKey });
 
   t.is(tool.executeSync("echo $KEEP").stdout.trim(), "1");
   t.is(tool.executeSync("cat /tmp/tool.txt").stdout.trim(), "changed");
@@ -342,8 +351,10 @@ test("integration: BashTool snapshot can exclude filesystem", (t) => {
 test("integration: BashTool empty snapshot roundtrip works", (t) => {
   const tool = new BashTool();
   const expectedPwd = tool.executeSync("pwd").stdout.trim();
-  const snapshot = tool.snapshot();
-  const restored = BashTool.fromSnapshot(snapshot);
+  const snapshot = tool.snapshot({ hmacKey: snapshotKey });
+  const restored = BashTool.fromSnapshot(snapshot, undefined, {
+    hmacKey: snapshotKey,
+  });
 
   t.is(restored.executeSync("pwd").stdout.trim(), expectedPwd);
   t.is(restored.executeSync("echo ${MISSING:-unset}").stdout.trim(), "unset");
@@ -353,8 +364,30 @@ test("integration: BashTool invalid snapshot throws", (t) => {
   const tool = new BashTool();
   const invalid = new Uint8Array([0, 1, 2, 3, 4]);
 
-  t.throws(() => tool.restoreSnapshot(invalid));
-  t.throws(() => BashTool.fromSnapshot(invalid));
+  t.throws(() => tool.restoreSnapshot(invalid, { hmacKey: snapshotKey }));
+  t.throws(() =>
+    BashTool.fromSnapshot(invalid, undefined, { hmacKey: snapshotKey }),
+  );
+});
+
+test("integration: BashTool snapshots require and verify HMAC", (t) => {
+  const tool = new BashTool();
+
+  t.throws(() => tool.snapshot(), {
+    message: /hmacKey/,
+  });
+
+  const snapshot = tool.snapshot({ hmacKey: snapshotKey });
+  const tampered = new Uint8Array(snapshot);
+  tampered[tampered.length - 1] ^= 1;
+
+  t.throws(() => tool.restoreSnapshot(snapshot));
+  t.throws(() => tool.restoreSnapshot(tampered, { hmacKey: snapshotKey }));
+  t.throws(() =>
+    BashTool.fromSnapshot(snapshot, undefined, {
+      hmacKey: new TextEncoder().encode("wrong key"),
+    }),
+  );
 });
 
 test("integration: Bash keyed snapshot rejects wrong key", (t) => {
