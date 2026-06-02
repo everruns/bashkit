@@ -357,6 +357,40 @@ test("integration: BashTool invalid snapshot throws", (t) => {
   t.throws(() => BashTool.fromSnapshot(invalid));
 });
 
+test("integration: Bash keyed snapshot rejects wrong key", (t) => {
+  const key = Buffer.from("correct-key");
+  const wrongKey = Buffer.from("wrong-key");
+  const bash = new Bash();
+  bash.executeSync("export SNAP_KEYED=yes");
+
+  const snapshot = bash.snapshotKeyed(key);
+  const restored = Bash.fromSnapshotKeyed(snapshot, key);
+  t.is(restored.executeSync("echo $SNAP_KEYED").stdout.trim(), "yes");
+
+  t.throws(() => Bash.fromSnapshotKeyed(snapshot, wrongKey));
+
+  bash.executeSync("export SNAP_KEYED=no");
+  t.throws(() => bash.restoreSnapshotKeyed(snapshot, wrongKey));
+});
+
+test("integration: BashTool keyed snapshot preserves options", (t) => {
+  const key = Buffer.from("tool-key");
+  const tool = new BashTool({ username: "agent", maxCommands: 5 });
+  tool.executeSync("export TOOL_KEYED=ready");
+
+  const snapshot = tool.snapshotKeyed(key, { excludeFilesystem: true });
+  const restored = BashTool.fromSnapshotKeyed(snapshot, key, {
+    username: "agent",
+    maxCommands: 5,
+  });
+
+  t.is(restored.executeSync("echo $TOOL_KEYED").stdout.trim(), "ready");
+  t.is(restored.executeSync("whoami").stdout.trim(), "agent");
+  t.throws(() =>
+    restored.restoreSnapshotKeyed(snapshot, Buffer.from("bad-key")),
+  );
+});
+
 test("integration: multiple resets remain stable", (t) => {
   const bash = new Bash();
   for (let i = 0; i < 10; i++) {

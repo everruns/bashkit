@@ -633,7 +633,12 @@ function makeBuiltinDispatcher(
  * Idempotent for empty/undefined input.
  */
 function registerCustomBuiltins(
-  native: { addBuiltin(name: string, dispatch: (payload: string) => Promise<string>): void },
+  native: {
+    addBuiltin(
+      name: string,
+      dispatch: (payload: string) => Promise<string>,
+    ): void;
+  },
   builtins: Record<string, BuiltinCallback> | undefined,
 ): void {
   if (!builtins) return;
@@ -876,6 +881,24 @@ export class Bash {
   }
 
   /**
+   * Serialize interpreter state with HMAC-SHA256 using a caller-provided key.
+   * Use for snapshots crossing trust boundaries.
+   */
+  snapshotKeyed(key: Uint8Array, options?: SnapshotOptions): Uint8Array {
+    return this.native.snapshotKeyed(
+      Buffer.from(key),
+      toNativeSnapshotOptions(options),
+    );
+  }
+
+  /**
+   * Restore interpreter state from a HMAC-protected snapshot.
+   */
+  restoreSnapshotKeyed(data: Uint8Array, key: Uint8Array): void {
+    this.native.restoreSnapshotKeyed(Buffer.from(data), Buffer.from(key));
+  }
+
+  /**
    * Create a new Bash instance from a snapshot.
    *
    * @example
@@ -887,6 +910,18 @@ export class Bash {
   static fromSnapshot(data: Uint8Array): Bash {
     const instance = new Bash();
     instance.native = NativeBash.fromSnapshot(Buffer.from(data));
+    return instance;
+  }
+
+  /**
+   * Create a new Bash instance from a HMAC-protected snapshot.
+   */
+  static fromSnapshotKeyed(data: Uint8Array, key: Uint8Array): Bash {
+    const instance = new Bash();
+    instance.native = NativeBash.fromSnapshotKeyed(
+      Buffer.from(data),
+      Buffer.from(key),
+    );
     return instance;
   }
 
@@ -1210,6 +1245,23 @@ export class BashTool {
   }
 
   /**
+   * Serialize interpreter state with HMAC-SHA256 using a caller-provided key.
+   */
+  snapshotKeyed(key: Uint8Array, options?: SnapshotOptions): Uint8Array {
+    return this.native.snapshotKeyed(
+      Buffer.from(key),
+      toNativeSnapshotOptions(options),
+    );
+  }
+
+  /**
+   * Restore interpreter state from a HMAC-protected snapshot.
+   */
+  restoreSnapshotKeyed(data: Uint8Array, key: Uint8Array): void {
+    this.native.restoreSnapshotKeyed(Buffer.from(data), Buffer.from(key));
+  }
+
+  /**
    * Create a new BashTool instance from a snapshot.
    *
    * Any provided options are applied before restoring the snapshot so limits
@@ -1220,6 +1272,24 @@ export class BashTool {
     const instance = Object.create(BashTool.prototype) as BashTool;
     instance.native = NativeBashTool.fromSnapshot(
       Buffer.from(data),
+      toNativeOptions(options, resolved),
+    );
+    return instance;
+  }
+
+  /**
+   * Create a new BashTool instance from a HMAC-protected snapshot.
+   */
+  static fromSnapshotKeyed(
+    data: Uint8Array,
+    key: Uint8Array,
+    options?: BashOptions,
+  ): BashTool {
+    const resolved = resolveFilesSync(options?.files);
+    const instance = Object.create(BashTool.prototype) as BashTool;
+    instance.native = NativeBashTool.fromSnapshotKeyed(
+      Buffer.from(data),
+      Buffer.from(key),
       toNativeOptions(options, resolved),
     );
     return instance;

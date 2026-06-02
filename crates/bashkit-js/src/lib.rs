@@ -1409,6 +1409,39 @@ impl Bash {
         })
     }
 
+    /// Serialize interpreter state to HMAC-protected bytes using a caller-provided key.
+    ///
+    /// Use this when snapshots cross trust boundaries.
+    #[napi]
+    pub fn snapshot_keyed(
+        &self,
+        key: napi::bindgen_prelude::Buffer,
+        options: Option<SnapshotOptions>,
+    ) -> napi::Result<napi::bindgen_prelude::Buffer> {
+        let options = to_snapshot_options(options);
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            let bytes = bash
+                .snapshot_to_bytes_keyed_with_options(&key, options)
+                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+            Ok(napi::bindgen_prelude::Buffer::from(bytes))
+        })
+    }
+
+    /// Restore interpreter state from a HMAC-protected snapshot.
+    #[napi]
+    pub fn restore_snapshot_keyed(
+        &self,
+        data: napi::bindgen_prelude::Buffer,
+        key: napi::bindgen_prelude::Buffer,
+    ) -> napi::Result<()> {
+        block_on_with(&self.state, |s| async move {
+            let mut bash = s.inner.lock().await;
+            bash.restore_snapshot_keyed(&data, &key)
+                .map_err(|e| napi::Error::from_reason(e.to_string()))
+        })
+    }
+
     /// Create a new Bash instance from a snapshot.
     ///
     /// Accepts optional `BashOptions` to re-apply execution limits.
@@ -1426,6 +1459,29 @@ impl Bash {
             .inner
             .get_mut()
             .restore_snapshot(&data)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+
+        Ok(Self {
+            state: Arc::new(state),
+        })
+    }
+
+    /// Create a new Bash instance from a HMAC-protected snapshot.
+    ///
+    /// Accepts optional `BashOptions` to re-apply execution limits.
+    #[napi(factory)]
+    pub fn from_snapshot_keyed(
+        data: napi::bindgen_prelude::Buffer,
+        key: napi::bindgen_prelude::Buffer,
+        options: Option<BashOptions>,
+    ) -> napi::Result<Self> {
+        let opts = options.unwrap_or_else(default_opts);
+        let mut state = shared_state_from_opts(opts, None)?;
+
+        state
+            .inner
+            .get_mut()
+            .restore_snapshot_keyed(&data, &key)
             .map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
         Ok(Self {
@@ -1892,6 +1948,37 @@ impl BashTool {
         })
     }
 
+    /// Serialize interpreter state to HMAC-protected bytes using a caller-provided key.
+    #[napi]
+    pub fn snapshot_keyed(
+        &self,
+        key: napi::bindgen_prelude::Buffer,
+        options: Option<SnapshotOptions>,
+    ) -> napi::Result<napi::bindgen_prelude::Buffer> {
+        let options = to_snapshot_options(options);
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            let bytes = bash
+                .snapshot_to_bytes_keyed_with_options(&key, options)
+                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+            Ok(napi::bindgen_prelude::Buffer::from(bytes))
+        })
+    }
+
+    /// Restore interpreter state from a HMAC-protected snapshot.
+    #[napi]
+    pub fn restore_snapshot_keyed(
+        &self,
+        data: napi::bindgen_prelude::Buffer,
+        key: napi::bindgen_prelude::Buffer,
+    ) -> napi::Result<()> {
+        block_on_with(&self.state, |s| async move {
+            let mut bash = s.inner.lock().await;
+            bash.restore_snapshot_keyed(&data, &key)
+                .map_err(|e| napi::Error::from_reason(e.to_string()))
+        })
+    }
+
     /// Create a new BashTool instance from a snapshot.
     ///
     /// Accepts optional `BashOptions` so restored instances preserve caller-provided
@@ -1908,6 +1995,30 @@ impl BashTool {
             .inner
             .get_mut()
             .restore_snapshot(&data)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+
+        Ok(Self {
+            state: Arc::new(state),
+        })
+    }
+
+    /// Create a new BashTool instance from a HMAC-protected snapshot.
+    ///
+    /// Accepts optional `BashOptions` so restored instances preserve caller-provided
+    /// execution limits and identity settings.
+    #[napi(factory)]
+    pub fn from_snapshot_keyed(
+        data: napi::bindgen_prelude::Buffer,
+        key: napi::bindgen_prelude::Buffer,
+        options: Option<BashOptions>,
+    ) -> napi::Result<Self> {
+        let opts = options.unwrap_or_else(default_opts);
+        let mut state = shared_state_from_opts(opts, None)?;
+
+        state
+            .inner
+            .get_mut()
+            .restore_snapshot_keyed(&data, &key)
             .map_err(|e| napi::Error::from_reason(e.to_string()))?;
 
         Ok(Self {
