@@ -22,7 +22,6 @@ env:
   MACOSX_DEPLOYMENT_TARGET: "10.13"
   CARGO_INCREMENTAL: "1"
   DEBUG: "napi:*"
-  DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
 
 jobs:
   # ============================================================================
@@ -209,20 +208,29 @@ jobs:
             ln -s ${{ github.workspace }}/crates/bashkit-js node_modules/@everruns/bashkit
           fi
 
+      - name: Detect Doppler availability
+        id: doppler
+        run: echo "available=${{ secrets.DOPPLER_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
+
       - name: Install Doppler CLI
-        if: env.DOPPLER_TOKEN != ''
+        if: steps.doppler.outputs.available == 'true'
         uses: dopplerhq/cli-action@v4
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
 
       # `--only-secrets OPENAI_API_KEY` keeps the runtime env scoped to
       # just the key these scripts need, instead of injecting every
-      # secret in the Doppler config.
+      # secret in the Doppler config. DOPPLER_TOKEN stays scoped to this
+      # trusted secret-fetch step, not npm install/build/test/example code.
       # Skipped on Windows + Node 24: libuv hits an assertion failure
       # (`!(handle->flags & UV_HANDLE_CLOSING)` in src/win/async.c) during
       # process shutdown of the example scripts on that combination; the
       # same examples pass on every other platform/Node combination.
       - name: Run AI examples
-        if: env.DOPPLER_TOKEN != '' && !(runner.os == 'Windows' && matrix.node == '24')
+        if: steps.doppler.outputs.available == 'true' && !(runner.os == 'Windows' && matrix.node == '24')
         shell: bash
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
         run: |
           doppler run --only-secrets OPENAI_API_KEY -- node examples/openai_tool.mjs
           doppler run --only-secrets OPENAI_API_KEY -- node examples/vercel_ai_tool.mjs
@@ -320,12 +328,20 @@ jobs:
           mkdir -p node_modules/@everruns
           ln -s ${{ github.workspace }}/crates/bashkit-js node_modules/@everruns/bashkit
 
+      - name: Detect Doppler availability
+        id: doppler
+        run: echo "available=${{ secrets.DOPPLER_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
+
       - name: Install Doppler CLI
-        if: env.DOPPLER_TOKEN != ''
+        if: steps.doppler.outputs.available == 'true'
         uses: dopplerhq/cli-action@v4
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
 
       - name: Run AI examples
-        if: env.DOPPLER_TOKEN != ''
+        if: steps.doppler.outputs.available == 'true'
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
         run: >
           docker run --rm -v ${{ github.workspace }}:${{ github.workspace }}
           -w ${{ github.workspace }}

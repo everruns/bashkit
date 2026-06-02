@@ -31,7 +31,6 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
 
 jobs:
   typecheck:
@@ -205,16 +204,26 @@ jobs:
           ${{ matrix.run }} langchain_integration.mjs
           ${{ matrix.run }} custom_builtins.mjs
 
+      - name: Detect Doppler availability
+        id: doppler
+        if: github.event_name != 'pull_request'
+        run: echo "available=${{ secrets.DOPPLER_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
+
       - name: Install Doppler CLI
-        if: env.DOPPLER_TOKEN != ''
+        if: steps.doppler.outputs.available == 'true'
         uses: dopplerhq/cli-action@v4
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
 
       # `--only-secrets OPENAI_API_KEY` keeps the runtime env scoped to
       # just the key these scripts need, instead of injecting every
-      # secret in the Doppler config.
+      # secret in the Doppler config. DOPPLER_TOKEN stays scoped to this
+      # trusted secret-fetch step, not npm install/build/test/example code.
       - name: Run AI examples
-        if: env.DOPPLER_TOKEN != '' && github.event_name != 'pull_request'
+        if: steps.doppler.outputs.available == 'true'
         working-directory: examples
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
         run: |
           doppler run --only-secrets OPENAI_API_KEY -- ${{ matrix.run }} openai_tool.mjs
           doppler run --only-secrets OPENAI_API_KEY -- ${{ matrix.run }} vercel_ai_tool.mjs
