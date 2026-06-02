@@ -518,11 +518,75 @@ async fn dump_data_respects_row_cap() {
     );
 }
 
+#[tokio::test]
+async fn value_byte_cap_rejects_large_cell_before_rendering() {
+    let limits = SqliteLimits::default()
+        .max_value_bytes(8)
+        .max_result_bytes(1024)
+        .max_output_bytes(1024)
+        .max_duration(std::time::Duration::ZERO);
+    let r = run_with_limits(&[":memory:", "SELECT randomblob(16)"], None, limits).await;
+    assert_eq!(r.exit_code, 1);
+    assert_eq!(r.stdout, "");
+    assert!(
+        r.stderr.contains("result value exceeds byte cap (16 > 8)"),
+        "stderr was: {}",
+        r.stderr
+    );
+}
+
+#[tokio::test]
+async fn result_byte_cap_rejects_many_small_cells_before_rendering() {
+    let limits = SqliteLimits::default()
+        .max_value_bytes(16)
+        .max_result_bytes(12)
+        .max_output_bytes(1024)
+        .max_duration(std::time::Duration::ZERO);
+    let r = run_with_limits(
+        &[":memory:", "SELECT 'abcdef' UNION ALL SELECT 'ghijklmn'"],
+        None,
+        limits,
+    )
+    .await;
+    assert_eq!(r.exit_code, 1);
+    assert_eq!(r.stdout, "");
+    assert!(
+        r.stderr.contains("result set exceeds byte cap (14 > 12)"),
+        "stderr was: {}",
+        r.stderr
+    );
+}
+
+#[tokio::test]
+async fn rendered_output_cap_rejects_hex_expansion() {
+    let limits = SqliteLimits::default()
+        .max_value_bytes(16)
+        .max_result_bytes(16)
+        .max_output_bytes(10)
+        .max_duration(std::time::Duration::ZERO);
+    let r = run_with_limits(
+        &[":memory:", "-json", "SELECT randomblob(8) AS b"],
+        None,
+        limits,
+    )
+    .await;
+    assert_eq!(r.exit_code, 1);
+    assert_eq!(r.stdout, "");
+    assert!(
+        r.stderr.contains("sqlite output exceeds byte cap"),
+        "stderr was: {}",
+        r.stderr
+    );
+}
+
 #[test]
 fn limits_builder_round_trips() {
     let l = SqliteLimits::default()
         .max_script_bytes(1024)
         .max_rows_per_query(10)
+        .max_value_bytes(64)
+        .max_result_bytes(512)
+        .max_output_bytes(1024)
         .max_db_bytes(2048)
         .max_duration(std::time::Duration::from_secs(7))
         .max_statements(42)
@@ -530,6 +594,9 @@ fn limits_builder_round_trips() {
         .pragma_deny(["foo", "BAR"]);
     assert_eq!(l.max_script_bytes, 1024);
     assert_eq!(l.max_rows_per_query, 10);
+    assert_eq!(l.max_value_bytes, 64);
+    assert_eq!(l.max_result_bytes, 512);
+    assert_eq!(l.max_output_bytes, 1024);
     assert_eq!(l.max_db_bytes, 2048);
     assert_eq!(l.max_duration, std::time::Duration::from_secs(7));
     assert_eq!(l.max_statements, 42);
