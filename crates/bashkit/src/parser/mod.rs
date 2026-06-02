@@ -208,6 +208,10 @@ impl<'a> Parser<'a> {
 
     /// Parse the input and return the AST.
     pub fn parse(mut self) -> Result<Script> {
+        self.parse_script()
+    }
+
+    fn parse_script(&mut self) -> Result<Script> {
         // Check if the very first token is an error
         self.check_error_token()?;
 
@@ -2747,14 +2751,38 @@ impl<'a> Parser<'a> {
                     .source_slice(body_start_offset, body_end_offset)
                     .unwrap_or_default();
 
-                // THREAT[TM-DOS-021]: Propagate parent parser limits to child parser
-                // to prevent depth limit bypass via nested process substitution.
-                // Child inherits remaining depth budget and fuel from parent.
-                let remaining_depth = self.max_depth.saturating_sub(self.current_depth);
-                let inner_parser = Parser::with_limits(&cmd_str, remaining_depth, self.fuel);
-                let commands = match inner_parser.parse() {
-                    Ok(script) => script.commands,
-                    Err(_) => Vec::new(),
+                // THREAT[TM-DOS-021]: Charge nested process-substitution parsers
+                // against the same depth/fuel/timeout budget. A fresh child parser
+                // without inherited current depth or fuel debit lets repeated `<(...)`
+                // recurse until stack overflow before normal parser limits fire.
+                if self.current_depth >= self.max_depth {
+                    return Err(Error::parse(format!(
+                        "AST nesting too deep ({} levels, max {})",
+                        self.current_depth + 1,
+                        self.max_depth
+                    )));
+                }
+                let mut inner_parser = Parser::with_limits_and_timeout(
+                    &cmd_str,
+                    self.max_depth,
+                    self.fuel,
+                    self.timeout,
+                );
+                inner_parser.current_depth = self.current_depth + 1;
+                inner_parser.started_at = self.started_at;
+                let commands = match inner_parser.parse_script() {
+                    Ok(script) => {
+                        self.fuel = inner_parser.fuel;
+                        script.commands
+                    }
+                    Err(err) if Self::is_parser_budget_error(&err) => {
+                        self.fuel = inner_parser.fuel;
+                        return Err(err);
+                    }
+                    Err(_) => {
+                        self.fuel = inner_parser.fuel;
+                        Vec::new()
+                    }
                 };
 
                 Ok(Word {
@@ -2764,6 +2792,17 @@ impl<'a> Parser<'a> {
                 })
             }
             _ => Err(self.error("expected word")),
+        }
+    }
+
+    fn is_parser_budget_error(err: &Error) -> bool {
+        match err {
+            Error::ResourceLimit(_) => true,
+            Error::Parse { message, .. } => {
+                message.starts_with("AST nesting too deep")
+                    || message.starts_with("parser fuel exhausted")
+            }
+            _ => false,
         }
     }
 
@@ -3948,6 +3987,53 @@ mod tests {
             AssignmentValue::Scalar(word) => assert_eq!(word.to_string(), "a+=b"),
             AssignmentValue::Array(_) => panic!("expected scalar assignment"),
         }
+    }
+
+    fn nested_process_substitution(levels: usize) -> String {
+        let mut script = String::from("cat ");
+        for _ in 0..levels {
+            script.push_str("<(cat ");
+        }
+        script.push_str("echo x");
+        for _ in 0..levels {
+            script.push_str("; )");
+        }
+        script
+    }
+
+    #[test]
+    fn test_nested_process_substitution_within_budget_parses() {
+        let script = nested_process_substitution(3);
+        let parser = Parser::with_limits(&script, 8, 1_000);
+        parser
+            .parse()
+            .expect("nested process substitution within budget should parse");
+    }
+
+    #[test]
+    fn test_nested_process_substitution_consumes_depth_budget() {
+        let script = nested_process_substitution(5);
+        let parser = Parser::with_limits(&script, 4, 10_000);
+        let err = parser
+            .parse()
+            .expect_err("nested process substitution must not bypass AST depth");
+        assert!(
+            err.to_string().contains("AST nesting too deep"),
+            "expected AST depth error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_nested_process_substitution_consumes_fuel_budget() {
+        let script = nested_process_substitution(8);
+        let parser = Parser::with_limits(&script, 100, 8);
+        let err = parser
+            .parse()
+            .expect_err("nested process substitution must not get fresh parser fuel");
+        assert!(
+            err.to_string().contains("parser fuel exhausted"),
+            "expected parser fuel error, got: {err}"
+        );
     }
 
     #[test]
