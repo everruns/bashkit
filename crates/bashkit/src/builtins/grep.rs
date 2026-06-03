@@ -48,6 +48,15 @@ use crate::interpreter::ExecResult;
 /// grep command - pattern matching
 pub struct Grep;
 
+/// Which pattern syntax to compile with. `-G/-E/-F/-P` select one of these and
+/// are mutually exclusive (GNU grep: the last one on the command line wins).
+enum PatternType {
+    Basic,    // -G: basic regular expressions (the default)
+    Extended, // -E: extended regular expressions
+    Fixed,    // -F: literal fixed strings
+    Perl,     // -P: Perl-compatible (PCRE) via fancy-regex
+}
+
 struct GrepOptions {
     patterns: Vec<String>,
     files: Vec<String>,
@@ -135,10 +144,12 @@ impl GrepOptions {
                         'l' => opts.files_with_matches = true,
                         'o' => opts.only_matching = true,
                         'w' => opts.word_regex = true,
-                        'F' => opts.fixed_strings = true,
-                        'E' => opts.extended_regex = true,
-                        'G' => opts.extended_regex = false, // basic regex (BRE, the default)
-                        'P' => opts.perl_regex = true,      // Perl-compatible regex (PCRE)
+                        // Pattern type: -G/-E/-F/-P are mutually exclusive,
+                        // last one wins (GNU grep semantics).
+                        'F' => opts.set_pattern_type(PatternType::Fixed),
+                        'E' => opts.set_pattern_type(PatternType::Extended),
+                        'G' => opts.set_pattern_type(PatternType::Basic),
+                        'P' => opts.set_pattern_type(PatternType::Perl),
                         'q' => opts.quiet = true,
                         'x' => opts.whole_line = true,
                         'H' => opts.show_filename = true,
@@ -233,10 +244,11 @@ impl GrepOptions {
                     "only-matching" => opts.only_matching = true,
                     "word-regexp" => opts.word_regex = true,
                     "line-regexp" => opts.whole_line = true,
-                    "fixed-strings" => opts.fixed_strings = true,
-                    "extended-regexp" => opts.extended_regex = true,
-                    "basic-regexp" => opts.extended_regex = false,
-                    "perl-regexp" => opts.perl_regex = true,
+                    // Pattern type: mutually exclusive, last one wins.
+                    "fixed-strings" => opts.set_pattern_type(PatternType::Fixed),
+                    "extended-regexp" => opts.set_pattern_type(PatternType::Extended),
+                    "basic-regexp" => opts.set_pattern_type(PatternType::Basic),
+                    "perl-regexp" => opts.set_pattern_type(PatternType::Perl),
                     "quiet" | "silent" => opts.quiet = true,
                     "byte-offset" => opts.byte_offset = true,
                     "text" => opts.binary_as_text = true,
@@ -321,6 +333,14 @@ impl GrepOptions {
         opts.files = positional;
 
         Ok(opts)
+    }
+
+    /// Select the pattern syntax, clearing any previously-selected type so the
+    /// last `-G/-E/-F/-P` flag wins (GNU grep semantics).
+    fn set_pattern_type(&mut self, pt: PatternType) {
+        self.fixed_strings = matches!(pt, PatternType::Fixed);
+        self.extended_regex = matches!(pt, PatternType::Extended);
+        self.perl_regex = matches!(pt, PatternType::Perl);
     }
 
     fn build_matcher(&self) -> Result<Matcher> {
@@ -497,7 +517,7 @@ impl Builtin for Grep {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         if let Some(r) = super::check_help_version(
             ctx.args,
-            "Usage: grep [OPTION]... PATTERN [FILE]...\nSearch for PATTERN in each FILE.\n\n  -i\t\t\tignore case distinctions\n  -v\t\t\tselect non-matching lines\n  -n\t\t\tprint line number with output lines\n  -c\t\t\tprint only a count of matching lines\n  -l\t\t\tprint only names of files with matches\n  -L\t\t\tprint only names of files without matches\n  -o\t\t\tshow only the matching part of lines\n  -q\t\t\tsuppress all normal output\n  -w\t\t\tmatch whole words only\n  -x\t\t\tmatch whole lines only\n  -m NUM\t\tstop after NUM matches\n  -E\t\t\textended regular expressions\n  -F\t\t\tfixed string matching\n  -G\t\t\tbasic regular expressions (default)\n  -P\t\t\tPerl-compatible regular expressions\n  -e PATTERN\t\tuse PATTERN for matching\n  -f FILE\t\tread patterns from FILE\n  -A NUM\t\tprint NUM lines of trailing context\n  -B NUM\t\tprint NUM lines of leading context\n  -C NUM\t\tprint NUM lines of output context\n  -H\t\t\talways print filename headers\n  -h\t\t\tsuppress filename headers\n  -b\t\t\tprint byte offset of matches\n  -a\t\t\ttreat binary files as text\n  -z\t\t\tuse NUL as line separator\n  -r\t\t\trecursive search\n  -s\t\t\tsuppress error messages\n  -Z\t\t\tprint NUL after filenames\n  --include=GLOB\tsearch only files matching GLOB\n  --exclude=GLOB\tskip files matching GLOB\n  --exclude-dir=GLOB\tskip directories matching GLOB\n  --color=WHEN\t\tcolor output (no-op)\n  --line-buffered\tline-buffered output (no-op)\n  --help\t\tdisplay this help and exit\n  --version\t\toutput version information and exit\n",
+            "Usage: grep [OPTION]... PATTERN [FILE]...\nSearch for PATTERN in each FILE.\n\n  -i, --ignore-case\t\tignore case distinctions\n  -v, --invert-match\t\tselect non-matching lines\n  -n, --line-number\t\tprint line number with output lines\n  -c, --count\t\t\tprint only a count of matching lines\n  -l, --files-with-matches\tprint only names of files with matches\n  -L, --files-without-match\tprint only names of files without matches\n  -o, --only-matching\t\tshow only the matching part of lines\n  -q, --quiet, --silent\t\tsuppress all normal output\n  -w, --word-regexp\t\tmatch whole words only\n  -x, --line-regexp\t\tmatch whole lines only\n  -m, --max-count=NUM\t\tstop after NUM matches\n  -E, --extended-regexp\t\textended regular expressions\n  -F, --fixed-strings\t\tfixed string matching\n  -G, --basic-regexp\t\tbasic regular expressions (default)\n  -P, --perl-regexp\t\tPerl-compatible regular expressions\n  -e, --regexp=PATTERN\t\tuse PATTERN for matching\n  -f, --file=FILE\t\tread patterns from FILE\n  -A, --after-context=NUM\tprint NUM lines of trailing context\n  -B, --before-context=NUM\tprint NUM lines of leading context\n  -C, --context=NUM\t\tprint NUM lines of output context\n  -H, --with-filename\t\talways print filename headers\n  -h, --no-filename\t\tsuppress filename headers\n  -b, --byte-offset\t\tprint byte offset of matches\n  -a, --text\t\t\ttreat binary files as text\n  -z, --null-data\t\tuse NUL as line separator\n  -r, -R, --recursive\t\trecursive search\n  -s, --no-messages\t\tsuppress error messages\n  -Z, --null\t\t\tprint NUL after filenames\n  --include=GLOB\t\tsearch only files matching GLOB\n  --exclude=GLOB\t\tskip files matching GLOB\n  --exclude-dir=GLOB\t\tskip directories matching GLOB\n  --color=WHEN\t\t\tcolor output (no-op)\n  --line-buffered\t\tline-buffered output (no-op)\n  --help\t\t\tdisplay this help and exit\n  --version\t\t\toutput version information and exit\n",
             Some("grep (bashkit) 0.1"),
         ) {
             return Ok(r);
@@ -1844,6 +1864,45 @@ mod tests {
             .unwrap();
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "xy345\n");
+    }
+
+    #[tokio::test]
+    async fn test_grep_pattern_type_extended_then_perl_last_wins() {
+        // -E then -P: perl wins, so the backreference compiles and matches.
+        let result = run_grep(&["-E", "-P", r"(.)\1"], Some("aa\nab"))
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "aa\n");
+    }
+
+    #[tokio::test]
+    async fn test_grep_pattern_type_perl_then_extended_last_wins() {
+        // -P then -E: extended wins, so -E cleared perl_regex and the
+        // backreference is rejected by the linear-time engine (error).
+        let result = run_grep(&["-P", "-E", r"(.)\1"], Some("aa")).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_grep_pattern_type_long_options_last_wins() {
+        // --perl-regexp then --extended-regexp: extended wins -> backref rejected.
+        let result = run_grep(
+            &["--perl-regexp", "--extended-regexp", r"(.)\1"],
+            Some("aa"),
+        )
+        .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_grep_pattern_type_perl_then_fixed_last_wins() {
+        // -P then -F: fixed wins, so the pattern is matched literally.
+        let result = run_grep(&["-P", "-F", r"a.b"], Some("a.b\naxb"))
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "a.b\n");
     }
 
     #[tokio::test]

@@ -369,6 +369,7 @@ None currently tracked.
 
 **Implemented Features:**
 - Basic flags: `-i`, `-v`, `-c`, `-n`, `-o`, `-l`, `-w`, `-E`, `-F`, `-G`, `-q`, `-m`, `-x`
+  (pattern-type flags `-G`/`-E`/`-F`/`-P` are mutually exclusive; last one wins, per GNU grep)
 - Context: `-A`, `-B`, `-C` (after/before/context lines)
 - Multiple patterns: `-e`
 - Include/exclude: `--include=GLOB`, `--exclude=GLOB` for recursive search
