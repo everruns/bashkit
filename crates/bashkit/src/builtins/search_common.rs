@@ -76,6 +76,8 @@ impl Matcher {
 
 /// Build a PCRE-style matcher (`grep -P`) with enforced size and backtracking
 /// limits and optional case-insensitivity.
+// THREAT[TM-DOS-025]: fancy-regex is a backtracking engine; the backtrack_limit
+// caps worst-case work so a crafted pattern can't hang the sandbox.
 pub(crate) fn build_fancy_matcher(
     pattern: &str,
     case_insensitive: bool,

@@ -1936,4 +1936,15 @@ mod tests {
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "3:bar\n");
     }
+
+    #[tokio::test]
+    async fn test_grep_perl_catastrophic_backtrack_is_bounded() {
+        // TM-DOS-025: a classic catastrophic-backtracking pattern against a
+        // long non-matching line must terminate (backtrack-limit -> "no match")
+        // rather than hang the sandbox.
+        let haystack = format!("{}!", "a".repeat(40));
+        let result = run_grep(&["-P", r"(a+)+$"], Some(&haystack)).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+        assert_eq!(result.stdout, "");
+    }
 }
