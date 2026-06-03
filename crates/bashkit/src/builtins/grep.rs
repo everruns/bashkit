@@ -37,15 +37,25 @@
 //!   grep --line-buffered pattern # line-buffered (no-op)
 
 use async_trait::async_trait;
-use regex::Regex;
 
-use super::search_common::{build_regex_opts, parse_numeric_flag_arg};
+use super::search_common::{
+    Matcher, build_fancy_matcher, build_regex_opts, parse_numeric_flag_arg,
+};
 use super::{Builtin, Context};
 use crate::error::{Error, Result};
 use crate::interpreter::ExecResult;
 
 /// grep command - pattern matching
 pub struct Grep;
+
+/// Which pattern syntax to compile with. `-G/-E/-F/-P` select one of these and
+/// are mutually exclusive (GNU grep: the last one on the command line wins).
+enum PatternType {
+    Basic,    // -G: basic regular expressions (the default)
+    Extended, // -E: extended regular expressions
+    Fixed,    // -F: literal fixed strings
+    Perl,     // -P: Perl-compatible (PCRE) via fancy-regex
+}
 
 struct GrepOptions {
     patterns: Vec<String>,
@@ -57,6 +67,7 @@ struct GrepOptions {
     files_with_matches: bool,
     fixed_strings: bool,
     extended_regex: bool,
+    perl_regex: bool, // -P: Perl-compatible (PCRE) via fancy-regex
     only_matching: bool,
     word_regex: bool,
     quiet: bool,
@@ -91,6 +102,7 @@ impl GrepOptions {
             files_with_matches: false,
             fixed_strings: false,
             extended_regex: false,
+            perl_regex: false,
             only_matching: false,
             word_regex: false,
             quiet: false,
@@ -132,9 +144,12 @@ impl GrepOptions {
                         'l' => opts.files_with_matches = true,
                         'o' => opts.only_matching = true,
                         'w' => opts.word_regex = true,
-                        'F' => opts.fixed_strings = true,
-                        'E' => opts.extended_regex = true,
-                        'P' => opts.extended_regex = true, // Perl regex implies ERE
+                        // Pattern type: -G/-E/-F/-P are mutually exclusive,
+                        // last one wins (GNU grep semantics).
+                        'F' => opts.set_pattern_type(PatternType::Fixed),
+                        'E' => opts.set_pattern_type(PatternType::Extended),
+                        'G' => opts.set_pattern_type(PatternType::Basic),
+                        'P' => opts.set_pattern_type(PatternType::Perl),
                         'q' => opts.quiet = true,
                         'x' => opts.whole_line = true,
                         'H' => opts.show_filename = true,
@@ -205,29 +220,101 @@ impl GrepOptions {
                     j += 1;
                 }
             } else if let Some(opt) = arg.strip_prefix("--") {
-                // Long options
+                // Long options. GNU getopt_long accepts both `--name=value` and
+                // `--name value`; split the inline form here and fall back to
+                // the next argv entry for value-taking options.
                 if opt.is_empty() {
                     // End of options
                     positional.extend(args[i + 1..].iter().cloned());
                     break;
-                } else if opt == "color" || opt.starts_with("color=") {
-                    // --color / --color=always/never/auto - no-op (we don't output ANSI)
-                } else if opt == "line-buffered" {
-                    // --line-buffered - no-op (output is already line-oriented)
-                } else if let Some(pat) = opt.strip_prefix("include=") {
-                    opts.include_patterns.push(strip_quotes(pat));
-                } else if let Some(pat) = opt.strip_prefix("exclude=") {
-                    opts.exclude_patterns.push(strip_quotes(pat));
-                } else if let Some(pat) = opt.strip_prefix("exclude-dir=") {
-                    opts.exclude_dir_patterns.push(strip_quotes(pat));
-                } else if opt == "files-without-match" {
-                    opts.files_without_matches = true;
-                } else if opt == "no-messages" {
-                    opts.suppress_errors = true;
-                } else if opt == "null" {
-                    opts.null_filename = true;
                 }
-                // Ignore other unknown long options
+                let (name, inline_val) = match opt.split_once('=') {
+                    Some((n, v)) => (n, Some(v.to_string())),
+                    None => (opt, None),
+                };
+                match name {
+                    // Boolean flags — long-form aliases of the short flags.
+                    "ignore-case" => opts.ignore_case = true,
+                    "no-ignore-case" => opts.ignore_case = false,
+                    "invert-match" => opts.invert_match = true,
+                    "line-number" => opts.line_numbers = true,
+                    "count" => opts.count_only = true,
+                    "files-with-matches" => opts.files_with_matches = true,
+                    "files-without-match" => opts.files_without_matches = true,
+                    "only-matching" => opts.only_matching = true,
+                    "word-regexp" => opts.word_regex = true,
+                    "line-regexp" => opts.whole_line = true,
+                    // Pattern type: mutually exclusive, last one wins.
+                    "fixed-strings" => opts.set_pattern_type(PatternType::Fixed),
+                    "extended-regexp" => opts.set_pattern_type(PatternType::Extended),
+                    "basic-regexp" => opts.set_pattern_type(PatternType::Basic),
+                    "perl-regexp" => opts.set_pattern_type(PatternType::Perl),
+                    "quiet" | "silent" => opts.quiet = true,
+                    "byte-offset" => opts.byte_offset = true,
+                    "text" => opts.binary_as_text = true,
+                    "null-data" => opts.null_terminated = true,
+                    "recursive" => opts.recursive = true,
+                    "no-messages" => opts.suppress_errors = true,
+                    "with-filename" => opts.show_filename = true,
+                    "no-filename" => opts.no_filename = true,
+                    "null" => opts.null_filename = true,
+                    // No-ops: output is already line-oriented and uncolored.
+                    "color" | "colour" | "line-buffered" => {}
+                    // Value-taking options.
+                    "regexp" => {
+                        opts.patterns
+                            .push(long_opt_value(&inline_val, name, &mut i, args)?)
+                    }
+                    "file" => {
+                        opts.pattern_file = Some(long_opt_value(&inline_val, name, &mut i, args)?)
+                    }
+                    "max-count" => {
+                        opts.max_count = Some(parse_long_numeric(
+                            &long_opt_value(&inline_val, name, &mut i, args)?,
+                            name,
+                        )?)
+                    }
+                    "after-context" => {
+                        opts.after_context = parse_long_numeric(
+                            &long_opt_value(&inline_val, name, &mut i, args)?,
+                            name,
+                        )?
+                    }
+                    "before-context" => {
+                        opts.before_context = parse_long_numeric(
+                            &long_opt_value(&inline_val, name, &mut i, args)?,
+                            name,
+                        )?
+                    }
+                    "context" => {
+                        let ctx = parse_long_numeric(
+                            &long_opt_value(&inline_val, name, &mut i, args)?,
+                            name,
+                        )?;
+                        opts.before_context = ctx;
+                        opts.after_context = ctx;
+                    }
+                    "include" => opts.include_patterns.push(strip_quotes(&long_opt_value(
+                        &inline_val,
+                        name,
+                        &mut i,
+                        args,
+                    )?)),
+                    "exclude" => opts.exclude_patterns.push(strip_quotes(&long_opt_value(
+                        &inline_val,
+                        name,
+                        &mut i,
+                        args,
+                    )?)),
+                    "exclude-dir" => opts.exclude_dir_patterns.push(strip_quotes(&long_opt_value(
+                        &inline_val,
+                        name,
+                        &mut i,
+                        args,
+                    )?)),
+                    // Ignore other unknown long options.
+                    _ => {}
+                }
             } else {
                 positional.push(arg.clone());
             }
@@ -248,7 +335,15 @@ impl GrepOptions {
         Ok(opts)
     }
 
-    fn build_regex(&self) -> Result<Regex> {
+    /// Select the pattern syntax, clearing any previously-selected type so the
+    /// last `-G/-E/-F/-P` flag wins (GNU grep semantics).
+    fn set_pattern_type(&mut self, pt: PatternType) {
+        self.fixed_strings = matches!(pt, PatternType::Fixed);
+        self.extended_regex = matches!(pt, PatternType::Extended);
+        self.perl_regex = matches!(pt, PatternType::Perl);
+    }
+
+    fn build_matcher(&self) -> Result<Matcher> {
         // Build patterns for each -e pattern
         let escaped_patterns: Vec<String> = self
             .patterns
@@ -260,6 +355,10 @@ impl GrepOptions {
                 }
                 let pat = if self.fixed_strings {
                     regex::escape(p)
+                } else if self.perl_regex {
+                    // PCRE mode (-P): pass through to fancy-regex unchanged so
+                    // lookaround / backreferences are preserved.
+                    p.clone()
                 } else if !self.extended_regex {
                     // BRE mode: convert to ERE for the regex crate
                     // In BRE: ( ) are literal, \( \) are groups
@@ -295,9 +394,43 @@ impl GrepOptions {
             combined
         };
 
-        build_regex_opts(&final_pattern, self.ignore_case)
-            .map_err(|e| Error::Execution(format!("grep: invalid pattern: {}", e)))
+        // -P uses the backtracking PCRE engine; everything else uses the
+        // default linear-time engine. `-F` (fixed strings) takes precedence
+        // over `-P`, matching GNU grep.
+        if self.perl_regex && !self.fixed_strings {
+            build_fancy_matcher(&final_pattern, self.ignore_case)
+                .map_err(|e| Error::Execution(format!("grep: invalid pattern: {}", e)))
+        } else {
+            build_regex_opts(&final_pattern, self.ignore_case)
+                .map(Matcher::Standard)
+                .map_err(|e| Error::Execution(format!("grep: invalid pattern: {}", e)))
+        }
     }
+}
+
+/// Resolve the value of a value-taking long option: prefer the inline
+/// `--name=value` form, else consume the next argv entry (`--name value`).
+fn long_opt_value(
+    inline: &Option<String>,
+    name: &str,
+    i: &mut usize,
+    args: &[String],
+) -> Result<String> {
+    if let Some(v) = inline {
+        Ok(v.clone())
+    } else {
+        *i += 1;
+        args.get(*i).cloned().ok_or_else(|| {
+            Error::Execution(format!("grep: option '--{}' requires an argument", name))
+        })
+    }
+}
+
+/// Parse a non-negative integer for a numeric long option (`--max-count`, etc.).
+fn parse_long_numeric(value: &str, name: &str) -> Result<usize> {
+    value
+        .parse()
+        .map_err(|_| Error::Execution(format!("grep: invalid --{} value: {}", name, value)))
 }
 
 /// Strip surrounding single or double quotes from a value
@@ -384,7 +517,7 @@ impl Builtin for Grep {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         if let Some(r) = super::check_help_version(
             ctx.args,
-            "Usage: grep [OPTION]... PATTERN [FILE]...\nSearch for PATTERN in each FILE.\n\n  -i\t\t\tignore case distinctions\n  -v\t\t\tselect non-matching lines\n  -n\t\t\tprint line number with output lines\n  -c\t\t\tprint only a count of matching lines\n  -l\t\t\tprint only names of files with matches\n  -L\t\t\tprint only names of files without matches\n  -o\t\t\tshow only the matching part of lines\n  -q\t\t\tsuppress all normal output\n  -w\t\t\tmatch whole words only\n  -x\t\t\tmatch whole lines only\n  -m NUM\t\tstop after NUM matches\n  -E\t\t\textended regular expressions\n  -F\t\t\tfixed string matching\n  -P\t\t\tPerl-compatible regular expressions\n  -e PATTERN\t\tuse PATTERN for matching\n  -f FILE\t\tread patterns from FILE\n  -A NUM\t\tprint NUM lines of trailing context\n  -B NUM\t\tprint NUM lines of leading context\n  -C NUM\t\tprint NUM lines of output context\n  -H\t\t\talways print filename headers\n  -h\t\t\tsuppress filename headers\n  -b\t\t\tprint byte offset of matches\n  -a\t\t\ttreat binary files as text\n  -z\t\t\tuse NUL as line separator\n  -r\t\t\trecursive search\n  -s\t\t\tsuppress error messages\n  -Z\t\t\tprint NUL after filenames\n  --include=GLOB\tsearch only files matching GLOB\n  --exclude=GLOB\tskip files matching GLOB\n  --exclude-dir=GLOB\tskip directories matching GLOB\n  --color=WHEN\t\tcolor output (no-op)\n  --line-buffered\tline-buffered output (no-op)\n  --help\t\tdisplay this help and exit\n  --version\t\toutput version information and exit\n",
+            "Usage: grep [OPTION]... PATTERN [FILE]...\nSearch for PATTERN in each FILE.\n\n  -i, --ignore-case\t\tignore case distinctions\n  -v, --invert-match\t\tselect non-matching lines\n  -n, --line-number\t\tprint line number with output lines\n  -c, --count\t\t\tprint only a count of matching lines\n  -l, --files-with-matches\tprint only names of files with matches\n  -L, --files-without-match\tprint only names of files without matches\n  -o, --only-matching\t\tshow only the matching part of lines\n  -q, --quiet, --silent\t\tsuppress all normal output\n  -w, --word-regexp\t\tmatch whole words only\n  -x, --line-regexp\t\tmatch whole lines only\n  -m, --max-count=NUM\t\tstop after NUM matches\n  -E, --extended-regexp\t\textended regular expressions\n  -F, --fixed-strings\t\tfixed string matching\n  -G, --basic-regexp\t\tbasic regular expressions (default)\n  -P, --perl-regexp\t\tPerl-compatible regular expressions\n  -e, --regexp=PATTERN\t\tuse PATTERN for matching\n  -f, --file=FILE\t\tread patterns from FILE\n  -A, --after-context=NUM\tprint NUM lines of trailing context\n  -B, --before-context=NUM\tprint NUM lines of leading context\n  -C, --context=NUM\t\tprint NUM lines of output context\n  -H, --with-filename\t\talways print filename headers\n  -h, --no-filename\t\tsuppress filename headers\n  -b, --byte-offset\t\tprint byte offset of matches\n  -a, --text\t\t\ttreat binary files as text\n  -z, --null-data\t\tuse NUL as line separator\n  -r, -R, --recursive\t\trecursive search\n  -s, --no-messages\t\tsuppress error messages\n  -Z, --null\t\t\tprint NUL after filenames\n  --include=GLOB\t\tsearch only files matching GLOB\n  --exclude=GLOB\t\tskip files matching GLOB\n  --exclude-dir=GLOB\t\tskip directories matching GLOB\n  --color=WHEN\t\t\tcolor output (no-op)\n  --line-buffered\t\tline-buffered output (no-op)\n  --help\t\t\tdisplay this help and exit\n  --version\t\t\toutput version information and exit\n",
             Some("grep (bashkit) 0.1"),
         ) {
             return Ok(r);
@@ -418,7 +551,7 @@ impl Builtin for Grep {
             return Err(Error::Execution("grep: missing pattern".to_string()));
         }
 
-        let regex = opts.build_regex()?;
+        let matcher = opts.build_matcher()?;
 
         let mut output = String::new();
         let mut any_match = false;
@@ -443,8 +576,14 @@ impl Builtin for Grep {
             }
             vec![(stdin_name.to_string(), stdin_content)]
         } else if opts.recursive {
-            // Try indexed search via SearchCapable if available
-            let search_result = try_indexed_search(&*ctx.fs, &opts, ctx.cwd).await;
+            // Try indexed search via SearchCapable if available. Skip it for -P:
+            // the backend's regex engine doesn't speak PCRE (lookaround /
+            // backreferences), so prefiltering there could drop real matches.
+            let search_result = if opts.perl_regex {
+                None
+            } else {
+                try_indexed_search(&*ctx.fs, &opts, ctx.cwd).await
+            };
 
             if let Some(indexed_inputs) = search_result {
                 indexed_inputs
@@ -586,7 +725,7 @@ impl Builtin for Grep {
 
                 if opts.only_matching && !opts.invert_match {
                     // -o mode: count each match separately
-                    for _ in regex.find_iter(line) {
+                    for _ in matcher.find_ranges(line) {
                         file_matched = true;
                         if !opts.files_without_matches {
                             any_match = true;
@@ -615,7 +754,7 @@ impl Builtin for Grep {
                         break;
                     }
                 } else {
-                    let matches = regex.is_match(line);
+                    let matches = matcher.is_match(line);
                     let should_match = if opts.invert_match { !matches } else { matches };
 
                     if should_match {
@@ -691,7 +830,7 @@ impl Builtin for Grep {
                     // -o mode: output each match
                     let mut o_matches = 0usize;
                     for (line_num, line) in lines.iter().enumerate() {
-                        for mat in regex.find_iter(line) {
+                        for (start, end) in matcher.find_ranges(line) {
                             if let Some(max) = opts.max_count
                                 && o_matches >= max
                             {
@@ -702,12 +841,12 @@ impl Builtin for Grep {
                                 output.push(fname_sep);
                             }
                             if opts.byte_offset {
-                                output.push_str(&format!("{}:", byte_offsets[line_num]));
+                                output.push_str(&format!("{}:", byte_offsets[line_num] + start));
                             }
                             if opts.line_numbers {
                                 output.push_str(&format!("{}:", line_num + 1));
                             }
-                            output.push_str(mat.as_str());
+                            output.push_str(&line[start..end]);
                             output.push('\n');
                             o_matches += 1;
                         }
@@ -1684,5 +1823,187 @@ mod tests {
             "grep_invalid_regex",
             &["regex::Error", "ParseError {"],
         );
+    }
+
+    // -P (PCRE via fancy-regex) capability tests.
+
+    #[tokio::test]
+    async fn test_grep_perl_lookahead() {
+        // Lookahead is unsupported by the default `regex` engine; -P must
+        // route to fancy-regex. Match "foo" only when followed by "bar".
+        let result = run_grep(&["-oP", r"foo(?=bar)"], Some("foobar\nfoobaz\nfoo"))
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "foo\n");
+    }
+
+    #[tokio::test]
+    async fn test_grep_perl_backreference() {
+        // Backreferences are rejected by `regex`; fancy-regex accepts them.
+        let result = run_grep(&["-P", r"(\w+) \1"], Some("hello hello\nhello world"))
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "hello hello\n");
+    }
+
+    #[tokio::test]
+    async fn test_grep_perl_lookbehind() {
+        let result = run_grep(&["-oP", r"(?<=\$)\d+"], Some("price $42 and 99"))
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "42\n");
+    }
+
+    #[tokio::test]
+    async fn test_grep_perl_long_flag() {
+        let result = run_grep(&["--perl-regexp", r"\d{3}"], Some("ab12\nxy345"))
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "xy345\n");
+    }
+
+    #[tokio::test]
+    async fn test_grep_pattern_type_extended_then_perl_last_wins() {
+        // -E then -P: perl wins, so the backreference compiles and matches.
+        let result = run_grep(&["-E", "-P", r"(.)\1"], Some("aa\nab"))
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "aa\n");
+    }
+
+    #[tokio::test]
+    async fn test_grep_pattern_type_perl_then_extended_last_wins() {
+        // -P then -E: extended wins, so -E cleared perl_regex and the
+        // backreference is rejected by the linear-time engine (error).
+        let result = run_grep(&["-P", "-E", r"(.)\1"], Some("aa")).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_grep_pattern_type_long_options_last_wins() {
+        // --perl-regexp then --extended-regexp: extended wins -> backref rejected.
+        let result = run_grep(
+            &["--perl-regexp", "--extended-regexp", r"(.)\1"],
+            Some("aa"),
+        )
+        .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_grep_pattern_type_perl_then_fixed_last_wins() {
+        // -P then -F: fixed wins, so the pattern is matched literally.
+        let result = run_grep(&["-P", "-F", r"a.b"], Some("a.b\naxb"))
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "a.b\n");
+    }
+
+    #[tokio::test]
+    async fn test_grep_perl_invalid_pattern_errors() {
+        // Unbalanced group: fancy-regex rejects it; we surface an error, not a
+        // panic, and must not leak the engine's Debug shape.
+        let result = run_grep(&["-P", "(foo"], Some("foo")).await;
+        assert!(result.is_err());
+    }
+
+    // GNU long-option alias capability tests.
+
+    #[tokio::test]
+    async fn test_grep_long_ignore_case() {
+        let result = run_grep(&["--ignore-case", "HELLO"], Some("Hello World\ngoodbye"))
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "Hello World\n");
+    }
+
+    #[tokio::test]
+    async fn test_grep_long_invert_and_line_number() {
+        let result = run_grep(
+            &["--invert-match", "--line-number", "hello"],
+            Some("hello\nworld\nhello again"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "2:world\n");
+    }
+
+    #[tokio::test]
+    async fn test_grep_long_max_count_inline() {
+        let result = run_grep(&["--max-count=2", "o"], Some("foo\nbar\nboo\nzoo"))
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "foo\nboo\n");
+    }
+
+    #[tokio::test]
+    async fn test_grep_long_max_count_separate_arg() {
+        // Space-separated value form: `--max-count 1`.
+        let result = run_grep(&["--max-count", "1", "o"], Some("foo\nboo\nzoo"))
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "foo\n");
+    }
+
+    #[tokio::test]
+    async fn test_grep_long_regexp_multiple() {
+        let result = run_grep(&["--regexp=foo", "--regexp", "baz"], Some("foo\nbar\nbaz"))
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "foo\nbaz\n");
+    }
+
+    #[tokio::test]
+    async fn test_grep_long_fixed_strings() {
+        let result = run_grep(&["--fixed-strings", "a.b"], Some("a.b\naxb"))
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "a.b\n");
+    }
+
+    #[tokio::test]
+    async fn test_grep_long_word_regexp() {
+        let result = run_grep(&["--word-regexp", "foo"], Some("foo\nfoobar\nbar foo"))
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "foo\nbar foo\n");
+    }
+
+    #[tokio::test]
+    async fn test_grep_long_missing_value_errors() {
+        let result = run_grep(&["--max-count"], Some("foo")).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_grep_only_matching_byte_offset() {
+        // -b with -o reports the byte offset of the match, not the line start.
+        let result = run_grep(&["-ob", "bar"], Some("foobar\n")).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "3:bar\n");
+    }
+
+    #[tokio::test]
+    async fn test_grep_perl_catastrophic_backtrack_is_bounded() {
+        // TM-DOS-025: a classic catastrophic-backtracking pattern against a
+        // long non-matching line must terminate (backtrack-limit -> "no match")
+        // rather than hang the sandbox.
+        let haystack = format!("{}!", "a".repeat(40));
+        let result = run_grep(&["-P", r"(a+)+$"], Some(&haystack)).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+        assert_eq!(result.stdout, "");
     }
 }

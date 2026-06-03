@@ -272,7 +272,7 @@ max_ast_depth: 100,           // Parser recursion (TM-DOS-022)
 |----|--------|--------------|------------|--------|
 | TM-DOS-023 | Long computation | Complex awk/sed regex | Timeout (30s) | **MITIGATED** |
 | TM-DOS-024 | Parser hang | Malformed input | `parser_timeout` (5s) + `max_parser_operations` | **MITIGATED** |
-| TM-DOS-025 | Regex backtrack | `grep "a](*b)*c" file` | Regex crate limits | Partial |
+| TM-DOS-025 | Regex backtrack | `grep "a](*b)*c" file`; `grep -P '(a+)+$' file` | Default `regex` engine is linear-time (no catastrophic backtracking); `grep -P`/`sed` fancy-regex paths are capped by `FANCY_BACKTRACK_LIMIT` (1M steps) — a match that exceeds it yields "no match" rather than hanging | **MITIGATED** |
 | TM-DOS-027 | Builtin parser recursion | Deeply nested awk/jq expressions | `MAX_AWK_PARSER_DEPTH` (100) + `MAX_JQ_JSON_DEPTH` (100) | **MITIGATED** |
 | TM-DOS-028 | Diff algorithm DoS | `diff` on two large unrelated files | LCS matrix capped at 10M cells; falls back to simple line-by-line output | **MITIGATED** |
 | TM-DOS-029 | Arithmetic overflow/panic | `$(( 2 ** -1 ))`, `$(( 1 << 64 ))`, `i64::MIN / -1` | Arithmetic ops use `wrapping_*` / saturating semantics — `i64::MIN / -1` and unary negate go through `wrapping_neg`; `<<` / `>>` clamp the shift amount | **MITIGATED** |
@@ -1389,7 +1389,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Threat ID | Vulnerability | Impact | Rationale |
 |-----------|---------------|--------|-----------|
 | TM-DOS-011 | Symlinks not followed | Functionality gap | By design - prevents symlink attacks |
-| TM-DOS-025 | Regex backtracking | CPU exhaustion | Regex crate has internal limits |
+| TM-DOS-025 | Regex backtracking | CPU exhaustion | Linear-time `regex` engine by default; fancy-regex paths (`grep -P`, `sed`) capped by `FANCY_BACKTRACK_LIMIT` |
 | TM-DOS-033 | AWK unbounded loops | CPU exhaustion | 30s timeout backstop |
 | TM-UNI-004 | Zero-width chars in variable names | Variable confusion | Matches Bash behavior |
 | TM-UNI-006 | Homoglyph filenames | Visual confusion | Impractical to fully detect |
