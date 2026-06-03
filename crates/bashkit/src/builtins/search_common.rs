@@ -13,6 +13,11 @@ pub(crate) const REGEX_SIZE_LIMIT: usize = 1_000_000;
 /// Default DFA size limit (1 MB).
 pub(crate) const REGEX_DFA_SIZE_LIMIT: usize = 1_000_000;
 
+/// Backtracking step cap for the fancy-regex (PCRE / `grep -P`) engine.
+/// Bounds worst-case backtracking so a pathological pattern can't hang the
+/// sandbox (mirrors `sed.rs`'s fallback limit; see TM-INF threat model).
+pub(crate) const FANCY_BACKTRACK_LIMIT: usize = 1_000_000;
+
 /// Build a regex with enforced size limits.
 pub(crate) fn build_regex(pattern: &str) -> std::result::Result<Regex, regex::Error> {
     build_regex_opts(pattern, false)
@@ -28,6 +33,60 @@ pub(crate) fn build_regex_opts(
         .size_limit(REGEX_SIZE_LIMIT)
         .dfa_size_limit(REGEX_DFA_SIZE_LIMIT)
         .build()
+}
+
+/// A compiled search pattern backed by either the default linear-time `regex`
+/// engine or the backtracking `fancy_regex` engine (used for `grep -P`,
+/// enabling lookaround and backreferences that `regex` rejects).
+///
+/// The two engines expose different APIs (`fancy_regex` returns `Result` from
+/// `is_match`/`find_iter`); this enum hides that behind a uniform surface so
+/// callers needn't branch on the engine. Match failures from the backtracking
+/// engine (e.g. hitting `FANCY_BACKTRACK_LIMIT`) are treated as "no match".
+pub(crate) enum Matcher {
+    Standard(Regex),
+    Fancy(fancy_regex::Regex),
+}
+
+impl Matcher {
+    /// Whether `text` contains at least one match.
+    pub(crate) fn is_match(&self, text: &str) -> bool {
+        match self {
+            Matcher::Standard(re) => re.is_match(text),
+            Matcher::Fancy(re) => re.is_match(text).unwrap_or(false),
+        }
+    }
+
+    /// Byte ranges `(start, end)` of all non-overlapping matches, left to
+    /// right. Slice `text[start..end]` to recover the matched substring.
+    pub(crate) fn find_ranges(&self, text: &str) -> Vec<(usize, usize)> {
+        match self {
+            Matcher::Standard(re) => re.find_iter(text).map(|m| (m.start(), m.end())).collect(),
+            // `find_iter` yields `Result<Match, _>`; `flatten` drops the Err
+            // arm (backtrack-limit / internal errors) — same "no match" policy
+            // as `is_match`.
+            Matcher::Fancy(re) => re
+                .find_iter(text)
+                .flatten()
+                .map(|m| (m.start(), m.end()))
+                .collect(),
+        }
+    }
+}
+
+/// Build a PCRE-style matcher (`grep -P`) with enforced size and backtracking
+/// limits and optional case-insensitivity.
+pub(crate) fn build_fancy_matcher(
+    pattern: &str,
+    case_insensitive: bool,
+) -> std::result::Result<Matcher, fancy_regex::Error> {
+    fancy_regex::RegexBuilder::new(pattern)
+        .case_insensitive(case_insensitive)
+        .delegate_size_limit(REGEX_SIZE_LIMIT)
+        .delegate_dfa_size_limit(REGEX_DFA_SIZE_LIMIT)
+        .backtrack_limit(FANCY_BACKTRACK_LIMIT)
+        .build()
+        .map(Matcher::Fancy)
 }
 
 /// Parse a numeric flag argument from short-flag character stream.

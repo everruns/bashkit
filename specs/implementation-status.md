@@ -368,18 +368,27 @@ None currently tracked.
 **Skipped Tests: 0** (all grep tests pass)
 
 **Implemented Features:**
-- Basic flags: `-i`, `-v`, `-c`, `-n`, `-o`, `-l`, `-w`, `-E`, `-F`, `-q`, `-m`, `-x`
+- Basic flags: `-i`, `-v`, `-c`, `-n`, `-o`, `-l`, `-w`, `-E`, `-F`, `-G`, `-q`, `-m`, `-x`
 - Context: `-A`, `-B`, `-C` (after/before/context lines)
 - Multiple patterns: `-e`
 - Include/exclude: `--include=GLOB`, `--exclude=GLOB` for recursive search
 - Pattern file: `-f` (requires file to exist in VFS)
 - Filename control: `-H` (always show), `-h` (never show)
-- Byte offset: `-b`
+- Byte offset: `-b` (with `-o`, reports the match's offset, not the line start)
 - Null-terminated: `-z` (split on `\0` instead of `\n`)
 - Recursive: `-r`/`-R` (uses VFS read_dir)
 - Binary handling: `-a` (filter null bytes), auto-detect binary (null byte → "Binary file ... matches")
-- Perl regex: `-P` (regex crate supports PCRE features)
-- No-op flags: `--color`, `--line-buffered`
+- Perl regex: `-P` — true PCRE via `fancy_regex` (lookaround, backreferences;
+  bounded by `FANCY_BACKTRACK_LIMIT`). Recursive `-P` bypasses the indexed
+  search fast-path so backend regex semantics can't drop PCRE-only matches.
+- GNU long-option aliases for all of the above, e.g. `--ignore-case`,
+  `--invert-match`, `--line-number`, `--count`, `--only-matching`,
+  `--word-regexp`, `--line-regexp`, `--fixed-strings`, `--extended-regexp`,
+  `--basic-regexp`, `--perl-regexp`, `--quiet`/`--silent`, `--byte-offset`,
+  `--text`, `--null-data`, `--recursive`, `--with-filename`, `--no-filename`,
+  `--regexp=PAT`, `--file=FILE`, `--max-count=N`, `--after-context=N`,
+  `--before-context=N`, `--context=N` (both `--name=value` and `--name value`)
+- No-op flags: `--color`/`--colour`, `--line-buffered`
 
 ### JQ Limitations
 
