@@ -114,7 +114,6 @@ jobs:
           RELEASE_TAG: ${{ needs.validate-tag.outputs.tag }}
         run: |
           TAG="$RELEASE_TAG"
-          VERSION="${TAG#v}"
 
           # Validate checksum files exist and are non-empty
           for f in bashkit-aarch64-apple-darwin.tar.gz.sha256 \
@@ -146,7 +145,6 @@ jobs:
           class Bashkit < Formula
             desc "Virtual bash interpreter with sandboxed execution"
             homepage "${{ github.server_url }}/${{ github.repository }}"
-            version "${VERSION}"
             license "Apache-2.0"
 
             on_macos do
