@@ -1097,7 +1097,7 @@ fn error_kind(e: &Error) -> String {
 }
 
 /// Build a ToolResponse for a timed-out execution (exit code 124, like bash `timeout`).
-fn timeout_response(dur: Duration) -> ToolResponse {
+pub(crate) fn timeout_response(dur: Duration) -> ToolResponse {
     ToolResponse {
         stdout: String::new(),
         stderr: format!(

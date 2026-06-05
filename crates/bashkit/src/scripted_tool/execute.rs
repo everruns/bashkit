@@ -4,13 +4,14 @@ use super::{ScriptedExecutionTrace, ScriptedTool, ToolDefExtension, extension::I
 use crate::Bash;
 use crate::tool::{
     Tool, ToolError, ToolExecution, ToolOutputChunk, ToolRequest, ToolResponse, ToolStatus,
-    VERSION, localized, tool_output_from_response, tool_request_from_value, tool_request_schema,
-    tool_response_schema,
+    VERSION, localized, timeout_response, tool_output_from_response, tool_request_from_value,
+    tool_request_schema, tool_response_schema,
 };
 use crate::tool_def::usage_from_schema;
 use async_trait::async_trait;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 // ============================================================================
 // ScriptedTool — internal helpers
@@ -114,39 +115,56 @@ impl ScriptedTool {
             };
         }
 
+        let timeout_ms = req.timeout_ms;
+        let commands = req.commands;
         let log: InvocationLog = Arc::new(Mutex::new(VecDeque::new()));
         let mut bash = self.create_bash(Arc::clone(&log));
 
-        let response = if let Some(sender) = stream_sender {
-            let output_cb = Box::new(move |stdout_chunk: &str, stderr_chunk: &str| {
-                if !stdout_chunk.is_empty() {
-                    let _ = sender.send(ToolOutputChunk {
-                        data: serde_json::json!(stdout_chunk),
-                        kind: "stdout".to_string(),
-                    });
-                }
-                if !stderr_chunk.is_empty() {
-                    let _ = sender.send(ToolOutputChunk {
-                        data: serde_json::json!(stderr_chunk),
-                        kind: "stderr".to_string(),
-                    });
-                }
-            });
-            bash.exec_streaming(&req.commands, output_cb).await
-        } else {
-            bash.exec(&req.commands).await
+        let fut = async {
+            let result = if let Some(sender) = stream_sender {
+                let output_cb = Box::new(move |stdout_chunk: &str, stderr_chunk: &str| {
+                    if !stdout_chunk.is_empty() {
+                        let _ = sender.send(ToolOutputChunk {
+                            data: serde_json::json!(stdout_chunk),
+                            kind: "stdout".to_string(),
+                        });
+                    }
+                    if !stderr_chunk.is_empty() {
+                        let _ = sender.send(ToolOutputChunk {
+                            data: serde_json::json!(stderr_chunk),
+                            kind: "stderr".to_string(),
+                        });
+                    }
+                });
+                bash.exec_streaming(&commands, output_cb).await
+            } else {
+                bash.exec(&commands).await
+            };
+
+            match result {
+                Ok(result) => result.into(),
+                Err(err) => ToolResponse {
+                    stdout: String::new(),
+                    stderr: err.to_string(),
+                    exit_code: 1,
+                    error: Some(err.to_string()),
+                    ..Default::default()
+                },
+            }
         };
 
-        let response = match response {
-            Ok(result) => result.into(),
-            Err(err) => ToolResponse {
-                stdout: String::new(),
-                stderr: err.to_string(),
-                exit_code: 1,
-                error: Some(err.to_string()),
-                ..Default::default()
-            },
+        // Keep ScriptedTool on the shared ToolRequest contract: per-call
+        // timeouts must abort the whole orchestration, including callbacks.
+        let response = if let Some(ms) = timeout_ms {
+            let duration = Duration::from_millis(ms);
+            match tokio::time::timeout(duration, fut).await {
+                Ok(response) => response,
+                Err(_) => timeout_response(duration),
+            }
+        } else {
+            fut.await
         };
+
         let invocations: Vec<_> = log
             .lock()
             .expect("scripted invocation log poisoned")
@@ -369,6 +387,67 @@ mod tests {
                 |_args: &ToolArgs| Ok("[]\n".to_string()),
             )
             .build()
+    }
+
+    #[tokio::test]
+    async fn test_scripted_tool_execute_honors_timeout_ms() {
+        let tool = ScriptedTool::builder("timeout_test")
+            .async_tool_fn(
+                ToolDef::new("slow", "Slow async tool"),
+                |_args: ToolArgs| async move {
+                    tokio::time::sleep(Duration::from_secs(10)).await;
+                    Ok("done\n".to_string())
+                },
+            )
+            .build();
+        let start = std::time::Instant::now();
+
+        let resp = tool
+            .execute(ToolRequest {
+                commands: "slow".to_string(),
+                timeout_ms: Some(50),
+            })
+            .await;
+
+        assert_eq!(resp.exit_code, 124);
+        assert_eq!(resp.error, Some("timeout".to_string()));
+        assert!(resp.stderr.contains("timed out"));
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "timeout_ms should abort before sleep completes"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_scripted_tool_execute_with_status_honors_timeout_ms() {
+        let tool = ScriptedTool::builder("timeout_status_test")
+            .async_tool_fn(
+                ToolDef::new("slow", "Slow async tool"),
+                |_args: ToolArgs| async move {
+                    tokio::time::sleep(Duration::from_secs(10)).await;
+                    Ok("done\n".to_string())
+                },
+            )
+            .build();
+        let start = std::time::Instant::now();
+
+        let resp = tool
+            .execute_with_status(
+                ToolRequest {
+                    commands: "slow".to_string(),
+                    timeout_ms: Some(50),
+                },
+                Box::new(|_| {}),
+            )
+            .await;
+
+        assert_eq!(resp.exit_code, 124);
+        assert_eq!(resp.error, Some("timeout".to_string()));
+        assert!(resp.stderr.contains("timed out"));
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "timeout_ms should abort before sleep completes"
+        );
     }
 
     #[tokio::test]
