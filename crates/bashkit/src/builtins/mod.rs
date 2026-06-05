@@ -289,6 +289,7 @@ pub(crate) fn check_help_version(
 ) -> Option<ExecResult> {
     for arg in args {
         match arg.as_str() {
+            "--" => break,
             "--help" => return Some(ExecResult::ok(help_text.to_string())),
             "--version" => {
                 if let Some(ver) = version {
@@ -1133,6 +1134,13 @@ mod tests {
     fn check_help_version_stops_at_non_flag() {
         let args = vec!["file.txt".to_string(), "--help".to_string()];
         let r = check_help_version(&args, "usage\n", None);
+        assert!(r.is_none());
+    }
+
+    #[test]
+    fn check_help_version_stops_at_option_delimiter() {
+        let args = vec!["--".to_string(), "--help".to_string()];
+        let r = check_help_version(&args, "usage\n", Some("v1"));
         assert!(r.is_none());
     }
 

@@ -4898,6 +4898,12 @@ fn rg_option_takes_value(arg: &str) -> bool {
     )
 }
 
+fn rg_arg_before_delimiter(args: &[String], needle: &str) -> bool {
+    args.iter()
+        .take_while(|arg| arg.as_str() != "--")
+        .any(|arg| arg == needle)
+}
+
 fn rg_generate_kind(args: &[String]) -> Result<Option<String>> {
     let mut i = 0;
     while i < args.len() {
@@ -5042,16 +5048,16 @@ impl Builtin for Rg {
             "  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n",
             "  -g, --glob GLOB\tinclude/exclude paths by glob (!GLOB excludes)\n  --iglob GLOB\tcase-insensitive include/exclude path glob\n  --glob-case-insensitive\tmake -g/--glob rules case-insensitive\n  --no-glob-case-insensitive\tdisable case-insensitive -g/--glob rules\n",
         );
-        if ctx.args.iter().any(|arg| arg == "-h") {
+        if rg_arg_before_delimiter(ctx.args, "-h") {
             return Ok(ExecResult::ok(help_text));
         }
-        if ctx.args.iter().any(|arg| arg == "-V") {
+        if rg_arg_before_delimiter(ctx.args, "-V") {
             return Ok(ExecResult::ok("rg (bashkit) 0.1\n".to_string()));
         }
         if let Some(r) = super::check_help_version(ctx.args, &help_text, Some("rg (bashkit) 0.1")) {
             return Ok(r);
         }
-        if ctx.args.iter().any(|arg| arg == "--pcre2-version") {
+        if rg_arg_before_delimiter(ctx.args, "--pcre2-version") {
             return Ok(ExecResult::ok(
                 "PCRE2 10.45 is available (JIT is available)\n".to_string(),
             ));
@@ -6963,6 +6969,10 @@ mod tests {
     ];
 
     const DIFF_DASH_PATTERN_FILES: &[(&str, &[u8])] = &[("/proj/dash.txt", b"-needle\nneedle\n")];
+    const DIFF_DASH_FLAG_FILES: &[(&str, &[u8])] = &[(
+        "/proj/dash-flags.txt",
+        b"-h\n-V\n--help\n--version\n--pcre2-version\nneedle\n",
+    )];
 
     const DIFF_PCRE2_FILES: &[(&str, &[u8])] = &[(
         "/proj/pcre.txt",
@@ -7548,6 +7558,46 @@ mod tests {
             args: &["--", "-needle", "proj/dash.txt"],
             stdin: None,
             files: DIFF_DASH_PATTERN_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "dash delimiter treats short help as pattern",
+            args: &["--", "-h", "proj/dash-flags.txt"],
+            stdin: None,
+            files: DIFF_DASH_FLAG_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "dash delimiter treats short version as pattern",
+            args: &["--", "-V", "proj/dash-flags.txt"],
+            stdin: None,
+            files: DIFF_DASH_FLAG_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "dash delimiter treats long help as pattern",
+            args: &["--", "--help", "proj/dash-flags.txt"],
+            stdin: None,
+            files: DIFF_DASH_FLAG_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "dash delimiter treats long version as pattern",
+            args: &["--", "--version", "proj/dash-flags.txt"],
+            stdin: None,
+            files: DIFF_DASH_FLAG_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "dash delimiter treats pcre2 version as pattern",
+            args: &["--", "--pcre2-version", "proj/dash-flags.txt"],
+            stdin: None,
+            files: DIFF_DASH_FLAG_FILES,
             cwd: "/",
             output: RgDiffOutput::Exact,
         },
