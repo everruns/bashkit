@@ -3808,6 +3808,51 @@ f
         assert_eq!(counts, vec![0, 0]);
     }
 
+    /// TM-INF-023: local compound arrays must not leak after a function returns.
+    #[tokio::test]
+    async fn tm_inf_023_function_local_arrays_do_not_leak() {
+        let mut bash = Bash::builder()
+            .session_limits(SessionLimits::unlimited())
+            .build();
+
+        let script = r#"
+outer=(global value)
+declare -A outer_map=([k]=global)
+f() {
+    local -a outer=(token value)
+    local -a secret_arr=(hidden token)
+    local -A outer_map=([k]=secret)
+    local -A secret_map=([k]=hidden)
+    printf "inside_outer=%s\n" "${outer[*]}"
+    printf "inside_secret_arr=%s\n" "${secret_arr[*]}"
+    printf "inside_outer_map=%s\n" "${outer_map[*]}"
+    printf "inside_secret_map=%s\n" "${secret_map[*]}"
+}
+f
+printf "outside_outer=%s\n" "${outer[*]}"
+printf "outside_secret_arr=%s\n" "${secret_arr[*]}"
+printf "outside_outer_map=%s\n" "${outer_map[*]}"
+printf "outside_secret_map=%s\n" "${secret_map[*]}"
+"#;
+        let result = bash.exec(script).await.unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        let lines: Vec<&str> = result.stdout.lines().collect();
+        assert_eq!(
+            lines,
+            vec![
+                "inside_outer=token value",
+                "inside_secret_arr=hidden token",
+                "inside_outer_map=secret",
+                "inside_secret_map=hidden",
+                "outside_outer=global value",
+                "outside_secret_arr=",
+                "outside_outer_map=global",
+                "outside_secret_map=",
+            ]
+        );
+    }
+
     /// TM-DOS-060: Array entry bomb — indexed array with many entries.
     #[tokio::test]
     async fn tm_dos_060_array_entry_bomb() {
