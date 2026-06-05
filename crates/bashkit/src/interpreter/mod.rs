@@ -2279,11 +2279,11 @@ impl Interpreter {
                 }
             }
 
-            // Run ERR trap on non-zero exit unless suppressed by AND-OR list, negated pipeline, or compound context
+            // Run ERR trap on non-zero exit (unless in conditional chain).
+            // Lists are suppressed here because execute_list already fired
+            // the ERR trap for the failing subcommand; firing again would
+            // double-invoke the trap (e.g. `set -e; trap 'f' ERR; false`).
             if exit_code != 0 {
-                // Lists are suppressed here because execute_list already fired
-                // the ERR trap for the failing subcommand; firing again would
-                // double-invoke the trap.
                 let suppressed = Self::suppresses_script_body_err_exit(command, &result);
                 if !suppressed {
                     self.run_err_trap(&mut stdout, &mut stderr).await;
