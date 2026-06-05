@@ -608,6 +608,32 @@ async fn snapshot_restore_does_not_reset_session_exec_limit_with_tampered_counte
 }
 
 #[tokio::test]
+async fn snapshot_restore_extreme_exec_counter_errors_without_overflow() {
+    let session_limits = SessionLimits::new().max_exec_calls(2);
+    let mut bash = Bash::builder().session_limits(session_limits).build();
+    bash.exec("echo first").await.unwrap();
+    let bytes = bash.snapshot().unwrap();
+
+    let mut tampered_json: serde_json::Value = serde_json::from_slice(&bytes[32..]).unwrap();
+    tampered_json["session_exec_calls"] = serde_json::json!(u64::MAX);
+    let tampered_snapshot: Snapshot = serde_json::from_value(tampered_json).unwrap();
+    let tampered_bytes = tampered_snapshot.to_bytes().unwrap();
+
+    bash.restore_snapshot(&tampered_bytes).unwrap();
+    let result = bash.exec("echo must-not-wrap").await;
+    assert!(
+        result.is_err(),
+        "restored u64::MAX exec counter must not panic or wrap below the limit"
+    );
+    let err_str = result.unwrap_err().to_string();
+    assert!(
+        err_str.contains("session exec() call limit"),
+        "error must be session exec limit, got: {err_str}"
+    );
+    assert_eq!(bash.session_counters().1, u64::MAX);
+}
+
+#[tokio::test]
 async fn keyed_snapshot_restore_carries_session_exec_budget_forward() {
     let key = b"session-budget-hmac-key";
     let session_limits = SessionLimits::new().max_exec_calls(2);
