@@ -108,6 +108,13 @@ echo "\$ \\ \\ \p \q"
 $ \ \ \p \q
 ### end
 
+### quote_backslash_dollar_after_single_quote
+# Escaped dollar in a double-quoted continuation remains literal, without leaking sentinels
+printf '<%s>\n' 'x'"\$HOME"
+### expect
+<x$HOME>
+### end
+
 ### quote_no_c_escape_in_double
 # C-style backslash escapes NOT special in double quotes
 echo "\a \b"
