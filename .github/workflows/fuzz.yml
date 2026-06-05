@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       duration:
-        description: 'Fuzzing duration in seconds per target'
+        description: 'Fuzzing duration in seconds per target (positive integer)'
         required: false
         default: '300'
 
@@ -47,11 +47,19 @@ jobs:
 
       - name: Run fuzzer - ${{ matrix.target }}
         working-directory: crates/bashkit
+        env:
+          DURATION_INPUT: ${{ github.event.inputs.duration || '300' }}
         run: |
-          # Run for specified duration (default 5 minutes per target)
-          DURATION="${{ github.event.inputs.duration || '300' }}"
+          # Validate duration is a positive integer before use (prevents shell injection
+          # from workflow_dispatch inputs being interpolated directly into the shell).
+          # ^[1-9][0-9]*$ rejects 0, negatives, and leading zeros (avoids bash octal
+          # arithmetic ambiguity, e.g. "09" would error on -eq comparisons).
+          if ! [[ "$DURATION_INPUT" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::duration must be a positive integer with no leading zeros, got: $DURATION_INPUT"
+            exit 1
+          fi
           cargo +nightly fuzz run ${{ matrix.target }} -- \
-            -max_total_time=$DURATION \
+            -max_total_time="$DURATION_INPUT" \
             -print_final_stats=1
 
       - name: Upload crash artifacts
