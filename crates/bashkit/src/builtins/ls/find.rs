@@ -114,10 +114,8 @@ pub(super) fn parse_find_args(
                 match t.as_str() {
                     "f" | "d" | "l" => {
                         opts.type_filter = Some(t.chars().next().unwrap());
-                        if negate_next {
-                            opts.negate_type = true;
-                            negate_next = false;
-                        }
+                        opts.negate_type = negate_next;
+                        negate_next = false;
                     }
                     _ => {
                         return Err(ExecResult::err(format!("find: unknown type '{}'\n", t), 1));
@@ -141,6 +139,8 @@ pub(super) fn parse_find_args(
                         ));
                     }
                 }
+                // Consume unsupported negation targets so ! cannot leak to a later test.
+                negate_next = false;
             }
             "-mindepth" => {
                 i += 1;
@@ -159,12 +159,16 @@ pub(super) fn parse_find_args(
                         ));
                     }
                 }
+                // Consume unsupported negation targets so ! cannot leak to a later test.
+                negate_next = false;
             }
             "-print" => {
-                // Default action, ignore
+                // Default action, ignore. Consume ! so it cannot leak to a later test.
+                negate_next = false;
             }
             "-print0" => {
                 opts.print0 = true;
+                negate_next = false;
             }
             "-printf" => {
                 i += 1;
@@ -175,6 +179,8 @@ pub(super) fn parse_find_args(
                     ));
                 }
                 opts.printf_format = Some(args[i].clone());
+                // Consume unsupported negation targets so ! cannot leak to a later test.
+                negate_next = false;
             }
             "-exec" | "-execdir" => {
                 i += 1;
@@ -190,6 +196,8 @@ pub(super) fn parse_find_args(
                     opts.exec_args.push(a.clone());
                     i += 1;
                 }
+                // Consume unsupported negation targets so ! cannot leak to a later test.
+                negate_next = false;
             }
             "-not" | "!" => {
                 negate_next = true;
