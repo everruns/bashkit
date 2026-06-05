@@ -3,8 +3,8 @@
 # crates/bashkit/benches/results/, next to the bench source.
 #
 # Usage:
-#   ./scripts/bench-sqlite.sh          # run + save
-#   ./scripts/bench-sqlite.sh --dry    # parse last run without re-running
+#   ./scripts/bench-sqlite.sh                  # run + save
+#   ./scripts/bench-sqlite.sh --dry OUTPUT     # parse trusted output without re-running
 set -euo pipefail
 
 RESULTS_DIR="crates/bashkit/benches/results"
@@ -15,17 +15,35 @@ CPUS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo "?")
 TIMESTAMP=$(date +%s)
 MONIKER="${HOSTNAME}-${OS}-${ARCH}"
 
-OUTPUT_FILE=/tmp/criterion-sqlite-output.txt
+usage() {
+    echo "Usage: $0 [--dry TRUSTED_OUTPUT_FILE]" >&2
+}
 
-if [[ "${1:-}" != "--dry" ]]; then
+OUTPUT_FILE=""
+CLEAN_OUTPUT_FILE=0
+
+if [[ "${1:-}" == "--dry" ]]; then
+    if [[ $# -ne 2 ]]; then
+        usage
+        exit 2
+    fi
+    OUTPUT_FILE="$2"
+    if [[ -L "$OUTPUT_FILE" || ! -f "$OUTPUT_FILE" || ! -r "$OUTPUT_FILE" ]]; then
+        echo "Dry output must be a readable regular file: $OUTPUT_FILE" >&2
+        exit 1
+    fi
+    echo "Using trusted output from $OUTPUT_FILE"
+elif [[ $# -eq 0 ]]; then
+    # Security: mktemp creates a private file so tee cannot follow a pre-created /tmp symlink.
+    OUTPUT_FILE=$(mktemp "${TMPDIR:-/tmp}/criterion-sqlite-output.XXXXXX")
+    CLEAN_OUTPUT_FILE=1
+    trap 'if [[ "$CLEAN_OUTPUT_FILE" -eq 1 ]]; then rm -f "$OUTPUT_FILE"; fi' EXIT
+
     echo "Running sqlite benchmark..."
     cargo bench --bench sqlite --features sqlite 2>&1 | tee "$OUTPUT_FILE"
 else
-    if [[ ! -f "$OUTPUT_FILE" ]]; then
-        echo "No previous output found at $OUTPUT_FILE"
-        exit 1
-    fi
-    echo "Using cached output from $OUTPUT_FILE"
+    usage
+    exit 2
 fi
 
 extract_times() {
