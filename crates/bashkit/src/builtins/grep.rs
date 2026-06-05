@@ -1073,32 +1073,6 @@ async fn try_indexed_search(
     Some(inputs)
 }
 
-fn path_contains_excluded_dir(
-    path: &std::path::Path,
-    root: &std::path::Path,
-    exclude_dir_patterns: &[String],
-) -> bool {
-    if exclude_dir_patterns.is_empty() {
-        return false;
-    }
-
-    let Ok(relative) = path.strip_prefix(root) else {
-        return false;
-    };
-    let Some(parent) = relative.parent() else {
-        return false;
-    };
-
-    parent.components().any(|component| {
-        let std::path::Component::Normal(name) = component else {
-            return false;
-        };
-        let Some(name) = name.to_str() else {
-            return false;
-        };
-        exclude_dir_patterns.iter().any(|p| glob_matches(name, p))
-    })
-}
 
 #[cfg(test)]
 mod tests {
