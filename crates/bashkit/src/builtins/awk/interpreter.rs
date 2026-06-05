@@ -8,11 +8,14 @@ use super::{AwkAction, AwkExpr, AwkFunctionDef, AwkOutputTarget, AwkPattern, Awk
 use crate::builtins::MAX_FORMAT_WIDTH;
 use crate::builtins::limits::{
     AWK_MAX_CALL_DEPTH as MAX_AWK_CALL_DEPTH,
+    AWK_MAX_GETLINE_CACHE_BYTES as MAX_GETLINE_CACHE_BYTES,
     AWK_MAX_GETLINE_CACHED_FILES as MAX_GETLINE_CACHED_FILES,
-    AWK_MAX_OUTPUT_BYTES as MAX_AWK_OUTPUT_BYTES, AWK_MAX_OUTPUT_TARGETS as MAX_AWK_OUTPUT_TARGETS,
+    AWK_MAX_GETLINE_FILE_BYTES as MAX_GETLINE_FILE_BYTES,
+    AWK_MAX_OUTPUT_BYTES as MAX_AWK_OUTPUT_BYTES,
+    AWK_MAX_OUTPUT_TARGETS as MAX_AWK_OUTPUT_TARGETS,
 };
 use crate::builtins::search_common::build_regex;
-use crate::fs::FileSystem;
+use crate::fs::{FileSystem, normalize_path};
 use crate::limits::ExecutionLimits;
 
 /// Flow control signal from action execution
@@ -31,6 +34,7 @@ pub(super) enum AwkFlow {
 // - AWK_MAX_OUTPUT_BYTES (total stdout+stderr+file redirects, 10 MB)
 // - AWK_MAX_OUTPUT_TARGETS (distinct redirected output files).
 // - AWK_MAX_GETLINE_CACHED_FILES (distinct files held open by `getline`).
+// - AWK_MAX_GETLINE_FILE_BYTES / AWK_MAX_GETLINE_CACHE_BYTES (retained input bytes).
 
 pub(super) struct AwkInterpreter {
     pub(super) state: AwkState,
@@ -57,8 +61,10 @@ pub(super) struct AwkInterpreter {
     /// for attacker-controlled scripts that print tiny records to many paths.
     total_output_bytes: usize,
     /// Cached file inputs for `getline var < file` redirection.
-    /// Maps resolved path -> (lines, current_position).
+    /// Maps normalized resolved path -> (lines, current_position).
     file_inputs: HashMap<String, (Vec<String>, usize)>,
+    /// Approximate raw input bytes retained by `file_inputs`.
+    file_input_bytes: usize,
     /// VFS reference for lazy file reads (getline < file).
     pub(super) fs: Option<Arc<dyn FileSystem>>,
     /// Working directory for resolving relative paths.
@@ -84,12 +90,22 @@ impl AwkInterpreter {
             file_appends: HashMap::new(),
             total_output_bytes: 0,
             file_inputs: HashMap::new(),
+            file_input_bytes: 0,
             call_depth: 0,
             fs: None,
             cwd: PathBuf::from("/"),
             range_active: HashMap::new(),
             max_loop_iterations: ExecutionLimits::default().max_loop_iterations,
         }
+    }
+
+    fn resolve_getline_path(&self, path_str: &str) -> String {
+        let resolved = if path_str.starts_with('/') {
+            PathBuf::from(path_str)
+        } else {
+            self.cwd.join(path_str)
+        };
+        normalize_path(&resolved).to_string_lossy().to_string()
     }
 
     /// Load a file into the `file_inputs` cache if not already present.
@@ -99,7 +115,7 @@ impl AwkInterpreter {
         if self.file_inputs.contains_key(resolved) {
             return true;
         }
-        // Guard: cap number of cached files to prevent memory exhaustion
+        // Guard: cap cache entries and retained bytes before whole-file reads.
         if self.file_inputs.len() >= MAX_GETLINE_CACHED_FILES {
             return false;
         }
@@ -110,18 +126,32 @@ impl AwkInterpreter {
         let p = PathBuf::from(resolved);
         // Spawn a thread with its own runtime to avoid blocking the current async runtime.
         let result = std::thread::spawn(move || {
-            tokio::runtime::Builder::new_current_thread()
+            let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
-                .unwrap()
-                .block_on(fs.read_file(&p))
+                .unwrap();
+            let meta = runtime.block_on(fs.stat(&p))?;
+            if meta.size > MAX_GETLINE_FILE_BYTES as u64 {
+                return Err(std::io::Error::other("awk getline input too large").into());
+            }
+            runtime.block_on(fs.read_file(&p))
         })
         .join();
         match result {
             Ok(Ok(bytes)) => {
+                if bytes.len() > MAX_GETLINE_FILE_BYTES {
+                    return false;
+                }
+                let Some(total) = self.file_input_bytes.checked_add(bytes.len()) else {
+                    return false;
+                };
+                if total > MAX_GETLINE_CACHE_BYTES {
+                    return false;
+                }
                 let text = String::from_utf8_lossy(&bytes).into_owned();
                 let lines: Vec<String> = text.lines().map(|l| l.to_string()).collect();
                 self.file_inputs.insert(resolved.to_string(), (lines, 0));
+                self.file_input_bytes = total;
                 true
             }
             _ => false,
@@ -349,11 +379,7 @@ impl AwkInterpreter {
             }
             AwkExpr::GetlineFile { var, file } => {
                 let path_str = self.eval_expr(file).as_string();
-                let resolved = if path_str.starts_with('/') {
-                    path_str.clone()
-                } else {
-                    self.cwd.join(&path_str).to_string_lossy().to_string()
-                };
+                let resolved = self.resolve_getline_path(&path_str);
 
                 if !self.ensure_file_loaded(&resolved) {
                     return AwkValue::Number(-1.0);
@@ -1233,11 +1259,7 @@ impl AwkInterpreter {
             AwkAction::GetlineFile { var, file } => {
                 // Read next line from file (action context — return value discarded).
                 let path_str = self.eval_expr(file).as_string();
-                let resolved = if path_str.starts_with('/') {
-                    path_str.clone()
-                } else {
-                    self.cwd.join(&path_str).to_string_lossy().to_string()
-                };
+                let resolved = self.resolve_getline_path(&path_str);
 
                 if !self.ensure_file_loaded(&resolved) {
                     return AwkFlow::Continue;

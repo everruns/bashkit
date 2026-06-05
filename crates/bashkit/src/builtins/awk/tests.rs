@@ -3,7 +3,9 @@
 use super::parser::AwkParser;
 use super::{Awk, csv_split_fields};
 use crate::builtins::limits::{
+    AWK_MAX_GETLINE_CACHE_BYTES as MAX_GETLINE_CACHE_BYTES,
     AWK_MAX_GETLINE_CACHED_FILES as MAX_GETLINE_CACHED_FILES,
+    AWK_MAX_GETLINE_FILE_BYTES as MAX_GETLINE_FILE_BYTES,
     AWK_MAX_OUTPUT_TARGETS as MAX_OUTPUT_TARGETS,
 };
 use crate::builtins::{Builtin, Context};
@@ -1116,6 +1118,72 @@ async fn test_awk_getline_file_size_limit() {
     .await
     .unwrap();
     assert_eq!(result.stdout, "-1\n");
+}
+
+#[tokio::test]
+async fn test_awk_getline_file_normalizes_cache_key() {
+    let fs = Arc::new(InMemoryFs::new());
+    fs.write_file(std::path::Path::new("/tmp/data.txt"), b"one\ntwo\n")
+        .await
+        .unwrap();
+
+    let result = run_awk_with_custom_fs(
+        &[r#"BEGIN{
+            r1=(getline a < "/tmp/data.txt");
+            r2=(getline b < "/tmp/./data.txt");
+            r3=(getline c < "/tmp/././data.txt");
+            print r1, a; print r2, b; print r3
+        }"#],
+        None,
+        fs,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.stdout, "1 one\n1 two\n0\n");
+}
+
+#[tokio::test]
+async fn test_awk_getline_file_builtin_size_limit() {
+    let fs = Arc::new(InMemoryFs::with_limits(crate::fs::FsLimits::unlimited()));
+    fs.write_file(
+        std::path::Path::new("/tmp/big.txt"),
+        &vec![b'x'; MAX_GETLINE_FILE_BYTES + 1],
+    )
+    .await
+    .unwrap();
+
+    let result = run_awk_with_custom_fs(
+        &[r#"BEGIN{r=(getline x < "/tmp/big.txt"); print r}"#],
+        None,
+        fs,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.stdout, "-1\n");
+}
+
+#[tokio::test]
+async fn test_awk_getline_file_total_cache_byte_limit() {
+    let fs = Arc::new(InMemoryFs::with_limits(crate::fs::FsLimits::unlimited()));
+    let chunk = MAX_GETLINE_CACHE_BYTES / 2 + 1;
+    fs.write_file(std::path::Path::new("/tmp/a.txt"), &vec![b'a'; chunk])
+        .await
+        .unwrap();
+    fs.write_file(std::path::Path::new("/tmp/b.txt"), &vec![b'b'; chunk])
+        .await
+        .unwrap();
+
+    let result = run_awk_with_custom_fs(
+        &[r#"BEGIN{r1=(getline a < "/tmp/a.txt"); r2=(getline b < "/tmp/b.txt"); print r1, r2}"#],
+        None,
+        fs,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.stdout, "1 -1\n");
 }
 
 // TM-INF-022: malformed-input corpus must not leak Debug shapes.
