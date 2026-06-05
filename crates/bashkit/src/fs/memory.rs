@@ -613,6 +613,10 @@ impl InMemoryFs {
         for path in lazy_paths {
             if let Some(FsEntry::LazyFile { loader, metadata }) = entries.remove(&path) {
                 let content = loader();
+                if let Err(_err) = self.check_write_limits(&entries, &path, content.len()) {
+                    entries.insert(path, FsEntry::LazyFile { loader, metadata });
+                    continue;
+                }
                 let mut metadata = metadata;
                 metadata.size = content.len() as u64;
                 entries.insert(path, FsEntry::File { content, metadata });
@@ -633,8 +637,7 @@ impl InMemoryFs {
                     });
                 }
                 FsEntry::LazyFile { .. } => {
-                    // All lazy files were materialized above
-                    unreachable!()
+                    // Lazy files that exceed limits stay lazy and are omitted.
                 }
                 FsEntry::Directory { metadata } => {
                     files.push(VfsEntry {
@@ -1212,9 +1215,13 @@ impl FileSystem for InMemoryFs {
                 return Ok(());
             }
             Some(FsEntry::LazyFile { .. }) => {
-                // Materialize lazy file before appending
+                // Materialize lazy file before appending.
                 if let Some(FsEntry::LazyFile { loader, metadata }) = entries.remove(&path) {
                     let loaded = loader();
+                    if let Err(err) = self.check_write_limits(&entries, &path, loaded.len()) {
+                        entries.insert(path, FsEntry::LazyFile { loader, metadata });
+                        return Err(err);
+                    }
                     let mut metadata = metadata;
                     metadata.size = loaded.len() as u64;
                     entries.insert(
@@ -1262,6 +1269,9 @@ impl FileSystem for InMemoryFs {
                     ..
                 } => {
                     current_total += file_content.len() as u64;
+                }
+                FsEntry::LazyFile { metadata, .. } => {
+                    current_total += metadata.size;
                 }
                 _ => {}
             }
@@ -2423,6 +2433,39 @@ mod tests {
 
         let result = fs.read_file(Path::new("/tmp/lazy.txt")).await;
         assert!(result.is_err());
+        assert!(fs.exists(Path::new("/tmp/lazy.txt")).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_lazy_file_snapshot_rejects_oversized_materialization() {
+        let limits = FsLimits::new().max_file_size(5);
+        let fs = InMemoryFs::with_limits(limits);
+        fs.add_lazy_file("/tmp/lazy.txt", 1, 0o644, Arc::new(|| b"toolarge".to_vec()));
+
+        let snapshot = fs.snapshot();
+        assert!(
+            !snapshot
+                .entries
+                .iter()
+                .any(|e| e.path == Path::new("/tmp/lazy.txt"))
+        );
+
+        let result = fs.read_file(Path::new("/tmp/lazy.txt")).await;
+        assert!(result.is_err());
+        assert!(fs.exists(Path::new("/tmp/lazy.txt")).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_lazy_file_append_rejects_oversized_materialization() {
+        let limits = FsLimits::new().max_file_size(5);
+        let fs = InMemoryFs::with_limits(limits);
+        fs.add_lazy_file("/tmp/lazy.txt", 1, 0o644, Arc::new(|| b"toolarge".to_vec()));
+
+        let append_result = fs.append_file(Path::new("/tmp/lazy.txt"), b"!").await;
+        assert!(append_result.is_err());
+
+        let read_result = fs.read_file(Path::new("/tmp/lazy.txt")).await;
+        assert!(read_result.is_err());
         assert!(fs.exists(Path::new("/tmp/lazy.txt")).await.unwrap());
     }
 
