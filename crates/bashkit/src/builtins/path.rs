@@ -243,6 +243,9 @@ impl Builtin for Realpath {
 /// `bashkit-coreutils-port` codegen tool — see `generated/readlink_args.rs`.
 /// Behaviour stays local against the bashkit VFS.
 ///
+/// Canonical modes follow VFS symlinks with a depth cap to avoid loops while
+/// preserving sandbox boundaries enforced by the filesystem backend.
+///
 /// Usage: readlink [-f|-m|-e] FILE...
 ///
 /// Options:
@@ -334,32 +337,13 @@ impl Builtin for Readlink {
                         }
                     }
                 }
-                ReadlinkMode::Canonicalize | ReadlinkMode::CanonicalizeMissing => {
-                    // -f and -m: canonicalize path (resolve . and ..)
-                    // -m doesn't require existence, -f requires all but last
-                    let parent_missing = if mode == ReadlinkMode::Canonicalize {
-                        resolved
-                            .parent()
-                            .filter(|p| !p.as_os_str().is_empty())
-                            .map(|p| ctx.fs.exists(p))
-                    } else {
-                        None
-                    };
-                    if let Some(fut) = parent_missing {
-                        if !fut.await.unwrap_or(false) {
-                            exit_code = 1;
-                            continue;
-                        }
-                    }
-                    output.push_str(&resolved.to_string_lossy());
-                    if needs_terminator {
-                        output.push(terminator);
-                    }
-                }
-                ReadlinkMode::CanonicalizeExisting => {
-                    // -e: all components must exist
-                    if ctx.fs.exists(&resolved).await.unwrap_or(false) {
-                        output.push_str(&resolved.to_string_lossy());
+                ReadlinkMode::Canonicalize
+                | ReadlinkMode::CanonicalizeMissing
+                | ReadlinkMode::CanonicalizeExisting => {
+                    if let Some(canonical) =
+                        canonicalize_readlink_path(ctx.fs.as_ref(), ctx.cwd, file, mode).await
+                    {
+                        output.push_str(&canonical.to_string_lossy());
                         if needs_terminator {
                             output.push(terminator);
                         }
@@ -383,12 +367,96 @@ impl Builtin for Readlink {
     }
 }
 
-#[derive(PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 enum ReadlinkMode {
     Raw,
     Canonicalize,
     CanonicalizeMissing,
     CanonicalizeExisting,
+}
+
+const READLINK_MAX_SYMLINK_DEPTH: usize = 40;
+
+async fn canonicalize_readlink_path(
+    fs: &dyn crate::fs::FileSystem,
+    cwd: &Path,
+    file: &str,
+    mode: ReadlinkMode,
+) -> Option<std::path::PathBuf> {
+    let canonical = follow_readlink_symlinks(fs, super::resolve_path(cwd, file)).await?;
+
+    match mode {
+        ReadlinkMode::CanonicalizeMissing => Some(canonical),
+        ReadlinkMode::Canonicalize => {
+            let parent = canonical
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or_else(|| Path::new("/"));
+            fs.exists(parent)
+                .await
+                .unwrap_or(false)
+                .then_some(canonical)
+        }
+        ReadlinkMode::CanonicalizeExisting => fs
+            .exists(&canonical)
+            .await
+            .unwrap_or(false)
+            .then_some(canonical),
+        ReadlinkMode::Raw => None,
+    }
+}
+
+async fn follow_readlink_symlinks(
+    fs: &dyn crate::fs::FileSystem,
+    path: std::path::PathBuf,
+) -> Option<std::path::PathBuf> {
+    let mut path = path;
+    let mut depth = 0;
+
+    loop {
+        if depth > READLINK_MAX_SYMLINK_DEPTH {
+            return None;
+        }
+
+        let normalized = crate::fs::normalize_path(&path);
+        let components: Vec<_> = normalized.components().collect();
+        let mut current = std::path::PathBuf::from("/");
+        let mut followed = false;
+
+        for (idx, component) in components.iter().enumerate() {
+            use std::path::Component;
+
+            match component {
+                Component::RootDir => continue,
+                Component::Normal(part) => current.push(part),
+                _ => continue,
+            }
+
+            if let Ok(target) = fs.read_link(&current).await {
+                depth += 1;
+                let link_parent = current.parent().unwrap_or_else(|| Path::new("/"));
+                let mut next = if target.is_absolute() {
+                    target
+                } else {
+                    link_parent.join(target)
+                };
+
+                for remaining in components.iter().skip(idx + 1) {
+                    if let Component::Normal(part) = remaining {
+                        next.push(part);
+                    }
+                }
+
+                path = crate::fs::normalize_path(&next);
+                followed = true;
+                break;
+            }
+        }
+
+        if !followed {
+            return Some(normalized);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -611,6 +679,70 @@ mod tests {
         let result = run_readlink_with_fs(&["-m", "/a/b/../c"], fs).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "/a/c\n");
+    }
+
+    #[tokio::test]
+    async fn test_readlink_f_canonicalize_root() {
+        let fs = Arc::new(InMemoryFs::new()) as Arc<dyn FileSystem>;
+        let result = run_readlink_with_fs(&["-f", "/"], fs).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "/\n");
+    }
+
+    #[tokio::test]
+    async fn test_readlink_f_canonicalize_follows_symlink() {
+        let fs = Arc::new(InMemoryFs::new()) as Arc<dyn FileSystem>;
+        fs.mkdir(Path::new("/target"), false).await.unwrap();
+        fs.symlink(Path::new("/target/file"), Path::new("/link"))
+            .await
+            .unwrap();
+
+        let result = run_readlink_with_fs(&["-f", "/link"], fs).await;
+
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "/target/file\n");
+    }
+
+    #[tokio::test]
+    async fn test_readlink_m_canonicalize_follows_dangling_symlink() {
+        let fs = Arc::new(InMemoryFs::new()) as Arc<dyn FileSystem>;
+        fs.symlink(Path::new("/missing/../target"), Path::new("/link"))
+            .await
+            .unwrap();
+
+        let result = run_readlink_with_fs(&["-m", "/link"], fs).await;
+
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "/target\n");
+    }
+
+    #[tokio::test]
+    async fn test_readlink_e_canonicalize_follows_intermediate_symlink() {
+        let fs = Arc::new(InMemoryFs::new()) as Arc<dyn FileSystem>;
+        fs.mkdir(Path::new("/real"), false).await.unwrap();
+        fs.write_file(Path::new("/real/file"), b"data")
+            .await
+            .unwrap();
+        fs.symlink(Path::new("/real"), Path::new("/dirlink"))
+            .await
+            .unwrap();
+
+        let result = run_readlink_with_fs(&["-e", "/dirlink/file"], fs).await;
+
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "/real/file\n");
+    }
+
+    #[tokio::test]
+    async fn test_readlink_canonicalize_rejects_symlink_loop() {
+        let fs = Arc::new(InMemoryFs::new()) as Arc<dyn FileSystem>;
+        fs.symlink(Path::new("/b"), Path::new("/a")).await.unwrap();
+        fs.symlink(Path::new("/a"), Path::new("/b")).await.unwrap();
+
+        let result = run_readlink_with_fs(&["-m", "/a"], fs).await;
+
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stdout.is_empty());
     }
 
     #[tokio::test]
