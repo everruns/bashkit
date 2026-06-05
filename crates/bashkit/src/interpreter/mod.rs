@@ -1663,8 +1663,11 @@ impl Interpreter {
     /// persistent session configuration and are NOT reset.
     const SET_OPTION_VARS: &'static [&'static str] = &[
         "SHOPT_a",
+        "SHOPT_b",
         "SHOPT_e",
         "SHOPT_f",
+        "SHOPT_h",
+        "SHOPT_m",
         "SHOPT_n",
         "SHOPT_u",
         "SHOPT_v",
