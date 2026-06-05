@@ -459,24 +459,30 @@ impl RgMatcher {
         }
     }
 
-    fn for_each_match<'a>(&self, text: &'a str, mut f: impl FnMut(RgMatch<'a>)) {
+    // Callers use this streaming matcher in resource-sensitive paths; the bool
+    // return preserves early exit without rebuilding eager per-line match Vecs.
+    fn for_each_match<'a>(&self, text: &'a str, mut f: impl FnMut(RgMatch<'a>) -> bool) {
         match self {
             Self::Rust(regex) => {
                 for mat in regex.find_iter(text) {
-                    f(RgMatch {
+                    if !f(RgMatch {
                         text: mat.as_str(),
                         start: mat.start(),
                         end: mat.end(),
-                    });
+                    }) {
+                        break;
+                    }
                 }
             }
             Self::Fancy(regex) => {
                 for mat in regex.find_iter(text).flatten() {
-                    f(RgMatch {
+                    if !f(RgMatch {
                         text: mat.as_str(),
                         start: mat.start(),
                         end: mat.end(),
-                    });
+                    }) {
+                        break;
+                    }
                 }
             }
         }
@@ -4021,7 +4027,7 @@ fn color_matches(text: &str, regex: &RgMatcher, opts: &RgOptions) -> String {
     let mut bailout = false;
     regex.for_each_match(text, |mat| {
         if bailout {
-            return;
+            return false;
         }
         estimated_extra = estimated_extra.saturating_add(per_match_extra);
         if mat.start() == mat.end() {
@@ -4029,7 +4035,9 @@ fn color_matches(text: &str, regex: &RgMatcher, opts: &RgOptions) -> String {
         }
         if estimated_extra > RG_COLOR_MATCH_EXTRA_BYTES_LIMIT {
             bailout = true;
+            return false;
         }
+        true
     });
     if bailout {
         return text.to_string();
@@ -4044,6 +4052,7 @@ fn color_matches(text: &str, regex: &RgMatcher, opts: &RgOptions) -> String {
             output.push_str(&color_text(mat.as_str(), &opts.color_scheme.matches, false));
             output.push_str(&color_prefix(&opts.color_scheme.highlight, false));
             last = mat.end();
+            true
         });
         if !matched {
             output.push_str(text);
@@ -4059,6 +4068,7 @@ fn color_matches(text: &str, regex: &RgMatcher, opts: &RgOptions) -> String {
         output.push_str(&text[last..mat.start()]);
         output.push_str(&color_text(mat.as_str(), &opts.color_scheme.matches, false));
         last = mat.end();
+        true
     });
     if last == 0 {
         text.to_string()
@@ -4260,7 +4270,7 @@ fn collect_rg_multiline_matches<'a>(
     lines: &[RgLine<'a>],
     max_count: Option<usize>,
 ) -> Vec<RgMultilineMatch<'a>> {
-    if lines.is_empty() {
+    if lines.is_empty() || max_count == Some(0) {
         return Vec::new();
     }
     let mut matches = Vec::new();
@@ -4268,7 +4278,7 @@ fn collect_rg_multiline_matches<'a>(
         if let Some(max) = max_count
             && matches.len() >= max
         {
-            return;
+            return false;
         }
         let line_idx = rg_line_index_for_offset(lines, mat.start());
         let end_line_idx = rg_line_index_for_offset(lines, mat.end().saturating_sub(1));
@@ -4280,6 +4290,7 @@ fn collect_rg_multiline_matches<'a>(
             end_line_idx,
             column: mat.start().saturating_sub(lines[line_idx].start_offset) + 1,
         });
+        max_count.is_none_or(|max| matches.len() < max)
     });
     matches
 }
@@ -4624,6 +4635,7 @@ fn write_rg_json_match_with_text(
             );
         }
         output.push_str(&value.to_string());
+        true
     });
     output.push_str("]},\"type\":\"match\"}\n");
 }
@@ -6375,6 +6387,7 @@ impl Builtin for Rg {
                             ));
                         }
                         output.push(record_terminator);
+                        true
                     });
                 }
             } else if opts.only_matching && !opts.invert_match {
@@ -6421,6 +6434,7 @@ impl Builtin for Rg {
                             output.push_str(&color_matches(mat.as_str(), &regex, &opts));
                         }
                         output.push(record_terminator);
+                        true
                     });
                 }
             } else if has_context {
@@ -6556,6 +6570,31 @@ mod tests {
         assert_eq!(third.raw, "c");
         assert_eq!(third.start_offset, 5);
         assert!(lines.next().is_none());
+    }
+
+    #[test]
+    fn rg_match_stream_callback_can_stop_iteration() {
+        let regex = RgMatcher::Rust(Regex::new("a").expect("valid regex"));
+        let mut seen = 0usize;
+
+        regex.for_each_match("aaaa", |_| {
+            seen += 1;
+            false
+        });
+
+        assert_eq!(seen, 1);
+    }
+
+    #[test]
+    fn rg_multiline_collection_stops_at_max_count() {
+        let regex = RgMatcher::Rust(Regex::new("a").expect("valid regex"));
+        let content = "a\na\na";
+        let lines: Vec<_> = iter_rg_lines(content, false, false).collect();
+
+        let matches = collect_rg_multiline_matches(&regex, content, &lines, Some(1));
+
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].start_offset, 0);
     }
 
     #[test]
