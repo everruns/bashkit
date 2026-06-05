@@ -295,7 +295,8 @@ impl Builtin for Curl {
 }
 
 /// Sanitize a multipart field name or filename to prevent header injection.
-/// Rejects CR/LF characters (which could inject headers) and escapes double quotes.
+/// Rejects CR/LF characters (which could inject headers) and escapes quoted-string
+/// metacharacters so names cannot terminate `Content-Disposition` parameters.
 fn sanitize_multipart_name(value: &str, label: &str) -> std::result::Result<String, String> {
     if value.contains('\r') || value.contains('\n') {
         return Err(format!(
@@ -303,7 +304,15 @@ fn sanitize_multipart_name(value: &str, label: &str) -> std::result::Result<Stri
             label
         ));
     }
-    Ok(value.replace('"', "\\\""))
+
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        if ch == '\\' || ch == '"' {
+            escaped.push('\\');
+        }
+        escaped.push(ch);
+    }
+    Ok(escaped)
 }
 
 /// Execute the actual curl request when http_client feature is enabled.
@@ -1321,6 +1330,12 @@ mod tests {
             run_curl_with_stdin_and_fs(&["-d", "plain-data", "https://example.com"], None, &[])
                 .await;
         assert!(result.stderr.contains("network access not configured"));
+    }
+
+    #[test]
+    fn test_sanitize_multipart_name_escapes_backslash_before_quote() {
+        let result = sanitize_multipart_name("foo\\\"; filename=evil", "field name").unwrap();
+        assert_eq!(result, "foo\\\\\\\"; filename=evil");
     }
 
     #[cfg(feature = "http_client")]
