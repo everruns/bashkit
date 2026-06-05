@@ -4105,6 +4105,31 @@ mod tests {
     }
 
     #[test]
+    fn test_array_subscript_single_quote_character_does_not_panic() {
+        let parser = Parser::new(r#"echo "${arr[\"]}""#);
+        let result = parser.parse();
+
+        assert!(
+            result.is_ok(),
+            "single-character quoted subscript should not panic: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_double_quoted_param_expansion_obeys_parser_depth_limit() {
+        let parser = Parser::with_limits(r#"echo "${a:-${b:-${c}}}""#, 2, usize::MAX);
+        let err = parser
+            .parse()
+            .expect_err("nested parameter expansion should be rejected");
+
+        assert!(
+            err.to_string()
+                .contains("parameter expansion nesting too deep"),
+            "expected parameter expansion depth error, got: {err}"
+        );
+    }
+
+    #[test]
     fn test_top_level_reserved_word_errors_immediately() {
         let parser = Parser::with_fuel("fi", usize::MAX);
         let err = parser.parse().unwrap_err();
