@@ -19,6 +19,10 @@
 # Decision: allow non-git HARNESS_DIR fixtures. Tests inject a minimal directory
 # tree instead of a cloned repo, so only repin when HARNESS_DIR is a git checkout.
 #
+# Decision: install the provider override through a mktemp + rename path. The
+# default work directory lives under /tmp, so never follow a pre-existing
+# providers/openai symlink while writing or chmoding the override.
+#
 # Prerequisites:
 #   - cargo build -p bashkit-cli --features realfs
 #   - OPENAI_API_KEY set in environment
@@ -39,7 +43,7 @@ if [[ ! -x "$BASHKIT" ]]; then
 fi
 
 HARNESS_DIR="${HARNESS_DIR:-/tmp/harness}"
-WORK_DIR="${WORK_DIR:-/tmp/harness-work}"
+WORK_DIR="${WORK_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/harness-work.XXXXXX")}"
 HARNESS_HOME="${HARNESS_HOME:-${WORK_DIR}/.harness}"
 HARNESS_REF="${HARNESS_REF:-fcfc0687daa7f28e2355a3ccdb6bafee2a4e8ddb}"
 
@@ -54,12 +58,15 @@ fi
 
 mkdir -p "${HARNESS_HOME}/sessions" "${HARNESS_HOME}/providers"
 
-cat > "${HARNESS_HOME}/providers/openai" <<'EOF'
+provider_override="${HARNESS_HOME}/providers/openai"
+provider_tmp="$(mktemp "${HARNESS_HOME}/providers/openai.XXXXXX")"
+cat > "${provider_tmp}" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 exec /harness/plugins/openai/providers/openai "$@"
 EOF
-chmod +x "${HARNESS_HOME}/providers/openai"
+chmod +x "${provider_tmp}"
+mv -f -- "${provider_tmp}" "${provider_override}"
 
 : "${OPENAI_API_KEY:?OPENAI_API_KEY must be set}"
 
