@@ -18,6 +18,18 @@ pub struct SpannedToken {
 /// THREAT[TM-DOS-044]: Prevents stack overflow from deeply nested $() patterns.
 const DEFAULT_MAX_SUBST_DEPTH: usize = 50;
 
+// Important decision: markers preserve quoted segments only until expansion.
+// They let later unquoted continuations split without splitting the quoted prefix.
+const QUOTED_SEGMENT_START: char = '\x01';
+const QUOTED_SEGMENT_END: char = '\x02';
+
+#[derive(Default)]
+struct ContinuationFlags {
+    has_unquoted_expansion: bool,
+    has_unquoted_glob: bool,
+    quoted_ranges: Vec<(usize, usize)>,
+}
+
 /// Lexer for bash scripts.
 pub struct Lexer<'a> {
     #[allow(dead_code)] // Stored for error reporting in future
@@ -1038,7 +1050,7 @@ impl<'a> Lexer<'a> {
 
         // If next char is another quote or word char, concatenate (e.g., 'EOF'"2" -> EOF2).
         // Any quoting makes the whole token literal.
-        self.read_continuation_into(&mut content);
+        let _ = self.read_continuation_into(&mut content);
 
         // Single-quoted strings are literal - no variable expansion. Quote-boundary
         // markers are only for parsed mixed words; LiteralWord keeps contents raw.
@@ -1053,12 +1065,13 @@ impl<'a> Lexer<'a> {
 
     /// After a closing quote, read any adjacent quoted or unquoted word chars
     /// into `content`.  Handles concatenation like `'foo'"bar"baz` -> `foobarbaz`.
-    fn read_continuation_into(&mut self, content: &mut String) {
+    fn read_continuation_into(&mut self, content: &mut String) -> ContinuationFlags {
+        let mut flags = ContinuationFlags::default();
         loop {
             match self.peek_char() {
                 Some('\'') => {
                     self.advance(); // opening '
-                    content.push('\u{1e}');
+                    let start = content.len();
                     while let Some(ch) = self.peek_char() {
                         if ch == '\'' {
                             self.advance(); // closing '
@@ -1067,11 +1080,11 @@ impl<'a> Lexer<'a> {
                         content.push(ch);
                         self.advance();
                     }
-                    content.push('\u{1f}');
+                    flags.quoted_ranges.push((start, content.len()));
                 }
                 Some('"') => {
                     self.advance(); // opening "
-                    content.push('\u{1e}');
+                    let start = content.len();
                     while let Some(ch) = self.peek_char() {
                         if ch == '"' {
                             self.advance(); // closing "
@@ -1102,7 +1115,7 @@ impl<'a> Lexer<'a> {
                         content.push(ch);
                         self.advance();
                     }
-                    content.push('\u{1f}');
+                    flags.quoted_ranges.push((start, content.len()));
                 }
                 Some('$') => {
                     // Check for $'...' ANSI-C quoting in continuation
@@ -1111,24 +1124,29 @@ impl<'a> Lexer<'a> {
                     if lookahead.next() == Some('\'') {
                         self.advance(); // consume $
                         self.advance(); // consume opening '
-                        content.push('\u{1e}');
+                        let start = content.len();
                         Self::push_literal_with_escaped_dollar(
                             content,
                             &self.read_dollar_single_quoted_content(),
                         );
-                        content.push('\u{1f}');
+                        flags.quoted_ranges.push((start, content.len()));
                     } else {
+                        flags.has_unquoted_expansion = true;
                         content.push('$');
                         self.advance();
                     }
                 }
                 Some(ch) if self.is_word_char(ch) => {
+                    if matches!(ch, '*' | '?' | '[') {
+                        flags.has_unquoted_glob = true;
+                    }
                     content.push(ch);
                     self.advance();
                 }
                 _ => break,
             }
         }
+        flags
     }
 
     /// Read ANSI-C quoted content ($'...').
@@ -1386,16 +1404,18 @@ impl<'a> Lexer<'a> {
         if let Some(ch) = self.peek_char()
             && (self.is_word_char(ch) || ch == '\'' || ch == '"' || ch == '$')
         {
-            let original = std::mem::take(&mut content);
-            content.push('\u{1e}');
-            content.push_str(&original);
-            content.push('\u{1f}');
-            let before_len = content.len();
-            self.read_continuation_into(&mut content);
-            let has_glob = content[before_len..]
-                .chars()
-                .any(|c| matches!(c, '*' | '?' | '['));
-            if has_quoted_expansion && has_glob {
+            let quoted_prefix_len = content.len();
+            let flags = self.read_continuation_into(&mut content);
+            if flags.has_unquoted_expansion {
+                let mut ranges = flags.quoted_ranges;
+                ranges.push((0, quoted_prefix_len));
+                for (start, end) in ranges.into_iter().rev() {
+                    content.insert(end, QUOTED_SEGMENT_END);
+                    content.insert(start, QUOTED_SEGMENT_START);
+                }
+                return Some(Token::Word(content));
+            }
+            if has_quoted_expansion && flags.has_unquoted_glob {
                 return Some(Token::QuotedGlobWord(content));
             }
             if has_quoted_expansion {
