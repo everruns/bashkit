@@ -223,6 +223,15 @@ impl MountableFs {
     /// # }
     /// ```
     pub fn mount(&self, path: impl AsRef<Path>, fs: Arc<dyn FileSystem>) -> Result<()> {
+        // THREAT[TM-DOS-058]: Reject direct self-mounts before they can create
+        // unbounded recursive delegation through read/write/usage traversal.
+        if std::ptr::addr_eq(
+            Arc::as_ptr(&fs).cast::<()>(),
+            self as *const Self as *const (),
+        ) {
+            return Err(IoError::other("cannot mount filesystem into itself").into());
+        }
+
         // Validate against the *input* path: the bashkit VFS is always
         // POSIX-style, so mount points must start with `/`. We use
         // `Path::has_root()` rather than `Path::is_absolute()` because the
@@ -555,6 +564,23 @@ impl FileSystemExt for MountableFs {
 mod tests {
     use super::*;
     use crate::fs::InMemoryFs;
+
+    #[test]
+    fn test_rejects_self_mount() {
+        let root = Arc::new(InMemoryFs::new());
+        let mfs = Arc::new(MountableFs::new(root));
+        let self_fs = Arc::clone(&mfs) as Arc<dyn FileSystem>;
+
+        let err = mfs
+            .mount("/", self_fs)
+            .expect_err("mounting MountableFs into itself must be rejected");
+
+        assert!(
+            err.to_string()
+                .contains("cannot mount filesystem into itself"),
+            "unexpected error: {err}"
+        );
+    }
 
     #[tokio::test]
     async fn test_mount_and_access() {
