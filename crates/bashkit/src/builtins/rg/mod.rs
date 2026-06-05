@@ -2529,6 +2529,12 @@ fn glob_class_to_regex(chars: &[char], start: usize) -> Option<(String, usize)> 
             return Some((out, i + 1));
         }
         saw_member = true;
+        if c == '-' && chars.get(i + 1) == Some(&'-') && !body.is_empty() {
+            // Preserve glob range validation by avoiding Rust regex `--` set difference syntax.
+            body.push_str(r"-\-");
+            i += 2;
+            continue;
+        }
         push_glob_class_char(&mut body, c, chars.get(i + 1).copied());
         i += 1;
     }
@@ -2542,6 +2548,8 @@ fn push_glob_class_char(out: &mut String, c: char, next: Option<char>) {
         ']' => out.push_str(r"\]"),
         '^' if out.is_empty() => out.push_str(r"\^"),
         '-' if out.is_empty() || next == Some(']') => out.push_str(r"\-"),
+        '&' => out.push_str(r"\&"),
+        '~' => out.push_str(r"\~"),
         _ => out.push(c),
     }
 }
@@ -6574,6 +6582,27 @@ mod tests {
     fn glob_brace_alternation_depth_limit_does_not_expand_nested_pattern() {
         let regex = glob_to_regex_with_depth("{a,b}", RG_GLOB_MAX_BRACE_DEPTH);
         assert_eq!(regex, r"^\{a,b\}$");
+    }
+
+    #[test]
+    fn glob_bracket_classes_escape_regex_set_operator_chars() {
+        let regex =
+            build_regex_opts(&glob_to_regex("[a&&b].txt"), false).expect("valid ampersand class");
+        assert!(regex.is_match("a.txt"));
+        assert!(regex.is_match("&.txt"));
+        assert!(regex.is_match("b.txt"));
+
+        let regex =
+            build_regex_opts(&glob_to_regex("[a~~b].txt"), false).expect("valid tilde class");
+        assert!(regex.is_match("a.txt"));
+        assert!(regex.is_match("~.txt"));
+        assert!(regex.is_match("b.txt"));
+    }
+
+    #[test]
+    fn glob_bracket_classes_reject_double_hyphen_operator_ranges() {
+        assert!(RgGlobRule::parse("[a--b].txt", false, false).is_err());
+        assert!(RgTypeGlob::parse("[a--b].txt").is_err());
     }
 
     #[test]
