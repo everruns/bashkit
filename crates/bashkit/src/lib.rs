@@ -3216,6 +3216,26 @@ mod tests {
         assert_eq!(file.stdout, "PUBLIC_FROM_EXEC3\n");
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn test_timed_out_debug_trap_does_not_suppress_next_exec_debug_trap() {
+        let limits = ExecutionLimits::new().timeout(std::time::Duration::from_millis(1));
+        let mut bash = Bash::builder().limits(limits).build();
+
+        let timed_out = bash
+            .exec("trap 'sleep 10' DEBUG; echo should-not-run")
+            .await;
+        assert!(matches!(
+            timed_out,
+            Err(Error::ResourceLimit(LimitExceeded::Timeout(_)))
+        ));
+
+        let result = bash
+            .exec("count=0; trap '((count++))' DEBUG; echo body; trap - DEBUG; echo $count")
+            .await
+            .unwrap();
+        assert_eq!(result.stdout, "body\n2\n");
+    }
+
     #[tokio::test]
     async fn test_pipeline_three_commands() {
         let mut bash = Bash::new();

@@ -1683,6 +1683,10 @@ impl Interpreter {
     pub fn reset_transient_state(&mut self) {
         self.traps_mut().clear();
         self.last_exit_code = 0;
+        // THREAT[TM-DOS-035/057]: A timeout can drop execution while a trap
+        // handler is awaited; clear the re-entrancy guard before each exec so
+        // one cancelled script cannot suppress traps in the next script.
+        self.in_trap = false;
         self.deferred_proc_subs.clear();
         self.pending_fd_capture_depth = 0;
         self.pending_fd_output.clear();
