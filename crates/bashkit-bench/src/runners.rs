@@ -325,9 +325,16 @@ impl JustBashInprocRunner {
 
 /// Run a command as a subprocess (one process per invocation)
 async fn run_subprocess(cmd: &str, args: &[&str], script: &str) -> Result<(String, String, i32)> {
-    let child = Command::new(cmd)
+    let workdir = tempfile::Builder::new()
+        .prefix("bashkit-bench-")
+        .tempdir()
+        .context("create isolated benchmark subprocess directory")?;
+    let program = subprocess_program(cmd)?;
+
+    let child = Command::new(&program)
         .args(args)
         .arg(script)
+        .current_dir(workdir.path())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -340,6 +347,17 @@ async fn run_subprocess(cmd: &str, args: &[&str], script: &str) -> Result<(Strin
     let exit_code = output.status.code().unwrap_or(-1);
 
     Ok((stdout, stderr, exit_code))
+}
+
+fn subprocess_program(cmd: &str) -> Result<PathBuf> {
+    let path = Path::new(cmd);
+    if path.is_relative() && (cmd.contains('/') || cmd.contains('\\')) {
+        Ok(std::env::current_dir()
+            .context("resolve current directory for benchmark subprocess")?
+            .join(path))
+    } else {
+        Ok(path.to_path_buf())
+    }
 }
 
 /// A persistent child process that communicates via JSON lines over stdin/stdout.
@@ -445,4 +463,42 @@ fn workspace_root() -> PathBuf {
 
 fn scripts_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("scripts")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{run_subprocess, subprocess_program};
+    use std::path::PathBuf;
+
+    #[test]
+    fn subprocess_program_resolves_relative_paths_before_cwd_isolation() {
+        let cwd = std::env::current_dir().unwrap();
+        assert_eq!(
+            subprocess_program("./just-bash").unwrap(),
+            cwd.join("./just-bash")
+        );
+        assert_eq!(subprocess_program("bash").unwrap(), PathBuf::from("bash"));
+    }
+
+    #[tokio::test]
+    async fn subprocess_runs_relative_io_in_isolated_temp_directory() {
+        let filename = format!("bashkit-bench-isolation-test-{}.txt", std::process::id());
+        let repo_victim = std::env::current_dir().unwrap().join(&filename);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&repo_victim)
+            .unwrap();
+        std::fs::write(&repo_victim, "keep me").unwrap();
+
+        let script = format!("printf changed > {filename}; cat {filename}");
+        let (stdout, stderr, exit_code) =
+            run_subprocess("/bin/sh", &["-c"], &script).await.unwrap();
+
+        assert_eq!(stdout, "changed");
+        assert_eq!(stderr, "");
+        assert_eq!(exit_code, 0);
+        assert_eq!(std::fs::read_to_string(&repo_victim).unwrap(), "keep me");
+        std::fs::remove_file(repo_victim).unwrap();
+    }
 }
