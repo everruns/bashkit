@@ -2857,6 +2857,37 @@ echo "result=${a:-cycle_broken}"
         );
     }
 
+    /// TM-DOS-090: malformed nameref array targets must not panic expansion.
+    #[tokio::test]
+    async fn tm_dos_090_malformed_nameref_array_target_does_not_panic() {
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            exec(
+                r#"
+arr=(zero one)
+declare -n elem='arr[1]'
+echo "elem=${elem[0]}"
+declare -n ref='['
+echo "before"
+echo "${ref[0]}"
+declare -n ref='a['
+echo "${ref[0]}"
+echo "after"
+"#,
+            ),
+        )
+        .await
+        .expect("malformed nameref target must not panic or hang");
+        assert_eq!(result.exit_code, 0);
+        assert!(
+            result.stdout.contains("elem=one")
+                && result.stdout.contains("before")
+                && result.stdout.contains("after"),
+            "malformed nameref target should expand safely: {:?}",
+            result.stdout
+        );
+    }
+
     // --- Cross-builtin: injected markers from one builtin don't affect another ---
 
     #[tokio::test]
