@@ -1070,9 +1070,11 @@ async fn try_indexed_search(
         }
     }
 
+    if inputs.is_empty() {
+        return None;
+    }
     Some(inputs)
 }
-
 
 #[cfg(test)]
 mod tests {
