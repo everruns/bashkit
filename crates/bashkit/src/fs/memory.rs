@@ -732,7 +732,7 @@ impl InMemoryFs {
             return Err(IoError::other("snapshot total bytes exceed limit").into());
         }
         self.limits
-            .check_file_count(file_count)
+            .check_final_file_count(file_count)
             .map_err(|e| IoError::other(e.to_string()))?;
 
         let mut entries = self.entries.write().unwrap();
@@ -2146,6 +2146,72 @@ mod tests {
         let err = limited.restore(&snapshot);
         assert!(err.is_err(), "restore must report the limit violation");
         assert!(!limited.exists(Path::new("/tmp/huge.bin")).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_restore_allows_exact_file_count_limit() {
+        // InMemoryFs starts with 3 device files. Add 2 user files so the
+        // snapshot's final file count exactly matches the configured limit.
+        let source = InMemoryFs::new();
+        source
+            .write_file(Path::new("/tmp/one.txt"), b"one")
+            .await
+            .unwrap();
+        source
+            .write_file(Path::new("/tmp/two.txt"), b"two")
+            .await
+            .unwrap();
+        let snapshot = source.snapshot();
+
+        let limited = InMemoryFs::with_limits(FsLimits::new().max_file_count(5));
+        limited
+            .write_file(Path::new("/tmp/stale.txt"), b"stale")
+            .await
+            .unwrap();
+
+        limited
+            .restore(&snapshot)
+            .expect("exact-limit snapshots should restore successfully");
+
+        assert!(!limited.exists(Path::new("/tmp/stale.txt")).await.unwrap());
+        assert_eq!(
+            limited.read_file(Path::new("/tmp/one.txt")).await.unwrap(),
+            b"one"
+        );
+        assert_eq!(
+            limited.read_file(Path::new("/tmp/two.txt")).await.unwrap(),
+            b"two"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_restore_rejects_over_file_count_limit() {
+        let source = InMemoryFs::new();
+        for name in ["one", "two", "three"] {
+            source
+                .write_file(Path::new(&format!("/tmp/{name}.txt")), name.as_bytes())
+                .await
+                .unwrap();
+        }
+        let snapshot = source.snapshot();
+
+        let limited = InMemoryFs::with_limits(FsLimits::new().max_file_count(5));
+        limited
+            .write_file(Path::new("/tmp/stale.txt"), b"stale")
+            .await
+            .unwrap();
+
+        let err = limited.restore(&snapshot);
+
+        assert!(err.is_err(), "over-limit snapshots must fail closed");
+        assert_eq!(
+            limited
+                .read_file(Path::new("/tmp/stale.txt"))
+                .await
+                .unwrap(),
+            b"stale"
+        );
+        assert!(!limited.exists(Path::new("/tmp/three.txt")).await.unwrap());
     }
 
     /// THREAT[TM-DOS-034]: Verify append_file uses single write lock,
