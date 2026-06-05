@@ -146,6 +146,33 @@ b 1
 b 3
 ### end
 
+### sort_stable_equal_field_preserves_input_order
+# Stable sort preserves input order when selected field keys compare equal
+printf 'b 3\na 2\nb 1\n' | sort -s -k1,1
+### expect
+a 2
+b 3
+b 1
+### end
+
+### sort_stable_numeric_equal_preserves_input_order
+# Stable numeric sort preserves input order when numeric keys compare equal
+printf '2 beta\n1 one\n2 alpha\n' | sort -s -n
+### expect
+1 one
+2 beta
+2 alpha
+### end
+
+### sort_stable_reverse_equal_field_preserves_input_order
+# Reverse stable sort reverses key order without reversing equal-key records
+printf 'b 3\na 2\nb 1\n' | sort -s -r -k1,1
+### expect
+b 3
+b 1
+a 2
+### end
+
 ### sort_check
 # Check if input is sorted
 printf 'a\nb\nc\n' | sort -c
