@@ -287,3 +287,146 @@ echo "SHOULD NOT APPEAR"
         result.stderr
     );
 }
+
+/// set -e: final failure in an AND list should abort following commands.
+#[tokio::test]
+async fn set_e_final_and_failure_exits_in_function() {
+    let mut bash = Bash::new();
+    let result = bash
+        .exec(
+            r#"
+set -e
+f() {
+    true && false
+    echo "SHOULD NOT APPEAR"
+}
+f
+echo "AFTER"
+"#,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.exit_code, 1);
+    assert!(!result.stdout.contains("SHOULD NOT APPEAR"));
+    assert!(!result.stdout.contains("AFTER"));
+}
+
+/// set -e: top-level final AND-list failure should abort following commands.
+#[tokio::test]
+async fn set_e_final_and_failure_exits_top_level() {
+    let mut bash = Bash::new();
+    let result = bash
+        .exec(
+            r#"
+set -e
+true && false
+echo "SHOULD NOT APPEAR"
+"#,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.exit_code, 1);
+    assert!(!result.stdout.contains("SHOULD NOT APPEAR"));
+}
+
+/// set -e: plain failure in for body should stop before later iterations.
+#[tokio::test]
+async fn set_e_plain_failure_stops_for_loop_immediately() {
+    let mut bash = Bash::new();
+    let result = bash
+        .exec(
+            r#"
+set -e
+for x in a b; do
+    echo "$x"
+    false
+done
+"#,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.exit_code, 1);
+    assert_eq!(result.stdout.trim(), "a");
+}
+
+/// set -e: plain failure in C-style for body should stop before step/next iteration.
+#[tokio::test]
+async fn set_e_plain_failure_stops_arithmetic_for_loop_immediately() {
+    let mut bash = Bash::new();
+    let result = bash
+        .exec(
+            r#"
+set -e
+for ((i=0; i<2; i++)); do
+    echo "$i"
+    false
+done
+"#,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.exit_code, 1);
+    assert_eq!(result.stdout.trim(), "0");
+}
+
+/// set -e: plain failure in while body should stop before later iterations.
+#[tokio::test]
+async fn set_e_plain_failure_stops_while_loop_immediately() {
+    let mut bash = Bash::new();
+    let result = bash
+        .exec(
+            r#"
+set -e
+i=0
+while [[ $i -lt 2 ]]; do
+    echo "$i"
+    ((i++)) || true
+    false
+done
+"#,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.exit_code, 1);
+    assert_eq!(result.stdout.trim(), "0");
+}
+
+/// set -e: plain failure in until body should stop before later iterations.
+#[tokio::test]
+async fn set_e_plain_failure_stops_until_loop_immediately() {
+    let mut bash = Bash::new();
+    let result = bash
+        .exec(
+            r#"
+set -e
+i=0
+until [[ $i -ge 2 ]]; do
+    echo "$i"
+    ((i++)) || true
+    false
+done
+"#,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.exit_code, 1);
+    assert_eq!(result.stdout.trim(), "0");
+}
+
+/// set -e: final failure in an OR list should abort following commands.
+#[tokio::test]
+async fn set_e_final_or_failure_exits_top_level() {
+    let mut bash = Bash::new();
+    let result = bash
+        .exec(
+            r#"
+set -e
+false || false
+echo "SHOULD NOT APPEAR"
+"#,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.exit_code, 1);
+    assert!(!result.stdout.contains("SHOULD NOT APPEAR"));
+}

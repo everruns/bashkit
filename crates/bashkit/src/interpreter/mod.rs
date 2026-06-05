@@ -2315,7 +2315,10 @@ impl Interpreter {
                 }
             }
 
-            // Run ERR trap on non-zero exit unless suppressed by AND-OR list, negated pipeline, or compound context
+            // Run ERR trap on non-zero exit (unless in conditional chain).
+            // Lists are suppressed here because execute_list already fired
+            // the ERR trap for the failing subcommand; firing again would
+            // double-invoke the trap (e.g. `set -e; trap 'f' ERR; false`).
             if exit_code != 0 {
                 let suppressed = Self::suppresses_script_body_err_exit(command, &result);
                 if !suppressed {
@@ -2323,14 +2326,13 @@ impl Interpreter {
                 }
             }
 
-            // errexit (set -e): stop on non-zero exit for top-level simple commands.
-            // List commands handle errexit internally (with && / || chain awareness).
-            // Negated pipelines (! cmd) explicitly handle the exit code.
-            // Only compound commands whose own execution context ignores -e
-            // may suppress a propagated AND-OR failure here; simple function
-            // calls and subshell compounds must still make the parent exit.
+            // errexit (set -e): stop on non-zero exit unless the callee marks
+            // the status as suppressed (for example, a short-circuited AND-OR
+            // list) or the command is an explicitly negated pipeline.
+            // Lists are NOT suppressed here so set -e fires for failing lists.
             if self.is_errexit_enabled() && exit_code != 0 {
-                let suppressed = Self::suppresses_script_body_err_exit(command, &result);
+                let suppressed = matches!(command, Command::Pipeline(p) if p.negated)
+                    || result.errexit_suppressed;
                 if !suppressed {
                     break;
                 }
@@ -2642,6 +2644,9 @@ impl Interpreter {
                 // Consume Exit and Return control flow at subshell boundary —
                 // they only terminate the subshell, not the parent shell.
                 // Return is used by ${var:?msg} error handling and nounset errors.
+                // Also clear errexit_suppressed: inner AND/OR suppression must not
+                // escape the subshell boundary and prevent the parent set -e from
+                // firing on the subshell's non-zero exit code.
                 if let Ok(ref mut res) = result {
                     match res.control_flow {
                         ControlFlow::Exit(code) | ControlFlow::Return(code) => {
@@ -2650,6 +2655,7 @@ impl Interpreter {
                         }
                         _ => {}
                     }
+                    res.errexit_suppressed = false;
                 }
 
                 result
@@ -2779,8 +2785,16 @@ impl Interpreter {
                 let emit_before = self.output_emit_count;
                 let result = self.execute_command_sequence(&for_cmd.body).await?;
                 self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
+                let should_errexit = self.is_errexit_enabled()
+                    && result.exit_code != 0
+                    && result.control_flow == ControlFlow::None
+                    && !result.errexit_suppressed;
                 match acc.accumulate(result) {
-                    state::LoopAction::None => {}
+                    state::LoopAction::None => {
+                        if should_errexit {
+                            return Ok(acc.finish());
+                        }
+                    }
                     state::LoopAction::Break => break,
                     state::LoopAction::Continue => continue,
                     state::LoopAction::Exit(r) => return Ok(r),
@@ -3008,8 +3022,16 @@ impl Interpreter {
                 let emit_before = self.output_emit_count;
                 let result = self.execute_command_sequence(&arith_for.body).await?;
                 self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
+                let should_errexit = self.is_errexit_enabled()
+                    && result.exit_code != 0
+                    && result.control_flow == ControlFlow::None
+                    && !result.errexit_suppressed;
                 match acc.accumulate(result) {
-                    state::LoopAction::None | state::LoopAction::Continue => {}
+                    state::LoopAction::None | state::LoopAction::Continue => {
+                        if should_errexit {
+                            return Ok(acc.finish());
+                        }
+                    }
                     state::LoopAction::Break => break,
                     state::LoopAction::Exit(r) => return Ok(r),
                 }
@@ -3572,8 +3594,16 @@ impl Interpreter {
                 let emit_before = self.output_emit_count;
                 let result = self.execute_command_sequence(body).await?;
                 self.maybe_emit_output(&result.stdout, &result.stderr, emit_before);
+                let should_errexit = self.is_errexit_enabled()
+                    && result.exit_code != 0
+                    && result.control_flow == ControlFlow::None
+                    && !result.errexit_suppressed;
                 match acc.accumulate(result) {
-                    state::LoopAction::None => {}
+                    state::LoopAction::None => {
+                        if should_errexit {
+                            return Ok(acc.finish());
+                        }
+                    }
                     state::LoopAction::Break => break,
                     state::LoopAction::Continue => continue,
                     state::LoopAction::Exit(r) => return Ok(r),
@@ -4537,7 +4567,9 @@ impl Interpreter {
                 continue;
             }
 
-            // Check if next operator (if any) is && or ||
+            // Check if this command is followed by another && / || operator.
+            // POSIX `errexit` suppression applies to non-final commands in an
+            // AND-OR list; the final executed command can still abort on failure.
             let current_is_conditional = matches!(op, ListOperator::And | ListOperator::Or);
 
             // Determine if THIS command should be backgrounded.
@@ -6647,6 +6679,11 @@ impl Interpreter {
             result.exit_code = code;
             result.control_flow = ControlFlow::None;
         }
+
+        // Clear errexit_suppressed at function boundary: AND/OR suppression
+        // from inside the function must not prevent the caller's set -e from
+        // firing on the function's non-zero exit code.
+        result.errexit_suppressed = false;
 
         self.apply_redirections(result, redirects).await
     }
