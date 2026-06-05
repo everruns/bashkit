@@ -136,12 +136,12 @@ jobs:
   examples:
     name: Examples
     runs-on: ubuntu-latest
-    # Fork-PR secret exfiltration guard: secrets are NOT exposed at job
-    # level here, because PR-controlled code (examples, build.rs, scripts)
-    # executes in this job. Steps that need real secrets gate on
-    # `github.event.pull_request.head.repo.fork != true` and only set the
-    # secret in their own step `env:`. See response in PR discussion;
-    # mirrors the pattern in `coverage.yml` and `js.yml`.
+    # Secret guard: only expose Doppler/API keys on push to main (trusted
+    # code). PRs — including same-repo branches — execute PR-controlled
+    # code (examples, build.rs, scripts) and must never see secrets.
+    # `github.event_name == 'push'` is the only reliable gate; the old
+    # `head.repo.fork != true` check passes for same-repo PRs and for
+    # workflow_call events where pull_request context is absent.
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
@@ -194,7 +194,7 @@ jobs:
       # steps gate on `env.DOPPLER_AVAILABLE` so this job stays green
       # in repos/forks without the secret configured.
       - name: Detect Doppler availability (trusted runs only)
-        if: github.event.pull_request.head.repo.fork != true
+        if: github.event_name == 'push'
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
         run: |
@@ -203,7 +203,7 @@ jobs:
           fi
 
       - name: Install Doppler CLI
-        if: github.event.pull_request.head.repo.fork != true && env.DOPPLER_AVAILABLE == 'true'
+        if: github.event_name == 'push' && env.DOPPLER_AVAILABLE == 'true'
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
         uses: dopplerhq/cli-action@4819d808ab99e5cde19a0637a16536a4038fad73 # v4
@@ -211,19 +211,18 @@ jobs:
       # External API dependency — don't block CI on Anthropic outages.
       # ANTHROPIC_API_KEY is sourced from Doppler (single source of truth
       # for non-GitHub secrets), so this step also requires Doppler to be
-      # available, which already implies a non-fork event.
+      # available, which already implies a push to main.
       # `--only-secrets` keeps the principle of least privilege: the
-      # PR-controlled cargo step sees ANTHROPIC_API_KEY only, not every
-      # secret in the Doppler config.
+      # step sees ANTHROPIC_API_KEY only, not every secret in Doppler.
       - name: Run LLM agent example
-        if: github.event.pull_request.head.repo.fork != true && env.DOPPLER_AVAILABLE == 'true'
+        if: github.event_name == 'push' && env.DOPPLER_AVAILABLE == 'true'
         continue-on-error: true
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
         run: doppler run --only-secrets ANTHROPIC_API_KEY -- cargo run --example agent_tool --features http_client
 
       - name: Run harness OpenAI joke example
-        if: github.event.pull_request.head.repo.fork != true && env.DOPPLER_AVAILABLE == 'true'
+        if: github.event_name == 'push' && env.DOPPLER_AVAILABLE == 'true'
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
         run: |
