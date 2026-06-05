@@ -841,6 +841,7 @@ impl<'a> BashkitContext<'a> {
     fn into_exec_result(self) -> ExecResult {
         ExecResult {
             stdout: self.stdout,
+            stdout_bytes: None,
             stderr: self.stderr,
             exit_code: self.exit_code,
             ..Default::default()

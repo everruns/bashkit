@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use base64::Engine;
 
 use super::arg_parser::ArgParser;
-use super::{Builtin, BuiltinHelper, Context, read_text_file};
+use super::{Builtin, BuiltinHelper, Context};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
@@ -16,6 +16,20 @@ use crate::interpreter::ExecResult;
 ///   -d, --decode    Decode base64 input
 ///   -w COLS         Wrap encoded lines after COLS characters (default: 76, 0 = no wrap)
 pub struct Base64;
+
+fn stdin_to_bytes(input: &str) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(input.len());
+    for ch in input.chars() {
+        let code = ch as u32;
+        if code <= u8::MAX as u32 {
+            bytes.push(code as u8);
+        } else {
+            let mut buf = [0; 4];
+            bytes.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
+        }
+    }
+    bytes
+}
 
 impl BuiltinHelper for Base64 {
     const NAME: &'static str = "base64";
@@ -58,38 +72,37 @@ impl Builtin for Base64 {
             }
         }
 
-        // Get input: from file, stdin, or empty
+        // Get input bytes: file reads must be byte-exact; stdin may contain the
+        // interpreter's Latin-1 byte-preserving surrogate string.
         let input = if let Some(ref path) = file {
             if path == "-" {
-                ctx.stdin.unwrap_or("").to_string()
+                stdin_to_bytes(ctx.stdin.unwrap_or(""))
             } else {
                 let resolved = super::resolve_path(ctx.cwd, path);
-                match read_text_file(ctx.fs.as_ref(), &resolved, "base64").await {
-                    Ok(text) => text,
+                match ctx.fs.read_file(&resolved).await {
+                    Ok(bytes) => bytes,
                     Err(_) => {
                         return Ok(Self::err_path(path, "No such file or directory", 1));
                     }
                 }
             }
         } else {
-            ctx.stdin.unwrap_or("").to_string()
+            stdin_to_bytes(ctx.stdin.unwrap_or(""))
         };
 
         if decode {
-            // Decode: strip whitespace, then decode
-            let cleaned: String = input.chars().filter(|c| !c.is_whitespace()).collect();
+            // Decode: strip ASCII whitespace, then decode.
+            let cleaned: Vec<u8> = input
+                .into_iter()
+                .filter(|byte| !byte.is_ascii_whitespace())
+                .collect();
             match base64::engine::general_purpose::STANDARD.decode(&cleaned) {
-                Ok(bytes) => {
-                    // Output raw bytes as string (lossy for non-UTF8)
-                    let output = String::from_utf8_lossy(&bytes).to_string();
-                    Ok(ExecResult::ok(output))
-                }
+                Ok(bytes) => Ok(ExecResult::ok_bytes(bytes)),
                 Err(e) => Ok(Self::err(format!("invalid input: {e}"), 1)),
             }
         } else {
-            // Encode
-            let encoded =
-                base64::engine::general_purpose::STANDARD.encode(input.trim_end_matches('\n'));
+            // Encode exact input bytes, including trailing newlines.
+            let encoded = base64::engine::general_purpose::STANDARD.encode(input);
             let output = if wrap > 0 {
                 // Wrap at specified column width
                 let mut wrapped = String::new();
@@ -112,7 +125,7 @@ impl Builtin for Base64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fs::InMemoryFs;
+    use crate::fs::{FileSystem, InMemoryFs};
     use std::collections::HashMap;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -154,6 +167,38 @@ mod tests {
         assert!(
             !result.stdout.trim().contains('\n'),
             "should not wrap with -w 0"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_encode_preserves_trailing_newline() {
+        let result = run_base64(&["-w", "0"], Some("hello\n")).await;
+        assert_eq!(result.stdout, "aGVsbG8K\n");
+    }
+
+    #[tokio::test]
+    async fn test_encode_binary_file_preserves_bytes() {
+        let args = vec!["-w".to_string(), "0".to_string(), "/blob".to_string()];
+        let env = HashMap::new();
+        let mut variables = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+        let fs = Arc::new(InMemoryFs::new());
+        fs.write_file(PathBuf::from("/blob").as_path(), &[0xff, b'\n', b'\n'])
+            .await
+            .unwrap();
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs, None);
+
+        let result = Base64.execute(ctx).await.expect("base64 execute failed");
+
+        assert_eq!(result.stdout, "/woK\n");
+    }
+
+    #[tokio::test]
+    async fn test_decode_binary_preserves_stdout_bytes() {
+        let result = run_base64(&["-d"], Some("AAH//kIAfw==")).await;
+        assert_eq!(
+            result.stdout_bytes.as_deref(),
+            Some(&[0x00, 0x01, 0xff, 0xfe, b'B', 0x00, 0x7f][..])
         );
     }
 

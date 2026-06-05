@@ -53,6 +53,8 @@ pub enum BuiltinSideEffect {
 pub struct ExecResult {
     /// Standard output
     pub stdout: String,
+    /// Exact stdout bytes when a builtin produces binary data.
+    pub stdout_bytes: Option<Vec<u8>>,
     /// Standard error
     pub stderr: String,
     /// Exit code
@@ -81,6 +83,18 @@ impl ExecResult {
     pub fn ok(stdout: impl Into<String>) -> Self {
         Self {
             stdout: stdout.into(),
+            stderr: String::new(),
+            exit_code: 0,
+            ..Default::default()
+        }
+    }
+
+    /// Create a successful result with exact stdout bytes.
+    pub fn ok_bytes(bytes: Vec<u8>) -> Self {
+        let stdout = bytes.iter().map(|&byte| byte as char).collect();
+        Self {
+            stdout,
+            stdout_bytes: Some(bytes),
             stderr: String::new(),
             exit_code: 0,
             ..Default::default()

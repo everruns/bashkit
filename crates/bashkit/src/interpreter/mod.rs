@@ -7583,7 +7583,10 @@ impl Interpreter {
                     if is_dev_null(&path) {
                         match redirect.fd {
                             Some(2) => result.stderr = String::new(),
-                            _ => result.stdout = String::new(),
+                            _ => {
+                                result.stdout = String::new();
+                                result.stdout_bytes = None;
+                            }
                         }
                     } else {
                         if redirect.kind == RedirectKind::Output
@@ -7608,15 +7611,19 @@ impl Interpreter {
                                 result.stderr = String::new();
                             }
                             _ => {
-                                if let Err(e) =
-                                    self.fs.write_file(&path, result.stdout.as_bytes()).await
-                                {
+                                let stdout = result
+                                    .stdout_bytes
+                                    .as_deref()
+                                    .unwrap_or(result.stdout.as_bytes());
+                                if let Err(e) = self.fs.write_file(&path, stdout).await {
                                     result.stdout = String::new();
+                                    result.stdout_bytes = None;
                                     result.stderr = format!("bash: {}: {}\n", target_path, e);
                                     result.exit_code = 1;
                                     return Ok(result);
                                 }
                                 result.stdout = String::new();
+                                result.stdout_bytes = None;
                             }
                         }
                     }
@@ -7627,7 +7634,10 @@ impl Interpreter {
                     if is_dev_null(&path) {
                         match redirect.fd {
                             Some(2) => result.stderr = String::new(),
-                            _ => result.stdout = String::new(),
+                            _ => {
+                                result.stdout = String::new();
+                                result.stdout_bytes = None;
+                            }
                         }
                     } else {
                         match redirect.fd {
@@ -7642,15 +7652,19 @@ impl Interpreter {
                                 result.stderr = String::new();
                             }
                             _ => {
-                                if let Err(e) =
-                                    self.fs.append_file(&path, result.stdout.as_bytes()).await
-                                {
+                                let stdout = result
+                                    .stdout_bytes
+                                    .as_deref()
+                                    .unwrap_or(result.stdout.as_bytes());
+                                if let Err(e) = self.fs.append_file(&path, stdout).await {
                                     result.stdout = String::new();
+                                    result.stdout_bytes = None;
                                     result.stderr = format!("bash: {}: {}\n", target_path, e);
                                     result.exit_code = 1;
                                     return Ok(result);
                                 }
                                 result.stdout = String::new();
+                                result.stdout_bytes = None;
                             }
                         }
                     }
@@ -7660,15 +7674,21 @@ impl Interpreter {
                     let path = self.resolve_path(&target_path);
                     if is_dev_null(&path) {
                         result.stdout = String::new();
+                        result.stdout_bytes = None;
                         result.stderr = String::new();
                     } else {
-                        let combined = format!("{}{}", result.stdout, result.stderr);
-                        if let Err(e) = self.fs.write_file(&path, combined.as_bytes()).await {
+                        let mut combined = result
+                            .stdout_bytes
+                            .clone()
+                            .unwrap_or_else(|| result.stdout.as_bytes().to_vec());
+                        combined.extend_from_slice(result.stderr.as_bytes());
+                        if let Err(e) = self.fs.write_file(&path, &combined).await {
                             result.stderr = format!("bash: {}: {}\n", target_path, e);
                             result.exit_code = 1;
                             return Ok(result);
                         }
                         result.stdout = String::new();
+                        result.stdout_bytes = None;
                         result.stderr = String::new();
                     }
                 }
