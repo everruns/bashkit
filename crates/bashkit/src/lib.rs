@@ -912,18 +912,30 @@ impl Bash {
             }
         }
 
-        // Fire after_exec hooks
-        if let Ok(ref exec_result) = result
-            && !self.interpreter.hooks().after_exec.is_empty()
-        {
-            let output = hooks::ExecOutput {
-                script: script.to_string(),
-                stdout: exec_result.stdout.clone(),
-                stderr: exec_result.stderr.clone(),
-                exit_code: exec_result.exit_code,
-            };
-            self.interpreter.hooks().fire_after_exec(output);
-        }
+        // Fire after_exec hooks — interceptor decisions are part of the public policy API.
+        let result = if let Ok(exec_result) = result {
+            if !self.interpreter.hooks().after_exec.is_empty() {
+                let output = hooks::ExecOutput {
+                    script: script.to_string(),
+                    stdout: exec_result.stdout.clone(),
+                    stderr: exec_result.stderr.clone(),
+                    exit_code: exec_result.exit_code,
+                };
+                match self.interpreter.hooks().fire_after_exec(output) {
+                    Some(output) => Ok(ExecResult {
+                        stdout: output.stdout,
+                        stderr: output.stderr,
+                        exit_code: output.exit_code,
+                        ..exec_result
+                    }),
+                    None => Ok(ExecResult::err("cancelled by after_exec hook", 1)),
+                }
+            } else {
+                Ok(exec_result)
+            }
+        } else {
+            result
+        };
 
         // Fire on_error hooks for execution errors
         if let Err(ref e) = result
@@ -6847,6 +6859,89 @@ echo missing fi"#,
 
         bash.exec("echo hello-hooks").await.unwrap();
         assert_eq!(captured.lock().unwrap().trim(), "hello-hooks");
+    }
+
+    #[tokio::test]
+    async fn test_after_exec_hook_can_modify_output() {
+        let mut bash = Bash::builder()
+            .after_exec(Box::new(|mut output| {
+                output.stdout = output.stdout.replace("SECRET", "[redacted]");
+                output.stderr = "policy stderr\n".to_string();
+                output.exit_code = 7;
+                hooks::HookAction::Continue(output)
+            }))
+            .build();
+
+        let result = bash.exec("echo SECRET").await.unwrap();
+        assert_eq!(result.stdout, "[redacted]\n");
+        assert_eq!(result.stderr, "policy stderr\n");
+        assert_eq!(result.exit_code, 7);
+    }
+
+    #[tokio::test]
+    async fn test_after_exec_hook_can_cancel_result() {
+        let mut bash = Bash::builder()
+            .after_exec(Box::new(|_output| {
+                hooks::HookAction::Cancel("blocked".to_string())
+            }))
+            .build();
+
+        let result = bash.exec("echo SECRET").await.unwrap();
+        assert_eq!(result.stdout, "");
+        assert_eq!(result.stderr, "cancelled by after_exec hook");
+        assert_eq!(result.exit_code, 1);
+    }
+
+    #[tokio::test]
+    async fn test_before_tool_hook_can_cancel_special_builtin() {
+        let mut bash = Bash::builder()
+            .before_tool(Box::new(|event| {
+                if event.name == "source" {
+                    hooks::HookAction::Cancel("source blocked".to_string())
+                } else {
+                    hooks::HookAction::Continue(event)
+                }
+            }))
+            .build();
+
+        let result = bash.exec("source missing.sh").await.unwrap();
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("cancelled by before_tool hook"));
+    }
+
+    #[tokio::test]
+    async fn test_after_tool_hook_can_modify_builtin_result() {
+        let mut bash = Bash::builder()
+            .after_tool(Box::new(|mut result| {
+                if result.name == "echo" {
+                    result.stdout = result.stdout.replace("SECRET", "[redacted]");
+                    result.exit_code = 9;
+                }
+                hooks::HookAction::Continue(result)
+            }))
+            .build();
+
+        let result = bash.exec("echo SECRET").await.unwrap();
+        assert_eq!(result.stdout, "[redacted]\n");
+        assert_eq!(result.exit_code, 9);
+    }
+
+    #[tokio::test]
+    async fn test_after_tool_hook_can_cancel_builtin_result() {
+        let mut bash = Bash::builder()
+            .after_tool(Box::new(|result| {
+                if result.name == "echo" {
+                    hooks::HookAction::Cancel("blocked".to_string())
+                } else {
+                    hooks::HookAction::Continue(result)
+                }
+            }))
+            .build();
+
+        let result = bash.exec("echo SECRET").await.unwrap();
+        assert_eq!(result.stdout, "");
+        assert!(result.stderr.contains("cancelled by after_tool hook"));
+        assert_eq!(result.exit_code, 1);
     }
 
     #[tokio::test]
