@@ -139,6 +139,8 @@ tool = BashTool(files={
 # Snapshot / restore state
 blob = tool.snapshot()
 restored = BashTool.from_snapshot(blob, username="user")
+trusted_blob = tool.snapshot_keyed(b"32+ bytes of application secret")
+trusted_restored = BashTool.from_snapshot_keyed(trusted_blob, b"32+ bytes of application secret")
 
 # Capture shell state for prompt/UI inspection
 state = tool.shell_state()         # -> ShellState
@@ -237,7 +239,15 @@ blob = bash.snapshot()              # -> bytes
 restored = Bash.from_snapshot(blob) # -> Bash
 assert restored.execute_sync("greet agent").stdout.strip() == "hi agent"
 shell_only = bash.snapshot(exclude_filesystem=True)
+trusted = bash.snapshot_keyed(b"32+ bytes of application secret")
+bash.restore_snapshot_keyed(trusted, b"32+ bytes of application secret")
 ```
+
+Unkeyed snapshot bytes are for local checkpoints and accidental-corruption
+detection only. Python callers that load snapshots from uploads, shared
+storage, or network transport must use `snapshot_keyed(...)`,
+`restore_snapshot_keyed(...)`, and `from_snapshot_keyed(...)` with an
+application secret so forged state is rejected before restore.
 
 ### ShellState
 

@@ -1309,6 +1309,31 @@ fn snapshot_live_bash(
     })
 }
 
+fn snapshot_live_bash_keyed(
+    py: Python<'_>,
+    rt: &Arc<Runtime>,
+    inner: &Arc<Mutex<Bash>>,
+    key: Vec<u8>,
+    exclude_filesystem: bool,
+    exclude_functions: bool,
+) -> PyResult<Vec<u8>> {
+    let rt = rt.clone();
+    let inner = inner.clone();
+    py.detach(|| {
+        rt.block_on(async move {
+            let bash = inner.lock().await;
+            bash.snapshot_to_bytes_keyed_with_options(
+                &key,
+                RustSnapshotOptions {
+                    exclude_filesystem,
+                    exclude_functions,
+                },
+            )
+            .map_err(raise_snapshot_error)
+        })
+    })
+}
+
 fn restore_live_bash_with_env_overrides(
     py: Python<'_>,
     rt: &Arc<Runtime>,
@@ -1329,6 +1354,35 @@ fn restore_live_bash_with_env_overrides(
             let mut state = bash.shell_state();
             for (key, value) in env_overrides {
                 state.env.insert(key, value);
+            }
+            bash.restore_shell_state(&state);
+            Ok(())
+        })
+    })
+}
+
+fn restore_live_bash_keyed_with_env_overrides(
+    py: Python<'_>,
+    rt: &Arc<Runtime>,
+    inner: &Arc<Mutex<Bash>>,
+    data: Vec<u8>,
+    key: Vec<u8>,
+    env_overrides: &[(String, String)],
+) -> PyResult<()> {
+    let rt = rt.clone();
+    let inner = inner.clone();
+    let env_overrides = env_overrides.to_vec();
+    py.detach(|| {
+        rt.block_on(async move {
+            let mut bash = inner.lock().await;
+            bash.restore_snapshot_keyed(&data, &key)
+                .map_err(raise_snapshot_error)?;
+            if env_overrides.is_empty() {
+                return Ok(());
+            }
+            let mut state = bash.shell_state();
+            for (env_key, env_value) in env_overrides {
+                state.env.insert(env_key, env_value);
             }
             bash.restore_shell_state(&state);
             Ok(())
@@ -3664,6 +3718,27 @@ impl PyBash {
         Ok(PyBytes::new(py, &bytes))
     }
 
+    /// Serialize interpreter state to HMAC-protected bytes for untrusted storage.
+    #[pyo3(signature = (key, exclude_filesystem=false, exclude_functions=false))]
+    fn snapshot_keyed<'py>(
+        &self,
+        py: Python<'py>,
+        key: Vec<u8>,
+        exclude_filesystem: bool,
+        exclude_functions: bool,
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        self.reject_external_handler_reentry()?;
+        let bytes = snapshot_live_bash_keyed(
+            py,
+            &self.rt,
+            &self.inner,
+            key,
+            exclude_filesystem,
+            exclude_functions,
+        )?;
+        Ok(PyBytes::new(py, &bytes))
+    }
+
     /// Capture a read-only shell-state snapshot for prompt rendering and inspection.
     fn shell_state(&self, py: Python<'_>) -> PyResult<ShellState> {
         self.reject_external_handler_reentry()?;
@@ -3676,6 +3751,21 @@ impl PyBash {
         let state = capture_shell_state(py, &self.rt, &self.inner)?;
         let env_overrides = placeholder_env_overrides(&state, &self.network);
         restore_live_bash_with_env_overrides(py, &self.rt, &self.inner, data, &env_overrides)
+    }
+
+    /// Restore interpreter state from HMAC-protected bytes produced by `snapshot_keyed()`.
+    fn restore_snapshot_keyed(&self, py: Python<'_>, data: Vec<u8>, key: Vec<u8>) -> PyResult<()> {
+        self.reject_external_handler_reentry()?;
+        let state = capture_shell_state(py, &self.rt, &self.inner)?;
+        let env_overrides = placeholder_env_overrides(&state, &self.network);
+        restore_live_bash_keyed_with_env_overrides(
+            py,
+            &self.rt,
+            &self.inner,
+            data,
+            key,
+            &env_overrides,
+        )
     }
 
     /// Create a new Bash instance from a snapshot and optional constructor kwargs.
@@ -3740,6 +3830,73 @@ impl PyBash {
             network,
         )?;
         bash.restore_snapshot(py, data)?;
+        Ok(bash)
+    }
+
+    /// Create a new Bash instance from HMAC-protected snapshot bytes.
+    #[staticmethod]
+    #[pyo3(signature = (
+        data,
+        key,
+        username=None,
+        hostname=None,
+        max_commands=None,
+        max_loop_iterations=None,
+        max_memory=None,
+        timeout_seconds=None,
+        python=false,
+        sqlite=false,
+        external_functions=None,
+        external_handler=None,
+        files=None,
+        mounts=None,
+        allowed_mount_paths=None,
+        readonly_filesystem=false,
+        custom_builtins=None,
+        network=None,
+    ))]
+    #[allow(clippy::too_many_arguments)]
+    fn from_snapshot_keyed(
+        py: Python<'_>,
+        data: Vec<u8>,
+        key: Vec<u8>,
+        username: Option<String>,
+        hostname: Option<String>,
+        max_commands: Option<u64>,
+        max_loop_iterations: Option<u64>,
+        max_memory: Option<u64>,
+        timeout_seconds: Option<f64>,
+        python: bool,
+        sqlite: bool,
+        external_functions: Option<Vec<String>>,
+        external_handler: Option<Py<PyAny>>,
+        files: Option<&Bound<'_, PyDict>>,
+        mounts: Option<&Bound<'_, PyList>>,
+        allowed_mount_paths: Option<Vec<String>>,
+        readonly_filesystem: bool,
+        custom_builtins: Option<&Bound<'_, PyDict>>,
+        network: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Self> {
+        let bash = Self::new(
+            py,
+            username,
+            hostname,
+            max_commands,
+            max_loop_iterations,
+            max_memory,
+            timeout_seconds,
+            python,
+            sqlite,
+            external_functions,
+            external_handler,
+            files,
+            mounts,
+            allowed_mount_paths,
+            readonly_filesystem,
+            custom_builtins,
+            network,
+        )?;
+        bash.restore_snapshot_keyed(py, data, key)?;
         Ok(bash)
     }
 
@@ -4344,6 +4501,26 @@ impl BashTool {
         Ok(PyBytes::new(py, &bytes))
     }
 
+    /// Serialize interpreter state to HMAC-protected bytes for untrusted storage.
+    #[pyo3(signature = (key, exclude_filesystem=false, exclude_functions=false))]
+    fn snapshot_keyed<'py>(
+        &self,
+        py: Python<'py>,
+        key: Vec<u8>,
+        exclude_filesystem: bool,
+        exclude_functions: bool,
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        let bytes = snapshot_live_bash_keyed(
+            py,
+            &self.rt,
+            &self.inner,
+            key,
+            exclude_filesystem,
+            exclude_functions,
+        )?;
+        Ok(PyBytes::new(py, &bytes))
+    }
+
     /// Capture a read-only shell-state snapshot for prompt rendering and inspection.
     fn shell_state(&self, py: Python<'_>) -> PyResult<ShellState> {
         capture_shell_state(py, &self.rt, &self.inner)
@@ -4354,6 +4531,20 @@ impl BashTool {
         let state = capture_shell_state(py, &self.rt, &self.inner)?;
         let env_overrides = placeholder_env_overrides(&state, &self.network);
         restore_live_bash_with_env_overrides(py, &self.rt, &self.inner, data, &env_overrides)
+    }
+
+    /// Restore interpreter state from HMAC-protected bytes produced by `snapshot_keyed()`.
+    fn restore_snapshot_keyed(&self, py: Python<'_>, data: Vec<u8>, key: Vec<u8>) -> PyResult<()> {
+        let state = capture_shell_state(py, &self.rt, &self.inner)?;
+        let env_overrides = placeholder_env_overrides(&state, &self.network);
+        restore_live_bash_keyed_with_env_overrides(
+            py,
+            &self.rt,
+            &self.inner,
+            data,
+            key,
+            &env_overrides,
+        )
     }
 
     /// Create a new BashTool instance from a snapshot and optional constructor kwargs.
@@ -4406,6 +4597,61 @@ impl BashTool {
             network,
         )?;
         tool.restore_snapshot(py, data)?;
+        Ok(tool)
+    }
+
+    /// Create a new BashTool instance from HMAC-protected snapshot bytes.
+    #[staticmethod]
+    #[pyo3(signature = (
+        data,
+        key,
+        username=None,
+        hostname=None,
+        max_commands=None,
+        max_loop_iterations=None,
+        max_memory=None,
+        timeout_seconds=None,
+        files=None,
+        mounts=None,
+        allowed_mount_paths=None,
+        readonly_filesystem=false,
+        custom_builtins=None,
+        network=None,
+    ))]
+    #[allow(clippy::too_many_arguments)]
+    fn from_snapshot_keyed(
+        py: Python<'_>,
+        data: Vec<u8>,
+        key: Vec<u8>,
+        username: Option<String>,
+        hostname: Option<String>,
+        max_commands: Option<u64>,
+        max_loop_iterations: Option<u64>,
+        max_memory: Option<u64>,
+        timeout_seconds: Option<f64>,
+        files: Option<&Bound<'_, PyDict>>,
+        mounts: Option<&Bound<'_, PyList>>,
+        allowed_mount_paths: Option<Vec<String>>,
+        readonly_filesystem: bool,
+        custom_builtins: Option<&Bound<'_, PyDict>>,
+        network: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Self> {
+        let tool = Self::new(
+            py,
+            username,
+            hostname,
+            max_commands,
+            max_loop_iterations,
+            max_memory,
+            timeout_seconds,
+            files,
+            mounts,
+            allowed_mount_paths,
+            readonly_filesystem,
+            custom_builtins,
+            network,
+        )?;
+        tool.restore_snapshot_keyed(py, data, key)?;
         Ok(tool)
     }
 
