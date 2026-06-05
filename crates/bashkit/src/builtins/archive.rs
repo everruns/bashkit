@@ -596,8 +596,19 @@ async fn extract_tar(
                 let content = &tar_data[offset..offset + size];
 
                 if to_stdout {
-                    // -O: write content to stdout
-                    stdout_output.push_str(&String::from_utf8_lossy(content));
+                    if let Err(err) = limits.check_file_size(size as u64) {
+                        return Ok(ExecResult::err(format!("tar: {name}: {err}\n"), 2));
+                    }
+
+                    let output = String::from_utf8_lossy(content);
+                    if let Err(err) =
+                        limits.check_total_bytes(stdout_output.len() as u64, output.len() as u64)
+                    {
+                        return Ok(ExecResult::err(format!("tar: {name}: {err}\n"), 2));
+                    }
+
+                    // -O: write content to stdout after applying VFS-sized quotas.
+                    stdout_output.push_str(&output);
                 } else {
                     let file_path = resolve_path(&extract_base, &name);
 
@@ -1710,6 +1721,62 @@ mod tests {
         // End-of-archive marker (two zero blocks)
         output.extend_from_slice(&[0u8; 1024]);
         output
+    }
+
+    fn build_tar_with_entries(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut output = Vec::new();
+        for (name, content) in entries {
+            let entry = build_tar_with_entry(name, content);
+            output.extend_from_slice(&entry[..entry.len() - 1024]);
+        }
+        output.extend_from_slice(&[0u8; 1024]);
+        output
+    }
+
+    #[tokio::test]
+    async fn test_tar_extract_stdout_enforces_file_size_limit() {
+        use crate::fs::FsLimits;
+
+        let limits = FsLimits::new().max_file_size(10).max_total_bytes(10_000);
+        let fs = Arc::new(InMemoryFs::with_limits(limits));
+        let mut cwd = PathBuf::from("/tmp");
+        fs.mkdir(&cwd, true).await.unwrap();
+        let env = HashMap::new();
+        let mut variables = HashMap::new();
+
+        let tar = build_tar_with_entry("large.txt", b"01234567890");
+        let stdin = String::from_utf8(tar).unwrap();
+        let args = vec!["-xOf".to_string(), "-".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs, Some(&stdin));
+
+        let result = Tar.execute(ctx).await.unwrap();
+
+        assert_eq!(result.exit_code, 2);
+        assert!(result.stdout.is_empty());
+        assert!(result.stderr.contains("file too large"));
+    }
+
+    #[tokio::test]
+    async fn test_tar_extract_stdout_enforces_total_output_limit() {
+        use crate::fs::FsLimits;
+
+        let limits = FsLimits::new().max_file_size(10).max_total_bytes(15);
+        let fs = Arc::new(InMemoryFs::with_limits(limits));
+        let mut cwd = PathBuf::from("/tmp");
+        fs.mkdir(&cwd, true).await.unwrap();
+        let env = HashMap::new();
+        let mut variables = HashMap::new();
+
+        let tar = build_tar_with_entries(&[("one.txt", b"1234567890"), ("two.txt", b"abcdef")]);
+        let stdin = String::from_utf8(tar).unwrap();
+        let args = vec!["-xOf".to_string(), "-".to_string()];
+        let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs, Some(&stdin));
+
+        let result = Tar.execute(ctx).await.unwrap();
+
+        assert_eq!(result.exit_code, 2);
+        assert!(result.stdout.is_empty());
+        assert!(result.stderr.contains("filesystem full"));
     }
 
     #[tokio::test]
