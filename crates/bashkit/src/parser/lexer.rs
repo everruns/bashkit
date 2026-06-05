@@ -1409,7 +1409,13 @@ impl<'a> Lexer<'a> {
             if flags.has_unquoted_expansion {
                 let mut ranges = flags.quoted_ranges;
                 ranges.push((0, quoted_prefix_len));
-                for (start, end) in ranges.into_iter().rev() {
+                // Process from highest byte offset to lowest so each insertion
+                // does not shift the byte positions of ranges not yet processed.
+                // The original push order has the prefix range last, so .rev()
+                // would incorrectly process it first and invalidate multibyte
+                // char boundaries for inner ranges.
+                ranges.sort_unstable_by(|a, b| b.1.cmp(&a.1).then(b.0.cmp(&a.0)));
+                for (start, end) in ranges {
                     content.insert(end, QUOTED_SEGMENT_END);
                     content.insert(start, QUOTED_SEGMENT_START);
                 }
