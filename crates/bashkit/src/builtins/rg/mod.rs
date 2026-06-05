@@ -4827,12 +4827,9 @@ fn rg_quiet_result(
     any_match: &mut bool,
     stderr: &str,
 ) -> Option<ExecResult> {
-    let selected = if opts.files_without_matches {
-        match_count == 0
-    } else {
-        match_count > 0
-    };
-    if selected {
+    // Quiet exit status always reflects whether the pattern matched,
+    // regardless of --files-without-match output selection.
+    if match_count > 0 {
         *any_match = true;
         if !opts.stats {
             return Some(ExecResult {
