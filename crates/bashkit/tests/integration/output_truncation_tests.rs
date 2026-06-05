@@ -106,11 +106,24 @@ async fn execution_continues_after_stdout_truncation() {
     assert_eq!(result.exit_code, 0);
 }
 
-// --- Minimal limit ---
+// --- Minimal limits ---
+
+#[tokio::test]
+async fn zero_stdout_limit_suppresses_output_and_truncates() {
+    let result = run_with_limits("echo hello", 0, 1_048_576).await;
+    assert_eq!(result.stdout, "");
+    assert!(result.stdout_truncated);
+}
+
+#[tokio::test]
+async fn zero_stderr_limit_suppresses_output_and_truncates() {
+    let result = run_with_limits("echo hello >&2", 1_048_576, 0).await;
+    assert_eq!(result.stderr, "");
+    assert!(result.stderr_truncated);
+}
 
 #[tokio::test]
 async fn minimal_stdout_limit_truncates_immediately() {
-    // 0 is treated as "use default" per #1181, so use 1 for minimal limit
     let result = run_with_limits("echo hello", 1, 1_048_576).await;
     assert!(result.stdout.len() <= 1);
     assert!(result.stdout_truncated);
