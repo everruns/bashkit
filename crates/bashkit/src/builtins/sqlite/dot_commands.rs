@@ -52,6 +52,8 @@ pub(super) enum DotError {
     InvalidValue { cmd: &'static str, value: String },
     #[error("sqlite engine error: {0}")]
     Engine(String),
+    #[error("sqlite output exceeds byte cap ({0} > {1})")]
+    OutputCap(usize, usize),
 }
 
 const HELP_TEXT: &str = concat!(
@@ -69,12 +71,19 @@ const HELP_TEXT: &str = concat!(
     ".read PATH              Execute SQL from a VFS file\n",
 );
 
+/// Dispatch a dot-command line.
+///
+/// `max_output_bytes` is the *remaining* output budget for the current
+/// invocation. `.dump` enforces this cumulatively across schema and all
+/// table rows so memory growth is bounded during construction, not only
+/// after the full string is returned to the caller.
 pub(super) fn dispatch(
     line: &str,
     engine: &SqliteEngine,
     opts: &mut OutputOpts,
     deadline: Deadline,
     limits: QueryLimits,
+    max_output_bytes: usize,
 ) -> Result<DotOutcome, DotError> {
     let (name, args) = tokenize_dot(line);
     match name.as_str() {
@@ -89,7 +98,7 @@ pub(super) fn dispatch(
         "indexes" | "indices" => {
             indexes(args, engine, opts, deadline, limits).map(DotOutcome::Stdout)
         }
-        "dump" => dump(engine, deadline, limits).map(DotOutcome::Stdout),
+        "dump" => dump(engine, deadline, limits, max_output_bytes).map(DotOutcome::Stdout),
         "read" => {
             let path = args
                 .into_iter()
@@ -276,15 +285,39 @@ fn indexes(
     Ok(out)
 }
 
+/// Append `chunk` to `buf`, returning `Err(OutputCap)` if doing so would
+/// exceed `max`. This enforces the output budget *during* construction so
+/// memory never grows beyond the cap even for large multi-table dumps.
+/// THREAT[TM-DOS-091]: cumulative `.dump` output cap enforced here.
+fn bounded_append(buf: &mut String, chunk: &str, max: usize) -> Result<(), DotError> {
+    let next = buf.len().saturating_add(chunk.len());
+    if next > max {
+        return Err(DotError::OutputCap(next, max));
+    }
+    buf.push_str(chunk);
+    Ok(())
+}
+
 /// Emit `BEGIN; <CREATE TABLE>...; <INSERT INTO ... VALUES (...)>; COMMIT;`.
 /// This matches sqlite3's `.dump` for tables; views/triggers/indexes only get
 /// their CREATE statement, no rows. Blob literals are emitted as `X'..'`.
+///
+/// `max_output_bytes` is the remaining output budget for the invocation.
+/// The cap is applied cumulatively across schema lines and every row from
+/// every table — construction stops as soon as the budget would be exceeded,
+/// preventing unbounded memory growth from large multi-table databases.
 fn dump(
     engine: &SqliteEngine,
     deadline: Deadline,
     limits: QueryLimits,
+    max_output_bytes: usize,
 ) -> Result<String, DotError> {
-    let mut out = String::from("PRAGMA foreign_keys=OFF;\nBEGIN TRANSACTION;\n");
+    let mut out = String::new();
+    bounded_append(
+        &mut out,
+        "PRAGMA foreign_keys=OFF;\nBEGIN TRANSACTION;\n",
+        max_output_bytes,
+    )?;
 
     // Schema first.
     let schema_outcome = engine
@@ -296,8 +329,8 @@ fn dump(
         .map_err(DotError::Engine)?;
     for row in &schema_outcome.rows {
         if let Some(Value::Text(sql)) = row.get(2) {
-            out.push_str(sql.as_str());
-            out.push_str(";\n");
+            bounded_append(&mut out, sql.as_str(), max_output_bytes)?;
+            bounded_append(&mut out, ";\n", max_output_bytes)?;
         }
     }
 
@@ -321,15 +354,12 @@ fn dump(
             .map_err(DotError::Engine)?;
         for data_row in &data.rows {
             let values: Vec<String> = data_row.iter().map(format_sql_literal).collect();
-            out.push_str(&format!(
-                "INSERT INTO \"{}\" VALUES({});\n",
-                quoted,
-                values.join(",")
-            ));
+            let line = format!("INSERT INTO \"{}\" VALUES({});\n", quoted, values.join(","));
+            bounded_append(&mut out, &line, max_output_bytes)?;
         }
     }
 
-    out.push_str("COMMIT;\n");
+    bounded_append(&mut out, "COMMIT;\n", max_output_bytes)?;
     Ok(out)
 }
 
@@ -385,7 +415,14 @@ mod tests {
         engine: &SqliteEngine,
         opts: &mut OutputOpts,
     ) -> Result<DotOutcome, DotError> {
-        dispatch(line, engine, opts, no_deadline(), unlimited_limits())
+        dispatch(
+            line,
+            engine,
+            opts,
+            no_deadline(),
+            unlimited_limits(),
+            usize::MAX,
+        )
     }
 
     #[test]
@@ -561,6 +598,93 @@ mod tests {
         assert!(s.contains("INSERT INTO \"t\" VALUES(1,'hello')"));
         assert!(s.contains("'O''Brien'"));
         assert!(s.contains("COMMIT;"));
+    }
+
+    /// `.dump` must stop and return an error when the cumulative output would
+    /// exceed the configured output cap, preventing unbounded memory growth
+    /// across many tables (DeepSec issue #1869).
+    #[test]
+    fn dump_respects_output_cap() {
+        let engine = mk_engine();
+        // Two tables with several rows of text data.
+        engine
+            .execute("CREATE TABLE a(v TEXT)", no_deadline(), unlimited_limits())
+            .unwrap();
+        engine
+            .execute("CREATE TABLE b(v TEXT)", no_deadline(), unlimited_limits())
+            .unwrap();
+        for i in 0..10 {
+            engine
+                .execute(
+                    &format!(
+                        "INSERT INTO a VALUES ('row-{i:04}-padding-aaaaaaaaaaaaaaaaaaaaaaaaa')"
+                    ),
+                    no_deadline(),
+                    unlimited_limits(),
+                )
+                .unwrap();
+            engine
+                .execute(
+                    &format!(
+                        "INSERT INTO b VALUES ('row-{i:04}-padding-bbbbbbbbbbbbbbbbbbbbbbbbb')"
+                    ),
+                    no_deadline(),
+                    unlimited_limits(),
+                )
+                .unwrap();
+        }
+
+        // A tiny cap that the dump cannot fit into, ensuring the cap fires
+        // mid-construction rather than only after the full string is built.
+        let tiny_cap: usize = 100;
+        let mut o = opts();
+        let err = dispatch(
+            ".dump",
+            &engine,
+            &mut o,
+            no_deadline(),
+            unlimited_limits(),
+            tiny_cap,
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(err, DotError::OutputCap(_, _)),
+            "expected OutputCap, got: {err}"
+        );
+        // Error message must not contain debug shapes — plain text only.
+        let msg = err.to_string();
+        assert!(
+            !msg.contains("{:?}"), // debug-ok: testing that debug shapes are absent from error output
+            "debug shape leaked into error: {msg}"
+        );
+        assert!(
+            msg.len() <= 1024,
+            "error message too long ({} bytes)",
+            msg.len()
+        );
+    }
+
+    /// `.dump` on an empty database still produces the PRAGMA/BEGIN/COMMIT
+    /// boilerplate even with a very tight cap that fits it.
+    #[test]
+    fn dump_empty_db_under_cap() {
+        let engine = mk_engine();
+        let mut o = opts();
+        // "PRAGMA foreign_keys=OFF;\nBEGIN TRANSACTION;\nCOMMIT;\n" is ~50 bytes.
+        let DotOutcome::Stdout(s) = dispatch(
+            ".dump",
+            &engine,
+            &mut o,
+            no_deadline(),
+            unlimited_limits(),
+            4096,
+        )
+        .unwrap() else {
+            panic!("expected stdout");
+        };
+        assert!(s.starts_with("PRAGMA foreign_keys=OFF;"));
+        assert!(s.ends_with("COMMIT;\n"));
     }
 
     #[test]

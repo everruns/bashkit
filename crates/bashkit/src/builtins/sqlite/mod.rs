@@ -789,8 +789,17 @@ async fn run_statements(
                 push_stdout_bounded(stdout, &rendered, limits.max_output_bytes)?;
             }
             Stmt::Dot(line) => {
-                let result =
-                    dot_commands::dispatch(&line, engine, opts, deadline, query_limits(limits));
+                // Pass the *remaining* output budget so .dump can enforce it
+                // cumulatively during construction (DeepSec #1869).
+                let remaining = limits.max_output_bytes.saturating_sub(stdout.len());
+                let result = dot_commands::dispatch(
+                    &line,
+                    engine,
+                    opts,
+                    deadline,
+                    query_limits(limits),
+                    remaining,
+                );
                 match result {
                     Ok(DotOutcome::Stdout(s)) => {
                         push_stdout_bounded(stdout, &s, limits.max_output_bytes)?;

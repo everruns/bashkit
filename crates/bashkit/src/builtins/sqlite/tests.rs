@@ -518,6 +518,37 @@ async fn dump_data_respects_row_cap() {
     );
 }
 
+/// `.dump` output cap is enforced cumulatively across all tables, not just
+/// per-query (DeepSec #1869). With a tiny max_output_bytes, a dump that
+/// would fit under max_result_bytes per table still hits the invocation cap.
+#[tokio::test]
+async fn dump_output_cap_enforced_across_multiple_tables() {
+    let limits = SqliteLimits::default()
+        .max_rows_per_query(1000)
+        .max_result_bytes(64 * 1024)
+        .max_output_bytes(120) // too small for schema + any data rows
+        .max_duration(std::time::Duration::ZERO);
+    let r = run_with_limits(
+        &[
+            ":memory:",
+            "CREATE TABLE a(v TEXT); CREATE TABLE b(v TEXT);\
+             INSERT INTO a VALUES ('row-aaa'), ('row-bbb');\
+             INSERT INTO b VALUES ('row-ccc'), ('row-ddd');\n.dump",
+        ],
+        None,
+        limits,
+    )
+    .await;
+    assert_eq!(r.exit_code, 1, "should fail due to output cap");
+    // Error must be plain text, not a debug-formatted struct.
+    let msg = &r.stderr;
+    assert!(
+        msg.contains("output exceeds byte cap") || msg.contains("sqlite:"),
+        "unexpected stderr: {msg}"
+    );
+    assert!(!msg.contains("{:?}"), "debug shape leaked into stderr"); // debug-ok: testing that debug shapes are absent
+}
+
 #[tokio::test]
 async fn value_byte_cap_rejects_large_cell_before_rendering() {
     let limits = SqliteLimits::default()

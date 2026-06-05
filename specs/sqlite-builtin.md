@@ -228,6 +228,7 @@ leading SQL keyword via the parser's lightweight tokeniser
 | TM-SQL-010    | DoS / fingerprinting via dangerous PRAGMAs           | `SqliteLimits::pragma_deny` defaults block `cache_size`, `mmap_size`, `page_size`, `max_page_count`, `temp_store_directory`, `data_store_directory`, `compile_options`, `locking_mode`, `shared_cache`; parser handles comments plus quoted/schema-qualified names |
 | TM-SQL-011    | Information leakage via host-side error strings      | `sanitize()` strips ` at /…:N:M` annotations from turso errors          |
 | TM-SQL-012    | Sandbox escape via `VACUUM INTO` writing host files  | Policy rejects `VACUUM` (with/without `INTO`) at the keyword sniffer; tested via `vacuum_into_blocked`/`vacuum_plain_blocked`/`vacuum_blocked_with_leading_comment` |
+| TM-SQL-013    | DoS via `.dump` cumulative output bypass            | `.dump` previously built the full string before `max_output_bytes` was applied; `bounded_append()` enforces the cap after each schema/row chunk with the remaining budget passed from `run_statements`; `THREAT[TM-DOS-091]`; tested via `dump_respects_output_cap` and `dump_output_cap_enforced_across_multiple_tables` |
 
 ## Test Plan
 
