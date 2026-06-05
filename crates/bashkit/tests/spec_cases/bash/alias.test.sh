@@ -190,3 +190,16 @@ cat "$file"
 ### expect
 ok
 ### end
+
+### alias_preserves_mixed_quoted_glob_arg
+# Alias reparse must keep unquoted glob portions outside quotes.
+
+shopt -s expand_aliases
+mkdir d
+printf 'data\n' > d/a.txt
+dir=d
+alias show='printf "<%s>\n" '
+show "$dir"/*.txt
+### expect
+<d/a.txt>
+### end
