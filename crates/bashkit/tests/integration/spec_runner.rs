@@ -264,13 +264,24 @@ async fn run_spec_test_paused_time(test: &SpecTest) -> TestResult {
 
 /// Run a spec test against real bash for comparison
 pub fn run_real_bash(script: &str) -> (String, i32) {
+    // Important decision: host bash comparison is untrusted spec input. Run it
+    // from a private temp directory, and remap hard-coded /tmp paths there, so
+    // redirects cannot clobber host or repo files while stdout parity remains /tmp-based.
+    let sandbox = tempfile::tempdir().expect("Failed to create bash comparison tempdir");
+    let sandbox_tmp = sandbox.path().to_string_lossy();
+    let sandbox_tmp_prefix = format!("{sandbox_tmp}/");
+    let rewritten_script = script.replace("/tmp/", &sandbox_tmp_prefix);
     let output = Command::new("bash")
         .arg("-c")
-        .arg(script)
+        .arg(&rewritten_script)
+        .current_dir(sandbox.path())
+        .env("TMPDIR", sandbox.path())
         .output()
         .expect("Failed to run bash");
 
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout)
+        .replace(&sandbox_tmp_prefix, "/tmp/")
+        .replace(sandbox_tmp.as_ref(), "/tmp");
     let exit_code = output.status.code().unwrap_or(1);
 
     (stdout, exit_code)
@@ -411,6 +422,41 @@ hello
         assert_eq!(
             tests[0].skip_reason,
             Some("not implemented yet".to_string())
+        );
+    }
+
+    #[test]
+    fn test_real_bash_comparison_uses_isolated_current_dir() {
+        let probe_name = format!("bashkit_real_bash_isolation_probe_{}", std::process::id());
+        let probe = std::env::current_dir().unwrap().join(&probe_name);
+        assert!(
+            !probe.exists(),
+            "test probe path unexpectedly exists: {}",
+            probe.display()
+        );
+
+        let abs_probe = std::path::Path::new("/tmp").join(&probe_name);
+        assert!(
+            !abs_probe.exists(),
+            "absolute test probe path unexpectedly exists: {}",
+            abs_probe.display()
+        );
+
+        let (stdout, exit_code) = run_real_bash(&format!(
+            "echo relative > {probe_name}; cat {probe_name}; echo absolute > /tmp/{probe_name}; cat /tmp/{probe_name}; echo /tmp/{probe_name}"
+        ));
+
+        assert_eq!(exit_code, 0);
+        assert_eq!(stdout, format!("relative\nabsolute\n/tmp/{probe_name}\n"));
+        assert!(
+            !probe.exists(),
+            "real bash comparison wrote to caller cwd: {}",
+            probe.display()
+        );
+        assert!(
+            !abs_probe.exists(),
+            "real bash comparison wrote to host /tmp: {}",
+            abs_probe.display()
         );
     }
 

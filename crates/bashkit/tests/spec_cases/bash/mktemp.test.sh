@@ -31,7 +31,7 @@ absent
 
 ### mktemp_template_xxxxxx
 # Custom template: trailing X's are replaced with random chars
-p=$(mktemp -p /tmp myXXXXXX)
+p=$(mktemp /tmp/myXXXXXX)
 case "$p" in
   /tmp/my??????) echo ok ;;
   *) echo "bad: $p" ;;
