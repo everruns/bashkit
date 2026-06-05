@@ -206,7 +206,7 @@ jobs:
 
       - name: Detect Doppler availability
         id: doppler
-        if: github.event_name != 'pull_request'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: echo "available=${{ secrets.DOPPLER_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
 
       - name: Install Doppler CLI
