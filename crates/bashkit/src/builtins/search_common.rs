@@ -57,19 +57,30 @@ impl Matcher {
         }
     }
 
-    /// Byte ranges `(start, end)` of all non-overlapping matches, left to
-    /// right. Slice `text[start..end]` to recover the matched substring.
-    pub(crate) fn find_ranges(&self, text: &str) -> Vec<(usize, usize)> {
+    /// Visit non-overlapping match byte ranges left to right.
+    ///
+    /// The callback returns `false` to stop scanning immediately. Keep this
+    /// lazy so grep early exits (`-m`, `-q`, `-l`, `-L`) bound work and memory
+    /// even for dense `-o` matches on large single-line files.
+    pub(crate) fn for_each_range(&self, text: &str, mut visit: impl FnMut((usize, usize)) -> bool) {
         match self {
-            Matcher::Standard(re) => re.find_iter(text).map(|m| (m.start(), m.end())).collect(),
-            // `find_iter` yields `Result<Match, _>`; `flatten` drops the Err
-            // arm (backtrack-limit / internal errors) — same "no match" policy
-            // as `is_match`.
-            Matcher::Fancy(re) => re
-                .find_iter(text)
-                .flatten()
-                .map(|m| (m.start(), m.end()))
-                .collect(),
+            Matcher::Standard(re) => {
+                for m in re.find_iter(text) {
+                    if !visit((m.start(), m.end())) {
+                        break;
+                    }
+                }
+            }
+            // `find_iter` yields `Result<Match, _>`; `Err` arms
+            // (backtrack-limit / internal errors) keep the same "no match"
+            // policy as `is_match` by not calling the visitor.
+            Matcher::Fancy(re) => {
+                for m in re.find_iter(text).flatten() {
+                    if !visit((m.start(), m.end())) {
+                        break;
+                    }
+                }
+            }
         }
     }
 }
@@ -131,4 +142,22 @@ pub(crate) fn parse_numeric_flag_arg(
             cmd_name, flag_name, num_str
         ))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn for_each_range_stops_when_visitor_returns_false() {
+        let matcher = Matcher::Standard(build_regex(".").unwrap());
+        let mut visited = 0usize;
+
+        matcher.for_each_range(&"x".repeat(100_000), |_| {
+            visited += 1;
+            false
+        });
+
+        assert_eq!(visited, 1);
+    }
 }

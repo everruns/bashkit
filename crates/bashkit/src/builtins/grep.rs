@@ -724,8 +724,9 @@ impl Builtin for Grep {
                 }
 
                 if opts.only_matching && !opts.invert_match {
-                    // -o mode: count each match separately
-                    for _ in matcher.find_ranges(line) {
+                    // -o mode: count each match separately, stopping the lazy
+                    // matcher as soon as grep's early-exit conditions are met.
+                    matcher.for_each_range(line, |_| {
                         file_matched = true;
                         if !opts.files_without_matches {
                             any_match = true;
@@ -734,16 +735,18 @@ impl Builtin for Grep {
                         total_matches += 1;
 
                         if opts.files_with_matches || opts.files_without_matches || opts.quiet {
-                            break;
+                            return false;
                         }
 
                         if let Some(max) = opts.max_count
                             && total_matches >= max
                         {
                             max_reached = true;
-                            break;
+                            return false;
                         }
-                    }
+
+                        true
+                    });
                     if (opts.files_with_matches || opts.files_without_matches) && file_matched {
                         break;
                     }
@@ -827,14 +830,15 @@ impl Builtin for Grep {
                 }
             } else if !opts.quiet {
                 if opts.only_matching && !opts.invert_match {
-                    // -o mode: output each match
+                    // -o mode: output each match lazily so -m can stop before
+                    // materializing every match range on dense inputs.
                     let mut o_matches = 0usize;
                     for (line_num, line) in lines.iter().enumerate() {
-                        for (start, end) in matcher.find_ranges(line) {
+                        matcher.for_each_range(line, |(start, end)| {
                             if let Some(max) = opts.max_count
                                 && o_matches >= max
                             {
-                                break;
+                                return false;
                             }
                             if show_filename {
                                 output.push_str(filename);
@@ -849,7 +853,8 @@ impl Builtin for Grep {
                             output.push_str(&line[start..end]);
                             output.push('\n');
                             o_matches += 1;
-                        }
+                            true
+                        });
                         if let Some(max) = opts.max_count
                             && o_matches >= max
                         {
@@ -1215,6 +1220,15 @@ mod tests {
             .unwrap();
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "o\no\no\no\n");
+    }
+
+    #[tokio::test]
+    async fn test_grep_only_matching_max_count_stops_on_first_dense_match() {
+        let haystack = "x".repeat(100_000);
+        let result = run_grep(&["-om1", "."], Some(&haystack)).await.unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "x\n");
     }
 
     #[tokio::test]
