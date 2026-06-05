@@ -25,11 +25,35 @@ env:
 
 jobs:
   # ============================================================================
+  # Verify the publish source is on main before running any repo code
+  # with secrets. Manual dispatch and release events can target arbitrary
+  # refs; this gate ensures all subsequent jobs see trusted code.
+  # ============================================================================
+  verify-source:
+    name: Verify publish source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Verify publish source is reachable from main
+        run: |
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          SOURCE_SHA=$(git rev-parse HEAD)
+          if ! git merge-base --is-ancestor "$SOURCE_SHA" origin/main; then
+            echo "Error: publish source $SOURCE_SHA is not reachable from origin/main"
+            exit 1
+          fi
+          echo "Publish source verified on origin/main: $SOURCE_SHA"
+
+  # ============================================================================
   # Build native bindings for each platform
   # ============================================================================
   build-js:
     name: Build JS - ${{ matrix.settings.target }}
     runs-on: ${{ matrix.settings.host }}
+    needs: [verify-source]
 
     strategy:
       fail-fast: false
