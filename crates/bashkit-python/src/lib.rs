@@ -24,7 +24,7 @@ use bashkit::{
     Bash, BashTool as RustBashTool, Builtin, BuiltinContext, BuiltinRegistry,
     DirEntry as FsDirEntry, ExcType, ExecResult as RustExecResult, ExecutionExtensions,
     ExecutionLimits, ExtFunctionResult, FileSystem, FileSystemExt, FileType as FsFileType,
-    InMemoryFs, Metadata as FsMetadata, MontyException, MontyObject, NetworkAllowlist,
+    FsLimits, InMemoryFs, Metadata as FsMetadata, MontyException, MontyObject, NetworkAllowlist,
     OutputCallback as RustOutputCallback, OverlayFs, PosixFs, PythonExternalFnHandler,
     PythonLimits, ScriptedTool as RustScriptedTool, ShellStateView as RustShellStateView,
     SnapshotOptions as RustSnapshotOptions, Tool, ToolArgs, ToolDef, ToolRequest, async_trait,
@@ -36,7 +36,7 @@ use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{
     PyBytes, PyCapsule, PyCapsuleMethods, PyDict, PyFloat, PyFrozenSet, PyInt, PyList, PyModule,
-    PySet, PyTuple,
+    PySet, PyString, PyTuple,
 };
 // pyo3-async-runtimes bridges Rust futures to a Python asyncio loop; it hard-pulls
 // multi-threaded tokio + mio sockets, which do not build on wasm. The async
@@ -696,27 +696,42 @@ impl PythonLazyFilesFs {
             return Ok(());
         };
 
+        // THREAT[TM-DOS-FFI]: Lazy Python file providers are host callbacks
+        // reachable from sandboxed reads; cap returned bytes before copying into
+        // Rust-owned VFS data, then keep the provider retryable if VFS write fails.
         let loaded = Python::attach(|py| -> std::result::Result<Vec<u8>, String> {
             let value = provider.bind(py).call0().map_err(|e| e.to_string())?;
-            let text = value.extract::<String>().map_err(|_| {
+            let text = value.cast::<PyString>().map_err(|_| {
                 format!(
                     "{PY_FILE_PROVIDER_TYPE_ERROR_PREFIX}file provider for '{}' must return str",
                     normalized.display()
                 )
             })?;
-            Ok(text.into_bytes())
+            let text = text.to_str().map_err(|e| e.to_string())?;
+            let content_size = text.len();
+            let max_file_size = FsLimits::default().max_file_size as usize;
+            if content_size > max_file_size {
+                return Err(format!(
+                    "file size limit exceeded: {} bytes > {} bytes",
+                    content_size, max_file_size
+                ));
+            }
+            Ok(text.as_bytes().to_vec())
         });
 
-        match loaded {
-            Ok(content) => {
-                self.overlay.write_file(&normalized, &content).await?;
-                Ok(())
-            }
+        let content = match loaded {
+            Ok(content) => content,
             Err(message) => {
                 self.providers.write().unwrap().insert(normalized, provider);
-                Err(std::io::Error::other(message).into())
+                return Err(std::io::Error::other(message).into());
             }
+        };
+
+        if let Err(err) = self.overlay.write_file(&normalized, &content).await {
+            self.providers.write().unwrap().insert(normalized, provider);
+            return Err(err);
         }
+        Ok(())
     }
 
     fn remove_provider_paths(&self, path: &Path, recursive: bool) {

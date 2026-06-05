@@ -14,6 +14,7 @@ _NAMES = (
     "test_bash_files_dict",
     "test_bash_files_dict_callables_are_lazy_and_cached",
     "test_bash_files_dict_callable_errors_and_invalid_returns_raise",
+    "test_bash_files_dict_callable_large_return_is_limited_and_retryable",
     "test_bash_mounts_readonly_by_default",
     "test_bash_mounts_writable",
     "test_bash_live_mount_preserves_state_and_unmounts",

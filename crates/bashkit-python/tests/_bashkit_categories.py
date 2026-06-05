@@ -300,6 +300,25 @@ def test_bash_files_dict_callable_errors_and_invalid_returns_raise():
         bash.read_file("/config/invalid.txt")
 
 
+def test_bash_files_dict_callable_large_return_is_limited_and_retryable():
+    state = {"large": True, "calls": 0}
+
+    def load_file():
+        state["calls"] += 1
+        if state["large"]:
+            return "x" * 10_000_001
+        return "ok"
+
+    bash = Bash(files={"/config/lazy.txt": load_file})
+
+    with pytest.raises(Exception, match="file size limit exceeded"):
+        bash.read_file("/config/lazy.txt")
+
+    state["large"] = False
+    assert bash.read_file("/config/lazy.txt") == "ok"
+    assert state["calls"] == 2
+
+
 def test_bash_mounts_readonly_by_default(tmp_path):
     (tmp_path / "data.txt").write_text("original\n")
     bash = Bash(mounts=[{"host_path": str(tmp_path), "vfs_path": "/data"}])
