@@ -2608,6 +2608,9 @@ impl Interpreter {
                 // Consume Exit and Return control flow at subshell boundary —
                 // they only terminate the subshell, not the parent shell.
                 // Return is used by ${var:?msg} error handling and nounset errors.
+                // Also clear errexit_suppressed: inner AND/OR suppression must not
+                // escape the subshell boundary and prevent the parent set -e from
+                // firing on the subshell's non-zero exit code.
                 if let Ok(ref mut res) = result {
                     match res.control_flow {
                         ControlFlow::Exit(code) | ControlFlow::Return(code) => {
@@ -2616,6 +2619,7 @@ impl Interpreter {
                         }
                         _ => {}
                     }
+                    res.errexit_suppressed = false;
                 }
 
                 result
@@ -6590,6 +6594,11 @@ impl Interpreter {
             result.exit_code = code;
             result.control_flow = ControlFlow::None;
         }
+
+        // Clear errexit_suppressed at function boundary: AND/OR suppression
+        // from inside the function must not prevent the caller's set -e from
+        // firing on the function's non-zero exit code.
+        result.errexit_suppressed = false;
 
         self.apply_redirections(result, redirects).await
     }
