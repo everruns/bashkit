@@ -23,13 +23,16 @@ impl BuiltinHelper for Iconv {
 
 /// Parse an encoding spec like "ascii//translit" into (encoding, translit).
 fn parse_encoding_spec(spec: &str) -> (Option<&'static str>, bool) {
-    let (name, translit) = if let Some(pos) = spec.find("//") {
+    if let Some(pos) = spec.find("//") {
         let suffix = &spec[pos + 2..];
-        (&spec[..pos], suffix.eq_ignore_ascii_case("translit"))
+        if suffix.eq_ignore_ascii_case("translit") {
+            (normalize_encoding(&spec[..pos]), true)
+        } else {
+            (None, false)
+        }
     } else {
-        (spec, false)
-    };
-    (normalize_encoding(name), translit)
+        (normalize_encoding(spec), false)
+    }
 }
 
 /// Normalize encoding name to canonical form.
@@ -445,6 +448,15 @@ mod tests {
         let r = run(&["-f", "EBCDIC", "-t", "UTF-8"], Some("hi"), None).await;
         assert_eq!(r.exit_code, 1);
         assert!(r.stderr.contains("unsupported encoding"));
+    }
+
+    #[tokio::test]
+    async fn test_unsupported_target_encoding_suffix() {
+        for target in ["ASCII//BAD", "UTF-8//IGNORE", "ASCII//TRANSLIT//IGNORE"] {
+            let r = run(&["-f", "UTF-8", "-t", target], Some("hi"), None).await;
+            assert_eq!(r.exit_code, 1, "target should be rejected: {target}");
+            assert!(r.stderr.contains("unsupported encoding"));
+        }
     }
 
     #[tokio::test]
