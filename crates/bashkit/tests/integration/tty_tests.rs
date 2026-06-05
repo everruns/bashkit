@@ -44,3 +44,22 @@ async fn tty_test_builtin_bracket() {
     let result = bash.exec("[ -t 1 ] && echo yes || echo no").await.unwrap();
     assert_eq!(result.stdout.trim(), "yes");
 }
+
+/// false clears a prior builder terminal configuration
+#[tokio::test]
+async fn tty_false_clears_prior_builder_true() {
+    let mut bash = Bash::builder().tty(1, true).tty(1, false).build();
+    let result = bash
+        .exec("[[ -t 1 ]] && echo yes || echo no")
+        .await
+        .unwrap();
+    assert_eq!(result.stdout.trim(), "no");
+}
+
+/// false overrides an inherited _TTY_N environment value
+#[tokio::test]
+async fn tty_false_overrides_env_true() {
+    let mut bash = Bash::builder().env("_TTY_1", "1").tty(1, false).build();
+    let result = bash.exec("[ -t 1 ] && echo yes || echo no").await.unwrap();
+    assert_eq!(result.stdout.trim(), "no");
+}
