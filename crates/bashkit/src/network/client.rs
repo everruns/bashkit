@@ -414,7 +414,7 @@ impl HttpClient {
         }
     }
 
-    async fn enforce_url_security(&self, url: &str) -> Result<()> {
+    pub(crate) async fn enforce_url_security(&self, url: &str) -> Result<()> {
         self.check_allowlist(url)?;
         if self.allowlist.is_blocking_private_ips() {
             self.check_private_ip(url).await?;
