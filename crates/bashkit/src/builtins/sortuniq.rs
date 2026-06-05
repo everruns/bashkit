@@ -523,8 +523,9 @@ impl Builtin for Sort {
 
         // Sort the lines
         let sort_fn = |a: &String, b: &String| -> std::cmp::Ordering {
-            if !key_specs.is_empty() {
+            let ord = if !key_specs.is_empty() {
                 // Multi-key sort: compare by each key spec in order
+                let mut result = std::cmp::Ordering::Equal;
                 for key in &key_specs {
                     let ka = extract_key_spec(a, delimiter, key);
                     let kb = extract_key_spec(b, delimiter, key);
@@ -543,28 +544,35 @@ impl Builtin for Sort {
                     };
                     let ord = if key.reverse { ord.reverse() } else { ord };
                     if ord != std::cmp::Ordering::Equal {
-                        return ord;
+                        result = ord;
+                        break;
                     }
                 }
-                // All keys equal — fall back to full-line comparison
-                a.cmp(b)
+                if result == std::cmp::Ordering::Equal && !stable {
+                    // GNU sort uses the full line as the final tie-breaker unless -s disables it.
+                    a.cmp(b)
+                } else {
+                    result
+                }
             } else {
                 // No key specs — use global flags on whole line
-                if version_sort {
-                    let ord = version_cmp(a, b);
-                    if ord == std::cmp::Ordering::Equal {
-                        a.cmp(b)
-                    } else {
-                        ord
-                    }
+                let ord = if version_sort {
+                    version_cmp(a, b)
                 } else {
-                    let ord = compare_keys(a, b, numeric, human_numeric, month_sort, fold_case);
-                    if ord == std::cmp::Ordering::Equal {
-                        a.cmp(b)
-                    } else {
-                        ord
-                    }
+                    compare_keys(a, b, numeric, human_numeric, month_sort, fold_case)
+                };
+                if ord == std::cmp::Ordering::Equal && !stable {
+                    // Without -s, equal mode-specific keys still fall back to lexical line order.
+                    a.cmp(b)
+                } else {
+                    ord
                 }
+            };
+
+            if reverse && ord != std::cmp::Ordering::Equal {
+                ord.reverse()
+            } else {
+                ord
             }
         };
 
@@ -572,10 +580,6 @@ impl Builtin for Sort {
             all_lines.sort_by(sort_fn);
         } else {
             all_lines.sort_unstable_by(sort_fn);
-        }
-
-        if reverse {
-            all_lines.reverse();
         }
 
         if unique {
