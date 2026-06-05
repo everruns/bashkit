@@ -6424,6 +6424,7 @@ impl Builtin for Rg {
                             );
                             output.push_str(&format_rg_match_text(mat.as_str(), &regex, &opts));
                             output.push(record_terminator);
+                            true
                         });
                         continue;
                     }
