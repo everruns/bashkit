@@ -263,6 +263,12 @@ pub struct Word {
     /// (`quoted == true`) but the unquoted `*` must still undergo glob
     /// expansion.
     pub has_unquoted_glob: bool,
+    /// Per-part quote flags. Needed for mixed words like `$a"$b"`: only
+    /// unquoted expansion parts undergo IFS splitting; quoted parts append
+    /// literally to adjacent fields. Empty for old/test-built words means
+    /// fall back to `quoted` for every part.
+    #[serde(default)]
+    pub part_quoted: Vec<bool>,
 }
 
 impl Word {
@@ -272,6 +278,7 @@ impl Word {
             parts: vec![WordPart::Literal(s.into())],
             quoted: false,
             has_unquoted_glob: false,
+            part_quoted: Vec::new(),
         }
     }
 
@@ -281,6 +288,7 @@ impl Word {
             parts: vec![WordPart::Literal(s.into())],
             quoted: true,
             has_unquoted_glob: false,
+            part_quoted: Vec::new(),
         }
     }
 }
@@ -590,6 +598,7 @@ mod tests {
             parts: vec![WordPart::Variable("HOME".into())],
             quoted: false,
             has_unquoted_glob: false,
+            part_quoted: Vec::new(),
         };
         assert_eq!(format!("{w}"), "$HOME");
     }
@@ -600,6 +609,7 @@ mod tests {
             parts: vec![WordPart::ArithmeticExpansion("1+2".into())],
             quoted: false,
             has_unquoted_glob: false,
+            part_quoted: Vec::new(),
         };
         assert_eq!(format!("{w}"), "$((1+2))");
     }
@@ -610,6 +620,7 @@ mod tests {
             parts: vec![WordPart::Length("var".into())],
             quoted: false,
             has_unquoted_glob: false,
+            part_quoted: Vec::new(),
         };
         assert_eq!(format!("{w}"), "${#var}");
     }
@@ -623,6 +634,7 @@ mod tests {
             }],
             quoted: false,
             has_unquoted_glob: false,
+            part_quoted: Vec::new(),
         };
         assert_eq!(format!("{w}"), "${arr[0]}");
     }
@@ -633,6 +645,7 @@ mod tests {
             parts: vec![WordPart::ArrayLength("arr".into())],
             quoted: false,
             has_unquoted_glob: false,
+            part_quoted: Vec::new(),
         };
         assert_eq!(format!("{w}"), "${#arr[@]}");
     }
@@ -643,6 +656,7 @@ mod tests {
             parts: vec![WordPart::ArrayIndices("arr".into())],
             quoted: false,
             has_unquoted_glob: false,
+            part_quoted: Vec::new(),
         };
         assert_eq!(format!("{w}"), "${!arr[@]}");
     }
@@ -657,6 +671,7 @@ mod tests {
             }],
             quoted: false,
             has_unquoted_glob: false,
+            part_quoted: Vec::new(),
         };
         assert_eq!(format!("{w}"), "${var:2:3}");
     }
@@ -671,6 +686,7 @@ mod tests {
             }],
             quoted: false,
             has_unquoted_glob: false,
+            part_quoted: Vec::new(),
         };
         assert_eq!(format!("{w}"), "${var:2}");
     }
@@ -685,6 +701,7 @@ mod tests {
             }],
             quoted: false,
             has_unquoted_glob: false,
+            part_quoted: Vec::new(),
         };
         assert_eq!(format!("{w}"), "${arr[@]:1:2}");
     }
@@ -699,6 +716,7 @@ mod tests {
             }],
             quoted: false,
             has_unquoted_glob: false,
+            part_quoted: Vec::new(),
         };
         assert_eq!(format!("{w}"), "${arr[@]:1}");
     }
@@ -714,6 +732,7 @@ mod tests {
             }],
             quoted: false,
             has_unquoted_glob: false,
+            part_quoted: Vec::new(),
         };
         assert_eq!(format!("{w}"), "${!ref}");
     }
@@ -724,6 +743,7 @@ mod tests {
             parts: vec![WordPart::PrefixMatch("MY_".into())],
             quoted: false,
             has_unquoted_glob: false,
+            part_quoted: Vec::new(),
         };
         assert_eq!(format!("{w}"), "${!MY_*}");
     }
@@ -737,6 +757,7 @@ mod tests {
             }],
             quoted: false,
             has_unquoted_glob: false,
+            part_quoted: Vec::new(),
         };
         assert_eq!(format!("{w}"), "${var@Q}");
     }
@@ -750,6 +771,7 @@ mod tests {
             ],
             quoted: false,
             has_unquoted_glob: false,
+            part_quoted: Vec::new(),
         };
         assert_eq!(format!("{w}"), "hello $USER");
     }
@@ -765,6 +787,7 @@ mod tests {
             }],
             quoted: false,
             has_unquoted_glob: false,
+            part_quoted: Vec::new(),
         };
         assert_eq!(format!("{w}"), "${var:-fallback}");
     }
@@ -780,6 +803,7 @@ mod tests {
             }],
             quoted: false,
             has_unquoted_glob: false,
+            part_quoted: Vec::new(),
         };
         assert_eq!(format!("{w}"), "${var-fallback}");
     }
@@ -795,6 +819,7 @@ mod tests {
             }],
             quoted: false,
             has_unquoted_glob: false,
+            part_quoted: Vec::new(),
         };
         assert_eq!(format!("{w}"), "${var:=val}");
     }
@@ -810,6 +835,7 @@ mod tests {
             }],
             quoted: false,
             has_unquoted_glob: false,
+            part_quoted: Vec::new(),
         };
         assert_eq!(format!("{w}"), "${var:+alt}");
     }
@@ -825,6 +851,7 @@ mod tests {
             }],
             quoted: false,
             has_unquoted_glob: false,
+            part_quoted: Vec::new(),
         };
         assert_eq!(format!("{w}"), "${var:?msg}");
     }
@@ -841,6 +868,7 @@ mod tests {
             }],
             quoted: false,
             has_unquoted_glob: false,
+            part_quoted: Vec::new(),
         };
         assert_eq!(format!("{w}"), "${var#pat}");
 
@@ -854,6 +882,7 @@ mod tests {
             }],
             quoted: false,
             has_unquoted_glob: false,
+            part_quoted: Vec::new(),
         };
         assert_eq!(format!("{w}"), "${var##pat}");
 
@@ -867,6 +896,7 @@ mod tests {
             }],
             quoted: false,
             has_unquoted_glob: false,
+            part_quoted: Vec::new(),
         };
         assert_eq!(format!("{w}"), "${var%pat}");
 
@@ -880,6 +910,7 @@ mod tests {
             }],
             quoted: false,
             has_unquoted_glob: false,
+            part_quoted: Vec::new(),
         };
         assert_eq!(format!("{w}"), "${var%%pat}");
     }
@@ -898,6 +929,7 @@ mod tests {
             }],
             quoted: false,
             has_unquoted_glob: false,
+            part_quoted: Vec::new(),
         };
         assert_eq!(format!("{w}"), "${var/old/new}");
 
@@ -913,6 +945,7 @@ mod tests {
             }],
             quoted: false,
             has_unquoted_glob: false,
+            part_quoted: Vec::new(),
         };
         assert_eq!(format!("{w}"), "${var///old/new}");
     }
@@ -929,6 +962,7 @@ mod tests {
                 }],
                 quoted: false,
                 has_unquoted_glob: false,
+                part_quoted: Vec::new(),
             };
             assert_eq!(format!("{w}"), expected);
         };
