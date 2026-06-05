@@ -8335,6 +8335,22 @@ mod tests {
             output: RgDiffOutput::Exact,
         },
         RgDiffCase {
+            name: "quiet files without match hit exits success",
+            args: &["-q", "--files-without-match", "needle", "proj/a.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
+            name: "quiet files without match miss exits failure",
+            args: &["-q", "--files-without-match", "needle", "proj/b.txt"],
+            stdin: None,
+            files: DIFF_BASIC_FILES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgDiffCase {
             name: "multiple regexp explicit files",
             args: &["-e", "needle", "-e", "Hello", "proj/a.txt", "proj/case.txt"],
             stdin: None,
@@ -12776,6 +12792,32 @@ mod tests {
                 matches: self.matches.clone(),
             }))
         }
+    }
+
+    #[tokio::test]
+    async fn quiet_files_without_match_uses_match_exit_status() {
+        let files = [
+            ("/proj/hit.txt", b"needle\n".as_slice()),
+            ("/proj/miss.txt", b"hay\n".as_slice()),
+        ];
+
+        let hit = run_rg(
+            &["-q", "--files-without-match", "needle", "/proj/hit.txt"],
+            None,
+            &files,
+        )
+        .await;
+        assert_eq!(hit.exit_code, 0);
+        assert_eq!(hit.stdout, "");
+
+        let miss = run_rg(
+            &["-q", "--files-without-match", "needle", "/proj/miss.txt"],
+            None,
+            &files,
+        )
+        .await;
+        assert_eq!(miss.exit_code, 1);
+        assert_eq!(miss.stdout, "");
     }
 
     #[tokio::test]
