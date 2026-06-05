@@ -84,7 +84,8 @@ export default function (pi: any) {
 				},
 				timeout: {
 					type: "number",
-					description: "Timeout in seconds (optional)",
+					description: "Timeout in seconds (optional, must be > 0)",
+					minimum: 1,
 				},
 			},
 			required: ["command"],
@@ -95,8 +96,10 @@ export default function (pi: any) {
 		) {
 			// Convert caller-supplied seconds to milliseconds for AbortSignal.
 			// If no timeout is given, execute unbounded (subject to Bash instance limits).
+			// Guard against zero/negative values — AbortSignal.timeout requires >= 0,
+			// and a zero-ms timeout would cancel before the command starts.
 			const signal =
-				params.timeout != null
+				params.timeout != null && params.timeout > 0
 					? AbortSignal.timeout(params.timeout * 1000)
 					: undefined;
 			const result = bash.executeSync(params.command, { signal });
