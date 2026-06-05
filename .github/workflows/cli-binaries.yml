@@ -34,6 +34,35 @@ jobs:
           fi
           echo "tag=$INPUT_TAG" >> "$GITHUB_OUTPUT"
 
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.validate.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Verify tag source
+        env:
+          RELEASE_TAG: ${{ steps.validate.outputs.tag }}
+        run: |
+          TAG="$RELEASE_TAG"
+          VERSION="${TAG#v}"
+          CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          if [ "$VERSION" != "$CARGO_VERSION" ]; then
+            echo "Error: tag $TAG does not match Cargo.toml version $CARGO_VERSION" >&2
+            exit 1
+          fi
+
+          git fetch --force origin main:refs/remotes/origin/main "refs/tags/$TAG:refs/tags/$TAG"
+          TAG_SHA=$(git rev-list -n 1 "$TAG")
+          if [ "$TAG_SHA" != "$GITHUB_SHA" ]; then
+            echo "Error: workflow ref $GITHUB_SHA does not match tag $TAG at $TAG_SHA" >&2
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$TAG_SHA" origin/main; then
+            echo "Error: release tag $TAG ($TAG_SHA) is not reachable from origin/main" >&2
+            exit 1
+          fi
+          echo "Release tag $TAG verified at $TAG_SHA and reachable from origin/main"
+
   build:
     name: Build CLI (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
