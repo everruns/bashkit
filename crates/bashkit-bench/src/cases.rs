@@ -1027,9 +1027,9 @@ fn io_cases() -> Vec<BenchCase> {
             Category::Io,
             "Write to file and read back",
             r#"
-echo "hello world" > /tmp/bench_test.txt
-cat /tmp/bench_test.txt
-rm /tmp/bench_test.txt
+echo "hello world" > bench_test.txt
+cat bench_test.txt
+rm bench_test.txt
 "#,
         )
         .with_expected("hello world\n"),
@@ -1038,11 +1038,11 @@ rm /tmp/bench_test.txt
             Category::Io,
             "Append to file",
             r#"
-echo "line1" > /tmp/bench_append.txt
-echo "line2" >> /tmp/bench_append.txt
-echo "line3" >> /tmp/bench_append.txt
-cat /tmp/bench_append.txt
-rm /tmp/bench_append.txt
+echo "line1" > bench_append.txt
+echo "line2" >> bench_append.txt
+echo "line3" >> bench_append.txt
+cat bench_append.txt
+rm bench_append.txt
 "#,
         )
         .with_expected("line1\nline2\nline3\n"),
@@ -1106,4 +1106,20 @@ EOF
         )
         .with_expected("10\n"),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::all_cases;
+
+    #[test]
+    fn benchmark_cases_do_not_use_predictable_shared_tmp_files() {
+        for case in all_cases() {
+            assert!(
+                !case.script.contains("/tmp/bench_"),
+                "{} uses a predictable shared /tmp benchmark path",
+                case.name
+            );
+        }
+    }
 }
