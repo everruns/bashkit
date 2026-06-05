@@ -2785,14 +2785,14 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                let cmd_str = self
-                    .source_slice(body_start_offset, body_end_offset)
-                    .unwrap_or_default();
+                let body_len = body_end_offset.saturating_sub(body_start_offset);
+                self.tick_units(body_len)?;
 
                 // THREAT[TM-DOS-021]: Charge nested process-substitution parsers
-                // against the same depth/fuel/timeout budget. A fresh child parser
-                // without inherited current depth or fuel debit lets repeated `<(...)`
-                // recurse until stack overflow before normal parser limits fire.
+                // against the same depth/fuel/timeout budget. Borrow the original
+                // source slice instead of cloning it so nested `<(...)` cannot retain
+                // repeated near-full-size String bodies; charge body bytes because the
+                // child lexer must rescan whitespace/comments that produce no tokens.
                 if self.current_depth >= self.max_depth {
                     return Err(Error::parse(format!(
                         "AST nesting too deep ({} levels, max {})",
@@ -2800,27 +2800,28 @@ impl<'a> Parser<'a> {
                         self.max_depth
                     )));
                 }
-                let mut inner_parser = Parser::with_limits_and_timeout(
-                    &cmd_str,
-                    self.max_depth,
-                    self.fuel,
-                    self.timeout,
-                );
-                inner_parser.current_depth = self.current_depth + 1;
-                inner_parser.started_at = self.started_at;
-                let commands = match inner_parser.parse_script() {
-                    Ok(script) => {
-                        self.fuel = inner_parser.fuel;
-                        script.commands
-                    }
-                    Err(err) if Self::is_parser_budget_error(&err) => {
-                        self.fuel = inner_parser.fuel;
-                        return Err(err);
-                    }
-                    Err(_) => {
-                        self.fuel = inner_parser.fuel;
-                        Vec::new()
-                    }
+                let inner_result = {
+                    let cmd_src = self
+                        .input
+                        .get(body_start_offset..body_end_offset)
+                        .unwrap_or("");
+                    let mut inner_parser = Parser::with_limits_and_timeout(
+                        cmd_src,
+                        self.max_depth,
+                        self.fuel,
+                        self.timeout,
+                    );
+                    inner_parser.current_depth = self.current_depth + 1;
+                    inner_parser.started_at = self.started_at;
+                    let result = inner_parser.parse_script();
+                    (result, inner_parser.fuel)
+                };
+                let (parse_result, remaining_fuel) = inner_result;
+                self.fuel = remaining_fuel;
+                let commands = match parse_result {
+                    Ok(script) => script.commands,
+                    Err(err) if Self::is_parser_budget_error(&err) => return Err(err),
+                    Err(_) => Vec::new(),
                 };
 
                 Ok(Word {
@@ -4068,6 +4069,19 @@ mod tests {
         let err = parser
             .parse()
             .expect_err("nested process substitution must not get fresh parser fuel");
+        assert!(
+            err.to_string().contains("parser fuel exhausted"),
+            "expected parser fuel error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_process_substitution_whitespace_body_consumes_fuel_budget() {
+        let script = format!("cat <({}echo x)", " ".repeat(256));
+        let parser = Parser::with_limits(&script, 100, 200);
+        let err = parser
+            .parse()
+            .expect_err("process substitution body scanning must consume parser fuel");
         assert!(
             err.to_string().contains("parser fuel exhausted"),
             "expected parser fuel error, got: {err}"
