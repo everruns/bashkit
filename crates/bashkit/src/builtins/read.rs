@@ -212,7 +212,8 @@ impl Builtin for Read {
                         field_start = i;
                         last_delim_was_non_ws = true;
                     } else {
-                        if field_start != i {
+                        let pushed_field = field_start != i;
+                        if pushed_field {
                             fields.push(ReadField {
                                 text: &line[field_start..i],
                                 start: field_start,
@@ -228,6 +229,26 @@ impl Builtin for Read {
                                 break;
                             }
                         }
+
+                        // IFS whitespace adjacent to a non-whitespace IFS delimiter
+                        // is one delimiter sequence, not an empty field.
+                        if pushed_field && i < line.len() {
+                            let mut next_iter = line[i..].char_indices();
+                            let (_, next_ch) = next_iter.next().expect("valid char boundary");
+                            if ifs_non_ws.contains(&next_ch) {
+                                i += next_ch.len_utf8();
+                                while i < line.len() {
+                                    let mut ws_iter = line[i..].char_indices();
+                                    let (_, ws_ch) = ws_iter.next().expect("valid char boundary");
+                                    if ifs_ws.contains(&ws_ch) {
+                                        i += ws_ch.len_utf8();
+                                    } else {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
                         field_start = i;
                         last_delim_was_non_ws = false;
                     }
@@ -708,6 +729,28 @@ mod tests {
         assert_eq!(vars.get("A").unwrap(), "one");
         assert_eq!(vars.get("B").unwrap(), "two");
         assert_eq!(vars.get("C").unwrap(), "three");
+    }
+
+    #[tokio::test]
+    async fn read_mixed_ifs_whitespace_before_non_ws_delimiter() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let mut env = HashMap::new();
+        env.insert("IFS".to_string(), ": ".to_string());
+        let args = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+        let ctx = Context::new_for_test(
+            &args,
+            &env,
+            &mut variables,
+            &mut cwd,
+            fs.clone(),
+            Some("one : two"),
+        );
+        let result = Read.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        let vars = extract_vars(&result);
+        assert_eq!(vars.get("A").unwrap(), "one");
+        assert_eq!(vars.get("B").unwrap(), "two");
+        assert_eq!(vars.get("C").unwrap(), "");
     }
 
     #[tokio::test]
