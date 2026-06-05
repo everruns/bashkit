@@ -236,6 +236,48 @@ echo "${arr[1]}"
 y
 ### end
 
+
+### local_array_compound_does_not_escape_scope
+# local arr=(...) should not leak after function return
+secret_func() {
+  local arr=(SECRET one two)
+  echo "inside: ${arr[0]} ${#arr[@]}"
+}
+secret_func
+echo "after_idx0=<${arr[0]}> after_count=<${#arr[@]}> after_all=<${arr[*]}>"
+### expect
+inside: SECRET 3
+after_idx0=<> after_count=<0> after_all=<>
+### end
+
+### local_array_compound_restores_global_array
+# local arr=(...) should restore any global array it shadowed
+arr=(global kept)
+restore_func() {
+  local arr=(local secret)
+  echo "inside: ${arr[*]}"
+}
+restore_func
+echo "after: ${arr[*]}"
+### expect
+inside: local secret
+after: global kept
+### end
+
+### local_assoc_array_compound_restores_global_assoc
+# local -A arr=(...) should restore any global associative array it shadowed
+declare -A assoc=([token]=global)
+assoc_func() {
+  local -A assoc=([token]=secret)
+  echo "inside: ${assoc[token]}"
+}
+assoc_func
+echo "after: ${assoc[token]}"
+### expect
+inside: secret
+after: global
+### end
+
 ### quoted_expansion_no_word_split_in_array
 # arr=("test ${X} done") should NOT word-split inside quotes
 X="hello world"
