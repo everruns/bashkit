@@ -210,6 +210,25 @@ find /tmp/fn_test -maxdepth 1 -type f -not -name '*.log'
 /tmp/fn_test/keep.txt
 ### end
 
+### find_not_type_consumed_before_name
+# -not must apply to -type and must not leak to a later -name predicate
+mkdir -p /tmp/fnt_test/dir.txt
+touch /tmp/fnt_test/file.txt /tmp/fnt_test/file.md
+find /tmp/fnt_test -maxdepth 1 -not -type f -name '*.txt' | sort
+### expect
+/tmp/fnt_test/dir.txt
+### end
+
+
+### find_not_type_exec_uses_negated_match_set
+# -exec should receive the -not -type match set, not a later leaked -name negation
+mkdir -p /tmp/fnte_test/dir.txt
+touch /tmp/fnte_test/file.txt /tmp/fnte_test/file.md
+find /tmp/fnte_test -maxdepth 1 -not -type f -name '*.txt' -exec echo EXEC:{} \; | sort
+### expect
+EXEC:/tmp/fnte_test/dir.txt
+### end
+
 ### find_not_path_exclude
 # find -not -path should exclude paths
 mkdir -p /tmp/fnp_test/.git /tmp/fnp_test/src
