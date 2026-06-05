@@ -865,6 +865,7 @@ struct SubshellSnapshot {
     cwd: PathBuf,
     memory_budget: crate::limits::MemoryBudget,
     exec_fd_table: HashMap<i32, FdTarget>,
+    random_state: u32,
 }
 
 /// Interpreter state.
@@ -5735,6 +5736,7 @@ impl Interpreter {
         let saved_env = self.env.clone();
         let saved_memory_budget = self.memory_budget.clone();
         let saved_exec_fd_table = self.exec_fd_table.clone();
+        let saved_random_state = self.random_state.load(Ordering::Relaxed);
 
         // Child only sees exported variables (env), not all shell variables.
         // Reset last_exit_code so $? starts at 0 (matches real bash subprocess).
@@ -5790,6 +5792,8 @@ impl Interpreter {
         self.env = saved_env;
         self.memory_budget = saved_memory_budget;
         self.exec_fd_table = saved_exec_fd_table;
+        self.random_state
+            .store(saved_random_state, Ordering::Relaxed);
         self.bash_source_stack = saved_source_stack;
         self.pipeline_stdin = prev_pipeline_stdin;
 
@@ -8078,6 +8082,7 @@ impl Interpreter {
             cwd: self.cwd.clone(),
             memory_budget: self.memory_budget.clone(),
             exec_fd_table: self.exec_fd_table.clone(),
+            random_state: self.random_state.load(Ordering::Relaxed),
         }
     }
 
@@ -8094,6 +8099,8 @@ impl Interpreter {
         self.cwd = snap.cwd;
         self.memory_budget = snap.memory_budget;
         self.exec_fd_table = snap.exec_fd_table;
+        self.random_state
+            .store(snap.random_state, Ordering::Relaxed);
     }
 
     fn execute_cmd_subst<'a>(
@@ -10531,16 +10538,17 @@ impl Interpreter {
             }
         };
         let resolved: &str = resolved_string.as_str();
-        // RANDOM=N reseeds the PRNG (matches bash behavior)
-        if resolved == "RANDOM" {
-            self.random_state
-                .store(value.parse::<u32>().unwrap_or(0), Ordering::Relaxed);
-            return;
-        }
         // Attribute lookup is now a single map probe + bit test.
         let attrs = self.var_attrs_get(resolved);
         // THREAT[TM-INJ-019/020/021]: Block assignment to readonly variables
         if attrs.contains(VarAttrs::READONLY) {
+            return;
+        }
+        // RANDOM=N reseeds the PRNG (matches bash behavior). Keep after
+        // readonly enforcement so `readonly RANDOM` protects PRNG state too.
+        if resolved == "RANDOM" {
+            self.random_state
+                .store(value.parse::<u32>().unwrap_or(0), Ordering::Relaxed);
             return;
         }
         // Apply integer attribute (declare -i): evaluate as arithmetic
@@ -11623,6 +11631,53 @@ mod tests {
         let parser = Parser::new(script);
         let ast = parser.parse().unwrap();
         interp.execute(&ast).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_random_state_isolated_from_subshell_contexts() {
+        for script in [
+            "RANDOM=42; echo $RANDOM; (RANDOM=100; : $RANDOM); echo $RANDOM",
+            "RANDOM=42; echo $RANDOM; x=$(RANDOM=100; : $RANDOM); echo $RANDOM",
+            "RANDOM=42; echo $RANDOM; echo $(( $(RANDOM=100; : $RANDOM; echo 0) )); echo $RANDOM",
+            "RANDOM=42; echo $RANDOM; bash -c 'RANDOM=100; : $RANDOM'; echo $RANDOM",
+        ] {
+            let result = run_script(script).await;
+            let lines: Vec<&str> = result.stdout.lines().collect();
+            assert_eq!(result.exit_code, 0, "script failed: {script}");
+            assert_eq!(lines.first().copied(), Some("19081"), "script: {script}");
+            assert_eq!(lines.last().copied(), Some("17033"), "script: {script}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_random_state_isolated_from_path_script() {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        fs.write_file(
+            std::path::Path::new("/tmp/random-child.sh"),
+            b"RANDOM=100
+: $RANDOM
+",
+        )
+        .await
+        .unwrap();
+
+        let mut interp = Interpreter::new(Arc::clone(&fs));
+        let parser = Parser::new("RANDOM=42; echo $RANDOM; /tmp/random-child.sh; echo $RANDOM");
+        let ast = parser.parse().unwrap();
+        let result = interp.execute(&ast).await.unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(
+            result.stdout.lines().collect::<Vec<_>>(),
+            ["19081", "17033"]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_readonly_random_blocks_reseed() {
+        let result = run_script("RANDOM=42; readonly RANDOM; RANDOM=100; echo $RANDOM").await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "19081");
     }
 
     /// Helper to run a script with custom limits and return result.
