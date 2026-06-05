@@ -938,7 +938,6 @@ struct SubshellSnapshot {
     cwd: PathBuf,
     memory_budget: crate::limits::MemoryBudget,
     exec_fd_table: HashMap<i32, FdTarget>,
-    random_state: u32,
 }
 
 /// Interpreter state.
@@ -1139,6 +1138,8 @@ impl Interpreter {
         }
         &s[..end]
     }
+
+    const OPERAND_QUOTE_MARK: char = '\u{1}';
 
     const MAX_GLOB_DEPTH: usize = 50;
 
@@ -1717,11 +1718,8 @@ impl Interpreter {
     /// persistent session configuration and are NOT reset.
     const SET_OPTION_VARS: &'static [&'static str] = &[
         "SHOPT_a",
-        "SHOPT_b",
         "SHOPT_e",
         "SHOPT_f",
-        "SHOPT_h",
-        "SHOPT_m",
         "SHOPT_n",
         "SHOPT_u",
         "SHOPT_v",
@@ -2249,26 +2247,6 @@ impl Interpreter {
     /// Used by `execute_source` and nested shell contexts.
     /// `run_exit_trap`: whether this shell context runs its EXIT trap.
     /// `fire_exit_hook`: whether `exit` notifies host-level on_exit hooks.
-    fn suppresses_script_body_err_exit(command: &Command, result: &ExecResult) -> bool {
-        matches!(command, Command::List(_))
-            || matches!(command, Command::Pipeline(p) if p.negated)
-            || (result.errexit_suppressed
-                && matches!(
-                    command,
-                    Command::Compound(
-                        CompoundCommand::If(_)
-                            | CompoundCommand::For(_)
-                            | CompoundCommand::ArithmeticFor(_)
-                            | CompoundCommand::While(_)
-                            | CompoundCommand::Until(_)
-                            | CompoundCommand::Case(_)
-                            | CompoundCommand::Select(_)
-                            | CompoundCommand::BraceGroup(_),
-                        _
-                    )
-                ))
-    }
-
     async fn execute_script_body(
         &mut self,
         script: &Script,
@@ -2347,7 +2325,9 @@ impl Interpreter {
             // the ERR trap for the failing subcommand; firing again would
             // double-invoke the trap (e.g. `set -e; trap 'f' ERR; false`).
             if exit_code != 0 {
-                let suppressed = Self::suppresses_script_body_err_exit(command, &result);
+                let suppressed = matches!(command, Command::List(_))
+                    || matches!(command, Command::Pipeline(p) if p.negated)
+                    || result.errexit_suppressed;
                 if !suppressed {
                     self.run_err_trap(&mut stdout, &mut stderr).await;
                 }
@@ -3114,97 +3094,6 @@ impl Interpreter {
         })
     }
 
-    fn conditional_word_literal(word: &Word) -> Option<&str> {
-        if word.parts.len() == 1
-            && let WordPart::Literal(s) = &word.parts[0]
-        {
-            return Some(s);
-        }
-        None
-    }
-
-    fn conditional_words_wrapped(words: &[Word]) -> bool {
-        if words.len() < 2
-            || Self::conditional_word_literal(&words[0]) != Some("(")
-            || Self::conditional_word_literal(&words[words.len() - 1]) != Some(")")
-        {
-            return false;
-        }
-
-        let mut depth = 0usize;
-        for (i, word) in words.iter().enumerate() {
-            match Self::conditional_word_literal(word) {
-                Some("(") => depth += 1,
-                Some(")") => {
-                    let Some(next_depth) = depth.checked_sub(1) else {
-                        return false;
-                    };
-                    depth = next_depth;
-                    if depth == 0 && i < words.len() - 1 {
-                        return false;
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        depth == 0
-    }
-
-    fn conditional_args_wrapped(args: &[String]) -> bool {
-        if args.len() < 2
-            || args.first().map(|s| s.as_str()) != Some("(")
-            || args.last().map(|s| s.as_str()) != Some(")")
-        {
-            return false;
-        }
-
-        let mut depth = 0usize;
-        for (i, arg) in args.iter().enumerate() {
-            match arg.as_str() {
-                "(" => depth += 1,
-                ")" => {
-                    let Some(next_depth) = depth.checked_sub(1) else {
-                        return false;
-                    };
-                    depth = next_depth;
-                    if depth == 0 && i < args.len() - 1 {
-                        return false;
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        depth == 0
-    }
-
-    fn find_top_level_conditional_word_operator(words: &[Word], op: &str) -> Option<usize> {
-        let mut depth = 0usize;
-        for i in (0..words.len()).rev() {
-            match Self::conditional_word_literal(&words[i]) {
-                Some(")") => depth += 1,
-                Some("(") => depth = depth.saturating_sub(1),
-                Some(found) if found == op && depth == 0 && i > 0 => return Some(i),
-                _ => {}
-            }
-        }
-        None
-    }
-
-    fn find_top_level_conditional_arg_operator(args: &[String], op: &str) -> Option<usize> {
-        let mut depth = 0usize;
-        for i in (0..args.len()).rev() {
-            match args[i].as_str() {
-                ")" => depth += 1,
-                "(" => depth = depth.saturating_sub(1),
-                found if found == op && depth == 0 && i > 0 => return Some(i),
-                _ => {}
-            }
-        }
-        None
-    }
-
     /// Evaluate [[ ]] from raw words with lazy expansion for short-circuit.
     fn evaluate_conditional_words<'a>(
         &'a mut self,
@@ -3215,32 +3104,48 @@ impl Interpreter {
                 return Ok(false);
             }
 
+            // Helper: get literal text of a word (for operators like &&, ||, !, (, ))
+            let word_literal = |w: &Word| -> Option<String> {
+                if w.parts.len() == 1
+                    && let WordPart::Literal(s) = &w.parts[0]
+                {
+                    return Some(s.clone());
+                }
+                None
+            };
+
             // Handle negation
-            if Self::conditional_word_literal(&words[0]) == Some("!") {
+            if word_literal(&words[0]).as_deref() == Some("!") {
                 return Ok(!self.evaluate_conditional_words(&words[1..]).await?);
             }
 
-            // Handle parentheses only when they wrap the whole expression.
-            if Self::conditional_words_wrapped(words) {
+            // Handle parentheses
+            if word_literal(&words[0]).as_deref() == Some("(")
+                && word_literal(&words[words.len() - 1]).as_deref() == Some(")")
+            {
                 return self
                     .evaluate_conditional_words(&words[1..words.len() - 1])
                     .await;
             }
 
-            // Look for || (lowest precedence), then && — only at current paren depth.
-            if let Some(i) = Self::find_top_level_conditional_word_operator(words, "||") {
-                let left = self.evaluate_conditional_words(&words[..i]).await?;
-                if left {
-                    return Ok(true); // short-circuit: skip right side
+            // Look for || (lowest precedence), then && — scan right to left
+            for i in (0..words.len()).rev() {
+                if word_literal(&words[i]).as_deref() == Some("||") && i > 0 {
+                    let left = self.evaluate_conditional_words(&words[..i]).await?;
+                    if left {
+                        return Ok(true); // short-circuit: skip right side
+                    }
+                    return self.evaluate_conditional_words(&words[i + 1..]).await;
                 }
-                return self.evaluate_conditional_words(&words[i + 1..]).await;
             }
-            if let Some(i) = Self::find_top_level_conditional_word_operator(words, "&&") {
-                let left = self.evaluate_conditional_words(&words[..i]).await?;
-                if !left {
-                    return Ok(false); // short-circuit: skip right side
+            for i in (0..words.len()).rev() {
+                if word_literal(&words[i]).as_deref() == Some("&&") && i > 0 {
+                    let left = self.evaluate_conditional_words(&words[..i]).await?;
+                    if !left {
+                        return Ok(false); // short-circuit: skip right side
+                    }
+                    return self.evaluate_conditional_words(&words[i + 1..]).await;
                 }
-                return self.evaluate_conditional_words(&words[i + 1..]).await;
             }
 
             // Leaf: expand words and evaluate as a simple condition
@@ -3267,19 +3172,26 @@ impl Interpreter {
                 return !self.evaluate_conditional(&args[1..]).await;
             }
 
-            // Handle parentheses only when they wrap the whole expression.
-            if Self::conditional_args_wrapped(args) {
+            // Handle parentheses
+            if args.first().map(|s| s.as_str()) == Some("(")
+                && args.last().map(|s| s.as_str()) == Some(")")
+            {
                 return self.evaluate_conditional(&args[1..args.len() - 1]).await;
             }
 
-            // Look for logical operators at current paren depth: || lowest, then &&.
-            if let Some(i) = Self::find_top_level_conditional_arg_operator(args, "||") {
-                return self.evaluate_conditional(&args[..i]).await
-                    || self.evaluate_conditional(&args[i + 1..]).await;
+            // Look for logical operators: || has lowest precedence, then &&.
+            // Scan for || first (split at lowest precedence first).
+            for i in (0..args.len()).rev() {
+                if args[i] == "||" && i > 0 {
+                    return self.evaluate_conditional(&args[..i]).await
+                        || self.evaluate_conditional(&args[i + 1..]).await;
+                }
             }
-            if let Some(i) = Self::find_top_level_conditional_arg_operator(args, "&&") {
-                return self.evaluate_conditional(&args[..i]).await
-                    && self.evaluate_conditional(&args[i + 1..]).await;
+            for i in (0..args.len()).rev() {
+                if args[i] == "&&" && i > 0 {
+                    return self.evaluate_conditional(&args[..i]).await
+                        && self.evaluate_conditional(&args[i + 1..]).await;
+                }
             }
 
             match args.len() {
@@ -4658,15 +4570,8 @@ impl Interpreter {
                     exit_code = result.exit_code;
                     self.last_exit_code = exit_code;
                     control_flow = result.control_flow;
-                    let followed_by_conditional_op =
-                        list.rest.get(i + 1).is_some_and(|(op, cmd)| {
-                            !Self::is_empty_sentinel(cmd)
-                                && matches!(op, ListOperator::And | ListOperator::Or)
-                        });
-                    // Bash suppresses errexit for AND-OR list elements except the
-                    // command following the final &&/|| operator.
                     exit_code_from_conditional_context =
-                        followed_by_conditional_op || result.errexit_suppressed;
+                        current_is_conditional || result.errexit_suppressed;
 
                     // If command signaled control flow, return immediately
                     if control_flow != ControlFlow::None {
@@ -4679,19 +4584,24 @@ impl Interpreter {
                         });
                     }
 
-                    // ERR trap follows the same AND-OR suppression as errexit.
-                    if exit_code != 0 && !exit_code_from_conditional_context {
+                    // ERR trap: fire on non-zero exit after semicolon commands
+                    if exit_code != 0 && !current_is_conditional {
                         self.run_err_trap(&mut stdout, &mut stderr).await;
                     }
                 }
             }
         }
 
-        // Final errexit check for the last command. A non-zero status only
-        // remains suppressed when it was carried from a short-circuited or
-        // non-final AND-OR list element; a failing final &&/|| command exits.
+        let last_nonempty_op_is_conditional = list
+            .rest
+            .iter()
+            .rev()
+            .find(|(_, cmd)| !Self::is_empty_sentinel(cmd))
+            .is_some_and(|(op, _)| matches!(op, ListOperator::And | ListOperator::Or));
+
+        // Final errexit check for the last command
         let should_final_errexit_check =
-            self.is_errexit_enabled() && exit_code != 0 && !exit_code_from_conditional_context;
+            self.is_errexit_enabled() && exit_code != 0 && !last_nonempty_op_is_conditional;
 
         if should_final_errexit_check {
             return Ok(ExecResult {
@@ -4708,7 +4618,7 @@ impl Interpreter {
             stderr,
             exit_code,
             control_flow: ControlFlow::None,
-            errexit_suppressed: exit_code_from_conditional_context && exit_code != 0,
+            errexit_suppressed: last_nonempty_op_is_conditional && exit_code != 0,
             ..Default::default()
         })
     }
@@ -5590,7 +5500,8 @@ impl Interpreter {
                 match plan_result {
                     Ok(Ok(Some(plan))) => {
                         let result = self.execute_builtin_plan(plan, redirects).await?;
-                        return Ok(self.apply_after_tool(name, result));
+                        self.fire_after_tool(name, &result);
+                        return Ok(result);
                     }
                     Ok(Ok(None)) => { /* fall through to normal execute() */ }
                     Ok(Err(e)) => return Err(e),
@@ -5600,7 +5511,8 @@ impl Interpreter {
                             1,
                         );
                         let result = self.apply_redirections(result, redirects).await?;
-                        return Ok(self.apply_after_tool(name, result));
+                        self.fire_after_tool(name, &result);
+                        return Ok(result);
                     }
                 }
             }
@@ -5667,81 +5579,21 @@ impl Interpreter {
             }
 
             let result = self.apply_redirections(result, redirects).await?;
-            Ok(self.apply_after_tool(name, result))
+            self.fire_after_tool(name, &result);
+            Ok(result)
         })
     }
 
-    /// Apply `after_tool` interceptor decisions to the result returned to callers.
-    fn apply_after_tool(&self, name: &str, result: ExecResult) -> ExecResult {
-        if self.hooks.after_tool.is_empty() {
-            return result;
-        }
-
-        let event = crate::hooks::ToolResult {
-            name: name.to_string(),
-            stdout: result.stdout.clone(),
-            exit_code: result.exit_code,
-        };
-        match self.hooks.fire_after_tool(event) {
-            Some(event) => ExecResult {
-                stdout: event.stdout,
-                exit_code: event.exit_code,
-                ..result
-            },
-            None => ExecResult::err(format!("bash: {name}: cancelled by after_tool hook\n"), 1),
-        }
-    }
-
-    fn is_special_builtin_name(name: &str) -> bool {
-        matches!(
-            name,
-            "exec"
-                | "local"
-                | "bash"
-                | "sh"
-                | "source"
-                | "."
-                | "eval"
-                | "command"
-                | "declare"
-                | "typeset"
-                | "let"
-                | "unset"
-                | "getopts"
-        )
-    }
-
-    async fn execute_special_builtin_with_hooks(
-        &mut self,
-        name: &str,
-        args: &[String],
-        stdin: Option<String>,
-        redirects: &[Redirect],
-    ) -> Result<ExecResult> {
-        let args = if !self.hooks.before_tool.is_empty() {
-            let event = crate::hooks::ToolEvent {
+    /// Fire `after_tool` hooks if any are registered (observational).
+    fn fire_after_tool(&self, name: &str, result: &ExecResult) {
+        if !self.hooks.after_tool.is_empty() {
+            let event = crate::hooks::ToolResult {
                 name: name.to_string(),
-                args: args.to_vec(),
+                stdout: result.stdout.clone(),
+                exit_code: result.exit_code,
             };
-            match self.hooks.fire_before_tool(event) {
-                Some(modified) => std::borrow::Cow::Owned(modified.args),
-                None => {
-                    let result = ExecResult::err(
-                        format!("bash: {name}: cancelled by before_tool hook\n"),
-                        1,
-                    );
-                    return self.apply_redirections(result, redirects).await;
-                }
-            }
-        } else {
-            std::borrow::Cow::Borrowed(args)
-        };
-
-        let result = self
-            .dispatch_special_builtin(name, &args, stdin, redirects)
-            .await
-            .expect("special builtin name checked before dispatch")?;
-        Ok(self.apply_after_tool(name, result))
+            self.hooks.fire_after_tool(event);
+        }
     }
 
     /// Dispatch an interpreter-level (special) builtin by name.
@@ -5803,15 +5655,11 @@ impl Interpreter {
             }
 
             // Interpreter-level special builtins
-            if Self::is_special_builtin_name(name) {
-                return self
-                    .execute_special_builtin_with_hooks(
-                        name,
-                        &args,
-                        stdin.clone(),
-                        &command.redirects,
-                    )
-                    .await;
+            if let Some(result) = self
+                .dispatch_special_builtin(name, &args, stdin.clone(), &command.redirects)
+                .await
+            {
+                return result;
             }
 
             // Host-registered builtins (mutable, may override baked-in builtins).
@@ -6064,7 +5912,6 @@ impl Interpreter {
         let saved_env = self.env.clone();
         let saved_memory_budget = self.memory_budget.clone();
         let saved_exec_fd_table = self.exec_fd_table.clone();
-        let saved_random_state = self.random_state.load(Ordering::Relaxed);
 
         // Child only sees exported variables (env), not all shell variables.
         // Reset last_exit_code so $? starts at 0 (matches real bash subprocess).
@@ -6116,8 +5963,6 @@ impl Interpreter {
         self.env = saved_env;
         self.memory_budget = saved_memory_budget;
         self.exec_fd_table = saved_exec_fd_table;
-        self.random_state
-            .store(saved_random_state, Ordering::Relaxed);
         self.bash_source_stack = saved_source_stack;
         self.pipeline_stdin = prev_pipeline_stdin;
 
@@ -8043,10 +7888,7 @@ impl Interpreter {
                     if is_dev_null(&path) {
                         match redirect.fd {
                             Some(2) => result.stderr = String::new(),
-                            _ => {
-                                result.stdout = String::new();
-                                result.stdout_bytes = None;
-                            }
+                            _ => result.stdout = String::new(),
                         }
                     } else {
                         if redirect.kind == RedirectKind::Output
@@ -8071,19 +7913,15 @@ impl Interpreter {
                                 result.stderr = String::new();
                             }
                             _ => {
-                                let stdout = result
-                                    .stdout_bytes
-                                    .as_deref()
-                                    .unwrap_or(result.stdout.as_bytes());
-                                if let Err(e) = self.fs.write_file(&path, stdout).await {
+                                if let Err(e) =
+                                    self.fs.write_file(&path, result.stdout.as_bytes()).await
+                                {
                                     result.stdout = String::new();
-                                    result.stdout_bytes = None;
                                     result.stderr = format!("bash: {}: {}\n", target_path, e);
                                     result.exit_code = 1;
                                     return Ok(result);
                                 }
                                 result.stdout = String::new();
-                                result.stdout_bytes = None;
                             }
                         }
                     }
@@ -8094,10 +7932,7 @@ impl Interpreter {
                     if is_dev_null(&path) {
                         match redirect.fd {
                             Some(2) => result.stderr = String::new(),
-                            _ => {
-                                result.stdout = String::new();
-                                result.stdout_bytes = None;
-                            }
+                            _ => result.stdout = String::new(),
                         }
                     } else {
                         match redirect.fd {
@@ -8112,19 +7947,15 @@ impl Interpreter {
                                 result.stderr = String::new();
                             }
                             _ => {
-                                let stdout = result
-                                    .stdout_bytes
-                                    .as_deref()
-                                    .unwrap_or(result.stdout.as_bytes());
-                                if let Err(e) = self.fs.append_file(&path, stdout).await {
+                                if let Err(e) =
+                                    self.fs.append_file(&path, result.stdout.as_bytes()).await
+                                {
                                     result.stdout = String::new();
-                                    result.stdout_bytes = None;
                                     result.stderr = format!("bash: {}: {}\n", target_path, e);
                                     result.exit_code = 1;
                                     return Ok(result);
                                 }
                                 result.stdout = String::new();
-                                result.stdout_bytes = None;
                             }
                         }
                     }
@@ -8134,21 +7965,15 @@ impl Interpreter {
                     let path = self.resolve_path(&target_path);
                     if is_dev_null(&path) {
                         result.stdout = String::new();
-                        result.stdout_bytes = None;
                         result.stderr = String::new();
                     } else {
-                        let mut combined = result
-                            .stdout_bytes
-                            .clone()
-                            .unwrap_or_else(|| result.stdout.as_bytes().to_vec());
-                        combined.extend_from_slice(result.stderr.as_bytes());
-                        if let Err(e) = self.fs.write_file(&path, &combined).await {
+                        let combined = format!("{}{}", result.stdout, result.stderr);
+                        if let Err(e) = self.fs.write_file(&path, combined.as_bytes()).await {
                             result.stderr = format!("bash: {}: {}\n", target_path, e);
                             result.exit_code = 1;
                             return Ok(result);
                         }
                         result.stdout = String::new();
-                        result.stdout_bytes = None;
                         result.stderr = String::new();
                     }
                 }
@@ -8542,7 +8367,6 @@ impl Interpreter {
             cwd: self.cwd.clone(),
             memory_budget: self.memory_budget.clone(),
             exec_fd_table: self.exec_fd_table.clone(),
-            random_state: self.random_state.load(Ordering::Relaxed),
         }
     }
 
@@ -8559,8 +8383,6 @@ impl Interpreter {
         self.cwd = snap.cwd;
         self.memory_budget = snap.memory_budget;
         self.exec_fd_table = snap.exec_fd_table;
-        self.random_state
-            .store(snap.random_state, Ordering::Relaxed);
     }
 
     fn execute_cmd_subst<'a>(
@@ -9410,12 +9232,10 @@ impl Interpreter {
         }
         // Strip quotes from operand before parsing.
         // For pattern-removal operators, quoted glob chars must stay literal.
-        // Track stripped double-quoted spans with a marker that is absent from
-        // the operand source, then consume that marker only from parsed literal
-        // parts. Expanded variable data is handled out-of-band so attacker data
-        // cannot inject quote-state toggles.
-        let quote_mark = Self::operand_quote_mark(operand);
-        let stripped = Self::strip_operand_quotes(operand, quote_mark);
+        // We preserve that by escaping glob metacharacters inside stripped
+        // double-quoted segments, so later pattern matching won't treat them as
+        // active wildcards/extglobs.
+        let stripped = Self::strip_operand_quotes(operand);
         // THREAT[TM-DOS-050]: Propagate caller-configured limits to word parsing
         let word = Parser::parse_word_string_with_limits(
             &stripped,
@@ -9423,19 +9243,15 @@ impl Interpreter {
             self.limits.max_parser_operations,
         );
         let mut result = String::new();
-        let mut in_marked = false;
         for part in &word.parts {
             match part {
-                WordPart::Literal(s) => {
-                    Self::push_marked_literal(&mut result, s, quote_mark, &mut in_marked);
-                }
+                WordPart::Literal(s) => result.push_str(s),
                 WordPart::Variable(name) => {
-                    let expanded = self.expand_variable(name);
-                    Self::push_operand_expansion(&mut result, &expanded, in_marked);
+                    result.push_str(&self.expand_variable(name));
                 }
                 WordPart::ArithmeticExpansion(expr) => {
-                    let val = self.evaluate_arithmetic_with_assign(expr).to_string();
-                    Self::push_operand_expansion(&mut result, &val, in_marked);
+                    let val = self.evaluate_arithmetic_with_assign(expr);
+                    result.push_str(&val.to_string());
                 }
                 WordPart::ParameterExpansion {
                     name,
@@ -9452,17 +9268,17 @@ impl Interpreter {
                         *colon_variant,
                         is_set,
                     );
-                    Self::push_operand_expansion(&mut result, &expanded, in_marked);
+                    result.push_str(&expanded);
                 }
                 WordPart::Length(name) => {
-                    let value = self.expand_variable(name).len().to_string();
-                    Self::push_operand_expansion(&mut result, &value, in_marked);
+                    let value = self.expand_variable(name);
+                    result.push_str(&value.len().to_string());
                 }
                 // TODO: handle CommandSubstitution etc. in sync operand expansion
                 _ => {}
             }
         }
-        result
+        Self::escape_marked_glob_literals(&result)
     }
 
     /// Strip unescaped double-quote pairs from operand strings.
@@ -9520,26 +9336,16 @@ impl Interpreter {
                 *in_marked = !*in_marked;
                 continue;
             }
-            Self::push_operand_char(out, ch, *in_marked);
+            if *in_marked
+                && matches!(
+                    ch,
+                    '*' | '?' | '[' | ']' | '(' | ')' | '|' | '+' | '@' | '!'
+                )
+            {
+                out.push('\\');
+            }
+            out.push(ch);
         }
-    }
-
-    fn push_operand_expansion(out: &mut String, s: &str, in_marked: bool) {
-        for ch in s.chars() {
-            Self::push_operand_char(out, ch, in_marked);
-        }
-    }
-
-    fn push_operand_char(out: &mut String, ch: char, in_marked: bool) {
-        if in_marked
-            && matches!(
-                ch,
-                '*' | '?' | '[' | ']' | '(' | ')' | '|' | '+' | '@' | '!'
-            )
-        {
-            out.push('\\');
-        }
-        out.push(ch);
     }
 
     fn find_unescaped_char(pattern: &str, target: char) -> Option<usize> {
@@ -11151,17 +10957,16 @@ impl Interpreter {
             }
         };
         let resolved: &str = resolved_string.as_str();
+        // RANDOM=N reseeds the PRNG (matches bash behavior)
+        if resolved == "RANDOM" {
+            self.random_state
+                .store(value.parse::<u32>().unwrap_or(0), Ordering::Relaxed);
+            return;
+        }
         // Attribute lookup is now a single map probe + bit test.
         let attrs = self.var_attrs_get(resolved);
         // THREAT[TM-INJ-019/020/021]: Block assignment to readonly variables
         if attrs.contains(VarAttrs::READONLY) {
-            return;
-        }
-        // RANDOM=N reseeds the PRNG (matches bash behavior). Keep after
-        // readonly enforcement so `readonly RANDOM` protects PRNG state too.
-        if resolved == "RANDOM" {
-            self.random_state
-                .store(value.parse::<u32>().unwrap_or(0), Ordering::Relaxed);
             return;
         }
         // Apply integer attribute (declare -i): evaluate as arithmetic
@@ -12234,16 +12039,28 @@ mod tests {
         let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
         let mut interp = Interpreter::new(Arc::clone(&fs));
         interp.counters.function_depth = 1;
-        interp
-            .call_stack
-            .push(CallFrame::new("caller".to_string(), Vec::new()));
+        interp.call_stack.push(CallFrame {
+            name: "caller".to_string(),
+            locals: HashMap::new(),
+            local_arrays: HashMap::new(),
+            local_assoc_arrays: HashMap::new(),
+            positional: Vec::new(),
+            saved_arrays: HashMap::new(),
+            saved_assoc_arrays: HashMap::new(),
+        });
         let baseline_call_stack_len = interp.call_stack.len();
         let baseline_bash_source_len = interp.bash_source_stack.len();
         let baseline_function_depth = interp.counters.function_depth;
 
-        interp
-            .call_stack
-            .push(CallFrame::new("bash".to_string(), Vec::new()));
+        interp.call_stack.push(CallFrame {
+            name: "bash".to_string(),
+            locals: HashMap::new(),
+            local_arrays: HashMap::new(),
+            local_assoc_arrays: HashMap::new(),
+            positional: Vec::new(),
+            saved_arrays: HashMap::new(),
+            saved_assoc_arrays: HashMap::new(),
+        });
         interp.bash_source_stack.push("script.sh".to_string());
 
         interp.reconcile_cancelled_execution_state(
@@ -12288,53 +12105,6 @@ mod tests {
         let parser = Parser::new(script);
         let ast = parser.parse().unwrap();
         interp.execute(&ast).await.unwrap()
-    }
-
-    #[tokio::test]
-    async fn test_random_state_isolated_from_subshell_contexts() {
-        for script in [
-            "RANDOM=42; echo $RANDOM; (RANDOM=100; : $RANDOM); echo $RANDOM",
-            "RANDOM=42; echo $RANDOM; x=$(RANDOM=100; : $RANDOM); echo $RANDOM",
-            "RANDOM=42; echo $RANDOM; echo $(( $(RANDOM=100; : $RANDOM; echo 0) )); echo $RANDOM",
-            "RANDOM=42; echo $RANDOM; bash -c 'RANDOM=100; : $RANDOM'; echo $RANDOM",
-        ] {
-            let result = run_script(script).await;
-            let lines: Vec<&str> = result.stdout.lines().collect();
-            assert_eq!(result.exit_code, 0, "script failed: {script}");
-            assert_eq!(lines.first().copied(), Some("19081"), "script: {script}");
-            assert_eq!(lines.last().copied(), Some("17033"), "script: {script}");
-        }
-    }
-
-    #[tokio::test]
-    async fn test_random_state_isolated_from_path_script() {
-        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
-        fs.write_file(
-            std::path::Path::new("/tmp/random-child.sh"),
-            b"RANDOM=100
-: $RANDOM
-",
-        )
-        .await
-        .unwrap();
-
-        let mut interp = Interpreter::new(Arc::clone(&fs));
-        let parser = Parser::new("RANDOM=42; echo $RANDOM; /tmp/random-child.sh; echo $RANDOM");
-        let ast = parser.parse().unwrap();
-        let result = interp.execute(&ast).await.unwrap();
-
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(
-            result.stdout.lines().collect::<Vec<_>>(),
-            ["19081", "17033"]
-        );
-    }
-
-    #[tokio::test]
-    async fn test_readonly_random_blocks_reseed() {
-        let result = run_script("RANDOM=42; readonly RANDOM; RANDOM=100; echo $RANDOM").await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "19081");
     }
 
     /// Helper to run a script with custom limits and return result.
@@ -14391,15 +14161,6 @@ echo "count=$COUNT"
         let result = run_script(r#"val="axxxb"; pat="a"; echo "${val#"$pat"*}""#).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout.trim(), "xxxb");
-    }
-
-    #[tokio::test]
-    async fn test_quoted_remove_prefix_operand_marker_byte_keeps_glob_literal() {
-        // Quoted variable data may contain the old in-band quote marker byte.
-        // It must remain literal data, not toggle wildcard protection off.
-        let result = run_script(r#"val="axxxb"; pat=$'\x01a*'; echo "${val#"$pat"}""#).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "axxxb");
     }
 
     #[test]
