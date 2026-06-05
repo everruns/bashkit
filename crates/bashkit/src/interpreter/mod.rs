@@ -11975,20 +11975,16 @@ mod tests {
         let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
         let mut interp = Interpreter::new(Arc::clone(&fs));
         interp.counters.function_depth = 1;
-        interp.call_stack.push(CallFrame {
-            name: "caller".to_string(),
-            locals: HashMap::new(),
-            positional: Vec::new(),
-        });
+        interp
+            .call_stack
+            .push(CallFrame::new("caller".to_string(), Vec::new()));
         let baseline_call_stack_len = interp.call_stack.len();
         let baseline_bash_source_len = interp.bash_source_stack.len();
         let baseline_function_depth = interp.counters.function_depth;
 
-        interp.call_stack.push(CallFrame {
-            name: "bash".to_string(),
-            locals: HashMap::new(),
-            positional: Vec::new(),
-        });
+        interp
+            .call_stack
+            .push(CallFrame::new("bash".to_string(), Vec::new()));
         interp.bash_source_stack.push("script.sh".to_string());
 
         interp.reconcile_cancelled_execution_state(
