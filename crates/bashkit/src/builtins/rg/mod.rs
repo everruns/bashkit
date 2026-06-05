@@ -4827,9 +4827,12 @@ fn rg_quiet_result(
     any_match: &mut bool,
     stderr: &str,
 ) -> Option<ExecResult> {
-    // Quiet exit status always reflects whether the pattern matched,
-    // regardless of --files-without-match output selection.
-    if match_count > 0 {
+    let selected = if opts.files_without_matches {
+        match_count == 0
+    } else {
+        match_count > 0
+    };
+    if selected {
         *any_match = true;
         if !opts.stats {
             return Some(ExecResult {
@@ -12804,7 +12807,8 @@ mod tests {
             &files,
         )
         .await;
-        assert_eq!(hit.exit_code, 0);
+        // hit.txt has needle, so --files-without-match finds no qualifying file → exit 1
+        assert_eq!(hit.exit_code, 1);
         assert_eq!(hit.stdout, "");
 
         let miss = run_rg(
@@ -12813,7 +12817,8 @@ mod tests {
             &files,
         )
         .await;
-        assert_eq!(miss.exit_code, 1);
+        // miss.txt has no needle, so --files-without-match finds it → exit 0
+        assert_eq!(miss.exit_code, 0);
         assert_eq!(miss.stdout, "");
     }
 
