@@ -7428,10 +7428,8 @@ mod tests {
     const DIFF_UNICODE_FILES: &[(&str, &[u8])] =
         &[("/proj/unicode.txt", "cafe\ncafé\nκαφες\n".as_bytes())];
 
-    const DIFF_MULTILINE_FILES: &[(&str, &[u8])] = &[(
-        "/proj/multi.txt",
-        b"foo\nbar foo\nbar\nbaz\nxxfoo\nbar\nfoo bar\n",
-    )];
+    const DIFF_MULTILINE_FILES: &[(&str, &[u8])] =
+        &[("/proj/multi.txt", b"foo\nbar\nbaz\nxxfoo\nbar\nfoo bar\n")];
     const DIFF_MULTILINE_ALL_MATCH_FILES: &[(&str, &[u8])] =
         &[("/proj/all-multiline.txt", b"foo\nbar\nxxfoo\nbar\n")];
 
