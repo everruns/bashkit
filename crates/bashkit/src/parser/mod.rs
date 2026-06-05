@@ -1987,10 +1987,49 @@ impl<'a> Parser<'a> {
         s
     }
 
+    /// Find the assignment operator, ignoring `=` characters inside array subscripts.
+    fn assignment_operator_pos(word: &str) -> Option<usize> {
+        let mut bracket_depth = 0usize;
+        let mut in_single_quote = false;
+        let mut in_double_quote = false;
+        let mut escaped = false;
+
+        for (pos, c) in word.char_indices() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+
+            if bracket_depth > 0 && c == '\\' {
+                escaped = true;
+                continue;
+            }
+
+            match c {
+                '\'' if bracket_depth > 0 && !in_double_quote => {
+                    in_single_quote = !in_single_quote;
+                }
+                '"' if bracket_depth > 0 && !in_single_quote => {
+                    in_double_quote = !in_double_quote;
+                }
+                '[' if !in_single_quote && !in_double_quote => {
+                    bracket_depth += 1;
+                }
+                ']' if bracket_depth > 0 && !in_single_quote && !in_double_quote => {
+                    bracket_depth -= 1;
+                }
+                '=' if bracket_depth == 0 => return Some(pos),
+                _ => {}
+            }
+        }
+
+        None
+    }
+
     /// Check if a word is an assignment (NAME=value, NAME+=value, or NAME[index]=value)
     /// Returns (name, optional_index, value, is_append)
     fn is_assignment(word: &str) -> Option<(&str, Option<&str>, &str, bool)> {
-        let eq_pos = word.find('=')?;
+        let eq_pos = Self::assignment_operator_pos(word)?;
         let mut lhs = &word[..eq_pos];
         let is_append = lhs.ends_with('+');
         if is_append {
@@ -4024,6 +4063,42 @@ mod tests {
         assert!(!cmd.assignments[0].append);
         match &cmd.assignments[0].value {
             AssignmentValue::Scalar(word) => assert_eq!(word.to_string(), "a+=b"),
+            AssignmentValue::Array(_) => panic!("expected scalar assignment"),
+        }
+    }
+
+    #[test]
+    fn test_array_append_assignment_with_equal_in_subscript_parses_as_assignment() {
+        let parser = Parser::new("arr[i=0]+=x");
+        let script = parser.parse().expect("script should parse");
+        let cmd = match &script.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got: {other:?}"),
+        };
+        assert_eq!(cmd.assignments.len(), 1);
+        assert_eq!(cmd.assignments[0].name, "arr");
+        assert_eq!(cmd.assignments[0].index.as_deref(), Some("i=0"));
+        assert!(cmd.assignments[0].append);
+        match &cmd.assignments[0].value {
+            AssignmentValue::Scalar(word) => assert_eq!(word.to_string(), "x"),
+            AssignmentValue::Array(_) => panic!("expected scalar assignment"),
+        }
+    }
+
+    #[test]
+    fn test_assoc_append_assignment_with_equal_in_subscript_parses_as_assignment() {
+        let parser = Parser::new("assoc[key=value]+=x");
+        let script = parser.parse().expect("script should parse");
+        let cmd = match &script.commands[0] {
+            Command::Simple(cmd) => cmd,
+            other => panic!("expected simple command, got: {other:?}"),
+        };
+        assert_eq!(cmd.assignments.len(), 1);
+        assert_eq!(cmd.assignments[0].name, "assoc");
+        assert_eq!(cmd.assignments[0].index.as_deref(), Some("key=value"));
+        assert!(cmd.assignments[0].append);
+        match &cmd.assignments[0].value {
+            AssignmentValue::Scalar(word) => assert_eq!(word.to_string(), "x"),
             AssignmentValue::Array(_) => panic!("expected scalar assignment"),
         }
     }
