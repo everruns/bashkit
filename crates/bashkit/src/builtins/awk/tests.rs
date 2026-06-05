@@ -2,7 +2,10 @@
 
 use super::parser::AwkParser;
 use super::{Awk, csv_split_fields};
-use crate::builtins::limits::AWK_MAX_GETLINE_CACHED_FILES as MAX_GETLINE_CACHED_FILES;
+use crate::builtins::limits::{
+    AWK_MAX_GETLINE_CACHED_FILES as MAX_GETLINE_CACHED_FILES,
+    AWK_MAX_OUTPUT_TARGETS as MAX_OUTPUT_TARGETS,
+};
 use crate::builtins::{Builtin, Context};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
@@ -966,6 +969,24 @@ async fn test_awk_file_redirect_output_limit() {
     assert!(
         result.stderr.contains("output limit exceeded"),
         "stderr should mention output limit: {}",
+        result.stderr
+    );
+}
+
+#[tokio::test]
+async fn test_awk_file_redirect_target_limit() {
+    // Many tiny writes to unique paths must be capped without scanning all prior buffers.
+    let program = format!(
+        r#"BEGIN {{ for(i=0;i<{};i++) print "x" > ("/tmp/out" i) }}"#,
+        MAX_OUTPUT_TARGETS + 1
+    );
+    let result = run_awk(&[&program], None).await.unwrap();
+    assert_eq!(result.exit_code, 2);
+    assert!(
+        result
+            .stderr
+            .contains("too many output redirection targets"),
+        "stderr should mention target limit: {}",
         result.stderr
     );
 }

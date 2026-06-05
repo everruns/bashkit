@@ -23,6 +23,8 @@ pub(crate) const AWK_MAX_PARSER_DEPTH: usize = 100;
 pub(crate) const AWK_MAX_CALL_DEPTH: usize = 64;
 /// awk: total output byte cap per invocation.
 pub(crate) const AWK_MAX_OUTPUT_BYTES: usize = 10_000_000;
+/// awk: max distinct output redirection targets per invocation.
+pub(crate) const AWK_MAX_OUTPUT_TARGETS: usize = 1_024;
 /// awk: max distinct files held open by `getline < file`.
 pub(crate) const AWK_MAX_GETLINE_CACHED_FILES: usize = 100;
 

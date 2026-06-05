@@ -9,7 +9,7 @@ use crate::builtins::MAX_FORMAT_WIDTH;
 use crate::builtins::limits::{
     AWK_MAX_CALL_DEPTH as MAX_AWK_CALL_DEPTH,
     AWK_MAX_GETLINE_CACHED_FILES as MAX_GETLINE_CACHED_FILES,
-    AWK_MAX_OUTPUT_BYTES as MAX_AWK_OUTPUT_BYTES,
+    AWK_MAX_OUTPUT_BYTES as MAX_AWK_OUTPUT_BYTES, AWK_MAX_OUTPUT_TARGETS as MAX_AWK_OUTPUT_TARGETS,
 };
 use crate::builtins::search_common::build_regex;
 use crate::fs::FileSystem;
@@ -29,6 +29,7 @@ pub(super) enum AwkFlow {
 // Awk runtime limits (TM-DOS-027, TM-DOS-028) live in `super::limits`:
 // - AWK_MAX_CALL_DEPTH (user-function recursion)
 // - AWK_MAX_OUTPUT_BYTES (total stdout+stderr+file redirects, 10 MB)
+// - AWK_MAX_OUTPUT_TARGETS (distinct redirected output files).
 // - AWK_MAX_GETLINE_CACHED_FILES (distinct files held open by `getline`).
 
 pub(super) struct AwkInterpreter {
@@ -51,6 +52,10 @@ pub(super) struct AwkInterpreter {
     /// Buffered file outputs for `>>` redirection (path -> content).
     /// Append mode: content is appended to existing file on flush.
     pub(super) file_appends: HashMap<String, String>,
+    /// Running byte total across stdout, stderr, and buffered file outputs.
+    /// Keep this O(1): recomputing from redirect maps on every write is quadratic
+    /// for attacker-controlled scripts that print tiny records to many paths.
+    total_output_bytes: usize,
     /// Cached file inputs for `getline var < file` redirection.
     /// Maps resolved path -> (lines, current_position).
     file_inputs: HashMap<String, (Vec<String>, usize)>,
@@ -77,6 +82,7 @@ impl AwkInterpreter {
             functions: HashMap::new(),
             file_outputs: HashMap::new(),
             file_appends: HashMap::new(),
+            total_output_bytes: 0,
             file_inputs: HashMap::new(),
             call_depth: 0,
             fs: None,
@@ -968,18 +974,22 @@ impl AwkInterpreter {
         Ok(result)
     }
 
-    /// Total bytes buffered across all output streams.
-    fn total_output_bytes(&self) -> usize {
-        self.output.len()
-            + self.stderr_output.len()
-            + self.file_outputs.values().map(|v| v.len()).sum::<usize>()
-            + self.file_appends.values().map(|v| v.len()).sum::<usize>()
+    fn has_output_capacity(&self, len: usize) -> bool {
+        self.total_output_bytes <= MAX_AWK_OUTPUT_BYTES.saturating_sub(len)
+    }
+
+    fn output_target_count(&self) -> usize {
+        self.file_outputs.len() + self.file_appends.len()
+    }
+
+    fn is_new_output_target(&self, path: &str) -> bool {
+        !self.file_outputs.contains_key(path) && !self.file_appends.contains_key(path)
     }
 
     /// Write text to stdout buffer or to a file output buffer based on the target.
-    /// Returns `false` if the write would exceed [`MAX_AWK_OUTPUT_BYTES`].
+    /// Returns `false` if the write would exceed output resource limits.
     fn write_output(&mut self, text: &str, target: &Option<AwkOutputTarget>) -> bool {
-        if self.total_output_bytes() + text.len() > MAX_AWK_OUTPUT_BYTES {
+        if !self.has_output_capacity(text.len()) {
             self.stderr_output
                 .push_str("awk: output limit exceeded (max 10MB)\n");
             return false;
@@ -993,13 +1003,23 @@ impl AwkInterpreter {
                     self.stderr_output.push_str(text);
                 } else if path == "/dev/stdout" {
                     self.output.push_str(text);
-                } else if matches!(target, Some(AwkOutputTarget::Append(_))) {
-                    self.file_appends.entry(path).or_default().push_str(text);
                 } else {
-                    self.file_outputs.entry(path).or_default().push_str(text);
+                    if self.is_new_output_target(&path)
+                        && self.output_target_count() >= MAX_AWK_OUTPUT_TARGETS
+                    {
+                        self.stderr_output
+                            .push_str("awk: too many output redirection targets\n");
+                        return false;
+                    }
+                    if matches!(target, Some(AwkOutputTarget::Append(_))) {
+                        self.file_appends.entry(path).or_default().push_str(text);
+                    } else {
+                        self.file_outputs.entry(path).or_default().push_str(text);
+                    }
                 }
             }
         }
+        self.total_output_bytes += text.len();
         true
     }
 
