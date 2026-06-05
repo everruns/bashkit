@@ -4594,6 +4594,7 @@ fn rg_context_line_indices(
     indices
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_rg_context(
     output: &mut String,
     filename: &str,
@@ -4660,7 +4661,7 @@ fn write_rg_context(
             regex,
             opts,
             matched,
-            rg_output_remaining(&output, output_limit),
+            rg_output_remaining(output, output_limit),
         ));
         output.push(record_terminator);
         truncate_rg_output(output, output_limit);
