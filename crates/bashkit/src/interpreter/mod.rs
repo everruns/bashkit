@@ -1642,13 +1642,17 @@ impl Interpreter {
 
     /// THREAT[TM-ISO-005/006/007]: Reset per-exec transient state.
     /// Called by Bash::exec() before each top-level execution to prevent
-    /// traps, exit code, `set` options, and transient stdin from leaking across calls.
+    /// traps, exit code, `set` options, transient stdin, and fd3+ redirect
+    /// capture buffers from leaking across calls.
     /// `shopt` options (expand_aliases, extglob, etc.) are intentionally
     /// preserved — they are persistent session configuration.
     pub fn reset_transient_state(&mut self) {
         self.traps_mut().clear();
         self.last_exit_code = 0;
         self.deferred_proc_subs.clear();
+        self.pending_fd_capture_depth = 0;
+        self.pending_fd_output.clear();
+        self.pending_fd_targets.clear();
         for var in Self::SET_OPTION_VARS {
             self.vars_mut().remove(*var);
             if let Some(bit) = BashFlags::from_shopt_name(var) {
@@ -2394,11 +2398,12 @@ impl Interpreter {
                     if capture_pending_fd {
                         self.pending_fd_capture_depth += 1;
                     }
-                    let result = self.execute_compound(compound).await?;
+                    let result = self.execute_compound(compound).await;
                     if capture_pending_fd {
                         self.pending_fd_capture_depth =
                             self.pending_fd_capture_depth.saturating_sub(1);
                     }
+                    let result = result?;
 
                     // Restore callback before applying redirections
                     if let Some(cb) = saved_callback {

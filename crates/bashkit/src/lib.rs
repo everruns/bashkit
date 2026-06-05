@@ -3183,6 +3183,30 @@ mod tests {
         assert_eq!(result.stdout, "");
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn test_timed_out_fd3_capture_does_not_leak_to_next_exec() {
+        let limits = ExecutionLimits::new().timeout(std::time::Duration::from_millis(1));
+        let mut bash = Bash::builder().limits(limits).build();
+
+        let timed_out = bash.exec("{ sleep 10; } 3>&1 > /tmp/poison.txt").await;
+        assert!(matches!(
+            timed_out,
+            Err(Error::ResourceLimit(LimitExceeded::Timeout(_)))
+        ));
+
+        let hidden = bash.exec("echo SECRET_FROM_EXEC2 1>&3").await.unwrap();
+        assert_eq!(hidden.stdout, "");
+
+        let routed = bash
+            .exec("echo PUBLIC_FROM_EXEC3 2>&1 > /tmp/public.txt")
+            .await
+            .unwrap();
+        assert_eq!(routed.stdout, "");
+
+        let file = bash.exec("cat /tmp/public.txt").await.unwrap();
+        assert_eq!(file.stdout, "PUBLIC_FROM_EXEC3\n");
+    }
+
     #[tokio::test]
     async fn test_pipeline_three_commands() {
         let mut bash = Bash::new();
