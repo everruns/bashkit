@@ -338,8 +338,13 @@ impl OverlayFs {
 
     /// Check limits before writing.
     fn check_write_limits(&self, content_size: usize) -> Result<()> {
+        self.check_write_limits_u64(content_size as u64)
+    }
+
+    /// Check limits for stat-sized lower-layer files before reading content.
+    fn check_write_limits_u64(&self, content_size: u64) -> Result<()> {
         // Check file size limit
-        if content_size as u64 > self.limits.max_file_size {
+        if content_size > self.limits.max_file_size {
             return Err(IoError::other(format!(
                 "file too large: {} bytes exceeds {} byte limit",
                 content_size, self.limits.max_file_size
@@ -350,7 +355,7 @@ impl OverlayFs {
         // THREAT[TM-DOS-035]: Check total size against combined usage, not just upper.
         // Using upper-only would allow exceeding limits when lower has existing data.
         let usage = self.compute_usage();
-        let new_total = usage.total_bytes + content_size as u64;
+        let new_total = usage.total_bytes + content_size;
         if new_total > self.limits.max_total_bytes {
             return Err(IoError::other(format!(
                 "filesystem full: {} bytes would exceed {} byte limit",
@@ -543,9 +548,12 @@ impl FileSystem for OverlayFs {
         // If file exists in lower, copy-on-write
         if self.lower.exists(&path).await.unwrap_or(false) {
             let lower_meta = self.lower.stat(&path).await?;
+
+            // Check limits from metadata before reading lower content.
+            self.check_write_limits_u64(lower_meta.size.saturating_add(content.len() as u64))?;
             let existing = self.lower.read_file(&path).await?;
 
-            // Check limits for combined content
+            // Keep enforcing against actual bytes in case a custom lower reports stale metadata.
             self.check_write_limits(existing.len() + content.len())?;
 
             // Ensure parent exists in upper
@@ -858,6 +866,8 @@ impl FileSystem for OverlayFs {
 
             // Create in upper with same content (for files)
             if stat.file_type == FileType::File {
+                // Metadata-only CoW must reject over-limit lower files before reading them.
+                self.check_write_limits_u64(stat.size)?;
                 let content = self.lower.read_file(&path).await?;
                 self.check_write_limits(content.len())?;
 
@@ -903,6 +913,8 @@ impl FileSystem for OverlayFs {
 
             match stat.file_type {
                 FileType::File | FileType::Fifo => {
+                    // `touch` is metadata-only; reject over-limit lower files before reading.
+                    self.check_write_limits_u64(stat.size)?;
                     let content = self.lower.read_file(&path).await?;
                     self.check_write_limits(content.len())?;
                     if let Some(parent) = path.parent()
@@ -961,6 +973,96 @@ impl FileSystemExt for OverlayFs {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    struct ReadTrackingFs {
+        inner: Arc<InMemoryFs>,
+        read_called: AtomicBool,
+    }
+
+    impl ReadTrackingFs {
+        fn new(inner: Arc<InMemoryFs>) -> Self {
+            Self {
+                inner,
+                read_called: AtomicBool::new(false),
+            }
+        }
+
+        fn read_called(&self) -> bool {
+            self.read_called.load(Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait]
+    impl FileSystemExt for ReadTrackingFs {
+        fn usage(&self) -> FsUsage {
+            self.inner.usage()
+        }
+
+        fn limits(&self) -> FsLimits {
+            self.inner.limits()
+        }
+    }
+
+    #[async_trait]
+    impl FileSystem for ReadTrackingFs {
+        async fn read_file(&self, path: &Path) -> Result<Vec<u8>> {
+            self.read_called.store(true, Ordering::SeqCst);
+            self.inner.read_file(path).await
+        }
+
+        async fn write_file(&self, path: &Path, content: &[u8]) -> Result<()> {
+            self.inner.write_file(path, content).await
+        }
+
+        async fn append_file(&self, path: &Path, content: &[u8]) -> Result<()> {
+            self.inner.append_file(path, content).await
+        }
+
+        async fn mkdir(&self, path: &Path, recursive: bool) -> Result<()> {
+            self.inner.mkdir(path, recursive).await
+        }
+
+        async fn remove(&self, path: &Path, recursive: bool) -> Result<()> {
+            self.inner.remove(path, recursive).await
+        }
+
+        async fn stat(&self, path: &Path) -> Result<Metadata> {
+            self.inner.stat(path).await
+        }
+
+        async fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>> {
+            self.inner.read_dir(path).await
+        }
+
+        async fn exists(&self, path: &Path) -> Result<bool> {
+            self.inner.exists(path).await
+        }
+
+        async fn rename(&self, from: &Path, to: &Path) -> Result<()> {
+            self.inner.rename(from, to).await
+        }
+
+        async fn copy(&self, from: &Path, to: &Path) -> Result<()> {
+            self.inner.copy(from, to).await
+        }
+
+        async fn symlink(&self, target: &Path, link: &Path) -> Result<()> {
+            self.inner.symlink(target, link).await
+        }
+
+        async fn read_link(&self, path: &Path) -> Result<PathBuf> {
+            self.inner.read_link(path).await
+        }
+
+        async fn chmod(&self, path: &Path, mode: u32) -> Result<()> {
+            self.inner.chmod(path, mode).await
+        }
+
+        async fn set_modified_time(&self, path: &Path, time: SystemTime) -> Result<()> {
+            self.inner.set_modified_time(path, time).await
+        }
+    }
 
     #[tokio::test]
     async fn test_read_from_lower() {
@@ -1103,6 +1205,33 @@ mod tests {
                 .await
                 .unwrap(),
             "file should not have been copied to upper layer"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_set_modified_time_rejects_large_lower_file_before_reading() {
+        let inner = Arc::new(InMemoryFs::new());
+        inner
+            .write_file(Path::new("/tmp/big.txt"), &[b'x'; 2048])
+            .await
+            .unwrap();
+        let lower = Arc::new(ReadTrackingFs::new(inner));
+
+        let limits = FsLimits::new().max_file_size(1024);
+        let overlay = OverlayFs::with_limits(lower.clone(), limits);
+
+        let result = overlay
+            .set_modified_time(Path::new("/tmp/big.txt"), SystemTime::now())
+            .await;
+
+        assert!(result.is_err(), "over-limit lower file should be rejected");
+        assert!(
+            result.unwrap_err().to_string().contains("file too large"),
+            "expected file size limit error"
+        );
+        assert!(
+            !lower.read_called(),
+            "set_modified_time must check stat size before reading lower content"
         );
     }
 
