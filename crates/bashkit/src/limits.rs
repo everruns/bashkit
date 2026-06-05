@@ -242,11 +242,9 @@ impl ExecutionLimits {
     }
 
     /// Set maximum explicit subshell nesting depth.
-    /// Passing 0 is treated as "use default" (no-op) to prevent misconfiguration.
+    /// A value of 0 is a valid strict limit that prevents explicit subshells.
     pub fn max_subshell_depth(mut self, depth: usize) -> Self {
-        if depth > 0 {
-            self.max_subshell_depth = depth;
-        }
+        self.max_subshell_depth = depth;
         self
     }
 
