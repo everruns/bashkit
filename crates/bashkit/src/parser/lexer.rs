@@ -1284,7 +1284,9 @@ impl<'a> Lexer<'a> {
                         // inner quotes (e.g. ${arr["key"]}) don't end the string
                         content.push('{');
                         self.advance();
-                        self.read_param_expansion_into(&mut content);
+                        if let Err(msg) = self.read_param_expansion_into(&mut content) {
+                            return Some(Token::Error(msg));
+                        }
                     }
                 }
                 '`' => {
@@ -1464,11 +1466,16 @@ impl<'a> Lexer<'a> {
     /// Read parameter expansion content after `${`, handling nested braces and quotes.
     /// In bash, quotes inside `${...}` (e.g. `${arr["key"]}`) don't terminate the
     /// outer double-quoted string. Appends chars including closing `}` to `content`.
-    fn read_param_expansion_into(&mut self, content: &mut String) {
-        let mut depth = 1;
+    /// THREAT[TM-DOS-045]: track nested `${...}` iteratively. This lexer runs
+    /// before parser fuel is checked, so recursion here can overflow the host stack.
+    fn read_param_expansion_into(&mut self, content: &mut String) -> Result<(), String> {
+        let mut depth = 1usize;
         while let Some(c) = self.peek_char() {
             match c {
                 '{' => {
+                    if depth >= self.max_subst_depth {
+                        return Err("parameter expansion nesting too deep".to_string());
+                    }
                     depth += 1;
                     content.push(c);
                     self.advance();
@@ -1536,9 +1543,12 @@ impl<'a> Lexer<'a> {
                         self.advance();
                         self.read_command_subst_into(content);
                     } else if self.peek_char() == Some('{') {
+                        if depth >= self.max_subst_depth {
+                            return Err("parameter expansion nesting too deep".to_string());
+                        }
+                        depth += 1;
                         content.push('{');
                         self.advance();
-                        self.read_param_expansion_into(content);
                     }
                 }
                 _ => {
@@ -1547,6 +1557,7 @@ impl<'a> Lexer<'a> {
                 }
             }
         }
+        Ok(())
     }
 
     /// Check if the content starting with { looks like a brace expansion
@@ -1929,6 +1940,29 @@ mod tests {
             Some(Token::QuotedWord("hello world".to_string()))
         );
         assert_eq!(lexer.next_token(), None);
+    }
+
+    #[test]
+    fn test_double_quoted_nested_param_expansion_depth_limit() {
+        let mut lexer = Lexer::with_max_subst_depth("\"${a:-${b:-${c}}}\"", 2);
+
+        match lexer.next_token() {
+            Some(Token::Error(msg)) => assert!(
+                msg.contains("parameter expansion nesting too deep"),
+                "expected parameter expansion depth error, got: {msg}"
+            ),
+            other => panic!("expected depth error token, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_double_quoted_nested_param_expansion_at_limit() {
+        let mut lexer = Lexer::with_max_subst_depth("\"${a:-${b}}\"", 2);
+
+        assert_eq!(
+            lexer.next_token(),
+            Some(Token::QuotedWord("${a:-${b}}".to_string()))
+        );
     }
 
     #[test]
