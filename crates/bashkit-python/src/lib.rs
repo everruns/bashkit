@@ -2750,7 +2750,8 @@ async fn call_python_callback_async(
             .await
             .map_err(|e| format!("{callback_name}: {e}"))?
     } else {
-        Python::attach(|py| session.run_awaitable_on_private_loop(py, &awaitable))
+        run_private_loop_awaitable_yielding(session, awaitable)
+            .await
             .map_err(|e| format!("{callback_name}: {e}"))?
     };
     #[cfg(target_arch = "wasm32")]
@@ -2758,6 +2759,21 @@ async fn call_python_callback_async(
         .map_err(|e| format!("{callback_name}: {e}"))?;
 
     Ok(result)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn run_private_loop_awaitable_yielding(
+    session: Arc<PyCallbackSession>,
+    awaitable: Py<PyAny>,
+) -> PyResult<Py<PyAny>> {
+    // THREAT[TM-DOS-057]: execute_sync() has no caller asyncio loop. Run the
+    // private Python event loop on Tokio's blocking pool so the interpreter
+    // future yields and Bashkit's execution timeout can preempt slow callbacks.
+    tokio::task::spawn_blocking(move || {
+        Python::attach(|py| session.run_awaitable_on_private_loop(py, &awaitable))
+    })
+    .await
+    .map_err(|e| PyRuntimeError::new_err(format!("Python async callback worker failed: {e}")))?
 }
 
 fn extract_python_string_callback_result(
@@ -4869,6 +4885,7 @@ pub struct ScriptedTool {
     callback_engine: Arc<PyCallbackEngine>,
     max_commands: Option<u64>,
     max_loop_iterations: Option<u64>,
+    timeout_seconds: Option<f64>,
 }
 
 impl ScriptedTool {
@@ -4931,13 +4948,20 @@ impl ScriptedTool {
             builder = builder.env(k, v);
         }
 
-        if self.max_commands.is_some() || self.max_loop_iterations.is_some() {
+        if self.max_commands.is_some()
+            || self.max_loop_iterations.is_some()
+            || self.timeout_seconds.is_some()
+        {
             let mut limits = ExecutionLimits::new();
             if let Some(mc) = self.max_commands {
                 limits = limits.max_commands(usize::try_from(mc).unwrap_or(usize::MAX));
             }
             if let Some(mli) = self.max_loop_iterations {
                 limits = limits.max_loop_iterations(usize::try_from(mli).unwrap_or(usize::MAX));
+            }
+            if let Some(ts) = self.timeout_seconds {
+                limits =
+                    limits.timeout(parse_timeout_seconds(ts).expect("validated timeout_seconds"));
             }
             builder = builder.limits(limits);
         }
@@ -4955,14 +4979,19 @@ impl ScriptedTool {
     ///     short_description: One-line description
     ///     max_commands: Max commands per execute call
     ///     max_loop_iterations: Max loop iterations per execute call
+    ///     timeout_seconds: Max wall-clock seconds per execute call
     #[new]
-    #[pyo3(signature = (name, short_description=None, max_commands=None, max_loop_iterations=None))]
+    #[pyo3(signature = (name, short_description=None, max_commands=None, max_loop_iterations=None, timeout_seconds=None))]
     fn new(
         name: String,
         short_description: Option<String>,
         max_commands: Option<u64>,
         max_loop_iterations: Option<u64>,
+        timeout_seconds: Option<f64>,
     ) -> PyResult<Self> {
+        if let Some(ts) = timeout_seconds {
+            parse_timeout_seconds(ts)?;
+        }
         let rt = make_runtime()?;
         let callback_engine = Python::attach(PyCallbackEngine::new)?;
 
@@ -4975,6 +5004,7 @@ impl ScriptedTool {
             callback_engine,
             max_commands,
             max_loop_iterations,
+            timeout_seconds,
         })
     }
 

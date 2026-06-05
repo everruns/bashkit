@@ -12,6 +12,7 @@ import asyncio
 import contextvars
 import gc
 import threading
+import time
 import weakref
 
 import pytest
@@ -36,6 +37,27 @@ def _collect_between_tests():
 # ===========================================================================
 # Async callback basics
 # ===========================================================================
+
+
+def test_async_callback_execute_sync_honors_timeout():
+    """execute_sync() timeout preempts slow async callbacks on private loop."""
+
+    async def slow(params, stdin=None):
+        await asyncio.sleep(0.25)
+        return "late\n"
+
+    tool = ScriptedTool("api", timeout_seconds=0.05)
+    tool.add_tool("slow", "Slow", callback=slow)
+
+    start = time.monotonic()
+    r = tool.execute_sync("slow")
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 0.2
+    assert r.exit_code == 1
+    assert "timeout" in (r.stderr + (r.error or "")).lower()
+    # Allow the abandoned private-loop worker to finish before interpreter shutdown.
+    time.sleep(0.3)
 
 
 def test_async_callback_sync_execute():
