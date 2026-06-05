@@ -180,11 +180,26 @@ fn parse_head_args(args: &[String], default: usize) -> Result<(usize, bool, Vec<
 }
 
 /// Take the first N bytes from text.
-/// Uses char-level truncation so that Latin-1 encoded binary data
-/// (e.g. from /dev/urandom where each byte maps to one char) is
-/// counted correctly — each char represents one original byte.
+///
+/// Bashkit keeps ordinary command output as UTF-8 strings, but binary device
+/// input is represented as Latin-1 chars so `/dev/urandom` pipelines keep one
+/// char per original byte. Treat only binary-looking Latin-1 as char-counted;
+/// normal UTF-8 stdin must never emit more than `head -c N` bytes.
 fn take_first_bytes(text: &str, n: usize) -> String {
-    text.chars().take(n).collect()
+    if looks_like_latin1_binary(text) {
+        return text.chars().take(n).collect();
+    }
+
+    let mut end = text.len().min(n);
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text[..end].to_string()
+}
+
+fn looks_like_latin1_binary(text: &str) -> bool {
+    text.chars()
+        .any(|c| matches!(c, '\0'..='\x08' | '\x0b'..='\x0c' | '\x0e'..='\x1f' | '\x7f'..='\u{9f}'))
 }
 
 /// Parse arguments for tail command, including +N "from start" syntax.
@@ -352,6 +367,29 @@ mod tests {
         let result = run_head(&["-2"], Some(input)).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "a\nb\n");
+    }
+
+    #[tokio::test]
+    async fn test_head_c_multibyte_stdin_respects_byte_limit() {
+        let result = run_head(&["-c", "1"], Some("éX")).await;
+        assert_eq!(result.exit_code, 0);
+        assert!(
+            result.stdout.len() <= 1,
+            "head -c 1 must not emit more than 1 byte for UTF-8 stdin"
+        );
+
+        let result = run_head(&["-c", "2"], Some("éX")).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "é");
+        assert_eq!(result.stdout.len(), 2);
+    }
+
+    #[test]
+    fn test_head_c_preserves_latin1_binary_byte_model() {
+        let input = "A\0éZ";
+        let output = take_first_bytes(input, 3);
+        assert_eq!(output.chars().count(), 3);
+        assert_eq!(output, "A\0é");
     }
 
     #[tokio::test]
