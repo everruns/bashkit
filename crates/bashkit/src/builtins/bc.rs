@@ -9,6 +9,10 @@ use super::{Builtin, Context};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
+// Security cap: Rust's formatter panics above its precision limit, and lower
+// huge values still let tiny untrusted bc programs allocate excessive output.
+const MAX_SCALE: u32 = 1024;
+
 /// The bc builtin - arbitrary-precision calculator.
 ///
 /// Usage: echo "expression" | bc [-l]
@@ -109,6 +113,9 @@ impl BcState {
             let val: u32 = val_str
                 .parse()
                 .map_err(|_| format!("parse error: {}", val_str))?;
+            if val > MAX_SCALE {
+                return Err(format!("scale too large: maximum is {}", MAX_SCALE));
+            }
             self.scale = val;
             return Ok(None);
         }
@@ -592,6 +599,14 @@ mod tests {
     async fn bc_financial_calc() {
         let result = run_bc("scale=2; 100.50 * 1.0825\n", &[]).await;
         assert_eq!(result.stdout, "108.79\n");
+    }
+
+    #[tokio::test]
+    async fn bc_rejects_excessive_scale() {
+        let result = run_bc("scale=65536; 1\n", &[]).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("scale too large"));
+        assert_eq!(result.stdout, "");
     }
 
     // ==================== comparisons ====================
