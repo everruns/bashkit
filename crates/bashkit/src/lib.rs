@@ -660,9 +660,11 @@ impl Bash {
         script: &str,
         mut extensions: ExecutionExtensions,
     ) -> Result<ExecResult> {
-        // Expose active execution limits to builtins that need to honor
-        // per-execution sandbox settings.
-        let _ = extensions.insert(self.interpreter.limits().clone());
+        // Expose active execution limits and deadline to builtins that need to
+        // honor per-execution sandbox settings inside synchronous VM sections.
+        let active_limits = self.interpreter.limits().clone();
+        let _ = extensions.insert(active_limits.clone());
+        let _ = extensions.insert(builtins::ExecutionDeadline::new(active_limits.timeout));
         #[cfg(feature = "python")]
         let _ = extensions.insert(builtins::PythonInprocessOptIn(self.python_inprocess_opt_in));
         #[cfg(feature = "sqlite")]

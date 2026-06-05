@@ -389,6 +389,33 @@ pub struct ExecutionExtensions {
     values: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
 }
 
+/// Per-exec wall-clock deadline for builtins with synchronous VM sections.
+#[derive(Debug, Clone)]
+pub(crate) struct ExecutionDeadline {
+    started_at: std::time::Instant,
+    timeout: std::time::Duration,
+}
+
+impl ExecutionDeadline {
+    /// Create a deadline anchored at the start of `Bash::exec*`.
+    pub(crate) fn new(timeout: std::time::Duration) -> Self {
+        Self {
+            started_at: std::time::Instant::now(),
+            timeout,
+        }
+    }
+
+    /// Remaining budget; never returns zero so downstream VM timers stay active.
+    pub(crate) fn remaining(&self) -> std::time::Duration {
+        let remaining = self.timeout.saturating_sub(self.started_at.elapsed());
+        if remaining.is_zero() {
+            std::time::Duration::from_millis(1)
+        } else {
+            remaining
+        }
+    }
+}
+
 impl ExecutionExtensions {
     /// Create an empty execution extension bag.
     pub fn new() -> Self {
