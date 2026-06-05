@@ -134,3 +134,10 @@ IFS=":"; read -ra parts <<< "a:b:c"; echo "${#parts[@]} ${parts[1]}"
 ### expect
 3 b
 ### end
+
+### read_custom_ifs_multiple_delimiters_last_var
+# Last read variable should preserve original remaining delimiters
+IFS=",:"; read -r a b <<< "1,2:3"; echo "$a|$b"
+### expect
+1|2:3
+### end
