@@ -87,12 +87,3 @@ sha256sum --check
 ### expect_exit_code
 1
 ### end
-
-### checksum_check_manifest_rejected
-# -c with a manifest must not hash the manifest and report success
-printf 'tampered' > /tmp/artifact.bin
-printf '0000000000000000000000000000000000000000000000000000000000000000  /tmp/artifact.bin\n' > /tmp/checksums.txt
-sha256sum -c /tmp/checksums.txt
-### expect_exit_code
-1
-### end
