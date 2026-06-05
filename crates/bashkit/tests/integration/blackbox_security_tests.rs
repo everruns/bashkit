@@ -586,6 +586,35 @@ mod finding_shell_options_leak {
             "set -e leaked across exec() calls — false aborted execution"
         );
     }
+
+    /// TM-ISO-023: all `set` short options are per-exec transient state.
+    #[tokio::test]
+    async fn set_short_flags_do_not_leak_between_exec() {
+        let mut bash = tight_bash();
+        let result = bash.exec("set -bhm").await.unwrap();
+        assert_eq!(result.exit_code, 0, "set -bhm should succeed");
+        let result = bash.exec("echo \"$-\"").await.unwrap();
+        assert_eq!(
+            result.stdout.trim(),
+            "",
+            "set -b/-h/-m leaked across exec() calls through $-"
+        );
+    }
+
+    /// TM-ISO-023: unsupported short options must not mint persistent SHOPT_* state.
+    #[tokio::test]
+    async fn set_invalid_short_option_does_not_create_shopt_state() {
+        let mut bash = tight_bash();
+        let result = bash.exec("set -Z").await.unwrap();
+        assert_eq!(result.exit_code, 2);
+
+        let result = bash.exec("echo \"$SHOPT_Z\"").await.unwrap();
+        assert_eq!(
+            result.stdout.trim(),
+            "",
+            "invalid set option created SHOPT_Z state"
+        );
+    }
 }
 
 // =============================================================================

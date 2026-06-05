@@ -83,6 +83,24 @@ fn option_name_to_var(name: &str) -> Option<&'static str> {
     }
 }
 
+/// Map accepted short `set` option flags to their transient SHOPT_* variables.
+fn short_option_to_var(opt: char) -> Option<&'static str> {
+    match opt {
+        'a' => Some("SHOPT_a"),
+        'b' => Some("SHOPT_b"),
+        'e' => Some("SHOPT_e"),
+        'f' => Some("SHOPT_f"),
+        'h' => Some("SHOPT_h"),
+        'm' => Some("SHOPT_m"),
+        'n' => Some("SHOPT_n"),
+        'u' => Some("SHOPT_u"),
+        'v' => Some("SHOPT_v"),
+        'x' => Some("SHOPT_x"),
+        'C' => Some("SHOPT_C"),
+        _ => None,
+    }
+}
+
 /// All known `set -o` options with their variable names, in display order.
 const SET_O_OPTIONS: &[(&str, &str)] = &[
     ("allexport", "SHOPT_a"),
@@ -177,10 +195,26 @@ impl Builtin for Set {
                     if opt == 'o' {
                         // -o within a combined flag (e.g. -euo): next arg is option name
                         need_o_arg = true;
-                    } else {
-                        let opt_name = format!("SHOPT_{}", opt);
-                        ctx.variables
-                            .insert(opt_name, if enable { "1" } else { "0" }.to_string());
+                    } else if short_option_to_var(opt).is_none() {
+                        return Ok(ExecResult::err(
+                            format!(
+                                "bash: set: {}{}: invalid option\n",
+                                if enable { '-' } else { '+' },
+                                opt
+                            ),
+                            2,
+                        ));
+                    }
+                }
+                for opt in arg.chars().skip(1) {
+                    if opt == 'o' {
+                        continue;
+                    }
+                    if let Some(opt_name) = short_option_to_var(opt) {
+                        ctx.variables.insert(
+                            opt_name.to_string(),
+                            if enable { "1" } else { "0" }.to_string(),
+                        );
                     }
                 }
                 if need_o_arg && i + 1 < ctx.args.len() {
