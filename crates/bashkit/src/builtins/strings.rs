@@ -55,13 +55,13 @@ fn parse_strings_args(
         } else if p.flag("-a") {
             // Default behavior, ignore
         } else if let Some(arg) = p.current() {
-            if arg != "-" && arg.starts_with('-') {
-                // Try parsing as -NUM shorthand
-                if let Some(rest) = arg.strip_prefix('-')
-                    && let Ok(n) = rest.parse::<usize>()
-                {
-                    opts.min_length = n;
-                }
+            if let Some(rest) = arg.strip_prefix('-')
+                && !rest.is_empty()
+                && rest.chars().all(|c| c.is_ascii_digit())
+            {
+                opts.min_length = rest
+                    .parse()
+                    .map_err(|_| format!("strings: invalid minimum string length: '{}'", rest))?;
                 p.advance();
             } else if let Some(file) = p.positional() {
                 files.push(file.to_string());
@@ -301,6 +301,14 @@ mod tests {
         let result = run_strings_with_fs(&["-8", "/test.bin"], &[("/test.bin", data)]).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "longest-string\n");
+    }
+
+    #[tokio::test]
+    async fn test_strings_dash_prefixed_filename() {
+        let data = b"dash-file\0";
+        let result = run_strings_with_fs(&["-data.bin"], &[("/-data.bin", data)]).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "dash-file\n");
     }
 
     #[tokio::test]
