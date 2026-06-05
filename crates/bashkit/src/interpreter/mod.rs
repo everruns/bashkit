@@ -2276,7 +2276,7 @@ impl Interpreter {
                 }
             }
 
-            // Run ERR trap on non-zero exit (unless in conditional chain)
+            // Run ERR trap on non-zero exit unless suppressed by AND-OR list, negated pipeline, or compound context
             if exit_code != 0 {
                 let suppressed = Self::suppresses_script_body_err_exit(command, &result);
                 if !suppressed {
