@@ -1025,11 +1025,14 @@ impl<'a> Lexer<'a> {
         self.read_continuation_into(&mut content);
 
         // Single-quoted strings are literal - no variable expansion.
-        // Decode lexer-only escaped-dollar sentinels from continued segments
+        // Decode NUL escape sentinels from continued double-quoted segments
         // before returning a token that bypasses parse_word().
-        Some(Token::LiteralWord(Self::decode_escaped_dollar_sentinel(
-            &content,
-        )))
+        // Only allocate when the sentinel is actually present (common case: none).
+        Some(Token::LiteralWord(if content.contains('\x00') {
+            Self::decode_nul_escape_sentinel(&content)
+        } else {
+            content
+        }))
     }
 
     /// After a closing quote, read any adjacent quoted or unquoted word chars
@@ -1227,8 +1230,9 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// Decode lexer-only escaped-dollar sentinels for literal-token paths.
-    fn decode_escaped_dollar_sentinel(segment: &str) -> String {
+    /// Decode NUL-based escape sentinels: each `\x00` followed by a char is
+    /// collapsed to that char. Used for literal-token paths that bypass `parse_word()`.
+    fn decode_nul_escape_sentinel(segment: &str) -> String {
         let mut decoded = String::with_capacity(segment.len());
         let mut chars = segment.chars();
 
