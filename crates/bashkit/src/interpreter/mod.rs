@@ -8962,7 +8962,14 @@ impl Interpreter {
                             }
                         }
                     } else if let Some(current) = fields.last_mut() {
-                        current.push_str(&value);
+                        // Quoted expansion results must not undergo brace/glob expansion
+                        // when an unquoted glob is elsewhere in the word. Escape special
+                        // chars so that expand_braces/expand_glob_item treat them as literals.
+                        if part_is_quoted && part_has_expansion && word.has_unquoted_glob {
+                            current.push_str(&Self::quote_expansion_for_quoted_glob(&value));
+                        } else {
+                            current.push_str(&value);
+                        }
                     }
                 }
                 return Ok(fields);
