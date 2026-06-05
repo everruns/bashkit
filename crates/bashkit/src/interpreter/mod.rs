@@ -8175,6 +8175,31 @@ impl Interpreter {
         Box::pin(async move { self.expand_word_inner(word).await })
     }
 
+    /// Quote expansion output that came from a quoted segment of a mixed word.
+    /// THREAT[TM-INF-022]: Quoted user-controlled values must stay literal; only
+    /// unquoted suffix/prefix glob syntax in the source word may drive expansion.
+    fn quote_expansion_for_quoted_glob(value: &str) -> String {
+        let mut quoted = String::with_capacity(value.len());
+        for ch in value.chars() {
+            if matches!(
+                ch,
+                '\\' | '*' | '?' | '[' | ']' | '{' | '}' | '@' | '!' | '+' | '(' | ')' | '|'
+            ) {
+                quoted.push('\\');
+            }
+            quoted.push(ch);
+        }
+        quoted
+    }
+
+    fn append_expansion_for_word(result: &mut String, word: &Word, value: &str) {
+        if word.quoted && word.has_unquoted_glob {
+            result.push_str(&Self::quote_expansion_for_quoted_glob(value));
+        } else {
+            result.push_str(value);
+        }
+    }
+
     async fn expand_word_inner(&mut self, word: &Word) -> Result<String> {
         let mut result = String::new();
         let mut is_first_part = true;
@@ -8221,9 +8246,13 @@ impl Interpreter {
                                 .unwrap_or_default(),
                             None => " ".to_string(),
                         };
-                        result.push_str(&positional.join(&sep));
+                        Self::append_expansion_for_word(&mut result, word, &positional.join(&sep));
                     } else {
-                        result.push_str(&self.expand_variable(name));
+                        Self::append_expansion_for_word(
+                            &mut result,
+                            word,
+                            &self.expand_variable(name),
+                        );
                     }
                 }
                 WordPart::CommandSubstitution(commands) => {
@@ -8236,7 +8265,7 @@ impl Interpreter {
                     // THREAT[TM-DOS-089]: Delegate to Box::pin-ed helper to
                     // prevent stack growth proportional to nesting depth.
                     let trimmed = self.execute_cmd_subst(commands).await?;
-                    result.push_str(&trimmed);
+                    Self::append_expansion_for_word(&mut result, word, &trimmed);
                 }
                 WordPart::ArithmeticExpansion(expr) => {
                     let expanded_expr = if expr.contains("$(") {
@@ -8245,7 +8274,7 @@ impl Interpreter {
                         expr.to_string()
                     };
                     let value = self.evaluate_arithmetic_with_assign(&expanded_expr);
-                    result.push_str(&value.to_string());
+                    Self::append_expansion_for_word(&mut result, word, &value.to_string());
                 }
                 WordPart::Length(name) => {
                     let value = if let Some(bracket_pos) = name.find('[') {
@@ -8314,23 +8343,27 @@ impl Interpreter {
                         *colon_variant,
                         is_set,
                     );
-                    result.push_str(&expanded);
+                    Self::append_expansion_for_word(&mut result, word, &expanded);
                 }
                 WordPart::ArrayAccess { name, index } => {
-                    result.push_str(&self.expand_array_access_part(name, index));
+                    Self::append_expansion_for_word(
+                        &mut result,
+                        word,
+                        &self.expand_array_access_part(name, index),
+                    );
                 }
                 WordPart::ArrayIndices(name) => {
                     let resolved = self.resolve_nameref(name);
                     if let Some(arr) = self.assoc_arrays.get(resolved) {
                         let mut keys: Vec<_> = arr.keys().cloned().collect();
                         keys.sort();
-                        result.push_str(&keys.join(" "));
+                        Self::append_expansion_for_word(&mut result, word, &keys.join(" "));
                     } else if let Some(arr) = self.arrays.get(resolved) {
                         let mut indices: Vec<_> = arr.keys().collect();
                         indices.sort();
                         let index_strs: Vec<String> =
                             indices.iter().map(|i| i.to_string()).collect();
-                        result.push_str(&index_strs.join(" "));
+                        Self::append_expansion_for_word(&mut result, word, &index_strs.join(" "));
                     }
                 }
                 WordPart::Substring {
@@ -8352,7 +8385,7 @@ impl Interpreter {
                     } else {
                         value.chars().skip(start).collect()
                     };
-                    result.push_str(&substr);
+                    Self::append_expansion_for_word(&mut result, word, &substr);
                 }
                 WordPart::ArraySlice {
                     name,
@@ -8379,7 +8412,7 @@ impl Interpreter {
                         } else {
                             &values[start..]
                         };
-                        result.push_str(&sliced.join(" "));
+                        Self::append_expansion_for_word(&mut result, word, &sliced.join(" "));
                     }
                 }
                 WordPart::IndirectExpansion {
@@ -8395,7 +8428,7 @@ impl Interpreter {
                         // Nameref without operator: ${!ref} returns the
                         // name the nameref points to (original behavior).
                         if let Some(ref target) = nameref_target {
-                            result.push_str(target);
+                            Self::append_expansion_for_word(&mut result, word, target);
                         }
                     } else {
                         // Resolve the indirect target variable name
@@ -8417,16 +8450,16 @@ impl Interpreter {
                                 *colon_variant,
                                 is_set,
                             );
-                            result.push_str(&expanded);
+                            Self::append_expansion_for_word(&mut result, word, &expanded);
                         } else {
                             // Plain indirect expansion (no operator)
                             if let Some(arr) = self.arrays.get(&resolved_name) {
                                 if let Some(first) = arr.get(&0) {
-                                    result.push_str(first);
+                                    Self::append_expansion_for_word(&mut result, word, first);
                                 }
                             } else {
                                 let value = self.expand_variable(&resolved_name);
-                                result.push_str(&value);
+                                Self::append_expansion_for_word(&mut result, word, &value);
                             }
                         }
                     }
@@ -8450,7 +8483,7 @@ impl Interpreter {
                         }
                     }
                     names.sort();
-                    result.push_str(&names.join(" "));
+                    Self::append_expansion_for_word(&mut result, word, &names.join(" "));
                 }
                 WordPart::ArrayLength(name) => {
                     let resolved = self.resolve_nameref(name);
@@ -8466,10 +8499,14 @@ impl Interpreter {
                     let expanded = self
                         .expand_process_substitution(commands, *is_input)
                         .await?;
-                    result.push_str(&expanded);
+                    Self::append_expansion_for_word(&mut result, word, &expanded);
                 }
                 WordPart::Transformation { name, operator } => {
-                    result.push_str(&self.apply_transformation(name, *operator));
+                    Self::append_expansion_for_word(
+                        &mut result,
+                        word,
+                        &self.apply_transformation(name, *operator),
+                    );
                 }
             }
             is_first_part = false;
@@ -11279,7 +11316,16 @@ impl Interpreter {
         let mut brace_end = None;
         let chars: Vec<char> = s.chars().collect();
 
+        let mut escaped = false;
         for (i, &ch) in chars.iter().enumerate() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
             match ch {
                 '{' => {
                     if depth == 0 {
@@ -11288,7 +11334,9 @@ impl Interpreter {
                     depth += 1;
                 }
                 '}' => {
-                    depth -= 1;
+                    if depth > 0 {
+                        depth -= 1;
+                    }
                     if depth == 0 && brace_start.is_some() {
                         brace_end = Some(i);
                         break;
@@ -13422,6 +13470,91 @@ echo "count=$COUNT"
             result.stdout.contains("tag_hello.tmp.html"),
             "ls output: {}",
             result.stdout
+        );
+    }
+
+    /// Quoted variable values must stay literal when an adjacent unquoted glob
+    /// keeps pathname expansion enabled for the rest of the word.
+    #[tokio::test]
+    async fn test_quoted_variable_glob_chars_stay_literal_with_adjacent_glob() {
+        let mut bash = crate::Bash::new();
+        bash.fs()
+            .mkdir(std::path::Path::new("/tmp/quoted_glob_literal"), true)
+            .await
+            .unwrap();
+        bash.fs()
+            .write_file(
+                std::path::Path::new("/tmp/quoted_glob_literal/*literal.tmp"),
+                b"literal",
+            )
+            .await
+            .unwrap();
+        bash.fs()
+            .write_file(
+                std::path::Path::new("/tmp/quoted_glob_literal/public.tmp"),
+                b"public",
+            )
+            .await
+            .unwrap();
+
+        let result = bash
+            .exec(r#"cd /tmp/quoted_glob_literal; p="*"; printf '%s\n' "$p"*.tmp"#)
+            .await
+            .unwrap();
+
+        let mut lines: Vec<&str> = result.stdout.trim().lines().collect();
+        lines.sort();
+        assert_eq!(
+            lines,
+            vec!["*literal.tmp"],
+            "glob chars from quoted variable must remain literal; stderr: {}",
+            result.stderr
+        );
+    }
+
+    /// Braces introduced by quoted parameter expansion must not undergo brace
+    /// expansion when an adjacent unquoted glob remains active.
+    #[tokio::test]
+    async fn test_quoted_variable_braces_stay_literal_with_adjacent_glob() {
+        let mut bash = crate::Bash::new();
+        bash.fs()
+            .mkdir(std::path::Path::new("/tmp/quoted_brace_literal"), true)
+            .await
+            .unwrap();
+        bash.fs()
+            .write_file(
+                std::path::Path::new("/tmp/quoted_brace_literal/{secret,public}x.txt"),
+                b"literal",
+            )
+            .await
+            .unwrap();
+        bash.fs()
+            .write_file(
+                std::path::Path::new("/tmp/quoted_brace_literal/secret.txt"),
+                b"secret",
+            )
+            .await
+            .unwrap();
+        bash.fs()
+            .write_file(
+                std::path::Path::new("/tmp/quoted_brace_literal/public.txt"),
+                b"public",
+            )
+            .await
+            .unwrap();
+
+        let result = bash
+            .exec(r#"cd /tmp/quoted_brace_literal; p="{secret,public}"; printf '%s\n' "$p"*.txt"#)
+            .await
+            .unwrap();
+
+        let mut lines: Vec<&str> = result.stdout.trim().lines().collect();
+        lines.sort();
+        assert_eq!(
+            lines,
+            vec!["{secret,public}x.txt"],
+            "braces from quoted variable must remain literal; stderr: {}",
+            result.stderr
         );
     }
 
