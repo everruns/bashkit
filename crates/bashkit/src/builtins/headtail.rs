@@ -184,17 +184,15 @@ fn parse_head_args(args: &[String], default: usize) -> Result<(usize, bool, Vec<
 
 fn normalize_vfs_path(path: &std::path::Path) -> std::path::PathBuf {
     path.components()
-        .fold(std::path::PathBuf::new(), |mut acc, c| {
-            match c {
-                std::path::Component::ParentDir => {
-                    acc.pop();
-                    acc
-                }
-                std::path::Component::CurDir => acc,
-                c => {
-                    acc.push(c);
-                    acc
-                }
+        .fold(std::path::PathBuf::new(), |mut acc, c| match c {
+            std::path::Component::ParentDir => {
+                acc.pop();
+                acc
+            }
+            std::path::Component::CurDir => acc,
+            c => {
+                acc.push(c);
+                acc
             }
         })
 }

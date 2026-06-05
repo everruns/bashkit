@@ -462,8 +462,8 @@ fn decode_file_bytes(bytes: &[u8]) -> String {
 }
 
 fn normalize_vfs_path(path: &Path) -> std::path::PathBuf {
-    path.components().fold(std::path::PathBuf::new(), |mut acc, c| {
-        match c {
+    path.components()
+        .fold(std::path::PathBuf::new(), |mut acc, c| match c {
             std::path::Component::ParentDir => {
                 acc.pop();
                 acc
@@ -473,8 +473,7 @@ fn normalize_vfs_path(path: &Path) -> std::path::PathBuf {
                 acc.push(c);
                 acc
             }
-        }
-    })
+        })
 }
 
 fn decode_file_bytes_for_path(path: &Path, bytes: &[u8]) -> String {
