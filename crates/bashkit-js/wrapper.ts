@@ -361,10 +361,19 @@ function toNativeOnOutput(onOutput?: OnOutput): NativeOnOutput | undefined {
       }
       return undefined;
     } catch (error) {
-      if (error instanceof Error) {
-        return error.stack ?? error.message ?? error.toString();
-      }
-      return String(error);
+      // Security: never propagate error.stack — it contains host file paths and
+      // function names (TM-INF-022 / issue #1868). Use error.message only, and
+      // strip path-like patterns so attacker-controlled output cannot smuggle them.
+      const raw =
+        error instanceof Error
+          ? (error.message ?? error.toString())
+          : String(error);
+      // Remove absolute-path and file:// URL segments from the message.
+      const sanitized = raw.replace(
+        /(\s|^)(\/[^\s]*|file:\/\/[^\s]*)/g,
+        "$1<path>",
+      );
+      return sanitized.slice(0, 256) || "output callback failed";
     }
   };
 }

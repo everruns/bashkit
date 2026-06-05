@@ -253,6 +253,37 @@ for (const [label, create] of [
     t.is(result.stdout, "after-error\n");
   });
 
+  test(`${label}: onOutput error does not leak stack trace or host paths`, async (t) => {
+    const shell = create();
+    const error = await t.throwsAsync(() =>
+      shell.execute(SCRIPT, {
+        onOutput() {
+          // Simulate error with a path-containing message (attacker-controlled)
+          const err = new Error("fail at /home/server/src/secret.ts:42");
+          // Attach a stack that contains host paths
+          err.stack = `Error: fail at /home/server/src/secret.ts:42\n    at Object.<anonymous> (/home/server/src/wrapper.ts:99:5)`;
+          throw err;
+        },
+      }),
+    );
+
+    t.truthy(error);
+    // Stack trace must not appear in the propagated error
+    t.false(
+      error.message.includes("at Object"),
+      "stack frame must not propagate",
+    );
+    t.false(
+      error.message.includes("wrapper.ts"),
+      "host filename must not propagate",
+    );
+    // Path-like segments must be stripped from message too
+    t.false(
+      error.message.includes("/home/server"),
+      "host path must not propagate",
+    );
+  });
+
   test(`${label}: execute onOutput error does not clear future explicit cancel`, async (t) => {
     const shell = create();
 
