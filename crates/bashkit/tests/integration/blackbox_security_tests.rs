@@ -591,7 +591,8 @@ mod finding_shell_options_leak {
     #[tokio::test]
     async fn set_short_flags_do_not_leak_between_exec() {
         let mut bash = tight_bash();
-        let _ = bash.exec("set -bhm").await;
+        let result = bash.exec("set -bhm").await.unwrap();
+        assert_eq!(result.exit_code, 0, "set -bhm should succeed");
         let result = bash.exec("echo \"$-\"").await.unwrap();
         assert_eq!(
             result.stdout.trim(),

@@ -197,7 +197,11 @@ impl Builtin for Set {
                         need_o_arg = true;
                     } else if short_option_to_var(opt).is_none() {
                         return Ok(ExecResult::err(
-                            format!("bash: set: -{}: invalid option\n", opt),
+                            format!(
+                                "bash: set: {}{}: invalid option\n",
+                                if enable { '-' } else { '+' },
+                                opt
+                            ),
                             2,
                         ));
                     }
