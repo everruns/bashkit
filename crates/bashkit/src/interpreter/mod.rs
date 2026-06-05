@@ -1696,6 +1696,7 @@ impl Interpreter {
             .map_err(|e| crate::error::Error::Execution(e.to_string()))
     }
 
+
     /// Set per-instance memory limits.
     pub fn set_memory_limits(&mut self, limits: crate::limits::MemoryLimits) {
         self.memory_limits = limits;
@@ -4747,17 +4748,7 @@ impl Interpreter {
                                 }
                             }
                         } else {
-                            let raw_idx = self.evaluate_arithmetic(index_str);
-                            let index = if raw_idx < 0 {
-                                let len = self
-                                    .arrays
-                                    .get(&resolved_name)
-                                    .and_then(|a| a.keys().max().map(|m| m + 1))
-                                    .unwrap_or(0) as i64;
-                                (len + raw_idx).max(0) as usize
-                            } else {
-                                raw_idx as usize
-                            };
+                            let index = self.resolve_indexed_array_subscript(&resolved_name, index_str);
                             let is_new_entry = self
                                 .arrays
                                 .get(&resolved_name)
@@ -8441,17 +8432,7 @@ impl Interpreter {
                 result.push_str(value);
             }
         } else {
-            let raw_idx = self.evaluate_arithmetic(index);
-            let idx = if raw_idx < 0 {
-                let len = self
-                    .arrays
-                    .get(arr_name)
-                    .map(|a| a.keys().max().map(|m| m + 1).unwrap_or(0))
-                    .unwrap_or(0) as i64;
-                (len + raw_idx).max(0) as usize
-            } else {
-                raw_idx as usize
-            };
+            let idx = self.resolve_indexed_array_subscript(arr_name, index);
             if let Some(arr) = self.arrays.get(arr_name)
                 && let Some(value) = arr.get(&idx)
             {
@@ -9218,9 +9199,8 @@ impl Interpreter {
                     None => (false, String::new()),
                 };
             }
-            if let Some(arr) = self.arrays.get(resolved_arr_name)
-                && let Ok(idx) = key.parse::<usize>()
-            {
+            if let Some(arr) = self.arrays.get(resolved_arr_name) {
+                let idx = self.resolve_indexed_array_subscript(resolved_arr_name, key);
                 return match arr.get(&idx) {
                     Some(v) => (true, v.clone()),
                     None => (false, String::new()),
@@ -11261,6 +11241,22 @@ impl Interpreter {
         }
     }
 
+    /// Resolve an indexed-array subscript the same way for read-before-write and write paths.
+    fn resolve_indexed_array_subscript(&self, arr_name: &str, key: &str) -> usize {
+        let raw_idx = self.evaluate_arithmetic(key);
+        if raw_idx < 0 {
+            let len = self
+                .arrays
+                .get(arr_name)
+                .and_then(|a| a.keys().max().map(|m| m.saturating_add(1) as i128))
+                .unwrap_or(0);
+            (len + raw_idx as i128).max(0) as usize
+        } else {
+            raw_idx as usize
+        }
+    }
+
+
     /// Set a parameter expansion assignment target (`:=`), including array elements.
     fn set_parameter_expansion_target(&mut self, name: &str, value: String) {
         if let Some(bracket) = name.find('[')
@@ -11294,17 +11290,7 @@ impl Interpreter {
                 return;
             }
 
-            let raw_idx = self.evaluate_arithmetic(key);
-            let index = if raw_idx < 0 {
-                let len = self
-                    .arrays
-                    .get(&resolved_name)
-                    .and_then(|a| a.keys().max().map(|m| m + 1))
-                    .unwrap_or(0) as i64;
-                (len + raw_idx).max(0) as usize
-            } else {
-                raw_idx as usize
-            };
+            let index = self.resolve_indexed_array_subscript(&resolved_name, key);
             let is_new_entry = self
                 .arrays
                 .get(&resolved_name)
