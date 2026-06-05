@@ -199,6 +199,29 @@ mod blackbox_resource_exhaustion {
         assert_ne!(r.exit_code, 0, "string bomb should be limited");
     }
 
+    /// TM-DOS-057: Bash execution timeout caps TypeScript VM timeout.
+    #[tokio::test]
+    async fn threat_ts_honors_bash_execution_timeout() {
+        let mut bash = Bash::builder()
+            .limits(ExecutionLimits::new().timeout(Duration::from_millis(100)))
+            .typescript_with_limits(
+                TypeScriptLimits::default().max_duration(Duration::from_millis(1500)),
+            )
+            .build();
+
+        let start = std::time::Instant::now();
+        let result = bash.exec(r#"ts -c "while (true) {}""#).await;
+        let elapsed = start.elapsed();
+
+        if let Ok(r) = result {
+            assert_ne!(r.exit_code, 0, "infinite loop should not succeed");
+        }
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "TypeScript VM must be capped by Bash timeout, elapsed: {elapsed:?}"
+        );
+    }
+
     /// Generous limits should succeed for normal code
     #[tokio::test]
     async fn normal_code_within_limits() {

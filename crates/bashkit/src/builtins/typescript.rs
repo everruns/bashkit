@@ -23,7 +23,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use zapcode_core::{ResourceLimits, RunResult, Value, VmState, ZapcodeRun};
 
-use super::{Builtin, Context, Extension, resolve_path};
+use super::{Builtin, Context, ExecutionDeadline, Extension, resolve_path};
 use crate::error::Result;
 use crate::fs::FileSystem;
 use crate::interpreter::ExecResult;
@@ -398,6 +398,14 @@ impl TypeScript {
         self.external_fns = Some(TypeScriptExternalFns { names, handler });
         self
     }
+
+    fn effective_limits(&self, deadline: Option<&ExecutionDeadline>) -> TypeScriptLimits {
+        let mut limits = self.limits.clone();
+        if let Some(deadline) = deadline {
+            limits.max_duration = limits.max_duration.min(deadline.remaining());
+        }
+        limits
+    }
 }
 
 impl Default for TypeScript {
@@ -628,11 +636,13 @@ impl Builtin for TypeScript {
             ));
         };
 
+        let limits = self.effective_limits(ctx.execution_extension::<ExecutionDeadline>());
+
         run_typescript(
             &code,
             ctx.fs.clone(),
             ctx.cwd,
-            &self.limits,
+            &limits,
             self.external_fns.as_ref(),
         )
         .await
