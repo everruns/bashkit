@@ -2183,6 +2183,26 @@ impl Interpreter {
     /// Used by `execute_source` and nested shell contexts.
     /// `run_exit_trap`: whether this shell context runs its EXIT trap.
     /// `fire_exit_hook`: whether `exit` notifies host-level on_exit hooks.
+    fn suppresses_script_body_err_exit(command: &Command, result: &ExecResult) -> bool {
+        matches!(command, Command::List(_))
+            || matches!(command, Command::Pipeline(p) if p.negated)
+            || (result.errexit_suppressed
+                && matches!(
+                    command,
+                    Command::Compound(
+                        CompoundCommand::If(_)
+                            | CompoundCommand::For(_)
+                            | CompoundCommand::ArithmeticFor(_)
+                            | CompoundCommand::While(_)
+                            | CompoundCommand::Until(_)
+                            | CompoundCommand::Case(_)
+                            | CompoundCommand::Select(_)
+                            | CompoundCommand::BraceGroup(_),
+                        _
+                    )
+                ))
+    }
+
     async fn execute_script_body(
         &mut self,
         script: &Script,
@@ -2258,9 +2278,7 @@ impl Interpreter {
 
             // Run ERR trap on non-zero exit (unless in conditional chain)
             if exit_code != 0 {
-                let suppressed = matches!(command, Command::List(_))
-                    || matches!(command, Command::Pipeline(p) if p.negated)
-                    || result.errexit_suppressed;
+                let suppressed = Self::suppresses_script_body_err_exit(command, &result);
                 if !suppressed {
                     self.run_err_trap(&mut stdout, &mut stderr).await;
                 }
@@ -2269,11 +2287,11 @@ impl Interpreter {
             // errexit (set -e): stop on non-zero exit for top-level simple commands.
             // List commands handle errexit internally (with && / || chain awareness).
             // Negated pipelines (! cmd) explicitly handle the exit code.
-            // Compound commands propagate errexit_suppressed from inner AND-OR chains.
+            // Only compound commands whose own execution context ignores -e
+            // may suppress a propagated AND-OR failure here; simple function
+            // calls and subshell compounds must still make the parent exit.
             if self.is_errexit_enabled() && exit_code != 0 {
-                let suppressed = matches!(command, Command::List(_))
-                    || matches!(command, Command::Pipeline(p) if p.negated)
-                    || result.errexit_suppressed;
+                let suppressed = Self::suppresses_script_body_err_exit(command, &result);
                 if !suppressed {
                     break;
                 }

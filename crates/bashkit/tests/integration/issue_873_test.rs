@@ -68,3 +68,60 @@ echo "SHOULD NOT APPEAR"
         .unwrap();
     assert!(!result.stdout.contains("SHOULD NOT APPEAR"));
 }
+
+#[tokio::test]
+async fn set_e_subshell_and_chain_failure_exits_parent() {
+    let mut bash = Bash::new();
+    let result = bash
+        .exec(
+            r#"
+set -e
+( false && : )
+echo "SHOULD NOT APPEAR"
+"#,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.exit_code, 1, "stdout: {}", result.stdout);
+    assert!(!result.stdout.contains("SHOULD NOT APPEAR"));
+}
+
+#[tokio::test]
+async fn set_e_function_and_chain_failure_exits_parent() {
+    let mut bash = Bash::new();
+    let result = bash
+        .exec(
+            r#"
+set -e
+f() { false && :; }
+f
+echo "SHOULD NOT APPEAR"
+"#,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.exit_code, 1, "stdout: {}", result.stdout);
+    assert!(!result.stdout.contains("SHOULD NOT APPEAR"));
+}
+
+#[tokio::test]
+async fn err_trap_runs_for_subshell_and_function_and_chain_failures() {
+    let mut bash = Bash::new();
+    let result = bash
+        .exec(
+            r#"
+trap 'echo ERR' ERR
+( false && : )
+f() { false && :; }
+f
+"#,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        result.stdout.matches("ERR").count(),
+        2,
+        "stdout: {}",
+        result.stdout
+    );
+}
