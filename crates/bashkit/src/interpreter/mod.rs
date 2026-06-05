@@ -1724,6 +1724,11 @@ impl Interpreter {
         self.pending_fd_capture_depth = 0;
         self.pending_fd_output.clear();
         self.pending_fd_targets.clear();
+        // Top-level timeouts drop the interpreter future at await points, so
+        // BASH_SOURCE cleanup after script execution may not run. Reset both
+        // the private stack and public array before reusing the Bash instance.
+        self.bash_source_stack.clear();
+        self.arrays_mut().remove("BASH_SOURCE");
         for var in Self::SET_OPTION_VARS {
             self.vars_mut().remove(*var);
             if let Some(bit) = BashFlags::from_shopt_name(var) {
