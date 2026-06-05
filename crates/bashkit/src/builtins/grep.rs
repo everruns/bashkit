@@ -949,6 +949,10 @@ async fn try_indexed_search(
     cwd: &std::path::Path,
 ) -> Option<Vec<(String, String)>> {
     let sc = fs.as_search_capable()?;
+    if opts.files.len() != 1 {
+        return None;
+    }
+
     let root = crate::fs::normalize_path(&if let Some(first) = opts.files.first() {
         if first.starts_with('/') {
             std::path::PathBuf::from(first)
@@ -996,6 +1000,9 @@ async fn try_indexed_search(
         if !should_include_file(name, &opts.include_patterns, &opts.exclude_patterns) {
             continue;
         }
+        if path_contains_excluded_dir(&candidate, &root, &opts.exclude_dir_patterns) {
+            continue;
+        }
 
         if let Ok(content) = fs.read_file(&candidate).await {
             let text = process_content(content, opts.binary_as_text);
@@ -1004,6 +1011,33 @@ async fn try_indexed_search(
     }
 
     Some(inputs)
+}
+
+fn path_contains_excluded_dir(
+    path: &std::path::Path,
+    root: &std::path::Path,
+    exclude_dir_patterns: &[String],
+) -> bool {
+    if exclude_dir_patterns.is_empty() {
+        return false;
+    }
+
+    let Ok(relative) = path.strip_prefix(root) else {
+        return false;
+    };
+    let Some(parent) = relative.parent() else {
+        return false;
+    };
+
+    parent.components().any(|component| {
+        let std::path::Component::Normal(name) = component else {
+            return false;
+        };
+        let Some(name) = name.to_str() else {
+            return false;
+        };
+        exclude_dir_patterns.iter().any(|p| glob_matches(name, p))
+    })
 }
 
 #[cfg(test)]
@@ -1490,6 +1524,119 @@ mod tests {
         let result = grep.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 1);
         assert_eq!(result.stdout, "");
+    }
+
+    #[tokio::test]
+    async fn test_grep_recursive_indexed_search_falls_back_for_multiple_roots() {
+        let grep = Grep;
+        let inner = InMemoryFs::new();
+        inner.mkdir(Path::new("/safe"), true).await.unwrap();
+        inner.mkdir(Path::new("/other"), true).await.unwrap();
+        inner
+            .write_file(Path::new("/safe/clean.txt"), b"nothing\n")
+            .await
+            .unwrap();
+        inner
+            .write_file(Path::new("/other/hit.txt"), b"SECRET\n")
+            .await
+            .unwrap();
+
+        let fs: Arc<dyn FileSystem> = Arc::new(IndexedTestFs {
+            inner,
+            matches: Vec::new(),
+        });
+
+        let mut vars = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+        let args: Vec<String> = ["-r", "SECRET", "/safe", "/other"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        let ctx = Context {
+            args: &args,
+            env: &HashMap::new(),
+            variables: &mut vars,
+            cwd: &mut cwd,
+            fs,
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+
+        let result = grep.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("/other/hit.txt:SECRET"));
+    }
+
+    #[tokio::test]
+    async fn test_grep_recursive_indexed_search_honors_exclude_dir() {
+        let grep = Grep;
+        let inner = InMemoryFs::new();
+        inner.mkdir(Path::new("/safe/public"), true).await.unwrap();
+        inner.mkdir(Path::new("/safe/secret"), true).await.unwrap();
+        inner
+            .write_file(Path::new("/safe/public/visible.txt"), b"public SECRET\n")
+            .await
+            .unwrap();
+        inner
+            .write_file(Path::new("/safe/secret/token.txt"), b"hidden SECRET\n")
+            .await
+            .unwrap();
+
+        let fs: Arc<dyn FileSystem> = Arc::new(IndexedTestFs {
+            inner,
+            matches: vec![
+                SearchMatch {
+                    path: PathBuf::from("/safe/public/visible.txt"),
+                    line_number: 1,
+                    line_content: "public SECRET".to_string(),
+                },
+                SearchMatch {
+                    path: PathBuf::from("/safe/secret/token.txt"),
+                    line_number: 1,
+                    line_content: "hidden SECRET".to_string(),
+                },
+            ],
+        });
+
+        let mut vars = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+        let args: Vec<String> = ["-r", "--exclude-dir=secret", "SECRET", "/safe"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        let ctx = Context {
+            args: &args,
+            env: &HashMap::new(),
+            variables: &mut vars,
+            cwd: &mut cwd,
+            fs,
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+
+        let result = grep.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert!(
+            result
+                .stdout
+                .contains("/safe/public/visible.txt:public SECRET")
+        );
+        assert!(!result.stdout.contains("token.txt"));
+        assert!(!result.stdout.contains("hidden SECRET"));
     }
 
     // -L (--files-without-match) tests
