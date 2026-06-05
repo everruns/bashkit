@@ -144,10 +144,16 @@ function formatOutput(
     output = output.slice(0, maxOutputLength) + "\n[truncated]";
   }
   if (sanitize) {
-    const escaped = output
+    let escaped = output
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;");
+    // Re-cap after escaping (XML entities expand length); avoid splitting mid-entity.
+    if (escaped.length > maxOutputLength) {
+      escaped =
+        escaped.slice(0, maxOutputLength).replace(/&[^;]{0,4}$/, "") +
+        "\n[truncated]";
+    }
     output = `<tool_output>\n${escaped}\n</tool_output>`;
   }
   return output;

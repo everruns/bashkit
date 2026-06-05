@@ -279,3 +279,22 @@ test("openai: sanitizeOutput escapes & < > in stdout (#1867)", async (t) => {
   t.true(result.content.includes("&lt;"), "< must be escaped");
   t.true(result.content.includes("&gt;"), "> must be escaped");
 });
+
+test("openai: sanitizeOutput re-caps length after escaping (#1867)", async (t) => {
+  // 24 '<' chars → 96 chars after escaping (&lt; each) — far exceeds maxOutputLength=20
+  const maxOutputLength = 20;
+  const adapter = openAiBashTool({ sanitizeOutput: true, maxOutputLength });
+  const result = await adapter.handler({
+    id: "xml-cap",
+    type: "function",
+    function: {
+      name: "bash",
+      arguments: JSON.stringify({ commands: "printf '%s' '<<<<<<<<<<<<<<<<<<<<<<<<'" }),
+    },
+  });
+  const inner = result.content.slice("<tool_output>\n".length, -"\n</tool_output>".length);
+  t.true(inner.includes("[truncated]"), "escaped output must be re-capped");
+  t.false(inner.includes("<"), "no raw < in escaped output");
+  t.true(result.content.startsWith("<tool_output>"), "outer tags intact");
+  t.true(result.content.endsWith("</tool_output>"), "outer tags intact");
+});
