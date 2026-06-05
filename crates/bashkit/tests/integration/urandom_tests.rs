@@ -62,3 +62,39 @@ async fn urandom_tr_filter_alphanumeric() {
         output
     );
 }
+
+/// Regression: valid UTF-8 file contents must not be decoded as Latin-1 mojibake.
+#[tokio::test]
+async fn utf8_file_reads_do_not_mojibake() {
+    use std::path::Path;
+
+    let mut bash = Bash::new();
+    let fs = bash.fs();
+    fs.write_file(Path::new("/tmp/utf8.txt"), "café\n".as_bytes())
+        .await
+        .unwrap();
+
+    let result = bash.exec("cat < /tmp/utf8.txt").await.unwrap();
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(result.stdout, "café\n");
+
+    let result = bash.exec("head -n 1 /tmp/utf8.txt").await.unwrap();
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(result.stdout, "café\n");
+}
+
+/// Regression: UTF-8 shell script files should parse their non-ASCII literals intact.
+#[tokio::test]
+async fn utf8_script_file_decodes_as_utf8() {
+    use std::path::Path;
+
+    let mut bash = Bash::new();
+    let fs = bash.fs();
+    fs.write_file(Path::new("/tmp/script.sh"), "echo café\n".as_bytes())
+        .await
+        .unwrap();
+
+    let result = bash.exec("bash /tmp/script.sh").await.unwrap();
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(result.stdout, "café\n");
+}
