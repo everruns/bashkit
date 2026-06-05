@@ -4086,6 +4086,30 @@ mod trace_events {
     }
 
     #[tokio::test]
+    async fn trace_failed_exec_does_not_leak_events_to_next_exec() {
+        let mut bash = Bash::builder().trace_mode(TraceMode::Full).build();
+
+        let failed = bash.exec(r#"grep -E "(" tenant-a-private-arg"#).await;
+        assert!(failed.is_err(), "invalid regex should fail execution");
+
+        let r = bash.exec("echo tenant-b").await.unwrap();
+        assert_eq!(r.exit_code, 0);
+
+        for event in &r.events {
+            if let TraceEventDetails::CommandStart { command, argv, .. } = &event.details {
+                assert_ne!(
+                    command, "grep",
+                    "stale failed command leaked into next exec"
+                );
+                assert!(
+                    argv.iter().all(|arg| !arg.contains("tenant-a-private-arg")),
+                    "stale failed argv leaked into next exec: {argv:?}" // debug-ok: assert context only
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn trace_redacted_scrubs_env_secrets() {
         let mut bash = Bash::builder().trace_mode(TraceMode::Redacted).build();
         // printf with env-style key=value argument containing a secret suffix

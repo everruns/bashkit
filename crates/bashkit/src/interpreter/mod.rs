@@ -2129,14 +2129,28 @@ impl Interpreter {
         // THREAT[TM-DOS-059]: Increment session-level exec call counter and
         // check session limits before starting execution.
         self.counters.tick_exec_call();
-        self.counters
+        let result = match self
+            .counters
             .check_session_limits(&self.session_limits)
-            .map_err(|e| crate::error::Error::Execution(e.to_string()))?;
+            .map_err(|e| crate::error::Error::Execution(e.to_string()))
+        {
+            Ok(()) => {
+                let result = self.execute_script_body(script, true, true).await;
+                // Script boundary cleanup: background jobs are scoped to a single exec()
+                // call, so they cannot accumulate across long-lived sessions.
+                let _ = self.jobs.lock().await.wait_all_results().await;
+                result
+            }
+            Err(e) => Err(e),
+        };
 
-        let result = self.execute_script_body(script, true, true).await;
-        // Script boundary cleanup: background jobs are scoped to a single exec()
-        // call, so they cannot accumulate across long-lived sessions.
-        let _ = self.jobs.lock().await.wait_all_results().await;
+        if result.is_err() {
+            // THREAT[TM-INF-019]: Trace events are per exec() result data.
+            // Error paths have no ExecResult to carry them, so discard them before
+            // a reused Bash instance can expose stale events to the next caller.
+            let _ = self.trace.take_events();
+        }
+
         result
     }
 
