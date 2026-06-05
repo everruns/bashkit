@@ -4533,8 +4533,15 @@ impl Interpreter {
                     exit_code = result.exit_code;
                     self.last_exit_code = exit_code;
                     control_flow = result.control_flow;
+                    let followed_by_conditional_op =
+                        list.rest.get(i + 1).is_some_and(|(op, cmd)| {
+                            !Self::is_empty_sentinel(cmd)
+                                && matches!(op, ListOperator::And | ListOperator::Or)
+                        });
+                    // Bash suppresses errexit for AND-OR list elements except the
+                    // command following the final &&/|| operator.
                     exit_code_from_conditional_context =
-                        current_is_conditional || result.errexit_suppressed;
+                        followed_by_conditional_op || result.errexit_suppressed;
 
                     // If command signaled control flow, return immediately
                     if control_flow != ControlFlow::None {
@@ -4547,24 +4554,19 @@ impl Interpreter {
                         });
                     }
 
-                    // ERR trap: fire on non-zero exit after semicolon commands
-                    if exit_code != 0 && !current_is_conditional {
+                    // ERR trap follows the same AND-OR suppression as errexit.
+                    if exit_code != 0 && !exit_code_from_conditional_context {
                         self.run_err_trap(&mut stdout, &mut stderr).await;
                     }
                 }
             }
         }
 
-        let last_nonempty_op_is_conditional = list
-            .rest
-            .iter()
-            .rev()
-            .find(|(_, cmd)| !Self::is_empty_sentinel(cmd))
-            .is_some_and(|(op, _)| matches!(op, ListOperator::And | ListOperator::Or));
-
-        // Final errexit check for the last command
+        // Final errexit check for the last command. A non-zero status only
+        // remains suppressed when it was carried from a short-circuited or
+        // non-final AND-OR list element; a failing final &&/|| command exits.
         let should_final_errexit_check =
-            self.is_errexit_enabled() && exit_code != 0 && !last_nonempty_op_is_conditional;
+            self.is_errexit_enabled() && exit_code != 0 && !exit_code_from_conditional_context;
 
         if should_final_errexit_check {
             return Ok(ExecResult {
@@ -4581,7 +4583,7 @@ impl Interpreter {
             stderr,
             exit_code,
             control_flow: ControlFlow::None,
-            errexit_suppressed: last_nonempty_op_is_conditional && exit_code != 0,
+            errexit_suppressed: exit_code_from_conditional_context && exit_code != 0,
             ..Default::default()
         })
     }

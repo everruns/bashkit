@@ -219,6 +219,31 @@ echo "result: ${result}"
     );
 }
 
+/// set -e: final failing command in && list inside a loop must exit.
+#[tokio::test]
+async fn set_e_exits_on_final_and_failure_in_for_loop() {
+    let mut bash = Bash::new();
+    let result = bash
+        .exec(
+            r#"
+set -e
+for i in 1; do
+    true && false
+done
+echo "SHOULD NOT APPEAR"
+"#,
+        )
+        .await
+        .unwrap();
+    assert!(
+        !result.stdout.contains("SHOULD NOT APPEAR"),
+        "errexit should stop after final && command fails: exit_code={}, stdout={:?}, stderr={:?}",
+        result.exit_code,
+        result.stdout,
+        result.stderr
+    );
+}
+
 /// set -e should still exit on non-AND-OR failures
 #[tokio::test]
 async fn set_e_exits_on_plain_failure() {
