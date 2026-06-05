@@ -26,7 +26,7 @@ const BUILTIN_COMMANDS: &[&str] = &[
     "clear", "column", "comm", "compgen", "continue", "cp", "curl", "cut", "date", "declare", "df",
     "diff", "dirname", "dirs", "dotenv", "du", "echo", "env", "envsubst", "eval", "exit", "expand",
     "export", "expr", "false", "find", "fold", "grep", "gunzip", "gzip", "head", "hexdump",
-    "history", "hostname", "iconv", "id", "jq", "json", "join", "kill", "ln", "local", "log", "ls",
+    "history", "hostname", "iconv", "id", "json", "join", "kill", "ln", "local", "log", "ls",
     "mkdir", "mktemp", "mv", "nl", "od", "paste", "popd", "printenv", "printf", "pushd", "pwd",
     "read", "readlink", "readonly", "realpath", "retry", "return", "rev", "rm", "rmdir", "sed",
     "semver", "seq", "set", "shift", "shopt", "shuf", "sleep", "sort", "source", "split", "stat",
@@ -153,6 +153,11 @@ impl Builtin for Compgen {
                     completions.push(cmd.to_string());
                 }
             }
+            #[cfg(feature = "jq")]
+            if "jq".starts_with(pfx) {
+                completions.push("jq".to_string());
+            }
+
             // Functions from shell context
             if let Some(ref shell) = ctx.shell {
                 for name in shell.functions.keys() {
@@ -299,6 +304,13 @@ mod tests {
         let r = run(&["-c", "--", "ec"], None, None).await;
         assert_eq!(r.exit_code, 0);
         assert!(r.stdout.contains("echo\n"));
+    }
+
+    #[tokio::test]
+    async fn test_jq_completion_matches_enabled_feature() {
+        let r = run(&["-c", "--", "jq"], None, None).await;
+        assert_eq!(r.exit_code == 0, cfg!(feature = "jq"));
+        assert_eq!(r.stdout.contains("jq\n"), cfg!(feature = "jq"));
     }
 
     #[tokio::test]
