@@ -1062,8 +1062,6 @@ impl Interpreter {
         &s[..end]
     }
 
-    const OPERAND_QUOTE_MARK: char = '\u{1}';
-
     const MAX_GLOB_DEPTH: usize = 50;
 
     /// Create a new interpreter with the given filesystem.
@@ -8819,10 +8817,12 @@ impl Interpreter {
         }
         // Strip quotes from operand before parsing.
         // For pattern-removal operators, quoted glob chars must stay literal.
-        // We preserve that by escaping glob metacharacters inside stripped
-        // double-quoted segments, so later pattern matching won't treat them as
-        // active wildcards/extglobs.
-        let stripped = Self::strip_operand_quotes(operand);
+        // Track stripped double-quoted spans with a marker that is absent from
+        // the operand source, then consume that marker only from parsed literal
+        // parts. Expanded variable data is handled out-of-band so attacker data
+        // cannot inject quote-state toggles.
+        let quote_mark = Self::operand_quote_mark(operand);
+        let stripped = Self::strip_operand_quotes(operand, quote_mark);
         // THREAT[TM-DOS-050]: Propagate caller-configured limits to word parsing
         let word = Parser::parse_word_string_with_limits(
             &stripped,
@@ -8830,15 +8830,19 @@ impl Interpreter {
             self.limits.max_parser_operations,
         );
         let mut result = String::new();
+        let mut in_marked = false;
         for part in &word.parts {
             match part {
-                WordPart::Literal(s) => result.push_str(s),
+                WordPart::Literal(s) => {
+                    Self::push_marked_literal(&mut result, s, quote_mark, &mut in_marked);
+                }
                 WordPart::Variable(name) => {
-                    result.push_str(&self.expand_variable(name));
+                    let expanded = self.expand_variable(name);
+                    Self::push_operand_expansion(&mut result, &expanded, in_marked);
                 }
                 WordPart::ArithmeticExpansion(expr) => {
-                    let val = self.evaluate_arithmetic_with_assign(expr);
-                    result.push_str(&val.to_string());
+                    let val = self.evaluate_arithmetic_with_assign(expr).to_string();
+                    Self::push_operand_expansion(&mut result, &val, in_marked);
                 }
                 WordPart::ParameterExpansion {
                     name,
@@ -8855,26 +8859,26 @@ impl Interpreter {
                         *colon_variant,
                         is_set,
                     );
-                    result.push_str(&expanded);
+                    Self::push_operand_expansion(&mut result, &expanded, in_marked);
                 }
                 WordPart::Length(name) => {
-                    let value = self.expand_variable(name);
-                    result.push_str(&value.len().to_string());
+                    let value = self.expand_variable(name).len().to_string();
+                    Self::push_operand_expansion(&mut result, &value, in_marked);
                 }
                 // TODO: handle CommandSubstitution etc. in sync operand expansion
                 _ => {}
             }
         }
-        Self::escape_marked_glob_literals(&result)
+        result
     }
 
     /// Strip unescaped double-quote pairs from operand strings.
     /// In patterns like `${var#./"$other"}`, the `"` around `$other` suppress
     /// globbing but should not appear as literal characters in the pattern.
     /// Escaped quotes (`\"`) and NUL-sentinel-marked chars (`\x00"`) are kept.
-    /// Glob metacharacters inside stripped double quotes are backslash-escaped
-    /// so quoted user input cannot become active glob/extglob syntax.
-    fn strip_operand_quotes(operand: &str) -> String {
+    /// The caller-provided quote marker is absent from the source operand, so
+    /// parsed literal marker chars can only be stripped quote boundaries.
+    fn strip_operand_quotes(operand: &str, quote_mark: char) -> String {
         let mut result = String::with_capacity(operand.len());
         let chars: Vec<char> = operand.chars().collect();
         let mut i = 0;
@@ -8891,7 +8895,7 @@ impl Interpreter {
                 i += 2;
             } else if chars[i] == '"' {
                 // Unescaped double quote: skip it (strip the quote character)
-                result.push(Self::OPERAND_QUOTE_MARK);
+                result.push(quote_mark);
                 i += 1;
             } else {
                 result.push(chars[i]);
@@ -8901,25 +8905,39 @@ impl Interpreter {
         result
     }
 
-    fn escape_marked_glob_literals(s: &str) -> String {
-        let mut out = String::with_capacity(s.len());
-        let mut in_marked = false;
+    fn operand_quote_mark(operand: &str) -> char {
+        (1..=char::MAX as u32)
+            .filter_map(char::from_u32)
+            .find(|&ch| ch != '\0' && !operand.contains(ch))
+            .expect("Unicode contains at least one char absent from any valid operand")
+    }
+
+    fn push_marked_literal(out: &mut String, s: &str, quote_mark: char, in_marked: &mut bool) {
         for ch in s.chars() {
-            if ch == Self::OPERAND_QUOTE_MARK {
-                in_marked = !in_marked;
+            if ch == quote_mark {
+                *in_marked = !*in_marked;
                 continue;
             }
-            if in_marked
-                && matches!(
-                    ch,
-                    '*' | '?' | '[' | ']' | '(' | ')' | '|' | '+' | '@' | '!'
-                )
-            {
-                out.push('\\');
-            }
-            out.push(ch);
+            Self::push_operand_char(out, ch, *in_marked);
         }
-        out
+    }
+
+    fn push_operand_expansion(out: &mut String, s: &str, in_marked: bool) {
+        for ch in s.chars() {
+            Self::push_operand_char(out, ch, in_marked);
+        }
+    }
+
+    fn push_operand_char(out: &mut String, ch: char, in_marked: bool) {
+        if in_marked
+            && matches!(
+                ch,
+                '*' | '?' | '[' | ']' | '(' | ')' | '|' | '+' | '@' | '!'
+            )
+        {
+            out.push('\\');
+        }
+        out.push(ch);
     }
 
     fn find_unescaped_char(pattern: &str, target: char) -> Option<usize> {
@@ -13579,6 +13597,15 @@ echo "count=$COUNT"
         let result = run_script(r#"val="axxxb"; pat="a"; echo "${val#"$pat"*}""#).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout.trim(), "xxxb");
+    }
+
+    #[tokio::test]
+    async fn test_quoted_remove_prefix_operand_marker_byte_keeps_glob_literal() {
+        // Quoted variable data may contain the old in-band quote marker byte.
+        // It must remain literal data, not toggle wildcard protection off.
+        let result = run_script(r#"val="axxxb"; pat=$'\x01a*'; echo "${val#"$pat"}""#).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "axxxb");
     }
 
     #[test]
