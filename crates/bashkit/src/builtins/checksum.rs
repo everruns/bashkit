@@ -61,18 +61,42 @@ impl Builtin for Sha256sum {
 }
 
 async fn checksum_execute<D: Digest>(ctx: &Context<'_>, cmd: &str) -> Result<ExecResult> {
-    let files: Vec<&String> = ctx.args.iter().filter(|a| !a.starts_with('-')).collect();
+    let mut files = Vec::new();
+    let mut end_of_options = false;
+
+    for arg in ctx.args {
+        if end_of_options {
+            files.push(arg);
+        } else if arg == "--" {
+            end_of_options = true;
+        } else if arg == "-" {
+            files.push(arg);
+        } else if let Some(option) = arg.strip_prefix("--") {
+            return Ok(ExecResult::err(
+                format!("{}: unrecognized option '--{}'\n", cmd, option),
+                1,
+            ));
+        } else if let Some(opt) = arg.strip_prefix('-') {
+            return Ok(ExecResult::err(
+                format!("{}: invalid option -- '{}'\n", cmd, opt),
+                1,
+            ));
+        } else {
+            files.push(arg);
+        }
+    }
 
     let mut output = String::new();
 
     if files.is_empty() {
-        // Read from stdin
-        let input = ctx.stdin.unwrap_or("");
-        let hash = hex_digest::<D>(input.as_bytes());
-        output.push_str(&hash);
-        output.push_str("  -\n");
+        write_stdin_digest::<D>(ctx.stdin, &mut output);
     } else {
         for file in &files {
+            if file.as_str() == "-" {
+                write_stdin_digest::<D>(ctx.stdin, &mut output);
+                continue;
+            }
+
             let path = if file.starts_with('/') {
                 std::path::PathBuf::from(file)
             } else {
@@ -95,6 +119,13 @@ async fn checksum_execute<D: Digest>(ctx: &Context<'_>, cmd: &str) -> Result<Exe
     }
 
     Ok(ExecResult::ok(output))
+}
+
+fn write_stdin_digest<D: Digest>(stdin: Option<&str>, output: &mut String) {
+    let input = stdin.unwrap_or("");
+    let hash = hex_digest::<D>(input.as_bytes());
+    output.push_str(&hash);
+    output.push_str("  -\n");
 }
 
 fn hex_digest<D: Digest>(data: &[u8]) -> String {
@@ -176,6 +207,38 @@ mod tests {
                 .stdout
                 .starts_with("f572d396fae9206628714fb2ce00f72e94f2258f")
         );
+    }
+
+    #[tokio::test]
+    async fn test_sha256sum_check_option_is_rejected() {
+        let result = run_checksum(&Sha256sum, &["-c"], Some("")).await;
+        assert_ne!(result.exit_code, 0);
+        assert!(result.stdout.is_empty());
+        assert!(result.stderr.contains("sha256sum: invalid option -- 'c'"));
+    }
+
+    #[tokio::test]
+    async fn test_sha256sum_unknown_long_option_is_rejected() {
+        let result = run_checksum(&Sha256sum, &["--check"], Some("")).await;
+        assert_ne!(result.exit_code, 0);
+        assert!(result.stdout.is_empty());
+        assert!(
+            result
+                .stderr
+                .contains("sha256sum: unrecognized option '--check'")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sha256sum_dash_reads_stdin() {
+        let result = run_checksum(&Sha256sum, &["-"], Some("hello\n")).await;
+        assert_eq!(result.exit_code, 0);
+        assert!(
+            result
+                .stdout
+                .starts_with("5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03")
+        );
+        assert!(result.stdout.contains("  -"));
     }
 
     #[tokio::test]
