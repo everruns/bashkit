@@ -4,6 +4,7 @@
  * Uses @everruns/bashkit Node.js bindings (NAPI-RS) — no subprocess, no Python.
  * All operations run against bashkit's in-memory virtual filesystem.
  * State (variables, files, cwd) persists across tool calls within a session.
+ * Each Pi agent start gets a fresh Bash instance; never share VFS across sessions.
  *
  * read/write/edit use direct VFS APIs (readFile, writeFile, mkdir, exists).
  * bash tool uses executeSync for shell commands.
@@ -27,8 +28,23 @@ const __dirname_ext =
 const require_ext = createRequire(resolve(__dirname_ext, "node_modules") + "/");
 const { Bash, BashTool } = require_ext("@everruns/bashkit");
 
-// Single bashkit instance — state persists across all tool calls
-const bash = new Bash({ username: "user", hostname: "pi-sandbox", maxCommands: 1_000_000 });
+const BASH_OPTIONS = {
+	username: "user",
+	hostname: "pi-sandbox",
+	maxCommands: 1_000_000,
+};
+
+function createBash() {
+	return new Bash(BASH_OPTIONS);
+}
+
+// Session boundary: Bash owns VFS, cwd, variables, and functions. Reset it on each
+// agent start so reused Pi processes cannot leak state across tenants/sessions.
+let sessionBash = createBash();
+
+function currentBash() {
+	return sessionBash;
+}
 
 // BashTool for generic system prompt and tool metadata
 const bashTool = new BashTool({ username: "user", hostname: "pi-sandbox" });
@@ -40,7 +56,10 @@ function resolvePath(userPath: string): string {
 }
 
 // Ensure parent directory exists for a file path
-function ensureParentDir(filePath: string): void {
+function ensureParentDir(
+	filePath: string,
+	bash: InstanceType<typeof Bash>,
+): void {
 	const dir = filePath.replace(/\/[^/]*$/, "");
 	if (dir && dir !== filePath && !bash.exists(dir)) {
 		bash.mkdir(dir, true);
@@ -65,6 +84,7 @@ function buildSystemPrompt(): string {
 export default function (pi: any) {
 	// Inject bashkit context into the LLM system prompt
 	pi.on("before_agent_start", async (event: any) => {
+		sessionBash = createBash();
 		return {
 			systemPrompt: event.systemPrompt + "\n\n" + buildSystemPrompt(),
 		};
@@ -93,6 +113,7 @@ export default function (pi: any) {
 			_toolCallId: string,
 			params: { command: string; timeout?: number },
 		) {
+			const bash = currentBash();
 			// Convert caller-supplied seconds to milliseconds for AbortSignal.
 			// If no timeout is given, execute unbounded (subject to Bash instance limits).
 			const signal =
@@ -140,6 +161,7 @@ export default function (pi: any) {
 			_toolCallId: string,
 			params: { path: string; offset?: number; limit?: number },
 		) {
+			const bash = currentBash();
 			const absPath = resolvePath(params.path);
 			const content = bash.readFile(absPath);
 			let lines = content.split("\n");
@@ -154,7 +176,7 @@ export default function (pi: any) {
 			if (params.limit) lines = lines.slice(0, params.limit);
 
 			const numbered = lines
-				.map((line, i) => `${offset + i + 1}\t${line}`)
+				.map((line: string, i: number) => `${offset + i + 1}\t${line}`)
 				.join("\n");
 
 			return {
@@ -185,8 +207,9 @@ export default function (pi: any) {
 			_toolCallId: string,
 			params: { path: string; content: string },
 		) {
+			const bash = currentBash();
 			const absPath = resolvePath(params.path);
-			ensureParentDir(absPath);
+			ensureParentDir(absPath, bash);
 			bash.writeFile(absPath, params.content);
 			return {
 				content: [
@@ -223,6 +246,7 @@ export default function (pi: any) {
 			_toolCallId: string,
 			params: { path: string; oldText: string; newText: string },
 		) {
+			const bash = currentBash();
 			const absPath = resolvePath(params.path);
 			const content = bash.readFile(absPath);
 

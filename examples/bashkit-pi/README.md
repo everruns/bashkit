@@ -56,11 +56,11 @@ pi (LLM agent)
   └── edit tool  ──→ Bash.readFile() + writeFile()  ──→ bashkit VFS (direct)
 ```
 
-Single `Bash` instance shared across all tools. read/write/edit use direct VFS APIs (no shell quoting). bash tool uses `executeSync()`. Both share the same VFS — files created by any tool are visible to all others.
+One `Bash` instance is active per Pi agent session and shared across all tools in that session. read/write/edit use direct VFS APIs (no shell quoting). bash tool uses `executeSync()`. Both share the same per-session VFS — files created by any tool are visible to all others in the same agent session.
 
 ## How It Works
 
-1. Extension creates a single `Bash` instance on load
-2. All four tools (bash, read, write, edit) operate on the same virtual filesystem
-3. Files created by `write` are visible to `bash`, `read`, `edit` — and vice versa
-4. Shell state (variables, cwd, functions) persists across `bash` calls
+1. Extension creates a fresh `Bash` instance for each `before_agent_start` event
+2. All four tools (bash, read, write, edit) operate on that session's virtual filesystem
+3. Files created by `write` are visible to `bash`, `read`, `edit` — and vice versa inside the same session
+4. Shell state (variables, cwd, functions) persists across `bash` calls in the same session, then resets for the next session
