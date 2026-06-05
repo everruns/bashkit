@@ -30,6 +30,20 @@ test("ai: files created via execute are readable via bash.readFile", async (t) =
   t.is(adapter.bash.readFile("/y.txt"), "created");
 });
 
+test("ai: direct VFS mkdir/remove APIs share adapter state", async (t) => {
+  const adapter = aiSdkBashTool();
+  adapter.bash.mkdir("/compat/nested", true);
+  adapter.bash.writeFile("/compat/nested/file.txt", "ok");
+  const result = await adapter.tools.bash.execute({
+    commands: "cat /compat/nested/file.txt",
+  });
+  t.is(result, "ok");
+
+  adapter.bash.remove("/compat", true);
+  const removed = await adapter.bash.execute("test ! -e /compat");
+  t.is(removed.exitCode, 0);
+});
+
 // --- Anthropic SDK adapter ---------------------------------------------------
 
 test("anthropic: files option is readable via handler", async (t) => {
@@ -65,6 +79,23 @@ test("anthropic: files created via handler are readable via bash.readFile", asyn
     input: { commands: "echo -n created > /y.txt" },
   });
   t.is(adapter.bash.readFile("/y.txt"), "created");
+});
+
+test("anthropic: direct VFS mkdir/remove APIs share adapter state", async (t) => {
+  const adapter = anthropicBashTool();
+  adapter.bash.mkdir("/compat/nested", true);
+  adapter.bash.writeFile("/compat/nested/file.txt", "ok");
+  const result = await adapter.handler({
+    type: "tool_use",
+    id: "t4",
+    name: "bash",
+    input: { commands: "cat /compat/nested/file.txt" },
+  });
+  t.is(result.content, "ok");
+
+  adapter.bash.remove("/compat", true);
+  const removed = await adapter.bash.execute("test ! -e /compat");
+  t.is(removed.exitCode, 0);
 });
 
 // --- OpenAI SDK adapter ------------------------------------------------------
@@ -107,6 +138,25 @@ test("openai: files created via handler are readable via bash.readFile", async (
     },
   });
   t.is(adapter.bash.readFile("/y.txt"), "created");
+});
+
+test("openai: direct VFS mkdir/remove APIs share adapter state", async (t) => {
+  const adapter = openAiBashTool();
+  adapter.bash.mkdir("/compat/nested", true);
+  adapter.bash.writeFile("/compat/nested/file.txt", "ok");
+  const result = await adapter.handler({
+    id: "c4",
+    type: "function",
+    function: {
+      name: "bash",
+      arguments: JSON.stringify({ commands: "cat /compat/nested/file.txt" }),
+    },
+  });
+  t.is(result.content, "ok");
+
+  adapter.bash.remove("/compat", true);
+  const removed = await adapter.bash.execute("test ! -e /compat");
+  t.is(removed.exitCode, 0);
 });
 
 // ============================================================================
