@@ -583,7 +583,10 @@ impl Builtin for Sort {
         }
 
         if unique {
-            all_lines.dedup();
+            // Use a HashSet so identical lines are removed even when not adjacent
+            // (can happen in stable mode when equal-key different-content lines interleave).
+            let mut seen = std::collections::HashSet::new();
+            all_lines.retain(|line| seen.insert(line.clone()));
         }
 
         let sep = if zero_terminated { "\0" } else { "\n" };
