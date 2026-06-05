@@ -466,6 +466,33 @@ fn should_include_file(filename: &str, include: &[String], exclude: &[String]) -
     true
 }
 
+fn path_has_excluded_dir(
+    root: &std::path::Path,
+    candidate: &std::path::Path,
+    exclude_dir: &[String],
+) -> bool {
+    if exclude_dir.is_empty() {
+        return false;
+    }
+
+    let relative = candidate.strip_prefix(root).unwrap_or(candidate);
+    let Some(parent) = relative.parent() else {
+        return false;
+    };
+
+    parent.components().any(|component| {
+        let std::path::Component::Normal(name) = component else {
+            return false;
+        };
+        let Some(name) = name.to_str() else {
+            return false;
+        };
+        exclude_dir
+            .iter()
+            .any(|pattern| glob_matches(name, pattern))
+    })
+}
+
 fn process_content(content: Vec<u8>, binary_as_text: bool) -> String {
     if binary_as_text {
         let filtered: Vec<u8> = content.into_iter().filter(|&b| b != 0).collect();
@@ -953,65 +980,93 @@ async fn try_indexed_search(
     opts: &GrepOptions,
     cwd: &std::path::Path,
 ) -> Option<Vec<(String, String)>> {
+    if opts.invert_match
+        || opts.files_without_matches
+        || opts.count_only
+        || opts.patterns.len() != 1
+    {
+        return None;
+    }
+
     let sc = fs.as_search_capable()?;
-    if opts.files.len() != 1 {
-        return None;
-    }
-
-    let root = crate::fs::normalize_path(&if let Some(first) = opts.files.first() {
-        if first.starts_with('/') {
-            std::path::PathBuf::from(first)
-        } else {
-            cwd.join(first)
-        }
-    } else {
-        cwd.to_path_buf()
-    });
-    let provider = sc.search_provider(&root)?;
-    let caps = provider.capabilities();
-    if !caps.content_search {
-        return None;
-    }
-
-    // Build combined pattern string
-    let pattern = opts.patterns.join("|");
-    let query = crate::fs::SearchQuery {
-        pattern,
-        is_regex: !opts.fixed_strings && caps.regex,
-        case_insensitive: opts.ignore_case,
-        root: root.clone(),
-        glob_filter: opts.include_patterns.first().cloned(),
-        max_results: opts.max_count,
-    };
-
-    let results = provider.search(&query).ok()?;
     let mut seen_paths = std::collections::HashSet::new();
     let mut inputs = Vec::new();
 
-    for m in &results.matches {
-        let candidate = if m.path.is_absolute() {
-            crate::fs::normalize_path(&m.path)
+    for file in &opts.files {
+        let root = crate::fs::normalize_path(&if file.starts_with('/') {
+            std::path::PathBuf::from(file)
         } else {
-            crate::fs::normalize_path(&root.join(&m.path))
+            cwd.join(file)
+        });
+        let provider = sc.search_provider(&root)?;
+        let caps = provider.capabilities();
+        if !caps.content_search {
+            return None;
+        }
+
+        let pattern = if opts.fixed_strings {
+            opts.patterns[0].clone()
+        } else {
+            if opts.perl_regex || !caps.regex {
+                return None;
+            }
+
+            let pattern = if opts.extended_regex {
+                opts.patterns[0].clone()
+            } else {
+                bre_to_ere(&opts.patterns[0])
+            };
+            let pattern = if opts.word_regex {
+                format!(r"\b{}\b", pattern)
+            } else {
+                pattern
+            };
+            if opts.whole_line {
+                format!("^(?:{})$", pattern)
+            } else {
+                pattern
+            }
         };
 
-        if !candidate.starts_with(&root) || !seen_paths.insert(candidate.clone()) {
-            continue;
-        }
-
-        let Some(name) = candidate.file_name().and_then(|n| n.to_str()) else {
-            continue;
+        let query = crate::fs::SearchQuery {
+            pattern,
+            is_regex: !opts.fixed_strings,
+            case_insensitive: opts.ignore_case,
+            root: root.clone(),
+            glob_filter: if caps.glob_filter && opts.include_patterns.len() == 1 {
+                opts.include_patterns.first().cloned()
+            } else {
+                None
+            },
+            max_results: None,
         };
-        if !should_include_file(name, &opts.include_patterns, &opts.exclude_patterns) {
-            continue;
-        }
-        if path_contains_excluded_dir(&candidate, &root, &opts.exclude_dir_patterns) {
-            continue;
-        }
 
-        if let Ok(content) = fs.read_file(&candidate).await {
-            let text = process_content(content, opts.binary_as_text);
-            inputs.push((candidate.to_string_lossy().into_owned(), text));
+        let results = provider.search(&query).ok()?;
+
+        for m in &results.matches {
+            let candidate = if m.path.is_absolute() {
+                crate::fs::normalize_path(&m.path)
+            } else {
+                crate::fs::normalize_path(&root.join(&m.path))
+            };
+
+            if !candidate.starts_with(&root) || !seen_paths.insert(candidate.clone()) {
+                continue;
+            }
+
+            let Some(name) = candidate.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            if !should_include_file(name, &opts.include_patterns, &opts.exclude_patterns)
+                || path_has_excluded_dir(&root, &candidate, &opts.exclude_dir_patterns)
+            {
+                continue;
+            }
+
+            if let Ok(content) = fs.read_file(&candidate).await {
+                let text = process_content(content, opts.binary_as_text);
+                inputs.push((candidate.to_string_lossy().into_owned(), text));
+            }
         }
     }
 
@@ -1164,6 +1219,36 @@ mod tests {
                 matches: self.matches.clone(),
             }))
         }
+    }
+
+    async fn run_grep_with_indexed_fs(
+        inner: InMemoryFs,
+        matches: Vec<SearchMatch>,
+        args: &[&str],
+    ) -> Result<ExecResult> {
+        let grep = Grep;
+        let fs: Arc<dyn FileSystem> = Arc::new(IndexedTestFs { inner, matches });
+        let mut vars = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+        let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+
+        let ctx = Context {
+            args: &args,
+            env: &HashMap::new(),
+            variables: &mut vars,
+            cwd: &mut cwd,
+            fs,
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+
+        grep.execute(ctx).await
     }
 
     #[tokio::test]
@@ -1654,6 +1739,107 @@ mod tests {
     }
 
     // -L (--files-without-match) tests
+
+    #[tokio::test]
+    async fn test_grep_recursive_indexed_search_uses_all_roots() {
+        let inner = InMemoryFs::new();
+        inner.mkdir(Path::new("/a"), true).await.unwrap();
+        inner.mkdir(Path::new("/b"), true).await.unwrap();
+        inner
+            .write_file(Path::new("/a/first.txt"), b"needle in a\n")
+            .await
+            .unwrap();
+        inner
+            .write_file(Path::new("/b/second.txt"), b"needle in b\n")
+            .await
+            .unwrap();
+
+        let result = run_grep_with_indexed_fs(
+            inner,
+            vec![
+                SearchMatch {
+                    path: PathBuf::from("/a/first.txt"),
+                    line_number: 1,
+                    line_content: "needle in a".to_string(),
+                },
+                SearchMatch {
+                    path: PathBuf::from("/b/second.txt"),
+                    line_number: 1,
+                    line_content: "needle in b".to_string(),
+                },
+            ],
+            &["-r", "needle", "/a", "/b"],
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("/a/first.txt:needle in a"));
+        assert!(result.stdout.contains("/b/second.txt:needle in b"));
+    }
+
+    #[tokio::test]
+    async fn test_grep_recursive_indexed_search_respects_exclude_dir() {
+        let inner = InMemoryFs::new();
+        inner.mkdir(Path::new("/dir/keep"), true).await.unwrap();
+        inner.mkdir(Path::new("/dir/skip"), true).await.unwrap();
+        inner
+            .write_file(Path::new("/dir/keep/a.txt"), b"needle keep\n")
+            .await
+            .unwrap();
+        inner
+            .write_file(Path::new("/dir/skip/a.txt"), b"needle skip\n")
+            .await
+            .unwrap();
+
+        let result = run_grep_with_indexed_fs(
+            inner,
+            vec![
+                SearchMatch {
+                    path: PathBuf::from("/dir/keep/a.txt"),
+                    line_number: 1,
+                    line_content: "needle keep".to_string(),
+                },
+                SearchMatch {
+                    path: PathBuf::from("/dir/skip/a.txt"),
+                    line_number: 1,
+                    line_content: "needle skip".to_string(),
+                },
+            ],
+            &["-r", "--exclude-dir=skip", "needle", "/dir"],
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("/dir/keep/a.txt:needle keep"));
+        assert!(!result.stdout.contains("skip"));
+    }
+
+    #[tokio::test]
+    async fn test_grep_recursive_indexed_search_falls_back_for_invert_match() {
+        let inner = InMemoryFs::new();
+        inner.mkdir(Path::new("/dir"), true).await.unwrap();
+        inner
+            .write_file(Path::new("/dir/a.txt"), b"needle\nplain\n")
+            .await
+            .unwrap();
+
+        let result = run_grep_with_indexed_fs(
+            inner,
+            vec![SearchMatch {
+                path: PathBuf::from("/dir/a.txt"),
+                line_number: 1,
+                line_content: "needle".to_string(),
+            }],
+            &["-r", "-v", "needle", "/dir"],
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "/dir/a.txt:plain\n");
+    }
 
     #[tokio::test]
     async fn test_grep_files_without_match_stdin() {
