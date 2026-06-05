@@ -7266,10 +7266,9 @@ echo missing fi"#,
     }
 
     #[tokio::test]
-    async fn test_before_tool_hook_does_not_fire_for_special_builtins() {
-        // Special builtins (declare, local, etc.) dispatch through
-        // dispatch_special_builtin, not execute_registered_builtin,
-        // so before_tool should not fire for them.
+    async fn test_before_tool_hook_fires_for_special_and_registered_builtins() {
+        // Special builtins now route through execute_special_builtin_with_hooks
+        // so before_tool fires for both declare and echo.
         use std::sync::Arc;
         use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -7283,13 +7282,13 @@ echo missing fi"#,
             }))
             .build();
 
-        // declare is a special builtin — should NOT trigger before_tool
+        // declare is a special builtin — now triggers before_tool
         bash.exec("declare x=1").await.unwrap();
-        assert_eq!(count.load(Ordering::Relaxed), 0);
-
-        // echo is a registered builtin — should trigger before_tool
-        bash.exec("echo hi").await.unwrap();
         assert_eq!(count.load(Ordering::Relaxed), 1);
+
+        // echo is a registered builtin — also triggers before_tool
+        bash.exec("echo hi").await.unwrap();
+        assert_eq!(count.load(Ordering::Relaxed), 2);
     }
 
     #[cfg(feature = "http_client")]
