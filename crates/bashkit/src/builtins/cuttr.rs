@@ -6,6 +6,9 @@ use super::{Builtin, BuiltinHelper, Context, read_text_file};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
+// Keep tr set expansion bounded before stdin/output controls can apply.
+const MAX_TR_EXPANDED_SET_CHARS: usize = 4096;
+
 /// The cut builtin - remove sections from each line.
 ///
 /// Usage: cut -d DELIM -f FIELDS [FILE...]
@@ -322,7 +325,10 @@ impl Builtin for Tr {
             return Ok(Self::err("missing operand", 1));
         }
 
-        let mut set1 = expand_char_set(&non_flag_args[0]);
+        let mut set1 = match expand_char_set(&non_flag_args[0]) {
+            Ok(set) => set,
+            Err(msg) => return Ok(Self::err(&msg, 1)),
+        };
         if complement {
             // Complement: use all byte-range chars (0-255) NOT in set1.
             // Covers full Latin-1 range so binary data from /dev/urandom
@@ -339,7 +345,10 @@ impl Builtin for Tr {
         let result = if delete && squeeze {
             // -ds: delete SET1 chars, then squeeze SET2 chars
             let set2 = if non_flag_args.len() >= 2 {
-                expand_char_set(&non_flag_args[1])
+                match expand_char_set(&non_flag_args[1]) {
+                    Ok(set) => set,
+                    Err(msg) => return Ok(Self::err(&msg, 1)),
+                }
             } else {
                 set1.clone()
             };
@@ -358,7 +367,10 @@ impl Builtin for Tr {
                 return Ok(Self::err("missing operand after SET1", 1));
             }
 
-            let set2 = expand_char_set(&non_flag_args[1]);
+            let set2 = match expand_char_set(&non_flag_args[1]) {
+                Ok(set) => set,
+                Err(msg) => return Ok(Self::err(&msg, 1)),
+            };
 
             let translated: String = stdin
                 .chars()
@@ -399,7 +411,7 @@ fn squeeze_chars(s: &str, set: &[char]) -> String {
 
 /// Expand a character set specification like "a-z" into a list of characters.
 /// Supports POSIX character classes: [:lower:], [:upper:], [:digit:], [:alpha:], [:alnum:], [:space:]
-fn expand_char_set(spec: &str) -> Vec<char> {
+fn expand_char_set(spec: &str) -> std::result::Result<Vec<char>, String> {
     let mut chars = Vec::new();
     let char_vec: Vec<char> = spec.chars().collect();
     let len = char_vec.len();
@@ -422,51 +434,51 @@ fn expand_char_set(spec: &str) -> Vec<char> {
                 .map_or(spec.len(), |(pos, _)| pos);
             let class_name = &spec[class_start..class_start + end];
             match class_name {
-                "lower" => chars.extend('a'..='z'),
-                "upper" => chars.extend('A'..='Z'),
-                "digit" => chars.extend('0'..='9'),
+                "lower" => push_char_range(&mut chars, 'a', 'z')?,
+                "upper" => push_char_range(&mut chars, 'A', 'Z')?,
+                "digit" => push_char_range(&mut chars, '0', '9')?,
                 "alpha" => {
-                    chars.extend('a'..='z');
-                    chars.extend('A'..='Z');
+                    push_char_range(&mut chars, 'a', 'z')?;
+                    push_char_range(&mut chars, 'A', 'Z')?;
                 }
                 "alnum" => {
-                    chars.extend('a'..='z');
-                    chars.extend('A'..='Z');
-                    chars.extend('0'..='9');
+                    push_char_range(&mut chars, 'a', 'z')?;
+                    push_char_range(&mut chars, 'A', 'Z')?;
+                    push_char_range(&mut chars, '0', '9')?;
                 }
-                "space" => chars.extend([' ', '\t', '\n', '\r', '\x0b', '\x0c']),
-                "blank" => chars.extend([' ', '\t']),
+                "space" => push_chars(&mut chars, [' ', '\t', '\n', '\r', '\x0b', '\x0c'])?,
+                "blank" => push_chars(&mut chars, [' ', '\t'])?,
                 "punct" => {
                     for code in 0x21u8..=0x7e {
                         let c = code as char;
                         if !c.is_ascii_alphanumeric() {
-                            chars.push(c);
+                            push_char(&mut chars, c)?;
                         }
                     }
                 }
                 "xdigit" => {
-                    chars.extend('0'..='9');
-                    chars.extend('A'..='F');
-                    chars.extend('a'..='f');
+                    push_char_range(&mut chars, '0', '9')?;
+                    push_char_range(&mut chars, 'A', 'F')?;
+                    push_char_range(&mut chars, 'a', 'f')?;
                 }
                 "print" => {
                     for code in 0x20u8..=0x7e {
-                        chars.push(code as char);
+                        push_char(&mut chars, code as char)?;
                     }
                 }
                 "graph" => {
                     for code in 0x21u8..=0x7e {
-                        chars.push(code as char);
+                        push_char(&mut chars, code as char)?;
                     }
                 }
                 "cntrl" => {
                     for code in 0u8..=0x1f {
-                        chars.push(code as char);
+                        push_char(&mut chars, code as char)?;
                     }
-                    chars.push(0x7f as char);
+                    push_char(&mut chars, 0x7f as char)?;
                 }
                 _ => {
-                    chars.push('[');
+                    push_char(&mut chars, '[')?;
                     i += 1;
                     continue;
                 }
@@ -481,52 +493,77 @@ fn expand_char_set(spec: &str) -> Vec<char> {
         // Check for range like a-z
         if i + 2 < len && char_vec[i + 1] == '-' {
             let end_char = char_vec[i + 2];
-            let start = c as u32;
-            let end = end_char as u32;
-            for code in start..=end {
-                if let Some(ch) = char::from_u32(code) {
-                    chars.push(ch);
-                }
-            }
+            push_char_range(&mut chars, c, end_char)?;
             i += 3;
         } else if i + 1 == len - 1 && char_vec[i + 1] == '-' {
             // Trailing dash
-            chars.push(c);
-            chars.push('-');
+            push_char(&mut chars, c)?;
+            push_char(&mut chars, '-')?;
             i += 2;
         } else {
             // Handle escape sequences
             if c == '\\' && i + 1 < len {
                 match char_vec[i + 1] {
                     'n' => {
-                        chars.push('\n');
+                        push_char(&mut chars, '\n')?;
                         i += 2;
                         continue;
                     }
                     't' => {
-                        chars.push('\t');
+                        push_char(&mut chars, '\t')?;
                         i += 2;
                         continue;
                     }
                     '0' => {
-                        chars.push('\0');
+                        push_char(&mut chars, '\0')?;
                         i += 2;
                         continue;
                     }
                     '\\' => {
-                        chars.push('\\');
+                        push_char(&mut chars, '\\')?;
                         i += 2;
                         continue;
                     }
                     _ => {}
                 }
             }
-            chars.push(c);
+            push_char(&mut chars, c)?;
             i += 1;
         }
     }
 
-    chars
+    Ok(chars)
+}
+
+fn push_char(chars: &mut Vec<char>, ch: char) -> std::result::Result<(), String> {
+    if chars.len() >= MAX_TR_EXPANDED_SET_CHARS {
+        return Err("character set expansion too large".to_string());
+    }
+    chars.push(ch);
+    Ok(())
+}
+
+fn push_chars(
+    chars: &mut Vec<char>,
+    values: impl IntoIterator<Item = char>,
+) -> std::result::Result<(), String> {
+    for ch in values {
+        push_char(chars, ch)?;
+    }
+    Ok(())
+}
+
+fn push_char_range(
+    chars: &mut Vec<char>,
+    start: char,
+    end: char,
+) -> std::result::Result<(), String> {
+    for code in (start as u32)..=(end as u32) {
+        if let Some(ch) = char::from_u32(code) {
+            push_char(chars, ch)?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -590,6 +627,10 @@ mod tests {
         Tr.execute(ctx).await.unwrap()
     }
 
+    fn expanded(spec: &str) -> Vec<char> {
+        expand_char_set(spec).unwrap()
+    }
+
     #[tokio::test]
     async fn test_cut_single_field() {
         let result = run_cut(&["-d", ",", "-f", "2"], Some("a,b,c\n1,2,3\n")).await;
@@ -634,14 +675,14 @@ mod tests {
 
     #[test]
     fn test_expand_char_set() {
-        assert_eq!(expand_char_set("abc"), vec!['a', 'b', 'c']);
-        assert_eq!(expand_char_set("a-c"), vec!['a', 'b', 'c']);
-        assert_eq!(expand_char_set("0-2"), vec!['0', '1', '2']);
+        assert_eq!(expanded("abc"), vec!['a', 'b', 'c']);
+        assert_eq!(expanded("a-c"), vec!['a', 'b', 'c']);
+        assert_eq!(expanded("0-2"), vec!['0', '1', '2']);
     }
 
     #[test]
     fn test_expand_char_class_lower() {
-        let lower = expand_char_set("[:lower:]");
+        let lower = expanded("[:lower:]");
         assert_eq!(lower.len(), 26);
         assert_eq!(lower[0], 'a');
         assert_eq!(lower[25], 'z');
@@ -649,7 +690,7 @@ mod tests {
 
     #[test]
     fn test_expand_char_class_upper() {
-        let upper = expand_char_set("[:upper:]");
+        let upper = expanded("[:upper:]");
         assert_eq!(upper.len(), 26);
         assert_eq!(upper[0], 'A');
         assert_eq!(upper[25], 'Z');
@@ -731,7 +772,7 @@ mod tests {
 
     #[test]
     fn test_expand_char_class_punct() {
-        let punct = expand_char_set("[:punct:]");
+        let punct = expanded("[:punct:]");
         assert!(punct.contains(&'!'));
         assert!(punct.contains(&'.'));
         assert!(punct.contains(&','));
@@ -744,7 +785,7 @@ mod tests {
 
     #[test]
     fn test_expand_char_class_xdigit() {
-        let xdigit = expand_char_set("[:xdigit:]");
+        let xdigit = expanded("[:xdigit:]");
         assert_eq!(xdigit.len(), 22); // 0-9 + A-F + a-f
         assert!(xdigit.contains(&'0'));
         assert!(xdigit.contains(&'9'));
@@ -758,7 +799,7 @@ mod tests {
 
     #[test]
     fn test_expand_char_class_digit() {
-        let digit = expand_char_set("[:digit:]");
+        let digit = expanded("[:digit:]");
         assert_eq!(digit.len(), 10);
         assert_eq!(digit[0], '0');
         assert_eq!(digit[9], '9');
@@ -766,7 +807,7 @@ mod tests {
 
     #[test]
     fn test_expand_char_class_alpha() {
-        let alpha = expand_char_set("[:alpha:]");
+        let alpha = expanded("[:alpha:]");
         assert_eq!(alpha.len(), 52);
         assert!(alpha.contains(&'a'));
         assert!(alpha.contains(&'z'));
@@ -776,7 +817,7 @@ mod tests {
 
     #[test]
     fn test_expand_char_class_alnum() {
-        let alnum = expand_char_set("[:alnum:]");
+        let alnum = expanded("[:alnum:]");
         assert_eq!(alnum.len(), 62);
         assert!(alnum.contains(&'a'));
         assert!(alnum.contains(&'0'));
@@ -785,7 +826,7 @@ mod tests {
 
     #[test]
     fn test_expand_char_class_space() {
-        let space = expand_char_set("[:space:]");
+        let space = expanded("[:space:]");
         assert!(space.contains(&' '));
         assert!(space.contains(&'\t'));
         assert!(space.contains(&'\n'));
@@ -794,7 +835,7 @@ mod tests {
 
     #[test]
     fn test_expand_char_class_blank() {
-        let blank = expand_char_set("[:blank:]");
+        let blank = expanded("[:blank:]");
         assert_eq!(blank.len(), 2);
         assert!(blank.contains(&' '));
         assert!(blank.contains(&'\t'));
@@ -802,7 +843,7 @@ mod tests {
 
     #[test]
     fn test_expand_char_class_cntrl() {
-        let cntrl = expand_char_set("[:cntrl:]");
+        let cntrl = expanded("[:cntrl:]");
         assert!(cntrl.contains(&'\0'));
         assert!(cntrl.contains(&'\x1f'));
         assert!(cntrl.contains(&'\x7f'));
@@ -878,8 +919,21 @@ mod tests {
     }
 
     #[test]
+    fn test_expand_char_set_rejects_large_unicode_range() {
+        let err = expand_char_set("a-\u{10ffff}").unwrap_err();
+        assert_eq!(err, "character set expansion too large");
+    }
+
+    #[tokio::test]
+    async fn test_tr_rejects_large_unicode_range() {
+        let result = run_tr(&["a-\u{10ffff}", "x"], Some("abc")).await;
+        assert_eq!(result.exit_code, 1);
+        assert_eq!(result.stderr, "tr: character set expansion too large\n");
+    }
+
+    #[test]
     fn test_expand_char_set_multibyte() {
-        let chars = expand_char_set("äöü");
+        let chars = expanded("äöü");
         assert_eq!(chars, vec!['ä', 'ö', 'ü']);
     }
 }
