@@ -73,6 +73,7 @@ Fields:
 | file_exists | `file_exists:/path` | VFS path exists |
 | dir_exists | `dir_exists:/path` | VFS directory exists |
 | file_contains | `file_contains:/path:text` | File content contains text |
+| file_line_regex | `file_line_regex:/path:pattern` | Any single file line matches regex |
 | llm_judge | `llm_judge:prompt` | Stub — not yet implemented |
 
 ## Providers
