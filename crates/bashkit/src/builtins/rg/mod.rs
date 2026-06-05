@@ -3530,6 +3530,7 @@ impl RgDisplayHint {
 async fn resolve_rg_symlink_target(
     fs: &dyn crate::fs::FileSystem,
     link_path: &Path,
+    containment_root: &Path,
 ) -> Option<(PathBuf, crate::fs::Metadata)> {
     let target = fs.read_link(link_path).await.ok()?;
     let resolved = if target.is_absolute() {
@@ -3537,6 +3538,11 @@ async fn resolve_rg_symlink_target(
     } else {
         crate::fs::normalize_path(&link_path.parent().unwrap_or(Path::new("/")).join(target))
     };
+    // rg may emulate ripgrep's -L behavior only inside the requested VFS search root;
+    // rejecting escapes preserves TM-ESC-002's inert-symlink sandbox boundary.
+    if !resolved.starts_with(containment_root) {
+        return None;
+    }
     let metadata = fs.stat(&resolved).await.ok()?;
     Some((resolved, metadata))
 }
@@ -3548,7 +3554,8 @@ async fn resolve_rg_explicit_path(
 ) -> Option<(PathBuf, crate::fs::Metadata)> {
     let meta = fs.stat(path).await.ok()?;
     if meta.file_type.is_symlink() && follow_symlinks {
-        resolve_rg_symlink_target(fs, path).await
+        let containment_root = path.parent().unwrap_or(Path::new("/"));
+        resolve_rg_symlink_target(fs, path, containment_root).await
     } else {
         Some((path.to_path_buf(), meta))
     }
@@ -3605,7 +3612,7 @@ async fn collect_rg_files_recursive(
                 let (entry_actual_path, entry_metadata) =
                     if entry.metadata.file_type.is_symlink() && opts.follow_symlinks {
                         let Some((target, target_meta)) =
-                            resolve_rg_symlink_target(fs, &actual_path).await
+                            resolve_rg_symlink_target(fs, &actual_path, &item.actual_root).await
                         else {
                             continue;
                         };
@@ -7372,15 +7379,53 @@ mod tests {
         assert!(err.contains("ratio exceeds"));
     }
 
+    #[tokio::test]
+    async fn rg_follow_rejects_recursive_symlink_escape() {
+        let result = run_rg_fixture_with_cwd(
+            &["-L", "needle", "workspace"],
+            None,
+            &[
+                ("/workspace/public.txt", b"needle public\n"),
+                ("/secret/flag.txt", b"needle secret\n"),
+            ],
+            &[
+                ("/workspace/flag.txt", "../secret/flag.txt"),
+                ("/workspace/flagdir", "../secret"),
+            ],
+            "/",
+        )
+        .await;
+
+        assert!(result.stdout.contains("workspace/public.txt"));
+        assert!(!result.stdout.contains("secret"));
+        assert!(!result.stdout.contains("flag.txt"));
+        assert!(!result.stdout.contains("flagdir"));
+    }
+
+    #[tokio::test]
+    async fn rg_follow_rejects_explicit_symlink_escape() {
+        let result = run_rg_fixture_with_cwd(
+            &["-L", "needle", "workspace/flag.txt"],
+            None,
+            &[("/secret/flag.txt", b"needle secret\n")],
+            &[("/workspace/flag.txt", "../secret/flag.txt")],
+            "/",
+        )
+        .await;
+
+        assert!(!result.stdout.contains("secret"));
+        assert!(!result.stdout.contains("flag.txt"));
+    }
+
     const DIFF_SYMLINK_FILES: &[(&str, &[u8])] = &[
-        ("/targets/file.txt", b"needle\n"),
-        ("/targets/dir/nested.txt", b"needle\n"),
+        ("/proj/targets/file.txt", b"needle\n"),
+        ("/proj/targets/dir/nested.txt", b"needle\n"),
         ("/proj/plain.txt", b"needle\n"),
     ];
 
     const DIFF_SYMLINKS: &[(&str, &str)] = &[
-        ("/proj/link.txt", "../targets/file.txt"),
-        ("/proj/linkdir", "../targets/dir"),
+        ("/proj/link.txt", "targets/file.txt"),
+        ("/proj/linkdir", "targets/dir"),
     ];
 
     const RG_SYMLINK_DIFF_CASES: &[RgSymlinkDiffCase] = &[
