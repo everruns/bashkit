@@ -7,6 +7,8 @@
 #   ./scripts/bench-parallel.sh --dry    # parse last run without re-running
 set -euo pipefail
 
+# Cache Criterion output in the caller's private cache directory. Avoid shared /tmp
+# paths so local users cannot pre-create symlinks or poison --dry parsing.
 RESULTS_DIR="crates/bashkit/benches/results"
 HOSTNAME=$(hostname 2>/dev/null || echo "unknown")
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -14,24 +16,46 @@ ARCH=$(uname -m)
 CPUS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo "?")
 TIMESTAMP=$(date +%s)
 MONIKER="${HOSTNAME}-${OS}-${ARCH}"
+CACHE_ROOT="${XDG_CACHE_HOME:-${HOME}/.cache}"
+CACHE_DIR="${CACHE_ROOT}/bashkit"
+OUTPUT_FILE="${CACHE_DIR}/criterion-parallel-output.txt"
+TEMP_OUTPUT=""
+cleanup_temp_output() {
+    if [[ -n "${TEMP_OUTPUT}" && -e "${TEMP_OUTPUT}" ]]; then
+        rm -f "${TEMP_OUTPUT}"
+    fi
+}
+trap cleanup_temp_output EXIT
+
+mkdir -p "$RESULTS_DIR" "$CACHE_DIR"
+if [[ -L "$CACHE_DIR" ]]; then
+    echo "Refusing symlinked cache directory: $CACHE_DIR"
+    exit 1
+fi
+chmod 700 "$CACHE_DIR"
 
 # Run benchmark unless --dry
 if [[ "${1:-}" != "--dry" ]]; then
     echo "Running parallel_execution benchmark..."
-    cargo bench --bench parallel_execution 2>&1 | tee /tmp/criterion-output.txt
+    TEMP_OUTPUT=$(mktemp "${CACHE_DIR}/criterion-parallel-output.XXXXXX")
+    chmod 600 "$TEMP_OUTPUT"
+    cargo bench --bench parallel_execution 2>&1 | tee "$TEMP_OUTPUT"
+    mv -f "$TEMP_OUTPUT" "$OUTPUT_FILE"
+    TEMP_OUTPUT=""
+    chmod 600 "$OUTPUT_FILE"
 else
-    if [[ ! -f /tmp/criterion-output.txt ]]; then
-        echo "No previous output found at /tmp/criterion-output.txt"
+    if [[ ! -f "$OUTPUT_FILE" || -L "$OUTPUT_FILE" ]]; then
+        echo "No previous output found at $OUTPUT_FILE"
         exit 1
     fi
-    echo "Using cached output from /tmp/criterion-output.txt"
+    echo "Using cached output from $OUTPUT_FILE"
 fi
 
 # Extract median time from Criterion output for lines matching a pattern
 # Usage: extract_times <grep_pattern> >> output_file
 extract_times() {
     local pattern="$1"
-    grep -A2 "$pattern" /tmp/criterion-output.txt | \
+    grep -A2 "$pattern" "$OUTPUT_FILE" | \
         awk -v pat="$pattern" '
             $0 ~ pat {name=$1}
             /time:/ {
@@ -92,10 +116,10 @@ cat >> "$MD_PATH" <<EOF
 EOF
 
 # Calculate speedups from the parsed output
-python3 -c "
-import re, sys
+OUTPUT_FILE="$OUTPUT_FILE" python3 -c "
+import os, re, sys
 
-text = open('/tmp/criterion-output.txt').read()
+text = open(os.environ['OUTPUT_FILE']).read()
 
 # Parse all timing results: name -> median_ms
 results = {}
