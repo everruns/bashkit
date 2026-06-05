@@ -1381,8 +1381,8 @@ fn restore_live_bash_keyed_with_env_overrides(
                 return Ok(());
             }
             let mut state = bash.shell_state();
-            for (key, value) in env_overrides {
-                state.env.insert(key, value);
+            for (env_key, env_value) in env_overrides {
+                state.env.insert(env_key, env_value);
             }
             bash.restore_shell_state(&state);
             Ok(())
