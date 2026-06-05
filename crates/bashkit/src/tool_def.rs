@@ -166,6 +166,8 @@ pub struct ToolImpl {
     pub exec: Option<AsyncToolExec>,
     /// Sync exec (preferred when running in sync context).
     pub exec_sync: Option<SyncToolExec>,
+    /// Whether callback error strings are sanitized before script-visible stderr.
+    pub sanitize_errors: bool,
 }
 
 impl ToolImpl {
@@ -175,6 +177,7 @@ impl ToolImpl {
             def,
             exec: None,
             exec_sync: None,
+            sanitize_errors: true,
         }
     }
 
@@ -195,6 +198,23 @@ impl ToolImpl {
     ) -> Self {
         self.exec_sync = Some(Arc::new(f));
         self
+    }
+
+    /// Control whether callback errors are sanitized before reaching stderr.
+    ///
+    /// Default: `true`, replacing callback `Err(String)` with
+    /// `"<tool>: callback failed\n"` to avoid exposing host-side secrets,
+    /// paths, connection strings, or stack traces to untrusted scripts.
+    /// Set to `false` only when callers are trusted and raw diagnostics are safe.
+    // THREAT[TM-INF-030]: ToolImpl may be registered directly as a Builtin, so
+    // it must match ScriptedTool's safe default instead of leaking raw callback errors.
+    pub fn sanitize_errors(mut self, sanitize: bool) -> Self {
+        self.sanitize_errors = sanitize;
+        self
+    }
+
+    fn callback_failed_message(&self) -> String {
+        format!("{}: callback failed\n", self.def.name)
     }
 }
 
@@ -222,6 +242,17 @@ impl Builtin for ToolImpl {
 
         match result {
             Ok(stdout) => Ok(ExecResult::ok(stdout)),
+            Err(msg) if self.sanitize_errors => {
+                #[cfg(not(feature = "tracing"))]
+                let _ = &msg;
+                #[cfg(feature = "tracing")]
+                tracing::debug!(
+                    tool = %self.def.name,
+                    error = %msg,
+                    "tool callback error (sanitized)"
+                );
+                Ok(ExecResult::err(self.callback_failed_message(), 1))
+            }
             Err(msg) => Ok(ExecResult::err(msg, 1)),
         }
     }
@@ -1327,7 +1358,18 @@ mod tests {
 
         assert!(tool.exec_sync.is_some());
         assert!(tool.exec.is_none());
+        assert!(tool.sanitize_errors);
         assert_eq!(tool.def.name, "greet");
+    }
+
+    fn tool_test_context<'a>(
+        args: &'a [String],
+        env: &'a std::collections::HashMap<String, String>,
+        vars: &'a mut std::collections::HashMap<String, String>,
+        cwd: &'a mut std::path::PathBuf,
+    ) -> Context<'a> {
+        let fs = Arc::new(crate::fs::InMemoryFs::new());
+        Context::new_for_test(args, env, vars, cwd, fs, None)
     }
 
     #[tokio::test]
@@ -1345,14 +1387,54 @@ mod tests {
 
         // Verify it works as a Builtin
         let args = vec!["--name".to_string(), "Alice".to_string()];
-        let mut vars = std::collections::HashMap::new();
         let env = std::collections::HashMap::new();
+        let mut vars = std::collections::HashMap::new();
         let mut cwd = std::path::PathBuf::from("/");
-        let fs = Arc::new(crate::fs::InMemoryFs::new());
-        let ctx = Context::new_for_test(&args, &env, &mut vars, &mut cwd, fs, None);
+        let ctx = tool_test_context(&args, &env, &mut vars, &mut cwd);
         let result = tool.execute(ctx).await.unwrap();
         assert_eq!(result.stdout, "hello Alice\n");
         assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn test_tool_impl_as_builtin_sanitizes_callback_errors() {
+        let secret = "postgres://user:secret@internal-db/private";
+        let tool =
+            ToolImpl::new(ToolDef::new("lookup", "Lookup record")).with_exec_sync(move |_| {
+                Err(format!(
+                    "backend failed for {secret} at /srv/app/src/client.rs:42"
+                ))
+            });
+
+        let args = vec![];
+        let env = std::collections::HashMap::new();
+        let mut vars = std::collections::HashMap::new();
+        let mut cwd = std::path::PathBuf::from("/");
+        let ctx = tool_test_context(&args, &env, &mut vars, &mut cwd);
+        let result = tool.execute(ctx).await.unwrap();
+
+        assert_eq!(result.exit_code, 1);
+        assert_eq!(result.stderr, "lookup: callback failed\n");
+        assert!(!result.stderr.contains("secret"));
+        assert!(!result.stderr.contains("internal-db"));
+        assert!(!result.stderr.contains("/srv/app"));
+    }
+
+    #[tokio::test]
+    async fn test_tool_impl_as_builtin_can_opt_out_of_error_sanitization() {
+        let tool = ToolImpl::new(ToolDef::new("lookup", "Lookup record"))
+            .with_exec_sync(|_| Err("raw diagnostic".to_string()))
+            .sanitize_errors(false);
+
+        let args = vec![];
+        let env = std::collections::HashMap::new();
+        let mut vars = std::collections::HashMap::new();
+        let mut cwd = std::path::PathBuf::from("/");
+        let ctx = tool_test_context(&args, &env, &mut vars, &mut cwd);
+        let result = tool.execute(ctx).await.unwrap();
+
+        assert_eq!(result.exit_code, 1);
+        assert_eq!(result.stderr, "raw diagnostic");
     }
 
     #[tokio::test]
@@ -1372,11 +1454,10 @@ mod tests {
         let tool = ToolImpl::new(ToolDef::new("empty", "No exec"));
 
         let args = vec![];
-        let mut vars = std::collections::HashMap::new();
         let env = std::collections::HashMap::new();
+        let mut vars = std::collections::HashMap::new();
         let mut cwd = std::path::PathBuf::from("/");
-        let fs = Arc::new(crate::fs::InMemoryFs::new());
-        let ctx = Context::new_for_test(&args, &env, &mut vars, &mut cwd, fs, None);
+        let ctx = tool_test_context(&args, &env, &mut vars, &mut cwd);
         let result = tool.execute(ctx).await;
         assert!(result.is_err());
     }

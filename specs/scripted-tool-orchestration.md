@@ -110,6 +110,7 @@ pub struct ToolImpl {
     pub def: ToolDef,
     pub exec: Option<AsyncToolExec>,
     pub exec_sync: Option<SyncToolExec>,
+    pub sanitize_errors: bool,
 }
 ```
 
@@ -118,6 +119,11 @@ Implements `Builtin`, so it can be registered in both `Bash` (via `.builtin()`)
 and `ScriptedTool`/`ScriptingToolSet` (via `.tool()`).
 
 When running async, prefers `exec`; falls back to `exec_sync`.
+When used directly as a `Builtin`, callback `Err(String)` values are sanitized by
+default to `"<tool>: callback failed\n"` before reaching script-visible stderr.
+This matches `ScriptedTool`'s safe default and prevents leaking host-side secrets,
+paths, connection strings, or stack traces. Trusted deployments may opt out with
+`.sanitize_errors(false)`.
 When running sync, prefers `exec_sync`; falls back to blocking on `exec`.
 
 Builder API:
