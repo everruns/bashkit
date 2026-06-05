@@ -6339,127 +6339,176 @@ impl Interpreter {
             return format!("{}", word);
         }
 
-        let mut out = String::from("\"");
-        for part in &word.parts {
-            match part {
-                WordPart::Literal(s) => {
-                    for ch in s.chars() {
-                        if matches!(ch, '\\' | '"' | '$' | '`') {
-                            out.push('\\');
-                        }
-                        out.push(ch);
+        if word.has_unquoted_glob {
+            // Keep glob metacharacters outside quotes while quoting expansions.
+            // Wrapping the whole word would erase the QuotedGlobWord boundary.
+            let mut out = String::new();
+            for part in &word.parts {
+                match part {
+                    WordPart::Literal(s) => Self::push_alias_reparse_literal(&mut out, s, true),
+                    _ => {
+                        out.push('"');
+                        Self::push_alias_reparse_word_part(&mut out, part);
+                        out.push('"');
                     }
-                }
-                WordPart::Variable(name) => out.push_str(&format!("${}", name)),
-                WordPart::CommandSubstitution(cmd) => out.push_str(&format!("$({:?})", cmd)),
-                WordPart::ArithmeticExpansion(expr) => out.push_str(&format!("$(({}))", expr)),
-                WordPart::ParameterExpansion {
-                    name,
-                    operator,
-                    operand,
-                    colon_variant,
-                } => match operator {
-                    ParameterOp::UseDefault => {
-                        let c = if *colon_variant { ":" } else { "" };
-                        out.push_str(&format!("${{{}{}-{}}}", name, c, operand));
-                    }
-                    ParameterOp::AssignDefault => {
-                        let c = if *colon_variant { ":" } else { "" };
-                        out.push_str(&format!("${{{}{}={}}}", name, c, operand));
-                    }
-                    ParameterOp::UseReplacement => {
-                        let c = if *colon_variant { ":" } else { "" };
-                        out.push_str(&format!("${{{}{}+{}}}", name, c, operand));
-                    }
-                    ParameterOp::Error => {
-                        let c = if *colon_variant { ":" } else { "" };
-                        out.push_str(&format!("${{{}{}?{}}}", name, c, operand));
-                    }
-                    ParameterOp::RemovePrefixShort => {
-                        out.push_str(&format!("${{{}#{}}}", name, operand))
-                    }
-                    ParameterOp::RemovePrefixLong => {
-                        out.push_str(&format!("${{{}##{}}}", name, operand))
-                    }
-                    ParameterOp::RemoveSuffixShort => {
-                        out.push_str(&format!("${{{}%{}}}", name, operand))
-                    }
-                    ParameterOp::RemoveSuffixLong => {
-                        out.push_str(&format!("${{{}%%{}}}", name, operand))
-                    }
-                    ParameterOp::ReplaceFirst {
-                        pattern,
-                        replacement,
-                    } => out.push_str(&format!("${{{}/{}/{}}}", name, pattern, replacement)),
-                    ParameterOp::ReplaceAll {
-                        pattern,
-                        replacement,
-                    } => out.push_str(&format!("${{{}//{}/{}}}", name, pattern, replacement)),
-                    ParameterOp::UpperFirst => out.push_str(&format!("${{{}^}}", name)),
-                    ParameterOp::UpperAll => out.push_str(&format!("${{{}^^}}", name)),
-                    ParameterOp::LowerFirst => out.push_str(&format!("${{{},}}", name)),
-                    ParameterOp::LowerAll => out.push_str(&format!("${{{},,}}", name)),
-                },
-                WordPart::Length(name) => out.push_str(&format!("${{#{}}}", name)),
-                WordPart::ArrayAccess { name, index } => {
-                    out.push_str(&format!("${{{}[{}]}}", name, index))
-                }
-                WordPart::ArrayLength(name) => out.push_str(&format!("${{#{}[@]}}", name)),
-                WordPart::ArrayIndices(name) => out.push_str(&format!("${{!{}[@]}}", name)),
-                WordPart::Substring {
-                    name,
-                    offset,
-                    length,
-                } => {
-                    if let Some(len) = length {
-                        out.push_str(&format!("${{{}:{}:{}}}", name, offset, len));
-                    } else {
-                        out.push_str(&format!("${{{}:{}}}", name, offset));
-                    }
-                }
-                WordPart::ArraySlice {
-                    name,
-                    offset,
-                    length,
-                } => {
-                    if let Some(len) = length {
-                        out.push_str(&format!("${{{}[@]:{}:{}}}", name, offset, len));
-                    } else {
-                        out.push_str(&format!("${{{}[@]:{}}}", name, offset));
-                    }
-                }
-                WordPart::IndirectExpansion {
-                    name,
-                    operator,
-                    operand,
-                    colon_variant,
-                } => {
-                    if let Some(op) = operator {
-                        let c = if *colon_variant { ":" } else { "" };
-                        let op_char = match op {
-                            ParameterOp::UseDefault => "-",
-                            ParameterOp::AssignDefault => "=",
-                            ParameterOp::UseReplacement => "+",
-                            ParameterOp::Error => "?",
-                            _ => "",
-                        };
-                        out.push_str(&format!("${{!{}{}{}{}}}", name, c, op_char, operand));
-                    } else {
-                        out.push_str(&format!("${{!{}}}", name));
-                    }
-                }
-                WordPart::PrefixMatch(prefix) => out.push_str(&format!("${{!{}*}}", prefix)),
-                WordPart::ProcessSubstitution { commands, is_input } => {
-                    let prefix = if *is_input { "<" } else { ">" };
-                    out.push_str(&format!("{}({:?})", prefix, commands));
-                }
-                WordPart::Transformation { name, operator } => {
-                    out.push_str(&format!("${{{}@{}}}", name, operator));
                 }
             }
+            return out;
+        }
+
+        let mut out = String::from("\"");
+        for part in &word.parts {
+            Self::push_alias_reparse_word_part(&mut out, part);
         }
         out.push('"');
         out
+    }
+
+    fn push_alias_reparse_literal(out: &mut String, s: &str, preserve_glob: bool) {
+        for ch in s.chars() {
+            if preserve_glob && matches!(ch, '*' | '?' | '[' | ']') {
+                out.push(ch);
+                continue;
+            }
+            if preserve_glob {
+                match ch {
+                    'a'..='z'
+                    | 'A'..='Z'
+                    | '0'..='9'
+                    | '_'
+                    | '-'
+                    | '.'
+                    | '/'
+                    | ':'
+                    | ','
+                    | '+'
+                    | '='
+                    | '%'
+                    | '@' => out.push(ch),
+                    _ => {
+                        out.push('\\');
+                        out.push(ch);
+                    }
+                }
+            } else {
+                if matches!(ch, '\\' | '"' | '$' | '`') {
+                    out.push('\\');
+                }
+                out.push(ch);
+            }
+        }
+    }
+
+    fn push_alias_reparse_word_part(out: &mut String, part: &WordPart) {
+        match part {
+            WordPart::Literal(s) => Self::push_alias_reparse_literal(out, s, false),
+            WordPart::Variable(name) => out.push_str(&format!("${}", name)),
+            WordPart::CommandSubstitution(cmd) => out.push_str(&format!("$({:?})", cmd)),
+            WordPart::ArithmeticExpansion(expr) => out.push_str(&format!("$(({}))", expr)),
+            WordPart::ParameterExpansion {
+                name,
+                operator,
+                operand,
+                colon_variant,
+            } => match operator {
+                ParameterOp::UseDefault => {
+                    let c = if *colon_variant { ":" } else { "" };
+                    out.push_str(&format!("${{{}{}-{}}}", name, c, operand));
+                }
+                ParameterOp::AssignDefault => {
+                    let c = if *colon_variant { ":" } else { "" };
+                    out.push_str(&format!("${{{}{}={}}}", name, c, operand));
+                }
+                ParameterOp::UseReplacement => {
+                    let c = if *colon_variant { ":" } else { "" };
+                    out.push_str(&format!("${{{}{}+{}}}", name, c, operand));
+                }
+                ParameterOp::Error => {
+                    let c = if *colon_variant { ":" } else { "" };
+                    out.push_str(&format!("${{{}{}?{}}}", name, c, operand));
+                }
+                ParameterOp::RemovePrefixShort => {
+                    out.push_str(&format!("${{{}#{}}}", name, operand))
+                }
+                ParameterOp::RemovePrefixLong => {
+                    out.push_str(&format!("${{{}##{}}}", name, operand))
+                }
+                ParameterOp::RemoveSuffixShort => {
+                    out.push_str(&format!("${{{}%{}}}", name, operand))
+                }
+                ParameterOp::RemoveSuffixLong => {
+                    out.push_str(&format!("${{{}%%{}}}", name, operand))
+                }
+                ParameterOp::ReplaceFirst {
+                    pattern,
+                    replacement,
+                } => out.push_str(&format!("${{{}/{}/{}}}", name, pattern, replacement)),
+                ParameterOp::ReplaceAll {
+                    pattern,
+                    replacement,
+                } => out.push_str(&format!("${{{}//{}/{}}}", name, pattern, replacement)),
+                ParameterOp::UpperFirst => out.push_str(&format!("${{{}^}}", name)),
+                ParameterOp::UpperAll => out.push_str(&format!("${{{}^^}}", name)),
+                ParameterOp::LowerFirst => out.push_str(&format!("${{{},}}", name)),
+                ParameterOp::LowerAll => out.push_str(&format!("${{{},,}}", name)),
+            },
+            WordPart::Length(name) => out.push_str(&format!("${{#{}}}", name)),
+            WordPart::ArrayAccess { name, index } => {
+                out.push_str(&format!("${{{}[{}]}}", name, index))
+            }
+            WordPart::ArrayLength(name) => out.push_str(&format!("${{#{}[@]}}", name)),
+            WordPart::ArrayIndices(name) => out.push_str(&format!("${{!{}[@]}}", name)),
+            WordPart::Substring {
+                name,
+                offset,
+                length,
+            } => {
+                if let Some(len) = length {
+                    out.push_str(&format!("${{{}:{}:{}}}", name, offset, len));
+                } else {
+                    out.push_str(&format!("${{{}:{}}}", name, offset));
+                }
+            }
+            WordPart::ArraySlice {
+                name,
+                offset,
+                length,
+            } => {
+                if let Some(len) = length {
+                    out.push_str(&format!("${{{}[@]:{}:{}}}", name, offset, len));
+                } else {
+                    out.push_str(&format!("${{{}[@]:{}}}", name, offset));
+                }
+            }
+            WordPart::IndirectExpansion {
+                name,
+                operator,
+                operand,
+                colon_variant,
+            } => {
+                if let Some(op) = operator {
+                    let c = if *colon_variant { ":" } else { "" };
+                    let op_char = match op {
+                        ParameterOp::UseDefault => "-",
+                        ParameterOp::AssignDefault => "=",
+                        ParameterOp::UseReplacement => "+",
+                        ParameterOp::Error => "?",
+                        _ => "",
+                    };
+                    out.push_str(&format!("${{!{}{}{}{}}}", name, c, op_char, operand));
+                } else {
+                    out.push_str(&format!("${{!{}}}", name));
+                }
+            }
+            WordPart::PrefixMatch(prefix) => out.push_str(&format!("${{!{}*}}", prefix)),
+            WordPart::ProcessSubstitution { commands, is_input } => {
+                let prefix = if *is_input { "<" } else { ">" };
+                out.push_str(&format!("{}({:?})", prefix, commands));
+            }
+            WordPart::Transformation { name, operator } => {
+                out.push_str(&format!("${{{}@{}}}", name, operator));
+            }
+        }
     }
 
     /// Execute a shell function call with call frame management.
