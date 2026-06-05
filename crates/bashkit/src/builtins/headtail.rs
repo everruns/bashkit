@@ -62,13 +62,16 @@ impl Builtin for Head {
                 match ctx.fs.read_file(&path).await {
                     Ok(content) => {
                         if byte_mode {
-                            // Byte mode: take first N bytes, preserve raw byte values
+                            // String-backed stdout cannot carry arbitrary raw bytes. Decode
+                            // valid UTF-8 normally, and use the Latin-1 fallback only for
+                            // non-UTF-8 device/binary data such as /dev/urandom.
                             let bytes = &content[..content.len().min(count)];
-                            let s: String = bytes.iter().map(|&b| b as char).collect();
-                            output.push_str(&s);
+                            output.push_str(&decode_file_bytes_for_path(&path, bytes));
                         } else {
-                            let text: String = content.iter().map(|&b| b as char).collect();
-                            output.push_str(&take_first_lines(&text, count));
+                            output.push_str(&take_first_lines(
+                                &decode_file_bytes_for_path(&path, &content),
+                                count,
+                            ));
                         }
                     }
                     Err(e) => {
@@ -177,6 +180,18 @@ fn parse_head_args(args: &[String], default: usize) -> Result<(usize, bool, Vec<
     }
 
     Ok((count, byte_mode, files))
+}
+
+fn decode_file_bytes_for_path(path: &std::path::Path, bytes: &[u8]) -> String {
+    if path == std::path::Path::new("/dev/urandom") || path == std::path::Path::new("/dev/random") {
+        latin1_bytes_to_string(bytes)
+    } else {
+        String::from_utf8(bytes.to_vec()).unwrap_or_else(|_| latin1_bytes_to_string(bytes))
+    }
+}
+
+fn latin1_bytes_to_string(bytes: &[u8]) -> String {
+    bytes.iter().map(|&b| b as char).collect()
 }
 
 /// Take the first N bytes from text.
