@@ -22,9 +22,12 @@
 #[cfg(feature = "interactive")]
 mod interactive;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::Parser;
-use std::path::PathBuf;
+use std::{
+    ffi::OsStr,
+    path::{Path, PathBuf},
+};
 use tokio::runtime::Builder;
 
 #[cfg(feature = "python")]
@@ -32,6 +35,8 @@ const PYTHON_INPROCESS_OPT_IN_ENV: &str = "BASHKIT_ALLOW_INPROCESS_PYTHON";
 
 #[cfg(feature = "sqlite")]
 const SQLITE_INPROCESS_OPT_IN_ENV: &str = "BASHKIT_ALLOW_INPROCESS_SQLITE";
+
+const REMOVED_MCP_COMMAND: &str = "mcp";
 
 /// Bashkit - Virtual bash interpreter
 #[derive(Parser, Debug)]
@@ -197,6 +202,25 @@ fn cli_mode(args: &Args) -> CliMode {
     }
 }
 
+fn validate_cli_args(args: &Args) -> Result<()> {
+    if args.command.is_none()
+        && args
+            .script
+            .as_deref()
+            .is_some_and(is_bare_removed_mcp_command)
+    {
+        bail!(
+            "the `bashkit mcp` MCP server command was removed; use `bashkit ./mcp` to execute a script named `mcp`"
+        );
+    }
+
+    Ok(())
+}
+
+fn is_bare_removed_mcp_command(script: &Path) -> bool {
+    script.as_os_str() == OsStr::new(REMOVED_MCP_COMMAND)
+}
+
 /// Parse mount specs (HOST_PATH or HOST_PATH:VFS_PATH) and apply to builder.
 #[cfg(feature = "realfs")]
 fn apply_real_mounts(
@@ -255,6 +279,7 @@ fn main() -> Result<()> {
     }));
 
     let args = Args::parse();
+    validate_cli_args(&args)?;
 
     let mode = cli_mode(&args);
     match mode {
@@ -391,10 +416,21 @@ mod tests {
     }
 
     #[test]
-    fn cli_mode_treats_mcp_as_script_name() {
+    fn validate_cli_args_rejects_removed_mcp_command() {
         let args = Args::parse_from(["bashkit", "mcp"]);
+        let err = validate_cli_args(&args).expect_err("bare mcp should be rejected");
+        assert!(
+            err.to_string().contains("MCP server command was removed"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_cli_args_allows_explicit_mcp_script_path() {
+        let args = Args::parse_from(["bashkit", "./mcp"]);
+        validate_cli_args(&args).expect("explicit mcp path is a script");
         assert_eq!(cli_mode(&args), CliMode::Script);
-        assert_eq!(args.script, Some(PathBuf::from("mcp")));
+        assert_eq!(args.script, Some(PathBuf::from("./mcp")));
     }
 
     #[test]
