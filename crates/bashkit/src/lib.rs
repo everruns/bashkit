@@ -1481,8 +1481,11 @@ impl BashBuilder {
     ///     .build();
     /// ```
     pub fn tty(mut self, fd: u32, is_terminal: bool) -> Self {
+        let key = format!("_TTY_{}", fd);
         if is_terminal {
-            self.env.insert(format!("_TTY_{}", fd), "1".to_string());
+            self.env.insert(key, "1".to_string());
+        } else {
+            self.env.remove(&key);
         }
         self
     }
