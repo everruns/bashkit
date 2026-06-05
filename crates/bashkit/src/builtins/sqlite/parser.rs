@@ -139,6 +139,12 @@ pub(super) fn strip_leading_noise(sql: &str) -> &str {
     let bytes = sql.as_bytes();
     let mut i = 0;
     loop {
+        // SQLite accepts one UTF-8 BOM before the first token; strip it so
+        // policy checks see the same leading keyword as the engine.
+        if i == 0 && bytes.starts_with(b"\xEF\xBB\xBF") {
+            i = 3;
+            continue;
+        }
         // ASCII whitespace
         while i < bytes.len() && bytes[i].is_ascii_whitespace() {
             i += 1;
@@ -455,6 +461,10 @@ mod tests {
             Some("ATTACH".into())
         );
         assert_eq!(leading_keyword("/* hi */ DETACH y"), Some("DETACH".into()));
+        assert_eq!(
+            leading_keyword("\u{feff}ATTACH 'x' AS y"),
+            Some("ATTACH".into())
+        );
     }
 
     #[test]
@@ -484,6 +494,10 @@ mod tests {
             Some("cache_size".into())
         );
         assert_eq!(
+            pragma_name("PRAGMA main . cache_size = -1024"),
+            Some("cache_size".into())
+        );
+        assert_eq!(
             pragma_name("pragma temp.user_version"),
             Some("user_version".into())
         );
@@ -491,6 +505,10 @@ mod tests {
 
     #[test]
     fn pragma_name_handles_quoted_schema_qualified_names() {
+        assert_eq!(
+            pragma_name("PRAGMA \"cache_size\" = -1024"),
+            Some("cache_size".into())
+        );
         assert_eq!(
             pragma_name("PRAGMA main.\"cache_size\" = -1024"),
             Some("cache_size".into())
@@ -513,6 +531,10 @@ mod tests {
         );
         assert_eq!(
             pragma_name("PRAGMA/**/cache_size"),
+            Some("cache_size".into())
+        );
+        assert_eq!(
+            pragma_name("PRAGMA /*x*/ cache_size"),
             Some("cache_size".into())
         );
     }
