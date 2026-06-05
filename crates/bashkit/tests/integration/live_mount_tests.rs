@@ -168,3 +168,19 @@ async fn live_mount_is_readonly_when_builder_enables_readonly_filesystem() {
         .unwrap();
     assert_ne!(result.exit_code, 0);
 }
+
+#[test]
+fn live_mount_rejects_self_mount() {
+    let bash = Bash::new();
+    let self_fs = bash.fs();
+
+    let err = bash
+        .mount("/", self_fs)
+        .expect_err("mounting Bash::fs() back into itself must be rejected");
+
+    assert!(
+        err.to_string()
+            .contains("cannot mount filesystem into itself"),
+        "unexpected error: {err}"
+    );
+}

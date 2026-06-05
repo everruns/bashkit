@@ -1096,6 +1096,13 @@ impl Bash {
         vfs_path: impl AsRef<std::path::Path>,
         fs: Arc<dyn FileSystem>,
     ) -> Result<()> {
+        // THREAT[TM-DOS-058]: `Bash::fs()` exposes the live outer VFS handle;
+        // reject mounting that handle back into this Bash before any wrappers
+        // can hide pointer identity and recurse through delegated operations.
+        if Arc::ptr_eq(&self.fs, &fs) {
+            return Err(std::io::Error::other("cannot mount filesystem into itself").into());
+        }
+
         let fs: Arc<dyn FileSystem> = if self.readonly_filesystem {
             Arc::new(ReadOnlyFs::new(fs))
         } else {
