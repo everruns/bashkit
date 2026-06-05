@@ -361,9 +361,9 @@ function toNativeOnOutput(onOutput?: OnOutput): NativeOnOutput | undefined {
       }
       return undefined;
     } catch (error) {
-      // Security: never propagate error.stack — it contains host file paths and
-      // function names (TM-INF-022 / issue #1868). Use error.message only, and
-      // strip path-like patterns so attacker-controlled output cannot smuggle them.
+      // THREAT[TM-INF-028]: never propagate error.stack — it contains host file
+      // paths and function names. Use error.message only, and strip path-like
+      // patterns so attacker-controlled output cannot smuggle them.
       const raw =
         error instanceof Error
           ? (error.message ?? error.toString())
