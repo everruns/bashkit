@@ -4147,6 +4147,16 @@ impl Interpreter {
         self.execute_command_sequence_impl(commands, false).await
     }
 
+    /// Execute commands whose stdout is captured by command substitution.
+    /// Streaming callbacks must stay suspended so hidden capture output cannot
+    /// leak to observers before it is assigned or otherwise consumed.
+    async fn execute_capture_only_sequence(&mut self, commands: &[Command]) -> Result<ExecResult> {
+        let saved_callback = self.output_callback.take();
+        let result = self.execute_command_sequence(commands).await;
+        self.output_callback = saved_callback;
+        result
+    }
+
     /// Execute a sequence of commands with optional errexit checking
     async fn execute_command_sequence_impl(
         &mut self,
@@ -8236,7 +8246,9 @@ impl Interpreter {
                     self.limits.max_parser_operations,
                 )
                 .parse()
-                && let Ok(trap_result) = self.execute_command_sequence(&trap_script.commands).await
+                && let Ok(trap_result) = self
+                    .execute_capture_only_sequence(&trap_script.commands)
+                    .await
             {
                 stdout.push_str(&trap_result.stdout);
             }

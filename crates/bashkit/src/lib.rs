@@ -6604,6 +6604,12 @@ echo missing fi"#,
     }
 
     #[tokio::test]
+    async fn test_streaming_equivalence_command_substitution_exit_trap() {
+        assert_streaming_equivalence("secret=$(trap 'echo TOKEN' EXIT); trap - EXIT; echo ok")
+            .await;
+    }
+
+    #[tokio::test]
     async fn test_max_memory_caps_string_growth() {
         let mut bash = Bash::builder()
             .max_memory(1024)
