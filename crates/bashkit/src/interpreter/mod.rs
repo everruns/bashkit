@@ -5432,7 +5432,7 @@ impl Interpreter {
                 }
             };
 
-            self.apply_builtin_side_effects(&result);
+            self.apply_builtin_side_effects(&result).await;
 
             // Sync successful export operands into env so subprocess isolation can see them.
             // Keep syncing even if export returned nonzero for other args (bash-compatible).
@@ -7607,7 +7607,7 @@ impl Interpreter {
     }
 
     /// Process structured side effects from builtin execution.
-    fn apply_builtin_side_effects(&mut self, result: &ExecResult) {
+    async fn apply_builtin_side_effects(&mut self, result: &ExecResult) {
         // Builtins that mutate SHOPT_* directly via `ctx.variables` (e.g. the
         // `set -e` / `set +u` paths in the `set` builtin) don't update the
         // cached `flags` bitfield. Resync once after every builtin so the
@@ -7656,6 +7656,8 @@ impl Interpreter {
                 }
                 builtins::BuiltinSideEffect::ClearHistory => {
                     self.history.clear();
+                    // Persist immediately so `history -c` is a same-exec sanitization boundary.
+                    self.save_history().await;
                 }
                 builtins::BuiltinSideEffect::SetLastExitCode(code) => {
                     self.last_exit_code = *code;

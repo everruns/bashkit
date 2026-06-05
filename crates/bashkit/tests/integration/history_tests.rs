@@ -57,6 +57,39 @@ async fn history_clear() {
 }
 
 #[tokio::test]
+async fn history_clear_persists_before_next_command() {
+    use std::sync::Arc;
+
+    let fs: Arc<dyn FileSystem> = Arc::new(bashkit::InMemoryFs::new());
+    let history_path = std::path::Path::new("/home/user/.bash_history");
+    fs.mkdir(std::path::Path::new("/home/user"), true)
+        .await
+        .unwrap();
+    fs.write_file(
+        history_path,
+        b"1700000000|0|10|/home/user|echo SECRET_TOKEN_123\n",
+    )
+    .await
+    .unwrap();
+
+    let mut bash = Bash::builder()
+        .fs(Arc::clone(&fs))
+        .history_file(history_path)
+        .build();
+
+    let result = bash
+        .exec("history -c\ncat /home/user/.bash_history")
+        .await
+        .unwrap();
+
+    assert!(
+        !result.stdout.contains("SECRET_TOKEN_123"),
+        "history -c must wipe persisted history before later commands can read it: {}",
+        result.stdout
+    );
+}
+
+#[tokio::test]
 async fn history_grep() {
     let mut bash = Bash::new();
     bash.exec("echo hello").await.unwrap();
