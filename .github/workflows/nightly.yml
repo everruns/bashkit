@@ -20,10 +20,10 @@ jobs:
     name: Miri
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Install Rust nightly with Miri
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # nightly
         with:
           components: miri
 
@@ -44,15 +44,15 @@ jobs:
     name: Security Analysis
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@1.95.0
+        uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Install cargo-geiger
-        uses: taiki-e/cache-cargo-install-action@v3
+        uses: taiki-e/cache-cargo-install-action@417450f3c33ee20393705369577571770643d4c7 # v3
         with:
           tool: cargo-geiger
           locked: true
@@ -64,7 +64,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload geiger report
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: geiger-report
           path: geiger-report.txt
@@ -78,7 +78,7 @@ jobs:
     # the last two nightly runs cancelled mid-suite at exactly 30 min.
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       # `-Z build-std` rebuilds std + every dep + every bashkit test with
       # ASAN instrumentation. Target dir grows past the default runner's
@@ -87,11 +87,11 @@ jobs:
         uses: ./.github/actions/free-disk-space
 
       - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # nightly
         with:
           components: rust-src
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           cache-on-failure: true
 
