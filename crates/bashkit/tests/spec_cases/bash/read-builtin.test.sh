@@ -83,6 +83,14 @@ echo "a=$a b=$b c=$c"
 a=one b=two c=three
 ### end
 
+### read_ifs_mixed_whitespace_before_non_ws_delimiter
+# IFS whitespace adjacent to a non-whitespace delimiter is one delimiter sequence
+IFS=": " read a b c <<< "one : two"
+echo "a=$a b=$b c=$c"
+### expect
+a=one b=two c=
+### end
+
 ### read_nchars
 # read -n N reads N characters
 read -n 3 var <<< "hello"
