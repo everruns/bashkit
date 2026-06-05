@@ -625,6 +625,11 @@ async fn snapshot_restore_extreme_exec_counter_errors_without_overflow() {
         result.is_err(),
         "restored u64::MAX exec counter must not panic or wrap below the limit"
     );
+    let err_str = result.unwrap_err().to_string();
+    assert!(
+        err_str.contains("session exec() call limit"),
+        "error must be session exec limit, got: {err_str}"
+    );
     assert_eq!(bash.session_counters().1, u64::MAX);
 }
 
