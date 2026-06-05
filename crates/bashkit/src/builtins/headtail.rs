@@ -182,11 +182,33 @@ fn parse_head_args(args: &[String], default: usize) -> Result<(usize, bool, Vec<
     Ok((count, byte_mode, files))
 }
 
+fn normalize_vfs_path(path: &std::path::Path) -> std::path::PathBuf {
+    path.components()
+        .fold(std::path::PathBuf::new(), |mut acc, c| {
+            match c {
+                std::path::Component::ParentDir => {
+                    acc.pop();
+                    acc
+                }
+                std::path::Component::CurDir => acc,
+                c => {
+                    acc.push(c);
+                    acc
+                }
+            }
+        })
+}
+
 fn decode_file_bytes_for_path(path: &std::path::Path, bytes: &[u8]) -> String {
-    if path == std::path::Path::new("/dev/urandom") || path == std::path::Path::new("/dev/random") {
+    let normalized = normalize_vfs_path(path);
+    if normalized == std::path::Path::new("/dev/urandom")
+        || normalized == std::path::Path::new("/dev/random")
+    {
         latin1_bytes_to_string(bytes)
     } else {
-        String::from_utf8(bytes.to_vec()).unwrap_or_else(|_| latin1_bytes_to_string(bytes))
+        std::str::from_utf8(bytes)
+            .map(str::to_owned)
+            .unwrap_or_else(|_| latin1_bytes_to_string(bytes))
     }
 }
 

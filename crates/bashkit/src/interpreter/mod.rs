@@ -456,11 +456,30 @@ fn command_not_found_message(name: &str, known_commands: &[&str]) -> String {
 /// byte model for random devices, and use it as a fallback for other non-UTF-8
 /// data that cannot be represented as text without replacement.
 fn decode_file_bytes(bytes: &[u8]) -> String {
-    String::from_utf8(bytes.to_vec()).unwrap_or_else(|_| latin1_bytes_to_string(bytes))
+    std::str::from_utf8(bytes)
+        .map(str::to_owned)
+        .unwrap_or_else(|_| latin1_bytes_to_string(bytes))
+}
+
+fn normalize_vfs_path(path: &Path) -> std::path::PathBuf {
+    path.components().fold(std::path::PathBuf::new(), |mut acc, c| {
+        match c {
+            std::path::Component::ParentDir => {
+                acc.pop();
+                acc
+            }
+            std::path::Component::CurDir => acc,
+            c => {
+                acc.push(c);
+                acc
+            }
+        }
+    })
 }
 
 fn decode_file_bytes_for_path(path: &Path, bytes: &[u8]) -> String {
-    if path == Path::new("/dev/urandom") || path == Path::new("/dev/random") {
+    let normalized = normalize_vfs_path(path);
+    if normalized == Path::new("/dev/urandom") || normalized == Path::new("/dev/random") {
         latin1_bytes_to_string(bytes)
     } else {
         decode_file_bytes(bytes)
