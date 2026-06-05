@@ -3876,10 +3876,14 @@ async fn try_indexed_search(
                 continue;
             }
             if let Ok(content) = fs.read_file(&candidate).await {
-                inputs.push(RgInput::discovered(
-                    display_path_for(&candidate, cwd, root_arg.as_deref(), opts),
-                    decode_rg_content(&content, opts),
-                ));
+                let display = display_path_for(&candidate, cwd, root_arg.as_deref(), opts);
+                let content = decode_rg_content(&content, opts);
+                let input = if explicit_file_match {
+                    RgInput::explicit(display, content)
+                } else {
+                    RgInput::discovered(display, content)
+                };
+                inputs.push(input);
             }
         }
     }
@@ -13869,6 +13873,32 @@ mod tests {
         let result = run_rg_with_fs(&["--no-ignore", "secret", "/safe"], None, fs).await;
         assert_eq!(result.exit_code, 1);
         assert_eq!(result.stdout, "");
+    }
+
+    #[tokio::test]
+    async fn test_rg_indexed_explicit_binary_file_reports_match_by_default() {
+        let inner = InMemoryFs::new();
+        inner.mkdir(Path::new("/proj"), true).await.unwrap();
+        inner
+            .write_file(Path::new("/proj/bin.dat"), b"abc\0needle\n")
+            .await
+            .unwrap();
+
+        let fs = Arc::new(IndexedTestFs {
+            inner,
+            matches: vec![SearchMatch {
+                path: PathBuf::from("/proj/bin.dat"),
+                line_number: 1,
+                line_content: "abc\0needle".to_string(),
+            }],
+        });
+
+        let result = run_rg_with_fs(&["needle", "/proj/bin.dat"], None, fs).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(
+            result.stdout,
+            "binary file matches (found \"\\0\" byte around offset 3)\n"
+        );
     }
 
     #[tokio::test]
