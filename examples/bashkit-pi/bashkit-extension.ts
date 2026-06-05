@@ -93,7 +93,13 @@ export default function (pi: any) {
 			_toolCallId: string,
 			params: { command: string; timeout?: number },
 		) {
-			const result = bash.executeSync(params.command);
+			// Convert caller-supplied seconds to milliseconds for AbortSignal.
+			// If no timeout is given, execute unbounded (subject to Bash instance limits).
+			const signal =
+				params.timeout != null
+					? AbortSignal.timeout(params.timeout * 1000)
+					: undefined;
+			const result = bash.executeSync(params.command, { signal });
 			let output = "";
 			if (result.stdout) output += result.stdout;
 			if (result.stderr) output += result.stderr;
