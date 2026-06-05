@@ -32,6 +32,10 @@ pub(crate) const AWK_MAX_GETLINE_CACHED_FILES: usize = 100;
 #[cfg(feature = "http_client")]
 pub(crate) const CURL_MAX_REDIRECTS: u32 = 10;
 
+/// curl: max request body bytes for `-d`, `-d @-`, `-d @file`, and multipart assembly.
+#[cfg(feature = "http_client")]
+pub(crate) const CURL_MAX_REQUEST_BODY_BYTES: usize = 10_000_000;
+
 /// dirs/pushd/popd: max entries on the directory stack.
 pub(crate) const DIRSTACK_MAX_SIZE: usize = 4096;
 

@@ -16,6 +16,9 @@ use async_trait::async_trait;
 
 #[cfg(feature = "http_client")]
 use super::limits::CURL_MAX_REDIRECTS as MAX_REDIRECTS;
+#[cfg(feature = "http_client")]
+use super::limits::CURL_MAX_REQUEST_BODY_BYTES;
+#[cfg(feature = "http_client")]
 use super::resolve_path;
 use super::{Builtin, Context};
 use crate::error::Result;
@@ -185,34 +188,8 @@ impl Builtin for Curl {
             i += 1;
         }
 
-        // Resolve -d @- (stdin) and -d @file (VFS file) before sending
-        if let Some(ref d) = data
-            && let Some(path) = d.strip_prefix('@')
-        {
-            if path == "-" {
-                // Read from stdin
-                data = Some(ctx.stdin.unwrap_or("").to_string());
-            } else {
-                // Read from VFS file
-                let resolved = resolve_path(ctx.cwd, path);
-                match ctx.fs.read_file(&resolved).await {
-                    Ok(content) => {
-                        data = Some(String::from_utf8_lossy(&content).into_owned());
-                    }
-                    Err(_) => {
-                        return Ok(ExecResult::err(
-                            format!(
-                                "curl: Failed reading data file {}: No such file or directory\n",
-                                path
-                            ),
-                            26,
-                        ));
-                    }
-                }
-            }
-        }
-
-        // Validate URL
+        // Validate URL before resolving @file bodies. This keeps failed/no-network
+        // invocations from forcing host/VFS reads or large allocations.
         let url = match url {
             Some(u) => u,
             None => {
@@ -235,11 +212,21 @@ impl Builtin for Curl {
         #[cfg(feature = "http_client")]
         {
             if let Some(http_client) = ctx.http_client {
+                if let Err(e) = http_client.enforce_url_security(&url).await {
+                    return Ok(curl_network_error_result(e));
+                }
+                let data_body =
+                    match resolve_data_body(data.as_deref(), ctx.stdin, ctx.cwd, ctx.fs.as_ref())
+                        .await
+                    {
+                        Ok(body) => body,
+                        Err(result) => return Ok(*result),
+                    };
                 return execute_curl_request(
                     http_client,
                     &url,
                     &method,
-                    data.as_deref(),
+                    data_body.as_deref(),
                     &headers,
                     head_only,
                     silent,
@@ -294,6 +281,100 @@ impl Builtin for Curl {
     }
 }
 
+#[cfg(feature = "http_client")]
+fn curl_network_error_result(e: impl std::fmt::Display) -> ExecResult {
+    let error_msg = e.to_string();
+    let exit_code = if error_msg.contains("access denied") {
+        7
+    } else if error_msg.contains("timeout") || error_msg.contains("timed out") {
+        28
+    } else if error_msg.contains("response too large") {
+        63
+    } else if error_msg.contains("invalid URL") {
+        3
+    } else {
+        1
+    };
+
+    ExecResult::err(format!("curl: {}\n", error_msg), exit_code)
+}
+
+#[cfg(feature = "http_client")]
+fn curl_data_file_error(path: &str) -> ExecResult {
+    ExecResult::err(
+        format!(
+            "curl: Failed reading data file {}: No such file or directory\n",
+            path
+        ),
+        26,
+    )
+}
+
+#[cfg(feature = "http_client")]
+fn curl_body_too_large_error() -> ExecResult {
+    ExecResult::err(
+        format!(
+            "curl: request body too large (max {} bytes)\n",
+            CURL_MAX_REQUEST_BODY_BYTES
+        ),
+        2,
+    )
+}
+
+#[cfg(feature = "http_client")]
+fn check_curl_body_size(len: usize) -> Option<ExecResult> {
+    if len > CURL_MAX_REQUEST_BODY_BYTES {
+        Some(curl_body_too_large_error())
+    } else {
+        None
+    }
+}
+
+#[cfg(feature = "http_client")]
+async fn resolve_data_body(
+    data: Option<&str>,
+    stdin: Option<&str>,
+    cwd: &std::path::Path,
+    fs: &dyn crate::fs::FileSystem,
+) -> std::result::Result<Option<Vec<u8>>, Box<ExecResult>> {
+    let Some(data) = data else {
+        return Ok(None);
+    };
+
+    if let Some(path) = data.strip_prefix('@') {
+        if path == "-" {
+            let bytes = stdin.unwrap_or("").as_bytes().to_vec();
+            if let Some(result) = check_curl_body_size(bytes.len()) {
+                return Err(Box::new(result));
+            }
+            return Ok(Some(bytes));
+        }
+
+        let resolved = resolve_path(cwd, path);
+        let meta = fs
+            .stat(&resolved)
+            .await
+            .map_err(|_| Box::new(curl_data_file_error(path)))?;
+        if meta.size > CURL_MAX_REQUEST_BODY_BYTES as u64 {
+            return Err(Box::new(curl_body_too_large_error()));
+        }
+        let bytes = fs
+            .read_file(&resolved)
+            .await
+            .map_err(|_| Box::new(curl_data_file_error(path)))?;
+        if let Some(result) = check_curl_body_size(bytes.len()) {
+            return Err(Box::new(result));
+        }
+        return Ok(Some(bytes));
+    }
+
+    let bytes = data.as_bytes().to_vec();
+    if let Some(result) = check_curl_body_size(bytes.len()) {
+        return Err(Box::new(result));
+    }
+    Ok(Some(bytes))
+}
+
 /// Sanitize a multipart field name or filename to prevent header injection.
 /// Rejects CR/LF characters (which could inject headers) and escapes double quotes.
 fn sanitize_multipart_name(value: &str, label: &str) -> std::result::Result<String, String> {
@@ -313,7 +394,7 @@ async fn execute_curl_request(
     http_client: &crate::network::HttpClient,
     url: &str,
     method: &str,
-    data: Option<&str>,
+    data: Option<&[u8]>,
     headers: &[String],
     head_only: bool,
     _silent: bool,
@@ -429,7 +510,16 @@ async fn execute_curl_request(
                         (file_path, guess_mime(file_path))
                     };
                     let resolved = resolve_path(ctx.cwd, path);
-                    let file_content = ctx.fs.read_file(&resolved).await.unwrap_or_default();
+                    let file_content = match ctx.fs.stat(&resolved).await {
+                        Ok(meta) if meta.size > CURL_MAX_REQUEST_BODY_BYTES as u64 => {
+                            return Ok(curl_body_too_large_error());
+                        }
+                        Ok(_) => ctx.fs.read_file(&resolved).await.unwrap_or_default(),
+                        Err(_) => Vec::new(),
+                    };
+                    if let Some(result) = check_curl_body_size(file_content.len()) {
+                        return Ok(result);
+                    }
                     let filename = std::path::Path::new(path)
                         .file_name()
                         .map(|n| n.to_string_lossy().to_string())
@@ -465,6 +555,9 @@ async fn execute_curl_request(
             }
         }
         body.extend_from_slice(format!("--{}--\r\n", boundary).as_bytes());
+        if let Some(result) = check_curl_body_size(body.len()) {
+            return Ok(result);
+        }
         Some(body)
     } else {
         None
@@ -474,7 +567,7 @@ async fn execute_curl_request(
     let initial_body = if multipart_body.is_some() {
         multipart_body.as_deref().map(|b| b.to_vec())
     } else {
-        data.map(|d| d.as_bytes().to_vec())
+        data.map(|d| d.to_vec())
     };
     let mut current_body = initial_body;
     let mut current_method = http_method;
@@ -636,22 +729,7 @@ async fn execute_curl_request(
                 return Ok(ExecResult::ok(final_output));
             }
             Err(e) => {
-                let error_msg = e.to_string();
-
-                // Determine appropriate exit code based on error type
-                let exit_code = if error_msg.contains("access denied") {
-                    7 // curl: couldn't connect to host
-                } else if error_msg.contains("timeout") || error_msg.contains("timed out") {
-                    28 // curl: operation timed out
-                } else if error_msg.contains("response too large") {
-                    63 // curl: maximum file size exceeded
-                } else if error_msg.contains("invalid URL") {
-                    3 // curl: URL malformed
-                } else {
-                    1 // general error
-                };
-
-                return Ok(ExecResult::err(format!("curl: {}\n", error_msg), exit_code));
+                return Ok(curl_network_error_result(e));
             }
         }
     }
@@ -1274,13 +1352,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_curl_data_at_stdin() {
-        // -d @- should read from stdin (network not configured, but data resolution
-        // happens before the network check)
         let result =
             run_curl_with_stdin_and_fs(&["-d", "@-", "https://example.com"], Some("hello"), &[])
                 .await;
-        // Without network, we get the "network access not configured" error,
-        // but the important thing is that @- was resolved (not sent literally)
         assert!(result.stderr.contains("network access not configured"));
     }
 
@@ -1296,21 +1370,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_curl_data_at_file_not_found() {
+    async fn test_curl_data_at_file_not_found_without_network_does_not_read() {
         let result =
             run_curl_with_stdin_and_fs(&["-d", "@/missing.json", "https://example.com"], None, &[])
                 .await;
         assert_ne!(result.exit_code, 0);
-        assert_eq!(result.exit_code, 26);
-        assert!(result.stderr.contains("Failed reading data file"));
+        assert!(result.stderr.contains("network access not configured"));
+    }
+
+    #[tokio::test]
+    async fn test_curl_data_at_file_without_url_does_not_read() {
+        let result = run_curl_with_stdin_and_fs(&["-d", "@/missing.json"], None, &[]).await;
+        assert_ne!(result.exit_code, 0);
+        assert_eq!(result.exit_code, 3);
+        assert!(result.stderr.contains("no URL specified"));
     }
 
     #[tokio::test]
     async fn test_curl_data_at_stdin_none() {
-        // -d @- with no stdin should resolve to empty string
         let result =
             run_curl_with_stdin_and_fs(&["-d", "@-", "https://example.com"], None, &[]).await;
-        // Should proceed past data resolution (get network error, not a data error)
         assert!(result.stderr.contains("network access not configured"));
     }
 
@@ -1326,6 +1405,23 @@ mod tests {
     #[cfg(feature = "http_client")]
     mod network_tests {
         use super::*;
+
+        #[tokio::test]
+        async fn test_curl_data_at_stdin_body_too_large() {
+            let fs = InMemoryFs::new();
+            let large_body = "x".repeat(CURL_MAX_REQUEST_BODY_BYTES + 1);
+            let result = resolve_data_body(
+                Some("@-"),
+                Some(&large_body),
+                std::path::Path::new("/"),
+                &fs,
+            )
+            .await;
+
+            let err = result.expect_err("oversize stdin body should be rejected");
+            assert_eq!(err.exit_code, 2);
+            assert!(err.stderr.contains("request body too large"));
+        }
 
         #[test]
         fn test_extract_filename_from_url() {
