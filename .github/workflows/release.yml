@@ -84,9 +84,11 @@ jobs:
       - name: Create and verify release tag
         run: |
           TAG="${{ steps.version.outputs.tag }}"
-          git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG" 2>/dev/null || true
-          if git rev-parse --verify "$TAG" >/dev/null 2>&1; then
-            TAG_SHA=$(git rev-list -n 1 "$TAG")
+          # Check remote first to avoid stale local refs
+          REMOTE_TAG_SHA=$(git ls-remote origin "refs/tags/$TAG" | awk '{print $1}')
+          if [ -n "$REMOTE_TAG_SHA" ]; then
+            git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+            TAG_SHA=$(git rev-list -n 1 "refs/tags/$TAG")
             if [ "$TAG_SHA" != "$GITHUB_SHA" ]; then
               echo "Error: existing tag $TAG points to $TAG_SHA, expected $GITHUB_SHA"
               exit 1
