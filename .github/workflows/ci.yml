@@ -189,10 +189,10 @@ jobs:
           TICKET_REF: 194b71a8bbc3771da1ce9f579395937c976bbddc
         run: bash examples/ticket-cli.sh
 
-      # Detect whether DOPPLER_TOKEN is configured. Only set on non-fork
-      # PRs/pushes; fork PRs never see the secret. Subsequent Doppler
-      # steps gate on `env.DOPPLER_AVAILABLE` so this job stays green
-      # in repos/forks without the secret configured.
+      # Detect whether DOPPLER_TOKEN is configured. Only set on push to
+      # main (trusted code); PRs — including same-repo branches — must
+      # never see the secret. Subsequent Doppler steps gate on
+      # `env.DOPPLER_AVAILABLE` so this job stays green when unconfigured.
       - name: Detect Doppler availability (trusted runs only)
         if: github.event_name == 'push'
         env:
