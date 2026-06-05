@@ -369,10 +369,11 @@ function toNativeOnOutput(onOutput?: OnOutput): NativeOnOutput | undefined {
           ? (error.message ?? error.toString())
           : String(error);
       // Remove absolute-path and file:// URL segments from the message.
-      const sanitized = raw.replace(
-        /(\s|^)(\/[^\s]*|file:\/\/[^\s]*)/g,
-        "$1<path>",
-      );
+      // Use a negative lookbehind so paths after punctuation (e.g. "at(/home/…")
+      // are also stripped, not just paths preceded by whitespace.
+      const sanitized = raw
+        .replace(/file:\/\/[^\s]*/g, "<path>")
+        .replace(/(?<!\w)\/[^\s]*/g, "<path>");
       return sanitized.slice(0, 256) || "output callback failed";
     }
   };

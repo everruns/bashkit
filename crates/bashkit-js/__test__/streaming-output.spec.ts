@@ -268,6 +268,8 @@ for (const [label, create] of [
     );
 
     t.truthy(error);
+    // A sanitized message must still propagate (not silently swallowed)
+    t.true(error.message.length > 0, "a sanitized message must still propagate");
     // Stack trace must not appear in the propagated error
     t.false(
       error.message.includes("at Object"),
@@ -281,6 +283,43 @@ for (const [label, create] of [
     t.false(
       error.message.includes("/home/server"),
       "host path must not propagate",
+    );
+    // Paths after punctuation (e.g. "at(/home/…)") must also be stripped
+    t.false(
+      error.message.includes("/home/"),
+      "path after punctuation must not propagate",
+    );
+  });
+
+  test(`${label}: executeSync onOutput error does not leak stack trace or host paths`, (t) => {
+    const shell = create();
+    const error = t.throws(() =>
+      shell.executeSync(SCRIPT, {
+        onOutput() {
+          const err = new Error("fail at(/home/server/src/secret.ts:42)");
+          err.stack = `Error: fail at /home/server/src/secret.ts:42\n    at Object.<anonymous> (/home/server/src/wrapper.ts:99:5)`;
+          throw err;
+        },
+      }),
+    );
+
+    t.truthy(error);
+    t.true(error.message.length > 0, "a sanitized message must still propagate");
+    t.false(
+      error.message.includes("at Object"),
+      "stack frame must not propagate",
+    );
+    t.false(
+      error.message.includes("wrapper.ts"),
+      "host filename must not propagate",
+    );
+    t.false(
+      error.message.includes("/home/server"),
+      "host path must not propagate",
+    );
+    t.false(
+      error.message.includes("/home/"),
+      "path after punctuation must not propagate",
     );
   });
 
