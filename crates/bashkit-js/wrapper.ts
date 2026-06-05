@@ -1386,6 +1386,16 @@ export class BashTool {
     this.native.writeFile(path, content);
   }
 
+  /** Create a directory. If recursive is true, creates parents as needed. */
+  mkdir(path: string, recursive?: boolean): void {
+    this.native.mkdir(path, recursive);
+  }
+
+  /** Remove a file or directory. If recursive is true, removes contents. */
+  remove(path: string, recursive?: boolean): void {
+    this.native.remove(path, recursive);
+  }
+
   /** Get metadata for a path (fileType, size, mode, timestamps). */
   stat(path: string): {
     fileType: string;
