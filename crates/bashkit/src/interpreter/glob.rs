@@ -68,9 +68,18 @@ impl Interpreter {
         if !self.is_extglob() {
             return false;
         }
-        let bytes = s.as_bytes();
-        for i in 0..bytes.len().saturating_sub(1) {
-            if matches!(bytes[i], b'@' | b'?' | b'*' | b'+' | b'!') && bytes[i + 1] == b'(' {
+        let mut escaped = false;
+        let mut chars = s.chars().peekable();
+        while let Some(ch) = chars.next() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if matches!(ch, '@' | '?' | '*' | '+' | '!') && chars.peek() == Some(&'(') {
                 return true;
             }
         }
@@ -84,12 +93,8 @@ impl Interpreter {
             return true;
         }
 
-        // Glob pattern matching with *, ?, [], and extglob support
-        if pattern.contains('*')
-            || pattern.contains('?')
-            || pattern.contains('[')
-            || self.contains_extglob(pattern)
-        {
+        // Glob pattern matching with unescaped *, ?, [], and extglob support
+        if self.contains_glob_chars(pattern) || self.contains_extglob(pattern) {
             self.glob_match(value, pattern)
         } else {
             // Literal match
@@ -184,6 +189,21 @@ impl Interpreter {
             match (pattern_chars.peek().copied(), value_chars.peek().copied()) {
                 (None, None) => return true,
                 (None, Some(_)) => return false,
+                (Some('\\'), Some(v)) => {
+                    pattern_chars.next();
+                    let literal = pattern_chars.next().unwrap_or('\\');
+                    let matches = if nocase {
+                        literal.eq_ignore_ascii_case(&v)
+                    } else {
+                        literal == v
+                    };
+                    if matches {
+                        value_chars.next();
+                    } else {
+                        return false;
+                    }
+                }
+                (Some('\\'), None) => return false,
                 (Some('*'), _) => {
                     // Check for extglob *(...)
                     let mut pc_clone = pattern_chars.clone();
@@ -566,7 +586,21 @@ impl Interpreter {
     // ── Glob option helpers ───────────────────────────────────────────
 
     pub(crate) fn contains_glob_chars(&self, s: &str) -> bool {
-        s.contains('*') || s.contains('?') || s.contains('[')
+        let mut escaped = false;
+        for ch in s.chars() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if matches!(ch, '*' | '?' | '[') {
+                return true;
+            }
+        }
+        false
     }
 
     /// Check if dotglob shopt is enabled
