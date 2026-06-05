@@ -2556,6 +2556,7 @@ impl Interpreter {
             CompoundCommand::While(while_cmd) => self.execute_while(while_cmd).await,
             CompoundCommand::Until(until_cmd) => self.execute_until(until_cmd).await,
             CompoundCommand::Subshell(commands) => {
+                self.counters.push_subshell(&self.limits)?;
                 // Subshells run in fully isolated scope: variables, arrays,
                 // functions, cwd, traps, positional params, and options are
                 // all snapshot/restored so mutations don't leak to the parent.
@@ -2602,6 +2603,7 @@ impl Interpreter {
                 self.call_stack = saved_call_stack;
                 self.last_exit_code = saved_exit;
                 self.coproc_buffers = saved_coproc;
+                self.counters.pop_subshell();
 
                 // Consume Exit and Return control flow at subshell boundary —
                 // they only terminate the subshell, not the parent shell.
@@ -12217,6 +12219,21 @@ mod tests {
         assert!(matches!(
             err,
             crate::error::Error::ResourceLimit(crate::limits::LimitExceeded::MaxLoopIterations(2))
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_nested_subshells_enforce_depth_limit() {
+        let limits = ExecutionLimits::new().max_subshell_depth(2);
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        let mut interp = Interpreter::new(Arc::clone(&fs));
+        interp.set_limits(limits);
+        let parser = Parser::new("( ( ( echo too-deep ) ) )");
+        let ast = parser.parse().unwrap();
+        let err = interp.execute(&ast).await.unwrap_err();
+        assert!(matches!(
+            err,
+            crate::error::Error::ResourceLimit(crate::limits::LimitExceeded::MaxSubshellDepth(2))
         ));
     }
 

@@ -93,6 +93,13 @@ pub struct ExecutionLimits {
     /// Default: 32
     pub max_subst_depth: usize,
 
+    // THREAT[TM-DOS-092]: Nested `( ... )` subshells keep saved call-stack
+    // clones and CoW state snapshots alive until unwind. Bound nesting so large
+    // positional parameters/state cannot be multiplied up to max_ast_depth.
+    /// Maximum explicit subshell nesting depth.
+    /// Default: 32
+    pub max_subshell_depth: usize,
+
     /// Maximum persistent custom file descriptors opened via `exec N>file`,
     /// `exec N<file`, or fd duplication. Standard fds 0/1/2 do not count.
     /// Default: 1024
@@ -118,6 +125,7 @@ impl Default for ExecutionLimits {
             max_stdout_bytes: 1_048_576, // 1MB
             max_stderr_bytes: 1_048_576, // 1MB
             max_subst_depth: 32,
+            max_subshell_depth: 32,
             max_file_descriptors: 1024,
             capture_final_env: false,
         }
@@ -233,6 +241,15 @@ impl ExecutionLimits {
         self
     }
 
+    /// Set maximum explicit subshell nesting depth.
+    /// Passing 0 is treated as "use default" (no-op) to prevent misconfiguration.
+    pub fn max_subshell_depth(mut self, depth: usize) -> Self {
+        if depth > 0 {
+            self.max_subshell_depth = depth;
+        }
+        self
+    }
+
     /// Set maximum persistent custom file descriptors.
     /// A value of 0 is a valid strict limit that prevents custom descriptors.
     pub fn max_file_descriptors(mut self, count: usize) -> Self {
@@ -331,6 +348,9 @@ pub struct ExecutionCounters {
     /// Current command substitution nesting depth.
     pub subst_depth: usize,
 
+    /// Current explicit subshell nesting depth.
+    pub subshell_depth: usize,
+
     // THREAT[TM-DOS-059]: Session-level cumulative counters.
     // These persist across exec() calls (never reset by reset_for_execution).
     /// Total commands across all exec() calls in this session.
@@ -353,10 +373,11 @@ impl ExecutionCounters {
         self.commands = 0;
         self.loop_iterations.clear();
         self.total_loop_iterations = 0;
-        // function_depth and subst_depth should already be 0 between exec() calls,
-        // but reset defensively to avoid stuck state
+        // function_depth/subst_depth/subshell_depth should already be 0 between
+        // exec() calls, but reset defensively to avoid stuck state.
         self.function_depth = 0;
         self.subst_depth = 0;
+        self.subshell_depth = 0;
     }
 
     /// Increment command counter, returns error if limit exceeded
@@ -522,6 +543,22 @@ impl ExecutionCounters {
     pub fn pop_subst(&mut self) {
         self.subst_depth = self.subst_depth.saturating_sub(1);
     }
+
+    /// Push explicit subshell, returns error if depth exceeded.
+    /// THREAT[TM-DOS-092]: Explicit subshells keep parent snapshots alive, so
+    /// nesting must be bounded separately from parser AST depth.
+    pub fn push_subshell(&mut self, limits: &ExecutionLimits) -> Result<(), LimitExceeded> {
+        if self.subshell_depth >= limits.max_subshell_depth {
+            return Err(LimitExceeded::MaxSubshellDepth(limits.max_subshell_depth));
+        }
+        self.subshell_depth += 1;
+        Ok(())
+    }
+
+    /// Pop explicit subshell.
+    pub fn pop_subshell(&mut self) {
+        self.subshell_depth = self.subshell_depth.saturating_sub(1);
+    }
 }
 
 /// Error returned when a resource limit is exceeded
@@ -541,6 +578,9 @@ pub enum LimitExceeded {
 
     #[error("maximum command substitution depth exceeded ({0})")]
     MaxSubstDepth(usize),
+
+    #[error("maximum subshell depth exceeded ({0})")]
+    MaxSubshellDepth(usize),
 
     #[error("maximum file descriptors exceeded ({0})")]
     MaxFileDescriptors(usize),
@@ -855,6 +895,8 @@ mod tests {
         assert_eq!(limits.max_parser_operations, 100_000);
         assert_eq!(limits.max_stdout_bytes, 1_048_576);
         assert_eq!(limits.max_stderr_bytes, 1_048_576);
+        assert_eq!(limits.max_subst_depth, 32);
+        assert_eq!(limits.max_subshell_depth, 32);
         assert!(!limits.capture_final_env);
     }
 
@@ -1008,6 +1050,22 @@ mod tests {
     }
 
     #[test]
+    fn test_subshell_depth() {
+        let limits = ExecutionLimits::new().max_subshell_depth(2);
+        let mut counters = ExecutionCounters::new();
+
+        assert!(counters.push_subshell(&limits).is_ok());
+        assert!(counters.push_subshell(&limits).is_ok());
+        assert!(matches!(
+            counters.push_subshell(&limits),
+            Err(LimitExceeded::MaxSubshellDepth(2))
+        ));
+
+        counters.pop_subshell();
+        assert!(counters.push_subshell(&limits).is_ok());
+    }
+
+    #[test]
     fn test_reset_for_execution() {
         let limits = ExecutionLimits::new().max_commands(5);
         let mut counters = ExecutionCounters::new();
@@ -1022,6 +1080,8 @@ mod tests {
         counters.loop_iterations = vec![42];
         counters.total_loop_iterations = 999;
         counters.function_depth = 3;
+        counters.subst_depth = 2;
+        counters.subshell_depth = 2;
 
         // Reset should restore all counters
         counters.reset_for_execution();
@@ -1029,6 +1089,8 @@ mod tests {
         assert!(counters.loop_iterations.is_empty());
         assert_eq!(counters.total_loop_iterations, 0);
         assert_eq!(counters.function_depth, 0);
+        assert_eq!(counters.subst_depth, 0);
+        assert_eq!(counters.subshell_depth, 0);
 
         // Should be able to tick commands again
         assert!(counters.tick_command(&limits).is_ok());
@@ -1047,6 +1109,7 @@ mod tests {
             .max_stdout_bytes(0)
             .max_stderr_bytes(0)
             .max_subst_depth(0)
+            .max_subshell_depth(0)
             .max_file_descriptors(0);
 
         assert_eq!(limits.max_commands, 0);
@@ -1059,6 +1122,7 @@ mod tests {
         assert_eq!(limits.max_stdout_bytes, 0);
         assert_eq!(limits.max_stderr_bytes, 0);
         assert_eq!(limits.max_subst_depth, 0);
+        assert_eq!(limits.max_subshell_depth, 0);
         assert_eq!(limits.max_file_descriptors, 0);
     }
 
@@ -1075,6 +1139,7 @@ mod tests {
             .max_stdout_bytes(2048)
             .max_stderr_bytes(4096)
             .max_subst_depth(8)
+            .max_subshell_depth(6)
             .max_file_descriptors(16);
 
         assert_eq!(limits.max_commands, 5);
@@ -1087,6 +1152,7 @@ mod tests {
         assert_eq!(limits.max_stdout_bytes, 2048);
         assert_eq!(limits.max_stderr_bytes, 4096);
         assert_eq!(limits.max_subst_depth, 8);
+        assert_eq!(limits.max_subshell_depth, 6);
         assert_eq!(limits.max_file_descriptors, 16);
     }
 
