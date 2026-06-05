@@ -19,6 +19,7 @@ pub(super) struct FindOptions {
     pub(super) max_depth: Option<usize>,
     pub(super) min_depth: Option<usize>,
     pub(super) printf_format: Option<String>,
+    pub(super) print0: bool,
     /// -exec/-execdir command template (args before \; or +)
     pub(super) exec_args: Vec<String>,
     /// true if -exec uses + (batch mode), false for \; (per-file mode)
@@ -27,6 +28,8 @@ pub(super) struct FindOptions {
     pub(super) negate_name: bool,
     /// Negate the -path predicate
     pub(super) negate_path: bool,
+    /// Negate the -type predicate
+    pub(super) negate_type: bool,
 }
 
 /// The find builtin - search for files.
@@ -58,10 +61,12 @@ pub(super) fn parse_find_args(
         max_depth: None,
         min_depth: None,
         printf_format: None,
+        print0: false,
         exec_args: Vec::new(),
         exec_batch: false,
         negate_name: false,
         negate_path: false,
+        negate_type: false,
     };
     let mut negate_next = false;
 
@@ -107,7 +112,13 @@ pub(super) fn parse_find_args(
                 }
                 let t = &args[i];
                 match t.as_str() {
-                    "f" | "d" | "l" => opts.type_filter = Some(t.chars().next().unwrap()),
+                    "f" | "d" | "l" => {
+                        opts.type_filter = Some(t.chars().next().unwrap());
+                        if negate_next {
+                            opts.negate_type = true;
+                            negate_next = false;
+                        }
+                    }
                     _ => {
                         return Err(ExecResult::err(format!("find: unknown type '{}'\n", t), 1));
                     }
@@ -149,8 +160,11 @@ pub(super) fn parse_find_args(
                     }
                 }
             }
-            "-print" | "-print0" => {
+            "-print" => {
                 // Default action, ignore
+            }
+            "-print0" => {
+                opts.print0 = true;
             }
             "-printf" => {
                 i += 1;
@@ -193,6 +207,13 @@ pub(super) fn parse_find_args(
         i += 1;
     }
 
+    if negate_next {
+        return Err(ExecResult::err(
+            "find: missing predicate after '-not'\n".to_string(),
+            1,
+        ));
+    }
+
     if paths.is_empty() {
         paths.push(".".to_string());
     }
@@ -223,10 +244,12 @@ async fn collect_find_plan_data(
         max_depth: opts.max_depth,
         min_depth: opts.min_depth,
         printf_format: None, // Don't format, just collect paths
+        print0: false,
         exec_args: Vec::new(),
         exec_batch: false,
         negate_name: opts.negate_name,
         negate_path: opts.negate_path,
+        negate_type: opts.negate_type,
     };
     let mut output = String::new();
     for path_str in search_paths {
@@ -409,9 +432,18 @@ fn find_recursive<'a>(
 
         // Check type filter
         let type_matches = match opts.type_filter {
-            Some('f') => metadata.file_type.is_file(),
-            Some('d') => metadata.file_type.is_dir(),
-            Some('l') => metadata.file_type.is_symlink(),
+            Some('f') => {
+                let m = metadata.file_type.is_file();
+                if opts.negate_type { !m } else { m }
+            }
+            Some('d') => {
+                let m = metadata.file_type.is_dir();
+                if opts.negate_type { !m } else { m }
+            }
+            Some('l') => {
+                let m = metadata.file_type.is_symlink();
+                if opts.negate_type { !m } else { m }
+            }
             _ => true,
         };
 
@@ -445,7 +477,7 @@ fn find_recursive<'a>(
                 output.push_str(&find_printf_format(fmt, display_path, &metadata));
             } else {
                 output.push_str(display_path);
-                output.push('\n');
+                output.push(if opts.print0 { '\0' } else { '\n' });
             }
         }
 

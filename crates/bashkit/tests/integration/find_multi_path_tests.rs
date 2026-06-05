@@ -173,3 +173,73 @@ async fn find_exec_with_missing_path_preserves_error_and_exec_output() {
         result.stderr
     );
 }
+
+#[tokio::test]
+async fn find_print0_uses_nul_delimiters() {
+    let mut bash = Bash::builder().build();
+
+    bash.exec("mkdir -p /tmp/find_print0 && touch /tmp/find_print0/a.txt /tmp/find_print0/b.txt")
+        .await
+        .unwrap();
+
+    let result = bash
+        .exec("find /tmp/find_print0 -type f -print0")
+        .await
+        .unwrap();
+
+    assert_eq!(result.exit_code, 0);
+    assert!(
+        result.stdout.contains('\0'),
+        "Expected NUL-delimited output, got: {:?}",
+        result.stdout
+    );
+    assert!(
+        !result.stdout.contains('\n'),
+        "-print0 must not emit newline-delimited output: {:?}",
+        result.stdout
+    );
+}
+
+#[tokio::test]
+async fn find_not_negates_type_predicate() {
+    let mut bash = Bash::builder().build();
+
+    bash.exec("mkdir -p /tmp/find_not_type/subdir && touch /tmp/find_not_type/file.txt")
+        .await
+        .unwrap();
+
+    let result = bash
+        .exec("find /tmp/find_not_type -not -type f | sort")
+        .await
+        .unwrap();
+
+    assert_eq!(result.exit_code, 0);
+    assert!(
+        result.stdout.contains("/tmp/find_not_type/subdir"),
+        "Expected directories in negated type output, got: {:?}",
+        result.stdout
+    );
+    assert!(
+        !result.stdout.contains("/tmp/find_not_type/file.txt"),
+        "Negated -type f must exclude files, got: {:?}",
+        result.stdout
+    );
+}
+
+#[tokio::test]
+async fn find_dangling_not_fails_closed() {
+    let mut bash = Bash::builder().build();
+
+    bash.exec("mkdir -p /tmp/find_dangling_not && touch /tmp/find_dangling_not/file.txt")
+        .await
+        .unwrap();
+
+    let result = bash.exec("find /tmp/find_dangling_not -not").await.unwrap();
+
+    assert_ne!(result.exit_code, 0);
+    assert!(
+        result.stderr.contains("missing predicate after '-not'"),
+        "Expected fail-closed diagnostic, got: {:?}",
+        result.stderr
+    );
+}
