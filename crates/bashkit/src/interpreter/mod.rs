@@ -2926,6 +2926,97 @@ impl Interpreter {
         })
     }
 
+    fn conditional_word_literal(word: &Word) -> Option<&str> {
+        if word.parts.len() == 1
+            && let WordPart::Literal(s) = &word.parts[0]
+        {
+            return Some(s);
+        }
+        None
+    }
+
+    fn conditional_words_wrapped(words: &[Word]) -> bool {
+        if words.len() < 2
+            || Self::conditional_word_literal(&words[0]) != Some("(")
+            || Self::conditional_word_literal(&words[words.len() - 1]) != Some(")")
+        {
+            return false;
+        }
+
+        let mut depth = 0usize;
+        for (i, word) in words.iter().enumerate() {
+            match Self::conditional_word_literal(word) {
+                Some("(") => depth += 1,
+                Some(")") => {
+                    let Some(next_depth) = depth.checked_sub(1) else {
+                        return false;
+                    };
+                    depth = next_depth;
+                    if depth == 0 && i < words.len() - 1 {
+                        return false;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        depth == 0
+    }
+
+    fn conditional_args_wrapped(args: &[String]) -> bool {
+        if args.len() < 2
+            || args.first().map(|s| s.as_str()) != Some("(")
+            || args.last().map(|s| s.as_str()) != Some(")")
+        {
+            return false;
+        }
+
+        let mut depth = 0usize;
+        for (i, arg) in args.iter().enumerate() {
+            match arg.as_str() {
+                "(" => depth += 1,
+                ")" => {
+                    let Some(next_depth) = depth.checked_sub(1) else {
+                        return false;
+                    };
+                    depth = next_depth;
+                    if depth == 0 && i < args.len() - 1 {
+                        return false;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        depth == 0
+    }
+
+    fn find_top_level_conditional_word_operator(words: &[Word], op: &str) -> Option<usize> {
+        let mut depth = 0usize;
+        for i in (0..words.len()).rev() {
+            match Self::conditional_word_literal(&words[i]) {
+                Some(")") => depth += 1,
+                Some("(") => depth = depth.saturating_sub(1),
+                Some(found) if found == op && depth == 0 && i > 0 => return Some(i),
+                _ => {}
+            }
+        }
+        None
+    }
+
+    fn find_top_level_conditional_arg_operator(args: &[String], op: &str) -> Option<usize> {
+        let mut depth = 0usize;
+        for i in (0..args.len()).rev() {
+            match args[i].as_str() {
+                ")" => depth += 1,
+                "(" => depth = depth.saturating_sub(1),
+                found if found == op && depth == 0 && i > 0 => return Some(i),
+                _ => {}
+            }
+        }
+        None
+    }
+
     /// Evaluate [[ ]] from raw words with lazy expansion for short-circuit.
     fn evaluate_conditional_words<'a>(
         &'a mut self,
@@ -2936,48 +3027,32 @@ impl Interpreter {
                 return Ok(false);
             }
 
-            // Helper: get literal text of a word (for operators like &&, ||, !, (, ))
-            let word_literal = |w: &Word| -> Option<String> {
-                if w.parts.len() == 1
-                    && let WordPart::Literal(s) = &w.parts[0]
-                {
-                    return Some(s.clone());
-                }
-                None
-            };
-
             // Handle negation
-            if word_literal(&words[0]).as_deref() == Some("!") {
+            if Self::conditional_word_literal(&words[0]) == Some("!") {
                 return Ok(!self.evaluate_conditional_words(&words[1..]).await?);
             }
 
-            // Handle parentheses
-            if word_literal(&words[0]).as_deref() == Some("(")
-                && word_literal(&words[words.len() - 1]).as_deref() == Some(")")
-            {
+            // Handle parentheses only when they wrap the whole expression.
+            if Self::conditional_words_wrapped(words) {
                 return self
                     .evaluate_conditional_words(&words[1..words.len() - 1])
                     .await;
             }
 
-            // Look for || (lowest precedence), then && — scan right to left
-            for i in (0..words.len()).rev() {
-                if word_literal(&words[i]).as_deref() == Some("||") && i > 0 {
-                    let left = self.evaluate_conditional_words(&words[..i]).await?;
-                    if left {
-                        return Ok(true); // short-circuit: skip right side
-                    }
-                    return self.evaluate_conditional_words(&words[i + 1..]).await;
+            // Look for || (lowest precedence), then && — only at current paren depth.
+            if let Some(i) = Self::find_top_level_conditional_word_operator(words, "||") {
+                let left = self.evaluate_conditional_words(&words[..i]).await?;
+                if left {
+                    return Ok(true); // short-circuit: skip right side
                 }
+                return self.evaluate_conditional_words(&words[i + 1..]).await;
             }
-            for i in (0..words.len()).rev() {
-                if word_literal(&words[i]).as_deref() == Some("&&") && i > 0 {
-                    let left = self.evaluate_conditional_words(&words[..i]).await?;
-                    if !left {
-                        return Ok(false); // short-circuit: skip right side
-                    }
-                    return self.evaluate_conditional_words(&words[i + 1..]).await;
+            if let Some(i) = Self::find_top_level_conditional_word_operator(words, "&&") {
+                let left = self.evaluate_conditional_words(&words[..i]).await?;
+                if !left {
+                    return Ok(false); // short-circuit: skip right side
                 }
+                return self.evaluate_conditional_words(&words[i + 1..]).await;
             }
 
             // Leaf: expand words and evaluate as a simple condition
@@ -3004,26 +3079,19 @@ impl Interpreter {
                 return !self.evaluate_conditional(&args[1..]).await;
             }
 
-            // Handle parentheses
-            if args.first().map(|s| s.as_str()) == Some("(")
-                && args.last().map(|s| s.as_str()) == Some(")")
-            {
+            // Handle parentheses only when they wrap the whole expression.
+            if Self::conditional_args_wrapped(args) {
                 return self.evaluate_conditional(&args[1..args.len() - 1]).await;
             }
 
-            // Look for logical operators: || has lowest precedence, then &&.
-            // Scan for || first (split at lowest precedence first).
-            for i in (0..args.len()).rev() {
-                if args[i] == "||" && i > 0 {
-                    return self.evaluate_conditional(&args[..i]).await
-                        || self.evaluate_conditional(&args[i + 1..]).await;
-                }
+            // Look for logical operators at current paren depth: || lowest, then &&.
+            if let Some(i) = Self::find_top_level_conditional_arg_operator(args, "||") {
+                return self.evaluate_conditional(&args[..i]).await
+                    || self.evaluate_conditional(&args[i + 1..]).await;
             }
-            for i in (0..args.len()).rev() {
-                if args[i] == "&&" && i > 0 {
-                    return self.evaluate_conditional(&args[..i]).await
-                        && self.evaluate_conditional(&args[i + 1..]).await;
-                }
+            if let Some(i) = Self::find_top_level_conditional_arg_operator(args, "&&") {
+                return self.evaluate_conditional(&args[..i]).await
+                    && self.evaluate_conditional(&args[i + 1..]).await;
             }
 
             match args.len() {

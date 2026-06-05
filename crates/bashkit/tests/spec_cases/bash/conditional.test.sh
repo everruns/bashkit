@@ -175,6 +175,27 @@ correct
 correct
 ### end
 
+
+### cond_parenthesized_or_outer_and_false
+# Parenthesized || must not be split before the outer &&.
+a=""
+b=""
+c="1"
+[[ ( "$a" || "$b" ) && "$c" ]] && echo wrong || echo correct
+### expect
+correct
+### end
+
+### cond_parenthesized_or_outer_and_true
+# Parenthesized || evaluates first, then the outer &&.
+a=""
+b="1"
+c="1"
+[[ ( "$a" || "$b" ) && "$c" ]] && echo correct || echo wrong
+### expect
+correct
+### end
+
 ### cond_exact_match_no_glob
 # [[ == ]] exact match with no glob chars
 [[ "hello" == "hello" ]] && echo yes || echo no
