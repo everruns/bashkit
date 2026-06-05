@@ -509,6 +509,20 @@ impl FsBackend for RealFs {
             .into());
         }
 
+        // Relative RealFs symlinks must not contain `..`. The stored bytes are
+        // reinterpreted by external host processes after later renames, so a
+        // creation-time containment proof is only stable for child-only paths.
+        if target
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+        {
+            return Err(IoError::new(
+                ErrorKind::PermissionDenied,
+                "symlink target with parent components not allowed in RealFs (sandbox security)",
+            )
+            .into());
+        }
+
         // Relative targets: resolve against the link's host-side parent.
         // Canonicalize nearest existing ancestor of the effective path so
         // existing symlink components in the target are enforced.
@@ -923,6 +937,30 @@ mod tests {
         assert!(
             !outside.path().join("newdir/pwned.txt").exists(),
             "must not create file outside realfs root"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn security_symlink_rejects_parent_components_before_move_escape() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("deep/a/b/c")).unwrap();
+
+        let fs = RealFs::new(root.path(), RealFsMode::ReadWrite).unwrap();
+        let result = fs
+            .symlink(
+                Path::new("../../../etc/passwd"),
+                Path::new("/deep/a/b/c/escape"),
+            )
+            .await;
+
+        assert!(
+            result.is_err(),
+            "relative symlink targets with parent components can escape after rename"
+        );
+        assert!(
+            !root.path().join("deep/a/b/c/escape").exists(),
+            "must not create movable symlink with unstable containment"
         );
     }
 
