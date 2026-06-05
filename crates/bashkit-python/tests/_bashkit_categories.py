@@ -455,6 +455,27 @@ def test_bash_direct_vfs_glob_limits_result_count():
     assert len(matches) == 9_000
 
 
+def test_bash_direct_vfs_glob_bounds_realfs_traversal(tmp_path):
+    # Security regression: direct glob over RealFs must stop by work budget
+    # instead of walking every host entry outside Bash execution limits.
+    for idx in range(10_050):
+        (tmp_path / f"dir_{idx:05}").mkdir()
+    (tmp_path / "zz_after_budget.txt").write_text("late")
+
+    bash = Bash(mounts=[{"host_path": str(tmp_path), "vfs_path": "/host"}])
+
+    assert bash.glob("/host/z*_after_budget.txt") == []
+
+
+def test_bash_direct_vfs_glob_honors_timeout(tmp_path):
+    for idx in range(512):
+        (tmp_path / f"dir_{idx:05}").mkdir()
+
+    bash = Bash(mounts=[{"host_path": str(tmp_path), "vfs_path": "/host"}], timeout_seconds=0)
+
+    assert bash.glob("/host/*/missing.txt") == []
+
+
 # -- Bash: FS / mount error cases ------------------------------------------
 
 
