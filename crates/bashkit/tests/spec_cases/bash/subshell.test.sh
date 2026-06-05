@@ -12,13 +12,14 @@ echo $?
 
 ### subshell_with_redirects
 # Subshell with redirects
-( echo 1 ) > /tmp/bashkit_sub_a.txt
-( echo 2 ) > /tmp/bashkit_sub_b.txt
-( echo 3; ) > /tmp/bashkit_sub_c.txt
-( echo 4; echo 5 ) > /tmp/bashkit_sub_d.txt
+mkdir -p bashkit_subshell_redirects
+( echo 1 ) > bashkit_subshell_redirects/a.txt
+( echo 2 ) > bashkit_subshell_redirects/b.txt
+( echo 3; ) > bashkit_subshell_redirects/c.txt
+( echo 4; echo 5 ) > bashkit_subshell_redirects/d.txt
 echo status=$?
-cat /tmp/bashkit_sub_a.txt /tmp/bashkit_sub_b.txt /tmp/bashkit_sub_c.txt /tmp/bashkit_sub_d.txt
-rm -f /tmp/bashkit_sub_a.txt /tmp/bashkit_sub_b.txt /tmp/bashkit_sub_c.txt /tmp/bashkit_sub_d.txt
+cat bashkit_subshell_redirects/a.txt bashkit_subshell_redirects/b.txt bashkit_subshell_redirects/c.txt bashkit_subshell_redirects/d.txt
+rm -rf bashkit_subshell_redirects
 ### expect
 status=0
 1
