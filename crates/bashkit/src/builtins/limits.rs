@@ -27,6 +27,10 @@ pub(crate) const AWK_MAX_OUTPUT_BYTES: usize = 10_000_000;
 pub(crate) const AWK_MAX_OUTPUT_TARGETS: usize = 1_024;
 /// awk: max distinct files held open by `getline < file`.
 pub(crate) const AWK_MAX_GETLINE_CACHED_FILES: usize = 100;
+/// awk: max bytes read from one `getline < file` input.
+pub(crate) const AWK_MAX_GETLINE_FILE_BYTES: usize = 10_000_000;
+/// awk: max total bytes retained by all `getline < file` inputs.
+pub(crate) const AWK_MAX_GETLINE_CACHE_BYTES: usize = 10_000_000;
 
 /// curl: max number of HTTP redirects to follow.
 #[cfg(feature = "http_client")]
