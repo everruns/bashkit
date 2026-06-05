@@ -176,7 +176,7 @@ jobs:
 
       - name: Run cat/tac spec tests
         working-directory: bashkit
-        run: cargo test -p bashkit --test integration bash_spec_tests
+        run: cargo test -p bashkit --test integration -- spec_tests::bash_spec_tests
 
       # Body-drift gate: rebuild the matching uutils binaries from the
       # *same* tree the args codegen ran against, then run the
@@ -193,7 +193,7 @@ jobs:
         working-directory: bashkit
         env:
           BASHKIT_RUN_COREUTILS_DIFF: '1'
-        run: cargo test -p bashkit --test coreutils_differential_tests
+        run: cargo test -p bashkit --test integration -- coreutils_differential_tests::
 
       - name: Capture drift patch
         id: diff
