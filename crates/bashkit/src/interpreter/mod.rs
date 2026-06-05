@@ -507,6 +507,18 @@ pub(crate) fn is_hidden_variable(name: &str) -> bool {
     is_internal_variable(name) || name.starts_with("_TTY_")
 }
 
+/// THREAT[TM-DOS-090]: Nameref targets are script-controlled. Only treat a
+/// resolved target as an embedded array element when it is exactly `name[index]`;
+/// malformed strings containing `[` must remain ordinary names, never sliced.
+fn parse_embedded_array_ref(resolved_name: &str) -> Option<(&str, &str)> {
+    let (arr_name, rest) = resolved_name.split_once('[')?;
+    let idx_part = rest.strip_suffix(']')?;
+    if !is_valid_var_name(arr_name) || idx_part.contains('[') || idx_part.contains(']') {
+        return None;
+    }
+    Some((arr_name, idx_part))
+}
+
 /// Check if a string is a valid shell variable name: `[a-zA-Z_][a-zA-Z0-9_]*`.
 ///
 /// Single canonical copy used by interpreter and builtins.
@@ -8053,12 +8065,9 @@ impl Interpreter {
     /// Expand an array access expression (`${arr[index]}`).
     fn expand_array_access_part(&self, name: &str, index: &str) -> String {
         let resolved_name = self.resolve_nameref(name);
-        let (arr_name, extra_index) = if let Some(bracket) = resolved_name.find('[') {
-            let idx_part = &resolved_name[bracket + 1..resolved_name.len() - 1];
-            (&resolved_name[..bracket], Some(idx_part.to_string()))
-        } else {
-            (resolved_name, None)
-        };
+        let (arr_name, extra_index) = parse_embedded_array_ref(resolved_name)
+            .map(|(arr_name, idx_part)| (arr_name, Some(idx_part.to_string())))
+            .unwrap_or((resolved_name, None));
 
         let mut result = String::new();
         if index == "@" || index == "*" {
