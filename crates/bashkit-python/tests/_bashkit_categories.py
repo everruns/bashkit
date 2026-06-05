@@ -129,6 +129,28 @@ def test_bash_restore_snapshot_after_reset_restores_original_state():
     assert bash.execute_sync("cat /workspace/state.txt").stdout.strip() == "saved"
 
 
+def test_bash_keyed_snapshot_rejects_wrong_key_and_restores_state():
+    bash = Bash()
+    bash.execute_sync("export KEEP=1; mkdir -p /workspace && echo saved > /workspace/state.txt")
+    snapshot = bash.snapshot_keyed(b"correct key")
+
+    try:
+        Bash.from_snapshot_keyed(snapshot, b"wrong key")
+    except BashError as err:
+        assert "HMAC mismatch" in str(err)
+    else:
+        raise AssertionError("wrong keyed snapshot key should fail")
+
+    restored = Bash.from_snapshot_keyed(snapshot, b"correct key", username="alice")
+    assert restored.execute_sync("whoami").stdout.strip() == "alice"
+    assert restored.execute_sync("echo $KEEP").stdout.strip() == "1"
+    assert restored.execute_sync("cat /workspace/state.txt").stdout.strip() == "saved"
+
+    restored.execute_sync("export KEEP=2")
+    restored.restore_snapshot_keyed(snapshot, b"correct key")
+    assert restored.execute_sync("echo $KEEP").stdout.strip() == "1"
+
+
 def test_bash_snapshot_can_exclude_filesystem():
     bash = Bash()
     bash.execute_sync("export KEEP=1; echo saved > /tmp/state.txt")
@@ -810,6 +832,28 @@ def test_bashtool_restore_snapshot_after_reset_restores_original_state():
     assert tool.execute_sync("echo $KEEP").stdout.strip() == "1"
     assert tool.execute_sync("pwd").stdout.strip() == "/workspace"
     assert tool.execute_sync("cat /workspace/tool.txt").stdout.strip() == "saved"
+
+
+def test_bashtool_keyed_snapshot_rejects_wrong_key_and_restores_state():
+    tool = BashTool()
+    tool.execute_sync("export KEEP=1; mkdir -p /workspace && echo saved > /workspace/tool.txt")
+    snapshot = tool.snapshot_keyed(b"correct key")
+
+    try:
+        BashTool.from_snapshot_keyed(snapshot, b"wrong key")
+    except BashError as err:
+        assert "HMAC mismatch" in str(err)
+    else:
+        raise AssertionError("wrong keyed snapshot key should fail")
+
+    restored = BashTool.from_snapshot_keyed(snapshot, b"correct key", username="alice")
+    assert restored.execute_sync("whoami").stdout.strip() == "alice"
+    assert restored.execute_sync("echo $KEEP").stdout.strip() == "1"
+    assert restored.execute_sync("cat /workspace/tool.txt").stdout.strip() == "saved"
+
+    restored.execute_sync("export KEEP=2")
+    restored.restore_snapshot_keyed(snapshot, b"correct key")
+    assert restored.execute_sync("echo $KEEP").stdout.strip() == "1"
 
 
 def test_bashtool_snapshot_can_exclude_filesystem():

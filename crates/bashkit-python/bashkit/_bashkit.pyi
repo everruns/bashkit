@@ -679,12 +679,25 @@ class Bash:
         """Serialize interpreter state to bytes."""
         ...
 
+    def snapshot_keyed(
+        self,
+        key: bytes,
+        exclude_filesystem: bool = False,
+        exclude_functions: bool = False,
+    ) -> bytes:
+        """Serialize interpreter state to HMAC-protected bytes."""
+        ...
+
     def shell_state(self) -> ShellState:
         """Capture a read-only shell-state snapshot."""
         ...
 
     def restore_snapshot(self, data: bytes) -> None:
         """Restore interpreter state from bytes produced by ``snapshot()``."""
+        ...
+
+    def restore_snapshot_keyed(self, data: bytes, key: bytes) -> None:
+        """Restore interpreter state from bytes produced by ``snapshot_keyed()``."""
         ...
 
     @staticmethod
@@ -697,6 +710,7 @@ class Bash:
         max_memory: int | None = None,
         timeout_seconds: float | None = None,
         python: bool = False,
+        sqlite: bool = False,
         external_functions: list[str] | None = None,
         external_handler: ExternalHandler | None = None,
         files: dict[str, str] | None = None,
@@ -707,6 +721,30 @@ class Bash:
         network: NetworkConfig | None = None,
     ) -> Bash:
         """Create a new ``Bash`` from snapshot bytes and optional constructor kwargs."""
+        ...
+
+    @staticmethod
+    def from_snapshot_keyed(
+        data: bytes,
+        key: bytes,
+        username: str | None = None,
+        hostname: str | None = None,
+        max_commands: int | None = None,
+        max_loop_iterations: int | None = None,
+        max_memory: int | None = None,
+        timeout_seconds: float | None = None,
+        python: bool = False,
+        sqlite: bool = False,
+        external_functions: list[str] | None = None,
+        external_handler: ExternalHandler | None = None,
+        files: dict[str, str] | None = None,
+        mounts: list[dict[str, Any]] | None = None,
+        allowed_mount_paths: list[str] | None = None,
+        readonly_filesystem: bool = False,
+        custom_builtins: Mapping[str, BuiltinCallback] | None = None,
+        network: NetworkConfig | None = None,
+    ) -> Bash:
+        """Create a new ``Bash`` from HMAC-protected snapshot bytes."""
         ...
 
     def read_file(self, path: str) -> str:
@@ -1112,12 +1150,25 @@ class BashTool:
         """Serialize interpreter state to bytes."""
         ...
 
+    def snapshot_keyed(
+        self,
+        key: bytes,
+        exclude_filesystem: bool = False,
+        exclude_functions: bool = False,
+    ) -> bytes:
+        """Serialize interpreter state to HMAC-protected bytes."""
+        ...
+
     def shell_state(self) -> ShellState:
         """Capture a read-only shell-state snapshot."""
         ...
 
     def restore_snapshot(self, data: bytes) -> None:
         """Restore interpreter state from bytes produced by ``snapshot()``."""
+        ...
+
+    def restore_snapshot_keyed(self, data: bytes, key: bytes) -> None:
+        """Restore interpreter state from bytes produced by ``snapshot_keyed()``."""
         ...
 
     @staticmethod
@@ -1137,6 +1188,26 @@ class BashTool:
         network: NetworkConfig | None = None,
     ) -> BashTool:
         """Create a new ``BashTool`` from snapshot bytes and optional constructor kwargs."""
+        ...
+
+    @staticmethod
+    def from_snapshot_keyed(
+        data: bytes,
+        key: bytes,
+        username: str | None = None,
+        hostname: str | None = None,
+        max_commands: int | None = None,
+        max_loop_iterations: int | None = None,
+        max_memory: int | None = None,
+        timeout_seconds: float | None = None,
+        files: dict[str, str] | None = None,
+        mounts: list[dict[str, Any]] | None = None,
+        allowed_mount_paths: list[str] | None = None,
+        readonly_filesystem: bool = False,
+        custom_builtins: Mapping[str, BuiltinCallback] | None = None,
+        network: NetworkConfig | None = None,
+    ) -> BashTool:
+        """Create a new ``BashTool`` from HMAC-protected snapshot bytes."""
         ...
 
     def read_file(self, path: str) -> str:

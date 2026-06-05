@@ -455,6 +455,7 @@ bash.execute_sync(
 snapshot = bash.snapshot()
 shell_only = bash.snapshot(exclude_filesystem=True)
 prompt_only = bash.snapshot(exclude_filesystem=True, exclude_functions=True)
+trusted_snapshot = bash.snapshot_keyed(b"32+ bytes of application secret")
 
 restored = Bash.from_snapshot(snapshot, username="agent", max_commands=100)
 assert restored.execute_sync("echo $BUILD_ID").stdout.strip() == "42"
@@ -465,9 +466,15 @@ restored.reset()
 restored.restore_snapshot(snapshot)
 assert restored.execute_sync("pwd").stdout.strip() == "/workspace"
 restored.restore_snapshot(shell_only)
+restored.restore_snapshot_keyed(trusted_snapshot, b"32+ bytes of application secret")
 ```
 
-`BashTool` exposes the same `snapshot()`, `restore_snapshot(...)`, and `from_snapshot(...)` APIs.
+Unkeyed `snapshot()` bytes detect accidental corruption only. Use
+`snapshot_keyed(...)`, `restore_snapshot_keyed(...)`, and
+`from_snapshot_keyed(...)` whenever snapshot bytes cross trust boundaries such
+as uploads, shared storage, or network transport.
+
+`BashTool` exposes the same snapshot, restore, and keyed snapshot APIs.
 Python callback builtins are host-side config, not serialized shell state, so
 pass `custom_builtins=` again when constructing a restored instance if you
 need them after snapshot restore.
@@ -520,8 +527,11 @@ from bashkit.deepagents import BashkitBackend, BashkitMiddleware
 - `reset()`
 - constructor kwarg: `custom_builtins={name: callback}`
 - `snapshot() -> bytes`
+- `snapshot_keyed(key: bytes) -> bytes`
 - `restore_snapshot(data: bytes)`
+- `restore_snapshot_keyed(data: bytes, key: bytes)`
 - `from_snapshot(data: bytes, **kwargs) -> Bash`
+- `from_snapshot_keyed(data: bytes, key: bytes, **kwargs) -> Bash`
 - constructor kwarg: `network={"allow": [...], "block_private_ips": True}` or `network={"allow_all": True}`, optionally with `credentials=[...]` and `credential_placeholders=[...]`
 - `mount(vfs_path: str, fs: FileSystem)`
 - `unmount(vfs_path: str)`
