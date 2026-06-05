@@ -854,6 +854,7 @@ impl<'a> Parser<'a> {
                             parts: vec![WordPart::Literal(w.clone())],
                             quoted: true,
                             has_unquoted_glob: false,
+                            part_quoted: Vec::new(),
                         });
                         self.advance();
                     }
@@ -955,6 +956,7 @@ impl<'a> Parser<'a> {
                         parts: vec![WordPart::Literal(w.clone())],
                         quoted: true,
                         has_unquoted_glob: false,
+                        part_quoted: Vec::new(),
                     });
                     self.advance();
                 }
@@ -1538,6 +1540,7 @@ impl<'a> Parser<'a> {
                             parts: vec![WordPart::Literal(w_clone)],
                             quoted: true,
                             has_unquoted_glob: false,
+                            part_quoted: Vec::new(),
                         }
                     } else {
                         let mut parsed = self.parse_word(w_clone);
@@ -2100,6 +2103,7 @@ impl<'a> Parser<'a> {
                             parts: vec![WordPart::Literal(elem_clone)],
                             quoted: true,
                             has_unquoted_glob: false,
+                            part_quoted: Vec::new(),
                         }
                     } else if matches!(
                         &self.current_token,
@@ -2198,6 +2202,7 @@ impl<'a> Parser<'a> {
                 parts: vec![WordPart::Literal(inner.to_string())],
                 quoted: true,
                 has_unquoted_glob: false,
+                part_quoted: Vec::new(),
             }
         } else {
             self.parse_word(value_str)
@@ -2495,6 +2500,7 @@ impl<'a> Parser<'a> {
                                 parts: vec![WordPart::Literal(w)],
                                 quoted: true,
                                 has_unquoted_glob: false,
+                                part_quoted: Vec::new(),
                             }
                         } else {
                             let mut word = self.parse_word(w);
@@ -2515,6 +2521,7 @@ impl<'a> Parser<'a> {
                             parts: vec![WordPart::Literal(w)],
                             quoted: true,
                             has_unquoted_glob: false,
+                            part_quoted: Vec::new(),
                         }
                     } else {
                         let mut word = self.parse_word(w);
@@ -2759,6 +2766,7 @@ impl<'a> Parser<'a> {
                     parts: vec![WordPart::Literal(w.clone())],
                     quoted: true,
                     has_unquoted_glob: false,
+                    part_quoted: Vec::new(),
                 };
                 self.advance();
                 Ok(word)
@@ -2867,6 +2875,7 @@ impl<'a> Parser<'a> {
                     parts: vec![WordPart::ProcessSubstitution { commands, is_input }],
                     quoted: false,
                     has_unquoted_glob: false,
+                    part_quoted: Vec::new(),
                 })
             }
             _ => Err(self.error("expected word")),
@@ -2896,6 +2905,7 @@ impl<'a> Parser<'a> {
                 parts: vec![WordPart::Literal(w.clone())],
                 quoted: true,
                 has_unquoted_glob: false,
+                part_quoted: Vec::new(),
             }),
             _ => None,
         }
@@ -2928,8 +2938,16 @@ impl<'a> Parser<'a> {
     /// Parse a word string into a Word with proper parts (variables, literals)
     fn parse_word(&self, s: String) -> Word {
         let mut parts = Vec::new();
+        let mut part_quoted = Vec::new();
         let mut chars = s.chars().peekable();
         let mut current = String::new();
+        let mut in_quoted_segment = false;
+        macro_rules! push_part {
+            ($part:expr) => {{
+                parts.push($part);
+                part_quoted.push(in_quoted_segment);
+            }};
+        }
 
         while let Some(ch) = chars.next() {
             if ch == '\x00' {
@@ -2937,10 +2955,14 @@ impl<'a> Parser<'a> {
                 if let Some(literal_ch) = chars.next() {
                     current.push(literal_ch);
                 }
+            } else if ch == '\u{1e}' {
+                in_quoted_segment = true;
+            } else if ch == '\u{1f}' {
+                in_quoted_segment = false;
             } else if ch == '$' {
                 // Flush current literal
                 if !current.is_empty() {
-                    parts.push(WordPart::Literal(std::mem::take(&mut current)));
+                    push_part!(WordPart::Literal(std::mem::take(&mut current)));
                 }
 
                 // Check for $'...' - ANSI-C quoting
@@ -2972,7 +2994,7 @@ impl<'a> Parser<'a> {
                             ansi.push(c);
                         }
                     }
-                    parts.push(WordPart::Literal(ansi));
+                    push_part!(WordPart::Literal(ansi));
                 } else if chars.peek() == Some(&'(') {
                     // Check for $( - command substitution or arithmetic
                     chars.next(); // consume first '('
@@ -3000,7 +3022,7 @@ impl<'a> Parser<'a> {
                         if expr.ends_with(')') {
                             expr.pop();
                         }
-                        parts.push(WordPart::ArithmeticExpansion(expr));
+                        push_part!(WordPart::ArithmeticExpansion(expr));
                     } else {
                         // Command substitution $(...)
                         let mut cmd_str = String::new();
@@ -3025,7 +3047,7 @@ impl<'a> Parser<'a> {
                         let inner_parser =
                             Parser::with_limits(&cmd_str, remaining_depth, self.fuel);
                         if let Ok(script) = inner_parser.parse() {
-                            parts.push(WordPart::CommandSubstitution(script.commands));
+                            push_part!(WordPart::CommandSubstitution(script.commands));
                         }
                     }
                 } else if chars.peek() == Some(&'{') {
@@ -3058,17 +3080,17 @@ impl<'a> Parser<'a> {
                                 chars.next();
                             }
                             if index == "@" || index == "*" {
-                                parts.push(WordPart::ArrayLength(var_name));
+                                push_part!(WordPart::ArrayLength(var_name));
                             } else {
                                 // ${#arr[n]} - length of element (same as ${#arr[n]})
-                                parts.push(WordPart::Length(format!("{}[{}]", var_name, index)));
+                                push_part!(WordPart::Length(format!("{}[{}]", var_name, index)));
                             }
                         } else {
                             // Consume closing }
                             if chars.peek() == Some(&'}') {
                                 chars.next();
                             }
-                            parts.push(WordPart::Length(var_name));
+                            push_part!(WordPart::Length(var_name));
                         }
                     } else if chars.peek() == Some(&'!') {
                         // Check for ${!arr[@]} or ${!arr[*]} - array indices
@@ -3106,15 +3128,15 @@ impl<'a> Parser<'a> {
                                 chars.next();
                             }
                             if index == "@" || index == "*" {
-                                parts.push(WordPart::ArrayIndices(var_name));
+                                push_part!(WordPart::ArrayIndices(var_name));
                             } else {
                                 // ${!arr[n]} - not standard, treat as variable
-                                parts.push(WordPart::Variable(format!("!{}[{}]", var_name, index)));
+                                push_part!(WordPart::Variable(format!("!{}[{}]", var_name, index)));
                             }
                         } else if chars.peek() == Some(&'}') {
                             // ${!var} - indirect expansion (no operator)
                             chars.next(); // consume '}'
-                            parts.push(WordPart::IndirectExpansion {
+                            push_part!(WordPart::IndirectExpansion {
                                 name: var_name,
                                 operator: None,
                                 operand: String::new(),
@@ -3138,7 +3160,7 @@ impl<'a> Parser<'a> {
                                     '?' => ParameterOp::Error,
                                     _ => unreachable!(),
                                 };
-                                parts.push(WordPart::IndirectExpansion {
+                                push_part!(WordPart::IndirectExpansion {
                                     name: var_name,
                                     operator: Some(operator),
                                     operand,
@@ -3154,7 +3176,7 @@ impl<'a> Parser<'a> {
                                     }
                                     suffix.push(chars.next().unwrap());
                                 }
-                                parts.push(WordPart::Variable(format!("!{}{}", var_name, suffix)));
+                                push_part!(WordPart::Variable(format!("!{}{}", var_name, suffix)));
                             }
                         } else if matches!(
                             chars.peek(),
@@ -3170,7 +3192,7 @@ impl<'a> Parser<'a> {
                                 '?' => ParameterOp::Error,
                                 _ => unreachable!(),
                             };
-                            parts.push(WordPart::IndirectExpansion {
+                            push_part!(WordPart::IndirectExpansion {
                                 name: var_name,
                                 operator: Some(operator),
                                 operand,
@@ -3190,9 +3212,9 @@ impl<'a> Parser<'a> {
                             if suffix.ends_with('*') || suffix.ends_with('@') {
                                 let full_prefix =
                                     format!("{}{}", var_name, &suffix[..suffix.len() - 1]);
-                                parts.push(WordPart::PrefixMatch(full_prefix));
+                                push_part!(WordPart::PrefixMatch(full_prefix));
                             } else {
-                                parts.push(WordPart::Variable(format!("!{}{}", var_name, suffix)));
+                                push_part!(WordPart::Variable(format!("!{}{}", var_name, suffix)));
                             }
                         }
                     } else {
@@ -3276,7 +3298,7 @@ impl<'a> Parser<'a> {
                                             '?' => ParameterOp::Error,
                                             _ => unreachable!(),
                                         };
-                                        parts.push(WordPart::ParameterExpansion {
+                                        push_part!(WordPart::ParameterExpansion {
                                             name: arr_name,
                                             operator,
                                             operand,
@@ -3308,7 +3330,7 @@ impl<'a> Parser<'a> {
                                         if chars.peek() == Some(&'}') {
                                             chars.next();
                                         }
-                                        parts.push(WordPart::ArraySlice {
+                                        push_part!(WordPart::ArraySlice {
                                             name: var_name,
                                             offset,
                                             length,
@@ -3326,7 +3348,7 @@ impl<'a> Parser<'a> {
                                         '?' => ParameterOp::Error,
                                         _ => unreachable!(),
                                     };
-                                    parts.push(WordPart::ParameterExpansion {
+                                    push_part!(WordPart::ParameterExpansion {
                                         name: arr_name,
                                         operator,
                                         operand,
@@ -3337,13 +3359,13 @@ impl<'a> Parser<'a> {
                                     if chars.peek() == Some(&'}') {
                                         chars.next();
                                     }
-                                    parts.push(WordPart::ArrayAccess {
+                                    push_part!(WordPart::ArrayAccess {
                                         name: var_name,
                                         index,
                                     });
                                 }
                             } else {
-                                parts.push(WordPart::ArrayAccess {
+                                push_part!(WordPart::ArrayAccess {
                                     name: var_name,
                                     index,
                                 });
@@ -3364,7 +3386,7 @@ impl<'a> Parser<'a> {
                                                 '?' => ParameterOp::Error,
                                                 _ => unreachable!(),
                                             };
-                                            parts.push(WordPart::ParameterExpansion {
+                                            push_part!(WordPart::ParameterExpansion {
                                                 name: var_name,
                                                 operator,
                                                 operand,
@@ -3396,7 +3418,7 @@ impl<'a> Parser<'a> {
                                             if chars.peek() == Some(&'}') {
                                                 chars.next();
                                             }
-                                            parts.push(WordPart::Substring {
+                                            push_part!(WordPart::Substring {
                                                 name: var_name,
                                                 offset,
                                                 length,
@@ -3415,7 +3437,7 @@ impl<'a> Parser<'a> {
                                         '?' => ParameterOp::Error,
                                         _ => unreachable!(),
                                     };
-                                    parts.push(WordPart::ParameterExpansion {
+                                    push_part!(WordPart::ParameterExpansion {
                                         name: var_name,
                                         operator,
                                         operand,
@@ -3427,7 +3449,7 @@ impl<'a> Parser<'a> {
                                     if chars.peek() == Some(&'#') {
                                         chars.next();
                                         let op = self.read_brace_operand(&mut chars);
-                                        parts.push(WordPart::ParameterExpansion {
+                                        push_part!(WordPart::ParameterExpansion {
                                             name: var_name,
                                             operator: ParameterOp::RemovePrefixLong,
                                             operand: op,
@@ -3435,7 +3457,7 @@ impl<'a> Parser<'a> {
                                         });
                                     } else {
                                         let op = self.read_brace_operand(&mut chars);
-                                        parts.push(WordPart::ParameterExpansion {
+                                        push_part!(WordPart::ParameterExpansion {
                                             name: var_name,
                                             operator: ParameterOp::RemovePrefixShort,
                                             operand: op,
@@ -3448,7 +3470,7 @@ impl<'a> Parser<'a> {
                                     if chars.peek() == Some(&'%') {
                                         chars.next();
                                         let op = self.read_brace_operand(&mut chars);
-                                        parts.push(WordPart::ParameterExpansion {
+                                        push_part!(WordPart::ParameterExpansion {
                                             name: var_name,
                                             operator: ParameterOp::RemoveSuffixLong,
                                             operand: op,
@@ -3456,7 +3478,7 @@ impl<'a> Parser<'a> {
                                         });
                                     } else {
                                         let op = self.read_brace_operand(&mut chars);
-                                        parts.push(WordPart::ParameterExpansion {
+                                        push_part!(WordPart::ParameterExpansion {
                                             name: var_name,
                                             operator: ParameterOp::RemoveSuffixShort,
                                             operand: op,
@@ -3517,7 +3539,7 @@ impl<'a> Parser<'a> {
                                             replacement,
                                         }
                                     };
-                                    parts.push(WordPart::ParameterExpansion {
+                                    push_part!(WordPart::ParameterExpansion {
                                         name: var_name,
                                         operator: op,
                                         operand: String::new(),
@@ -3535,7 +3557,7 @@ impl<'a> Parser<'a> {
                                     if chars.peek() == Some(&'}') {
                                         chars.next();
                                     }
-                                    parts.push(WordPart::ParameterExpansion {
+                                    push_part!(WordPart::ParameterExpansion {
                                         name: var_name,
                                         operator: op,
                                         operand: String::new(),
@@ -3553,7 +3575,7 @@ impl<'a> Parser<'a> {
                                     if chars.peek() == Some(&'}') {
                                         chars.next();
                                     }
-                                    parts.push(WordPart::ParameterExpansion {
+                                    push_part!(WordPart::ParameterExpansion {
                                         name: var_name,
                                         operator: op,
                                         operand: String::new(),
@@ -3567,7 +3589,7 @@ impl<'a> Parser<'a> {
                                         if chars.peek() == Some(&'}') {
                                             chars.next();
                                         }
-                                        parts.push(WordPart::Transformation {
+                                        push_part!(WordPart::Transformation {
                                             name: var_name,
                                             operator: op,
                                         });
@@ -3575,13 +3597,13 @@ impl<'a> Parser<'a> {
                                         if chars.peek() == Some(&'}') {
                                             chars.next();
                                         }
-                                        parts.push(WordPart::Variable(var_name));
+                                        push_part!(WordPart::Variable(var_name));
                                     }
                                 }
                                 '}' => {
                                     chars.next();
                                     if !var_name.is_empty() {
-                                        parts.push(WordPart::Variable(var_name));
+                                        push_part!(WordPart::Variable(var_name));
                                     }
                                 }
                                 _ => {
@@ -3593,18 +3615,18 @@ impl<'a> Parser<'a> {
                                         chars.next();
                                     }
                                     if !var_name.is_empty() {
-                                        parts.push(WordPart::Variable(var_name));
+                                        push_part!(WordPart::Variable(var_name));
                                     }
                                 }
                             }
                         } else if !var_name.is_empty() {
-                            parts.push(WordPart::Variable(var_name));
+                            push_part!(WordPart::Variable(var_name));
                         }
                     }
                 } else if let Some(&c) = chars.peek() {
                     // Check for special single-character variables ($?, $#, $@, $*, $!, $$, $-, $0-$9)
                     if matches!(c, '?' | '#' | '@' | '*' | '!' | '$' | '-') || c.is_ascii_digit() {
-                        parts.push(WordPart::Variable(chars.next().unwrap().to_string()));
+                        push_part!(WordPart::Variable(chars.next().unwrap().to_string()));
                     } else {
                         // $VAR format
                         let mut var_name = String::new();
@@ -3616,7 +3638,7 @@ impl<'a> Parser<'a> {
                             }
                         }
                         if !var_name.is_empty() {
-                            parts.push(WordPart::Variable(var_name));
+                            push_part!(WordPart::Variable(var_name));
                         } else {
                             // Just a literal $
                             current.push('$');
@@ -3633,18 +3655,19 @@ impl<'a> Parser<'a> {
 
         // Flush remaining literal
         if !current.is_empty() {
-            parts.push(WordPart::Literal(current));
+            push_part!(WordPart::Literal(current));
         }
 
         // If no parts, create an empty literal
         if parts.is_empty() {
-            parts.push(WordPart::Literal(String::new()));
+            push_part!(WordPart::Literal(String::new()));
         }
 
         Word {
             parts,
             quoted: false,
             has_unquoted_glob: false,
+            part_quoted,
         }
     }
 

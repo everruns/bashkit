@@ -9008,6 +9008,58 @@ impl Interpreter {
                 }
             }
 
+            let has_mixed_part_quotes =
+                word.part_quoted.iter().any(|q| *q) && word.part_quoted.iter().any(|q| !*q);
+            if has_mixed_part_quotes {
+                let mut fields = vec![String::new()];
+                for (idx, part) in word.parts.iter().enumerate() {
+                    let part_is_quoted = word.part_quoted.get(idx).copied().unwrap_or(word.quoted);
+                    let part_has_expansion = matches!(
+                        part,
+                        WordPart::Variable(_)
+                            | WordPart::CommandSubstitution(_)
+                            | WordPart::ArithmeticExpansion(_)
+                            | WordPart::ParameterExpansion { .. }
+                            | WordPart::ArrayAccess { .. }
+                    );
+                    let value = if idx > 0
+                        && let WordPart::Literal(s) = part
+                    {
+                        s.clone()
+                    } else {
+                        let single = Word {
+                            parts: vec![part.clone()],
+                            quoted: part_is_quoted,
+                            has_unquoted_glob: false,
+                            part_quoted: vec![part_is_quoted],
+                        };
+                        self.expand_word(&single).await?
+                    };
+
+                    if part_has_expansion && !part_is_quoted {
+                        let split = self.ifs_split(&value);
+                        if let Some((first, rest)) = split.split_first() {
+                            if let Some(current) = fields.last_mut() {
+                                current.push_str(first);
+                            }
+                            for field in rest {
+                                fields.push(field.clone());
+                            }
+                        }
+                    } else if let Some(current) = fields.last_mut() {
+                        // Quoted expansion results must not undergo brace/glob expansion
+                        // when an unquoted glob is elsewhere in the word. Escape special
+                        // chars so that expand_braces/expand_glob_item treat them as literals.
+                        if part_is_quoted && part_has_expansion && word.has_unquoted_glob {
+                            current.push_str(&Self::quote_expansion_for_quoted_glob(&value));
+                        } else {
+                            current.push_str(&value);
+                        }
+                    }
+                }
+                return Ok(fields);
+            }
+
             // For other words, expand to a single field then apply IFS word splitting
             // when the word is unquoted and contains an expansion.
             // Per POSIX, unquoted variable/command/arithmetic expansion results undergo
@@ -14534,6 +14586,18 @@ cat /tmp/test_fd_leak.txt"#,
         assert_eq!(result.exit_code, 0);
         let lines: Vec<&str> = result.stdout.lines().collect();
         assert_eq!(lines, vec!["count:1", "arg1:a b csuffix", "arg2:<none>"]);
+    }
+
+    // Regression: only unquoted expansion parts in mixed words undergo IFS splitting.
+    #[tokio::test]
+    async fn test_mixed_quote_unquoted_prefix_var_still_splits() {
+        let result = run_script(
+            r#"a="x y"; b="q r"; set -- $a"$b"; echo "count:$#"; echo "arg1:$1"; echo "arg2:$2""#,
+        )
+        .await;
+        assert_eq!(result.exit_code, 0);
+        let lines: Vec<&str> = result.stdout.lines().collect();
+        assert_eq!(lines, vec!["count:2", "arg1:x", "arg2:yq r"]);
     }
 
     /// Issue #1184: input process substitution temp files must be cleaned up

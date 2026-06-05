@@ -411,6 +411,9 @@ impl<'a> Lexer<'a> {
                 // Word already has content (the prefix) — concatenate the quoted segment
                 let quote_char = ch;
                 self.advance();
+                if quote_char == '"' {
+                    word.push('\u{1e}');
+                }
                 while let Some(c) = self.peek_char() {
                     if c == quote_char {
                         self.advance();
@@ -464,6 +467,9 @@ impl<'a> Lexer<'a> {
                     }
                     word.push(c);
                     self.advance();
+                }
+                if quote_char == '"' {
+                    word.push('\u{1f}');
                 }
                 continue;
             } else if ch == '$' {
@@ -546,6 +552,9 @@ impl<'a> Lexer<'a> {
                 // This handles: VAR="val", date +"%Y", echo foo"bar"
                 let quote_char = ch;
                 self.advance(); // consume opening quote
+                if quote_char == '"' {
+                    word.push('\u{1e}');
+                }
                 while let Some(c) = self.peek_char() {
                     if c == quote_char {
                         self.advance(); // consume closing quote
@@ -610,6 +619,9 @@ impl<'a> Lexer<'a> {
                     word.push(c);
                     self.advance();
                 }
+                if quote_char == '"' {
+                    word.push('\u{1f}');
+                }
                 continue;
             } else if ch == '$' {
                 // Handle variable references and command substitution
@@ -618,10 +630,12 @@ impl<'a> Lexer<'a> {
                 // $'...' — ANSI-C quoting: resolve escapes at parse time
                 if self.peek_char() == Some('\'') {
                     self.advance(); // consume opening '
+                    word.push('\u{1e}');
                     Self::push_literal_with_escaped_dollar(
                         &mut word,
                         &self.read_dollar_single_quoted_content(),
                     );
+                    word.push('\u{1f}');
                     // ANSI-C quotes are single-quote semantics: quoted context.
                     has_quoted_expansion = true;
                     continue;
@@ -632,6 +646,7 @@ impl<'a> Lexer<'a> {
                     self.advance(); // consume opening "
                     // Locale quotes are double-quote semantics: quoted context.
                     has_quoted_expansion = true;
+                    word.push('\u{1e}');
                     while let Some(c) = self.peek_char() {
                         if c == '"' {
                             self.advance();
@@ -715,6 +730,7 @@ impl<'a> Lexer<'a> {
                         word.push(c);
                         self.advance();
                     }
+                    word.push('\u{1f}');
                     continue;
                 }
 
@@ -1024,10 +1040,10 @@ impl<'a> Lexer<'a> {
         // Any quoting makes the whole token literal.
         self.read_continuation_into(&mut content);
 
-        // Single-quoted strings are literal - no variable expansion.
-        // Decode NUL escape sentinels from continued double-quoted segments
-        // before returning a token that bypasses parse_word().
-        // Only allocate when the sentinel is actually present (common case: none).
+        // Single-quoted strings are literal - no variable expansion. Quote-boundary
+        // markers are only for parsed mixed words; LiteralWord keeps contents raw.
+        // Also decode any NUL escape sentinels from continued double-quoted segments.
+        content.retain(|ch| ch != '\u{1e}' && ch != '\u{1f}');
         Some(Token::LiteralWord(if content.contains('\x00') {
             Self::decode_nul_escape_sentinel(&content)
         } else {
@@ -1042,6 +1058,7 @@ impl<'a> Lexer<'a> {
             match self.peek_char() {
                 Some('\'') => {
                     self.advance(); // opening '
+                    content.push('\u{1e}');
                     while let Some(ch) = self.peek_char() {
                         if ch == '\'' {
                             self.advance(); // closing '
@@ -1050,9 +1067,11 @@ impl<'a> Lexer<'a> {
                         content.push(ch);
                         self.advance();
                     }
+                    content.push('\u{1f}');
                 }
                 Some('"') => {
                     self.advance(); // opening "
+                    content.push('\u{1e}');
                     while let Some(ch) = self.peek_char() {
                         if ch == '"' {
                             self.advance(); // closing "
@@ -1083,6 +1102,7 @@ impl<'a> Lexer<'a> {
                         content.push(ch);
                         self.advance();
                     }
+                    content.push('\u{1f}');
                 }
                 Some('$') => {
                     // Check for $'...' ANSI-C quoting in continuation
@@ -1091,10 +1111,12 @@ impl<'a> Lexer<'a> {
                     if lookahead.next() == Some('\'') {
                         self.advance(); // consume $
                         self.advance(); // consume opening '
+                        content.push('\u{1e}');
                         Self::push_literal_with_escaped_dollar(
                             content,
                             &self.read_dollar_single_quoted_content(),
                         );
+                        content.push('\u{1f}');
                     } else {
                         content.push('$');
                         self.advance();
@@ -1364,6 +1386,10 @@ impl<'a> Lexer<'a> {
         if let Some(ch) = self.peek_char()
             && (self.is_word_char(ch) || ch == '\'' || ch == '"' || ch == '$')
         {
+            let original = std::mem::take(&mut content);
+            content.push('\u{1e}');
+            content.push_str(&original);
+            content.push('\u{1f}');
             let before_len = content.len();
             self.read_continuation_into(&mut content);
             let has_glob = content[before_len..]
