@@ -6,8 +6,14 @@
 
 #![cfg(feature = "python")]
 
-use bashkit::{Bash, PythonLimits};
-use std::time::Duration;
+use bashkit::{
+    Bash, DirEntry, FileSystem, FileSystemExt, FsLimits, FsUsage, InMemoryFs, Metadata,
+    PythonLimits, VfsSnapshot, async_trait,
+};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, SystemTime};
 
 /// Helper: create Bash with python builtins using default limits.
 fn bash_python() -> Bash {
@@ -23,6 +29,107 @@ fn bash_python_limits(limits: PythonLimits) -> Bash {
         .python_with_limits(limits)
         .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
         .build()
+}
+
+struct RecordingAppendFs {
+    inner: InMemoryFs,
+    append_calls: AtomicUsize,
+}
+
+impl RecordingAppendFs {
+    fn new() -> Self {
+        Self {
+            inner: InMemoryFs::new(),
+            append_calls: AtomicUsize::new(0),
+        }
+    }
+
+    fn append_calls(&self) -> usize {
+        self.append_calls.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl FileSystemExt for RecordingAppendFs {
+    fn usage(&self) -> FsUsage {
+        self.inner.usage()
+    }
+
+    async fn mkfifo(&self, path: &Path, mode: u32) -> bashkit::Result<()> {
+        self.inner.mkfifo(path, mode).await
+    }
+
+    fn limits(&self) -> FsLimits {
+        self.inner.limits()
+    }
+
+    fn vfs_snapshot(&self) -> Option<VfsSnapshot> {
+        self.inner.vfs_snapshot()
+    }
+
+    fn vfs_restore(&self, snapshot: &VfsSnapshot) -> bashkit::Result<()> {
+        self.inner.vfs_restore(snapshot)
+    }
+}
+
+#[async_trait]
+impl FileSystem for RecordingAppendFs {
+    async fn read_file(&self, path: &Path) -> bashkit::Result<Vec<u8>> {
+        self.inner.read_file(path).await
+    }
+
+    async fn write_file(&self, path: &Path, content: &[u8]) -> bashkit::Result<()> {
+        self.inner.write_file(path, content).await
+    }
+
+    async fn append_file(&self, path: &Path, content: &[u8]) -> bashkit::Result<()> {
+        self.append_calls.fetch_add(1, Ordering::SeqCst);
+        self.inner.append_file(path, content).await
+    }
+
+    async fn mkdir(&self, path: &Path, recursive: bool) -> bashkit::Result<()> {
+        self.inner.mkdir(path, recursive).await
+    }
+
+    async fn remove(&self, path: &Path, recursive: bool) -> bashkit::Result<()> {
+        self.inner.remove(path, recursive).await
+    }
+
+    async fn stat(&self, path: &Path) -> bashkit::Result<Metadata> {
+        self.inner.stat(path).await
+    }
+
+    async fn read_dir(&self, path: &Path) -> bashkit::Result<Vec<DirEntry>> {
+        self.inner.read_dir(path).await
+    }
+
+    async fn exists(&self, path: &Path) -> bashkit::Result<bool> {
+        self.inner.exists(path).await
+    }
+
+    async fn rename(&self, from: &Path, to: &Path) -> bashkit::Result<()> {
+        self.inner.rename(from, to).await
+    }
+
+    async fn copy(&self, from: &Path, to: &Path) -> bashkit::Result<()> {
+        self.inner.copy(from, to).await
+    }
+
+    async fn symlink(&self, target: &Path, link: &Path) -> bashkit::Result<()> {
+        self.inner.symlink(target, link).await
+    }
+
+    async fn read_link(&self, path: &Path) -> bashkit::Result<PathBuf> {
+        self.inner.read_link(path).await
+    }
+
+    async fn chmod(&self, path: &Path, mode: u32) -> bashkit::Result<()> {
+        self.inner.chmod(path, mode).await
+    }
+
+    async fn set_modified_time(&self, path: &Path, time: SystemTime) -> bashkit::Result<()> {
+        self.inner.set_modified_time(path, time).await
+    }
 }
 
 // =============================================================================
@@ -748,6 +855,31 @@ mod vfs_bridging {
             .unwrap();
         assert_eq!(r.exit_code, 0);
         assert_eq!(r.stdout, "bash-1\npath-open\nopen\nbash-2\n");
+    }
+
+    #[tokio::test]
+    async fn open_append_text_uses_vfs_append_api() {
+        let fs = Arc::new(RecordingAppendFs::new());
+        let mut bash = Bash::builder()
+            .fs(fs.clone())
+            .python()
+            .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
+            .build();
+
+        let r = bash
+            .exec(
+                "printf 'first' > /tmp/open-append-api.txt\npython3 -c \"with open('/tmp/open-append-api.txt', 'a') as f:\n    f.write('+second')\"\ncat /tmp/open-append-api.txt",
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout, "first+second");
+        assert_eq!(
+            fs.append_calls(),
+            1,
+            "Python append must use FileSystem::append_file"
+        );
     }
 
     #[tokio::test]
