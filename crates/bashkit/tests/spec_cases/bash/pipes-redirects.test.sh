@@ -165,12 +165,13 @@ sleep: invalid time interval 'abc'
 ### end
 
 ### redirect_both_to_file_content
-# Redirect both stdout and stderr to file with &>
-echo hello; sleep abc
-echo ---
+# Redirect both stdout and stderr to file with &> and verify file content
+{ echo hello; sleep abc; } &>/tmp/both_content.txt
+cat /tmp/both_content.txt
+### bash_diff: bashkit sleep error lacks --help hint from coreutils
 ### expect
 hello
----
+sleep: invalid time interval 'abc'
 ### end
 
 ### redirect_both_devnull
