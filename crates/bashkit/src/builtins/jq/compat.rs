@@ -44,13 +44,16 @@ pub(super) const ARGS_VAR_NAME: &str = "$ARGS";
 /// top-down). The trailing `;` after every def is required.
 pub(super) const JQ_COMPAT_DEFS: &str = r#"
 def setpath(p; v):
-  if (p | length) == 0 then v
-  else p[0] as $k |
-    (if . == null then
-      if ($k | type) == "number" then [] else {} end
-    else . end) |
-    .[$k] |= setpath(p[1:]; v)
-  end;
+  p as $p | v as $v |
+  def _bashkit_setpath($path; $value):
+    if ($path | length) == 0 then $value
+    else $path[0] as $k |
+      (if . == null then
+        if ($k | type) == "number" then [] else {} end
+      else . end) |
+      .[$k] |= _bashkit_setpath($path[1:]; $value)
+    end;
+  _bashkit_setpath($p; $v);
 def leaf_paths: paths(scalars);
 def match(re; flags):
   matches(re; flags)[] |
