@@ -361,10 +361,20 @@ function toNativeOnOutput(onOutput?: OnOutput): NativeOnOutput | undefined {
       }
       return undefined;
     } catch (error) {
-      if (error instanceof Error) {
-        return error.stack ?? error.message ?? error.toString();
-      }
-      return String(error);
+      // THREAT[TM-INF-028]: never propagate error.stack — it contains host file
+      // paths and function names. Use error.message only, and strip path-like
+      // patterns so attacker-controlled output cannot smuggle them.
+      const raw =
+        error instanceof Error
+          ? (error.message ?? error.toString())
+          : String(error);
+      // Remove absolute-path and file:// URL segments from the message.
+      // Use a negative lookbehind so paths after punctuation (e.g. "at(/home/…")
+      // are also stripped, not just paths preceded by whitespace.
+      const sanitized = raw
+        .replace(/file:\/\/[^\s]*/g, "<path>")
+        .replace(/(?<!\w)\/[^\s]*/g, "<path>");
+      return sanitized.slice(0, 256) || "output callback failed";
     }
   };
 }
