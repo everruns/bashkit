@@ -81,6 +81,23 @@ jobs:
           echo "$NOTES" > release_notes.md
           echo "Release notes extracted for v$VERSION"
 
+      - name: Create and verify release tag
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG" 2>/dev/null || true
+          if git rev-parse --verify "$TAG" >/dev/null 2>&1; then
+            TAG_SHA=$(git rev-list -n 1 "$TAG")
+            if [ "$TAG_SHA" != "$GITHUB_SHA" ]; then
+              echo "Error: existing tag $TAG points to $TAG_SHA, expected $GITHUB_SHA"
+              exit 1
+            fi
+            echo "Existing tag $TAG verified at $GITHUB_SHA"
+          else
+            git tag "$TAG" "$GITHUB_SHA"
+            git push origin "$TAG"
+            echo "Created tag $TAG at $GITHUB_SHA"
+          fi
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
