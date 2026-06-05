@@ -83,6 +83,7 @@ async fn evaluate_check(
         "file_exists" => check_file_exists(check, weight, check_value, fs).await,
         "dir_exists" => check_dir_exists(check, weight, check_value, fs).await,
         "file_contains" => check_file_contains(check, weight, check_value, fs).await,
+        "file_line_regex" => check_file_line_regex(check, weight, check_value, fs).await,
         "llm_judge" => ScoreResult {
             check: check.to_string(),
             passed: true,
@@ -263,10 +264,72 @@ async fn check_file_contains(
     }
 }
 
+async fn check_file_line_regex(
+    check: &str,
+    weight: f64,
+    value: &str,
+    fs: &dyn FileSystem,
+) -> ScoreResult {
+    // Format: "file_line_regex:/path:pattern". Match is scoped to one line so
+    // CSV/table row expectations cannot pass from unrelated substrings.
+    let (path_str, pattern) = match value.split_once(':') {
+        Some((p, t)) => (p, t),
+        None => {
+            return ScoreResult {
+                check: check.to_string(),
+                passed: false,
+                detail: "invalid format, expected file_line_regex:/path:pattern".to_string(),
+                weight,
+            };
+        }
+    };
+
+    let re = match regex::Regex::new(pattern) {
+        Ok(re) => re,
+        Err(e) => {
+            return ScoreResult {
+                check: check.to_string(),
+                passed: false,
+                detail: format!("invalid regex: {}", e),
+                weight,
+            };
+        }
+    };
+
+    let path = Path::new(path_str);
+    match fs.read_file(path).await {
+        Ok(bytes) => {
+            let content = String::from_utf8_lossy(&bytes);
+            let found = content.lines().any(|line| re.is_match(line));
+            ScoreResult {
+                check: check.to_string(),
+                passed: found,
+                detail: if found {
+                    "matched file line".to_string()
+                } else {
+                    format!(
+                        "pattern '{}' not matched by any line in {}",
+                        pattern, path_str
+                    )
+                },
+                weight,
+            }
+        }
+        Err(e) => ScoreResult {
+            check: check.to_string(),
+            passed: false,
+            detail: format!("cannot read {}: {}", path_str, e),
+            weight,
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::agent::ToolCallResult;
+    use bashkit::{FileSystem, InMemoryFs};
+    use std::path::Path;
 
     fn make_trace(tool_calls: Vec<ToolCallResult>) -> AgentTrace {
         let last = tool_calls.last().cloned();
@@ -318,5 +381,57 @@ mod tests {
         }]);
         let r = check_stdout_contains("stdout_contains:hello", 1.0, "hello", &trace);
         assert!(r.passed);
+    }
+
+    #[tokio::test]
+    async fn file_line_regex_matches_quoted_or_unquoted_csv_row() {
+        let fs = InMemoryFs::new();
+        fs.mkdir(Path::new("/data"), false).await.unwrap();
+        fs.write_file(
+            Path::new("/data/employees.csv"),
+            b"name,department,salary\nAlice Chen,Engineering,120000\n\"Bob Park\",\"Marketing\",95000\n",
+        )
+        .await
+        .unwrap();
+
+        let unquoted = check_file_line_regex(
+            "file_line_regex:/data/employees.csv:^\"?Alice Chen\"?,\"?Engineering\"?,\"?120000\"?$",
+            1.0,
+            "/data/employees.csv:^\"?Alice Chen\"?,\"?Engineering\"?,\"?120000\"?$",
+            &fs,
+        )
+        .await;
+        let quoted = check_file_line_regex(
+            "file_line_regex:/data/employees.csv:^\"?Bob Park\"?,\"?Marketing\"?,\"?95000\"?$",
+            1.0,
+            "/data/employees.csv:^\"?Bob Park\"?,\"?Marketing\"?,\"?95000\"?$",
+            &fs,
+        )
+        .await;
+
+        assert!(unquoted.passed);
+        assert!(quoted.passed);
+    }
+
+    #[tokio::test]
+    async fn file_line_regex_rejects_values_split_across_lines() {
+        let fs = InMemoryFs::new();
+        fs.mkdir(Path::new("/data"), false).await.unwrap();
+        fs.write_file(
+            Path::new("/data/employees.csv"),
+            b"name,department,salary\nAlice Chen\nEngineering\n120000\n",
+        )
+        .await
+        .unwrap();
+
+        let result = check_file_line_regex(
+            "file_line_regex:/data/employees.csv:^\"?Alice Chen\"?,\"?Engineering\"?,\"?120000\"?$",
+            1.0,
+            "/data/employees.csv:^\"?Alice Chen\"?,\"?Engineering\"?,\"?120000\"?$",
+            &fs,
+        )
+        .await;
+
+        assert!(!result.passed);
     }
 }
