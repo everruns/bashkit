@@ -334,6 +334,17 @@ impl FsLimits {
         Ok(())
     }
 
+    /// Check if a restored snapshot's final file count exceeds the limit.
+    pub fn check_final_file_count(&self, count: u64) -> Result<(), FsLimitExceeded> {
+        if count > self.max_file_count {
+            return Err(FsLimitExceeded::FileCount {
+                current: count,
+                limit: self.max_file_count,
+            });
+        }
+        Ok(())
+    }
+
     /// Check if adding a directory would exceed the directory count limit.
     pub fn check_dir_count(&self, current: u64) -> Result<(), FsLimitExceeded> {
         if current >= self.max_dir_count {
