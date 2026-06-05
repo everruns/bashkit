@@ -409,8 +409,8 @@ impl ExecutionCounters {
             Ok(())
         });
 
-        self.commands += 1;
-        self.session_commands += 1;
+        self.commands = self.commands.saturating_add(1);
+        self.session_commands = self.session_commands.saturating_add(1);
         if self.commands > limits.max_commands {
             return Err(LimitExceeded::MaxCommands(limits.max_commands));
         }
@@ -437,7 +437,7 @@ impl ExecutionCounters {
 
     /// Increment exec call counter for session tracking.
     pub fn tick_exec_call(&mut self) {
-        self.session_exec_calls += 1;
+        self.session_exec_calls = self.session_exec_calls.saturating_add(1);
     }
 
     /// Increment loop iteration counter, returns error if limit exceeded
@@ -922,6 +922,31 @@ mod tests {
             counters.tick_command(&limits),
             Err(LimitExceeded::MaxCommands(5))
         ));
+    }
+
+    #[test]
+    fn test_command_counter_saturates_on_overflow() {
+        let limits = ExecutionLimits::new().max_commands(5);
+        let mut counters = ExecutionCounters::new();
+        counters.commands = usize::MAX;
+        counters.session_commands = u64::MAX;
+
+        assert!(matches!(
+            counters.tick_command(&limits),
+            Err(LimitExceeded::MaxCommands(5))
+        ));
+        assert_eq!(counters.commands, usize::MAX);
+        assert_eq!(counters.session_commands, u64::MAX);
+    }
+
+    #[test]
+    fn test_exec_counter_saturates_on_overflow() {
+        let mut counters = ExecutionCounters::new();
+        counters.session_exec_calls = u64::MAX;
+
+        counters.tick_exec_call();
+
+        assert_eq!(counters.session_exec_calls, u64::MAX);
     }
 
     #[test]
