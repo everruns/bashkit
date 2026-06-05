@@ -2989,49 +2989,56 @@ async fn collect_rg_inputs(
     }
 
     let mut collected = RgCollectedInputs::default();
-    let mut inputs = Vec::new();
+    let mut candidates = Vec::new();
     let mut roots = Vec::new();
     for p in &opts.paths {
         let path = resolve_path(ctx.cwd, p);
-        if let Some((actual_path, meta)) =
-            resolve_rg_explicit_path(&*ctx.fs, &path, opts.follow_symlinks).await
-            && meta.file_type.is_dir()
-        {
-            roots.push(RgSearchRoot {
-                logical: path.clone(),
-                actual: actual_path,
-                display_hint: RgDisplayHint::from_root_arg(Some(p)),
-            });
-            continue;
-        }
-
-        let actual_path = resolve_rg_explicit_path(&*ctx.fs, &path, opts.follow_symlinks)
-            .await
-            .map(|(actual, _)| actual)
-            .unwrap_or_else(|| path.clone());
-        let text = match read_rg_text_file(&*ctx.fs, &actual_path, ctx.cwd, p, opts).await {
-            Ok(t) => t,
-            Err(e) => {
-                collected.had_errors = true;
-                if opts.messages {
-                    collected.stderr.push_str(&e.stderr);
-                }
-                continue;
+        match resolve_rg_explicit_path(&*ctx.fs, &path, opts.follow_symlinks).await {
+            Some((actual_path, meta)) if meta.file_type.is_dir() => {
+                roots.push(RgSearchRoot {
+                    logical: path,
+                    actual: actual_path,
+                    display_hint: RgDisplayHint::from_root_arg(Some(p)),
+                });
             }
-        };
-        inputs.push(RgInput::explicit(
-            apply_path_separator_to_display(p, opts),
-            text,
-        ));
+            Some((actual_path, meta)) => {
+                candidates.push(RgFileCandidate {
+                    logical: path,
+                    actual: actual_path,
+                    metadata: meta,
+                    display_hint: RgDisplayHint::from_root_arg(Some(p)),
+                    display_override: Some(apply_path_separator_to_display(p, opts)),
+                    explicit: true,
+                });
+            }
+            None => {
+                let text = match read_rg_text_file(&*ctx.fs, &path, ctx.cwd, p, opts).await {
+                    Ok(t) => t,
+                    Err(e) => {
+                        collected.had_errors = true;
+                        if opts.messages {
+                            collected.stderr.push_str(&e.stderr);
+                        }
+                        continue;
+                    }
+                };
+                collected.inputs.push(RgInput::explicit(
+                    apply_path_separator_to_display(p, opts),
+                    text,
+                ));
+            }
+        }
     }
     if !roots.is_empty() {
-        let files = collect_rg_files_recursive(&*ctx.fs, &roots, opts, ctx.cwd).await;
-        let read = read_rg_files(&*ctx.fs, files, ctx.cwd, opts).await;
-        collected.had_errors |= read.had_errors;
-        collected.stderr.push_str(&read.stderr);
-        inputs.extend(read.inputs);
+        candidates.extend(collect_rg_files_recursive(&*ctx.fs, &roots, opts, ctx.cwd).await);
     }
-    collected.inputs = inputs;
+    if opts.sort != RgSort::Path || opts.sort_reverse {
+        sort_rg_candidates(&mut candidates, opts);
+    }
+    let read = read_rg_files(&*ctx.fs, candidates, ctx.cwd, opts).await;
+    collected.had_errors |= read.had_errors;
+    collected.stderr.push_str(&read.stderr);
+    collected.inputs.extend(read.inputs);
     Ok(collected)
 }
 
@@ -3484,6 +3491,8 @@ struct RgFileCandidate {
     actual: PathBuf,
     metadata: crate::fs::Metadata,
     display_hint: RgDisplayHint,
+    display_override: Option<String>,
+    explicit: bool,
 }
 
 struct RgWalkItem {
@@ -3643,6 +3652,8 @@ async fn collect_rg_files_recursive(
                         actual: entry_actual_path,
                         metadata: entry_metadata,
                         display_hint: item.display_hint,
+                        display_override: None,
+                        explicit: false,
                     });
                 }
             }
@@ -3657,6 +3668,8 @@ async fn collect_rg_files_recursive(
                 actual: item.actual,
                 metadata: meta,
                 display_hint: item.display_hint,
+                display_override: None,
+                explicit: false,
             });
         }
     }
@@ -3739,6 +3752,8 @@ async fn collect_rg_file_list(
                 actual: actual_path,
                 metadata: meta,
                 display_hint: RgDisplayHint::from_root_arg(Some(p)),
+                display_override: None,
+                explicit: true,
             });
         }
     }
@@ -3746,7 +3761,7 @@ async fn collect_rg_file_list(
     result.extend(
         candidates
             .iter()
-            .map(|file| display_path_for(&file.logical, cwd, file.display_hint.root_arg(), opts)),
+            .map(|file| candidate_display_path(file, cwd, opts)),
     );
     result
 }
@@ -3770,8 +3785,9 @@ async fn read_rg_files(
 ) -> RgCollectedInputs {
     let mut collected = RgCollectedInputs::default();
     for file in files {
-        let display = display_path_for(&file.logical, cwd, file.display_hint.root_arg(), opts);
+        let display = candidate_display_path(&file, cwd, opts);
         match read_rg_text_file(fs, &file.actual, cwd, &display, opts).await {
+            Ok(text) if file.explicit => collected.inputs.push(RgInput::explicit(display, text)),
             Ok(text) => collected.inputs.push(RgInput::discovered(display, text)),
             Err(e) => {
                 collected.had_errors = true;
@@ -3782,6 +3798,12 @@ async fn read_rg_files(
         }
     }
     collected
+}
+
+fn candidate_display_path(file: &RgFileCandidate, cwd: &Path, opts: &RgOptions) -> String {
+    file.display_override
+        .clone()
+        .unwrap_or_else(|| display_path_for(&file.logical, cwd, file.display_hint.root_arg(), opts))
 }
 
 async fn try_indexed_search(
@@ -11896,8 +11918,24 @@ mod tests {
             output: RgDiffOutput::Exact,
         },
         RgTimedDiffCase {
+            name: "sort modified across explicit files",
+            args: &["--sort", "modified", "needle", "d1/new.txt", "d2/old.txt"],
+            files: DIFF_TIMED_MULTI_ROOT_SORT_FILES,
+            mtimes: DIFF_TIMED_MULTI_ROOT_SORT_MTIMES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgTimedDiffCase {
             name: "files sort modified across explicit roots",
             args: &["--files", "--sort", "modified", "d1", "d2"],
+            files: DIFF_TIMED_MULTI_ROOT_SORT_FILES,
+            mtimes: DIFF_TIMED_MULTI_ROOT_SORT_MTIMES,
+            cwd: "/",
+            output: RgDiffOutput::Exact,
+        },
+        RgTimedDiffCase {
+            name: "files sort modified across explicit files",
+            args: &["--files", "--sort", "modified", "d1/new.txt", "d2/old.txt"],
             files: DIFF_TIMED_MULTI_ROOT_SORT_FILES,
             mtimes: DIFF_TIMED_MULTI_ROOT_SORT_MTIMES,
             cwd: "/",
