@@ -1024,8 +1024,12 @@ impl<'a> Lexer<'a> {
         // Any quoting makes the whole token literal.
         self.read_continuation_into(&mut content);
 
-        // Single-quoted strings are literal - no variable expansion
-        Some(Token::LiteralWord(content))
+        // Single-quoted strings are literal - no variable expansion.
+        // Decode lexer-only escaped-dollar sentinels from continued segments
+        // before returning a token that bypasses parse_word().
+        Some(Token::LiteralWord(Self::decode_escaped_dollar_sentinel(
+            &content,
+        )))
     }
 
     /// After a closing quote, read any adjacent quoted or unquoted word chars
@@ -1221,6 +1225,24 @@ impl<'a> Lexer<'a> {
             }
             dst.push(ch);
         }
+    }
+
+    /// Decode lexer-only escaped-dollar sentinels for literal-token paths.
+    fn decode_escaped_dollar_sentinel(segment: &str) -> String {
+        let mut decoded = String::with_capacity(segment.len());
+        let mut chars = segment.chars();
+
+        while let Some(ch) = chars.next() {
+            if ch == '\x00' {
+                if let Some(literal_ch) = chars.next() {
+                    decoded.push(literal_ch);
+                }
+            } else {
+                decoded.push(ch);
+            }
+        }
+
+        decoded
     }
 
     fn read_double_quoted_string(&mut self) -> Option<Token> {
@@ -1972,6 +1994,17 @@ mod tests {
         assert_eq!(
             lexer.next_token(),
             Some(Token::Word("foo\x00$(id)".to_string()))
+        );
+        assert_eq!(lexer.next_token(), None);
+    }
+
+    #[test]
+    fn test_single_quoted_word_continuation_decodes_escaped_dollar() {
+        let mut lexer = Lexer::new(r#"echo 'x'"\$HOME""#);
+        assert_eq!(lexer.next_token(), Some(Token::Word("echo".to_string())));
+        assert_eq!(
+            lexer.next_token(),
+            Some(Token::LiteralWord("x$HOME".to_string()))
         );
         assert_eq!(lexer.next_token(), None);
     }
