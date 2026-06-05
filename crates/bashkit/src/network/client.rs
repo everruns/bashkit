@@ -414,6 +414,11 @@ impl HttpClient {
         }
     }
 
+    /// Validate a URL against the same allowlist and private-IP policy used before requests.
+    pub(crate) async fn validate_url(&self, url: &str) -> Result<()> {
+        self.enforce_url_security(url).await
+    }
+
     pub(crate) async fn enforce_url_security(&self, url: &str) -> Result<()> {
         self.check_allowlist(url)?;
         if self.allowlist.is_blocking_private_ips() {
