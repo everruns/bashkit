@@ -170,6 +170,10 @@ impl Interpreter {
         }
 
         let extglob = self.is_extglob();
+        // THREAT[TM-DOS-039]: Once the remaining pattern has no closing bracket,
+        // every `[` is literal. Cache that state so an unmatched suffix is scanned
+        // at most once instead of from every subsequent `[` start.
+        let mut no_more_bracket_closes = !pattern.contains(']');
 
         // Check for extglob at the start of pattern
         if extglob && pattern.len() >= 2 {
@@ -264,6 +268,17 @@ impl Interpreter {
                     }
                 }
                 (Some('['), Some(v)) => {
+                    if no_more_bracket_closes || !pattern_chars.clone().any(|c| c == ']') {
+                        no_more_bracket_closes = true;
+                        pattern_chars.next();
+                        if v == '[' {
+                            value_chars.next();
+                        } else {
+                            return false;
+                        }
+                        continue;
+                    }
+
                     // Save state before consuming '[' — if bracket expr is
                     // invalid (e.g. "[]"), we fall back to literal '[' match.
                     let saved_pattern = pattern_chars.clone();
@@ -866,5 +881,37 @@ impl Interpreter {
                 }
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use crate::fs::{FileSystem, InMemoryFs};
+
+    use super::Interpreter;
+
+    fn interp() -> Interpreter {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        Interpreter::new(fs)
+    }
+
+    #[test]
+    fn unmatched_bracket_run_matches_literals() {
+        let interp = interp();
+        let brackets = "[".repeat(65_536);
+
+        assert!(interp.pattern_matches(&brackets, &brackets));
+        assert!(!interp.pattern_matches(&format!("{brackets}x"), &brackets));
+    }
+
+    #[test]
+    fn invalid_and_valid_bracket_patterns_still_match() {
+        let interp = interp();
+
+        assert!(interp.pattern_matches("[]", "[]"));
+        assert!(interp.pattern_matches("[", "["));
+        assert!(interp.pattern_matches("a", "[a]"));
     }
 }
