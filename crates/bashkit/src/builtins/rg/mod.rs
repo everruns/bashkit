@@ -29,6 +29,7 @@ use super::search_common::build_regex_opts;
 use super::{Builtin, Context, read_text_file, resolve_path};
 use crate::error::{Error, Result};
 use crate::interpreter::ExecResult;
+use crate::limits::ExecutionLimits;
 
 // Ignore files are repository input. Keep parsing/matching bounded so a large
 // ignore file cannot force unbounded regex compilation or per-path scans.
@@ -3959,6 +3960,31 @@ struct RgPrefix<'a> {
 const RG_ANSI_RESET: &str = "\x1b[0m";
 const RG_COLOR_MATCH_EXTRA_BYTES_LIMIT: usize = 64 * 1024;
 
+fn rg_output_limit(ctx: &Context<'_>) -> usize {
+    ctx.execution_extension::<ExecutionLimits>()
+        .map(|limits| limits.max_stdout_bytes.saturating_add(1))
+        .unwrap_or_else(|| {
+            ExecutionLimits::default()
+                .max_stdout_bytes
+                .saturating_add(1)
+        })
+}
+
+fn truncate_rg_output(output: &mut String, limit: usize) {
+    if output.len() <= limit {
+        return;
+    }
+    let mut end = limit;
+    while !output.is_char_boundary(end) {
+        end -= 1;
+    }
+    output.truncate(end);
+}
+
+fn rg_output_remaining(output: &str, limit: usize) -> Option<usize> {
+    Some(limit.saturating_sub(output.len()))
+}
+
 fn color_path(path: &str, color: bool, color_scheme: &RgColorScheme) -> String {
     if color {
         color_text(path, &color_scheme.path, true)
@@ -4409,6 +4435,7 @@ fn format_rg_output_line(
     regex: &RgMatcher,
     opts: &RgOptions,
     matched: bool,
+    output_remaining: Option<usize>,
 ) -> String {
     let line = format_rg_line(line, match_line, regex, opts, matched);
     let display = if let Some(max_columns) = opts.max_columns {
@@ -4426,11 +4453,15 @@ fn format_rg_output_line(
         line
     };
 
-    if matched && opts.replacement.is_none() && !opts.invert_match {
+    let mut display = if matched && opts.replacement.is_none() && !opts.invert_match {
         color_matches(&display, regex, opts)
     } else {
         display
+    };
+    if let Some(remaining) = output_remaining {
+        truncate_rg_output(&mut display, remaining);
     }
+    display
 }
 
 fn format_rg_match_text(text: &str, regex: &RgMatcher, opts: &RgOptions) -> String {
@@ -4571,6 +4602,7 @@ fn write_rg_context(
     match_lines: &[usize],
     opts: &RgOptions,
     show_filename: bool,
+    output_limit: usize,
 ) {
     // Merge context windows before expansion. Large -A/-B/-C values must cost
     // proportional to emitted lines, not matches × context.
@@ -4592,6 +4624,7 @@ fn write_rg_context(
         {
             output.push_str(&opts.context_separator);
             output.push(record_terminator);
+            truncate_rg_output(output, output_limit);
         }
         prev_line = Some(line_idx);
 
@@ -4627,8 +4660,10 @@ fn write_rg_context(
             regex,
             opts,
             matched,
+            rg_output_remaining(&output, output_limit),
         ));
         output.push(record_terminator);
+        truncate_rg_output(output, output_limit);
     }
 }
 
@@ -5129,6 +5164,7 @@ impl Builtin for Rg {
         if opts.type_list {
             return Ok(ExecResult::ok(opts.type_database.list()));
         }
+        let output_limit = rg_output_limit(&ctx);
         load_rg_global_ignore_files(&*ctx.fs, ctx.env, &mut opts).await?;
         if let Err(result) = load_rg_ignore_files(&*ctx.fs, ctx.cwd, &mut opts).await {
             return Ok(result);
@@ -5145,12 +5181,15 @@ impl Builtin for Rg {
                 for file in files {
                     output.push_str(file.as_str());
                     output.push('\0');
+                    truncate_rg_output(&mut output, output_limit);
                 }
                 output
             } else if files.is_empty() {
                 String::new()
             } else {
-                format!("{}\n", files.join("\n"))
+                let mut output = format!("{}\n", files.join("\n"));
+                truncate_rg_output(&mut output, output_limit);
+                output
             };
             return Ok(ExecResult {
                 stdout: output,
@@ -5242,6 +5281,7 @@ impl Builtin for Rg {
                             &opts.color_scheme,
                         ));
                         output.push(if opts.null { '\0' } else { '\n' });
+                        truncate_rg_output(&mut output, output_limit);
                     } else if (opts.count_only || opts.count_matches) && opts.include_zero {
                         if show_filename {
                             output.push_str(&color_path(
@@ -5278,6 +5318,7 @@ impl Builtin for Rg {
                         &opts.color_scheme,
                     ));
                     output.push(if opts.null { '\0' } else { '\n' });
+                    truncate_rg_output(&mut output, output_limit);
                     continue;
                 }
                 if opts.count_only || opts.count_matches {
@@ -5574,6 +5615,7 @@ impl Builtin for Rg {
                     }
                     output.push_str(&count_value.to_string());
                     output.push(record_terminator);
+                    truncate_rg_output(&mut output, output_limit);
                     continue;
                 }
             }
@@ -5708,6 +5750,7 @@ impl Builtin for Rg {
                         }
                         output.push_str(&count_value.to_string());
                         output.push(record_terminator);
+                        truncate_rg_output(&mut output, output_limit);
                         continue;
                     }
                     if opts.quiet {
@@ -5717,6 +5760,7 @@ impl Builtin for Rg {
                     let line_show_filename = if opts.heading && show_filename && match_count > 0 {
                         if !output.is_empty() {
                             output.push(record_terminator);
+                            truncate_rg_output(&mut output, output_limit);
                         }
                         output.push_str(&color_path(
                             filename,
@@ -5724,6 +5768,7 @@ impl Builtin for Rg {
                             &opts.color_scheme,
                         ));
                         output.push(record_terminator);
+                        truncate_rg_output(&mut output, output_limit);
                         false
                     } else {
                         show_filename
@@ -5736,6 +5781,7 @@ impl Builtin for Rg {
                         {
                             output.push_str(&opts.context_separator);
                             output.push(record_terminator);
+                            truncate_rg_output(&mut output, output_limit);
                         }
                         write_rg_context(
                             &mut output,
@@ -5745,6 +5791,7 @@ impl Builtin for Rg {
                             &inverted_match_lines,
                             &opts,
                             line_show_filename,
+                            output_limit,
                         );
                     } else {
                         for &line_idx in &inverted_match_lines {
@@ -5774,8 +5821,10 @@ impl Builtin for Rg {
                                 &regex,
                                 &opts,
                                 true,
+                                rg_output_remaining(&output, output_limit),
                             ));
                             output.push(record_terminator);
+                            truncate_rg_output(&mut output, output_limit);
                         }
                     }
                     continue;
@@ -5926,6 +5975,7 @@ impl Builtin for Rg {
                     }
                     output.push_str(&count_value.to_string());
                     output.push(record_terminator);
+                    truncate_rg_output(&mut output, output_limit);
                     continue;
                 }
                 if opts.quiet {
@@ -5935,6 +5985,7 @@ impl Builtin for Rg {
                 let line_show_filename = if opts.heading && show_filename && match_count > 0 {
                     if !output.is_empty() {
                         output.push(record_terminator);
+                        truncate_rg_output(&mut output, output_limit);
                     }
                     output.push_str(&color_path(
                         filename,
@@ -5942,6 +5993,7 @@ impl Builtin for Rg {
                         &opts.color_scheme,
                     ));
                     output.push(record_terminator);
+                    truncate_rg_output(&mut output, output_limit);
                     false
                 } else {
                     show_filename
@@ -6022,8 +6074,10 @@ impl Builtin for Rg {
                             &regex,
                             &opts,
                             matched,
+                            rg_output_remaining(&output, output_limit),
                         ));
                         output.push(record_terminator);
+                        truncate_rg_output(&mut output, output_limit);
                         line_idx += 1;
                     }
                 } else if opts.vimgrep {
@@ -6073,8 +6127,10 @@ impl Builtin for Rg {
                             &regex,
                             &opts,
                             true,
+                            rg_output_remaining(&output, output_limit),
                         ));
                         output.push(record_terminator);
+                        truncate_rg_output(&mut output, output_limit);
                     }
                 } else if opts.only_matching {
                     for mat in &matches {
@@ -6107,6 +6163,7 @@ impl Builtin for Rg {
                     {
                         output.push_str(&opts.context_separator);
                         output.push(record_terminator);
+                        truncate_rg_output(&mut output, output_limit);
                     }
                     write_rg_context(
                         &mut output,
@@ -6116,6 +6173,7 @@ impl Builtin for Rg {
                         &context_match_lines,
                         &opts,
                         line_show_filename,
+                        output_limit,
                     );
                 } else if let Some(replacement) = &opts.replacement {
                     for mat in &matches {
@@ -6146,6 +6204,7 @@ impl Builtin for Rg {
                             replacement,
                         ));
                         output.push(record_terminator);
+                        truncate_rg_output(&mut output, output_limit);
                     }
                 } else {
                     let mut seen_line_indices = HashSet::new();
@@ -6185,8 +6244,10 @@ impl Builtin for Rg {
                                 &regex,
                                 &opts,
                                 true,
+                                rg_output_remaining(&output, output_limit),
                             ));
                             output.push(record_terminator);
+                            truncate_rg_output(&mut output, output_limit);
                         }
                     }
                 }
@@ -6372,6 +6433,7 @@ impl Builtin for Rg {
                 }
                 output.push_str(&count_value.to_string());
                 output.push(record_terminator);
+                truncate_rg_output(&mut output, output_limit);
                 continue;
             }
             if opts.quiet {
@@ -6381,6 +6443,7 @@ impl Builtin for Rg {
             let line_show_filename = if opts.heading && show_filename && match_count > 0 {
                 if !output.is_empty() {
                     output.push(record_terminator);
+                    truncate_rg_output(&mut output, output_limit);
                 }
                 output.push_str(&color_path(
                     filename,
@@ -6388,6 +6451,7 @@ impl Builtin for Rg {
                     &opts.color_scheme,
                 ));
                 output.push(record_terminator);
+                truncate_rg_output(&mut output, output_limit);
                 false
             } else {
                 show_filename
@@ -6457,14 +6521,23 @@ impl Builtin for Rg {
                             hyperlink_format: opts.hyperlink_format.as_deref(),
                         },
                     );
-                    output.push_str(&format_rg_output_line(
-                        line.text,
-                        line.match_text,
-                        &regex,
-                        &opts,
-                        matched,
-                    ));
+                    if opts.only_matching
+                        && !opts.invert_match
+                        && let Some(mat) = match_for_line
+                    {
+                        output.push_str(&format_rg_match_text(mat.as_str(), &regex, &opts));
+                    } else {
+                        output.push_str(&format_rg_output_line(
+                            line.text,
+                            line.match_text,
+                            &regex,
+                            &opts,
+                            matched,
+                            rg_output_remaining(&output, output_limit),
+                        ));
+                    }
                     output.push(record_terminator);
+                    truncate_rg_output(&mut output, output_limit);
                 }
             } else if opts.vimgrep && !opts.invert_match {
                 for &line_idx in &match_lines {
@@ -6477,6 +6550,7 @@ impl Builtin for Rg {
                     {
                         output.push_str(&rg_replacement_cap_marker());
                         output.push(record_terminator);
+                        truncate_rg_output(&mut output, output_limit);
                         continue;
                     }
                     let mut output_col_offset: usize = 0;
@@ -6522,9 +6596,11 @@ impl Builtin for Rg {
                                 &regex,
                                 &opts,
                                 true,
+                                rg_output_remaining(&output, output_limit),
                             ));
                         }
                         output.push(record_terminator);
+                        truncate_rg_output(&mut output, output_limit);
                         true
                     });
                 }
@@ -6538,6 +6614,7 @@ impl Builtin for Rg {
                     {
                         output.push_str(&rg_replacement_cap_marker());
                         output.push(record_terminator);
+                        truncate_rg_output(&mut output, output_limit);
                         continue;
                     }
                     regex.for_each_match(lines[line_idx].match_text, |mat| {
@@ -6572,6 +6649,7 @@ impl Builtin for Rg {
                             output.push_str(&color_matches(mat.as_str(), &regex, &opts));
                         }
                         output.push(record_terminator);
+                        truncate_rg_output(&mut output, output_limit);
                         true
                     });
                 }
@@ -6583,6 +6661,7 @@ impl Builtin for Rg {
                 {
                     output.push_str(&opts.context_separator);
                     output.push(record_terminator);
+                    truncate_rg_output(&mut output, output_limit);
                 }
                 write_rg_context(
                     &mut output,
@@ -6592,6 +6671,7 @@ impl Builtin for Rg {
                     &match_lines,
                     &opts,
                     line_show_filename,
+                    output_limit,
                 );
             } else {
                 for &line_idx in &match_lines {
@@ -6627,8 +6707,10 @@ impl Builtin for Rg {
                         &regex,
                         &opts,
                         true,
+                        rg_output_remaining(&output, output_limit),
                     ));
                     output.push(record_terminator);
+                    truncate_rg_output(&mut output, output_limit);
                 }
             }
         }
@@ -6655,6 +6737,8 @@ impl Builtin for Rg {
             };
             append_rg_stats(&mut output, &stats, bytes_printed);
         }
+
+        truncate_rg_output(&mut output, output_limit);
 
         let exit_code = if collected_inputs.had_errors {
             2
@@ -14225,6 +14309,24 @@ mod tests {
         let result = run_rg(&["--color=always", "a", "/file.txt"], None, &files).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, format!("{dense}\n"));
+    }
+
+    #[tokio::test]
+    async fn test_rg_color_always_honors_stdout_limit_for_many_matches() {
+        let mut bash = crate::Bash::builder()
+            .limits(crate::ExecutionLimits::new().max_stdout_bytes(4096))
+            .build();
+        let dense_lines = "a\n".repeat(16_384);
+        bash.fs()
+            .write_file(Path::new("/file.txt"), dense_lines.as_bytes())
+            .await
+            .unwrap();
+
+        let result = bash.exec("rg --color=always a /file.txt").await.unwrap();
+
+        assert!(result.stdout_truncated);
+        assert!(result.stdout.len() <= 4096);
+        assert!(result.stdout.contains("\x1b[31m"));
     }
 
     #[tokio::test]
