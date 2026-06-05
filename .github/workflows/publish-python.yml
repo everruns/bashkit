@@ -27,20 +27,20 @@ jobs:
     name: Build sdist
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: "3.12"
 
-      - uses: PyO3/maturin-action@v1
+      - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
         with:
           command: sdist
           args: --out dist
           rust-toolchain: stable
           working-directory: crates/bashkit-python
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: pypi_files-sdist
           path: crates/bashkit-python/dist
@@ -90,14 +90,14 @@ jobs:
 
     runs-on: ${{ matrix.runs-on }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: "3.12"
 
       - name: Build wheels
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
         with:
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux || 'auto' }}
@@ -106,7 +106,7 @@ jobs:
           docker-options: -e CI
           working-directory: crates/bashkit-python
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: pypi_files-${{ matrix.os }}-${{ matrix.target }}-${{ matrix.manylinux || 'manylinux' }}
           path: crates/bashkit-python/dist
@@ -125,12 +125,12 @@ jobs:
       RUST_NIGHTLY: "nightly-2026-05-29"
       PYODIDE_BUILD_VERSION: "0.34.4"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       # Python 3.13 -> pyodide-build's modern config (Pyodide 0.29.x, Emscripten
       # 4.0.9), whose binaryen understands modern LLVM's wasm target-features and
       # whose runtime supports wasm exception handling. See specs/emscripten-wheels.md.
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: "3.13"
 
@@ -140,7 +140,7 @@ jobs:
       - name: Install nightly Rust with the Emscripten target
         # @nightly matches the repo's other nightly jobs; the exact nightly is
         # pinned via the toolchain: input below.
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # nightly
         with:
           toolchain: ${{ env.RUST_NIGHTLY }}
           targets: wasm32-unknown-emscripten
@@ -157,7 +157,7 @@ jobs:
           RUSTUP_TOOLCHAIN: ${{ env.RUST_NIGHTLY }}
         run: pyodide build --outdir dist
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: pypi_files-emscripten
           path: crates/bashkit-python/dist
@@ -168,7 +168,7 @@ jobs:
     needs: [build, build-sdist, build-emscripten]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Verify publish source is on main release tag
         env:
@@ -200,7 +200,7 @@ jobs:
           fi
           echo "Publish source verified: $SOURCE_SHA at v$TAG_VERSION"
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: pypi_files-*
           merge-multiple: true
@@ -212,7 +212,7 @@ jobs:
           echo "---"
           echo "Total files: $(ls -1 dist/ | wc -l)"
 
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
       - run: uvx twine check dist/*
 
   # Smoke-test wheels on each OS, including the new cp314 artifacts
@@ -243,11 +243,11 @@ jobs:
             python-version: "3.14"
     runs-on: ${{ matrix.runs-on }}
     steps:
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: ${{ matrix.python-version }}
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: pypi_files-${{ matrix.os }}-*
           merge-multiple: true
@@ -273,7 +273,7 @@ jobs:
       id-token: write
 
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: pypi_files-*
           merge-multiple: true
@@ -282,7 +282,7 @@ jobs:
       - name: List dist files
         run: ls -lhR dist/
 
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
 
       - name: Publish to PyPI
         run: uv publish --trusted-publishing always dist/*
