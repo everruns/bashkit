@@ -1,6 +1,6 @@
 //! Spec test integration - runs all .test.sh files against Bashkit
 //!
-//! Run with: cargo test --test spec_tests
+//! Run with: cargo test --test integration -- spec_tests::
 //!
 //! Test files are in tests/spec_cases/{bash,awk,grep,sed,jq}/
 //!
