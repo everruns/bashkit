@@ -12,6 +12,10 @@
 
 use libfuzzer_sys::fuzz_target;
 
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
 fuzz_target!(|data: &[u8]| {
     // Only process valid UTF-8
     if let Ok(input) = std::str::from_utf8(data) {
@@ -55,27 +59,24 @@ fuzz_target!(|data: &[u8]| {
                 )
                 .build();
 
-            // Test 1: render template with JSON data via stdin
+            let quoted_json = shell_quote(json_data);
+            let quoted_template = shell_quote(template);
+
+            // Test 1: write JSON to the VFS path consumed by -d, then pipe template via stdin.
             let script = format!(
-                "echo '{}' | template -d /dev/stdin '{}'",
-                json_data.replace('\'', "'\\''"),
-                template.replace('\'', "'\\''"),
+                "printf %s {quoted_json} > /tmp/template-data.json; printf %s {quoted_template} | template -d /tmp/template-data.json"
             );
             bashkit::testing::fuzz_exec(&mut bash, &script, "template_fuzz", &[]).await;
 
             // Test 2: render template with --strict mode
             let script2 = format!(
-                "echo '{}' | template --strict -d /dev/stdin '{}'",
-                json_data.replace('\'', "'\\''"),
-                template.replace('\'', "'\\''"),
+                "printf %s {quoted_json} > /tmp/template-data.json; printf %s {quoted_template} | template --strict -d /tmp/template-data.json"
             );
             bashkit::testing::fuzz_exec(&mut bash, &script2, "template_fuzz", &[]).await;
 
             // Test 3: render template with -e (HTML escape) flag
             let script3 = format!(
-                "echo '{}' | template -e -d /dev/stdin '{}'",
-                json_data.replace('\'', "'\\''"),
-                template.replace('\'', "'\\''"),
+                "printf %s {quoted_json} > /tmp/template-data.json; printf %s {quoted_template} | template -e -d /tmp/template-data.json"
             );
             bashkit::testing::fuzz_exec(&mut bash, &script3, "template_fuzz", &[]).await;
         });
