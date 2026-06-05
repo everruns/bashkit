@@ -4531,10 +4531,6 @@ impl Interpreter {
             // POSIX `errexit` suppression applies to non-final commands in an
             // AND-OR list; the final executed command can still abort on failure.
             let current_is_conditional = matches!(op, ListOperator::And | ListOperator::Or);
-            let next_is_conditional = matches!(
-                list.rest.get(i + 1).map(|(op, _)| op),
-                Some(ListOperator::And | ListOperator::Or)
-            );
 
             // Determine if THIS command should be backgrounded.
             // A command is backgrounded when the NEXT separator is Background
