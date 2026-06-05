@@ -145,7 +145,11 @@ function formatOutput(
     output = output.slice(0, maxOutputLength) + "\n[truncated]";
   }
   if (sanitize) {
-    output = `<tool_output>\n${output}\n</tool_output>`;
+    const escaped = output
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+    output = `<tool_output>\n${escaped}\n</tool_output>`;
   }
   return output;
 }
