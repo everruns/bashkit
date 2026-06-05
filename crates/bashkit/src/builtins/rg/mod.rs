@@ -3295,6 +3295,29 @@ async fn load_local_ignore_rules(
         return Ok(());
     }
 
+    // Ignore evaluation is last-match-wins, so load lower-precedence files first.
+    if !opts.no_ignore_vcs && (!opts.require_git || has_git_dir_in_ancestors(fs, dir, root).await) {
+        if !opts.no_ignore_exclude {
+            load_optional_ignore_file_with_rule_base(
+                fs,
+                &dir.join(".git/info/exclude"),
+                dir,
+                opts.ignore_file_case_insensitive,
+                inherited_rule_count,
+                rules,
+            )
+            .await?;
+        }
+        load_optional_ignore_file_with_rule_base(
+            fs,
+            &dir.join(".gitignore"),
+            dir,
+            opts.ignore_file_case_insensitive,
+            inherited_rule_count,
+            rules,
+        )
+        .await?;
+    }
     if !opts.no_ignore_dot {
         load_optional_ignore_file_with_rule_base(
             fs,
@@ -3314,28 +3337,6 @@ async fn load_local_ignore_rules(
             rules,
         )
         .await?;
-    }
-    if !opts.no_ignore_vcs && (!opts.require_git || has_git_dir_in_ancestors(fs, dir, root).await) {
-        load_optional_ignore_file_with_rule_base(
-            fs,
-            &dir.join(".gitignore"),
-            dir,
-            opts.ignore_file_case_insensitive,
-            inherited_rule_count,
-            rules,
-        )
-        .await?;
-        if !opts.no_ignore_exclude {
-            load_optional_ignore_file_with_rule_base(
-                fs,
-                &dir.join(".git/info/exclude"),
-                dir,
-                opts.ignore_file_case_insensitive,
-                inherited_rule_count,
-                rules,
-            )
-            .await?;
-        }
     }
     Ok(())
 }
@@ -13080,6 +13081,31 @@ mod tests {
         assert!(no_vcs.stdout.contains("a.log"));
         assert!(!no_vcs.stdout.contains("src/ignored.txt"));
         assert!(!no_vcs.stdout.contains("rgonly.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_rg_rgignore_overrides_gitignore_conflicts() {
+        let rgignore_ignores_files: &[(&str, &[u8])] = &[
+            ("/proj/.git/config", b"[core]\n"),
+            ("/proj/.gitignore", b"!secret.txt\n"),
+            ("/proj/.rgignore", b"secret.txt\n"),
+            ("/proj/public.txt", b"needle\n"),
+            ("/proj/secret.txt", b"needle\n"),
+        ];
+        let ignored = run_rg(&["--files", "/proj"], None, rgignore_ignores_files).await;
+        assert_eq!(ignored.exit_code, 0);
+        assert!(ignored.stdout.contains("public.txt"));
+        assert!(!ignored.stdout.contains("secret.txt"));
+
+        let rgignore_unignores_files: &[(&str, &[u8])] = &[
+            ("/proj/.git/config", b"[core]\n"),
+            ("/proj/.gitignore", b"secret.txt\n"),
+            ("/proj/.rgignore", b"!secret.txt\n"),
+            ("/proj/secret.txt", b"needle\n"),
+        ];
+        let unignored = run_rg(&["--files", "/proj"], None, rgignore_unignores_files).await;
+        assert_eq!(unignored.exit_code, 0);
+        assert!(unignored.stdout.contains("secret.txt"));
     }
 
     #[tokio::test]
