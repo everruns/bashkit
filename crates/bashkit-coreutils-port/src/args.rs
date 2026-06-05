@@ -867,12 +867,13 @@ fn path_ends_with_command_new(func: &Expr) -> bool {
 }
 
 fn validate_allowed_command_builder_macro(mac: &syn::Macro) -> Result<()> {
+    // Only fully qualified trusted builder macros may cross this boundary:
+    // unqualified macros can be shadowed by copied uutils modules before codegen.
     let segs = path_segments(&mac.path);
     if matches!(segs.as_slice(), [env] if env == "env") {
         return validate_env_macro(mac);
     }
-    if matches!(segs.as_slice(), [value_parser] if value_parser == "value_parser")
-        || matches!(segs.as_slice(), [clap, value_parser] if clap == "clap" && value_parser == "value_parser")
+    if matches!(segs.as_slice(), [clap, value_parser] if clap == "clap" && value_parser == "value_parser")
     {
         return validate_value_parser_macro(mac);
     }
@@ -1358,6 +1359,34 @@ pub fn uu_app() -> clap::Command {
         let msg = format!("{err:#}");
         assert!(
             msg.contains("value_parser! in command builder must not contain a nested macro"),
+            "got: {msg}"
+        );
+    }
+
+    #[test]
+    fn rejects_unqualified_value_parser_macro() {
+        let (_tmp, uutils) = fixture(&[
+            (
+                "src/uu/cat/src/cat.rs",
+                r#"
+mod options {
+    pub static FILE: &str = "file";
+}
+
+pub fn uu_app() -> clap::Command {
+    Command::new("cat").arg(
+        Arg::new(options::FILE).value_parser(value_parser!(std::ffi::OsString)),
+    )
+}
+"#,
+            ),
+            ("src/uu/cat/locales/en-US.ftl", ""),
+        ]);
+
+        let err = run(&uutils, "cat", "poc").unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("macro is not allowed in command builder"),
             "got: {msg}"
         );
     }
