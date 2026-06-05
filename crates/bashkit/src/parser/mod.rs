@@ -4105,7 +4105,7 @@ mod tests {
     }
 
     #[test]
-    fn test_array_subscript_single_quote_character_does_not_panic() {
+    fn test_array_subscript_single_double_quote_character_does_not_panic() {
         let parser = Parser::new(r#"echo "${arr[\"]}""#);
         let result = parser.parse();
 
