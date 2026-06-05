@@ -800,6 +800,28 @@ async fn regex_invalid_pattern_yields_short_error() {
 }
 
 #[tokio::test]
+async fn setpath_binds_dynamic_path_to_original_input() {
+    let result = run_jq(r#"setpath(.path; 1)"#, r#"{"path":["a"]}"#)
+        .await
+        .unwrap();
+    assert_eq!(
+        result.trim(),
+        "{\n  \"path\": [\n    \"a\"\n  ],\n  \"a\": 1\n}"
+    );
+}
+
+#[tokio::test]
+async fn setpath_binds_dynamic_value_to_original_input() {
+    let result = run_jq(r#"setpath(["a"]; .path[0])"#, r#"{"path":["expected"]}"#)
+        .await
+        .unwrap();
+    assert_eq!(
+        result.trim(),
+        "{\n  \"path\": [\n    \"expected\"\n  ],\n  \"a\": \"expected\"\n}"
+    );
+}
+
+#[tokio::test]
 async fn regex_invalid_flag_yields_short_error() {
     let result = run_jq_result(r#"match("x"; "z")"#, r#""x""#).await.unwrap();
     assert_ne!(result.exit_code, 0);
