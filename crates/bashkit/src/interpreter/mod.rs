@@ -951,6 +951,10 @@ pub struct Interpreter {
     /// Monotonic counter incremented each time output is emitted via callback.
     /// Used to detect whether sub-calls already emitted output, preventing duplicates.
     output_emit_count: u64,
+    /// Bytes already delivered to streaming output callbacks for this execution.
+    /// Mirrors ExecResult caps so live consumers cannot bypass output limits.
+    output_stream_stdout_bytes: usize,
+    output_stream_stderr_bytes: usize,
     /// Pending nounset (set -u) error message, consumed by execute_command.
     nounset_error: Option<String>,
     /// Trap handlers: signal/event name -> command string. Arc-wrapped for CoW subshell snapshots.
@@ -1392,6 +1396,8 @@ impl Interpreter {
                 builtins::ExecutionExtensions::new(),
             ))),
             output_emit_count: 0,
+            output_stream_stdout_bytes: 0,
+            output_stream_stderr_bytes: 0,
             nounset_error: None,
             traps: Arc::new(HashMap::new()),
             pipestatus: Vec::new(),
@@ -2014,12 +2020,16 @@ impl Interpreter {
     pub fn set_output_callback(&mut self, callback: OutputCallback) {
         self.output_callback = Some(callback);
         self.output_emit_count = 0;
+        self.output_stream_stdout_bytes = 0;
+        self.output_stream_stderr_bytes = 0;
     }
 
     /// Clear the output callback.
     pub fn clear_output_callback(&mut self) {
         self.output_callback = None;
         self.output_emit_count = 0;
+        self.output_stream_stdout_bytes = 0;
+        self.output_stream_stderr_bytes = 0;
     }
 
     /// Emit output via the callback if set, and if sub-calls didn't already emit.
@@ -2036,12 +2046,26 @@ impl Interpreter {
         if self.output_emit_count != emit_count_before {
             return false;
         }
-        if stdout.is_empty() && stderr.is_empty() {
+
+        let stdout_remaining = self
+            .limits
+            .max_stdout_bytes
+            .saturating_sub(self.output_stream_stdout_bytes);
+        let stderr_remaining = self
+            .limits
+            .max_stderr_bytes
+            .saturating_sub(self.output_stream_stderr_bytes);
+        let stdout_chunk = Self::utf8_prefix_at_most(stdout, stdout_remaining);
+        let stderr_chunk = Self::utf8_prefix_at_most(stderr, stderr_remaining);
+        if stdout_chunk.is_empty() && stderr_chunk.is_empty() {
             return false;
         }
+
         if let Some(ref mut cb) = self.output_callback {
-            cb(stdout, stderr);
+            cb(stdout_chunk, stderr_chunk);
             self.output_emit_count += 1;
+            self.output_stream_stdout_bytes += stdout_chunk.len();
+            self.output_stream_stderr_bytes += stderr_chunk.len();
         }
         true
     }

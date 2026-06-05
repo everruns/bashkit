@@ -6522,6 +6522,45 @@ echo missing fi"#,
     }
 
     #[tokio::test]
+    async fn test_exec_streaming_respects_stdout_stderr_limits() {
+        let stdout_chunks = Arc::new(Mutex::new(Vec::new()));
+        let stderr_chunks = Arc::new(Mutex::new(Vec::new()));
+        let so = stdout_chunks.clone();
+        let se = stderr_chunks.clone();
+        let mut bash = Bash::builder()
+            .limits(
+                ExecutionLimits::new()
+                    .max_stdout_bytes(10)
+                    .max_stderr_bytes(8),
+            )
+            .build();
+
+        let result = bash
+            .exec_streaming(
+                "echo hello; echo world; echo err1 >&2; echo err2 >&2",
+                Box::new(move |stdout, stderr| {
+                    if !stdout.is_empty() {
+                        so.lock().unwrap().push(stdout.to_string());
+                    }
+                    if !stderr.is_empty() {
+                        se.lock().unwrap().push(stderr.to_string());
+                    }
+                }),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.stdout, "hello\nworl");
+        assert_eq!(result.stderr, "err1\nerr");
+        assert!(result.stdout_truncated);
+        assert!(result.stderr_truncated);
+        let streamed_stdout: String = stdout_chunks.lock().unwrap().iter().cloned().collect();
+        let streamed_stderr: String = stderr_chunks.lock().unwrap().iter().cloned().collect();
+        assert_eq!(streamed_stdout, result.stdout);
+        assert_eq!(streamed_stderr, result.stderr);
+    }
+
+    #[tokio::test]
     async fn test_streaming_equivalence_for_loop() {
         assert_streaming_equivalence("for i in 1 2 3; do echo $i; done").await;
     }
