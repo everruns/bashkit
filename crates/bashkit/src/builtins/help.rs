@@ -220,6 +220,7 @@ const BUILTINS: &[CmdInfo] = &[
         usage: "wc [-lwc] [FILE...]",
         description: "Count lines/words/bytes",
     },
+    #[cfg(feature = "jq")]
     CmdInfo {
         name: "jq",
         category: "text",
@@ -539,6 +540,12 @@ mod tests {
         assert!(result.stdout.contains("echo"));
         assert!(result.stdout.contains("grep"));
         assert!(result.stdout.contains("mkdir"));
+    }
+
+    #[tokio::test]
+    async fn test_jq_help_matches_enabled_feature() {
+        let result = run_help(&["jq"]).await;
+        assert_eq!(result.exit_code == 0, cfg!(feature = "jq"));
     }
 
     #[tokio::test]

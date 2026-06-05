@@ -248,9 +248,26 @@ mod duration_millis {
 }
 
 /// List of built-in commands (organized by category)
+#[cfg(feature = "jq")]
 const BUILTINS: &str = "\
 echo printf cat read \
 grep sed awk jq head tail sort uniq cut tr wc nl paste column comm diff strings tac rev \
+cd pwd ls find mkdir mktemp rm rmdir cp mv touch chmod chown ln \
+file stat less tar gzip gunzip du df \
+test [ true false exit return break continue \
+export set unset local shift source eval declare typeset readonly shopt getopts \
+sleep date seq expr yes wait timeout xargs tee watch \
+basename dirname realpath \
+pushd popd dirs \
+whoami hostname uname id env printenv history \
+curl wget \
+od xxd hexdump base64 \
+kill";
+
+#[cfg(not(feature = "jq"))]
+const BUILTINS: &str = "\
+echo printf cat read \
+grep sed awk head tail sort uniq cut tr wc nl paste column comm diff strings tac rev \
 cd pwd ls find mkdir mktemp rm rmdir cp mv touch chmod chown ln \
 file stat less tar gzip gunzip du df \
 test [ true false exit return break continue \
@@ -1398,6 +1415,12 @@ mod tests {
         assert!(tool.help().contains("## Parameters"));
         assert!(tool.system_prompt().starts_with("bashkit:"));
         assert_eq!(tool.version(), VERSION);
+    }
+
+    #[test]
+    fn test_jq_help_matches_enabled_feature() {
+        let helptext = BashTool::default().help();
+        assert_eq!(helptext.contains("awk jq head"), cfg!(feature = "jq"));
     }
 
     #[test]
