@@ -73,3 +73,17 @@ md5sum /tmp/nonexistent.txt
 ### expect_exit_code
 1
 ### end
+
+### checksum_check_option_rejected
+# checksum verification mode is not implemented yet; reject instead of hashing stdin
+sha256sum -c
+### expect_exit_code
+1
+### end
+
+### checksum_unknown_long_option_rejected
+# unsupported options fail closed instead of silently hashing stdin or files
+sha256sum --check
+### expect_exit_code
+1
+### end
