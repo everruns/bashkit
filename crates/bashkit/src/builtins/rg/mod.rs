@@ -6440,7 +6440,11 @@ impl Builtin for Rg {
                             show_filename: line_show_filename,
                             line_numbers: opts.line_numbers,
                             line_idx,
-                            column: None,
+                            column: if opts.column && matched && !opts.invert_match {
+                                regex.find(line.match_text).map(|m| m.start() + 1)
+                            } else {
+                                None
+                            },
                             byte_offset: if opts.byte_offset {
                                 Some(line.start_offset)
                             } else {
