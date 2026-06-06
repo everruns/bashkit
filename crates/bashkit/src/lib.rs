@@ -681,7 +681,6 @@ impl Bash {
         // malformed or parser-expensive scripts cannot bypass session limits.
         self.interpreter.begin_exec_invocation()?;
 
-
         // Check raw input size before hooks to avoid allocating/copying oversized
         // untrusted scripts in hook payloads.
         let input_len = script.len();

@@ -1696,7 +1696,6 @@ impl Interpreter {
             .map_err(|e| crate::error::Error::Execution(e.to_string()))
     }
 
-
     /// Set per-instance memory limits.
     pub fn set_memory_limits(&mut self, limits: crate::limits::MemoryLimits) {
         self.memory_limits = limits;
@@ -4748,7 +4747,8 @@ impl Interpreter {
                                 }
                             }
                         } else {
-                            let index = self.resolve_indexed_array_subscript(&resolved_name, index_str);
+                            let index =
+                                self.resolve_indexed_array_subscript(&resolved_name, index_str);
                             let is_new_entry = self
                                 .arrays
                                 .get(&resolved_name)
@@ -11255,7 +11255,6 @@ impl Interpreter {
             raw_idx as usize
         }
     }
-
 
     /// Set a parameter expansion assignment target (`:=`), including array elements.
     fn set_parameter_expansion_target(&mut self, name: &str, value: String) {
