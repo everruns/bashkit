@@ -6475,7 +6475,13 @@ impl Builtin for Rg {
                         output.push(record_terminator);
                         continue;
                     }
+                    let mut output_col_offset: usize = 0;
                     regex.for_each_match(lines[line_idx].match_text, |mat| {
+                        let col = if opts.only_matching && opts.replacement.is_some() {
+                            mat.start() + output_col_offset + 1
+                        } else {
+                            mat.start() + 1
+                        };
                         write_rg_prefix(
                             &mut output,
                             RgPrefix {
@@ -6483,7 +6489,7 @@ impl Builtin for Rg {
                                 show_filename: true,
                                 line_numbers: true,
                                 line_idx,
-                                column: Some(mat.start() + 1),
+                                column: Some(col),
                                 byte_offset: None,
                                 separator: opts.field_match_separator.as_str(),
                                 null_path_separator: opts.null,
@@ -6493,7 +6499,19 @@ impl Builtin for Rg {
                             },
                         );
                         if opts.only_matching {
-                            output.push_str(&format_rg_match_text(mat.as_str(), &regex, &opts));
+                            let formatted =
+                                format_rg_match_text(mat.as_str(), &regex, &opts);
+                            if opts.replacement.is_some() {
+                                let orig_len = mat.as_str().len();
+                                let repl_len = formatted.len();
+                                if repl_len >= orig_len {
+                                    output_col_offset += repl_len - orig_len;
+                                } else {
+                                    output_col_offset =
+                                        output_col_offset.saturating_sub(orig_len - repl_len);
+                                }
+                            }
+                            output.push_str(&formatted);
                         } else {
                             output.push_str(&format_rg_output_line(
                                 lines[line_idx].text,
