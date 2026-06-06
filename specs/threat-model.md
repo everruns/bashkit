@@ -1386,6 +1386,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | TM-DOS-089 | Command substitution stack overflow via inlined futures | SIGABRT at ~20-30 nested $() levels | Box::pin `expand_word` and `execute_cmd_subst` to cap per-level stack — **FIXED** via #1089 |
 | ~~TM-DOS-090~~ | ~~`shuf` unbounded range/repeat materialization~~ | ~~OOM/CPU exhaustion via huge `--input-range` or `--head-count` before stdout truncation~~ | ~~Sample numeric ranges without full collection and reject output that exceeds `ExecutionLimits` before allocation~~ — `shuf_resource_tests` cover huge range `-n 1` and repeat output caps (**FIXED**) |
 | TM-DOS-091 | SQLite `.dump` cumulative output bypass | `.dump` built the full schema+rows string before checking `max_output_bytes`; an attacker controlling many tables/rows could cause memory to grow far beyond the configured output cap | `bounded_append()` helper enforces the cap after each schema line and each INSERT row; `dispatch()` receives the *remaining* budget (`max_output_bytes - stdout.len()`) from `run_statements` — **FIXED** via #1869 |
+| TM-DOS-092 | Subshell snapshot amplification | Deeply nested `( ... )` keeps CoW state snapshots and call-stack clones alive | `max_subshell_depth` counter (default 32) bounds live explicit subshell snapshots | **MITIGATED** |
 
 ### Accepted (Low Priority)
 
