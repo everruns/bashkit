@@ -1687,6 +1687,15 @@ impl Interpreter {
         self.session_limits = limits;
     }
 
+    /// Count a host-level Bash::exec invocation before parsing untrusted input.
+    pub(crate) fn begin_exec_invocation(&mut self) -> Result<()> {
+        self.counters.reset_for_execution();
+        self.counters.tick_exec_call();
+        self.counters
+            .check_session_limits(&self.session_limits)
+            .map_err(|e| crate::error::Error::Execution(e.to_string()))
+    }
+
     /// Set per-instance memory limits.
     pub fn set_memory_limits(&mut self, limits: crate::limits::MemoryLimits) {
         self.memory_limits = limits;
@@ -2203,30 +2212,17 @@ impl Interpreter {
 
     /// Execute a script.
     pub async fn execute(&mut self, script: &Script) -> Result<ExecResult> {
-        // Reset per-execution counters so each exec() gets a fresh budget.
-        // Without this, hitting the limit in one exec() permanently poisons the session.
-        self.counters.reset_for_execution();
+        // Note: Bash::exec() resets per-exec counters and counts the session
+        // invocation before parsing, so parse/budget failures also consume the
+        // max_exec_calls budget. Internal callers of Interpreter::execute() do
+        // not represent host-level exec() invocations.
 
-        // Note: per-exec state reset (traps, exit code, options) is done in
-        // Bash::exec() before calling this method, to avoid clearing state
-        // set by internal callers like execute_bash_builtin.
-
-        // THREAT[TM-DOS-059]: Increment session-level exec call counter and
-        // check session limits before starting execution.
-        self.counters.tick_exec_call();
-        let result = match self
-            .counters
-            .check_session_limits(&self.session_limits)
-            .map_err(|e| crate::error::Error::Execution(e.to_string()))
-        {
-            Ok(()) => {
-                let result = self.execute_script_body(script, true, true).await;
-                // Script boundary cleanup: background jobs are scoped to a single exec()
-                // call, so they cannot accumulate across long-lived sessions.
-                let _ = self.jobs.lock().await.wait_all_results().await;
-                result
-            }
-            Err(e) => Err(e),
+        let result = {
+            let result = self.execute_script_body(script, true, true).await;
+            // Script boundary cleanup: background jobs are scoped to a single exec()
+            // call, so they cannot accumulate across long-lived sessions.
+            let _ = self.jobs.lock().await.wait_all_results().await;
+            result
         };
 
         if result.is_err() {

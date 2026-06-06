@@ -677,6 +677,10 @@ impl Bash {
         // THREAT[TM-ISO-005/006/007]: Reset transient state between exec() calls
         self.interpreter.reset_transient_state();
 
+        // THREAT[TM-DOS-059]: Count every host exec() call at the boundary so
+        // malformed or parser-expensive scripts cannot bypass session limits.
+        self.interpreter.begin_exec_invocation()?;
+
         // Check raw input size before hooks to avoid allocating/copying oversized
         // untrusted scripts in hook payloads.
         let input_len = script.len();
