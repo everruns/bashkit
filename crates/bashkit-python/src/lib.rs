@@ -2238,7 +2238,9 @@ def _run(coro, ctx):
             .call_method1(
                 "run",
                 (
-                    self.event_loop(py)?.bind(py).getattr("run_until_complete")?,
+                    self.event_loop(py)?
+                        .bind(py)
+                        .getattr("run_until_complete")?,
                     awaitable.bind(py),
                 ),
             )
