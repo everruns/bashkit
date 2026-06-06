@@ -2230,10 +2230,19 @@ def _run(coro, ctx):
                 .map(|v| v.unbind());
         }
 
-        self.event_loop(py)?
+        // Use context.run() so ContextVars captured at execute_sync()-call time are
+        // active when the coroutine runs. Necessary when spawn_blocking brings execution
+        // to a thread-pool thread whose Python context is empty.
+        context
             .bind(py)
-            .call_method1("run_until_complete", (awaitable.bind(py),))
-            .map(|value| value.unbind())
+            .call_method1(
+                "run",
+                (
+                    self.event_loop(py)?.bind(py).getattr("run_until_complete")?,
+                    awaitable.bind(py),
+                ),
+            )
+            .map(|v| v.unbind())
     }
 }
 
