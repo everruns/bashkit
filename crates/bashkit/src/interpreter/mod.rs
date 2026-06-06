@@ -1139,8 +1139,6 @@ impl Interpreter {
         &s[..end]
     }
 
-    const OPERAND_QUOTE_MARK: char = '\u{1}';
-
     const MAX_GLOB_DEPTH: usize = 50;
 
     /// Create a new interpreter with the given filesystem.
@@ -12046,8 +12044,6 @@ mod tests {
         interp.call_stack.push(CallFrame {
             name: "caller".to_string(),
             locals: HashMap::new(),
-            local_arrays: HashMap::new(),
-            local_assoc_arrays: HashMap::new(),
             positional: Vec::new(),
             saved_arrays: HashMap::new(),
             saved_assoc_arrays: HashMap::new(),
@@ -12059,8 +12055,6 @@ mod tests {
         interp.call_stack.push(CallFrame {
             name: "bash".to_string(),
             locals: HashMap::new(),
-            local_arrays: HashMap::new(),
-            local_assoc_arrays: HashMap::new(),
             positional: Vec::new(),
             saved_arrays: HashMap::new(),
             saved_assoc_arrays: HashMap::new(),
