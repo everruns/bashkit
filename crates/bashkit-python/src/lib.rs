@@ -2144,8 +2144,23 @@ enum PySyncLoopMode {
     PerSession,
 }
 
+// Work item sent to the dedicated private-loop worker thread.
+// The worker owns the asyncio event loop and runs awaitables sequentially on
+// the same OS thread, satisfying asyncio's thread-affinity requirement.
+struct PrivateLoopWorkItem {
+    awaitable: Py<PyAny>,
+    context: Py<PyAny>,
+    result_tx: std::sync::mpsc::SyncSender<PyResult<Py<PyAny>>>,
+}
+
 struct PyPrivateAsyncLoop {
-    event_loop: StdMutex<Option<Py<PyAny>>>,
+    // Sender to the dedicated worker thread that owns the asyncio event loop.
+    // Lazily initialised on first use; `None` before the first call.
+    // Decision: single dedicated thread per PyPrivateAsyncLoop instance so that
+    // all run_until_complete calls happen on the thread that created the loop,
+    // satisfying asyncio's thread-affinity requirement (review comment on
+    // spawn_blocking scheduling successive callbacks on different OS threads).
+    worker_tx: StdMutex<Option<std::sync::mpsc::SyncSender<PrivateLoopWorkItem>>>,
     // Cached Python helper for background-thread fallback (Jupyter/IPython compatibility).
     bg_thread_runner: StdMutex<Option<Py<PyAny>>>,
 }
@@ -2153,21 +2168,62 @@ struct PyPrivateAsyncLoop {
 impl PyPrivateAsyncLoop {
     fn new() -> Arc<Self> {
         Arc::new(Self {
-            event_loop: StdMutex::new(None),
+            worker_tx: StdMutex::new(None),
             bg_thread_runner: StdMutex::new(None),
         })
     }
 
-    fn event_loop(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let mut event_loop = self.event_loop.lock().expect("tool async loop lock");
-        if event_loop.is_none() {
-            let asyncio = py.import("asyncio")?;
-            *event_loop = Some(asyncio.call_method0("new_event_loop")?.unbind());
+    // Lazily start the dedicated worker thread and return a clone of its sender.
+    // The worker thread creates the asyncio event loop on its own OS thread and
+    // keeps it there for the lifetime of the PyPrivateAsyncLoop. This pins all
+    // run_until_complete calls to a single thread, matching asyncio's thread-
+    // affinity contract.
+    fn ensure_worker_tx(&self) -> PyResult<std::sync::mpsc::SyncSender<PrivateLoopWorkItem>> {
+        let mut guard = self.worker_tx.lock().expect("private loop worker tx lock");
+        if let Some(ref tx) = *guard {
+            return Ok(tx.clone());
         }
-        Ok(event_loop
-            .as_ref()
-            .expect("tool async loop prepared")
-            .clone_ref(py))
+        let (tx, rx) = std::sync::mpsc::sync_channel::<PrivateLoopWorkItem>(0);
+        std::thread::Builder::new()
+            .name("bashkit-py-loop".into())
+            .spawn(move || {
+                // Create the event loop on this thread and keep it here for its
+                // entire lifetime; this is the only thread that calls run_until_complete.
+                let event_loop: Py<PyAny> = Python::attach(|py| {
+                    py.import("asyncio")
+                        .and_then(|a| a.call_method0("new_event_loop"))
+                        .map(|l| l.unbind())
+                        .expect("asyncio.new_event_loop()")
+                });
+
+                while let Ok(item) = rx.recv() {
+                    let result = Python::attach(|py| {
+                        // context.run() propagates ContextVars captured at execute_sync()
+                        // call time into the coroutine (background threads start empty).
+                        item.context
+                            .bind(py)
+                            .call_method1(
+                                "run",
+                                (
+                                    event_loop.bind(py).getattr("run_until_complete")?,
+                                    item.awaitable.bind(py),
+                                ),
+                            )
+                            .map(|v| v.unbind())
+                    });
+                    // Ignore send errors: the caller timed out and moved on.
+                    let _ = item.result_tx.send(result);
+                }
+
+                Python::attach(|py| {
+                    let _ = event_loop.bind(py).call_method0("close");
+                });
+            })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("failed to spawn private loop thread: {e}"))
+            })?;
+        *guard = Some(tx.clone());
+        Ok(tx)
     }
 
     fn bg_thread_runner(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
@@ -2230,21 +2286,22 @@ def _run(coro, ctx):
                 .map(|v| v.unbind());
         }
 
-        // Use context.run() so ContextVars captured at execute_sync()-call time are
-        // active when the coroutine runs. Necessary when spawn_blocking brings execution
-        // to a thread-pool thread whose Python context is empty.
-        context
-            .bind(py)
-            .call_method1(
-                "run",
-                (
-                    self.event_loop(py)?
-                        .bind(py)
-                        .getattr("run_until_complete")?,
-                    awaitable.bind(py),
-                ),
-            )
-            .map(|v| v.unbind())
+        // Dispatch to the dedicated worker thread that owns the asyncio event loop.
+        // This ensures all run_until_complete calls happen on the same OS thread,
+        // preserving asyncio thread-affinity. The GIL is released while waiting so
+        // the worker thread can acquire it to run Python.
+        let tx = self.ensure_worker_tx()?;
+        let (result_tx, result_rx) = std::sync::mpsc::sync_channel(0);
+        tx.send(PrivateLoopWorkItem {
+            awaitable: awaitable.clone_ref(py),
+            context: context.clone_ref(py),
+            result_tx,
+        })
+        .map_err(|_| PyRuntimeError::new_err("private loop worker channel closed"))?;
+        // Release the GIL while waiting so the worker thread can acquire it.
+        // `move` ensures result_rx (Send, not Sync) is owned by the closure.
+        py.detach(move || result_rx.recv())
+            .map_err(|_| PyRuntimeError::new_err("private loop worker disconnected"))?
     }
 }
 
