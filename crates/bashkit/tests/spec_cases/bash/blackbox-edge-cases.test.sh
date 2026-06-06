@@ -275,6 +275,27 @@ default
 default
 ### end
 
+### indexed_array_assign_default_arithmetic_index_preserves_set_element
+# Indexed array := must use arithmetic subscript resolution for the is-set check.
+a[2]=old
+echo "${a[1+1]:=new}"
+echo "${a[2]}"
+### expect
+old
+old
+### end
+
+### indexed_array_assign_default_negative_index_preserves_set_element
+# Negative indexed array := resolves relative to the current maximum index.
+a[2]=old
+echo "${a[-1]:=new}"
+echo "${a[2]}"
+### expect
+old
+old
+### end
+
+
 ### assoc_array_check_key
 # Check if associative array key exists
 declare -A m; m[foo]=bar; [[ -v m[foo] ]] && echo exists || echo missing
