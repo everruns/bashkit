@@ -4535,7 +4535,7 @@ fn rg_context_line_indices(
     }
 
     ranges.sort_unstable_by_key(|&(start, end)| (start, end));
-    let mut merged = Vec::with_capacity(ranges.len());
+    let mut merged: Vec<(usize, usize)> = Vec::with_capacity(ranges.len());
     for (start, end) in ranges {
         if let Some((_, last_end)) = merged.last_mut()
             && start <= *last_end
