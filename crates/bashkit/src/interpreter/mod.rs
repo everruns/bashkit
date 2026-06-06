@@ -938,6 +938,7 @@ struct SubshellSnapshot {
     cwd: PathBuf,
     memory_budget: crate::limits::MemoryBudget,
     exec_fd_table: HashMap<i32, FdTarget>,
+    random_state: u32,
 }
 
 /// Interpreter state.
@@ -1716,8 +1717,11 @@ impl Interpreter {
     /// persistent session configuration and are NOT reset.
     const SET_OPTION_VARS: &'static [&'static str] = &[
         "SHOPT_a",
+        "SHOPT_b",
         "SHOPT_e",
         "SHOPT_f",
+        "SHOPT_h",
+        "SHOPT_m",
         "SHOPT_n",
         "SHOPT_u",
         "SHOPT_v",
@@ -3092,6 +3096,97 @@ impl Interpreter {
         })
     }
 
+    fn conditional_word_literal(word: &Word) -> Option<&str> {
+        if word.parts.len() == 1
+            && let WordPart::Literal(s) = &word.parts[0]
+        {
+            return Some(s);
+        }
+        None
+    }
+
+    fn conditional_words_wrapped(words: &[Word]) -> bool {
+        if words.len() < 2
+            || Self::conditional_word_literal(&words[0]) != Some("(")
+            || Self::conditional_word_literal(&words[words.len() - 1]) != Some(")")
+        {
+            return false;
+        }
+
+        let mut depth = 0usize;
+        for (i, word) in words.iter().enumerate() {
+            match Self::conditional_word_literal(word) {
+                Some("(") => depth += 1,
+                Some(")") => {
+                    let Some(next_depth) = depth.checked_sub(1) else {
+                        return false;
+                    };
+                    depth = next_depth;
+                    if depth == 0 && i < words.len() - 1 {
+                        return false;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        depth == 0
+    }
+
+    fn conditional_args_wrapped(args: &[String]) -> bool {
+        if args.len() < 2
+            || args.first().map(|s| s.as_str()) != Some("(")
+            || args.last().map(|s| s.as_str()) != Some(")")
+        {
+            return false;
+        }
+
+        let mut depth = 0usize;
+        for (i, arg) in args.iter().enumerate() {
+            match arg.as_str() {
+                "(" => depth += 1,
+                ")" => {
+                    let Some(next_depth) = depth.checked_sub(1) else {
+                        return false;
+                    };
+                    depth = next_depth;
+                    if depth == 0 && i < args.len() - 1 {
+                        return false;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        depth == 0
+    }
+
+    fn find_top_level_conditional_word_operator(words: &[Word], op: &str) -> Option<usize> {
+        let mut depth = 0usize;
+        for i in (0..words.len()).rev() {
+            match Self::conditional_word_literal(&words[i]) {
+                Some(")") => depth += 1,
+                Some("(") => depth = depth.saturating_sub(1),
+                Some(found) if found == op && depth == 0 && i > 0 => return Some(i),
+                _ => {}
+            }
+        }
+        None
+    }
+
+    fn find_top_level_conditional_arg_operator(args: &[String], op: &str) -> Option<usize> {
+        let mut depth = 0usize;
+        for i in (0..args.len()).rev() {
+            match args[i].as_str() {
+                ")" => depth += 1,
+                "(" => depth = depth.saturating_sub(1),
+                found if found == op && depth == 0 && i > 0 => return Some(i),
+                _ => {}
+            }
+        }
+        None
+    }
+
     /// Evaluate [[ ]] from raw words with lazy expansion for short-circuit.
     fn evaluate_conditional_words<'a>(
         &'a mut self,
@@ -3102,48 +3197,32 @@ impl Interpreter {
                 return Ok(false);
             }
 
-            // Helper: get literal text of a word (for operators like &&, ||, !, (, ))
-            let word_literal = |w: &Word| -> Option<String> {
-                if w.parts.len() == 1
-                    && let WordPart::Literal(s) = &w.parts[0]
-                {
-                    return Some(s.clone());
-                }
-                None
-            };
-
             // Handle negation
-            if word_literal(&words[0]).as_deref() == Some("!") {
+            if Self::conditional_word_literal(&words[0]) == Some("!") {
                 return Ok(!self.evaluate_conditional_words(&words[1..]).await?);
             }
 
-            // Handle parentheses
-            if word_literal(&words[0]).as_deref() == Some("(")
-                && word_literal(&words[words.len() - 1]).as_deref() == Some(")")
-            {
+            // Handle parentheses only when they wrap the whole expression.
+            if Self::conditional_words_wrapped(words) {
                 return self
                     .evaluate_conditional_words(&words[1..words.len() - 1])
                     .await;
             }
 
-            // Look for || (lowest precedence), then && — scan right to left
-            for i in (0..words.len()).rev() {
-                if word_literal(&words[i]).as_deref() == Some("||") && i > 0 {
-                    let left = self.evaluate_conditional_words(&words[..i]).await?;
-                    if left {
-                        return Ok(true); // short-circuit: skip right side
-                    }
-                    return self.evaluate_conditional_words(&words[i + 1..]).await;
+            // Look for || (lowest precedence), then && — only at current paren depth.
+            if let Some(i) = Self::find_top_level_conditional_word_operator(words, "||") {
+                let left = self.evaluate_conditional_words(&words[..i]).await?;
+                if left {
+                    return Ok(true); // short-circuit: skip right side
                 }
+                return self.evaluate_conditional_words(&words[i + 1..]).await;
             }
-            for i in (0..words.len()).rev() {
-                if word_literal(&words[i]).as_deref() == Some("&&") && i > 0 {
-                    let left = self.evaluate_conditional_words(&words[..i]).await?;
-                    if !left {
-                        return Ok(false); // short-circuit: skip right side
-                    }
-                    return self.evaluate_conditional_words(&words[i + 1..]).await;
+            if let Some(i) = Self::find_top_level_conditional_word_operator(words, "&&") {
+                let left = self.evaluate_conditional_words(&words[..i]).await?;
+                if !left {
+                    return Ok(false); // short-circuit: skip right side
                 }
+                return self.evaluate_conditional_words(&words[i + 1..]).await;
             }
 
             // Leaf: expand words and evaluate as a simple condition
@@ -3170,26 +3249,19 @@ impl Interpreter {
                 return !self.evaluate_conditional(&args[1..]).await;
             }
 
-            // Handle parentheses
-            if args.first().map(|s| s.as_str()) == Some("(")
-                && args.last().map(|s| s.as_str()) == Some(")")
-            {
+            // Handle parentheses only when they wrap the whole expression.
+            if Self::conditional_args_wrapped(args) {
                 return self.evaluate_conditional(&args[1..args.len() - 1]).await;
             }
 
-            // Look for logical operators: || has lowest precedence, then &&.
-            // Scan for || first (split at lowest precedence first).
-            for i in (0..args.len()).rev() {
-                if args[i] == "||" && i > 0 {
-                    return self.evaluate_conditional(&args[..i]).await
-                        || self.evaluate_conditional(&args[i + 1..]).await;
-                }
+            // Look for logical operators at current paren depth: || lowest, then &&.
+            if let Some(i) = Self::find_top_level_conditional_arg_operator(args, "||") {
+                return self.evaluate_conditional(&args[..i]).await
+                    || self.evaluate_conditional(&args[i + 1..]).await;
             }
-            for i in (0..args.len()).rev() {
-                if args[i] == "&&" && i > 0 {
-                    return self.evaluate_conditional(&args[..i]).await
-                        && self.evaluate_conditional(&args[i + 1..]).await;
-                }
+            if let Some(i) = Self::find_top_level_conditional_arg_operator(args, "&&") {
+                return self.evaluate_conditional(&args[..i]).await
+                    && self.evaluate_conditional(&args[i + 1..]).await;
             }
 
             match args.len() {
@@ -4568,8 +4640,15 @@ impl Interpreter {
                     exit_code = result.exit_code;
                     self.last_exit_code = exit_code;
                     control_flow = result.control_flow;
+                    let followed_by_conditional_op =
+                        list.rest.get(i + 1).is_some_and(|(op, cmd)| {
+                            !Self::is_empty_sentinel(cmd)
+                                && matches!(op, ListOperator::And | ListOperator::Or)
+                        });
+                    // Bash suppresses errexit for AND-OR list elements except the
+                    // command following the final &&/|| operator.
                     exit_code_from_conditional_context =
-                        current_is_conditional || result.errexit_suppressed;
+                        followed_by_conditional_op || result.errexit_suppressed;
 
                     // If command signaled control flow, return immediately
                     if control_flow != ControlFlow::None {
@@ -4582,24 +4661,19 @@ impl Interpreter {
                         });
                     }
 
-                    // ERR trap: fire on non-zero exit after semicolon commands
-                    if exit_code != 0 && !current_is_conditional {
+                    // ERR trap follows the same AND-OR suppression as errexit.
+                    if exit_code != 0 && !exit_code_from_conditional_context {
                         self.run_err_trap(&mut stdout, &mut stderr).await;
                     }
                 }
             }
         }
 
-        let last_nonempty_op_is_conditional = list
-            .rest
-            .iter()
-            .rev()
-            .find(|(_, cmd)| !Self::is_empty_sentinel(cmd))
-            .is_some_and(|(op, _)| matches!(op, ListOperator::And | ListOperator::Or));
-
-        // Final errexit check for the last command
+        // Final errexit check for the last command. A non-zero status only
+        // remains suppressed when it was carried from a short-circuited or
+        // non-final AND-OR list element; a failing final &&/|| command exits.
         let should_final_errexit_check =
-            self.is_errexit_enabled() && exit_code != 0 && !last_nonempty_op_is_conditional;
+            self.is_errexit_enabled() && exit_code != 0 && !exit_code_from_conditional_context;
 
         if should_final_errexit_check {
             return Ok(ExecResult {
@@ -4616,7 +4690,7 @@ impl Interpreter {
             stderr,
             exit_code,
             control_flow: ControlFlow::None,
-            errexit_suppressed: last_nonempty_op_is_conditional && exit_code != 0,
+            errexit_suppressed: exit_code_from_conditional_context && exit_code != 0,
             ..Default::default()
         })
     }
@@ -7947,7 +8021,10 @@ impl Interpreter {
                     if is_dev_null(&path) {
                         match redirect.fd {
                             Some(2) => result.stderr = String::new(),
-                            _ => result.stdout = String::new(),
+                            _ => {
+                                result.stdout = String::new();
+                                result.stdout_bytes = None;
+                            }
                         }
                     } else {
                         if redirect.kind == RedirectKind::Output
@@ -7972,15 +8049,19 @@ impl Interpreter {
                                 result.stderr = String::new();
                             }
                             _ => {
-                                if let Err(e) =
-                                    self.fs.write_file(&path, result.stdout.as_bytes()).await
-                                {
+                                let stdout = result
+                                    .stdout_bytes
+                                    .as_deref()
+                                    .unwrap_or(result.stdout.as_bytes());
+                                if let Err(e) = self.fs.write_file(&path, stdout).await {
                                     result.stdout = String::new();
+                                    result.stdout_bytes = None;
                                     result.stderr = format!("bash: {}: {}\n", target_path, e);
                                     result.exit_code = 1;
                                     return Ok(result);
                                 }
                                 result.stdout = String::new();
+                                result.stdout_bytes = None;
                             }
                         }
                     }
@@ -7991,7 +8072,10 @@ impl Interpreter {
                     if is_dev_null(&path) {
                         match redirect.fd {
                             Some(2) => result.stderr = String::new(),
-                            _ => result.stdout = String::new(),
+                            _ => {
+                                result.stdout = String::new();
+                                result.stdout_bytes = None;
+                            }
                         }
                     } else {
                         match redirect.fd {
@@ -8006,15 +8090,19 @@ impl Interpreter {
                                 result.stderr = String::new();
                             }
                             _ => {
-                                if let Err(e) =
-                                    self.fs.append_file(&path, result.stdout.as_bytes()).await
-                                {
+                                let stdout = result
+                                    .stdout_bytes
+                                    .as_deref()
+                                    .unwrap_or(result.stdout.as_bytes());
+                                if let Err(e) = self.fs.append_file(&path, stdout).await {
                                     result.stdout = String::new();
+                                    result.stdout_bytes = None;
                                     result.stderr = format!("bash: {}: {}\n", target_path, e);
                                     result.exit_code = 1;
                                     return Ok(result);
                                 }
                                 result.stdout = String::new();
+                                result.stdout_bytes = None;
                             }
                         }
                     }
@@ -8024,15 +8112,21 @@ impl Interpreter {
                     let path = self.resolve_path(&target_path);
                     if is_dev_null(&path) {
                         result.stdout = String::new();
+                        result.stdout_bytes = None;
                         result.stderr = String::new();
                     } else {
-                        let combined = format!("{}{}", result.stdout, result.stderr);
-                        if let Err(e) = self.fs.write_file(&path, combined.as_bytes()).await {
+                        let mut combined = result
+                            .stdout_bytes
+                            .clone()
+                            .unwrap_or_else(|| result.stdout.as_bytes().to_vec());
+                        combined.extend_from_slice(result.stderr.as_bytes());
+                        if let Err(e) = self.fs.write_file(&path, &combined).await {
                             result.stderr = format!("bash: {}: {}\n", target_path, e);
                             result.exit_code = 1;
                             return Ok(result);
                         }
                         result.stdout = String::new();
+                        result.stdout_bytes = None;
                         result.stderr = String::new();
                     }
                 }
@@ -8426,6 +8520,7 @@ impl Interpreter {
             cwd: self.cwd.clone(),
             memory_budget: self.memory_budget.clone(),
             exec_fd_table: self.exec_fd_table.clone(),
+            random_state: self.random_state.load(Ordering::Relaxed),
         }
     }
 
@@ -8442,6 +8537,8 @@ impl Interpreter {
         self.cwd = snap.cwd;
         self.memory_budget = snap.memory_budget;
         self.exec_fd_table = snap.exec_fd_table;
+        self.random_state
+            .store(snap.random_state, Ordering::Relaxed);
     }
 
     fn execute_cmd_subst<'a>(

@@ -393,6 +393,7 @@ pub struct ExecutionExtensions {
 /// Per-exec wall-clock deadline for builtins with synchronous VM sections.
 #[derive(Debug, Clone)]
 pub(crate) struct ExecutionDeadline {
+    #[allow(dead_code)]
     started_at: std::time::Instant,
     timeout: std::time::Duration,
 }
@@ -407,6 +408,7 @@ impl ExecutionDeadline {
     }
 
     /// Remaining budget; never returns zero so downstream VM timers stay active.
+    #[allow(dead_code)]
     pub(crate) fn remaining(&self) -> std::time::Duration {
         let remaining = self.timeout.saturating_sub(self.started_at.elapsed());
         if remaining.is_zero() {
