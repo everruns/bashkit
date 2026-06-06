@@ -2144,8 +2144,23 @@ enum PySyncLoopMode {
     PerSession,
 }
 
+// Work item sent to the dedicated private-loop worker thread.
+// The worker owns the asyncio event loop and runs awaitables sequentially on
+// the same OS thread, satisfying asyncio's thread-affinity requirement.
+struct PrivateLoopWorkItem {
+    awaitable: Py<PyAny>,
+    context: Py<PyAny>,
+    result_tx: std::sync::mpsc::SyncSender<PyResult<Py<PyAny>>>,
+}
+
 struct PyPrivateAsyncLoop {
-    event_loop: StdMutex<Option<Py<PyAny>>>,
+    // Sender to the dedicated worker thread that owns the asyncio event loop.
+    // Lazily initialised on first use; `None` before the first call.
+    // Decision: single dedicated thread per PyPrivateAsyncLoop instance so that
+    // all run_until_complete calls happen on the thread that created the loop,
+    // satisfying asyncio's thread-affinity requirement (review comment on
+    // spawn_blocking scheduling successive callbacks on different OS threads).
+    worker_tx: StdMutex<Option<std::sync::mpsc::SyncSender<PrivateLoopWorkItem>>>,
     // Cached Python helper for background-thread fallback (Jupyter/IPython compatibility).
     bg_thread_runner: StdMutex<Option<Py<PyAny>>>,
 }
@@ -2153,21 +2168,62 @@ struct PyPrivateAsyncLoop {
 impl PyPrivateAsyncLoop {
     fn new() -> Arc<Self> {
         Arc::new(Self {
-            event_loop: StdMutex::new(None),
+            worker_tx: StdMutex::new(None),
             bg_thread_runner: StdMutex::new(None),
         })
     }
 
-    fn event_loop(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let mut event_loop = self.event_loop.lock().expect("tool async loop lock");
-        if event_loop.is_none() {
-            let asyncio = py.import("asyncio")?;
-            *event_loop = Some(asyncio.call_method0("new_event_loop")?.unbind());
+    // Lazily start the dedicated worker thread and return a clone of its sender.
+    // The worker thread creates the asyncio event loop on its own OS thread and
+    // keeps it there for the lifetime of the PyPrivateAsyncLoop. This pins all
+    // run_until_complete calls to a single thread, matching asyncio's thread-
+    // affinity contract.
+    fn ensure_worker_tx(&self) -> PyResult<std::sync::mpsc::SyncSender<PrivateLoopWorkItem>> {
+        let mut guard = self.worker_tx.lock().expect("private loop worker tx lock");
+        if let Some(ref tx) = *guard {
+            return Ok(tx.clone());
         }
-        Ok(event_loop
-            .as_ref()
-            .expect("tool async loop prepared")
-            .clone_ref(py))
+        let (tx, rx) = std::sync::mpsc::sync_channel::<PrivateLoopWorkItem>(0);
+        std::thread::Builder::new()
+            .name("bashkit-py-loop".into())
+            .spawn(move || {
+                // Create the event loop on this thread and keep it here for its
+                // entire lifetime; this is the only thread that calls run_until_complete.
+                let event_loop: Py<PyAny> = Python::attach(|py| {
+                    py.import("asyncio")
+                        .and_then(|a| a.call_method0("new_event_loop"))
+                        .map(|l| l.unbind())
+                        .expect("asyncio.new_event_loop()")
+                });
+
+                while let Ok(item) = rx.recv() {
+                    let result = Python::attach(|py| {
+                        // context.run() propagates ContextVars captured at execute_sync()
+                        // call time into the coroutine (background threads start empty).
+                        item.context
+                            .bind(py)
+                            .call_method1(
+                                "run",
+                                (
+                                    event_loop.bind(py).getattr("run_until_complete")?,
+                                    item.awaitable.bind(py),
+                                ),
+                            )
+                            .map(|v| v.unbind())
+                    });
+                    // Ignore send errors: the caller timed out and moved on.
+                    let _ = item.result_tx.send(result);
+                }
+
+                Python::attach(|py| {
+                    let _ = event_loop.bind(py).call_method0("close");
+                });
+            })
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("failed to spawn private loop thread: {e}"))
+            })?;
+        *guard = Some(tx.clone());
+        Ok(tx)
     }
 
     fn bg_thread_runner(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
@@ -2230,10 +2286,22 @@ def _run(coro, ctx):
                 .map(|v| v.unbind());
         }
 
-        self.event_loop(py)?
-            .bind(py)
-            .call_method1("run_until_complete", (awaitable.bind(py),))
-            .map(|value| value.unbind())
+        // Dispatch to the dedicated worker thread that owns the asyncio event loop.
+        // This ensures all run_until_complete calls happen on the same OS thread,
+        // preserving asyncio thread-affinity. The GIL is released while waiting so
+        // the worker thread can acquire it to run Python.
+        let tx = self.ensure_worker_tx()?;
+        let (result_tx, result_rx) = std::sync::mpsc::sync_channel(0);
+        tx.send(PrivateLoopWorkItem {
+            awaitable: awaitable.clone_ref(py),
+            context: context.clone_ref(py),
+            result_tx,
+        })
+        .map_err(|_| PyRuntimeError::new_err("private loop worker channel closed"))?;
+        // Release the GIL while waiting so the worker thread can acquire it.
+        // `move` ensures result_rx (Send, not Sync) is owned by the closure.
+        py.detach(move || result_rx.recv())
+            .map_err(|_| PyRuntimeError::new_err("private loop worker disconnected"))?
     }
 }
 
@@ -2750,7 +2818,8 @@ async fn call_python_callback_async(
             .await
             .map_err(|e| format!("{callback_name}: {e}"))?
     } else {
-        Python::attach(|py| session.run_awaitable_on_private_loop(py, &awaitable))
+        run_private_loop_awaitable_yielding(session, awaitable)
+            .await
             .map_err(|e| format!("{callback_name}: {e}"))?
     };
     #[cfg(target_arch = "wasm32")]
@@ -2758,6 +2827,21 @@ async fn call_python_callback_async(
         .map_err(|e| format!("{callback_name}: {e}"))?;
 
     Ok(result)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn run_private_loop_awaitable_yielding(
+    session: Arc<PyCallbackSession>,
+    awaitable: Py<PyAny>,
+) -> PyResult<Py<PyAny>> {
+    // THREAT[TM-DOS-057]: execute_sync() has no caller asyncio loop. Run the
+    // private Python event loop on Tokio's blocking pool so the interpreter
+    // future yields and Bashkit's execution timeout can preempt slow callbacks.
+    tokio::task::spawn_blocking(move || {
+        Python::attach(|py| session.run_awaitable_on_private_loop(py, &awaitable))
+    })
+    .await
+    .map_err(|e| PyRuntimeError::new_err(format!("Python async callback worker failed: {e}")))?
 }
 
 fn extract_python_string_callback_result(
@@ -4869,6 +4953,7 @@ pub struct ScriptedTool {
     callback_engine: Arc<PyCallbackEngine>,
     max_commands: Option<u64>,
     max_loop_iterations: Option<u64>,
+    timeout_seconds: Option<f64>,
 }
 
 impl ScriptedTool {
@@ -4931,13 +5016,20 @@ impl ScriptedTool {
             builder = builder.env(k, v);
         }
 
-        if self.max_commands.is_some() || self.max_loop_iterations.is_some() {
+        if self.max_commands.is_some()
+            || self.max_loop_iterations.is_some()
+            || self.timeout_seconds.is_some()
+        {
             let mut limits = ExecutionLimits::new();
             if let Some(mc) = self.max_commands {
                 limits = limits.max_commands(usize::try_from(mc).unwrap_or(usize::MAX));
             }
             if let Some(mli) = self.max_loop_iterations {
                 limits = limits.max_loop_iterations(usize::try_from(mli).unwrap_or(usize::MAX));
+            }
+            if let Some(ts) = self.timeout_seconds {
+                limits =
+                    limits.timeout(parse_timeout_seconds(ts).expect("validated timeout_seconds"));
             }
             builder = builder.limits(limits);
         }
@@ -4955,14 +5047,19 @@ impl ScriptedTool {
     ///     short_description: One-line description
     ///     max_commands: Max commands per execute call
     ///     max_loop_iterations: Max loop iterations per execute call
+    ///     timeout_seconds: Max wall-clock seconds per execute call
     #[new]
-    #[pyo3(signature = (name, short_description=None, max_commands=None, max_loop_iterations=None))]
+    #[pyo3(signature = (name, short_description=None, max_commands=None, max_loop_iterations=None, timeout_seconds=None))]
     fn new(
         name: String,
         short_description: Option<String>,
         max_commands: Option<u64>,
         max_loop_iterations: Option<u64>,
+        timeout_seconds: Option<f64>,
     ) -> PyResult<Self> {
+        if let Some(ts) = timeout_seconds {
+            parse_timeout_seconds(ts)?;
+        }
         let rt = make_runtime()?;
         let callback_engine = Python::attach(PyCallbackEngine::new)?;
 
@@ -4975,6 +5072,7 @@ impl ScriptedTool {
             callback_engine,
             max_commands,
             max_loop_iterations,
+            timeout_seconds,
         })
     }
 
