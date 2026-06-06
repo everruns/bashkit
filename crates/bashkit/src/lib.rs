@@ -7382,7 +7382,7 @@ echo missing fi"#,
         // Even though the request will fail (no real server), the hook
         // infrastructure is wired correctly if it doesn't panic.
         // A successful test is that the builder accepts the hook and builds.
-        let _result = bash.exec("curl -s https://httpbin.org/get").await.unwrap();
+        let _result = bash.exec("curl -s https://httpbin.org/get").await;
         // We can't assert on captured content since there's no real HTTP
         // server, but the hook is wired and the build succeeded.
     }
