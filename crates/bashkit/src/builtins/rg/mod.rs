@@ -6556,21 +6556,14 @@ impl Builtin for Rg {
                             hyperlink_format: opts.hyperlink_format.as_deref(),
                         },
                     );
-                    if opts.only_matching
-                        && !opts.invert_match
-                        && let Some(mat) = match_for_line
-                    {
-                        output.push_str(&format_rg_match_text(mat.as_str(), &regex, &opts));
-                    } else {
-                        output.push_str(&format_rg_output_line(
-                            line.text,
-                            line.match_text,
-                            &regex,
-                            &opts,
-                            matched,
-                            rg_output_remaining(&output, output_limit),
-                        ));
-                    }
+                    output.push_str(&format_rg_output_line(
+                        line.text,
+                        line.match_text,
+                        &regex,
+                        &opts,
+                        matched,
+                        rg_output_remaining(&output, output_limit),
+                    ));
                     output.push(record_terminator);
                     truncate_rg_output(&mut output, output_limit);
                 }

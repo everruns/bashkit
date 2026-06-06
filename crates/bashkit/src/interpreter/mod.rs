@@ -5498,8 +5498,7 @@ impl Interpreter {
                 match plan_result {
                     Ok(Ok(Some(plan))) => {
                         let result = self.execute_builtin_plan(plan, redirects).await?;
-                        self.fire_after_tool(name, &result);
-                        return Ok(result);
+                        return Ok(self.apply_after_tool(name, result));
                     }
                     Ok(Ok(None)) => { /* fall through to normal execute() */ }
                     Ok(Err(e)) => return Err(e),
@@ -5509,8 +5508,7 @@ impl Interpreter {
                             1,
                         );
                         let result = self.apply_redirections(result, redirects).await?;
-                        self.fire_after_tool(name, &result);
-                        return Ok(result);
+                        return Ok(self.apply_after_tool(name, result));
                     }
                 }
             }
@@ -5577,21 +5575,80 @@ impl Interpreter {
             }
 
             let result = self.apply_redirections(result, redirects).await?;
-            self.fire_after_tool(name, &result);
-            Ok(result)
+            Ok(self.apply_after_tool(name, result))
         })
     }
 
-    /// Fire `after_tool` hooks if any are registered (observational).
-    fn fire_after_tool(&self, name: &str, result: &ExecResult) {
-        if !self.hooks.after_tool.is_empty() {
-            let event = crate::hooks::ToolResult {
-                name: name.to_string(),
-                stdout: result.stdout.clone(),
-                exit_code: result.exit_code,
-            };
-            self.hooks.fire_after_tool(event);
+    /// Apply `after_tool` interceptor decisions to the result returned to callers.
+    fn apply_after_tool(&self, name: &str, result: ExecResult) -> ExecResult {
+        if self.hooks.after_tool.is_empty() {
+            return result;
         }
+        let event = crate::hooks::ToolResult {
+            name: name.to_string(),
+            stdout: result.stdout.clone(),
+            exit_code: result.exit_code,
+        };
+        match self.hooks.fire_after_tool(event) {
+            Some(event) => ExecResult {
+                stdout: event.stdout,
+                exit_code: event.exit_code,
+                ..result
+            },
+            None => ExecResult::err(format!("bash: {name}: cancelled by after_tool hook\n"), 1),
+        }
+    }
+
+    fn is_special_builtin_name(name: &str) -> bool {
+        matches!(
+            name,
+            "exec"
+                | "local"
+                | "bash"
+                | "sh"
+                | "source"
+                | "."
+                | "eval"
+                | "command"
+                | "declare"
+                | "typeset"
+                | "let"
+                | "unset"
+                | "getopts"
+        )
+    }
+
+    async fn execute_special_builtin_with_hooks(
+        &mut self,
+        name: &str,
+        args: &[String],
+        stdin: Option<String>,
+        redirects: &[Redirect],
+    ) -> Result<ExecResult> {
+        let args = if !self.hooks.before_tool.is_empty() {
+            let event = crate::hooks::ToolEvent {
+                name: name.to_string(),
+                args: args.to_vec(),
+            };
+            match self.hooks.fire_before_tool(event) {
+                Some(modified) => std::borrow::Cow::Owned(modified.args),
+                None => {
+                    let result = ExecResult::err(
+                        format!("bash: {name}: cancelled by before_tool hook\n"),
+                        1,
+                    );
+                    return self.apply_redirections(result, redirects).await;
+                }
+            }
+        } else {
+            std::borrow::Cow::Borrowed(args)
+        };
+
+        let result = self
+            .dispatch_special_builtin(name, &args, stdin, redirects)
+            .await
+            .expect("special builtin name checked before dispatch")?;
+        Ok(self.apply_after_tool(name, result))
     }
 
     /// Dispatch an interpreter-level (special) builtin by name.
@@ -5653,11 +5710,15 @@ impl Interpreter {
             }
 
             // Interpreter-level special builtins
-            if let Some(result) = self
-                .dispatch_special_builtin(name, &args, stdin.clone(), &command.redirects)
-                .await
-            {
-                return result;
+            if Self::is_special_builtin_name(name) {
+                return self
+                    .execute_special_builtin_with_hooks(
+                        name,
+                        &args,
+                        stdin.clone(),
+                        &command.redirects,
+                    )
+                    .await;
             }
 
             // Host-registered builtins (mutable, may override baked-in builtins).
@@ -9230,9 +9291,10 @@ impl Interpreter {
         }
         // Strip quotes from operand before parsing.
         // For pattern-removal operators, quoted glob chars must stay literal.
-        // We preserve that by escaping glob metacharacters inside stripped
-        // double-quoted segments, so later pattern matching won't treat them as
-        // active wildcards/extglobs.
+        // Track stripped double-quoted spans with a marker that is absent from
+        // the operand source, then consume that marker only from parsed literal
+        // parts. Expanded variable data is handled out-of-band so attacker data
+        // cannot inject quote-state toggles.
         let quote_mark = Self::operand_quote_mark(operand);
         let stripped = Self::strip_operand_quotes(operand, quote_mark);
         // THREAT[TM-DOS-050]: Propagate caller-configured limits to word parsing
@@ -9249,11 +9311,12 @@ impl Interpreter {
                     Self::push_marked_literal(&mut result, s, quote_mark, &mut in_marked);
                 }
                 WordPart::Variable(name) => {
-                    result.push_str(&self.expand_variable(name));
+                    let expanded = self.expand_variable(name);
+                    Self::push_operand_expansion(&mut result, &expanded, in_marked);
                 }
                 WordPart::ArithmeticExpansion(expr) => {
-                    let val = self.evaluate_arithmetic_with_assign(expr);
-                    result.push_str(&val.to_string());
+                    let val = self.evaluate_arithmetic_with_assign(expr).to_string();
+                    Self::push_operand_expansion(&mut result, &val, in_marked);
                 }
                 WordPart::ParameterExpansion {
                     name,
@@ -9270,11 +9333,11 @@ impl Interpreter {
                         *colon_variant,
                         is_set,
                     );
-                    result.push_str(&expanded);
+                    Self::push_operand_expansion(&mut result, &expanded, in_marked);
                 }
                 WordPart::Length(name) => {
-                    let value = self.expand_variable(name);
-                    result.push_str(&value.len().to_string());
+                    let value = self.expand_variable(name).len().to_string();
+                    Self::push_operand_expansion(&mut result, &value, in_marked);
                 }
                 // TODO: handle CommandSubstitution etc. in sync operand expansion
                 _ => {}
@@ -9348,6 +9411,24 @@ impl Interpreter {
             }
             out.push(ch);
         }
+    }
+
+    fn push_operand_expansion(out: &mut String, s: &str, in_marked: bool) {
+        for ch in s.chars() {
+            Self::push_operand_char(out, ch, in_marked);
+        }
+    }
+
+    fn push_operand_char(out: &mut String, ch: char, in_marked: bool) {
+        if in_marked
+            && matches!(
+                ch,
+                '*' | '?' | '[' | ']' | '(' | ')' | '|' | '+' | '@' | '!'
+            )
+        {
+            out.push('\\');
+        }
+        out.push(ch);
     }
 
     fn find_unescaped_char(pattern: &str, target: char) -> Option<usize> {
