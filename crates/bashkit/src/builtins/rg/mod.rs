@@ -5947,39 +5947,47 @@ impl Builtin for Rg {
                     show_filename
                 };
                 if opts.passthru {
-                    let mut match_by_start_line = BTreeMap::new();
+                    let mut matches_by_start_line: BTreeMap<usize, Vec<RgMultilineMatch<'_>>> =
+                        BTreeMap::new();
                     for mat in &matches {
-                        match_by_start_line.entry(mat.line_idx).or_insert(*mat);
+                        matches_by_start_line
+                            .entry(mat.line_idx)
+                            .or_default()
+                            .push(*mat);
                     }
                     let match_line_set: HashSet<usize> =
                         context_match_lines.iter().copied().collect();
                     let mut line_idx = 0usize;
                     while line_idx < lines.len() {
-                        if opts.only_matching
-                            && let Some(mat) = match_by_start_line.get(&line_idx).copied()
-                        {
-                            let segments = rg_multiline_match_segments(mat, &regex, &opts);
-                            write_rg_multiline_match_segments(
-                                &mut output,
-                                mat,
-                                &segments,
-                                RgMultilineMatchPrefix {
-                                    filename,
-                                    show_filename: line_show_filename,
-                                    line_numbers: opts.line_numbers,
-                                    column: opts.column,
-                                    byte_offset: opts.byte_offset,
-                                    vimgrep: false,
-                                    separator: opts.field_match_separator.as_str(),
-                                    null_path_separator: opts.null,
-                                    color: opts.color_enabled(),
-                                    color_scheme: &opts.color_scheme,
-                                    hyperlink_format: opts.hyperlink_format.as_deref(),
-                                },
-                                record_terminator,
-                            );
-                            line_idx = (mat.end_line_idx + 1).max(line_idx + segments.len());
-                            continue;
+                        if opts.only_matching {
+                            if let Some(line_matches) = matches_by_start_line.get(&line_idx) {
+                                for &mat in line_matches {
+                                    let segments = rg_multiline_match_segments(mat, &regex, &opts);
+                                    write_rg_multiline_match_segments(
+                                        &mut output,
+                                        mat,
+                                        &segments,
+                                        RgMultilineMatchPrefix {
+                                            filename,
+                                            show_filename: line_show_filename,
+                                            line_numbers: opts.line_numbers,
+                                            column: opts.column,
+                                            byte_offset: opts.byte_offset,
+                                            vimgrep: false,
+                                            separator: opts.field_match_separator.as_str(),
+                                            null_path_separator: opts.null,
+                                            color: opts.color_enabled(),
+                                            color_scheme: &opts.color_scheme,
+                                            hyperlink_format: opts.hyperlink_format.as_deref(),
+                                        },
+                                        record_terminator,
+                                    );
+                                }
+                            }
+                            if match_line_set.contains(&line_idx) {
+                                line_idx += 1;
+                                continue;
+                            }
                         }
                         let line = lines[line_idx];
                         let matched = match_line_set.contains(&line_idx);
@@ -6140,6 +6148,7 @@ impl Builtin for Rg {
                         output.push(record_terminator);
                     }
                 } else {
+                    let mut seen_line_indices = HashSet::new();
                     for mat in &matches {
                         for (line_idx, line) in lines
                             .iter()
@@ -6147,6 +6156,9 @@ impl Builtin for Rg {
                             .take(mat.end_line_idx + 1)
                             .skip(mat.line_idx)
                         {
+                            if !seen_line_indices.insert(line_idx) {
+                                continue;
+                            }
                             write_rg_prefix(
                                 &mut output,
                                 RgPrefix {
@@ -6381,15 +6393,41 @@ impl Builtin for Rg {
                 show_filename
             };
             if opts.passthru {
-                let mut first_match_by_line = BTreeMap::new();
-                for &line_idx in &match_lines {
-                    if let Some(mat) = regex.find(lines[line_idx].match_text) {
-                        first_match_by_line.insert(line_idx, mat);
-                    }
-                }
+                let match_line_set: HashSet<usize> = match_lines.iter().copied().collect();
                 for (line_idx, line) in lines.iter().enumerate() {
-                    let match_for_line = first_match_by_line.get(&line_idx).copied();
-                    let matched = match_for_line.is_some();
+                    let matched = match_line_set.contains(&line_idx);
+                    if opts.only_matching && !opts.invert_match && matched {
+                        regex.for_each_match(line.match_text, |mat| {
+                            write_rg_prefix(
+                                &mut output,
+                                RgPrefix {
+                                    filename,
+                                    show_filename: line_show_filename,
+                                    line_numbers: opts.line_numbers,
+                                    line_idx,
+                                    column: if opts.column {
+                                        Some(mat.start() + 1)
+                                    } else {
+                                        None
+                                    },
+                                    byte_offset: if opts.byte_offset {
+                                        Some(line.start_offset + mat.start())
+                                    } else {
+                                        None
+                                    },
+                                    separator: opts.field_match_separator.as_str(),
+                                    null_path_separator: opts.null,
+                                    color: opts.color_enabled(),
+                                    color_scheme: &opts.color_scheme,
+                                    hyperlink_format: opts.hyperlink_format.as_deref(),
+                                },
+                            );
+                            output.push_str(&format_rg_match_text(mat.as_str(), &regex, &opts));
+                            output.push(record_terminator);
+                            true
+                        });
+                        continue;
+                    }
                     let separator = if matched {
                         opts.field_match_separator.as_str()
                     } else {
@@ -6403,18 +6441,12 @@ impl Builtin for Rg {
                             line_numbers: opts.line_numbers,
                             line_idx,
                             column: if opts.column && matched && !opts.invert_match {
-                                match_for_line.map(|mat| mat.start() + 1)
+                                regex.find(line.match_text).map(|m| m.start() + 1)
                             } else {
                                 None
                             },
                             byte_offset: if opts.byte_offset {
-                                Some(if matched && opts.only_matching && !opts.invert_match {
-                                    match_for_line
-                                        .map(|mat| line.start_offset + mat.start())
-                                        .unwrap_or(line.start_offset)
-                                } else {
-                                    line.start_offset
-                                })
+                                Some(line.start_offset)
                             } else {
                                 None
                             },
@@ -6425,20 +6457,13 @@ impl Builtin for Rg {
                             hyperlink_format: opts.hyperlink_format.as_deref(),
                         },
                     );
-                    if opts.only_matching
-                        && !opts.invert_match
-                        && let Some(mat) = match_for_line
-                    {
-                        output.push_str(&format_rg_match_text(mat.as_str(), &regex, &opts));
-                    } else {
-                        output.push_str(&format_rg_output_line(
-                            line.text,
-                            line.match_text,
-                            &regex,
-                            &opts,
-                            matched,
-                        ));
-                    }
+                    output.push_str(&format_rg_output_line(
+                        line.text,
+                        line.match_text,
+                        &regex,
+                        &opts,
+                        matched,
+                    ));
                     output.push(record_terminator);
                 }
             } else if opts.vimgrep && !opts.invert_match {
@@ -6454,7 +6479,13 @@ impl Builtin for Rg {
                         output.push(record_terminator);
                         continue;
                     }
+                    let mut output_col_offset: usize = 0;
                     regex.for_each_match(lines[line_idx].match_text, |mat| {
+                        let col = if opts.only_matching && opts.replacement.is_some() {
+                            mat.start() + output_col_offset + 1
+                        } else {
+                            mat.start() + 1
+                        };
                         write_rg_prefix(
                             &mut output,
                             RgPrefix {
@@ -6462,7 +6493,7 @@ impl Builtin for Rg {
                                 show_filename: true,
                                 line_numbers: true,
                                 line_idx,
-                                column: Some(mat.start() + 1),
+                                column: Some(col),
                                 byte_offset: None,
                                 separator: opts.field_match_separator.as_str(),
                                 null_path_separator: opts.null,
@@ -6472,7 +6503,18 @@ impl Builtin for Rg {
                             },
                         );
                         if opts.only_matching {
-                            output.push_str(&format_rg_match_text(mat.as_str(), &regex, &opts));
+                            let formatted = format_rg_match_text(mat.as_str(), &regex, &opts);
+                            if opts.replacement.is_some() {
+                                let orig_len = mat.as_str().len();
+                                let repl_len = formatted.len();
+                                if repl_len >= orig_len {
+                                    output_col_offset += repl_len - orig_len;
+                                } else {
+                                    output_col_offset =
+                                        output_col_offset.saturating_sub(orig_len - repl_len);
+                                }
+                            }
+                            output.push_str(&formatted);
                         } else {
                             output.push_str(&format_rg_output_line(
                                 lines[line_idx].text,
@@ -7438,7 +7480,7 @@ mod tests {
     ];
 
     const DIFF_OUTPUT_MODE_FILES: &[(&str, &[u8])] =
-        &[("/proj/output.txt", b"foo1 bar\nnone\nfoo2 baz\n")];
+        &[("/proj/output.txt", b"foo1 foo2 bar\nnone\nfoo3 baz\n")];
 
     const DIFF_JSON_MODE_FILES: &[(&str, &[u8])] = &[
         ("/proj/a.txt", b"before\nfoo bar foo\nafter\n"),
