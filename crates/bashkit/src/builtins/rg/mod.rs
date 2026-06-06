@@ -6499,8 +6499,7 @@ impl Builtin for Rg {
                             },
                         );
                         if opts.only_matching {
-                            let formatted =
-                                format_rg_match_text(mat.as_str(), &regex, &opts);
+                            let formatted = format_rg_match_text(mat.as_str(), &regex, &opts);
                             if opts.replacement.is_some() {
                                 let orig_len = mat.as_str().len();
                                 let repl_len = formatted.len();
