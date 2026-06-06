@@ -32,6 +32,11 @@ static PROC_SUB_COUNTER: AtomicU64 = AtomicU64::new(0);
 // bashkit crate semver so scripts that gate on Bash features keep working.
 const COMPAT_BASH_VERSION: &str = "5.2.15(1)-release";
 const COMPAT_BASH_VERSINFO: [&str; 6] = ["5", "2", "15", "1", "release", "virtual"];
+// Important decision: lexer emits these only for mixed words where an initial
+// quoted segment is followed by an unquoted expansion. Keep them internal and
+// strip before observable output.
+const QUOTED_SEGMENT_START: char = '\x01';
+const QUOTED_SEGMENT_END: char = '\x02';
 
 // Important decision: operand quote sentinels must be selected from a small,
 // parser-inert set. Exhaustive Unicode probing is attacker-amplifiable CPU work.
@@ -8629,7 +8634,10 @@ impl Interpreter {
         &'a mut self,
         word: &'a Word,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String>> + Send + 'a>> {
-        Box::pin(async move { self.expand_word_inner(word).await })
+        Box::pin(async move {
+            let expanded = self.expand_word_inner(word).await?;
+            Ok(Self::strip_quote_markers(&expanded))
+        })
     }
 
     /// Quote expansion output that came from a quoted segment of a mixed word.
@@ -9133,7 +9141,7 @@ impl Interpreter {
             // when the word is unquoted and contains an expansion.
             // Per POSIX, unquoted variable/command/arithmetic expansion results undergo
             // field splitting on IFS.
-            let expanded = self.expand_word(word).await?;
+            let expanded = self.expand_word_inner(word).await?;
 
             // IFS splitting applies to unquoted expansions only.
             // Skip splitting for assignment-like words (e.g., result="$1") where
@@ -9157,7 +9165,7 @@ impl Interpreter {
             if has_expansion {
                 Ok(self.ifs_split(&expanded))
             } else {
-                Ok(vec![expanded])
+                Ok(vec![Self::strip_quote_markers(&expanded)])
             }
         })
     }
@@ -9274,6 +9282,25 @@ impl Interpreter {
         None
     }
 
+    fn strip_quote_markers(s: &str) -> String {
+        s.chars()
+            .filter(|&c| c != QUOTED_SEGMENT_START && c != QUOTED_SEGMENT_END)
+            .collect()
+    }
+
+    fn quote_marker_chars(s: &str) -> Vec<(char, bool)> {
+        let mut quoted = false;
+        let mut chars = Vec::new();
+        for c in s.chars() {
+            match c {
+                QUOTED_SEGMENT_START => quoted = true,
+                QUOTED_SEGMENT_END => quoted = false,
+                _ => chars.push((c, quoted)),
+            }
+        }
+        chars
+    }
+
     /// Split a string on IFS characters according to POSIX rules.
     ///
     /// - IFS whitespace (space, tab, newline) collapses; leading/trailing stripped.
@@ -9298,49 +9325,61 @@ impl Interpreter {
             .unwrap_or_else(|| " \t\n".to_string());
 
         if ifs.is_empty() {
-            return vec![s.to_string()];
+            return vec![Self::strip_quote_markers(s)];
         }
 
-        let is_ifs = |c: char| ifs.contains(c);
-        let is_ifs_ws = |c: char| ifs.contains(c) && " \t\n".contains(c);
-        let is_ifs_nws = |c: char| ifs.contains(c) && !" \t\n".contains(c);
+        let is_ifs = |c: char, quoted: bool| !quoted && ifs.contains(c);
+        let is_ifs_ws = |c: char, quoted: bool| !quoted && ifs.contains(c) && " \t\n".contains(c);
+        let is_ifs_nws = |c: char, quoted: bool| !quoted && ifs.contains(c) && !" \t\n".contains(c);
         let all_whitespace_ifs = ifs.chars().all(|c| " \t\n".contains(c));
+        let chars = Self::quote_marker_chars(s);
 
         if all_whitespace_ifs {
-            // IFS is only whitespace: split on runs, elide empties
-            return s
-                .split(|c: char| is_ifs(c))
-                .filter(|f| !f.is_empty())
-                .take(limit)
-                .map(|f| f.to_string())
-                .collect();
+            // IFS is only whitespace: split on unquoted runs, elide empties.
+            let mut fields = Vec::new();
+            let mut current = String::new();
+            for &(c, quoted) in &chars {
+                if is_ifs(c, quoted) {
+                    if !current.is_empty() {
+                        fields.push(std::mem::take(&mut current));
+                        if fields.len() >= limit {
+                            return fields;
+                        }
+                    }
+                } else {
+                    current.push(c);
+                }
+            }
+            if !current.is_empty() && fields.len() < limit {
+                fields.push(current);
+            }
+            return fields;
         }
 
         // Mixed or pure non-whitespace IFS.
         let mut fields: Vec<String> = Vec::new();
         let mut current = String::new();
-        let chars: Vec<char> = s.chars().collect();
         let mut i = 0;
 
         // Skip leading IFS whitespace
-        while i < chars.len() && is_ifs_ws(chars[i]) {
+        while i < chars.len() && is_ifs_ws(chars[i].0, chars[i].1) {
             i += 1;
         }
         // Leading non-whitespace IFS produces an empty first field
-        if i < chars.len() && is_ifs_nws(chars[i]) {
+        if i < chars.len() && is_ifs_nws(chars[i].0, chars[i].1) {
             fields.push(String::new());
             if fields.len() >= limit {
                 return fields;
             }
             i += 1;
-            while i < chars.len() && is_ifs_ws(chars[i]) {
+            while i < chars.len() && is_ifs_ws(chars[i].0, chars[i].1) {
                 i += 1;
             }
         }
 
         while i < chars.len() {
-            let c = chars[i];
-            if is_ifs_nws(c) {
+            let (c, quoted) = chars[i];
+            if is_ifs_nws(c, quoted) {
                 // Non-whitespace IFS delimiter: finalize current field
                 fields.push(std::mem::take(&mut current));
                 if fields.len() >= limit {
@@ -9348,22 +9387,22 @@ impl Interpreter {
                 }
                 i += 1;
                 // Consume trailing IFS whitespace
-                while i < chars.len() && is_ifs_ws(chars[i]) {
+                while i < chars.len() && is_ifs_ws(chars[i].0, chars[i].1) {
                     i += 1;
                 }
-            } else if is_ifs_ws(c) {
+            } else if is_ifs_ws(c, quoted) {
                 // IFS whitespace: skip it, then check for non-ws delimiter
-                while i < chars.len() && is_ifs_ws(chars[i]) {
+                while i < chars.len() && is_ifs_ws(chars[i].0, chars[i].1) {
                     i += 1;
                 }
-                if i < chars.len() && is_ifs_nws(chars[i]) {
+                if i < chars.len() && is_ifs_nws(chars[i].0, chars[i].1) {
                     // <ws><nws> = single delimiter. Push current field.
                     fields.push(std::mem::take(&mut current));
                     if fields.len() >= limit {
                         return fields;
                     }
                     i += 1; // consume the nws char
-                    while i < chars.len() && is_ifs_ws(chars[i]) {
+                    while i < chars.len() && is_ifs_ws(chars[i].0, chars[i].1) {
                         i += 1;
                     }
                 } else if i < chars.len() {
@@ -14747,6 +14786,18 @@ cat /tmp/test_fd_exec_public.txt"#,
         assert_eq!(result.exit_code, 0);
         let lines: Vec<&str> = result.stdout.lines().collect();
         assert_eq!(lines, vec!["count:2", "arg1:x", "arg2:yq r"]);
+    }
+
+    // Mixed-quoting: "$v"$u protects only the quoted segment; unquoted $u still splits.
+    #[tokio::test]
+    async fn test_mixed_quote_unquoted_suffix_var_splits() {
+        let result = run_script(
+            r#"v="x y"; u="a b"; set -- "$v"$u; echo "count:$#"; echo "arg1:$1"; echo "arg2:$2""#,
+        )
+        .await;
+        assert_eq!(result.exit_code, 0);
+        let lines: Vec<&str> = result.stdout.lines().collect();
+        assert_eq!(lines, vec!["count:2", "arg1:x ya", "arg2:b"]);
     }
 
     /// Issue #1184: input process substitution temp files must be cleaned up
