@@ -4508,6 +4508,61 @@ fn write_rg_multiline_match_segments(
     }
 }
 
+fn rg_context_line_indices(
+    lines_len: usize,
+    match_lines: &[usize],
+    before_context: usize,
+    after_context: usize,
+    include_matches: bool,
+) -> Vec<usize> {
+    if lines_len == 0 || match_lines.is_empty() {
+        return Vec::new();
+    }
+
+    let mut ranges = Vec::with_capacity(match_lines.len());
+    for &match_idx in match_lines {
+        if match_idx >= lines_len {
+            continue;
+        }
+        let start = match_idx.saturating_sub(before_context);
+        let end = match_idx
+            .saturating_add(after_context)
+            .saturating_add(1)
+            .min(lines_len);
+        ranges.push((start, end));
+    }
+    if ranges.is_empty() {
+        return Vec::new();
+    }
+
+    ranges.sort_unstable_by_key(|&(start, end)| (start, end));
+    let mut merged: Vec<(usize, usize)> = Vec::with_capacity(ranges.len());
+    for (start, end) in ranges {
+        if let Some((_, last_end)) = merged.last_mut()
+            && start <= *last_end
+        {
+            *last_end = (*last_end).max(end);
+            continue;
+        }
+        merged.push((start, end));
+    }
+
+    let match_set = (!include_matches).then(|| match_lines.iter().copied().collect::<HashSet<_>>());
+    let mut indices = Vec::new();
+    for (start, end) in merged {
+        for idx in start..end {
+            if match_set
+                .as_ref()
+                .is_some_and(|matches| matches.contains(&idx))
+            {
+                continue;
+            }
+            indices.push(idx);
+        }
+    }
+    indices
+}
+
 fn write_rg_context(
     output: &mut String,
     filename: &str,
@@ -4517,17 +4572,15 @@ fn write_rg_context(
     opts: &RgOptions,
     show_filename: bool,
 ) {
-    let mut printed = HashSet::new();
-    for &match_idx in match_lines {
-        let start = match_idx.saturating_sub(opts.before_context);
-        let end = (match_idx + opts.after_context + 1).min(lines.len());
-        for idx in start..end {
-            printed.insert(idx);
-        }
-    }
-
-    let mut sorted: Vec<usize> = printed.into_iter().collect();
-    sorted.sort_unstable();
+    // Merge context windows before expansion. Large -A/-B/-C values must cost
+    // proportional to emitted lines, not matches × context.
+    let sorted = rg_context_line_indices(
+        lines.len(),
+        match_lines,
+        opts.before_context,
+        opts.after_context,
+        true,
+    );
     let match_set: HashSet<usize> = match_lines.iter().copied().collect();
     let mut prev_line = None;
     let record_terminator = rg_record_terminator(opts);
@@ -5787,24 +5840,21 @@ impl Builtin for Rg {
                         write_rg_json_begin(&mut output, filename);
                         let match_line_set: HashSet<usize> =
                             context_match_lines.iter().copied().collect();
-                        let mut context_lines = BTreeSet::new();
-                        if opts.passthru {
-                            for line_idx in 0..lines.len() {
-                                if !match_line_set.contains(&line_idx) {
-                                    context_lines.insert(line_idx);
-                                }
-                            }
+                        let context_lines = if opts.passthru {
+                            (0..lines.len())
+                                .filter(|line_idx| !match_line_set.contains(line_idx))
+                                .collect::<Vec<_>>()
                         } else if has_context {
-                            for &match_idx in &context_match_lines {
-                                let start = match_idx.saturating_sub(opts.before_context);
-                                let end = (match_idx + opts.after_context + 1).min(lines.len());
-                                for line_idx in start..end {
-                                    if !match_line_set.contains(&line_idx) {
-                                        context_lines.insert(line_idx);
-                                    }
-                                }
-                            }
-                        }
+                            rg_context_line_indices(
+                                lines.len(),
+                                &context_match_lines,
+                                opts.before_context,
+                                opts.after_context,
+                                false,
+                            )
+                        } else {
+                            Vec::new()
+                        };
                         if context_lines.len() > RG_MAX_JSON_CONTEXT_EVENTS {
                             return Ok(ExecResult::err(
                                 "rg: too many JSON context events (output capped)\n".to_string(),
@@ -5827,7 +5877,8 @@ impl Builtin for Rg {
                             for &mat in &matches {
                                 match_by_start_line.entry(mat.line_idx).or_insert(mat);
                             }
-                            let mut event_lines: BTreeSet<usize> = context_lines;
+                            let mut event_lines: BTreeSet<usize> =
+                                context_lines.into_iter().collect();
                             event_lines.extend(match_by_start_line.keys().copied());
                             for line_idx in event_lines {
                                 if let Some(mat) = match_by_start_line.get(&line_idx).copied() {
@@ -6224,24 +6275,21 @@ impl Builtin for Rg {
                 if match_count > 0 {
                     write_rg_json_begin(&mut output, filename);
                     let match_line_set: HashSet<usize> = match_lines.iter().copied().collect();
-                    let mut context_lines = BTreeSet::new();
-                    if opts.passthru {
-                        for line_idx in 0..lines.len() {
-                            if !match_line_set.contains(&line_idx) {
-                                context_lines.insert(line_idx);
-                            }
-                        }
+                    let context_lines = if opts.passthru {
+                        (0..lines.len())
+                            .filter(|line_idx| !match_line_set.contains(line_idx))
+                            .collect::<Vec<_>>()
                     } else if has_context {
-                        for &match_idx in &match_lines {
-                            let start = match_idx.saturating_sub(opts.before_context);
-                            let end = (match_idx + opts.after_context + 1).min(lines.len());
-                            for line_idx in start..end {
-                                if !match_line_set.contains(&line_idx) {
-                                    context_lines.insert(line_idx);
-                                }
-                            }
-                        }
-                    }
+                        rg_context_line_indices(
+                            lines.len(),
+                            &match_lines,
+                            opts.before_context,
+                            opts.after_context,
+                            false,
+                        )
+                    } else {
+                        Vec::new()
+                    };
                     if context_lines.len() > RG_MAX_JSON_CONTEXT_EVENTS {
                         return Ok(ExecResult::err(
                             "rg: too many JSON context events (output capped)\n".to_string(),
@@ -6260,7 +6308,7 @@ impl Builtin for Rg {
                             );
                         }
                     } else {
-                        let mut event_lines: BTreeSet<usize> = context_lines;
+                        let mut event_lines: BTreeSet<usize> = context_lines.into_iter().collect();
                         event_lines.extend(match_lines.iter().copied());
                         for line_idx in event_lines {
                             if match_line_set.contains(&line_idx) {
@@ -13832,6 +13880,28 @@ mod tests {
     async fn test_rg_context_combined_flag() {
         let result = run_rg(
             &["-nC1", "needle", "/test.txt"],
+            None,
+            &[("/test.txt", b"before\nneedle\nafter\n")],
+        )
+        .await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "1-before\n2:needle\n3-after\n");
+    }
+
+    #[test]
+    fn test_rg_context_indices_merge_before_expanding() {
+        let lines = rg_context_line_indices(10, &[2, 3, 4], 2, usize::MAX, true);
+        assert_eq!(lines, (0..10).collect::<Vec<_>>());
+
+        let context_only = rg_context_line_indices(6, &[1, 2, 3], 1, 1, false);
+        assert_eq!(context_only, vec![0, 4]);
+    }
+
+    #[tokio::test]
+    async fn test_rg_context_extreme_value_does_not_overflow() {
+        let max_context = format!("-nC{}", usize::MAX);
+        let result = run_rg(
+            &[max_context.as_str(), "needle", "/test.txt"],
             None,
             &[("/test.txt", b"before\nneedle\nafter\n")],
         )
