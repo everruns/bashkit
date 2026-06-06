@@ -4437,6 +4437,9 @@ fn format_rg_output_line(
     matched: bool,
     output_remaining: Option<usize>,
 ) -> String {
+    if output_remaining == Some(0) {
+        return String::new();
+    }
     let line = format_rg_line(line, match_line, regex, opts, matched);
     let display = if let Some(max_columns) = opts.max_columns {
         if max_columns == 0 || line.chars().count() <= max_columns {
@@ -5188,8 +5191,15 @@ impl Builtin for Rg {
             } else if files.is_empty() {
                 String::new()
             } else {
-                let mut output = format!("{}\n", files.join("\n"));
-                truncate_rg_output(&mut output, output_limit);
+                let mut output = String::new();
+                for file in &files {
+                    output.push_str(file.as_str());
+                    output.push('\n');
+                    truncate_rg_output(&mut output, output_limit);
+                    if output.len() >= output_limit {
+                        break;
+                    }
+                }
                 output
             };
             return Ok(ExecResult {
@@ -5411,6 +5421,10 @@ impl Builtin for Rg {
                             opts.replacement.as_deref(),
                             search_lines[line_idx].match_text,
                         );
+                        truncate_rg_output(&mut output, output_limit);
+                        if output.len() >= output_limit {
+                            break;
+                        }
                     }
                     write_rg_json_end(
                         &mut output,
@@ -5724,6 +5738,10 @@ impl Builtin for Rg {
                                     &regex,
                                     opts.replacement.as_deref(),
                                 );
+                                truncate_rg_output(&mut output, output_limit);
+                                if output.len() >= output_limit {
+                                    break;
+                                }
                             }
                             write_rg_json_end(
                                 &mut output,
@@ -5921,6 +5939,10 @@ impl Builtin for Rg {
                                     &regex,
                                     opts.replacement.as_deref(),
                                 );
+                                truncate_rg_output(&mut output, output_limit);
+                                if output.len() >= output_limit {
+                                    break;
+                                }
                             }
                         } else {
                             let mut match_by_start_line = BTreeMap::new();
@@ -5947,6 +5969,10 @@ impl Builtin for Rg {
                                         lines[line_idx],
                                         line_idx,
                                     );
+                                }
+                                truncate_rg_output(&mut output, output_limit);
+                                if output.len() >= output_limit {
+                                    break;
                                 }
                             }
                         }
@@ -6380,6 +6406,10 @@ impl Builtin for Rg {
                                 &regex,
                                 opts.replacement.as_deref(),
                             );
+                            truncate_rg_output(&mut output, output_limit);
+                            if output.len() >= output_limit {
+                                break;
+                            }
                         }
                     } else {
                         let mut event_lines: BTreeSet<usize> = context_lines.into_iter().collect();
@@ -6401,6 +6431,10 @@ impl Builtin for Rg {
                                     lines[line_idx],
                                     line_idx,
                                 );
+                            }
+                            truncate_rg_output(&mut output, output_limit);
+                            if output.len() >= output_limit {
+                                break;
                             }
                         }
                     }
