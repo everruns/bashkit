@@ -33,6 +33,15 @@ static PROC_SUB_COUNTER: AtomicU64 = AtomicU64::new(0);
 const COMPAT_BASH_VERSION: &str = "5.2.15(1)-release";
 const COMPAT_BASH_VERSINFO: [&str; 6] = ["5", "2", "15", "1", "release", "virtual"];
 
+// Important decision: operand quote sentinels must be selected from a small,
+// parser-inert set. Exhaustive Unicode probing is attacker-amplifiable CPU work.
+const OPERAND_QUOTE_MARK_CANDIDATES: &[char] = &[
+    '\u{E000}', '\u{E001}', '\u{E002}', '\u{E003}', '\u{E004}', '\u{E005}', '\u{E006}', '\u{E007}',
+    '\u{E008}', '\u{E009}', '\u{E00A}', '\u{E00B}', '\u{E00C}', '\u{E00D}', '\u{E00E}', '\u{E00F}',
+    '\u{FDD0}', '\u{FDD1}', '\u{FDD2}', '\u{FDD3}', '\u{FDD4}', '\u{FDD5}', '\u{FDD6}', '\u{FDD7}',
+    '\u{FDD8}', '\u{FDD9}', '\u{FDDA}', '\u{FDDB}', '\u{FDDC}', '\u{FDDD}', '\u{FDDE}', '\u{FDDF}',
+];
+
 use futures_util::FutureExt;
 
 use crate::builtins::{self, Builtin};
@@ -9426,7 +9435,7 @@ impl Interpreter {
     /// Escaped quotes (`\"`) and NUL-sentinel-marked chars (`\x00"`) are kept.
     /// The caller-provided quote marker is absent from the source operand, so
     /// parsed literal marker chars can only be stripped quote boundaries.
-    fn strip_operand_quotes(operand: &str, quote_mark: char) -> String {
+    fn strip_operand_quotes(operand: &str, quote_mark: Option<char>) -> String {
         let mut result = String::with_capacity(operand.len());
         let chars: Vec<char> = operand.chars().collect();
         let mut i = 0;
@@ -9442,8 +9451,12 @@ impl Interpreter {
                 result.push(chars[i + 1]);
                 i += 2;
             } else if chars[i] == '"' {
-                // Unescaped double quote: skip it (strip the quote character)
-                result.push(quote_mark);
+                // Unescaped double quote: skip it (strip the quote character).
+                // If every bounded sentinel is already present, strip without
+                // marking rather than doing attacker-controlled exhaustive work.
+                if let Some(quote_mark) = quote_mark {
+                    result.push(quote_mark);
+                }
                 i += 1;
             } else {
                 result.push(chars[i]);
@@ -9453,16 +9466,21 @@ impl Interpreter {
         result
     }
 
-    fn operand_quote_mark(operand: &str) -> char {
-        (1..=char::MAX as u32)
-            .filter_map(char::from_u32)
-            .find(|&ch| ch != '\0' && !operand.contains(ch))
-            .expect("Unicode contains at least one char absent from any valid operand")
+    fn operand_quote_mark(operand: &str) -> Option<char> {
+        OPERAND_QUOTE_MARK_CANDIDATES
+            .iter()
+            .copied()
+            .find(|&ch| !operand.contains(ch))
     }
 
-    fn push_marked_literal(out: &mut String, s: &str, quote_mark: char, in_marked: &mut bool) {
+    fn push_marked_literal(
+        out: &mut String,
+        s: &str,
+        quote_mark: Option<char>,
+        in_marked: &mut bool,
+    ) {
         for ch in s.chars() {
-            if ch == quote_mark {
+            if Some(ch) == quote_mark {
                 *in_marked = !*in_marked;
                 continue;
             }
@@ -14340,6 +14358,20 @@ echo "count=$COUNT"
         let result = run_script(r#"val="axxxb"; pat=$'\x01a*'; echo "${val#"$pat"}""#).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout.trim(), "axxxb");
+    }
+
+    #[test]
+    fn test_operand_quote_mark_uses_bounded_fallible_candidates() {
+        let operand: String = OPERAND_QUOTE_MARK_CANDIDATES.iter().collect();
+        assert_eq!(Interpreter::operand_quote_mark(&operand), None);
+    }
+
+    #[tokio::test]
+    async fn test_quoted_remove_prefix_operand_with_all_mark_candidates_does_not_panic() {
+        let candidate_chars: String = OPERAND_QUOTE_MARK_CANDIDATES.iter().collect();
+        let script = format!(r#"val="axxxb"; echo "${{val#"{}a*"}}""#, candidate_chars);
+        let result = run_script(&script).await;
+        assert_eq!(result.exit_code, 0);
     }
 
     #[test]
