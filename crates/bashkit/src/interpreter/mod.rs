@@ -1730,9 +1730,7 @@ impl Interpreter {
         // one cancelled script cannot suppress traps in the next script.
         self.in_trap = false;
         self.deferred_proc_subs.clear();
-        self.pending_fd_capture_depth = 0;
-        self.pending_fd_output.clear();
-        self.pending_fd_targets.clear();
+        self.clear_pending_fd_redirect_state();
         // Top-level timeouts drop the interpreter future at await points, so
         // BASH_SOURCE cleanup after script execution may not run. Reset both
         // the private stack and public array before reusing the Bash instance.
@@ -1749,6 +1747,25 @@ impl Interpreter {
 
     pub(crate) fn clear_transient_stdin(&mut self) {
         self.pipeline_stdin = None;
+    }
+
+    fn clear_pending_fd_redirect_state(&mut self) {
+        self.pending_fd_output.clear();
+        self.pending_fd_targets.clear();
+        self.pending_fd_capture_depth = 0;
+    }
+
+    fn append_pending_fd_output(&mut self, fd: i32, data: &str) {
+        if data.is_empty() {
+            return;
+        }
+        let used: usize = self.pending_fd_output.values().map(String::len).sum();
+        let remaining = self.limits.max_stdout_bytes.saturating_sub(used);
+        if remaining == 0 {
+            return;
+        }
+        let entry = self.pending_fd_output.entry(fd).or_default();
+        entry.push_str(Self::utf8_prefix_at_most(data, remaining));
     }
 
     /// Set an environment variable.
@@ -2533,12 +2550,18 @@ impl Interpreter {
                     });
                     let capture_pending_fd = has_dup_output && has_file_redirect;
                     if capture_pending_fd {
+                        if self.pending_fd_capture_depth == 0 {
+                            self.clear_pending_fd_redirect_state();
+                        }
                         self.pending_fd_capture_depth += 1;
                     }
                     let result = self.execute_compound(compound).await;
                     if capture_pending_fd {
                         self.pending_fd_capture_depth =
                             self.pending_fd_capture_depth.saturating_sub(1);
+                        if result.is_err() {
+                            self.clear_pending_fd_redirect_state();
+                        }
                     }
                     let result = result?;
 
@@ -4316,15 +4339,16 @@ fn route_fd_table_content(
         let target = extra_fd_targets
             .iter()
             .find(|(n, _)| n == fd_num)
-            .map(|(_, t)| t)
-            .unwrap_or(&FdTarget::Stdout);
-        route(
-            data,
-            target,
-            &mut file_writes,
-            &mut new_stdout,
-            &mut new_stderr,
-        );
+            .map(|(_, t)| t);
+        if let Some(target) = target {
+            route(
+                data,
+                target,
+                &mut file_writes,
+                &mut new_stdout,
+                &mut new_stderr,
+            );
+        }
     }
 
     (new_stdout, new_stderr, file_writes)
@@ -8176,10 +8200,7 @@ impl Interpreter {
                                     // Move content to pending_fd_output for compound
                                     // redirect routing (e.g. `echo msg 1>&3` inside
                                     // `{ ... } 3>&1 >file`).
-                                    self.pending_fd_output
-                                        .entry(dst)
-                                        .or_default()
-                                        .push_str(&data);
+                                    self.append_pending_fd_output(dst, &data);
                                 }
                             }
                             _ => {}
@@ -8252,6 +8273,7 @@ impl Interpreter {
                         result.stderr =
                             format!("bash: {}: cannot overwrite existing file\n", target_path);
                         result.exit_code = 1;
+                        self.clear_pending_fd_redirect_state();
                         return Ok(result);
                     }
 
@@ -8339,8 +8361,7 @@ impl Interpreter {
             &self.pending_fd_targets,
             &self.pending_fd_output,
         );
-        self.pending_fd_output.clear();
-        self.pending_fd_targets.clear();
+        self.clear_pending_fd_redirect_state();
 
         // Write files
         for (path, (content, is_append, display_path)) in &file_writes {
@@ -12060,6 +12081,7 @@ impl Interpreter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Bash;
     use crate::fs::InMemoryFs;
     use crate::parser::Parser;
 
@@ -14641,6 +14663,47 @@ cat /tmp/test_fd_leak.txt"#,
         .await;
         let lines: Vec<&str> = result.stdout.lines().collect();
         assert_eq!(lines, vec!["public"]);
+    }
+
+    #[tokio::test]
+    async fn test_fd3_pending_output_cleared_after_noclobber_error() {
+        // Regression: failed outer fd-table redirects must not retain fd3+ data.
+        let result = run_script(
+            r#"echo existing > /tmp/test_fd_noclobber.txt
+set -C
+{ echo "secret" 1>&3; } 3>&1 > /tmp/test_fd_noclobber.txt
+echo "public" 2>&1 > /tmp/test_fd_after_noclobber.txt
+cat /tmp/test_fd_after_noclobber.txt"#,
+        )
+        .await;
+        let lines: Vec<&str> = result.stdout.lines().collect();
+        assert_eq!(lines, vec!["public"]);
+        assert!(!result.stdout.contains("secret"));
+    }
+
+    #[tokio::test]
+    async fn test_fd3_pending_output_not_leaked_across_exec_calls() {
+        // Regression: Bash::exec reset clears stale fd3+ buffers in reused interpreters.
+        let mut bash = Bash::new();
+        let first = bash
+            .exec(
+                r#"echo existing > /tmp/test_fd_exec_leak.txt
+set -C
+{ echo "secret" 1>&3; } 3>&1 > /tmp/test_fd_exec_leak.txt"#,
+            )
+            .await
+            .unwrap();
+        assert_eq!(first.exit_code, 1);
+
+        let second = bash
+            .exec(
+                r#"echo "public" 2>&1 > /tmp/test_fd_exec_public.txt
+cat /tmp/test_fd_exec_public.txt"#,
+            )
+            .await
+            .unwrap();
+        assert_eq!(second.stdout, "public\n");
+        assert!(!second.stdout.contains("secret"));
     }
 
     // Regression: date +"$var" must not word-split format when var contains spaces
