@@ -3506,6 +3506,29 @@ mod session_limits {
         );
     }
 
+    /// TM-DOS-059: Malformed scripts count toward exec() call limit before parsing.
+    #[tokio::test]
+    async fn tm_dos_059_parse_errors_count_toward_exec_call_limit() {
+        let session = SessionLimits::new()
+            .max_exec_calls(1)
+            .max_total_commands(u64::MAX);
+        let mut bash = Bash::builder().session_limits(session).build();
+
+        let parse_err = bash.exec("if").await;
+        assert!(parse_err.is_err(), "malformed script should fail parsing");
+
+        let limit_err = bash.exec("echo should_fail").await;
+        assert!(
+            limit_err.is_err(),
+            "second exec() should fail because parse errors consume exec budget"
+        );
+        let msg = limit_err.unwrap_err().to_string();
+        assert!(
+            msg.contains("session") && msg.contains("exec"),
+            "error should mention session exec limit: {msg}"
+        );
+    }
+
     /// TM-DOS-059: Session counters persist across exec() calls (not reset).
     #[tokio::test]
     async fn tm_dos_059_counter_persistence() {
