@@ -2249,26 +2249,6 @@ impl Interpreter {
     /// Used by `execute_source` and nested shell contexts.
     /// `run_exit_trap`: whether this shell context runs its EXIT trap.
     /// `fire_exit_hook`: whether `exit` notifies host-level on_exit hooks.
-    fn suppresses_script_body_err_exit(command: &Command, result: &ExecResult) -> bool {
-        matches!(command, Command::List(_))
-            || matches!(command, Command::Pipeline(p) if p.negated)
-            || (result.errexit_suppressed
-                && matches!(
-                    command,
-                    Command::Compound(
-                        CompoundCommand::If(_)
-                            | CompoundCommand::For(_)
-                            | CompoundCommand::ArithmeticFor(_)
-                            | CompoundCommand::While(_)
-                            | CompoundCommand::Until(_)
-                            | CompoundCommand::Case(_)
-                            | CompoundCommand::Select(_)
-                            | CompoundCommand::BraceGroup(_),
-                        _
-                    )
-                ))
-    }
-
     async fn execute_script_body(
         &mut self,
         script: &Script,
@@ -2347,7 +2327,9 @@ impl Interpreter {
             // the ERR trap for the failing subcommand; firing again would
             // double-invoke the trap (e.g. `set -e; trap 'f' ERR; false`).
             if exit_code != 0 {
-                let suppressed = Self::suppresses_script_body_err_exit(command, &result);
+                let suppressed = matches!(command, Command::List(_))
+                    || matches!(command, Command::Pipeline(p) if p.negated)
+                    || result.errexit_suppressed;
                 if !suppressed {
                     self.run_err_trap(&mut stdout, &mut stderr).await;
                 }
@@ -5676,7 +5658,6 @@ impl Interpreter {
         if self.hooks.after_tool.is_empty() {
             return result;
         }
-
         let event = crate::hooks::ToolResult {
             name: name.to_string(),
             stdout: result.stdout.clone(),
@@ -6064,7 +6045,6 @@ impl Interpreter {
         let saved_env = self.env.clone();
         let saved_memory_budget = self.memory_budget.clone();
         let saved_exec_fd_table = self.exec_fd_table.clone();
-        let saved_random_state = self.random_state.load(Ordering::Relaxed);
 
         // Child only sees exported variables (env), not all shell variables.
         // Reset last_exit_code so $? starts at 0 (matches real bash subprocess).
@@ -6116,8 +6096,6 @@ impl Interpreter {
         self.env = saved_env;
         self.memory_budget = saved_memory_budget;
         self.exec_fd_table = saved_exec_fd_table;
-        self.random_state
-            .store(saved_random_state, Ordering::Relaxed);
         self.bash_source_stack = saved_source_stack;
         self.pipeline_stdin = prev_pipeline_stdin;
 
@@ -9520,7 +9498,15 @@ impl Interpreter {
                 *in_marked = !*in_marked;
                 continue;
             }
-            Self::push_operand_char(out, ch, *in_marked);
+            if *in_marked
+                && matches!(
+                    ch,
+                    '*' | '?' | '[' | ']' | '(' | ')' | '|' | '+' | '@' | '!'
+                )
+            {
+                out.push('\\');
+            }
+            out.push(ch);
         }
     }
 
@@ -11151,17 +11137,16 @@ impl Interpreter {
             }
         };
         let resolved: &str = resolved_string.as_str();
+        // RANDOM=N reseeds the PRNG (matches bash behavior)
+        if resolved == "RANDOM" {
+            self.random_state
+                .store(value.parse::<u32>().unwrap_or(0), Ordering::Relaxed);
+            return;
+        }
         // Attribute lookup is now a single map probe + bit test.
         let attrs = self.var_attrs_get(resolved);
         // THREAT[TM-INJ-019/020/021]: Block assignment to readonly variables
         if attrs.contains(VarAttrs::READONLY) {
-            return;
-        }
-        // RANDOM=N reseeds the PRNG (matches bash behavior). Keep after
-        // readonly enforcement so `readonly RANDOM` protects PRNG state too.
-        if resolved == "RANDOM" {
-            self.random_state
-                .store(value.parse::<u32>().unwrap_or(0), Ordering::Relaxed);
             return;
         }
         // Apply integer attribute (declare -i): evaluate as arithmetic
@@ -12234,16 +12219,24 @@ mod tests {
         let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
         let mut interp = Interpreter::new(Arc::clone(&fs));
         interp.counters.function_depth = 1;
-        interp
-            .call_stack
-            .push(CallFrame::new("caller".to_string(), Vec::new()));
+        interp.call_stack.push(CallFrame {
+            name: "caller".to_string(),
+            locals: HashMap::new(),
+            positional: Vec::new(),
+            saved_arrays: HashMap::new(),
+            saved_assoc_arrays: HashMap::new(),
+        });
         let baseline_call_stack_len = interp.call_stack.len();
         let baseline_bash_source_len = interp.bash_source_stack.len();
         let baseline_function_depth = interp.counters.function_depth;
 
-        interp
-            .call_stack
-            .push(CallFrame::new("bash".to_string(), Vec::new()));
+        interp.call_stack.push(CallFrame {
+            name: "bash".to_string(),
+            locals: HashMap::new(),
+            positional: Vec::new(),
+            saved_arrays: HashMap::new(),
+            saved_assoc_arrays: HashMap::new(),
+        });
         interp.bash_source_stack.push("script.sh".to_string());
 
         interp.reconcile_cancelled_execution_state(
@@ -12288,53 +12281,6 @@ mod tests {
         let parser = Parser::new(script);
         let ast = parser.parse().unwrap();
         interp.execute(&ast).await.unwrap()
-    }
-
-    #[tokio::test]
-    async fn test_random_state_isolated_from_subshell_contexts() {
-        for script in [
-            "RANDOM=42; echo $RANDOM; (RANDOM=100; : $RANDOM); echo $RANDOM",
-            "RANDOM=42; echo $RANDOM; x=$(RANDOM=100; : $RANDOM); echo $RANDOM",
-            "RANDOM=42; echo $RANDOM; echo $(( $(RANDOM=100; : $RANDOM; echo 0) )); echo $RANDOM",
-            "RANDOM=42; echo $RANDOM; bash -c 'RANDOM=100; : $RANDOM'; echo $RANDOM",
-        ] {
-            let result = run_script(script).await;
-            let lines: Vec<&str> = result.stdout.lines().collect();
-            assert_eq!(result.exit_code, 0, "script failed: {script}");
-            assert_eq!(lines.first().copied(), Some("19081"), "script: {script}");
-            assert_eq!(lines.last().copied(), Some("17033"), "script: {script}");
-        }
-    }
-
-    #[tokio::test]
-    async fn test_random_state_isolated_from_path_script() {
-        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
-        fs.write_file(
-            std::path::Path::new("/tmp/random-child.sh"),
-            b"RANDOM=100
-: $RANDOM
-",
-        )
-        .await
-        .unwrap();
-
-        let mut interp = Interpreter::new(Arc::clone(&fs));
-        let parser = Parser::new("RANDOM=42; echo $RANDOM; /tmp/random-child.sh; echo $RANDOM");
-        let ast = parser.parse().unwrap();
-        let result = interp.execute(&ast).await.unwrap();
-
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(
-            result.stdout.lines().collect::<Vec<_>>(),
-            ["19081", "17033"]
-        );
-    }
-
-    #[tokio::test]
-    async fn test_readonly_random_blocks_reseed() {
-        let result = run_script("RANDOM=42; readonly RANDOM; RANDOM=100; echo $RANDOM").await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "19081");
     }
 
     /// Helper to run a script with custom limits and return result.
@@ -14391,15 +14337,6 @@ echo "count=$COUNT"
         let result = run_script(r#"val="axxxb"; pat="a"; echo "${val#"$pat"*}""#).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout.trim(), "xxxb");
-    }
-
-    #[tokio::test]
-    async fn test_quoted_remove_prefix_operand_marker_byte_keeps_glob_literal() {
-        // Quoted variable data may contain the old in-band quote marker byte.
-        // It must remain literal data, not toggle wildcard protection off.
-        let result = run_script(r#"val="axxxb"; pat=$'\x01a*'; echo "${val#"$pat"}""#).await;
-        assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout.trim(), "axxxb");
     }
 
     #[test]
