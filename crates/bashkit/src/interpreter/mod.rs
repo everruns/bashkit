@@ -9199,7 +9199,8 @@ impl Interpreter {
         // We preserve that by escaping glob metacharacters inside stripped
         // double-quoted segments, so later pattern matching won't treat them as
         // active wildcards/extglobs.
-        let stripped = Self::strip_operand_quotes(operand);
+        let quote_mark = Self::operand_quote_mark(operand);
+        let stripped = Self::strip_operand_quotes(operand, quote_mark);
         // THREAT[TM-DOS-050]: Propagate caller-configured limits to word parsing
         let word = Parser::parse_word_string_with_limits(
             &stripped,
@@ -9207,9 +9208,12 @@ impl Interpreter {
             self.limits.max_parser_operations,
         );
         let mut result = String::new();
+        let mut in_marked = false;
         for part in &word.parts {
             match part {
-                WordPart::Literal(s) => result.push_str(s),
+                WordPart::Literal(s) => {
+                    Self::push_marked_literal(&mut result, s, quote_mark, &mut in_marked);
+                }
                 WordPart::Variable(name) => {
                     result.push_str(&self.expand_variable(name));
                 }
@@ -9242,7 +9246,7 @@ impl Interpreter {
                 _ => {}
             }
         }
-        Self::escape_marked_glob_literals(&result)
+        result
     }
 
     /// Strip unescaped double-quote pairs from operand strings.
