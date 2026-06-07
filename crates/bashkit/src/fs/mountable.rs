@@ -7,12 +7,12 @@
 // while holding lock). This is intentional - corrupted state should not propagate.
 #![allow(clippy::unwrap_used)]
 
+use crate::time::SystemTime;
 use async_trait::async_trait;
 use std::collections::BTreeMap;
 use std::io::Error as IoError;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
-use crate::time::SystemTime;
 
 use super::limits::{FsLimits, FsUsage};
 use super::traits::{DirEntry, FileSystem, FileSystemExt, FileType, Metadata};

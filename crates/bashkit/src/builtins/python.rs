@@ -18,6 +18,7 @@
 //!
 //! Supports: `python -c "code"`, `python script.py`, stdin piping.
 
+use crate::time::Duration;
 use async_trait::async_trait;
 use chrono::{Datelike, Timelike};
 use monty::{
@@ -30,7 +31,6 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
-use crate::time::Duration;
 
 use super::{Builtin, Context, resolve_path};
 use crate::error::Result;

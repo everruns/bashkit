@@ -14,7 +14,9 @@ fn system_time_now_does_not_panic() {
 fn unix_epoch_is_before_now() {
     let epoch = bashkit::time::UNIX_EPOCH;
     let now = bashkit::time::SystemTime::now();
-    let duration = now.duration_since(epoch).expect("now should be after epoch");
+    let duration = now
+        .duration_since(epoch)
+        .expect("now should be after epoch");
     assert!(duration.as_secs() > 1_000_000_000, "expected year 2001+");
 }
 

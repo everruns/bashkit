@@ -415,7 +415,6 @@ mod limits;
 #[cfg(feature = "logging")]
 mod logging_impl;
 mod network;
-pub mod time;
 /// Parser module - exposed for fuzzing and testing
 pub mod parser;
 /// Scripted tool: compose ToolDef+callback pairs into a single Tool via bash scripts.
@@ -429,6 +428,7 @@ mod snapshot;
 /// invariants enforced (TM-INF-013, TM-INF-016, TM-INF-022).
 #[doc(hidden)]
 pub mod testing;
+pub mod time;
 /// Tool contract for LLM integration
 pub mod tool;
 /// Reusable tool primitives: ToolDef, ToolArgs, ToolImpl, exec types.

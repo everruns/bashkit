@@ -424,9 +424,9 @@ pub use search::{
 pub use traits::{DirEntry, FileSystem, FileSystemExt, FileType, Metadata, fs_errors};
 
 use crate::error::Result;
+use crate::time::SystemTime;
 use std::io::{Error as IoError, ErrorKind};
 use std::path::{Path, PathBuf};
-use crate::time::SystemTime;
 
 /// Filesystem implementation for logic-only shells.
 ///

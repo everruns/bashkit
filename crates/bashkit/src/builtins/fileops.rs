@@ -2,10 +2,10 @@
 // Decision: touch delegates mtime changes to the filesystem layer so `touch`
 // and `touch -t` stay consistent across in-memory, overlay, and realfs backends.
 
+use crate::time::SystemTime;
 use async_trait::async_trait;
 use chrono::{Datelike, Local, LocalResult, NaiveDate, TimeZone};
 use std::path::Path;
-use crate::time::SystemTime;
 
 use super::limits::MKTEMP_MAX_ATTEMPTS;
 use super::{Builtin, Context, resolve_path};
@@ -1126,7 +1126,8 @@ mod tests {
         assert_eq!(result.exit_code, 0);
 
         let metadata = fs.stat(&file).await.unwrap();
-        let modified: DateTime<Local> = crate::time::to_chrono_utc(metadata.modified).with_timezone(&Local);
+        let modified: DateTime<Local> =
+            crate::time::to_chrono_utc(metadata.modified).with_timezone(&Local);
         assert_eq!(modified.year(), 2026);
         assert_eq!(modified.month(), 4);
         assert_eq!(modified.day(), 6);

@@ -28,5 +28,5 @@ pub fn from_chrono<Tz: chrono::TimeZone>(dt: chrono::DateTime<Tz>) -> SystemTime
 pub fn to_chrono_utc(st: SystemTime) -> chrono::DateTime<chrono::Utc> {
     let duration = st.duration_since(UNIX_EPOCH).unwrap_or_default();
     chrono::DateTime::from_timestamp(duration.as_secs() as i64, duration.subsec_nanos())
-        .unwrap_or_else(|| chrono::DateTime::UNIX_EPOCH)
+        .unwrap_or(chrono::DateTime::UNIX_EPOCH)
 }
