@@ -17,7 +17,7 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
+use crate::time::Instant;
 
 use turso_core::{Connection, Database, IO, MemoryIO, Numeric, OpenFlags, StepResult, Value};
 

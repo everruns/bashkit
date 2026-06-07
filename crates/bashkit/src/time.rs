@@ -2,13 +2,14 @@
 //!
 //! On native targets this re-exports `std::time` directly.
 //! On `wasm32-unknown-unknown` it uses `web_time` so that
-//! `SystemTime::now()` works in the browser instead of panicking.
+//! `SystemTime::now()` and `Instant::now()` work in the browser instead
+//! of panicking.
 
 #[cfg(target_family = "wasm")]
-pub use web_time::{Duration, SystemTime, UNIX_EPOCH};
+pub use web_time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[cfg(not(target_family = "wasm"))]
-pub use std::time::{Duration, SystemTime, UNIX_EPOCH};
+pub use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Convert a [`chrono::DateTime`] to our platform-compatible [`SystemTime`].
 ///

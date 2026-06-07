@@ -854,7 +854,7 @@ impl Bash {
         // Load persisted history on first exec (no-op if already loaded)
         self.interpreter.load_history().await;
 
-        let exec_start = std::time::Instant::now();
+        let exec_start = crate::time::Instant::now();
         // THREAT[TM-DOS-057]: Wrap execution with timeout to prevent sleep/blocking bypass.
         // Only the native path arms the tokio timeout; wasm has no reliable timer driver.
         #[cfg(not(target_family = "wasm"))]

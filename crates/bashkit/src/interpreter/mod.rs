@@ -3708,7 +3708,7 @@ impl Interpreter {
     /// User and system CPU time are always reported as 0.
     /// This is a documented incompatibility with bash.
     async fn execute_time(&mut self, time_cmd: &TimeCommand) -> Result<ExecResult> {
-        use std::time::Instant;
+        use crate::time::Instant;
 
         let start = Instant::now();
 
@@ -5307,7 +5307,7 @@ impl Interpreter {
             let trace_start = if self.trace.mode() != crate::trace::TraceMode::Off {
                 self.trace
                     .command_start(name, &args, self.cwd.to_string_lossy().as_ref());
-                Some(std::time::Instant::now())
+                Some(crate::time::Instant::now())
             } else {
                 None
             };
@@ -13745,7 +13745,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_extglob_no_hang() {
-        use std::time::{Duration, Instant};
+        use crate::time::{Duration, Instant};
         let start = Instant::now();
         let result = run_script(
             r#"shopt -s extglob; [[ "aaaaaaaaaaaa" == +(a|aa) ]] && echo yes || echo no"#,
