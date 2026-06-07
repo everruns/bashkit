@@ -7,9 +7,10 @@ authors = ["siennathesane"]
 description = "WASM smoke tests for bashkit"
 
 [dependencies]
-bashkit = { path = "../bashkit" }
+bashkit = { path = "../bashkit", features = ["indexeddb"] }
 wasm-bindgen-test = "0.3"
 getrandom = { version = "0.3", features = ["wasm_js"] }
+js-sys = "0.3"
 
 [lib]
 crate-type = ["cdylib"]
