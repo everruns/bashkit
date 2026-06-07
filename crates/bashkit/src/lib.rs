@@ -448,6 +448,8 @@ pub use clap;
 #[cfg(feature = "http_client")]
 pub use credential::Credential;
 pub use error::{Error, Result};
+#[cfg(feature = "indexeddb")]
+pub use fs::IndexedDbFs;
 pub use fs::{
     DirEntry, FileSystem, FileSystemExt, FileType, FsBackend, FsLimitExceeded, FsLimits, FsUsage,
     InMemoryFs, LazyLoader, Metadata, MountableFs, OverlayFs, PosixFs, ReadOnlyFs,

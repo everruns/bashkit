@@ -378,9 +378,11 @@ dependencies = [
  "rand 0.10.1",
  "regex",
  "reqwest",
+ "rexie",
  "russh",
  "rustls",
  "serde",
+ "serde-wasm-bindgen",
  "serde_json",
  "serial_test",
  "sha1",
@@ -394,6 +396,7 @@ dependencies = [
  "turso_core",
  "unit-prefix",
  "url",
+ "wasm-bindgen",
  "web-time",
  "zapcode-core",
  "zeroize",
@@ -489,6 +492,7 @@ version = "0.9.0"
 dependencies = [
  "bashkit",
  "getrandom 0.3.4",
+ "js-sys",
  "wasm-bindgen-test",
 ]
 
@@ -2181,6 +2185,21 @@ name = "id-arena"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d3067d79b975e8844ca9eb072e16b31c3c1c36928edf9c6789548c524d0d954"
+
+[[package]]
+name = "idb"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6554f394e990a1af530a528a7fdcad6e01b29cb1b990f89df3ffd62cf15f7828"
+dependencies = [
+ "indexmap",
+ "js-sys",
+ "num-traits",
+ "thiserror 2.0.18",
+ "tokio",
+ "wasm-bindgen",
+ "web-sys",
+]
 
 [[package]]
 name = "idna"
@@ -4095,6 +4114,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rexie"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "887466cfa8a12c08ee4b174998135cea8ff0fd84858627cd793e56535a045bc9"
+dependencies = [
+ "idb",
+ "thiserror 1.0.69",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "rfc6979"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4614,6 +4644,17 @@ checksum = "9a8e94ea7f378bd32cbbd37198a4a91436180c5bb472411e48b5ec2e2124ae9e"
 dependencies = [
  "serde_core",
  "serde_derive",
+]
+
+[[package]]
+name = "serde-wasm-bindgen"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8302e169f0eddcc139c70f139d19d6467353af16f9fce27e8c30158036a1e16b"
+dependencies = [
+ "js-sys",
+ "serde",
+ "wasm-bindgen",
 ]
 
 [[package]]

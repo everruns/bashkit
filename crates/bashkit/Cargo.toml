@@ -108,6 +108,11 @@ zapcode-core = { version = "1.5", optional = true }
 # Pulls a multi-MB transitive dep tree only when the `sqlite` feature is active.
 turso_core = { workspace = true, optional = true }
 
+# IndexedDB backend for wasm32 browser persistence (optional)
+rexie = { version = "0.6", optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
+serde-wasm-bindgen = { version = "0.6", optional = true }
+
 [features]
 default = []
 # Enable jq builtin via embedded jaq interpreter
@@ -156,6 +161,9 @@ sqlite = ["dep:turso_core", "tokio/rt-multi-thread"]
 realfs = []
 # Enable native-extension interop contracts such as bashkit::interop::fs.
 interop = ["tokio/rt-multi-thread"]
+# Enable IndexedDB backend for wasm32 browser persistence.
+# Usage: cargo build --target wasm32-unknown-unknown --features indexeddb
+indexeddb = ["dep:rexie", "dep:wasm-bindgen", "dep:serde-wasm-bindgen"]
 
 [package.metadata.docs.rs]
 all-features = true
