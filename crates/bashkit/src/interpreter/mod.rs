@@ -635,24 +635,12 @@ struct CallFrame {
     name: String,
     /// Local variables in this scope
     locals: HashMap<String, String>,
+    /// Indexed arrays shadowed by local declarations in this scope.
+    local_arrays: HashMap<String, Option<HashMap<usize, String>>>,
+    /// Associative arrays shadowed by local declarations in this scope.
+    local_assoc_arrays: HashMap<String, Option<HashMap<String, String>>>,
     /// Positional parameters ($1, $2, etc.)
     positional: Vec<String>,
-    /// Saved indexed array bindings shadowed by `local`.
-    saved_arrays: HashMap<String, Option<HashMap<usize, String>>>,
-    /// Saved associative array bindings shadowed by `local`.
-    saved_assoc_arrays: HashMap<String, Option<HashMap<String, String>>>,
-}
-
-impl CallFrame {
-    fn new(name: String, positional: Vec<String>) -> Self {
-        Self {
-            name,
-            locals: HashMap::new(),
-            positional,
-            saved_arrays: HashMap::new(),
-            saved_assoc_arrays: HashMap::new(),
-        }
-    }
 }
 
 /// A snapshot of shell state (variables, env, cwd, options).
@@ -4128,8 +4116,13 @@ impl Interpreter {
         self.reset_state_for_child_shell();
 
         // Push call frame, apply options, execute, restore, pop
-        self.call_stack
-            .push(CallFrame::new(name_arg, positional_args));
+        self.call_stack.push(CallFrame {
+            name: name_arg,
+            locals: HashMap::new(),
+            local_arrays: HashMap::new(),
+            local_assoc_arrays: HashMap::new(),
+            positional: positional_args,
+        });
 
         let mut saved_opt_names: HashSet<&'static str> = HashSet::new();
         for (var, val) in &shell_opts {
@@ -4165,7 +4158,7 @@ impl Interpreter {
         // Restore stdin
         self.pipeline_stdin = saved_stdin;
 
-        self.call_stack.pop();
+        self.pop_call_frame();
 
         // Restore parent state — full revert of the snapshot since the child
         // is process-isolated. This also undoes OPTIND/SHOPT_* writes above.
@@ -6074,7 +6067,13 @@ impl Interpreter {
         self.nounset_error = None;
 
         // Push call frame: $0 = script name, $1..N = args
-        self.call_stack = vec![CallFrame::new(name.to_string(), args.to_vec())];
+        self.call_stack = vec![CallFrame {
+            name: name.to_string(),
+            locals: HashMap::new(),
+            local_arrays: HashMap::new(),
+            local_assoc_arrays: HashMap::new(),
+            positional: args.to_vec(),
+        }];
 
         // Set up BASH_SOURCE for the subprocess
         let saved_source_stack = self.bash_source_stack.clone();
@@ -6209,8 +6208,13 @@ impl Interpreter {
             let saved = self.call_stack.last().map(|frame| frame.positional.clone());
             // Push a temporary call frame for positional params
             if self.call_stack.is_empty() {
-                self.call_stack
-                    .push(CallFrame::new(filename.clone(), source_args));
+                self.call_stack.push(CallFrame {
+                    name: filename.clone(),
+                    locals: HashMap::new(),
+                    local_arrays: HashMap::new(),
+                    local_assoc_arrays: HashMap::new(),
+                    positional: source_args,
+                });
             } else if let Some(frame) = self.call_stack.last_mut() {
                 frame.positional = source_args;
             }
@@ -6250,7 +6254,7 @@ impl Interpreter {
                 }
             } else {
                 // We pushed a frame; pop it
-                self.call_stack.pop();
+                self.pop_call_frame();
             }
         }
 
@@ -6555,22 +6559,9 @@ impl Interpreter {
         }
     }
 
-    /// Execute a shell function call with call frame management.
-    fn save_local_array_bindings(&mut self, name: &str) {
-        let saved_array = self.arrays.get(name).cloned();
-        let saved_assoc = self.assoc_arrays.get(name).cloned();
-        if let Some(frame) = self.call_stack.last_mut() {
-            let name = name.to_string();
-            frame
-                .saved_arrays
-                .entry(name.clone())
-                .or_insert(saved_array);
-            frame.saved_assoc_arrays.entry(name).or_insert(saved_assoc);
-        }
-    }
-
     fn shadow_local_array_bindings(&mut self, name: &str, keep_indexed: bool, keep_assoc: bool) {
-        self.save_local_array_bindings(name);
+        self.remember_local_array_binding(name);
+        self.remember_local_assoc_array_binding(name);
         let mut removed_entries = 0;
         if !keep_indexed {
             removed_entries += self.arrays_mut().remove(name).map_or(0, |arr| arr.len());
@@ -6586,37 +6577,6 @@ impl Interpreter {
         }
     }
 
-    fn restore_local_array_bindings(&mut self, frame: CallFrame) {
-        for (name, saved) in frame.saved_arrays {
-            let old_entries = self.arrays.get(&name).map_or(0, |arr| arr.len());
-            let new_entries = saved.as_ref().map_or(0, |arr| arr.len());
-            match saved {
-                Some(arr) => {
-                    self.arrays_mut().insert(name, arr);
-                }
-                None => {
-                    self.arrays_mut().remove(&name);
-                }
-            }
-            self.memory_budget.array_entries =
-                self.memory_budget.array_entries.saturating_sub(old_entries) + new_entries;
-        }
-        for (name, saved) in frame.saved_assoc_arrays {
-            let old_entries = self.assoc_arrays.get(&name).map_or(0, |arr| arr.len());
-            let new_entries = saved.as_ref().map_or(0, |arr| arr.len());
-            match saved {
-                Some(arr) => {
-                    self.assoc_arrays_mut().insert(name, arr);
-                }
-                None => {
-                    self.assoc_arrays_mut().remove(&name);
-                }
-            }
-            self.memory_budget.array_entries =
-                self.memory_budget.array_entries.saturating_sub(old_entries) + new_entries;
-        }
-    }
-
     async fn execute_function_call(
         &mut self,
         name: &str,
@@ -6629,7 +6589,13 @@ impl Interpreter {
         self.counters.push_function(&self.limits)?;
 
         // Push call frame with positional parameters
-        self.call_stack.push(CallFrame::new(name.to_string(), args));
+        self.call_stack.push(CallFrame {
+            name: name.to_string(),
+            locals: HashMap::new(),
+            local_arrays: HashMap::new(),
+            local_assoc_arrays: HashMap::new(),
+            positional: args,
+        });
 
         // Set FUNCNAME array from call stack (index 0 = current, 1 = caller, ...)
         let funcname_arr: HashMap<usize, String> = self
@@ -6659,9 +6625,7 @@ impl Interpreter {
         self.pipeline_stdin = prev_pipeline_stdin;
 
         // Pop call frame, restore local array bindings, function counter, and BASH_SOURCE
-        if let Some(frame) = self.call_stack.pop() {
-            self.restore_local_array_bindings(frame);
-        }
+        self.pop_call_frame();
         self.counters.pop_function();
         self.bash_source_stack.pop();
         self.update_bash_source();
@@ -6741,6 +6705,7 @@ impl Interpreter {
                         self.shadow_local_array_bindings(var_name, !flags.assoc, flags.assoc);
                         let inner = &value[1..value.len() - 1];
                         let inserted = if flags.assoc {
+                            self.remember_local_assoc_array_binding(var_name);
                             let mut arr = HashMap::new();
                             let mut rest = inner.trim();
                             while let Some(bracket_start) = rest.find('[') {
@@ -6778,6 +6743,7 @@ impl Interpreter {
                             }
                             self.insert_assoc_array_checked(var_name.to_string(), arr)
                         } else {
+                            self.remember_local_array_binding(var_name);
                             let mut arr = HashMap::new();
                             for (idx, val) in inner.split_whitespace().enumerate() {
                                 arr.insert(idx, val.trim_matches('"').to_string());
@@ -6802,17 +6768,17 @@ impl Interpreter {
                     }
                 } else if !is_internal_variable(arg) {
                     if flags.assoc {
-                        self.shadow_local_array_bindings(arg, false, true);
+                        self.remember_local_assoc_array_binding(arg);
+                        if self.insert_assoc_array_checked(arg.to_string(), HashMap::new()) {
+                            self.insert_local_checked(arg.to_string(), String::new());
+                        }
                     } else if flags.array {
-                        self.shadow_local_array_bindings(arg, true, false);
+                        self.remember_local_array_binding(arg);
+                        if self.insert_array_checked(arg.to_string(), HashMap::new()) {
+                            self.insert_local_checked(arg.to_string(), String::new());
+                        }
                     } else {
-                        self.shadow_local_array_bindings(arg, false, false);
-                    }
-                    self.insert_local_checked(arg.to_string(), String::new());
-                    if flags.assoc {
-                        self.assoc_arrays_mut().entry(arg.to_string()).or_default();
-                    } else if flags.array {
-                        self.arrays_mut().entry(arg.to_string()).or_default();
+                        self.insert_local_checked(arg.to_string(), String::new());
                     }
                     if flags.integer {
                         self.add_var_attr(arg, VarAttrs::INTEGER);
@@ -7969,8 +7935,13 @@ impl Interpreter {
                     if let Some(frame) = self.call_stack.last_mut() {
                         frame.positional = new_positional.clone();
                     } else {
-                        self.call_stack
-                            .push(CallFrame::new(String::new(), new_positional.clone()));
+                        self.call_stack.push(CallFrame {
+                            name: String::new(),
+                            locals: HashMap::new(),
+                            local_arrays: HashMap::new(),
+                            local_assoc_arrays: HashMap::new(),
+                            positional: new_positional.clone(),
+                        });
                     }
                 }
                 builtins::BuiltinSideEffect::ClearHistory => {
@@ -11418,6 +11389,74 @@ impl Interpreter {
         self.env.insert(key, value);
     }
 
+    /// Pop a call frame and restore any global array bindings shadowed by `local -a/-A`.
+    fn pop_call_frame(&mut self) -> Option<CallFrame> {
+        let frame = self.call_stack.pop()?;
+        for (name, previous) in &frame.local_arrays {
+            self.restore_array_binding(name, previous.clone());
+        }
+        for (name, previous) in &frame.local_assoc_arrays {
+            self.restore_assoc_array_binding(name, previous.clone());
+        }
+        Some(frame)
+    }
+
+    /// Remember the array binding that a local indexed array declaration shadows.
+    fn remember_local_array_binding(&mut self, name: &str) {
+        let previous = self.arrays.get(name).cloned();
+        if let Some(frame) = self.call_stack.last_mut() {
+            frame
+                .local_arrays
+                .entry(name.to_string())
+                .or_insert(previous);
+        }
+    }
+
+    /// Remember the array binding that a local associative array declaration shadows.
+    fn remember_local_assoc_array_binding(&mut self, name: &str) {
+        let previous = self.assoc_arrays.get(name).cloned();
+        if let Some(frame) = self.call_stack.last_mut() {
+            frame
+                .local_assoc_arrays
+                .entry(name.to_string())
+                .or_insert(previous);
+        }
+    }
+
+    fn restore_array_binding(&mut self, name: &str, previous: Option<HashMap<usize, String>>) {
+        let old_entries = self.arrays.get(name).map_or(0, |a| a.len());
+        let new_entries = previous.as_ref().map_or(0, |a| a.len());
+        self.memory_budget.array_entries = self
+            .memory_budget
+            .array_entries
+            .saturating_sub(old_entries)
+            .saturating_add(new_entries);
+        if let Some(arr) = previous {
+            self.arrays_mut().insert(name.to_string(), arr);
+        } else {
+            self.arrays_mut().remove(name);
+        }
+    }
+
+    fn restore_assoc_array_binding(
+        &mut self,
+        name: &str,
+        previous: Option<HashMap<String, String>>,
+    ) {
+        let old_entries = self.assoc_arrays.get(name).map_or(0, |a| a.len());
+        let new_entries = previous.as_ref().map_or(0, |a| a.len());
+        self.memory_budget.array_entries = self
+            .memory_budget
+            .array_entries
+            .saturating_sub(old_entries)
+            .saturating_add(new_entries);
+        if let Some(arr) = previous {
+            self.assoc_arrays_mut().insert(name.to_string(), arr);
+        } else {
+            self.assoc_arrays_mut().remove(name);
+        }
+    }
+
     /// Insert an array with memory budget checking.
     /// Returns true if the insert succeeded.
     fn insert_array_checked(&mut self, name: String, arr: HashMap<usize, String>) -> bool {
@@ -12113,9 +12152,13 @@ mod tests {
         let mut interp = Interpreter::new(Arc::clone(&fs));
         let replacement = "a".repeat(2048);
         interp.set_variable("p".to_string(), replacement);
-        interp
-            .call_stack
-            .push(CallFrame::new("f".to_string(), vec!["x".to_string(); 6000]));
+        interp.call_stack.push(CallFrame {
+            name: "f".to_string(),
+            locals: HashMap::new(),
+            local_arrays: HashMap::new(),
+            local_assoc_arrays: HashMap::new(),
+            positional: vec!["x".to_string(); 6000],
+        });
 
         let value = interp.resolve_param_expansion_name("@").1;
         let expanded = interp.apply_param_op_maybe_per_element(
@@ -12229,9 +12272,9 @@ mod tests {
         interp.call_stack.push(CallFrame {
             name: "caller".to_string(),
             locals: HashMap::new(),
+            local_arrays: HashMap::new(),
+            local_assoc_arrays: HashMap::new(),
             positional: Vec::new(),
-            saved_arrays: HashMap::new(),
-            saved_assoc_arrays: HashMap::new(),
         });
         let baseline_call_stack_len = interp.call_stack.len();
         let baseline_bash_source_len = interp.bash_source_stack.len();
@@ -12240,9 +12283,9 @@ mod tests {
         interp.call_stack.push(CallFrame {
             name: "bash".to_string(),
             locals: HashMap::new(),
+            local_arrays: HashMap::new(),
+            local_assoc_arrays: HashMap::new(),
             positional: Vec::new(),
-            saved_arrays: HashMap::new(),
-            saved_assoc_arrays: HashMap::new(),
         });
         interp.bash_source_stack.push("script.sh".to_string());
 
@@ -12373,10 +12416,12 @@ mod tests {
         let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
         let mut interp = Interpreter::new(Arc::clone(&fs));
         interp.set_memory_limits(crate::limits::MemoryLimits::new().max_total_variable_bytes(20));
-        interp.call_stack.push({
-            let mut frame = CallFrame::new("f".to_string(), Vec::new());
-            frame.locals = HashMap::from([("A".to_string(), "1".to_string())]);
-            frame
+        interp.call_stack.push(CallFrame {
+            name: "f".to_string(),
+            locals: HashMap::from([("A".to_string(), "1".to_string())]),
+            local_arrays: HashMap::new(),
+            local_assoc_arrays: HashMap::new(),
+            positional: Vec::new(),
         });
         interp
             .memory_budget
