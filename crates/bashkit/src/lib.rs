@@ -863,7 +863,7 @@ impl Bash {
             match tokio::time::timeout(execution_timeout, self.interpreter.execute(&ast)).await {
                 Ok(r) => r,
                 Err(_elapsed) => {
-                    self.interpreter.clear_transient_stdin();
+                    self.interpreter.clear_cancelled_execution_state();
                     Err(Error::ResourceLimit(LimitExceeded::Timeout(
                         execution_timeout,
                     )))

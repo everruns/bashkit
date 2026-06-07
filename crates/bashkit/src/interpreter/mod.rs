@@ -1600,6 +1600,11 @@ impl Interpreter {
     /// Check if errexit (set -e) is enabled.
     /// Sync the internal bash_source_stack to the BASH_SOURCE indexed array.
     fn update_bash_source(&mut self) {
+        if self.bash_source_stack.is_empty() {
+            self.arrays_mut().remove("BASH_SOURCE");
+            return;
+        }
+
         let arr: HashMap<usize, String> = self
             .bash_source_stack
             .iter()
@@ -1757,10 +1762,12 @@ impl Interpreter {
             }
         }
         self.pipeline_stdin = None;
+        self.bash_source_stack.clear();
+        self.arrays_mut().remove("BASH_SOURCE");
     }
 
-    pub(crate) fn clear_transient_stdin(&mut self) {
-        self.pipeline_stdin = None;
+    pub(crate) fn clear_cancelled_execution_state(&mut self) {
+        self.reconcile_cancelled_execution_state(0, 0, 0, None);
     }
 
     fn clear_pending_fd_redirect_state(&mut self) {
