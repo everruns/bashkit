@@ -441,7 +441,7 @@ pub(super) fn format_long_entry(name: &str, metadata: &crate::fs::Metadata, huma
     // Format modified time
     let modified = metadata
         .modified
-        .duration_since(std::time::UNIX_EPOCH)
+        .duration_since(crate::time::UNIX_EPOCH)
         .map(|d| {
             let secs = d.as_secs();
             // Simple date formatting: YYYY-MM-DD HH:MM

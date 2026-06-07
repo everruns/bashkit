@@ -35,6 +35,7 @@ fancy-regex = { workspace = true }
 
 # Date/Time
 chrono = { workspace = true }
+web-time = { workspace = true }
 
 # HTTP client (for curl/wget) - optional, enabled with http_client feature
 reqwest = { workspace = true, optional = true }

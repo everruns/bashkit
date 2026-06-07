@@ -36,7 +36,7 @@ use std::collections::HashSet;
 use std::io::{Error as IoError, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
-use std::time::SystemTime;
+use crate::time::SystemTime;
 
 use super::limits::{FsLimits, FsUsage};
 use super::memory::InMemoryFs;

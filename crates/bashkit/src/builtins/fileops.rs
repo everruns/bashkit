@@ -5,7 +5,7 @@
 use async_trait::async_trait;
 use chrono::{Datelike, Local, LocalResult, NaiveDate, TimeZone};
 use std::path::Path;
-use std::time::SystemTime;
+use crate::time::SystemTime;
 
 use super::limits::MKTEMP_MAX_ATTEMPTS;
 use super::{Builtin, Context, resolve_path};
@@ -376,7 +376,7 @@ fn parse_touch_timestamp(raw: &str) -> std::result::Result<SystemTime, String> {
         LocalResult::None => return Err(format!("touch: invalid date format '{}'\n", raw)),
     };
 
-    Ok(local.into())
+    Ok(crate::time::from_chrono(local))
 }
 
 #[async_trait]
@@ -1126,7 +1126,7 @@ mod tests {
         assert_eq!(result.exit_code, 0);
 
         let metadata = fs.stat(&file).await.unwrap();
-        let modified: DateTime<Local> = metadata.modified.into();
+        let modified: DateTime<Local> = crate::time::to_chrono_utc(metadata.modified).with_timezone(&Local);
         assert_eq!(modified.year(), 2026);
         assert_eq!(modified.month(), 4);
         assert_eq!(modified.day(), 6);

@@ -22,7 +22,7 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use rand::Rng;
 use sha2::{Digest, Sha256};
-use std::time::{SystemTime, UNIX_EPOCH};
+use crate::time::{SystemTime, UNIX_EPOCH};
 use zeroize::Zeroize;
 
 /// Configuration for Web Bot Authentication.

@@ -415,6 +415,7 @@ mod limits;
 #[cfg(feature = "logging")]
 mod logging_impl;
 mod network;
+mod time;
 /// Parser module - exposed for fuzzing and testing
 pub mod parser;
 /// Scripted tool: compose ToolDef+callback pairs into a single Tool via bash scripts.

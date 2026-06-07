@@ -7035,7 +7035,7 @@ mod tests {
             fs_trait.write_file(p, content).await.unwrap();
         }
         for (path, secs) in mtimes {
-            let time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(*secs);
+            let time = crate::time::UNIX_EPOCH + crate::time::Duration::from_secs(*secs);
             fs_trait
                 .set_modified_time(Path::new(path), time)
                 .await
@@ -12490,7 +12490,7 @@ mod tests {
         }
         for (path, secs) in case.mtimes {
             let host_path = tempdir.path().join(path.trim_start_matches('/'));
-            let time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(*secs);
+            let time = crate::time::UNIX_EPOCH + crate::time::Duration::from_secs(*secs);
             std::fs::File::open(host_path)
                 .expect("open timed rg fixture file")
                 .set_modified(time)

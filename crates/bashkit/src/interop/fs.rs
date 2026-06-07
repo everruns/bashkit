@@ -14,7 +14,7 @@ use std::slice;
 use std::str;
 use std::sync::Arc;
 use std::sync::mpsc::sync_channel;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use crate::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::runtime::{Builder, Runtime};
 
 pub const BASHKIT_FS_ABI_VERSION_V1: u32 = 1;

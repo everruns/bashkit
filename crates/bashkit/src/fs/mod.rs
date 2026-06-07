@@ -302,7 +302,7 @@
 //! use std::path::{Path, PathBuf};
 //! use std::collections::HashMap;
 //! use std::sync::RwLock;
-//! use std::time::SystemTime;
+//! use crate::time::SystemTime;
 //!
 //! /// A simple custom filesystem example
 //! pub struct SimpleFs {
@@ -426,7 +426,7 @@ pub use traits::{DirEntry, FileSystem, FileSystemExt, FileType, Metadata, fs_err
 use crate::error::Result;
 use std::io::{Error as IoError, ErrorKind};
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use crate::time::SystemTime;
 
 /// Filesystem implementation for logic-only shells.
 ///

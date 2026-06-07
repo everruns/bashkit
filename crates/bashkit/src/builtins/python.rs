@@ -30,7 +30,7 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
-use std::time::Duration;
+use crate::time::Duration;
 
 use super::{Builtin, Context, resolve_path};
 use crate::error::Result;
@@ -794,7 +794,7 @@ async fn handle_os_call(
             Ok(meta) => {
                 let mtime = meta
                     .modified
-                    .duration_since(std::time::UNIX_EPOCH)
+                    .duration_since(crate::time::UNIX_EPOCH)
                     .map(|d| d.as_secs_f64())
                     .unwrap_or(0.0);
                 let stat_obj = match meta.file_type {
