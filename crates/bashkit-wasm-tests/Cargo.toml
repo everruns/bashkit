@@ -1,0 +1,15 @@
+[package]
+name = "bashkit-wasm-tests"
+version = "0.9.0"
+edition = "2024"
+license = "MIT"
+authors = ["siennathesane"]
+description = "WASM smoke tests for bashkit"
+
+[dependencies]
+bashkit = { path = "../bashkit" }
+wasm-bindgen-test = "0.3"
+getrandom = { version = "0.3", features = ["wasm_js"] }
+
+[lib]
+crate-type = ["cdylib"]
