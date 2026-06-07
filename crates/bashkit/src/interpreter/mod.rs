@@ -12268,8 +12268,6 @@ mod tests {
             local_arrays: HashMap::new(),
             local_assoc_arrays: HashMap::new(),
             positional: Vec::new(),
-            saved_arrays: HashMap::new(),
-            saved_assoc_arrays: HashMap::new(),
         });
         let baseline_call_stack_len = interp.call_stack.len();
         let baseline_bash_source_len = interp.bash_source_stack.len();
@@ -12281,8 +12279,6 @@ mod tests {
             local_arrays: HashMap::new(),
             local_assoc_arrays: HashMap::new(),
             positional: Vec::new(),
-            saved_arrays: HashMap::new(),
-            saved_assoc_arrays: HashMap::new(),
         });
         interp.bash_source_stack.push("script.sh".to_string());
 
