@@ -139,3 +139,28 @@ async fn bash_source_cleared_after_timed_out_child_bash_script() {
         .unwrap();
     assert_eq!(result.stdout.trim(), "source=");
 }
+
+/// BASH_SOURCE is cleared after a timed-out sourced function call
+#[tokio::test(start_paused = true)]
+async fn bash_source_cleared_after_timeout_in_sourced_function() {
+    let limits = bashkit::ExecutionLimits::new().timeout(std::time::Duration::from_millis(1));
+    let mut bash = Bash::builder().limits(limits).build();
+    let fs = bash.fs();
+    fs.write_file(Path::new("/leak.sh"), b"leakme() { sleep 10; }\nleakme\n")
+        .await
+        .unwrap();
+
+    let timed_out = bash.exec("source /leak.sh").await;
+    assert!(matches!(
+        timed_out,
+        Err(bashkit::Error::ResourceLimit(
+            bashkit::LimitExceeded::Timeout(_)
+        ))
+    ));
+
+    let result = bash
+        .exec(r#"echo "len=${#BASH_SOURCE[@]} first=${BASH_SOURCE[0]}""#)
+        .await
+        .unwrap();
+    assert_eq!(result.stdout.trim(), "len=0 first=");
+}
