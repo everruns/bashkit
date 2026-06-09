@@ -487,7 +487,7 @@ pub use scripted_tool::{
 pub use tool_def::{AsyncToolExec, SyncToolExec, ToolImpl};
 
 #[cfg(feature = "http_client")]
-pub use network::{HttpClient, HttpHandler};
+pub use network::{HttpClient, HttpHandler, Method};
 
 /// Re-exported network response type for custom HTTP handler implementations.
 #[cfg(feature = "http_client")]
