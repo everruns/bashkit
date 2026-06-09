@@ -126,7 +126,7 @@ async fn keys_pretty_prints_array() {
     assert_eq!(result.trim(), "[\n  \"a\",\n  \"b\"\n]");
 }
 
-/// TM-DOS-095: an unbounded generator must not grow output without limit or
+/// TM-DOS-093: an unbounded generator must not grow output without limit or
 /// hang the host. jaq's iterator is synchronous so the execution timeout
 /// cannot preempt it; the output-byte cap (here the 1 MB default, since the
 /// test harness supplies no shell/limits) must abort with a clean error.

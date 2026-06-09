@@ -339,7 +339,7 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
     let mut has_output = false;
     let mut all_null_or_false = true;
 
-    // THREAT[TM-DOS-095]: jaq evaluation is a synchronous iterator that the
+    // THREAT[TM-DOS-093]: jaq evaluation is a synchronous iterator that the
     // async execution timeout cannot preempt. Unbounded generators
     // (`jq -n 'repeat(1)'`, `range(0;1e18)`) would grow `output` without limit
     // (OOM) or spin forever producing no output (hang). Cap accumulated output
