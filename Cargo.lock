@@ -369,6 +369,7 @@ dependencies = [
  "jaq-core",
  "jaq-json",
  "jaq-std",
+ "js-sys",
  "md-5",
  "monty",
  "num-traits",
@@ -397,6 +398,8 @@ dependencies = [
  "unit-prefix",
  "url",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
  "web-time",
  "zapcode-core",
  "zeroize",
@@ -490,6 +493,7 @@ dependencies = [
 name = "bashkit-wasm-tests"
 version = "0.9.0"
 dependencies = [
+ "async-trait",
  "bashkit",
  "getrandom 0.3.4",
  "js-sys",
