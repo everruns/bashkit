@@ -181,7 +181,7 @@ const PY_FILE_PROVIDER_TYPE_ERROR_PREFIX: &str = "__bashkit_py_file_provider_typ
 
 /// Pyclass-held handle to the shared per-instance tokio runtime.
 ///
-/// Decision: dropping the last handle shuts the runtime down with
+/// THREAT[TM-PY-030]: dropping the last handle shuts the runtime down with
 /// `shutdown_background()` instead of tokio's default blocking shutdown.
 /// Pyclass dealloc runs while attached to the Python interpreter (GIL
 /// held), and the default `Runtime::drop` joins in-flight blocking tasks.
@@ -2331,12 +2331,12 @@ def _run(coro, ctx):
             context: context.clone_ref(py),
             result_tx,
         };
-        // Detach (release the GIL) around BOTH the send and the recv. The
-        // channel is a rendezvous (capacity 0), so send blocks until the
-        // worker receives — and on first use the worker must acquire the GIL
-        // to create its event loop before it ever reaches recv(). Sending
-        // while attached therefore deadlocks the whole process: dispatcher
-        // holds the GIL waiting on send, worker waits on the GIL.
+        // THREAT[TM-PY-030]: detach (release the GIL) around BOTH the send and
+        // the recv. The channel is a rendezvous (capacity 0), so send blocks
+        // until the worker receives — and on first use the worker must acquire
+        // the GIL to create its event loop before it ever reaches recv().
+        // Sending while attached therefore deadlocks the whole process:
+        // dispatcher holds the GIL waiting on send, worker waits on the GIL.
         // `move` ensures result_rx (Send, not Sync) is owned by the closure.
         py.detach(move || {
             tx.send(item)

@@ -65,6 +65,37 @@ def test_async_callback_execute_sync_honors_timeout():
     assert callback_done.wait(timeout=2.0), "slow callback did not finish within 2 s"
 
 
+def test_dealloc_during_inflight_callback_does_not_deadlock():
+    """Dropping the tool while a timed-out callback still runs must not hang.
+
+    Regression for TM-PY-030 (2): pyclass dealloc runs with the GIL held and
+    drops the tool's tokio runtime. The default runtime drop joins in-flight
+    blocking tasks, and the abandoned callback task needs the GIL to finish —
+    deadlocking the whole interpreter. Runtime shutdown must not block.
+    """
+
+    callback_done = threading.Event()
+
+    async def slow(params, stdin=None):
+        await asyncio.sleep(0.25)
+        callback_done.set()
+        return "late\n"
+
+    tool = ScriptedTool("api", timeout_seconds=0.05)
+    tool.add_tool("slow", "Slow", callback=slow)
+
+    r = tool.execute_sync("slow")
+    assert r.exit_code == 1
+
+    # Dealloc the tool (and its runtime) while the abandoned callback is
+    # still sleeping on the private-loop worker thread.
+    del tool
+    gc.collect()
+
+    # The orphaned callback finishes on its own once the GIL is free.
+    assert callback_done.wait(timeout=2.0), "slow callback did not finish within 2 s"
+
+
 def test_async_callback_sync_execute():
     """Async callback works via execute_sync()."""
 
