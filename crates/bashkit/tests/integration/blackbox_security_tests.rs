@@ -1224,6 +1224,37 @@ mod command_injection_passing {
         assert!(result.stdout.contains("normal"));
     }
 
+    /// eval runs in the current shell and must NOT fire the EXIT trap when the
+    /// eval'd code finishes — the trap fires once, at actual shell exit.
+    #[tokio::test]
+    async fn eval_does_not_fire_exit_trap_early() {
+        let mut bash = tight_bash();
+        let result = bash
+            .exec("trap 'echo BYE' EXIT\neval 'echo hi'\necho done")
+            .await
+            .unwrap();
+        assert_eq!(
+            result.stdout.matches("BYE").count(),
+            1,
+            "EXIT trap should fire exactly once, got: {:?}",
+            result.stdout
+        );
+        // BYE must come after `done` (end of script), not after `hi`.
+        let bye = result.stdout.find("BYE").unwrap();
+        let done = result.stdout.find("done").unwrap();
+        assert!(done < bye, "EXIT trap fired early: {:?}", result.stdout);
+    }
+
+    /// An EXIT trap that runs `eval` must not recurse unboundedly. Before the
+    /// fix, eval re-ran the (unguarded) EXIT trap, recursing one command per
+    /// level until the budget aborted — risking a stack overflow first.
+    #[tokio::test]
+    async fn exit_trap_eval_recursion_terminates() {
+        let mut bash = tight_bash();
+        // Must return (Ok or budget Err), never hang or stack-overflow.
+        let _ = bash.exec("trap 'eval :' EXIT\necho go").await;
+    }
+
     /// Array subscript command substitution stays sandboxed
     #[tokio::test]
     async fn array_subscript_cmd_subst_sandboxed() {
