@@ -179,11 +179,45 @@ enum PyFileMount {
 
 const PY_FILE_PROVIDER_TYPE_ERROR_PREFIX: &str = "__bashkit_py_file_provider_type_error__:";
 
-fn make_runtime() -> PyResult<Arc<Runtime>> {
+/// Pyclass-held handle to the shared per-instance tokio runtime.
+///
+/// Decision: dropping the last handle shuts the runtime down with
+/// `shutdown_background()` instead of tokio's default blocking shutdown.
+/// Pyclass dealloc runs while attached to the Python interpreter (GIL
+/// held), and the default `Runtime::drop` joins in-flight blocking tasks.
+/// An abandoned (timed-out) Python callback task must re-attach — acquire
+/// the GIL — to finish, so joining it from dealloc deadlocks the whole
+/// process (seen as a 6 h CI hang in
+/// `test_async_callback_execute_sync_honors_timeout`). Background shutdown
+/// lets such tasks finish on their own once the GIL is released.
+struct PyRuntime(Option<Arc<Runtime>>);
+
+impl Clone for PyRuntime {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl std::ops::Deref for PyRuntime {
+    type Target = Arc<Runtime>;
+    fn deref(&self) -> &Arc<Runtime> {
+        self.0.as_ref().expect("runtime taken only in Drop")
+    }
+}
+
+impl Drop for PyRuntime {
+    fn drop(&mut self) {
+        if let Some(rt) = self.0.take().and_then(Arc::into_inner) {
+            rt.shutdown_background();
+        }
+    }
+}
+
+fn make_runtime() -> PyResult<PyRuntime> {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .map(Arc::new)
+        .map(|rt| PyRuntime(Some(Arc::new(rt))))
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {e}")))
 }
 
@@ -1480,18 +1514,18 @@ fn capture_shell_state(
 #[pyclass(name = "FileSystem")]
 struct PyFileSystem {
     inner: FileSystemHandle,
-    rt: Arc<Runtime>,
+    rt: PyRuntime,
 }
 
 impl PyFileSystem {
-    fn from_static(inner: Arc<dyn FileSystem>, rt: Arc<Runtime>) -> Self {
+    fn from_static(inner: Arc<dyn FileSystem>, rt: PyRuntime) -> Self {
         Self {
             inner: FileSystemHandle::Static(inner),
             rt,
         }
     }
 
-    fn from_live(inner: Arc<Mutex<Bash>>, rt: Arc<Runtime>) -> Self {
+    fn from_live(inner: Arc<Mutex<Bash>>, rt: PyRuntime) -> Self {
         Self {
             inner: FileSystemHandle::Live {
                 inner,
@@ -1503,7 +1537,7 @@ impl PyFileSystem {
 
     fn from_live_with_reentry_guard(
         inner: Arc<Mutex<Bash>>,
-        rt: Arc<Runtime>,
+        rt: PyRuntime,
         external_handler_reentry_depth: Arc<AtomicUsize>,
     ) -> Self {
         Self {
@@ -2292,16 +2326,25 @@ def _run(coro, ctx):
         // the worker thread can acquire it to run Python.
         let tx = self.ensure_worker_tx()?;
         let (result_tx, result_rx) = std::sync::mpsc::sync_channel(0);
-        tx.send(PrivateLoopWorkItem {
+        let item = PrivateLoopWorkItem {
             awaitable: awaitable.clone_ref(py),
             context: context.clone_ref(py),
             result_tx,
-        })
-        .map_err(|_| PyRuntimeError::new_err("private loop worker channel closed"))?;
-        // Release the GIL while waiting so the worker thread can acquire it.
+        };
+        // Detach (release the GIL) around BOTH the send and the recv. The
+        // channel is a rendezvous (capacity 0), so send blocks until the
+        // worker receives — and on first use the worker must acquire the GIL
+        // to create its event loop before it ever reaches recv(). Sending
+        // while attached therefore deadlocks the whole process: dispatcher
+        // holds the GIL waiting on send, worker waits on the GIL.
         // `move` ensures result_rx (Send, not Sync) is owned by the closure.
-        py.detach(move || result_rx.recv())
-            .map_err(|_| PyRuntimeError::new_err("private loop worker disconnected"))?
+        py.detach(move || {
+            tx.send(item)
+                .map_err(|_| PyRuntimeError::new_err("private loop worker channel closed"))?;
+            result_rx
+                .recv()
+                .map_err(|_| PyRuntimeError::new_err("private loop worker disconnected"))
+        })?
     }
 }
 
@@ -3298,7 +3341,7 @@ pub struct PyBash {
     inner: Arc<Mutex<Bash>>,
     /// Shared tokio runtime — reused across all sync calls to avoid
     /// per-call OS thread/fd exhaustion (issue #414).
-    rt: Arc<Runtime>,
+    rt: PyRuntime,
     /// Cancellation token. Wrapped in RwLock so reset() can swap it to
     /// the new interpreter's token without requiring &mut self.
     cancelled: Arc<RwLock<Arc<AtomicBool>>>,
@@ -4163,7 +4206,7 @@ pub struct BashTool {
     inner: Arc<Mutex<Bash>>,
     /// Shared tokio runtime — reused across all sync calls to avoid
     /// per-call OS thread/fd exhaustion (issue #414).
-    rt: Arc<Runtime>,
+    rt: PyRuntime,
     /// Cancellation token. Wrapped in RwLock so reset() can swap it to
     /// the new interpreter's token without requiring &mut self.
     cancelled: Arc<RwLock<Arc<AtomicBool>>>,
@@ -4949,7 +4992,7 @@ pub struct ScriptedTool {
     env_vars: Vec<(String, String)>,
     /// Shared tokio runtime — reused across all sync calls to avoid
     /// per-call OS thread/fd exhaustion (issue #414).
-    rt: Arc<Runtime>,
+    rt: PyRuntime,
     callback_engine: Arc<PyCallbackEngine>,
     max_commands: Option<u64>,
     max_loop_iterations: Option<u64>,
