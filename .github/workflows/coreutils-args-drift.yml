@@ -18,6 +18,8 @@ name: Coreutils Args Drift
 # permission, and it only commits generated files after tests pass.
 
 on:
+  push:
+    branches: [main]  # guard: accept push events so GitHub doesn't record a phantom failure; all jobs skip on push
   schedule:
     # Weekly Mondays 05:00 UTC. uutils flag changes are rare; weekly is plenty.
     - cron: '0 5 * * 1'
@@ -33,6 +35,7 @@ env:
 jobs:
   regenerate:
     name: Regenerate uutils argument surfaces
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
