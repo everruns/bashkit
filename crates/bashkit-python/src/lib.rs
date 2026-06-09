@@ -1630,12 +1630,10 @@ impl PyFileSystem {
             return std::thread::scope(|scope| {
                 scope
                     .spawn(move || {
-                        let rt = tokio::runtime::Builder::new_current_thread()
-                            .enable_all()
-                            .build()
-                            .map_err(|e| {
-                                PyRuntimeError::new_err(format!("Failed to create runtime: {e}"))
-                            })?;
+                        // A fresh runtime, not `self.rt`: the outer `block_on`
+                        // driving this callback still owns `self.rt`, and a
+                        // current-thread runtime can't be entered twice.
+                        let rt = make_runtime()?;
                         rt.block_on(async move {
                             let fs = inner.resolve().await?;
                             f(fs).await
@@ -3213,6 +3211,17 @@ struct PyCustomBuiltinAdapter {
     rt: Arc<Runtime>,
 }
 
+impl PyCustomBuiltinAdapter {
+    fn from_entry(py: Python<'_>, entry: &PyCustomBuiltinEntry, rt: &Arc<Runtime>) -> Self {
+        Self {
+            name: entry.name.clone(),
+            callback: entry.callback.clone_ref(py),
+            is_async: entry.is_async,
+            rt: rt.clone(),
+        }
+    }
+}
+
 #[async_trait]
 impl Builtin for PyCustomBuiltinAdapter {
     async fn execute(&self, ctx: BuiltinContext<'_>) -> bashkit::Result<RustExecResult> {
@@ -3270,12 +3279,7 @@ fn build_runtime_custom_builtin_impls(
 ) -> Vec<PyCustomBuiltinAdapter> {
     builtins
         .iter()
-        .map(|entry| PyCustomBuiltinAdapter {
-            name: entry.name.clone(),
-            callback: entry.callback.clone_ref(py),
-            is_async: entry.is_async,
-            rt: rt.clone(),
-        })
+        .map(|entry| PyCustomBuiltinAdapter::from_entry(py, entry, rt))
         .collect()
 }
 
@@ -4053,12 +4057,7 @@ impl PyBash {
     /// builtin > `PATH`.
     fn add_builtin(&self, py: Python<'_>, name: String, callback: Py<PyAny>) -> PyResult<()> {
         let entry = build_py_custom_builtin_entry(py, name.clone(), callback)?;
-        let adapter = PyCustomBuiltinAdapter {
-            name: entry.name.clone(),
-            callback: entry.callback.clone_ref(py),
-            is_async: entry.is_async,
-            rt: self.rt.clone(),
-        };
+        let adapter = PyCustomBuiltinAdapter::from_entry(py, &entry, &self.rt);
         {
             let mut guard = self
                 .custom_builtins
@@ -4847,12 +4846,7 @@ impl BashTool {
     /// See [`PyBash::add_builtin`] for semantics.
     fn add_builtin(&self, py: Python<'_>, name: String, callback: Py<PyAny>) -> PyResult<()> {
         let entry = build_py_custom_builtin_entry(py, name.clone(), callback)?;
-        let adapter = PyCustomBuiltinAdapter {
-            name: entry.name.clone(),
-            callback: entry.callback.clone_ref(py),
-            is_async: entry.is_async,
-            rt: self.rt.clone(),
-        };
+        let adapter = PyCustomBuiltinAdapter::from_entry(py, &entry, &self.rt);
         {
             let mut guard = self
                 .custom_builtins
