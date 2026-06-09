@@ -322,8 +322,11 @@ impl<'a> Lexer<'a> {
         }
 
         // Check if it's a single digit followed by > or <
-        // We need to peek further without consuming
-        let input_remaining: String = self.chars.clone().collect();
+        // We need to peek further without consuming. Only the digit plus a
+        // 2-char redirect operator (e.g. ">>", "<&", "<<") matter, so bound the
+        // lookahead — collecting all remaining input here made every
+        // digit-initial word O(n) and the whole lex O(n^2) (TM-DOS-024).
+        let input_remaining: String = self.chars.clone().take(4).collect();
 
         // Check patterns: "N>" "N>>" "N>&" "N<" "N<&"
         if fd_str.len() == 1
@@ -1833,13 +1836,17 @@ impl<'a> Lexer<'a> {
     /// compound assignment like `([key]=val ...)`.  Returns true when the
     /// first non-whitespace char after `(` is `[`.
     fn looks_like_assoc_assign(&self) -> bool {
+        // Cap the lookahead like looks_like_brace_expansion: an uncapped scan
+        // over leading whitespace made `x=(` followed by megabytes of spaces
+        // O(n) per call (TM-DOS-024).
+        const MAX_LOOKAHEAD: usize = 10_000;
         let mut chars = self.chars.clone();
         // Skip the `(` we haven't consumed yet
         if chars.next() != Some('(') {
             return false;
         }
         // Skip optional whitespace
-        for ch in chars {
+        for ch in chars.take(MAX_LOOKAHEAD) {
             match ch {
                 ' ' | '\t' => continue,
                 '[' => return true,
