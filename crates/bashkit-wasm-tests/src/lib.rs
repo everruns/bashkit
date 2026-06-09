@@ -1,18 +1,9 @@
-//! WASM-specific smoke tests for bashkit platform-compatible time types.
+//! WASM-specific smoke tests for bashkit.
 //!
-//! Run with: wasm-pack test --node
-//!     or: wasm-pack test --headless --chrome
+//! Run with: wasm-pack test --headless --chrome
 
 use wasm_bindgen_test::*;
 wasm_bindgen_test_configure!(run_in_browser);
-
-/// Polyfill IndexedDB in Node.js test environments.
-#[wasm_bindgen_test]
-fn setup_fake_indexeddb() {
-    let _ = js_sys::eval(
-        "try { if (typeof indexedDB === 'undefined' && typeof require !== 'undefined') { require('fake-indexeddb/auto'); } } catch(e) {}",
-    );
-}
 
 #[wasm_bindgen_test]
 fn system_time_now_does_not_panic() {
@@ -213,4 +204,514 @@ async fn indexeddb_fs_posix_wrapper() {
 
     // verify_filesystem_requirements smoke test
     bashkit::verify_filesystem_requirements(&*fs).await.unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// HTTP client tests
+// ---------------------------------------------------------------------------
+
+use bashkit::{HttpClient, HttpHandler, HttpResponse, Method, NetworkAllowlist};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
+
+struct MockHandler {
+    status: u16,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+}
+
+#[async_trait::async_trait]
+impl HttpHandler for MockHandler {
+    async fn request(
+        &self,
+        _method: &str,
+        _url: &str,
+        _body: Option<&[u8]>,
+        _headers: &[(String, String)],
+    ) -> Result<HttpResponse, String> {
+        Ok(HttpResponse {
+            status: self.status,
+            headers: self.headers.clone(),
+            body: self.body.clone(),
+        })
+    }
+}
+
+struct EchoHandler;
+
+#[async_trait::async_trait]
+impl HttpHandler for EchoHandler {
+    async fn request(
+        &self,
+        method: &str,
+        url: &str,
+        body: Option<&[u8]>,
+        headers: &[(String, String)],
+    ) -> Result<HttpResponse, String> {
+        let mut body_out = Vec::new();
+        body_out.extend_from_slice(format!("{} {}\n", method, url).as_bytes());
+        for (k, v) in headers {
+            body_out.extend_from_slice(format!("{}:{}\n", k, v).as_bytes());
+        }
+        if let Some(b) = body {
+            body_out.extend_from_slice(b);
+        }
+        Ok(HttpResponse {
+            status: 200,
+            headers: vec![("Content-Type".to_string(), "text/plain".to_string())],
+            body: body_out,
+        })
+    }
+}
+
+#[wasm_bindgen_test]
+fn http_client_new() {
+    let client = HttpClient::new(NetworkAllowlist::allow_all());
+    assert_eq!(client.max_response_bytes(), 10 * 1024 * 1024);
+}
+
+#[wasm_bindgen_test]
+fn http_client_with_timeout() {
+    let client = HttpClient::with_timeout(NetworkAllowlist::allow_all(), Duration::from_secs(60));
+    assert_eq!(client.max_response_bytes(), 10 * 1024 * 1024);
+}
+
+#[wasm_bindgen_test]
+fn http_client_with_config() {
+    let client =
+        HttpClient::with_config(NetworkAllowlist::allow_all(), Duration::from_secs(5), 1024);
+    assert_eq!(client.max_response_bytes(), 1024);
+}
+
+#[wasm_bindgen_test]
+async fn http_blocked_by_empty_allowlist() {
+    let client = HttpClient::new(NetworkAllowlist::new());
+    let result = client.get("https://example.com").await;
+    assert!(result.is_err());
+    let msg = result.unwrap_err().to_string();
+    assert!(
+        msg.contains("access denied"),
+        "expected access denied, got: {}",
+        msg
+    );
+}
+
+#[wasm_bindgen_test]
+async fn http_allowed_by_allowlist() {
+    let mut client = HttpClient::new(NetworkAllowlist::new().allow("https://example.com"));
+    client.set_handler(Box::new(MockHandler {
+        status: 200,
+        headers: vec![],
+        body: b"ok".to_vec(),
+    }));
+    let result = client.get("https://example.com").await;
+    assert!(result.is_ok());
+    let resp = result.unwrap();
+    assert_eq!(resp.status, 200);
+    assert_eq!(resp.body, b"ok");
+}
+
+#[wasm_bindgen_test]
+async fn http_blocked_by_allowlist() {
+    let mut client = HttpClient::new(NetworkAllowlist::new().allow("https://allowed.com"));
+    client.set_handler(Box::new(MockHandler {
+        status: 200,
+        headers: vec![],
+        body: b"ok".to_vec(),
+    }));
+    let result = client.get("https://blocked.com").await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("access denied"));
+}
+
+#[wasm_bindgen_test]
+async fn http_get_method() {
+    let mut client = HttpClient::new(NetworkAllowlist::allow_all());
+    client.set_handler(Box::new(EchoHandler));
+    let result = client.get("https://example.com/path").await.unwrap();
+    assert_eq!(result.status, 200);
+    let text = result.body_string();
+    assert!(text.starts_with("GET https://example.com/path"));
+}
+
+#[wasm_bindgen_test]
+async fn http_post_method() {
+    let mut client = HttpClient::new(NetworkAllowlist::allow_all());
+    client.set_handler(Box::new(EchoHandler));
+    let result = client
+        .post("https://example.com/path", Some(b"hello"))
+        .await
+        .unwrap();
+    assert_eq!(result.status, 200);
+    let text = result.body_string();
+    assert!(text.starts_with("POST https://example.com/path"));
+    assert!(text.ends_with("hello"));
+}
+
+#[wasm_bindgen_test]
+async fn http_put_method() {
+    let mut client = HttpClient::new(NetworkAllowlist::allow_all());
+    client.set_handler(Box::new(EchoHandler));
+    let result = client
+        .put("https://example.com/path", Some(b"world"))
+        .await
+        .unwrap();
+    assert_eq!(result.status, 200);
+    let text = result.body_string();
+    assert!(text.starts_with("PUT https://example.com/path"));
+    assert!(text.ends_with("world"));
+}
+
+#[wasm_bindgen_test]
+async fn http_delete_method() {
+    let mut client = HttpClient::new(NetworkAllowlist::allow_all());
+    client.set_handler(Box::new(EchoHandler));
+    let result = client.delete("https://example.com/path").await.unwrap();
+    assert_eq!(result.status, 200);
+    assert!(
+        result
+            .body_string()
+            .starts_with("DELETE https://example.com/path")
+    );
+}
+
+#[wasm_bindgen_test]
+async fn http_head_method() {
+    let mut client = HttpClient::new(NetworkAllowlist::allow_all());
+    client.set_handler(Box::new(MockHandler {
+        status: 204,
+        headers: vec![("X-Test".to_string(), "1".to_string())],
+        body: vec![],
+    }));
+    let result = client.head("https://example.com/path").await.unwrap();
+    assert_eq!(result.status, 204);
+    assert!(result.headers.iter().any(|(k, _)| k == "X-Test"));
+}
+
+#[wasm_bindgen_test]
+async fn http_request_with_headers() {
+    let mut client = HttpClient::new(NetworkAllowlist::allow_all());
+    client.set_handler(Box::new(EchoHandler));
+    let result = client
+        .request_with_headers(
+            Method::Get,
+            "https://example.com",
+            None,
+            &[("Authorization".to_string(), "Bearer token".to_string())],
+        )
+        .await
+        .unwrap();
+    let text = result.body_string();
+    assert!(text.contains("Authorization:Bearer token"));
+}
+
+#[wasm_bindgen_test]
+async fn http_request_with_timeout() {
+    let mut client = HttpClient::new(NetworkAllowlist::allow_all());
+    client.set_handler(Box::new(MockHandler {
+        status: 200,
+        headers: vec![],
+        body: b"ok".to_vec(),
+    }));
+    let result = client
+        .request_with_timeout(Method::Get, "https://example.com", None, &[], Some(5))
+        .await;
+    assert!(result.is_ok());
+}
+
+#[wasm_bindgen_test]
+async fn http_request_with_timeouts() {
+    let mut client = HttpClient::new(NetworkAllowlist::allow_all());
+    client.set_handler(Box::new(MockHandler {
+        status: 200,
+        headers: vec![],
+        body: b"ok".to_vec(),
+    }));
+    let result = client
+        .request_with_timeouts(
+            Method::Get,
+            "https://example.com",
+            None,
+            &[],
+            Some(5),
+            Some(2),
+        )
+        .await;
+    assert!(result.is_ok());
+}
+
+#[wasm_bindgen_test]
+async fn http_response_body_string() {
+    let mut client = HttpClient::new(NetworkAllowlist::allow_all());
+    client.set_handler(Box::new(MockHandler {
+        status: 200,
+        headers: vec![],
+        body: b"hello world".to_vec(),
+    }));
+    let result = client.get("https://example.com").await.unwrap();
+    assert_eq!(result.body_string(), "hello world");
+}
+
+#[wasm_bindgen_test]
+async fn http_response_is_success() {
+    let mut client = HttpClient::new(NetworkAllowlist::allow_all());
+    client.set_handler(Box::new(MockHandler {
+        status: 201,
+        headers: vec![],
+        body: vec![],
+    }));
+    let result = client.get("https://example.com").await.unwrap();
+    assert!(result.is_success());
+}
+
+#[wasm_bindgen_test]
+async fn http_response_is_not_success() {
+    let mut client = HttpClient::new(NetworkAllowlist::allow_all());
+    client.set_handler(Box::new(MockHandler {
+        status: 404,
+        headers: vec![],
+        body: b"not found".to_vec(),
+    }));
+    let result = client.get("https://example.com").await.unwrap();
+    assert!(!result.is_success());
+}
+
+#[wasm_bindgen_test]
+async fn http_max_response_bytes_enforced() {
+    let mut client =
+        HttpClient::with_config(NetworkAllowlist::allow_all(), Duration::from_secs(30), 4);
+    client.set_handler(Box::new(MockHandler {
+        status: 200,
+        headers: vec![],
+        body: b"too-large".to_vec(),
+    }));
+    let result = client.get("https://example.com").await;
+    assert!(result.is_err());
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("response too large")
+    );
+}
+
+#[wasm_bindgen_test]
+async fn http_before_http_hook() {
+    let mut client = HttpClient::new(NetworkAllowlist::allow_all());
+    client.set_handler(Box::new(EchoHandler));
+    let count = Arc::new(AtomicUsize::new(0));
+    let count_clone = count.clone();
+    client.set_before_http(vec![Box::new(move |mut event| {
+        count_clone.fetch_add(1, Ordering::SeqCst);
+        event
+            .headers
+            .push(("X-Hook".to_string(), "fired".to_string()));
+        bashkit::hooks::HookAction::Continue(event)
+    })]);
+    let result = client.get("https://example.com").await.unwrap();
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+    assert!(result.body_string().contains("X-Hook:fired"));
+}
+
+#[wasm_bindgen_test]
+async fn http_after_http_hook() {
+    let mut client = HttpClient::new(NetworkAllowlist::allow_all());
+    client.set_handler(Box::new(MockHandler {
+        status: 200,
+        headers: vec![("X-Original".to_string(), "1".to_string())],
+        body: b"ok".to_vec(),
+    }));
+    let count = Arc::new(AtomicUsize::new(0));
+    let count_clone = count.clone();
+    client.set_after_http(vec![Box::new(move |event| {
+        count_clone.fetch_add(1, Ordering::SeqCst);
+        bashkit::hooks::HookAction::Continue(event)
+    })]);
+    let _ = client.get("https://example.com").await.unwrap();
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+}
+
+#[wasm_bindgen_test]
+async fn http_before_http_hook_can_cancel() {
+    let mut client = HttpClient::new(NetworkAllowlist::allow_all());
+    client.set_handler(Box::new(EchoHandler));
+    client.set_before_http(vec![Box::new(|_event| {
+        bashkit::hooks::HookAction::Cancel("nope".to_string())
+    })]);
+    let result = client.get("https://example.com").await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("cancelled"));
+}
+
+#[wasm_bindgen_test]
+async fn http_get_blocks_private_ip() {
+    let client = HttpClient::new(NetworkAllowlist::allow_all());
+    let result = client.get("http://10.0.0.1/secret").await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("private IP"));
+}
+
+#[wasm_bindgen_test]
+async fn http_get_blocks_loopback() {
+    let client = HttpClient::new(NetworkAllowlist::allow_all());
+    let result = client.get("http://127.0.0.1/").await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("private IP"));
+}
+
+#[wasm_bindgen_test]
+async fn http_get_allows_public_via_handler() {
+    let mut client = HttpClient::new(NetworkAllowlist::allow_all());
+    client.set_handler(Box::new(MockHandler {
+        status: 200,
+        headers: vec![],
+        body: b"ok".to_vec(),
+    }));
+    let result = client.get("https://example.com/").await;
+    assert!(result.is_ok());
+}
+
+#[wasm_bindgen_test]
+async fn http_get_rejects_no_host() {
+    let client = HttpClient::new(NetworkAllowlist::allow_all());
+    let result = client.get("file:///etc/passwd").await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("no host"));
+}
+
+#[wasm_bindgen_test]
+async fn http_get_rejects_invalid_url() {
+    let client = HttpClient::new(NetworkAllowlist::allow_all());
+    let result = client.get("definitely::not::a::url").await;
+    assert!(result.is_err());
+}
+
+#[wasm_bindgen_test]
+async fn http_request_with_headers_blocked_by_allowlist() {
+    let client = HttpClient::new(NetworkAllowlist::new());
+    let result = client
+        .request_with_headers(Method::Get, "https://example.com", None, &[])
+        .await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("access denied"));
+}
+
+#[wasm_bindgen_test]
+async fn http_request_with_timeout_blocked_by_allowlist() {
+    let client = HttpClient::new(NetworkAllowlist::new());
+    let result = client
+        .request_with_timeout(Method::Get, "https://example.com", None, &[], Some(5))
+        .await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("access denied"));
+}
+
+#[wasm_bindgen_test]
+async fn http_before_http_hook_cannot_bypass_allowlist() {
+    let mut client = HttpClient::new(NetworkAllowlist::new().allow("https://allowed.com"));
+    client.set_handler(Box::new(MockHandler {
+        status: 200,
+        headers: vec![],
+        body: b"ok".to_vec(),
+    }));
+    client.set_before_http(vec![Box::new(|mut event| {
+        event.url = "https://blocked.com".to_string();
+        bashkit::hooks::HookAction::Continue(event)
+    })]);
+    let result = client
+        .request_with_headers(Method::Get, "https://allowed.com", None, &[])
+        .await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("access denied"));
+}
+
+#[wasm_bindgen_test]
+async fn http_empty_body_ok() {
+    let mut client = HttpClient::new(NetworkAllowlist::allow_all());
+    client.set_handler(Box::new(EchoHandler));
+    let result = client.post("https://example.com", None).await.unwrap();
+    assert_eq!(result.status, 200);
+}
+
+#[wasm_bindgen_test]
+async fn http_handler_receives_headers() {
+    let mut client = HttpClient::new(NetworkAllowlist::allow_all());
+    client.set_handler(Box::new(EchoHandler));
+    let result = client
+        .request_with_headers(
+            Method::Get,
+            "https://example.com",
+            None,
+            &[
+                ("Accept".to_string(), "application/json".to_string()),
+                ("X-Custom".to_string(), "value".to_string()),
+            ],
+        )
+        .await
+        .unwrap();
+    let text = result.body_string();
+    assert!(text.contains("Accept:application/json"));
+    assert!(text.contains("X-Custom:value"));
+}
+
+#[wasm_bindgen_test]
+async fn http_multiple_before_hooks_fire_in_order() {
+    let mut client = HttpClient::new(NetworkAllowlist::allow_all());
+    client.set_handler(Box::new(EchoHandler));
+    let order = Arc::new(AtomicUsize::new(0));
+    let order1 = order.clone();
+    let order2 = order.clone();
+    client.set_before_http(vec![
+        Box::new(move |event| {
+            order1.fetch_add(1, Ordering::SeqCst);
+            bashkit::hooks::HookAction::Continue(event)
+        }),
+        Box::new(move |event| {
+            order2.fetch_add(10, Ordering::SeqCst);
+            bashkit::hooks::HookAction::Continue(event)
+        }),
+    ]);
+    let _ = client.get("https://example.com").await.unwrap();
+    assert_eq!(order.load(Ordering::SeqCst), 11);
+}
+
+#[wasm_bindgen_test]
+async fn http_multiple_after_hooks_fire_in_order() {
+    let mut client = HttpClient::new(NetworkAllowlist::allow_all());
+    client.set_handler(Box::new(MockHandler {
+        status: 200,
+        headers: vec![],
+        body: b"ok".to_vec(),
+    }));
+    let order = Arc::new(AtomicUsize::new(0));
+    let order1 = order.clone();
+    let order2 = order.clone();
+    client.set_after_http(vec![
+        Box::new(move |event| {
+            order1.fetch_add(1, Ordering::SeqCst);
+            bashkit::hooks::HookAction::Continue(event)
+        }),
+        Box::new(move |event| {
+            order2.fetch_add(10, Ordering::SeqCst);
+            bashkit::hooks::HookAction::Continue(event)
+        }),
+    ]);
+    let _ = client.get("https://example.com").await.unwrap();
+    assert_eq!(order.load(Ordering::SeqCst), 11);
+}
+
+#[wasm_bindgen_test]
+async fn http_v6_loopback_blocked() {
+    let client = HttpClient::new(NetworkAllowlist::allow_all());
+    let result = client.get("http://[::1]/").await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("private IP"));
+}
+
+#[wasm_bindgen_test]
+async fn http_v4_mapped_v6_blocked() {
+    let client = HttpClient::new(NetworkAllowlist::allow_all());
+    let result = client.get("http://[::ffff:10.0.0.1]/").await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("private IP"));
 }
