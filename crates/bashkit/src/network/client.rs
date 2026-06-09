@@ -3,76 +3,48 @@
 //! Provides a virtual HTTP client that respects the allowlist with
 //! security mitigations for common HTTP attacks.
 //!
+//! # Platform Support
+//!
+//! - **Native** (default): Uses `reqwest` with a private-IP-filtering DNS
+//!   resolver, streaming response bodies, and per-request timeout clients.
+//!   See `client::native` for the native transport implementation.
+//! - **WASM** (`target_family = "wasm")`: Uses the browser's `fetch` API
+//!   via `web_sys` and `wasm_bindgen_futures`. DNS checks are limited to
+//!   literal-IP blocking because the browser does not expose raw socket or
+//!   DNS APIs. Timeouts are enforced with `AbortController`.
+//!   See `client_wasm` for the WASM transport implementation.
+//!
 //! # Security Mitigations
 //!
 //! This module mitigates the following threats (see `specs/threat-model.md`):
 //!
 //! - **TM-NET-008**: Large response DoS → `max_response_bytes` limit (10MB default)
-//! - **TM-NET-009**: Connection hang → connect timeout (10s)
+//! - **TM-NET-009**: Connection hang → connect timeout (10s) *(native only)*
 //! - **TM-NET-010**: Slowloris attack → read timeout (30s)
-//! - **TM-NET-011**: Redirect bypass → `Policy::none()` disables auto-redirect
-//! - **TM-NET-012**: Chunked encoding bomb → streaming size check
-//! - **TM-NET-013**: Gzip/compression bomb → auto-decompression disabled
+//! - **TM-NET-011**: Redirect bypass → no auto-redirect on native; browser CORS
+//!   and same-origin policy provide additional defense on WASM.
+//! - **TM-NET-012**: Chunked encoding bomb → streaming size check *(native)* /
+//!   `Content-Length` pre-check + array-buffer limit *(WASM)*
+//! - **TM-NET-013**: Gzip/compression bomb → auto-decompression disabled *(native)*
 //! - **TM-NET-014**: DNS rebind via redirect → manual redirect requires allowlist check
-//! - **TM-NET-015**: Host proxy leakage → `.no_proxy()` ignores host `HTTP_PROXY`/`HTTPS_PROXY`
+//! - **TM-NET-015**: Host proxy leakage → `.no_proxy()` ignores host `HTTP_PROXY`/`HTTPS_PROXY` *(native)*
 //! - **TM-NET-002 (TOCTOU)**: DNS rebinding between pre-resolve check and actual connect →
-//!   private-IP filtering installed as reqwest's DNS resolver, so the connection path itself
-//!   refuses to dial any private/reserved IP, even if DNS answers diverge between checks.
+//!   private-IP filtering installed as reqwest's DNS resolver on native. WASM relies on
+//!   the browser's same-origin policy and the allowlist pre-check.
 
-use reqwest::Client;
-use reqwest::dns::{Name, Resolve, Resolving};
-use std::net::SocketAddr;
-use std::sync::{Arc, OnceLock};
+#[cfg(not(target_family = "wasm"))]
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use super::allowlist::{NetworkAllowlist, UrlMatch, is_private_ip};
 use crate::error::{Error, Result};
 
-/// THREAT[TM-NET-002 TOCTOU]: DNS resolver wrapper that rejects any
-/// hostname whose addresses include a private/reserved IP at connect time.
-///
-/// The pre-resolve check in `enforce_url_security` cannot bind the validated
-/// IP to the actual connection because reqwest re-resolves the hostname when
-/// `send()` runs. An attacker controlling DNS for an allowed hostname can
-/// answer with a public IP during the check and then a private/internal IP
-/// during the connect ("DNS rebinding"). Installing this resolver in the
-/// reqwest client moves the policy onto the connection path, so the connect
-/// itself refuses to dial private addresses regardless of pre-check timing.
-struct PrivateIpFilteringResolver;
+#[cfg(not(target_family = "wasm"))]
+mod native;
 
-impl Resolve for PrivateIpFilteringResolver {
-    fn resolve(&self, name: Name) -> Resolving {
-        Box::pin(async move {
-            let host = name.as_str().to_string();
-            // Use port 0 in the lookup; reqwest documents that explicit URL
-            // ports override the resolved port, and otherwise scheme-default
-            // ports are substituted. Port 0 is a valid placeholder.
-            let lookup_target = format!("{}:0", host);
-            let resolved = tokio::net::lookup_host(lookup_target.as_str())
-                .await
-                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
-
-            let addrs: Vec<SocketAddr> = resolved.collect();
-            let mut filtered: Vec<SocketAddr> = Vec::with_capacity(addrs.len());
-            for addr in addrs {
-                if !is_private_ip(&addr.ip()) {
-                    filtered.push(addr);
-                }
-            }
-
-            if filtered.is_empty() {
-                let msg = format!(
-                    "access denied: '{}' resolves only to private/reserved IPs (SSRF protection)",
-                    host
-                );
-                return Err(msg.into());
-            }
-
-            let iter: Box<dyn Iterator<Item = SocketAddr> + Send> = Box::new(filtered.into_iter());
-            Ok(iter)
-        })
-    }
-}
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
 
 /// Default maximum response body size (10 MB)
 pub const DEFAULT_MAX_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
@@ -86,6 +58,10 @@ pub const MAX_TIMEOUT_SECS: u64 = 600;
 /// Minimum allowed timeout (1 second) - prevents instant timeouts that waste resources
 pub const MIN_TIMEOUT_SECS: u64 = 1;
 
+// ---------------------------------------------------------------------------
+// HttpHandler trait
+// ---------------------------------------------------------------------------
+
 /// Trait for custom HTTP request handling.
 ///
 /// Embedders can implement this trait to intercept, proxy, log, cache,
@@ -98,14 +74,12 @@ pub const MIN_TIMEOUT_SECS: u64 = 1;
 ///
 /// # Default
 ///
-/// When no custom handler is set, `HttpClient` uses `reqwest` directly,
-/// with a private-IP-filtering DNS resolver installed on the connector
-/// that rejects private IPs at connect time. This catches DNS rebinding
-/// that happens between the precheck and the actual TCP connect.
+/// When no custom handler is set, `HttpClient` uses the platform
+/// default (`reqwest` on native, `fetch` on WASM).
 ///
 /// # SSRF responsibility for handlers (TM-NET-023, #1570)
 ///
-/// **Custom HTTP handlers DO NOT inherit reqwest's connect-time IP
+/// **Custom HTTP handlers DO NOT inherit the platform's connect-time IP
 /// filter.** The DNS precheck bashkit runs is best-effort and is
 /// vulnerable to a rebind window between the precheck and the moment
 /// the handler opens its own socket. If a handler performs real network
@@ -114,7 +88,7 @@ pub const MIN_TIMEOUT_SECS: u64 = 1;
 /// connecting, or constrain its egress at a lower layer. The internal
 /// classifier `bashkit::network::allowlist::is_private_ip` (re-exported
 /// at `bashkit::network::is_private_ip` when used from inside this
-/// crate) is the same one the default reqwest path uses. Handlers that
+/// crate) is the same one the default native path uses. Handlers that
 /// only consult fixtures or in-memory state (mocks, test doubles) have
 /// no exposure here.
 #[async_trait::async_trait]
@@ -134,65 +108,9 @@ pub trait HttpHandler: Send + Sync {
     ) -> std::result::Result<Response, String>;
 }
 
-/// HTTP client with allowlist-based access control.
-///
-/// # Security Features
-///
-/// - URL allowlist enforcement
-/// - Response size limits to prevent memory exhaustion
-/// - Configurable timeouts to prevent hanging
-/// - No automatic redirect following (to prevent allowlist bypass)
-pub struct HttpClient {
-    client: OnceLock<std::result::Result<Client, String>>,
-    allowlist: NetworkAllowlist,
-    default_timeout: Duration,
-    /// Maximum response body size in bytes
-    max_response_bytes: usize,
-    /// Optional custom HTTP handler for request interception
-    handler: Option<Box<dyn HttpHandler>>,
-    /// Optional bot-auth config for transparent request signing
-    #[cfg(feature = "bot-auth")]
-    bot_auth: Option<super::bot_auth::BotAuthConfig>,
-    /// Interceptor hooks fired before each HTTP request
-    before_http: Vec<crate::hooks::Interceptor<crate::hooks::HttpRequestEvent>>,
-    /// Interceptor hooks fired after each HTTP response
-    after_http: Vec<crate::hooks::Interceptor<crate::hooks::HttpResponseEvent>>,
-}
-
-/// HTTP request method
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Method {
-    Get,
-    Post,
-    Put,
-    Delete,
-    Head,
-    Patch,
-}
-
-impl Method {
-    fn as_reqwest(self) -> reqwest::Method {
-        match self {
-            Method::Get => reqwest::Method::GET,
-            Method::Post => reqwest::Method::POST,
-            Method::Put => reqwest::Method::PUT,
-            Method::Delete => reqwest::Method::DELETE,
-            Method::Head => reqwest::Method::HEAD,
-            Method::Patch => reqwest::Method::PATCH,
-        }
-    }
-
-    fn as_str(self) -> &'static str {
-        match self {
-            Method::Get => "GET",
-            Method::Post => "POST",
-            Method::Put => "PUT",
-            Method::Delete => "DELETE",
-            Method::Head => "HEAD",
-            Method::Patch => "PATCH",
-        }
-    }
-}
+// ---------------------------------------------------------------------------
+// Response
+// ---------------------------------------------------------------------------
 
 /// HTTP response
 #[derive(Debug)]
@@ -215,6 +133,66 @@ impl Response {
     pub fn is_success(&self) -> bool {
         (200..300).contains(&self.status)
     }
+}
+
+// ---------------------------------------------------------------------------
+// Method
+// ---------------------------------------------------------------------------
+
+/// HTTP request method
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Method {
+    Get,
+    Post,
+    Put,
+    Delete,
+    Head,
+    Patch,
+}
+
+impl Method {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Method::Get => "GET",
+            Method::Post => "POST",
+            Method::Put => "PUT",
+            Method::Delete => "DELETE",
+            Method::Head => "HEAD",
+            Method::Patch => "PATCH",
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// HttpClient
+// ---------------------------------------------------------------------------
+
+/// HTTP client with allowlist-based access control.
+///
+/// # Security Features
+///
+/// - URL allowlist enforcement
+/// - Response size limits to prevent memory exhaustion
+/// - Configurable timeouts to prevent hanging
+/// - No automatic redirect following (to prevent allowlist bypass)
+pub struct HttpClient {
+    #[cfg(not(target_family = "wasm"))]
+    client: OnceLock<std::result::Result<reqwest::Client, String>>,
+    #[cfg(target_family = "wasm")]
+    _wasm_marker: std::marker::PhantomData<()>,
+    allowlist: NetworkAllowlist,
+    default_timeout: Duration,
+    /// Maximum response body size in bytes
+    max_response_bytes: usize,
+    /// Optional custom HTTP handler for request interception
+    handler: Option<Box<dyn HttpHandler>>,
+    /// Optional bot-auth config for transparent request signing
+    #[cfg(feature = "bot-auth")]
+    bot_auth: Option<super::bot_auth::BotAuthConfig>,
+    /// Interceptor hooks fired before each HTTP request
+    before_http: Vec<crate::hooks::Interceptor<crate::hooks::HttpRequestEvent>>,
+    /// Interceptor hooks fired after each HTTP response
+    after_http: Vec<crate::hooks::Interceptor<crate::hooks::HttpResponseEvent>>,
 }
 
 impl HttpClient {
@@ -250,7 +228,10 @@ impl HttpClient {
         max_response_bytes: usize,
     ) -> Self {
         Self {
+            #[cfg(not(target_family = "wasm"))]
             client: OnceLock::new(),
+            #[cfg(target_family = "wasm")]
+            _wasm_marker: std::marker::PhantomData,
             allowlist,
             default_timeout: timeout,
             max_response_bytes,
@@ -265,7 +246,7 @@ impl HttpClient {
     /// Set a custom HTTP handler for request interception.
     ///
     /// The handler is called after the URL allowlist check, so the security
-    /// boundary stays in bashkit. The default reqwest-based handler is used
+    /// boundary stays in bashkit. The default platform handler is used
     /// when no custom handler is set.
     pub fn set_handler(&mut self, handler: Box<dyn HttpHandler>) {
         self.handler = Some(handler);
@@ -364,16 +345,6 @@ impl HttpClient {
         }
     }
 
-    fn client(&self) -> Result<&Client> {
-        let block_private = self.allowlist.is_blocking_private_ips();
-        let client = self
-            .client
-            .get_or_init(|| build_client(self.default_timeout, None, block_private));
-        client
-            .as_ref()
-            .map_err(|err| Error::Internal(format!("failed to build HTTP client: {err}")))
-    }
-
     /// Make a GET request.
     pub async fn get(&self, url: &str) -> Result<Response> {
         self.request(Method::Get, url, None).await
@@ -429,17 +400,9 @@ impl HttpClient {
 
     /// THREAT[TM-NET-002/004/023]: Pre-resolve DNS and block private IPs.
     ///
-    /// Returns `Err` for malformed URLs and for URLs with no host
-    /// component — the previous fail-open behaviour let those slip
-    /// through to the connect path. DNS lookup *errors* still
-    /// short-circuit to `Ok(())` (fail-open) because failing closed
-    /// here breaks any caller that intentionally targets an unresolved
-    /// hostname before a `before_http` hook rewrites or cancels the
-    /// request. The primary mitigation for the rebind / fail-open
-    /// window is the trait-level requirement on `HttpHandler` (see
-    /// #1570) and the connect-time `PrivateIpFilteringResolver` on the
-    /// default reqwest path. Direct-IP and successful-resolution paths
-    /// remain fail-closed.
+    /// On native this performs a full DNS lookup and blocks private resolves.
+    /// On WASM only literal IPs are checked; hostname resolution is deferred
+    /// to the browser, which applies same-origin policy and CORS.
     pub(crate) async fn check_private_ip(&self, url: &str) -> Result<()> {
         let parsed = url::Url::parse(url)
             .map_err(|e| Error::Network(format!("invalid URL for SSRF precheck: {e}")))?;
@@ -448,7 +411,12 @@ impl HttpClient {
                 "access denied: URL has no host (SSRF protection)".to_string(),
             ));
         };
-        if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        // Strip brackets from IPv6 literals so they parse correctly.
+        let ip_str = host
+            .strip_prefix('[')
+            .and_then(|h| h.strip_suffix(']'))
+            .unwrap_or(host);
+        if let Ok(ip) = ip_str.parse::<std::net::IpAddr>() {
             if is_private_ip(&ip) {
                 return Err(Error::Network(format!(
                     "access denied: {} is a private IP (SSRF protection)",
@@ -457,24 +425,30 @@ impl HttpClient {
             }
             return Ok(());
         }
-        let port = parsed
-            .port()
-            .unwrap_or(if parsed.scheme() == "https" { 443 } else { 80 });
-        let addr = format!("{}:{}", host, port);
-        let Ok(addrs) = tokio::net::lookup_host(&addr).await else {
-            // DNS lookup failed — fall through. See the function-level
-            // doc for why this stays fail-open.
-            return Ok(());
-        };
-        for a in addrs {
-            if is_private_ip(&a.ip()) {
-                return Err(Error::Network(format!(
-                    "access denied: {} resolves to private IP {} (SSRF protection)",
-                    host,
-                    a.ip()
-                )));
+
+        // Native: perform DNS precheck.
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let port = parsed
+                .port()
+                .unwrap_or(if parsed.scheme() == "https" { 443 } else { 80 });
+            let addr = format!("{}:{}", host, port);
+            let Ok(addrs) = tokio::net::lookup_host(&addr).await else {
+                // DNS lookup failed — fall through. See the function-level
+                // doc for why this stays fail-open.
+                return Ok(());
+            };
+            for a in addrs {
+                if is_private_ip(&a.ip()) {
+                    return Err(Error::Network(format!(
+                        "access denied: {} resolves to private IP {} (SSRF protection)",
+                        host,
+                        a.ip()
+                    )));
+                }
             }
         }
+
         Ok(())
     }
 
@@ -534,6 +508,7 @@ impl HttpClient {
             let method_str = method.as_str();
             let mut all_headers: Vec<(String, String)> = headers.to_vec();
             all_headers.extend(signing_headers);
+            #[cfg(not(target_family = "wasm"))]
             let response = tokio::time::timeout(
                 self.default_timeout,
                 handler.request(method_str, url, body, &all_headers),
@@ -541,6 +516,11 @@ impl HttpClient {
             .await
             .map_err(|_| Error::Network("operation timed out".to_string()))?
             .map_err(Error::Network)?;
+            #[cfg(target_family = "wasm")]
+            let response = handler
+                .request(method_str, url, body, &all_headers)
+                .await
+                .map_err(Error::Network)?;
             if response.body.len() > self.max_response_bytes {
                 return Err(Error::Network(format!(
                     "response too large: {} bytes (max: {} bytes)",
@@ -556,90 +536,16 @@ impl HttpClient {
             return Ok(response);
         }
 
-        // Build request
-        let mut request = self.client()?.request(method.as_reqwest(), url);
-
-        // Add custom headers
-        for (name, value) in headers {
-            request = request.header(name.as_str(), value.as_str());
-        }
-
-        // Add bot-auth signing headers
-        for (name, value) in &signing_headers {
-            request = request.header(name.as_str(), value.as_str());
-        }
-
-        if let Some(body_data) = body {
-            request = request.body(body_data.to_vec());
-        }
-
-        // Send request
-        let response = request
-            .send()
-            .await
-            .map_err(|e| Error::network_sanitized("request failed", &e))?;
-
-        // Extract response data
-        let status = response.status().as_u16();
-        let resp_headers: Vec<(String, String)> = response
-            .headers()
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
-            .collect();
-
-        // Fire after_http hooks
-        self.fire_after_http(crate::hooks::HttpResponseEvent {
-            url: url.to_string(),
-            status,
-            headers: resp_headers.clone(),
-        });
-
-        // Check Content-Length header to fail fast on large responses
-        if let Some(content_length) = response.content_length()
-            && usize::try_from(content_length).unwrap_or(usize::MAX) > self.max_response_bytes
-        {
-            return Err(Error::Network(format!(
-                "response too large: {} bytes (max: {} bytes)",
-                content_length, self.max_response_bytes
-            )));
-        }
-
-        // Read body with size limit enforcement
-        // We stream the response to avoid loading huge responses into memory
-        let body = self.read_body_with_limit(response).await?;
-
-        Ok(Response {
-            status,
-            headers: resp_headers,
+        self.send_request(
+            method,
+            url,
             body,
-        })
-    }
-
-    /// Read response body with size limit enforcement.
-    ///
-    /// This streams the response to avoid allocating memory for oversized responses.
-    async fn read_body_with_limit(&self, response: reqwest::Response) -> Result<Vec<u8>> {
-        use futures_util::StreamExt;
-
-        let mut body = Vec::new();
-        let mut stream = response.bytes_stream();
-
-        while let Some(chunk_result) = stream.next().await {
-            let chunk = chunk_result
-                .map_err(|e| Error::network_sanitized("failed to read response chunk", &e))?;
-
-            // Check if adding this chunk would exceed the limit
-            if body.len() + chunk.len() > self.max_response_bytes {
-                return Err(Error::Network(format!(
-                    "response too large: exceeded {} bytes limit",
-                    self.max_response_bytes
-                )));
-            }
-
-            body.extend_from_slice(&chunk);
-        }
-
-        Ok(body)
+            headers,
+            signing_headers,
+            self.default_timeout,
+            None,
+        )
+        .await
     }
 
     /// Make a HEAD request to get headers without body.
@@ -756,6 +662,7 @@ impl HttpClient {
             let method_str = method.as_str();
             let mut all_headers: Vec<(String, String)> = headers.to_vec();
             all_headers.extend(signing_headers);
+            #[cfg(not(target_family = "wasm"))]
             let response = tokio::time::timeout(
                 request_timeout,
                 handler.request(method_str, url, body, &all_headers),
@@ -763,6 +670,11 @@ impl HttpClient {
             .await
             .map_err(|_| Error::Network("operation timed out".to_string()))?
             .map_err(Error::Network)?;
+            #[cfg(target_family = "wasm")]
+            let response = handler
+                .request(method_str, url, body, &all_headers)
+                .await
+                .map_err(Error::Network)?;
             if response.body.len() > self.max_response_bytes {
                 return Err(Error::Network(format!(
                     "response too large: {} bytes (max: {} bytes)",
@@ -778,144 +690,62 @@ impl HttpClient {
             return Ok(response);
         }
 
-        // Use the custom timeout client if any timeout is specified, otherwise use default client
-        let client = if timeout_secs.is_some() || connect_timeout_secs.is_some() {
-            // Connect timeout: use explicit connect_timeout, or derive from overall timeout, or use default 10s
-            let connect_timeout = connect_timeout_secs.map_or_else(
-                || std::cmp::min(request_timeout, Duration::from_secs(10)),
-                |s| Duration::from_secs(clamp_timeout(s)),
-            );
-            build_client(
-                request_timeout,
-                Some(connect_timeout),
-                self.allowlist.is_blocking_private_ips(),
-            )
-            .map_err(|e| Error::network_sanitized("failed to create client", &e))?
-        } else {
-            self.client()?.clone()
-        };
+        self.send_request(
+            method,
+            url,
+            body,
+            headers,
+            signing_headers,
+            request_timeout,
+            connect_timeout_secs.map(|s| Duration::from_secs(clamp_timeout(s))),
+        )
+        .await
+    }
 
-        // Build request
-        let mut request = client.request(method.as_reqwest(), url);
+    // -----------------------------------------------------------------------
+    // Platform-specific transport
+    // -----------------------------------------------------------------------
 
-        // Add custom headers
-        for (name, value) in headers {
-            request = request.header(name.as_str(), value.as_str());
-        }
-
-        // Add bot-auth signing headers
-        for (name, value) in &signing_headers {
-            request = request.header(name.as_str(), value.as_str());
-        }
-
-        if let Some(body_data) = body {
-            request = request.body(body_data.to_vec());
-        }
-
-        // Send request
-        let response = request.send().await.map_err(|e| {
-            // Check if this was a timeout error
-            if e.is_timeout() {
-                Error::Network("operation timed out".to_string())
-            } else {
-                Error::network_sanitized("request failed", &e)
-            }
-        })?;
-
-        // Extract response data
-        let status = response.status().as_u16();
-        let resp_headers: Vec<(String, String)> = response
-            .headers()
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
-            .collect();
+    #[cfg(target_family = "wasm")]
+    pub(crate) async fn send_request(
+        &self,
+        method: Method,
+        url: &str,
+        body: Option<&[u8]>,
+        headers: &[(String, String)],
+        signing_headers: Vec<(String, String)>,
+        timeout: Duration,
+        _connect_timeout: Option<Duration>,
+    ) -> Result<Response> {
+        let response = crate::network::client_wasm::send_request(
+            self.max_response_bytes,
+            method,
+            url,
+            body,
+            headers,
+            signing_headers,
+            timeout,
+        )
+        .await?;
 
         // Fire after_http hooks
         self.fire_after_http(crate::hooks::HttpResponseEvent {
             url: url.to_string(),
-            status,
-            headers: resp_headers.clone(),
+            status: response.status,
+            headers: response.headers.clone(),
         });
 
-        // Check Content-Length header to fail fast on large responses
-        if let Some(content_length) = response.content_length()
-            && usize::try_from(content_length).unwrap_or(usize::MAX) > self.max_response_bytes
-        {
-            return Err(Error::Network(format!(
-                "response too large: {} bytes (max: {} bytes)",
-                content_length, self.max_response_bytes
-            )));
-        }
-
-        // Read body with size limit enforcement
-        let body = self.read_body_with_limit(response).await?;
-
-        Ok(Response {
-            status,
-            headers: resp_headers,
-            body,
-        })
+        Ok(response)
     }
 }
 
-/// Install the rustls `ring` crypto provider as the process-wide default.
-///
-/// We pair reqwest's `rustls-no-provider` feature with an explicit `ring`
-/// install so the dep tree contains zero C-compiled crypto (no aws-lc-sys).
-/// That keeps cross-compiled wheel builds (notably aarch64 manylinux, where
-/// the cross sysroot is missing `AT_HWCAP2`) green and removes a class of
-/// toolchain-specific build failures.
-///
-/// Idempotent: safe to call from multiple call sites and across crates.
-/// `install_default` errors if a provider is already installed (e.g. set by
-/// the embedder); we treat that as success because *some* provider is now
-/// active, which is all rustls needs.
-fn install_default_crypto_provider() {
-    use std::sync::Once;
-    static INIT: Once = Once::new();
-    INIT.call_once(|| {
-        let _ = rustls::crypto::ring::default_provider().install_default();
-    });
-}
-
-fn build_client(
-    timeout: Duration,
-    connect_timeout: Option<Duration>,
-    block_private_ips: bool,
-) -> std::result::Result<Client, String> {
-    install_default_crypto_provider();
-    let mut builder = Client::builder()
-        .timeout(timeout)
-        .connect_timeout(connect_timeout.unwrap_or(Duration::from_secs(10)))
-        .user_agent("bashkit/0.1.2")
-        // Disable automatic redirects to prevent allowlist bypass via redirect
-        // Scripts can follow redirects manually if needed
-        .redirect(reqwest::redirect::Policy::none())
-        // Disable automatic decompression to prevent zip bomb attacks
-        // and match real curl behavior (which requires --compressed flag)
-        // With decompression enabled, a 10KB gzip could expand to 10GB
-        .no_gzip()
-        .no_brotli()
-        .no_deflate()
-        // THREAT[TM-NET-015]: Ignore host proxy env vars (HTTP_PROXY, HTTPS_PROXY, ALL_PROXY)
-        // to prevent sandboxed HTTP traffic from being redirected through a host proxy
-        .no_proxy();
-
-    // THREAT[TM-NET-002 TOCTOU]: install a DNS resolver that filters private IPs
-    // at connect time, so DNS rebinding cannot slip a private address past the
-    // pre-resolve check.
-    if block_private_ips {
-        builder = builder.dns_resolver(Arc::new(PrivateIpFilteringResolver));
-    }
-
-    builder.build().map_err(|e| e.to_string())
-}
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration as StdDuration;
-    use tokio::time::sleep;
 
     struct StaticHandler {
         response: Response,
@@ -938,47 +768,17 @@ mod tests {
         }
     }
 
-    struct SlowHandler {
-        delay: StdDuration,
-    }
-
-    #[async_trait::async_trait]
-    impl HttpHandler for SlowHandler {
-        async fn request(
-            &self,
-            _method: &str,
-            _url: &str,
-            _body: Option<&[u8]>,
-            _headers: &[(String, String)],
-        ) -> std::result::Result<Response, String> {
-            sleep(self.delay).await;
-            Ok(Response {
-                status: 200,
-                headers: vec![],
-                body: b"ok".to_vec(),
-            })
-        }
-    }
-
     #[tokio::test]
     async fn test_blocked_by_empty_allowlist() {
         let client = HttpClient::new(NetworkAllowlist::new());
+        #[cfg(not(target_family = "wasm"))]
         assert!(client.client.get().is_none());
 
         let result = client.get("https://example.com").await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("access denied"));
+        #[cfg(not(target_family = "wasm"))]
         assert!(client.client.get().is_none());
-    }
-
-    #[test]
-    fn test_default_client_initializes_on_first_use() {
-        let client = HttpClient::new(NetworkAllowlist::allow_all());
-        assert!(client.client.get().is_none());
-
-        client.client().expect("client");
-
-        assert!(client.client.get().is_some());
     }
 
     #[tokio::test]
@@ -1007,12 +807,9 @@ mod tests {
         let allowlist = NetworkAllowlist::new().allow("https://blocked.com");
         let client = HttpClient::new(allowlist);
 
-        // Should use default client (not blocked by allowlist here, but blocked.com not actually accessible)
-        // This just verifies the code path with None timeout works
         let result = client
             .request_with_timeout(Method::Get, "https://blocked.example.com", None, &[], None)
             .await;
-        // Should fail with access denied (not in allowlist)
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("access denied"));
     }
@@ -1022,7 +819,6 @@ mod tests {
         let allowlist = NetworkAllowlist::new().allow("https://allowed.com");
         let client = HttpClient::new(allowlist);
 
-        // Test with invalid URL
         let result = client
             .request_with_timeout(Method::Get, "not-a-url", None, &[], Some(10))
             .await;
@@ -1033,7 +829,6 @@ mod tests {
     async fn test_request_with_timeouts_both_params() {
         let client = HttpClient::new(NetworkAllowlist::new());
 
-        // Both timeouts specified - should still check allowlist first
         let result = client
             .request_with_timeouts(
                 Method::Get,
@@ -1052,7 +847,6 @@ mod tests {
     async fn test_request_with_timeouts_connect_only() {
         let client = HttpClient::new(NetworkAllowlist::new());
 
-        // Only connect timeout specified
         let result = client
             .request_with_timeouts(Method::Get, "https://example.com", None, &[], None, Some(5))
             .await;
@@ -1062,125 +856,13 @@ mod tests {
 
     #[test]
     fn test_u64_to_usize_no_truncation() {
-        // On 64-bit: fits fine. On 32-bit: saturates to usize::MAX rather than truncating.
-        let large: u64 = 5_368_709_120; // 5GB
+        let large: u64 = 5_368_709_120;
         let result = usize::try_from(large).unwrap_or(usize::MAX);
-        // Should never silently become a smaller value
         assert!(result >= large.min(usize::MAX as u64) as usize);
-    }
-
-    #[test]
-    fn test_build_client_uses_no_proxy() {
-        // Verify build_client succeeds — the .no_proxy() call ensures
-        // host HTTP_PROXY/HTTPS_PROXY env vars are ignored (TM-NET-015).
-        let client = build_client(Duration::from_secs(30), None, true);
-        assert!(client.is_ok(), "build_client should succeed with no_proxy");
-    }
-
-    #[test]
-    fn test_build_client_installs_ring_crypto_provider() {
-        // Regression: with reqwest's `rustls-no-provider` feature, rustls panics
-        // on first TLS handshake unless a default crypto provider is installed.
-        // build_client must install the ring provider via the `Once` guard so
-        // every code path (default client + per-request timeout client) is safe.
-        // The dep tree must NOT include aws-lc-sys/aws-lc-rs (verified by
-        // `cargo tree -i aws-lc-sys` returning no match).
-        let _ = build_client(Duration::from_secs(30), None, true);
-        // A provider is now installed process-wide. `install_default` returns
-        // Err on the second call — that's our invariant: the first install
-        // succeeded.
-        let second_install = rustls::crypto::ring::default_provider().install_default();
-        assert!(
-            second_install.is_err(),
-            "build_client must install a default crypto provider before \
-             returning, otherwise the first HTTPS request panics"
-        );
-    }
-
-    #[test]
-    fn test_install_default_crypto_provider_is_idempotent() {
-        // Multiple invocations must not panic; the `Once` guard ensures only
-        // the first call attempts an install.
-        install_default_crypto_provider();
-        install_default_crypto_provider();
-        install_default_crypto_provider();
-    }
-
-    #[tokio::test]
-    async fn test_private_ip_filtering_resolver_rejects_loopback() {
-        // THREAT[TM-NET-002]: regression for DNS-rebinding TOCTOU. The pre-resolve
-        // check is best-effort and is now backed by a connection-time resolver
-        // that refuses to dial private/reserved IPs even when DNS answers
-        // change between the security check and `send()`.
-        //
-        // `localhost` always resolves to a loopback address (127.0.0.1 / ::1).
-        // The filter must reject it, proving the policy is enforced on the path
-        // reqwest actually uses to connect.
-        let resolver = PrivateIpFilteringResolver;
-        let name: Name = "localhost".parse().expect("valid DNS name");
-        let result = resolver.resolve(name).await;
-        assert!(
-            result.is_err(),
-            "localhost must be rejected by the private-IP-filtering resolver"
-        );
-        let err = result.err().unwrap().to_string();
-        assert!(
-            err.contains("private/reserved"),
-            "error must mention SSRF protection, got: {err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_private_ip_filtering_resolver_filters_private_from_mixed() {
-        // If a hostname resolved to a mix of public and private IPs, only the
-        // public addresses must reach reqwest's connection logic. Simulate by
-        // resolving a public-DNS name we don't actually depend on for the
-        // network test — we just verify the filtering logic in isolation.
-        //
-        // We construct synthetic addresses to drive the filter directly,
-        // because relying on third-party DNS in unit tests is flaky.
-        use std::net::{IpAddr, Ipv4Addr};
-        let public: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34)), 0);
-        let private: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 0);
-        let metadata: SocketAddr =
-            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(169, 254, 169, 254)), 0);
-        let mixed = vec![public, private, metadata];
-        let kept: Vec<SocketAddr> = mixed
-            .into_iter()
-            .filter(|a| !is_private_ip(&a.ip()))
-            .collect();
-        assert_eq!(kept, vec![public]);
-    }
-
-    #[tokio::test]
-    async fn test_default_client_rejects_loopback_via_resolver() {
-        // End-to-end regression: build the same reqwest client the runtime uses
-        // (private-IP filtering enabled) and try to dial a hostname that
-        // resolves only to loopback. The resolver must short-circuit the
-        // connection attempt with an SSRF-style error rather than dialing.
-        let allowlist = NetworkAllowlist::new().allow("http://localhost");
-        let client = HttpClient::new(allowlist);
-        let result = client.get("http://localhost").await;
-        assert!(
-            result.is_err(),
-            "request to a loopback hostname must be refused"
-        );
-        let msg = result.err().unwrap().to_string();
-        assert!(
-            msg.contains("private")
-                || msg.contains("SSRF")
-                || msg.contains("reserved")
-                || msg.contains("access denied"),
-            "expected SSRF-protection error, got: {msg}"
-        );
     }
 
     #[tokio::test]
     async fn test_check_private_ip_fails_closed_on_invalid_url() {
-        // Regression for #1570 (TM-NET-023): malformed URLs previously
-        // returned Ok(()) from the precheck. The fail-closed contract is
-        // exercised directly against `check_private_ip` to avoid relying
-        // on the allowlist's parser short-circuiting first.
         let client = HttpClient::new(NetworkAllowlist::allow_all());
         let result = client.check_private_ip("definitely::not::a::url").await;
         assert!(result.is_err(), "malformed URL must trip the SSRF precheck");
@@ -1193,8 +875,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_private_ip_fails_closed_on_no_host() {
-        // Regression for #1570: URLs without a host component used to slip
-        // through. Now they are rejected.
         let client = HttpClient::new(NetworkAllowlist::allow_all());
         let result = client.check_private_ip("file:///etc/passwd").await;
         assert!(result.is_err(), "host-less URL must trip the precheck");
@@ -1207,8 +887,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_private_ip_blocks_literal_private_ip() {
-        // Direct IP form: no DNS, deterministic — the existing direct-IP
-        // branch must still reject 10.0.0.1.
         let client = HttpClient::new(NetworkAllowlist::allow_all());
         let result = client.check_private_ip("http://10.0.0.1/").await;
         assert!(result.is_err());
@@ -1221,8 +899,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_check_private_ip_blocks_metadata_via_v4_mapped_v6() {
-        // Belt-and-braces with TM-NET-022 (#1569): IPv4-mapped IPv6 form of
-        // AWS metadata must also fail closed.
         let client = HttpClient::new(NetworkAllowlist::allow_all());
         let result = client
             .check_private_ip("http://[::ffff:169.254.169.254]/")
@@ -1301,29 +977,6 @@ mod tests {
             .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("access denied"));
-    }
-
-    #[tokio::test]
-    async fn test_custom_handler_enforces_request_timeout() {
-        let mut client = HttpClient::with_config(
-            NetworkAllowlist::allow_all(),
-            Duration::from_secs(30),
-            DEFAULT_MAX_RESPONSE_BYTES,
-        );
-        client.set_handler(Box::new(SlowHandler {
-            delay: StdDuration::from_millis(1200),
-        }));
-
-        let result = client
-            .request_with_timeouts(Method::Get, "https://example.com", None, &[], Some(1), None)
-            .await;
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("operation timed out")
-        );
     }
 
     // Note: Integration tests that actually make network requests
