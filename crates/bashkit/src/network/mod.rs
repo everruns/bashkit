@@ -86,6 +86,9 @@ pub mod bot_auth;
 #[cfg(feature = "http_client")]
 mod client;
 
+#[cfg(all(feature = "http_client", target_family = "wasm"))]
+mod client_wasm;
+
 #[allow(unused_imports)] // UrlMatch is used internally but may not be exported
 pub use allowlist::{NetworkAllowlist, UrlMatch, is_private_ip};
 
