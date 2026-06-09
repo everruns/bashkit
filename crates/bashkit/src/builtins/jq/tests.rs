@@ -126,6 +126,29 @@ async fn keys_pretty_prints_array() {
     assert_eq!(result.trim(), "[\n  \"a\",\n  \"b\"\n]");
 }
 
+/// TM-DOS-095: an unbounded generator must not grow output without limit or
+/// hang the host. jaq's iterator is synchronous so the execution timeout
+/// cannot preempt it; the output-byte cap (here the 1 MB default, since the
+/// test harness supplies no shell/limits) must abort with a clean error.
+#[tokio::test]
+async fn unbounded_generator_is_capped() {
+    let result = run_jq_result_with_args(&["-n", "repeat(1)"], "")
+        .await
+        .unwrap();
+    assert_ne!(result.exit_code, 0, "runaway generator should fail");
+    assert!(
+        result.stderr.contains("output limit exceeded"),
+        "expected output-limit error, got stderr={:?} stdout_len={}", // debug-ok: test assertion
+        result.stderr,
+        result.stdout.len()
+    );
+    assert!(
+        result.stdout.len() <= 1_048_576 + 64,
+        "output must be bounded by the cap, got {} bytes",
+        result.stdout.len()
+    );
+}
+
 #[tokio::test]
 async fn length_returns_number() {
     let result = run_jq("length", r#"[1,2,3,4,5]"#).await.unwrap();

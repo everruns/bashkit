@@ -417,6 +417,13 @@ impl ExecutionDeadline {
             remaining
         }
     }
+
+    /// Whether the wall-clock budget is exhausted. Builtins with synchronous
+    /// loops the async timeout cannot preempt poll this to abort.
+    #[allow(dead_code)]
+    pub(crate) fn is_expired(&self) -> bool {
+        self.started_at.elapsed() >= self.timeout
+    }
 }
 
 impl ExecutionExtensions {
