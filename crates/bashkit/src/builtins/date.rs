@@ -799,7 +799,7 @@ mod tests {
             "300000000000000000 months ago",
         ] {
             let result = run_date(&["-d", spec, "+%Y"]).await;
-            assert_ne!(result.exit_code, 0, "spec {spec:?} should fail cleanly");
+            assert_ne!(result.exit_code, 0, "spec '{spec}' should fail cleanly");
         }
     }
 
