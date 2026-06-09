@@ -4650,6 +4650,45 @@ echo ${#arr[@]}
         }
     }
 
+    /// TM-DOS-042: Comma-list brace expansion recursion bomb.
+    /// `{a,b}{a,b}...` repeated tens of thousands of times is far under
+    /// `max_input_bytes`, but the combinatorial count cap is only charged on
+    /// recursion *return*, so the first DFS path used to descend one frame per
+    /// group and stack-overflow the worker thread before any cap fired. The
+    /// depth cap must bound the descent: this completes without panic/OOM and
+    /// with bounded output.
+    #[tokio::test]
+    async fn brace_expansion_comma_recursion_bomb() {
+        let limits = ExecutionLimits::new()
+            .max_commands(1_000)
+            .max_stdout_bytes(1_000_000);
+        let mut bash = Bash::builder().limits(limits).build();
+
+        // 50k repetitions of `{a,b}` (~250 KB source, well under the input cap).
+        let script = format!("echo {}", "{a,b}".repeat(50_000));
+        let result = bash.exec(&script).await;
+        match result {
+            Ok(r) => {
+                assert!(
+                    r.stdout.len() <= 1_000_000,
+                    "comma-list brace bomb produced {} bytes — should be capped",
+                    r.stdout.len()
+                );
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                assert!(
+                    msg.contains("brace")
+                        || msg.contains("exceeded")
+                        || msg.contains("budget")
+                        || msg.contains("too large"),
+                    "Expected a limit error, got: {}",
+                    msg
+                );
+            }
+        }
+    }
+
     /// TM-DOS-059: Parameter expansion replacement bomb.
     /// `${x//a/$(echo bbbbbbbb)}` replaces each 'a' with 'bbbbbbbb'.
     /// At scale (10K 'a's × 1K 'b's = 10MB), this must be caught by
