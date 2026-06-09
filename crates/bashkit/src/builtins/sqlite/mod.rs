@@ -427,7 +427,7 @@ impl Builtin for Sqlite {
                 let engine = match SqliteEngine::open_pure_memory() {
                     Ok(e) => e,
                     Err(msg) => {
-                        return Ok(ExecResult::err(format!("sqlite: {msg}\n"), 1));
+                        return Ok(ExecResult::err(format!("sqlite: {}\n", sanitize(&msg)), 1));
                     }
                 };
                 let outcome = run_statements(
@@ -443,7 +443,7 @@ impl Builtin for Sqlite {
                 )
                 .await;
                 if let Err(e) = outcome {
-                    stderr.push_str(&format!("sqlite: {e}\n"));
+                    stderr.push_str(&format!("sqlite: {}\n", sanitize(&e)));
                     exit_code = 1;
                 }
             }
@@ -473,7 +473,9 @@ impl Builtin for Sqlite {
                 if reopen {
                     match open_file_engine(backend, path, &ctx.fs, &self.limits).await {
                         Ok(e) => *guard = Some(e),
-                        Err(msg) => return Ok(ExecResult::err(format!("sqlite: {msg}\n"), 1)),
+                        Err(msg) => {
+                            return Ok(ExecResult::err(format!("sqlite: {}\n", sanitize(&msg)), 1));
+                        }
                     }
                 }
                 let engine = guard.as_ref().expect("engine populated above");
@@ -491,7 +493,7 @@ impl Builtin for Sqlite {
                 )
                 .await;
                 if let Err(e) = outcome {
-                    stderr.push_str(&format!("sqlite: {e}\n"));
+                    stderr.push_str(&format!("sqlite: {}\n", sanitize(&e)));
                     exit_code = 1;
                 }
 
