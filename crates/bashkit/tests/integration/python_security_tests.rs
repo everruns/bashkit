@@ -321,6 +321,31 @@ mod whitebox_resource_limits {
         assert_ne!(r.exit_code, 0, "100ms limit should block long loop");
     }
 
+    /// The bash-level execution timeout must bound a CPU-bound Python loop even
+    /// when PythonLimits.max_duration is much larger: the async timeout cannot
+    /// preempt Monty's synchronous run, so the builtin clamps Monty's duration
+    /// to the remaining deadline. Without the clamp this would run for the full
+    /// 60s Python limit.
+    #[tokio::test]
+    async fn bash_timeout_clamps_python_duration() {
+        let bash = Bash::builder()
+            .python_with_limits(PythonLimits::default().max_duration(Duration::from_secs(60)))
+            .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
+            .limits(ExecutionLimits::new().timeout(Duration::from_millis(300)));
+        let mut bash = bash.build();
+        let start = std::time::Instant::now();
+        let r = bash
+            .exec("python3 -c \"while True:\n    pass\"")
+            .await
+            .unwrap();
+        let elapsed = start.elapsed();
+        assert_ne!(r.exit_code, 0, "infinite loop should be stopped");
+        assert!(
+            elapsed < Duration::from_secs(15),
+            "bash timeout did not clamp Python duration: ran {elapsed:?}"
+        );
+    }
+
     #[tokio::test]
     async fn tight_recursion_blocks_deep_call() {
         let limits = PythonLimits::default().max_recursion(10);

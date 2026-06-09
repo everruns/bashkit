@@ -32,7 +32,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::{Builtin, Context, resolve_path};
+use super::{Builtin, Context, ExecutionDeadline, resolve_path};
 use crate::error::Result;
 use crate::fs::{FileSystem, FileType};
 use crate::interpreter::ExecResult;
@@ -445,13 +445,25 @@ impl Builtin for Python {
                 .map(|(k, v)| (k.clone(), v.clone())),
         );
 
+        // Clamp Monty's wall-clock budget to the caller's remaining execution
+        // deadline (like the TypeScript builtin) so a CPU-bound script cannot
+        // overrun a tighter bash timeout — the async timeout cannot preempt
+        // Monty's synchronous start/resume sections.
+        let mut limits = self.limits.clone();
+        if let Some(remaining) = ctx
+            .execution_extension::<ExecutionDeadline>()
+            .map(ExecutionDeadline::remaining)
+        {
+            limits.max_duration = limits.max_duration.min(remaining);
+        }
+
         run_python(
             &code,
             &filename,
             ctx.fs.clone(),
             ctx.cwd,
             &merged_env,
-            &self.limits,
+            &limits,
             self.external_fns.as_ref(),
         )
         .await
