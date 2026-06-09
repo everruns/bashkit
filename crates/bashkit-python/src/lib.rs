@@ -61,7 +61,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock, RwLock, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::runtime::Runtime;
+use tokio::runtime::{Handle, Runtime};
 use tokio::sync::{Mutex, oneshot};
 
 // ============================================================================
@@ -1015,6 +1015,13 @@ enum FileSystemHandle {
 }
 
 impl FileSystemHandle {
+    /// A `Static` handle wraps an `Arc<dyn FileSystem>` directly, so resolving
+    /// it never touches the interpreter lock. Used to pick a re-entrancy-safe
+    /// dispatch path in `PyFileSystem::with_fs`.
+    fn is_static(&self) -> bool {
+        matches!(self, Self::Static(_))
+    }
+
     async fn resolve(&self) -> PyResult<Arc<dyn FileSystem>> {
         match self {
             Self::Static(fs) => Ok(Arc::clone(fs)),
@@ -1605,10 +1612,39 @@ impl PyFileSystem {
 
     fn with_fs<T, F, Fut>(&self, f: F) -> PyResult<T>
     where
-        F: FnOnce(Arc<dyn FileSystem>) -> Fut,
-        Fut: Future<Output = PyResult<T>>,
+        F: FnOnce(Arc<dyn FileSystem>) -> Fut + Send,
+        Fut: Future<Output = PyResult<T>> + Send,
+        T: Send,
     {
         let inner = self.inner.clone();
+        // A `Static` handle (e.g. a custom builtin's `ctx.fs`) operates on a
+        // cloned `Arc<dyn FileSystem>` with no interpreter lock. When such a
+        // handle is used from *inside* the shared current-thread runtime —
+        // `execute_sync` drives the interpreter via `self.rt.block_on`, and the
+        // custom builtin callback runs within it — calling `block_on` again on
+        // this thread panics ("Cannot start a runtime from within a runtime").
+        // Run the op on a throwaway thread with its own runtime instead. `Live`
+        // handles keep the original fast path: they lock the interpreter, so
+        // re-entrant use is already unsupported and must not silently deadlock.
+        if inner.is_static() && Handle::try_current().is_ok() {
+            return std::thread::scope(|scope| {
+                scope
+                    .spawn(move || {
+                        let rt = tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                            .map_err(|e| {
+                                PyRuntimeError::new_err(format!("Failed to create runtime: {e}"))
+                            })?;
+                        rt.block_on(async move {
+                            let fs = inner.resolve().await?;
+                            f(fs).await
+                        })
+                    })
+                    .join()
+                    .map_err(|_| PyRuntimeError::new_err("filesystem worker thread panicked"))?
+            });
+        }
         self.rt.block_on(async move {
             let fs = inner.resolve().await?;
             f(fs).await
@@ -2159,16 +2195,23 @@ fn prepare_output_handler(
 }
 
 // Decision: `custom_builtins` mirror Rust builtin semantics with a shell-first
-// context object (`argv`, `stdin`, `env`, `cwd`); `ScriptedTool` remains
+// context object (`argv`, `stdin`, `env`, `cwd`, `fs`); `ScriptedTool` remains
 // schema-first and continues to pass `(params, stdin)`.
 //
-// Deliberately omitted for now: live `fs`, mutable shell variables, mutable
-// `cwd`, and feature-gated network/git/ssh clients from Rust `BuiltinContext`.
-// Those are reasonable follow-ups, but this PR keeps the Python surface small
-// and shell-first while we validate the core callback shape.
+// `fs` wraps the *same* `Arc<dyn FileSystem>` the interpreter is running on
+// (mirroring how the embedded `python3`/Monty builtin receives `ctx.fs`), so it
+// is a live view, not a snapshot. It is a `Static` `PyFileSystem` handle, which
+// bypasses the interpreter lock — `PyFileSystem::with_fs` runs its ops off the
+// shared runtime thread so they are safe from within the callback.
+//
+// Still deliberately omitted: mutable shell variables, mutable `cwd`, and
+// feature-gated network/git/ssh clients from Rust `BuiltinContext`. Reasonable
+// follow-ups, kept out to keep the Python surface small and shell-first.
 /// Execution context passed to Python-backed custom builtins.
 ///
-/// Fields are snapshots of the shell state at invocation time.
+/// `name`, `argv`, `stdin`, `env`, and `cwd` are snapshots of the shell state at
+/// invocation time; `fs` is a live handle to the interpreter's virtual
+/// filesystem.
 #[pyclass(name = "BuiltinContext", skip_from_py_object)]
 struct PyBuiltinContext {
     #[pyo3(get)]
@@ -2181,6 +2224,8 @@ struct PyBuiltinContext {
     env: std::collections::HashMap<String, String>,
     #[pyo3(get)]
     cwd: String,
+    #[pyo3(get)]
+    fs: Py<PyFileSystem>,
 }
 
 #[pymethods]
@@ -2197,7 +2242,12 @@ fn make_py_builtin_context(
     py: Python<'_>,
     name: &str,
     ctx: &BuiltinContext<'_>,
+    rt: &Arc<Runtime>,
 ) -> Result<Py<PyBuiltinContext>, String> {
+    // Wrap the interpreter's live VFS as a `Static` handle so callbacks read and
+    // write the same filesystem without re-locking the interpreter.
+    let fs = Py::new(py, PyFileSystem::from_static(ctx.fs.clone(), rt.clone()))
+        .map_err(|e| e.to_string())?;
     Py::new(
         py,
         PyBuiltinContext {
@@ -2206,6 +2256,7 @@ fn make_py_builtin_context(
             stdin: ctx.stdin.map(str::to_owned),
             env: ctx.env.clone(),
             cwd: ctx.cwd.to_string_lossy().into_owned(),
+            fs,
         },
     )
     .map_err(|e| e.to_string())
@@ -3158,6 +3209,8 @@ struct PyCustomBuiltinAdapter {
     name: String,
     callback: Py<PyAny>,
     is_async: bool,
+    /// Shared runtime, threaded into each invocation's `ctx.fs` handle.
+    rt: Arc<Runtime>,
 }
 
 #[async_trait]
@@ -3165,7 +3218,7 @@ impl Builtin for PyCustomBuiltinAdapter {
     async fn execute(&self, ctx: BuiltinContext<'_>) -> bashkit::Result<RustExecResult> {
         let session = ctx.execution_extension::<Arc<PyCallbackSession>>().cloned();
         let builtin_arg = Python::attach(|py| -> Result<Py<PyAny>, String> {
-            let builtin_arg = make_py_builtin_context(py, &self.name, &ctx)
+            let builtin_arg = make_py_builtin_context(py, &self.name, &ctx, &self.rt)
                 .map_err(|e| format!("{}: {}", self.name, e))?
                 .into_bound(py)
                 .into_any()
@@ -3213,6 +3266,7 @@ impl Builtin for PyCustomBuiltinAdapter {
 fn build_runtime_custom_builtin_impls(
     py: Python<'_>,
     builtins: &[PyCustomBuiltinEntry],
+    rt: &Arc<Runtime>,
 ) -> Vec<PyCustomBuiltinAdapter> {
     builtins
         .iter()
@@ -3220,6 +3274,7 @@ fn build_runtime_custom_builtin_impls(
             name: entry.name.clone(),
             callback: entry.callback.clone_ref(py),
             is_async: entry.is_async,
+            rt: rt.clone(),
         })
         .collect()
 }
@@ -3234,8 +3289,9 @@ fn populate_registry_from_entries(
     py: Python<'_>,
     registry: &BuiltinRegistry,
     builtins: &[PyCustomBuiltinEntry],
+    rt: &Arc<Runtime>,
 ) {
-    for builtin in build_runtime_custom_builtin_impls(py, builtins) {
+    for builtin in build_runtime_custom_builtin_impls(py, builtins, rt) {
         registry.insert(builtin.name.clone(), Arc::new(builtin));
     }
 }
@@ -3788,13 +3844,12 @@ impl PyBash {
         builder = builder.readonly_filesystem(readonly_filesystem);
         let builtin_engine = PyCallbackEngine::new(py)?;
         let host_registry = BuiltinRegistry::new();
-        populate_registry_from_entries(py, &host_registry, &custom_builtins);
+        let rt = make_runtime()?;
+        populate_registry_from_entries(py, &host_registry, &custom_builtins, &rt);
         builder = builder.builtin_registry(host_registry.clone());
 
         let bash = builder.build();
         let cancelled = Arc::new(RwLock::new(bash.cancellation_token()));
-
-        let rt = make_runtime()?;
 
         Ok(Self {
             inner: Arc::new(Mutex::new(bash)),
@@ -4002,6 +4057,7 @@ impl PyBash {
             name: entry.name.clone(),
             callback: entry.callback.clone_ref(py),
             is_async: entry.is_async,
+            rt: self.rt.clone(),
         };
         {
             let mut guard = self
@@ -4532,7 +4588,7 @@ impl BashTool {
             if guard.is_empty() {
                 Vec::new()
             } else {
-                Python::attach(|py| build_runtime_custom_builtin_impls(py, &guard))
+                Python::attach(|py| build_runtime_custom_builtin_impls(py, &guard, &self.rt))
             }
         };
         for builtin in builtins {
@@ -4622,13 +4678,12 @@ impl BashTool {
         builder = builder.readonly_filesystem(readonly_filesystem);
         let builtin_engine = PyCallbackEngine::new(py)?;
         let host_registry = BuiltinRegistry::new();
-        populate_registry_from_entries(py, &host_registry, &custom_builtins);
+        let rt = make_runtime()?;
+        populate_registry_from_entries(py, &host_registry, &custom_builtins, &rt);
         builder = builder.builtin_registry(host_registry.clone());
 
         let bash = builder.build();
         let cancelled = Arc::new(RwLock::new(bash.cancellation_token()));
-
-        let rt = make_runtime()?;
 
         Ok(Self {
             inner: Arc::new(Mutex::new(bash)),
@@ -4796,6 +4851,7 @@ impl BashTool {
             name: entry.name.clone(),
             callback: entry.callback.clone_ref(py),
             is_async: entry.is_async,
+            rt: self.rt.clone(),
         };
         {
             let mut guard = self

@@ -293,6 +293,19 @@ Returns dict with `name`, `description`, `args_schema` for LangChain integration
 callback is
 `Callable[[BuiltinContext], str | BuiltinResult | Awaitable[str | BuiltinResult]]`.
 
+`BuiltinContext` exposes `name`, `argv`, `stdin`, `env`, `cwd`, and `fs`. The
+`fs` attribute is a `FileSystem` handle to the interpreter's *live* virtual
+filesystem (same API as `Bash.fs()`), so reads see files created by earlier
+commands and writes are visible to later ones. It wraps the same
+`Arc<dyn FileSystem>` the interpreter uses (mirroring how the embedded
+`python3`/Monty builtin receives `ctx.fs`) and operates on it directly without
+the interpreter lock. Because a custom builtin runs inside `execute_sync`'s
+current-thread `block_on`, `PyFileSystem::with_fs` detects the active runtime
+(`Handle::try_current`) and dispatches `ctx.fs` ops on a throwaway worker thread
+to avoid a nested-runtime panic. This is distinct from — and safe unlike —
+calling back into the owning instance's `Bash.fs()` / `Bash.read_file()`, which
+is rejected/unsupported re-entrancy.
+
 **Sync callbacks** are called directly under the session's captured `contextvars`
 snapshot and may return either a stdout string or a `BuiltinResult` with
 explicit `stdout`, `stderr`, and `exit_code`.
@@ -355,6 +368,16 @@ def view_image(ctx: BuiltinContext) -> BuiltinResult:
     if not ctx.argv:
         return BuiltinResult(stderr="view-image: missing path\n", exit_code=1)
     return BuiltinResult(stdout="")
+```
+
+```python
+# ctx.fs reads/writes the interpreter's live VFS.
+def head(ctx: BuiltinContext) -> str:
+    data = ctx.fs.read_file(ctx.argv[0]).decode()      # bytes -> str
+    return "".join(data.splitlines(keepends=True)[:10])
+
+bash = Bash(custom_builtins={"head10": head}, files={"/log.txt": "..."})
+bash.execute_sync("head10 /log.txt")
 ```
 
 ## Optional Dependencies
