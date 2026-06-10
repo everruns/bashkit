@@ -249,9 +249,7 @@ mod tests {
     use super::*;
     use std::time::Duration as StdDuration;
 
-    use super::super::{
-        DEFAULT_MAX_RESPONSE_BYTES, HttpHandler, NetworkAllowlist,
-    };
+    use super::super::{DEFAULT_MAX_RESPONSE_BYTES, HttpHandler, NetworkAllowlist};
 
     struct SlowHandler {
         delay: StdDuration,
