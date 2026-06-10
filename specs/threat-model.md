@@ -1767,9 +1767,16 @@ and receive now both run inside `py.detach(...)`. (2) Pyclass dealloc runs attac
 and dropped the last `Arc<Runtime>`; tokio's default `Runtime::drop` joins in-flight
 blocking tasks, and an abandoned (timed-out) callback task must re-attach to finish —
 freezing the entire interpreter. The `PyRuntime` handle now shuts the runtime down
-with `shutdown_background()` on last drop. Regression tests:
+with `shutdown_background()` on last drop. (3) The private-loop worker thread called
+`Python::attach` on its exit path to close its asyncio loop; the worker usually wakes
+because the engine was gc'd, and that gc commonly runs inside `Py_Finalize` —
+attaching during finalization fatals CPython (`PyGILState_Release`, SIGABRT at
+interpreter exit; `Python::try_attach` cannot detect finalization before 3.13). The
+worker exit path no longer touches Python: the loop's `Py` ref is dropped unattached
+(deferred decref) and the loop is closed by `BaseEventLoop.__del__`. Regression tests:
 `tests/test_async_callbacks.py::test_async_callback_execute_sync_honors_timeout`,
-`…::test_dealloc_during_inflight_callback_does_not_deadlock`.
+`…::test_dealloc_during_inflight_callback_does_not_deadlock`; variant (3) is covered
+by the `langgraph_async_tool.py` example run in the Python CI Examples job.
 
 | TM-PY-029 | Host clock information disclosure | `datetime.date.today()` / `datetime.datetime.now()` expose host system time and timezone | Intentional — required for correct datetime semantics | **ACCEPTED** |
 

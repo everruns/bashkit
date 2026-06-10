@@ -2249,9 +2249,16 @@ impl PyPrivateAsyncLoop {
                     let _ = item.result_tx.send(result);
                 }
 
-                Python::attach(|py| {
-                    let _ = event_loop.bind(py).call_method0("close");
-                });
+                // THREAT[TM-PY-030]: do NOT touch Python on the exit path.
+                // The worker wakes here because the engine was gc'd, and that
+                // gc commonly runs inside Py_Finalize — attaching then crashes
+                // CPython (PyGILState_Release fatal: SIGABRT at interpreter
+                // exit). Even Python::try_attach cannot detect finalization
+                // before 3.13. Dropping `event_loop` without attaching is safe
+                // (pyo3 defers the decref); the loop is closed by asyncio's
+                // BaseEventLoop.__del__ when the deferred decref runs, or
+                // reclaimed by the OS at process exit.
+                drop(event_loop);
             })
             .map_err(|e| {
                 PyRuntimeError::new_err(format!("failed to spawn private loop thread: {e}"))
