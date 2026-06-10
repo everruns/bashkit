@@ -264,10 +264,15 @@ async def test_execute_sync_ctx_fs_live_loop(factory):
 
 @pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
 @pytest.mark.asyncio
-async def test_await_execute_ctx_fs(factory):
-    """ctx.fs works from a builtin driven via await execute() on the caller loop."""
+async def test_await_execute_ctx_fs_uses_caller_loop(factory):
+    """An async ctx.fs builtin driven via await execute() runs on the caller's
+    loop (matching test_await_execute_async_builtin_uses_caller_loop)."""
 
-    def rw(ctx: BuiltinContext) -> str:
+    caller_loop = asyncio.get_running_loop()
+    captured: list = []
+
+    async def rw(ctx: BuiltinContext) -> str:
+        captured.append(asyncio.get_running_loop())
         ctx.fs.write_file("/aw.txt", b"await\n")
         return ctx.fs.read_file("/aw.txt").decode()
 
@@ -276,3 +281,4 @@ async def test_await_execute_ctx_fs(factory):
 
     assert result.exit_code == 0
     assert result.stdout == "await\n"
+    assert captured == [caller_loop]

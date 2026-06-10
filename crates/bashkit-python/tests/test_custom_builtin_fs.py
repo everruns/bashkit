@@ -69,6 +69,8 @@ def test_ctx_fs_supports_common_ops(factory):
 
     assert result.exit_code == 0
     assert result.stdout == "a.txt\n"
+    # Mutations persist on the live VFS after the callback returns.
+    assert shell.fs().read_file("/d/a.txt").decode() == "a"
 
 
 @pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
@@ -86,28 +88,41 @@ async def test_ctx_fs_works_from_async_callback(factory):
 
 
 @pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
+@pytest.mark.asyncio
+async def test_ctx_fs_async_callback_writes_file(factory):
+    async def awriter(ctx):
+        ctx.fs.write_file("/async-out.txt", b"async-write\n")
+        return "wrote\n"
+
+    shell = factory(custom_builtins={"awriter": awriter})
+    result = await shell.execute("awriter")
+
+    assert result.exit_code == 0
+    # The write is visible to later commands and via the instance handle.
+    cat = await shell.execute("cat /async-out.txt")
+    assert cat.stdout == "async-write\n"
+    assert shell.fs().read_file("/async-out.txt").decode() == "async-write\n"
+
+
+@pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
 def test_ctx_fs_read_missing_raises_clean_error(factory):
-    """Reading a missing path surfaces a clean ``RuntimeError`` (not a panic or a
+    """Reading a missing path raises a clean ``RuntimeError`` (not a panic or a
     leaked host path)."""
-    seen = {}
 
     def reader(ctx):
-        try:
+        with pytest.raises(RuntimeError) as exc_info:
             ctx.fs.read_file("/does-not-exist.txt")
-        except Exception as exc:  # inspect then re-raise
-            seen["type"] = type(exc).__name__
-            seen["msg"] = str(exc)
-            raise
-        return ""
+        message = str(exc_info.value)
+        # No host filesystem path leaks through the error.
+        assert "/rustc/" not in message
+        assert ".cargo" not in message
+        return "handled\n"
 
     shell = factory(custom_builtins={"reader": reader})
     result = shell.execute_sync("reader")
 
-    assert result.exit_code != 0
-    assert seen["type"] == "RuntimeError"
-    # No host filesystem path leaks through the error.
-    assert "/rustc/" not in seen["msg"]
-    assert ".cargo" not in seen["msg"]
+    assert result.exit_code == 0
+    assert result.stdout == "handled\n"
 
 
 @pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
@@ -130,16 +145,12 @@ def test_ctx_fs_write_then_read_within_one_callback(factory):
 def test_ctx_fs_respects_readonly_filesystem(factory):
     """Under ``readonly_filesystem=True`` reads succeed but writes are denied —
     ``ctx.fs`` does not bypass the read-only wrapper."""
-    seen = {}
 
     def writer(ctx):
-        seen["read"] = ctx.fs.read_file("/seed.txt").decode()
-        try:
+        assert ctx.fs.read_file("/seed.txt").decode() == "seeded\n"
+        with pytest.raises(RuntimeError):
             ctx.fs.write_file("/seed.txt", b"nope")
-        except Exception as exc:  # inspect then re-raise
-            seen["write_err"] = type(exc).__name__
-            raise
-        return ""
+        return "handled\n"
 
     shell = factory(
         custom_builtins={"writer": writer},
@@ -148,9 +159,10 @@ def test_ctx_fs_respects_readonly_filesystem(factory):
     )
     result = shell.execute_sync("writer")
 
-    assert seen["read"] == "seeded\n"
-    assert seen.get("write_err") == "RuntimeError"
-    assert result.exit_code != 0
+    assert result.exit_code == 0
+    assert result.stdout == "handled\n"
+    # The denied write left the seed file unchanged.
+    assert shell.fs().read_file("/seed.txt").decode() == "seeded\n"
 
 
 @pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])

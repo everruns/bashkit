@@ -95,8 +95,7 @@ class BuiltinContext:
             files created by earlier commands and writes are visible to later
             ones. Same API as ``Bash.fs()`` — e.g. ``ctx.fs.read_file(path)``
             returns ``bytes``. Operates directly on the interpreter's VFS, so
-            it is safe to use from inside the callback (unlike calling back
-            into ``Bash.fs()`` / ``Bash.read_file()`` on the owning instance).
+            it is safe to use from inside the callback.
     """
 
     name: str

@@ -318,6 +318,8 @@ async def test_concurrent_async_requests_ctx_fs_custom_builtin():
         body = response.json()
         assert body["exit_code"] == 0
         assert body["stdout"] == str(i)
+        # Each request's write landed on the shared VFS with the expected content.
+        assert bash.fs().read_file(f"/req-{i}.txt").decode() == str(i)
 
 
 @pytest.mark.asyncio
