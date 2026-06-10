@@ -9,7 +9,7 @@ inside the shared runtime's ``block_on``) and ``await execute``.
 
 import pytest
 
-from bashkit import Bash, BashTool, FileSystem
+from bashkit import Bash, BashError, BashTool, FileSystem
 
 
 @pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
@@ -106,23 +106,35 @@ async def test_ctx_fs_async_callback_writes_file(factory):
 
 @pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
 def test_ctx_fs_read_missing_raises_clean_error(factory):
-    """Reading a missing path raises a clean ``RuntimeError`` (not a panic or a
-    leaked host path)."""
+    """A missing read raises a clean ``RuntimeError`` at the ``ctx.fs`` boundary;
+    an unhandled one surfaces as a sanitized ``BashError`` at the call site
+    (no panic, no leaked host path)."""
 
     def reader(ctx):
         with pytest.raises(RuntimeError) as exc_info:
             ctx.fs.read_file("/does-not-exist.txt")
         message = str(exc_info.value)
-        # No host filesystem path leaks through the error.
         assert "/rustc/" not in message
         assert ".cargo" not in message
         return "handled\n"
 
-    shell = factory(custom_builtins={"reader": reader})
-    result = shell.execute_sync("reader")
+    def boom(ctx):
+        # No try/except: the ctx.fs error escapes the callback.
+        return ctx.fs.read_file("/does-not-exist.txt").decode()
 
-    assert result.exit_code == 0
-    assert result.stdout == "handled\n"
+    shell = factory(custom_builtins={"reader": reader, "boom": boom})
+
+    handled = shell.execute_sync("reader")
+    assert handled.exit_code == 0
+    assert handled.stdout == "handled\n"
+
+    # An unhandled ctx.fs error surfaces at the call site as a failed command;
+    # execute_sync_or_throw turns that into a (sanitized) BashError.
+    with pytest.raises(BashError) as exc_info:
+        shell.execute_sync_or_throw("boom")
+    message = str(exc_info.value)
+    assert "/rustc/" not in message
+    assert ".cargo" not in message
 
 
 @pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
