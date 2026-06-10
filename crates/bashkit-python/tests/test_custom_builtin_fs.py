@@ -211,3 +211,74 @@ def test_ctx_fs_cross_handle_consistency(factory):
 
     assert shell.execute_sync("writer").exit_code == 0
     assert shell.fs().read_file("/shared.txt").decode() == "shared\n"
+
+
+@pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
+def test_ctx_fs_supports_more_ops(factory):
+    """The remaining ``FileSystem`` ops (append_file/stat/rename/copy/chmod/
+    symlink/read_link/remove) round-trip through ``ctx.fs`` on the live VFS."""
+
+    def ops(ctx):
+        ctx.fs.mkdir("/m/src", recursive=True)
+        ctx.fs.write_file("/m/src/file.txt", b"alpha")
+        ctx.fs.append_file("/m/src/file.txt", b"beta")
+        assert ctx.fs.read_file("/m/src/file.txt") == b"alphabeta"
+
+        st = ctx.fs.stat("/m/src/file.txt")
+        assert st["file_type"] == "file"
+        assert st["size"] == 9
+
+        ctx.fs.mkdir("/m/dst", recursive=True)
+        ctx.fs.copy("/m/src/file.txt", "/m/dst/copied.txt")
+        ctx.fs.rename("/m/dst/copied.txt", "/m/dst/renamed.txt")
+        ctx.fs.symlink("/m/dst/renamed.txt", "/m/link.txt")
+        ctx.fs.chmod("/m/dst/renamed.txt", 0o600)
+        assert ctx.fs.read_link("/m/link.txt") == "/m/dst/renamed.txt"
+        assert ctx.fs.stat("/m/dst/renamed.txt")["mode"] == 0o600
+
+        ctx.fs.remove("/m/link.txt")
+        assert ctx.fs.exists("/m/link.txt") is False
+        return "ok\n"
+
+    shell = factory(custom_builtins={"ops": ops})
+    result = shell.execute_sync("ops")
+
+    assert result.exit_code == 0
+    assert result.stdout == "ok\n"
+    # Mutations persist on the live VFS after the callback returns.
+    assert shell.fs().read_file("/m/dst/renamed.txt") == b"alphabeta"
+    assert shell.fs().exists("/m/link.txt") is False
+
+
+@pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
+def test_ctx_fs_nested_reentry_via_lazy_provider(factory):
+    """A lazy provider triggered *via* ``ctx.fs.read_file`` itself reads another
+    file through a captured ``ctx.fs`` handle. The provider runs on the
+    worker-thread runtime (so ``Handle::try_current()`` is already true there),
+    which makes the inner read take the worker-thread dispatch branch again —
+    exercising recursive ``ctx.fs`` re-entry without deadlocking."""
+
+    holder = {}
+
+    def provider():
+        # Re-enters ctx.fs from inside the worker-thread runtime. /inner.txt is a
+        # plain file (no further Python callback), so the nested read completes.
+        return "nested:" + holder["fs"].read_file("/inner.txt").decode()
+
+    def setup(ctx):
+        holder["fs"] = ctx.fs
+        return "ready\n"
+
+    def trigger(ctx):
+        return ctx.fs.read_file("/lazy.txt").decode()
+
+    shell = factory(
+        custom_builtins={"setup": setup, "trigger": trigger},
+        files={"/lazy.txt": provider, "/inner.txt": "inner-data\n"},
+    )
+
+    assert shell.execute_sync("setup").exit_code == 0
+    result = shell.execute_sync("trigger")
+
+    assert result.exit_code == 0
+    assert result.stdout == "nested:inner-data\n"
