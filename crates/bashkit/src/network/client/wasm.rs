@@ -22,7 +22,7 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{AbortController, Request, RequestInit, RequestMode, Response};
 
-use super::client::{Method, Response as HttpResponse};
+use super::{Method, Response as HttpResponse};
 use crate::error::{Error, Result};
 
 /// Wrapper that asserts a future is `Send`.

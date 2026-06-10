@@ -12,7 +12,7 @@
 //!   via `web_sys` and `wasm_bindgen_futures`. DNS checks are limited to
 //!   literal-IP blocking because the browser does not expose raw socket or
 //!   DNS APIs. Timeouts are enforced with `AbortController`.
-//!   See `client_wasm` for the WASM transport implementation.
+//!   See `client::wasm` for the WASM transport implementation.
 //!
 //! # Security Mitigations
 //!
@@ -41,6 +41,9 @@ use crate::error::{Error, Result};
 
 #[cfg(not(target_family = "wasm"))]
 mod native;
+
+#[cfg(target_family = "wasm")]
+mod wasm;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -717,7 +720,7 @@ impl HttpClient {
         timeout: Duration,
         _connect_timeout: Option<Duration>,
     ) -> Result<Response> {
-        let response = crate::network::client_wasm::send_request(
+        let response = wasm::send_request(
             self.max_response_bytes,
             method,
             url,
