@@ -312,6 +312,20 @@ to a daemon thread whose `run_until_complete` call is wrapped in `context.run()`
 so ContextVars propagate correctly despite the thread switch. The helper is
 cached on the `PyPrivateAsyncLoop` to avoid repeated module compilation.
 
+**Teardown determinism** (TM-PY-030): while the interpreter is alive, dropping
+the last reference to a `Bash`/`BashTool`/`ScriptedTool` deterministically
+releases everything it owns *before* the drop returns — in-flight private-loop
+callbacks are cancelled cooperatively (each runs as an `asyncio.Task`;
+cancellation raises `asyncio.CancelledError` at the next await point), the
+private-loop worker thread is joined and closes its event loop (freeing its
+fds), and the tokio runtime's blocking pool is joined. All joins release the
+GIL first, so teardown cannot deadlock against callbacks that need to attach.
+Callbacks that block without awaiting (e.g. `time.sleep` inside `async def`)
+cannot be cancelled mid-section; teardown then waits for the current section
+to reach an await point or return. At interpreter exit (boundary: an `atexit`
+handler registered at module import), teardown goes hands-off — native threads
+must not touch a finalizing CPython — and the OS reclaims resources.
+
 **ContextVar propagation**: ContextVars set before `execute()` or
 `execute_sync()` are captured at call time and replayed inside each callback
 invocation regardless of which mechanism is used.
