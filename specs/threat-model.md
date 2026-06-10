@@ -136,6 +136,15 @@ the session-level backstop.
 | TM-DOS-039 | Missing validate_path in VFS methods | `remove`, `stat`, `read_dir`, `copy`, `rename`, `symlink`, `chmod` skip `validate_path()` | All `FileSystem` methods on `InMemoryFs` and `OverlayFs` call `validate_path()`; `MountableFs` validates via the root limits before delegating (TM-DOS-046) | **MITIGATED** |
 | TM-DOS-040 | Integer truncation on 32-bit | `u64 as usize` casts in network/Python extension silently truncate on 32-bit, bypassing size checks | All `u64`-to-`usize` size-check casts in `network/client.rs` (Content-Length checks) and `bashkit-python/src/lib.rs` (limits propagation) use `usize::try_from(...).unwrap_or(usize::MAX)` so over-`usize` values fail safe instead of wrapping | **MITIGATED** |
 
+> **Scope of the FS quotas above (TM-DOS-005/006/010, `max_file_size` /
+> `max_file_count` / `max_total_bytes`)**: these are enforced by the
+> in-memory and overlay backends. They do **not** apply to a `RealFs` mount
+> in `RealFsMode::ReadWrite` — `RealFs::limits()` returns `unlimited()` and
+> writes go straight to the host with no byte/count quota. This is by design
+> (`--mount-rw` is sandbox-breaking, see TM-ESC-030), but it means a script
+> with a writable real-FS mount can exhaust host disk/inodes. Use
+> `--mount-ro` for untrusted scripts.
+
 **TM-DOS-034**: Fixed. `InMemoryFs::append_file()` now uses a single write lock for the entire
 read-check-write operation, preventing TOCTOU races. See `fs/memory.rs:940-942`.
 
@@ -308,21 +317,25 @@ longer the primary defence. Regression tests:
 depth exceeded` error. Regression test:
 `tests/threat_model_tests.rs::yaml_template_depth::tm_dos_052_template_if_depth_bomb`.
 
-**Current Risk**: MEDIUM - Three open DoS vectors (TM-DOS-029, TM-DOS-030, TM-DOS-031) need remediation
+**Current Risk**: LOW — TM-DOS-029, TM-DOS-030, and TM-DOS-031 are all mitigated
+(see the status table above). Their original write-ups are kept below for history.
 
-**TM-DOS-029**: Arithmetic exponentiation casts `i64` to `u32` (`right as u32`), wrapping negatives.
-`i64::pow()` with large exponent panics or hangs. Shift operators panic if `right >= 64` or `right < 0`.
-`i64::MIN / -1` panics. All arithmetic panics in debug on overflow.
-Fix: use `wrapping_*` operations and clamp shift/exponent ranges.
+**TM-DOS-029** (mitigated): Arithmetic exponentiation cast `i64` to `u32` (`right as u32`),
+wrapping negatives; `i64::pow()` with a large exponent panicked or hung; shift operators panicked
+if `right >= 64` or `right < 0`; `i64::MIN / -1` panicked. Resolved: arithmetic ops use `wrapping_*`,
+shift amounts are masked, and the exponent is clamped (`interpreter/mod.rs` arithmetic evaluator).
+The same `i64::MIN / -1` guard is now applied in the `expr` builtin (`checked_div`/`checked_rem`).
 
-**TM-DOS-030**: `eval` (line 4613), `source` (line 4548), trap handlers (lines 697, 7795), and alias
-expansion (line 3627) all use `Parser::new()` which ignores configured `max_ast_depth` and
-`max_parser_operations`. Previously fixed for command substitution (TM-DOS-021) but not these paths.
-Fix: use `Parser::with_limits()` everywhere.
+**TM-DOS-030** (fixed): `eval`, `source`, trap handlers, and alias expansion previously used
+`Parser::new()`, ignoring configured `max_ast_depth` / `max_parser_operations`. Resolved: all of
+these paths use `Parser::with_limits()`. Separately, `eval` and alias expansion now run their bodies
+via `execute_script_body(.., run_exit_trap=false)` (like `source`) so they do not fire the EXIT trap
+— previously they ran the unguarded EXIT trap, letting `trap 'eval :' EXIT` recurse one command per
+level until the budget aborted.
 
-**TM-DOS-031**: ExtGlob `+(...)` and `*(...)` handlers recurse without depth limit. Pattern
-`+(a|aa)` against `"aaaa..."` creates exponential backtracking via nested `glob_match_impl` calls.
-Fix: add depth parameter to `glob_match_impl`, bail when exceeded.
+**TM-DOS-031** (mitigated): ExtGlob `+(...)` / `*(...)` handlers recursed without a depth limit.
+Resolved: `glob_match_impl` carries a recursion-depth cap and bails when exceeded
+(`interpreter/glob.rs`).
 
 **Implementation**: `limits.rs`, `builtins/awk.rs`, `builtins/jq/`, `builtins/diff.rs`
 ```rust
@@ -1354,7 +1367,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | TM-INF-017 | `set` and `declare -p` leak internal markers | Internal state disclosure (_NAMEREF_, _READONLY_, _UPPER_, _LOWER_) | Filter `is_internal_variable()` names from output |
 | TM-INF-018 | `date` builtin returns real host time | Timezone fingerprinting, timing correlation | `Bash::builder().fixed_epoch(N)` freezes the clock; `Bash::builder().epoch_offset(N)` shifts real-clock by N seconds (mutually exclusive, last call wins). Both implemented via `Date::with_fixed_epoch` / `Date::with_offset_seconds` in `builtins/date.rs`. Default behavior is real clock — embed callers opt in for sandboxing. Regression tests: `tm_inf_018_date::*` in `tests/threat_model_tests.rs`. | **MITIGATED** (opt-in) |
 | ~~TM-DOS-041~~ | ~~Brace expansion `{N..M}` unbounded range~~ | ~~OOM via `{1..999999999}` allocating billions of strings~~ | Static parser-time check (`MAX_STATIC_BRACE_RANGE = 100_000` in `parser/budget.rs`) rejects oversized literal ranges with `BraceRangeTooLarge`; runtime fallback in `try_expand_range` (`MAX_BRACE_RANGE = 10_000`) treats remaining oversized ranges as literals (**FIXED**) |
-| ~~TM-DOS-042~~ | ~~Brace expansion combinatorial explosion~~ | ~~OOM via `{1..100}{1..100}{1..100}` = 1M strings~~ | `expand_braces` caps total emitted strings at `MAX_BRACE_EXPANSION_TOTAL = 100_000` and bails out of the recursion when the budget is hit (**FIXED**) |
+| ~~TM-DOS-042~~ | ~~Brace expansion combinatorial explosion~~ | ~~OOM/stack overflow via `{1..100}{1..100}{1..100}` (1M strings) or `{a,b}{a,b}...` (deep recursion)~~ | `expand_braces` caps total emitted strings (`MAX_BRACE_EXPANSION_TOTAL = 100_000`). The count cap alone was insufficient for comma-lists: it is only charged on recursion *return*, so the first DFS path descended one frame per group with the count still zero and stack-overflowed. Now also bounds recursion depth and cumulative output bytes (`MAX_EXPANSION_RESULT_BYTES`) so it degrades to a bounded literal result (**FIXED**) |
 | ~~TM-DOS-043~~ | ~~Arithmetic overflow in `execute_arithmetic_with_side_effects`~~ | ~~Panic (DoS) in debug mode via `((x+=1))` with x=i64::MAX~~ | ~~Use `wrapping_add/sub/mul`~~ (**FIXED**) |
 | ~~TM-DOS-044~~ | ~~Lexer `read_command_subst_into` stack overflow~~ | ~~Process crash (SIGABRT) via ~50 nested `$()` in double-quotes~~ | ~~Add depth parameter to `read_command_subst_into()`~~ (**FIXED**) |
 | ~~TM-DOS-045~~ | ~~OverlayFs `symlink()` bypasses all limits~~ | ~~Unlimited symlink creation despite `max_file_count`~~ | ~~Add `check_write_limits()` + `validate_path()` to symlink~~ — overlay symlink path enforces limits (**FIXED**) |
@@ -1387,6 +1400,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | ~~TM-DOS-090~~ | ~~`shuf` unbounded range/repeat materialization~~ | ~~OOM/CPU exhaustion via huge `--input-range` or `--head-count` before stdout truncation~~ | ~~Sample numeric ranges without full collection and reject output that exceeds `ExecutionLimits` before allocation~~ — `shuf_resource_tests` cover huge range `-n 1` and repeat output caps (**FIXED**) |
 | TM-DOS-091 | SQLite `.dump` cumulative output bypass | `.dump` built the full schema+rows string before checking `max_output_bytes`; an attacker controlling many tables/rows could cause memory to grow far beyond the configured output cap | `bounded_append()` helper enforces the cap after each schema line and each INSERT row; `dispatch()` receives the *remaining* budget (`max_output_bytes - stdout.len()`) from `run_statements` — **FIXED** via #1869 |
 | TM-DOS-092 | Subshell snapshot amplification | Deeply nested `( ... )` keeps CoW state snapshots and call-stack clones alive | `max_subshell_depth` counter (default 32) bounds live explicit subshell snapshots | **MITIGATED** |
+| TM-DOS-093 | jq unbounded generator OOM/hang | `jq -n 'repeat(1)'` / `range(0;1e18)` — the jaq result loop appended every value to an in-memory string with no byte/value/deadline cap; jaq's iterator is synchronous so the async execution timeout cannot preempt it. jq is a core builtin (no opt-in gate) | Cap accumulated output at the caller's `max_stdout_bytes` and poll `ExecutionDeadline::is_expired()` every 4096 values, aborting with a clean error (`builtins/jq/mod.rs`) — **FIXED** |
 
 ### Accepted (Low Priority)
 
@@ -1457,7 +1471,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | VFS limit enforcement on public API | TM-ESC-012 | `validate_path()` + `check_write_limits()` in `add_file()` / `restore()` | **MITIGATED** |
 | Custom jaq env function | TM-INF-013, TM-ISO-004 | Read from `ctx.env`/`ctx.variables`, not `std::env` | **DONE** |
 | Internal variable namespace isolation | TM-INJ-009 | `is_internal_variable()` rejection in every write path; `set` / `declare -p` filter | **MITIGATED** |
-| Parser limit propagation | TM-DOS-030 | `Parser::with_limits()` in eval/source/trap/alias | **NEEDED** |
+| Parser limit propagation | TM-DOS-030 | `Parser::with_limits()` in eval/source/trap/alias | **MITIGATED** |
 | ExtGlob depth limit | TM-DOS-031 | Depth parameter in `glob_match_impl` (`interpreter/glob.rs:162,324`) | **MITIGATED** |
 | Python wrapper input sanitization | TM-PY-023, TM-PY-024 | `shlex.quote()` on every interpolated path; per-call random heredoc delimiter via `secrets.token_hex(8)` | **MITIGATED** |
 | Tar path validation | TM-INJ-010 | Resolved-path check + `starts_with(&extract_base)` in `archive.rs` | **MITIGATED** |

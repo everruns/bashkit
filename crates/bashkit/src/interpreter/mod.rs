@@ -4926,7 +4926,10 @@ impl Interpreter {
                         1,
                     ))
                 } else {
-                    self.execute(&s).await
+                    // Alias expansion runs in the current shell: use
+                    // execute_script_body (like source/eval), NOT execute(),
+                    // so an aliased command does not fire the EXIT trap.
+                    self.execute_script_body(&s, false, true).await
                 }
             }
             Err(e) => Ok(ExecResult::err(
@@ -6292,7 +6295,12 @@ impl Interpreter {
             self.pipeline_stdin = stdin;
         }
 
-        let mut result = self.execute(&script).await?;
+        // eval runs in the current shell: use execute_script_body (like source),
+        // NOT execute(), so it does not fire the EXIT trap. execute() runs the
+        // EXIT trap, which is wrong for eval and — because the top-level EXIT
+        // trap has no re-entrancy guard — lets `trap 'eval :' EXIT` recurse one
+        // command per level until the budget aborts, risking stack overflow.
+        let mut result = self.execute_script_body(&script, false, true).await?;
 
         self.pipeline_stdin = prev_pipeline_stdin;
 
@@ -11892,11 +11900,32 @@ impl Interpreter {
     fn expand_braces(&self, s: &str) -> Vec<String> {
         const MAX_BRACE_EXPANSION_TOTAL: usize = 100_000;
         let mut count = 0;
-        self.expand_braces_capped(s, &mut count, MAX_BRACE_EXPANSION_TOTAL)
+        let mut bytes = 0;
+        self.expand_braces_capped(s, &mut count, &mut bytes, MAX_BRACE_EXPANSION_TOTAL, 0)
     }
 
-    fn expand_braces_capped(&self, s: &str, count: &mut usize, max: usize) -> Vec<String> {
-        if *count >= max {
+    /// THREAT[TM-DOS-042]: The combinatorial `count` cap alone is insufficient
+    /// because it is only incremented *after* each recursive call returns, so
+    /// the first DFS path descends to the full nesting/sequence depth (one
+    /// level per brace group) with `count` still zero. An input like
+    /// `{a,b}{a,b}...` repeated tens of thousands of times (well under
+    /// `max_input_bytes`) therefore stack-overflows the worker thread, and
+    /// allocates O(depth * suffix) memory, before the count cap or execution
+    /// timeout can fire. The `depth` cap bounds the descent up front;
+    /// legitimate scripts never approach this many nested/sequential groups.
+    fn expand_braces_capped(
+        &self,
+        s: &str,
+        count: &mut usize,
+        bytes: &mut usize,
+        max: usize,
+        recursion_depth: usize,
+    ) -> Vec<String> {
+        const MAX_BRACE_EXPANSION_DEPTH: usize = 100;
+        if *count >= max
+            || *bytes >= Self::MAX_EXPANSION_RESULT_BYTES
+            || recursion_depth >= MAX_BRACE_EXPANSION_DEPTH
+        {
             return vec![s.to_string()];
         }
 
@@ -11955,12 +11984,14 @@ impl Interpreter {
         if let Some(range_result) = self.try_expand_range(&brace_content) {
             let mut results = Vec::new();
             for item in range_result {
-                if *count >= max {
+                if *count >= max || *bytes >= Self::MAX_EXPANSION_RESULT_BYTES {
                     break;
                 }
                 let expanded = format!("{}{}{}", prefix, item, suffix);
-                let sub = self.expand_braces_capped(&expanded, count, max);
+                let sub =
+                    self.expand_braces_capped(&expanded, count, bytes, max, recursion_depth + 1);
                 *count += sub.len();
+                *bytes += sub.iter().map(String::len).sum::<usize>();
                 results.extend(sub);
             }
             return results;
@@ -11976,12 +12007,13 @@ impl Interpreter {
 
         let mut results = Vec::new();
         for item in items {
-            if *count >= max {
+            if *count >= max || *bytes >= Self::MAX_EXPANSION_RESULT_BYTES {
                 break;
             }
             let expanded = format!("{}{}{}", prefix, item, suffix);
-            let sub = self.expand_braces_capped(&expanded, count, max);
+            let sub = self.expand_braces_capped(&expanded, count, bytes, max, recursion_depth + 1);
             *count += sub.len();
+            *bytes += sub.iter().map(String::len).sum::<usize>();
             results.extend(sub);
         }
 
@@ -12135,6 +12167,24 @@ mod tests {
     use crate::Bash;
     use crate::fs::InMemoryFs;
     use crate::parser::Parser;
+
+    /// TM-DOS-042: comma-list brace expansion must not recurse one frame per
+    /// brace group (stack overflow) nor accumulate unbounded memory. A long
+    /// `{a,b}{a,b}...` sequence — far under the input cap — used to descend to
+    /// full depth before any cap engaged.
+    #[test]
+    fn brace_expansion_comma_sequence_is_bounded() {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        let interp = Interpreter::new(Arc::clone(&fs));
+        let s = "{a,b}".repeat(50_000);
+        let out = interp.expand_braces(&s);
+        // Must terminate without panic/overflow and stay bounded.
+        let total: usize = out.iter().map(String::len).sum();
+        assert!(
+            total <= Interpreter::MAX_EXPANSION_RESULT_BYTES + 1024,
+            "brace expansion produced {total} bytes — should be byte-capped"
+        );
+    }
 
     #[test]
     fn test_empty_anchored_replacement_respects_expansion_limit() {

@@ -264,7 +264,21 @@ impl CredentialPolicy {
                                 .iter()
                                 .find(|(name, _)| name.eq_ignore_ascii_case(header_name))
                             {
-                                *header_value = header_value.replace(placeholder_str, secret_value);
+                                // Substitute only when the placeholder appears
+                                // exactly once. A legitimate value carries one
+                                // placeholder; multiple occurrences are a
+                                // segmentation/fingerprinting attempt (a script
+                                // splitting the value to read the secret back in
+                                // chunks from a header-reflecting endpoint), so
+                                // we refuse and fail closed — the request goes
+                                // out with placeholders, never the real secret.
+                                // (The single-echo risk where an approved host
+                                // reflects the whole header remains a documented
+                                // v1 limitation; see credential-injection.md.)
+                                if header_value.matches(placeholder_str).count() == 1 {
+                                    *header_value =
+                                        header_value.replacen(placeholder_str, secret_value, 1);
+                                }
                             }
                         }
                     }
@@ -453,6 +467,37 @@ mod tests {
             HookAction::Continue(e) => {
                 assert_eq!(e.headers.len(), 1);
                 assert_eq!(e.headers[0].1, "Bearer sk-real-key");
+            }
+            HookAction::Cancel(_) => panic!("should not cancel"),
+        }
+    }
+
+    #[test]
+    fn test_placeholder_multiple_occurrences_fail_closed() {
+        // A script repeating the placeholder is attempting to segment the
+        // secret across a header-reflecting endpoint. We must not substitute
+        // anything: the request goes out with placeholders, never the secret.
+        let mut policy = CredentialPolicy::new();
+        let placeholder =
+            policy.add_placeholder("https://api.openai.com", Credential::bearer("sk-real-key"));
+
+        let hook = policy.into_hook();
+        let event = HttpRequestEvent {
+            method: "POST".into(),
+            url: "https://api.openai.com/v1/chat/completions".into(),
+            headers: vec![(
+                "Authorization".into(),
+                format!("Bearer {placeholder}.{placeholder}"),
+            )],
+        };
+
+        match hook(event) {
+            HookAction::Continue(e) => {
+                assert!(
+                    !e.headers[0].1.contains("sk-real-key"),
+                    "secret must not be injected when placeholder is repeated"
+                );
+                assert!(e.headers[0].1.contains("bk_placeholder_"));
             }
             HookAction::Cancel(_) => panic!("should not cancel"),
         }

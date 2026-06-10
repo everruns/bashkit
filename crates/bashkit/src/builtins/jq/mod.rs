@@ -24,9 +24,10 @@ use jaq_core::{Compiler, Ctx, Vars, data};
 use jaq_json::Val;
 use jaq_std::input::{HasInputs, Inputs, RcIter};
 
-use super::{Builtin, Context, read_text_file, resolve_path};
+use super::{Builtin, Context, ExecutionDeadline, read_text_file, resolve_path};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
+use crate::limits::ExecutionLimits;
 
 mod args;
 mod compat;
@@ -338,6 +339,19 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
     let mut has_output = false;
     let mut all_null_or_false = true;
 
+    // THREAT[TM-DOS-093]: jaq evaluation is a synchronous iterator that the
+    // async execution timeout cannot preempt. Unbounded generators
+    // (`jq -n 'repeat(1)'`, `range(0;1e18)`) would grow `output` without limit
+    // (OOM) or spin forever producing no output (hang). Cap accumulated output
+    // bytes against the caller's stdout limit and check the wall-clock deadline
+    // periodically so a runaway filter aborts instead of wedging the host.
+    let max_output_bytes = ctx
+        .execution_extension::<ExecutionLimits>()
+        .map(|l| l.max_stdout_bytes)
+        .unwrap_or_else(|| ExecutionLimits::default().max_stdout_bytes);
+    let deadline = ctx.execution_extension::<ExecutionDeadline>();
+    let mut values_emitted: usize = 0;
+
     // Drive the outer loop from the shared input iterator so `input`/`inputs`
     // inside the filter consume from the same source (matching real jq:
     // `[inputs]` on a 3-value stream returns the *remaining* values, not all).
@@ -404,6 +418,19 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
                     output.push_str(&formatted);
                     if !parsed.join_output {
                         output.push('\n');
+                    }
+
+                    if output.len() > max_output_bytes {
+                        return Ok(ExecResult::err(
+                            format!("jq: output limit exceeded ({max_output_bytes} bytes)\n"),
+                            5,
+                        ));
+                    }
+                    values_emitted += 1;
+                    if values_emitted.is_multiple_of(4096)
+                        && deadline.is_some_and(ExecutionDeadline::is_expired)
+                    {
+                        return Ok(ExecResult::err("jq: execution timed out\n".to_string(), 5));
                     }
                 }
                 Err(e) => {

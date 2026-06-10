@@ -151,7 +151,9 @@ fn parse_base_date(s: &str, now: DateTime<Utc>) -> std::result::Result<DateTime<
 
     // Relative: "N unit(s) ago" or "+N unit(s)" or "-N unit(s)"
     if let Some(duration) = parse_relative_date(&lower) {
-        return Ok(now + duration);
+        return now
+            .checked_add_signed(duration)
+            .ok_or_else(|| format!("date out of range: '{}'", s));
     }
 
     // Try ISO-like formats: YYYY-MM-DD HH:MM:SS, YYYY-MM-DD
@@ -230,8 +232,15 @@ fn parse_date_string(s: &str, now: DateTime<Utc>) -> std::result::Result<DateTim
             // and ISO dates correctly.
             let orig_base = s[..base_match.end()].trim();
             if let Ok(base_dt) = parse_base_date(orig_base, now) {
-                let offset = unit_duration(unit, sign * n);
-                return Ok(base_dt + offset);
+                let offset = unit_duration(
+                    unit,
+                    sign.checked_mul(n)
+                        .ok_or_else(|| format!("date out of range: '{}'", s))?,
+                )
+                .ok_or_else(|| format!("date out of range: '{}'", s))?;
+                return base_dt
+                    .checked_add_signed(offset)
+                    .ok_or_else(|| format!("date out of range: '{}'", s));
             }
         }
     }
@@ -258,7 +267,7 @@ fn parse_relative_date(s: &str) -> Option<Duration> {
         regex::Regex::new(r"^(\d+)\s+(second|minute|hour|day|week|month|year)s?\s+ago$").ok()?;
     if let Some(caps) = re_ago.captures(s) {
         let n: i64 = caps[1].parse().ok()?;
-        return Some(unit_duration(&caps[2], -n));
+        return unit_duration(&caps[2], n.checked_neg()?);
     }
 
     // "+N unit(s)" or "-N unit(s)" or "N unit(s)"
@@ -267,32 +276,35 @@ fn parse_relative_date(s: &str) -> Option<Duration> {
     if let Some(caps) = re_rel.captures(s) {
         let sign = if &caps[1] == "-" { -1i64 } else { 1i64 };
         let n: i64 = caps[2].parse().ok()?;
-        return Some(unit_duration(&caps[3], sign * n));
+        return unit_duration(&caps[3], sign.checked_mul(n)?);
     }
 
     // "next unit" / "last unit"
     if let Some(unit) = s.strip_prefix("next ") {
         let unit = unit.trim().trim_end_matches('s');
-        return Some(unit_duration(unit, 1));
+        return unit_duration(unit, 1);
     }
     if let Some(unit) = s.strip_prefix("last ") {
         let unit = unit.trim().trim_end_matches('s');
-        return Some(unit_duration(unit, -1));
+        return unit_duration(unit, -1);
     }
 
     None
 }
 
-fn unit_duration(unit: &str, n: i64) -> Duration {
+// Returns None when the requested offset overflows i64 (the multiply) or the
+// chrono Duration range, so callers can report "date out of range" instead of
+// panicking on inputs like `date -d "30000000000000000 years"`.
+fn unit_duration(unit: &str, n: i64) -> Option<Duration> {
     match unit {
-        "second" => Duration::seconds(n),
-        "minute" => Duration::minutes(n),
-        "hour" => Duration::hours(n),
-        "day" => Duration::days(n),
-        "week" => Duration::weeks(n),
-        "month" => Duration::days(n * 30), // Approximate
-        "year" => Duration::days(n * 365), // Approximate
-        _ => Duration::zero(),
+        "second" => Duration::try_seconds(n),
+        "minute" => Duration::try_minutes(n),
+        "hour" => Duration::try_hours(n),
+        "day" => Duration::try_days(n),
+        "week" => Duration::try_weeks(n),
+        "month" => n.checked_mul(30).and_then(Duration::try_days), // Approximate
+        "year" => n.checked_mul(365).and_then(Duration::try_days), // Approximate
+        _ => Some(Duration::zero()),
     }
 }
 
@@ -775,6 +787,20 @@ mod tests {
         assert_eq!(result.exit_code, 0);
         let date = result.stdout.trim();
         assert_eq!(date.len(), 10);
+    }
+
+    /// Relative offsets that overflow i64 or the chrono range must report an
+    /// error, not panic (e.g. `n * 365` in unit_duration, then base + offset).
+    #[tokio::test]
+    async fn test_date_d_relative_overflow_no_panic() {
+        for spec in [
+            "30000000000000000 years",
+            "+9000000000000000000 days",
+            "300000000000000000 months ago",
+        ] {
+            let result = run_date(&["-d", spec, "+%Y"]).await;
+            assert_ne!(result.exit_code, 0, "spec '{spec}' should fail cleanly");
+        }
     }
 
     #[tokio::test]

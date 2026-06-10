@@ -321,6 +321,36 @@ mod whitebox_resource_limits {
         assert_ne!(r.exit_code, 0, "100ms limit should block long loop");
     }
 
+    /// The bash-level execution timeout must bound a CPU-bound Python loop even
+    /// when PythonLimits.max_duration is much larger: the async timeout cannot
+    /// preempt Monty's synchronous run, so the builtin clamps Monty's duration
+    /// to the remaining deadline. Without the clamp this would run for the full
+    /// 60s Python limit. Use a generous (2s) bash timeout so the clamp normally
+    /// stops Monty cleanly first; either a non-zero `Ok` exit or a `Timeout`
+    /// `Err` is acceptable — both prove the loop was bounded, and the
+    /// elapsed-time assertion (well under the 60s Python limit) is the real
+    /// regression guard. Accepting both avoids flakiness on loaded runners.
+    #[tokio::test]
+    async fn bash_timeout_clamps_python_duration() {
+        let bash = Bash::builder()
+            .python_with_limits(PythonLimits::default().max_duration(Duration::from_secs(60)))
+            .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
+            .limits(ExecutionLimits::new().timeout(Duration::from_secs(2)));
+        let mut bash = bash.build();
+        let start = std::time::Instant::now();
+        let result = bash.exec("python3 -c \"while True:\n    pass\"").await;
+        let elapsed = start.elapsed();
+        // An Err here is the outer execution timeout firing, which is also an
+        // acceptable bound; the elapsed-time assertion below is the real guard.
+        if let Ok(r) = result {
+            assert_ne!(r.exit_code, 0, "infinite loop should be stopped");
+        }
+        assert!(
+            elapsed < Duration::from_secs(15),
+            "bash timeout did not clamp Python duration: ran {elapsed:?}"
+        );
+    }
+
     #[tokio::test]
     async fn tight_recursion_blocks_deep_call() {
         let limits = PythonLimits::default().max_recursion(10);

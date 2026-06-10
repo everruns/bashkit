@@ -118,13 +118,14 @@ fn evaluate(args: &[&str]) -> std::result::Result<String, String> {
                         if b == 0 {
                             return Err("division by zero".to_string());
                         }
-                        a / b
+                        // checked_div guards i64::MIN / -1 (overflow panic).
+                        a.checked_div(b).ok_or("integer overflow")?
                     }
                     "%" => {
                         if b == 0 {
                             return Err("division by zero".to_string());
                         }
-                        a % b
+                        a.checked_rem(b).ok_or("integer overflow")?
                     }
                     _ => unreachable!(),
                 };
@@ -543,6 +544,31 @@ mod tests {
         let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
         let result = Expr.execute(ctx).await.unwrap();
         assert_eq!(result.stdout.trim(), "0");
+    }
+
+    // ==================== arithmetic overflow ====================
+
+    /// i64::MIN / -1 (and % -1) overflow; must return a clean error, not panic.
+    #[tokio::test]
+    async fn expr_div_overflow_no_panic() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        for op in ["/", "%"] {
+            let args = vec![
+                "-9223372036854775808".to_string(),
+                op.to_string(),
+                "-1".to_string(),
+            ];
+            let ctx =
+                Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+            let result = Expr.execute(ctx).await.unwrap();
+            assert_eq!(result.exit_code, 2, "op {op} should error");
+            assert!(
+                result.stderr.contains("integer overflow"),
+                "op {op}: expected overflow error, got {:?}", // debug-ok: test assertion
+                result.stderr
+            );
+        }
     }
 
     // ==================== pattern matching ====================

@@ -810,7 +810,11 @@ impl MemoryBudget {
                 limits.max_function_count
             )));
         }
-        let new_bytes = self.function_body_bytes + body_bytes - old_body_bytes;
+        // saturating_sub mirrors record_function_insert: if accounting ever
+        // drifts so old_body_bytes exceeds the running total (e.g. after a
+        // snapshot restore recomputes sizes differently), the check must not
+        // underflow-panic.
+        let new_bytes = (self.function_body_bytes + body_bytes).saturating_sub(old_body_bytes);
         if new_bytes > limits.max_function_body_bytes {
             return Err(LimitExceeded::Memory(format!(
                 "function body byte limit ({}) exceeded",
