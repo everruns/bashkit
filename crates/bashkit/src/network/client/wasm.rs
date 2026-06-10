@@ -47,8 +47,13 @@ impl<F: Future> Future for AssertSend<F> {
 }
 
 /// Format a `JsValue` error for network error reporting.
+///
+/// Extracts the human-readable message without dumping the full
+/// `JsValue` debug representation (which includes a wasm stack trace).
 fn js_err_str(e: &wasm_bindgen::JsValue) -> String {
-    e.as_string().unwrap_or_else(|| format!("{:?}", e))
+    e.as_string()
+        .or_else(|| js_sys::Reflect::get(e, &"message".into()).ok()?.as_string())
+        .unwrap_or_else(|| "unknown error".to_string())
 }
 
 /// Execute an HTTP request via the browser `fetch` API.
@@ -64,8 +69,12 @@ pub(crate) fn send_request(
     let url = url.to_string();
     let headers = headers.to_vec();
     AssertSend(async move {
-        let abort_controller = AbortController::new()
-            .map_err(|e| Error::Internal(format!("failed to create abort controller: {:?}", e)))?;
+        let abort_controller = AbortController::new().map_err(|e| {
+            Error::Internal(format!(
+                "failed to create abort controller: {}",
+                js_err_str(&e)
+            ))
+        })?;
 
         let opts = RequestInit::new();
         opts.set_method(method.as_str());
@@ -78,18 +87,18 @@ pub(crate) fn send_request(
         }
 
         let request = Request::new_with_str_and_init(&url, &opts)
-            .map_err(|e| Error::Network(format!("failed to build request: {:?}", e)))?;
+            .map_err(|e| Error::Network(format!("failed to build request: {}", js_err_str(&e))))?;
 
         let req_headers = request.headers();
         for (name, value) in &headers {
             req_headers
                 .set(name, value)
-                .map_err(|e| Error::Network(format!("failed to set header: {:?}", e)))?;
+                .map_err(|e| Error::Network(format!("failed to set header: {}", js_err_str(&e))))?;
         }
         for (name, value) in &signing_headers {
-            req_headers
-                .set(name, value)
-                .map_err(|e| Error::Network(format!("failed to set signing header: {:?}", e)))?;
+            req_headers.set(name, value).map_err(|e| {
+                Error::Network(format!("failed to set signing header: {}", js_err_str(&e)))
+            })?;
         }
 
         // Set up timeout via abort controller + setTimeout
@@ -105,7 +114,7 @@ pub(crate) fn send_request(
                 timeout_closure.as_ref().unchecked_ref(),
                 timeout_ms,
             )
-            .map_err(|e| Error::Internal(format!("failed to set timeout: {:?}", e)))?;
+            .map_err(|e| Error::Internal(format!("failed to set timeout: {}", js_err_str(&e))))?;
 
         let fetch_promise = window.fetch_with_request(&request);
         let resp_value = match JsFuture::from(fetch_promise).await {
@@ -124,15 +133,16 @@ pub(crate) fn send_request(
 
         let response: Response = resp_value
             .dyn_into()
-            .map_err(|e| Error::Internal(format!("invalid response type: {:?}", e)))?;
+            .map_err(|e| Error::Internal(format!("invalid response type: {}", js_err_str(&e))))?;
 
         let status = response.status();
         let resp_headers = response.headers();
         let mut header_pairs = Vec::new();
         if let Ok(Some(iter)) = js_sys::try_iter(&resp_headers) {
             for entry in iter {
-                let entry =
-                    entry.map_err(|e| Error::Internal(format!("header entry error: {:?}", e)))?;
+                let entry = entry.map_err(|e| {
+                    Error::Internal(format!("header entry error: {}", js_err_str(&e)))
+                })?;
                 if let Ok(array) = entry.dyn_into::<js_sys::Array>() {
                     if array.length() >= 2 {
                         let name = array.get(0).as_string().unwrap_or_default();
@@ -150,15 +160,15 @@ pub(crate) fn send_request(
                     let msg = js_err_str(&e);
                     Error::network_sanitized("failed to read response body", &msg)
                 })?;
-                let array_buffer: js_sys::ArrayBuffer = body_value
-                    .dyn_into()
-                    .map_err(|e| Error::Internal(format!("invalid body type: {:?}", e)))?;
+                let array_buffer: js_sys::ArrayBuffer = body_value.dyn_into().map_err(|e| {
+                    Error::Internal(format!("invalid body type: {}", js_err_str(&e)))
+                })?;
                 js_sys::Uint8Array::new(&array_buffer).to_vec()
             }
             Err(e) => {
                 return Err(Error::Network(format!(
-                    "failed to read response body: {:?}",
-                    e
+                    "failed to read response body: {}",
+                    js_err_str(&e)
                 )));
             }
         };
