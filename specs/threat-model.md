@@ -1731,6 +1731,7 @@ caller's GIL hold.
 
 | TM-PY-026 | reset() discards security config | `BashTool.reset()` creates new `Bash` with bare builder, dropping all configured limits | `PyBash::reset` and `BashTool::reset` rebuild via `replace_live_bash_with_builder` + `build_live_builder`, which preserves the original limits, env, and registered builtins | **MITIGATED** |
 | TM-PY-027 | Unbounded recursion in JSON conversion | `py_to_json`/`json_to_py` recurse without depth limit on nested dicts/lists | `json_to_py_inner`, `py_to_json_inner`, and the MontyObject converters all carry a `depth` arg; depth > `MAX_NESTING_DEPTH = 64` raises `ValueError("… nesting depth exceeds maximum of 64")` | **MITIGATED** |
+| TM-PY-030 | GIL deadlock via async-callback private loop | Private-loop dispatch blocked on a rendezvous channel while attached (GIL held), and pyclass dealloc joined in-flight blocking tasks that must re-attach to finish — either froze the whole process (observed as a 6 h CI hang) | Dispatch detaches around both the send and the receive; `PyRuntime` drop shuts the tokio runtime down with `shutdown_background()` instead of a blocking join | **MITIGATED** |
 
 **TM-PY-026** (mitigated): `PyBash::reset` and `BashTool::reset` (`crates/bashkit-python/src/lib.rs`)
 rebuild the inner `Bash` via `replace_live_bash_with_builder` + `build_live_builder`, which
@@ -1742,6 +1743,19 @@ re-applies the original limits, env, and registered builtins. Regression tests:
 MontyObject converters in `crates/bashkit-python/src/lib.rs` carry a `depth: usize` argument.
 At `depth > MAX_NESTING_DEPTH = 64`, conversion raises a Python `ValueError` instead of
 recursing. Coverage: `tests/_security_advanced.py::JsonConversionBoundariesTests`.
+
+**TM-PY-030** (mitigated): two deadlock variants in the async-callback private-loop
+machinery (`crates/bashkit-python/src/lib.rs`). (1) `PyPrivateAsyncLoop::run_awaitable`
+sent work to the dedicated worker thread over a `sync_channel(0)` rendezvous while
+attached; on first use the worker must attach (acquire the GIL) to create its asyncio
+loop before it can `recv()`, so dispatcher and worker waited on each other. The send
+and receive now both run inside `py.detach(...)`. (2) Pyclass dealloc runs attached
+and dropped the last `Arc<Runtime>`; tokio's default `Runtime::drop` joins in-flight
+blocking tasks, and an abandoned (timed-out) callback task must re-attach to finish —
+freezing the entire interpreter. The `PyRuntime` handle now shuts the runtime down
+with `shutdown_background()` on last drop. Regression tests:
+`tests/test_async_callbacks.py::test_async_callback_execute_sync_honors_timeout`,
+`…::test_dealloc_during_inflight_callback_does_not_deadlock`.
 
 | TM-PY-029 | Host clock information disclosure | `datetime.date.today()` / `datetime.datetime.now()` expose host system time and timezone | Intentional — required for correct datetime semantics | **ACCEPTED** |
 

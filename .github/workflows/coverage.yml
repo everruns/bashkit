@@ -25,6 +25,7 @@ jobs:
   coverage:
     name: Generate Rust Coverage
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
@@ -68,6 +69,9 @@ jobs:
   python-coverage:
     name: Generate Python Binding Coverage
     runs-on: ubuntu-latest
+    # Bounded so a hung test fails fast instead of occupying a runner for
+    # GitHub's 6 h default (a GIL deadlock once did exactly that).
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
@@ -116,6 +120,7 @@ jobs:
   node-coverage:
     name: Generate Node Binding Coverage
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
@@ -175,6 +180,7 @@ jobs:
     name: Upload Coverage
     needs: [coverage, python-coverage, node-coverage]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
       actions: read
