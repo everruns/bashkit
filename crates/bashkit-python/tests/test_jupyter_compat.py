@@ -282,3 +282,50 @@ async def test_await_execute_ctx_fs_uses_caller_loop(factory):
     assert result.exit_code == 0
     assert result.stdout == "await\n"
     assert captured == [caller_loop]
+
+
+# ---------------------------------------------------------------------------
+# ctx.fs from an *async* callback driven by execute_sync — the third dispatch
+# path. The async callback body runs on an asyncio loop thread (the private
+# loop, or the background daemon loop under a live loop), which has no tokio
+# context, so ctx.fs ops fall through to `self.rt.block_on` rather than the
+# worker-thread branch the sync-callback case takes. Sync callbacks +
+# execute_sync (worker-thread branch) and async callbacks + await execute
+# (caller loop) are covered above; this fills the remaining combination.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
+def test_execute_sync_async_ctx_fs_builtin(factory):
+    """An async ctx.fs builtin driven by execute_sync() (no running loop) runs on
+    the private loop thread; ctx.fs resolves via the block_on fallback there."""
+
+    async def rw(ctx: BuiltinContext) -> str:
+        await asyncio.sleep(0)  # force a real await so the body runs on the loop
+        ctx.fs.write_file("/async-sync.txt", b"async-sync\n")
+        return ctx.fs.read_file("/async-sync.txt").decode()
+
+    shell = factory(custom_builtins={"rw": rw})
+    result = shell.execute_sync("rw")
+
+    assert result.exit_code == 0
+    assert result.stdout == "async-sync\n"
+    assert shell.fs().read_file("/async-sync.txt").decode() == "async-sync\n"
+
+
+def test_execute_sync_async_ctx_fs_inside_asyncio_run():
+    """Same third path under a live outer loop: execute_sync() inside
+    asyncio.run() drives the async callback on a background daemon loop, and
+    ctx.fs works there too."""
+
+    async def rw(ctx: BuiltinContext) -> str:
+        await asyncio.sleep(0)
+        return ctx.fs.read_file("/seed.txt").decode()
+
+    async def jupyter_cell():
+        bash = Bash(custom_builtins={"rw": rw}, files={"/seed.txt": "seeded\n"})
+        return bash.execute_sync("rw")
+
+    result = asyncio.run(jupyter_cell())
+    assert result.exit_code == 0
+    assert result.stdout == "seeded\n"

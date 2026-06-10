@@ -18,7 +18,7 @@ import time
 
 import pytest
 
-from bashkit import ScriptedTool
+from bashkit import Bash, ScriptedTool
 
 PROC_AVAILABLE = os.path.exists("/proc/self/task")
 
@@ -76,6 +76,34 @@ def test_fds_stable_across_tool_churn():
         del t
         gc.collect()
         assert _fd_count() <= baseline
+
+
+@pytest.mark.asyncio
+async def test_drop_bash_while_async_execute_in_flight_does_not_panic():
+    """A `Bash` dropped while `await execute()` is in flight must not panic.
+
+    The in-flight future holds the last `Arc<Mutex<Bash>>`; when it completes on
+    a pyo3-async-runtimes worker thread, the `Bash` — and its custom-builtin
+    adapters, which each hold a `PyRuntime` clone — drop *there*, so the last
+    `PyRuntime` clone drops inside a tokio context. `PyRuntime::drop` must hand
+    off to `shutdown_background()` rather than a blocking runtime join, which in
+    that context panics ("Cannot drop a runtime in a context where blocking is
+    not allowed") and surfaces as `pyo3_async_runtimes.RustPanic` to the
+    awaiting caller. Regression for the #2009/#2010 interaction.
+    """
+
+    async def slow(ctx):
+        await asyncio.sleep(0.3)
+        return "done\n"
+
+    b = Bash(custom_builtins={"slow": slow})
+    fut = asyncio.ensure_future(b.execute("slow"))
+    await asyncio.sleep(0.05)  # let execution start; callback is in flight
+    del b
+    gc.collect()
+    result = await fut  # RustPanic here before the drop-path fix
+    assert result.exit_code == 0
+    assert result.stdout == "done\n"
 
 
 def test_dropped_tool_cancels_abandoned_callback():

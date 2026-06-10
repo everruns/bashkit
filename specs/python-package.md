@@ -309,6 +309,11 @@ calling back into the owning instance's `Bash.fs()` / `Bash.read_file()`, which
 is unsupported re-entrancy: it re-enters the interpreter's runtime and panics
 with a nested-runtime error (not a deadlock, and not caught by the
 `external_handler` reentry guard, which does not fire for custom builtins).
+A callback may retain `ctx.fs` beyond the invocation: the handle stays valid
+even after the `Bash` instance is dropped, and keeps the underlying VFS and
+its tokio runtime alive until the handle itself is released — so stashing it
+extends resource lifetime past `del bash` (see the teardown-determinism
+notes below).
 
 **Sync callbacks** are called directly under the session's captured `contextvars`
 snapshot and may return either a stdout string or a `BuiltinResult` with
@@ -341,7 +346,11 @@ Callbacks that block without awaiting (e.g. `time.sleep` inside `async def`)
 cannot be cancelled mid-section; teardown then waits for the current section
 to reach an await point or return. At interpreter exit (boundary: an `atexit`
 handler registered at module import), teardown goes hands-off — native threads
-must not touch a finalizing CPython — and the OS reclaims resources.
+must not touch a finalizing CPython — and the OS reclaims resources. The same
+hands-off path applies when the last runtime handle is dropped *inside* a tokio
+context (a `Bash` dropped while `await execute()` is still in flight finishes on
+a runtime worker thread): a blocking runtime join there would panic, so the drop
+falls back to `shutdown_background()` instead of the deterministic join.
 
 **ContextVar propagation**: ContextVars set before `execute()` or
 `execute_sync()` are captured at call time and replayed inside each callback

@@ -95,7 +95,11 @@ class BuiltinContext:
             files created by earlier commands and writes are visible to later
             ones. Same API as ``Bash.fs()`` — e.g. ``ctx.fs.read_file(path)``
             returns ``bytes``. Operates directly on the interpreter's VFS, so
-            it is safe to use from inside the callback.
+            it is safe to use from inside the callback. Ops are synchronous and,
+            while a runtime is active, may run off-thread (relatively expensive
+            per call), so batch filesystem work rather than looping over many
+            tiny ops. May be retained past the callback: a stashed handle keeps
+            the VFS (and its runtime) alive even after the ``Bash`` is dropped.
     """
 
     name: str

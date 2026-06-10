@@ -238,7 +238,12 @@ fn join_without_gil<F: FnOnce() + Send>(f: F) {
 /// hang in `test_async_callback_execute_sync_honors_timeout`). Once the
 /// interpreter is exiting, joining is unsafe (threads attaching during
 /// finalization abort the process on CPython < 3.13), so the drop falls
-/// back to `shutdown_background()` and the OS reclaims resources.
+/// back to `shutdown_background()` and the OS reclaims resources. The same
+/// hands-off path is taken when the last clone drops *inside* a tokio context
+/// (e.g. a `Bash` dropped mid-`await execute()` finishes on a runtime worker
+/// thread, dropping its custom-builtin adapters' `PyRuntime` clones there): a
+/// blocking runtime drop in that context panics, so `shutdown_background()`
+/// is used instead.
 struct PyRuntime(Option<Arc<Runtime>>);
 
 impl Clone for PyRuntime {
@@ -259,7 +264,21 @@ impl Drop for PyRuntime {
         let Some(rt) = self.0.take().and_then(Arc::into_inner) else {
             return;
         };
-        if interpreter_at_exit() {
+        // Two cases must avoid the blocking join:
+        //   - `interpreter_at_exit()`: joining threads that may re-attach is
+        //     unsafe during finalization (see the type doc).
+        //   - `Handle::try_current().is_ok()`: the last clone is dropping
+        //     *inside* a tokio context. This happens when a `Bash` is dropped
+        //     while `await execute()` is still in flight: the future holds the
+        //     last `Arc<Mutex<Bash>>` and, on completion, drops it on a
+        //     pyo3-async-runtimes worker thread — cascading into the
+        //     custom-builtin adapters that hold `PyRuntime` clones. Dropping a
+        //     runtime (a blocking join) from within another runtime panics
+        //     with "Cannot drop a runtime in a context where blocking is not
+        //     allowed", so hand off to `shutdown_background()` instead.
+        // The normal path — last clone dropping on a Python thread with no
+        // tokio context — keeps #2009's deterministic `join_without_gil`.
+        if interpreter_at_exit() || Handle::try_current().is_ok() {
             rt.shutdown_background();
         } else {
             join_without_gil(move || drop(rt));
@@ -1633,6 +1652,18 @@ impl PyFileSystem {
         // ever gets hot, amortize with a long-lived worker thread + runtime
         // reused across ops via a channel (note: `block_in_place` is not an
         // option while `make_runtime` builds a current-thread runtime).
+        //
+        // A `Static` handle used from a thread with *no* tokio context falls
+        // through to `self.rt.block_on` below. This is the async-callback case:
+        // the callback body runs on an asyncio loop thread — the caller's loop
+        // under `await execute()`, the private loop under `execute_sync()` — not
+        // a tokio worker, so `Handle::try_current()` is `Err`. Under
+        // `execute_sync()` that `block_on` runs on a *second* thread while the
+        // main thread holds the current-thread scheduler core; it completes only
+        // because tokio's parker fallback polls the future without owning the
+        // core. That is fine for VFS ops (they never need the runtime's
+        // timer/IO drivers) — but a timer- or IO-dependent fs future added here
+        // would stall this path, so keep `inner.resolve()` + fs ops driver-free.
         //
         // `Live` handles keep the original fast path: they lock the interpreter.
         // Re-entrant use of a `Live` handle from inside the shared runtime is
