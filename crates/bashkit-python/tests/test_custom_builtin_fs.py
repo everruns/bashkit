@@ -83,3 +83,107 @@ async def test_ctx_fs_works_from_async_callback(factory):
 
     assert result.exit_code == 0
     assert result.stdout == "async-data\n"
+
+
+@pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
+def test_ctx_fs_read_missing_raises_clean_error(factory):
+    """Reading a missing path surfaces a clean ``RuntimeError`` (not a panic or a
+    leaked host path)."""
+    seen = {}
+
+    def reader(ctx):
+        try:
+            ctx.fs.read_file("/does-not-exist.txt")
+        except Exception as exc:  # inspect then re-raise
+            seen["type"] = type(exc).__name__
+            seen["msg"] = str(exc)
+            raise
+        return ""
+
+    shell = factory(custom_builtins={"reader": reader})
+    result = shell.execute_sync("reader")
+
+    assert result.exit_code != 0
+    assert seen["type"] == "RuntimeError"
+    # No host filesystem path leaks through the error.
+    assert "/rustc/" not in seen["msg"]
+    assert ".cargo" not in seen["msg"]
+
+
+@pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
+def test_ctx_fs_write_then_read_within_one_callback(factory):
+    """A write and a subsequent read inside a single callback observe the same
+    live filesystem."""
+
+    def rw(ctx):
+        ctx.fs.write_file("/inline.txt", b"inline-bytes\n")
+        return ctx.fs.read_file("/inline.txt").decode()
+
+    shell = factory(custom_builtins={"rw": rw})
+    result = shell.execute_sync("rw")
+
+    assert result.exit_code == 0
+    assert result.stdout == "inline-bytes\n"
+
+
+@pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
+def test_ctx_fs_respects_readonly_filesystem(factory):
+    """Under ``readonly_filesystem=True`` reads succeed but writes are denied —
+    ``ctx.fs`` does not bypass the read-only wrapper."""
+    seen = {}
+
+    def writer(ctx):
+        seen["read"] = ctx.fs.read_file("/seed.txt").decode()
+        try:
+            ctx.fs.write_file("/seed.txt", b"nope")
+        except Exception as exc:  # inspect then re-raise
+            seen["write_err"] = type(exc).__name__
+            raise
+        return ""
+
+    shell = factory(
+        custom_builtins={"writer": writer},
+        files={"/seed.txt": "seeded\n"},
+        readonly_filesystem=True,
+    )
+    result = shell.execute_sync("writer")
+
+    assert seen["read"] == "seeded\n"
+    assert seen.get("write_err") == "RuntimeError"
+    assert result.exit_code != 0
+
+
+@pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
+def test_ctx_fs_reads_lazy_provider_file(factory):
+    """Reading a lazy (callable-backed) file through ``ctx.fs`` materializes it by
+    calling back into Python."""
+    calls = {"n": 0}
+
+    def provider():
+        calls["n"] += 1
+        return "lazy-content\n"
+
+    def reader(ctx):
+        return ctx.fs.read_file("/lazy.txt").decode()
+
+    shell = factory(custom_builtins={"reader": reader}, files={"/lazy.txt": provider})
+    result = shell.execute_sync("reader")
+
+    assert result.exit_code == 0
+    assert result.stdout == "lazy-content\n"
+    assert calls["n"] >= 1
+
+
+@pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
+def test_ctx_fs_cross_handle_consistency(factory):
+    """A write via ``ctx.fs`` is observable via the instance's own ``fs()``
+    handle — both wrap the same filesystem."""
+
+    def writer(ctx):
+        ctx.fs.write_file("/shared.txt", b"shared\n")
+        return ""
+
+    shell = factory(custom_builtins={"writer": writer})
+
+    assert shell.execute_sync("writer").exit_code == 0
+    assert shell.fs().read_file("/shared.txt").decode() == "shared\n"

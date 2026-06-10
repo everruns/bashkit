@@ -218,3 +218,61 @@ async def test_await_execute_contextvar(factory):
 
     assert result.exit_code == 0
     assert result.stdout.strip() == "trace=await-req"
+
+
+# ===========================================================================
+# BuiltinContext.fs under a running loop
+#
+# ``ctx.fs`` is a *sync* handle whose ops run off the interpreter's runtime
+# thread. These confirm it works from a custom builtin under the same running-
+# loop conditions Jupyter maintains — via execute_sync (inside asyncio.run and a
+# live loop) and via await execute.
+# ===========================================================================
+
+
+def test_execute_sync_ctx_fs_inside_asyncio_run():
+    """execute_sync() with a ctx.fs builtin works inside asyncio.run()."""
+
+    def rw(ctx: BuiltinContext) -> str:
+        ctx.fs.write_file("/nb.txt", b"nb-data\n")
+        return ctx.fs.read_file("/nb.txt").decode()
+
+    async def jupyter_cell():
+        bash = Bash(custom_builtins={"rw": rw})
+        return bash.execute_sync("rw")
+
+    result = asyncio.run(jupyter_cell())
+    assert result.exit_code == 0
+    assert result.stdout == "nb-data\n"
+
+
+@pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
+@pytest.mark.asyncio
+async def test_execute_sync_ctx_fs_live_loop(factory):
+    """execute_sync() with a ctx.fs builtin works while a loop is running."""
+
+    def rw(ctx: BuiltinContext) -> str:
+        ctx.fs.write_file("/nb.txt", b"live\n")
+        return ctx.fs.read_file("/nb.txt").decode()
+
+    shell = factory(custom_builtins={"rw": rw})
+    result = shell.execute_sync("rw")
+
+    assert result.exit_code == 0
+    assert result.stdout == "live\n"
+
+
+@pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
+@pytest.mark.asyncio
+async def test_await_execute_ctx_fs(factory):
+    """ctx.fs works from a builtin driven via await execute() on the caller loop."""
+
+    def rw(ctx: BuiltinContext) -> str:
+        ctx.fs.write_file("/aw.txt", b"await\n")
+        return ctx.fs.read_file("/aw.txt").decode()
+
+    shell = factory(custom_builtins={"rw": rw})
+    result = await shell.execute("rw")
+
+    assert result.exit_code == 0
+    assert result.stdout == "await\n"

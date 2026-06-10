@@ -291,6 +291,36 @@ async def test_concurrent_sync_requests_with_shared_bash_and_async_custom_builti
 
 
 @pytest.mark.asyncio
+async def test_concurrent_async_requests_ctx_fs_custom_builtin():
+    """Concurrent async endpoints over one shared Bash run a custom builtin that
+    reads/writes the VFS through ``ctx.fs`` — each request's fs op must complete
+    correctly on the caller's event loop without deadlocking it."""
+
+    def fs_roundtrip(ctx):
+        rid = ctx.argv[0]
+        ctx.fs.write_file(f"/req-{rid}.txt", rid.encode())
+        return ctx.fs.read_file(f"/req-{rid}.txt").decode()
+
+    bash = Bash(custom_builtins={"fs-roundtrip": fs_roundtrip})
+    app = FastAPI()
+
+    @app.get("/fs/{rid}")
+    async def fs_endpoint(rid: str):
+        result = await bash.execute(f"fs-roundtrip {rid}")
+        return {"stdout": result.stdout, "exit_code": result.exit_code}
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        responses = await asyncio.gather(*(client.get(f"/fs/{i}") for i in range(6)))
+
+    for i, response in enumerate(responses):
+        assert response.status_code == 200
+        body = response.json()
+        assert body["exit_code"] == 0
+        assert body["stdout"] == str(i)
+
+
+@pytest.mark.asyncio
 async def test_async_endpoint_mounts_native_filesystem_capsule():
     """FastAPI async endpoint can mount a native-extension filesystem capsule."""
     app = FastAPI()
