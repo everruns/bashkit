@@ -59,7 +59,7 @@ use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex as StdMutex, RwLock};
+use std::sync::{Arc, Mutex as StdMutex, OnceLock, RwLock, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::runtime::Runtime;
 use tokio::sync::{Mutex, oneshot};
@@ -179,17 +179,66 @@ enum PyFileMount {
 
 const PY_FILE_PROVIDER_TYPE_ERROR_PREFIX: &str = "__bashkit_py_file_provider_type_error__:";
 
+// ============================================================================
+// Interpreter-exit boundary and deterministic teardown (TM-PY-030)
+//
+// Decision: teardown is fully deterministic while the interpreter is alive
+// (workers joined, asyncio loops closed, tokio blocking pool joined before
+// drop returns) and hands-off once the interpreter begins exiting. The
+// boundary is an `atexit` handler registered at module import: CPython runs
+// atexit callbacks at the very start of `Py_FinalizeEx`, strictly before the
+// finalization phase in which native threads may no longer attach (attaching
+// then aborts the process on CPython < 3.13 — see TM-PY-030 variant 3).
+// After the flag flips, threads skip Python entirely and the OS reclaims
+// resources at process exit; before it flips, the interpreter is fully alive
+// and every attach/join below is safe.
+// ============================================================================
+
+static INTERPRETER_AT_EXIT: AtomicBool = AtomicBool::new(false);
+
+fn interpreter_at_exit() -> bool {
+    INTERPRETER_AT_EXIT.load(Ordering::Acquire)
+}
+
+/// Registered with `atexit` at module import; not part of the public API.
+#[pyfunction]
+fn _mark_interpreter_at_exit() {
+    INTERPRETER_AT_EXIT.store(true, Ordering::Release);
+}
+
+/// Whether the current thread is attached to the Python interpreter (holds
+/// the GIL). Used by teardown paths to decide whether a blocking join must
+/// be wrapped in a detach.
+fn thread_attached_to_python() -> bool {
+    // SAFETY: PyGILState_Check only reads thread-local interpreter state and
+    // is documented as callable from any thread at any time.
+    unsafe { pyo3::ffi::PyGILState_Check() == 1 }
+}
+
+/// Run `f` (a blocking join) without holding the GIL, so threads that must
+/// attach to finish can make progress. Detaches first when the calling
+/// thread is attached (the pyclass-dealloc case); runs `f` directly when it
+/// is not. Callers must check `interpreter_at_exit()` first: once the
+/// interpreter is exiting, joining threads that may touch Python is unsafe.
+fn join_without_gil<F: FnOnce() + Send>(f: F) {
+    if thread_attached_to_python() {
+        Python::attach(|py| py.detach(f));
+    } else {
+        f();
+    }
+}
+
 /// Pyclass-held handle to the shared per-instance tokio runtime.
 ///
-/// THREAT[TM-PY-030]: dropping the last handle shuts the runtime down with
-/// `shutdown_background()` instead of tokio's default blocking shutdown.
-/// Pyclass dealloc runs while attached to the Python interpreter (GIL
-/// held), and the default `Runtime::drop` joins in-flight blocking tasks.
-/// An abandoned (timed-out) Python callback task must re-attach — acquire
-/// the GIL — to finish, so joining it from dealloc deadlocks the whole
-/// process (seen as a 6 h CI hang in
-/// `test_async_callback_execute_sync_honors_timeout`). Background shutdown
-/// lets such tasks finish on their own once the GIL is released.
+/// THREAT[TM-PY-030]: while the interpreter is alive, dropping the last
+/// handle joins the runtime's blocking pool deterministically with the GIL
+/// released (`join_without_gil`), so in-flight callback tasks that must
+/// re-attach to finish can do so — restoring deterministic cleanup without
+/// the GIL deadlock that a blocking join while attached produced (a 6 h CI
+/// hang in `test_async_callback_execute_sync_honors_timeout`). Once the
+/// interpreter is exiting, joining is unsafe (threads attaching during
+/// finalization abort the process on CPython < 3.13), so the drop falls
+/// back to `shutdown_background()` and the OS reclaims resources.
 struct PyRuntime(Option<Arc<Runtime>>);
 
 impl Clone for PyRuntime {
@@ -207,8 +256,13 @@ impl std::ops::Deref for PyRuntime {
 
 impl Drop for PyRuntime {
     fn drop(&mut self) {
-        if let Some(rt) = self.0.take().and_then(Arc::into_inner) {
+        let Some(rt) = self.0.take().and_then(Arc::into_inner) else {
+            return;
+        };
+        if interpreter_at_exit() {
             rt.shutdown_background();
+        } else {
+            join_without_gil(move || drop(rt));
         }
     }
 }
@@ -2187,14 +2241,31 @@ struct PrivateLoopWorkItem {
     result_tx: std::sync::mpsc::SyncSender<PyResult<Py<PyAny>>>,
 }
 
+// The lazily spawned worker behind a PyPrivateAsyncLoop: channel sender plus
+// the join handle used for deterministic teardown.
+struct PrivateLoopWorker {
+    tx: std::sync::mpsc::SyncSender<PrivateLoopWorkItem>,
+    handle: std::thread::JoinHandle<()>,
+}
+
 struct PyPrivateAsyncLoop {
-    // Sender to the dedicated worker thread that owns the asyncio event loop.
-    // Lazily initialised on first use; `None` before the first call.
+    // Dedicated worker thread that owns the asyncio event loop. Lazily
+    // started on first use; `None` before the first call and after shutdown.
     // Decision: single dedicated thread per PyPrivateAsyncLoop instance so that
     // all run_until_complete calls happen on the thread that created the loop,
     // satisfying asyncio's thread-affinity requirement (review comment on
     // spawn_blocking scheduling successive callbacks on different OS threads).
-    worker_tx: StdMutex<Option<std::sync::mpsc::SyncSender<PrivateLoopWorkItem>>>,
+    worker: StdMutex<Option<PrivateLoopWorker>>,
+    // The worker's asyncio loop, set once by the worker thread after it
+    // creates the loop. Read by cancel_inflight() to schedule a threadsafe
+    // task cancellation; never run from any other thread.
+    event_loop: Arc<OnceLock<Py<PyAny>>>,
+    // The asyncio.Task currently driven by run_until_complete, if any.
+    // Published by the worker around each item so teardown can cancel it.
+    current_task: Arc<StdMutex<Option<Py<PyAny>>>>,
+    // Set by shutdown(); the worker rejects queued-but-unstarted items so a
+    // teardown join is bounded by the (cancelled) in-flight item only.
+    closing: Arc<AtomicBool>,
     // Cached Python helper for background-thread fallback (Jupyter/IPython compatibility).
     bg_thread_runner: StdMutex<Option<Py<PyAny>>>,
 }
@@ -2202,7 +2273,10 @@ struct PyPrivateAsyncLoop {
 impl PyPrivateAsyncLoop {
     fn new() -> Arc<Self> {
         Arc::new(Self {
-            worker_tx: StdMutex::new(None),
+            worker: StdMutex::new(None),
+            event_loop: Arc::new(OnceLock::new()),
+            current_task: Arc::new(StdMutex::new(None)),
+            closing: Arc::new(AtomicBool::new(false)),
             bg_thread_runner: StdMutex::new(None),
         })
     }
@@ -2213,58 +2287,139 @@ impl PyPrivateAsyncLoop {
     // run_until_complete calls to a single thread, matching asyncio's thread-
     // affinity contract.
     fn ensure_worker_tx(&self) -> PyResult<std::sync::mpsc::SyncSender<PrivateLoopWorkItem>> {
-        let mut guard = self.worker_tx.lock().expect("private loop worker tx lock");
-        if let Some(ref tx) = *guard {
-            return Ok(tx.clone());
+        let mut guard = self.worker.lock().expect("private loop worker lock");
+        if let Some(ref worker) = *guard {
+            return Ok(worker.tx.clone());
+        }
+        if self.closing.load(Ordering::Acquire) {
+            return Err(PyRuntimeError::new_err("private loop is shutting down"));
         }
         let (tx, rx) = std::sync::mpsc::sync_channel::<PrivateLoopWorkItem>(0);
-        std::thread::Builder::new()
+        let event_loop_slot = self.event_loop.clone();
+        let current_task = self.current_task.clone();
+        let closing = self.closing.clone();
+        let handle = std::thread::Builder::new()
             .name("bashkit-py-loop".into())
             .spawn(move || {
                 // Create the event loop on this thread and keep it here for its
                 // entire lifetime; this is the only thread that calls run_until_complete.
                 let event_loop: Py<PyAny> = Python::attach(|py| {
-                    py.import("asyncio")
+                    let event_loop = py
+                        .import("asyncio")
                         .and_then(|a| a.call_method0("new_event_loop"))
-                        .map(|l| l.unbind())
-                        .expect("asyncio.new_event_loop()")
+                        .expect("asyncio.new_event_loop()");
+                    // Publish the loop so cancel_inflight() can schedule a
+                    // threadsafe cancellation from other threads.
+                    let _ = event_loop_slot.set(event_loop.clone().unbind());
+                    event_loop.unbind()
                 });
 
                 while let Ok(item) = rx.recv() {
+                    if closing.load(Ordering::Acquire) {
+                        // Teardown started: reject without touching the
+                        // awaitable so the join is not extended by queued
+                        // work. Dropping the item's Py refs unattached is
+                        // safe (pyo3 defers the decrefs).
+                        let _ = item.result_tx.send(Err(PyRuntimeError::new_err(
+                            "private loop is shutting down",
+                        )));
+                        continue;
+                    }
                     let result = Python::attach(|py| {
-                        // context.run() propagates ContextVars captured at execute_sync()
-                        // call time into the coroutine (background threads start empty).
-                        item.context
+                        // Create the task under the captured context so
+                        // ContextVars propagate (asyncio.Task snapshots the
+                        // current context at creation), then publish it so
+                        // teardown can cancel a long-running callback.
+                        let task = item.context.bind(py).call_method1(
+                            "run",
+                            (
+                                event_loop.bind(py).getattr("create_task")?,
+                                item.awaitable.bind(py),
+                            ),
+                        )?;
+                        *current_task.lock().expect("private loop task slot") =
+                            Some(task.clone().unbind());
+                        let result = event_loop
                             .bind(py)
-                            .call_method1(
-                                "run",
-                                (
-                                    event_loop.bind(py).getattr("run_until_complete")?,
-                                    item.awaitable.bind(py),
-                                ),
-                            )
-                            .map(|v| v.unbind())
+                            .call_method1("run_until_complete", (task,));
+                        *current_task.lock().expect("private loop task slot") = None;
+                        result.map(|v| v.unbind())
                     });
                     // Ignore send errors: the caller timed out and moved on.
                     let _ = item.result_tx.send(result);
                 }
 
-                // THREAT[TM-PY-030]: do NOT touch Python on the exit path.
-                // The worker wakes here because the engine was gc'd, and that
-                // gc commonly runs inside Py_Finalize — attaching then crashes
-                // CPython (PyGILState_Release fatal: SIGABRT at interpreter
-                // exit). Even Python::try_attach cannot detect finalization
-                // before 3.13. Dropping `event_loop` without attaching is safe
-                // (pyo3 defers the decref); the loop is closed by asyncio's
-                // BaseEventLoop.__del__ when the deferred decref runs, or
-                // reclaimed by the OS at process exit.
+                // THREAT[TM-PY-030]: while the interpreter is alive, close the
+                // loop deterministically (releases its epoll/self-pipe fds
+                // before the teardown join returns). Once the interpreter is
+                // exiting, do NOT touch Python: the worker often wakes here
+                // because the engine was gc'd inside Py_Finalize, and
+                // attaching then crashes CPython (PyGILState_Release fatal;
+                // Python::try_attach cannot detect finalization before 3.13).
+                // The atexit-set flag flips strictly before that phase.
+                if !interpreter_at_exit() {
+                    Python::attach(|py| {
+                        let _ = event_loop.bind(py).call_method0("close");
+                    });
+                }
+                // Unattached drop is safe either way (deferred decref).
                 drop(event_loop);
             })
             .map_err(|e| {
                 PyRuntimeError::new_err(format!("failed to spawn private loop thread: {e}"))
             })?;
-        *guard = Some(tx.clone());
-        Ok(tx)
+        let tx_clone = tx.clone();
+        *guard = Some(PrivateLoopWorker { tx, handle });
+        Ok(tx_clone)
+    }
+
+    /// Cancel the asyncio task currently running on the worker, if any.
+    /// Cooperative: the callback observes `asyncio.CancelledError` at its
+    /// next await point. Callers must ensure the interpreter is alive.
+    fn cancel_inflight(&self) {
+        let Some(event_loop) = self.event_loop.get() else {
+            return;
+        };
+        Python::attach(|py| {
+            let task = self
+                .current_task
+                .lock()
+                .expect("private loop task slot")
+                .as_ref()
+                .map(|t| t.clone_ref(py));
+            let Some(task) = task else { return };
+            // call_soon_threadsafe is the only thread-safe entry point into a
+            // loop running on another thread. Errors (loop already closed,
+            // task already done) mean there is nothing left to cancel.
+            if let Ok(cancel) = task.bind(py).getattr("cancel") {
+                let _ = event_loop
+                    .bind(py)
+                    .call_method1("call_soon_threadsafe", (cancel,));
+            }
+        });
+    }
+
+    /// Deterministic teardown: stop accepting work, cancel the in-flight
+    /// callback, and join the worker (which closes its loop) before
+    /// returning. Idempotent. At interpreter exit this degrades to dropping
+    /// the channel — joining is unsafe then (the worker may no longer attach)
+    /// and the OS reclaims everything at process exit.
+    fn shutdown(&self) {
+        self.closing.store(true, Ordering::Release);
+        let worker = self.worker.lock().expect("private loop worker lock").take();
+        let Some(PrivateLoopWorker { tx, handle }) = worker else {
+            return;
+        };
+        drop(tx);
+        if interpreter_at_exit() {
+            return;
+        }
+        self.cancel_inflight();
+        // THREAT[TM-PY-030]: the worker needs the GIL to finish the cancelled
+        // item and close its loop, so the join must not hold it.
+        join_without_gil(move || {
+            let _ = handle.join();
+        });
     }
 
     fn bg_thread_runner(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
@@ -2355,8 +2510,19 @@ def _run(coro, ctx):
     }
 }
 
+impl Drop for PyPrivateAsyncLoop {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
 struct PyCallbackEngine {
     shared_private_async_loop: Arc<PyPrivateAsyncLoop>,
+    // Live per-session private loops (PySyncLoopMode::PerSession), tracked so
+    // pyclass Drop can cancel in-flight callbacks it cannot reach through the
+    // session Arcs (an abandoned timed-out callback task holds its own
+    // session Arc, so the loop's Drop alone would wait out the callback).
+    session_private_loops: StdMutex<Vec<Weak<PyPrivateAsyncLoop>>>,
     caller: Py<PyAny>,
 }
 
@@ -2364,8 +2530,36 @@ impl PyCallbackEngine {
     fn new(py: Python<'_>) -> PyResult<Arc<Self>> {
         Ok(Arc::new(Self {
             shared_private_async_loop: PyPrivateAsyncLoop::new(),
+            session_private_loops: StdMutex::new(Vec::new()),
             caller: create_context_callback_caller(py)?,
         }))
+    }
+
+    fn register_session_loop(&self, private_loop: &Arc<PyPrivateAsyncLoop>) {
+        let mut loops = self
+            .session_private_loops
+            .lock()
+            .expect("session private loops lock");
+        loops.retain(|w| w.strong_count() > 0);
+        loops.push(Arc::downgrade(private_loop));
+    }
+
+    /// Cancel every in-flight private-loop callback owned by this engine.
+    /// Called from pyclass Drop (interpreter alive) BEFORE the tokio runtime
+    /// join, so teardown is bounded by cooperative cancellation instead of
+    /// full callback duration.
+    fn cancel_inflight_callbacks(&self) {
+        self.shared_private_async_loop.cancel_inflight();
+        let loops: Vec<Arc<PyPrivateAsyncLoop>> = {
+            let guard = self
+                .session_private_loops
+                .lock()
+                .expect("session private loops lock");
+            guard.iter().filter_map(Weak::upgrade).collect()
+        };
+        for private_loop in loops {
+            private_loop.cancel_inflight();
+        }
     }
 
     fn invoke(
@@ -2397,7 +2591,13 @@ impl PyCallbackSession {
     ) -> PyResult<Arc<Self>> {
         let private_async_loop = match sync_loop_mode {
             PySyncLoopMode::SharedAcrossSessions => engine.shared_private_async_loop.clone(),
-            PySyncLoopMode::PerSession => PyPrivateAsyncLoop::new(),
+            PySyncLoopMode::PerSession => {
+                let private_loop = PyPrivateAsyncLoop::new();
+                // Track it so pyclass Drop can cancel in-flight callbacks
+                // even when an abandoned task still holds the session Arc.
+                engine.register_session_loop(&private_loop);
+                private_loop
+            }
         };
         Ok(Arc::new(Self {
             state: StdMutex::new(capture_callback_state(
@@ -3388,6 +3588,15 @@ pub struct PyBash {
     network: Option<PyNetworkConfig>,
 }
 
+// THREAT[TM-PY-030]: see the equivalent Drop on ScriptedTool.
+impl Drop for PyBash {
+    fn drop(&mut self) {
+        if !interpreter_at_exit() {
+            self.builtin_engine.cancel_inflight_callbacks();
+        }
+    }
+}
+
 impl PyBash {
     fn reject_external_handler_reentry(&self) -> PyResult<()> {
         reject_external_handler_reentry_depth(Some(&self.external_handler_reentry_depth))
@@ -4239,6 +4448,15 @@ pub struct BashTool {
     network: Option<PyNetworkConfig>,
 }
 
+// THREAT[TM-PY-030]: see the equivalent Drop on ScriptedTool.
+impl Drop for BashTool {
+    fn drop(&mut self) {
+        if !interpreter_at_exit() {
+            self.builtin_engine.cancel_inflight_callbacks();
+        }
+    }
+}
+
 impl BashTool {
     fn build_live_builder(&self, py: Python<'_>) -> PyResult<bashkit::BashBuilder> {
         let mut builder = Bash::builder();
@@ -5006,6 +5224,19 @@ pub struct ScriptedTool {
     timeout_seconds: Option<f64>,
 }
 
+// THREAT[TM-PY-030]: cancel in-flight (possibly abandoned timed-out)
+// callbacks BEFORE the `rt` field drop joins the tokio blocking pool, so
+// teardown is bounded by cooperative cancellation instead of full callback
+// duration. At interpreter exit the runtime drop degrades to background
+// shutdown on its own, so there is nothing to cancel.
+impl Drop for ScriptedTool {
+    fn drop(&mut self) {
+        if !interpreter_at_exit() {
+            self.callback_engine.cancel_inflight_callbacks();
+        }
+    }
+}
+
 impl ScriptedTool {
     /// Build a Rust ScriptedTool from stored Python config.
     ///
@@ -5417,6 +5648,14 @@ fn _bashkit(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("BashError", m.py().get_type::<BashError>())?;
     m.add_function(wrap_pyfunction!(create_langchain_tool_spec, m)?)?;
     m.add_function(wrap_pyfunction!(get_version, m)?)?;
+    m.add_function(wrap_pyfunction!(_mark_interpreter_at_exit, m)?)?;
+    // THREAT[TM-PY-030]: atexit runs at the very start of Py_FinalizeEx,
+    // strictly before the finalization phase in which native threads may no
+    // longer attach. The flag it sets is the boundary between deterministic
+    // teardown (interpreter alive) and hands-off teardown (process exiting).
+    m.py()
+        .import("atexit")?
+        .call_method1("register", (m.getattr("_mark_interpreter_at_exit")?,))?;
     Ok(())
 }
 

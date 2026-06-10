@@ -69,16 +69,21 @@ def test_dealloc_during_inflight_callback_does_not_deadlock():
     """Dropping the tool while a timed-out callback still runs must not hang.
 
     Regression for TM-PY-030 (2): pyclass dealloc runs with the GIL held and
-    drops the tool's tokio runtime. The default runtime drop joins in-flight
-    blocking tasks, and the abandoned callback task needs the GIL to finish —
-    deadlocking the whole interpreter. Runtime shutdown must not block.
+    joins the tool's tokio runtime; the abandoned callback task needs the GIL
+    to finish, so a join while attached deadlocked the whole interpreter.
+    Teardown must release the GIL around the join and bound it by cancelling
+    the in-flight callback, so dealloc returns promptly either way.
     """
 
-    callback_done = threading.Event()
+    settled = threading.Event()
 
     async def slow(params, stdin=None):
-        await asyncio.sleep(0.25)
-        callback_done.set()
+        try:
+            await asyncio.sleep(0.25)
+        finally:
+            # Runs on completion AND on cancellation (deterministic teardown
+            # cancels abandoned callbacks rather than awaiting them).
+            settled.set()
         return "late\n"
 
     tool = ScriptedTool("api", timeout_seconds=0.05)
@@ -88,12 +93,14 @@ def test_dealloc_during_inflight_callback_does_not_deadlock():
     assert r.exit_code == 1
 
     # Dealloc the tool (and its runtime) while the abandoned callback is
-    # still sleeping on the private-loop worker thread.
+    # still sleeping on the private-loop worker thread. This must neither
+    # deadlock nor wait out the sleep.
+    begin = time.monotonic()
     del tool
     gc.collect()
+    assert time.monotonic() - begin < 5.0, "teardown blocked on abandoned callback"
 
-    # The orphaned callback finishes on its own once the GIL is free.
-    assert callback_done.wait(timeout=2.0), "slow callback did not finish within 2 s"
+    assert settled.wait(timeout=2.0), "slow callback neither finished nor cancelled"
 
 
 def test_async_callback_sync_execute():

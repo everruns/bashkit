@@ -1745,7 +1745,7 @@ caller's GIL hold.
 
 | TM-PY-026 | reset() discards security config | `BashTool.reset()` creates new `Bash` with bare builder, dropping all configured limits | `PyBash::reset` and `BashTool::reset` rebuild via `replace_live_bash_with_builder` + `build_live_builder`, which preserves the original limits, env, and registered builtins | **MITIGATED** |
 | TM-PY-027 | Unbounded recursion in JSON conversion | `py_to_json`/`json_to_py` recurse without depth limit on nested dicts/lists | `json_to_py_inner`, `py_to_json_inner`, and the MontyObject converters all carry a `depth` arg; depth > `MAX_NESTING_DEPTH = 64` raises `ValueError("… nesting depth exceeds maximum of 64")` | **MITIGATED** |
-| TM-PY-030 | GIL deadlock / exit crash via async-callback private loop | Private-loop dispatch blocked on a rendezvous channel while attached (GIL held); pyclass dealloc joined in-flight blocking tasks that must re-attach to finish (froze the whole process, observed as a 6 h CI hang); worker thread attached during interpreter finalization to close its loop (SIGABRT at process exit) | Dispatch detaches around both the send and the receive; `PyRuntime` drop shuts the tokio runtime down with `shutdown_background()` instead of a blocking join; worker exit path never touches Python (loop closed via `BaseEventLoop.__del__`) | **MITIGATED** |
+| TM-PY-030 | GIL deadlock / exit crash via async-callback private loop | Private-loop dispatch blocked on a rendezvous channel while attached (GIL held); pyclass dealloc joined in-flight blocking tasks that must re-attach to finish (froze the whole process, observed as a 6 h CI hang); worker thread attached during interpreter finalization to close its loop (SIGABRT at process exit) | Deterministic teardown protocol: dispatch detaches around send/receive; in-flight callbacks are cancelled and workers/runtime joined with the GIL released while the interpreter is alive; once the atexit-set exit flag flips, threads skip Python and the OS reclaims resources | **MITIGATED** |
 
 **TM-PY-026** (mitigated): `PyBash::reset` and `BashTool::reset` (`crates/bashkit-python/src/lib.rs`)
 rebuild the inner `Bash` via `replace_live_bash_with_builder` + `build_live_builder`, which
@@ -1758,25 +1758,38 @@ MontyObject converters in `crates/bashkit-python/src/lib.rs` carry a `depth: usi
 At `depth > MAX_NESTING_DEPTH = 64`, conversion raises a Python `ValueError` instead of
 recursing. Coverage: `tests/_security_advanced.py::JsonConversionBoundariesTests`.
 
-**TM-PY-030** (mitigated): two deadlock variants in the async-callback private-loop
-machinery (`crates/bashkit-python/src/lib.rs`). (1) `PyPrivateAsyncLoop::run_awaitable`
-sent work to the dedicated worker thread over a `sync_channel(0)` rendezvous while
-attached; on first use the worker must attach (acquire the GIL) to create its asyncio
-loop before it can `recv()`, so dispatcher and worker waited on each other. The send
-and receive now both run inside `py.detach(...)`. (2) Pyclass dealloc runs attached
-and dropped the last `Arc<Runtime>`; tokio's default `Runtime::drop` joins in-flight
-blocking tasks, and an abandoned (timed-out) callback task must re-attach to finish —
-freezing the entire interpreter. The `PyRuntime` handle now shuts the runtime down
-with `shutdown_background()` on last drop. (3) The private-loop worker thread called
-`Python::attach` on its exit path to close its asyncio loop; the worker usually wakes
-because the engine was gc'd, and that gc commonly runs inside `Py_Finalize` —
-attaching during finalization fatals CPython (`PyGILState_Release`, SIGABRT at
-interpreter exit; `Python::try_attach` cannot detect finalization before 3.13). The
-worker exit path no longer touches Python: the loop's `Py` ref is dropped unattached
-(deferred decref) and the loop is closed by `BaseEventLoop.__del__`. Regression tests:
-`tests/test_async_callbacks.py::test_async_callback_execute_sync_honors_timeout`,
-`…::test_dealloc_during_inflight_callback_does_not_deadlock`; variant (3) is covered
-by the `langgraph_async_tool.py` example run in the Python CI Examples job.
+**TM-PY-030** (mitigated): three crash/deadlock variants in the async-callback
+private-loop machinery (`crates/bashkit-python/src/lib.rs`), resolved by a
+deterministic teardown protocol. (1) `PyPrivateAsyncLoop::run_awaitable` sent work to
+the dedicated worker thread over a `sync_channel(0)` rendezvous while attached; on
+first use the worker must attach (acquire the GIL) to create its asyncio loop before
+it can `recv()`, so dispatcher and worker waited on each other. The send and receive
+both run inside `py.detach(...)`. (2) Pyclass dealloc runs attached and dropped the
+last `Arc<Runtime>`; tokio's default `Runtime::drop` joins in-flight blocking tasks,
+and an abandoned (timed-out) callback task must re-attach to finish — freezing the
+entire interpreter. (3) The private-loop worker attached on its exit path while the
+interpreter was finalizing — `Py_Finalize` gc is what usually wakes it — which fatals
+CPython (`PyGILState_Release`, SIGABRT; `Python::try_attach` cannot detect
+finalization before 3.13).
+
+Teardown protocol: an `atexit` handler registered at module import sets
+`INTERPRETER_AT_EXIT`; atexit runs at the very start of `Py_FinalizeEx`, strictly
+before the phase in which native threads may no longer attach, so the flag cleanly
+splits two regimes. While the interpreter is alive, teardown is fully deterministic:
+pyclass `Drop` cancels in-flight callbacks (each callback runs as a published
+`asyncio.Task`; cancellation goes through `call_soon_threadsafe(task.cancel)`, and a
+`closing` flag rejects queued-but-unstarted items), `PyPrivateAsyncLoop::shutdown`
+joins the worker — which closes its loop before exiting, freeing its fds — and
+`PyRuntime::drop` joins the tokio blocking pool; every join runs via
+`join_without_gil` (detach first when `PyGILState_Check` says the dropping thread is
+attached), eliminating the GIL deadlock. Once the flag is set, threads skip Python
+entirely and the OS reclaims resources at process exit — the only regime in which
+deterministic cleanup is impossible by CPython's own rules. Regression tests:
+`tests/test_teardown_determinism.py` (exact thread-count and fd-count determinism,
+bounded cancellation, interpreter-exit subprocess stress) plus
+`tests/test_async_callbacks.py::test_async_callback_execute_sync_honors_timeout` and
+`…::test_dealloc_during_inflight_callback_does_not_deadlock`; variant (3) is also
+covered by the `langgraph_async_tool.py` example run in the Python CI Examples job.
 
 | TM-PY-029 | Host clock information disclosure | `datetime.date.today()` / `datetime.datetime.now()` expose host system time and timezone | Intentional — required for correct datetime semantics | **ACCEPTED** |
 
