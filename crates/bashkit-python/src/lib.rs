@@ -1619,13 +1619,28 @@ impl PyFileSystem {
         let inner = self.inner.clone();
         // A `Static` handle (e.g. a custom builtin's `ctx.fs`) operates on a
         // cloned `Arc<dyn FileSystem>` with no interpreter lock. When such a
-        // handle is used from *inside* the shared current-thread runtime —
-        // `execute_sync` drives the interpreter via `self.rt.block_on`, and the
-        // custom builtin callback runs within it — calling `block_on` again on
-        // this thread panics ("Cannot start a runtime from within a runtime").
-        // Run the op on a throwaway thread with its own runtime instead. `Live`
-        // handles keep the original fast path: they lock the interpreter, so
-        // re-entrant use is already unsupported and must not silently deadlock.
+        // handle is used while a tokio runtime is already active on this thread
+        // — `execute_sync` drives the interpreter via `self.rt.block_on` and the
+        // custom builtin callback runs within it; the same holds on a
+        // multi-thread runtime worker when `await execute()` drives a *sync*
+        // builtin — calling `block_on` again here panics ("Cannot start a
+        // runtime from within a runtime"). Run the op on a throwaway thread with
+        // its own runtime instead.
+        //
+        // Cost: this spawns one OS thread and builds one current-thread runtime
+        // per op, so a callback doing many `ctx.fs` ops in a tight loop pays
+        // that scaffolding each time. Fine for occasional `ctx.fs` use; if it
+        // ever gets hot, amortize with a long-lived worker thread + runtime
+        // reused across ops via a channel (note: `block_in_place` is not an
+        // option while `make_runtime` builds a current-thread runtime).
+        //
+        // `Live` handles keep the original fast path: they lock the interpreter.
+        // Re-entrant use of a `Live` handle from inside the shared runtime is
+        // unsupported — it re-enters `self.rt.block_on` and panics with the same
+        // nested-runtime error. That is NOT a deadlock, and it is NOT caught by
+        // the `external_handler` reentry guard (which only fires inside an
+        // external_handler, not a custom builtin); the loud panic is preferable
+        // to silently deadlocking or corrupting interpreter state.
         if inner.is_static() && Handle::try_current().is_ok() {
             return std::thread::scope(|scope| {
                 scope
@@ -1640,6 +1655,10 @@ impl PyFileSystem {
                         })
                     })
                     .join()
+                    // Drop the panic payload deliberately: a `Box<dyn Any>` can't
+                    // be formatted without downcasting and may carry internal
+                    // Debug shapes / host paths (TM-INF-022). The default panic
+                    // hook still prints the full trace to stderr for debugging.
                     .map_err(|_| PyRuntimeError::new_err("filesystem worker thread panicked"))?
             });
         }

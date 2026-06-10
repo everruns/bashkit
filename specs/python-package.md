@@ -302,9 +302,13 @@ commands and writes are visible to later ones. It wraps the same
 the interpreter lock. Because a custom builtin runs inside `execute_sync`'s
 current-thread `block_on`, `PyFileSystem::with_fs` detects the active runtime
 (`Handle::try_current`) and dispatches `ctx.fs` ops on a throwaway worker thread
-to avoid a nested-runtime panic. This is distinct from — and safe unlike —
+to avoid a nested-runtime panic. Each op on this path spawns a short-lived
+worker thread and runtime, so batching fs work in a callback is cheaper than
+many small ops in a tight loop. This is distinct from — and safe unlike —
 calling back into the owning instance's `Bash.fs()` / `Bash.read_file()`, which
-is rejected/unsupported re-entrancy.
+is unsupported re-entrancy: it re-enters the interpreter's runtime and panics
+with a nested-runtime error (not a deadlock, and not caught by the
+`external_handler` reentry guard, which does not fire for custom builtins).
 
 **Sync callbacks** are called directly under the session's captured `contextvars`
 snapshot and may return either a stdout string or a `BuiltinResult` with
