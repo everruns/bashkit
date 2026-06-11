@@ -542,6 +542,8 @@ def test_async_callback_execute_sync_first_private_loop_call_does_not_deadlock()
     Runs in a fresh subprocess with a 10 s timeout to reliably detect a deadlock
     without hanging the whole test suite.
     """
+    import glob as _glob
+    import os
     import subprocess
     import sys
     import textwrap
@@ -561,13 +563,36 @@ def test_async_callback_execute_sync_first_private_loop_call_does_not_deadlock()
         print("ok")
     """)
 
+    # pytest runs from crates/bashkit-python/, so the subprocess inherits that
+    # CWD. Python always inserts '' (= CWD) as sys.path[0], which points at the
+    # source tree (no _bashkit.so). Fix: cwd='/' neutralises ''; we also
+    # prepend the directory that actually contains _bashkit*.so via a glob scan
+    # of sys.path (find_spec is unreliable after pytest imports bashkit first).
+    pkg_root = next(
+        (
+            p
+            for p in sys.path
+            if p
+            and (
+                _glob.glob(os.path.join(p, "bashkit", "_bashkit*.so"))
+                or _glob.glob(os.path.join(p, "bashkit", "_bashkit*.pyd"))
+            )
+        ),
+        None,
+    )
+    env = {
+        **os.environ,
+        "PYTHONPATH": (pkg_root + os.pathsep if pkg_root else "") + os.environ.get("PYTHONPATH", ""),
+    }
+
     result = subprocess.run(
         [sys.executable, "-c", script],
         timeout=10,
         capture_output=True,
         text=True,
+        cwd="/",
+        env=env,
     )
     assert result.returncode == 0, (
-        f"subprocess failed (exit {result.returncode}):\n"
-        f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        f"subprocess failed (exit {result.returncode}):\nstdout: {result.stdout}\nstderr: {result.stderr}"
     )
