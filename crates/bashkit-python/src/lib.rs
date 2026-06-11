@@ -1629,6 +1629,22 @@ impl PyFileSystem {
         }
     }
 
+    // The `Send` bounds are load-bearing for the worker-thread branch below
+    // (`std::thread::scope` moves `f`, its future, and the result `T` across the
+    // thread boundary). They are NOT an extra restriction in practice, so there
+    // is no non-`Send` fast path worth splitting out:
+    //   - `with_fs` is only ever called inside `py.detach(...)` (see every
+    //     caller), so the GIL is released and a closure physically cannot hold a
+    //     `Bound<'py>` / `Python<'py>` ref across the await — the canonical
+    //     source of a non-`Send` fs future.
+    //   - `FileSystem: FileSystemExt: Send + Sync` and the trait is
+    //     `#[async_trait]`, so every fs method already returns a `Send`-boxed
+    //     future and `Arc<dyn FileSystem>` is `Send + Sync`. Any closure that
+    //     just awaits fs ops (all of them do) satisfies `Fut: Send` for free.
+    // A separate non-`Send` `with_fs_local` would therefore have no caller today
+    // (dead code), and the runtime branch means a single method can't statically
+    // pick local-vs-send anyway. Keep one helper; the bound documents the real
+    // off-thread-dispatch invariant.
     fn with_fs<T, F, Fut>(&self, f: F) -> PyResult<T>
     where
         F: FnOnce(Arc<dyn FileSystem>) -> Fut + Send,
@@ -1688,9 +1704,18 @@ impl PyFileSystem {
                     .join()
                     // Drop the panic payload deliberately: a `Box<dyn Any>` can't
                     // be formatted without downcasting and may carry internal
-                    // Debug shapes / host paths (TM-INF-022). The default panic
-                    // hook still prints the full trace to stderr for debugging.
-                    .map_err(|_| PyRuntimeError::new_err("filesystem worker thread panicked"))?
+                    // Debug shapes / host paths (TM-INF-022). Point the user at
+                    // the stderr backtrace the default panic hook prints instead
+                    // — actionable in headless setups where the hint is the only
+                    // breadcrumb, and leaks nothing (static string, no payload).
+                    .map_err(|_| {
+                        PyRuntimeError::new_err(
+                            "internal error: bashkit filesystem worker thread panicked. \
+                             This is a bug in bashkit, not your script. A backtrace was \
+                             printed to stderr; re-run with RUST_BACKTRACE=1 for the full \
+                             trace and please report it.",
+                        )
+                    })?
             });
         }
         self.rt.block_on(async move {
