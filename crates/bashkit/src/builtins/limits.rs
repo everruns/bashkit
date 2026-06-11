@@ -39,6 +39,11 @@ pub(crate) const CURL_MAX_REDIRECTS: u32 = 10;
 #[cfg(feature = "http_client")]
 pub(crate) const CURL_MAX_REQUEST_BODY_BYTES: usize = 10_000_000;
 
+/// expand/unexpand: max accepted tab stop width.
+pub(crate) const EXPAND_MAX_TAB_STOP: usize = 10_000;
+/// expand: max output bytes per invocation before interpreter-level truncation.
+pub(crate) const EXPAND_MAX_OUTPUT_BYTES: usize = 1_048_576;
+
 /// dirs/pushd/popd: max entries on the directory stack.
 pub(crate) const DIRSTACK_MAX_SIZE: usize = 4096;
 
