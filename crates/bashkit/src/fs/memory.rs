@@ -317,6 +317,16 @@ impl Default for InMemoryFs {
 }
 
 impl InMemoryFs {
+    // File-count quotas cover every non-directory entry. Use negation so new
+    // FsEntry variants are automatically counted without an explicit update here.
+    fn entry_counts_toward_file_count(entry: &FsEntry) -> bool {
+        !matches!(entry, FsEntry::Directory { .. })
+    }
+
+    fn snapshot_entry_counts_toward_file_count(kind: &VfsEntryKind) -> bool {
+        !matches!(kind, VfsEntryKind::Directory)
+    }
+
     /// Create a new in-memory filesystem with default directories and default limits.
     ///
     /// Creates the following directory structure:
@@ -484,7 +494,6 @@ impl InMemoryFs {
             match entry {
                 FsEntry::File { content, .. } | FsEntry::Fifo { content, .. } => {
                     total_bytes += content.len() as u64;
-                    file_count += 1;
                 }
                 FsEntry::Directory { .. } => {
                     dir_count += 1;
@@ -492,12 +501,11 @@ impl InMemoryFs {
                 FsEntry::LazyFile { metadata, .. } => {
                     // Lazy files count by their declared metadata size
                     total_bytes += metadata.size;
-                    file_count += 1;
                 }
-                FsEntry::Symlink { .. } => {
-                    // THREAT[TM-DOS-045]: Symlinks count toward file count
-                    file_count += 1;
-                }
+                FsEntry::Symlink { .. } => {}
+            }
+            if Self::entry_counts_toward_file_count(entry) {
+                file_count += 1;
             }
         }
 
@@ -523,25 +531,20 @@ impl InMemoryFs {
         let mut is_new_file = true;
 
         for (entry_path, entry) in entries.iter() {
-            match entry {
+            let entry_size = match entry {
                 FsEntry::File { content, .. } | FsEntry::Fifo { content, .. } => {
-                    let size = content.len() as u64;
-                    current_total += size;
-                    current_file_count += 1;
-                    if entry_path == path {
-                        old_file_size = size;
-                        is_new_file = false;
-                    }
+                    content.len() as u64
                 }
-                FsEntry::LazyFile { metadata, .. } => {
-                    current_total += metadata.size;
-                    current_file_count += 1;
-                    if entry_path == path {
-                        old_file_size = metadata.size;
-                        is_new_file = false;
-                    }
+                FsEntry::LazyFile { metadata, .. } => metadata.size,
+                FsEntry::Directory { .. } | FsEntry::Symlink { .. } => 0,
+            };
+            current_total += entry_size;
+            if Self::entry_counts_toward_file_count(entry) {
+                current_file_count += 1;
+                if entry_path == path {
+                    old_file_size = entry_size;
+                    is_new_file = false;
                 }
-                _ => {}
             }
         }
 
@@ -723,6 +726,8 @@ impl InMemoryFs {
                     .check_file_size(content.len() as u64)
                     .map_err(|e| IoError::other(e.to_string()))?;
                 total_bytes += content.len() as u64;
+            }
+            if Self::snapshot_entry_counts_toward_file_count(&entry.kind) {
                 file_count += 1;
             }
         }
@@ -1574,15 +1579,7 @@ impl FileSystem for InMemoryFs {
         if is_new {
             let file_count = entries
                 .values()
-                .filter(|e| {
-                    matches!(
-                        e,
-                        FsEntry::File { .. }
-                            | FsEntry::LazyFile { .. }
-                            | FsEntry::Fifo { .. }
-                            | FsEntry::Symlink { .. }
-                    )
-                })
+                .filter(|entry| Self::entry_counts_toward_file_count(entry))
                 .count() as u64;
             self.limits
                 .check_file_count(file_count)
@@ -2218,6 +2215,32 @@ mod tests {
             b"stale"
         );
         assert!(!limited.exists(Path::new("/tmp/three.txt")).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_restore_respects_fifo_file_count_limit() {
+        // Default snapshots include 3 /dev files. Add two FIFOs so restore
+        // must count named pipes as file-count entries before clearing.
+        let unlimited = InMemoryFs::with_limits(FsLimits::unlimited());
+        unlimited
+            .mkfifo(Path::new("/tmp/fifo1"), 0o644)
+            .await
+            .unwrap();
+        unlimited
+            .mkfifo(Path::new("/tmp/fifo2"), 0o644)
+            .await
+            .unwrap();
+        let snapshot = unlimited.snapshot();
+
+        let limited = InMemoryFs::with_limits(FsLimits::new().max_file_count(4));
+        let err = limited.restore(&snapshot);
+
+        assert!(
+            err.is_err(),
+            "restore must count FIFOs toward file-count limits"
+        );
+        assert!(!limited.exists(Path::new("/tmp/fifo1")).await.unwrap());
+        assert!(!limited.exists(Path::new("/tmp/fifo2")).await.unwrap());
     }
 
     /// THREAT[TM-DOS-034]: Verify append_file uses single write lock,
