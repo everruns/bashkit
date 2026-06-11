@@ -3,8 +3,8 @@
 ## Decision
 
 Bashkit provides built-in commands for script execution in a virtual environment.
-All builtins operate on the virtual filesystem. For the complete list of 160
-builtins, see the generated `specs/status/builtins.json`; for known gaps, `specs/limitations.md`.
+All builtins operate on the virtual filesystem. For the complete list, see
+the generated `specs/status/builtins.json`; for known gaps, `specs/limitations.md`.
 
 ### Standard Flags
 

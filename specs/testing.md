@@ -10,7 +10,7 @@ Multi-layer testing strategy:
 4. **Comparison tests** - Direct comparison with real bash
 5. **Differential fuzzing** - Property-based testing against real bash
 
-For current test counts and pass rates, see CI (`bash_spec_tests`).
+For current test counts and pass rates, see CI (`spec_tests::bash_spec_tests`).
 For run commands, see AGENTS.md "Local Dev" and `.github/workflows/ci.yml`.
 
 ## Spec Test Framework

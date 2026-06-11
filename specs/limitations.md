@@ -11,8 +11,8 @@ they're recorded here; everything positive is generated or tested instead:
 
 - **Builtin inventory**: generated `specs/status/builtins.json`
   (`just regen-builtins`, drift-checked by `builtins-drift.yml`)
-- **Test counts / pass rates**: CI (`bash_spec_tests` job); spec cases in
-  `crates/bashkit/tests/spec_cases/`
+- **Test counts / pass rates**: CI (`spec_tests::bash_spec_tests` suite);
+  spec cases in `crates/bashkit/tests/spec_cases/`
 - **Resource limit defaults**: `crates/bashkit/src/limits.rs`
 - **Hook/binding API surface**: rustdoc + binding type stubs
 
