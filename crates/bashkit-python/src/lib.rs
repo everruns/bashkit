@@ -2501,7 +2501,8 @@ def _run(coro, ctx):
         // GIL need not be released around the send. Only result_rx.recv() blocks;
         // detach releases the GIL so the worker can acquire it to run Python.
         // `move` ensures result_rx (Send, not Sync) is owned by the closure.
-        let send_result = tx.send(item)
+        let send_result = tx
+            .send(item)
             .map_err(|_| PyRuntimeError::new_err("private loop worker channel closed"));
         py.detach(move || {
             send_result?;
