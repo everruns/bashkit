@@ -6568,20 +6568,27 @@ impl Interpreter {
     }
 
     fn shadow_local_array_bindings(&mut self, name: &str, keep_indexed: bool, keep_assoc: bool) {
-        self.remember_local_array_binding(name);
-        self.remember_local_assoc_array_binding(name);
-        let mut removed_entries = 0;
+        // A newly retained snapshot keeps the removed binding's entries charged
+        // (released at frame pop). When no new snapshot is retained — a second
+        // shadow of the same name in the same frame keeps the first snapshot —
+        // the binding being removed is a transient local that is not retained
+        // anywhere, so its entries must be released now to avoid budget drift.
+        let retained_indexed = self.remember_local_array_binding(name);
+        let retained_assoc = self.remember_local_assoc_array_binding(name);
         if !keep_indexed {
-            removed_entries += self.arrays_mut().remove(name).map_or(0, |arr| arr.len());
+            let removed = self.arrays_mut().remove(name).map_or(0, |arr| arr.len());
+            if !retained_indexed {
+                self.memory_budget.record_array_remove(removed);
+            }
         }
         if !keep_assoc {
-            removed_entries += self
+            let removed = self
                 .assoc_arrays_mut()
                 .remove(name)
                 .map_or(0, |arr| arr.len());
-        }
-        if removed_entries > 0 {
-            self.memory_budget.record_array_remove(removed_entries);
+            if !retained_assoc {
+                self.memory_budget.record_array_remove(removed);
+            }
         }
     }
 
@@ -6613,6 +6620,12 @@ impl Interpreter {
             .enumerate()
             .map(|(i, f)| (i, f.name.clone()))
             .collect();
+        // Interpreter-set FUNCNAME entries are metadata and are inserted
+        // uncharged. Remember how many there are so that on return we credit
+        // back only the *user-added* entries (e.g. `FUNCNAME[7]=x`), which were
+        // charged via the normal array-assignment path. Without this, repeated
+        // FUNCNAME mutation would leak array budget across calls (over-count).
+        let funcname_meta_len = funcname_arr.len();
         let prev_funcname = self
             .arrays_mut()
             .insert("FUNCNAME".to_string(), funcname_arr);
@@ -6638,23 +6651,24 @@ impl Interpreter {
         self.bash_source_stack.pop();
         self.update_bash_source();
 
-        // Restore previous FUNCNAME (or set from remaining stack)
-        let old_funcname_entries = self.arrays.get("FUNCNAME").map_or(0, |arr| arr.len());
-        let new_funcname_entries = if self.call_stack.is_empty() {
+        // Restore previous FUNCNAME (or set from remaining stack). Interpreter
+        // metadata entries are never charged, but a script may have added its
+        // own entries to FUNCNAME while inside the function; those were charged,
+        // so credit them back as the array is discarded to avoid budget drift.
+        let funcname_user_entries = self
+            .arrays
+            .get("FUNCNAME")
+            .map_or(0, |a| a.len())
+            .saturating_sub(funcname_meta_len);
+        if funcname_user_entries > 0 {
+            self.memory_budget
+                .record_array_remove(funcname_user_entries);
+        }
+        if self.call_stack.is_empty() {
             self.arrays_mut().remove("FUNCNAME");
-            0
         } else if let Some(prev) = prev_funcname {
-            let len = prev.len();
             self.arrays_mut().insert("FUNCNAME".to_string(), prev);
-            len
-        } else {
-            old_funcname_entries
-        };
-        self.memory_budget.array_entries = self
-            .memory_budget
-            .array_entries
-            .saturating_sub(old_funcname_entries)
-            + new_funcname_entries;
+        }
 
         let mut result = result?;
 
@@ -6710,7 +6724,7 @@ impl Interpreter {
                     // Handle compound array assignment: local arr=(1 2 3) or local -a/-A arr=(...)
                     let is_compound = value.starts_with('(') && value.ends_with(')');
                     if is_compound {
-                        self.shadow_local_array_bindings(var_name, !flags.assoc, flags.assoc);
+                        self.shadow_local_array_bindings(var_name, false, false);
                         let inner = &value[1..value.len() - 1];
                         let inserted = if flags.assoc {
                             self.remember_local_assoc_array_binding(var_name);
@@ -6776,12 +6790,12 @@ impl Interpreter {
                     }
                 } else if !is_internal_variable(arg) {
                     if flags.assoc {
-                        self.shadow_local_array_bindings(arg, false, true);
+                        self.shadow_local_array_bindings(arg, false, false);
                         if self.insert_assoc_array_checked(arg.to_string(), HashMap::new()) {
                             self.insert_local_checked(arg.to_string(), String::new());
                         }
                     } else if flags.array {
-                        self.shadow_local_array_bindings(arg, true, false);
+                        self.shadow_local_array_bindings(arg, false, false);
                         if self.insert_array_checked(arg.to_string(), HashMap::new()) {
                             self.insert_local_checked(arg.to_string(), String::new());
                         }
@@ -11411,35 +11425,45 @@ impl Interpreter {
     }
 
     /// Remember the array binding that a local indexed array declaration shadows.
-    fn remember_local_array_binding(&mut self, name: &str) {
+    /// Snapshot the indexed-array binding a local declaration shadows.
+    ///
+    /// Returns `true` only when this call retained a *new* snapshot in the
+    /// frame. A later shadow of the same name within the same frame keeps the
+    /// first snapshot (`or_insert`) and returns `false`, signalling that the
+    /// binding being replaced is a transient local — not retained anywhere —
+    /// so its entries must be released from the array budget.
+    fn remember_local_array_binding(&mut self, name: &str) -> bool {
         let previous = self.arrays.get(name).cloned();
         if let Some(frame) = self.call_stack.last_mut() {
-            frame
-                .local_arrays
-                .entry(name.to_string())
-                .or_insert(previous);
+            if frame.local_arrays.contains_key(name) {
+                return false;
+            }
+            frame.local_arrays.insert(name.to_string(), previous);
+            return true;
         }
+        false
     }
 
-    /// Remember the array binding that a local associative array declaration shadows.
-    fn remember_local_assoc_array_binding(&mut self, name: &str) {
+    /// Snapshot the associative-array binding a local declaration shadows.
+    /// See [`remember_local_array_binding`](Self::remember_local_array_binding)
+    /// for the meaning of the return value.
+    fn remember_local_assoc_array_binding(&mut self, name: &str) -> bool {
         let previous = self.assoc_arrays.get(name).cloned();
         if let Some(frame) = self.call_stack.last_mut() {
-            frame
-                .local_assoc_arrays
-                .entry(name.to_string())
-                .or_insert(previous);
+            if frame.local_assoc_arrays.contains_key(name) {
+                return false;
+            }
+            frame.local_assoc_arrays.insert(name.to_string(), previous);
+            return true;
         }
+        false
     }
 
     fn restore_array_binding(&mut self, name: &str, previous: Option<HashMap<usize, String>>) {
         let old_entries = self.arrays.get(name).map_or(0, |a| a.len());
-        let new_entries = previous.as_ref().map_or(0, |a| a.len());
-        self.memory_budget.array_entries = self
-            .memory_budget
-            .array_entries
-            .saturating_sub(old_entries)
-            .saturating_add(new_entries);
+        // Saved bindings remain budgeted while shadowed; popping only releases
+        // entries allocated by the local binding currently active in arrays.
+        self.memory_budget.record_array_remove(old_entries);
         if let Some(arr) = previous {
             self.arrays_mut().insert(name.to_string(), arr);
         } else {
@@ -11453,12 +11477,9 @@ impl Interpreter {
         previous: Option<HashMap<String, String>>,
     ) {
         let old_entries = self.assoc_arrays.get(name).map_or(0, |a| a.len());
-        let new_entries = previous.as_ref().map_or(0, |a| a.len());
-        self.memory_budget.array_entries = self
-            .memory_budget
-            .array_entries
-            .saturating_sub(old_entries)
-            .saturating_add(new_entries);
+        // Saved bindings remain budgeted while shadowed; popping only releases
+        // entries allocated by the local binding currently active in assoc_arrays.
+        self.memory_budget.record_array_remove(old_entries);
         if let Some(arr) = previous {
             self.assoc_arrays_mut().insert(name.to_string(), arr);
         } else {

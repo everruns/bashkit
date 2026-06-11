@@ -3855,6 +3855,148 @@ printf "after_assoc=<%s>\n" "${assoc_shadow[*]}"
         );
     }
 
+    /// TM-DOS-060: FUNCNAME bookkeeping must not undercount array budget.
+    #[tokio::test]
+    async fn tm_dos_060_funcname_restore_preserves_array_budget() {
+        let mem = MemoryLimits::new().max_array_entries(3);
+        let mut bash = Bash::builder()
+            .memory_limits(mem)
+            .session_limits(SessionLimits::unlimited())
+            .build();
+
+        let script = r#"
+arr[0]=a
+arr[1]=b
+arr[2]=c
+f() { :; }
+f
+extra[0]=x
+printf "%s %s\n" "${#arr[@]}" "${#extra[@]}"
+"#;
+        let result = bash.exec(script).await.unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "3 0");
+    }
+
+    /// TM-DOS-060: saved local array shadows must stay charged to array budget.
+    #[tokio::test]
+    async fn tm_dos_060_local_array_shadow_preserves_array_budget() {
+        let mem = MemoryLimits::new().max_array_entries(3);
+        let mut bash = Bash::builder()
+            .memory_limits(mem)
+            .session_limits(SessionLimits::unlimited())
+            .build();
+
+        let script = r#"
+arr=(a b c)
+f() {
+    local arr=(x)
+    printf "inside=%s\n" "${#arr[@]}"
+}
+f
+printf "outside=%s:%s\n" "${#arr[@]}" "${arr[*]}"
+"#;
+        let result = bash.exec(script).await.unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(
+            result.stdout.lines().collect::<Vec<_>>(),
+            vec!["inside=0", "outside=3:a b c"]
+        );
+    }
+
+    /// TM-DOS-060: saved local associative-array shadows must stay charged.
+    #[tokio::test]
+    async fn tm_dos_060_local_assoc_array_shadow_preserves_array_budget() {
+        let mem = MemoryLimits::new().max_array_entries(3);
+        let mut bash = Bash::builder()
+            .memory_limits(mem)
+            .session_limits(SessionLimits::unlimited())
+            .build();
+
+        let script = r#"
+declare -A map
+map[a]=1
+map[b]=2
+map[c]=3
+f() {
+    local -A map=([x]=9)
+    printf "inside=%s\n" "${#map[@]}"
+}
+f
+printf "outside=%s:%s\n" "${#map[@]}" "${map[a]}${map[b]}${map[c]}"
+"#;
+        let result = bash.exec(script).await.unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(
+            result.stdout.lines().collect::<Vec<_>>(),
+            vec!["inside=0", "outside=3:123"]
+        );
+    }
+
+    /// TM-DOS-060: re-shadowing the same local array in one frame must release
+    /// the replaced transient binding's budget (only the first snapshot is kept,
+    /// so later removals must not leave phantom entries charged).
+    #[tokio::test]
+    async fn tm_dos_060_repeated_local_array_shadow_does_not_drift_budget() {
+        let mem = MemoryLimits::new().max_array_entries(3);
+        let mut bash = Bash::builder()
+            .memory_limits(mem)
+            .session_limits(SessionLimits::unlimited())
+            .build();
+
+        // The first `local arr=(a b c)` fills the budget. The second
+        // `local arr=(x)` replaces it; its three entries must be released so the
+        // single-element reassignment fits. Without releasing them the budget
+        // drifts upward and the second assignment is wrongly rejected.
+        let script = r#"
+f() {
+    local arr=(a b c)
+    printf "first=%s\n" "${#arr[@]}"
+    local arr=(x)
+    printf "second=%s\n" "${#arr[@]}"
+}
+f
+printf "after=%s\n" "${#arr[@]}"
+"#;
+        let result = bash.exec(script).await.unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(
+            result.stdout.lines().collect::<Vec<_>>(),
+            vec!["first=3", "second=1", "after=0"]
+        );
+    }
+
+    /// TM-DOS-060: user mutation of FUNCNAME inside a function must not leak
+    /// array budget after the function returns (interpreter metadata stays
+    /// uncharged, but user-added entries are credited back on discard).
+    #[tokio::test]
+    async fn tm_dos_060_funcname_user_mutation_does_not_leak_budget() {
+        let mem = MemoryLimits::new().max_array_entries(5);
+        let mut bash = Bash::builder()
+            .memory_limits(mem)
+            .session_limits(SessionLimits::unlimited())
+            .build();
+
+        // Each call adds a user entry to FUNCNAME, which is discarded on return.
+        // If the charge leaked, the later 5-element array would not fully fit.
+        let script = r#"
+f() { FUNCNAME[7]=injected; }
+f
+f
+f
+arr=(a b c d e)
+printf "n=%s\n" "${#arr[@]}"
+"#;
+        let result = bash.exec(script).await.unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "n=5");
+    }
+
     /// TM-INF-023: local compound arrays must not leak after a function returns.
     #[tokio::test]
     async fn tm_inf_023_function_local_arrays_do_not_leak() {
