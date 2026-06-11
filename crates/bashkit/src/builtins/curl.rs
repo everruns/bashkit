@@ -552,8 +552,8 @@ async fn execute_curl_request(
                         (file_path, guess_mime(file_path))
                     };
                     let resolved = resolve_path(ctx.cwd, path);
-                    let file_content = match ctx.fs.read_file(&resolved).await {
-                        Ok(content) => content,
+                    let metadata = match ctx.fs.stat(&resolved).await {
+                        Ok(metadata) => metadata,
                         Err(e) => {
                             return Ok(ExecResult::err(
                                 format!("curl: failed to read upload file {}: {}\n", path, e),
@@ -572,22 +572,35 @@ async fn execute_curl_request(
                         Err(e) => return Ok(ExecResult::err(e, 2)),
                     };
 
-                    if let Err(e) = append_multipart_bytes(
-                        &mut body,
-                        format!(
-                            "Content-Disposition: form-data; name=\"{}\"; filename=\"{}\"\r\n",
-                            safe_name, safe_filename
-                        )
-                        .as_bytes(),
-                    ) {
+                    let disposition = format!(
+                        "Content-Disposition: form-data; name=\"{}\"; filename=\"{}\"\r\n",
+                        safe_name, safe_filename
+                    );
+                    let content_type = format!("Content-Type: {}\r\n\r\n", mime);
+                    let remaining = CURL_MAX_REQUEST_BODY_BYTES
+                        .saturating_sub(body.len())
+                        .saturating_sub(disposition.len())
+                        .saturating_sub(content_type.len())
+                        as u64;
+                    if metadata.size > remaining {
+                        return Ok(curl_body_too_large_error());
+                    }
+
+                    if let Err(e) = append_multipart_bytes(&mut body, disposition.as_bytes()) {
                         return Ok(ExecResult::err(e, 26));
                     }
-                    if let Err(e) = append_multipart_bytes(
-                        &mut body,
-                        format!("Content-Type: {}\r\n\r\n", mime).as_bytes(),
-                    ) {
+                    if let Err(e) = append_multipart_bytes(&mut body, content_type.as_bytes()) {
                         return Ok(ExecResult::err(e, 26));
                     }
+                    let file_content = match ctx.fs.read_file(&resolved).await {
+                        Ok(content) => content,
+                        Err(e) => {
+                            return Ok(ExecResult::err(
+                                format!("curl: failed to read upload file {}: {}\n", path, e),
+                                26,
+                            ));
+                        }
+                    };
                     if let Err(e) = append_multipart_bytes(&mut body, &file_content) {
                         return Ok(ExecResult::err(e, 26));
                     }
@@ -1674,6 +1687,7 @@ mod tests {
         struct ReadCountingFs {
             inner: InMemoryFs,
             reads: Arc<std::sync::atomic::AtomicUsize>,
+            reported_size: Option<u64>,
         }
 
         impl crate::fs::FileSystemExt for ReadCountingFs {}
@@ -1702,7 +1716,11 @@ mod tests {
             }
 
             async fn stat(&self, path: &std::path::Path) -> Result<crate::fs::Metadata> {
-                self.inner.stat(path).await
+                let mut metadata = self.inner.stat(path).await?;
+                if let Some(size) = self.reported_size {
+                    metadata.size = size;
+                }
+                Ok(metadata)
             }
 
             async fn read_dir(&self, path: &std::path::Path) -> Result<Vec<crate::fs::DirEntry>> {
@@ -1757,6 +1775,7 @@ mod tests {
             let fs: Arc<dyn FileSystem> = Arc::new(ReadCountingFs {
                 inner,
                 reads: reads.clone(),
+                reported_size: None,
             });
             let mut bash = crate::Bash::builder()
                 .fs(fs)
@@ -1790,6 +1809,35 @@ mod tests {
                     body: b"ok".to_vec(),
                 })
             }
+        }
+
+        #[tokio::test]
+        async fn test_curl_multipart_oversized_upload_file_rejected_before_read() {
+            let inner = InMemoryFs::new();
+            inner
+                .write_file(std::path::Path::new("/large.bin"), b"tiny sentinel")
+                .await
+                .unwrap();
+            let reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let fs: Arc<dyn FileSystem> = Arc::new(ReadCountingFs {
+                inner,
+                reads: reads.clone(),
+                reported_size: Some(CURL_MAX_REQUEST_BODY_BYTES as u64 + 1),
+            });
+            let mut bash = crate::Bash::builder()
+                .fs(fs)
+                .network(crate::NetworkAllowlist::allow_all())
+                .http_handler(Box::new(OkHandler))
+                .build();
+
+            let result = bash
+                .exec("curl -s -F file=@/large.bin https://example.com")
+                .await
+                .unwrap();
+
+            assert_eq!(result.exit_code, 2);
+            assert!(result.stderr.contains("request body too large"));
+            assert_eq!(reads.load(std::sync::atomic::Ordering::SeqCst), 0);
         }
 
         #[tokio::test]
