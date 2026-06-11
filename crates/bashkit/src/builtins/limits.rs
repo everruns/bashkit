@@ -42,6 +42,9 @@ pub(crate) const CURL_MAX_REQUEST_BODY_BYTES: usize = 10_000_000;
 /// dirs/pushd/popd: max entries on the directory stack.
 pub(crate) const DIRSTACK_MAX_SIZE: usize = 4096;
 
+/// find: total stdout cap for default and `-printf` output.
+pub(crate) const FIND_MAX_OUTPUT_BYTES: usize = 1_048_576;
+
 /// mktemp: max name-collision retries before giving up.
 pub(crate) const MKTEMP_MAX_ATTEMPTS: usize = 64;
 

@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use std::path::Path;
 
 use super::glob_match;
+use crate::builtins::limits::FIND_MAX_OUTPUT_BYTES;
 use crate::builtins::{Builtin, Context, ExecutionPlan, SubCommand, resolve_path};
 use crate::error::Result;
 use crate::interpreter::{ControlFlow, ExecResult};
@@ -373,7 +374,14 @@ impl Builtin for Find {
             }
 
             if let Err(e) = find_recursive(&ctx, &path, path_str, &opts, 0, &mut output).await {
-                errors.push_str(&format!("find: '{}': {}\n", path_str, e));
+                // Output-cap errors are reported as "find: <message>" (no path
+                // context) to avoid a double prefix. All other errors include
+                // the search path for context.
+                let msg = match e {
+                    crate::error::Error::Execution(ref s) => format!("find: {}\n", s),
+                    _ => format!("find: '{}': {}\n", path_str, e),
+                };
+                errors.push_str(&msg);
                 had_error = true;
             }
         }
@@ -482,10 +490,12 @@ fn find_recursive<'a>(
         // Output if matches (or if no filters, show everything)
         if type_matches && name_matches && path_matches && above_min_depth {
             if let Some(ref fmt) = opts.printf_format {
-                output.push_str(&find_printf_format(fmt, display_path, &metadata));
+                find_printf_format(fmt, display_path, &metadata, output)?;
             } else {
-                output.push_str(display_path);
-                output.push(if opts.print0 { '\0' } else { '\n' });
+                // Append path and terminator atomically: both must fit or neither is
+                // written, so callers never see a partial final line.
+                let terminator = if opts.print0 { "\0" } else { "\n" };
+                push_find_line(output, display_path, terminator)?;
             }
         }
 
@@ -526,111 +536,138 @@ fn find_recursive<'a>(
     })
 }
 
-/// Format a path using find's -printf format string.
-fn find_printf_format(fmt: &str, display_path: &str, metadata: &crate::fs::Metadata) -> String {
-    let mut out = String::new();
-    let chars: Vec<char> = fmt.chars().collect();
-    let mut i = 0;
-    while i < chars.len() {
-        match chars[i] {
-            '\\' => {
-                i += 1;
-                if i < chars.len() {
-                    match chars[i] {
-                        'n' => out.push('\n'),
-                        't' => out.push('\t'),
-                        '0' => out.push('\0'),
-                        '\\' => out.push('\\'),
-                        c => {
-                            out.push('\\');
-                            out.push(c);
-                        }
-                    }
-                }
-            }
-            '%' => {
-                i += 1;
-                if i >= chars.len() {
-                    out.push('%');
-                    continue;
-                }
-                match chars[i] {
-                    'f' => {
-                        let name = std::path::Path::new(display_path)
-                            .file_name()
-                            .map(|s| s.to_string_lossy().to_string())
-                            .unwrap_or_else(|| display_path.to_string());
-                        out.push_str(&name);
-                    }
-                    'p' => out.push_str(display_path),
-                    'P' => {
-                        // In builtin context, display_path is already relative
-                        let rel = display_path.strip_prefix("./").unwrap_or(display_path);
-                        out.push_str(rel);
-                    }
-                    's' => out.push_str(&metadata.size.to_string()),
-                    'm' => out.push_str(&format!("{:o}", metadata.mode & 0o7777)),
-                    'M' => {
-                        let type_ch = if metadata.file_type.is_dir() {
-                            'd'
-                        } else if metadata.file_type.is_symlink() {
-                            'l'
-                        } else {
-                            '-'
-                        };
-                        out.push(type_ch);
-                        for shift in [6, 3, 0] {
-                            let bits = (metadata.mode >> shift) & 7;
-                            out.push(if bits & 4 != 0 { 'r' } else { '-' });
-                            out.push(if bits & 2 != 0 { 'w' } else { '-' });
-                            out.push(if bits & 1 != 0 { 'x' } else { '-' });
-                        }
-                    }
-                    'y' => {
-                        let ch = if metadata.file_type.is_dir() {
-                            'd'
-                        } else if metadata.file_type.is_symlink() {
-                            'l'
-                        } else {
-                            'f'
-                        };
-                        out.push(ch);
-                    }
-                    'd' => {
-                        // Approximate depth from display_path
-                        let base = display_path.strip_prefix("./").unwrap_or(display_path);
-                        let depth = if base == "." || base.is_empty() {
-                            0
-                        } else {
-                            base.matches('/').count() + 1
-                        };
-                        out.push_str(&depth.to_string());
-                    }
-                    'T' => {
-                        i += 1;
-                        if i < chars.len() && chars[i] == '@' {
-                            let secs = metadata
-                                .modified
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .ok()
-                                .map(|d| d.as_secs())
-                                .unwrap_or(0);
-                            out.push_str(&secs.to_string());
-                        } else {
-                            out.push_str("%T");
-                            continue;
-                        }
-                    }
-                    '%' => out.push('%'),
-                    c => {
-                        out.push('%');
-                        out.push(c);
-                    }
-                }
-            }
-            c => out.push(c),
-        }
-        i += 1;
+/// Append `value` to `output`, returning an error if the total would exceed
+/// `FIND_MAX_OUTPUT_BYTES`. Used by `-printf` format expansion.
+fn push_find_output(output: &mut String, value: &str) -> crate::error::Result<()> {
+    if output.len() + value.len() > FIND_MAX_OUTPUT_BYTES {
+        return Err(crate::error::Error::Execution(
+            "output size limit exceeded".to_string(),
+        ));
     }
-    out
+    output.push_str(value);
+    Ok(())
+}
+
+/// Append a single char to `output`, respecting `FIND_MAX_OUTPUT_BYTES`.
+fn push_find_char(output: &mut String, value: char) -> crate::error::Result<()> {
+    if output.len() + value.len_utf8() > FIND_MAX_OUTPUT_BYTES {
+        return Err(crate::error::Error::Execution(
+            "output size limit exceeded".to_string(),
+        ));
+    }
+    output.push(value);
+    Ok(())
+}
+
+/// Atomically append `path` + `terminator` to `output`.
+/// Both are written together or neither is, so callers never see a partial line.
+fn push_find_line(output: &mut String, path: &str, terminator: &str) -> crate::error::Result<()> {
+    let needed = path.len() + terminator.len();
+    if output.len() + needed > FIND_MAX_OUTPUT_BYTES {
+        return Err(crate::error::Error::Execution(
+            "output size limit exceeded".to_string(),
+        ));
+    }
+    output.push_str(path);
+    output.push_str(terminator);
+    Ok(())
+}
+
+/// Format a path using find's -printf format string.
+fn find_printf_format(
+    fmt: &str,
+    display_path: &str,
+    metadata: &crate::fs::Metadata,
+    output: &mut String,
+) -> crate::error::Result<()> {
+    let mut chars = fmt.chars().peekable();
+    loop {
+        let Some(ch) = chars.next() else { break };
+        match ch {
+            '\\' => match chars.next() {
+                Some('n') => push_find_char(output, '\n')?,
+                Some('t') => push_find_char(output, '\t')?,
+                Some('0') => push_find_char(output, '\0')?,
+                Some('\\') => push_find_char(output, '\\')?,
+                Some(c) => {
+                    push_find_char(output, '\\')?;
+                    push_find_char(output, c)?;
+                }
+                None => {}
+            },
+            '%' => match chars.next() {
+                None => push_find_char(output, '%')?,
+                Some('f') => {
+                    let name = std::path::Path::new(display_path)
+                        .file_name()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_else(|| display_path.to_string());
+                    push_find_output(output, &name)?;
+                }
+                Some('p') => push_find_output(output, display_path)?,
+                Some('P') => {
+                    let rel = display_path.strip_prefix("./").unwrap_or(display_path);
+                    push_find_output(output, rel)?;
+                }
+                Some('s') => push_find_output(output, &metadata.size.to_string())?,
+                Some('m') => push_find_output(output, &format!("{:o}", metadata.mode & 0o7777))?,
+                Some('M') => {
+                    let type_ch = if metadata.file_type.is_dir() {
+                        'd'
+                    } else if metadata.file_type.is_symlink() {
+                        'l'
+                    } else {
+                        '-'
+                    };
+                    push_find_char(output, type_ch)?;
+                    for shift in [6u32, 3, 0] {
+                        let bits = (metadata.mode >> shift) & 7;
+                        push_find_char(output, if bits & 4 != 0 { 'r' } else { '-' })?;
+                        push_find_char(output, if bits & 2 != 0 { 'w' } else { '-' })?;
+                        push_find_char(output, if bits & 1 != 0 { 'x' } else { '-' })?;
+                    }
+                }
+                Some('y') => {
+                    let ch = if metadata.file_type.is_dir() {
+                        'd'
+                    } else if metadata.file_type.is_symlink() {
+                        'l'
+                    } else {
+                        'f'
+                    };
+                    push_find_char(output, ch)?;
+                }
+                Some('d') => {
+                    let base = display_path.strip_prefix("./").unwrap_or(display_path);
+                    let depth = if base == "." || base.is_empty() {
+                        0
+                    } else {
+                        base.matches('/').count() + 1
+                    };
+                    push_find_output(output, &depth.to_string())?;
+                }
+                Some('T') => {
+                    if chars.peek() == Some(&'@') {
+                        chars.next();
+                        let secs = metadata
+                            .modified
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .ok()
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        push_find_output(output, &secs.to_string())?;
+                    } else {
+                        push_find_output(output, "%T")?;
+                    }
+                }
+                Some('%') => push_find_char(output, '%')?,
+                Some(c) => {
+                    push_find_char(output, '%')?;
+                    push_find_char(output, c)?;
+                }
+            },
+            c => push_find_char(output, c)?,
+        }
+    }
+    Ok(())
 }
