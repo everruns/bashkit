@@ -500,7 +500,9 @@ NAPI-RS bindings in `crates/bashkit-js/`. TypeScript wrapper in `wrapper.ts`.
 |-------|---------|-------|
 | `Bash` | `executeSync`, `execute`, `cancel`, `reset`, `snapshot`, `restoreSnapshot`, `fromSnapshot` | Core interpreter |
 | `Bash` (VFS) | `readFile`, `writeFile`, `mkdir`, `exists`, `remove` | Direct VFS access via NAPI |
-| `Bash` (helpers) | `ls`, `glob` | Shell-based convenience wrappers |
+| `Bash` (helpers) | `ls`, `glob`, `shellState` | Shell-based convenience wrappers + state inspection |
+| `Bash` (builtins) | `addBuiltin`, `removeBuiltin`, `customBuiltins` option | JS callbacks as builtins; `ctx.fs` exposes the live VFS |
+| `Bash` (network) | `network` option | `http_client` allowlist + credential injection / placeholders (parity with Python `network=`) |
 | `BashTool` | `executeSync`, `execute`, `cancel`, `reset`, `snapshot`, `restoreSnapshot`, `fromSnapshot` | Interpreter + tool metadata |
 | `BashTool` (metadata) | `name`, `shortDescription`, `description`, `help`, `systemPrompt`, `inputSchema`, `outputSchema`, `version` | LLM tool contract |
 | `BashTool` (helpers) | `readFile`, `writeFile`, `exists`, `ls`, `glob` | Shell-based VFS wrappers |
