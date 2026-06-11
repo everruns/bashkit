@@ -2,10 +2,12 @@
 
 use super::parser::AwkParser;
 use super::{Awk, csv_split_fields};
+#[rustfmt::skip]
 use crate::builtins::limits::{
     AWK_MAX_GETLINE_CACHE_BYTES as MAX_GETLINE_CACHE_BYTES,
     AWK_MAX_GETLINE_CACHED_FILES as MAX_GETLINE_CACHED_FILES,
-    AWK_MAX_GETLINE_FILE_BYTES as MAX_GETLINE_FILE_BYTES, AWK_MAX_OUTPUT_BYTES as MAX_OUTPUT_BYTES,
+    AWK_MAX_GETLINE_FILE_BYTES as MAX_GETLINE_FILE_BYTES,
+    AWK_MAX_OUTPUT_BYTES as MAX_OUTPUT_BYTES,
     AWK_MAX_OUTPUT_TARGETS as MAX_OUTPUT_TARGETS,
 };
 use crate::builtins::{Builtin, Context};
@@ -950,8 +952,12 @@ async fn test_awk_output_limit_exceeded() {
 #[tokio::test]
 async fn test_awk_single_write_over_limit_rejected() {
     // One oversized record must be rejected before buffering stdout.
-    let input = "x".repeat(MAX_OUTPUT_BYTES);
-    let result = run_awk(&["{ print }"], Some(&input)).await.unwrap();
+    // Use MAX_OUTPUT_BYTES + 1 with printf (no ORS) so the write is
+    // unambiguously over the cap regardless of newline/ORS behavior.
+    let input = "x".repeat(MAX_OUTPUT_BYTES + 1);
+    let result = run_awk(&[r#"{ printf "%s", $0 }"#], Some(&input))
+        .await
+        .unwrap();
     assert_eq!(result.exit_code, 2);
     assert!(
         result.stderr.contains("output limit exceeded"),
