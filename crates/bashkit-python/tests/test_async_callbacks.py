@@ -528,3 +528,71 @@ def test_async_callable_object():
     r = tool.execute_sync("greet --name Object")
     assert r.exit_code == 0
     assert r.stdout.strip() == "hello Object"
+
+
+def test_async_callback_execute_sync_first_private_loop_call_does_not_deadlock():
+    """First execute_sync call must not deadlock when the private-loop worker
+    needs the GIL to create its asyncio event loop.
+
+    Regression for TM-PY-030 variant (1): the work-dispatch channel was a
+    rendezvous (sync_channel(0)), so the dispatcher blocked on send() while the
+    worker blocked on the GIL — both waiting on each other. The fix switches the
+    dispatch channel to unbounded so send() never blocks.
+
+    Runs in a fresh subprocess with a 10 s timeout to reliably detect a deadlock
+    without hanging the whole test suite.
+    """
+    import glob as _glob
+    import os
+    import subprocess
+    import sys
+    import textwrap
+
+    script = textwrap.dedent("""
+        import asyncio
+        from bashkit import ScriptedTool
+
+        async def greet(params, stdin=None):
+            return "hello\\n"
+
+        tool = ScriptedTool("api")
+        tool.add_tool("greet", "Greet", callback=greet)
+        r = tool.execute_sync("greet")
+        assert r.exit_code == 0, f"exit_code={r.exit_code} stderr={r.stderr!r}"
+        assert r.stdout.strip() == "hello"
+        print("ok")
+    """)
+
+    # pytest runs from crates/bashkit-python/, so the subprocess inherits that
+    # CWD. Python always inserts '' (= CWD) as sys.path[0], which points at the
+    # source tree (no _bashkit.so). Fix: cwd='/' neutralises ''; we also
+    # prepend the directory that actually contains _bashkit*.so via a glob scan
+    # of sys.path (find_spec is unreliable after pytest imports bashkit first).
+    pkg_root = next(
+        (
+            p
+            for p in sys.path
+            if p
+            and (
+                _glob.glob(os.path.join(p, "bashkit", "_bashkit*.so"))
+                or _glob.glob(os.path.join(p, "bashkit", "_bashkit*.pyd"))
+            )
+        ),
+        None,
+    )
+    env = {
+        **os.environ,
+        "PYTHONPATH": (pkg_root + os.pathsep if pkg_root else "") + os.environ.get("PYTHONPATH", ""),
+    }
+
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        timeout=10,
+        capture_output=True,
+        text=True,
+        cwd="/",
+        env=env,
+    )
+    assert result.returncode == 0, (
+        f"subprocess failed (exit {result.returncode}):\nstdout: {result.stdout}\nstderr: {result.stderr}"
+    )

@@ -2244,7 +2244,8 @@ struct PrivateLoopWorkItem {
 // The lazily spawned worker behind a PyPrivateAsyncLoop: channel sender plus
 // the join handle used for deterministic teardown.
 struct PrivateLoopWorker {
-    tx: std::sync::mpsc::SyncSender<PrivateLoopWorkItem>,
+    // Unbounded so send() never blocks with the GIL held (TM-PY-030 root-cause fix).
+    tx: std::sync::mpsc::Sender<PrivateLoopWorkItem>,
     handle: std::thread::JoinHandle<()>,
 }
 
@@ -2286,7 +2287,7 @@ impl PyPrivateAsyncLoop {
     // keeps it there for the lifetime of the PyPrivateAsyncLoop. This pins all
     // run_until_complete calls to a single thread, matching asyncio's thread-
     // affinity contract.
-    fn ensure_worker_tx(&self) -> PyResult<std::sync::mpsc::SyncSender<PrivateLoopWorkItem>> {
+    fn ensure_worker_tx(&self) -> PyResult<std::sync::mpsc::Sender<PrivateLoopWorkItem>> {
         let mut guard = self.worker.lock().expect("private loop worker lock");
         if let Some(ref worker) = *guard {
             return Ok(worker.tx.clone());
@@ -2294,7 +2295,10 @@ impl PyPrivateAsyncLoop {
         if self.closing.load(Ordering::Acquire) {
             return Err(PyRuntimeError::new_err("private loop is shutting down"));
         }
-        let (tx, rx) = std::sync::mpsc::sync_channel::<PrivateLoopWorkItem>(0);
+        // Unbounded channel: send() never blocks, so GIL need not be released
+        // around the send (TM-PY-030 root-cause fix). Queue depth ≤ 1 in practice
+        // because the caller blocks on result_rx.recv() before issuing another send.
+        let (tx, rx) = std::sync::mpsc::channel::<PrivateLoopWorkItem>();
         let event_loop_slot = self.event_loop.clone();
         let current_task = self.current_task.clone();
         let closing = self.closing.clone();
@@ -2493,16 +2497,15 @@ def _run(coro, ctx):
             context: context.clone_ref(py),
             result_tx,
         };
-        // THREAT[TM-PY-030]: detach (release the GIL) around BOTH the send and
-        // the recv. The channel is a rendezvous (capacity 0), so send blocks
-        // until the worker receives — and on first use the worker must acquire
-        // the GIL to create its event loop before it ever reaches recv().
-        // Sending while attached therefore deadlocks the whole process:
-        // dispatcher holds the GIL waiting on send, worker waits on the GIL.
+        // THREAT[TM-PY-030]: send() is non-blocking (unbounded channel), so the
+        // GIL need not be released around the send. Only result_rx.recv() blocks;
+        // detach releases the GIL so the worker can acquire it to run Python.
         // `move` ensures result_rx (Send, not Sync) is owned by the closure.
+        let send_result = tx
+            .send(item)
+            .map_err(|_| PyRuntimeError::new_err("private loop worker channel closed"));
         py.detach(move || {
-            tx.send(item)
-                .map_err(|_| PyRuntimeError::new_err("private loop worker channel closed"))?;
+            send_result?;
             result_rx
                 .recv()
                 .map_err(|_| PyRuntimeError::new_err("private loop worker disconnected"))

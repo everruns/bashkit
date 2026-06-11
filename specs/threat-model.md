@@ -1760,11 +1760,15 @@ recursing. Coverage: `tests/_security_advanced.py::JsonConversionBoundariesTests
 
 **TM-PY-030** (mitigated): three crash/deadlock variants in the async-callback
 private-loop machinery (`crates/bashkit-python/src/lib.rs`), resolved by a
-deterministic teardown protocol. (1) `PyPrivateAsyncLoop::run_awaitable` sent work to
-the dedicated worker thread over a `sync_channel(0)` rendezvous while attached; on
-first use the worker must attach (acquire the GIL) to create its asyncio loop before
-it can `recv()`, so dispatcher and worker waited on each other. The send and receive
-both run inside `py.detach(...)`. (2) Pyclass dealloc runs attached and dropped the
+deterministic teardown protocol and root-cause channel fix. (1) `PyPrivateAsyncLoop::run_awaitable`
+originally sent work to the dedicated worker thread over a `sync_channel(0)` rendezvous
+while attached; on first use the worker must attach (acquire the GIL) to create its
+asyncio loop before it can `recv()`, so dispatcher and worker waited on each other.
+**Root-cause fix**: the work-dispatch channel is now an unbounded `channel()`, so
+`send()` is non-blocking and the GIL need not be released around it — only the
+result `recv()` runs inside `py.detach(...)`. Queue depth is ≤ 1 in practice because
+the caller blocks on `result_rx.recv()` before issuing another send. Regression test:
+`test_async_callbacks.py::test_async_callback_execute_sync_first_private_loop_call_does_not_deadlock`. (2) Pyclass dealloc runs attached and dropped the
 last `Arc<Runtime>`; tokio's default `Runtime::drop` joins in-flight blocking tasks,
 and an abandoned (timed-out) callback task must re-attach to finish — freezing the
 entire interpreter. (3) The private-loop worker attached on its exit path while the
