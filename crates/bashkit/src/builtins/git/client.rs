@@ -11,7 +11,7 @@
 //! Future phases may integrate more deeply with gitoxide for full compatibility.
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use crate::error::{Error, Result};
@@ -1075,6 +1075,50 @@ impl GitClient {
         Ok(())
     }
 
+    /// Validate a user pathspec before joining with `repo_path`.
+    ///
+    /// Git inspection commands must never let absolute paths or `..` escape the
+    /// repository root. The VFS normalizes traversal when reading, so reject it
+    /// before constructing any candidate path.
+    fn validate_repo_pathspec(pathspec: &str) -> Result<PathBuf> {
+        if pathspec.is_empty() {
+            return Err(Error::Internal(
+                "fatal: empty pathspec is outside repository".to_string(),
+            ));
+        }
+        let path = Path::new(pathspec);
+        let mut clean = PathBuf::new();
+
+        for component in path.components() {
+            match component {
+                Component::Normal(part) => clean.push(part),
+                Component::CurDir => {}
+                Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                    return Err(Error::Internal(format!(
+                        "fatal: pathspec '{}' is outside repository",
+                        pathspec
+                    )));
+                }
+            }
+        }
+
+        // All components were CurDir (e.g. ".", "./", ".//") — treat as repo root
+        if clean.as_os_str().is_empty() {
+            return Ok(PathBuf::from("."));
+        }
+
+        Ok(clean)
+    }
+
+    fn tracked_file_matches_pathspec(file: &str, pathspec: &Path) -> bool {
+        // "." matches every file in the repository
+        if pathspec == Path::new(".") {
+            return true;
+        }
+        let file_path = Path::new(file);
+        file_path == pathspec || file_path.starts_with(pathspec)
+    }
+
     /// Create a new branch.
     pub async fn branch_create(
         &self,
@@ -1312,7 +1356,8 @@ impl GitClient {
                     rev
                 )));
             }
-            let file_path = repo_path.join(path);
+            let safe_path = Self::validate_repo_pathspec(path)?;
+            let file_path = repo_path.join(&safe_path);
             if fs.exists(&file_path).await? {
                 let content = fs.read_file(&file_path).await?;
                 // Sanitize file content from VFS (TM-GIT-015)
@@ -1442,7 +1487,8 @@ impl GitClient {
                     let head_content = fs.read_file(&git_dir.join("HEAD")).await?;
                     let head = String::from_utf8_lossy(&head_content);
                     if let Some(branch) = head.trim().strip_prefix("ref: refs/heads/") {
-                        let ref_path = git_dir.join(format!("refs/heads/{}", branch));
+                        Self::validate_ref_name(branch)?;
+                        let ref_path = git_dir.join("refs/heads").join(branch);
                         if fs.exists(&ref_path).await? {
                             let hash = fs.read_file(&ref_path).await?;
                             // Sanitize hash read from ref file (TM-GIT-015)
@@ -1461,7 +1507,13 @@ impl GitClient {
                 }
                 arg => {
                     // Try to resolve as a branch ref
-                    let ref_path = git_dir.join(format!("refs/heads/{}", arg));
+                    Self::validate_ref_name(arg).map_err(|_| {
+                        Error::Internal(format!(
+                            "fatal: ambiguous argument '{}': unknown revision",
+                            arg
+                        ))
+                    })?;
+                    let ref_path = git_dir.join("refs/heads").join(arg);
                     if fs.exists(&ref_path).await? {
                         let hash = fs.read_file(&ref_path).await?;
                         // Sanitize hash read from ref file (TM-GIT-015)
@@ -1596,11 +1648,24 @@ impl GitClient {
             )));
         }
 
-        // Get files to search
+        // Search only tracked paths inside the repository. Explicit pathspecs
+        // filter tracked files; they are never read directly from the VFS.
+        let tracked_files = self.ls_files(fs, repo_path).await?;
         let files = if paths.is_empty() {
-            self.ls_files(fs, repo_path).await?
+            tracked_files
         } else {
-            paths.iter().map(|p| p.to_string()).collect()
+            let pathspecs = paths
+                .iter()
+                .map(|path| Self::validate_repo_pathspec(path))
+                .collect::<Result<Vec<_>>>()?;
+            tracked_files
+                .into_iter()
+                .filter(|file| {
+                    pathspecs
+                        .iter()
+                        .any(|pathspec| Self::tracked_file_matches_pathspec(file, pathspec))
+                })
+                .collect()
         };
 
         let mut output = String::new();
@@ -1638,7 +1703,8 @@ impl GitClient {
             let head_content = fs.read_file(&git_dir.join("HEAD")).await?;
             let head = String::from_utf8_lossy(&head_content);
             if let Some(branch) = head.trim().strip_prefix("ref: refs/heads/") {
-                let ref_path = git_dir.join(format!("refs/heads/{}", branch));
+                Self::validate_ref_name(branch)?;
+                let ref_path = git_dir.join("refs/heads").join(branch);
                 if fs.exists(&ref_path).await? {
                     let hash = fs.read_file(&ref_path).await?;
                     return Ok(String::from_utf8_lossy(&hash).trim().to_string());
@@ -1647,14 +1713,21 @@ impl GitClient {
             return Ok(head.trim().to_string());
         }
 
-        // Try as branch name
-        let ref_path = git_dir.join(format!("refs/heads/{}", refspec));
-        if fs.exists(&ref_path).await? {
-            let hash = fs.read_file(&ref_path).await?;
-            return Ok(String::from_utf8_lossy(&hash).trim().to_string());
+        // Try as branch name. Invalid ref names cannot be resolved via the VFS.
+        if Self::validate_ref_name(refspec).is_ok() {
+            let ref_path = git_dir.join("refs/heads").join(refspec);
+            if fs.exists(&ref_path).await? {
+                let hash = fs.read_file(&ref_path).await?;
+                return Ok(String::from_utf8_lossy(&hash).trim().to_string());
+            }
+        } else if !refspec.chars().all(|ch| ch.is_ascii_hexdigit()) {
+            return Err(Error::Internal(format!(
+                "fatal: ambiguous argument '{}': unknown revision",
+                refspec
+            )));
         }
 
-        // Assume it's a commit hash
+        // Assume hex-looking input is a commit hash or prefix.
         Ok(refspec.to_string())
     }
 }
