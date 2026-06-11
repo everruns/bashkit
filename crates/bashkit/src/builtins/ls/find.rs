@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use std::path::Path;
 
 use super::glob_match;
+use crate::builtins::limits::FIND_MAX_OUTPUT_BYTES;
 use crate::builtins::{Builtin, Context, ExecutionPlan, SubCommand, resolve_path};
 use crate::error::Result;
 use crate::interpreter::{ControlFlow, ExecResult};
@@ -442,10 +443,10 @@ fn find_recursive<'a>(
         // Output if matches (or if no filters, show everything)
         if type_matches && name_matches && path_matches && above_min_depth {
             if let Some(ref fmt) = opts.printf_format {
-                output.push_str(&find_printf_format(fmt, display_path, &metadata));
+                find_printf_format(fmt, display_path, &metadata, output)?;
             } else {
-                output.push_str(display_path);
-                output.push('\n');
+                push_find_output(output, display_path)?;
+                push_find_output(output, "\n")?;
             }
         }
 
@@ -486,9 +487,35 @@ fn find_recursive<'a>(
     })
 }
 
+/// Append bytes to find stdout while enforcing the builtin output cap.
+fn push_find_output(output: &mut String, value: &str) -> Result<()> {
+    if output.len().saturating_add(value.len()) > FIND_MAX_OUTPUT_BYTES {
+        return Err(crate::error::Error::Execution(
+            "find: output limit exceeded".to_string(),
+        ));
+    }
+    output.push_str(value);
+    Ok(())
+}
+
+/// Append one char to find stdout while enforcing the builtin output cap.
+fn push_find_char(output: &mut String, value: char) -> Result<()> {
+    if output.len().saturating_add(value.len_utf8()) > FIND_MAX_OUTPUT_BYTES {
+        return Err(crate::error::Error::Execution(
+            "find: output limit exceeded".to_string(),
+        ));
+    }
+    output.push(value);
+    Ok(())
+}
+
 /// Format a path using find's -printf format string.
-fn find_printf_format(fmt: &str, display_path: &str, metadata: &crate::fs::Metadata) -> String {
-    let mut out = String::new();
+fn find_printf_format(
+    fmt: &str,
+    display_path: &str,
+    metadata: &crate::fs::Metadata,
+    output: &mut String,
+) -> Result<()> {
     let chars: Vec<char> = fmt.chars().collect();
     let mut i = 0;
     while i < chars.len() {
@@ -497,13 +524,13 @@ fn find_printf_format(fmt: &str, display_path: &str, metadata: &crate::fs::Metad
                 i += 1;
                 if i < chars.len() {
                     match chars[i] {
-                        'n' => out.push('\n'),
-                        't' => out.push('\t'),
-                        '0' => out.push('\0'),
-                        '\\' => out.push('\\'),
+                        'n' => push_find_char(output, '\n')?,
+                        't' => push_find_char(output, '\t')?,
+                        '0' => push_find_char(output, '\0')?,
+                        '\\' => push_find_char(output, '\\')?,
                         c => {
-                            out.push('\\');
-                            out.push(c);
+                            push_find_char(output, '\\')?;
+                            push_find_char(output, c)?;
                         }
                     }
                 }
@@ -511,7 +538,7 @@ fn find_printf_format(fmt: &str, display_path: &str, metadata: &crate::fs::Metad
             '%' => {
                 i += 1;
                 if i >= chars.len() {
-                    out.push('%');
+                    push_find_char(output, '%')?;
                     continue;
                 }
                 match chars[i] {
@@ -520,16 +547,16 @@ fn find_printf_format(fmt: &str, display_path: &str, metadata: &crate::fs::Metad
                             .file_name()
                             .map(|s| s.to_string_lossy().to_string())
                             .unwrap_or_else(|| display_path.to_string());
-                        out.push_str(&name);
+                        push_find_output(output, &name)?;
                     }
-                    'p' => out.push_str(display_path),
+                    'p' => push_find_output(output, display_path)?,
                     'P' => {
                         // In builtin context, display_path is already relative
                         let rel = display_path.strip_prefix("./").unwrap_or(display_path);
-                        out.push_str(rel);
+                        push_find_output(output, rel)?;
                     }
-                    's' => out.push_str(&metadata.size.to_string()),
-                    'm' => out.push_str(&format!("{:o}", metadata.mode & 0o7777)),
+                    's' => push_find_output(output, &metadata.size.to_string())?,
+                    'm' => push_find_output(output, &format!("{:o}", metadata.mode & 0o7777))?,
                     'M' => {
                         let type_ch = if metadata.file_type.is_dir() {
                             'd'
@@ -538,12 +565,12 @@ fn find_printf_format(fmt: &str, display_path: &str, metadata: &crate::fs::Metad
                         } else {
                             '-'
                         };
-                        out.push(type_ch);
+                        push_find_char(output, type_ch)?;
                         for shift in [6, 3, 0] {
                             let bits = (metadata.mode >> shift) & 7;
-                            out.push(if bits & 4 != 0 { 'r' } else { '-' });
-                            out.push(if bits & 2 != 0 { 'w' } else { '-' });
-                            out.push(if bits & 1 != 0 { 'x' } else { '-' });
+                            push_find_char(output, if bits & 4 != 0 { 'r' } else { '-' })?;
+                            push_find_char(output, if bits & 2 != 0 { 'w' } else { '-' })?;
+                            push_find_char(output, if bits & 1 != 0 { 'x' } else { '-' })?;
                         }
                     }
                     'y' => {
@@ -554,7 +581,7 @@ fn find_printf_format(fmt: &str, display_path: &str, metadata: &crate::fs::Metad
                         } else {
                             'f'
                         };
-                        out.push(ch);
+                        push_find_char(output, ch)?;
                     }
                     'd' => {
                         // Approximate depth from display_path
@@ -564,7 +591,7 @@ fn find_printf_format(fmt: &str, display_path: &str, metadata: &crate::fs::Metad
                         } else {
                             base.matches('/').count() + 1
                         };
-                        out.push_str(&depth.to_string());
+                        push_find_output(output, &depth.to_string())?;
                     }
                     'T' => {
                         i += 1;
@@ -575,22 +602,22 @@ fn find_printf_format(fmt: &str, display_path: &str, metadata: &crate::fs::Metad
                                 .ok()
                                 .map(|d| d.as_secs())
                                 .unwrap_or(0);
-                            out.push_str(&secs.to_string());
+                            push_find_output(output, &secs.to_string())?;
                         } else {
-                            out.push_str("%T");
+                            push_find_output(output, "%T")?;
                             continue;
                         }
                     }
-                    '%' => out.push('%'),
+                    '%' => push_find_char(output, '%')?,
                     c => {
-                        out.push('%');
-                        out.push(c);
+                        push_find_char(output, '%')?;
+                        push_find_char(output, c)?;
                     }
                 }
             }
-            c => out.push(c),
+            c => push_find_char(output, c)?,
         }
         i += 1;
     }
-    out
+    Ok(())
 }

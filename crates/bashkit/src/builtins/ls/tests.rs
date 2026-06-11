@@ -4,6 +4,7 @@ use super::find::{Find, build_find_exec_commands, parse_find_args};
 use super::glob_match;
 use super::list::Ls;
 use super::rmdir::Rmdir;
+use crate::builtins::limits::FIND_MAX_OUTPUT_BYTES;
 use crate::builtins::{Builtin, Context, ExecutionPlan};
 
 use std::collections::HashMap;
@@ -534,6 +535,57 @@ async fn test_find_current_dir() {
     assert_eq!(result.exit_code, 0);
     assert!(result.stdout.contains("."));
     assert!(result.stdout.contains("file.txt"));
+}
+
+#[tokio::test]
+async fn test_find_printf_rejects_oversized_single_entry_output() {
+    let (fs, mut cwd, mut variables) = create_test_ctx().await;
+    let env = HashMap::new();
+
+    fs.write_file(&cwd.join("file.txt"), b"content")
+        .await
+        .unwrap();
+
+    let oversized_format = "x".repeat(FIND_MAX_OUTPUT_BYTES + 1);
+    let args = vec![
+        ".".to_string(),
+        "-type".to_string(),
+        "f".to_string(),
+        "-printf".to_string(),
+        oversized_format,
+    ];
+    let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+
+    let result = Find.execute(ctx).await.unwrap();
+    assert_eq!(result.exit_code, 1);
+    assert!(result.stdout.len() <= FIND_MAX_OUTPUT_BYTES);
+    assert!(result.stderr.contains("find: output limit exceeded"));
+}
+
+#[tokio::test]
+async fn test_find_printf_rejects_oversized_aggregate_output() {
+    let (fs, mut cwd, mut variables) = create_test_ctx().await;
+    let env = HashMap::new();
+
+    for i in 0..5 {
+        fs.write_file(&cwd.join(format!("file{i}.txt")), b"content")
+            .await
+            .unwrap();
+    }
+
+    let args = vec![
+        ".".to_string(),
+        "-type".to_string(),
+        "f".to_string(),
+        "-printf".to_string(),
+        "x".repeat((FIND_MAX_OUTPUT_BYTES / 4) + 1),
+    ];
+    let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs.clone(), None);
+
+    let result = Find.execute(ctx).await.unwrap();
+    assert_eq!(result.exit_code, 1);
+    assert!(result.stdout.len() <= FIND_MAX_OUTPUT_BYTES);
+    assert!(result.stderr.contains("find: output limit exceeded"));
 }
 
 #[tokio::test]
