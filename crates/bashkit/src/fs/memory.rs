@@ -460,7 +460,7 @@ impl InMemoryFs {
         }
     }
 
-    /// THREAT[TM-DOS-003]: Generate bounded random bytes for /dev/urandom.
+    /// THREAT[TM-DOS-003]: Generate bounded random bytes for `/dev/urandom` and `/dev/random`.
     /// Returns exactly 8192 bytes to prevent unbounded reads while
     /// supporting common patterns like `od -N8 -tx1 /dev/urandom`.
     fn generate_random_bytes() -> Result<Vec<u8>> {
@@ -2279,16 +2279,22 @@ mod tests {
     #[test]
     fn test_random_device_source_uses_csprng() {
         let source = include_str!("memory.rs");
-        let production_source = source
-            .split("fn test_random_device_source_uses_csprng")
-            .next()
-            .unwrap();
+        // Extract just the generate_random_bytes function body so the check
+        // is not brittle against imports, variable names, or other uses of
+        // RandomState elsewhere in the file.
+        let fn_body = source
+            .split("fn generate_random_bytes")
+            .nth(1)
+            .expect("generate_random_bytes must exist in memory.rs");
+        // Take up to the next top-level `fn ` at the same indentation level
+        // (four spaces + "fn "), which terminates the function block.
+        let fn_body = fn_body.split("\n    fn ").next().unwrap_or(fn_body);
         assert!(
-            production_source.contains("getrandom::fill"),
-            "/dev/random devices must use the OS CSPRNG"
+            fn_body.contains("getrandom") && fn_body.contains("fill"),
+            "/dev/random devices must use the OS CSPRNG (getrandom::fill or use getrandom::fill)"
         );
         assert!(
-            !production_source.contains("std::collections::hash_map::RandomState"),
+            !fn_body.contains("RandomState"),
             "/dev/random devices must not use HashMap hasher seeds as randomness"
         );
     }
