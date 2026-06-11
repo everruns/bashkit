@@ -581,8 +581,7 @@ fn find_printf_format(
     output: &mut String,
 ) -> crate::error::Result<()> {
     let mut chars = fmt.chars().peekable();
-    loop {
-        let Some(ch) = chars.next() else { break };
+    while let Some(ch) = chars.next() {
         match ch {
             '\\' => match chars.next() {
                 Some('n') => push_find_char(output, '\n')?,
