@@ -44,9 +44,15 @@ impl Builtin for Join {
 
         while !p.is_done() {
             if let Some(val) = p.flag_value_opt("-1") {
-                opts.field1 = val.parse().unwrap_or(1);
+                opts.field1 = match parse_field_number("-1", val) {
+                    Ok(field) => field,
+                    Err(message) => return Ok(ExecResult::err(message, 1)),
+                };
             } else if let Some(val) = p.flag_value_opt("-2") {
-                opts.field2 = val.parse().unwrap_or(1);
+                opts.field2 = match parse_field_number("-2", val) {
+                    Ok(field) => field,
+                    Err(message) => return Ok(ExecResult::err(message, 1)),
+                };
             } else if let Some(val) = p.flag_value_opt("-t") {
                 opts.separator = val.chars().next().unwrap_or(' ');
             } else if let Some(val) = p.flag_value_opt("-a") {
@@ -134,6 +140,14 @@ impl Builtin for Join {
 
         Ok(ExecResult::ok(output))
     }
+}
+
+fn parse_field_number(option: &str, value: &str) -> std::result::Result<usize, String> {
+    let field = value.parse().unwrap_or(1);
+    if field == 0 {
+        return Err(format!("join: invalid field number for {}: 0\n", option));
+    }
+    Ok(field)
 }
 
 async fn read_input(
@@ -236,5 +250,29 @@ mod tests {
         assert_eq!(result.exit_code, 0);
         // "b 2" should appear as unpairable from file1
         assert!(result.stdout.contains("b 2"));
+    }
+
+    #[tokio::test]
+    async fn test_join_rejects_zero_file1_field() {
+        let fs = Arc::new(InMemoryFs::new()) as Arc<dyn FileSystem>;
+        fs.write_file(Path::new("/f1"), b"a 1").await.unwrap();
+        fs.write_file(Path::new("/f2"), b"a x").await.unwrap();
+
+        let result = run_join(&["-1", "0", "/f1", "/f2"], fs).await;
+
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid field number"));
+    }
+
+    #[tokio::test]
+    async fn test_join_rejects_zero_file2_field() {
+        let fs = Arc::new(InMemoryFs::new()) as Arc<dyn FileSystem>;
+        fs.write_file(Path::new("/f1"), b"a 1").await.unwrap();
+        fs.write_file(Path::new("/f2"), b"a x").await.unwrap();
+
+        let result = run_join(&["-2", "0", "/f1", "/f2"], fs).await;
+
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid field number"));
     }
 }
