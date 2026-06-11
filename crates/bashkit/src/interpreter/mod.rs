@@ -6776,16 +6776,17 @@ impl Interpreter {
                     }
                 } else if !is_internal_variable(arg) {
                     if flags.assoc {
-                        self.remember_local_assoc_array_binding(arg);
+                        self.shadow_local_array_bindings(arg, false, true);
                         if self.insert_assoc_array_checked(arg.to_string(), HashMap::new()) {
                             self.insert_local_checked(arg.to_string(), String::new());
                         }
                     } else if flags.array {
-                        self.remember_local_array_binding(arg);
+                        self.shadow_local_array_bindings(arg, true, false);
                         if self.insert_array_checked(arg.to_string(), HashMap::new()) {
                             self.insert_local_checked(arg.to_string(), String::new());
                         }
                     } else {
+                        self.shadow_local_array_bindings(arg, false, false);
                         self.insert_local_checked(arg.to_string(), String::new());
                     }
                     if flags.integer {

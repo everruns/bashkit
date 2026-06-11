@@ -3808,6 +3808,53 @@ f
         assert_eq!(counts, vec![0, 0]);
     }
 
+    /// TM-INF-023: bare local declarations must shadow stale global array bindings.
+    #[tokio::test]
+    async fn tm_inf_023_bare_local_declarations_shadow_global_arrays() {
+        let mut bash = Bash::builder()
+            .session_limits(SessionLimits::unlimited())
+            .build();
+
+        let script = r#"
+scalar_shadow=(GLOBAL_INDEXED)
+declare -A indexed_shadow=([k]=GLOBAL_ASSOC)
+assoc_shadow=(GLOBAL_INDEXED)
+f() {
+    local scalar_shadow
+    local -a indexed_shadow
+    local -A assoc_shadow
+    printf "scalar_star=<%s>\n" "${scalar_shadow[*]}"
+    printf "scalar_zero=<%s>\n" "${scalar_shadow[0]}"
+    printf "indexed_star=<%s>\n" "${indexed_shadow[*]}"
+    printf "indexed_key=<%s>\n" "${indexed_shadow[k]}"
+    printf "assoc_star=<%s>\n" "${assoc_shadow[*]}"
+    printf "assoc_zero=<%s>\n" "${assoc_shadow[0]}"
+}
+f
+printf "after_scalar=<%s>\n" "${scalar_shadow[*]}"
+printf "after_indexed=<%s>\n" "${indexed_shadow[*]}"
+printf "after_assoc=<%s>\n" "${assoc_shadow[*]}"
+"#;
+        let result = bash.exec(script).await.unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        let lines: Vec<&str> = result.stdout.lines().collect();
+        assert_eq!(
+            lines,
+            vec![
+                "scalar_star=<>",
+                "scalar_zero=<>",
+                "indexed_star=<>",
+                "indexed_key=<>",
+                "assoc_star=<>",
+                "assoc_zero=<>",
+                "after_scalar=<GLOBAL_INDEXED>",
+                "after_indexed=<GLOBAL_ASSOC>",
+                "after_assoc=<GLOBAL_INDEXED>",
+            ]
+        );
+    }
+
     /// TM-INF-023: local compound arrays must not leak after a function returns.
     #[tokio::test]
     async fn tm_inf_023_function_local_arrays_do_not_leak() {
