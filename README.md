@@ -132,7 +132,7 @@ assert_eq!(output.result["stdout"], "hello\nworld\n");
 | Flow control | `true`, `false`, `exit`, `return`, `break`, `continue`, `test`, `[` |
 | Variables | `export`, `set`, `unset`, `local`, `shift`, `source`, `.`, `eval`, `readonly`, `times`, `declare`, `typeset`, `let`, `alias`, `unalias` |
 | Shell | `bash`, `sh` (virtual re-invocation), `exec`, `:`, `trap`, `caller`, `getopts`, `shopt`, `command`, `type`, `which`, `hash`, `compgen`, `fc`, `help` |
-| Text processing | `grep`, `rg`, `sed`, `awk`, `jq`, `head`, `tail`, `sort`, `uniq`, `cut`, `tr`, `wc`, `paste`, `column`, `diff`, `comm`, `strings`, `tac`, `rev`, `seq`, `expr`, `fold`, `expand`, `unexpand`, `join`, `iconv`, `shuf` |
+| Text processing | `grep`, `rg`, `sed`, `awk`, `jq` (requires `jq` feature), `head`, `tail`, `sort`, `uniq`, `cut`, `tr`, `wc`, `paste`, `column`, `diff`, `comm`, `strings`, `tac`, `rev`, `seq`, `expr`, `fold`, `expand`, `unexpand`, `join`, `iconv`, `shuf` |
 | File operations | `mkdir`, `mktemp`, `mkfifo`, `rm`, `cp`, `mv`, `touch`, `chmod`, `chown`, `ln`, `rmdir`, `realpath`, `readlink`, `split`, `truncate` |
 | File inspection | `file`, `stat`, `less` |
 | Archives | `tar`, `gzip`, `gunzip`, `zip`, `unzip` |
