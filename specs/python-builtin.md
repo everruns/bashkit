@@ -14,42 +14,20 @@ Bashkit provides sandboxed Python execution via `python` and `python3` builtins,
 powered by the [Monty](https://github.com/pydantic/monty) embedded Python
 interpreter written in Rust.
 
-### Feature Flag
+### Feature Flag and Registration
 
-Enable with:
-```toml
-[dependencies]
-bashkit = { version = "0.1", features = ["python"] }
-```
-
-### Registration (Opt-in)
-
-Python builtins are **not** auto-registered. Enable via builder:
+The `python` cargo feature enables compilation; registration is opt-in via
+the builder (matching the `git` pattern):
 
 ```rust
-use bashkit::Bash;
-
-// Default limits
 let bash = Bash::builder()
-    .python()
-    .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
-    .build();
-
-// Custom limits
-use bashkit::PythonLimits;
-use std::time::Duration;
-
-let bash = Bash::builder()
-    .python_with_limits(
-        PythonLimits::default()
-            .max_duration(Duration::from_secs(5))
-            .max_memory(16 * 1024 * 1024)
-    )
+    .python()                                   // or .python_with_limits(PythonLimits::default()...)
+    .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1") // runtime gate, required
     .build();
 ```
 
-The `python` feature flag enables compilation; `.python()` on the builder enables
-registration. This matches the `git` pattern (`Bash::builder().git(config).build()`).
+For security, execution is runtime-gated on `BASHKIT_ALLOW_INPROCESS_PYTHON=1`
+(builder `.env(...)` or `export`).
 
 ### Why Monty
 
@@ -61,283 +39,121 @@ registration. This matches the `git` pattern (`Bash::builder().git(config).build
 
 ### Supported Usage
 
-```bash
-# Inline code
-python3 -c "print('hello')"
-
-# Expression evaluation (REPL-like: last expression printed)
-python3 -c "2 + 2"
-
-# Script file (from VFS)
-python3 script.py
-
-# Stdin
-echo "print('hello')" | python3
-python3 - <<< "print('hi')"
-
-# Version
-python3 --version
-python3 -V
-```
+`python3 -c "code"` (REPL-like: last expression printed), `python3 script.py`
+(from VFS), stdin (`echo "code" | python3`, `python3 - <<< ...`),
+`--version`/`-V`. Shebang lines are stripped automatically.
 
 ### Resource Limits
 
-Monty enforces its own resource limits independent of Bashkit's shell limits.
-All limits are configurable via `PythonLimits`:
+Monty enforces its own limits independent of Bashkit's shell limits,
+configurable via `PythonLimits`:
 
-| Limit | Default | Builder Method | Purpose |
-|-------|---------|----------------|---------|
-| Max allocations | 1,000,000 | `.max_allocations(n)` | Prevent memory exhaustion |
-| Max duration | 30 seconds | `.max_duration(d)` | Prevent infinite loops |
-| Max memory | 64 MB | `.max_memory(bytes)` | Prevent memory exhaustion |
-| Max recursion | 200 | `.max_recursion(depth)` | Prevent stack overflow |
+| Limit | Default | Builder Method |
+|-------|---------|----------------|
+| Max allocations | 1,000,000 | `.max_allocations(n)` |
+| Max duration | 30 s | `.max_duration(d)` |
+| Max memory | 64 MB | `.max_memory(bytes)` |
+| Max recursion | 200 | `.max_recursion(depth)` |
 
-```rust
-use bashkit::PythonLimits;
-use std::time::Duration;
-
-// Tighter limits for untrusted code
-let limits = PythonLimits::default()
-    .max_duration(Duration::from_secs(5))
-    .max_memory(16 * 1024 * 1024)  // 16 MB
-    .max_allocations(100_000)
-    .max_recursion(50);
-```
+Since Monty 0.0.4 the parser also enforces a nesting-depth limit (200
+release / 35 debug) against stack overflow from deeply nested expressions.
 
 ### Python Feature Support
 
-Monty implements a subset of Python 3.12:
+Monty implements a subset of Python 3.12. Supported: functions (incl.
+defaults, `*args`/`**kwargs`, star unpacking, PEP 448), control flow,
+exceptions, comprehensions/generator expressions, f-strings, core data
+structures (list/dict/tuple/set/frozenset/namedtuple) with their operators
+and views, `@property`, the common builtins (print, len, range, sorted,
+isinstance, open, input, ...), and stdlib modules: sys, typing, math,
+pathlib, os (getenv/environ), json, datetime (incl. `date.today()`,
+`datetime.now(tz)`).
 
-**Supported:**
-- Variables, assignments, augmented assignments
-- Arithmetic, comparison, logical operators
-- Control flow: if/elif/else, for, while, break, continue
-- Functions: def, return, default args, *args, **kwargs
-- Star unpacking in calls: `func(*args, **kwargs)` (since Monty 0.0.4)
-- PEP 448 generalised unpacking in literals: `[*a, *b]`, `{**d1, **d2}` (since Monty 0.0.8)
-- Data structures: list, dict, tuple, set, frozenset, namedtuple
-- Dict constructor: `dict(iterable)`, `dict(zip(...))`, `dict(iterable, **kwargs)` (since Monty 0.0.8)
-- Tuple comparison: `<`, `>`, `<=`, `>=` (since Monty 0.0.8)
-- Dict view and set/frozenset operators (since Monty 0.0.8)
-- `str` and `bytes` comparison operators (since Monty 0.0.8)
-- List/dict/set comprehensions, generator expressions
-- String operations, f-strings
-- Exception handling: try/except/finally/raise
-- Property descriptors (`@property`) (since Monty 0.0.4)
-- Built-in functions: print, len, range, enumerate, zip, map, filter, sorted, reversed, sum, min, max, abs, round, int, float, str, bool, list, dict, tuple, set, type, isinstance, hasattr, getattr, id, repr, ord, chr, hex, oct, bin, all, any, input, open
-- Standard modules: sys, typing, math (~50 functions), pathlib, os (getenv/environ), json, datetime
-- `datetime.date.today()`, `datetime.datetime.now()` with optional timezone (since Monty 0.0.11)
-- JSON: `json.dumps()`, `json.loads()` (since Monty 0.0.9)
-- Multi-module imports: `import a, b, c` (since Monty 0.0.10)
-- `TYPE_CHECKING` guard support (since Monty 0.0.4)
-
-**Not supported (Monty limitations):**
-- Classes (planned upstream)
-- Match statements
-- Import of third-party libraries
-- HTTP/network I/O — no `socket`, `urllib`, `requests`, `http.client` modules.
-  Monty has no OsCall variants for network operations, so there is no way to bridge these.
-- Most standard library modules
+Not supported (Monty limitations): classes (planned upstream), match
+statements, third-party imports, most stdlib modules, and HTTP/network I/O —
+no `socket`/`urllib`/`requests`/`http.client`; Monty has no OsCall variants
+for network operations, so there is no way to bridge these.
 
 ### VFS Bridging
 
-Python `pathlib.Path` and `open()` operations are bridged to Bashkit's virtual
-filesystem via Monty's OsCall pause/resume mechanism. This enables Python code
-to read and write files that are shared with the bash environment.
+Python `pathlib.Path` and `open()` operations are bridged to Bashkit's VFS
+via Monty's OsCall pause/resume mechanism, so Python and bash share files:
 
-```bash
-# Write from bash, read from Python
-echo "data" > /tmp/shared.txt
-python3 -c "print(open('/tmp/shared.txt').read())"
-
-# Write from Python, read from bash
-python3 -c "with open('/tmp/out.txt', 'w') as f: f.write('hello\n')"
-cat /tmp/out.txt
-
-# Create directories, check existence
-python3 -c "from pathlib import Path
-Path('/tmp/new').mkdir()
-print(Path('/tmp/new').is_dir())"
-
-# Environment variables
-python3 -c "import os; print(os.getenv('HOME'))"
-```
-
-**Supported operations:**
-- `Path.read_text()`, `Path.read_bytes()` — read from VFS
-- `Path.write_text()`, `Path.write_bytes()` — write to VFS
-- `open()`, `Path.open()` — read, write, and append files in the VFS
-- `Path.exists()`, `Path.is_file()`, `Path.is_dir()`, `Path.is_symlink()`
-- `Path.mkdir()` (with `parents=True`, `exist_ok=True` kwargs)
-- `Path.unlink()`, `Path.rmdir()` — delete from VFS
-- `Path.iterdir()` — list directory contents
-- `Path.stat()` — file metadata (st_size, st_mode, st_mtime, etc.)
-- `Path.rename()` — move/rename
-- `Path.resolve()`, `Path.absolute()` — path resolution
-- `os.getenv()`, `os.environ` — environment variable access
-- `datetime.date.today()` — current date from host system
-- `datetime.datetime.now(tz=None)` — current datetime (naive or timezone-aware)
-
-**Architecture:**
 ```
 Python code → Monty VM → OsCall(Open/ReadText, path) → Bashkit VFS → resume
 ```
 
-Monty pauses execution at filesystem operations, yields an `OsCall` event
-with the operation type and arguments, Bashkit bridges it to the VFS, and
-resumes execution with the result (or a Python exception).
+Monty pauses at filesystem operations, yields an `OsCall` event with the
+operation + arguments, Bashkit bridges it to the VFS, and resumes with the
+result (or a Python exception).
 
-> **Note:** Monty 0.0.10+ includes native filesystem mounting (`MountTable`,
-> `MountDir`, `MountMode`) that can handle file operations directly against
-> host directories. Bashkit uses the OsCall bridge instead because our VFS is
-> in-memory and may not be backed by host directories. The native mount system
-> is suited for real-filesystem use cases where Monty is used standalone.
+Supported operations (one line): `open()`/`Path.open()` (read/write/append),
+`Path.read_text/read_bytes/write_text/write_bytes/exists/is_file/is_dir/
+is_symlink/mkdir/unlink/rmdir/iterdir/stat/rename/resolve/absolute`,
+`os.getenv()`/`os.environ`, `datetime.date.today()`/`datetime.now(tz)`.
 
-### Direct Integration
-
-Monty runs directly in the host process. Resource limits (memory, allocations,
-time, recursion) are enforced by Monty's own runtime. Since Monty 0.0.4, the
-parser enforces a nesting depth limit (200 in release, 35 in debug) to prevent
-stack overflow from deeply nested expressions.
-
-```rust
-use bashkit::{Bash, PythonLimits};
-
-// Default limits
-let bash = Bash::builder()
-    .python()
-    .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
-    .build();
-
-// Custom limits
-let bash = Bash::builder()
-    .python_with_limits(PythonLimits::default().max_duration(Duration::from_secs(5)))
-    .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
-    .build();
-```
-
-For security, `python`/`python3` execution is runtime-gated and requires
-`BASHKIT_ALLOW_INPROCESS_PYTHON=1` (builder `.env(...)` or `export`).
+> **Note:** Monty 0.0.10+ has native filesystem mounting (`MountTable`,
+> `MountDir`, `MountMode`) against host directories. Bashkit uses the OsCall
+> bridge instead because our VFS is in-memory and may not be backed by host
+> directories; the native mount system suits standalone real-filesystem use.
 
 ### External Functions
 
-Host applications can register async external function handlers that Python code
-can call by name. This enables Python scripts to invoke host-provided capabilities
-(e.g., tool calls, data lookups) without serialization overhead — arguments arrive
-as raw `MontyObject` values.
-
-**Builder API:**
+Host applications can register async external function handlers that Python
+code calls by name — host capabilities (tool calls, lookups) without
+serialization overhead; arguments arrive as raw `MontyObject` values.
 
 ```rust
-use bashkit::{Bash, PythonLimits, PythonExternalFnHandler};
-use bashkit::{MontyObject, ExtFunctionResult};
-use std::sync::Arc;
-
 let handler: PythonExternalFnHandler = Arc::new(|name, args, kwargs| {
-    Box::pin(async move {
-        ExtFunctionResult::Return(MontyObject::Int(42))
-    })
+    Box::pin(async move { ExtFunctionResult::Return(MontyObject::Int(42)) })
 });
-
 let bash = Bash::builder()
-    .python_with_external_handler(
-        PythonLimits::default(),
-        vec!["get_answer".into()],
-        handler,
-    )
+    .python_with_external_handler(PythonLimits::default(), vec!["get_answer".into()], handler)
     .build();
 ```
 
-**Handler signature:** `(function_name: String, positional_args: Vec<MontyObject>, keyword_args: Vec<(MontyObject, MontyObject)>) -> Pin<Box<dyn Future<Output = ExtFunctionResult> + Send>>`
-
-**Return values:**
-- `ExtFunctionResult::Return(MontyObject)` — success, value returned to Python
-- `ExtFunctionResult::Error(MontyException)` — raises a Python exception
-
-**Dispatch:** A single handler receives all registered function names; dispatch by
-`function_name` inside the handler.
-
-**Trust model:** External function handlers follow the same trust model as
-`BashBuilder::builtin()` and `ScriptedTool` callbacks — the host application
-registers trusted Rust code, untrusted scripts invoke it by name.
-
-**Unstable re-exports:** `MontyObject`, `ExtFunctionResult`, `MontyException`, and
-`ExcType` are re-exported from the `monty` crate (git-pinned, not on crates.io).
-These types may change in breaking ways between bashkit releases.
+- Handler signature: `(function_name: String, positional_args: Vec<MontyObject>, keyword_args: Vec<(MontyObject, MontyObject)>) -> Pin<Box<dyn Future<Output = ExtFunctionResult> + Send>>`.
+- Returns `ExtFunctionResult::Return(MontyObject)` (value to Python) or `ExtFunctionResult::Error(MontyException)` (raises).
+- **Dispatch:** one handler receives all registered names; dispatch on `function_name` inside it.
+- **Trust model:** same as `BashBuilder::builtin()` and `ScriptedTool` callbacks — host registers trusted Rust code, untrusted scripts invoke by name.
+- **Unstable re-exports:** `MontyObject`, `ExtFunctionResult`, `MontyException`, `ExcType` re-exported from the `monty` crate (git-pinned, not on crates.io); may break between bashkit releases.
 
 ### Security
 
-See `specs/threat-model.md` section "Python / Monty Security (TM-PY)"
-for the full threat analysis.
+See `specs/threat-model.md` § "Python / Monty Security (TM-PY)" for the full
+analysis. Summary:
 
-#### Threat: Code injection via bash variable expansion
-Bash variables are expanded before reaching the Python builtin. This is
-by-design consistent with all other builtins. Use single quotes to prevent
-expansion: `python3 -c 'print("hello")'`.
-
-#### Threat: Resource exhaustion
-Monty enforces independent resource limits. Even if Bashkit's shell limits
-are generous, Python code cannot exceed Monty's allocation/time/memory caps.
-
-#### Threat: Sandbox escape via filesystem
-All `pathlib.Path` operations go through Bashkit's virtual filesystem.
-Python code cannot access the real host filesystem. `/etc/passwd` in Python
-reads from VFS (where it doesn't exist), not the host.
-
-#### Threat: Sandbox escape via os/subprocess
-Monty has no `os.system()`, `subprocess`, or `socket` implementations.
-These modules raise errors when used.
-
-#### Threat: Denial of service via large output
-Python print output is captured in memory. The 64 MB memory limit on
-Monty prevents unbounded output generation.
-
-#### Threat: Path traversal
-Relative paths are resolved against the shell's cwd. Path traversal via
-`../..` is constrained by the VFS's path normalization.
+- **Code injection via bash expansion**: variables expand before reaching the builtin (by-design, consistent with all builtins); use single quotes to prevent.
+- **Resource exhaustion**: Monty's allocation/time/memory caps apply even when shell limits are generous; print output is captured in memory and bounded by the memory cap.
+- **Sandbox escape via filesystem**: all path ops go through the VFS; `/etc/passwd` reads VFS, not host. Relative paths resolve against the shell cwd; `../..` traversal constrained by VFS path normalization.
+- **Sandbox escape via os/subprocess/socket**: not implemented in Monty; raise errors.
 
 ### Error Handling
 
-- Syntax errors: Exit code 1, Python traceback on stderr
-- Runtime errors: Exit code 1, Python traceback on stderr, any stdout produced before error preserved
-- File not found: Exit code 2, error on stderr
-- Missing `-c` argument: Exit code 2, error on stderr
-- Unknown option: Exit code 2, error on stderr
+Exit code 1: syntax/runtime errors (Python traceback on stderr; stdout
+produced before a runtime error is preserved). Exit code 2: usage errors —
+file not found, missing `-c` argument, unknown option.
 
 ### LLM Hints
 
-When Python is registered via `BashToolBuilder::python()`, the builtin contributes
-a hint to `help()` and `system_prompt()` documenting its limitations:
+Registration via `BashToolBuilder::python()` contributes a hint to `help()` /
+`system_prompt()` documenting the limitations (stdlib subset, VFS-only file
+I/O, no network/classes/third-party imports) through the general
+`Builtin::llm_hint()` mechanism (hints deduplicated automatically).
 
-> python/python3: Embedded Python (Monty). Stdlib: math, pathlib, os.getenv, sys, typing. File I/O via pathlib.Path and open() against the VFS. No HTTP/network. No classes. No third-party imports.
-
-Regex module `re` is intentionally disabled in Bashkit due to catastrophic
-backtracking DoS risk in untrusted code execution.
-
-This uses the general `Builtin::llm_hint()` mechanism — any builtin can provide
-hints that are automatically deduplicated and included in LLM-facing documentation.
+The regex module `re` is intentionally disabled in Bashkit due to
+catastrophic-backtracking DoS risk in untrusted code execution.
 
 ### Integration with Bashkit
 
-- `python`/`python3` both map to the same builtin
-- Works in pipelines: `echo "data" | python3 -c "import sys; ..."`
-  - Note: stdin piping provides code, not data (matches real python behavior for no-arg invocation)
-- Works in command substitution: `result=$(python3 -c "print(42)")`
-- Works in conditionals: `if python3 -c "1/0"; then ... else ... fi`
-- Shebang lines (`#!/usr/bin/env python3`) are stripped automatically
+`python`/`python3` map to the same builtin; works in pipelines (stdin
+provides *code*, not data — matches real python's no-arg behavior), command
+substitution, and conditionals.
 
 ## Verification
 
 ```bash
-# Build with python feature
-cargo build --features python
-
-# Run unit tests
 cargo test --features python --lib -- python
-
-# Run spec tests
 cargo test --features python --test spec_tests -- python
-
-# Run security tests
 cargo test --features python --test threat_model_tests -- python
 ```

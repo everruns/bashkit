@@ -1,38 +1,23 @@
 # Transparent Request Signing (bot-auth)
 
-## Status
-Implemented
-
 > Ed25519 request signing for all outbound HTTP requests per RFC 9421 / web-bot-auth profile.
 
 ## Problem
 
-The [toolkit library contract](https://github.com/everruns/everruns/blob/main/specs/toolkit-library-contract.md) section 9 requires HTTP-capable kits to support Ed25519 request signing. bashkit has curl, wget, and http builtins that make outbound HTTP requests. Target servers need a way to verify bot identity cryptographically.
+The [toolkit library contract](https://github.com/everruns/everruns/blob/main/specs/toolkit-library-contract.md) section 9 requires HTTP-capable kits to support Ed25519 request signing. bashkit's curl/wget/http builtins make outbound HTTP requests; target servers need cryptographic bot-identity verification.
 
 ## Design Decisions
 
-1. **Transparent** — signing happens inside `HttpClient`, before every outbound request. No CLI flags, no script changes. Scripts using `curl -s https://api.example.com` get signed requests automatically.
-
-2. **Feature-gated** — `bot-auth` cargo feature. When disabled, zero crypto dependencies compiled in. Implies `http_client`.
-
-3. **Non-blocking** — signing failures (clock errors, key issues) never block the request. The request is sent unsigned. This preserves tool availability.
-
-4. **Follows fetchkit** — same `BotAuthConfig` shape, same signing algorithm, same header format. Reference: `everruns/fetchkit/crates/fetchkit/src/bot_auth.rs`.
+1. **Transparent** — signing happens inside `HttpClient`, before every outbound request. No CLI flags, no script changes.
+2. **Feature-gated** — `bot-auth` cargo feature; implies `http_client`. Disabled = zero crypto deps compiled in.
+3. **Non-blocking** — signing failures (clock errors, key issues) never block the request; it is sent unsigned. Preserves tool availability.
+4. **Follows fetchkit** — same `BotAuthConfig` shape, signing algorithm, header format. Reference: `everruns/fetchkit/crates/fetchkit/src/bot_auth.rs`.
 
 ## Architecture
 
-```
-BashBuilder::bot_auth(config)
-    │
-    ▼
-HttpClient::set_bot_auth(config)
-    │
-    ▼  (on every request, after allowlist check)
-BotAuthConfig::sign_request(method, target_uri)
-    │
-    ▼
-Signature + Signature-Input + Signature-Agent headers
-```
+`BashBuilder::bot_auth(config)` → `HttpClient::set_bot_auth(config)` → on every
+request, after allowlist check, `BotAuthConfig::sign_request(method, target_uri)`
+adds `Signature` + `Signature-Input` + `Signature-Agent` headers.
 
 Signing happens in `HttpClient` at the same layer as the allowlist check. **All** outbound HTTP paths are covered:
 
@@ -43,53 +28,16 @@ Signing happens in `HttpClient` at the same layer as the allowlist check. **All*
 | Custom `HttpHandler` | Yes | Signing headers merged into the handler's `headers` slice |
 | Redirects (manual follow in curl/wget) | Yes | Each redirect is a new `HttpClient` request, re-signed with the new authority |
 
-Every HTTP builtin — `curl`, `wget`, `http` — goes through `HttpClient`, so signing is guaranteed for all outbound requests when configured. No builtin can bypass signing.
+Every HTTP builtin — `curl`, `wget`, `http` — goes through `HttpClient`, so no builtin can bypass signing.
 
 ## API
 
-### Builder
-
-```rust
-use bashkit::{Bash, NetworkAllowlist, BotAuthConfig};
-
-let bash = Bash::builder()
-    .network(NetworkAllowlist::new().allow("https://api.example.com"))
-    .bot_auth(BotAuthConfig::from_seed([42u8; 32])
-        .with_agent_fqdn("bot.example.com")
-        .with_validity_secs(300))
-    .build();
-```
-
-### BotAuthConfig
-
-```rust
-pub struct BotAuthConfig {
-    seed: [u8; 32],               // Ed25519 seed
-    agent_fqdn: Option<String>,  // Signature-Agent header
-    validity_secs: u64,          // default: 300
-}
-
-impl BotAuthConfig {
-    fn from_seed(seed: [u8; 32]) -> Self;
-    fn from_base64_seed(encoded: &str) -> Result<Self, BotAuthError>;
-    fn with_agent_fqdn(self, fqdn: impl Into<String>) -> Self;
-    fn with_validity_secs(self, secs: u64) -> Self;
-    fn keyid(&self) -> String;  // JWK Thumbprint
-}
-```
-
-### Public Key Derivation
-
-```rust
-pub fn derive_bot_auth_public_key(seed: &str) -> Result<BotAuthPublicKey, BotAuthError>;
-
-pub struct BotAuthPublicKey {
-    pub key_id: String,              // JWK Thumbprint (RFC 7638)
-    pub jwk: serde_json::Value,      // Full JWK (OKP/Ed25519)
-}
-```
-
-Consumer uses this to serve the well-known key directory endpoint.
+`BotAuthConfig` (`from_seed`, `from_base64_seed`, `with_agent_fqdn`,
+`with_validity_secs` [default 300], `keyid()` = JWK Thumbprint),
+`derive_bot_auth_public_key(seed)` → `BotAuthPublicKey { key_id, jwk }`,
+`BashBuilder::bot_auth(config)`: see `crates/bashkit/src/network/bot_auth.rs` /
+rustdoc. Consumers use the derived public key to serve the well-known key
+directory endpoint; typical wiring reads seed + agent FQDN from env vars.
 
 ## Signing Format
 
@@ -110,23 +58,10 @@ Per RFC 9421 with web-bot-auth tag:
 | `Signature-Input` | `sig=("@method" "@target-uri");created=...;expires=...;keyid="...";alg="ed25519";nonce="...";tag="web-bot-auth"` |
 | `Signature-Agent` | FQDN (only when `agent_fqdn` is set) |
 
-## Consumer Wiring
-
-```rust
-if let Ok(seed) = std::env::var("BOT_AUTH_SIGNING_KEY_SEED") {
-    builder = builder.bot_auth(BotAuthConfig::from_base64_seed(&seed)?
-        .with_agent_fqdn(std::env::var("BOT_AUTH_AGENT_FQDN").ok().unwrap_or_default())
-    );
-}
-```
-
 ## Dependencies
 
-Feature `bot-auth` adds:
-- `ed25519-dalek` 2.x (Ed25519 signing)
-- `rand` 0.10 (nonce generation)
-- `zeroize` 1.x (key material zeroization on drop)
-- `sha2` (already a required dep for checksum builtins)
+Feature `bot-auth` adds: `ed25519-dalek` 2.x, `rand` 0.10 (nonce), `zeroize`
+1.x (key zeroization on drop), `sha2` (already required for checksum builtins).
 
 ## Files
 

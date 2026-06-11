@@ -1,8 +1,5 @@
 # Builtin Commands
 
-## Status
-Implemented
-
 ## Decision
 
 Bashkit provides built-in commands for script execution in a virtual environment.
@@ -13,9 +10,8 @@ builtins and per-command details, see `specs/implementation-status.md`.
 
 All external-style builtins support `--help` and `--version` flags via the
 `check_help_version()` helper in `builtins/mod.rs` (long flags only — short
-flags `-h`/`-V` are not handled by the helper since they have different meanings
-in many tools). Tools where `-h`/`-V` genuinely mean help/version handle them
-directly in their `execute()` method.
+flags `-h`/`-V` have different meanings in many tools). Tools where `-h`/`-V`
+genuinely mean help/version handle them directly in `execute()`.
 
 ### Command Dispatch Order
 
@@ -27,107 +23,43 @@ as bash. Exit 127: not found; Exit 126: not executable or is a directory.
 
 ### Builtin Trait
 
-```rust
-#[async_trait]
-pub trait Builtin: Send + Sync {
-    async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult>;
-
-    /// Return an execution plan for sub-command execution.
-    /// Default: Ok(None) — normal execute() is used.
-    async fn execution_plan(&self, ctx: &Context<'_>) -> Result<Option<ExecutionPlan>> {
-        Ok(None)
-    }
-}
-
-pub struct Context<'a> {
-    pub args: &'a [String],
-    pub env: &'a HashMap<String, String>,
-    pub variables: &'a mut HashMap<String, String>,
-    pub cwd: &'a mut PathBuf,
-    pub fs: Arc<dyn FileSystem>,
-    pub stdin: Option<&'a str>,
-    #[cfg(feature = "http_client")]
-    pub http_client: Option<&'a HttpClient>,
-    #[cfg(feature = "git")]
-    pub git_client: Option<&'a GitClient>,
-    /// Internal builtins only — None for custom builtins.
-    pub(crate) shell: Option<ShellRef<'a>>,
-}
-
-impl Context<'_> {
-    pub fn execution_extension<T>(&self) -> Option<&T>
-    where
-        T: Send + Sync + 'static;
-}
-```
+`Builtin` trait (`execute(ctx)` + optional `execution_plan(ctx)`, default
+`Ok(None)`) and `Context` (args, env, variables, cwd, fs, stdin,
+feature-gated http/git clients, `pub(crate) shell: Option<ShellRef>` — None
+for custom builtins, public `execution_extension::<T>()` accessor): see
+`crates/bashkit/src/builtins/mod.rs` / rustdoc.
 
 ### Clap-Backed Custom Builtins
 
 Custom Rust builtins can implement `ClapBuiltin` instead of `Builtin` when
-their arguments are better represented as a `#[derive(clap::Parser)]` struct.
-`clap` is an unconditional dependency of `bashkit` (also used by ported
-coreutils argument surfaces — see `specs/coreutils-args-port.md`), so this
-trait is always available.
-Bashkit parses `Context::args` through clap, passes parsed args plus a mutable
-`BashkitContext` to the handler, maps `--help` and `--version` to successful
-stdout results, and maps clap parse failures to stderr with clap's exit code.
-Parse diagnostics are capped to 1 KB to preserve TM-INF-022 stderr constraints.
-
-```rust
-use bashkit::{BashkitContext, ClapBuiltin, async_trait};
-use bashkit::clap::Parser;
-
-#[derive(Parser)]
-#[command(name = "greet")]
-struct GreetArgs {
-    #[arg(short, long, default_value = "World")]
-    name: String,
-}
-
-struct Greet;
-
-#[async_trait]
-impl ClapBuiltin for Greet {
-    type Args = GreetArgs;
-
-    async fn execute_clap(
-        &self,
-        args: Self::Args,
-        ctx: &mut BashkitContext<'_>,
-    ) -> bashkit::Result<()> {
-        ctx.write_stdout(format!("Hello, {}!\n", args.name));
-        Ok(())
-    }
-}
-```
+their arguments are better represented as a `#[derive(clap::Parser)]` struct
+(see `builtins/mod.rs` / rustdoc for the trait and an example). `clap` is an
+unconditional dependency of `bashkit` (also used by ported coreutils argument
+surfaces — see `specs/coreutils-args-port.md`), so this trait is always
+available. Bashkit parses `Context::args` through clap, passes parsed args
+plus a mutable `BashkitContext` to the handler, maps `--help`/`--version` to
+successful stdout results, and maps clap parse failures to stderr with clap's
+exit code. Parse diagnostics are capped to 1 KB to preserve TM-INF-022 stderr
+constraints.
 
 ### Extension Trait
 
 Extensions bundle a related set of builtins so embedders can add one capability
 to `BashBuilder` or `BashToolBuilder` instead of registering each command
-manually.
-
-```rust
-pub trait Extension: Send + Sync {
-    fn builtins(&self) -> Vec<(String, Box<dyn Builtin>)>;
-}
-```
+manually: `Extension::builtins() -> Vec<(String, Box<dyn Builtin>)>`
+(`builtins/mod.rs`).
 
 Rules:
 
-- `BashBuilder::extension(ext)` expands each returned builtin into the builder's
-  custom builtin map
-- `BashToolBuilder::extension(ext)` expands each returned builtin into the
-  tool's custom builtin list
+- `BashBuilder::extension(ext)` / `BashToolBuilder::extension(ext)` expand each
+  returned builtin into the builder's custom builtin map/list
 - For `BashBuilder`, later registrations with the same command name override
   earlier registrations, matching `BashBuilder::builtin`
 - Extensions must construct fresh builtin values or use shared ownership
   internally; builders may call `builtins()` when configuring reusable tools
 
-Current extension:
-
-- `TypeScriptExtension` registers `ts`/`typescript` and, when enabled by
-  `TypeScriptConfig`, `node`/`deno`/`bun`
+Current extension: `TypeScriptExtension` registers `ts`/`typescript` and, when
+enabled by `TypeScriptConfig`, `node`/`deno`/`bun`.
 
 ### BuiltinRegistry — Host-Owned Mutable Builtins
 
@@ -136,23 +68,8 @@ Current extension:
 instance is built. For embedders that need to register or remove builtins
 *after* construction (FFI bindings, REPLs, plugin systems),
 `BuiltinRegistry` provides a host-owned mutable registry consulted at
-command-dispatch time.
-
-```rust
-#[derive(Clone, Default)]
-pub struct BuiltinRegistry {
-    inner: Arc<RwLock<HashMap<String, Arc<dyn Builtin>>>>,
-}
-
-impl BuiltinRegistry {
-    pub fn new() -> Self;
-    pub fn insert(&self, name: impl Into<String>, builtin: Arc<dyn Builtin>);
-    pub fn remove(&self, name: &str) -> Option<Arc<dyn Builtin>>;
-    pub fn lookup(&self, name: &str) -> Option<Arc<dyn Builtin>>;
-    pub fn names(&self) -> Vec<String>;
-    pub fn is_empty(&self) -> bool;
-}
-```
+command-dispatch time. API (`insert`/`remove`/`lookup`/`names`/`is_empty`):
+see `builtins/mod.rs` / rustdoc.
 
 Wired in via `BashBuilder::builtin_registry(registry)`. The handle is
 `Clone`; clones share the same underlying storage, so the embedder keeps a
@@ -190,12 +107,9 @@ Implementation notes:
 accept a typed, per-call extension bag. Builtins read values from it via
 `ctx.execution_extension::<T>()`.
 
-Use this for request-scoped data that is not shell state:
-
-- tracing/request IDs
-- auth or tenant context
-- host-language runtime sessions (Python/JS callback bridges)
-- metrics/audit sinks for one execution
+Use this for request-scoped data that is not shell state: tracing/request IDs,
+auth or tenant context, host-language runtime sessions (Python/JS callback
+bridges), metrics/audit sinks for one execution.
 
 Rules:
 
@@ -245,12 +159,8 @@ other commands (e.g. `timeout`, `xargs`, `find -exec`), it returns a declarative
 before `execute()` — when it returns `Some(plan)`, the interpreter fulfills the
 plan instead of using the `execute()` result.
 
-```rust
-pub enum ExecutionPlan {
-    Timeout { duration: Duration, preserve_status: bool, command: SubCommand },
-    Batch { commands: Vec<SubCommand> },
-}
-```
+Variants: `Timeout { duration, preserve_status, command }`,
+`Batch { commands }` (`builtins/mod.rs`).
 
 **Current users:** `timeout` → Timeout, `xargs` → Batch, `find -exec` → Batch.
 
@@ -273,7 +183,3 @@ macro in `interpreter/mod.rs`. To add a new one:
 `curl`, `wget`, `http` require the `http_client` feature + URL allowlist.
 When `bot-auth` feature is enabled, all outbound HTTP requests are transparently
 signed with Ed25519 per RFC 9421 (see `specs/request-signing.md`).
-
-## Alternatives Considered
-
-Inline within design sections above.

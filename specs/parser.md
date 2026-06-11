@@ -1,19 +1,14 @@
 # Parser Design
 
-## Status
-Implemented (core features)
-
 ## Decision
 
-Bashkit uses a recursive descent parser with a context-aware lexer.
-
-### Tokenization Flow
+Recursive descent parser with a context-aware lexer.
 
 ```
 Input → Lexer → Tokens → Parser → AST
 ```
 
-Token types, AST structures, and parser grammar are defined in
+Token types, AST structures, and parser grammar live in
 `crates/bashkit/src/parser/`. They evolve as features are added.
 
 ### Parser Rules (Simplified)
@@ -30,9 +25,8 @@ redirect      → ('>' | '>>' | '<' | '<<' | '<<<') word
 
 ### Context-Aware Lexing
 
-The lexer handles bash's context-sensitivity:
-- `$var` in double quotes: expand variable
-- `$var` in single quotes: literal text
+Handles bash's context-sensitivity:
+- `$var` in double quotes: expand; in single quotes: literal
 - Word splitting after expansion
 - Glob patterns (*, ?, [])
 - Brace expansion: `{a,b,c}` and `{1..5}` vs brace groups `{ cmd; }`
@@ -45,21 +39,9 @@ The lexer handles bash's context-sensitivity:
 
 ### Error Recovery
 
-Parser produces errors with line/column numbers, expected vs. found token,
-and context (what was being parsed).
+Errors carry line/column, expected vs. found token, and parse context.
 
 ## Alternatives Considered
 
-### PEG parser (pest, pom)
-Rejected: Bash grammar is context-sensitive, PEG can't handle here-docs well,
-manual parser gives better error messages.
-
-### Tree-sitter
-Rejected: Designed for incremental parsing (overkill), large dependency,
-harder to customize.
-
-## Verification
-
-```bash
-cargo test --lib -- parser
-```
+- PEG (pest, pom): rejected — bash grammar is context-sensitive, here-docs awkward, manual parser gives better errors.
+- Tree-sitter: rejected — incremental parsing overkill, large dep, harder to customize.

@@ -8,28 +8,19 @@ Implemented
 
 Compose tool definitions (`ToolDef`) + execution callbacks into a single `ScriptedTool` that accepts bash scripts. Each sub-tool becomes a builtin command, letting LLMs orchestrate N tools in one call using pipes, variables, loops, and conditionals.
 
-`ScriptedTool` always runs in code/logic mode. The bash language is used for
-control flow and data transformation, not as a VFS shell: filesystem primitives,
-path script execution, file redirection, and process substitution are unavailable.
+`ScriptedTool` always runs in code/logic mode: bash is the control-flow and data-transformation language, not a VFS shell — filesystem primitives, path script execution, file redirection, and process substitution are unavailable.
 
-`ScriptedToolBuilder` and `ScriptingToolSetBuilder` also implement the shared
-toolkit-library contract from [the tool contract](./tool-contract.md):
-locale-aware metadata, `build_service()`, `build_tool_definition()`,
-`build_input_schema()`, `build_output_schema()`, and single-use
-`ToolExecution`.
+`ScriptedToolBuilder` and `ScriptingToolSetBuilder` also implement the shared toolkit-library contract from [the tool contract](./tool-contract.md): locale-aware metadata, `build_service()`, `build_tool_definition()`, `build_input_schema()`, `build_output_schema()`, single-use `ToolExecution`.
 
 ## Feature flag
 
-`scripted_tool` — the entire module is gated behind `#[cfg(feature = "scripted_tool")]`.
+`scripted_tool` — entire module gated behind `#[cfg(feature = "scripted_tool")]`.
 
 ## Motivation
 
-When an LLM has access to many tools (get_user, list_orders, get_inventory, etc.), each tool call is a separate round-trip. A data-gathering task that needs 5 tools requires 5+ turns. With `ScriptedTool`, the LLM writes a single bash script that calls all tools, pipes results through `jq`, and returns composed output — reducing latency and token cost.
+With many tools, each LLM tool call is a separate round-trip; a 5-tool data-gathering task costs 5+ turns. `ScriptedTool` lets the LLM write one bash script that calls all tools, pipes results through `jq`, and returns composed output — reducing latency and token cost.
 
-The intended use is "code mode": logic, conditionals, loops, pipes, and data
-transformations represented as bash. It is not intended for project/file
-manipulation; use `Bash` / `BashTool` when a virtual filesystem is part of the
-task.
+Intended use is "code mode" only. Not for project/file manipulation; use `Bash` / `BashTool` when a virtual filesystem is part of the task.
 
 ## Design
 
@@ -39,23 +30,13 @@ task.
 pub struct ToolDef {
     pub name: String,
     pub description: String,
-    pub input_schema: serde_json::Value,  // JSON Schema, empty object if unset
-    pub tags: Vec<String>,               // categorical tags for discovery
-    pub category: Option<String>,        // grouping category for discovery
-}
-
-impl ToolDef {
-    pub fn new(name: impl Into<String>, description: impl Into<String>) -> Self;
-    pub fn with_schema(self, schema: serde_json::Value) -> Self;
-    pub fn with_tags(self, tags: &[&str]) -> Self;
-    pub fn with_category(self, category: &str) -> Self;
+    pub input_schema: serde_json::Value,  // JSON Schema, `{}` if unset
+    pub tags: Vec<String>,                // optional, for discovery
+    pub category: Option<String>,         // optional, for discovery
 }
 ```
 
-Standard OpenAPI fields: `name`, `description`, `input_schema`. Schema is optional — defaults to `{}`.
-
-Tags and category are optional metadata for progressive discovery. Tags are free-form labels
-(e.g. `["admin", "billing"]`), category is a grouping key (e.g. `"payments"`).
+Builder: `new(name, description)`, `with_schema`, `with_tags`, `with_category`. Tags are free-form labels (e.g. `["admin", "billing"]`); category is a grouping key (e.g. `"payments"`) for progressive discovery.
 
 ### ToolArgs — parsed arguments passed to callbacks
 
@@ -64,44 +45,20 @@ pub struct ToolArgs {
     pub params: serde_json::Value,  // JSON object from --key value flags
     pub stdin: Option<String>,      // pipeline input from prior command
 }
-
-impl ToolArgs {
-    pub fn param_str(&self, key: &str) -> Option<&str>;
-    pub fn param_i64(&self, key: &str) -> Option<i64>;
-    pub fn param_f64(&self, key: &str) -> Option<f64>;
-    pub fn param_bool(&self, key: &str) -> Option<bool>;
-}
 ```
 
-The adapter parses `--key value` and `--key=value` flags from the bash command line,
-coerces types according to the tool's `input_schema`, and passes the result as `ToolArgs`.
+Typed accessors: `param_str` / `param_i64` / `param_f64` / `param_bool`.
 
-### ToolCallback
-
-```rust
-pub type ToolCallback =
-    Arc<dyn Fn(&ToolArgs) -> Result<String, String> + Send + Sync>;
-```
-
-- `args.params`: JSON object with parsed `--key value` flags, typed per schema.
-- `args.stdin`: pipeline input from prior command.
-- Returns stdout string on success, error message on failure.
-
-### AsyncToolCallback
+### Callbacks
 
 ```rust
+pub type ToolCallback = Arc<dyn Fn(&ToolArgs) -> Result<String, String> + Send + Sync>;
 pub type AsyncToolCallback = Arc<
-    dyn Fn(ToolArgs) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send>>
-        + Send + Sync,
+    dyn Fn(ToolArgs) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send>> + Send + Sync,
 >;
 ```
 
-Async variant of `ToolCallback`. Takes owned `ToolArgs` (the future may outlive the
-borrow). Register via `builder.async_tool_fn(def, callback)`. Both sync and async
-callbacks can be mixed in a single `ScriptedTool`.
-
-Internally represented as `CallbackKind::Async` and `.await`-ed inside
-`ToolBuiltinAdapter::execute()`, which is already `async fn`.
+Return stdout string on success, error message on failure. Async takes owned `ToolArgs` (future may outlive the borrow); register via `.async_tool_fn(def, cb)`. Sync and async mix freely in one `ScriptedTool` — internally `CallbackKind::Async`, `.await`-ed inside `ToolBuiltinAdapter::execute()` (already `async fn`).
 
 ### ToolImpl — unified tool unit
 
@@ -114,418 +71,114 @@ pub struct ToolImpl {
 }
 ```
 
-Combines metadata (`ToolDef`) with optional sync and async exec functions.
-Implements `Builtin`, so it can be registered in both `Bash` (via `.builtin()`)
-and `ScriptedTool`/`ScriptingToolSet` (via `.tool()`).
+Combines metadata with optional sync + async exec fns (`with_exec`, `with_exec_sync`). Implements `Builtin`, so registrable in both `Bash` (`.builtin()`) and `ScriptedTool`/`ScriptingToolSet` (`.tool()`). Async path prefers `exec`, falls back to `exec_sync`; sync path the reverse (blocking on `exec`).
 
-When running async, prefers `exec`; falls back to `exec_sync`.
-When used directly as a `Builtin`, callback `Err(String)` values are sanitized by
-default to `"<tool>: callback failed\n"` before reaching script-visible stderr.
-This matches `ScriptedTool`'s safe default and prevents leaking host-side secrets,
-paths, connection strings, or stack traces. Trusted deployments may opt out with
-`.sanitize_errors(false)`.
-When running sync, prefers `exec_sync`; falls back to blocking on `exec`.
+When used directly as a `Builtin`, callback `Err(String)` values are sanitized by default to `"<tool>: callback failed\n"` before reaching script-visible stderr — matches `ScriptedTool`'s safe default and prevents leaking host-side secrets, paths, connection strings, or stack traces. Trusted deployments opt out with `.sanitize_errors(false)`.
 
-Builder API:
-
-```rust
-let tool = ToolImpl::new(
-    ToolDef::new("get_user", "Fetch user by ID")
-        .with_schema(json!({"type": "object", "properties": {"id": {"type": "integer"}}})),
-)
-.with_exec_sync(|args| {
-    let id = args.param_i64("id").ok_or("missing --id")?;
-    Ok(format!("{{\"id\":{id}}}\n"))
-})
-.with_exec(|args| async move {
-    let id = args.param_i64("id").ok_or("missing --id")?;
-    Ok(format!("{{\"id\":{id}}}\n"))
-});
-
-// Register in ScriptedTool
-ScriptedTool::builder("api").tool(tool).build();
-```
-
-Type aliases for backward compatibility: `ToolCallback = SyncToolExec`,
-`AsyncToolCallback = AsyncToolExec`.
+Backward-compat aliases: `ToolCallback = SyncToolExec`, `AsyncToolCallback = AsyncToolExec`.
 
 ### ToolDefExtension — Bash extension for ToolDef-backed commands
 
-`ToolDefExtension` implements the shared `Extension` trait and registers a group
-of `ToolDef`/callback pairs into any `Bash` instance:
+Implements the shared `Extension` trait; registers a group of `ToolDef`/callback pairs into any `Bash` instance. Contributes: one builtin per tool, `help`, `discover`, plus `--help`, `--dry-run`, callback error sanitization, and invocation tracing shared with `ScriptedTool`. `ScriptedTool` builds its per-call logic-only shell by installing this extension, so plain `Bash` and `ScriptedTool` use one command adapter path.
 
-```rust
-let extension = ToolDefExtension::builder()
-    .tool_fn(ToolDef::new("get_user", "Fetch user by ID"), |args| {
-        let id = args.param_i64("id").ok_or("missing --id")?;
-        Ok(format!("{{\"id\":{id}}}\n"))
-    })
-    .build();
-
-let mut bash = Bash::builder().extension(extension).build();
-```
-
-The extension contributes:
-
-- one builtin per registered tool
-- `help` for runtime schema/usage introspection
-- `discover` for category/tag/search discovery
-- `--help`, `--dry-run`, callback error sanitization, and invocation tracing behavior shared with `ScriptedTool`
-
-`ScriptedTool` builds its per-call logic-only shell by installing this extension,
-so plain `Bash` and `ScriptedTool` use one command adapter path.
-
-Invocation tracing is isolated by default. Every `ToolDefExtensionBuilder::build()`
-call mints a fresh bounded trace log, and `Clone` for `ToolDefExtension` copies
-command configuration into a new empty log rather than sharing trace state. Hosts
-that intentionally need to read traces after moving an extension into a `Bash`
-must call `ToolDefExtension::invocation_trace()` first and retain the returned
-`ToolDefInvocationTrace` handle. Do not share one trace handle across tenants.
+Invocation tracing is isolated by default: every `ToolDefExtensionBuilder::build()` mints a fresh bounded trace log, and `Clone` copies command configuration into a new empty log rather than sharing trace state. Hosts that need traces after moving an extension into a `Bash` must call `ToolDefExtension::invocation_trace()` first and retain the returned `ToolDefInvocationTrace` handle. Do not share one trace handle across tenants.
 
 ### ContextVar propagation (Python)
 
-Python callbacks (both sync and async) automatically see `contextvars.ContextVar`
-values that were set by the caller at `execute()` / `execute_sync()` time:
+Python callbacks (sync and async) automatically see `contextvars.ContextVar` values set by the caller at `execute()` / `execute_sync()` time:
 
-1. Each Python surface owns one long-lived callback engine. The engine holds
-   reusable machinery only: `ctx.run(...)` callback entry and one cached
-   private asyncio loop for sync fallback.
-2. Each `execute()` / `execute_sync()` call creates a fresh callback session
-   that snapshots the caller's `contextvars` state.
-3. `execute()` also captures the caller's active asyncio loop via
-   `TaskLocals`, so async callbacks can be scheduled back onto that same loop.
-4. `Bash` / `BashTool` pass the callback session through bashkit's generic
-   execution extensions, so persistent builtin adapters resolve request-scoped
-   callback state without mutating shared runtime state.
-5. Sync callbacks are invoked via `ctx.run(fn, params, stdin)`.
-6. Async callbacks are created under `ctx.run(...)`; when they run on the
-   caller loop, the session owns the spawned Python tasks so cancellation only
-   affects that execution's callbacks.
-7. `execute_sync()` has no caller-owned loop to reuse, so async callbacks fall
-   back to the engine's private loop on the worker thread. This preserves sync
-   support, but loop-bound caller resources only work with `await execute()`.
+1. Each Python surface owns one long-lived callback engine holding reusable machinery only: `ctx.run(...)` callback entry and one cached private asyncio loop for sync fallback.
+2. Each `execute()` / `execute_sync()` call creates a fresh callback session snapshotting the caller's `contextvars` state.
+3. `execute()` also captures the caller's active asyncio loop via `TaskLocals`, so async callbacks schedule back onto that loop.
+4. `Bash` / `BashTool` pass the callback session through bashkit's generic execution extensions, so persistent builtin adapters resolve request-scoped callback state without mutating shared runtime state.
+5. Sync callbacks invoke via `ctx.run(fn, params, stdin)`.
+6. Async callbacks are created under `ctx.run(...)`; when run on the caller loop, the session owns the spawned Python tasks so cancellation only affects that execution's callbacks.
+7. `execute_sync()` has no caller-owned loop, so async callbacks fall back to the engine's private loop on the worker thread. Sync support preserved, but loop-bound caller resources only work with `await execute()`.
 
-This enables framework patterns like LangGraph's `get_stream_writer()` and
-FastAPI's request-scoped state.
+Enables framework patterns like LangGraph's `get_stream_writer()` and FastAPI request-scoped state.
 
-**Caveat:** `execute_sync()` must not be called from an async endpoint that runs
-on the same thread as a Python event loop. Use `await execute()` from async
-contexts instead.
+**Caveat:** `execute_sync()` must not be called from an async endpoint running on the same thread as a Python event loop; use `await execute()` instead.
 
 ### Flag parsing
 
-Bash command args are parsed into a JSON object:
+Implementation and per-syntax precedence: `parse_flags` in `crates/bashkit/src/tool_def.rs`. Rules:
 
-| Syntax | Result |
-|--------|--------|
-| `--id 42` | `{"id": 42}` (if schema says integer) |
-| `--id=42` | `{"id": 42}` |
-| `--verbose` | `{"verbose": true}` (if schema says boolean) |
-| `--name Alice` | `{"name": "Alice"}` |
-| `--tags '["a","b"]'` | `{"tags": ["a","b"]}` (if schema says array) |
-| `--tags a,b,c` | `{"tags": ["a","b","c"]}` (array of scalars: comma-split) |
-| `--tags x --tags y` | `{"tags": ["x","y"]}` (repeated invocations append) |
-| `--server '{"port":80}'` | `{"server": {"port":80}}` (if schema says object) |
-| `--server name=foo url=http://x` | `{"server": {"name":"foo","url":"http://x"}}` (object via pairs) |
-| `--endpoint name=a --endpoint name=b` | `{"endpoint": [{"name":"a"},{"name":"b"}]}` (array of objects via repeated pair groups) |
-
-Type coercion follows the `input_schema` property types: `integer`, `number`, `boolean`, `string`,
-`array`, `object`. Unknown flags (not in schema) are kept as strings.
-
-Flag parsing is bounded before callback execution. Parsed flag value bytes are capped at
-64 KiB per command invocation, and array-typed flags are capped at 4096 parsed items after
-JSON parsing, comma splitting, and repeated-invocation appends. Oversized inputs fail before
-allocating the full `ToolArgs.params` value.
-
-Aggregate types (`array`, `object`) are resolved through `$ref`, `oneOf`/`anyOf`/`allOf` branches,
-nullable shorthand (`type: ["array","null"]`), and implicit signals (`items` ⇒ array, `properties`
-⇒ object). When the resolved type is aggregate and the raw value starts with `[` or `{`,
-`parse_flags` parses it as JSON; on parse failure the original string is preserved so downstream
-serde validation produces the real error.
-
-For aggregate flags, `parse_flags` also accepts schema-driven shorthand:
-
-- **Object via pairs**: a sequence of `key=value` tokens after `--flag` is collected into one
-  object, terminating at the next `--flag` or end of args. Each `key` is matched against the
-  property names in the object schema; unknown keys produce a validation error. Each `value` is
-  type-coerced per the nested property schema.
-- **Array of objects via repeated pair groups**: each `--flag <pairs...>` invocation contributes
-  one object; repeated invocations append. Mixing JSON and pair forms across invocations is
-  allowed (`--flag '{...}' --flag k=v`); mixing them within a single invocation is rejected.
-- **Array of scalars**: a single arg is comma-split (`--tags a,b,c`); repeated invocations
-  append (`--tags x --tags y`). JSON form (`--tags '["a","b"]'`) continues to work.
-
-Help output (`usage_from_schema`) advertises both forms for aggregate flags:
-`--server <json|key=value...>` and `--tags <json|a,b,c>`.
+- `--key value` and `--key=value` parse into a JSON object. Type coercion follows `input_schema` property types (`integer`, `number`, `boolean`, `string`, `array`, `object`); bare `--flag` is `true` when schema says boolean. Unknown flags (not in schema) stay strings.
+- Bounded before callback execution: parsed flag value bytes capped at 64 KiB per command invocation; array-typed flags capped at 4096 items after JSON parsing, comma splitting, and repeated-invocation appends. Oversized input fails before allocating the full `ToolArgs.params`.
+- Aggregate types resolve through `$ref`, `oneOf`/`anyOf`/`allOf` branches, nullable shorthand (`type: ["array","null"]`), and implicit signals (`items` ⇒ array, `properties` ⇒ object). When the resolved type is aggregate and the raw value starts `[` or `{`, it parses as JSON; on parse failure the original string is preserved so downstream serde validation produces the real error.
+- Schema-driven shorthand for aggregate flags:
+  - **Object via pairs**: `--flag key=value ...` collected into one object, terminating at the next `--flag` or end of args; keys matched against object-schema property names (unknown keys error); values coerced per nested property schema.
+  - **Array of objects via repeated pair groups**: each `--flag <pairs...>` contributes one object; repeats append. Mixing JSON and pair forms across invocations is allowed, within one invocation rejected.
+  - **Array of scalars**: single arg comma-split (`--tags a,b,c`); repeats append; JSON form still works.
+- Help output (`usage_from_schema`) advertises both forms: `--server <json|key=value...>`, `--tags <json|a,b,c>`.
 
 ### ScriptedToolBuilder
 
-Two arguments per tool: definition + callback. Use `.tool_fn()` for sync and
-`.async_tool_fn()` for async callbacks.
-
-```rust
-ScriptedTool::builder("api_name")
-    .locale("en-US")
-    .short_description("...")
-    .tool_fn(
-        ToolDef::new("get_user", "Fetch user by ID")
-            .with_schema(json!({"type": "object", "properties": {"id": {"type": "integer"}}})),
-        |args| {
-            let id = args.param_i64("id").ok_or("missing --id")?;
-            Ok(format!("{{\"id\":{id}}}\n"))
-        },
-    )
-    .async_tool_fn(
-        ToolDef::new("fetch_url", "Fetch a URL"),
-        |args| async move {
-            let url = args.param_str("url").unwrap_or("?");
-            Ok(format!("{{\"url\":\"{url}\",\"status\":200}}\n"))
-        },
-    )
-    .env("API_KEY", "...")
-    .limits(ExecutionLimits::new().max_commands(500))
-    .build()
-```
+Two arguments per tool: definition + callback. `.tool_fn()` sync, `.async_tool_fn()` async; plus `.locale()`, `.short_description()`, `.env()`, `.limits()`, `.compact_prompt()`. Full example: `crates/bashkit/examples/scripted_tool.rs`.
 
 ### ToolBuiltinAdapter (internal)
 
-Wraps `ToolCallback` (Arc) as a `Builtin` for the interpreter. Parses `--key value` flags
-from `ctx.args` using the tool's schema for type coercion, then calls the callback with `ToolArgs`.
+Wraps a callback as a `Builtin`: parses `--key value` flags from `ctx.args` using the tool's schema, then calls the callback with `ToolArgs`.
 
 ### ScriptedTool
 
-Implements the `Tool` trait. On each `execute()`:
+Implements the `Tool` trait. Each `execute()`: fresh logic-only `Bash`, callbacks registered via `Arc::clone`, run script, return `ToolResponse { stdout, stderr, exit_code }`. Reusable — multiple `execute()` calls share the same `Arc` callback instances.
 
-1. Creates a fresh logic-only `Bash` instance.
-2. Registers each callback as a builtin via `Arc::clone`.
-3. Runs the user-provided script.
-4. Returns `ToolResponse { stdout, stderr, exit_code }`.
+The logic-only shell keeps: variables, arrays, functions, arithmetic, command substitution; `if`/`case`/`for`/`while`; pipelines, heredocs, here-strings; callback commands plus `help` and `discover`; stdin transforms (`jq`, `grep`, `sed`, `awk`, `sort`, `cut`, `tr`, `wc`, `head`, `tail`, `seq`, `expr`).
 
-Reusable — multiple `execute()` calls share the same `Arc<ToolCallback>` instances.
-
-The logic-only shell keeps bash syntax and stdin/stdout data-flow features:
-
-- variables, arrays, functions, arithmetic, command substitution
-- `if`/`case`/`for`/`while`
-- pipelines, heredocs, here-strings
-- callback commands plus `help` and `discover`
-- stdin-oriented transforms such as `jq`, `grep`, `sed`, `awk`, `sort`, `cut`,
-  `tr`, `wc`, `head`, `tail`, `seq`, and `expr`
-
-The following filesystem surfaces are rejected:
-
-- file commands such as `cat`, `ls`, `find`, `mkdir`, `rm`, `cp`, `mv`, `touch`,
-  `chmod`, `ln`, `stat`, `source`, and `.`
-- path execution such as `/tmp/script.sh` or `$PATH` script lookup
-- file input/output redirection (`< file`, `> file`, `>> file`, `&> file`), except
-  `/dev/null`
-- process substitution (`<(...)`, `>(...)`)
-- file operands to dual-use tools; the internal filesystem rejects all real
-  operations with `filesystem access disabled`
+Rejected filesystem surfaces: file commands (`cat`, `ls`, `find`, `mkdir`, `rm`, `cp`, `mv`, `touch`, `chmod`, `ln`, `stat`, `source`, `.`); path execution (`/tmp/script.sh`, `$PATH` lookup); file redirection (`<`, `>`, `>>`, `&>`) except `/dev/null`; process substitution; file operands to dual-use tools — the internal filesystem rejects all real operations with `filesystem access disabled`.
 
 ### Built-in `help` command
 
-Registered automatically alongside user tools. Provides runtime schema introspection:
-
-```bash
-help --list              # List all tool names + descriptions
-help get_user            # Human-readable usage
-help get_user --json     # Machine-readable JSON (pipeable to jq)
-```
-
-JSON output includes `name`, `description`, and `input_schema` — letting LLMs discover
-enum values, required fields, etc. at runtime without loading all schemas into context.
+`help --list` (names + descriptions), `help <tool>` (usage), `help <tool> --json` (machine-readable: `name`, `description`, `input_schema`) — lets LLMs discover enum values, required fields, etc. at runtime without loading all schemas into context.
 
 ### Compact prompt mode
 
-`ScriptedToolBuilder::compact_prompt(true)` switches `system_prompt()` to a compact form
-that lists only tool names + one-liners, deferring full schemas to `help`:
-
-```rust
-ScriptedTool::builder("api")
-    .compact_prompt(true)
-    .tool_fn(...)
-    .build()
-```
-
-This reduces context window usage for large tool sets (50+). Default: `false` (full
-schemas in prompt, backward compatible).
+`ScriptedToolBuilder::compact_prompt(true)` switches `system_prompt()` to tool names + one-liners, deferring full schemas to `help`. For large tool sets (50+). Default `false` (full schemas, backward compatible).
 
 ### Built-in `discover` command
 
-Registered automatically alongside `help`. Provides progressive tool discovery for large tool sets:
-
-```bash
-discover --categories           # List all categories with tool counts
-discover --category payments    # List tools in a category
-discover --tag admin            # Filter by tag
-discover --search user          # Search name + description (case-insensitive)
-discover --category payments --json  # Any mode supports --json output
-```
-
-Tools must have `tags` and/or `category` set via `ToolDef::with_tags()` / `ToolDef::with_category()` to appear in filtered results.
+`discover --categories | --category X | --tag Y | --search text`, each with optional `--json`. Tools need `tags`/`category` set via `ToolDef` to appear in filtered results.
 
 ### LLM integration
 
-`system_prompt()` generates markdown with available tool commands, input schemas (when present), and tips. Example output:
-
-```markdown
-# api_name
-
-Input: {"commands": "<bash script>"}
-Output: {stdout, stderr, exit_code}
-
-## Available tool commands
-
-- `get_user`: Fetch user by ID
-  Usage: `get_user --id <integer>`
-- `list_orders`: List orders for user
-  Usage: `list_orders --user_id <integer>`
-
-## Tips
-
-- Pass arguments as `--key value` or `--key=value` flags
-- Pipe tool output through `jq` for JSON processing
-- Use variables to pass data between tool calls
-- Do not use filesystem commands or file redirection
-```
+`system_prompt()` generates markdown with available tool commands, input schemas (when present), and usage tips — see the `Tool` impl in `crates/bashkit/src/scripted_tool/execute.rs`.
 
 ### Shared context across callbacks
 
-Use the standard Rust closure-capture pattern with `Arc` to share resources:
-
-```rust
-let client = Arc::new(build_authenticated_client());
-let c = client.clone();
-builder.tool_fn(ToolDef::new("get_user", "..."), move |args| {
-    let resp = c.get(&format!("/users/{}", args.param_i64("id").unwrap()));
-    Ok(resp.text()?)
-});
-```
-
-For mutable state, use `Arc<Mutex<T>>`. No API change needed — closures handle it naturally.
+Standard Rust closure capture: clone an `Arc` (e.g. an authenticated client) into each closure; `Arc<Mutex<T>>` for mutable state. No API change needed.
 
 ### State across execute() calls
 
-Each `execute()` creates a fresh Bash interpreter (security: clean sandbox per call).
-The LLM carries state via its context window — it sees stdout from each call and passes
-relevant data into the next script.
-
-For callback-level persistence, `Arc` state in closures persists across `execute()` calls
-since the same `Arc<ToolCallback>` instances are reused.
+Each `execute()` creates a fresh Bash interpreter (security: clean sandbox per call). The LLM carries state via its context window. Callback-level persistence: `Arc` state captured in closures persists across `execute()` calls since the same callback instances are reused.
 
 ### Execution trace access
 
-`ScriptedTool` records inner command invocations from the most recent `execute()` call and
-exposes them via `take_last_execution_trace()`. This trace is for observability and eval
-telemetry, not scoring:
-
-```rust
-let mut tool = ScriptedTool::builder("api").tool_fn(...).build();
-let _resp = tool.execute(ToolRequest::new("discover --search user\nhelp get_user")).await;
-let trace = tool.take_last_execution_trace().unwrap();
-assert_eq!(trace.invocations[0].name, "discover");
-```
-
-Trace entries record:
-- command name
-- kind: `tool`, `help`, or `discover`
-- raw argv tokens
-- exit code
+`take_last_execution_trace()` returns inner command invocations from the most recent `execute()` — observability/eval telemetry, not scoring. Entries record command name, kind (`tool` / `help` / `discover`), raw argv tokens, exit code.
 
 ### ScriptingToolSet — mode-controlled multi-tool wrapper
 
-`ScriptingToolSet` wraps `ScriptedTool` and exposes one or two tools via `tools()`
-based on `DiscoveryMode`:
+Wraps `ScriptedTool`; `tools()` returns one or two tools by `DiscoveryMode`:
 
 | Mode | `tools()` returns | When to use |
 |------|------------------|-------------|
 | `Exclusive` (default) | 1 tool: `ScriptedTool` with full schemas | Only tool the LLM has |
-| `WithDiscovery` | 2 tools: `ScriptedTool` (compact) + `DiscoverTool` | Alongside other tools, or large tool sets |
+| `WithDiscovery` | 2 tools: `ScriptedTool` (compact) + `DiscoverTool` (`{name}_discover`) | Alongside other tools, or large tool sets |
 
-```rust
-// Exclusive mode (default): tools() returns [ScriptedTool]
-let toolset = ScriptingToolSet::builder("api")
-    .short_description("My API")
-    .tool_fn(ToolDef::new("get_user", "Fetch user").with_schema(...), callback)
-    .build();
-let tools = toolset.tools(); // vec![ScriptedTool]
-
-// Discovery mode: tools() returns [ScriptedTool, DiscoverTool]
-let toolset = ScriptingToolSet::builder("api")
-    .short_description("My API")
-    .tool_fn(ToolDef::new("get_user", "Fetch user").with_category("users"), callback)
-    .with_discovery()
-    .build();
-let tools = toolset.tools(); // vec![ScriptedTool(compact), DiscoverTool]
-assert_eq!(tools[0].name(), "api");           // script tool
-assert_eq!(tools[1].name(), "api_discover");   // discover tool
-```
-
-`ScriptingToolSet` does **not** implement `Tool` itself. Instead, call `tools()` to
-get `Vec<Box<dyn Tool>>` and register each with your LLM.
-
-In discovery mode:
-- The **script tool** (`{name}`) has a compact prompt (tool names only, no schemas)
-  and all builtins (tools + help + discover).
-- The **discover tool** (`{name}_discover`) has a prompt focused on `discover`/`help`
-  commands. It shares the same inner `ScriptedTool`, so the LLM can explore schemas
-  before writing scripts.
-
-Builder API mirrors `ScriptedToolBuilder`: `.tool()`, `.env()`, `.limits()`,
-`.short_description()`, plus `.with_discovery()` to switch mode.
+`ScriptingToolSet` does **not** implement `Tool` itself — call `tools()` for `Vec<Box<dyn Tool>>` and register each. In discovery mode the script tool gets a compact prompt (names only) and all builtins; the discover tool's prompt focuses on `discover`/`help` and shares the same inner `ScriptedTool`, so the LLM can explore schemas before writing scripts. Builder mirrors `ScriptedToolBuilder` plus `.with_discovery()`.
 
 ## Module location
 
-```
-tool_def.rs          — ToolDef, ToolArgs, ToolImpl, SyncToolExec, AsyncToolExec, parse_flags
-scripted_tool/
-├── mod.rs           — CallbackKind, ScriptedToolBuilder, ScriptedTool, re-exports from tool_def
-├── extension.rs     — ToolDefExtension, ToolBuiltinAdapter, help/discover builtins
-├── execute.rs       — Tool impl and documentation helpers
-└── toolset.rs       — ScriptingToolSet, ScriptingToolSetBuilder, DiscoveryMode
-```
-
-Public exports from `lib.rs` (gated by `scripted_tool` feature):
-`ToolDef`, `ToolArgs`, `ToolImpl`, `SyncToolExec`, `AsyncToolExec`,
-`ToolCallback`, `AsyncToolCallback` (aliases), `ScriptedTool`, `ScriptedToolBuilder`,
-`ToolDefExtension`, `ToolDefExtensionBuilder`, `ScriptingToolSet`,
-`ScriptingToolSetBuilder`, `DiscoverTool`, `DiscoveryMode`.
+`crates/bashkit/src/tool_def.rs` (ToolDef, ToolArgs, ToolImpl, exec types, `parse_flags`) and `crates/bashkit/src/scripted_tool/` (builder, extension + builtins, `Tool` impl, toolset). Public exports gated by the `scripted_tool` feature in `lib.rs`.
 
 ## Example
 
-`crates/bashkit/examples/scripted_tool.rs` — e-commerce API demo with get_user, list_orders, get_inventory, create_discount. Uses `ToolDef` + closures (no trait impls needed).
-
-Run: `cargo run --example scripted_tool --features scripted_tool`
+`crates/bashkit/examples/scripted_tool.rs` — e-commerce API demo using `ToolDef` + closures (no trait impls). Run: `cargo run --example scripted_tool --features scripted_tool`.
 
 ## Test coverage
 
-50 unit tests covering:
-- Builder configuration (name, description, defaults, compact_prompt)
-- Introspection (help, system_prompt, schemas, schema rendering)
-- Help builtin (--list, human-readable, --json, unknown tool, jq piping, compact vs full prompt)
-- Discover builtin (--categories, --category, --tag, --search, --json, no-args usage, case-insensitive search, tag JSON, ToolDef with_tags/with_category)
-- Flag parsing (`--key value`, `--key=value`, boolean flags, type coercion)
-- Single tool execution
-- Pipeline with jq
-- Multi-step orchestration (variables, command substitution)
-- Error handling and fallback (`||`)
-- Stdin piping
-- Loops and conditionals
-- Environment variables
-- Status callbacks
-- Multiple sequential `execute()` calls (Arc reuse)
-- Shared context: Arc across callbacks, mutable Arc<Mutex<T>>
-- Interpreter isolation: fresh per execute(), Arc callback persistence
+Unit tests in the module cover builder configuration, help/discover introspection, flag parsing and coercion, pipelines, multi-step orchestration, error handling/fallback, stdin piping, loops, env vars, Arc reuse and fresh-interpreter isolation across `execute()` calls, and shared `Arc`/`Arc<Mutex<T>>` context.
 
 ## Security
 
-Inherits all bashkit sandbox guarantees:
-- Virtual filesystem (no host access)
-- Resource limits (max commands, loop iterations, function depth)
-- No network access unless explicitly configured
-
-`ScriptedTool` further uses a disabled filesystem backend and a reduced builtin
-surface so scripts cannot use VFS storage or path-based script execution.
-
-Sub-tool callback implementations control their own security boundaries.
+Inherits all bashkit sandbox guarantees: virtual filesystem (no host access), resource limits, no network unless explicitly configured. `ScriptedTool` further uses a disabled filesystem backend and a reduced builtin surface so scripts cannot use VFS storage or path-based script execution. Sub-tool callback implementations control their own security boundaries.

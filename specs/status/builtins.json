@@ -1,0 +1,630 @@
+{
+  "_generated": "just regen-builtins — do not edit by hand",
+  "builtins": [
+    {
+      "feature": null,
+      "name": "."
+    },
+    {
+      "feature": null,
+      "name": ":"
+    },
+    {
+      "feature": null,
+      "name": "["
+    },
+    {
+      "feature": null,
+      "name": "alias"
+    },
+    {
+      "feature": null,
+      "name": "assert"
+    },
+    {
+      "feature": null,
+      "name": "awk"
+    },
+    {
+      "feature": null,
+      "name": "base64"
+    },
+    {
+      "feature": null,
+      "name": "basename"
+    },
+    {
+      "feature": null,
+      "name": "bc"
+    },
+    {
+      "feature": null,
+      "name": "break"
+    },
+    {
+      "feature": "typescript",
+      "name": "bun"
+    },
+    {
+      "feature": null,
+      "name": "caller"
+    },
+    {
+      "feature": null,
+      "name": "cat"
+    },
+    {
+      "feature": null,
+      "name": "cd"
+    },
+    {
+      "feature": null,
+      "name": "chmod"
+    },
+    {
+      "feature": null,
+      "name": "chown"
+    },
+    {
+      "feature": null,
+      "name": "clear"
+    },
+    {
+      "feature": null,
+      "name": "column"
+    },
+    {
+      "feature": null,
+      "name": "comm"
+    },
+    {
+      "feature": null,
+      "name": "compgen"
+    },
+    {
+      "feature": null,
+      "name": "continue"
+    },
+    {
+      "feature": null,
+      "name": "cp"
+    },
+    {
+      "feature": null,
+      "name": "csv"
+    },
+    {
+      "feature": null,
+      "name": "curl"
+    },
+    {
+      "feature": null,
+      "name": "cut"
+    },
+    {
+      "feature": null,
+      "name": "date"
+    },
+    {
+      "feature": "typescript",
+      "name": "deno"
+    },
+    {
+      "feature": null,
+      "name": "df"
+    },
+    {
+      "feature": null,
+      "name": "diff"
+    },
+    {
+      "feature": null,
+      "name": "dirname"
+    },
+    {
+      "feature": null,
+      "name": "dirs"
+    },
+    {
+      "feature": null,
+      "name": "dotenv"
+    },
+    {
+      "feature": null,
+      "name": "du"
+    },
+    {
+      "feature": null,
+      "name": "echo"
+    },
+    {
+      "feature": null,
+      "name": "env"
+    },
+    {
+      "feature": null,
+      "name": "envsubst"
+    },
+    {
+      "feature": null,
+      "name": "eval"
+    },
+    {
+      "feature": null,
+      "name": "exit"
+    },
+    {
+      "feature": null,
+      "name": "expand"
+    },
+    {
+      "feature": null,
+      "name": "export"
+    },
+    {
+      "feature": null,
+      "name": "expr"
+    },
+    {
+      "feature": null,
+      "name": "false"
+    },
+    {
+      "feature": null,
+      "name": "fc"
+    },
+    {
+      "feature": null,
+      "name": "file"
+    },
+    {
+      "feature": null,
+      "name": "find"
+    },
+    {
+      "feature": null,
+      "name": "fold"
+    },
+    {
+      "feature": "git",
+      "name": "git"
+    },
+    {
+      "feature": null,
+      "name": "glob"
+    },
+    {
+      "feature": null,
+      "name": "grep"
+    },
+    {
+      "feature": null,
+      "name": "gunzip"
+    },
+    {
+      "feature": null,
+      "name": "gzip"
+    },
+    {
+      "feature": null,
+      "name": "hash"
+    },
+    {
+      "feature": null,
+      "name": "head"
+    },
+    {
+      "feature": null,
+      "name": "help"
+    },
+    {
+      "feature": null,
+      "name": "hexdump"
+    },
+    {
+      "feature": null,
+      "name": "history"
+    },
+    {
+      "feature": null,
+      "name": "hostname"
+    },
+    {
+      "feature": null,
+      "name": "http"
+    },
+    {
+      "feature": null,
+      "name": "iconv"
+    },
+    {
+      "feature": null,
+      "name": "id"
+    },
+    {
+      "feature": null,
+      "name": "join"
+    },
+    {
+      "feature": "jq",
+      "name": "jq"
+    },
+    {
+      "feature": null,
+      "name": "json"
+    },
+    {
+      "feature": null,
+      "name": "kill"
+    },
+    {
+      "feature": null,
+      "name": "less"
+    },
+    {
+      "feature": null,
+      "name": "ln"
+    },
+    {
+      "feature": null,
+      "name": "local"
+    },
+    {
+      "feature": null,
+      "name": "log"
+    },
+    {
+      "feature": null,
+      "name": "ls"
+    },
+    {
+      "feature": null,
+      "name": "mapfile"
+    },
+    {
+      "feature": null,
+      "name": "md5sum"
+    },
+    {
+      "feature": null,
+      "name": "mkdir"
+    },
+    {
+      "feature": null,
+      "name": "mkfifo"
+    },
+    {
+      "feature": null,
+      "name": "mktemp"
+    },
+    {
+      "feature": null,
+      "name": "mv"
+    },
+    {
+      "feature": null,
+      "name": "nl"
+    },
+    {
+      "feature": "typescript",
+      "name": "node"
+    },
+    {
+      "feature": null,
+      "name": "numfmt"
+    },
+    {
+      "feature": null,
+      "name": "od"
+    },
+    {
+      "feature": null,
+      "name": "parallel"
+    },
+    {
+      "feature": null,
+      "name": "paste"
+    },
+    {
+      "feature": null,
+      "name": "patch"
+    },
+    {
+      "feature": null,
+      "name": "popd"
+    },
+    {
+      "feature": null,
+      "name": "printenv"
+    },
+    {
+      "feature": null,
+      "name": "printf"
+    },
+    {
+      "feature": null,
+      "name": "pushd"
+    },
+    {
+      "feature": null,
+      "name": "pwd"
+    },
+    {
+      "feature": "python",
+      "name": "python"
+    },
+    {
+      "feature": "python",
+      "name": "python3"
+    },
+    {
+      "feature": null,
+      "name": "read"
+    },
+    {
+      "feature": null,
+      "name": "readarray"
+    },
+    {
+      "feature": null,
+      "name": "readlink"
+    },
+    {
+      "feature": null,
+      "name": "readonly"
+    },
+    {
+      "feature": null,
+      "name": "realpath"
+    },
+    {
+      "feature": null,
+      "name": "retry"
+    },
+    {
+      "feature": null,
+      "name": "return"
+    },
+    {
+      "feature": null,
+      "name": "rev"
+    },
+    {
+      "feature": null,
+      "name": "rg"
+    },
+    {
+      "feature": null,
+      "name": "rm"
+    },
+    {
+      "feature": null,
+      "name": "rmdir"
+    },
+    {
+      "feature": "ssh",
+      "name": "scp"
+    },
+    {
+      "feature": null,
+      "name": "sed"
+    },
+    {
+      "feature": null,
+      "name": "semver"
+    },
+    {
+      "feature": null,
+      "name": "seq"
+    },
+    {
+      "feature": null,
+      "name": "set"
+    },
+    {
+      "feature": "ssh",
+      "name": "sftp"
+    },
+    {
+      "feature": null,
+      "name": "sha1sum"
+    },
+    {
+      "feature": null,
+      "name": "sha256sum"
+    },
+    {
+      "feature": null,
+      "name": "shift"
+    },
+    {
+      "feature": null,
+      "name": "shopt"
+    },
+    {
+      "feature": null,
+      "name": "shuf"
+    },
+    {
+      "feature": null,
+      "name": "sleep"
+    },
+    {
+      "feature": null,
+      "name": "sort"
+    },
+    {
+      "feature": null,
+      "name": "source"
+    },
+    {
+      "feature": null,
+      "name": "split"
+    },
+    {
+      "feature": "sqlite",
+      "name": "sqlite"
+    },
+    {
+      "feature": "sqlite",
+      "name": "sqlite3"
+    },
+    {
+      "feature": "ssh",
+      "name": "ssh"
+    },
+    {
+      "feature": null,
+      "name": "stat"
+    },
+    {
+      "feature": null,
+      "name": "strings"
+    },
+    {
+      "feature": null,
+      "name": "tac"
+    },
+    {
+      "feature": null,
+      "name": "tail"
+    },
+    {
+      "feature": null,
+      "name": "tar"
+    },
+    {
+      "feature": null,
+      "name": "tee"
+    },
+    {
+      "feature": null,
+      "name": "template"
+    },
+    {
+      "feature": null,
+      "name": "test"
+    },
+    {
+      "feature": null,
+      "name": "timeout"
+    },
+    {
+      "feature": null,
+      "name": "times"
+    },
+    {
+      "feature": null,
+      "name": "tomlq"
+    },
+    {
+      "feature": null,
+      "name": "touch"
+    },
+    {
+      "feature": null,
+      "name": "tr"
+    },
+    {
+      "feature": null,
+      "name": "trap"
+    },
+    {
+      "feature": null,
+      "name": "tree"
+    },
+    {
+      "feature": null,
+      "name": "true"
+    },
+    {
+      "feature": null,
+      "name": "truncate"
+    },
+    {
+      "feature": "typescript",
+      "name": "ts"
+    },
+    {
+      "feature": null,
+      "name": "type"
+    },
+    {
+      "feature": "typescript",
+      "name": "typescript"
+    },
+    {
+      "feature": null,
+      "name": "unalias"
+    },
+    {
+      "feature": null,
+      "name": "uname"
+    },
+    {
+      "feature": null,
+      "name": "unexpand"
+    },
+    {
+      "feature": null,
+      "name": "uniq"
+    },
+    {
+      "feature": null,
+      "name": "unset"
+    },
+    {
+      "feature": null,
+      "name": "unzip"
+    },
+    {
+      "feature": null,
+      "name": "verify"
+    },
+    {
+      "feature": null,
+      "name": "wait"
+    },
+    {
+      "feature": null,
+      "name": "watch"
+    },
+    {
+      "feature": null,
+      "name": "wc"
+    },
+    {
+      "feature": null,
+      "name": "wget"
+    },
+    {
+      "feature": null,
+      "name": "which"
+    },
+    {
+      "feature": null,
+      "name": "whoami"
+    },
+    {
+      "feature": null,
+      "name": "xargs"
+    },
+    {
+      "feature": null,
+      "name": "xxd"
+    },
+    {
+      "feature": null,
+      "name": "yaml"
+    },
+    {
+      "feature": null,
+      "name": "yes"
+    },
+    {
+      "feature": null,
+      "name": "zip"
+    }
+  ],
+  "count": 156
+}

@@ -6,110 +6,32 @@ Phase 1: Implemented — Handler trait, allowlist, ssh/scp/sftp builtins
 
 ## Decision
 
-Bashkit provides SSH/SCP/SFTP builtins via the `ssh` feature flag.
-Follows the same opt-in pattern as `git` and `http_client`.
-
-### Feature Flag
-
-Enable with:
-```toml
-[dependencies]
-bashkit = { version = "0.1", features = ["ssh"] }
-```
-
-Pulls in the `russh`-based default transport implementation.
-
-### Configuration
-
-```rust
-use bashkit::{Bash, SshConfig};
-
-let bash = Bash::builder()
-    .ssh(SshConfig::new()
-        .allow("db.abc123.supabase.co")
-        .allow("*.example.com")
-        .default_user("root")
-        .timeout(Duration::from_secs(30)))
-    .build();
-```
+SSH/SCP/SFTP builtins behind the `ssh` feature flag (pulls in the
+`russh`-based default transport). Same opt-in pattern as `git` and
+`http_client`: disabled unless `SshConfig` is set via builder.
 
 ### Supported Commands
 
-#### Phase 1 — Command Execution
+Phase 1 (implemented): `ssh [user@]host command...` (with `-i` keyfile from
+VFS, `-p` port), `scp` to/from remote, `sftp [user@]host` (heredoc/pipe mode).
 
-| Command | Description |
-|---------|-------------|
-| `ssh [user@]host command...` | Execute command on remote host |
-| `ssh -i keyfile [user@]host command...` | With identity file (from VFS) |
-| `ssh -p port [user@]host command...` | Custom port |
-| `scp source [user@]host:dest` | Copy file to remote |
-| `scp [user@]host:source dest` | Copy file from remote |
-| `sftp [user@]host` | Interactive-ish file transfer (heredoc/pipe mode) |
-
-#### Phase 2 — Interactive Sessions (Future)
-
-| Command | Description |
-|---------|-------------|
-| `ssh [user@]host` (no command) | Interactive session via heredoc |
-| Port forwarding | `-L`, `-R` tunnel support |
-| Agent forwarding | `-A` SSH agent support |
+Phase 2 (future): interactive `ssh` sessions via heredoc, port forwarding
+(`-L`/`-R`), agent forwarding (`-A`).
 
 ### Architecture
 
 Follows the HTTP pattern: trait + allowlist + default implementation.
 
 ```
-┌─────────────────────────────────────┐
-│  ssh/scp/sftp builtins              │
-│  - Parse CLI args                   │
-│  - Validate host against allowlist  │
-│  - Delegate to SshClient            │
-├─────────────────────────────────────┤
-│  SshClient                          │
-│  - Holds SshConfig + SshHandler     │
-│  - Enforces allowlist before calls  │
-│  - Manages session pool             │
-├─────────────────────────────────────┤
-│  SshHandler trait (pluggable)       │
-│  - Default: russh-based impl        │
-│  - Custom: mock, proxy, log, etc.   │
-├─────────────────────────────────────┤
-│  SshAllowlist                       │
-│  - Host patterns with glob support  │
-│  - Port restrictions                │
-│  - Default-deny                     │
-└─────────────────────────────────────┘
+ssh/scp/sftp builtins (parse args, validate host, delegate)
+  → SshClient (holds SshConfig + SshHandler, enforces allowlist, session pool)
+    → SshHandler trait (pluggable: default russh impl; custom mock/proxy/log)
+  SshAllowlist: host glob patterns, port restrictions, default-deny
 ```
 
-### Handler Trait
-
-```rust
-#[async_trait]
-pub trait SshHandler: Send + Sync {
-    /// Execute a command on a remote host.
-    async fn exec(
-        &self,
-        target: &SshTarget,
-        command: &str,
-    ) -> std::result::Result<SshOutput, String>;
-
-    /// Upload a file to a remote host (scp/sftp put).
-    async fn upload(
-        &self,
-        target: &SshTarget,
-        remote_path: &str,
-        content: &[u8],
-        mode: u32,
-    ) -> std::result::Result<(), String>;
-
-    /// Download a file from a remote host (scp/sftp get).
-    async fn download(
-        &self,
-        target: &SshTarget,
-        remote_path: &str,
-    ) -> std::result::Result<Vec<u8>, String>;
-}
-```
+`SshHandler` trait (`exec`/`upload`/`download`): see
+`crates/bashkit/src/builtins/ssh/handler.rs` / rustdoc. Custom handlers via
+`Bash::builder().ssh_handler(...)`.
 
 ### Security Model
 
@@ -135,25 +57,14 @@ pub trait SshHandler: Send + Sync {
 
 ### Builder API
 
-```rust
-Bash::builder()
-    .ssh(SshConfig::new()
-        .allow("*.supabase.co")          // Host glob pattern
-        .allow_port(22)                   // Allowed ports (default: 22)
-        .allow_port(2222)
-        .default_user("root")
-        .timeout(Duration::from_secs(30))
-        .max_response_bytes(10_000_000)   // 10MB
-        .max_sessions(5))
-    .ssh_handler(Box::new(custom_handler)) // Optional custom handler
-    .build()
-```
+`SshConfig` (see `crates/bashkit/src/builtins/ssh/config.rs` / rustdoc):
+`allow(pattern)`, `allow_port(n)` (default: 22), `default_user(u)`,
+`timeout(d)`, `max_response_bytes(n)`, `max_sessions(n)`. Set via
+`Bash::builder().ssh(config)`.
 
 ### Allowlist Patterns
 
 - Exact host: `db.abc123.supabase.co`
 - Wildcard subdomain: `*.supabase.co`
 - IP address: `192.168.1.100`
-- With port override: patterns apply to allowed ports list
-
-No scheme needed (always SSH protocol).
+- Patterns apply to the allowed-ports list; no scheme (always SSH)

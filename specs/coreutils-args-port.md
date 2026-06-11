@@ -10,174 +10,127 @@ codegen**, not by depending on `uu_*` crates at runtime.
 
 `crates/bashkit-coreutils-port/` is a small standalone binary that:
 
-1. Parses `<uutils>/src/uu/<util>/src/<util>.rs` with `syn`.
-2. Falls back to scanning sibling `.rs` files (e.g. `ls/src/config.rs`) when
-   the `mod options` it needs lives next to `<util>.rs` rather than inside it.
-3. Reads `<uutils>/src/uu/<util>/locales/en-US.ftl` for help/about strings.
-4. Rewrites the `uu_app()` AST in place:
+1. Parses `<uutils>/src/uu/<util>/src/<util>.rs` with `syn`, falling back to
+   sibling `.rs` files (e.g. `ls/src/config.rs`) when `mod options` lives
+   next to `<util>.rs`.
+2. Reads `<uutils>/src/uu/<util>/locales/en-US.ftl` for help/about strings.
+3. Rewrites the `uu_app()` AST in place:
    - `translate!("k")` → `String::from("<value from ftl>")`
    - `uucore::crate_version!()` → `env!("CARGO_PKG_VERSION")`
    - `uucore::format_usage(x)` → local `format_usage` shim
-   - `.help_template(uucore::localized_help_template(...))` → chain step elided
-   - `uucore::clap_localization::configure_localized_command(cmd)` → `cmd`
+   - `.help_template(uucore::localized_help_template(...))` and
+     `uucore::clap_localization::configure_localized_command(cmd)` → elided
    - `ShortcutValueParser::new([…])` → `clap::builder::PossibleValuesParser::new([…])`
      (loses uucore's unambiguous-abbreviation behaviour; documented divergence)
-   - `Arg::…env("FOO")…` → chain step elided AND harvested into a
-     sidecar table (TM-INF-024). uutils attaches `.env(...)` to options
-     like `TABSIZE`/`TIME_STYLE` so they pick up host process state;
-     bashkit sandboxes scripts inside `ctx.env`, so the generated
-     `<util>_command()` only consults argv. To preserve uutils' UX
-     across the port, codegen records each stripped `.env(...)` into
-     `pub static <UTIL>_ENV_DEFAULTS: &[clap_env::EnvDefault]` next to
-     the command builder. Each row carries `(arg_id, long, env_var,
-     kind ∈ {Single, Bool, Multi})`. The bashkit-side shim
-     `crate::builtins::clap_env::apply_env_defaults` reads
-     `<UTIL>_ENV_DEFAULTS` plus the caller's `ctx.env` and synthesises
-     `--<long> <value>` (or `--<long>` for `Bool`) into argv before
-     `try_get_matches_from`, emulating clap's documented "argv > env >
-     default" precedence — but sourced from the sandbox, never
-     `std::env`. Defence-in-depth: the workspace `clap` dep drops the
-     `env` cargo feature, `builtins::tests::no_clap_env_in_generated_parsers`
-     statically forbids runtime `.env(` calls in `generated/*.rs`, and
-     `every_generated_parser_emits_env_defaults_table` enforces the
-     uniform sidecar surface (every util emits the table, possibly
-     empty). Per-builtin opt-in: a builtin chooses whether to wire
-     through the shim — if it does, every uutils env-default
-     auto-lights as that option's bashkit support lands.
-5. Validates the rewritten `uu_app()` before emission: args mode accepts
+   - `Arg::…env("FOO")…` → chain step elided AND harvested into a sidecar
+     table (TM-INF-024). uutils attaches `.env(...)` to options like
+     `TABSIZE`/`TIME_STYLE` so they pick up host process state; bashkit
+     sandboxes scripts inside `ctx.env`, so the generated `<util>_command()`
+     only consults argv. To preserve uutils' UX, codegen records each
+     stripped `.env(...)` into `pub static <UTIL>_ENV_DEFAULTS:
+     &[clap_env::EnvDefault]` next to the command builder — rows of
+     `(arg_id, long, env_var, kind ∈ {Single, Bool, Multi})`. The shim
+     `crate::builtins::clap_env::apply_env_defaults` reads the table plus
+     the caller's `ctx.env` and synthesises `--<long> <value>` (or
+     `--<long>` for `Bool`) into argv before `try_get_matches_from`,
+     emulating clap's "argv > env > default" precedence — sourced from the
+     sandbox, never `std::env`. Defence-in-depth: the workspace `clap` dep
+     drops the `env` cargo feature,
+     `builtins::tests::no_clap_env_in_generated_parsers` statically forbids
+     runtime `.env(` calls in `generated/*.rs`, and
+     `every_generated_parser_emits_env_defaults_table` enforces the uniform
+     sidecar surface (every util emits the table, possibly empty).
+     Per-builtin opt-in: a builtin chooses whether to wire through the shim —
+     if it does, every uutils env-default auto-lights as that option's
+     bashkit support lands.
+4. Validates the rewritten `uu_app()` before emission: args mode accepts
    either a single tail clap `Command` builder expression, or the
    two-statement shape `let <ident> = Command::new(...)<chain>;
-   <ident>.<method>(...)<chain>` where the `let` initializer is itself
-   a Command::new chain and the tail's innermost receiver is the
-   let-bound identifier (the same shape that emerges after the Rewriter
-   folds `uucore::clap_localization::configure_localized_command(cmd)`
-   to `cmd`). Anything else — additional prefix statements, block
-   expressions, loops, matches, async blocks, unsafe blocks, or a
-   destructuring/let-else binding — is rejected before any generated
-   Rust is written. This keeps third-party uutils source from smuggling
-   arbitrary executable statements into `<util>_command()` (TM-INF-025).
-6. Emits a generated file under
-   `crates/bashkit/src/builtins/generated/<util>_args.rs` with a clean
+   <ident>.<method>(...)<chain>` where the `let` initializer is itself a
+   Command::new chain and the tail's innermost receiver is the let-bound
+   identifier (the shape that emerges after folding
+   `configure_localized_command(cmd)` to `cmd`). Anything else — additional
+   prefix statements, block expressions, loops, matches, async blocks,
+   unsafe blocks, or a destructuring/let-else binding — is rejected before
+   any generated Rust is written. This keeps third-party uutils source from
+   smuggling arbitrary executable statements into `<util>_command()`
+   (TM-INF-025).
+5. Emits `crates/bashkit/src/builtins/generated/<util>_args.rs` with a clean
    `pub fn <util>_command() -> clap::Command`.
 
 bashkit's `Builtin::execute` calls `<util>_command().try_get_matches_from(...)`
 and implements behaviour against the VFS. `clap` is an unconditional
-dependency of `bashkit` — there is no feature flag for the ported path or
-the `ClapBuiltin` trait.
-
+dependency — no feature flag for the ported path or the `ClapBuiltin` trait.
 Help template is overridden in the calling builtin (e.g. `cat.rs`) to put the
-`Usage:` line first, matching GNU coreutils' layout.
+`Usage:` line first, matching GNU layout.
 
 ## Rationale
 
 The uu_* crates expose `uu_app()` as their canonical clap definition, but
-they:
-
-- Hardcode `std::fs` / `io::stdin()` / `io::stdout()` (incompatible with VFS).
-- Are sync (incompatible with bashkit's tokio-async builtins).
-- Resolve every help/about string through Fluent at runtime.
-- Pull `rustix` / `winapi-util` (hostile to WASM).
+they hardcode `std::fs` / `io::stdin()` / `io::stdout()` (incompatible with
+VFS), are sync (incompatible with tokio-async builtins), resolve help
+strings through Fluent at runtime, and pull `rustix` / `winapi-util`
+(hostile to WASM).
 
 A runtime dep would force Fluent init and locale bundles into bashkit. A
-build-time `build.rs` would either vendor uutils as a submodule or fetch it
-during every clean build, both of which violate bashkit norms (build does
-not fetch; generated artifacts are not in `target/`). Codegen run via a
-binary, with output committed, gives reviewability, grep-ability, and
-predictable build times — at the cost of needing to re-run the recipe on
-every uutils bump (CI guard recommended below).
+`build.rs` would either vendor uutils as a submodule or fetch during every
+clean build — both violate bashkit norms (build does not fetch; generated
+artifacts are not in `target/`). Codegen via a binary, with output
+committed, gives reviewability, grep-ability, and predictable build times —
+at the cost of re-running the recipe on every uutils bump (drift CI below).
 
 ## Verification
 
-POC ports `cat` and `tac`:
-
-- `crates/bashkit/src/builtins/generated/cat_args.rs`
-- `crates/bashkit/src/builtins/generated/tac_args.rs`
-
-Spec tests:
-
-- `tests/spec_cases/bash/cat.test.sh` — covers `-n`, `-b`, `-E`, `-s`, `-ns`,
-  `-A`, `-` (stdin), and rejection of unknown flags.
-- `tests/spec_cases/bash/textrev.test.sh` — adds tac unknown-flag and
-  parser-accepts-but-unimplemented (`-s`) cases on top of the existing
-  reverse-line tests.
-- `tests/spec_cases/bash/help-flag.test.sh` — `cat_help` now matches GNU's
-  `Usage:`-first layout.
-
-Regenerate with `just regen-coreutils-args` (or run the per-util command
-directly):
-
-```bash
-cargo run -p bashkit-coreutils-port -- /tmp/uutils cat <REV> \
-    > crates/bashkit/src/builtins/generated/cat_args.rs
-```
+Regenerate with `just regen-coreutils-args` (clones/updates the uutils
+checkout, checks out the pin, regenerates every ported util). Spec tests:
+`tests/spec_cases/bash/cat.test.sh`, `textrev.test.sh`, `help-flag.test.sh`.
 
 ## Scaling
 
-Each new utility port is three steps:
+Per new utility:
 
-1. `just regen-coreutils-args` (extend the for-loop to add the util).
-2. Add `pub mod <util>_args;` to
-   `crates/bashkit/src/builtins/generated/mod.rs`.
+1. `just regen-coreutils-args` (extend the recipe's for-loop with the util).
+2. Add `pub mod <util>_args;` to `crates/bashkit/src/builtins/generated/mod.rs`.
 3. In the matching builtin, replace handwritten parsing with
-   `<util>_command().try_get_matches_from(...)` and read the boolean/value
-   flags.
+   `<util>_command().try_get_matches_from(...)`.
 
-The codegen tool handles every uutils utility whose `uu_app()` follows the
-common shape (`Command::new(...)` chain, `mod options`, flat `en-US.ftl`).
-Ports that need bespoke transforms (e.g. utils with no `mod options`, or
-help strings using Fluent placables/selectors) currently fail with an
-`unresolved translate!()` error rather than emitting silently-wrong code.
+The tool handles every uutils utility whose `uu_app()` follows the common
+shape (`Command::new(...)` chain, `mod options`, flat `en-US.ftl`). Ports
+needing bespoke transforms (no `mod options`, Fluent placables/selectors)
+fail with an `unresolved translate!()` error rather than emitting
+silently-wrong code.
 
 ## Verification — Differential tests
 
-The args workflow above only catches **flag-signature drift**: it
-regenerates `<util>_args.rs` and surfaces a diff if uutils added,
-removed, or renamed flags. It cannot see **body drift** — semantic
-divergence inside `cat.rs` / `textrev.rs` against GNU/uutils.
+The args workflow only catches **flag-signature drift**; it cannot see
+**body drift** (semantic divergence inside `cat.rs` / `textrev.rs` vs
+GNU/uutils). `crates/bashkit/tests/integration/coreutils_differential_tests.rs`
+closes that gap: per fixture row it runs the same `<util> <args>` (same
+stdin, same input files) through bashkit and the matching uutils binary,
+asserting byte-equal stdout + exit-code parity. Key properties:
 
-`crates/bashkit/tests/coreutils_differential_tests.rs` closes that gap:
-for each fixture row it runs the same `<util> <args>` (with the same
-stdin and the same input files) through bashkit and through the
-matching uutils binary, then asserts byte-for-byte stdout parity plus
-exit-code parity.
-
-Pattern reference: `crates/bashkit/tests/sqlite_differential_tests.rs`.
-
-Properties:
-
+- **Opt-in**: skips unless `BASHKIT_RUN_COREUTILS_DIFF=1` — body divergences
+  are *expected*; the harness surfaces them, it does not gate the regular
+  workspace test run. Also skips gracefully when neither `uu_<util>` nor a
+  `coreutils` multicall binary is on `$PATH`.
 - One `DiffFixture` per row (util, argv, stdin, files, optional
-  `diff_reason` for documented divergences). Adding a port is ~10
-  lines: a new fixture row.
-- **Opt-in.** The harness skips with a notice unless
-  `BASHKIT_RUN_COREUTILS_DIFF=1` is set. Body divergences between
-  bashkit and uutils are *expected* — the harness's purpose is to
-  surface them, not to gate the regular workspace test run on them.
-- After the env gate, also skips gracefully when neither `uu_<util>`
-  nor a `coreutils` multicall binary is on `$PATH` — same UX as the
-  sqlite harness.
-- Files are materialized to a host tempdir for the uutils side and
-  mounted at the same virtual path in bashkit, so both engines receive
-  the same `<file>` argument.
-- `LC_ALL=C` for the host side; bashkit currently does not localize.
+  `diff_reason` for documented divergences); adding a port is ~10 lines.
+- Files materialize to a host tempdir for uutils and mount at the same
+  virtual path in bashkit; `LC_ALL=C` on the host side (bashkit does not
+  localize).
 
-CI integration:
-
-- `.github/workflows/ci.yml`'s `Test` job pre-installs the uutils
-  multicall via `taiki-e/install-action@v2` (cached, with
-  `continue-on-error`). It does **not** set
-  `BASHKIT_RUN_COREUTILS_DIFF`, so the harness still skips here —
-  install is purely caching for downstream jobs.
-- `.github/workflows/coreutils-args-drift.yml` builds the multicall
-  from the *pinned* uutils clone, sets
-  `BASHKIT_RUN_COREUTILS_DIFF=1`, and runs the harness so body drift
-  surfaces in the same auto-PR as flag drift.
+CI: `.github/workflows/ci.yml`'s `Test` job pre-installs the uutils
+multicall (cached, `continue-on-error`) but does **not** set the env gate —
+install is purely caching. The drift workflow (below) builds the multicall
+from the *pinned* clone and runs the harness with the gate set, so body
+drift surfaces in the same auto-PR as flag drift.
 
 ## Module mode
 
-Args mode rewrites a single function (`uu_app()`). For library code
-that's worth reusing wholesale — e.g. uucore's `format/` parser, which
-`printf.rs` would otherwise have to reimplement — we have a second mode
-that vendors entire uucore modules at port time.
+Args mode rewrites a single function (`uu_app()`). For library code worth
+reusing wholesale — e.g. uucore's `format/` parser, which `printf.rs` would
+otherwise reimplement — a second mode vendors entire uucore modules at port
+time.
 
 ### When to use module mode vs args mode
 
@@ -186,20 +139,17 @@ that vendors entire uucore modules at port time.
 | Reuse a uutils utility's flag surface (`uu_app()`) | args | `bashkit-coreutils-port <UUTILS_DIR> <UTIL> [<REV>]` |
 | Reuse a platform-clean uucore library (e.g. `format/`) | module | `bashkit-coreutils-port port-module <UUTILS_DIR> <MODULE> [<REV>]` |
 
-Module mode is the right tool when the target is a small, platform-
-clean module whose imports are mostly `std` + a few published crates,
-plus a bounded set of uucore-internal types. Adding a runtime
-dependency on `uucore` was rejected — it costs ~98 s of cold build
-time, breaks the WASM target (`uucore → rustix → errno`), and forces
-Fluent into bashkit's runtime — so the modules we want come in by
-port-time vendoring.
+Module mode fits small, platform-clean modules whose imports are mostly
+`std` + a few published crates, plus a bounded set of uucore-internal types.
+A runtime dependency on `uucore` was rejected — ~98 s of cold build time,
+breaks the WASM target (`uucore → rustix → errno`), and forces Fluent into
+bashkit's runtime.
 
 ### Manifest
 
 Vendored modules are declared in
-`crates/bashkit-coreutils-port/vendored.toml` (next to the tool — the
-tool owns the manifest, the drift workflow reads it). Each `[[modules]]`
-stanza declares one porting target:
+`crates/bashkit-coreutils-port/vendored.toml` (the tool owns the manifest,
+the drift workflow reads it). Each `[[modules]]` stanza declares one target:
 
 ```toml
 [[modules]]
@@ -212,49 +162,41 @@ prefix = "uucore::error::UError"
 action = "error"
 ```
 
-The `out` path is relative to
-`crates/bashkit/src/builtins/generated/`. `source` may be a single
-`.rs` file or a directory — directories are walked recursively and the
-output mirrors the structure.
+`out` is relative to `crates/bashkit/src/builtins/generated/`. `source` may
+be a single `.rs` file or a directory (walked recursively, structure
+mirrored).
 
 ### Substitution model
 
-`bashkit-coreutils-port port-module` walks every top-level `use` in
-each ported file, flattens nested groups (`use a::{b, c}`), and
-classifies each path:
+`port-module` walks every top-level `use` in each ported file, flattens
+nested groups (`use a::{b, c}`), and classifies each path:
 
-- **External or module-local** (anything not rooted at `uucore`/`crate`)
-  passes through. `std`, `bigdecimal`, `num-traits`, etc. resolve at
-  bashkit's compile time; `self::`/`super::` references stay inside the
-  vendored module tree.
-- **Fluent boundary** — `use fluent::*;` and `use uucore::translate;`
-  / `uucore::i18n::*` are hard errors regardless of manifest, with a
-  message telling the operator the module is not safely vendorable
-  without code changes.
+- **External or module-local** (not rooted at `uucore`/`crate`) passes
+  through — `std`, `bigdecimal`, etc. resolve at bashkit compile time;
+  `self::`/`super::` stay inside the vendored tree.
+- **Fluent boundary** — `use fluent::*;`, `use uucore::translate;`,
+  `uucore::i18n::*` are hard errors regardless of manifest: the module is
+  not safely vendorable without code changes.
 - **uucore-internal** must match a `[[modules.substitutions]]` prefix.
-  Unmatched internal references abort the port — silent emission of a
-  broken `use uucore::...` is rejected, since the vendored module would
-  not compile against bashkit's dep graph.
+  Unmatched internal references abort the port — silent emission of a broken
+  `use uucore::...` is rejected since it would not compile against bashkit's
+  dep graph.
 
-Substitution `action`s:
+Substitution `action`s (all implemented):
 
-| Action | Behaviour | Status |
-|---|---|---|
-| `error` | Abort the port at this import. Use when the module references a uucore type that should not be vendored. | Implemented |
-| `replace_with` | Rewrite the matched prefix in every `use` path to `target`; when the rewritten path's final segment differs from the original, an `as <orig>` rename is inserted so call sites compile unchanged. | Implemented |
-| `inline` | Vendor the file at `inline_source` next to the module's output dir (under `<out_base>/<leaf>.rs` where `<leaf>` is the prefix's final segment), and rewrite matching `use` paths to `crate::builtins::generated::<leaf>::…` so imports work from any nested module depth. The inlined file is processed through the same enforce + rewrite pipeline so transitive uucore references either substitute or surface explicitly. | Implemented |
+| Action | Behaviour |
+|---|---|
+| `error` | Abort the port at this import (uucore type that should not be vendored). |
+| `replace_with` | Rewrite the matched prefix in every `use` path to `target`; if the final segment changes, insert `as <orig>` so call sites compile unchanged. |
+| `inline` | Vendor the file at `inline_source` next to the module's output dir (`<out_base>/<leaf>.rs`, `<leaf>` = prefix's final segment) and rewrite matching `use` paths to `crate::builtins::generated::<leaf>::…` so imports work from any nesting depth. The inlined file goes through the same enforce + rewrite pipeline, so transitive uucore references either substitute or surface explicitly. |
 
-Output goes through `prettyplease::unparse` whenever any
-`replace_with` or `inline` substitution is in scope, so use-group
-syntax may be flattened into individual `use` items as a side effect
-of rewriting. `use module::{self, Item}` is normalized to
-`use module;` plus `use module::Item;` so flattened relative imports
-remain valid Rust.
-
-Top-level upstream `#[cfg(test)]` items and rustdoc attributes are
-stripped during module vendoring. Bashkit tests and public docs cover
-the integrated behavior, while upstream tests and examples assume the
-original uucore crate topology.
+Output goes through `prettyplease::unparse` whenever any `replace_with` or
+`inline` substitution is in scope, so use-groups may flatten into individual
+`use` items. `use module::{self, Item}` normalizes to `use module;` +
+`use module::Item;` so flattened relative imports remain valid Rust.
+Top-level upstream `#[cfg(test)]` items and rustdoc attributes are stripped:
+bashkit tests/docs cover the integrated behavior; upstream tests assume the
+original uucore topology.
 
 ### Vendored Modules
 
@@ -264,99 +206,63 @@ original uucore crate topology.
 
 ### Output banner
 
-Module-mode files carry the same banner shape as args mode:
-
-```text
-// GENERATED by bashkit-coreutils-port. DO NOT EDIT.
-//
-// Source: uutils/coreutils@<rev> <relative-source-path>
-// Regenerate: cargo run -p bashkit-coreutils-port -- port-module <UUTILS_DIR> <MODULE> <REV>
-//
-// Original uutils licensed MIT; see THIRD_PARTY_LICENSES.
-```
-
-### Drift CI
-
-`.github/workflows/coreutils-args-drift.yml` re-runs `port-module` for
-every entry in `vendored.toml` against uutils HEAD on the same weekly
-cadence as args drift. Module diffs and args diffs land in the **same**
-auto-PR (single bot PR per drift run, never one PR per module). The
-workflow auto-discovers modules from the manifest — adding a new
-vendored module is one TOML stanza in `vendored.toml` and the next
-drift run picks it up.
+Module-mode files carry the same banner shape as args mode: `GENERATED by
+bashkit-coreutils-port. DO NOT EDIT.`, source `uutils/coreutils@<rev>` +
+relative path, regenerate command, MIT license pointer
+(`THIRD_PARTY_LICENSES`).
 
 ## Source-of-truth uutils revision pin
 
 `crates/bashkit/src/builtins/generated/mod.rs` declares
-`pub const UUTILS_REVISION: &str = "<short-rev>"`. This is the single
-source of truth shared by:
-
-- The codegen tool (drift workflow checks out uutils at this rev
-  before regenerating `<util>_args.rs`).
-- The body-drift harness (drift workflow builds the `coreutils`
-  multicall from the same rev).
-- `just regen-coreutils-args` (reads the pin and checks out the local
-  uutils clone at it before regenerating).
-
-A static test in `builtins/mod.rs::tests::generated_args_headers_\
-match_pinned_uutils_revision` asserts every `<util>_args.rs` header
-references the same rev as the constant. Manual partial-regenerations
-that forget to bump (or mis-bump) the pin fail in CI.
-
-The drift workflow always resolves upstream HEAD to a concrete commit,
-checks out that commit detached, and bumps `UUTILS_REVISION` together
-with the regenerated files in one PR — the two never diverge across an
-auto-PR boundary.
+`pub const UUTILS_REVISION: &str = "<short-rev>"` — single source of truth
+shared by the codegen tool, the body-drift harness (multicall built from the
+same rev), and `just regen-coreutils-args` (checks out the local clone at
+the pin). A static test
+(`builtins/mod.rs::tests::generated_args_headers_match_pinned_uutils_revision`)
+asserts every `<util>_args.rs` header references the same rev as the
+constant, so partial regenerations that forget or mis-bump the pin fail in
+CI. The drift workflow always resolves upstream HEAD to a concrete commit,
+checks it out detached, and bumps `UUTILS_REVISION` together with the
+regenerated files in one PR — the two never diverge across an auto-PR
+boundary.
 
 ## CI guard
 
 `.github/workflows/coreutils-args-drift.yml` runs weekly (Mondays 05:00 UTC)
-and on `workflow_dispatch`. It:
+and on `workflow_dispatch`:
 
-1. Checks out bashkit and `uutils/coreutils` side-by-side in a read-only
-   job with checkout credential persistence disabled.
-2. Reads the current pin from `generated/mod.rs` and checks out uutils
-   at the resolved upstream HEAD commit for the regen.
-3. Runs `bashkit-coreutils-port` against every `pub mod <util>_args;` line in
-   `crates/bashkit/src/builtins/generated/mod.rs` and bumps
-   `UUTILS_REVISION` to the rev it just generated against.
-4. Verifies bashkit still builds and the cat/tac spec tests pass.
-5. Builds the uutils multicall from the same checkout and runs the
-   differential harness with `BASHKIT_RUN_COREUTILS_DIFF=1`.
-6. Uploads a binary git patch for `crates/bashkit/src/builtins/generated/`
-   if `git diff` is non-empty.
-7. Runs a separate write-scoped PR job that checks out bashkit without
-   persisted credentials, applies only generated-file changes from that
-   patch, commits them, and opens or updates the drift PR with `gh`.
+1. Read-only job (checkout credential persistence disabled) checks out
+   bashkit + uutils side-by-side, regenerates every `pub mod <util>_args;`
+   entry and every `vendored.toml` module against resolved upstream HEAD,
+   bumps `UUTILS_REVISION`, verifies bashkit builds and cat/tac spec tests
+   pass, builds the uutils multicall and runs the differential harness with
+   `BASHKIT_RUN_COREUTILS_DIFF=1`, then uploads a binary git patch for
+   `generated/` if non-empty.
+2. A separate write-scoped PR job checks out bashkit without persisted
+   credentials, applies only generated-file changes from that patch, and
+   opens or updates the drift PR with `gh`.
 
-The read-only job is the only job that builds or executes code from
-`uutils/coreutils`. The write-scoped PR job must not checkout, build, or
-execute uutils code, and must not use third-party PR creation actions.
+The read-only job is the only job that builds or executes uutils code. The
+write-scoped job must not checkout, build, or execute uutils code, and must
+not use third-party PR-creation actions. Module diffs and args diffs land in
+the **same** auto-PR (one bot PR per drift run); adding a vendored module is
+one TOML stanza and the next run picks it up.
 
-The PR's intermediate commits are bot-authored (this is automated drift
-detection, not a code change). Maintainers must **squash-merge as a human**
-so the merge commit is attributed correctly per `AGENTS.md`.
-
-Reviewing the auto-PR is part of the maintenance checklist — see
-`specs/maintenance.md` § Coreutils Argument-Surface Drift.
+The PR's intermediate commits are bot-authored (automated drift detection,
+not a code change). Maintainers must **squash-merge as a human** so the
+merge commit is attributed correctly per `AGENTS.md`. Reviewing the auto-PR
+is part of the maintenance checklist — see `specs/maintenance.md`
+§ Coreutils Argument-Surface Drift.
 
 ## Alternatives considered
 
-- **Direct dep on `uu_*` crates** — rejected: forces Fluent init, drags
-  `rustix`/`winapi-util`, breaks WASM, and locks bashkit to uutils' clap
-  major version.
-- **`build.rs` regenerating every build** — rejected: hides generated code
-  from PR diffs, slows clean builds, and bashkit avoids fetching at build
-  time.
-- **Manual port of each `uu_app()`** — rejected: the user requested an
-  automated approach. ~100 utilities is too many for hand-translation, and
-  uutils tracks GNU upstream changes that we'd want to pull in.
+- **Direct dep on `uu_*` crates** — rejected: forces Fluent init, drags `rustix`/`winapi-util`, breaks WASM, locks bashkit to uutils' clap major.
+- **`build.rs` regenerating every build** — rejected: hides generated code from PR diffs, slows clean builds, bashkit avoids fetching at build time.
+- **Manual port of each `uu_app()`** — rejected: ~100 utilities is too many for hand-translation, and uutils tracks GNU upstream changes we want to pull in.
 
 ## See also
 
 - `specs/builtins.md` — `Builtin` trait, `ClapBuiltin`, command dispatch.
-- `crates/bashkit-coreutils-port/src/main.rs` — codegen entry point;
-  `args.rs` and `module.rs` host the two mode implementations,
-  `manifest.rs` holds the `vendored.toml` schema.
+- `crates/bashkit-coreutils-port/src/main.rs` — codegen entry point; `args.rs` / `module.rs` host the two modes, `manifest.rs` the `vendored.toml` schema.
 - `crates/bashkit-coreutils-port/vendored.toml` — vendored-module manifest.
 - `crates/bashkit/src/builtins/cat.rs`, `textrev.rs` — port consumers.

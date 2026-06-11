@@ -1,11 +1,8 @@
 # Testing Strategy
 
-## Status
-Implemented
-
 ## Decision
 
-Bashkit uses a multi-layer testing strategy:
+Multi-layer testing strategy:
 
 1. **Unit tests** - Component-level tests in each module
 2. **Spec tests** - Compatibility tests against bash behavior
@@ -14,6 +11,7 @@ Bashkit uses a multi-layer testing strategy:
 5. **Differential fuzzing** - Property-based testing against real bash
 
 For current test counts and pass rates, see `specs/implementation-status.md`.
+For run commands, see AGENTS.md "Local Dev" and `.github/workflows/ci.yml`.
 
 ## Spec Test Framework
 
@@ -26,19 +24,6 @@ script_to_execute
 ### expect
 expected_output
 ### end
-
-### another_test
-### skip: reason for skipping
-script_that_fails
-### expect
-expected_output
-### end
-
-### exit_code_test
-false
-### exit_code: 1
-### expect
-### end
 ```
 
 ### Directives
@@ -50,21 +35,11 @@ false
 - `### bash_diff: reason` - Test has known difference from real bash (still runs in spec tests, excluded from bash comparison)
 - `### paused_time` - Run with tokio paused time for deterministic timing tests
 
-## Running Tests
-
-```bash
-# All spec tests (live inside the consolidated `integration` binary)
-cargo test --test integration -- spec_tests::
-
-# Single category
-cargo test --test integration -- spec_tests::bash_spec_tests
-
-# Check spec tests match real bash
-just check-bash-compat
-
-# Generate comprehensive compatibility report
-just compat-report
-```
+Spec tests live inside the consolidated `integration` binary:
+`cargo test --test integration -- spec_tests::` (or a category like
+`spec_tests::bash_spec_tests`). `just check-bash-compat` verifies expectations
+against real bash; `just compat-report` generates the compatibility report;
+`./scripts/update-spec-expected.sh [--verbose]` updates expected outputs.
 
 ## Integration Test Binary Layout
 
@@ -101,34 +76,17 @@ matches `integration::*::foo*` test paths.
 
 ## Coverage
 
-Coverage is uploaded to Codecov from three sources:
-
-- Rust unit/integration coverage via `cargo tarpaulin`
-- Rust coverage exercised through Python binding tests via `cargo llvm-cov`
-- Rust coverage exercised through Node binding tests via `cargo llvm-cov`
-
-```bash
-cargo tarpaulin --features http_client --out html --output-dir coverage
-```
+Uploaded to Codecov from three sources: Rust unit/integration coverage via
+`cargo tarpaulin`; Rust coverage exercised through Python and Node binding
+tests via `cargo llvm-cov`.
 
 ## Adding New Tests
 
-1. Create or edit `.test.sh` file in appropriate category
-2. Use the standard format with `### test_name`, `### expect`, `### end`
-3. Run `just check-bash-compat` to verify expected output matches real bash
-4. If test fails due to unimplemented feature, add `### skip: reason`
-5. If Bashkit intentionally differs from bash, add `### bash_diff: reason`
-6. Update `specs/implementation-status.md` for skipped tests
-
-### Checking Expected Outputs
-
-```bash
-# Check all tests match real bash
-./scripts/update-spec-expected.sh
-
-# Show detailed comparison for each test
-./scripts/update-spec-expected.sh --verbose
-```
+1. Create or edit `.test.sh` file in appropriate category, standard format
+2. Run `just check-bash-compat` to verify expected output matches real bash
+3. Unimplemented feature → `### skip: reason`; intentional difference →
+   `### bash_diff: reason`
+4. Update `specs/implementation-status.md` for skipped tests
 
 ## Comparison Testing
 
@@ -140,13 +98,10 @@ spec tests and comparison.
 
 ## Differential Fuzzing
 
-Grammar-based property testing using proptest generates random valid bash scripts
-and compares Bashkit output against real bash.
-
-```bash
-just fuzz-diff         # default 50 cases
-just fuzz-diff-deep    # 1000 cases
-```
+Grammar-based property testing using proptest generates random valid bash
+scripts and compares Bashkit output against real bash. `just fuzz-diff`
+(50 cases), `just fuzz-diff-deep` (1000). Part of the consolidated binary:
+`cargo test --test integration -- proptest_differential::`.
 
 Known exclusions: `pwd` (path differs), `wc` (formatting), filesystem ops (VFS).
 
@@ -168,23 +123,3 @@ cross-runtime compatibility.
 2. runtime-compat tests use only `node:test`, `node:assert`, `node:module`
 3. Files are plain `.mjs` (no TypeScript)
 4. Keep files focused — one file per concern area
-
-## Alternatives Considered
-
-### Bash test suite
-Rejected: Too complex, many tests for features we intentionally don't support.
-
-### Traditional fuzzing (AFL, libFuzzer)
-Future consideration: Would help find parser crashes via mutation.
-
-## Verification
-
-```bash
-# Run what CI runs
-cargo test --workspace --lib --bins --tests --features http_client,ssh,sqlite
-cargo test --features failpoints --test security_failpoint_tests -- --test-threads=1
-cargo test --test proptest_security -- --test-threads=1
-
-# Run differential fuzzing (now part of the consolidated binary)
-cargo test --test integration -- proptest_differential:: --nocapture
-```

@@ -1,8 +1,5 @@
 # Architecture
 
-## Status
-Implemented
-
 ## Decision
 
 **Official name:** "Bashkit" (not "BashKit"). Crate/package identifiers use lowercase `bashkit`.
@@ -17,13 +14,12 @@ Bashkit uses a Cargo workspace with multiple crates:
 | `crates/bashkit-js/` | JavaScript bindings (NAPI-RS) |
 | `crates/bashkit-eval/` | LLM evaluation harness |
 
-The core library modules: `parser/`, `interpreter/`, `fs/`, `builtins/`,
-`network/`, `git/`, `ssh/`, `scripted_tool/`. See the source for current
-structure — it evolves as features are added.
+Core library modules: `parser/`, `interpreter/`, `fs/`, `builtins/`,
+`network/`, `git/`, `ssh/`, `scripted_tool/`. See source — structure evolves.
 
 ### Public API
 
-Main entry point is `Bash` (library) and `BashTool` (LLM tool contract).
+Main entry points: `Bash` (library) and `BashTool` (LLM tool contract).
 See `crates/bashkit/src/lib.rs` for the full public API surface.
 
 ### Design Principles
@@ -35,21 +31,5 @@ See `crates/bashkit/src/lib.rs` for the full public API surface.
 
 ## Alternatives Considered
 
-### Single crate vs workspace
-Rejected single crate because:
-- CLI binary would bloat the library
-- Python/JS packages need separate crates
-- Cleaner separation of concerns
-
-### Sync vs async filesystem
-Rejected sync because:
-- Bashkit is fully async
-- Network operations need async
-- tokio is already a dependency
-
-## Verification
-
-```bash
-cargo build
-cargo test
-```
+- Single crate: rejected — CLI bloats library; Python/JS packages need separate crates.
+- Sync filesystem: rejected — network ops need async; tokio already a dep.

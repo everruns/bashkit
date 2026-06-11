@@ -1,21 +1,17 @@
 # Virtual Filesystem Design
 
-## Status
-Active
-
 ## Decision
 
-Bashkit uses a two-layer filesystem abstraction:
+Two-layer filesystem abstraction:
 
 | Layer | Trait/Type | Responsibility |
 |-------|------------|----------------|
 | Backend | `FsBackend` | Raw storage operations (minimal contract) |
 | POSIX | `FileSystem` / `PosixFs` | POSIX-like semantics enforcement |
 
-`FsBackend` handles raw storage without enforcing POSIX semantics.
-Implementations can be wrapped with `PosixFs` to get type-safe behavior.
-
-See `crates/bashkit/src/fs/` for trait definitions and implementations.
+`FsBackend` handles raw storage without enforcing POSIX semantics; wrap with
+`PosixFs` for type-safe behavior. See `crates/bashkit/src/fs/` for trait
+definitions and implementations.
 
 ### Which Trait Should I Implement?
 
@@ -41,23 +37,14 @@ Do you need a custom filesystem?
 ### Implementations
 
 #### InMemoryFs
-- All files stored in `HashMap<PathBuf, FsEntry>`, thread-safe via `RwLock`
+- `HashMap<PathBuf, FsEntry>`, thread-safe via `RwLock`; no persistence
 - Initial directories: `/`, `/tmp`, `/home`, `/home/user`, `/dev`
 - Special handling for `/dev/null`, `/dev/urandom`, `/dev/random`
-- No persistence — state lost on drop
-
-##### Mounting Files with BashBuilder
-
-```rust
-let mut bash = Bash::builder()
-    .mount_text("/config/app.conf", "debug=true\nport=8080\n")
-    .mount_readonly_text("/etc/version", "1.2.3")
-    .build();
-```
+- Mount files at build time via `BashBuilder::mount_text()` /
+  `mount_readonly_text()`
 
 #### OverlayFs
-- Copy-on-write layer over another FileSystem
-- Whiteout tracking for deleted files
+- Copy-on-write layer over another FileSystem, whiteout tracking for deletes
 - Useful for: temp modifications, testing, isolation
 
 #### MountableFs
@@ -66,8 +53,8 @@ let mut bash = Bash::builder()
 - Always used as outermost FS layer for live mount/unmount support
 
 #### ReadOnlyFs
-- Wraps another `FileSystem` and delegates read/stat/list operations
-- Denies all mutation operations with `PermissionDenied`
+- Wraps another `FileSystem`, delegates read/stat/list, denies all mutations
+  with `PermissionDenied`
 - Useful for inspection-only tool sessions where even in-memory writes to
   `/tmp`, redirections, `cp`, `mv`, `mkdir`, `rm`, and `chmod` must fail
 
@@ -77,31 +64,14 @@ let mut bash = Bash::builder()
 - Path traversal prevented via canonicalization + root prefix check
 - New-path writes canonicalize the nearest existing ancestor before attaching a
   missing suffix, blocking symlink escapes through non-existent subpaths
-
-##### Builder Methods
-
-```rust
-Bash::builder().mount_real_readonly("/path/to/dir")
-Bash::builder().mount_real_readonly_at("/path/to/dir", "/mnt/data")
-Bash::builder().mount_real_readwrite("/path/to/dir")
-```
-
-##### CLI Usage
-
-```bash
-bashkit --mount-ro /path/to/project -c 'cat /README.md'
-bashkit --mount-rw /path/to/output:/mnt/output -c 'echo result > /mnt/output/result.txt'
-```
+- Builder: `mount_real_readonly[_at]()`, `mount_real_readwrite()`; CLI:
+  `--mount-ro` / `--mount-rw` (`host:vfs` syntax for mount point)
 
 #### Live Mount/Unmount
 
-Every `Bash` instance wraps its filesystem stack in a `MountableFs`. This
-enables post-build mount/unmount without rebuilding the interpreter:
-
-```rust
-bash.mount("/mnt/data", data_fs)?;
-bash.unmount("/mnt/data")?;
-```
+Every `Bash` instance wraps its filesystem stack in a `MountableFs`, enabling
+post-build `bash.mount(path, fs)` / `bash.unmount(path)` without rebuilding
+the interpreter.
 
 ### FS Layering Stack
 
@@ -189,8 +159,5 @@ Safety: real mounts are **read-only by default**. Text files are writable
 
 ## Alternatives Considered
 
-### Real filesystem with chroot
-Rejected: requires root, not portable, doesn't work in WASM.
-
-### tokio::fs wrapper
-Rejected: always hits real FS, can't isolate or virtualize.
+- Real filesystem with chroot: rejected — requires root, not portable, no WASM.
+- tokio::fs wrapper: rejected — always hits real FS, can't isolate or virtualize.

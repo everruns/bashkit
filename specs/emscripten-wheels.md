@@ -7,52 +7,41 @@ Implemented (reduced feature set). CI build + smoke test green; PyPI publish wir
 ## Abstract
 
 Bashkit ships an additional Python wheel targeting `wasm32-unknown-emscripten`
-(the Pyodide ABI), so `bashkit` can run **in the browser, JupyterLite, and other
-WASM hosts** with no native toolchain. This is a *reduced-feature* variant of the
-native package: the in-VFS shell plus the embedded `jq` and Monty `python`
-interpreters, driven through the blocking `execute_sync()` API.
-
-Approach mirrors Pydantic's recipe for building Emscripten wheels for a
-Rust + maturin + PyO3 package
-(<https://pydantic.dev/articles/emscripten-wheels-pydantic>).
+(the Pyodide ABI), so `bashkit` runs **in the browser, JupyterLite, and other
+WASM hosts** with no native toolchain. Reduced-feature variant of the native
+package: in-VFS shell plus embedded `jq` and Monty `python`, driven through
+blocking `execute_sync()`. Approach mirrors Pydantic's Emscripten-wheel
+recipe (<https://pydantic.dev/articles/emscripten-wheels-pydantic>).
 
 ## Why a separate, reduced wheel
 
-Pyodide runs single-threaded with no OS sockets and no host filesystem. Several
-deps the native wheel relies on contain hard `compile_error!`s or missing modules
+Pyodide runs single-threaded with no OS sockets and no host filesystem.
+Several native-wheel deps contain hard `compile_error!`s or missing modules
 on wasm:
 
-| Capability | Native crate/feature | Why it can't build on wasm |
-|---|---|---|
-| Outbound HTTP (`curl`/`wget`/`http`) | `http_client` → `reqwest` → `mio` | `mio`: "This wasm target is unsupported by mio. Disable the net feature." |
-| SQLite (`sqlite`/`sqlite3`) | `sqlite` → `turso_core` + `tokio/rt-multi-thread` | tokio: "Only features sync,macros,io-util,rt,time are supported on wasm." |
-| Host directory mounts | `realfs` → `tokio::fs` | `tokio::fs` absent on wasm |
-| Capsule FS interop | `interop` → `tokio/rt-multi-thread` | multi-thread runtime unsupported |
-| Async `execute()` bridge | `pyo3-async-runtimes` (`tokio-runtime`) | hard-pulls `rt-multi-thread` + tokio `net` (mio) |
+- `http_client` → `reqwest` → `mio`: wasm target unsupported by mio's net feature.
+- `sqlite` → `turso_core` + `tokio/rt-multi-thread`: tokio supports only sync/macros/io-util/rt/time on wasm.
+- `realfs` → `tokio::fs`: absent on wasm.
+- `interop` (capsule FS) → `tokio/rt-multi-thread`: unsupported.
+- async `execute()` bridge → `pyo3-async-runtimes` (tokio-runtime): hard-pulls `rt-multi-thread` + tokio `net` (mio).
 
-The core `bashkit` crate was already wasm-aware (it gates `rt-multi-thread`/`fs`
-behind `cfg(not(target_arch = "wasm32"))`). The work is confined to
-`crates/bashkit-python`.
+The core `bashkit` crate was already wasm-aware (gates
+`rt-multi-thread`/`fs` behind `cfg(not(target_arch = "wasm32"))`); the work
+is confined to `crates/bashkit-python`.
 
-## Feature matrix: native vs wasm
+## Feature surface: native vs wasm
 
-| Surface | Native wheel | Pyodide wheel |
-|---|---|---|
-| `Bash` / `BashTool` / `ScriptedTool` | ✅ | ✅ |
-| `execute_sync()` / `execute_sync_or_throw()` | ✅ | ✅ |
-| `async execute()` / `execute_or_throw()` | ✅ | ❌ (method absent) |
-| `python=True` (Monty) | ✅ | ✅ |
-| `jq` builtin | ✅ | ✅ |
-| Custom builtins — sync callbacks | ✅ | ✅ |
-| Custom builtins — async callbacks | ✅ (caller-loop or private-loop) | ✅ (private-loop fallback only) |
-| `network=` (allowlist / credentials) | ✅ | ❌ (raises at construction) |
-| `sqlite=True` | ✅ | ❌ (raises at construction) |
-| `mounts=` (host dirs) | ✅ | ❌ (raises at construction) |
-| `external_handler=` | ✅ | ❌ (raises at construction) |
-| `FileSystem.real()` / capsule `to/from_capsule` | ✅ | ❌ (method absent) |
+Present on both: `Bash`/`BashTool`/`ScriptedTool`, `execute_sync()` /
+`execute_sync_or_throw()`, Monty `python=True`, `jq`, sync custom-builtin
+callbacks, async custom-builtin callbacks (wasm: private-loop fallback only —
+no caller-loop).
 
-Unavailable *configuration* kwargs **fail loudly** with a `RuntimeError` rather
-than silently no-op, so callers learn immediately the WASM build can't do it.
+Absent on wasm: async `execute()` / `execute_or_throw()` (methods absent),
+`FileSystem.real()` / capsule `to/from_capsule` (methods absent). Gated-off
+*configuration* kwargs — `network=`, `sqlite=True`, `mounts=`,
+`external_handler=` — **fail loudly** with `RuntimeError` at construction
+rather than silently no-op, so callers learn immediately the WASM build
+can't do it.
 
 ## Implementation
 
@@ -60,7 +49,7 @@ All gating lives in `crates/bashkit-python`:
 
 ### `Cargo.toml`
 
-Dependencies are split per target:
+Per-target dependency split:
 
 ```toml
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -75,138 +64,100 @@ tokio = { workspace = true }   # wasm-safe base features only
 
 ### `src/lib.rs`
 
-- `#[cfg(not(target_arch = "wasm32"))]` on: the async `execute*()` `#[pymethods]`,
-  `pyo3-async-runtimes` imports, `make_external_handler`, the caller-loop callback
+- `#[cfg(not(target_arch = "wasm32"))]` on: async `execute*()` `#[pymethods]`,
+  `pyo3-async-runtimes` imports, `make_external_handler`, caller-loop callback
   machinery (`PyCancellableLoopFuture`, `call_soon_threadsafe_with_context`,
-  `cancel_python_task`), network/credential parsing + `apply`, `FileSystem.real()`
-  and the capsule bridge.
-- `type CallerLoopLocals` aliases `TaskLocals` (native) / `std::convert::Infallible`
-  (wasm). `caller_loop_locals` is always `None` on wasm, so the caller-loop branches
-  in `capture_callback_state` and `call_python_callback_async` are statically dead.
-- Construction-time guards raise `RuntimeError` for `network=`, `sqlite=True`,
-  `mounts=`, and `external_handler=` on wasm.
-- A wasm-scoped `#![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]`
-  silences lints from helpers referenced only by native-gated paths.
+  `cancel_python_task`), network/credential parsing + `apply`,
+  `FileSystem.real()`, capsule bridge.
+- `type CallerLoopLocals` aliases `TaskLocals` (native) /
+  `std::convert::Infallible` (wasm); `caller_loop_locals` is always `None`
+  on wasm, so caller-loop branches are statically dead.
+- Construction-time `RuntimeError` guards for the four gated kwargs.
+- Wasm-scoped `#![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports))]`
+  silences lints from native-only helpers.
 
 Decision comments are inline at each gate; this spec is the index.
 
+## Toolchain pins
+
+Versions are pinned in CI via job-level `RUST_NIGHTLY` /
+`PYODIDE_BUILD_VERSION` env vars in `.github/workflows/python.yml` (`wasm`
+job) and `.github/workflows/publish-python.yml` (`build-emscripten` job) —
+those are the source of truth. Host Python **3.13** selects pyodide-build's
+modern config (pyodide-build → Pyodide 0.29.x / Emscripten 4.0.9 ABI;
+Emscripten is managed by pyodide-build). Nightly Rust is required because
+Pyodide injects `-Z link-native-libraries=no`, and the nightly must satisfy
+monty's MSRV + edition 2024.
+
+**Invariant: bump the trio (host Python / pyodide-build / Rust nightly)
+together** — they must agree on the wasm feature set and
+exception-handling ABI (version triangle below) — and re-verify the wheel
+*imports* (not just builds) after any bump. Python 3.11/3.12 pin
+pyodide-build ≤0.25.1 → Emscripten 3.1.x, which fails against modern Rust;
+use 3.13.
+
 ## Building locally
 
-### Toolchain matrix (verified)
-
-| Component | Version (pinned in CI) | Why |
-|---|---|---|
-| Python (host for build) | **3.13** | Selects pyodide-build's modern config |
-| pyodide-build | **0.34.4** | → Pyodide 0.29.x / Emscripten 4.0.9 ABI |
-| Emscripten | **4.0.9** | Managed by pyodide-build; binaryen knows modern LLVM wasm features |
-| Rust | **nightly-2026-05-29** | `-Z link-native-libraries=no`; satisfies monty's MSRV + edition 2024 |
-
-Both CI workflows (`python.yml` `wasm` job, `publish-python.yml` `build-emscripten`)
-pin the nightly date and `pyodide-build` version via job-level `RUST_NIGHTLY` /
-`PYODIDE_BUILD_VERSION` env vars. **Bump the trio together** — they must agree on
-the wasm feature set and exception-handling ABI (see "version triangle") — and
-re-verify the wheel *imports* (not just builds) after any bump.
-
-The Emscripten/ABI versions are dictated by the installed `pyodide-build` for the
-host Python. **Python 3.11/3.12 pin pyodide-build ≤0.25.1 → Emscripten 3.1.x**,
-whose binaryen is too old for modern LLVM (see "version triangle" below) — use
-Python 3.13.
-
-Use the same pinned versions as CI (above) so a local build matches:
+Use the same pins as CI:
 
 ```bash
-# 1. nightly Rust (Pyodide passes -Z link-native-libraries=no)
-rustup toolchain install nightly-2026-05-29 --target wasm32-unknown-emscripten
-
-# 2. pyodide-build (under Python 3.13) — manages its own matching emsdk
-python3.13 -m pip install "pyodide-build==0.34.4"
-pyodide xbuildenv install            # downloads Emscripten 4.0.9 + ABI
-
-# 3. build (no RUSTFLAGS hacks, no separate emsdk needed)
+rustup toolchain install <RUST_NIGHTLY> --target wasm32-unknown-emscripten
+python3.13 -m pip install "pyodide-build==<PYODIDE_BUILD_VERSION>"
+pyodide xbuildenv install                 # downloads matching Emscripten + ABI
 cd crates/bashkit-python
-RUSTUP_TOOLCHAIN=nightly-2026-05-29 pyodide build
-
-# 4. smoke test — run from a scratch dir so the crate's own bashkit/ source
-#    package doesn't shadow the installed extension module
-pyodide venv .venv-pyodide
-.venv-pyodide/bin/pip install dist/*.whl
+RUSTUP_TOOLCHAIN=<RUST_NIGHTLY> pyodide build
+pyodide venv .venv-pyodide && .venv-pyodide/bin/pip install dist/*.whl
+# Smoke test from a scratch dir — the crate's own bashkit/ source package
+# otherwise shadows the installed extension (ModuleNotFoundError: bashkit._bashkit)
 ( cd "$(mktemp -d)" && /abs/path/.venv-pyodide/bin/python -c \
   "from bashkit import Bash; print(Bash(python=True).execute_sync('echo hi | jq -R .').stdout)" )
 ```
 
-For a fast Rust-only type check without the full wheel build:
-
-```bash
-PYO3_CROSS_PYTHON_VERSION=3.13 \
-  cargo check -p bashkit-python --target wasm32-unknown-emscripten
-```
+Fast Rust-only type check: `PYO3_CROSS_PYTHON_VERSION=3.13 cargo check -p
+bashkit-python --target wasm32-unknown-emscripten`.
 
 ### Browser / JupyterLite verification
 
-The CI `pyodide venv` smoke test runs the wheel in real Pyodide-CPython but
-installs via `pip`. A browser / JupyterLite user instead installs via `micropip`
-into a freshly loaded Pyodide. To verify *that* path (the actual end-user flow),
-load the real runtime under Node and `micropip.install` the wheel — this is a
-one-off manual check, deliberately not a CI job (it pulls `micropip` from the
-jsdelivr CDN, which would add network flakiness; the venv test already exercises
-the wasm runtime + EH ABI):
+CI's `pyodide venv` smoke test installs via `pip`; the actual end-user flow
+installs via `micropip` into freshly loaded Pyodide. Verifying that path is
+a deliberate one-off manual check, **not** a CI job — it pulls `micropip`
+from the jsdelivr CDN (network flakiness), and the venv test already
+exercises the wasm runtime + EH ABI. Recipe: `npm install pyodide@<ABI
+version>`, then a Node script doing `loadPyodide()` →
+`micropip.install(wheel file URL)` → `import bashkit` → `execute_sync(...)`.
+Confirmed working: `Bash(python=True).execute_sync('echo hello && echo 1 |
+jq .')` → `'hello\n1\n'`, and `Bash(sqlite=True)` raises `RuntimeError`.
 
-```bash
-mkdir pyodide-browser-test && cd pyodide-browser-test
-npm install pyodide@0.29.4          # match the wheel's Pyodide ABI
-# test.mjs: loadPyodide() -> loadPackage('micropip') ->
-#   micropip.install(pathToFileURL(wheel)) -> import bashkit -> execute_sync(...)
-node test.mjs /path/to/dist/bashkit-*-wasm32.whl
-```
+## The version triangle (the hard part)
 
-Confirmed working: `Bash(python=True).execute_sync('echo hello && echo 1 | jq .')`
-→ `'hello\n1\n'`, and `Bash(sqlite=True)` raises `RuntimeError`.
+Three independently-versioned toolchains must agree on the wasm feature set:
 
-### The version triangle (the hard part)
-
-The build sits at the intersection of three independently-versioned toolchains
-that must agree on the wasm feature set:
-
-1. **Rust/LLVM** emits a `target_features` section. Modern LLVM (19+, required by
-   `edition 2024` and monty's `rustc 1.95` MSRV) marks features like
+1. **Rust/LLVM** emits a `target_features` section; modern LLVM (19+,
+   required by edition 2024 and monty's MSRV) marks features like
    `bulk-memory-opt` and `call-indirect-overlong`.
-2. **Emscripten/binaryen** runs `wasm-opt --detect-features`, reading that section
-   and passing `--enable-<feature>` for each. Binaryen must recognize every name
-   or the link fails: `Unknown option '--enable-bulk-memory-opt'`. Binaryen ≥
-   the one in **Emscripten 4.0.9** knows them; the one in Emscripten 3.1.x does not.
-3. **Pyodide runtime** must support the **exception-handling ABI** the wheel uses.
-   Modern Rust emits the new wasm-EH `__cpp_exception` *tag*; older Pyodide
-   (0.25/Emscripten 3.1.46) only supports legacy EH, giving a load-time
+2. **Emscripten/binaryen** runs `wasm-opt --detect-features` and passes
+   `--enable-<feature>` for each; binaryen must recognize every name or the
+   link fails (`Unknown option '--enable-bulk-memory-opt'`). Emscripten
+   4.0.9's binaryen knows them; 3.1.x's does not.
+3. **Pyodide runtime** must support the **exception-handling ABI** the wheel
+   uses. Modern Rust emits the new wasm-EH `__cpp_exception` *tag*; older
+   Pyodide (0.25 / Emscripten 3.1.46) only supports legacy EH → load-time
    `LinkError: tag import requires a WebAssembly.Tag`.
 
-Older Emscripten (3.1.x) fails (2) and (3) against modern Rust, and the
-edition-2024 + monty MSRV floor forbids dropping to an old-enough nightly. The
-resolution is to move *up*: Python 3.13 → pyodide-build's Emscripten 4.0.9 config,
-which matches modern nightly Rust on both feature naming and the wasm-EH ABI. No
-`-O1` / wasm-opt-skip or target-feature disabling is needed.
+Old Emscripten fails (2) and (3) against modern Rust, and the edition-2024 +
+monty MSRV floor forbids dropping to an old-enough nightly. Resolution is to
+move *up*: Python 3.13 → pyodide-build's Emscripten 4.0.9 config, matching
+modern nightly Rust on both feature naming and the wasm-EH ABI. No `-O1` /
+wasm-opt-skip / target-feature disabling needed.
 
 ## CI
 
-`.github/workflows/python.yml` adds a `wasm` job: Python 3.13 + nightly Rust +
-`pyodide build`, then imports the wheel in a `pyodide venv` (from a scratch dir) to
-smoke-test `execute_sync`. Wired into the `python-check` gate.
-
-`.github/workflows/publish-python.yml` adds a `build-emscripten` job feeding the
-`inspect` → `publish` pipeline so the Pyodide wheel ships to PyPI alongside the
-native wheels.
-
-## Gotchas (from the Pydantic article, confirmed here)
-
-- **Nightly Rust required**: Pyodide injects `-Z link-native-libraries=no`.
-- **No threads / no asyncio loop bridging**: async `execute()` is native-only;
-  async custom-builtin callbacks use the private-loop fallback on wasm.
-- **No sockets / no host FS**: network, sqlite, realfs, interop all gated off.
-- **Version triangle**: Rust/LLVM ↔ Emscripten/binaryen ↔ Pyodide-runtime EH ABI
-  must agree (see above). Pin via the host Python version (3.13) + a recent
-  nightly; bump deliberately.
-- **Source shadowing in the smoke test**: run the import test from a scratch
-  directory, or the crate's `bashkit/` source package shadows the installed
-  extension (`ModuleNotFoundError: No module named 'bashkit._bashkit'`).
+`.github/workflows/python.yml` `wasm` job: Python 3.13 + nightly Rust +
+`pyodide build`, then imports the wheel in a `pyodide venv` (from a scratch
+dir) to smoke-test `execute_sync`. Wired into the `python-check` gate.
+`.github/workflows/publish-python.yml` `build-emscripten` job feeds the
+`inspect` → `publish` pipeline so the Pyodide wheel ships to PyPI alongside
+the native wheels.
 
 ## See also
 

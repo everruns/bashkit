@@ -1,62 +1,27 @@
 # Interactive Shell Mode
 
-## Status
-Phase 1: Implemented
-Phase 2: Implemented
-Phase 3: Implemented
-
 ## Decision
 
-Bashkit provides an interactive REPL mode via `bashkit` (no arguments).
-Uses `rustyline` for line editing — lightweight, MIT-licensed, no heavy
-transitive deps (no SQLite, no crossterm). Fits bashkit's isolation-first
-design.
+Bashkit provides an interactive REPL via `bashkit` (no arguments); add
+`--mount-rw /path` for real filesystem access. Uses `rustyline` for line
+editing — lightweight, MIT-licensed, no heavy transitive deps (no SQLite, no
+crossterm). Fits bashkit's isolation-first design.
 
 ### Feature Flag
 
-Interactive mode is behind the `interactive` feature flag (default on
-for the CLI binary, compiled out in library mode):
+Behind the `interactive` feature flag (default on for the CLI binary,
+compiled out in library mode): `interactive = ["dep:rustyline",
+"dep:terminal_size", "dep:signal-hook"]`. Build without:
+`cargo build -p bashkit-cli --no-default-features`.
 
-```toml
-[features]
-default = ["python", "interactive"]
-interactive = ["dep:rustyline", "dep:terminal_size", "dep:signal-hook"]
-```
+### Features (all implemented)
 
-Build without interactive:
-```bash
-cargo build -p bashkit-cli --no-default-features
-```
-
-### Invocation
-
-```bash
-bashkit                            # Interactive REPL (VFS only)
-bashkit --mount-rw /path/to/work   # REPL with real filesystem access
-```
-
-### Features
-
-| Feature | Status | Phase |
-|---------|--------|-------|
-| Read-eval-print loop | Implemented | 1 |
-| Multiline input (continuation) | Implemented | 1 |
-| Ctrl-C clears current line | Implemented | 1 |
-| Ctrl-D exits shell | Implemented | 1 |
-| `exit [N]` builtin | Implemented (on_exit hook) | 1 |
-| Streaming output | Implemented | 1 |
-| TTY detection (`[ -t 0 ]`) | Implemented | 1 |
-| Readline editing (emacs/vi keys) | Implemented (rustyline) | 1 |
-| PS1/PS2 custom prompt | Implemented | 2 |
-| Tab completion (builtins, paths, vars) | Implemented | 2 |
-| History hints (fish-style) | Implemented | 2 |
-| Syntax highlighting (hint coloring) | Implemented | 2 |
-| Ctrl-C interrupts running commands | Implemented (signal-hook) | 2 |
-| Terminal width detection | Implemented (terminal_size) | 2 |
-| `~/.bashkitrc` startup file | Implemented | 2 |
-| COLUMNS/LINES/SHLVL env vars | Implemented | 2 |
-| Feature-gated (`interactive` flag) | Implemented | 3 |
-| Command history (in-memory) | Implemented | 1 |
+REPL with streaming output; multiline continuation; Ctrl-C clears line /
+interrupts running commands; Ctrl-D exits; `exit [N]`; in-memory command
+history + fish-style history hints; readline editing (emacs/vi); PS1/PS2
+custom prompts; tab completion; syntax highlighting (hint coloring); TTY
+detection (`[ -t 0 ]`); terminal width detection; `~/.bashkitrc` startup
+file; COLUMNS/LINES/SHLVL env vars.
 
 ### Design
 
@@ -100,25 +65,22 @@ all matches on tab).
 
 #### History Hints
 
-Fish-style inline suggestions from history. Shows the most recent
-matching history entry as dimmed text to the right of the cursor.
-Accept with right arrow.
+Fish-style inline suggestions from history: most recent matching entry as
+dimmed text right of cursor; accept with right arrow.
 
 #### Ctrl-C During Execution
 
-Uses `signal-hook` to register a SIGINT handler that sets bashkit's
-`cancellation_token()`. A background tokio task polls the signal flag
-every 50ms and propagates to the cancel token. After cancellation,
-the token is reset for the next command.
+`signal-hook` registers a SIGINT handler that sets bashkit's
+`cancellation_token()`. A background tokio task polls the signal flag every
+50ms and propagates to the cancel token; token resets for the next command.
 
 #### Exit Handling
 
 The `exit` builtin fires an `on_exit` hook registered via
-`BashBuilder::on_exit()`. The interactive REPL registers a hook at
-build time that sets an atomic flag. After each `exec()` call, the
-REPL checks the flag and breaks the loop if set. This works through
-the normal execution pipeline — `echo bye; exit 1`, conditionals,
-and scripts all terminate the session correctly.
+`BashBuilder::on_exit()`. The REPL registers a hook at build time that sets an
+atomic flag, checked after each `exec()`. Works through the normal execution
+pipeline — `echo bye; exit 1`, conditionals, and scripts all terminate the
+session correctly.
 
 #### Multiline Detection
 
@@ -133,36 +95,22 @@ the REPL shows PS2 and appends the next line. Detected patterns:
 
 #### Startup File
 
-Sources `~/.bashkitrc` from the VFS on startup (if it exists).
-Use `--mount-rw` to make a real host directory available, then
-create `.bashkitrc` with aliases, PS1, etc.
+Sources `~/.bashkitrc` from the VFS on startup (if it exists). Use
+`--mount-rw` to make a real host directory available with a `.bashkitrc`.
 
-#### Environment Variables
+#### Environment
 
-Interactive mode sets:
-- `COLUMNS` — terminal width (from `terminal_size` crate)
-- `LINES` — terminal height
-- `SHLVL` — incremented from parent (or 1)
-
-#### Terminal Width Detection
-
-Uses `terminal_size` crate instead of hardcoded 80 columns.
-Width is detected at startup and set via `$COLUMNS`.
+Sets `COLUMNS`/`LINES` from the `terminal_size` crate (no hardcoded 80) and
+`SHLVL` (incremented from parent, or 1).
 
 ### Dependencies
 
-```toml
-# In bashkit-cli/Cargo.toml (all optional, gated by "interactive" feature)
-rustyline = { version = "18", optional = true }
-terminal_size = { version = "0.4", optional = true }
-signal-hook = { version = "0.4", optional = true }
-```
-
-All MIT-licensed, all in `deny.toml` allowlist.
+`rustyline` 18, `terminal_size` 0.4, `signal-hook` 0.4 — all optional, gated
+by `interactive`, all MIT-licensed, all in `deny.toml` allowlist.
 
 ### Security
 
-Interactive mode reuses the existing sandbox. No new attack surface:
+Reuses the existing sandbox. No new attack surface:
 
 - VFS isolation preserved (unless `--mount-rw` explicitly used)
 - All execution limits still enforced
@@ -180,35 +128,10 @@ Interactive mode reuses the existing sandbox. No new attack surface:
 
 ### Testing
 
-| Test | Count | Purpose |
-|------|-------|---------|
-| `is_incomplete_input` | 5 | Parse error pattern detection |
-| `expand_ps1` | 8 | PS1 escape expansion |
-| Prompt integration | 1 | Default prompt format |
-| Exec/state | 5 | Streaming, persistence, TTY, rc file |
-| Error result | 1 | Error code propagation |
-
-Tests compile only when `interactive` feature is enabled. Run:
-```bash
-cargo test -p bashkit-cli             # with interactive (default)
-cargo test -p bashkit-cli --no-default-features  # without
-```
-
-### Verification
-
-```bash
-# Build with interactive support (default)
-cargo build -p bashkit-cli
-
-# Build without interactive (library-only deps)
-cargo build -p bashkit-cli --no-default-features
-
-# Smoke test
-echo 'echo hello' | bashkit
-
-# Interactive session
-bashkit
-```
+Unit tests cover incomplete-input detection, PS1 expansion, prompt format,
+exec/state (streaming, persistence, TTY, rc file), error propagation. Compile
+only with the `interactive` feature: `cargo test -p bashkit-cli`
+(`--no-default-features` to test without).
 
 ## See Also
 

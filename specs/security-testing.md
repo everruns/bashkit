@@ -1,22 +1,12 @@
 # Security Testing with Fail Points
 
-## Status
-
-Implemented
-
 ## Overview
 
-Bashkit uses [fail-rs](https://github.com/tikv/fail-rs) for fault injection security testing. This enables systematic testing of error handling paths and resource limit enforcement under failure conditions.
-
-## Enabling Fail Points
-
-Fail points are disabled by default and have zero runtime overhead when disabled.
+Bashkit uses [fail-rs](https://github.com/tikv/fail-rs) for fault injection
+security testing of error handling paths and resource limit enforcement.
+Fail points are disabled by default, zero runtime overhead when disabled.
 
 ```bash
-# Run security tests
-cargo test --features failpoints security_
-
-# Run with single thread to avoid race conditions
 cargo test --features failpoints security_ -- --test-threads=1
 ```
 
@@ -43,103 +33,23 @@ cargo test --features failpoints security_ -- --test-threads=1
 |------------|---------|----------------------|
 | `interp::execute_command` | `panic`, `error`, `exit_nonzero` | Test command execution failure handling |
 
-## Using Fail Points
+## Usage
 
-### In Tests
-
-```rust
-#[tokio::test]
-async fn test_resource_limit_bypass() {
-    // Configure fail point
-    fail::cfg("limits::tick_command", "return(skip_increment)").unwrap();
-
-    // Run code that should be affected
-    let result = run_script("echo hello").await;
-
-    // Always clean up
-    fail::cfg("limits::tick_command", "off").unwrap();
-
-    // Assert expected behavior
-    assert!(/* ... */);
-}
-```
-
-### Fail Point Actions
-
-From fail-rs documentation:
-
-| Action | Syntax | Description |
-|--------|--------|-------------|
-| `return` | `return(value)` | Return early with value |
-| `panic` | `panic(msg)` | Panic with message |
-| `print` | `print(msg)` | Print message |
-| `sleep` | `sleep(ms)` | Sleep for milliseconds |
-| `pause` | `pause` | Pause until unpaused |
-| `yield` | `yield` | Yield to scheduler |
-
-### Probability and Count
-
-```bash
-# 10% probability
-FAILPOINTS="limits::tick_command=10%return(skip_increment)"
-
-# First 5 times only
-FAILPOINTS="limits::tick_command=5*return(skip_increment)"
-
-# Combined: 10% probability, max 3 times
-FAILPOINTS="limits::tick_command=3*10%return(skip_increment)"
-```
+In tests: `fail::cfg("limits::tick_command", "return(skip_increment)")` before,
+`fail::cfg("name", "off")` after. Action syntax (return/panic/sleep/pause,
+probability `10%`, count `5*`): see [fail crate docs](https://docs.rs/fail).
 
 ## Security Test Categories
 
-### 1. Resource Limit Bypass Tests
-
-Test that resource limits cannot be bypassed through:
-- Counter corruption
-- Check skipping
-- Counter overflow/underflow
-
-### 2. Filesystem Failure Tests
-
-Test graceful handling of:
-- I/O errors
-- Permission denied
-- Disk full
-- Partial writes
-- Data corruption
-
-### 3. Interpreter Failure Tests
-
-Test behavior under:
-- Execution errors
-- Panic recovery (where applicable)
-- Unexpected exit codes
+1. **Resource limit bypass**: counter corruption, check skipping, overflow/underflow
+2. **Filesystem failure**: I/O errors, permission denied, disk full, partial writes, data corruption
+3. **Interpreter failure**: execution errors, panic recovery, unexpected exit codes
 
 ## Adding New Fail Points
 
-1. Import the macro:
-```rust
-#[cfg(feature = "failpoints")]
-use fail::fail_point;
-```
-
-2. Add fail point at critical location:
-```rust
-#[cfg(feature = "failpoints")]
-fail_point!("module::function", |action| {
-    match action.as_deref() {
-        Some("failure_mode") => {
-            return Err(/* error */);
-        }
-        _ => {}
-    }
-    Ok(()) // Default: continue normal execution
-});
-```
-
-3. Document in this spec.
-
-4. Add tests in `tests/security_failpoint_tests.rs`.
+Add `fail_point!("module::function", |action| ...)` under
+`#[cfg(feature = "failpoints")]` at the critical location, document it in this
+spec, and add tests in `tests/security_failpoint_tests.rs`.
 
 ## Best Practices
 
@@ -151,9 +61,8 @@ fail_point!("module::function", |action| {
 ## JavaScript Security Tests
 
 The JavaScript/TypeScript bindings have a dedicated security test suite at
-`crates/bashkit-js/__test__/security.spec.ts`. These tests cover both
-white-box (targeting known internals) and black-box (adversarial inputs)
-scenarios across 18 categories:
+`crates/bashkit-js/__test__/security.spec.ts` (run: `cd crates/bashkit-js &&
+pnpm test`). White-box and black-box scenarios across 18 categories:
 
 1. Resource limit enforcement (TM-DOS)
 2. Output truncation (TM-DOS)
@@ -173,11 +82,6 @@ scenarios across 18 categories:
 16. Rapid instance creation/destruction
 17. Edge case inputs
 18. Async factory security
-
-```bash
-# Run JS security tests
-cd crates/bashkit-js && pnpm test
-```
 
 ## Related Files
 
