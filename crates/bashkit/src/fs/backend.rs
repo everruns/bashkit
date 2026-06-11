@@ -92,9 +92,9 @@
 //!
 //! See `examples/custom_backend.rs` for a complete working example.
 
+use crate::time::SystemTime;
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
 
 use super::limits::{FsLimits, FsUsage};
 use super::traits::{DirEntry, Metadata};

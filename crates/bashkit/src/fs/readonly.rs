@@ -4,11 +4,11 @@
 //! embedder wants a session that can inspect data but cannot persist or stage
 //! any filesystem changes, including copies into the in-memory VFS.
 
+use crate::time::SystemTime;
 use async_trait::async_trait;
 use std::io::{Error as IoError, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::SystemTime;
 
 use super::limits::{FsLimits, FsUsage};
 use super::traits::{DirEntry, FileSystem, FileSystemExt, Metadata};

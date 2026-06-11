@@ -302,7 +302,7 @@
 //! use std::path::{Path, PathBuf};
 //! use std::collections::HashMap;
 //! use std::sync::RwLock;
-//! use std::time::SystemTime;
+//! use crate::time::SystemTime;
 //!
 //! /// A simple custom filesystem example
 //! pub struct SimpleFs {
@@ -397,6 +397,8 @@
 //! ```
 
 mod backend;
+#[cfg(feature = "indexeddb")]
+mod indexeddb;
 mod limits;
 mod memory;
 mod mountable;
@@ -409,6 +411,8 @@ mod search;
 mod traits;
 
 pub use backend::FsBackend;
+#[cfg(feature = "indexeddb")]
+pub use indexeddb::IndexedDbFs;
 pub use limits::{FsLimitExceeded, FsLimits, FsUsage};
 pub use memory::{InMemoryFs, LazyLoader, VfsSnapshot};
 pub use mountable::MountableFs;
@@ -424,9 +428,9 @@ pub use search::{
 pub use traits::{DirEntry, FileSystem, FileSystemExt, FileType, Metadata, fs_errors};
 
 use crate::error::Result;
+use crate::time::SystemTime;
 use std::io::{Error as IoError, ErrorKind};
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
 
 /// Filesystem implementation for logic-only shells.
 ///

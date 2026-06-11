@@ -52,6 +52,8 @@ fancy-regex = "0.18"
 
 # Date/Time
 chrono = "0.4"
+# Drop-in replacement for std::time::{SystemTime, Duration} on WASM targets
+web-time = "1"
 
 # Compression
 flate2 = "1"

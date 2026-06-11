@@ -364,8 +364,8 @@ struct SmallRng {
 
 impl SmallRng {
     fn seed_from_now() -> Self {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        let nanos = crate::time::SystemTime::now()
+            .duration_since(crate::time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
             .unwrap_or(0x123_4567_89AB_CDEF);
         // SystemTime::now can return a tiny duration in tight loops; XOR

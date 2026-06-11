@@ -513,8 +513,8 @@ async fn execute_curl_request(
     let multipart_body: Option<Vec<u8>> = if !form_fields.is_empty() {
         let boundary = format!(
             "----bashkit{:016x}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
+            crate::time::SystemTime::now()
+                .duration_since(crate::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos())
                 .unwrap_or(0)
         );
@@ -1740,7 +1740,7 @@ mod tests {
             async fn set_modified_time(
                 &self,
                 path: &std::path::Path,
-                time: std::time::SystemTime,
+                time: crate::time::SystemTime,
             ) -> Result<()> {
                 self.inner.set_modified_time(path, time).await
             }

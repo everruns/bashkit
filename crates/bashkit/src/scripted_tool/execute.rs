@@ -226,7 +226,7 @@ impl Tool for ScriptedTool {
         let req = tool_request_from_value(self.locale(), args)?;
         let tool = self.clone();
         Ok(ToolExecution::new(move |stream_sender| async move {
-            let start = std::time::Instant::now();
+            let start = crate::time::Instant::now();
             let response = tool.run_request_with_stream(req, stream_sender).await;
             tool_output_from_response(response, start.elapsed())
         }))
@@ -400,7 +400,7 @@ mod tests {
                 },
             )
             .build();
-        let start = std::time::Instant::now();
+        let start = crate::time::Instant::now();
 
         let resp = tool
             .execute(ToolRequest {
@@ -429,7 +429,7 @@ mod tests {
                 },
             )
             .build();
-        let start = std::time::Instant::now();
+        let start = crate::time::Instant::now();
 
         let resp = tool
             .execute_with_status(

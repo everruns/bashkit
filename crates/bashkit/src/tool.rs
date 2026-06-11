@@ -985,7 +985,7 @@ impl Tool for BashTool {
         let tool = self.clone();
 
         Ok(ToolExecution::new(move |stream_sender| async move {
-            let start = std::time::Instant::now();
+            let start = crate::time::Instant::now();
             let response = tool.run_request_with_stream(req, stream_sender).await;
             tool_output_from_response(response, start.elapsed())
         }))

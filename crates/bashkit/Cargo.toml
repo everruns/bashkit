@@ -35,6 +35,7 @@ fancy-regex = { workspace = true }
 
 # Date/Time
 chrono = { workspace = true }
+web-time = { workspace = true }
 
 # HTTP client (for curl/wget) - optional, enabled with http_client feature
 reqwest = { workspace = true, optional = true }
@@ -107,12 +108,22 @@ zapcode-core = { version = "1.5", optional = true }
 # Pulls a multi-MB transitive dep tree only when the `sqlite` feature is active.
 turso_core = { workspace = true, optional = true }
 
+# IndexedDB backend for wasm32 browser persistence (optional)
+rexie = { version = "0.6", optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
+serde-wasm-bindgen = { version = "0.6", optional = true }
+
+# WASM HTTP client dependencies (browser fetch API)
+js-sys = { version = "0.3", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+web-sys = { version = "0.3", optional = true, features = ["Headers", "Request", "RequestInit", "RequestMode", "Response", "Window", "AbortController", "AbortSignal"] }
+
 [features]
 default = []
 # Enable jq builtin via embedded jaq interpreter
 # Usage: cargo build --features jq
 jq = ["dep:jaq-core", "dep:jaq-std", "dep:jaq-json"]
-http_client = ["reqwest", "rustls"]
+http_client = []
 # Enable Ed25519 request signing per RFC 9421 / web-bot-auth profile
 bot-auth = ["http_client", "dep:ed25519-dalek", "dep:rand", "dep:zeroize"]
 # Enable fail points for security/fault injection testing
@@ -155,6 +166,9 @@ sqlite = ["dep:turso_core", "tokio/rt-multi-thread"]
 realfs = []
 # Enable native-extension interop contracts such as bashkit::interop::fs.
 interop = ["tokio/rt-multi-thread"]
+# Enable IndexedDB backend for wasm32 browser persistence.
+# Usage: cargo build --target wasm32-unknown-unknown --features indexeddb
+indexeddb = ["dep:rexie", "dep:wasm-bindgen", "dep:serde-wasm-bindgen"]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -246,6 +260,17 @@ required-features = ["sqlite"]
 name = "sqlite_workflow"
 required-features = ["sqlite"]
 
-# Additional tokio features needed only on native (not WASM)
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Native-only: reqwest + rustls are always available on non-WASM targets
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "fs"] }
+reqwest = { workspace = true }
+rustls = { workspace = true }
+
+# WASM-only: browser fetch API deps always available on WASM targets
+[target.'cfg(target_family = "wasm")'.dependencies]
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["Headers", "Request", "RequestInit", "RequestMode", "Response", "Window", "AbortController", "AbortSignal"] }
+
+

@@ -1,6 +1,7 @@
 // Decision: cross-addon filesystem interop uses only a versioned repr(C)
 // handle + vtable. Rust trait objects stay inside the exporting addon.
 
+use crate::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::{
     DirEntry, Error as BashError, FileSystem, FileSystemExt, FileType, Metadata,
     Result as BashResult, async_trait,
@@ -14,7 +15,6 @@ use std::slice;
 use std::str;
 use std::sync::Arc;
 use std::sync::mpsc::sync_channel;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::runtime::{Builder, Runtime};
 
 pub const BASHKIT_FS_ABI_VERSION_V1: u32 = 1;

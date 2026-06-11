@@ -428,6 +428,7 @@ mod snapshot;
 /// invariants enforced (TM-INF-013, TM-INF-016, TM-INF-022).
 #[doc(hidden)]
 pub mod testing;
+pub mod time;
 /// Tool contract for LLM integration
 pub mod tool;
 /// Reusable tool primitives: ToolDef, ToolArgs, ToolImpl, exec types.
@@ -447,6 +448,8 @@ pub use clap;
 #[cfg(feature = "http_client")]
 pub use credential::Credential;
 pub use error::{Error, Result};
+#[cfg(feature = "indexeddb")]
+pub use fs::IndexedDbFs;
 pub use fs::{
     DirEntry, FileSystem, FileSystemExt, FileType, FsBackend, FsLimitExceeded, FsLimits, FsUsage,
     InMemoryFs, LazyLoader, Metadata, MountableFs, OverlayFs, PosixFs, ReadOnlyFs,
@@ -484,7 +487,7 @@ pub use scripted_tool::{
 pub use tool_def::{AsyncToolExec, SyncToolExec, ToolImpl};
 
 #[cfg(feature = "http_client")]
-pub use network::{HttpClient, HttpHandler};
+pub use network::{HttpClient, HttpHandler, Method};
 
 /// Re-exported network response type for custom HTTP handler implementations.
 #[cfg(feature = "http_client")]
@@ -853,7 +856,7 @@ impl Bash {
         // Load persisted history on first exec (no-op if already loaded)
         self.interpreter.load_history().await;
 
-        let exec_start = std::time::Instant::now();
+        let exec_start = crate::time::Instant::now();
         // THREAT[TM-DOS-057]: Wrap execution with timeout to prevent sleep/blocking bypass.
         // Only the native path arms the tokio timeout; wasm has no reliable timer driver.
         #[cfg(not(target_family = "wasm"))]

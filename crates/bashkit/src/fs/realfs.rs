@@ -65,10 +65,10 @@
 //! bashkit --mount-rw /path/to/out:/mnt/out -c 'echo hi > /mnt/out/result.txt'
 //! ```
 
+use crate::time::SystemTime;
 use async_trait::async_trait;
 use std::io::{Error as IoError, ErrorKind};
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
 
 use super::backend::FsBackend;
 use super::limits::{FsLimits, FsUsage};

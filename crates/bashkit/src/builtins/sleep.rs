@@ -95,7 +95,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_sleep_zero() {
-        let start = std::time::Instant::now();
+        let start = crate::time::Instant::now();
         let result = run_sleep(&["0"]).await;
         let elapsed = start.elapsed();
 
@@ -105,7 +105,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_sleep_fractional() {
-        let start = std::time::Instant::now();
+        let start = crate::time::Instant::now();
         let result = run_sleep(&["0.1"]).await;
         let elapsed = start.elapsed();
 

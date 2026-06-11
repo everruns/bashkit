@@ -31,12 +31,12 @@
 // while holding lock). This is intentional - corrupted state should not propagate.
 #![allow(clippy::unwrap_used)]
 
+use crate::time::SystemTime;
 use async_trait::async_trait;
 use std::collections::HashSet;
 use std::io::{Error as IoError, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
-use std::time::SystemTime;
 
 use super::limits::{FsLimits, FsUsage};
 use super::memory::InMemoryFs;

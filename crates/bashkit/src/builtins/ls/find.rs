@@ -611,7 +611,7 @@ fn find_printf_format(fmt: &str, display_path: &str, metadata: &crate::fs::Metad
                         if i < chars.len() && chars[i] == '@' {
                             let secs = metadata
                                 .modified
-                                .duration_since(std::time::UNIX_EPOCH)
+                                .duration_since(crate::time::UNIX_EPOCH)
                                 .ok()
                                 .map(|d| d.as_secs())
                                 .unwrap_or(0);
