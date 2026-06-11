@@ -31,12 +31,13 @@ exceptions = []
 [advisories]
 # Ignore unmaintained transitive dependencies we can't control
 ignore = [
-    # paste: transitive via bashkit-bench -> statrs -> nalgebra -> simba
-    # No security impact; bench-only dependency
-    "RUSTSEC-2024-0436",
     # atomic-polyfill: transitive via monty -> postcard -> heapless
     # Unmaintained but no security vulnerability; upstream dep we can't control
     "RUSTSEC-2023-0089",
+    # proc-macro-error2: transitive via bashkit-bench -> tabled -> tabled_derive
+    # Unmaintained build-time proc-macro in the bench harness only (not shipped
+    # library code); no upgrade available (tabled 0.21 is latest)
+    "RUSTSEC-2026-0173",
 ]
 
 [bans]
