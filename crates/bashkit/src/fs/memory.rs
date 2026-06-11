@@ -317,16 +317,10 @@ impl Default for InMemoryFs {
 }
 
 impl InMemoryFs {
-    // File-count quotas intentionally cover every non-directory in-memory entry.
-    // Keep this centralized so FIFO/symlink creation and snapshot restore cannot drift.
+    // File-count quotas cover every non-directory entry. Use negation so new
+    // FsEntry variants are automatically counted without an explicit update here.
     fn entry_counts_toward_file_count(entry: &FsEntry) -> bool {
-        matches!(
-            entry,
-            FsEntry::File { .. }
-                | FsEntry::LazyFile { .. }
-                | FsEntry::Fifo { .. }
-                | FsEntry::Symlink { .. }
-        )
+        !matches!(entry, FsEntry::Directory { .. })
     }
 
     fn snapshot_entry_counts_toward_file_count(kind: &VfsEntryKind) -> bool {
