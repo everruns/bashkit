@@ -36,6 +36,9 @@ All threats use a stable ID format: `TM-<CATEGORY>-<NUMBER>`
 | TM-PY | Python Security | Embedded Python sandbox escape, VFS isolation, resource limits |
 | TM-TS | TypeScript Security | Embedded TypeScript sandbox escape, VFS isolation, resource limits |
 | TM-SQL | SQLite Security | Embedded SQLite sandbox escape, VFS isolation, resource limits |
+| TM-SSH | SSH Security | Host allowlist, credential handling, session limits, host key verification |
+| TM-FS | Filesystem Mount Security | RealFs mount defaults, sensitive host path exposure |
+| TM-SNAP | Snapshot Security | Snapshot integrity, digest forgery |
 | TM-UNI | Unicode Security | Byte-boundary panics, invisible chars, homoglyphs, normalization |
 
 ### Adding New Threats

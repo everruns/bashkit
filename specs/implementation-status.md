@@ -279,7 +279,7 @@ Features that may be added in the future (not intentionally excluded):
 
 ### Implemented
 
-**142 core builtins + 14 feature-gated = 156 total**
+**150 core builtins + 14 feature-gated = 164 total**
 
 `echo`, `printf`, `cat`, `nl`, `cd`, `pwd`, `true`, `false`, `exit`, `test`, `[`,
 `export`, `set`, `unset`, `local`, `source`, `.`, `read`, `shift`, `break`,
@@ -299,7 +299,7 @@ Features that may be added in the future (not intentionally excluded):
 `clear`, `fold`, `expand`, `unexpand`, `envsubst`, `join`, `split`,
 `assert`, `dotenv`, `glob`, `log`, `retry`, `semver`, `verify`,
 `compgen`, `csv`, `fc`, `help`, `http`, `iconv`, `json`,
-`numfmt`, `parallel`, `patch`, `rg`, `template`, `tomlq`, `yaml`, `zip`, `unzip`,
+`numfmt`, `parallel`, `patch`, `rg`, `shuf`, `template`, `tomlq`, `truncate`, `yaml`, `zip`, `unzip`,
 `alias`, `unalias`,
 `jq` (requires `jq` feature),
 `git` (requires `git` feature, see [git-support.md](git-support.md)),

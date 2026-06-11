@@ -2,6 +2,9 @@
 
 > Transparent per-host credential injection for outbound HTTP requests, without exposing secrets to sandboxed scripts.
 
+## Status
+Implemented
+
 ## Problem
 
 AI agents generate scripts that call external APIs (`curl https://api.github.com/...`). Today, the only way to authenticate these requests is to pass secrets as environment variables — but the script can read and exfiltrate them. The industry has converged on **outbound proxy credential injection** as the solution: a trusted layer between the sandbox and the network injects credentials per-host, so the agent never sees the raw secret.

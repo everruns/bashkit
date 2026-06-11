@@ -116,14 +116,18 @@ Use `just check` / `just pre-pr`, or slice by feature the way CI does
 
 ```bash
 cargo test --workspace --lib --bins --tests --features http_client,ssh,sqlite
-cargo test --features realfs      -p bashkit --test realfs_tests
-cargo test --features failpoints  --test security_failpoint_tests -- --test-threads=1
-cargo test --features python      -p bashkit
-cargo test --features typescript  -p bashkit
+cargo test --workspace --doc --features http_client,ssh,sqlite
+cargo test --features realfs     -p bashkit --test realfs_tests -p bashkit-cli
+cargo test --features failpoints --test security_failpoint_tests -- --test-threads=1
+cargo test --test proptest_security -- --test-threads=1
+cargo test --features ssh        -p bashkit --test ssh_builtin_tests
 ```
 
+Python is tested via `pytest` (`.github/workflows/python.yml`), TypeScript
+via `cargo run --example typescript_external_functions --features typescript`.
+
 Bashkit's integration tests live under `crates/bashkit/tests/integration/`
-and are aggregated by `tests/integration/main.rs` into a single binary.
+and are aggregated by `crates/bashkit/tests/integration/main.rs` into a single binary.
 New behavioral tests go there. A small number of files stay as top-level
 `tests/*.rs` because they need their own binary (process-global env
 mutation, `--test-threads=1`, ssh-only feature isolation) — the list and
