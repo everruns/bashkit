@@ -6570,19 +6570,14 @@ impl Interpreter {
     fn shadow_local_array_bindings(&mut self, name: &str, keep_indexed: bool, keep_assoc: bool) {
         self.remember_local_array_binding(name);
         self.remember_local_assoc_array_binding(name);
-        let mut removed_entries = 0;
         if !keep_indexed {
-            removed_entries += self.arrays_mut().remove(name).map_or(0, |arr| arr.len());
+            self.arrays_mut().remove(name);
         }
         if !keep_assoc {
-            removed_entries += self
-                .assoc_arrays_mut()
-                .remove(name)
-                .map_or(0, |arr| arr.len());
+            self.assoc_arrays_mut().remove(name);
         }
-        if removed_entries > 0 {
-            self.memory_budget.record_array_remove(removed_entries);
-        }
+        // Shadowed array bindings stay retained in the call frame, so keep
+        // their entries charged until the frame is popped.
     }
 
     async fn execute_function_call(
@@ -6638,23 +6633,14 @@ impl Interpreter {
         self.bash_source_stack.pop();
         self.update_bash_source();
 
-        // Restore previous FUNCNAME (or set from remaining stack)
-        let old_funcname_entries = self.arrays.get("FUNCNAME").map_or(0, |arr| arr.len());
-        let new_funcname_entries = if self.call_stack.is_empty() {
+        // Restore previous FUNCNAME (or set from remaining stack). FUNCNAME is
+        // interpreter metadata, not user allocation, so it is never charged to
+        // the array-entry memory budget.
+        if self.call_stack.is_empty() {
             self.arrays_mut().remove("FUNCNAME");
-            0
         } else if let Some(prev) = prev_funcname {
-            let len = prev.len();
             self.arrays_mut().insert("FUNCNAME".to_string(), prev);
-            len
-        } else {
-            old_funcname_entries
-        };
-        self.memory_budget.array_entries = self
-            .memory_budget
-            .array_entries
-            .saturating_sub(old_funcname_entries)
-            + new_funcname_entries;
+        }
 
         let mut result = result?;
 
@@ -6710,7 +6696,7 @@ impl Interpreter {
                     // Handle compound array assignment: local arr=(1 2 3) or local -a/-A arr=(...)
                     let is_compound = value.starts_with('(') && value.ends_with(')');
                     if is_compound {
-                        self.shadow_local_array_bindings(var_name, !flags.assoc, flags.assoc);
+                        self.shadow_local_array_bindings(var_name, false, false);
                         let inner = &value[1..value.len() - 1];
                         let inserted = if flags.assoc {
                             self.remember_local_assoc_array_binding(var_name);
@@ -6776,12 +6762,12 @@ impl Interpreter {
                     }
                 } else if !is_internal_variable(arg) {
                     if flags.assoc {
-                        self.shadow_local_array_bindings(arg, false, true);
+                        self.shadow_local_array_bindings(arg, false, false);
                         if self.insert_assoc_array_checked(arg.to_string(), HashMap::new()) {
                             self.insert_local_checked(arg.to_string(), String::new());
                         }
                     } else if flags.array {
-                        self.shadow_local_array_bindings(arg, true, false);
+                        self.shadow_local_array_bindings(arg, false, false);
                         if self.insert_array_checked(arg.to_string(), HashMap::new()) {
                             self.insert_local_checked(arg.to_string(), String::new());
                         }
@@ -11434,12 +11420,9 @@ impl Interpreter {
 
     fn restore_array_binding(&mut self, name: &str, previous: Option<HashMap<usize, String>>) {
         let old_entries = self.arrays.get(name).map_or(0, |a| a.len());
-        let new_entries = previous.as_ref().map_or(0, |a| a.len());
-        self.memory_budget.array_entries = self
-            .memory_budget
-            .array_entries
-            .saturating_sub(old_entries)
-            .saturating_add(new_entries);
+        // Saved bindings remain budgeted while shadowed; popping only releases
+        // entries allocated by the local binding currently active in arrays.
+        self.memory_budget.record_array_remove(old_entries);
         if let Some(arr) = previous {
             self.arrays_mut().insert(name.to_string(), arr);
         } else {
@@ -11453,12 +11436,9 @@ impl Interpreter {
         previous: Option<HashMap<String, String>>,
     ) {
         let old_entries = self.assoc_arrays.get(name).map_or(0, |a| a.len());
-        let new_entries = previous.as_ref().map_or(0, |a| a.len());
-        self.memory_budget.array_entries = self
-            .memory_budget
-            .array_entries
-            .saturating_sub(old_entries)
-            .saturating_add(new_entries);
+        // Saved bindings remain budgeted while shadowed; popping only releases
+        // entries allocated by the local binding currently active in assoc_arrays.
+        self.memory_budget.record_array_remove(old_entries);
         if let Some(arr) = previous {
             self.assoc_arrays_mut().insert(name.to_string(), arr);
         } else {

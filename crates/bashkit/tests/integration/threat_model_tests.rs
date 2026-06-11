@@ -3855,6 +3855,87 @@ printf "after_assoc=<%s>\n" "${assoc_shadow[*]}"
         );
     }
 
+    /// TM-DOS-060: FUNCNAME bookkeeping must not undercount array budget.
+    #[tokio::test]
+    async fn tm_dos_060_funcname_restore_preserves_array_budget() {
+        let mem = MemoryLimits::new().max_array_entries(3);
+        let mut bash = Bash::builder()
+            .memory_limits(mem)
+            .session_limits(SessionLimits::unlimited())
+            .build();
+
+        let script = r#"
+arr[0]=a
+arr[1]=b
+arr[2]=c
+f() { :; }
+f
+extra[0]=x
+printf "%s %s\n" "${#arr[@]}" "${#extra[@]}"
+"#;
+        let result = bash.exec(script).await.unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "3 0");
+    }
+
+    /// TM-DOS-060: saved local array shadows must stay charged to array budget.
+    #[tokio::test]
+    async fn tm_dos_060_local_array_shadow_preserves_array_budget() {
+        let mem = MemoryLimits::new().max_array_entries(3);
+        let mut bash = Bash::builder()
+            .memory_limits(mem)
+            .session_limits(SessionLimits::unlimited())
+            .build();
+
+        let script = r#"
+arr=(a b c)
+f() {
+    local arr=(x)
+    printf "inside=%s\n" "${#arr[@]}"
+}
+f
+printf "outside=%s:%s\n" "${#arr[@]}" "${arr[*]}"
+"#;
+        let result = bash.exec(script).await.unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(
+            result.stdout.lines().collect::<Vec<_>>(),
+            vec!["inside=0", "outside=3:a b c"]
+        );
+    }
+
+    /// TM-DOS-060: saved local associative-array shadows must stay charged.
+    #[tokio::test]
+    async fn tm_dos_060_local_assoc_array_shadow_preserves_array_budget() {
+        let mem = MemoryLimits::new().max_array_entries(3);
+        let mut bash = Bash::builder()
+            .memory_limits(mem)
+            .session_limits(SessionLimits::unlimited())
+            .build();
+
+        let script = r#"
+declare -A map
+map[a]=1
+map[b]=2
+map[c]=3
+f() {
+    local -A map=([x]=9)
+    printf "inside=%s\n" "${#map[@]}"
+}
+f
+printf "outside=%s:%s\n" "${#map[@]}" "${map[a]}${map[b]}${map[c]}"
+"#;
+        let result = bash.exec(script).await.unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(
+            result.stdout.lines().collect::<Vec<_>>(),
+            vec!["inside=0", "outside=3:123"]
+        );
+    }
+
     /// TM-INF-023: local compound arrays must not leak after a function returns.
     #[tokio::test]
     async fn tm_inf_023_function_local_arrays_do_not_leak() {
