@@ -87,6 +87,40 @@ mod show {
         let result = bash.exec("cd /repo && git show").await.unwrap();
         assert_ne!(result.exit_code, 0);
     }
+
+    #[tokio::test]
+    async fn show_file_rejects_absolute_path_outside_repo() {
+        let mut bash = create_git_bash();
+        setup_repo(&mut bash).await;
+        bash.exec(r#"echo "outside secret" > /secret.txt"#)
+            .await
+            .unwrap();
+
+        let result = bash
+            .exec("cd /repo && git show HEAD:/secret.txt")
+            .await
+            .unwrap();
+
+        assert_ne!(result.exit_code, 0);
+        assert!(!result.stdout.contains("outside secret"));
+    }
+
+    #[tokio::test]
+    async fn show_file_rejects_parent_traversal_outside_repo() {
+        let mut bash = create_git_bash();
+        setup_repo(&mut bash).await;
+        bash.exec(r#"echo "outside secret" > /secret.txt"#)
+            .await
+            .unwrap();
+
+        let result = bash
+            .exec("cd /repo && git show HEAD:../secret.txt")
+            .await
+            .unwrap();
+
+        assert_ne!(result.exit_code, 0);
+        assert!(!result.stdout.contains("outside secret"));
+    }
 }
 
 mod ls_files {
@@ -202,6 +236,29 @@ mod rev_parse {
         assert_ne!(result.exit_code, 0);
         assert!(result.stderr.contains("not a git repository"));
     }
+
+    #[tokio::test]
+    async fn branch_ref_rejects_parent_traversal_outside_refs() {
+        let mut bash = create_git_bash();
+        setup_repo(&mut bash).await;
+        bash.exec(
+            r#"
+cd /repo
+mkdir -p .git/refs
+printf 'outside-secret' > .git/refs/secret
+"#,
+        )
+        .await
+        .unwrap();
+
+        let result = bash
+            .exec("cd /repo && git rev-parse ../secret")
+            .await
+            .unwrap();
+
+        assert_ne!(result.exit_code, 0);
+        assert!(!result.stdout.contains("outside-secret"));
+    }
 }
 
 mod restore {
@@ -260,6 +317,29 @@ mod merge_base {
         let result = bash.exec("cd /repo && git merge-base HEAD").await.unwrap();
         assert_ne!(result.exit_code, 0);
     }
+
+    #[tokio::test]
+    async fn merge_base_rejects_parent_traversal_ref() {
+        let mut bash = create_git_bash();
+        setup_repo(&mut bash).await;
+        bash.exec(
+            r#"
+cd /repo
+mkdir -p .git/refs
+printf 'outside-secret' > .git/refs/secret
+"#,
+        )
+        .await
+        .unwrap();
+
+        let result = bash
+            .exec("cd /repo && git merge-base HEAD ../secret")
+            .await
+            .unwrap();
+
+        assert_ne!(result.exit_code, 0);
+        assert!(!result.stdout.contains("outside-secret"));
+    }
 }
 
 mod grep {
@@ -303,5 +383,39 @@ mod grep {
         setup_repo(&mut bash).await;
         let result = bash.exec("cd /repo && git grep").await.unwrap();
         assert_ne!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn grep_rejects_absolute_path_outside_repo() {
+        let mut bash = create_git_bash();
+        setup_repo(&mut bash).await;
+        bash.exec(r#"echo "outside secret" > /secret.txt"#)
+            .await
+            .unwrap();
+
+        let result = bash
+            .exec("cd /repo && git grep secret /secret.txt")
+            .await
+            .unwrap();
+
+        assert_ne!(result.exit_code, 0);
+        assert!(!result.stdout.contains("outside secret"));
+    }
+
+    #[tokio::test]
+    async fn grep_rejects_parent_traversal_outside_repo() {
+        let mut bash = create_git_bash();
+        setup_repo(&mut bash).await;
+        bash.exec(r#"echo "outside secret" > /secret.txt"#)
+            .await
+            .unwrap();
+
+        let result = bash
+            .exec("cd /repo && git grep secret ../secret.txt")
+            .await
+            .unwrap();
+
+        assert_ne!(result.exit_code, 0);
+        assert!(!result.stdout.contains("outside secret"));
     }
 }
