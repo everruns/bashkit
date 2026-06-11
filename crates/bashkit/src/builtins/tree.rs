@@ -227,6 +227,7 @@ async fn build_tree(
         Err(_) => return Ok(()),
     };
 
+    let remaining = state.budget.remaining_entries();
     let mut filtered: Vec<_> = entries
         .into_iter()
         .filter(|e| {
@@ -243,9 +244,10 @@ async fn build_tree(
             }
             true
         })
+        .take(remaining.saturating_add(1))
         .collect();
 
-    if filtered.len() > state.budget.remaining_entries() {
+    if filtered.len() > remaining {
         return Err(TreeLimitError::TooManyEntries);
     }
     state.budget.visited_entries += filtered.len();
