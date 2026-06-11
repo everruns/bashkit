@@ -76,6 +76,11 @@ const ON_OUTPUT_REENTRY_ERROR: &str = "onOutput cannot re-enter the same Bash in
 // so the user sees a real error and can migrate to async execute().
 const SYNC_BUILTIN_DEADLOCK_ERROR: &str = "custom builtins require execute() (async). executeSync() would deadlock because the JS event loop is blocked while the synchronous call is in flight";
 
+// Decision: ScriptedTool tool callbacks also dispatch through Node's event
+// loop. Reject registered-tool execution from executeSync before queueing the
+// callback so untrusted scripts cannot hang the process indefinitely.
+const SYNC_SCRIPTED_TOOL_DEADLOCK_ERROR: &str = "registered tools require execute() (async). executeSync() would deadlock because the JS event loop is blocked while the synchronous call is in flight";
+
 struct OnOutputReentryScope {
     depth: Arc<AtomicUsize>,
 }
@@ -2451,6 +2456,10 @@ struct JsToolEntry {
     /// Wrapped in Arc so we can share references with Rust ScriptedTool callbacks
     /// (ThreadsafeFunction doesn't implement Clone).
     callback: Arc<ToolTsfn>,
+    /// Shared depth counter incremented by ScriptedTool.executeSync. Non-zero
+    /// means the Node event loop is blocked by native sync execution, so the
+    /// TSFN callback would never run.
+    in_sync_execute_depth: Arc<AtomicUsize>,
 }
 
 /// Compose JS callbacks as bash builtins for multi-tool orchestration.
@@ -2466,6 +2475,7 @@ pub struct ScriptedTool {
     rt: Mutex<tokio::runtime::Runtime>,
     max_commands: Option<u32>,
     max_loop_iterations: Option<u32>,
+    in_sync_execute_depth: Arc<AtomicUsize>,
 }
 
 #[napi]
@@ -2485,6 +2495,7 @@ impl ScriptedTool {
             rt: Mutex::new(rt),
             max_commands: options.max_commands,
             max_loop_iterations: options.max_loop_iterations,
+            in_sync_execute_depth: Arc::new(AtomicUsize::new(0)),
         })
     }
 
@@ -2518,6 +2529,7 @@ impl ScriptedTool {
             description,
             schema: schema_val,
             callback: Arc::new(tsfn),
+            in_sync_execute_depth: self.in_sync_execute_depth.clone(),
         });
         Ok(())
     }
@@ -2531,6 +2543,7 @@ impl ScriptedTool {
     /// Execute a bash script synchronously.
     #[napi]
     pub fn execute_sync(&self, commands: String) -> napi::Result<ExecResult> {
+        let _sync_scope = SyncExecuteScope::enter(self.in_sync_execute_depth.clone());
         let tool = self.build_rust_tool();
         let rt_guard = self.rt.blocking_lock();
         let resp = rt_guard.block_on(async move {
@@ -2641,6 +2654,10 @@ impl ScriptedTool {
     fn build_rust_tool(&self) -> RustScriptedTool {
         let mut builder = RustScriptedTool::builder(&self.name);
 
+        // sanitize_errors(false): JS callback errors are already sanitized inside
+        // the closure below; this setting lets the trusted deadlock message pass through.
+        builder = builder.sanitize_errors(false);
+
         if let Some(ref desc) = self.short_desc {
             builder = builder.short_description(desc);
         }
@@ -2648,8 +2665,16 @@ impl ScriptedTool {
         for entry in &self.tools {
             let tsfn = entry.callback.clone();
             let tool_name = entry.name.clone();
+            let in_sync_execute_depth = entry.in_sync_execute_depth.clone();
 
             let callback = move |args: &ToolArgs| -> Result<String, String> {
+                if in_sync_execute_depth.load(Ordering::SeqCst) > 0 {
+                    return Err(format!(
+                        "{}: {}\n",
+                        tool_name, SYNC_SCRIPTED_TOOL_DEADLOCK_ERROR
+                    ));
+                }
+
                 // Serialize params + stdin as JSON for the JS callback
                 let request = serde_json::json!({
                     "params": args.params,
@@ -2670,8 +2695,11 @@ impl ScriptedTool {
                         Ok(_permit) => tsfn_clone
                             .call_async((request_str,))
                             .await
-                            .map_err(|e| format!("{}: {}", tool_name_clone, e)),
-                        Err(e) => Err(format!("{}: semaphore error: {}", tool_name_clone, e)),
+                            // Sanitize JS callback errors here — don't let exception
+                            // details (paths, connection strings, stack traces) leak
+                            // into script stderr. Only the generic form passes through.
+                            .map_err(|_| format!("{}: callback failed\n", tool_name_clone)),
+                        Err(_) => Err(format!("{}: semaphore error\n", tool_name_clone)),
                     };
                     let _ = tx.send(result);
                 });
