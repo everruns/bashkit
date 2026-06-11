@@ -71,6 +71,25 @@ pub struct HistoryEntry {
     pub duration_ms: u64,
 }
 
+impl HistoryEntry {
+    fn retained_bytes(&self) -> usize {
+        self.command.len().saturating_add(self.cwd.len())
+    }
+}
+
+fn format_history_entries(entries: &[HistoryEntry]) -> String {
+    let mut content = String::new();
+    for entry in entries {
+        use std::fmt::Write;
+        let _ = writeln!(
+            content,
+            "{}|{}|{}|{}|{}",
+            entry.timestamp, entry.exit_code, entry.duration_ms, entry.cwd, entry.command
+        );
+    }
+    content
+}
+
 /// Runtime command surface for an interpreter instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum ShellProfile {
@@ -289,6 +308,8 @@ pub(crate) struct ShellRef<'a> {
     call_stack: &'a [CallFrame],
     /// Command history (read-only, accessed via `history_entries`).
     pub(crate) history: &'a [HistoryEntry],
+    /// Execution limits used by read-only builtins to avoid unbounded formatting.
+    limits: &'a ExecutionLimits,
     /// Shared job table (read-only, accessed via `jobs`).
     pub(crate) jobs: &'a SharedJobTable,
     /// Typed per-execution extensions for the current `exec*()` call.
@@ -296,6 +317,11 @@ pub(crate) struct ShellRef<'a> {
 }
 
 impl ShellRef<'_> {
+    /// Get execution limits visible to read-only builtins.
+    pub(crate) fn limits(&self) -> &ExecutionLimits {
+        self.limits
+    }
+
     /// Check if a name is a registered builtin command.
     pub(crate) fn has_builtin(&self, name: &str) -> bool {
         self.builtins.contains_key(name)
@@ -1030,6 +1056,12 @@ pub struct Interpreter {
     expanding_aliases: HashSet<String>,
     /// Command history entries for the current session.
     history: Vec<HistoryEntry>,
+    /// Retained command/cwd bytes for bounded history accounting.
+    history_bytes: usize,
+    /// Number of retained entries already flushed to the VFS history file.
+    history_saved_entries: usize,
+    /// Whether the VFS history file needs compaction after trimming or clearing.
+    history_needs_rewrite: bool,
     /// Optional VFS path for persisting history between sessions.
     history_file: Option<PathBuf>,
     /// Whether history has been loaded from VFS (to avoid re-loading on each exec).
@@ -1464,6 +1496,9 @@ impl Interpreter {
             aliases: Arc::new(HashMap::new()),
             expanding_aliases: HashSet::new(),
             history: Vec::new(),
+            history_bytes: 0,
+            history_saved_entries: 0,
+            history_needs_rewrite: false,
             history_file: None,
             history_loaded: false,
             subst_generation: 0,
@@ -1813,13 +1848,63 @@ impl Interpreter {
         exit_code: i32,
         duration_ms: u64,
     ) {
-        self.history.push(HistoryEntry {
+        self.push_history_entry(HistoryEntry {
             command,
             timestamp,
             cwd,
             exit_code,
             duration_ms,
         });
+    }
+
+    fn push_history_entry(&mut self, entry: HistoryEntry) {
+        // THREAT[TM-DOS-094]: Long-lived Bash instances retain history across
+        // exec() calls. Enforce entry/byte caps before persistence or listing.
+        if self.limits.max_history_entries == 0 || self.limits.max_history_bytes == 0 {
+            return;
+        }
+
+        let entry_bytes = entry.retained_bytes();
+        if entry_bytes > self.limits.max_history_bytes {
+            return;
+        }
+
+        self.history_bytes = self.history_bytes.saturating_add(entry_bytes);
+        self.history.push(entry);
+        if self.trim_history_to_limits() {
+            self.history_needs_rewrite = true;
+        }
+    }
+
+    fn trim_history_to_limits(&mut self) -> bool {
+        // Evict oldest-first. Compute how many leading entries to drop for both
+        // the entry-count and byte budgets, then remove them in a single
+        // `drain` instead of repeated `remove(0)` calls (each of which shifts
+        // the whole vector), so trimming a batch is O(n) rather than O(n*k).
+        let len = self.history.len();
+        let mut drop_count = len.saturating_sub(self.limits.max_history_entries);
+        let mut freed_bytes: usize = self.history[..drop_count]
+            .iter()
+            .map(|e| e.retained_bytes())
+            .sum();
+        while drop_count < len
+            && self.history_bytes.saturating_sub(freed_bytes) > self.limits.max_history_bytes
+        {
+            freed_bytes = freed_bytes.saturating_add(self.history[drop_count].retained_bytes());
+            drop_count += 1;
+        }
+
+        if drop_count == 0 {
+            return false;
+        }
+
+        self.history.drain(..drop_count);
+        self.history_bytes = self.history_bytes.saturating_sub(freed_bytes);
+        self.history_saved_entries = self.history_saved_entries.saturating_sub(drop_count);
+        if self.history.is_empty() {
+            self.history_bytes = 0;
+        }
+        true
     }
 
     /// Set the VFS path for persisting history.
@@ -1833,10 +1918,12 @@ impl Interpreter {
         &self.history
     }
 
-    /// Clear all history entries.
-    #[allow(dead_code)]
+    /// Clear all history entries and reset persistence accounting.
     pub fn clear_history(&mut self) {
         self.history.clear();
+        self.history_bytes = 0;
+        self.history_saved_entries = 0;
+        self.history_needs_rewrite = true;
     }
 
     /// Load history from the VFS history file (if configured). No-op after first call.
@@ -1864,37 +1951,56 @@ impl Interpreter {
                     parts[2].parse::<u64>(),
                 )
             {
-                self.history.push(HistoryEntry {
+                let before = self.history.len();
+                self.push_history_entry(HistoryEntry {
                     timestamp: ts,
                     exit_code: ec,
                     duration_ms: dur,
                     cwd: parts[3].to_string(),
                     command: parts[4].to_string(),
                 });
+                if self.history.len() == before {
+                    self.history_needs_rewrite = true;
+                }
             }
         }
+        self.history_saved_entries = self.history.len();
     }
 
     /// Save history to the VFS history file (if configured).
-    pub async fn save_history(&self) {
+    pub async fn save_history(&mut self) {
         let path = match &self.history_file {
             Some(p) => p.clone(),
             None => return,
         };
-        let mut content = String::new();
-        for entry in &self.history {
-            use std::fmt::Write;
-            let _ = writeln!(
-                content,
-                "{}|{}|{}|{}|{}",
-                entry.timestamp, entry.exit_code, entry.duration_ms, entry.cwd, entry.command
-            );
-        }
-        // Ensure parent directory exists
         if let Some(parent) = path.parent() {
             let _ = self.fs.mkdir(parent, true).await;
         }
-        let _ = self.fs.write_file(&path, content.as_bytes()).await;
+
+        if self.history_needs_rewrite || self.history_saved_entries > self.history.len() {
+            let content = format_history_entries(&self.history);
+            // Only advance persistence accounting when the write succeeds. On a
+            // transient FS error keep `history_needs_rewrite` set so the next
+            // save retries a full rewrite instead of silently dropping deltas.
+            if self.fs.write_file(&path, content.as_bytes()).await.is_ok() {
+                self.history_saved_entries = self.history.len();
+                self.history_needs_rewrite = false;
+            } else {
+                self.history_needs_rewrite = true;
+            }
+            return;
+        }
+
+        if self.history_saved_entries < self.history.len() {
+            let content = format_history_entries(&self.history[self.history_saved_entries..]);
+            if self.fs.append_file(&path, content.as_bytes()).await.is_ok() {
+                self.history_saved_entries = self.history.len();
+            } else {
+                // Append failed: force a full rewrite next time so the missed
+                // delta is not lost.
+                self.history_needs_rewrite = true;
+            }
+        }
     }
 
     /// Capture the current shell state (variables, env, cwd, options).
@@ -5549,6 +5655,7 @@ impl Interpreter {
                     namerefs: Arc::make_mut(&mut self.namerefs),
                     call_stack: &self.call_stack,
                     history: &self.history,
+                    limits: &self.limits,
                     jobs: &self.jobs,
                     execution_extensions,
                 };
@@ -5600,6 +5707,7 @@ impl Interpreter {
                 namerefs: Arc::make_mut(&mut self.namerefs),
                 call_stack: &self.call_stack,
                 history: &self.history,
+                limits: &self.limits,
                 jobs: &self.jobs,
                 execution_extensions,
             };
@@ -7968,7 +8076,7 @@ impl Interpreter {
                     }
                 }
                 builtins::BuiltinSideEffect::ClearHistory => {
-                    self.history.clear();
+                    self.clear_history();
                     // Persist immediately so `history -c` is a same-exec sanitization boundary.
                     self.save_history().await;
                 }

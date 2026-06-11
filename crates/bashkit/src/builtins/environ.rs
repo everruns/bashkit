@@ -267,53 +267,81 @@ impl Builtin for History {
         }
 
         let history = shell.history_entries();
+        let limits = shell.limits();
         let now = chrono::Utc::now().timestamp();
-
-        // Apply filters
-        let filtered: Vec<(usize, &crate::interpreter::HistoryEntry)> = history
-            .iter()
-            .enumerate()
-            .filter(|(_, entry)| {
-                if let Some(ref pat) = grep_pattern
-                    && !entry.command.contains(pat.as_str())
-                {
-                    return false;
-                }
-                if let Some(ref cwd) = cwd_filter
-                    && !entry.cwd.starts_with(cwd.as_str())
-                {
-                    return false;
-                }
-                if failed_only && entry.exit_code == 0 {
-                    return false;
-                }
-                if let Some(secs) = since_secs
-                    && now - entry.timestamp > secs
-                {
-                    return false;
-                }
-                true
-            })
-            .collect();
-
-        // Apply count limit (last N entries)
-        let entries: &[(usize, &crate::interpreter::HistoryEntry)] = if let Some(n) = count {
-            let start = filtered.len().saturating_sub(n);
-            &filtered[start..]
-        } else {
-            &filtered
+        let matches_entry = |entry: &crate::interpreter::HistoryEntry| {
+            if let Some(ref pat) = grep_pattern
+                && !entry.command.contains(pat.as_str())
+            {
+                return false;
+            }
+            if let Some(ref cwd) = cwd_filter
+                && !entry.cwd.starts_with(cwd.as_str())
+            {
+                return false;
+            }
+            if failed_only && entry.exit_code == 0 {
+                return false;
+            }
+            if let Some(secs) = since_secs
+                && now - entry.timestamp > secs
+            {
+                return false;
+            }
+            true
         };
 
-        // Format output: bash-style numbered listing
+        // THREAT[TM-DOS-094]: Do not allocate a filtered copy of all history.
+        // History is already session-capped; output is capped independently.
         let mut output = String::new();
-        for (idx, entry) in entries {
-            use std::fmt::Write;
-            // 1-indexed like bash
-            let _ = writeln!(output, "  {}  {}", idx + 1, entry.command);
+        if let Some(n) = count {
+            let mut entries = history
+                .iter()
+                .enumerate()
+                .rev()
+                .filter(|(_, entry)| matches_entry(entry))
+                .take(n)
+                .collect::<Vec<_>>();
+            entries.reverse();
+            for (idx, entry) in entries {
+                if !append_history_line(&mut output, limits.max_history_output_bytes, idx, entry) {
+                    break;
+                }
+            }
+        } else {
+            for (idx, entry) in history
+                .iter()
+                .enumerate()
+                .filter(|(_, entry)| matches_entry(entry))
+            {
+                if !append_history_line(&mut output, limits.max_history_output_bytes, idx, entry) {
+                    break;
+                }
+            }
         }
 
         Ok(ExecResult::ok(output))
     }
+}
+
+/// Append one formatted history line. Returns `false` when the line does not
+/// fit within `max_bytes`, signalling the caller to stop so the emitted output
+/// is always a prefix of the full listing (never skipping an earlier entry to
+/// fit a later, shorter one).
+fn append_history_line(
+    output: &mut String,
+    max_bytes: usize,
+    idx: usize,
+    entry: &crate::interpreter::HistoryEntry,
+) -> bool {
+    use std::fmt::Write;
+    let mut line = String::new();
+    let _ = writeln!(line, "  {}  {}", idx + 1, entry.command);
+    if output.len().saturating_add(line.len()) > max_bytes {
+        return false;
+    }
+    output.push_str(&line);
+    true
 }
 
 #[cfg(test)]

@@ -105,6 +105,19 @@ pub struct ExecutionLimits {
     /// Default: 1024
     pub max_file_descriptors: usize,
 
+    /// Maximum command history entries retained per Bash instance.
+    /// Default: 1,000
+    pub max_history_entries: usize,
+
+    /// Maximum retained command history bytes per Bash instance.
+    /// Counts command and cwd strings, including loaded persisted history.
+    /// Default: 1MB (1,048,576 bytes)
+    pub max_history_bytes: usize,
+
+    /// Maximum bytes formatted by the `history` builtin in one call.
+    /// Default: 1MB (1,048,576 bytes)
+    pub max_history_output_bytes: usize,
+
     /// Whether to capture the final environment state in ExecResult.
     /// Default: false (opt-in to avoid cloning cost when not needed)
     pub capture_final_env: bool,
@@ -127,6 +140,9 @@ impl Default for ExecutionLimits {
             max_subst_depth: 32,
             max_subshell_depth: 32,
             max_file_descriptors: 1024,
+            max_history_entries: 1_000,
+            max_history_bytes: 1_048_576,        // 1MB
+            max_history_output_bytes: 1_048_576, // 1MB
             capture_final_env: false,
         }
     }
@@ -154,6 +170,7 @@ impl ExecutionLimits {
             timeout: Duration::from_secs(u64::MAX / 2), // effectively no timeout
             max_stdout_bytes: 10_485_760,               // 10 MB
             max_stderr_bytes: 10_485_760,               // 10 MB
+            max_history_output_bytes: 10_485_760,       // 10 MB
             ..Self::default()
         }
     }
@@ -252,6 +269,27 @@ impl ExecutionLimits {
     /// A value of 0 is a valid strict limit that prevents custom descriptors.
     pub fn max_file_descriptors(mut self, count: usize) -> Self {
         self.max_file_descriptors = count;
+        self
+    }
+
+    /// Set maximum retained history entries.
+    /// Passing 0 disables history retention.
+    pub fn max_history_entries(mut self, count: usize) -> Self {
+        self.max_history_entries = count;
+        self
+    }
+
+    /// Set maximum retained history bytes.
+    /// Passing 0 disables history retention.
+    pub fn max_history_bytes(mut self, bytes: usize) -> Self {
+        self.max_history_bytes = bytes;
+        self
+    }
+
+    /// Set maximum `history` builtin output bytes.
+    /// Passing 0 makes `history` output empty.
+    pub fn max_history_output_bytes(mut self, bytes: usize) -> Self {
+        self.max_history_output_bytes = bytes;
         self
     }
 
@@ -899,6 +937,9 @@ mod tests {
         assert_eq!(limits.max_stderr_bytes, 1_048_576);
         assert_eq!(limits.max_subst_depth, 32);
         assert_eq!(limits.max_subshell_depth, 32);
+        assert_eq!(limits.max_history_entries, 1_000);
+        assert_eq!(limits.max_history_bytes, 1_048_576);
+        assert_eq!(limits.max_history_output_bytes, 1_048_576);
         assert!(!limits.capture_final_env);
     }
 
