@@ -997,7 +997,7 @@ async fn test_awk_file_redirect_output_limit() {
 
 #[tokio::test]
 async fn test_awk_file_redirect_target_limit() {
-    // Many tiny writes to unique paths must be capped without scanning all prior buffers.
+    // Many tiny writes to unique paths must be capped by the distinct-target guard.
     let program = format!(
         r#"BEGIN {{ for(i=0;i<{};i++) print "x" > ("/tmp/out" i) }}"#,
         MAX_OUTPUT_TARGETS + 1
@@ -1011,6 +1011,81 @@ async fn test_awk_file_redirect_target_limit() {
         "stderr should mention target limit: {}",
         result.stderr
     );
+}
+
+#[tokio::test]
+async fn test_awk_file_redirect_streams_vfs_file_size_limit() {
+    // Redirected output must hit VFS quotas while AWK is still executing,
+    // not after collecting an oversized in-memory buffer.
+    use crate::fs::FsLimits;
+
+    let limits = FsLimits {
+        max_file_size: 100,
+        ..FsLimits::unlimited()
+    };
+    let fs = Arc::new(InMemoryFs::with_limits(limits));
+    let result = run_awk_with_custom_fs(
+        &[r#"BEGIN { for(i=0;i<20;i++) print "abcdef" > "/tmp/out" }"#],
+        None,
+        fs.clone(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.exit_code, 2);
+    assert!(
+        result.stderr.contains("cannot write /tmp/out"),
+        "stderr should mention redirected write failure: {}",
+        result.stderr
+    );
+    let content = fs
+        .read_file(std::path::Path::new("/tmp/out"))
+        .await
+        .unwrap();
+    assert!(
+        content.len() <= 100,
+        "VFS file limit should be enforced incrementally: {} bytes",
+        content.len()
+    );
+}
+
+#[tokio::test]
+async fn test_awk_many_redirected_writes_reuse_single_writer() {
+    // A tight redirect loop streams every line through the one reusable writer
+    // thread (no thread/runtime per write). Verify the appends all land.
+    let fs = Arc::new(InMemoryFs::new());
+    let result = run_awk_with_custom_fs(
+        &[r#"BEGIN { for (i = 0; i < 500; i++) print i >> "/tmp/log" }"#],
+        None,
+        fs.clone(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.exit_code, 0, "stderr: {}", result.stderr);
+    let content = fs
+        .read_file(std::path::Path::new("/tmp/log"))
+        .await
+        .unwrap();
+    let lines = String::from_utf8(content).unwrap();
+    assert_eq!(lines.lines().count(), 500);
+    assert_eq!(lines.lines().next(), Some("0"));
+    assert_eq!(lines.lines().last(), Some("499"));
+}
+
+#[tokio::test]
+async fn test_awk_dev_null_redirect_does_not_count_against_output_limit() {
+    // /dev/null is discarded before any AWK-side redirect buffering.
+    let result = run_awk(
+        &[r#"BEGIN { s = sprintf("%1000s", "x"); for(i=0;i<12000;i++) print s > "/dev/null"; print "done" }"#],
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(result.stdout, "done\n");
+    assert_eq!(result.stderr, "");
 }
 
 /// Helper: run AWK with a caller-provided VFS.
