@@ -12,9 +12,9 @@ Homepage: [bashkit.sh](https://bashkit.sh)
 
 ## Features
 
-- **Secure by default** - No process spawning, no filesystem access, no network access unless explicitly enabled. [250+ threats](specs/threat-model.md) analyzed and mitigated
+- **Secure by default** - No process spawning, no filesystem access, no network access unless explicitly enabled. [280+ threats](specs/threat-model.md) analyzed and mitigated
 - **POSIX compliant** - Substantial IEEE 1003.1-2024 Shell Command Language compliance
-- **Sandboxed, in-process execution** - All 156 commands reimplemented in Rust, no `fork`/`exec`
+- **Sandboxed, in-process execution** - All 164 commands reimplemented in Rust, no `fork`/`exec`
 - **Virtual filesystem** - InMemoryFs, OverlayFs, MountableFs with optional RealFs backend (`realfs` feature)
 - **Resource limits** - Command count, loop iterations, function depth, output size, filesystem size, parser fuel
 - **Network allowlist** - HTTP access denied by default, per-domain control
@@ -123,7 +123,7 @@ assert_eq!(output.result["stdout"], "hello\nworld\n");
   </a>
 </div>
 
-## Built-in Commands (156)
+## Built-in Commands (164)
 
 | Category | Commands |
 |----------|----------|
@@ -131,21 +131,21 @@ assert_eq!(output.result["stdout"], "hello\nworld\n");
 | Navigation | `cd`, `pwd`, `ls`, `tree`, `find`, `pushd`, `popd`, `dirs` |
 | Flow control | `true`, `false`, `exit`, `return`, `break`, `continue`, `test`, `[` |
 | Variables | `export`, `set`, `unset`, `local`, `shift`, `source`, `.`, `eval`, `readonly`, `times`, `declare`, `typeset`, `let`, `alias`, `unalias` |
-| Shell | `bash`, `sh` (virtual re-invocation), `:`, `trap`, `caller`, `getopts`, `shopt`, `command`, `type`, `which`, `hash`, `compgen`, `fc`, `help` |
-| Text processing | `grep`, `rg`, `sed`, `awk`, `jq`, `head`, `tail`, `sort`, `uniq`, `cut`, `tr`, `wc`, `paste`, `column`, `diff`, `comm`, `strings`, `tac`, `rev`, `seq`, `expr`, `fold`, `expand`, `unexpand`, `join`, `iconv` |
-| File operations | `mkdir`, `mktemp`, `mkfifo`, `rm`, `cp`, `mv`, `touch`, `chmod`, `chown`, `ln`, `rmdir`, `realpath`, `readlink`, `split` |
+| Shell | `bash`, `sh` (virtual re-invocation), `exec`, `:`, `trap`, `caller`, `getopts`, `shopt`, `command`, `type`, `which`, `hash`, `compgen`, `fc`, `help` |
+| Text processing | `grep`, `rg`, `sed`, `awk`, `jq`, `head`, `tail`, `sort`, `uniq`, `cut`, `tr`, `wc`, `paste`, `column`, `diff`, `comm`, `strings`, `tac`, `rev`, `seq`, `expr`, `fold`, `expand`, `unexpand`, `join`, `iconv`, `shuf` |
+| File operations | `mkdir`, `mktemp`, `mkfifo`, `rm`, `cp`, `mv`, `touch`, `chmod`, `chown`, `ln`, `rmdir`, `realpath`, `readlink`, `split`, `truncate` |
 | File inspection | `file`, `stat`, `less` |
 | Archives | `tar`, `gzip`, `gunzip`, `zip`, `unzip` |
 | Byte tools | `od`, `xxd`, `hexdump`, `base64` |
 | Checksums | `md5sum`, `sha1sum`, `sha256sum` |
-| Utilities | `sleep`, `date`, `basename`, `dirname`, `timeout`, `wait`, `watch`, `yes`, `kill`, `bc`, `clear` |
+| Utilities | `sleep`, `date`, `basename`, `dirname`, `timeout`, `wait`, `watch`, `yes`, `kill`, `bc`, `clear`, `numfmt` |
 | Disk | `df`, `du` |
 | Pipeline | `xargs`, `tee` |
 | System info | `whoami`, `hostname`, `uname`, `id`, `env`, `printenv`, `history` |
 | Data formats | `csv`, `json`, `yaml`, `tomlq`, `template`, `envsubst` |
 | Network | `curl`, `wget` (requires allowlist), `http` |
 | DevOps | `assert`, `dotenv`, `glob`, `log`, `retry`, `semver`, `verify`, `parallel`, `patch` |
-| Experimental | `python`, `python3` (requires `python` feature), `ts`, `typescript`, `node`, `deno`, `bun` (requires `typescript` feature), `git` (requires `git` feature), `sqlite`, `sqlite3` (requires `sqlite` feature) |
+| Experimental | `python`, `python3` (requires `python` feature), `ts`, `typescript`, `node`, `deno`, `bun` (requires `typescript` feature), `git` (requires `git` feature), `ssh`, `scp`, `sftp` (requires `ssh` feature), `sqlite`, `sqlite3` (requires `sqlite` feature) |
 
 ## Shell Features
 
@@ -540,7 +540,7 @@ Bashkit is built for running untrusted scripts from AI agents and users. Securit
 
 | Layer | Protection |
 |-------|------------|
-| **No process spawning** | All 156 commands are reimplemented in Rust — no `fork`, `exec`, or shell escape |
+| **No process spawning** | All 164 commands are reimplemented in Rust — no `fork`, `exec`, or shell escape |
 | **Virtual filesystem** | Scripts see an in-memory FS by default; no host filesystem access unless explicitly mounted |
 | **Network allowlist** | HTTP access is denied by default; each domain must be explicitly allowed |
 | **Resource limits** | Configurable caps on commands (10K), loop iterations (100K), function depth (100), output (10MB), input (10MB) |
@@ -553,7 +553,7 @@ Bashkit is built for running untrusted scripts from AI agents and users. Securit
 
 ### Threat Model
 
-60+ identified threats across 11 categories (DoS, sandbox escape, info disclosure, injection, network, isolation, internal errors, git, logging, Python, Unicode) — each with a stable ID, mitigation status, and test coverage.
+280+ identified threats across 17 categories (DoS, sandbox escape, info disclosure, injection, network, isolation, internal errors, git, SSH, logging, crypto, Python, TypeScript, SQLite, Unicode, filesystem, snapshots) — each with a stable ID, mitigation status, and test coverage.
 
 See the [threat model](specs/threat-model.md) for the full analysis and [security policy](SECURITY.md) for reporting vulnerabilities.
 
