@@ -8,7 +8,7 @@ Homepage: [bashkit.sh](https://bashkit.sh)
 
 - Sandboxed, in-process execution with a virtual filesystem
 - Full bash syntax: variables, pipelines, redirects, loops, functions, and arrays
-- 160 built-in commands including `grep`, `sed`, `awk`, `jq`, `curl`, and `find`
+- 156 built-in commands including `grep`, `sed`, `awk`, `jq`, `curl`, and `find`
 - Sync and async execution APIs
 - Direct VFS helpers, standalone `FileSystem` handles, and live mounts
 - Cancellation support via `cancel()`

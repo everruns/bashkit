@@ -14,7 +14,7 @@ Homepage: [bashkit.sh](https://bashkit.sh)
 
 - **Secure by default** - No process spawning, no filesystem access, no network access unless explicitly enabled. [280+ threats](specs/threat-model.md) analyzed and mitigated
 - **POSIX compliant** - Substantial IEEE 1003.1-2024 Shell Command Language compliance
-- **Sandboxed, in-process execution** - All 164 commands reimplemented in Rust, no `fork`/`exec`
+- **Sandboxed, in-process execution** - All 156 commands reimplemented in Rust, no `fork`/`exec`
 - **Virtual filesystem** - InMemoryFs, OverlayFs, MountableFs with optional RealFs backend (`realfs` feature)
 - **Resource limits** - Command count, loop iterations, function depth, output size, filesystem size, parser fuel
 - **Network allowlist** - HTTP access denied by default, per-domain control
@@ -123,7 +123,7 @@ assert_eq!(output.result["stdout"], "hello\nworld\n");
   </a>
 </div>
 
-## Built-in Commands (164)
+## Built-in Commands (156)
 
 | Category | Commands |
 |----------|----------|
@@ -540,7 +540,7 @@ Bashkit is built for running untrusted scripts from AI agents and users. Securit
 
 | Layer | Protection |
 |-------|------------|
-| **No process spawning** | All 164 commands are reimplemented in Rust — no `fork`, `exec`, or shell escape |
+| **No process spawning** | All 156 commands are reimplemented in Rust — no `fork`, `exec`, or shell escape |
 | **Virtual filesystem** | Scripts see an in-memory FS by default; no host filesystem access unless explicitly mounted |
 | **Network allowlist** | HTTP access is denied by default; each domain must be explicitly allowed |
 | **Resource limits** | Configurable caps on commands (10K), loop iterations (100K), function depth (100), output (10MB), input (10MB) |

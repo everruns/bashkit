@@ -26,7 +26,7 @@ If the user needs exact Bash parity, check the compatibility docs before answeri
 
 ## Builtin Categories
 
-The README currently lists 160 built-in commands. Important groups:
+The project tracks 156 built-in commands (generated specs/status/builtins.json). Important groups:
 
 - Core: `echo`, `printf`, `cat`, `nl`, `read`, `mapfile`, `readarray`
 - Navigation: `cd`, `pwd`, `ls`, `tree`, `find`, `pushd`, `popd`, `dirs`
