@@ -537,6 +537,37 @@ test("integration: async ScriptedTool concurrent execution", async (t) => {
   t.is(second.stdout.trim(), "second:two");
 });
 
+test("integration: ScriptedTool executeSync returns error instead of deadlocking", (t) => {
+  let invoked = false;
+  const tool = new ScriptedTool({ name: "sync_guard" });
+  tool.addTool("ping", "Ping callback", () => {
+    invoked = true;
+    return "pong\n";
+  });
+
+  const result = tool.executeSync("ping");
+  t.is(result.exitCode, 1);
+  t.false(invoked, "JS callback must not run when the event loop is blocked");
+  t.regex(
+    result.stderr,
+    /ping: registered tools require execute\(\) \(async\)/,
+  );
+});
+
+test("integration: ScriptedTool executeSyncOrThrow throws instead of deadlocking", (t) => {
+  let invoked = false;
+  const tool = new ScriptedTool({ name: "sync_throw_guard" });
+  tool.addTool("ping", "Ping callback", () => {
+    invoked = true;
+    return "pong\n";
+  });
+
+  t.throws(() => tool.executeSyncOrThrow("ping"), {
+    instanceOf: BashError,
+  });
+  t.false(invoked);
+});
+
 // ============================================================================
 // ExecResult contract
 // ============================================================================
