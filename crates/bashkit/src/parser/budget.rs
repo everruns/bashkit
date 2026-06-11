@@ -278,8 +278,9 @@ fn estimate_brace_range_size(content: &str) -> Option<u64> {
         } else {
             1
         };
-        let range = (end - start).unsigned_abs();
-        return Some(range / step + 1);
+        let range = ((end as i128) - (start as i128)).unsigned_abs();
+        let count = range / u128::from(step) + 1;
+        return Some(u64::try_from(count).unwrap_or(u64::MAX));
     }
 
     // Try single-char range
@@ -424,6 +425,14 @@ mod tests {
         assert_eq!(estimate_brace_range_size("1..100"), Some(100));
         assert_eq!(estimate_brace_range_size("-5..5"), Some(11));
         assert_eq!(estimate_brace_range_size("1..100..10"), Some(10));
+    }
+
+    #[test]
+    fn estimate_numeric_range_extreme_i64_endpoints() {
+        assert_eq!(
+            estimate_brace_range_size("-9223372036854775808..9223372036854775807"),
+            Some(u64::MAX),
+        );
     }
 
     #[test]
