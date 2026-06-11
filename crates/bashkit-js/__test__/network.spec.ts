@@ -169,6 +169,25 @@ test("headers credential with empty list throws", (t) => {
   );
 });
 
+test("headers credential with an empty header name throws", (t) => {
+  t.throws(
+    () =>
+      new Bash({
+        network: {
+          allow: ["x"],
+          credentials: [
+            {
+              pattern: "x",
+              kind: "headers",
+              headers: [{ name: "", value: "v" }],
+            },
+          ],
+        },
+      }),
+    { message: /name must be a non-empty header name/ },
+  );
+});
+
 test("placeholder with empty env name throws", (t) => {
   t.throws(
     () =>

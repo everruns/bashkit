@@ -1159,6 +1159,11 @@ fn credential_from_parts(
                     "network.{label}: kind 'headers' accepts only 'headers'"
                 ));
             }
+            if let Some(idx) = headers.iter().position(|h| h.name.is_empty()) {
+                return invalid(format!(
+                    "network.{label}: headers[{idx}] name must be a non-empty header name"
+                ));
+            }
             Ok(Credential::headers(
                 headers
                     .iter()
