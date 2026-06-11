@@ -987,6 +987,9 @@ async fn try_indexed_search(
     {
         return None;
     }
+    if opts.max_count == Some(0) {
+        return Some(Vec::new());
+    }
 
     let sc = fs.as_search_capable()?;
     let mut seen_paths = std::collections::HashSet::new();
@@ -1038,7 +1041,7 @@ async fn try_indexed_search(
             } else {
                 None
             },
-            max_results: None,
+            max_results: opts.max_count,
         };
 
         let results = provider.search(&query).ok()?;
@@ -1085,7 +1088,7 @@ mod tests {
     };
     use std::collections::HashMap;
     use std::path::{Path, PathBuf};
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
     async fn run_grep(args: &[&str], stdin: Option<&str>) -> Result<ExecResult> {
         let grep = Grep;
@@ -1116,6 +1119,7 @@ mod tests {
     struct IndexedTestFs {
         inner: InMemoryFs,
         matches: Vec<SearchMatch>,
+        query_max_results: Option<Arc<Mutex<Vec<Option<usize>>>>>,
     }
 
     #[async_trait::async_trait]
@@ -1169,12 +1173,24 @@ mod tests {
 
     struct IndexedProvider {
         matches: Vec<SearchMatch>,
+        query_max_results: Option<Arc<Mutex<Vec<Option<usize>>>>>,
     }
 
     impl SearchProvider for IndexedProvider {
-        fn search(&self, _query: &SearchQuery) -> Result<SearchResults> {
+        fn search(&self, query: &SearchQuery) -> Result<SearchResults> {
+            if let Some(query_max_results) = &self.query_max_results {
+                query_max_results
+                    .lock()
+                    .expect("query max results lock should not be poisoned")
+                    .push(query.max_results);
+            }
+            let matches = if let Some(max_results) = query.max_results {
+                self.matches.iter().take(max_results).cloned().collect()
+            } else {
+                self.matches.clone()
+            };
             Ok(SearchResults {
-                matches: self.matches.clone(),
+                matches,
                 truncated: false,
             })
         }
@@ -1193,6 +1209,7 @@ mod tests {
         fn search_provider(&self, _path: &Path) -> Option<Box<dyn SearchProvider>> {
             Some(Box::new(IndexedProvider {
                 matches: self.matches.clone(),
+                query_max_results: self.query_max_results.clone(),
             }))
         }
     }
@@ -1203,7 +1220,11 @@ mod tests {
         args: &[&str],
     ) -> Result<ExecResult> {
         let grep = Grep;
-        let fs: Arc<dyn FileSystem> = Arc::new(IndexedTestFs { inner, matches });
+        let fs: Arc<dyn FileSystem> = Arc::new(IndexedTestFs {
+            inner,
+            matches,
+            query_max_results: None,
+        });
         let mut vars = HashMap::new();
         let mut cwd = PathBuf::from("/");
         let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
@@ -1571,6 +1592,7 @@ mod tests {
                 line_number: 1,
                 line_content: "secret".to_string(),
             }],
+            query_max_results: None,
         });
 
         let mut vars = HashMap::new();
@@ -1619,6 +1641,7 @@ mod tests {
         let fs: Arc<dyn FileSystem> = Arc::new(IndexedTestFs {
             inner,
             matches: Vec::new(),
+            query_max_results: None,
         });
 
         let mut vars = HashMap::new();
@@ -1678,6 +1701,7 @@ mod tests {
                     line_content: "hidden SECRET".to_string(),
                 },
             ],
+            query_max_results: None,
         });
 
         let mut vars = HashMap::new();
@@ -1752,6 +1776,72 @@ mod tests {
         assert_eq!(result.exit_code, 0);
         assert!(result.stdout.contains("/a/first.txt:needle in a"));
         assert!(result.stdout.contains("/b/second.txt:needle in b"));
+    }
+
+    #[tokio::test]
+    async fn test_grep_recursive_indexed_search_passes_max_count_to_provider() {
+        let inner = InMemoryFs::new();
+        inner.mkdir(Path::new("/dir"), true).await.unwrap();
+        inner
+            .write_file(Path::new("/dir/first.txt"), b"needle first\n")
+            .await
+            .unwrap();
+        inner
+            .write_file(Path::new("/dir/second.txt"), b"needle second\n")
+            .await
+            .unwrap();
+        let query_max_results = Arc::new(Mutex::new(Vec::new()));
+        let fs: Arc<dyn FileSystem> = Arc::new(IndexedTestFs {
+            inner,
+            matches: vec![
+                SearchMatch {
+                    path: PathBuf::from("/dir/first.txt"),
+                    line_number: 1,
+                    line_content: "needle first".to_string(),
+                },
+                SearchMatch {
+                    path: PathBuf::from("/dir/second.txt"),
+                    line_number: 1,
+                    line_content: "needle second".to_string(),
+                },
+            ],
+            query_max_results: Some(query_max_results.clone()),
+        });
+
+        let grep = Grep;
+        let mut vars = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+        let args: Vec<String> = ["-r", "-m1", "needle", "/dir"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let ctx = Context {
+            args: &args,
+            env: &HashMap::new(),
+            variables: &mut vars,
+            cwd: &mut cwd,
+            fs,
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+
+        let result = grep.execute(ctx).await.unwrap();
+
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "/dir/first.txt:needle first\n");
+        assert_eq!(
+            query_max_results
+                .lock()
+                .expect("query max results lock should not be poisoned")
+                .as_slice(),
+            &[Some(1)]
+        );
     }
 
     #[tokio::test]
