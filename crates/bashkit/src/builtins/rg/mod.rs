@@ -416,25 +416,37 @@ fn rg_replacement_cap_marker() -> String {
     )
 }
 
+fn replacement_output_projection(
+    haystack_len: usize,
+    replacement: &str,
+    match_count: usize,
+    include_unmatched_text: bool,
+) -> usize {
+    let capture_ref_count = replacement.bytes().filter(|&byte| byte == b'$').count();
+    let per_match = replacement
+        .len()
+        .saturating_add(capture_ref_count.saturating_mul(haystack_len));
+    match_count
+        .saturating_mul(per_match)
+        .saturating_add(if include_unmatched_text {
+            haystack_len
+        } else {
+            0
+        })
+}
+
 fn replacement_output_exceeds_cap(
     haystack_len: usize,
     replacement: &str,
     match_count: usize,
     include_unmatched_text: bool,
 ) -> bool {
-    let capture_ref_count = replacement.bytes().filter(|&byte| byte == b'$').count();
-    let per_match = replacement
-        .len()
-        .saturating_add(capture_ref_count.saturating_mul(haystack_len));
-    let projected =
-        match_count
-            .saturating_mul(per_match)
-            .saturating_add(if include_unmatched_text {
-                haystack_len
-            } else {
-                0
-            });
-    projected > RG_MAX_REPLACEMENT_OUTPUT_BYTES
+    replacement_output_projection(
+        haystack_len,
+        replacement,
+        match_count,
+        include_unmatched_text,
+    ) > RG_MAX_REPLACEMENT_OUTPUT_BYTES
 }
 
 impl RgMatcher {
@@ -4475,6 +4487,20 @@ fn format_rg_match_text(text: &str, regex: &RgMatcher, opts: &RgOptions) -> Stri
     }
 }
 
+fn rg_multiline_replacement_matches_exceed_cap(
+    matches: &[RgMultilineMatch<'_>],
+    replacement: &str,
+) -> bool {
+    matches
+        .iter()
+        .map(|mat| replacement_output_projection(mat.text.len(), replacement, 1, true))
+        .try_fold(0usize, |total, projected| {
+            let total = total.saturating_add(projected);
+            (total <= RG_MAX_REPLACEMENT_OUTPUT_BYTES).then_some(total)
+        })
+        .is_none()
+}
+
 fn rg_multiline_match_segments(
     mat: RgMultilineMatch<'_>,
     regex: &RgMatcher,
@@ -6040,6 +6066,17 @@ impl Builtin for Rg {
                     while line_idx < lines.len() {
                         if opts.only_matching {
                             if let Some(line_matches) = matches_by_start_line.get(&line_idx) {
+                                if let Some(replacement) = &opts.replacement
+                                    && rg_multiline_replacement_matches_exceed_cap(
+                                        line_matches,
+                                        replacement,
+                                    )
+                                {
+                                    output.push_str(&rg_replacement_cap_marker());
+                                    output.push(record_terminator);
+                                    line_idx += 1;
+                                    continue;
+                                }
                                 for &mat in line_matches {
                                     let segments = rg_multiline_match_segments(mat, &regex, &opts);
                                     write_rg_multiline_match_segments(
@@ -6496,6 +6533,17 @@ impl Builtin for Rg {
                 for (line_idx, line) in lines.iter().enumerate() {
                     let matched = match_line_set.contains(&line_idx);
                     if opts.only_matching && !opts.invert_match && matched {
+                        if let Some(replacement) = &opts.replacement
+                            && regex.replacement_matches_exceed_cap(
+                                line.match_text,
+                                replacement.as_str(),
+                            )
+                        {
+                            output.push_str(&rg_replacement_cap_marker());
+                            output.push(record_terminator);
+                            truncate_rg_output(&mut output, output_limit);
+                            continue;
+                        }
                         regex.for_each_match(line.match_text, |mat| {
                             write_rg_prefix(
                                 &mut output,
@@ -14130,6 +14178,23 @@ mod tests {
             ],
             vec![
                 "--vimgrep",
+                "--only-matching",
+                "--replace",
+                replacement.as_str(),
+                "a",
+                "/big.txt",
+            ],
+            vec![
+                "--passthru",
+                "--only-matching",
+                "--replace",
+                replacement.as_str(),
+                "a",
+                "/big.txt",
+            ],
+            vec![
+                "--multiline",
+                "--passthru",
                 "--only-matching",
                 "--replace",
                 replacement.as_str(),
