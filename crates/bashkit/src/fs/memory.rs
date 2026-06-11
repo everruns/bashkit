@@ -463,18 +463,14 @@ impl InMemoryFs {
     /// THREAT[TM-DOS-003]: Generate bounded random bytes for /dev/urandom.
     /// Returns exactly 8192 bytes to prevent unbounded reads while
     /// supporting common patterns like `od -N8 -tx1 /dev/urandom`.
-    fn generate_random_bytes() -> Vec<u8> {
-        use std::collections::hash_map::RandomState;
-        use std::hash::{BuildHasher, Hasher};
-
+    fn generate_random_bytes() -> Result<Vec<u8>> {
         const SIZE: usize = 8192;
-        let mut buf = Vec::with_capacity(SIZE);
-        while buf.len() < SIZE {
-            let h = RandomState::new().build_hasher().finish();
-            buf.extend_from_slice(&h.to_ne_bytes());
-        }
-        buf.truncate(SIZE);
-        buf
+        let mut buf = vec![0; SIZE];
+        // Important decision: use the OS CSPRNG backing getrandom, not
+        // non-CSPRNG hasher seeds, because scripts commonly use these paths
+        // for tokens, salts, nonces, and keys.
+        getrandom::fill(&mut buf).map_err(|_| IoError::other("random device unavailable"))?;
+        Ok(buf)
     }
 
     /// Compute current usage statistics.
@@ -1010,7 +1006,7 @@ impl FileSystem for InMemoryFs {
 
         // /dev/urandom and /dev/random: return bounded random bytes
         if path == Path::new("/dev/urandom") || path == Path::new("/dev/random") {
-            return Ok(Self::generate_random_bytes());
+            return Self::generate_random_bytes();
         }
 
         // First try with a read lock for the common (non-lazy) case
@@ -2278,6 +2274,23 @@ mod tests {
         let fs = InMemoryFs::new();
         let content = fs.read_file(Path::new("/dev/urandom")).await.unwrap();
         assert_eq!(content.len(), 8192);
+    }
+
+    #[test]
+    fn test_random_device_source_uses_csprng() {
+        let source = include_str!("memory.rs");
+        let production_source = source
+            .split("fn test_random_device_source_uses_csprng")
+            .next()
+            .unwrap();
+        assert!(
+            production_source.contains("getrandom::fill"),
+            "/dev/random devices must use the OS CSPRNG"
+        );
+        assert!(
+            !production_source.contains("std::collections::hash_map::RandomState"),
+            "/dev/random devices must not use HashMap hasher seeds as randomness"
+        );
     }
 
     #[tokio::test]
