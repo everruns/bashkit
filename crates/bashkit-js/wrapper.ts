@@ -1626,10 +1626,10 @@ export class ScriptedTool {
    * Execute a bash script synchronously.
    *
    * Note: ScriptedTool callbacks run asynchronously via Node's event loop.
-   * This method will deadlock if any registered tool callback is invoked.
-   * Use `execute()` (async) instead for scripts that call registered tools.
-   * Only use this for scripts that don't invoke any registered tools
-   * (e.g., pure bash without tool calls).
+   * If a registered tool is invoked, this method returns a non-zero result
+   * instead of queueing a callback that would deadlock. Use `execute()`
+   * (async) for scripts that call registered tools. Only use this for scripts
+   * that don't invoke any registered tools (e.g., pure bash).
    */
   executeSync(commands: string): ExecResult {
     return this.native.executeSync(commands);
@@ -1648,7 +1648,8 @@ export class ScriptedTool {
   /**
    * Execute synchronously. Throws `BashError` on non-zero exit.
    *
-   * Same caveats as `executeSync()` — use `executeOrThrow()` instead.
+   * Same caveats as `executeSync()` — throws when a registered tool would
+   * require the blocked Node event loop. Use `executeOrThrow()` instead.
    */
   executeSyncOrThrow(commands: string): ExecResult {
     const result = this.native.executeSync(commands);
