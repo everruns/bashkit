@@ -7,6 +7,11 @@ import type {
   ExecResult,
   BashOptions as NativeBashOptions,
   SnapshotOptions as NativeSnapshotOptions,
+  NetworkOptions,
+  NetworkCredential,
+  NetworkCredentialPlaceholder,
+  CredentialHeader,
+  ShellState,
 } from "./index.cjs";
 
 const require = createRequire(import.meta.url);
@@ -89,7 +94,14 @@ const nativeFileSystemCopy: (
   toPath: string,
 ) => void = native.__fileSystemCopy;
 
-export type { ExecResult };
+export type {
+  ExecResult,
+  NetworkOptions,
+  NetworkCredential,
+  NetworkCredentialPlaceholder,
+  CredentialHeader,
+  ShellState,
+};
 
 /**
  * A file value: either a string, a sync function returning a string,
@@ -105,7 +117,9 @@ const MAX_JSON_NESTING_DEPTH = 64;
  * Execution context passed to a custom builtin registered via
  * `customBuiltins` or `addBuiltin`.
  *
- * All fields are snapshots of the shell state at invocation time.
+ * `name`, `argv`, `stdin`, `env`, and `cwd` are snapshots of the shell
+ * state at invocation time; `fs` is a live handle to the interpreter's
+ * virtual filesystem.
  */
 export interface BuiltinContext {
   /** The command name as invoked. */
@@ -118,6 +132,13 @@ export interface BuiltinContext {
   readonly env: Record<string, string>;
   /** Current working directory. */
   readonly cwd: string;
+  /**
+   * Live handle to the interpreter's virtual filesystem — the same VFS the
+   * executing script sees. Reads observe earlier script writes and writes
+   * are visible to subsequent commands. Inherits mounts and read-only
+   * configuration.
+   */
+  readonly fs: FileSystem;
 }
 
 /**
@@ -216,6 +237,27 @@ export interface BashOptions {
    * resource-affecting PRAGMAs and `ATTACH`/`DETACH` rejected.
    */
   sqlite?: boolean;
+  /**
+   * Outbound network configuration. When set, enables `curl`/`wget`
+   * restricted to the configured allowlist, with optional transparent
+   * credential injection. Omitted = network disabled (no `curl`/`wget`).
+   *
+   * Must specify either `allow` (list of URL patterns) or `allowAll: true`,
+   * not both. `blockPrivateIps` defaults to `true`.
+   *
+   * @example
+   * ```typescript
+   * const bash = new Bash({
+   *   network: {
+   *     allow: ["https://api.example.com/**"],
+   *     credentials: [
+   *       { pattern: "https://api.example.com/**", kind: "bearer", token: secret },
+   *     ],
+   *   },
+   * });
+   * ```
+   */
+  network?: NetworkOptions;
   /**
    * Names of external functions callable from embedded Python code.
    *
@@ -468,6 +510,7 @@ function toNativeOptions(
     python: options?.python,
     externalFunctions: options?.externalFunctions,
     sqlite: options?.sqlite,
+    network: options?.network,
   };
 }
 
@@ -635,6 +678,12 @@ export class FileSystem {
 /**
  * Wrap a {@link BuiltinCallback} for the native `addBuiltin` ABI.
  *
+ * The native side passes the JSON-serialized context plus an opaque VFS
+ * handle. Like the output callback, the napi TSFN delivers the
+ * `(String, External)` args as one `[payload, fsHandle]` tuple; this
+ * wrapper adapts that odd FFI shape into a single {@link BuiltinContext}
+ * object with a live `fs` accessor.
+ *
  * The Rust side expects a uniform `Promise<string>` return, so we always
  * route the callback result through `Promise.resolve` — sync `string`
  * returns get wrapped, native `Promise<string>` returns pass through, and
@@ -643,10 +692,15 @@ export class FileSystem {
  */
 function makeBuiltinDispatcher(
   callback: BuiltinCallback,
-): (payload: string) => Promise<string> {
-  return (payload: string) => {
+): (requestPair: [string, unknown]) => Promise<string> {
+  return (requestPair: [string, unknown]) => {
     try {
-      const ctx = JSON.parse(payload) as BuiltinContext;
+      const [payload, fsHandle] = requestPair;
+      const parsed = JSON.parse(payload) as Omit<BuiltinContext, "fs">;
+      const ctx: BuiltinContext = {
+        ...parsed,
+        fs: FileSystem.fromNative(fsHandle),
+      };
       return Promise.resolve(callback(ctx));
     } catch (e) {
       return Promise.reject(e);
@@ -662,7 +716,7 @@ function registerCustomBuiltins(
   native: {
     addBuiltin(
       name: string,
-      dispatch: (payload: string) => Promise<string>,
+      dispatch: (requestPair: [string, unknown]) => Promise<string>,
     ): void;
   },
   builtins: Record<string, BuiltinCallback> | undefined,
@@ -1086,6 +1140,16 @@ export class Bash {
       .map((s) => s.trim())
       .filter((s) => s.length > 0);
   }
+
+  /**
+   * Capture a lightweight snapshot of shell state (variables, env, cwd,
+   * arrays, aliases, traps) for inspection — e.g. prompt rendering or
+   * debugging. Function definitions are omitted; use `snapshot()` for full
+   * state capture/restore.
+   */
+  shellState(): ShellState {
+    return this.native.shellState();
+  }
 }
 
 /**
@@ -1495,6 +1559,16 @@ export class BashTool {
       .split("\n")
       .map((s) => s.trim())
       .filter((s) => s.length > 0);
+  }
+
+  /**
+   * Capture a lightweight snapshot of shell state (variables, env, cwd,
+   * arrays, aliases, traps) for inspection — e.g. prompt rendering or
+   * debugging. Function definitions are omitted; use `snapshot()` for full
+   * state capture/restore.
+   */
+  shellState(): ShellState {
+    return this.native.shellState();
   }
 
   /** Tool name. */

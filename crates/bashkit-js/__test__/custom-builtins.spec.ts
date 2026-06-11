@@ -287,7 +287,10 @@ test("executeSync with custom builtin returns error instead of deadlocking", (t)
   const result = bash.executeSync("mybuiltin");
   t.is(result.exitCode, 1);
   t.false(invoked, "JS callback must not run when the loop is blocked");
-  t.regex(result.stderr, /mybuiltin: custom builtins require execute\(\) \(async\)/);
+  t.regex(
+    result.stderr,
+    /mybuiltin: custom builtins require execute\(\) \(async\)/,
+  );
 });
 
 test("executeSync with addBuiltin custom builtin returns error", (t) => {
@@ -316,7 +319,10 @@ test("BashTool executeSync with custom builtin returns error", (t) => {
   const result = tool.executeSync("mybuiltin");
   t.is(result.exitCode, 1);
   t.false(invoked);
-  t.regex(result.stderr, /mybuiltin: custom builtins require execute\(\) \(async\)/);
+  t.regex(
+    result.stderr,
+    /mybuiltin: custom builtins require execute\(\) \(async\)/,
+  );
 });
 
 test("async execute() still works after a guardrail-rejected executeSync", async (t) => {
@@ -331,4 +337,120 @@ test("async execute() still works after a guardrail-rejected executeSync", async
   const result = await bash.execute("mybuiltin");
   t.is(result.exitCode, 0);
   t.is(result.stdout, "via-async\n");
+});
+
+// ----------------------------------------------------------------------------
+// ctx.fs — live VFS access inside custom builtins (parity with Python's
+// BuiltinContext.fs, see PR #2010)
+// ----------------------------------------------------------------------------
+
+test("ctx.fs reads files written by the script", async (t) => {
+  const bash = new Bash({
+    customBuiltins: {
+      "read-it": (ctx) => ctx.fs.readFile(ctx.argv[0]!),
+    },
+  });
+  await bash.execute('echo "from bash" > /tmp/in.txt');
+  const result = await bash.execute("read-it /tmp/in.txt");
+  t.is(result.exitCode, 0);
+  t.is(result.stdout, "from bash\n");
+});
+
+test("ctx.fs writes are visible to subsequent commands", async (t) => {
+  const bash = new Bash({
+    customBuiltins: {
+      "write-it": (ctx) => {
+        ctx.fs.writeFile("/tmp/out.txt", "from builtin\n");
+        return "";
+      },
+    },
+  });
+  const result = await bash.execute("write-it && cat /tmp/out.txt");
+  t.is(result.exitCode, 0);
+  t.is(result.stdout, "from builtin\n");
+});
+
+test("ctx.fs writes are visible within the same pipeline read-back", async (t) => {
+  // Live view: a write made by the builtin is observable by a later
+  // ctx.fs read in another builtin invocation of the same execute() call.
+  const bash = new Bash({
+    customBuiltins: {
+      put: (ctx) => {
+        ctx.fs.writeFile("/tmp/live.txt", ctx.argv[0]! + "\n");
+        return "";
+      },
+      get: (ctx) => ctx.fs.readFile("/tmp/live.txt"),
+    },
+  });
+  const result = await bash.execute("put hello42 && get");
+  t.is(result.exitCode, 0);
+  t.is(result.stdout, "hello42\n");
+});
+
+test("ctx.fs supports mkdir/readDir/exists/stat", async (t) => {
+  const seen: string[] = [];
+  const bash = new Bash({
+    customBuiltins: {
+      probe: (ctx) => {
+        ctx.fs.mkdir("/tmp/sub/dir", true);
+        ctx.fs.writeFile("/tmp/sub/dir/a.txt", "x");
+        seen.push(
+          `exists=${ctx.fs.exists("/tmp/sub/dir/a.txt")}`,
+          `entries=${ctx.fs
+            .readDir("/tmp/sub/dir")
+            .map((e) => e.name)
+            .join(",")}`,
+          `size=${ctx.fs.stat("/tmp/sub/dir/a.txt").size}`,
+        );
+        return "";
+      },
+    },
+  });
+  const result = await bash.execute("probe");
+  t.is(result.exitCode, 0);
+  t.deepEqual(seen, ["exists=true", "entries=a.txt", "size=1"]);
+});
+
+test("ctx.fs read of a missing file surfaces as exit 1 + stderr", async (t) => {
+  const bash = new Bash({
+    customBuiltins: {
+      "read-missing": (ctx) => ctx.fs.readFile("/tmp/does-not-exist"),
+    },
+  });
+  const result = await bash.execute("read-missing");
+  t.is(result.exitCode, 1);
+  t.regex(result.stderr, /does-not-exist|not found|No such/i);
+});
+
+test("ctx.fs works with addBuiltin registration", async (t) => {
+  const bash = new Bash();
+  bash.addBuiltin("read-it", (ctx) => ctx.fs.readFile("/tmp/added.txt"));
+  await bash.execute('printf "added" > /tmp/added.txt');
+  const result = await bash.execute("read-it");
+  t.is(result.exitCode, 0);
+  t.is(result.stdout, "added");
+});
+
+test("ctx.fs works on BashTool builtins", async (t) => {
+  const tool = new BashTool({
+    customBuiltins: {
+      "read-it": (ctx) => ctx.fs.readFile("/tmp/tool.txt"),
+    },
+  });
+  await tool.execute('printf "tool" > /tmp/tool.txt');
+  const result = await tool.execute("read-it");
+  t.is(result.exitCode, 0);
+  t.is(result.stdout, "tool");
+});
+
+test("ctx.fs respects files mounted at construction", async (t) => {
+  const bash = new Bash({
+    files: { "/data/config.json": '{"ok":true}' },
+    customBuiltins: {
+      "read-config": (ctx) => ctx.fs.readFile("/data/config.json"),
+    },
+  });
+  const result = await bash.execute("read-config");
+  t.is(result.exitCode, 0);
+  t.is(result.stdout, '{"ok":true}');
 });

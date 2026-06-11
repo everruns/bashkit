@@ -14,6 +14,7 @@ Homepage: [bashkit.sh](https://bashkit.sh)
 - Cancellation support via `cancel()`
 - Sticky cancellation recovery via `clearCancel()`
 - Snapshot and restore support on `Bash`
+- Outbound HTTP (`curl`/`wget`) behind a URL allowlist with transparent credential injection
 - AI framework adapters for OpenAI, Anthropic, Vercel AI SDK, and LangChain
 
 ## Install
@@ -338,6 +339,21 @@ The callback receives a `BuiltinContext`:
 - `stdin: string | null` — piped input, or `null` if no pipe
 - `env: Record<string, string>` — environment variables (only exported names)
 - `cwd: string` — current working directory
+- `fs: FileSystem` — live handle to the instance's virtual filesystem
+
+`ctx.fs` is the same VFS the executing script sees: reads observe earlier
+script writes, and writes are visible to subsequent commands. It inherits
+mounts and read-only configuration.
+
+```typescript
+const bash = new Bash({
+  customBuiltins: {
+    head10: (ctx) =>
+      ctx.fs.readFile(ctx.argv[0]).split("\n").slice(0, 10).join("\n") + "\n",
+  },
+});
+await bash.execute("head10 /var/log/app.log");
+```
 
 Override precedence: shell function > POSIX special builtin > custom builtin
 
@@ -411,6 +427,58 @@ console.log(restoredTool.executeSync("echo $TOOL_STATE").stdout); // ready\n
 restoredTool.restoreSnapshot(toolShellOnly, { hmacKey });
 ```
 
+## Network
+
+Outbound HTTP (`curl` / `wget`) is disabled by default. Enable it with the
+`network` option, which requires either an explicit URL allowlist or
+`allowAll: true`:
+
+```typescript
+const bash = new Bash({
+  network: {
+    allow: ["https://api.example.com/**"],
+    blockPrivateIps: true, // default
+  },
+});
+
+await bash.execute("curl https://api.example.com/users"); // allowed
+await bash.execute("curl https://evil.example.org"); // denied: not in allowlist
+```
+
+### Credential Injection
+
+Attach credentials to matching requests without exposing them to scripts:
+
+```typescript
+const bash = new Bash({
+  network: {
+    allow: ["https://api.example.com/**"],
+    // Direct injection — the script never sees the secret.
+    credentials: [
+      {
+        pattern: "https://api.example.com/**",
+        kind: "bearer",
+        token: process.env.API_TOKEN!,
+      },
+    ],
+    // Placeholder mode — the script sees an opaque `bk_placeholder_...`
+    // value in $MY_TOKEN; it is swapped for the real secret on the wire.
+    credentialPlaceholders: [
+      {
+        env: "MY_TOKEN",
+        pattern: "https://api.example.com/**",
+        kind: "header",
+        name: "X-Api-Key",
+        value: process.env.API_KEY!,
+      },
+    ],
+  },
+});
+```
+
+Credential kinds: `"bearer"` (requires `token`), `"header"` (requires
+`name` + `value`), `"headers"` (requires `headers: Array<{ name, value }>`).
+
 ## Framework Integrations
 
 ### OpenAI
@@ -464,6 +532,7 @@ import {
 - `restoreSnapshot(data, options?)` / `restoreSnapshotKeyed(data, key)`
 - `Bash.fromSnapshot(data, options?)` / `Bash.fromSnapshotKeyed(data, key)`
 - Direct VFS helpers: `readFile`, `writeFile`, `appendFile`, `mkdir`, `remove`, `exists`, `stat`, `readDir`, `ls`, `glob`, `mount`, `unmount`, `fs`
+- `shellState()` — lightweight inspection snapshot (variables, env, cwd, arrays, aliases, traps)
 
 ### BashTool
 
@@ -502,6 +571,7 @@ import {
 - `python?: boolean`
 - `externalFunctions?: string[]`
 - `customBuiltins?: Record<string, (ctx: BuiltinContext) => string | Promise<string>>` — JS callbacks registered as bash builtins (see [Custom Builtins](#custom-builtins))
+- `network?: NetworkOptions` — outbound HTTP configuration (see [Network](#network))
 
 ### BuiltinContext
 
@@ -510,6 +580,7 @@ import {
 - `stdin: string | null` — piped input, `null` if no pipe
 - `env: Record<string, string>` — exported environment variables
 - `cwd: string` — current working directory
+- `fs: FileSystem` — live handle to the instance's virtual filesystem
 
 ### ExecuteOptions
 

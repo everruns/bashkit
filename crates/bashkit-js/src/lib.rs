@@ -19,10 +19,11 @@ use bashkit::interop::fs::{
 use bashkit::tool::VERSION;
 use bashkit::{
     Bash as RustBash, BashTool as RustBashTool, Builtin, BuiltinContext, BuiltinRegistry,
-    ExecResult as RustExecResult, ExecutionLimits, ExtFunctionResult, FileSystem as BashFileSystem,
-    FileType, InMemoryFs, Metadata, MontyObject, OutputCallback, PosixFs, PythonExternalFnHandler,
-    PythonLimits, RealFs, RealFsMode, ScriptedTool as RustScriptedTool,
-    SnapshotOptions as RustSnapshotOptions, Tool, ToolArgs, ToolDef, ToolRequest, async_trait,
+    Credential, ExecResult as RustExecResult, ExecutionLimits, ExtFunctionResult,
+    FileSystem as BashFileSystem, FileType, InMemoryFs, Metadata, MontyObject, NetworkAllowlist,
+    OutputCallback, PosixFs, PythonExternalFnHandler, PythonLimits, RealFs, RealFsMode,
+    ScriptedTool as RustScriptedTool, SnapshotOptions as RustSnapshotOptions, Tool, ToolArgs,
+    ToolDef, ToolRequest, async_trait,
 };
 use napi::bindgen_prelude::External;
 use napi::{Env, JsValue, Unknown, ValueType, sys};
@@ -725,6 +726,55 @@ pub struct ExecResult {
     pub success: bool,
 }
 
+/// Lightweight snapshot of shell state for inspection (prompt rendering,
+/// debugging). Mirrors the Python binding's `ShellState`; omits function
+/// definitions (use `snapshot()` for full state capture/restore).
+#[napi(object)]
+pub struct ShellState {
+    /// Environment variables.
+    pub env: HashMap<String, String>,
+    /// Shell variables (non-exported).
+    pub variables: HashMap<String, String>,
+    /// Indexed arrays: name → { index (as string) → value }. Sparse indices
+    /// are preserved, hence a map rather than a dense JS array.
+    pub arrays: HashMap<String, HashMap<String, String>>,
+    /// Associative arrays: name → { key → value }.
+    pub assoc_arrays: HashMap<String, HashMap<String, String>>,
+    /// Current working directory.
+    pub cwd: String,
+    /// Exit code of the last executed command.
+    pub last_exit_code: i32,
+    /// Shell aliases.
+    pub aliases: HashMap<String, String>,
+    /// Trap handlers keyed by signal/condition name.
+    pub traps: HashMap<String, String>,
+}
+
+fn shell_state_to_js(view: bashkit::ShellStateView) -> ShellState {
+    ShellState {
+        env: view.env,
+        variables: view.variables,
+        arrays: view
+            .arrays
+            .into_iter()
+            .map(|(name, entries)| {
+                (
+                    name,
+                    entries
+                        .into_iter()
+                        .map(|(idx, value)| (idx.to_string(), value))
+                        .collect(),
+                )
+            })
+            .collect(),
+        assoc_arrays: view.assoc_arrays,
+        cwd: view.cwd.to_string_lossy().into_owned(),
+        last_exit_code: view.last_exit_code,
+        aliases: view.aliases,
+        traps: view.traps,
+    }
+}
+
 // The native JS callback arrives as one `[stdout, stderr]` tuple payload even
 // though napi-rs models the args as `(String, String)`. Keep the public TS
 // wrapper responsible for adapting that odd FFI shape into its
@@ -981,6 +1031,230 @@ pub struct MountConfig {
     pub writable: Option<bool>,
 }
 
+/// A single HTTP header (name/value pair) for credential injection.
+#[napi(object)]
+#[derive(Clone)]
+pub struct CredentialHeader {
+    pub name: String,
+    pub value: String,
+}
+
+/// Credential injected into outbound HTTP requests matching `pattern`.
+///
+/// `kind` selects the shape: `"bearer"` (requires `token`), `"header"`
+/// (requires `name` + `value`), or `"headers"` (requires `headers`).
+/// Scripts never see the secret — it is attached on the wire only.
+#[napi(object)]
+#[derive(Clone)]
+pub struct NetworkCredential {
+    /// URL pattern the credential applies to (e.g. `https://api.example.com/**`).
+    pub pattern: String,
+    /// One of `"bearer"`, `"header"`, `"headers"`.
+    pub kind: String,
+    /// Bearer token (for `kind: "bearer"`).
+    pub token: Option<String>,
+    /// Header name (for `kind: "header"`).
+    pub name: Option<String>,
+    /// Header value (for `kind: "header"`).
+    pub value: Option<String>,
+    /// Header list (for `kind: "headers"`).
+    pub headers: Option<Vec<CredentialHeader>>,
+}
+
+/// Placeholder-mode credential injection: `env` is set to an opaque
+/// placeholder value visible to scripts; outbound requests matching
+/// `pattern` have the placeholder replaced with the real credential.
+#[napi(object)]
+#[derive(Clone)]
+pub struct NetworkCredentialPlaceholder {
+    /// Environment variable that receives the placeholder value.
+    pub env: String,
+    /// URL pattern the credential applies to.
+    pub pattern: String,
+    /// One of `"bearer"`, `"header"`, `"headers"`.
+    pub kind: String,
+    /// Bearer token (for `kind: "bearer"`).
+    pub token: Option<String>,
+    /// Header name (for `kind: "header"`).
+    pub name: Option<String>,
+    /// Header value (for `kind: "header"`).
+    pub value: Option<String>,
+    /// Header list (for `kind: "headers"`).
+    pub headers: Option<Vec<CredentialHeader>>,
+}
+
+/// Outbound network configuration (enables `curl`/`wget`).
+///
+/// Must specify either `allow` (list of URL patterns) or `allowAll: true`,
+/// not both. `blockPrivateIps` defaults to `true`.
+#[napi(object)]
+#[derive(Clone)]
+pub struct NetworkOptions {
+    /// URL patterns permitted for outbound requests.
+    pub allow: Option<Vec<String>>,
+    /// Allow all outbound requests (mutually exclusive with `allow`).
+    pub allow_all: Option<bool>,
+    /// Block requests resolving to private/loopback IPs (default: true).
+    pub block_private_ips: Option<bool>,
+    /// Credentials injected transparently into matching requests.
+    pub credentials: Option<Vec<NetworkCredential>>,
+    /// Placeholder-mode credential injection (see type docs).
+    pub credential_placeholders: Option<Vec<NetworkCredentialPlaceholder>>,
+}
+
+/// Build a core [`Credential`] from the kind-discriminated option fields.
+/// Mirrors the Python binding's `parse_credential_spec` validation rules.
+fn credential_from_parts(
+    label: &str,
+    kind: &str,
+    token: Option<&String>,
+    name: Option<&String>,
+    value: Option<&String>,
+    headers: Option<&Vec<CredentialHeader>>,
+) -> napi::Result<Credential> {
+    let invalid = |msg: String| -> napi::Result<Credential> { Err(napi::Error::from_reason(msg)) };
+    match kind {
+        "bearer" => {
+            let Some(token) = token else {
+                return invalid(format!("network.{label}: kind 'bearer' requires 'token'"));
+            };
+            if name.is_some() || value.is_some() || headers.is_some() {
+                return invalid(format!(
+                    "network.{label}: kind 'bearer' accepts only 'token'"
+                ));
+            }
+            Ok(Credential::bearer(token.clone()))
+        }
+        "header" => {
+            let (Some(name), Some(value)) = (name, value) else {
+                return invalid(format!(
+                    "network.{label}: kind 'header' requires 'name' and 'value'"
+                ));
+            };
+            if name.is_empty() {
+                return invalid(format!(
+                    "network.{label}: 'name' must be a non-empty header name"
+                ));
+            }
+            if token.is_some() || headers.is_some() {
+                return invalid(format!(
+                    "network.{label}: kind 'header' accepts only 'name' and 'value'"
+                ));
+            }
+            Ok(Credential::header(name.clone(), value.clone()))
+        }
+        "headers" => {
+            let Some(headers) = headers else {
+                return invalid(format!(
+                    "network.{label}: kind 'headers' requires 'headers'"
+                ));
+            };
+            if headers.is_empty() {
+                return invalid(format!(
+                    "network.{label}: 'headers' must contain at least one entry"
+                ));
+            }
+            if token.is_some() || name.is_some() || value.is_some() {
+                return invalid(format!(
+                    "network.{label}: kind 'headers' accepts only 'headers'"
+                ));
+            }
+            Ok(Credential::headers(
+                headers
+                    .iter()
+                    .map(|h| (h.name.clone(), h.value.clone()))
+                    .collect::<Vec<_>>(),
+            ))
+        }
+        other => invalid(format!(
+            "network.{label}: unknown kind '{other}' (expected 'bearer', 'header', or 'headers')"
+        )),
+    }
+}
+
+/// Validate `NetworkOptions` up front so `build_bash_from_state` (also used
+/// by `reset()`) can apply them infallibly later.
+fn validate_network_options(net: &NetworkOptions) -> napi::Result<()> {
+    let allow_all = net.allow_all.unwrap_or(false);
+    if allow_all && net.allow.is_some() {
+        return Err(napi::Error::from_reason(
+            "network: 'allow' and 'allowAll' are mutually exclusive",
+        ));
+    }
+    if !allow_all && net.allow.is_none() {
+        return Err(napi::Error::from_reason(
+            "network: must provide 'allow' (list of URL patterns) or 'allowAll: true'",
+        ));
+    }
+    for (idx, cred) in net.credentials.iter().flatten().enumerate() {
+        credential_from_parts(
+            &format!("credentials[{idx}]"),
+            &cred.kind,
+            cred.token.as_ref(),
+            cred.name.as_ref(),
+            cred.value.as_ref(),
+            cred.headers.as_ref(),
+        )?;
+    }
+    for (idx, ph) in net.credential_placeholders.iter().flatten().enumerate() {
+        if ph.env.is_empty() {
+            return Err(napi::Error::from_reason(format!(
+                "network.credentialPlaceholders[{idx}]: 'env' must be a non-empty environment variable name"
+            )));
+        }
+        credential_from_parts(
+            &format!("credentialPlaceholders[{idx}]"),
+            &ph.kind,
+            ph.token.as_ref(),
+            ph.name.as_ref(),
+            ph.value.as_ref(),
+            ph.headers.as_ref(),
+        )?;
+    }
+    Ok(())
+}
+
+/// Apply pre-validated network options to the builder. Panics are impossible
+/// for inputs that passed [`validate_network_options`]; on the (unreachable)
+/// invalid path the credential is skipped.
+fn apply_network_options(
+    mut builder: bashkit::BashBuilder,
+    net: &NetworkOptions,
+) -> bashkit::BashBuilder {
+    let allowlist = if net.allow_all.unwrap_or(false) {
+        NetworkAllowlist::allow_all()
+    } else {
+        NetworkAllowlist::new().allow_many(net.allow.iter().flatten().cloned())
+    }
+    .block_private_ips(net.block_private_ips.unwrap_or(true));
+    builder = builder.network(allowlist);
+    for (idx, cred) in net.credentials.iter().flatten().enumerate() {
+        if let Ok(credential) = credential_from_parts(
+            &format!("credentials[{idx}]"),
+            &cred.kind,
+            cred.token.as_ref(),
+            cred.name.as_ref(),
+            cred.value.as_ref(),
+            cred.headers.as_ref(),
+        ) {
+            builder = builder.credential(&cred.pattern, credential);
+        }
+    }
+    for (idx, ph) in net.credential_placeholders.iter().flatten().enumerate() {
+        if let Ok(credential) = credential_from_parts(
+            &format!("credentialPlaceholders[{idx}]"),
+            &ph.kind,
+            ph.token.as_ref(),
+            ph.name.as_ref(),
+            ph.value.as_ref(),
+            ph.headers.as_ref(),
+        ) {
+            builder = builder.credential_placeholder(&ph.env, &ph.pattern, credential);
+        }
+    }
+    builder
+}
+
 /// Options for creating a Bash or BashTool instance.
 #[napi(object)]
 pub struct BashOptions {
@@ -1026,6 +1300,10 @@ pub struct BashOptions {
     /// builtin and injects `BASHKIT_ALLOW_INPROCESS_SQLITE=1` so the
     /// runtime gate is satisfied. Defaults to `false`.
     pub sqlite: Option<bool>,
+    /// Outbound network configuration. When set, enables `curl`/`wget`
+    /// restricted to the configured allowlist, with optional transparent
+    /// credential injection. Omitted = network disabled.
+    pub network: Option<NetworkOptions>,
 }
 
 #[napi(object)]
@@ -1058,6 +1336,7 @@ fn default_opts() -> BashOptions {
         python: None,
         external_functions: None,
         sqlite: None,
+        network: None,
     }
 }
 
@@ -1123,6 +1402,8 @@ struct SharedState {
     allowed_mount_paths: Option<Vec<String>>,
     python: bool,
     sqlite: bool,
+    /// Validated network configuration (see [`validate_network_options`]).
+    network: Option<NetworkOptions>,
     external_functions: Vec<String>,
     external_handler: Option<ExternalHandlerArc>,
     /// Host-owned mutable registry of custom builtins. The same handle is
@@ -1345,26 +1626,30 @@ impl Bash {
     /// Register a JS callback as a custom bash builtin.
     ///
     /// The callback receives a JSON-serialized `BuiltinContext`
-    /// (`{name, argv, stdin, env, cwd}`) and returns the stdout to emit —
-    /// either as a string (sync) or a `Promise<string>` (async). Exceptions
-    /// surface as stderr with exit code 1.
+    /// (`{name, argv, stdin, env, cwd}`) plus a native VFS handle, and
+    /// returns the stdout to emit — either as a string (sync) or a
+    /// `Promise<string>` (async). Exceptions surface as stderr with exit
+    /// code 1. The TS wrapper adapts `(json, fsHandle)` into a single
+    /// `BuiltinContext` object with a live `fs` accessor.
     ///
     /// Unlike `customBuiltins` at construction time, this can be called at
     /// any point in the instance's lifetime — the interpreter consults the
     /// shared registry on every dispatch, so subsequent `execute*()` calls
     /// pick up the new builtin without rebuilding the interpreter or
     /// disturbing the VFS.
-    #[napi(ts_args_type = "name: string, callback: (request: string) => Promise<string>")]
+    #[napi(
+        ts_args_type = "name: string, callback: (requestPair: [string, unknown]) => Promise<string>"
+    )]
     pub fn add_builtin(
         &self,
         name: String,
         callback: napi::bindgen_prelude::Function<
-            (String,),
+            (String, External<NativeFileSystemState>),
             napi::bindgen_prelude::Promise<String>,
         >,
     ) -> napi::Result<()> {
         let tsfn: BuiltinTsfn = callback
-            .build_threadsafe_function::<(String,)>()
+            .build_threadsafe_function::<(String, External<NativeFileSystemState>)>()
             .weak::<true>()
             .build()?;
         self.state.host_registry.insert(
@@ -1753,6 +2038,17 @@ impl Bash {
             self.state.clone(),
         )))
     }
+
+    /// Capture a lightweight snapshot of shell state (variables, env, cwd,
+    /// arrays, aliases, traps) for inspection. Function definitions are
+    /// omitted — use `snapshot()` for full state capture/restore.
+    #[napi]
+    pub fn shell_state(&self) -> napi::Result<ShellState> {
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            Ok(shell_state_to_js(bash.shell_state_view()))
+        })
+    }
 }
 
 // ============================================================================
@@ -1911,17 +2207,19 @@ impl BashTool {
 
     /// Register a JS callback as a custom bash builtin.
     /// See [`Bash::add_builtin`] for semantics.
-    #[napi(ts_args_type = "name: string, callback: (request: string) => Promise<string>")]
+    #[napi(
+        ts_args_type = "name: string, callback: (requestPair: [string, unknown]) => Promise<string>"
+    )]
     pub fn add_builtin(
         &self,
         name: String,
         callback: napi::bindgen_prelude::Function<
-            (String,),
+            (String, External<NativeFileSystemState>),
             napi::bindgen_prelude::Promise<String>,
         >,
     ) -> napi::Result<()> {
         let tsfn: BuiltinTsfn = callback
-            .build_threadsafe_function::<(String,)>()
+            .build_threadsafe_function::<(String, External<NativeFileSystemState>)>()
             .weak::<true>()
             .build()?;
         self.state.host_registry.insert(
@@ -2349,6 +2647,17 @@ impl BashTool {
             self.state.clone(),
         )))
     }
+
+    /// Capture a lightweight snapshot of shell state (variables, env, cwd,
+    /// arrays, aliases, traps) for inspection. Function definitions are
+    /// omitted — use `snapshot()` for full state capture/restore.
+    #[napi]
+    pub fn shell_state(&self) -> napi::Result<ShellState> {
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            Ok(shell_state_to_js(bash.shell_state_view()))
+        })
+    }
 }
 
 // ============================================================================
@@ -2381,10 +2690,13 @@ type ToolTsfn = napi::threadsafe_function::ThreadsafeFunction<
 /// the TSFN return is uniformly `Promise<String>` regardless of whether the
 /// user's callback was sync or async. Both branches resolve via the same
 /// `.await` on the returned `Promise<String>` future.
+///
+/// Args: the JSON-serialized context string plus an opaque native handle to
+/// the interpreter's live VFS (wrapped by the TS dispatcher into `ctx.fs`).
 type BuiltinTsfn = napi::threadsafe_function::ThreadsafeFunction<
-    (String,),
+    (String, External<NativeFileSystemState>),
     napi::bindgen_prelude::Promise<String>,
-    (String,),
+    (String, External<NativeFileSystemState>),
     napi::Status,
     false,
     true,
@@ -2393,7 +2705,8 @@ type BuiltinTsfn = napi::threadsafe_function::ThreadsafeFunction<
 /// Adapts a JS callback into a bashkit [`Builtin`].
 ///
 /// The callback receives a JSON string `{"name", "argv", "stdin", "env", "cwd"}`
-/// and resolves with the stdout to emit. Exceptions/rejections surface as
+/// plus a native VFS handle (surfaced to user code as `ctx.fs`), and resolves
+/// with the stdout to emit. Exceptions/rejections surface as
 /// stderr + exit-code-1 (real-shell semantics).
 struct JsCustomBuiltinAdapter {
     name: String,
@@ -2432,9 +2745,14 @@ impl Builtin for JsCustomBuiltinAdapter {
             .await
             .map_err(|e| bashkit::Error::Execution(format!("{}: semaphore: {}", self.name, e)))?;
 
+        // Wrap the interpreter's live VFS as a `Static` handle so the JS
+        // callback reads and writes the same filesystem without re-locking
+        // the interpreter (mirrors the Python binding's `BuiltinContext.fs`).
+        let fs_handle = External::new(NativeFileSystemState::from_static(ctx.fs.clone()));
+
         // Two-step await: first call_async returns the `Promise<String>`
         // handle from JS, then awaiting the Promise resolves to its value.
-        let promise = match self.callback.call_async((request_str,)).await {
+        let promise = match self.callback.call_async((request_str, fs_handle)).await {
             Ok(p) => p,
             Err(e) => return Ok(RustExecResult::err(format!("{}\n", e), 1)),
         };
@@ -2860,6 +3178,12 @@ fn build_bash_from_state(state: &SharedState, files: Option<&HashMap<String, Str
         builder = builder.env("BASHKIT_ALLOW_INPROCESS_SQLITE", "1");
     }
 
+    // Enable outbound network (curl/wget). Options were validated at
+    // construction time, so application here is infallible.
+    if let Some(ref network) = state.network {
+        builder = apply_network_options(builder, network);
+    }
+
     // Attach the host-owned builtin registry. Entries inserted via JS
     // `addBuiltin()` are visible to the running interpreter without rebuilding.
     builder = builder.builtin_registry(state.host_registry.clone());
@@ -2877,6 +3201,10 @@ fn shared_state_from_opts(
     let ext_fns = opts.external_functions.clone().unwrap_or_default();
     let mounts = opts.mounts.clone();
     let allowed_mount_paths = opts.allowed_mount_paths.clone();
+    if let Some(ref network) = opts.network {
+        validate_network_options(network)?;
+    }
+    let network = opts.network.clone();
     // A single registry handle threaded through the tmp + final SharedState
     // *and* the built interpreter — all observe the same underlying storage.
     let host_registry = BuiltinRegistry::new();
@@ -2912,6 +3240,7 @@ fn shared_state_from_opts(
         allowed_mount_paths: allowed_mount_paths.clone(),
         python: py,
         sqlite: sql,
+        network: network.clone(),
         external_functions: ext_fns.clone(),
         external_handler: external_handler.clone(),
         host_registry: host_registry.clone(),
@@ -2960,6 +3289,7 @@ fn shared_state_from_opts(
         allowed_mount_paths,
         python: py,
         sqlite: sql,
+        network,
         external_functions: ext_fns,
         external_handler,
         host_registry,
