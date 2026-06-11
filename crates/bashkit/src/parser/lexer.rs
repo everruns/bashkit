@@ -20,6 +20,7 @@ const DEFAULT_MAX_SUBST_DEPTH: usize = 50;
 
 // Important decision: markers preserve quoted segments only until expansion.
 // They let later unquoted continuations split without splitting the quoted prefix.
+// Marker insertion is one-pass, never repeated String::insert, to avoid parser DoS.
 const QUOTED_SEGMENT_START: char = '\x01';
 const QUOTED_SEGMENT_END: char = '\x02';
 
@@ -1149,6 +1150,39 @@ impl<'a> Lexer<'a> {
         flags
     }
 
+    /// Add quote markers in one rebuild pass. Empty ranges carry no protected
+    /// bytes, and adjacent quoted ranges are equivalent to one quoted span.
+    fn apply_quote_markers(content: &mut String, mut ranges: Vec<(usize, usize)>) {
+        ranges.retain(|(start, end)| start < end);
+        if ranges.is_empty() {
+            return;
+        }
+        ranges.sort_unstable();
+
+        let mut merged: Vec<(usize, usize)> = Vec::with_capacity(ranges.len());
+        for (start, end) in ranges {
+            if let Some((_, last_end)) = merged.last_mut()
+                && start <= *last_end
+            {
+                *last_end = (*last_end).max(end);
+                continue;
+            }
+            merged.push((start, end));
+        }
+
+        let mut marked = String::with_capacity(content.len() + merged.len() * 2);
+        let mut cursor = 0;
+        for (start, end) in merged {
+            marked.push_str(&content[cursor..start]);
+            marked.push(QUOTED_SEGMENT_START);
+            marked.push_str(&content[start..end]);
+            marked.push(QUOTED_SEGMENT_END);
+            cursor = end;
+        }
+        marked.push_str(&content[cursor..]);
+        *content = marked;
+    }
+
     /// Read ANSI-C quoted content ($'...').
     /// Opening $' already consumed. Returns the resolved string.
     fn read_dollar_single_quoted_content(&mut self) -> String {
@@ -1409,16 +1443,9 @@ impl<'a> Lexer<'a> {
             if flags.has_unquoted_expansion {
                 let mut ranges = flags.quoted_ranges;
                 ranges.push((0, quoted_prefix_len));
-                // Process from highest byte offset to lowest so each insertion
-                // does not shift the byte positions of ranges not yet processed.
-                // The original push order has the prefix range last, so .rev()
-                // would incorrectly process it first and invalidate multibyte
-                // char boundaries for inner ranges.
-                ranges.sort_unstable_by(|a, b| b.1.cmp(&a.1).then(b.0.cmp(&a.0)));
-                for (start, end) in ranges {
-                    content.insert(end, QUOTED_SEGMENT_END);
-                    content.insert(start, QUOTED_SEGMENT_START);
-                }
+                // Build marker-delimited quoted spans in one pass so hostile
+                // many-continuation words cannot trigger quadratic insertion work.
+                Self::apply_quote_markers(&mut content, ranges);
                 return Some(Token::Word(content));
             }
             if has_quoted_expansion && flags.has_unquoted_glob {
@@ -2016,6 +2043,22 @@ mod tests {
         assert_eq!(
             lexer.next_token(),
             Some(Token::QuotedWord("hello world".to_string()))
+        );
+        assert_eq!(lexer.next_token(), None);
+    }
+
+    #[test]
+    fn test_mixed_quote_empty_continuations_do_not_emit_quadratic_markers() {
+        let mut script = String::from("\"a\"");
+        for _ in 0..512 {
+            script.push_str("\"\"");
+        }
+        script.push_str("$x");
+
+        let mut lexer = Lexer::new(&script);
+        assert_eq!(
+            lexer.next_token(),
+            Some(Token::Word("\x01a\x02$x".to_string()))
         );
         assert_eq!(lexer.next_token(), None);
     }
