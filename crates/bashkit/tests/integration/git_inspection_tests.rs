@@ -433,10 +433,7 @@ mod grep {
             .await
             .unwrap();
 
-        let result = bash
-            .exec("cd /repo && git grep secret")
-            .await
-            .unwrap();
+        let result = bash.exec("cd /repo && git grep secret").await.unwrap();
 
         assert!(!result.stdout.contains("outside secret"));
     }
