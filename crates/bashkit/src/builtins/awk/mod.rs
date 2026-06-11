@@ -695,26 +695,8 @@ impl Builtin for Awk {
 }
 
 impl Awk {
-    /// Flush buffered file outputs to VFS.
-    async fn flush_file_outputs(interp: &AwkInterpreter, ctx: &Context<'_>) -> Result<()> {
-        // Truncate mode: write entire buffer as file content
-        for (path, content) in &interp.file_outputs {
-            let path = if path.starts_with('/') {
-                std::path::PathBuf::from(path)
-            } else {
-                ctx.cwd.join(path)
-            };
-            ctx.fs.write_file(&path, content.as_bytes()).await?;
-        }
-        // Append mode: append buffer to existing file (or create)
-        for (path, content) in &interp.file_appends {
-            let path = if path.starts_with('/') {
-                std::path::PathBuf::from(path)
-            } else {
-                ctx.cwd.join(path)
-            };
-            ctx.fs.append_file(&path, content.as_bytes()).await?;
-        }
+    /// AWK redirection streams through VFS as output is produced.
+    async fn flush_file_outputs(_interp: &AwkInterpreter, _ctx: &Context<'_>) -> Result<()> {
         Ok(())
     }
 }

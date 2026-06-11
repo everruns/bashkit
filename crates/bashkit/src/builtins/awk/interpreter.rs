@@ -1,6 +1,6 @@
 //! AWK interpreter - executes a parsed `AwkProgram`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -48,17 +48,12 @@ pub(super) struct AwkInterpreter {
     pub(super) functions: HashMap<String, AwkFunctionDef>,
     /// Current function call depth for recursion limiting
     call_depth: usize,
-    /// Buffered file outputs for `>` redirection (path -> content).
-    /// Truncate mode: first write creates entry, subsequent writes append to buffer.
-    /// Flushed to VFS after execution completes.
-    pub(super) file_outputs: HashMap<String, String>,
-    /// Buffered file outputs for `>>` redirection (path -> content).
-    /// Append mode: content is appended to existing file on flush.
-    pub(super) file_appends: HashMap<String, String>,
-    /// Running byte total across stdout, stderr, and buffered file outputs.
-    /// Keep this O(1): recomputing from redirect maps on every write is quadratic
-    /// for attacker-controlled scripts that print tiny records to many paths.
-    total_output_bytes: usize,
+    /// Paths already seen as `>`/`>>` redirect targets in this AWK run.
+    /// First write truncates (for `>`); later writes stream as appends. Also
+    /// serves as the distinct-target set for the output-target DoS guard.
+    pub(super) file_truncates: HashSet<String>,
+    /// Total bytes streamed to real file redirects, excluding discarded devices.
+    redirected_file_output_bytes: usize,
     /// Cached file inputs for `getline var < file` redirection.
     /// Maps normalized resolved path -> (lines, current_position).
     file_inputs: HashMap<String, (Vec<String>, usize)>,
@@ -85,9 +80,8 @@ impl AwkInterpreter {
             input_lines: Vec::new(),
             line_index: 0,
             functions: HashMap::new(),
-            file_outputs: HashMap::new(),
-            file_appends: HashMap::new(),
-            total_output_bytes: 0,
+            file_truncates: HashSet::new(),
+            redirected_file_output_bytes: 0,
             file_inputs: HashMap::new(),
             file_input_bytes: 0,
             call_depth: 0,
@@ -999,20 +993,18 @@ impl AwkInterpreter {
         Ok(result)
     }
 
+    /// Total bytes accounted across all output streams (O(1): stdout/stderr
+    /// lengths plus the running streamed-redirect counter).
+    fn total_output_bytes(&self) -> usize {
+        self.output.len() + self.stderr_output.len() + self.redirected_file_output_bytes
+    }
+
     fn has_output_capacity(&self, len: usize) -> bool {
-        len <= MAX_AWK_OUTPUT_BYTES.saturating_sub(self.total_output_bytes)
+        len <= MAX_AWK_OUTPUT_BYTES.saturating_sub(self.total_output_bytes())
     }
 
-    fn output_target_count(&self) -> usize {
-        self.file_outputs.len() + self.file_appends.len()
-    }
-
-    fn is_new_output_target(&self, path: &str) -> bool {
-        !self.file_outputs.contains_key(path) && !self.file_appends.contains_key(path)
-    }
-
-    /// Write text to stdout buffer or to a file output buffer based on the target.
-    /// Returns `false` if the write would exceed output resource limits.
+    /// Stream text to stdout, stderr, or the VFS-backed redirect target.
+    /// Returns `false` if output limits or VFS validation reject the write.
     fn write_output(&mut self, text: &str, target: &Option<AwkOutputTarget>) -> bool {
         if !self.has_output_capacity(text.len()) {
             self.stderr_output
@@ -1020,32 +1012,92 @@ impl AwkInterpreter {
             return false;
         }
         match target {
-            None => self.output.push_str(text),
+            None => {
+                self.output.push_str(text);
+                true
+            }
             Some(AwkOutputTarget::Truncate(expr)) | Some(AwkOutputTarget::Append(expr)) => {
                 let path = self.eval_expr(expr).as_string();
-                // Intercept /dev/stderr and /dev/stdout — route to streams, not VFS
-                if path == "/dev/stderr" {
+                // Intercept special devices before VFS work so /dev/null never buffers.
+                if path == "/dev/null" {
+                    true
+                } else if path == "/dev/stderr" {
                     self.stderr_output.push_str(text);
+                    true
                 } else if path == "/dev/stdout" {
                     self.output.push_str(text);
+                    true
                 } else {
-                    if self.is_new_output_target(&path)
-                        && self.output_target_count() >= MAX_AWK_OUTPUT_TARGETS
-                    {
-                        self.stderr_output
-                            .push_str("awk: too many output redirection targets\n");
-                        return false;
-                    }
-                    if matches!(target, Some(AwkOutputTarget::Append(_))) {
-                        self.file_appends.entry(path).or_default().push_str(text);
-                    } else {
-                        self.file_outputs.entry(path).or_default().push_str(text);
-                    }
+                    let append = matches!(target, Some(AwkOutputTarget::Append(_)));
+                    self.write_file_output(&path, text, append)
                 }
             }
         }
-        self.total_output_bytes += text.len();
-        true
+    }
+
+    /// Write redirected output immediately through the VFS so sandbox quotas are
+    /// enforced during AWK execution instead of after unbounded buffering.
+    fn write_file_output(&mut self, path: &str, text: &str, append: bool) -> bool {
+        let resolved = if path.starts_with('/') {
+            PathBuf::from(path)
+        } else {
+            self.cwd.join(path)
+        };
+        let key = resolved.to_string_lossy().into_owned();
+        // Bound the number of distinct redirect targets (DoS guard, parity with
+        // the previous buffered implementation). file_truncates doubles as the
+        // distinct-target set, so reject new targets before inserting them.
+        if !self.file_truncates.contains(&key)
+            && self.file_truncates.len() >= MAX_AWK_OUTPUT_TARGETS
+        {
+            self.stderr_output
+                .push_str("awk: too many output redirection targets\n");
+            return false;
+        }
+        let Some(fs) = &self.fs else {
+            self.stderr_output
+                .push_str("awk: no filesystem available\n");
+            return false;
+        };
+        let fs = fs.clone();
+        let bytes = text.as_bytes().to_vec();
+        // First write to a path truncates (for `>`); later writes append. `>>`
+        // always appends. insert() returns false when the path was already seen.
+        let first_write = self.file_truncates.insert(key);
+        let append = append || !first_write;
+
+        let resolved_for_thread = resolved.clone();
+        let result = std::thread::spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async move {
+                    if append {
+                        fs.append_file(&resolved_for_thread, &bytes).await
+                    } else {
+                        fs.write_file(&resolved_for_thread, &bytes).await
+                    }
+                })
+        })
+        .join();
+
+        match result {
+            Ok(Ok(())) => {
+                self.redirected_file_output_bytes += text.len();
+                true
+            }
+            Ok(Err(e)) => {
+                self.stderr_output
+                    .push_str(&format!("awk: cannot write {path}: {e}\n"));
+                false
+            }
+            Err(_) => {
+                self.stderr_output
+                    .push_str(&format!("awk: cannot write {path}: write worker failed\n"));
+                false
+            }
+        }
     }
 
     /// Execute action. Returns flow control signal.
