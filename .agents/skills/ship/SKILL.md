@@ -45,7 +45,7 @@ Review the changes and update project artifacts where applicable. Skip items tha
 1. **Specs** (`specs/`): if the change adds/modifies behavior covered by a spec, update the relevant spec file to stay in sync
 2. **Threat model** (`specs/threat-model.md`): if the change introduces new attack surfaces, external inputs, authentication/authorization changes, or data handling — add or update threat entries using the `TM-<CATEGORY>-<NNN>` format and add `// THREAT[TM-XXX-NNN]` code comments at mitigation points
 3. **AGENTS.md**: if the change adds new specs, commands, or modifies development workflows — update the relevant section
-4. **Implementation status** (`specs/implementation-status.md`): if feature status changed, update the status table
+4. **Limitations** (`specs/limitations.md`): if a limitation was added or lifted, update the table; if builtins changed, run `just regen-builtins` and commit the JSON
 5. **Documentation** (`crates/bashkit/docs/`): if the change affects public APIs, tools, or features — update the relevant guide markdown files
 
 ### Phase 3b: Code Simplification

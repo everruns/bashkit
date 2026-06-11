@@ -33,7 +33,7 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 | parallel-execution | Threading model, Arc usage |
 | documentation | Rustdoc guides, embedded markdown |
 | release-process | Version tagging, crates.io + PyPI + npm publishing |
-| implementation-status | Feature status, test coverage, limitations, POSIX compliance |
+| limitations | Negative spec: intentional gaps (L-* IDs), partial features, POSIX stance |
 | tool-contract | Public LLM Tool trait contract |
 | git-support | Sandboxed git operations on VFS |
 | python-builtin | Embedded Python via Monty, security, resource limits |

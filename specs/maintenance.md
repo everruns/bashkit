@@ -55,7 +55,7 @@ dependency rot, or security gaps ship in a release.
 
 - All tests pass
 - No test gaps for recently added features
-- Test counts in `implementation-status.md` match reality
+- `builtins-drift` workflow green (generated `specs/status/builtins.json` in sync)
 - Bash compatibility — no new regressions against real bash
 - Coverage reviewed — no major uncovered paths
 
@@ -81,7 +81,7 @@ dependency rot, or security gaps ship in a release.
 ### Specs
 
 - Each spec status reflects reality
-- `implementation-status.md` feature tables match code
+- `limitations.md` rows still true (lifted limitations removed)
 - No orphaned TODOs in specs that are now resolved
 - New features have spec entries
 
@@ -212,5 +212,5 @@ Use `/maintain` skill to execute this checklist interactively.
 ## References
 
 - `specs/release-process.md` — release workflow
-- `specs/implementation-status.md` — feature status
+- `specs/limitations.md` — negative spec (intentional gaps, partial features)
 - `specs/threat-model.md` — threat model

@@ -10,7 +10,7 @@ Multi-layer testing strategy:
 4. **Comparison tests** - Direct comparison with real bash
 5. **Differential fuzzing** - Property-based testing against real bash
 
-For current test counts and pass rates, see `specs/implementation-status.md`.
+For current test counts and pass rates, see CI (`bash_spec_tests`).
 For run commands, see AGENTS.md "Local Dev" and `.github/workflows/ci.yml`.
 
 ## Spec Test Framework
@@ -86,7 +86,7 @@ tests via `cargo llvm-cov`.
 2. Run `just check-bash-compat` to verify expected output matches real bash
 3. Unimplemented feature → `### skip: reason`; intentional difference →
    `### bash_diff: reason`
-4. Update `specs/implementation-status.md` for skipped tests
+4. Record the limitation in `specs/limitations.md` (skip reason = evidence)
 
 ## Comparison Testing
 

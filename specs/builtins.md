@@ -4,7 +4,7 @@
 
 Bashkit provides built-in commands for script execution in a virtual environment.
 All builtins operate on the virtual filesystem. For the complete list of 160
-builtins and per-command details, see `specs/implementation-status.md`.
+builtins, see the generated `specs/status/builtins.json`; for known gaps, `specs/limitations.md`.
 
 ### Standard Flags
 
@@ -176,7 +176,7 @@ macro in `interpreter/mod.rs`. To add a new one:
 2. Add `mod mycommand;` and `pub use mycommand::MyCommand;` in `builtins/mod.rs`
 3. Add one line to the `register_builtins!` table in `interpreter/mod.rs`
 4. Add spec tests in `tests/spec_cases/`
-5. Update `specs/implementation-status.md`
+5. Run `just regen-builtins`; record any gaps in `specs/limitations.md`
 
 ### Network Builtins
 

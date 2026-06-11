@@ -137,4 +137,4 @@ only with the `interactive` feature: `cargo test -p bashkit-cli`
 
 - `specs/architecture.md` - Core interpreter architecture
 - `specs/builtins.md` - Builtin command reference
-- `specs/implementation-status.md` - Feature status
+- `specs/limitations.md` - Intentional gaps and partial features
