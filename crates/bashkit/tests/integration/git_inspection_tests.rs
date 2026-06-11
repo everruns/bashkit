@@ -418,4 +418,26 @@ mod grep {
         assert_ne!(result.exit_code, 0);
         assert!(!result.stdout.contains("outside secret"));
     }
+
+    #[tokio::test]
+    async fn grep_ignores_injected_tracked_entry_outside_repo() {
+        let mut bash = create_git_bash();
+        setup_repo(&mut bash).await;
+        bash.exec(r#"echo "outside secret" > /secret.txt"#)
+            .await
+            .unwrap();
+
+        // Inject a traversal path into .git/tracked — simulates a malicious
+        // or corrupted tracked-file list that could otherwise escape the repo.
+        bash.exec(r#"echo "../secret.txt" >> /repo/.git/tracked"#)
+            .await
+            .unwrap();
+
+        let result = bash
+            .exec("cd /repo && git grep secret")
+            .await
+            .unwrap();
+
+        assert!(!result.stdout.contains("outside secret"));
+    }
 }

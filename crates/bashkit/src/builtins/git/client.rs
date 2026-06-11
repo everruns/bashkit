@@ -1079,11 +1079,18 @@ impl GitClient {
     ///
     /// Git inspection commands must never let absolute paths or `..` escape the
     /// repository root. The VFS normalizes traversal when reading, so reject it
-    /// before constructing any candidate path.
+    /// before constructing any candidate path. Control characters are also
+    /// rejected up front to prevent terminal-control / multi-line error output.
     fn validate_repo_pathspec(pathspec: &str) -> Result<PathBuf> {
         if pathspec.is_empty() {
             return Err(Error::Internal(
                 "fatal: empty pathspec is outside repository".to_string(),
+            ));
+        }
+        // Reject control characters before they appear in any error string.
+        if pathspec.chars().any(|c| c.is_control()) {
+            return Err(Error::Internal(
+                "fatal: pathspec contains invalid characters".to_string(),
             ));
         }
         let path = Path::new(pathspec);
@@ -1650,7 +1657,15 @@ impl GitClient {
 
         // Search only tracked paths inside the repository. Explicit pathspecs
         // filter tracked files; they are never read directly from the VFS.
-        let tracked_files = self.ls_files(fs, repo_path).await?;
+        // Also validate every entry from ls_files() because .git/tracked and
+        // .git/index are writable inside the repo and could contain injected
+        // paths like ../secret.txt that would otherwise escape the boundary.
+        let tracked_files: Vec<String> = self
+            .ls_files(fs, repo_path)
+            .await?
+            .into_iter()
+            .filter(|f| Self::validate_repo_pathspec(f).is_ok())
+            .collect();
         let files = if paths.is_empty() {
             tracked_files
         } else {
