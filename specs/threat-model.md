@@ -261,7 +261,6 @@ max_function_depth: 100,      // Runtime recursion (TM-DOS-020, TM-DOS-021)
 max_ast_depth: 100,           // Parser recursion (TM-DOS-022)
 // TM-DOS-021: Child parsers in command/process substitution inherit remaining
 // depth budget and fuel from parent parser (parser/mod.rs lines 1553, 1670)
-<<<<<<< HEAD
 // TM-DOS-026: Arithmetic evaluator tracks recursion depth, capped at 50
 // (interpreter/mod.rs MAX_ARITHMETIC_DEPTH)
 // TM-DOS-026: Arithmetic evaluator tracks recursion depth, capped at 50.
@@ -1401,6 +1400,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | TM-DOS-091 | SQLite `.dump` cumulative output bypass | `.dump` built the full schema+rows string before checking `max_output_bytes`; an attacker controlling many tables/rows could cause memory to grow far beyond the configured output cap | `bounded_append()` helper enforces the cap after each schema line and each INSERT row; `dispatch()` receives the *remaining* budget (`max_output_bytes - stdout.len()`) from `run_statements` — **FIXED** via #1869 |
 | TM-DOS-092 | Subshell snapshot amplification | Deeply nested `( ... )` keeps CoW state snapshots and call-stack clones alive | `max_subshell_depth` counter (default 32) bounds live explicit subshell snapshots | **MITIGATED** |
 | TM-DOS-093 | jq unbounded generator OOM/hang | `jq -n 'repeat(1)'` / `range(0;1e18)` — the jaq result loop appended every value to an in-memory string with no byte/value/deadline cap; jaq's iterator is synchronous so the async execution timeout cannot preempt it. jq is a core builtin (no opt-in gate) | Cap accumulated output at the caller's `max_stdout_bytes` and poll `ExecutionDeadline::is_expired()` every 4096 values, aborting with a clean error (`builtins/jq/mod.rs`) — **FIXED** |
+| TM-DOS-094 | Persistent command history memory DoS | Long-lived Bash instances can retain, serialize, and list unbounded command history across many `exec()` calls | `ExecutionLimits` caps history entries, retained history bytes, and history output bytes; persisted saves append deltas unless compaction is required — **FIXED** |
 
 ### Accepted (Low Priority)
 
@@ -1434,6 +1434,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Execution timeout (30s) | TM-DOS-023 | `limits.rs` | Yes |
 | Builtin output pre-allocation caps | TM-DOS-058, TM-DOS-090 | `limits.rs`, `builtins/shuf.rs` | Yes |
 | Persistent custom fd cap | TM-DOS-063 | `limits.rs`, `interpreter/mod.rs` | Yes |
+| Command history caps | TM-DOS-094 | `limits.rs`, `interpreter/mod.rs`, `builtins/environ.rs` | Yes |
 | Virtual filesystem | TM-ESC-001, TM-ESC-003 | `fs/memory.rs` | Yes |
 | Filesystem limits | TM-DOS-005 to TM-DOS-010, TM-DOS-014 | `fs/limits.rs` | Yes |
 | Path depth limit (100) | TM-DOS-012 | `fs/limits.rs` | Yes |
@@ -1532,6 +1533,9 @@ ExecutionLimits::new()
     .max_input_bytes(10_000_000)       // TM-DOS-001 (10MB)
     .max_ast_depth(100)                // TM-DOS-022 (also inherited by child parsers: TM-DOS-021)
     .max_parser_operations(100_000)    // TM-DOS-024 (also inherited by child parsers: TM-DOS-021)
+    .max_history_entries(1_000)        // TM-DOS-094
+    .max_history_bytes(1_048_576)      // TM-DOS-094
+    .max_history_output_bytes(1_048_576) // TM-DOS-094
 // Note: MAX_ARITHMETIC_DEPTH (50) is a compile-time constant in interpreter (TM-DOS-026)
 // Note: MAX_AWK_PARSER_DEPTH (100) is a compile-time constant in builtins/awk.rs (TM-DOS-027)
 // Note: MAX_JQ_JSON_DEPTH (100) is a compile-time constant in builtins/jq/ (TM-DOS-027)

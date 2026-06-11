@@ -248,3 +248,114 @@ async fn history_does_not_record_blank_lines() {
     let lines: Vec<&str> = result.stdout.lines().collect();
     assert_eq!(lines.len(), 1, "should only have one entry: {:?}", lines);
 }
+
+#[tokio::test]
+async fn history_caps_entries_by_execution_limits() {
+    let limits = bashkit::ExecutionLimits::new().max_history_entries(2);
+    let mut bash = Bash::builder().limits(limits).build();
+    bash.exec("echo a").await.unwrap();
+    bash.exec("echo b").await.unwrap();
+    bash.exec("echo c").await.unwrap();
+
+    let result = bash.exec("history").await.unwrap();
+    assert!(
+        !result.stdout.contains("echo a"),
+        "oldest entry should be evicted: {}",
+        result.stdout
+    );
+    assert!(
+        result.stdout.contains("echo b"),
+        "second entry should remain: {}",
+        result.stdout
+    );
+    assert!(
+        result.stdout.contains("echo c"),
+        "newest entry should remain: {}",
+        result.stdout
+    );
+}
+
+#[tokio::test]
+async fn history_caps_retained_bytes() {
+    let limits = bashkit::ExecutionLimits::new().max_history_bytes(22);
+    let mut bash = Bash::builder().limits(limits).build();
+    bash.exec("echo aaaa").await.unwrap();
+    bash.exec("echo bbbb").await.unwrap();
+    bash.exec("echo cccc").await.unwrap();
+
+    let result = bash.exec("history").await.unwrap();
+    assert!(
+        !result.stdout.contains("echo aaaa"),
+        "oldest bytes should be evicted: {}",
+        result.stdout
+    );
+    assert!(
+        !result.stdout.contains("echo bbbb"),
+        "middle bytes should be evicted: {}",
+        result.stdout
+    );
+    assert!(
+        result.stdout.contains("echo cccc"),
+        "newest fitting entry should remain: {}",
+        result.stdout
+    );
+}
+
+#[tokio::test]
+async fn history_load_caps_persisted_entries() {
+    use std::sync::Arc;
+
+    let fs = Arc::new(bashkit::InMemoryFs::new());
+    let history_content = concat!(
+        "1700000000|0|10|/home/user|echo one\n",
+        "1700000001|0|10|/home/user|echo two\n",
+        "1700000002|0|10|/home/user|echo three\n",
+    );
+    fs.mkdir(std::path::Path::new("/home/user"), true)
+        .await
+        .unwrap();
+    fs.write_file(
+        std::path::Path::new("/home/user/.bash_history"),
+        history_content.as_bytes(),
+    )
+    .await
+    .unwrap();
+
+    let limits = bashkit::ExecutionLimits::new().max_history_entries(2);
+    let mut bash = Bash::builder()
+        .fs(fs)
+        .limits(limits)
+        .history_file("/home/user/.bash_history")
+        .build();
+    let result = bash.exec("history").await.unwrap();
+    assert!(
+        !result.stdout.contains("echo one"),
+        "loaded history should be capped: {}",
+        result.stdout
+    );
+    assert!(
+        result.stdout.contains("echo two"),
+        "second persisted entry should remain: {}",
+        result.stdout
+    );
+    assert!(
+        result.stdout.contains("echo three"),
+        "newest persisted entry should remain: {}",
+        result.stdout
+    );
+}
+
+#[tokio::test]
+async fn history_output_is_capped_without_count() {
+    let limits = bashkit::ExecutionLimits::new().max_history_output_bytes(20);
+    let mut bash = Bash::builder().limits(limits).build();
+    bash.exec("echo alpha").await.unwrap();
+    bash.exec("echo beta").await.unwrap();
+
+    let result = bash.exec("history").await.unwrap();
+    assert!(
+        result.stdout.len() <= 20,
+        "history output should be capped: {}",
+        result.stdout
+    );
+}
