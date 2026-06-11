@@ -2,6 +2,9 @@
 
 use async_trait::async_trait;
 
+use super::limits::{
+    EXPAND_MAX_OUTPUT_BYTES as MAX_OUTPUT_BYTES, EXPAND_MAX_TAB_STOP as MAX_TAB_STOP,
+};
 use super::{Builtin, BuiltinHelper, Context, read_text_file, resolve_path};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
@@ -38,10 +41,16 @@ impl Builtin for Expand {
                     if i >= ctx.args.len() {
                         return Ok(Self::err("option requires an argument -- 't'", 1));
                     }
-                    tab_stops = parse_tab_stops(&ctx.args[i]);
+                    tab_stops = match parse_tab_stops(&ctx.args[i]) {
+                        Ok(stops) => stops,
+                        Err(e) => return Ok(Self::err(e, 1)),
+                    };
                 }
                 s if s.starts_with("-t") && s.len() > 2 => {
-                    tab_stops = parse_tab_stops(&s[2..]);
+                    tab_stops = match parse_tab_stops(&s[2..]) {
+                        Ok(stops) => stops,
+                        Err(e) => return Ok(Self::err(e, 1)),
+                    };
                 }
                 _ => files.push(&ctx.args[i]),
             }
@@ -71,9 +80,13 @@ impl Builtin for Expand {
                 if ch == '\t' {
                     let next_stop = next_tab_stop(col, &tab_stops);
                     let spaces = next_stop - col;
-                    for _ in 0..spaces {
-                        output.push(' ');
+                    if output.len().saturating_add(spaces) > MAX_OUTPUT_BYTES {
+                        return Ok(Self::err(
+                            format!("output exceeds byte limit ({MAX_OUTPUT_BYTES})"),
+                            1,
+                        ));
                     }
+                    output.extend(std::iter::repeat_n(' ', spaces));
                     col = next_stop;
                 } else {
                     output.push(ch);
@@ -126,10 +139,15 @@ impl Builtin for Unexpand {
                     if i >= ctx.args.len() {
                         return Ok(Self::err("option requires an argument -- 't'", 1));
                     }
-                    let parsed_tab_stops = parse_tab_stops(&ctx.args[i]);
-                    if parsed_tab_stops.is_empty() {
-                        return Ok(Self::err(format!("invalid tab size: '{}'", ctx.args[i]), 1));
-                    }
+                    let parsed_tab_stops = match parse_tab_stops(&ctx.args[i]) {
+                        Ok(stops) => stops,
+                        Err(_) => {
+                            return Ok(Self::err(
+                                format!("invalid tab size: '{}'", ctx.args[i]),
+                                1,
+                            ));
+                        }
+                    };
                     tab_stops = parsed_tab_stops;
                     all = true; // -t implies -a
                 }
@@ -227,13 +245,22 @@ impl Builtin for Unexpand {
     }
 }
 
-fn parse_tab_stops(s: &str) -> Vec<usize> {
-    s.split(',')
-        .filter_map(|p| p.trim().parse::<usize>().ok())
-        .filter(|&n| n > 0)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .collect()
+fn parse_tab_stops(s: &str) -> std::result::Result<Vec<usize>, String> {
+    let mut stops = Vec::new();
+    for part in s.split(',') {
+        let trimmed = part.trim();
+        let Ok(stop) = trimmed.parse::<usize>() else {
+            return Err(format!("invalid tab size: '{s}'"));
+        };
+        if stop == 0 || stop > MAX_TAB_STOP {
+            return Err(format!("invalid tab size: '{s}'"));
+        }
+        stops.push(stop);
+    }
+    if stops.is_empty() {
+        return Err(format!("invalid tab size: '{s}'"));
+    }
+    Ok(stops)
 }
 
 fn next_tab_stop(col: usize, tab_stops: &[usize]) -> usize {
@@ -320,6 +347,24 @@ mod tests {
         let result = run_expand(&["-t", "4"], Some("\thello")).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "    hello");
+    }
+
+    #[tokio::test]
+    async fn test_expand_rejects_oversized_tab_stop() {
+        let result = run_expand(&["-t", "1000000000"], Some("\thello")).await;
+        assert_eq!(result.exit_code, 1);
+        assert_eq!(result.stderr, "expand: invalid tab size: '1000000000'\n");
+    }
+
+    #[tokio::test]
+    async fn test_expand_rejects_output_amplification_over_cap() {
+        let input = "\t".repeat((MAX_OUTPUT_BYTES / MAX_TAB_STOP) + 1);
+        let result = run_expand(&["-t", &MAX_TAB_STOP.to_string()], Some(&input)).await;
+        assert_eq!(result.exit_code, 1);
+        assert_eq!(
+            result.stderr,
+            format!("expand: output exceeds byte limit ({MAX_OUTPUT_BYTES})\n")
+        );
     }
 
     #[tokio::test]

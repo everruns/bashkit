@@ -33,6 +33,11 @@ pub(crate) const CURL_MAX_REDIRECTS: u32 = 10;
 /// dirs/pushd/popd: max entries on the directory stack.
 pub(crate) const DIRSTACK_MAX_SIZE: usize = 4096;
 
+/// expand/unexpand: max accepted tab stop width.
+pub(crate) const EXPAND_MAX_TAB_STOP: usize = 10_000;
+/// expand: max output bytes per invocation before interpreter-level truncation.
+pub(crate) const EXPAND_MAX_OUTPUT_BYTES: usize = 1_048_576;
+
 /// mktemp: max name-collision retries before giving up.
 pub(crate) const MKTEMP_MAX_ATTEMPTS: usize = 64;
 
