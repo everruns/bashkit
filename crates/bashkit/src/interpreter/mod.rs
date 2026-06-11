@@ -1877,20 +1877,34 @@ impl Interpreter {
     }
 
     fn trim_history_to_limits(&mut self) -> bool {
-        let mut trimmed = false;
-        while self.history.len() > self.limits.max_history_entries
-            || self.history_bytes > self.limits.max_history_bytes
+        // Evict oldest-first. Compute how many leading entries to drop for both
+        // the entry-count and byte budgets, then remove them in a single
+        // `drain` instead of repeated `remove(0)` calls (each of which shifts
+        // the whole vector), so trimming a batch is O(n) rather than O(n*k).
+        let len = self.history.len();
+        let mut drop_count = len.saturating_sub(self.limits.max_history_entries);
+        let mut freed_bytes: usize = self.history[..drop_count]
+            .iter()
+            .map(|e| e.retained_bytes())
+            .sum();
+        while drop_count < len
+            && self.history_bytes.saturating_sub(freed_bytes) > self.limits.max_history_bytes
         {
-            if self.history.is_empty() {
-                self.history_bytes = 0;
-                break;
-            }
-            let removed = self.history.remove(0);
-            self.history_bytes = self.history_bytes.saturating_sub(removed.retained_bytes());
-            self.history_saved_entries = self.history_saved_entries.saturating_sub(1);
-            trimmed = true;
+            freed_bytes = freed_bytes.saturating_add(self.history[drop_count].retained_bytes());
+            drop_count += 1;
         }
-        trimmed
+
+        if drop_count == 0 {
+            return false;
+        }
+
+        self.history.drain(..drop_count);
+        self.history_bytes = self.history_bytes.saturating_sub(freed_bytes);
+        self.history_saved_entries = self.history_saved_entries.saturating_sub(drop_count);
+        if self.history.is_empty() {
+            self.history_bytes = 0;
+        }
+        true
     }
 
     /// Set the VFS path for persisting history.
@@ -1965,16 +1979,27 @@ impl Interpreter {
 
         if self.history_needs_rewrite || self.history_saved_entries > self.history.len() {
             let content = format_history_entries(&self.history);
-            let _ = self.fs.write_file(&path, content.as_bytes()).await;
-            self.history_saved_entries = self.history.len();
-            self.history_needs_rewrite = false;
+            // Only advance persistence accounting when the write succeeds. On a
+            // transient FS error keep `history_needs_rewrite` set so the next
+            // save retries a full rewrite instead of silently dropping deltas.
+            if self.fs.write_file(&path, content.as_bytes()).await.is_ok() {
+                self.history_saved_entries = self.history.len();
+                self.history_needs_rewrite = false;
+            } else {
+                self.history_needs_rewrite = true;
+            }
             return;
         }
 
         if self.history_saved_entries < self.history.len() {
             let content = format_history_entries(&self.history[self.history_saved_entries..]);
-            let _ = self.fs.append_file(&path, content.as_bytes()).await;
-            self.history_saved_entries = self.history.len();
+            if self.fs.append_file(&path, content.as_bytes()).await.is_ok() {
+                self.history_saved_entries = self.history.len();
+            } else {
+                // Append failed: force a full rewrite next time so the missed
+                // delta is not lost.
+                self.history_needs_rewrite = true;
+            }
         }
     }
 

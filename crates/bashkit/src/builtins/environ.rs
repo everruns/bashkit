@@ -304,7 +304,9 @@ impl Builtin for History {
                 .collect::<Vec<_>>();
             entries.reverse();
             for (idx, entry) in entries {
-                append_history_line(&mut output, limits.max_history_output_bytes, idx, entry);
+                if !append_history_line(&mut output, limits.max_history_output_bytes, idx, entry) {
+                    break;
+                }
             }
         } else {
             for (idx, entry) in history
@@ -312,7 +314,9 @@ impl Builtin for History {
                 .enumerate()
                 .filter(|(_, entry)| matches_entry(entry))
             {
-                append_history_line(&mut output, limits.max_history_output_bytes, idx, entry);
+                if !append_history_line(&mut output, limits.max_history_output_bytes, idx, entry) {
+                    break;
+                }
             }
         }
 
@@ -320,22 +324,24 @@ impl Builtin for History {
     }
 }
 
+/// Append one formatted history line. Returns `false` when the line does not
+/// fit within `max_bytes`, signalling the caller to stop so the emitted output
+/// is always a prefix of the full listing (never skipping an earlier entry to
+/// fit a later, shorter one).
 fn append_history_line(
     output: &mut String,
     max_bytes: usize,
     idx: usize,
     entry: &crate::interpreter::HistoryEntry,
-) {
-    if output.len() >= max_bytes {
-        return;
-    }
-
+) -> bool {
     use std::fmt::Write;
     let mut line = String::new();
     let _ = writeln!(line, "  {}  {}", idx + 1, entry.command);
-    if output.len().saturating_add(line.len()) <= max_bytes {
-        output.push_str(&line);
+    if output.len().saturating_add(line.len()) > max_bytes {
+        return false;
     }
+    output.push_str(&line);
+    true
 }
 
 #[cfg(test)]

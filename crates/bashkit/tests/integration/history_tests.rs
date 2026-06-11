@@ -359,3 +359,27 @@ async fn history_output_is_capped_without_count() {
         result.stdout
     );
 }
+
+#[tokio::test]
+async fn history_output_is_a_prefix_when_capped() {
+    // With a tight output cap, once a line does not fit, iteration stops — so
+    // the output is a prefix of the full listing and never skips an earlier
+    // (longer) entry to fit a later (shorter) one.
+    let limits = bashkit::ExecutionLimits::new().max_history_output_bytes(40);
+    let mut bash = Bash::builder().limits(limits).build();
+    bash.exec("echo first-entry-is-deliberately-long-aaaaaaaa")
+        .await
+        .unwrap();
+    bash.exec("echo b").await.unwrap();
+
+    let result = bash.exec("history").await.unwrap();
+    // The oldest entry's line exceeds the cap, so iteration stops there. Under
+    // the old behavior the short "echo b" line would have been appended after
+    // skipping the long one; with prefix semantics it must be absent.
+    assert!(
+        !result.stdout.contains("echo b"),
+        "later short entry must not appear once an earlier entry is skipped: {:?}",
+        result.stdout
+    );
+    assert!(result.stdout.len() <= 40);
+}
