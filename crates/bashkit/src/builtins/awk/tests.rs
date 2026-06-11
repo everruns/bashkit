@@ -1050,6 +1050,30 @@ async fn test_awk_file_redirect_streams_vfs_file_size_limit() {
 }
 
 #[tokio::test]
+async fn test_awk_many_redirected_writes_reuse_single_writer() {
+    // A tight redirect loop streams every line through the one reusable writer
+    // thread (no thread/runtime per write). Verify the appends all land.
+    let fs = Arc::new(InMemoryFs::new());
+    let result = run_awk_with_custom_fs(
+        &[r#"BEGIN { for (i = 0; i < 500; i++) print i >> "/tmp/log" }"#],
+        None,
+        fs.clone(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.exit_code, 0, "stderr: {}", result.stderr);
+    let content = fs
+        .read_file(std::path::Path::new("/tmp/log"))
+        .await
+        .unwrap();
+    let lines = String::from_utf8(content).unwrap();
+    assert_eq!(lines.lines().count(), 500);
+    assert_eq!(lines.lines().next(), Some("0"));
+    assert_eq!(lines.lines().last(), Some("499"));
+}
+
+#[tokio::test]
 async fn test_awk_dev_null_redirect_does_not_count_against_output_limit() {
     // /dev/null is discarded before any AWK-side redirect buffering.
     let result = run_awk(

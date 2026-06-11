@@ -35,6 +35,84 @@ pub(super) enum AwkFlow {
 // - AWK_MAX_GETLINE_CACHED_FILES (distinct files held open by `getline`).
 // - AWK_MAX_GETLINE_FILE_BYTES / AWK_MAX_GETLINE_CACHE_BYTES (retained input bytes).
 
+/// One redirected VFS write, dispatched to the [`VfsWriter`] thread.
+struct WriteJob {
+    path: PathBuf,
+    bytes: Vec<u8>,
+    append: bool,
+    resp: std::sync::mpsc::Sender<crate::error::Result<()>>,
+}
+
+/// A single long-lived OS thread owning one Tokio runtime that serializes
+/// redirected VFS writes.
+///
+/// AWK executes synchronously inside the outer async runtime, so each
+/// redirected write must hop to a thread with its own runtime to call the async
+/// VFS. Spawning a fresh thread + runtime per write would let a tight
+/// `print > file` loop create thousands of threads/runtimes (DoS). Reusing one
+/// writer for the whole run keeps writes incremental (so VFS quotas are still
+/// enforced as they happen) at O(1) threads.
+struct VfsWriter {
+    tx: Option<std::sync::mpsc::Sender<WriteJob>>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl VfsWriter {
+    fn new(fs: Arc<dyn FileSystem>) -> Self {
+        let (tx, rx) = std::sync::mpsc::channel::<WriteJob>();
+        let handle = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("awk vfs writer runtime");
+            runtime.block_on(async move {
+                while let Ok(job) = rx.recv() {
+                    let res = if job.append {
+                        fs.append_file(&job.path, &job.bytes).await
+                    } else {
+                        fs.write_file(&job.path, &job.bytes).await
+                    };
+                    let _ = job.resp.send(res);
+                }
+            });
+        });
+        Self {
+            tx: Some(tx),
+            handle: Some(handle),
+        }
+    }
+
+    /// Perform one write synchronously on the writer thread. Returns the VFS
+    /// result, or `Err(())` if the writer thread is gone.
+    fn write(
+        &self,
+        path: PathBuf,
+        bytes: Vec<u8>,
+        append: bool,
+    ) -> Result<crate::error::Result<()>, ()> {
+        let (resp_tx, resp_rx) = std::sync::mpsc::channel();
+        let job = WriteJob {
+            path,
+            bytes,
+            append,
+            resp: resp_tx,
+        };
+        self.tx.as_ref().ok_or(())?.send(job).map_err(|_| ())?;
+        resp_rx.recv().map_err(|_| ())
+    }
+}
+
+impl Drop for VfsWriter {
+    fn drop(&mut self) {
+        // Drop the sender first so the writer loop's `rx.recv()` returns Err and
+        // the thread exits, then join it to flush any in-flight write cleanly.
+        drop(self.tx.take());
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
 pub(super) struct AwkInterpreter {
     pub(super) state: AwkState,
     pub(super) output: String,
@@ -54,6 +132,9 @@ pub(super) struct AwkInterpreter {
     pub(super) file_truncates: HashSet<String>,
     /// Total bytes streamed to real file redirects, excluding discarded devices.
     redirected_file_output_bytes: usize,
+    /// Single reusable writer thread for redirected VFS writes (lazily started
+    /// on the first redirect). Joined when the interpreter is dropped.
+    vfs_writer: Option<VfsWriter>,
     /// Cached file inputs for `getline var < file` redirection.
     /// Maps normalized resolved path -> (lines, current_position).
     file_inputs: HashMap<String, (Vec<String>, usize)>,
@@ -82,6 +163,7 @@ impl AwkInterpreter {
             functions: HashMap::new(),
             file_truncates: HashSet::new(),
             redirected_file_output_bytes: 0,
+            vfs_writer: None,
             file_inputs: HashMap::new(),
             file_input_bytes: 0,
             call_depth: 0,
@@ -1054,35 +1136,25 @@ impl AwkInterpreter {
                 .push_str("awk: too many output redirection targets\n");
             return false;
         }
-        let Some(fs) = &self.fs else {
-            self.stderr_output
-                .push_str("awk: no filesystem available\n");
-            return false;
+        let fs = match &self.fs {
+            Some(fs) => fs.clone(),
+            None => {
+                self.stderr_output
+                    .push_str("awk: no filesystem available\n");
+                return false;
+            }
         };
-        let fs = fs.clone();
         let bytes = text.as_bytes().to_vec();
         // First write to a path truncates (for `>`); later writes append. `>>`
         // always appends. insert() returns false when the path was already seen.
         let first_write = self.file_truncates.insert(key);
         let append = append || !first_write;
 
-        let resolved_for_thread = resolved.clone();
-        let result = std::thread::spawn(move || {
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .unwrap()
-                .block_on(async move {
-                    if append {
-                        fs.append_file(&resolved_for_thread, &bytes).await
-                    } else {
-                        fs.write_file(&resolved_for_thread, &bytes).await
-                    }
-                })
-        })
-        .join();
-
-        match result {
+        // Start the single reusable writer thread on first use, then dispatch
+        // every redirected write through it (one thread/runtime per AWK run, not
+        // per write).
+        let writer = self.vfs_writer.get_or_insert_with(|| VfsWriter::new(fs));
+        match writer.write(resolved, bytes, append) {
             Ok(Ok(())) => {
                 self.redirected_file_output_bytes += text.len();
                 true
@@ -1092,7 +1164,7 @@ impl AwkInterpreter {
                     .push_str(&format!("awk: cannot write {path}: {e}\n"));
                 false
             }
-            Err(_) => {
+            Err(()) => {
                 self.stderr_output
                     .push_str(&format!("awk: cannot write {path}: write worker failed\n"));
                 false
