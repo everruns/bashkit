@@ -78,13 +78,6 @@ user-id = 4484
 user-login = "hsivonen"
 user-name = "Henri Sivonen"
 
-[[publisher.winnow]]
-version = "1.0.2"
-when = "2026-04-21"
-user-id = 6743
-user-login = "epage"
-user-name = "Ed Page"
-
 [[audits.mozilla.wildcard-audits.unicode-normalization]]
 who = "Manish Goregaokar <manishsmail@gmail.com>"
 criteria = "safe-to-deploy"
