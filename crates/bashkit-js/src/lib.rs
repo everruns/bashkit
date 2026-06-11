@@ -2670,7 +2670,7 @@ impl ScriptedTool {
             let callback = move |args: &ToolArgs| -> Result<String, String> {
                 if in_sync_execute_depth.load(Ordering::SeqCst) > 0 {
                     return Err(format!(
-                        "{}: {}",
+                        "{}: {}\n",
                         tool_name, SYNC_SCRIPTED_TOOL_DEADLOCK_ERROR
                     ));
                 }
@@ -2698,8 +2698,8 @@ impl ScriptedTool {
                             // Sanitize JS callback errors here — don't let exception
                             // details (paths, connection strings, stack traces) leak
                             // into script stderr. Only the generic form passes through.
-                            .map_err(|_| format!("{}: callback failed", tool_name_clone)),
-                        Err(_) => Err(format!("{}: semaphore error", tool_name_clone)),
+                            .map_err(|_| format!("{}: callback failed\n", tool_name_clone)),
+                        Err(_) => Err(format!("{}: semaphore error\n", tool_name_clone)),
                     };
                     let _ = tx.send(result);
                 });
