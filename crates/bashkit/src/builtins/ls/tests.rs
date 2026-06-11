@@ -4,6 +4,7 @@ use super::find::{Find, build_find_exec_commands, parse_find_args};
 use super::glob_match;
 use super::list::Ls;
 use super::rmdir::Rmdir;
+use crate::builtins::limits::FIND_MAX_OUTPUT_BYTES;
 use crate::builtins::{Builtin, Context, ExecutionPlan};
 
 use std::collections::HashMap;
@@ -2617,4 +2618,91 @@ async fn test_find_plan_exec_with_missing_path_returns_status_plan() {
         }
         _ => panic!("expected BatchWithStatus plan"),
     }
+}
+
+// ==================== find output cap tests ====================
+
+#[tokio::test]
+async fn test_find_printf_rejects_oversized_single_entry_output() {
+    let (fs, mut cwd, mut variables) = create_test_ctx().await;
+    let env = HashMap::new();
+
+    fs.write_file(&cwd.join("a.txt"), b"x").await.unwrap();
+
+    // A -printf format that produces more than FIND_MAX_OUTPUT_BYTES for a single entry.
+    let fmt = "x".repeat(FIND_MAX_OUTPUT_BYTES + 1);
+    let args = vec!["-printf".to_string(), fmt];
+    let ctx = Context {
+        args: &args,
+        env: &env,
+        variables: &mut variables,
+        cwd: &mut cwd,
+        fs: fs.clone(),
+        stdin: None,
+        #[cfg(feature = "http_client")]
+        http_client: None,
+        #[cfg(feature = "git")]
+        git_client: None,
+        #[cfg(feature = "ssh")]
+        ssh_client: None,
+        shell: None,
+    };
+
+    let result = Find.execute(ctx).await.unwrap();
+    assert_eq!(
+        result.exit_code, 1,
+        "should fail when printf output exceeds cap"
+    );
+    assert!(
+        result.stderr.contains("find: output size limit exceeded"),
+        "stderr should report the limit with prefix: {}",
+        result.stderr
+    );
+    assert!(
+        result.stdout.len() <= FIND_MAX_OUTPUT_BYTES,
+        "stdout must not exceed cap: len={}",
+        result.stdout.len()
+    );
+}
+
+#[tokio::test]
+async fn test_find_printf_rejects_oversized_aggregate_output() {
+    let (fs, mut cwd, mut variables) = create_test_ctx().await;
+    let env = HashMap::new();
+
+    fs.write_file(&cwd.join("a.txt"), b"x").await.unwrap();
+    fs.write_file(&cwd.join("b.txt"), b"x").await.unwrap();
+
+    // Each entry produces just over half the cap; two entries together exceed it.
+    let half = FIND_MAX_OUTPUT_BYTES / 2 + 1;
+    let fmt = "y".repeat(half);
+    let args = vec!["-printf".to_string(), fmt];
+    let ctx = Context {
+        args: &args,
+        env: &env,
+        variables: &mut variables,
+        cwd: &mut cwd,
+        fs: fs.clone(),
+        stdin: None,
+        #[cfg(feature = "http_client")]
+        http_client: None,
+        #[cfg(feature = "git")]
+        git_client: None,
+        #[cfg(feature = "ssh")]
+        ssh_client: None,
+        shell: None,
+    };
+
+    let result = Find.execute(ctx).await.unwrap();
+    assert_eq!(result.exit_code, 1, "aggregate output should hit cap");
+    assert!(
+        result.stderr.contains("find: output size limit exceeded"),
+        "stderr should report the limit with prefix: {}",
+        result.stderr
+    );
+    assert!(
+        result.stdout.len() <= FIND_MAX_OUTPUT_BYTES,
+        "stdout must not exceed cap: len={}",
+        result.stdout.len()
+    );
 }
