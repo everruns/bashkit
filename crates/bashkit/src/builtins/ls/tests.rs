@@ -2654,8 +2654,8 @@ async fn test_find_printf_rejects_oversized_single_entry_output() {
         "should fail when printf output exceeds cap"
     );
     assert!(
-        result.stderr.contains("output size limit exceeded") || result.stderr.contains("find:"),
-        "stderr should report the limit: {}",
+        result.stderr.contains("find: output size limit exceeded"),
+        "stderr should report the limit with prefix: {}",
         result.stderr
     );
     assert!(
@@ -2696,8 +2696,8 @@ async fn test_find_printf_rejects_oversized_aggregate_output() {
     let result = Find.execute(ctx).await.unwrap();
     assert_eq!(result.exit_code, 1, "aggregate output should hit cap");
     assert!(
-        result.stderr.contains("output size limit exceeded") || result.stderr.contains("find:"),
-        "stderr should report the limit: {}",
+        result.stderr.contains("find: output size limit exceeded"),
+        "stderr should report the limit with prefix: {}",
         result.stderr
     );
     assert!(
