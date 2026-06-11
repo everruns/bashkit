@@ -6,6 +6,7 @@ use std::path::Path;
 use super::{Builtin, Context, resolve_path};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
+use crate::limits::ExecutionLimits;
 
 /// The tree builtin command.
 ///
@@ -19,6 +20,10 @@ use crate::interpreter::ExecResult;
 ///   --noreport    Suppress directory/file count report
 pub struct Tree;
 
+// `tree` runs as one shell command, so it must enforce its own traversal fuel
+// instead of relying only on the interpreter command counter.
+const DEFAULT_TREE_MAX_VISITED_ENTRIES: usize = 100_000;
+
 struct TreeOptions {
     show_hidden: bool,
     dirs_only: bool,
@@ -27,9 +32,35 @@ struct TreeOptions {
     noreport: bool,
 }
 
+struct TreeBudget {
+    max_visited_entries: usize,
+    visited_entries: usize,
+    max_output_bytes: usize,
+}
+
+enum TreeLimitError {
+    TooManyEntries,
+    OutputTooLarge,
+}
+
+impl TreeLimitError {
+    fn message(&self) -> &'static str {
+        match self {
+            Self::TooManyEntries => "tree: resource limit exceeded: too many entries visited\n",
+            Self::OutputTooLarge => "tree: resource limit exceeded: output too large\n",
+        }
+    }
+}
+
 struct TreeCounts {
     dirs: usize,
     files: usize,
+}
+
+struct TreeState {
+    counts: TreeCounts,
+    budget: TreeBudget,
+    output: String,
 }
 
 #[async_trait]
@@ -112,7 +143,20 @@ impl Builtin for Tree {
             paths.push(".");
         }
 
-        let mut output = String::new();
+        let limits = ctx
+            .execution_extension::<ExecutionLimits>()
+            .cloned()
+            .unwrap_or_default();
+        let budget = TreeBudget {
+            max_visited_entries: limits.max_commands.min(DEFAULT_TREE_MAX_VISITED_ENTRIES),
+            visited_entries: 0,
+            max_output_bytes: limits.max_stdout_bytes,
+        };
+        let mut state = TreeState {
+            counts: TreeCounts { dirs: 0, files: 0 },
+            budget,
+            output: String::new(),
+        };
 
         for path_str in &paths {
             let root = resolve_path(ctx.cwd, path_str);
@@ -127,32 +171,40 @@ impl Builtin for Tree {
                 ));
             }
 
-            output.push_str(path_str);
-            output.push('\n');
+            if let Err(e) =
+                push_output(&mut state, path_str).and_then(|()| push_output(&mut state, "\n"))
+            {
+                return Ok(ExecResult::err(e.message().to_string(), 1));
+            }
 
-            let mut counts = TreeCounts { dirs: 0, files: 0 };
-            build_tree(&ctx, &root, "", &opts, 0, &mut counts, &mut output).await;
+            state.counts = TreeCounts { dirs: 0, files: 0 };
+            if let Err(e) = build_tree(&ctx, &root, "", &opts, 0, &mut state).await {
+                return Ok(ExecResult::err(e.message().to_string(), 1));
+            }
 
             if !opts.noreport {
-                if opts.dirs_only {
-                    output.push_str(&format!(
+                let summary = if opts.dirs_only {
+                    format!(
                         "\n{} director{}\n",
-                        counts.dirs,
-                        if counts.dirs == 1 { "y" } else { "ies" }
-                    ));
+                        state.counts.dirs,
+                        if state.counts.dirs == 1 { "y" } else { "ies" }
+                    )
                 } else {
-                    output.push_str(&format!(
+                    format!(
                         "\n{} director{}, {} file{}\n",
-                        counts.dirs,
-                        if counts.dirs == 1 { "y" } else { "ies" },
-                        counts.files,
-                        if counts.files == 1 { "" } else { "s" }
-                    ));
+                        state.counts.dirs,
+                        if state.counts.dirs == 1 { "y" } else { "ies" },
+                        state.counts.files,
+                        if state.counts.files == 1 { "" } else { "s" }
+                    )
+                };
+                if let Err(e) = push_output(&mut state, &summary) {
+                    return Ok(ExecResult::err(e.message().to_string(), 1));
                 }
             }
         }
 
-        Ok(ExecResult::ok(output))
+        Ok(ExecResult::ok(state.output))
     }
 }
 
@@ -162,20 +214,20 @@ async fn build_tree(
     prefix: &str,
     opts: &TreeOptions,
     depth: usize,
-    counts: &mut TreeCounts,
-    output: &mut String,
-) {
+    state: &mut TreeState,
+) -> std::result::Result<(), TreeLimitError> {
     if let Some(max) = opts.max_depth
         && depth >= max
     {
-        return;
+        return Ok(());
     }
 
     let entries = match ctx.fs.read_dir(dir).await {
         Ok(e) => e,
-        Err(_) => return,
+        Err(_) => return Ok(()),
     };
 
+    let remaining = state.budget.remaining_entries();
     let mut filtered: Vec<_> = entries
         .into_iter()
         .filter(|e| {
@@ -192,7 +244,13 @@ async fn build_tree(
             }
             true
         })
+        .take(remaining.saturating_add(1))
         .collect();
+
+    if filtered.len() > remaining {
+        return Err(TreeLimitError::TooManyEntries);
+    }
+    state.budget.visited_entries += filtered.len();
 
     filtered.sort_by(|a, b| a.name.cmp(&b.name));
 
@@ -205,13 +263,13 @@ async fn build_tree(
             "\u{251c}\u{2500}\u{2500} "
         };
 
-        output.push_str(prefix);
-        output.push_str(connector);
-        output.push_str(&entry.name);
-        output.push('\n');
+        push_output(state, prefix)?;
+        push_output(state, connector)?;
+        push_output(state, &entry.name)?;
+        push_output(state, "\n")?;
 
         if entry.metadata.file_type.is_dir() {
-            counts.dirs += 1;
+            state.counts.dirs += 1;
             let new_prefix = if is_last {
                 format!("{}    ", prefix)
             } else {
@@ -224,14 +282,30 @@ async fn build_tree(
                 &new_prefix,
                 opts,
                 depth + 1,
-                counts,
-                output,
+                state,
             ))
-            .await;
+            .await?;
         } else {
-            counts.files += 1;
+            state.counts.files += 1;
         }
     }
+
+    Ok(())
+}
+
+impl TreeBudget {
+    fn remaining_entries(&self) -> usize {
+        self.max_visited_entries
+            .saturating_sub(self.visited_entries)
+    }
+}
+
+fn push_output(state: &mut TreeState, s: &str) -> std::result::Result<(), TreeLimitError> {
+    if state.output.len().saturating_add(s.len()) > state.budget.max_output_bytes {
+        return Err(TreeLimitError::OutputTooLarge);
+    }
+    state.output.push_str(s);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -432,5 +506,45 @@ mod tests {
         let result = run_tree(&["--bogus"], fs).await;
         assert_eq!(result.exit_code, 1);
         assert!(result.stderr.contains("unrecognized option"));
+    }
+
+    #[tokio::test]
+    async fn test_tree_entry_budget_exceeded() {
+        let fs = Arc::new(InMemoryFs::new()) as Arc<dyn FileSystem>;
+        fs.mkdir(Path::new("/wide"), true).await.unwrap();
+        for i in 0..3 {
+            fs.write_file(Path::new(&format!("/wide/file{i}.txt")), b"x")
+                .await
+                .unwrap();
+        }
+
+        let mut bash = crate::Bash::builder()
+            .fs(fs)
+            .limits(ExecutionLimits::new().max_commands(2))
+            .build();
+        let result = bash.exec("tree /wide").await.expect("tree failed");
+
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stdout.is_empty());
+        assert!(result.stderr.contains("too many entries visited"));
+    }
+
+    #[tokio::test]
+    async fn test_tree_output_budget_exceeded() {
+        let fs = Arc::new(InMemoryFs::new()) as Arc<dyn FileSystem>;
+        fs.mkdir(Path::new("/wide"), true).await.unwrap();
+        fs.write_file(Path::new("/wide/long-name.txt"), b"x")
+            .await
+            .unwrap();
+
+        let mut bash = crate::Bash::builder()
+            .fs(fs)
+            .limits(ExecutionLimits::new().max_stdout_bytes(12))
+            .build();
+        let result = bash.exec("tree /wide").await.expect("tree failed");
+
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stdout.is_empty());
+        assert!(result.stderr.contains("output too large"));
     }
 }
