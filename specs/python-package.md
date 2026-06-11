@@ -293,6 +293,28 @@ Returns dict with `name`, `description`, `args_schema` for LangChain integration
 callback is
 `Callable[[BuiltinContext], str | BuiltinResult | Awaitable[str | BuiltinResult]]`.
 
+`BuiltinContext` exposes `name`, `argv`, `stdin`, `env`, `cwd`, and `fs`. The
+`fs` attribute is a `FileSystem` handle to the interpreter's *live* virtual
+filesystem (same API as `Bash.fs()`), so reads see files created by earlier
+commands and writes are visible to later ones. It wraps the same
+`Arc<dyn FileSystem>` the interpreter uses (mirroring how the embedded
+`python3`/Monty builtin receives `ctx.fs`) and operates on it directly without
+the interpreter lock. Because a custom builtin runs inside `execute_sync`'s
+current-thread `block_on`, `PyFileSystem::with_fs` detects the active runtime
+(`Handle::try_current`) and dispatches `ctx.fs` ops on a throwaway worker thread
+to avoid a nested-runtime panic. Each op on this path spawns a short-lived
+worker thread and runtime, so batching fs work in a callback is cheaper than
+many small ops in a tight loop. This is distinct from — and safe unlike —
+calling back into the owning instance's `Bash.fs()` / `Bash.read_file()`, which
+is unsupported re-entrancy: it re-enters the interpreter's runtime and panics
+with a nested-runtime error (not a deadlock, and not caught by the
+`external_handler` reentry guard, which does not fire for custom builtins).
+A callback may retain `ctx.fs` beyond the invocation: the handle stays valid
+even after the `Bash` instance is dropped, and keeps the underlying VFS and
+its tokio runtime alive until the handle itself is released — so stashing it
+extends resource lifetime past `del bash` (see the teardown-determinism
+notes below).
+
 **Sync callbacks** are called directly under the session's captured `contextvars`
 snapshot and may return either a stdout string or a `BuiltinResult` with
 explicit `stdout`, `stderr`, and `exit_code`.
@@ -324,7 +346,11 @@ Callbacks that block without awaiting (e.g. `time.sleep` inside `async def`)
 cannot be cancelled mid-section; teardown then waits for the current section
 to reach an await point or return. At interpreter exit (boundary: an `atexit`
 handler registered at module import), teardown goes hands-off — native threads
-must not touch a finalizing CPython — and the OS reclaims resources.
+must not touch a finalizing CPython — and the OS reclaims resources. The same
+hands-off path applies when the last runtime handle is dropped *inside* a tokio
+context (a `Bash` dropped while `await execute()` is still in flight finishes on
+a runtime worker thread): a blocking runtime join there would panic, so the drop
+falls back to `shutdown_background()` instead of the deterministic join.
 
 **ContextVar propagation**: ContextVars set before `execute()` or
 `execute_sync()` are captured at call time and replayed inside each callback
@@ -355,6 +381,16 @@ def view_image(ctx: BuiltinContext) -> BuiltinResult:
     if not ctx.argv:
         return BuiltinResult(stderr="view-image: missing path\n", exit_code=1)
     return BuiltinResult(stdout="")
+```
+
+```python
+# ctx.fs reads/writes the interpreter's live VFS.
+def head(ctx: BuiltinContext) -> str:
+    data = ctx.fs.read_file(ctx.argv[0]).decode()      # bytes -> str
+    return "".join(data.splitlines(keepends=True)[:10])
+
+bash = Bash(custom_builtins={"head10": head}, files={"/log.txt": "..."})
+bash.execute_sync("head10 /log.txt")
 ```
 
 ## Optional Dependencies

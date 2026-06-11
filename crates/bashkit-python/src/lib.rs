@@ -61,7 +61,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock, RwLock, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::runtime::Runtime;
+use tokio::runtime::{Handle, Runtime};
 use tokio::sync::{Mutex, oneshot};
 
 // ============================================================================
@@ -238,7 +238,12 @@ fn join_without_gil<F: FnOnce() + Send>(f: F) {
 /// hang in `test_async_callback_execute_sync_honors_timeout`). Once the
 /// interpreter is exiting, joining is unsafe (threads attaching during
 /// finalization abort the process on CPython < 3.13), so the drop falls
-/// back to `shutdown_background()` and the OS reclaims resources.
+/// back to `shutdown_background()` and the OS reclaims resources. The same
+/// hands-off path is taken when the last clone drops *inside* a tokio context
+/// (e.g. a `Bash` dropped mid-`await execute()` finishes on a runtime worker
+/// thread, dropping its custom-builtin adapters' `PyRuntime` clones there): a
+/// blocking runtime drop in that context panics, so `shutdown_background()`
+/// is used instead.
 struct PyRuntime(Option<Arc<Runtime>>);
 
 impl Clone for PyRuntime {
@@ -259,7 +264,21 @@ impl Drop for PyRuntime {
         let Some(rt) = self.0.take().and_then(Arc::into_inner) else {
             return;
         };
-        if interpreter_at_exit() {
+        // Two cases must avoid the blocking join:
+        //   - `interpreter_at_exit()`: joining threads that may re-attach is
+        //     unsafe during finalization (see the type doc).
+        //   - `Handle::try_current().is_ok()`: the last clone is dropping
+        //     *inside* a tokio context. This happens when a `Bash` is dropped
+        //     while `await execute()` is still in flight: the future holds the
+        //     last `Arc<Mutex<Bash>>` and, on completion, drops it on a
+        //     pyo3-async-runtimes worker thread — cascading into the
+        //     custom-builtin adapters that hold `PyRuntime` clones. Dropping a
+        //     runtime (a blocking join) from within another runtime panics
+        //     with "Cannot drop a runtime in a context where blocking is not
+        //     allowed", so hand off to `shutdown_background()` instead.
+        // The normal path — last clone dropping on a Python thread with no
+        // tokio context — keeps #2009's deterministic `join_without_gil`.
+        if interpreter_at_exit() || Handle::try_current().is_ok() {
             rt.shutdown_background();
         } else {
             join_without_gil(move || drop(rt));
@@ -1015,6 +1034,13 @@ enum FileSystemHandle {
 }
 
 impl FileSystemHandle {
+    /// A `Static` handle wraps an `Arc<dyn FileSystem>` directly, so resolving
+    /// it never touches the interpreter lock. Used to pick a re-entrancy-safe
+    /// dispatch path in `PyFileSystem::with_fs`.
+    fn is_static(&self) -> bool {
+        matches!(self, Self::Static(_))
+    }
+
     async fn resolve(&self) -> PyResult<Arc<dyn FileSystem>> {
         match self {
             Self::Static(fs) => Ok(Arc::clone(fs)),
@@ -1603,12 +1629,95 @@ impl PyFileSystem {
         }
     }
 
+    // The `Send` bounds are load-bearing for the worker-thread branch below
+    // (`std::thread::scope` moves `f`, its future, and the result `T` across the
+    // thread boundary). They are NOT an extra restriction in practice, so there
+    // is no non-`Send` fast path worth splitting out:
+    //   - `with_fs` is only ever called inside `py.detach(...)` (see every
+    //     caller), so the GIL is released and a closure physically cannot hold a
+    //     `Bound<'py>` / `Python<'py>` ref across the await — the canonical
+    //     source of a non-`Send` fs future.
+    //   - `FileSystem: FileSystemExt: Send + Sync` and the trait is
+    //     `#[async_trait]`, so every fs method already returns a `Send`-boxed
+    //     future and `Arc<dyn FileSystem>` is `Send + Sync`. Any closure that
+    //     just awaits fs ops (all of them do) satisfies `Fut: Send` for free.
+    // A separate non-`Send` `with_fs_local` would therefore have no caller today
+    // (dead code), and the runtime branch means a single method can't statically
+    // pick local-vs-send anyway. Keep one helper; the bound documents the real
+    // off-thread-dispatch invariant.
     fn with_fs<T, F, Fut>(&self, f: F) -> PyResult<T>
     where
-        F: FnOnce(Arc<dyn FileSystem>) -> Fut,
-        Fut: Future<Output = PyResult<T>>,
+        F: FnOnce(Arc<dyn FileSystem>) -> Fut + Send,
+        Fut: Future<Output = PyResult<T>> + Send,
+        T: Send,
     {
         let inner = self.inner.clone();
+        // A `Static` handle (e.g. a custom builtin's `ctx.fs`) operates on a
+        // cloned `Arc<dyn FileSystem>` with no interpreter lock. When such a
+        // handle is used while a tokio runtime is already active on this thread
+        // — `execute_sync` drives the interpreter via `self.rt.block_on` and the
+        // custom builtin callback runs within it; the same holds on a
+        // multi-thread runtime worker when `await execute()` drives a *sync*
+        // builtin — calling `block_on` again here panics ("Cannot start a
+        // runtime from within a runtime"). Run the op on a throwaway thread with
+        // its own runtime instead.
+        //
+        // Cost: this spawns one OS thread and builds one current-thread runtime
+        // per op, so a callback doing many `ctx.fs` ops in a tight loop pays
+        // that scaffolding each time. Fine for occasional `ctx.fs` use; if it
+        // ever gets hot, amortize with a long-lived worker thread + runtime
+        // reused across ops via a channel (note: `block_in_place` is not an
+        // option while `make_runtime` builds a current-thread runtime).
+        //
+        // A `Static` handle used from a thread with *no* tokio context falls
+        // through to `self.rt.block_on` below. This is the async-callback case:
+        // the callback body runs on an asyncio loop thread — the caller's loop
+        // under `await execute()`, the private loop under `execute_sync()` — not
+        // a tokio worker, so `Handle::try_current()` is `Err`. Under
+        // `execute_sync()` that `block_on` runs on a *second* thread while the
+        // main thread holds the current-thread scheduler core; it completes only
+        // because tokio's parker fallback polls the future without owning the
+        // core. That is fine for VFS ops (they never need the runtime's
+        // timer/IO drivers) — but a timer- or IO-dependent fs future added here
+        // would stall this path, so keep `inner.resolve()` + fs ops driver-free.
+        //
+        // `Live` handles keep the original fast path: they lock the interpreter.
+        // Re-entrant use of a `Live` handle from inside the shared runtime is
+        // unsupported — it re-enters `self.rt.block_on` and panics with the same
+        // nested-runtime error. That is NOT a deadlock, and it is NOT caught by
+        // the `external_handler` reentry guard (which only fires inside an
+        // external_handler, not a custom builtin); the loud panic is preferable
+        // to silently deadlocking or corrupting interpreter state.
+        if inner.is_static() && Handle::try_current().is_ok() {
+            return std::thread::scope(|scope| {
+                scope
+                    .spawn(move || {
+                        // A fresh runtime, not `self.rt`: the outer `block_on`
+                        // driving this callback still owns `self.rt`, and a
+                        // current-thread runtime can't be entered twice.
+                        let rt = make_runtime()?;
+                        rt.block_on(async move {
+                            let fs = inner.resolve().await?;
+                            f(fs).await
+                        })
+                    })
+                    .join()
+                    // Drop the panic payload deliberately: a `Box<dyn Any>` can't
+                    // be formatted without downcasting and may carry internal
+                    // Debug shapes / host paths (TM-INF-022). Point the user at
+                    // the stderr backtrace the default panic hook prints instead
+                    // — actionable in headless setups where the hint is the only
+                    // breadcrumb, and leaks nothing (static string, no payload).
+                    .map_err(|_| {
+                        PyRuntimeError::new_err(
+                            "internal error: bashkit filesystem worker thread panicked. \
+                             This is a bug in bashkit, not your script. A backtrace was \
+                             printed to stderr; re-run with RUST_BACKTRACE=1 for the full \
+                             trace and please report it.",
+                        )
+                    })?
+            });
+        }
         self.rt.block_on(async move {
             let fs = inner.resolve().await?;
             f(fs).await
@@ -2159,16 +2268,23 @@ fn prepare_output_handler(
 }
 
 // Decision: `custom_builtins` mirror Rust builtin semantics with a shell-first
-// context object (`argv`, `stdin`, `env`, `cwd`); `ScriptedTool` remains
+// context object (`argv`, `stdin`, `env`, `cwd`, `fs`); `ScriptedTool` remains
 // schema-first and continues to pass `(params, stdin)`.
 //
-// Deliberately omitted for now: live `fs`, mutable shell variables, mutable
-// `cwd`, and feature-gated network/git/ssh clients from Rust `BuiltinContext`.
-// Those are reasonable follow-ups, but this PR keeps the Python surface small
-// and shell-first while we validate the core callback shape.
+// `fs` wraps the *same* `Arc<dyn FileSystem>` the interpreter is running on
+// (mirroring how the embedded `python3`/Monty builtin receives `ctx.fs`), so it
+// is a live view, not a snapshot. It is a `Static` `PyFileSystem` handle, which
+// bypasses the interpreter lock — `PyFileSystem::with_fs` runs its ops off the
+// shared runtime thread so they are safe from within the callback.
+//
+// Still deliberately omitted: mutable shell variables, mutable `cwd`, and
+// feature-gated network/git/ssh clients from Rust `BuiltinContext`. Reasonable
+// follow-ups, kept out to keep the Python surface small and shell-first.
 /// Execution context passed to Python-backed custom builtins.
 ///
-/// Fields are snapshots of the shell state at invocation time.
+/// `name`, `argv`, `stdin`, `env`, and `cwd` are snapshots of the shell state at
+/// invocation time; `fs` is a live handle to the interpreter's virtual
+/// filesystem.
 #[pyclass(name = "BuiltinContext", skip_from_py_object)]
 struct PyBuiltinContext {
     #[pyo3(get)]
@@ -2181,6 +2297,8 @@ struct PyBuiltinContext {
     env: std::collections::HashMap<String, String>,
     #[pyo3(get)]
     cwd: String,
+    #[pyo3(get)]
+    fs: Py<PyFileSystem>,
 }
 
 #[pymethods]
@@ -2197,7 +2315,12 @@ fn make_py_builtin_context(
     py: Python<'_>,
     name: &str,
     ctx: &BuiltinContext<'_>,
+    rt: &PyRuntime,
 ) -> Result<Py<PyBuiltinContext>, String> {
+    // Wrap the interpreter's live VFS as a `Static` handle so callbacks read and
+    // write the same filesystem without re-locking the interpreter.
+    let fs = Py::new(py, PyFileSystem::from_static(ctx.fs.clone(), rt.clone()))
+        .map_err(|e| e.to_string())?;
     Py::new(
         py,
         PyBuiltinContext {
@@ -2206,6 +2329,7 @@ fn make_py_builtin_context(
             stdin: ctx.stdin.map(str::to_owned),
             env: ctx.env.clone(),
             cwd: ctx.cwd.to_string_lossy().into_owned(),
+            fs,
         },
     )
     .map_err(|e| e.to_string())
@@ -3161,6 +3285,22 @@ struct PyCustomBuiltinAdapter {
     name: String,
     callback: Py<PyAny>,
     is_async: bool,
+    /// Shared runtime, threaded into each invocation's `ctx.fs` handle. A
+    /// `PyRuntime` clone is a refcount bump on the same `Arc<Runtime>` the
+    /// interpreter runs on; deterministic teardown still only fires when the
+    /// last clone drops (`Arc::into_inner` in `PyRuntime::drop`).
+    rt: PyRuntime,
+}
+
+impl PyCustomBuiltinAdapter {
+    fn from_entry(py: Python<'_>, entry: &PyCustomBuiltinEntry, rt: &PyRuntime) -> Self {
+        Self {
+            name: entry.name.clone(),
+            callback: entry.callback.clone_ref(py),
+            is_async: entry.is_async,
+            rt: rt.clone(),
+        }
+    }
 }
 
 #[async_trait]
@@ -3168,7 +3308,7 @@ impl Builtin for PyCustomBuiltinAdapter {
     async fn execute(&self, ctx: BuiltinContext<'_>) -> bashkit::Result<RustExecResult> {
         let session = ctx.execution_extension::<Arc<PyCallbackSession>>().cloned();
         let builtin_arg = Python::attach(|py| -> Result<Py<PyAny>, String> {
-            let builtin_arg = make_py_builtin_context(py, &self.name, &ctx)
+            let builtin_arg = make_py_builtin_context(py, &self.name, &ctx, &self.rt)
                 .map_err(|e| format!("{}: {}", self.name, e))?
                 .into_bound(py)
                 .into_any()
@@ -3216,14 +3356,11 @@ impl Builtin for PyCustomBuiltinAdapter {
 fn build_runtime_custom_builtin_impls(
     py: Python<'_>,
     builtins: &[PyCustomBuiltinEntry],
+    rt: &PyRuntime,
 ) -> Vec<PyCustomBuiltinAdapter> {
     builtins
         .iter()
-        .map(|entry| PyCustomBuiltinAdapter {
-            name: entry.name.clone(),
-            callback: entry.callback.clone_ref(py),
-            is_async: entry.is_async,
-        })
+        .map(|entry| PyCustomBuiltinAdapter::from_entry(py, entry, rt))
         .collect()
 }
 
@@ -3237,8 +3374,9 @@ fn populate_registry_from_entries(
     py: Python<'_>,
     registry: &BuiltinRegistry,
     builtins: &[PyCustomBuiltinEntry],
+    rt: &PyRuntime,
 ) {
-    for builtin in build_runtime_custom_builtin_impls(py, builtins) {
+    for builtin in build_runtime_custom_builtin_impls(py, builtins, rt) {
         registry.insert(builtin.name.clone(), Arc::new(builtin));
     }
 }
@@ -3791,13 +3929,12 @@ impl PyBash {
         builder = builder.readonly_filesystem(readonly_filesystem);
         let builtin_engine = PyCallbackEngine::new(py)?;
         let host_registry = BuiltinRegistry::new();
-        populate_registry_from_entries(py, &host_registry, &custom_builtins);
+        let rt = make_runtime()?;
+        populate_registry_from_entries(py, &host_registry, &custom_builtins, &rt);
         builder = builder.builtin_registry(host_registry.clone());
 
         let bash = builder.build();
         let cancelled = Arc::new(RwLock::new(bash.cancellation_token()));
-
-        let rt = make_runtime()?;
 
         Ok(Self {
             inner: Arc::new(Mutex::new(bash)),
@@ -4001,11 +4138,7 @@ impl PyBash {
     /// builtin > `PATH`.
     fn add_builtin(&self, py: Python<'_>, name: String, callback: Py<PyAny>) -> PyResult<()> {
         let entry = build_py_custom_builtin_entry(py, name.clone(), callback)?;
-        let adapter = PyCustomBuiltinAdapter {
-            name: entry.name.clone(),
-            callback: entry.callback.clone_ref(py),
-            is_async: entry.is_async,
-        };
+        let adapter = PyCustomBuiltinAdapter::from_entry(py, &entry, &self.rt);
         {
             let mut guard = self
                 .custom_builtins
@@ -4535,7 +4668,7 @@ impl BashTool {
             if guard.is_empty() {
                 Vec::new()
             } else {
-                Python::attach(|py| build_runtime_custom_builtin_impls(py, &guard))
+                Python::attach(|py| build_runtime_custom_builtin_impls(py, &guard, &self.rt))
             }
         };
         for builtin in builtins {
@@ -4625,13 +4758,12 @@ impl BashTool {
         builder = builder.readonly_filesystem(readonly_filesystem);
         let builtin_engine = PyCallbackEngine::new(py)?;
         let host_registry = BuiltinRegistry::new();
-        populate_registry_from_entries(py, &host_registry, &custom_builtins);
+        let rt = make_runtime()?;
+        populate_registry_from_entries(py, &host_registry, &custom_builtins, &rt);
         builder = builder.builtin_registry(host_registry.clone());
 
         let bash = builder.build();
         let cancelled = Arc::new(RwLock::new(bash.cancellation_token()));
-
-        let rt = make_runtime()?;
 
         Ok(Self {
             inner: Arc::new(Mutex::new(bash)),
@@ -4795,11 +4927,7 @@ impl BashTool {
     /// See [`PyBash::add_builtin`] for semantics.
     fn add_builtin(&self, py: Python<'_>, name: String, callback: Py<PyAny>) -> PyResult<()> {
         let entry = build_py_custom_builtin_entry(py, name.clone(), callback)?;
-        let adapter = PyCustomBuiltinAdapter {
-            name: entry.name.clone(),
-            callback: entry.callback.clone_ref(py),
-            is_async: entry.is_async,
-        };
+        let adapter = PyCustomBuiltinAdapter::from_entry(py, &entry, &self.rt);
         {
             let mut guard = self
                 .custom_builtins

@@ -91,6 +91,15 @@ class BuiltinContext:
         stdin: Pipeline input from the previous command, if any.
         env: Environment variables visible to the builtin.
         cwd: Current working directory at invocation time.
+        fs: Live handle to the interpreter's virtual filesystem. Reads see
+            files created by earlier commands and writes are visible to later
+            ones. Same API as ``Bash.fs()`` — e.g. ``ctx.fs.read_file(path)``
+            returns ``bytes``. Operates directly on the interpreter's VFS, so
+            it is safe to use from inside the callback. Ops are synchronous and,
+            while a runtime is active, may run off-thread (relatively expensive
+            per call), so batch filesystem work rather than looping over many
+            tiny ops. May be retained past the callback: a stashed handle keeps
+            the VFS (and its runtime) alive even after the ``Bash`` is dropped.
     """
 
     name: str
@@ -98,6 +107,7 @@ class BuiltinContext:
     stdin: str | None
     env: dict[str, str]
     cwd: str
+    fs: FileSystem
 
 class BuiltinResult:
     """Shell-facing result for a custom builtin callback.
@@ -501,11 +511,12 @@ class Bash:
                 files and mounts are applied.
             custom_builtins: Constructor-time Python callbacks exposed as
                 bash builtins. Each callback receives a ``BuiltinContext``
-                with raw ``argv`` tokens and optional pipeline ``stdin``,
-                and must return a stdout string, a ``BuiltinResult``, or
-                await either. Async callbacks run on the caller's active
-                asyncio loop for ``await execute()`` and on a private loop
-                for ``execute_sync()``.
+                with raw ``argv`` tokens, optional pipeline ``stdin``, and a
+                live ``fs`` handle to the virtual filesystem, and must return a
+                stdout string, a ``BuiltinResult``, or await either. Async
+                callbacks run on the caller's active asyncio loop for
+                ``await execute()`` and on a private loop for
+                ``execute_sync()``.
             network: Optional outbound HTTP / network configuration. Pass
                 ``{"allow": [...]}`` for an explicit allowlist or
                 ``{"allow_all": True}`` to allow every URL (mirrors
@@ -940,10 +951,11 @@ class BashTool:
                 files and mounts are applied.
             custom_builtins: Constructor-time Python callbacks exposed as
                 bash builtins. Each callback receives a ``BuiltinContext``
-                and must return a stdout string, a ``BuiltinResult``, or
-                await either. Async callbacks run on the caller's active
-                asyncio loop for ``await execute()`` and on a private loop
-                for ``execute_sync()``.
+                (including a live ``fs`` handle to the virtual filesystem) and
+                must return a stdout string, a ``BuiltinResult``, or await
+                either. Async callbacks run on the caller's active asyncio
+                loop for ``await execute()`` and on a private loop for
+                ``execute_sync()``.
             network: Optional outbound HTTP / network configuration. See
                 ``Bash.__init__`` for accepted keys. Preserved across
                 ``reset()`` and ``from_snapshot()``.

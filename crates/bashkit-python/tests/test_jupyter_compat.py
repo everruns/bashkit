@@ -218,3 +218,114 @@ async def test_await_execute_contextvar(factory):
 
     assert result.exit_code == 0
     assert result.stdout.strip() == "trace=await-req"
+
+
+# ===========================================================================
+# BuiltinContext.fs under a running loop
+#
+# ``ctx.fs`` is a *sync* handle whose ops run off the interpreter's runtime
+# thread. These confirm it works from a custom builtin under the same running-
+# loop conditions Jupyter maintains — via execute_sync (inside asyncio.run and a
+# live loop) and via await execute.
+# ===========================================================================
+
+
+def test_execute_sync_ctx_fs_inside_asyncio_run():
+    """execute_sync() with a ctx.fs builtin works inside asyncio.run()."""
+
+    def rw(ctx: BuiltinContext) -> str:
+        ctx.fs.write_file("/nb.txt", b"nb-data\n")
+        return ctx.fs.read_file("/nb.txt").decode()
+
+    async def jupyter_cell():
+        bash = Bash(custom_builtins={"rw": rw})
+        return bash.execute_sync("rw")
+
+    result = asyncio.run(jupyter_cell())
+    assert result.exit_code == 0
+    assert result.stdout == "nb-data\n"
+
+
+@pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
+@pytest.mark.asyncio
+async def test_execute_sync_ctx_fs_live_loop(factory):
+    """execute_sync() with a ctx.fs builtin works while a loop is running."""
+
+    def rw(ctx: BuiltinContext) -> str:
+        ctx.fs.write_file("/nb.txt", b"live\n")
+        return ctx.fs.read_file("/nb.txt").decode()
+
+    shell = factory(custom_builtins={"rw": rw})
+    result = shell.execute_sync("rw")
+
+    assert result.exit_code == 0
+    assert result.stdout == "live\n"
+
+
+@pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
+@pytest.mark.asyncio
+async def test_await_execute_ctx_fs_uses_caller_loop(factory):
+    """An async ctx.fs builtin driven via await execute() runs on the caller's
+    loop (matching test_await_execute_async_builtin_uses_caller_loop)."""
+
+    caller_loop = asyncio.get_running_loop()
+    captured: list = []
+
+    async def rw(ctx: BuiltinContext) -> str:
+        captured.append(asyncio.get_running_loop())
+        ctx.fs.write_file("/aw.txt", b"await\n")
+        return ctx.fs.read_file("/aw.txt").decode()
+
+    shell = factory(custom_builtins={"rw": rw})
+    result = await shell.execute("rw")
+
+    assert result.exit_code == 0
+    assert result.stdout == "await\n"
+    assert captured == [caller_loop]
+
+
+# ---------------------------------------------------------------------------
+# ctx.fs from an *async* callback driven by execute_sync — the third dispatch
+# path. The async callback body runs on an asyncio loop thread (the private
+# loop, or the background daemon loop under a live loop), which has no tokio
+# context, so ctx.fs ops fall through to `self.rt.block_on` rather than the
+# worker-thread branch the sync-callback case takes. Sync callbacks +
+# execute_sync (worker-thread branch) and async callbacks + await execute
+# (caller loop) are covered above; this fills the remaining combination.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
+def test_execute_sync_async_ctx_fs_builtin(factory):
+    """An async ctx.fs builtin driven by execute_sync() (no running loop) runs on
+    the private loop thread; ctx.fs resolves via the block_on fallback there."""
+
+    async def rw(ctx: BuiltinContext) -> str:
+        await asyncio.sleep(0)  # force a real await so the body runs on the loop
+        ctx.fs.write_file("/async-sync.txt", b"async-sync\n")
+        return ctx.fs.read_file("/async-sync.txt").decode()
+
+    shell = factory(custom_builtins={"rw": rw})
+    result = shell.execute_sync("rw")
+
+    assert result.exit_code == 0
+    assert result.stdout == "async-sync\n"
+    assert shell.fs().read_file("/async-sync.txt").decode() == "async-sync\n"
+
+
+def test_execute_sync_async_ctx_fs_inside_asyncio_run():
+    """Same third path under a live outer loop: execute_sync() inside
+    asyncio.run() drives the async callback on a background daemon loop, and
+    ctx.fs works there too."""
+
+    async def rw(ctx: BuiltinContext) -> str:
+        await asyncio.sleep(0)
+        return ctx.fs.read_file("/seed.txt").decode()
+
+    async def jupyter_cell():
+        bash = Bash(custom_builtins={"rw": rw}, files={"/seed.txt": "seeded\n"})
+        return bash.execute_sync("rw")
+
+    result = asyncio.run(jupyter_cell())
+    assert result.exit_code == 0
+    assert result.stdout == "seeded\n"
