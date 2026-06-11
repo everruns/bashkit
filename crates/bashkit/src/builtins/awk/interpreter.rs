@@ -1000,7 +1000,7 @@ impl AwkInterpreter {
     }
 
     fn has_output_capacity(&self, len: usize) -> bool {
-        self.total_output_bytes <= MAX_AWK_OUTPUT_BYTES.saturating_sub(len)
+        len <= MAX_AWK_OUTPUT_BYTES.saturating_sub(self.total_output_bytes)
     }
 
     fn output_target_count(&self) -> usize {
