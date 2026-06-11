@@ -377,11 +377,17 @@ enum ReadlinkMode {
 
 const READLINK_MAX_SYMLINK_DEPTH: usize = 40;
 
-fn readlink_path_within_limits(path: &Path) -> bool {
+fn readlink_path_within_limits(fs: &dyn crate::fs::FileSystem, path: &Path) -> bool {
     // THREAT[TM-DOS-013]: Canonicalization may compose symlink targets plus
     // remaining components repeatedly; keep every intermediate path inside the
     // VFS path budget before collecting components or normalizing again.
-    crate::fs::FsLimits::default().validate_path(path).is_ok()
+    //
+    // Validate against both the active filesystem's configured limits (which
+    // may be stricter than the default) and the default bounded limits — the
+    // latter still caps unlimited backends (e.g. RealFs reports
+    // `FsLimits::unlimited()`), so the effective bound is the intersection.
+    fs.limits().validate_path(path).is_ok()
+        && crate::fs::FsLimits::default().validate_path(path).is_ok()
 }
 
 async fn canonicalize_readlink_path(
@@ -421,12 +427,12 @@ async fn follow_readlink_symlinks(
     let mut depth = 0;
 
     loop {
-        if depth > READLINK_MAX_SYMLINK_DEPTH || !readlink_path_within_limits(&path) {
+        if depth > READLINK_MAX_SYMLINK_DEPTH || !readlink_path_within_limits(fs, &path) {
             return None;
         }
 
         let normalized = crate::fs::normalize_path(&path);
-        if !readlink_path_within_limits(&normalized) {
+        if !readlink_path_within_limits(fs, &normalized) {
             return None;
         }
         let components: Vec<_> = normalized.components().collect();
@@ -444,7 +450,7 @@ async fn follow_readlink_symlinks(
 
             if let Ok(target) = fs.read_link(&current).await {
                 depth += 1;
-                if !readlink_path_within_limits(&target) {
+                if !readlink_path_within_limits(fs, &target) {
                     return None;
                 }
                 let link_parent = current.parent().unwrap_or_else(|| Path::new("/"));
@@ -460,7 +466,7 @@ async fn follow_readlink_symlinks(
                     }
                 }
 
-                if !readlink_path_within_limits(&next) {
+                if !readlink_path_within_limits(fs, &next) {
                     return None;
                 }
                 path = crate::fs::normalize_path(&next);
@@ -773,6 +779,36 @@ mod tests {
 
         assert_eq!(result.exit_code, 1);
         assert!(result.stdout.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_readlink_respects_stricter_filesystem_path_limit() {
+        // `/a` -> `/bbb...(40)`; canonicalizing `/a/ccc...(15)` composes a
+        // ~57-byte path. That fits under the default 4096 budget but exceeds a
+        // stricter per-filesystem limit, which must be honored.
+        let link_target = format!("/{}", "b".repeat(40));
+        let query = format!("/a/{}", "c".repeat(15));
+
+        // Stricter fs: composed path exceeds max_path_length(50) -> rejected.
+        let strict_fs = Arc::new(InMemoryFs::with_limits(
+            crate::fs::FsLimits::default().max_path_length(50),
+        )) as Arc<dyn FileSystem>;
+        strict_fs
+            .symlink(Path::new(&link_target), Path::new("/a"))
+            .await
+            .unwrap();
+        let strict = run_readlink_with_fs(&["-m", &query], strict_fs).await;
+        assert_eq!(strict.exit_code, 1, "stricter fs limit should reject");
+        assert!(strict.stdout.is_empty());
+
+        // Default fs: same composition is within budget -> resolves.
+        let lax_fs = Arc::new(InMemoryFs::new()) as Arc<dyn FileSystem>;
+        lax_fs
+            .symlink(Path::new(&link_target), Path::new("/a"))
+            .await
+            .unwrap();
+        let lax = run_readlink_with_fs(&["-m", &query], lax_fs).await;
+        assert_eq!(lax.exit_code, 0, "default budget should resolve");
     }
 
     #[tokio::test]
