@@ -377,6 +377,13 @@ enum ReadlinkMode {
 
 const READLINK_MAX_SYMLINK_DEPTH: usize = 40;
 
+fn readlink_path_within_limits(path: &Path) -> bool {
+    // THREAT[TM-DOS-013]: Canonicalization may compose symlink targets plus
+    // remaining components repeatedly; keep every intermediate path inside the
+    // VFS path budget before collecting components or normalizing again.
+    crate::fs::FsLimits::default().validate_path(path).is_ok()
+}
+
 async fn canonicalize_readlink_path(
     fs: &dyn crate::fs::FileSystem,
     cwd: &Path,
@@ -414,11 +421,14 @@ async fn follow_readlink_symlinks(
     let mut depth = 0;
 
     loop {
-        if depth > READLINK_MAX_SYMLINK_DEPTH {
+        if depth > READLINK_MAX_SYMLINK_DEPTH || !readlink_path_within_limits(&path) {
             return None;
         }
 
         let normalized = crate::fs::normalize_path(&path);
+        if !readlink_path_within_limits(&normalized) {
+            return None;
+        }
         let components: Vec<_> = normalized.components().collect();
         let mut current = std::path::PathBuf::from("/");
         let mut followed = false;
@@ -434,6 +444,9 @@ async fn follow_readlink_symlinks(
 
             if let Ok(target) = fs.read_link(&current).await {
                 depth += 1;
+                if !readlink_path_within_limits(&target) {
+                    return None;
+                }
                 let link_parent = current.parent().unwrap_or_else(|| Path::new("/"));
                 let mut next = if target.is_absolute() {
                     target
@@ -447,6 +460,9 @@ async fn follow_readlink_symlinks(
                     }
                 }
 
+                if !readlink_path_within_limits(&next) {
+                    return None;
+                }
                 path = crate::fs::normalize_path(&next);
                 followed = true;
                 break;
@@ -738,6 +754,20 @@ mod tests {
         let fs = Arc::new(InMemoryFs::new()) as Arc<dyn FileSystem>;
         fs.symlink(Path::new("/b"), Path::new("/a")).await.unwrap();
         fs.symlink(Path::new("/a"), Path::new("/b")).await.unwrap();
+
+        let result = run_readlink_with_fs(&["-m", "/a"], fs).await;
+
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stdout.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_readlink_canonicalize_rejects_growing_symlink_path() {
+        let fs = Arc::new(InMemoryFs::new()) as Arc<dyn FileSystem>;
+        let target = format!("/a/{}", "x".repeat(128));
+        fs.symlink(Path::new(&target), Path::new("/a"))
+            .await
+            .unwrap();
 
         let result = run_readlink_with_fs(&["-m", "/a"], fs).await;
 
