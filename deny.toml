@@ -38,6 +38,11 @@ ignore = [
     # Unmaintained build-time proc-macro in the bench harness only (not shipped
     # library code); no upgrade available (tabled 0.21 is latest)
     "RUSTSEC-2026-0173",
+    # pyo3: OOB read in PyList/PyTuple nth/nth_back (RUSTSEC-2026-0176)
+    # Patched in pyo3 >=0.29, but pyo3-async-runtimes has no 0.29 release yet
+    # (still pins pyo3 0.28), so we can't upgrade. Host-side Python bindings
+    # only — not reachable from sandboxed scripts. Remove on pyo3 0.29 bump.
+    "RUSTSEC-2026-0176",
 ]
 
 [bans]
