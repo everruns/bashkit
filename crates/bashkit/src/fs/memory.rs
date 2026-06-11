@@ -502,7 +502,10 @@ impl InMemoryFs {
                     // Lazy files count by their declared metadata size
                     total_bytes += metadata.size;
                 }
-                FsEntry::Symlink { .. } => {}
+                FsEntry::Symlink { metadata, .. } => {
+                    // THREAT[TM-DOS-013]: Symlink target bytes count toward total usage
+                    total_bytes += metadata.size;
+                }
             }
             if Self::entry_counts_toward_file_count(entry) {
                 file_count += 1;
@@ -535,8 +538,11 @@ impl InMemoryFs {
                 FsEntry::File { content, .. } | FsEntry::Fifo { content, .. } => {
                     content.len() as u64
                 }
-                FsEntry::LazyFile { metadata, .. } => metadata.size,
-                FsEntry::Directory { .. } | FsEntry::Symlink { .. } => 0,
+                // THREAT[TM-DOS-013]: Symlink target bytes count toward total usage
+                FsEntry::LazyFile { metadata, .. } | FsEntry::Symlink { metadata, .. } => {
+                    metadata.size
+                }
+                FsEntry::Directory { .. } => 0,
             };
             current_total += entry_size;
             if Self::entry_counts_toward_file_count(entry) {
@@ -1571,20 +1577,17 @@ impl FileSystem for InMemoryFs {
         self.limits
             .validate_path(link)
             .map_err(|e| IoError::other(e.to_string()))?;
+        self.limits
+            .validate_path(target)
+            .map_err(|e| IoError::other(e.to_string()))?;
         let link = Self::normalize_path(link);
+        let target_size = target.as_os_str().as_encoded_bytes().len();
         let mut entries = self.entries.write().unwrap();
 
-        // THREAT[TM-DOS-045]: Symlinks count toward file count - enforce limit
-        let is_new = !entries.contains_key(&link);
-        if is_new {
-            let file_count = entries
-                .values()
-                .filter(|entry| Self::entry_counts_toward_file_count(entry))
-                .count() as u64;
-            self.limits
-                .check_file_count(file_count)
-                .map_err(|e| IoError::other(e.to_string()))?;
-        }
+        // THREAT[TM-DOS-045]: Symlinks count toward file count.
+        // THREAT[TM-DOS-013]: Symlink target bytes count toward filesystem usage.
+        // check_write_limits enforces single-file size, total bytes, and file count.
+        self.check_write_limits(&entries, &link, target_size)?;
 
         entries.insert(
             link,
@@ -1592,7 +1595,7 @@ impl FileSystem for InMemoryFs {
                 target: target.to_path_buf(),
                 metadata: Metadata {
                     file_type: FileType::Symlink,
-                    size: 0,
+                    size: target_size as u64,
                     mode: 0o777,
                     modified: SystemTime::now(),
                     created: SystemTime::now(),
@@ -2636,6 +2639,39 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("too many files") || err.contains("limit"));
+    }
+
+    #[tokio::test]
+    async fn test_symlink_validates_target_path_limits() {
+        let fs = InMemoryFs::new();
+        let long_component = "x".repeat(crate::fs::limits::DEFAULT_MAX_FILENAME_LENGTH + 1);
+        let target = PathBuf::from(format!("/tmp/{long_component}"));
+
+        let result = fs.symlink(&target, Path::new("/tmp/link")).await;
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("filename too long")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_symlink_target_bytes_count_toward_total_limit() {
+        let limits = FsLimits::new().max_total_bytes(20);
+        let fs = InMemoryFs::with_limits(limits);
+
+        fs.symlink(Path::new("/target-one"), Path::new("/tmp/link1"))
+            .await
+            .unwrap();
+        let result = fs
+            .symlink(Path::new("/target-two"), Path::new("/tmp/link2"))
+            .await;
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("filesystem full"));
     }
 
     #[tokio::test]
