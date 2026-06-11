@@ -1,10 +1,21 @@
 // Decision: homepage HTML and Markdown are generated from the same content
 // tables so agent-facing navigation and product claims stay in sync.
+// Decision: the builtin count comes from the generated inventory
+// (specs/status/builtins.json) so marketing copy can't drift from the code.
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+const inventory = JSON.parse(
+  readFileSync(resolve(process.cwd(), "../specs/status/builtins.json"), "utf8"),
+) as { builtins: { name: string }[] };
+
+export const builtinCount = inventory.builtins.length;
+
 export const homeHero = {
   eyebrow: "Virtual bash for AI agents",
   title: "An awesomely fast virtual bash sandbox. Written in Rust.",
   description:
-    "Bashkit runs untrusted shell scripts from AI agents without spawning a single OS process. 160 reimplemented commands, substantial POSIX shell language coverage, a virtual filesystem, resource limits, and tool interfaces for agent frameworks \u2014 all in-memory, all sandboxed.",
+    `Bashkit runs untrusted shell scripts from AI agents without spawning a single OS process. ${builtinCount} reimplemented commands, substantial POSIX shell language coverage, a virtual filesystem, resource limits, and tool interfaces for agent frameworks \u2014 all in-memory, all sandboxed.`,
 };
 
 export const homeNavigation = [
@@ -16,7 +27,7 @@ export const homeNavigation = [
   {
     label: "Builtins",
     href: "/builtins",
-    detail: "Browse the 160-command sandbox surface.",
+    detail: `Browse the ${builtinCount}-command sandbox surface.`,
   },
   {
     label: "GitHub repository",
@@ -43,7 +54,7 @@ export const evalSnapshot = {
 export const benchesHref = "/benches";
 
 export const heroStats = [
-  { label: "Built-in commands", value: "160", href: "/builtins" },
+  { label: "Built-in commands", value: String(builtinCount), href: "/builtins" },
   {
     label: "Threats mitigated",
     value: "250+",
@@ -135,7 +146,7 @@ export const surfaces = [
       "Substantial IEEE 1003.1-2024 Shell Command Language coverage, plus bash extensions: arrays, [[ ]], brace expansion, extended globs, coprocesses, traps.",
   },
   {
-    title: "160 reimplemented commands",
+    title: `${builtinCount} reimplemented commands`,
     detail:
       "grep, sed, awk, jq, curl, tar, find, xargs, and 150+ more \u2014 pure Rust, no shelling out.",
   },
@@ -224,7 +235,7 @@ export const defense = [
   {
     title: "No process spawning",
     detail:
-      "160 commands reimplemented in Rust \u2014 no fork, exec, or shell escape.",
+      `${builtinCount} commands reimplemented in Rust \u2014 no fork, exec, or shell escape.`,
   },
   {
     title: "Virtual filesystem",

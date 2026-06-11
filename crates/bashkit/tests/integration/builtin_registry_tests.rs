@@ -206,3 +206,25 @@ async fn command_respects_before_tool_for_host_builtin() {
     assert_eq!(via_command.exit_code, 1);
     assert!(via_command.stderr.contains("cancelled by before_tool hook"));
 }
+
+#[tokio::test]
+async fn builtin_names_lists_baked_in_and_host_builtins() {
+    // Baked-in builtins, sorted, no duplicates.
+    let bash = Bash::new();
+    let names = bash.builtin_names();
+    for expected in ["echo", "cd", "grep", "awk", "sed"] {
+        assert!(names.iter().any(|n| n == expected), "missing {expected}");
+    }
+    let mut sorted = names.clone();
+    sorted.sort();
+    sorted.dedup();
+    assert_eq!(names, sorted, "names must be sorted and deduped");
+
+    // Host-registered builtins are included; unknown names are not.
+    let registry = BuiltinRegistry::new();
+    registry.insert("custom-cmd", Arc::new(EchoArgs));
+    let bash = Bash::builder().builtin_registry(registry).build();
+    let names = bash.builtin_names();
+    assert!(names.iter().any(|n| n == "custom-cmd"));
+    assert!(!names.iter().any(|n| n == "no-such-builtin"));
+}

@@ -69,6 +69,13 @@ fuzz-diff-deep:
 clean:
     cargo clean
 
+# Regenerate the canonical builtin inventory consumed by the site's
+# builtins page. Committed output; the builtins-drift workflow fails on diff.
+regen-builtins:
+    cargo run -q --example dump_builtins \
+        --features jq,git,ssh,http_client,python,typescript,sqlite \
+        > specs/status/builtins.json
+
 # === uutils argument-surface port (POC) ===
 
 # Regenerate the clap `Command` builders for utilities ported from

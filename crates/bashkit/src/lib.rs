@@ -1209,6 +1209,17 @@ impl Bash {
         self.interpreter.restore_shell_state(state);
     }
 
+    /// Names of all builtins registered in this instance, sorted.
+    ///
+    /// Reflects what this build + configuration actually dispatches:
+    /// baked-in builtins (including compile-feature-gated ones like `jq`,
+    /// `git`, `ssh`), custom builtins registered at construction, and
+    /// host-registry builtins. Canonical source for the generated builtins
+    /// status (`just regen-builtins`, `specs/status/builtins.json`).
+    pub fn builtin_names(&self) -> Vec<String> {
+        self.interpreter.builtin_names()
+    }
+
     /// Get the current session-level counters (cumulative across exec() calls).
     ///
     /// Returns `(session_commands, session_exec_calls)`.
