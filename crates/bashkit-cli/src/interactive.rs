@@ -27,21 +27,6 @@ const RC_FILE: &str = "/home/user/.bashkitrc";
 const SOURCE_RC_ENV: &str = "BASHKIT_SOURCE_RC";
 const MAX_HISTORY: usize = 1000;
 
-// Same list as compgen.rs — keep in sync.
-const BUILTIN_COMMANDS: &[&str] = &[
-    "alias", "assert", "awk", "base64", "basename", "bc", "break", "cat", "cd", "chmod", "chown",
-    "clear", "column", "comm", "compgen", "continue", "cp", "curl", "cut", "date", "declare", "df",
-    "diff", "dirname", "dirs", "dotenv", "du", "echo", "env", "envsubst", "eval", "exit", "expand",
-    "export", "expr", "false", "fc", "find", "fold", "grep", "gunzip", "gzip", "head", "help",
-    "hexdump", "history", "hostname", "iconv", "id", "jq", "json", "join", "kill", "ln", "local",
-    "log", "ls", "mkdir", "mktemp", "mv", "nl", "od", "paste", "popd", "printenv", "printf",
-    "pushd", "pwd", "read", "readlink", "readonly", "realpath", "retry", "return", "rev", "rg",
-    "rm", "rmdir", "sed", "semver", "seq", "set", "shift", "shopt", "sleep", "sort", "source",
-    "split", "stat", "strings", "tac", "tail", "tar", "tee", "test", "timeout", "touch", "tr",
-    "tree", "true", "type", "uname", "unexpand", "uniq", "unset", "wait", "watch", "wc", "wget",
-    "whoami", "xargs", "xxd", "yes",
-];
-
 // --- Incomplete input detection ---
 
 fn is_incomplete_input(err_msg: &str) -> bool {
@@ -159,6 +144,10 @@ fn expand_ps1(ps1: &str, state: &bashkit::ShellStateView) -> String {
 struct BashkitHelper {
     fs: Arc<dyn bashkit::FileSystem>,
     state_fn: Box<dyn Fn() -> bashkit::ShellStateView + Send + Sync>,
+    /// Registered builtin names, snapshotted at startup from
+    /// `Bash::builtin_names()` — same live-registry source as `compgen -b`,
+    /// never a hardcoded list (the old one drifted to 109 of 156 names).
+    builtin_names: Vec<String>,
 }
 
 impl BashkitHelper {
@@ -274,9 +263,9 @@ impl Completer for BashkitHelper {
 
         if is_command_position {
             // Complete builtins
-            for &cmd in BUILTIN_COMMANDS {
+            for cmd in &self.builtin_names {
                 if cmd.starts_with(partial) {
-                    candidates.push(cmd.to_string());
+                    candidates.push(cmd.clone());
                 }
             }
             // Complete functions and aliases
@@ -475,6 +464,7 @@ pub async fn run(mut bash: bashkit::Bash, exit_state: Arc<ExitState>) -> Result<
     let helper = BashkitHelper {
         fs,
         state_fn: Box::new(move || state_for_helper.lock().unwrap().clone()),
+        builtin_names: bash.builtin_names(),
     };
 
     let mut editor = Editor::with_config(config)?;
@@ -902,6 +892,7 @@ mod tests {
         BashkitHelper {
             fs: Arc::clone(&fs),
             state_fn: Box::new(move || state.clone()),
+            builtin_names: bash.builtin_names(),
         }
     }
 
