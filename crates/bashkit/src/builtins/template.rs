@@ -223,7 +223,7 @@ fn render_template_inner(
                 i += end_pos + end_tag.len();
 
                 if let Some(serde_json::Value::Array(items)) = json_data.get(block_var) {
-                    // THREAT[TM-TINJ-001]: Escape template markers in data values
+                    // THREAT[TM-INJ-023]: Escape template markers in data values
                     // to prevent injection. Data containing `{{VAR}}` must not be
                     // re-evaluated as template directives.
                     const SENTINEL: &str = "\x00BK_LBRACE\x00";
@@ -616,7 +616,7 @@ mod tests {
         assert!(result.stderr.contains("template:"));
     }
 
-    // THREAT[TM-TINJ-001]: Template injection via #each data values
+    // THREAT[TM-INJ-023]: Template injection via #each data values
 
     #[tokio::test]
     async fn test_each_data_injection_blocked() {

