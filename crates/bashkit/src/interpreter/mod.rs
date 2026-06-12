@@ -302,6 +302,10 @@ pub(crate) struct ShellRef<'a> {
     pub(crate) namerefs: &'a mut HashMap<String, String>,
     /// Registered builtin commands (read-only, accessed via `has_builtin`).
     pub(crate) builtins: &'a HashMap<String, Arc<dyn Builtin>>,
+    /// Host-owned builtin registry, when configured (read-only). Needed so
+    /// introspection builtins (`compgen -b`) list host-registered commands
+    /// alongside baked-in ones, matching `Bash::builtin_names()`.
+    pub(crate) host_builtins: Option<&'a crate::builtins::BuiltinRegistry>,
     /// Defined shell functions (read-only, accessed via `has_function`).
     pub(crate) functions: &'a HashMap<String, FunctionDef>,
     /// Call stack frames (read-only, accessed via `call_stack_depth`/`call_stack_frame_name`).
@@ -316,6 +320,20 @@ pub(crate) struct ShellRef<'a> {
     pub(crate) execution_extensions: Arc<builtins::ExecutionExtensions>,
 }
 
+/// Sorted, deduped union of baked-in/custom builtins and the host registry.
+fn merged_builtin_names(
+    builtins: &HashMap<String, Arc<dyn Builtin>>,
+    host_builtins: Option<&crate::builtins::BuiltinRegistry>,
+) -> Vec<String> {
+    let mut names: Vec<String> = builtins.keys().cloned().collect();
+    if let Some(reg) = host_builtins {
+        names.extend(reg.names());
+    }
+    names.sort();
+    names.dedup();
+    names
+}
+
 impl ShellRef<'_> {
     /// Get execution limits visible to read-only builtins.
     pub(crate) fn limits(&self) -> &ExecutionLimits {
@@ -325,6 +343,12 @@ impl ShellRef<'_> {
     /// Check if a name is a registered builtin command.
     pub(crate) fn has_builtin(&self, name: &str) -> bool {
         self.builtins.contains_key(name)
+    }
+
+    /// Sorted names of all registered builtins (baked-in + custom + host
+    /// registry) — same contract as [`crate::Bash::builtin_names`].
+    pub(crate) fn builtin_names(&self) -> Vec<String> {
+        merged_builtin_names(self.builtins, self.host_builtins)
     }
 
     /// Check if a name is a defined shell function.
@@ -5648,6 +5672,7 @@ impl Interpreter {
                 let execution_extensions = self.current_execution_extensions();
                 let shell_ref = ShellRef {
                     builtins: &self.builtins,
+                    host_builtins: self.host_builtins.as_ref(),
                     functions: &self.functions,
                     aliases: Arc::make_mut(&mut self.aliases),
                     traps: Arc::make_mut(&mut self.traps),
@@ -5700,6 +5725,7 @@ impl Interpreter {
             let execution_extensions = self.current_execution_extensions();
             let shell_ref = ShellRef {
                 builtins: &self.builtins,
+                host_builtins: self.host_builtins.as_ref(),
                 functions: &self.functions,
                 aliases: Arc::make_mut(&mut self.aliases),
                 traps: Arc::make_mut(&mut self.traps),
@@ -5879,13 +5905,7 @@ impl Interpreter {
     /// Sorted names of all registered builtins (baked-in + custom + host
     /// registry). See [`crate::Bash::builtin_names`].
     pub(crate) fn builtin_names(&self) -> Vec<String> {
-        let mut names: Vec<String> = self.builtins.keys().cloned().collect();
-        if let Some(reg) = &self.host_builtins {
-            names.extend(reg.names());
-        }
-        names.sort();
-        names.dedup();
-        names
+        merged_builtin_names(&self.builtins, self.host_builtins.as_ref())
     }
 
     // THREAT[TM-DOS-089]: Box the final dispatch split so function lookup,

@@ -8,7 +8,9 @@
 //!   compgen -f                                # filenames
 //!   compgen -d                                # directories
 //!   compgen -v                                # variables
-//!   compgen -c                                # commands (builtins)
+//!   compgen -b                                # builtins
+//!   compgen -a                                # aliases
+//!   compgen -c                                # commands (builtins, functions, aliases, PATH)
 //!   compgen -A function                       # by action type
 
 use async_trait::async_trait;
@@ -20,21 +22,6 @@ use crate::interpreter::ExecResult;
 /// compgen builtin - bash completion generator.
 pub struct Compgen;
 
-/// Hardcoded list of known builtin command names.
-const BUILTIN_COMMANDS: &[&str] = &[
-    "alias", "assert", "awk", "base64", "basename", "bc", "break", "cat", "cd", "chmod", "chown",
-    "clear", "column", "comm", "compgen", "continue", "cp", "curl", "cut", "date", "declare", "df",
-    "diff", "dirname", "dirs", "dotenv", "du", "echo", "env", "envsubst", "eval", "exit", "expand",
-    "export", "expr", "false", "find", "fold", "grep", "gunzip", "gzip", "head", "hexdump",
-    "history", "hostname", "iconv", "id", "json", "join", "kill", "ln", "local", "log", "ls",
-    "mkdir", "mktemp", "mv", "nl", "od", "paste", "popd", "printenv", "printf", "pushd", "pwd",
-    "read", "readlink", "readonly", "realpath", "retry", "return", "rev", "rm", "rmdir", "sed",
-    "semver", "seq", "set", "shift", "shopt", "shuf", "sleep", "sort", "source", "split", "stat",
-    "strings", "tac", "tail", "tar", "tee", "test", "timeout", "touch", "tr", "tree", "truncate",
-    "true", "uname", "unexpand", "uniq", "unset", "wait", "watch", "wc", "wget", "whoami", "xargs",
-    "xxd", "yes",
-];
-
 #[async_trait]
 impl Builtin for Compgen {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
@@ -42,6 +29,9 @@ impl Builtin for Compgen {
         let mut gen_files = false;
         let mut gen_dirs = false;
         let mut gen_commands = false;
+        let mut gen_builtins = false;
+        let mut gen_functions = false;
+        let mut gen_aliases = false;
         let mut gen_variables = false;
         let mut actions: Vec<String> = Vec::new();
         let mut prefix: Option<String> = None;
@@ -62,6 +52,8 @@ impl Builtin for Compgen {
                 "-f" => gen_files = true,
                 "-d" => gen_dirs = true,
                 "-c" => gen_commands = true,
+                "-b" => gen_builtins = true,
+                "-a" => gen_aliases = true,
                 "-v" => gen_variables = true,
                 "-A" => {
                     i += 1;
@@ -101,11 +93,11 @@ impl Builtin for Compgen {
             match action.as_str() {
                 "file" => gen_files = true,
                 "directory" => gen_dirs = true,
-                "command" | "builtin" => gen_commands = true,
+                "command" => gen_commands = true,
+                "builtin" => gen_builtins = true,
                 "variable" => gen_variables = true,
-                "function" | "alias" => {
-                    // No functions/aliases in virtual env, produce empty
-                }
+                "function" => gen_functions = true,
+                "alias" => gen_aliases = true,
                 _ => {
                     return Ok(ExecResult::err(
                         format!("compgen: unknown action '{action}'\n"),
@@ -145,32 +137,45 @@ impl Builtin for Compgen {
             }
         }
 
-        // -c: commands (builtins + functions + aliases + PATH executables)
-        if gen_commands {
-            // Builtins
-            for &cmd in BUILTIN_COMMANDS {
-                if cmd.starts_with(pfx) {
-                    completions.push(cmd.to_string());
+        // -b / -A builtin (and -c): names from the live registry — the same
+        // source as `Bash::builtin_names()` — never a hardcoded list, which
+        // drifted (109 names vs 156 registered) before this was wired up.
+        // `ctx.shell` is None only for custom/external builtin contexts,
+        // which have no interpreter introspection by design.
+        if (gen_builtins || gen_commands)
+            && let Some(ref shell) = ctx.shell
+        {
+            for name in shell.builtin_names() {
+                if name.starts_with(pfx) {
+                    completions.push(name);
                 }
             }
-            #[cfg(feature = "jq")]
-            if "jq".starts_with(pfx) {
-                completions.push("jq".to_string());
-            }
+        }
 
-            // Functions from shell context
-            if let Some(ref shell) = ctx.shell {
-                for name in shell.functions.keys() {
-                    if name.starts_with(pfx) {
-                        completions.push(name.clone());
-                    }
-                }
-                for name in shell.aliases.keys() {
-                    if name.starts_with(pfx) {
-                        completions.push(name.clone());
-                    }
+        // -A function (and -c): defined shell functions
+        if (gen_functions || gen_commands)
+            && let Some(ref shell) = ctx.shell
+        {
+            for name in shell.functions.keys() {
+                if name.starts_with(pfx) {
+                    completions.push(name.clone());
                 }
             }
+        }
+
+        // -a / -A alias (and -c): defined aliases
+        if (gen_aliases || gen_commands)
+            && let Some(ref shell) = ctx.shell
+        {
+            for name in shell.aliases.keys() {
+                if name.starts_with(pfx) {
+                    completions.push(name.clone());
+                }
+            }
+        }
+
+        // -c: PATH executables on top of builtins/functions/aliases
+        if gen_commands {
             // PATH executables from VFS
             let path_var = ctx
                 .variables
@@ -210,11 +215,14 @@ impl Builtin for Compgen {
             && !gen_files
             && !gen_dirs
             && !gen_commands
+            && !gen_builtins
+            && !gen_functions
+            && !gen_aliases
             && !gen_variables
             && actions.is_empty()
         {
             return Ok(ExecResult::err(
-                "compgen: usage: compgen [-W wordlist] [-f] [-d] [-c] [-v] [-A action] [word]\n"
+                "compgen: usage: compgen [-W wordlist] [-f] [-d] [-c] [-b] [-a] [-v] [-A action] [word]\n"
                     .to_string(),
                 1,
             ));
@@ -300,17 +308,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_commands() {
-        let r = run(&["-c", "--", "ec"], None, None).await;
-        assert_eq!(r.exit_code, 0);
-        assert!(r.stdout.contains("echo\n"));
-    }
-
-    #[tokio::test]
-    async fn test_jq_completion_matches_enabled_feature() {
-        let r = run(&["-c", "--", "jq"], None, None).await;
-        assert_eq!(r.exit_code == 0, cfg!(feature = "jq"));
-        assert_eq!(r.stdout.contains("jq\n"), cfg!(feature = "jq"));
+    async fn test_commands_without_shell_context_yields_no_builtins() {
+        // Builtin names come from the live registry via `ctx.shell`; custom/
+        // external builtin contexts (shell: None) have no introspection.
+        // Registry-backed behavior is covered by tests/integration/compgen_tests.rs.
+        let r = run(&["-b", "--", "ec"], None, None).await;
+        assert_eq!(r.exit_code, 1);
+        assert!(r.stdout.is_empty());
     }
 
     #[tokio::test]
@@ -372,9 +376,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_action_flag() {
+        // Parses and runs; name generation needs shell context (None here),
+        // so no matches. Registry-backed -A coverage lives in
+        // tests/integration/compgen_tests.rs.
         let r = run(&["-A", "command", "--", "ec"], None, None).await;
-        assert_eq!(r.exit_code, 0);
-        assert!(r.stdout.contains("echo\n"));
+        assert_eq!(r.exit_code, 1);
+        assert!(r.stdout.is_empty());
     }
 
     #[tokio::test]

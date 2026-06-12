@@ -29,6 +29,7 @@ pub mod builtin_registry_tests;
 pub mod byte_range_panic_tests;
 pub mod cancellation_tests;
 pub mod cmdsub_quote_test;
+pub mod compgen_tests;
 pub mod coproc_tests;
 pub mod coreutils_differential_tests;
 pub mod credential_injection_tests;

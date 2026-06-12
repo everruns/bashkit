@@ -55,7 +55,7 @@ PS2 defaults to `> ` for continuation lines. Both can be set via
 Completes based on context:
 
 - **Command position** (start of line, after `;`/`|`/`&&`/`||`):
-  builtins (100+), aliases
+  builtins (live registry via `Bash::builtin_names()`), aliases
 - **Argument position**: VFS paths (files and directories)
 - **`$` prefix**: environment and shell variables
 - Directories show trailing `/`
