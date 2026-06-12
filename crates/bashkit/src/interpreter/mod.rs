@@ -9409,6 +9409,9 @@ impl Interpreter {
 
     /// Split a string on IFS characters, returning an error if resource caps are exceeded.
     fn ifs_split_limited(&self, s: &str, limit: usize) -> Result<Vec<String>> {
+        // Clamp so callers passing a larger value (e.g. remaining array capacity)
+        // cannot bypass the configured max_word_split_fields cap.
+        let limit = limit.min(self.limits.max_word_split_fields);
         if limit == 0 {
             return Ok(Vec::new());
         }
@@ -9421,7 +9424,8 @@ impl Interpreter {
 
         if ifs.is_empty() {
             let field = Self::strip_quote_markers(s);
-            return self.push_ifs_field(Vec::new(), field, limit, s.len());
+            let bytes = field.len();
+            return self.push_ifs_field(Vec::new(), field, limit, bytes);
         }
 
         let is_ifs = |c: char, quoted: bool| !quoted && ifs.contains(c);

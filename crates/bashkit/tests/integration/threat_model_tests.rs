@@ -4794,12 +4794,19 @@ done
 arr=($parts)
 echo ${#arr[@]}
 "#;
-        // Word-splitting that exceeds max_array_entries now propagates as an error
-        // rather than silently truncating, so exec returns Err.
+        // Word-splitting that exceeds max_word_split_fields propagates as Err.
         let result = bash.exec(script).await;
+        let err_msg = match &result {
+            Err(e) => e.to_string(),
+            Ok(r) => r.stderr.clone(),
+        };
         assert!(
-            result.is_err() || result.as_ref().map(|r| r.exit_code).unwrap_or(0) != 0,
-            "Word-split array assignment exceeding max_array_entries should fail"
+            result.is_err(),
+            "should error on word-split limit, got: {err_msg}"
+        );
+        assert!(
+            err_msg.contains("word split") || err_msg.contains("limit"),
+            "error should mention word-split limit, got: {err_msg}"
         );
     }
 
