@@ -257,9 +257,16 @@ let bash = Bash::builder()
 **Dispatch:** A single handler receives all registered function names; dispatch by
 `function_name` inside the handler.
 
+**Timeouts:** Each awaited handler call is wrapped in the remaining
+`PythonLimits::max_duration` wall-clock budget for the current Python invocation.
+If the budget expires while a handler is pending, Bashkit resumes Python with a
+`RuntimeError` instead of waiting for the handler indefinitely.
+
 **Trust model:** External function handlers follow the same trust model as
 `BashBuilder::builtin()` and `ScriptedTool` callbacks — the host application
-registers trusted Rust code, untrusted scripts invoke it by name.
+registers trusted Rust code, untrusted scripts invoke it by name. Handlers are
+trusted host code and should still enforce independent limits for outbound I/O,
+remote services, and other resources they consume.
 
 **Unstable re-exports:** `MontyObject`, `ExtFunctionResult`, `MontyException`, and
 `ExcType` are re-exported from the `monty` crate (git-pinned, not on crates.io).
