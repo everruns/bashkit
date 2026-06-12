@@ -9,12 +9,20 @@ python3 -c "import os; print(os.getenv('_READONLY_x', 'none'))"
 none
 ### end
 
-### user_variable_still_visible
-# Regular user variables should still be accessible from Python
-MY_VAR=hello
+### exported_variable_visible
+# Exported variables are visible in Python via os.environ
+export MY_VAR=hello
 python3 -c "import os; print(os.getenv('MY_VAR', 'missing'))"
 ### expect
 hello
+### end
+
+### unexported_variable_not_visible
+# Non-exported shell variables are NOT visible in Python (matches bash semantics)
+UNEXPORTED_VAR=secret
+python3 -c "import os; print(os.getenv('UNEXPORTED_VAR', 'none'))"
+### expect
+none
 ### end
 
 ### shopt_not_visible

@@ -30,7 +30,7 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::{Builtin, Context, ExecutionDeadline, resolve_path};
 use crate::error::Result;
@@ -151,6 +151,10 @@ impl PythonLimits {
 ///
 /// Receives `(function_name, positional_args, keyword_args)` directly from monty.
 /// Return `ExtFunctionResult::Return(value)` for success or `ExtFunctionResult::Error(exc)` for failure.
+///
+/// Important security decision: the Python builtin wraps each awaited handler
+/// in the remaining [`PythonLimits::max_duration`] budget. Host handlers are
+/// trusted code, but should still enforce their own I/O and service limits.
 pub type PythonExternalFnHandler = Arc<
     dyn Fn(
             String,
@@ -433,17 +437,9 @@ impl Builtin for Python {
             ));
         }
 
-        // Merge env and variables so exported vars (set via `export`) are visible
-        // to Python's os.getenv(). Variables override env (bash semantics).
-        // THREAT[TM-INF]: Filter internal markers (including SHOPT_*) to prevent
-        // information disclosure via os.environ (issue #999).
-        let mut merged_env = ctx.env.clone();
-        merged_env.extend(
-            ctx.variables
-                .iter()
-                .filter(|(k, _)| !crate::interpreter::is_hidden_variable(k))
-                .map(|(k, v)| (k.clone(), v.clone())),
-        );
+        // THREAT[TM-INF]: Python environment access is intentionally scoped
+        // to exported variables only (`ctx.env`). Shell-local variables in
+        // `ctx.variables` may contain wrapper secrets or internal markers.
 
         // Clamp Monty's wall-clock budget to the caller's remaining execution
         // deadline (like the TypeScript builtin) so a CPU-bound script cannot
@@ -462,7 +458,7 @@ impl Builtin for Python {
             &filename,
             ctx.fs.clone(),
             ctx.cwd,
-            &merged_env,
+            ctx.env,
             &limits,
             self.external_fns.as_ref(),
         )
@@ -505,6 +501,9 @@ async fn run_python(
         .max_recursion_depth(Some(py_limits.max_recursion));
 
     let tracker = LimitedTracker::new(limits);
+    // Important security decision: cap awaited host callbacks with the same wall-clock
+    // budget as Monty so external functions cannot pin execution between VM steps.
+    let python_deadline = Instant::now().checked_add(py_limits.max_duration);
 
     // Run the synchronous start() phase, then extract collected output.
     // PrintWriter::CollectString is not Send, so we scope it to avoid holding across .await.
@@ -533,10 +532,12 @@ async fn run_python(
             }
             RunProgress::FunctionCall(call) => {
                 let result = if let Some(ef) = external_fns {
-                    (ef.handler)(
+                    call_external_with_deadline(
+                        ef,
                         call.function_name.clone(),
                         call.args.clone(),
                         call.kwargs.clone(),
+                        python_deadline,
                     )
                     .await
                 } else {
@@ -606,12 +607,42 @@ async fn run_python(
     }
 }
 
+fn python_external_timeout_error() -> ExtFunctionResult {
+    ExtFunctionResult::Error(MontyException::new(
+        ExcType::RuntimeError,
+        Some("Python external function exceeded max_duration".into()),
+    ))
+}
+
+async fn call_external_with_deadline(
+    external_fns: &PythonExternalFns,
+    function_name: String,
+    args: Vec<MontyObject>,
+    kwargs: Vec<(MontyObject, MontyObject)>,
+    deadline: Option<Instant>,
+) -> ExtFunctionResult {
+    let Some(deadline) = deadline else {
+        // Instant::checked_add overflowed (very large max_duration); run uncapped.
+        return (external_fns.handler)(function_name, args, kwargs).await;
+    };
+    let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+        return python_external_timeout_error();
+    };
+    match tokio::time::timeout(
+        remaining,
+        (external_fns.handler)(function_name, args, kwargs),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => python_external_timeout_error(),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // VFS bridging: Monty OsCall → Bashkit FileSystem
 // ---------------------------------------------------------------------------
 
-/// Dispatch a Monty OsCall to the appropriate VFS operation.
-///
 /// Monty's `OsFunctionCall` is a tagged enum carrying typed args. We project it
 /// to the generic `(positional, keyword)` `MontyObject` view via the public
 /// `to_args()` and dispatch on the stable `name()` string (kept byte-identical
@@ -1506,12 +1537,21 @@ mod tests {
         fn_names: &[&str],
         handler: PythonExternalFnHandler,
     ) -> ExecResult {
+        run_with_external_and_limits(code, fn_names, handler, PythonLimits::default()).await
+    }
+
+    async fn run_with_external_and_limits(
+        code: &str,
+        fn_names: &[&str],
+        handler: PythonExternalFnHandler,
+        limits: PythonLimits,
+    ) -> ExecResult {
         let args = vec!["-c".to_string(), code.to_string()];
         let env = opt_in_env();
         let mut variables = HashMap::new();
         let mut cwd = PathBuf::from("/home/user");
         let fs = Arc::new(InMemoryFs::new());
-        let py = Python::with_limits(PythonLimits::default())
+        let py = Python::with_limits(limits)
             .with_external_handler(fn_names.iter().map(|s| s.to_string()).collect(), handler);
         let ctx = Context::new_for_test(&args, &env, &mut variables, &mut cwd, fs, None);
         py.execute(ctx).await.unwrap()
@@ -1525,6 +1565,33 @@ mod tests {
         let r = run_with_external("print(get_answer())", &["get_answer"], handler).await;
         assert_eq!(r.exit_code, 0);
         assert_eq!(r.stdout, "42\n");
+    }
+
+    #[tokio::test]
+    async fn test_external_fn_handler_timeout_uses_python_deadline() {
+        let handler: PythonExternalFnHandler = Arc::new(|_name, _args, _kwargs| {
+            Box::pin(async {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                ExtFunctionResult::Return(MontyObject::Int(1))
+            })
+        });
+        let started = Instant::now();
+        let r = tokio::time::timeout(
+            Duration::from_secs(1),
+            run_with_external_and_limits(
+                "print(slow())",
+                &["slow"],
+                handler,
+                PythonLimits::default().max_duration(Duration::from_millis(25)),
+            ),
+        )
+        .await
+        .expect("Python external call should observe max_duration");
+
+        assert_eq!(r.exit_code, 1);
+        assert!(r.stderr.contains("RuntimeError"));
+        assert!(r.stderr.contains("exceeded max_duration"));
+        assert!(started.elapsed() < Duration::from_millis(500));
     }
 
     #[tokio::test]

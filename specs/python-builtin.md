@@ -115,7 +115,8 @@ let bash = Bash::builder()
 - Handler signature: `(function_name: String, positional_args: Vec<MontyObject>, keyword_args: Vec<(MontyObject, MontyObject)>) -> Pin<Box<dyn Future<Output = ExtFunctionResult> + Send>>`.
 - Returns `ExtFunctionResult::Return(MontyObject)` (value to Python) or `ExtFunctionResult::Error(MontyException)` (raises).
 - **Dispatch:** one handler receives all registered names; dispatch on `function_name` inside it.
-- **Trust model:** same as `BashBuilder::builtin()` and `ScriptedTool` callbacks — host registers trusted Rust code, untrusted scripts invoke by name.
+- **Timeouts:** Each awaited handler call is wrapped in the remaining `PythonLimits::max_duration` wall-clock budget for the current Python invocation. If the budget expires while a handler is pending, Bashkit resumes Python with a `RuntimeError` instead of waiting for the handler indefinitely.
+- **Trust model:** same as `BashBuilder::builtin()` and `ScriptedTool` callbacks — host registers trusted Rust code, untrusted scripts invoke by name. Handlers are trusted host code and should still enforce independent limits for outbound I/O, remote services, and other resources they consume.
 - **Unstable re-exports:** `MontyObject`, `ExtFunctionResult`, `MontyException`, `ExcType` re-exported from the `monty` crate (git-pinned, not on crates.io); may break between bashkit releases.
 
 ### Security
