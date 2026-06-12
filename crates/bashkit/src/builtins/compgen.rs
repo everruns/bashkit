@@ -9,6 +9,7 @@
 //!   compgen -d                                # directories
 //!   compgen -v                                # variables
 //!   compgen -b                                # builtins
+//!   compgen -a                                # aliases
 //!   compgen -c                                # commands (builtins, functions, aliases, PATH)
 //!   compgen -A function                       # by action type
 
