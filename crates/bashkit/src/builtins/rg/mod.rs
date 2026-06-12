@@ -3968,19 +3968,18 @@ fn path_allowed_by_hidden_filter(path: &Path, root: &Path, opts: &RgOptions, cwd
         return true;
     }
 
-    let components: Vec<_> = path
-        .strip_prefix(root)
-        .unwrap_or(path)
-        .components()
-        .collect();
-    for (idx, component) in components.iter().enumerate() {
+    let relative = path.strip_prefix(root).unwrap_or(path);
+    let mut components = relative.components().peekable();
+    while let Some(component) = components.next() {
         let Some(name) = component.as_os_str().to_str() else {
             continue;
         };
         if !is_hidden_name(name) {
             continue;
         }
-        if idx + 1 == components.len() {
+        // Hidden file (last component): allowed if explicitly included.
+        // Hidden directory (intermediate component): always excluded.
+        if components.peek().is_none() {
             return opts.explicitly_includes_hidden_file(path, cwd);
         }
         return false;
