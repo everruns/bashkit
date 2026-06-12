@@ -1330,7 +1330,6 @@ impl<'a> Lexer<'a> {
         self.advance(); // consume opening "
         let mut content = String::new();
         let mut closed = false;
-        let mut has_quoted_expansion = false;
 
         while let Some(ch) = self.peek_char() {
             match ch {
@@ -1370,13 +1369,6 @@ impl<'a> Lexer<'a> {
                 '$' => {
                     content.push('$');
                     self.advance();
-                    if self.peek_char().is_some_and(|nc| {
-                        nc.is_ascii_alphanumeric()
-                            || nc == '_'
-                            || matches!(nc, '{' | '(' | '?' | '#' | '@' | '*' | '!' | '$' | '-')
-                    }) {
-                        has_quoted_expansion = true;
-                    }
                     if self.peek_char() == Some('(') {
                         // $(...) command substitution — track paren depth
                         content.push('(');
@@ -1394,7 +1386,6 @@ impl<'a> Lexer<'a> {
                 }
                 '`' => {
                     // Backtick command substitution inside double quotes
-                    has_quoted_expansion = true;
                     self.advance(); // consume opening `
                     content.push_str("$(");
                     while let Some(c) = self.peek_char() {
@@ -1451,13 +1442,10 @@ impl<'a> Lexer<'a> {
                 Self::apply_quote_markers(&mut content, ranges);
                 return Some(Token::Word(content));
             }
-            if has_quoted_expansion && flags.has_unquoted_glob {
+            if flags.has_unquoted_glob {
                 return Some(Token::QuotedGlobWord(content));
             }
-            if has_quoted_expansion {
-                return Some(Token::QuotedWord(content));
-            }
-            return Some(Token::Word(content));
+            return Some(Token::QuotedWord(content));
         }
 
         Some(Token::QuotedWord(content))

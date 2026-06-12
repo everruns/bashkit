@@ -1375,6 +1375,46 @@ mod parser_edge_cases_passing {
             "Single-quoted heredoc expanded command substitution"
         );
     }
+
+    /// Any quoted byte in the delimiter disables heredoc body expansion.
+    #[tokio::test]
+    async fn heredoc_partially_quoted_delimiter_no_expansion() {
+        let mut bash = tight_bash();
+        let result = bash
+            .exec("cat <<\"EOF\"x\n$(echo INJECTED)\nEOFx\n")
+            .await
+            .unwrap();
+        assert_eq!(
+            result.stdout, "$(echo INJECTED)\n",
+            "partially quoted heredoc delimiter expanded command substitution"
+        );
+    }
+}
+
+mod finding_mixed_quoted_word_quote_metadata {
+    use super::*;
+
+    #[tokio::test]
+    async fn quoted_glob_metacharacter_with_unquoted_suffix_stays_literal() {
+        let mut bash = tight_bash();
+        let result = bash.exec(r#"echo "*"x"#).await.unwrap();
+
+        assert_eq!(
+            result.stdout, "*x\n",
+            "glob metacharacter from quoted segment was expanded"
+        );
+    }
+
+    #[tokio::test]
+    async fn quoted_brace_expression_with_unquoted_suffix_stays_literal() {
+        let mut bash = tight_bash();
+        let result = bash.exec(r#"echo "{1..3}"x"#).await.unwrap();
+
+        assert_eq!(
+            result.stdout, "{1..3}x\n",
+            "brace expression from quoted segment was expanded"
+        );
+    }
 }
 
 mod state_isolation_passing {
