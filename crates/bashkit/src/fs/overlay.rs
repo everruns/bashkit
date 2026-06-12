@@ -321,13 +321,18 @@ impl OverlayFs {
                 }
                 if let Ok(meta) = self.lower.stat(&child).await {
                     match meta.file_type {
-                        FileType::File if !self.upper.exists(&child).await.unwrap_or(false) => {
+                        FileType::File | FileType::Symlink | FileType::Fifo
+                            if !self.upper.exists(&child).await.unwrap_or(false) =>
+                        {
                             self.hide_lower_file(meta.size);
+                            self.add_whiteout(&child);
                         }
                         FileType::Directory => {
                             self.hide_lower_dir();
-                            // Recurse into subdirectories
+                            // THREAT[TM-DOS-038]: Materialize child whiteouts so
+                            // recreating the parent does not reveal accounted children.
                             Box::pin(self.hide_lower_children_recursive(&child)).await;
+                            self.add_whiteout(&child);
                         }
                         _ => {}
                     }
@@ -618,16 +623,19 @@ impl FileSystem for OverlayFs {
         }
 
         // If was in lower, add whiteout and track hiding.
-        // If in_upper was also true, the lower was already hidden (by the upper
-        // override). The whiteout replaces the override as the hiding mechanism,
-        // so no additional deduction needed.
+        // File upper overrides already hide the lower file. Recursive directory
+        // deletes must still materialize child whiteouts because upper directory
+        // overlays merge lower children instead of replacing the subtree.
         if in_lower {
-            // Newly hiding the lower entry only if there was no upper override
-            if !in_upper && let Ok(meta) = self.lower.stat(&path).await {
+            if let Ok(meta) = self.lower.stat(&path).await {
                 match meta.file_type {
-                    FileType::File => self.hide_lower_file(meta.size),
+                    FileType::File | FileType::Symlink | FileType::Fifo if !in_upper => {
+                        self.hide_lower_file(meta.size)
+                    }
                     FileType::Directory => {
-                        self.hide_lower_dir();
+                        if !in_upper {
+                            self.hide_lower_dir();
+                        }
                         // THREAT[TM-DOS-038]: Recursive delete must track all
                         // lower children for accurate usage deduction.
                         if recursive {
@@ -1622,6 +1630,34 @@ mod tests {
             after.file_count,
             before.file_count - 2,
             "should deduct all child file counts"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_recursive_delete_recreate_keeps_lower_children_hidden() {
+        let lower = Arc::new(InMemoryFs::new());
+        lower.mkdir(Path::new("/dir"), true).await.unwrap();
+        lower
+            .write_file(Path::new("/dir/a"), &[b'a'; 80])
+            .await
+            .unwrap();
+
+        let overlay = OverlayFs::new(lower);
+
+        overlay.remove(Path::new("/dir"), true).await.unwrap();
+        overlay.mkdir(Path::new("/dir"), false).await.unwrap();
+
+        assert!(
+            overlay.exists(Path::new("/dir")).await.unwrap(),
+            "recreated directory should exist"
+        );
+        assert!(
+            !overlay.exists(Path::new("/dir/a")).await.unwrap(),
+            "recursive delete child whiteout must survive parent recreation"
+        );
+        assert!(
+            overlay.read_file(Path::new("/dir/a")).await.is_err(),
+            "lower child must not reappear after mkdir removes parent whiteout"
         );
     }
 
