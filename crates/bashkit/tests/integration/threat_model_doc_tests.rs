@@ -28,6 +28,20 @@ fn extract_tm_ids(text: &str, found: &mut HashSet<String>) {
                 .collect();
             if !num.is_empty() {
                 found.insert(format!("TM-{cat}-{num}"));
+                // Shorthand group citations: TM-ISO-005/006/007 cites three
+                // IDs in the same category. Expand each /NNN suffix.
+                let mut tail = &after_cat[1 + num.len()..];
+                while let Some(stripped) = tail.strip_prefix('/') {
+                    let next: String = stripped
+                        .chars()
+                        .take_while(|c| c.is_ascii_digit())
+                        .collect();
+                    if next.is_empty() {
+                        break;
+                    }
+                    found.insert(format!("TM-{cat}-{next}"));
+                    tail = &stripped[next.len()..];
+                }
             }
         }
         i = start + 3;
