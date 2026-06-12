@@ -597,7 +597,9 @@ async fn test_awk_multi_subscript() {
 #[tokio::test]
 async fn test_awk_rejects_too_many_multi_subscripts() {
     // Regression: unbounded multi-subscript lists built a recursive SUBSEP_CONCAT AST.
-    let subscripts = std::iter::repeat_n("1", AWK_MAX_MULTI_SUBSCRIPTS + 1).collect::<Vec<_>>().join(",");
+    let subscripts = std::iter::repeat_n("1", AWK_MAX_MULTI_SUBSCRIPTS + 1)
+        .collect::<Vec<_>>()
+        .join(",");
     let program = format!("BEGIN {{ a[{subscripts}] = 1 }}");
 
     let err = run_awk(&[&program], Some("")).await.unwrap_err();
