@@ -582,14 +582,8 @@ mod whitebox_env_security {
             .exec("INTERNAL_VAR=secret\npython3 -c \"import os\nprint(os.getenv('INTERNAL_VAR', 'none'))\"")
             .await
             .unwrap();
-        // Unexported vars should not be visible to Python
-        // (bash semantics: only exported vars are in env)
-        // Note: bashkit merges variables, so this tests that behavior
-        if r.exit_code == 0 {
-            // If visible, verify it's the expected value (no corruption)
-            let out = r.stdout.trim();
-            assert!(out == "none" || out == "secret");
-        }
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stdout.trim(), "none");
     }
 
     #[tokio::test]

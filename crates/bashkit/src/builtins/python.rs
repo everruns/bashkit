@@ -433,24 +433,15 @@ impl Builtin for Python {
             ));
         }
 
-        // Merge env and variables so exported vars (set via `export`) are visible
-        // to Python's os.getenv(). Variables override env (bash semantics).
-        // THREAT[TM-INF]: Filter internal markers (including SHOPT_*) to prevent
-        // information disclosure via os.environ (issue #999).
-        let mut merged_env = ctx.env.clone();
-        merged_env.extend(
-            ctx.variables
-                .iter()
-                .filter(|(k, _)| !crate::interpreter::is_hidden_variable(k))
-                .map(|(k, v)| (k.clone(), v.clone())),
-        );
-
+        // THREAT[TM-INF]: Python environment access is intentionally scoped
+        // to exported variables only (`ctx.env`). Shell-local variables in
+        // `ctx.variables` may contain wrapper secrets or internal markers.
         run_python(
             &code,
             &filename,
             ctx.fs.clone(),
             ctx.cwd,
-            &merged_env,
+            ctx.env,
             &self.limits,
             self.external_fns.as_ref(),
         )
