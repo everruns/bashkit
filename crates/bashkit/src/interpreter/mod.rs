@@ -33,6 +33,53 @@ static PROC_SUB_COUNTER: AtomicU64 = AtomicU64::new(0);
 const COMPAT_BASH_VERSION: &str = "5.2.15(1)-release";
 const COMPAT_BASH_VERSINFO: [&str; 6] = ["5", "2", "15", "1", "release", "virtual"];
 
+// Important decision: IFS is script-controlled, so split membership must be O(1)
+// and field materialization must be bounded before loops/commands consume args.
+struct IfsClassifier {
+    ascii: [bool; 128],
+    non_ascii: HashSet<char>,
+    all_whitespace_ifs: bool,
+}
+
+impl IfsClassifier {
+    fn new(ifs: &str) -> Self {
+        let mut ascii = [false; 128];
+        let mut non_ascii = HashSet::new();
+        let mut all_whitespace_ifs = true;
+        for c in ifs.chars() {
+            if !matches!(c, ' ' | '\t' | '\n') {
+                all_whitespace_ifs = false;
+            }
+            if c.is_ascii() {
+                ascii[c as usize] = true;
+            } else {
+                non_ascii.insert(c);
+            }
+        }
+        Self {
+            ascii,
+            non_ascii,
+            all_whitespace_ifs,
+        }
+    }
+
+    fn is_ifs(&self, c: char) -> bool {
+        if c.is_ascii() {
+            self.ascii[c as usize]
+        } else {
+            self.non_ascii.contains(&c)
+        }
+    }
+
+    fn is_ifs_ws(&self, c: char) -> bool {
+        matches!(c, ' ' | '\t' | '\n') && self.is_ifs(c)
+    }
+
+    fn is_ifs_nws(&self, c: char) -> bool {
+        self.is_ifs(c) && !matches!(c, ' ' | '\t' | '\n')
+    }
+}
+
 use futures_util::FutureExt;
 
 use crate::builtins::{self, Builtin};
@@ -4567,7 +4614,7 @@ impl Interpreter {
                                 break;
                             }
                             let expanded = self.expand_word(word).await?;
-                            for field in self.ifs_split_limited(&expanded, remaining) {
+                            for field in self.ifs_split_limited(&expanded, remaining)? {
                                 next_arr.insert(idx, field);
                                 idx += 1;
                             }
@@ -8476,7 +8523,7 @@ impl Interpreter {
                         // $@ unquoted: each param is subject to further IFS splitting
                         let mut fields = Vec::new();
                         for p in &positional {
-                            fields.extend(self.ifs_split(p));
+                            fields.extend(self.ifs_split(p)?);
                         }
                         return Ok(fields);
                     }
@@ -8502,7 +8549,7 @@ impl Interpreter {
                         // $* unquoted: each param is subject to IFS splitting
                         let mut fields = Vec::new();
                         for p in &positional {
-                            fields.extend(self.ifs_split(p));
+                            fields.extend(self.ifs_split(p)?);
                         }
                         return Ok(fields);
                     }
@@ -8579,7 +8626,7 @@ impl Interpreter {
                 });
 
             if has_expansion {
-                Ok(self.ifs_split(&expanded))
+                self.ifs_split(&expanded)
             } else {
                 Ok(vec![expanded])
             }
@@ -8705,14 +8752,14 @@ impl Interpreter {
     ///   an empty field between them.
     /// - `<ws><nws><ws>` = single delimiter (ws absorbed into the nws delimiter).
     /// - Empty IFS → no splitting. Unset IFS → default " \t\n".
-    fn ifs_split(&self, s: &str) -> Vec<String> {
-        self.ifs_split_limited(s, usize::MAX)
+    fn ifs_split(&self, s: &str) -> Result<Vec<String>> {
+        self.ifs_split_limited(s, self.limits.max_word_split_fields)
     }
 
-    /// Split a string on IFS characters, returning at most `limit` fields.
-    fn ifs_split_limited(&self, s: &str, limit: usize) -> Vec<String> {
+    /// Split a string on IFS characters, returning an error if resource caps are exceeded.
+    fn ifs_split_limited(&self, s: &str, limit: usize) -> Result<Vec<String>> {
         if limit == 0 {
-            return Vec::new();
+            return Ok(Vec::new());
         }
 
         let ifs = self
@@ -8722,93 +8769,100 @@ impl Interpreter {
             .unwrap_or_else(|| " \t\n".to_string());
 
         if ifs.is_empty() {
-            return vec![s.to_string()];
+            return self.push_ifs_field(Vec::new(), s.to_string(), limit, s.len());
         }
 
-        let is_ifs = |c: char| ifs.contains(c);
-        let is_ifs_ws = |c: char| ifs.contains(c) && " \t\n".contains(c);
-        let is_ifs_nws = |c: char| ifs.contains(c) && !" \t\n".contains(c);
-        let all_whitespace_ifs = ifs.chars().all(|c| " \t\n".contains(c));
+        let classifier = IfsClassifier::new(&ifs);
 
-        if all_whitespace_ifs {
-            // IFS is only whitespace: split on runs, elide empties
-            return s
-                .split(|c: char| is_ifs(c))
+        if classifier.all_whitespace_ifs {
+            let mut fields = Vec::new();
+            let mut bytes = 0usize;
+            for field in s
+                .split(|c: char| classifier.is_ifs(c))
                 .filter(|f| !f.is_empty())
-                .take(limit)
-                .map(|f| f.to_string())
-                .collect();
+            {
+                bytes = bytes.saturating_add(field.len());
+                fields = self.push_ifs_field(fields, field.to_string(), limit, bytes)?;
+            }
+            return Ok(fields);
         }
 
-        // Mixed or pure non-whitespace IFS.
         let mut fields: Vec<String> = Vec::new();
         let mut current = String::new();
-        let chars: Vec<char> = s.chars().collect();
-        let mut i = 0;
+        let mut bytes = 0usize;
+        let mut chars = s.chars().peekable();
 
-        // Skip leading IFS whitespace
-        while i < chars.len() && is_ifs_ws(chars[i]) {
-            i += 1;
+        while chars.peek().is_some_and(|c| classifier.is_ifs_ws(*c)) {
+            chars.next();
         }
-        // Leading non-whitespace IFS produces an empty first field
-        if i < chars.len() && is_ifs_nws(chars[i]) {
-            fields.push(String::new());
-            if fields.len() >= limit {
-                return fields;
-            }
-            i += 1;
-            while i < chars.len() && is_ifs_ws(chars[i]) {
-                i += 1;
+        if chars.peek().is_some_and(|c| classifier.is_ifs_nws(*c)) {
+            fields = self.push_ifs_field(fields, String::new(), limit, bytes)?;
+            chars.next();
+            while chars.peek().is_some_and(|c| classifier.is_ifs_ws(*c)) {
+                chars.next();
             }
         }
 
-        while i < chars.len() {
-            let c = chars[i];
-            if is_ifs_nws(c) {
-                // Non-whitespace IFS delimiter: finalize current field
-                fields.push(std::mem::take(&mut current));
-                if fields.len() >= limit {
-                    return fields;
+        while let Some(c) = chars.next() {
+            if classifier.is_ifs_nws(c) {
+                let field = std::mem::take(&mut current);
+                bytes = bytes.saturating_add(field.len());
+                fields = self.push_ifs_field(fields, field, limit, bytes)?;
+                while chars.peek().is_some_and(|c| classifier.is_ifs_ws(*c)) {
+                    chars.next();
                 }
-                i += 1;
-                // Consume trailing IFS whitespace
-                while i < chars.len() && is_ifs_ws(chars[i]) {
-                    i += 1;
+            } else if classifier.is_ifs_ws(c) {
+                while chars.peek().is_some_and(|c| classifier.is_ifs_ws(*c)) {
+                    chars.next();
                 }
-            } else if is_ifs_ws(c) {
-                // IFS whitespace: skip it, then check for non-ws delimiter
-                while i < chars.len() && is_ifs_ws(chars[i]) {
-                    i += 1;
-                }
-                if i < chars.len() && is_ifs_nws(chars[i]) {
-                    // <ws><nws> = single delimiter. Push current field.
-                    fields.push(std::mem::take(&mut current));
-                    if fields.len() >= limit {
-                        return fields;
+                if chars.peek().is_some_and(|c| classifier.is_ifs_nws(*c)) {
+                    let field = std::mem::take(&mut current);
+                    bytes = bytes.saturating_add(field.len());
+                    fields = self.push_ifs_field(fields, field, limit, bytes)?;
+                    chars.next();
+                    while chars.peek().is_some_and(|c| classifier.is_ifs_ws(*c)) {
+                        chars.next();
                     }
-                    i += 1; // consume the nws char
-                    while i < chars.len() && is_ifs_ws(chars[i]) {
-                        i += 1;
-                    }
-                } else if i < chars.len() {
-                    // ws alone as delimiter (no nws follows)
-                    fields.push(std::mem::take(&mut current));
-                    if fields.len() >= limit {
-                        return fields;
-                    }
+                } else if chars.peek().is_some() {
+                    let field = std::mem::take(&mut current);
+                    bytes = bytes.saturating_add(field.len());
+                    fields = self.push_ifs_field(fields, field, limit, bytes)?;
                 }
-                // trailing ws at end → ignore (don't push empty field)
             } else {
                 current.push(c);
-                i += 1;
             }
         }
 
-        if !current.is_empty() && fields.len() < limit {
-            fields.push(current);
+        if !current.is_empty() {
+            bytes = bytes.saturating_add(current.len());
+            fields = self.push_ifs_field(fields, current, limit, bytes)?;
         }
 
-        fields
+        Ok(fields)
+    }
+
+    fn push_ifs_field(
+        &self,
+        mut fields: Vec<String>,
+        field: String,
+        limit: usize,
+        bytes: usize,
+    ) -> Result<Vec<String>> {
+        if fields.len() >= limit {
+            return Err(crate::limits::LimitExceeded::Memory(format!(
+                "word split field limit ({limit}) exceeded"
+            ))
+            .into());
+        }
+        if bytes > self.limits.max_word_split_bytes {
+            return Err(crate::limits::LimitExceeded::Memory(format!(
+                "word split byte limit ({}) exceeded",
+                self.limits.max_word_split_bytes
+            ))
+            .into());
+        }
+        fields.push(field);
+        Ok(fields)
     }
 
     /// Expand an operand string from a parameter expansion (sync, lazy).
@@ -11638,6 +11692,34 @@ mod tests {
         let parser = Parser::new(script);
         let ast = parser.parse().unwrap();
         interp.execute(&ast).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_ifs_split_field_limit_rejects_exploding_command_substitution() {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        let mut interp = Interpreter::new(Arc::clone(&fs));
+        interp.set_limits(ExecutionLimits::default().max_word_split_fields(3));
+        let parser = Parser::new("IFS=,; for x in $(echo a,b,c,d); do :; done");
+        let ast = parser.parse().unwrap();
+        let err = interp.execute(&ast).await.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("word split field limit (3) exceeded")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ifs_split_byte_limit_rejects_large_materialized_field() {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        let mut interp = Interpreter::new(Arc::clone(&fs));
+        interp.set_limits(ExecutionLimits::default().max_word_split_bytes(5));
+        let parser = Parser::new("v=abcdef; echo $v");
+        let ast = parser.parse().unwrap();
+        let err = interp.execute(&ast).await.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("word split byte limit (5) exceeded")
+        );
     }
 
     #[tokio::test]
