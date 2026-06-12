@@ -7317,6 +7317,7 @@ impl Interpreter {
 
                 let baseline_call_stack_len = self.call_stack.len();
                 let baseline_bash_source_len = self.bash_source_stack.len();
+                let baseline_function_depth = self.counters.function_depth;
                 let baseline_pipeline_stdin = self.pipeline_stdin.clone();
                 let exec_future = self.execute_command(&inner_cmd);
                 match timeout(duration, exec_future).await {
@@ -7326,6 +7327,7 @@ impl Interpreter {
                         self.reconcile_cancelled_execution_state(
                             baseline_call_stack_len,
                             baseline_bash_source_len,
+                            baseline_function_depth,
                             baseline_pipeline_stdin,
                         );
                         // Timeout expired.
@@ -7444,6 +7446,7 @@ impl Interpreter {
         &mut self,
         baseline_call_stack_len: usize,
         baseline_bash_source_len: usize,
+        baseline_function_depth: usize,
         baseline_pipeline_stdin: Option<String>,
     ) {
         let leaked_call_frames = self
@@ -7463,10 +7466,8 @@ impl Interpreter {
             self.update_bash_source();
         }
 
-        for _ in 0..leaked_call_frames.max(leaked_bash_source_entries) {
-            self.counters.pop_function();
-        }
-
+        // Some cancellable paths push call frames or BASH_SOURCE without pushing function depth.
+        self.counters.function_depth = baseline_function_depth;
         self.pipeline_stdin = baseline_pipeline_stdin;
 
         if self.call_stack.is_empty() {
@@ -11596,6 +11597,39 @@ mod tests {
         let ast = parser.parse().unwrap();
         let result = interp.execute(&ast).await.unwrap();
         assert_eq!(result.stdout, "");
+    }
+
+    #[test]
+    fn test_cancelled_shell_frame_does_not_pop_function_depth() {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        let mut interp = Interpreter::new(Arc::clone(&fs));
+        interp.counters.function_depth = 1;
+        interp.call_stack.push(CallFrame {
+            name: "caller".to_string(),
+            locals: HashMap::new(),
+            positional: Vec::new(),
+        });
+        let baseline_call_stack_len = interp.call_stack.len();
+        let baseline_bash_source_len = interp.bash_source_stack.len();
+        let baseline_function_depth = interp.counters.function_depth;
+
+        interp.call_stack.push(CallFrame {
+            name: "bash".to_string(),
+            locals: HashMap::new(),
+            positional: Vec::new(),
+        });
+        interp.bash_source_stack.push("script.sh".to_string());
+
+        interp.reconcile_cancelled_execution_state(
+            baseline_call_stack_len,
+            baseline_bash_source_len,
+            baseline_function_depth,
+            None,
+        );
+
+        assert_eq!(interp.call_stack.len(), baseline_call_stack_len);
+        assert_eq!(interp.bash_source_stack.len(), baseline_bash_source_len);
+        assert_eq!(interp.counters.function_depth, baseline_function_depth);
     }
 
     /// Test that parse_duration preserves subsecond precision

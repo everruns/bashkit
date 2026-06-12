@@ -55,7 +55,7 @@ use pyo3_async_runtimes::tokio::future_into_py;
 type CallerLoopLocals = TaskLocals;
 #[cfg(target_arch = "wasm32")]
 type CallerLoopLocals = std::convert::Infallible;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -1164,6 +1164,9 @@ fn normalize_find_path(path: &str) -> String {
 }
 
 const GLOB_MAX_RESULTS: usize = 10_000;
+// Direct VFS glob runs outside Bash::exec, so it needs its own traversal budget
+// and timeout to bound no-match walks over large RealFs mounts.
+const GLOB_MAX_VISITED_ENTRIES: usize = 10_000;
 
 fn glob_search_root(pattern: &str) -> String {
     let wildcard_idx = pattern.find(['*', '?', '[']);
@@ -1181,58 +1184,87 @@ fn glob_search_root(pattern: &str) -> String {
     }
 }
 
-fn glob_via_bash(rt: &Arc<Runtime>, inner: &Arc<Mutex<Bash>>, pattern: String) -> Vec<String> {
+fn glob_timeout(timeout_seconds: Option<f64>) -> Duration {
+    timeout_seconds
+        .map(Duration::from_secs_f64)
+        .unwrap_or_else(|| ExecutionLimits::default().timeout)
+}
+
+fn glob_via_bash(
+    rt: &Arc<Runtime>,
+    inner: &Arc<Mutex<Bash>>,
+    pattern: String,
+    timeout: Duration,
+) -> Vec<String> {
     if !is_safe_glob_pattern(&pattern) {
         return Vec::new();
     }
 
-    with_live_fs(rt, inner, move |fs| async move {
-        let root = normalize_find_path(&glob_search_root(&pattern));
-        let root_path = Path::new(&root);
-        let mut matches = Vec::new();
-        let mut stack = vec![root.clone()];
+    let inner = inner.clone();
+    rt.block_on(async move {
+        let fs = {
+            let bash = inner.lock().await;
+            bash.fs()
+        };
 
-        // If the root resolves to a single file (no wildcards in pattern),
-        // just match against it and return. Otherwise fall through to walk
-        // the directory tree rooted at `root`.
-        if let Ok(metadata) = fs.stat(root_path).await
-            && metadata.file_type == FsFileType::File
-        {
-            if glob_match_path(&root, &pattern) {
-                matches.push(root);
+        tokio::time::timeout(timeout, async move {
+            let root = normalize_find_path(&glob_search_root(&pattern));
+            let root_path = Path::new(&root);
+            let mut matches = Vec::new();
+            let mut stack = vec![root.clone()];
+            let mut visited_dirs = HashSet::from([root.clone()]);
+            let mut visited_entries = 0usize;
+
+            // If the root resolves to a single file (no wildcards in pattern),
+            // just match against it and return. Otherwise fall through to walk
+            // the directory tree rooted at `root`.
+            if let Ok(metadata) = fs.stat(root_path).await
+                && metadata.file_type == FsFileType::File
+            {
+                if glob_match_path(&root, &pattern) {
+                    matches.push(root);
+                }
+                return matches;
             }
-            return Ok(matches);
-        }
 
-        while let Some(dir) = stack.pop() {
-            let entries = match fs.read_dir(Path::new(&dir)).await {
-                Ok(entries) => entries,
-                Err(_) => continue,
-            };
-
-            for entry in entries {
-                let child = if dir == "/" {
-                    format!("/{}", entry.name)
-                } else {
-                    format!("{}/{}", dir, entry.name)
+            while let Some(dir) = stack.pop() {
+                let entries = match fs.read_dir(Path::new(&dir)).await {
+                    Ok(entries) => entries,
+                    Err(_) => continue,
                 };
 
-                match entry.metadata.file_type {
-                    FsFileType::Directory => stack.push(child),
-                    FsFileType::File if glob_match_path(&child, &pattern) => {
-                        matches.push(child);
-                        if matches.len() >= GLOB_MAX_RESULTS {
-                            return Ok(matches);
-                        }
+                for entry in entries {
+                    visited_entries += 1;
+                    if visited_entries > GLOB_MAX_VISITED_ENTRIES {
+                        return matches;
                     }
-                    _ => {}
+
+                    let child = if dir == "/" {
+                        format!("/{}", entry.name)
+                    } else {
+                        format!("{}/{}", dir, entry.name)
+                    };
+
+                    match entry.metadata.file_type {
+                        FsFileType::Directory if visited_dirs.insert(child.clone()) => {
+                            stack.push(child);
+                        }
+                        FsFileType::File if glob_match_path(&child, &pattern) => {
+                            matches.push(child);
+                            if matches.len() >= GLOB_MAX_RESULTS {
+                                return matches;
+                            }
+                        }
+                        _ => {}
+                    }
                 }
             }
-        }
 
-        Ok(matches)
+            matches
+        })
+        .await
+        .unwrap_or_default()
     })
-    .unwrap_or_default()
 }
 
 // Decision: snapshot factories build with caller kwargs first, then restore
@@ -3775,7 +3807,12 @@ impl PyBash {
     fn glob(&self, py: Python<'_>, pattern: String) -> PyResult<Py<PyAny>> {
         self.reject_external_handler_reentry()?;
         let matches = py.detach(|| -> PyResult<Vec<String>> {
-            Ok(glob_via_bash(&self.rt, &self.inner, pattern))
+            Ok(glob_via_bash(
+                &self.rt,
+                &self.inner,
+                pattern,
+                glob_timeout(self.timeout_seconds),
+            ))
         })?;
         Ok(PyList::new(py, matches)?.into_any().unbind())
     }
@@ -4423,7 +4460,12 @@ impl BashTool {
 
     fn glob(&self, py: Python<'_>, pattern: String) -> PyResult<Py<PyAny>> {
         let matches = py.detach(|| -> PyResult<Vec<String>> {
-            Ok(glob_via_bash(&self.rt, &self.inner, pattern))
+            Ok(glob_via_bash(
+                &self.rt,
+                &self.inner,
+                pattern,
+                glob_timeout(self.timeout_seconds),
+            ))
         })?;
         Ok(PyList::new(py, matches)?.into_any().unbind())
     }
