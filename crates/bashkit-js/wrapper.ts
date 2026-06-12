@@ -374,7 +374,17 @@ function errorExecResult(error: string): ExecResult {
 }
 
 function cancelledExecResult(): ExecResult {
-  return errorExecResult("execution cancelled");
+  // Preserve prior behavior: cancellation does not populate stderr.
+  return {
+    stdout: "",
+    stderr: "",
+    exitCode: 1,
+    error: "execution cancelled",
+    stdoutTruncated: false,
+    stderrTruncated: false,
+    finalEnv: undefined,
+    success: false,
+  };
 }
 
 function inputTooLargeExecResult(
@@ -851,6 +861,10 @@ export class Bash {
    * same instance from `onOutput` via `execute*`, `readFile`, `fs()`, etc.
    */
   executeSync(commands: string, options?: ExecuteOptions): ExecResult {
+    const inputLimitResult = inputTooLargeExecResult(commands, this.maxInputBytes);
+    if (inputLimitResult) {
+      return inputLimitResult;
+    }
     const nativeOnOutput = toNativeOnOutput(options?.onOutput);
     if (options?.signal) {
       const signal = options.signal;
@@ -1266,6 +1280,10 @@ export class BashTool {
    * via `execute*`, `readFile`, `fs()`, etc.
    */
   executeSync(commands: string, options?: ExecuteOptions): ExecResult {
+    const inputLimitResult = inputTooLargeExecResult(commands, this.maxInputBytes);
+    if (inputLimitResult) {
+      return inputLimitResult;
+    }
     const nativeOnOutput = toNativeOnOutput(options?.onOutput);
     if (options?.signal) {
       const signal = options.signal;

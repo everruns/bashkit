@@ -571,6 +571,7 @@ import {
 - `maxCommands?: number`
 - `maxLoopIterations?: number`
 - `maxMemory?: number`
+- `maxInputBytes?: number`
 - `timeoutMs?: number`
 - `files?: Record<string, string | (() => string) | (() => Promise<string>)>`
 - `mounts?: Array<{ path: string; root: string; writable?: boolean }>`
