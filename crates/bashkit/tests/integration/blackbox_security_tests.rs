@@ -1819,6 +1819,11 @@ mod creative_abuse_passing {
             "script must continue and report exit 1, got stdout: {:?}",
             result.stdout
         );
+        assert_eq!(
+            result.exit_code, 0,
+            "overall exit code must be 0 (from trailing echo), got {}",
+            result.exit_code
+        );
     }
 
     /// Compound command with missing input redirect is also non-fatal.
@@ -1837,6 +1842,11 @@ mod creative_abuse_passing {
             result.stdout.contains("after=1"),
             "script must continue and report exit 1, got stdout: {:?}",
             result.stdout
+        );
+        assert_eq!(
+            result.exit_code, 0,
+            "overall exit code must be 0 (from trailing echo), got {}",
+            result.exit_code
         );
     }
 }
