@@ -118,6 +118,14 @@ pub struct ExecutionLimits {
     /// Default: 1MB (1,048,576 bytes)
     pub max_history_output_bytes: usize,
 
+    /// Maximum fields produced by one IFS word-splitting operation.
+    /// Default: 100,000
+    pub max_word_split_fields: usize,
+
+    /// Maximum total bytes copied into fields by one IFS word-splitting operation.
+    /// Default: 10MB (10,000,000 bytes)
+    pub max_word_split_bytes: usize,
+
     /// Whether to capture the final environment state in ExecResult.
     /// Default: false (opt-in to avoid cloning cost when not needed)
     pub capture_final_env: bool,
@@ -143,6 +151,8 @@ impl Default for ExecutionLimits {
             max_history_entries: 1_000,
             max_history_bytes: 1_048_576,        // 1MB
             max_history_output_bytes: 1_048_576, // 1MB
+            max_word_split_fields: 100_000,
+            max_word_split_bytes: 10_000_000,
             capture_final_env: false,
         }
     }
@@ -290,6 +300,24 @@ impl ExecutionLimits {
     /// Passing 0 makes `history` output empty.
     pub fn max_history_output_bytes(mut self, bytes: usize) -> Self {
         self.max_history_output_bytes = bytes;
+        self
+    }
+
+    /// Set maximum fields produced by one IFS word-splitting operation.
+    /// Passing 0 is treated as "use default" (no-op) to prevent misconfiguration.
+    pub fn max_word_split_fields(mut self, count: usize) -> Self {
+        if count > 0 {
+            self.max_word_split_fields = count;
+        }
+        self
+    }
+
+    /// Set maximum total bytes copied by one IFS word-splitting operation.
+    /// Passing 0 is treated as "use default" (no-op) to prevent misconfiguration.
+    pub fn max_word_split_bytes(mut self, bytes: usize) -> Self {
+        if bytes > 0 {
+            self.max_word_split_bytes = bytes;
+        }
         self
     }
 
@@ -1153,8 +1181,11 @@ mod tests {
             .max_stderr_bytes(0)
             .max_subst_depth(0)
             .max_subshell_depth(0)
-            .max_file_descriptors(0);
+            .max_file_descriptors(0)
+            .max_word_split_fields(0)
+            .max_word_split_bytes(0);
 
+        let defaults = ExecutionLimits::default();
         assert_eq!(limits.max_commands, 0);
         assert_eq!(limits.max_loop_iterations, 0);
         assert_eq!(limits.max_total_loop_iterations, 0);
@@ -1167,6 +1198,8 @@ mod tests {
         assert_eq!(limits.max_subst_depth, 0);
         assert_eq!(limits.max_subshell_depth, 0);
         assert_eq!(limits.max_file_descriptors, 0);
+        assert_eq!(limits.max_word_split_fields, defaults.max_word_split_fields);
+        assert_eq!(limits.max_word_split_bytes, defaults.max_word_split_bytes);
     }
 
     #[test]
@@ -1183,7 +1216,9 @@ mod tests {
             .max_stderr_bytes(4096)
             .max_subst_depth(8)
             .max_subshell_depth(6)
-            .max_file_descriptors(16);
+            .max_file_descriptors(16)
+            .max_word_split_fields(17)
+            .max_word_split_bytes(18);
 
         assert_eq!(limits.max_commands, 5);
         assert_eq!(limits.max_loop_iterations, 7);
@@ -1197,6 +1232,8 @@ mod tests {
         assert_eq!(limits.max_subst_depth, 8);
         assert_eq!(limits.max_subshell_depth, 6);
         assert_eq!(limits.max_file_descriptors, 16);
+        assert_eq!(limits.max_word_split_fields, 17);
+        assert_eq!(limits.max_word_split_bytes, 18);
     }
 
     #[test]

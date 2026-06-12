@@ -4772,6 +4772,8 @@ echo ${#arr[@]}
 
     /// TM-DOS-060: Unquoted expansion in array assignment must still respect
     /// max_array_entries after IFS word splitting (arr=($x)).
+    /// Word-split array assignment that exceeds max_array_entries now errors
+    /// instead of silently truncating (ifs_split_limited returns Err).
     #[tokio::test]
     async fn array_assignment_word_split_respects_array_entry_limit() {
         let mem = MemoryLimits::new().max_array_entries(100);
@@ -4792,12 +4794,12 @@ done
 arr=($parts)
 echo ${#arr[@]}
 "#;
-        let result = bash.exec(script).await.unwrap();
-        assert_eq!(result.exit_code, 0);
-        let count: usize = result.stdout.trim().parse().unwrap_or(0);
-        assert_eq!(
-            count, 100,
-            "Word-split array assignment should stop at max_array_entries"
+        // Word-splitting that exceeds max_array_entries now propagates as an error
+        // rather than silently truncating, so exec returns Err.
+        let result = bash.exec(script).await;
+        assert!(
+            result.is_err() || result.as_ref().map(|r| r.exit_code).unwrap_or(0) != 0,
+            "Word-split array assignment exceeding max_array_entries should fail"
         );
     }
 
