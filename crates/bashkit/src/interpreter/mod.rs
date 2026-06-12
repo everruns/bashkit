@@ -4946,7 +4946,7 @@ impl Interpreter {
                                 break;
                             }
                             let expanded = self.expand_word(word).await?;
-                            for field in self.ifs_split_limited(&expanded, remaining) {
+                            for field in self.ifs_split_limited(&expanded, remaining)? {
                                 next_arr.insert(idx, field);
                                 idx += 1;
                             }
@@ -9104,7 +9104,7 @@ impl Interpreter {
                         // $@ unquoted: each param is subject to further IFS splitting
                         let mut fields = Vec::new();
                         for p in &positional {
-                            fields.extend(self.ifs_split(p));
+                            fields.extend(self.ifs_split(p)?);
                         }
                         return Ok(fields);
                     }
@@ -9130,7 +9130,7 @@ impl Interpreter {
                         // $* unquoted: each param is subject to IFS splitting
                         let mut fields = Vec::new();
                         for p in &positional {
-                            fields.extend(self.ifs_split(p));
+                            fields.extend(self.ifs_split(p)?);
                         }
                         return Ok(fields);
                     }
@@ -9210,7 +9210,7 @@ impl Interpreter {
                     };
 
                     if part_has_expansion && !part_is_quoted {
-                        let split = self.ifs_split(&value);
+                        let split = self.ifs_split(&value)?;
                         if let Some((first, rest)) = split.split_first() {
                             if let Some(current) = fields.last_mut() {
                                 current.push_str(first);
@@ -9259,7 +9259,7 @@ impl Interpreter {
                 });
 
             if has_expansion {
-                Ok(self.ifs_split(&expanded))
+                self.ifs_split(&expanded)
             } else {
                 Ok(vec![Self::strip_quote_markers(&expanded)])
             }
@@ -9403,14 +9403,17 @@ impl Interpreter {
     ///   an empty field between them.
     /// - `<ws><nws><ws>` = single delimiter (ws absorbed into the nws delimiter).
     /// - Empty IFS → no splitting. Unset IFS → default " \t\n".
-    fn ifs_split(&self, s: &str) -> Vec<String> {
-        self.ifs_split_limited(s, usize::MAX)
+    fn ifs_split(&self, s: &str) -> Result<Vec<String>> {
+        self.ifs_split_limited(s, self.limits.max_word_split_fields)
     }
 
-    /// Split a string on IFS characters, returning at most `limit` fields.
-    fn ifs_split_limited(&self, s: &str, limit: usize) -> Vec<String> {
+    /// Split a string on IFS characters, returning an error if resource caps are exceeded.
+    fn ifs_split_limited(&self, s: &str, limit: usize) -> Result<Vec<String>> {
+        // Clamp so callers passing a larger value (e.g. remaining array capacity)
+        // cannot bypass the configured max_word_split_fields cap.
+        let limit = limit.min(self.limits.max_word_split_fields);
         if limit == 0 {
-            return Vec::new();
+            return Ok(Vec::new());
         }
 
         let ifs = self
@@ -9420,7 +9423,9 @@ impl Interpreter {
             .unwrap_or_else(|| " \t\n".to_string());
 
         if ifs.is_empty() {
-            return vec![Self::strip_quote_markers(s)];
+            let field = Self::strip_quote_markers(s);
+            let bytes = field.len();
+            return self.push_ifs_field(Vec::new(), field, limit, bytes);
         }
 
         let is_ifs = |c: char, quoted: bool| !quoted && ifs.contains(c);
@@ -9433,27 +9438,33 @@ impl Interpreter {
             // IFS is only whitespace: split on unquoted runs, elide empties.
             let mut fields = Vec::new();
             let mut current = String::new();
+            let mut bytes = 0usize;
             for &(c, quoted) in &chars {
                 if is_ifs(c, quoted) {
                     if !current.is_empty() {
-                        fields.push(std::mem::take(&mut current));
-                        if fields.len() >= limit {
-                            return fields;
-                        }
+                        bytes = bytes.saturating_add(current.len());
+                        fields = self.push_ifs_field(
+                            fields,
+                            std::mem::take(&mut current),
+                            limit,
+                            bytes,
+                        )?;
                     }
                 } else {
                     current.push(c);
                 }
             }
-            if !current.is_empty() && fields.len() < limit {
-                fields.push(current);
+            if !current.is_empty() {
+                bytes = bytes.saturating_add(current.len());
+                fields = self.push_ifs_field(fields, current, limit, bytes)?;
             }
-            return fields;
+            return Ok(fields);
         }
 
         // Mixed or pure non-whitespace IFS.
         let mut fields: Vec<String> = Vec::new();
         let mut current = String::new();
+        let mut bytes = 0usize;
         let mut i = 0;
 
         // Skip leading IFS whitespace
@@ -9462,10 +9473,7 @@ impl Interpreter {
         }
         // Leading non-whitespace IFS produces an empty first field
         if i < chars.len() && is_ifs_nws(chars[i].0, chars[i].1) {
-            fields.push(String::new());
-            if fields.len() >= limit {
-                return fields;
-            }
+            fields = self.push_ifs_field(fields, String::new(), limit, bytes)?;
             i += 1;
             while i < chars.len() && is_ifs_ws(chars[i].0, chars[i].1) {
                 i += 1;
@@ -9476,10 +9484,9 @@ impl Interpreter {
             let (c, quoted) = chars[i];
             if is_ifs_nws(c, quoted) {
                 // Non-whitespace IFS delimiter: finalize current field
-                fields.push(std::mem::take(&mut current));
-                if fields.len() >= limit {
-                    return fields;
-                }
+                let field = std::mem::take(&mut current);
+                bytes = bytes.saturating_add(field.len());
+                fields = self.push_ifs_field(fields, field, limit, bytes)?;
                 i += 1;
                 // Consume trailing IFS whitespace
                 while i < chars.len() && is_ifs_ws(chars[i].0, chars[i].1) {
@@ -9492,20 +9499,18 @@ impl Interpreter {
                 }
                 if i < chars.len() && is_ifs_nws(chars[i].0, chars[i].1) {
                     // <ws><nws> = single delimiter. Push current field.
-                    fields.push(std::mem::take(&mut current));
-                    if fields.len() >= limit {
-                        return fields;
-                    }
+                    let field = std::mem::take(&mut current);
+                    bytes = bytes.saturating_add(field.len());
+                    fields = self.push_ifs_field(fields, field, limit, bytes)?;
                     i += 1; // consume the nws char
                     while i < chars.len() && is_ifs_ws(chars[i].0, chars[i].1) {
                         i += 1;
                     }
                 } else if i < chars.len() {
                     // ws alone as delimiter (no nws follows)
-                    fields.push(std::mem::take(&mut current));
-                    if fields.len() >= limit {
-                        return fields;
-                    }
+                    let field = std::mem::take(&mut current);
+                    bytes = bytes.saturating_add(field.len());
+                    fields = self.push_ifs_field(fields, field, limit, bytes)?;
                 }
                 // trailing ws at end → ignore (don't push empty field)
             } else {
@@ -9514,11 +9519,36 @@ impl Interpreter {
             }
         }
 
-        if !current.is_empty() && fields.len() < limit {
-            fields.push(current);
+        if !current.is_empty() {
+            bytes = bytes.saturating_add(current.len());
+            fields = self.push_ifs_field(fields, current, limit, bytes)?;
         }
 
-        fields
+        Ok(fields)
+    }
+
+    fn push_ifs_field(
+        &self,
+        mut fields: Vec<String>,
+        field: String,
+        limit: usize,
+        bytes: usize,
+    ) -> Result<Vec<String>> {
+        if fields.len() >= limit {
+            return Err(crate::limits::LimitExceeded::Memory(format!(
+                "word split field limit ({limit}) exceeded"
+            ))
+            .into());
+        }
+        if bytes > self.limits.max_word_split_bytes {
+            return Err(crate::limits::LimitExceeded::Memory(format!(
+                "word split byte limit ({}) exceeded",
+                self.limits.max_word_split_bytes
+            ))
+            .into());
+        }
+        fields.push(field);
+        Ok(fields)
     }
 
     /// Expand an operand string from a parameter expansion (sync, lazy).
@@ -12558,6 +12588,34 @@ mod tests {
         let parser = Parser::new(script);
         let ast = parser.parse().unwrap();
         interp.execute(&ast).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_ifs_split_field_limit_rejects_exploding_command_substitution() {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        let mut interp = Interpreter::new(Arc::clone(&fs));
+        interp.set_limits(ExecutionLimits::default().max_word_split_fields(3));
+        let parser = Parser::new("IFS=,; for x in $(echo a,b,c,d); do :; done");
+        let ast = parser.parse().unwrap();
+        let err = interp.execute(&ast).await.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("word split field limit (3) exceeded")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ifs_split_byte_limit_rejects_large_materialized_field() {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        let mut interp = Interpreter::new(Arc::clone(&fs));
+        interp.set_limits(ExecutionLimits::default().max_word_split_bytes(5));
+        let parser = Parser::new("v=abcdef; echo $v");
+        let ast = parser.parse().unwrap();
+        let err = interp.execute(&ast).await.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("word split byte limit (5) exceeded")
+        );
     }
 
     #[tokio::test]
