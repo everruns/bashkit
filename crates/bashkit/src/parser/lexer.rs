@@ -1330,7 +1330,6 @@ impl<'a> Lexer<'a> {
         self.advance(); // consume opening "
         let mut content = String::new();
         let mut closed = false;
-        let mut has_quoted_expansion = false;
 
         while let Some(ch) = self.peek_char() {
             match ch {
@@ -1370,13 +1369,6 @@ impl<'a> Lexer<'a> {
                 '$' => {
                     content.push('$');
                     self.advance();
-                    if self.peek_char().is_some_and(|nc| {
-                        nc.is_ascii_alphanumeric()
-                            || nc == '_'
-                            || matches!(nc, '{' | '(' | '?' | '#' | '@' | '*' | '!' | '$' | '-')
-                    }) {
-                        has_quoted_expansion = true;
-                    }
                     if self.peek_char() == Some('(') {
                         // $(...) command substitution — track paren depth
                         content.push('(');
@@ -1394,7 +1386,6 @@ impl<'a> Lexer<'a> {
                 }
                 '`' => {
                     // Backtick command substitution inside double quotes
-                    has_quoted_expansion = true;
                     self.advance(); // consume opening `
                     content.push_str("$(");
                     while let Some(c) = self.peek_char() {
@@ -1451,16 +1442,56 @@ impl<'a> Lexer<'a> {
                 Self::apply_quote_markers(&mut content, ranges);
                 return Some(Token::Word(content));
             }
-            if has_quoted_expansion && flags.has_unquoted_glob {
-                return Some(Token::QuotedGlobWord(content));
+            if flags.has_unquoted_glob {
+                // Escape glob metacharacters inside quoted ranges (initial double-quoted
+                // prefix + any further quoted segments from read_continuation_into) so
+                // the glob expander treats them as literals, not active patterns.
+                let mut ranges = flags.quoted_ranges;
+                if quoted_prefix_len > 0 {
+                    ranges.push((0, quoted_prefix_len));
+                }
+                ranges.sort_unstable_by_key(|&(s, _)| s);
+                return Some(Token::QuotedGlobWord(
+                    Self::escape_glob_metas_in_quoted_ranges(&content, &ranges),
+                ));
             }
-            if has_quoted_expansion {
-                return Some(Token::QuotedWord(content));
-            }
-            return Some(Token::Word(content));
+            return Some(Token::QuotedWord(content));
         }
 
         Some(Token::QuotedWord(content))
+    }
+
+    /// Escape glob metacharacters within quoted byte ranges so that the glob
+    /// expander treats them as literal characters rather than active patterns.
+    /// Ranges must be sorted and non-overlapping.
+    fn escape_glob_metas_in_quoted_ranges(s: &str, quoted_ranges: &[(usize, usize)]) -> String {
+        if quoted_ranges.is_empty() {
+            return s.to_string();
+        }
+        let mut result = String::with_capacity(s.len() + 8);
+        let mut byte_pos = 0usize;
+        let mut range_idx = 0usize;
+        for ch in s.chars() {
+            let ch_end = byte_pos + ch.len_utf8();
+            // Advance past ranges that have ended.
+            while range_idx < quoted_ranges.len() && quoted_ranges[range_idx].1 <= byte_pos {
+                range_idx += 1;
+            }
+            let in_quoted = range_idx < quoted_ranges.len()
+                && byte_pos >= quoted_ranges[range_idx].0
+                && ch_end <= quoted_ranges[range_idx].1;
+            if in_quoted
+                && matches!(
+                    ch,
+                    '\\' | '*' | '?' | '[' | ']' | '{' | '}' | '@' | '!' | '+' | '(' | ')' | '|'
+                )
+            {
+                result.push('\\');
+            }
+            result.push(ch);
+            byte_pos = ch_end;
+        }
+        result
     }
 
     /// Read command substitution content after `$(`, handling nested parens and quotes.
