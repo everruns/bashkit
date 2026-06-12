@@ -614,11 +614,6 @@ fn python_external_timeout_error() -> ExtFunctionResult {
     ))
 }
 
-fn remaining_python_budget(deadline: Option<Instant>) -> Option<Duration> {
-    let deadline = deadline?;
-    deadline.checked_duration_since(Instant::now())
-}
-
 async fn call_external_with_deadline(
     external_fns: &PythonExternalFns,
     function_name: String,
@@ -626,10 +621,13 @@ async fn call_external_with_deadline(
     kwargs: Vec<(MontyObject, MontyObject)>,
     deadline: Option<Instant>,
 ) -> ExtFunctionResult {
-    let Some(remaining) = remaining_python_budget(deadline) else {
+    let Some(deadline) = deadline else {
+        // Instant::checked_add overflowed (very large max_duration); run uncapped.
+        return (external_fns.handler)(function_name, args, kwargs).await;
+    };
+    let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
         return python_external_timeout_error();
     };
-
     match tokio::time::timeout(
         remaining,
         (external_fns.handler)(function_name, args, kwargs),
