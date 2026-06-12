@@ -19,6 +19,8 @@ pub(crate) const ARCHIVE_MAX_DECOMPRESSION_RATIO: usize = 100;
 
 /// awk: max parser recursion depth.
 pub(crate) const AWK_MAX_PARSER_DEPTH: usize = 100;
+/// awk: max comma-separated subscripts in one array key.
+pub(crate) const AWK_MAX_MULTI_SUBSCRIPTS: usize = 100;
 /// awk: max user-function call depth at runtime.
 pub(crate) const AWK_MAX_CALL_DEPTH: usize = 64;
 /// awk: total output byte cap per invocation.
