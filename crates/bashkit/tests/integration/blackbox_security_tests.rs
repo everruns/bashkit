@@ -1397,6 +1397,8 @@ mod finding_mixed_quoted_word_quote_metadata {
     #[tokio::test]
     async fn quoted_glob_metacharacter_with_unquoted_suffix_stays_literal() {
         let mut bash = tight_bash();
+        // Create a file that *x would match if the quoted * were expanded.
+        bash.exec("touch ax").await.unwrap();
         let result = bash.exec(r#"echo "*"x"#).await.unwrap();
 
         assert_eq!(
@@ -1408,6 +1410,9 @@ mod finding_mixed_quoted_word_quote_metadata {
     #[tokio::test]
     async fn quoted_brace_expression_with_unquoted_suffix_stays_literal() {
         let mut bash = tight_bash();
+        // Create a file that {1..3}x would match if brace expansion of the quoted
+        // segment fired; the literal pattern should be echoed instead.
+        bash.exec("touch 1x").await.unwrap();
         let result = bash.exec(r#"echo "{1..3}"x"#).await.unwrap();
 
         assert_eq!(
