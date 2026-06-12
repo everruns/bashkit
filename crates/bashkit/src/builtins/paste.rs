@@ -20,7 +20,7 @@ struct PasteOptions {
     serial: bool,
 }
 
-fn parse_paste_args(args: &[String]) -> (PasteOptions, Vec<String>) {
+fn parse_paste_args(args: &[String]) -> std::result::Result<(PasteOptions, Vec<String>), String> {
     let mut opts = PasteOptions {
         delimiters: vec!['\t'],
         serial: false,
@@ -29,12 +29,12 @@ fn parse_paste_args(args: &[String]) -> (PasteOptions, Vec<String>) {
     let mut p = super::arg_parser::ArgParser::new(args);
 
     while !p.is_done() {
-        if let Some(val) = p.flag_value_opt("-d") {
+        if let Some(val) = p.flag_value("-d", "paste")? {
             opts.delimiters = parse_delim_spec(val);
         } else if p.flag("-s") {
             opts.serial = true;
-        } else if try_parse_combined_flags(&mut p, &mut opts) {
-            // handled combined flags like -sd,
+        } else if try_parse_combined_flags(&mut p, &mut opts)? {
+            // handled combined flags like -sd, or -sd ,
         } else if let Some(arg) = p.positional() {
             files.push(arg.to_string());
         }
@@ -44,7 +44,7 @@ fn parse_paste_args(args: &[String]) -> (PasteOptions, Vec<String>) {
         opts.delimiters = vec!['\t'];
     }
 
-    (opts, files)
+    Ok((opts, files))
 }
 
 /// Parse combined short flags like `-sd,` where `s` is a boolean flag
@@ -52,10 +52,10 @@ fn parse_paste_args(args: &[String]) -> (PasteOptions, Vec<String>) {
 fn try_parse_combined_flags(
     p: &mut super::arg_parser::ArgParser<'_>,
     opts: &mut PasteOptions,
-) -> bool {
+) -> std::result::Result<bool, String> {
     let arg = match p.current() {
         Some(a) if a.starts_with('-') && !a.starts_with("--") && a.len() > 2 => a,
-        _ => return false,
+        _ => return Ok(false),
     };
 
     let chars: Vec<char> = arg[1..].chars().collect();
@@ -70,14 +70,20 @@ fn try_parse_combined_flags(
                 i += 1;
             }
             'd' => {
-                // 'd' consumes the rest as delimiter spec
+                // 'd' consumes the attached remainder, or the next argv when trailing.
                 let rest: String = chars[i + 1..].iter().collect();
-                if !rest.is_empty() {
+                if rest.is_empty() {
+                    let Some(next) = p.rest().get(1) else {
+                        return Err("paste: -d requires an argument".to_string());
+                    };
+                    delimiters = Some(parse_delim_spec(next));
+                    p.advance();
+                } else {
                     delimiters = Some(parse_delim_spec(&rest));
                 }
                 i = chars.len(); // consumed everything
             }
-            _ => return false, // unknown flag char, bail out
+            _ => return Ok(false), // unknown flag char, bail out
         }
     }
 
@@ -89,7 +95,7 @@ fn try_parse_combined_flags(
         opts.delimiters = d;
     }
     p.advance();
-    true
+    Ok(true)
 }
 
 fn parse_delim_spec(spec: &str) -> Vec<char> {
@@ -122,7 +128,10 @@ impl Builtin for Paste {
         ) {
             return Ok(r);
         }
-        let (opts, files) = parse_paste_args(ctx.args);
+        let (opts, files) = match parse_paste_args(ctx.args) {
+            Ok(parsed) => parsed,
+            Err(msg) => return Ok(ExecResult::err(format!("{msg}\n"), 1)),
+        };
 
         // Collect input sources
         let mut sources: Vec<Vec<String>> = Vec::new();
@@ -370,6 +379,29 @@ mod tests {
         let result = run_paste(&["-sd:"], Some("x\ny\nz\n")).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "x:y:z\n");
+    }
+
+    #[tokio::test]
+    async fn test_paste_combined_sd_consumes_next_delimiter() {
+        let result = run_paste(&["-sd", ","], Some("a\nb\nc\n")).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "a,b,c\n");
+    }
+
+    #[tokio::test]
+    async fn test_paste_combined_sd_missing_delimiter_errors() {
+        let result = run_paste(&["-sd"], Some("a\nb\nc\n")).await;
+        assert_eq!(result.exit_code, 1);
+        assert_eq!(result.stdout, "");
+        assert!(result.stderr.contains("paste: -d requires an argument"));
+    }
+
+    #[tokio::test]
+    async fn test_paste_missing_delimiter_errors() {
+        let result = run_paste(&["-d"], Some("a\nb\nc\n")).await;
+        assert_eq!(result.exit_code, 1);
+        assert_eq!(result.stdout, "");
+        assert!(result.stderr.contains("paste: -d requires an argument"));
     }
 
     #[tokio::test]
