@@ -321,7 +321,9 @@ impl OverlayFs {
                 }
                 if let Ok(meta) = self.lower.stat(&child).await {
                     match meta.file_type {
-                        FileType::File if !self.upper.exists(&child).await.unwrap_or(false) => {
+                        FileType::File | FileType::Symlink | FileType::Fifo
+                            if !self.upper.exists(&child).await.unwrap_or(false) =>
+                        {
                             self.hide_lower_file(meta.size);
                             self.add_whiteout(&child);
                         }
@@ -627,7 +629,9 @@ impl FileSystem for OverlayFs {
         if in_lower {
             if let Ok(meta) = self.lower.stat(&path).await {
                 match meta.file_type {
-                    FileType::File if !in_upper => self.hide_lower_file(meta.size),
+                    FileType::File | FileType::Symlink | FileType::Fifo if !in_upper => {
+                        self.hide_lower_file(meta.size)
+                    }
                     FileType::Directory => {
                         if !in_upper {
                             self.hide_lower_dir();
