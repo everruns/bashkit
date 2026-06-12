@@ -115,6 +115,34 @@ for (const [label, create] of [
       assert.equal(result.stdout, "");
     });
 
+    it("rejects async execute when the per-instance queue is full", async () => {
+      const shell = create();
+      const blocker = shell.execute("sleep 0.05");
+      const accepted = Array.from({ length: 7 }, (_, i) =>
+        shell.execute(`echo queued-${i}`),
+      );
+
+      await assert.rejects(
+        () => shell.execute("echo should-not-queue"),
+        /too many pending async execute calls/,
+      );
+
+      assert.equal((await blocker).exitCode, 0);
+      for (const pending of accepted) {
+        assert.equal((await pending).exitCode, 0);
+      }
+    });
+
+    it("validates maxInputBytes before queueing async execute", async () => {
+      const shell = create({ maxInputBytes: 4 });
+
+      const result = await shell.execute("echo too-large");
+
+      assert.equal(result.exitCode, 1);
+      assert.match(result.error, /input too large/);
+      assert.equal(result.stdout, "");
+    });
+
     it("async rejects Promise-returning onOutput", async () => {
       const shell = create();
 

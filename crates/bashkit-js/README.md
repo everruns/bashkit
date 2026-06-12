@@ -245,6 +245,12 @@ Use `reset()` only when you want to discard state entirely.
 For synchronous execution, `executeSync(...)` and `executeSyncOrThrow(...)`
 also accept `{ signal }`.
 
+Async `execute(...)` calls are serialized per instance and keep a bounded
+backlog. If too many executions are already pending on one `Bash`, `BashTool`,
+or `ScriptedTool`, the next async call rejects instead of retaining another
+queued command string. Commands larger than `maxInputBytes` are rejected before
+entering the async queue.
+
 ## BashTool
 
 `BashTool` wraps the interpreter with tool-contract metadata for agent frameworks:

@@ -36,7 +36,7 @@ use std::pin::Pin;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 
 // ---------------------------------------------------------------------------
 // Shared tokio runtime + concurrency limiter for JS tool callbacks (issue #982).
@@ -46,6 +46,12 @@ use tokio::sync::Mutex;
 // maximum number of concurrent in-flight callbacks to prevent DoS.
 // ---------------------------------------------------------------------------
 const MAX_CONCURRENT_TOOL_CALLBACKS: usize = 10;
+// Decision: JS async execute() is per-instance serialized by RustBash, so only
+// a small bounded backlog is useful. Bound it before awaiting the mutex so
+// pending futures cannot retain unbounded command strings.
+const MAX_PENDING_ASYNC_EXECUTIONS: usize = 8;
+const ASYNC_EXECUTE_QUEUE_FULL_ERROR: &str =
+    "too many pending async execute calls for this instance";
 
 fn callback_runtime() -> &'static tokio::runtime::Runtime {
     use std::sync::OnceLock;
@@ -1388,6 +1394,7 @@ struct SharedState {
     /// function check this and fail closed instead of deadlocking on a
     /// callback the loop can never service. See [`SYNC_BUILTIN_DEADLOCK_ERROR`].
     in_sync_execute_depth: Arc<AtomicUsize>,
+    async_execute_semaphore: Arc<Semaphore>,
     username: Option<String>,
     hostname: Option<String>,
     max_commands: Option<u32>,
@@ -1444,6 +1451,32 @@ where
     let rt_guard = s.rt.blocking_lock();
     let s2 = state.clone();
     rt_guard.block_on(f(s2))
+}
+
+fn max_input_bytes_for_state(state: &SharedState) -> usize {
+    state.max_input_bytes.map_or_else(
+        || ExecutionLimits::default().max_input_bytes,
+        |v| v as usize,
+    )
+}
+
+fn validate_async_execute_input(state: &SharedState, commands: &str) -> Option<ExecResult> {
+    let max_input_bytes = max_input_bytes_for_state(state);
+    let input_len = commands.len();
+    if input_len > max_input_bytes {
+        return Some(js_exec_result_from_error(format!(
+            "input too large: {input_len} bytes exceeds maxInputBytes {max_input_bytes}"
+        )));
+    }
+    None
+}
+
+fn acquire_async_execute_slot(state: &Arc<SharedState>) -> napi::Result<OwnedSemaphorePermit> {
+    state
+        .async_execute_semaphore
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| napi::Error::from_reason(ASYNC_EXECUTE_QUEUE_FULL_ERROR))
 }
 
 fn canonicalize_path(path: &str, label: &str) -> napi::Result<PathBuf> {
@@ -1559,7 +1592,11 @@ impl Bash {
     #[napi]
     pub async fn execute(&self, commands: String) -> napi::Result<ExecResult> {
         reject_on_output_reentry(&self.state)?;
+        if let Some(result) = validate_async_execute_input(&self.state, &commands) {
+            return Ok(result);
+        }
         let s = self.state.clone();
+        let _slot = acquire_async_execute_slot(&s)?;
         let mut bash = s.inner.lock().await;
         execute_rust_bash(&mut bash, &commands, None, None, None, None).await
     }
@@ -1581,6 +1618,10 @@ impl Bash {
             raw_env,
             async move {
                 reject_on_output_reentry(&state)?;
+                if let Some(result) = validate_async_execute_input(&state, &commands) {
+                    return Ok(result);
+                }
+                let _slot = acquire_async_execute_slot(&state)?;
                 let mut bash = state.inner.lock().await;
                 let cancelled = bash.cancellation_token();
                 let callback_requested_cancel = Arc::new(AtomicBool::new(false));
@@ -2144,7 +2185,11 @@ impl BashTool {
     #[napi]
     pub async fn execute(&self, commands: String) -> napi::Result<ExecResult> {
         reject_on_output_reentry(&self.state)?;
+        if let Some(result) = validate_async_execute_input(&self.state, &commands) {
+            return Ok(result);
+        }
         let s = self.state.clone();
+        let _slot = acquire_async_execute_slot(&s)?;
         let mut bash = s.inner.lock().await;
         execute_rust_bash(&mut bash, &commands, None, None, None, None).await
     }
@@ -2166,6 +2211,10 @@ impl BashTool {
             raw_env,
             async move {
                 reject_on_output_reentry(&state)?;
+                if let Some(result) = validate_async_execute_input(&state, &commands) {
+                    return Ok(result);
+                }
+                let _slot = acquire_async_execute_slot(&state)?;
                 let mut bash = state.inner.lock().await;
                 let cancelled = bash.cancellation_token();
                 let callback_requested_cancel = Arc::new(AtomicBool::new(false));
@@ -3226,6 +3275,7 @@ fn shared_state_from_opts(
         cancelled: std::sync::Mutex::new(Arc::new(AtomicBool::new(false))),
         on_output_reentry_depth: Arc::new(AtomicUsize::new(0)),
         in_sync_execute_depth: Arc::new(AtomicUsize::new(0)),
+        async_execute_semaphore: Arc::new(Semaphore::new(MAX_PENDING_ASYNC_EXECUTIONS)),
         username: opts.username.clone(),
         hostname: opts.hostname.clone(),
         max_commands: opts.max_commands,
@@ -3275,6 +3325,7 @@ fn shared_state_from_opts(
         cancelled: std::sync::Mutex::new(cancelled),
         on_output_reentry_depth: tmp.on_output_reentry_depth,
         in_sync_execute_depth: tmp.in_sync_execute_depth,
+        async_execute_semaphore: Arc::new(Semaphore::new(MAX_PENDING_ASYNC_EXECUTIONS)),
         username: opts.username,
         hostname: opts.hostname,
         max_commands: opts.max_commands,

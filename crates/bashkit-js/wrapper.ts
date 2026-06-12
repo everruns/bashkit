@@ -158,6 +158,13 @@ export interface BashOptions {
   maxLoopIterations?: number;
   maxTotalLoopIterations?: number;
   /**
+   * Maximum script input size in UTF-8 bytes.
+   *
+   * Async execute validates this before entering the per-instance queue so
+   * oversized calls cannot wait while retaining large command strings.
+   */
+  maxInputBytes?: number;
+  /**
    * Maximum interpreter memory in bytes (variables, arrays, functions).
    *
    * Caps the total byte budget for variable storage and function bodies.
@@ -331,7 +338,15 @@ export interface ExecuteOptions {
 type NativeOnOutput = (chunkPair: [string, string]) => string | undefined;
 const ASYNC_ON_OUTPUT_ERROR =
   "onOutput must be synchronous and must not return a Promise";
-const asyncExecuteQueues = new WeakMap<object, Promise<void>>();
+const DEFAULT_MAX_INPUT_BYTES = 10_000_000;
+const MAX_PENDING_ASYNC_EXECUTIONS = 8;
+const ASYNC_EXECUTE_QUEUE_FULL_ERROR =
+  "too many pending async execute calls for this instance";
+interface AsyncExecuteQueueState {
+  tail: Promise<void>;
+  pending: number;
+}
+const asyncExecuteQueues = new WeakMap<object, AsyncExecuteQueueState>();
 
 function isAsyncFunction(fn: Function): boolean {
   return Object.prototype.toString.call(fn) === "[object AsyncFunction]";
@@ -345,12 +360,12 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
   );
 }
 
-function cancelledExecResult(): ExecResult {
+function errorExecResult(error: string): ExecResult {
   return {
     stdout: "",
-    stderr: "",
+    stderr: error,
     exitCode: 1,
-    error: "execution cancelled",
+    error,
     stdoutTruncated: false,
     stderrTruncated: false,
     finalEnv: undefined,
@@ -358,24 +373,54 @@ function cancelledExecResult(): ExecResult {
   };
 }
 
+function cancelledExecResult(): ExecResult {
+  return errorExecResult("execution cancelled");
+}
+
+function inputTooLargeExecResult(
+  commands: string,
+  maxInputBytes: number,
+): ExecResult | undefined {
+  const inputBytes = Buffer.byteLength(commands, "utf8");
+  if (inputBytes <= maxInputBytes) {
+    return undefined;
+  }
+  return errorExecResult(
+    `input too large: ${inputBytes} bytes exceeds maxInputBytes ${maxInputBytes}`,
+  );
+}
+
 // Decision: serialize async execute() per instance in JS so queued AbortSignal
-// listeners only attach once a call reaches the front of the line.
+// listeners only attach once a call reaches the front of the line. Also bound
+// the backlog before retaining large command strings in queued closures.
 function queueAsyncExecute<T>(
   owner: object,
   run: () => Promise<T>,
 ): Promise<T> {
-  const previous = asyncExecuteQueues.get(owner) ?? Promise.resolve();
+  let state = asyncExecuteQueues.get(owner);
+  if (!state) {
+    state = { tail: Promise.resolve(), pending: 0 };
+    asyncExecuteQueues.set(owner, state);
+  }
+  if (state.pending >= MAX_PENDING_ASYNC_EXECUTIONS) {
+    return Promise.reject(new Error(ASYNC_EXECUTE_QUEUE_FULL_ERROR));
+  }
+  state.pending += 1;
+  const previous = state.tail;
   const completion = previous.then(
     () => run(),
     () => run(),
   );
-  asyncExecuteQueues.set(
-    owner,
-    completion.then(
-      () => undefined,
-      () => undefined,
-    ),
+  state.tail = completion.then(
+    () => undefined,
+    () => undefined,
   );
+  state.tail.finally(() => {
+    state.pending -= 1;
+    if (state.pending === 0 && asyncExecuteQueues.get(owner) === state) {
+      asyncExecuteQueues.delete(owner);
+    }
+  });
   return completion;
 }
 
@@ -744,10 +789,12 @@ function registerCustomBuiltins(
  */
 export class Bash {
   private native: NativeBashType;
+  private maxInputBytes: number;
 
   constructor(options?: BashOptions) {
     const resolved = resolveFilesSync(options?.files);
     this.native = new NativeBash(toNativeOptions(options, resolved));
+    this.maxInputBytes = options?.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES;
     registerCustomBuiltins(this.native, options?.customBuiltins);
   }
 
@@ -769,6 +816,7 @@ export class Bash {
     const resolved = await resolveFiles(options?.files);
     const instance = Object.create(Bash.prototype) as Bash;
     instance.native = new NativeBash(toNativeOptions(options, resolved));
+    instance.maxInputBytes = options?.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES;
     registerCustomBuiltins(instance.native, options?.customBuiltins);
     return instance;
   }
@@ -846,6 +894,13 @@ export class Bash {
     const signal = options?.signal;
     if (signal?.aborted) {
       return cancelledExecResult();
+    }
+    const inputLimitResult = inputTooLargeExecResult(
+      commands,
+      this.maxInputBytes,
+    );
+    if (inputLimitResult) {
+      return inputLimitResult;
     }
     return queueAsyncExecute(this, async () => {
       if (signal?.aborted) {
@@ -1172,10 +1227,12 @@ export class Bash {
  */
 export class BashTool {
   private native: NativeBashToolType;
+  private maxInputBytes: number;
 
   constructor(options?: BashOptions) {
     const resolved = resolveFilesSync(options?.files);
     this.native = new NativeBashTool(toNativeOptions(options, resolved));
+    this.maxInputBytes = options?.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES;
     registerCustomBuiltins(this.native, options?.customBuiltins);
   }
 
@@ -1186,6 +1243,7 @@ export class BashTool {
     const resolved = await resolveFiles(options?.files);
     const instance = Object.create(BashTool.prototype) as BashTool;
     instance.native = new NativeBashTool(toNativeOptions(options, resolved));
+    instance.maxInputBytes = options?.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES;
     registerCustomBuiltins(instance.native, options?.customBuiltins);
     return instance;
   }
@@ -1243,6 +1301,13 @@ export class BashTool {
     const signal = options?.signal;
     if (signal?.aborted) {
       return cancelledExecResult();
+    }
+    const inputLimitResult = inputTooLargeExecResult(
+      commands,
+      this.maxInputBytes,
+    );
+    if (inputLimitResult) {
+      return inputLimitResult;
     }
     return queueAsyncExecute(this, async () => {
       if (signal?.aborted) {
@@ -1726,7 +1791,14 @@ export class ScriptedTool {
    * tool callbacks require the Node.js event loop to be running.
    */
   async execute(commands: string): Promise<ExecResult> {
-    return this.native.execute(commands);
+    const inputLimitResult = inputTooLargeExecResult(
+      commands,
+      DEFAULT_MAX_INPUT_BYTES,
+    );
+    if (inputLimitResult) {
+      return inputLimitResult;
+    }
+    return queueAsyncExecute(this, () => this.native.execute(commands));
   }
 
   /**
@@ -1747,7 +1819,7 @@ export class ScriptedTool {
    * Execute asynchronously. Throws `BashError` on non-zero exit.
    */
   async executeOrThrow(commands: string): Promise<ExecResult> {
-    const result = await this.native.execute(commands);
+    const result = await this.execute(commands);
     if (result.exitCode !== 0) {
       throw new BashError(result);
     }
