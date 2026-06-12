@@ -1108,6 +1108,7 @@ fn error_kind(e: &Error) -> String {
         Error::ResourceLimit(_) => "resource_limit".to_string(),
         Error::Network(_) => "network_error".to_string(),
         Error::Regex(_) => "regex_error".to_string(),
+        Error::CommandFailure(_) => "execution_error".to_string(),
         Error::Internal(_) => "internal_error".to_string(),
         Error::Cancelled => "cancelled".to_string(),
     }

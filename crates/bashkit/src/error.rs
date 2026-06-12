@@ -51,6 +51,16 @@ pub enum Error {
     #[error("execution cancelled")]
     Cancelled,
 
+    /// A bash-level command failure that should not abort the interpreter.
+    ///
+    /// Used for errors (e.g. missing input-redirect target) that bash handles
+    /// by failing the individual command with exit 1 and continuing execution,
+    /// rather than aborting the whole script.  Callers that process redirections
+    /// before executing a command must catch this variant and convert it into a
+    /// non-fatal `Ok(ExecResult)` with the enclosed stderr message.
+    #[error("{0}")]
+    CommandFailure(String),
+
     /// Internal error for unexpected failures.
     ///
     /// THREAT[TM-INT-002]: Unexpected internal failures should not crash the interpreter.
