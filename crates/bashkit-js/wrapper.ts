@@ -554,6 +554,7 @@ function toNativeOptions(
     maxLoopIterations: options?.maxLoopIterations,
     maxTotalLoopIterations: options?.maxTotalLoopIterations,
     maxMemory: options?.maxMemory,
+    maxInputBytes: options?.maxInputBytes,
     timeoutMs: options?.timeoutMs,
     files: resolvedFiles,
     mounts: options?.mounts?.map((m) => ({
