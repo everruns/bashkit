@@ -1500,6 +1500,22 @@ impl RgOptions {
         matched.unwrap_or(!has_include)
     }
 
+    fn has_matching_positive_glob(&self, path: &Path, cwd: &Path) -> bool {
+        self.glob_rules
+            .iter()
+            .any(|rule| rule.include && rule.matches(path, cwd))
+    }
+
+    fn has_matching_type_include(&self, path: &Path) -> bool {
+        self.type_includes
+            .iter()
+            .any(|file_type| file_type.matches(path))
+    }
+
+    fn explicitly_includes_hidden_file(&self, path: &Path, cwd: &Path) -> bool {
+        self.has_matching_positive_glob(path, cwd) || self.has_matching_type_include(path)
+    }
+
     fn matches_type_filters(&self, path: &Path) -> bool {
         if !self.type_includes.is_empty()
             && !self
@@ -3634,11 +3650,9 @@ async fn collect_rg_files_recursive(
         };
         if let Ok(entries) = fs.read_dir(&item.actual).await {
             for entry in entries {
-                if !opts.hidden && is_hidden_name(&entry.name) {
-                    continue;
-                }
                 let path = item.logical.join(&entry.name);
                 let actual_path = item.actual.join(&entry.name);
+                let hidden_entry = !opts.hidden && is_hidden_name(&entry.name);
                 let entry_depth = item.depth + 1;
                 let (entry_actual_path, entry_metadata) =
                     if entry.metadata.file_type.is_symlink() && opts.follow_symlinks {
@@ -3653,7 +3667,7 @@ async fn collect_rg_files_recursive(
                     };
 
                 if entry_metadata.file_type.is_dir() {
-                    if opts.is_ignored_by_rules(&path, true, &rules) {
+                    if hidden_entry || opts.is_ignored_by_rules(&path, true, &rules) {
                         continue;
                     }
                     if opts
@@ -3681,6 +3695,7 @@ async fn collect_rg_files_recursive(
                     && !opts.is_ignored_by_rules(&path, false, &rules)
                     && opts.matches_globs(&path, cwd)
                     && opts.matches_type_filters(&path)
+                    && (!hidden_entry || opts.explicitly_includes_hidden_file(&path, cwd))
                 {
                     result.push(RgFileCandidate {
                         logical: path,
@@ -3927,8 +3942,7 @@ async fn try_indexed_search(
                 || !seen_paths.insert(candidate.clone())
                 || (!explicit_file_match && !opts.matches_globs(&candidate, cwd))
                 || (!explicit_file_match
-                    && !opts.hidden
-                    && path_has_hidden_component_relative_to(&candidate, &root))
+                    && !path_allowed_by_hidden_filter(&candidate, &root, opts, cwd))
             {
                 continue;
             }
@@ -3948,11 +3962,30 @@ async fn try_indexed_search(
     Some(inputs)
 }
 
-fn path_has_hidden_component_relative_to(path: &Path, root: &Path) -> bool {
-    path.strip_prefix(root)
+fn path_allowed_by_hidden_filter(path: &Path, root: &Path, opts: &RgOptions, cwd: &Path) -> bool {
+    // Match ripgrep: positive globs unhide hidden files, not hidden directories.
+    if opts.hidden {
+        return true;
+    }
+
+    let components: Vec<_> = path
+        .strip_prefix(root)
         .unwrap_or(path)
         .components()
-        .any(|component| component.as_os_str().to_str().is_some_and(is_hidden_name))
+        .collect();
+    for (idx, component) in components.iter().enumerate() {
+        let Some(name) = component.as_os_str().to_str() else {
+            continue;
+        };
+        if !is_hidden_name(name) {
+            continue;
+        }
+        if idx + 1 == components.len() {
+            return opts.explicitly_includes_hidden_file(path, cwd);
+        }
+        return false;
+    }
+    true
 }
 
 struct RgPrefix<'a> {
@@ -14129,6 +14162,114 @@ mod tests {
         assert!(result.stdout.contains("./src/main.rs:needle"));
         assert!(!result.stdout.contains("main.txt"));
         assert!(!result.stdout.contains("vendor"));
+    }
+
+    #[tokio::test]
+    async fn test_rg_positive_glob_includes_hidden_files_not_hidden_dirs() {
+        let result = run_rg_with_cwd(
+            &["-g", "*.rs", "needle", "."],
+            None,
+            &[
+                ("/proj/.lib.rs", b"needle\n"),
+                ("/proj/lib.rs", b"needle\n"),
+                ("/proj/visible/.mod.rs", b"needle\n"),
+                ("/proj/.hidden_dir/lib.rs", b"needle\n"),
+                ("/proj/readme.md", b"needle\n"),
+            ],
+            "/proj",
+        )
+        .await;
+
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("./.lib.rs:needle"));
+        assert!(result.stdout.contains("./lib.rs:needle"));
+        assert!(result.stdout.contains("./visible/.mod.rs:needle"));
+        assert!(!result.stdout.contains(".hidden_dir"));
+        assert!(!result.stdout.contains("readme.md"));
+    }
+
+    #[tokio::test]
+    async fn test_rg_type_include_includes_hidden_files_not_hidden_dirs() {
+        let result = run_rg_with_cwd(
+            &["-t", "rust", "needle", "."],
+            None,
+            &[
+                ("/proj/.lib.rs", b"needle\n"),
+                ("/proj/lib.rs", b"needle\n"),
+                ("/proj/visible/.mod.rs", b"needle\n"),
+                ("/proj/.hidden_dir/lib.rs", b"needle\n"),
+                ("/proj/readme.md", b"needle\n"),
+            ],
+            "/proj",
+        )
+        .await;
+
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("./.lib.rs:needle"));
+        assert!(result.stdout.contains("./lib.rs:needle"));
+        assert!(result.stdout.contains("./visible/.mod.rs:needle"));
+        assert!(!result.stdout.contains(".hidden_dir"));
+        assert!(!result.stdout.contains("readme.md"));
+    }
+
+    #[tokio::test]
+    async fn test_rg_indexed_positive_glob_includes_hidden_files_not_hidden_dirs() {
+        let inner = InMemoryFs::new();
+        inner.mkdir(Path::new("/safe/visible"), true).await.unwrap();
+        inner
+            .mkdir(Path::new("/safe/.hidden_dir"), true)
+            .await
+            .unwrap();
+        inner
+            .write_file(Path::new("/safe/.lib.rs"), b"needle\n")
+            .await
+            .unwrap();
+        inner
+            .write_file(Path::new("/safe/lib.rs"), b"needle\n")
+            .await
+            .unwrap();
+        inner
+            .write_file(Path::new("/safe/visible/.mod.rs"), b"needle\n")
+            .await
+            .unwrap();
+        inner
+            .write_file(Path::new("/safe/.hidden_dir/lib.rs"), b"needle\n")
+            .await
+            .unwrap();
+
+        let fs = Arc::new(IndexedTestFs {
+            inner,
+            matches: vec![
+                SearchMatch {
+                    path: PathBuf::from("/safe/.lib.rs"),
+                    line_number: 1,
+                    line_content: "needle".to_string(),
+                },
+                SearchMatch {
+                    path: PathBuf::from("/safe/lib.rs"),
+                    line_number: 1,
+                    line_content: "needle".to_string(),
+                },
+                SearchMatch {
+                    path: PathBuf::from("/safe/visible/.mod.rs"),
+                    line_number: 1,
+                    line_content: "needle".to_string(),
+                },
+                SearchMatch {
+                    path: PathBuf::from("/safe/.hidden_dir/lib.rs"),
+                    line_number: 1,
+                    line_content: "needle".to_string(),
+                },
+            ],
+        });
+
+        let result =
+            run_rg_with_fs(&["--no-ignore", "-g", "*.rs", "needle", "/safe"], None, fs).await;
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("/safe/.lib.rs:needle"));
+        assert!(result.stdout.contains("/safe/lib.rs:needle"));
+        assert!(result.stdout.contains("/safe/visible/.mod.rs:needle"));
+        assert!(!result.stdout.contains(".hidden_dir"));
     }
 
     #[tokio::test]
