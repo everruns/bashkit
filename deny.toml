@@ -43,6 +43,10 @@ ignore = [
     # (still pins pyo3 0.28), so we can't upgrade. Host-side Python bindings
     # only — not reachable from sandboxed scripts. Remove on pyo3 0.29 bump.
     "RUSTSEC-2026-0176",
+    # pyo3: missing Sync bound on PyCFunction::new_closure (RUSTSEC-2026-0177)
+    # Same 0.29 blocker; `new_closure` is not called anywhere in this
+    # workspace, so the unsound API is unreachable. Remove on pyo3 0.29 bump.
+    "RUSTSEC-2026-0177",
 ]
 
 [bans]
