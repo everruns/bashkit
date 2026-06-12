@@ -2621,7 +2621,13 @@ impl Interpreter {
                     }
 
                     // Process input redirections before executing compound
-                    let stdin = self.process_input_redirections(None, redirects).await?;
+                    let stdin = match self.process_input_redirections(None, redirects).await {
+                        Ok(s) => s,
+                        Err(crate::error::Error::CommandFailure(msg)) => {
+                            return Ok(ExecResult::err(msg, 1));
+                        }
+                        Err(e) => return Err(e),
+                    };
                     let prev_pipeline_stdin = if stdin.is_some() {
                         let prev = self.pipeline_stdin.take();
                         self.pipeline_stdin = stdin;
@@ -5397,9 +5403,16 @@ impl Interpreter {
             }
 
             // Handle input redirections first
-            let stdin = self
+            let stdin = match self
                 .process_input_redirections(stdin, &command.redirects)
-                .await?;
+                .await
+            {
+                Ok(s) => s,
+                Err(crate::error::Error::CommandFailure(msg)) => {
+                    return Ok(ExecResult::err(msg, 1));
+                }
+                Err(e) => return Err(e),
+            };
 
             // For `read -u FD`, check if FD is a coproc read FD and inject data as stdin
             let stdin = if name == "read" && stdin.is_none() {
@@ -5498,7 +5511,12 @@ impl Interpreter {
                 RedirectKind::Input => {
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
-                    let content = self.fs.read_file(&path).await?;
+                    let content = match self.fs.read_file(&path).await {
+                        Ok(c) => c,
+                        Err(e) => {
+                            return Ok(ExecResult::err(format!("bash: {target_path}: {e}\n"), 1));
+                        }
+                    };
                     let text = decode_file_bytes_for_path(&path, &content);
                     let fd = redirect.fd.or(resolved_fd_var);
                     if let Some(fd) = fd {
@@ -7807,8 +7825,16 @@ impl Interpreter {
                             target_path
                         )));
                     } else {
-                        let content = self.fs.read_file(&path).await?;
-                        stdin = Some(decode_file_bytes_for_path(&path, &content));
+                        match self.fs.read_file(&path).await {
+                            Ok(content) => {
+                                stdin = Some(decode_file_bytes_for_path(&path, &content));
+                            }
+                            Err(e) => {
+                                return Err(crate::error::Error::CommandFailure(format!(
+                                    "bash: {target_path}: {e}\n"
+                                )));
+                            }
+                        }
                     }
                 }
                 RedirectKind::HereString => {

@@ -1798,4 +1798,55 @@ mod creative_abuse_passing {
         assert!(result.stdout.contains("empty: 0"));
         assert!(result.stdout.contains("sparse: sparse"));
     }
+
+    // --- Input redirect from missing file (#2050) ---
+
+    /// Missing input-redirect target fails the command (exit 1) but does not
+    /// abort the whole exec() call; the script continues.
+    #[tokio::test]
+    async fn input_redirect_missing_file_is_nonfatal() {
+        let mut bash = tight_bash();
+        let result = bash
+            .exec("cat < /no-such-file; echo after=$?")
+            .await
+            .unwrap(); // must NOT return Err
+        assert!(
+            !result.stderr.is_empty(),
+            "expected file-not-found message in stderr, got empty stderr"
+        );
+        assert!(
+            result.stdout.contains("after=1"),
+            "script must continue and report exit 1, got stdout: {:?}",
+            result.stdout
+        );
+        assert_eq!(
+            result.exit_code, 0,
+            "overall exit code must be 0 (from trailing echo), got {}",
+            result.exit_code
+        );
+    }
+
+    /// Compound command with missing input redirect is also non-fatal.
+    #[tokio::test]
+    async fn compound_input_redirect_missing_file_is_nonfatal() {
+        let mut bash = tight_bash();
+        let result = bash
+            .exec("{ cat; } < /no-such-file; echo after=$?")
+            .await
+            .unwrap();
+        assert!(
+            !result.stderr.is_empty(),
+            "expected file-not-found message in stderr, got empty stderr"
+        );
+        assert!(
+            result.stdout.contains("after=1"),
+            "script must continue and report exit 1, got stdout: {:?}",
+            result.stdout
+        );
+        assert_eq!(
+            result.exit_code, 0,
+            "overall exit code must be 0 (from trailing echo), got {}",
+            result.exit_code
+        );
+    }
 }
