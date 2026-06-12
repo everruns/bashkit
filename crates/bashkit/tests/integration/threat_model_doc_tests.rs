@@ -16,7 +16,10 @@ fn extract_tm_ids(text: &str, found: &mut HashSet<String>) {
     while let Some(off) = text[i..].find("TM-") {
         let start = i + off;
         let rest = &text[start + 3..];
-        let cat: String = rest.chars().take_while(|c| c.is_ascii_uppercase()).collect();
+        let cat: String = rest
+            .chars()
+            .take_while(|c| c.is_ascii_uppercase())
+            .collect();
         let after_cat = &rest[cat.len()..];
         if !cat.is_empty() && after_cat.starts_with('-') {
             let num: String = after_cat[1..]
