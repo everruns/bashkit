@@ -73,7 +73,7 @@ fn limitation_evidence_tests_exist() {
         let cited = evidence.trim_matches('`');
         if cited.starts_with("l_") {
             assert!(
-                evidence_src.contains(&format!("async fn {cited}(")),
+                evidence_src.contains(&format!("fn {cited}(")),
                 "{id}: evidence test `{cited}` not found in limitations_evidence_tests.rs"
             );
         }

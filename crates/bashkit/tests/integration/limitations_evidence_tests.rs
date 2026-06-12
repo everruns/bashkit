@@ -30,7 +30,12 @@ async fn l_proc_003_no_process_spawning() {
     let mut bash = Bash::new();
     // `sh -c 'echo hi'` style host escape: /bin/sh is not a spawnable path.
     let result = bash.exec("/bin/sh -c 'echo escaped'").await.unwrap();
-    assert_ne!(result.exit_code, 0);
+    assert_eq!(result.exit_code, 127);
+    assert!(
+        result.stderr.contains("No such file or directory"),
+        "stderr: {}",
+        result.stderr
+    );
     assert!(!result.stdout.contains("escaped"));
 
     let result = bash.exec("definitely-not-a-command").await.unwrap();
@@ -74,8 +79,9 @@ async fn l_net_002_default_deny_no_resolution() {
     let result = bash.exec("curl -s https://example.com").await.unwrap();
     assert_ne!(result.exit_code, 0);
     assert!(
-        !result.stderr.is_empty(),
-        "denied request must explain itself"
+        result.stderr.contains("network access not configured"),
+        "must fail with the default-deny diagnostic, got: {}",
+        result.stderr
     );
 }
 
