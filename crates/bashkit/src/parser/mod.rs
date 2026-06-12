@@ -4013,6 +4013,37 @@ mod tests {
     }
 
     #[test]
+    fn test_ansi_c_quoted_nul_before_dollar_stays_literal() {
+        for input in [
+            "echo $'\\0$(printf pwned)'",
+            "echo $'\\x00$(printf pwned)'",
+            "echo $'\\u0000${SECRET}'",
+            "echo $'\\U00000000${SECRET}'",
+        ] {
+            let parser = Parser::new(input);
+            let script = parser.parse().unwrap();
+            if let Command::Simple(cmd) = &script.commands[0] {
+                assert_eq!(cmd.args.len(), 1);
+                let arg = &cmd.args[0];
+                assert!(arg.quoted, "ANSI-C quoted argument must be quoted: {input}");
+                assert!(
+                    arg.parts
+                        .iter()
+                        .all(|part| matches!(part, WordPart::Literal(_))),
+                    "ANSI-C quoted NUL must not expose expansions for {input}: {:?}",
+                    arg.parts
+                );
+                assert!(
+                    arg.to_string().starts_with('\0'),
+                    "decoded ANSI-C NUL should remain literal for {input}"
+                );
+            } else {
+                panic!("expected simple command");
+            }
+        }
+    }
+
+    #[test]
     fn test_single_quoted_segment_concatenation_stays_literal() {
         let parser = Parser::new("echo foo'$(id)'");
         let script = parser.parse().unwrap();
