@@ -87,6 +87,7 @@ pub mod sqlite_security_tests;
 pub mod stack_overflow_regression_tests;
 pub mod subst_depth_limit_tests;
 pub mod symlink_overlay_security_tests;
+pub mod threat_model_doc_tests;
 pub mod threat_model_tests;
 pub mod tty_tests;
 pub mod typescript_integration_tests;
