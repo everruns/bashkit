@@ -1213,10 +1213,10 @@ impl<'a> Lexer<'a> {
         out
     }
 
-    /// Append a literal segment while protecting `$` from parse_word expansion.
+    /// Append a literal segment while protecting sentinel-sensitive bytes from parse_word expansion.
     fn push_literal_with_escaped_dollar(dst: &mut String, segment: &str) {
         for ch in segment.chars() {
-            if ch == '$' {
+            if matches!(ch, '\x00' | '$') {
                 dst.push('\x00');
             }
             dst.push(ch);
