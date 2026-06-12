@@ -20,7 +20,9 @@ Intentional-limitation IDs (`L-<AREA>-<NNN>`) are stable: code comments
 and docs reference them (like TM-* threat IDs). Never renumber; mark
 lifted limitations as removed in the PR that lifts them.
 `limitations_doc_format` in `crates/bashkit/tests/integration/` lints the
-table format and ID uniqueness.
+table format and ID uniqueness; evidence cells naming `l_*` tests must
+resolve to functions in `limitations_evidence_tests.rs` (also linted).
+`stance` marks rows that are positions rather than testable behaviors.
 
 ## Intentional Limitations
 
@@ -31,13 +33,13 @@ execution model. Evidence is a threat-model ID, a test, or `stance`
 | ID | Limitation | Why | Evidence |
 |----|------------|-----|----------|
 | L-PROC-001 | `exec` does not replace the process; `exec cmd` runs cmd then stops execution (fd redirects work) | True process replace would break sandbox containment | TM-ESC-005 |
-| L-PROC-002 | No job control (`bg`, `fg`, `jobs`) | Requires process state; interactive-only feature | stance |
-| L-PROC-003 | No process spawning; external commands run as builtins | Core sandbox model: no fork/exec escape surface | stance |
+| L-PROC-002 | No job control (`bg`, `fg`, `jobs`) | Requires process state; interactive-only feature | `l_proc_002_no_job_control` |
+| L-PROC-003 | No process spawning; external commands run as builtins | Core sandbox model: no fork/exec escape surface | `l_proc_003_no_process_spawning` |
 | L-FS-001 | Symlinks stored but never followed in path resolution (`ln -s` works, `read_link()` returns targets, traversal blocked) | Prevents symlink loops and link-based sandbox escapes | TM-DOS-011 |
-| L-FS-002 | No file permission enforcement in the VFS | Single-tenant virtual FS; permissions would be theater | stance |
-| L-NET-001 | No raw network sockets; HTTP only via `curl`/`wget`/`http` builtins | Allowlist-mediated egress is the only network surface | stance |
-| L-NET-002 | No DNS resolution; hosts must appear in the allowlist | Resolution would bypass allowlist intent | stance |
-| L-SIG-001 | `trap` stores INT/TERM handlers but no signal delivery in virtual mode (EXIT, ERR fire) | No host signals exist inside the sandbox | stance |
+| L-FS-002 | No file permission enforcement in the VFS | Single-tenant virtual FS; permissions would be theater | `l_fs_002_no_permission_enforcement` |
+| L-NET-001 | No raw network sockets; HTTP only via `curl`/`wget`/`http` builtins | Allowlist-mediated egress is the only network surface | `l_net_001_no_raw_sockets` |
+| L-NET-002 | No DNS resolution; hosts must appear in the allowlist | Resolution would bypass allowlist intent | `l_net_002_default_deny_no_resolution` |
+| L-SIG-001 | `trap` stores INT/TERM handlers but no signal delivery in virtual mode (EXIT, ERR fire) | No host signals exist inside the sandbox | `l_sig_001_signal_traps_not_delivered` |
 
 ### Design Rationale
 
@@ -99,7 +101,7 @@ pass in CI); only divergences and boundaries are recorded here.
 |----|------|------------|----------|
 | L-AWK-001 | awk | Some complex regex patterns unsupported (engine shared with sed/grep, size-limited) | stance |
 | L-JQ-001 | jq | Alternative `//`: jaq errors on `.foo` applied to null instead of returning null (upstream jaq divergence) | 1 skipped spec test |
-| L-GREP-001 | grep | `--color`/`--colour`, `--line-buffered` accepted as no-ops | stance |
+| L-GREP-001 | grep | `--color`/`--colour`, `--line-buffered` accepted as no-ops | `l_grep_001_noop_flags` |
 | L-CURL-001 | curl | Spec-test coverage for methods/headers/payloads/auth/redirects not ported (needs `http_client` + allowlist in harness); behavior covered by integration tests | stance |
 
 Safety boundaries (enforced, not bugs): printf width/precision caps,

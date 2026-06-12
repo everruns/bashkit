@@ -58,6 +58,29 @@ fn limitations_doc_format() {
 }
 
 #[test]
+fn limitation_evidence_tests_exist() {
+    // Evidence cells citing an `l_*` test must resolve to a test function
+    // in limitations_evidence_tests.rs, so lifting a limitation can't leave
+    // the doc citing a deleted test (or vice versa).
+    let doc = limitations_doc();
+    let evidence_src = {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/integration/limitations_evidence_tests.rs");
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
+    };
+
+    for (id, evidence) in id_rows(&doc) {
+        let cited = evidence.trim_matches('`');
+        if cited.starts_with("l_") {
+            assert!(
+                evidence_src.contains(&format!("fn {cited}(")),
+                "{id}: evidence test `{cited}` not found in limitations_evidence_tests.rs"
+            );
+        }
+    }
+}
+
+#[test]
 fn limitation_ids_referenced_from_code_exist_in_doc() {
     // Code comments may cite L-* IDs (e.g. path.rs cites L-FS-001). Every
     // citation must resolve to a row, so lifting a limitation can't leave
