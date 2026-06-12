@@ -139,7 +139,7 @@ impl Builtin for Dirname {
 /// `generated/realpath_args.rs`. Behaviour is implemented locally
 /// against the bashkit VFS.
 ///
-/// Symlink resolution stays disabled per `specs/implementation-status.md`'s
+/// Symlink resolution stays disabled per L-FS-001 in `specs/limitations.md`'s
 /// "Intentionally Unimplemented" entry: bashkit's VFS does not model
 /// symlinks, so `-e`/`-m` only differ on existence checks, and
 /// `-L`/`-P`/`--strip` collapse to the same lexical canonicalisation.

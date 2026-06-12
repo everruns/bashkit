@@ -33,7 +33,7 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 | parallel-execution | Threading model, Arc usage |
 | documentation | Rustdoc guides, embedded markdown |
 | release-process | Version tagging, crates.io + PyPI + npm publishing |
-| implementation-status | Feature status, test coverage, limitations, POSIX compliance |
+| limitations | Negative spec: intentional gaps (L-* IDs), partial features, POSIX stance |
 | tool-contract | Public LLM Tool trait contract |
 | git-support | Sandboxed git operations on VFS |
 | python-builtin | Embedded Python via Monty, security, resource limits |
@@ -46,10 +46,10 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 | request-signing | Transparent Ed25519 request signing (bot-auth) per RFC 9421 |
 | interactive-shell | Interactive REPL mode with rustyline line editing |
 | sqlite-builtin | Embedded SQLite via Turso (MemoryIO + VfsIO backends, dot-commands) |
-| coreutils-args-port | Port uutils `uu_app()` clap definitions (args mode) and platform-clean uucore modules (module mode, manifest-driven) into bashkit via codegen |
-| credential-injection | Transparent per-host credential injection for outbound HTTP requests, without exposing secrets to sandboxed scripts |
+| coreutils-args-port | Codegen port of uutils clap definitions + uucore modules |
+| credential-injection | Per-host HTTP credential injection without exposing secrets |
 | performance-results | Benchmark/eval result locations and `/benches` site aggregation contract |
-| emscripten-wheels | Reduced-feature Pyodide/Emscripten (`wasm32-unknown-emscripten`) Python wheel: feature gating, toolchain, CI/publish |
+| emscripten-wheels | Reduced-feature Pyodide/Emscripten Python wheel |
 
 ### Documentation
 
@@ -104,15 +104,12 @@ just check        # fmt + clippy + test
 just pre-pr       # Pre-PR checks
 ```
 
-**Do not run `cargo test --all-features` as a single invocation.** It is
-not exercised in CI, statically links every embedded interpreter (monty,
-zapcode, turso, russh, jaq, reqwest+rustls, ed25519-dalek), and turns on
-`failpoints` — whose global state requires `--test-threads=1`. Even with
-test files consolidated into one binary (see `specs/testing.md`), the
-parallel link step exceeds sandbox/cloud-runner memory limits and the
-supervisor kills the shell, often with output truncated to a single line.
-Use `just check` / `just pre-pr`, or slice by feature the way CI does
-(see `.github/workflows/ci.yml`):
+**Do not run `cargo test --all-features` as a single invocation.** Not
+exercised in CI; statically links every embedded interpreter and enables
+`failpoints` (global state, needs `--test-threads=1`); the parallel link
+step exceeds sandbox/cloud-runner memory and the supervisor kills the
+shell. Use `just check` / `just pre-pr`, or slice by feature the way CI
+does (see `.github/workflows/ci.yml`):
 
 ```bash
 cargo test --workspace --lib --bins --tests --features http_client,ssh,sqlite
@@ -143,37 +140,15 @@ criteria live in `specs/testing.md`.
 
 ### Stderr from builtins must not leak internal Debug shapes
 
-See **TM-INF-022** in `specs/threat-model.md`.
-
-Rules:
-- No `{:?}`, `{:#?}`, or `{name:?}` in `crates/bashkit/src/builtins/`.
-- Use `Display` (`{}`) or a domain-specific formatter that maps each
-  library error variant to a short, real-shell-style message (see
-  `format_compile_errors` in `builtins/jq/errors.rs` as the reference).
-- Cap diagnostic length at ≤ 1 KB.
-- Legitimate Debug uses (assert-failure messages in `#[cfg(test)]`)
-  must annotate the line with `// debug-ok: <reason>`.
-
-Enforcement (all three layers run by `cargo test`, no separate recipe):
-- **Static**: `builtins::tests::no_debug_fmt_in_builtin_source` walks
-  every builtin source file (recursively, so submodules like
-  `builtins/jq/` are also scanned) and asserts no `{:?}` directives.
-- **Dynamic per-tool**: each tool's `mod tests` calls
-  `bashkit::testing::assert_no_leak` against malformed inputs that
-  exercise its error paths.
-- **Fuzz**: `tests/{jq,awk}_fuzz_scaffold_tests.rs`, the proptest cases
-  in `tests/proptest_security.rs`, and every `fuzz/fuzz_targets/*.rs`
-  cargo-fuzz target call `bashkit::testing::assert_fuzz_invariants`
-  on the result. This also enforces the host-env canary
-  (`BASHKIT_FUZZ_HOST_CANARY_*` must not appear in stdout/stderr —
-  TM-INF-013 regression guard) and the host-path bans (`/rustc/`,
-  `/.cargo/registry/`, etc. — TM-INF-016).
-
-When adding a new builtin that wraps a library:
-1. Add a `no_leak_*` test to its `mod tests` (see `jq/tests.rs`, `awk.rs`,
-   `json.rs` for examples).
-2. If a cargo-fuzz target exists for the tool, ensure it uses
-   `bashkit::testing::fuzz_exec(...)` — not bare `bash.exec(...)`.
+**TM-INF-022** in `specs/threat-model.md`. No `{:?}`/`{:#?}` in
+`crates/bashkit/src/builtins/`; use `Display` or a domain formatter
+(reference: `format_compile_errors` in `builtins/jq/errors.rs`); cap
+diagnostics ≤ 1 KB; test-only Debug needs `// debug-ok: <reason>`.
+Enforced by `cargo test` (static scan, per-tool `assert_no_leak`, fuzz
+invariants) — see `bashkit::testing` rustdoc for the layers.
+New library-wrapping builtin: add a `no_leak_*` test (see `jq/tests.rs`);
+fuzz targets must use `bashkit::testing::fuzz_exec(...)`, not bare
+`bash.exec(...)`.
 
 ### Benches
 
@@ -205,7 +180,7 @@ Do not mix criterion `.md` files into `crates/bashkit-bench/results/`.
 1. `just pre-pr` (runs 2-4 automatically)
 2. `cargo fmt --check`
 3. `cargo clippy --all-targets --all-features -- -D warnings`
-4. `cargo test --all-features`
+4. `just test` (feature-sliced; never `cargo test --all-features` in one invocation — see Local Dev)
 5. Unit tests cover both positive (expected behavior) and negative (error handling, edge cases) scenarios
 6. Security tests if change touches user input, parsing, sandboxing, or permissions (see `specs/security-testing.md`)
 7. Compatibility/differential tests if change affects Bash behavior parity (compare against real Bash)
@@ -234,24 +209,13 @@ Types: feat, fix, docs, refactor, test, chore
 
 ### Commit Attribution
 
-All commits MUST be attributed to the real human user, never to a coding agent or bot.
-
-Before committing, verify `git config user.name` and `git config user.email` resolve to a real human identity.
-
-If git config is missing, or resolves to a bot/agent identity, configure git user from environment variables:
-
-```bash
-git config user.name "$GIT_USER_NAME"
-git config user.email "$GIT_USER_EMAIL"
-```
-
-Environment variables `GIT_USER_NAME` and `GIT_USER_EMAIL` only need to be set when git config is missing or non-human. If both are missing in that case, stop and ask the user — do not commit with default/bot identity.
-
-- Do NOT set `GIT_AUTHOR_NAME`, `GIT_COMMITTER_NAME`, or `user.name` to any AI/bot identity (e.g. "Claude", "Cursor", "Copilot", "github-actions[bot]")
-- Do NOT use `Co-authored-by` trailers referencing AI tools
-- Do NOT add "generated by", "authored by AI", or similar attribution in commit messages
-- The pre-push script checks for bot-like author names and will warn if detected
-- Merge commits must also use the real user as author — never use agent identities
+All commits (incl. merge commits) attributed to the real human user —
+never a bot/agent identity, no AI `Co-authored-by` trailers, no
+"generated by" text. Verify `git config user.name`/`user.email` are
+human before committing; if missing or bot-like, set from
+`$GIT_USER_NAME`/`$GIT_USER_EMAIL`. If those are also missing, stop and
+ask — never commit with a default/bot identity. Pre-push script warns on
+bot-like author names.
 
 ### PRs
 

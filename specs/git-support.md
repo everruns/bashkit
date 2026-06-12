@@ -1,79 +1,23 @@
 # Git Support
 
 ## Status
-Phase 1: Implemented
-Phase 2: Implemented (virtual mode - URL validation only)
-Phase 3: Implemented (branch, checkout, diff, reset)
+Phases 1-3 implemented (Phase 2 remote ops: virtual mode — URL validation only)
 
 ## Decision
 
-Bashkit provides virtual git operations via the `git` feature flag.
-All git operations work on the virtual filesystem only.
-
-### Feature Flag
-
-Enable with:
-```toml
-[dependencies]
-bashkit = { version = "0.1", features = ["git"] }
-```
-
-### Configuration
-
-```rust
-use bashkit::{Bash, GitConfig};
-
-let bash = Bash::builder()
-    .git(GitConfig::new()
-        .author("Deploy Bot", "deploy@example.com"))
-    .build();
-```
+Virtual git operations behind the `git` feature flag. All git operations work
+on the virtual filesystem only. Configure via
+`Bash::builder().git(GitConfig::new().author(name, email))`.
 
 ### Supported Commands
 
-#### Phase 1 (Local) - Implemented
-
-| Command | Description |
-|---------|-------------|
-| `git init [path]` | Create empty repository |
-| `git config [key] [value]` | Get/set repository config |
-| `git add <pathspec>...` | Stage files |
-| `git commit -m <message>` | Record changes |
-| `git status` | Show working tree status |
-| `git log [-n N]` | Show commit history |
-
-#### Phase 2 (Remote) - Implemented (Virtual Mode)
-
-Remote operations validate URLs against the allowlist but return virtual
-mode messages (actual network operations not supported in VFS-only mode).
-
-| Command | Description |
-|---------|-------------|
-| `git remote` | List remotes (names only) |
-| `git remote -v` | List remotes with URLs |
-| `git remote add <name> <url>` | Add remote (validates URL) |
-| `git remote remove <name>` | Remove remote |
-| `git clone <url> [path]` | Validates URL, returns virtual mode message |
-| `git push [remote]` | Validates URL, returns virtual mode message |
-| `git pull [remote]` | Validates URL, returns virtual mode message |
-| `git fetch [remote]` | Validates URL, returns virtual mode message |
-
-#### Phase 3 (Advanced) - Implemented
-
-| Command | Description |
-|---------|-------------|
-| `git branch [-d] [name]` | List, create, or delete branches |
-| `git checkout [-b] <branch\|commit>` | Switch branches or create and switch |
-| `git diff [from] [to]` | Show changes (simplified in virtual mode) |
-| `git reset [--soft\|--mixed\|--hard]` | Reset HEAD and clear staging |
-
-#### Future (Not Yet Implemented)
-
-| Command | Description |
-|---------|-------------|
-| `git merge <branch>` | Merge branches |
-| `git rebase <branch>` | Rebase commits |
-| `git stash [push\|pop\|list]` | Stash changes |
+- Phase 1 (local): `init`, `config`, `add`, `commit -m`, `status`, `log [-n N]`
+- Phase 2 (remote, virtual mode): `remote [-v]`, `remote add/remove` (fully
+  functional); `clone`/`push`/`pull`/`fetch` validate URL against allowlist
+  then return virtual-mode messages (no network in VFS-only mode)
+- Phase 3 (advanced): `branch [-d]`, `checkout [-b]`, `diff` (simplified),
+  `reset [--soft|--mixed|--hard]`
+- Future: `merge`, `rebase`, `stash`
 
 ### Security
 
@@ -93,48 +37,19 @@ See `specs/threat-model.md` Section 8: Git Security (TM-GIT-*)
 
 #### Remote Operations (Phase 2)
 
-- Remote URLs require explicit allowlist
+- Remote URLs require explicit allowlist (`GitConfig::allow_remote(pattern)`)
 - HTTPS only (no SSH, no git:// protocol)
-- Virtual mode: URL validation only, actual network operations not supported
-- `git remote add/remove` fully functional for managing remote references
-- `git clone/push/pull/fetch` validate URLs then return helpful messages
+- Virtual mode: URL validation only, no actual network operations
 
-### API Design
+### API
 
-#### GitConfig
-
-```rust
-/// Git configuration for Bashkit.
-pub struct GitConfig { ... }
-
-impl GitConfig {
-    /// Create new config with default virtual identity.
-    pub fn new() -> Self;
-
-    /// Set author name and email for commits.
-    pub fn author(self, name: &str, email: &str) -> Self;
-
-    /// Allow a remote URL pattern (Phase 2).
-    pub fn allow_remote(self, pattern: &str) -> Self;
-}
-```
-
-#### BashBuilder Extension
-
-```rust
-impl BashBuilder {
-    /// Configure git support.
-    #[cfg(feature = "git")]
-    pub fn git(self, config: GitConfig) -> Self;
-}
-```
+`GitConfig` (`new()`, `author()`, `allow_remote()`) and
+`BashBuilder::git(config)` (feature-gated): see
+`crates/bashkit/src/builtins/git/config.rs` / rustdoc.
 
 ### Implementation
 
-#### Phase 1 Architecture
-
-For Phase 1, git operations are implemented using a simplified storage
-format in the VFS:
+Phase 1 uses a simplified storage format in the VFS:
 
 - `.git/HEAD` - Current branch reference
 - `.git/config` - Repository configuration (INI format)
@@ -142,51 +57,16 @@ format in the VFS:
 - `.git/commits` - Commit history (pipe-separated fields)
 - `.git/refs/heads/<branch>` - Branch references
 
-This approach provides:
-- Full VFS isolation
-- Security-focused implementation
-- Correct user-facing behavior
-- Foundation for Phase 2 gitoxide integration
-
-#### Future Phases
-
-Phase 2 will integrate `gitoxide` (gix) crate for:
-- Network operations (clone, push, pull, fetch)
-- Full git object format compatibility
-- Remote URL allowlist enforcement
+Gives full VFS isolation, correct user-facing behavior, foundation for future
+`gitoxide` (gix) integration (real network ops, full git object format,
+remote allowlist enforcement).
 
 ### Testing
 
-Tests are organized by category:
-
-| Test File | Purpose |
-|-----------|---------|
-| `tests/git_integration_tests.rs` | Phase 1 functional tests |
-| `tests/git_security_tests.rs` | TM-GIT-* threat tests |
-| `tests/git_remote_security_tests.rs` | Phase 2 remote security tests |
-| `tests/git_advanced_tests.rs` | Phase 3 advanced operation tests |
-
-Run tests:
-```bash
-# Run git tests
-cargo test --features git git_
-
-# Run security tests
-cargo test --features git,failpoints git_security
-```
-
-### Verification
-
-```bash
-# Build with git feature
-cargo build --features git
-
-# Run all git tests
-cargo test --features git
-
-# Pre-PR checks
-just pre-pr
-```
+Tests live under `crates/bashkit/tests/integration/`:
+`git_integration_tests.rs` (Phase 1), `git_security_tests.rs` (TM-GIT-*),
+`git_remote_security_tests.rs` (Phase 2), `git_advanced_tests.rs` (Phase 3),
+`git_inspection_tests.rs`.
 
 ## See Also
 

@@ -3,54 +3,41 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import BaseLayout from "../layouts/BaseLayout.astro";
 
-// Decision: build the public builtins index from specs/implementation-status.md
-// so the homepage and this page stay anchored to the canonical 160-command list.
+// Decision: build the public builtins index from the generated inventory
+// specs/status/builtins.json (`just regen-builtins`), so the page reflects
+// what the code actually registers. The builtins-drift workflow keeps the
+// committed JSON in sync with the source.
 
-const implementationStatus = readFileSync(
-  resolve(process.cwd(), "../specs/implementation-status.md"),
-  "utf8",
+type BuiltinEntry = { name: string; feature: string | null };
+
+const inventory = JSON.parse(
+  readFileSync(resolve(process.cwd(), "../specs/status/builtins.json"), "utf8"),
+) as { builtins: BuiltinEntry[] };
+
+const builtins = [...new Set(inventory.builtins.map((entry) => entry.name))].sort(
+  (left, right) => left.localeCompare(right),
 );
 
-const implementedSection = implementationStatus.match(
-  /### Implemented\s+[\s\S]*?\n\n([\s\S]*?)\n\n### Not Yet Implemented/,
-);
+const featureTones: Record<string, string> = {
+  jq: "gold",
+  git: "mint",
+  ssh: "sky",
+  python: "rose",
+  typescript: "violet",
+  sqlite: "amber",
+};
 
-const builtins = [
-  ...new Set(
-    Array.from(
-      implementedSection?.[1].matchAll(/`([^`]+)`/g) ?? [],
-      (match: RegExpMatchArray) => match[1],
+const optInBuiltinGroups = Object.entries(featureTones)
+  .map(([feature, tone]) => ({
+    label: `opt-in: ${feature}`,
+    tone,
+    names: new Set(
+      inventory.builtins
+        .filter((entry) => entry.feature === feature)
+        .map((entry) => entry.name),
     ),
-  ),
-].sort((left, right) => left.localeCompare(right));
-
-const optInBuiltinGroups = [
-  {
-    label: "opt-in: jq",
-    tone: "gold",
-    names: new Set(["jq"]),
-  },
-  {
-    label: "opt-in: git",
-    tone: "mint",
-    names: new Set(["git"]),
-  },
-  {
-    label: "opt-in: ssh",
-    tone: "sky",
-    names: new Set(["ssh", "scp", "sftp"]),
-  },
-  {
-    label: "opt-in: python",
-    tone: "rose",
-    names: new Set(["python", "python3"]),
-  },
-  {
-    label: "opt-in: typescript",
-    tone: "violet",
-    names: new Set(["ts", "typescript", "node", "deno", "bun"]),
-  },
-];
+  }))
+  .filter((group) => group.names.size > 0);
 
 const optInBuiltinLookup = new Map(
   optInBuiltinGroups.flatMap((group) =>
@@ -73,35 +60,36 @@ const groupedBuiltins = Object.entries(
 
 const builtinsSpecHref =
   "https://github.com/everruns/bashkit/blob/main/specs/builtins.md";
-const implementationStatusHref =
-  "https://github.com/everruns/bashkit/blob/main/specs/implementation-status.md";
+const builtinsJsonHref =
+  "https://github.com/everruns/bashkit/blob/main/specs/status/builtins.json";
 ---
 
 <BaseLayout
-  title="Bashkit builtins — 160 commands in the virtual runtime"
-  description="Browse the 160 builtins Bashkit exposes inside its in-process virtual shell runtime."
+  title={`Bashkit builtins — ${builtins.length} commands in the virtual runtime`}
+  description={`Browse the ${builtins.length} builtins Bashkit exposes inside its in-process virtual shell runtime.`}
 >
   <section class="builtins-hero section">
     <div class="container builtins-hero__grid">
       <div class="builtins-hero__copy">
         <span class="builtins-eyebrow">Builtins index</span>
-        <h1>160+ builtin commands.</h1>
+        <h1>{builtins.length} builtin commands.</h1>
         <p>
           Bashkit reimplements the shell surface inside the runtime: text
           processing, files, archives, network, shell control, plus optional
-          Python and TypeScript runtimes. This page mirrors the canonical
-          implemented list from the project specs.
+          Python, TypeScript, and SQLite runtimes. This page mirrors the
+          generated inventory of what the code registers.
         </p>
       </div>
 
       <aside class="builtins-hero__panel">
         <div>
           <span class="builtins-eyebrow">Source of truth</span>
-          <h2>Tracked in specs, not guessed from source folders.</h2>
+          <h2>Generated from the code, drift-checked in CI.</h2>
         </div>
         <p>
-          The count and command names here come from
-          <a href={implementationStatusHref} target="_blank" rel="noopener noreferrer"><code>specs/implementation-status.md</code></a>.
+          The count and command names come from
+          <a href={builtinsJsonHref} target="_blank" rel="noopener noreferrer"><code>specs/status/builtins.json</code></a>,
+          regenerated from the builtin registry via <code>just regen-builtins</code>.
         </p>
         <div class="builtins-legend">
           <span class="builtins-eyebrow">Legend</span>
@@ -114,8 +102,8 @@ const implementationStatusHref =
           }
         </div>
         <div class="builtins-actions">
-          <a href={implementationStatusHref} target="_blank" rel="noopener noreferrer">
-            Implementation status
+          <a href={builtinsJsonHref} target="_blank" rel="noopener noreferrer">
+            Generated inventory
           </a>
           <a href={builtinsSpecHref} target="_blank" rel="noopener noreferrer">
             Builtins spec
@@ -317,6 +305,11 @@ const implementationStatusHref =
     border: 1px solid rgb(106 76 201 / 0.24);
     background: rgb(106 76 201 / 0.12);
     color: #5b3db1;
+  }
+  .builtins-tone-amber {
+    border: 1px solid rgb(196 110 32 / 0.28);
+    background: rgb(196 110 32 / 0.12);
+    color: #8a4a08;
   }
   @media (max-width: 900px) {
     .builtins-hero__grid,

@@ -5876,6 +5876,18 @@ impl Interpreter {
             .is_some_and(|reg| reg.lookup(name).is_some())
     }
 
+    /// Sorted names of all registered builtins (baked-in + custom + host
+    /// registry). See [`crate::Bash::builtin_names`].
+    pub(crate) fn builtin_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.builtins.keys().cloned().collect();
+        if let Some(reg) = &self.host_builtins {
+            names.extend(reg.names());
+        }
+        names.sort();
+        names.dedup();
+        names
+    }
+
     // THREAT[TM-DOS-089]: Box the final dispatch split so function lookup,
     // special builtin handling, registered builtin execution, and path search
     // do not contribute another large async frame per nested substitution level.

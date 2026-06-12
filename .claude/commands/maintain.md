@@ -1,4 +1,4 @@
-Run the pre-release maintenance checklist from `specs/012-maintenance.md`. Find and fix all issues before reporting.
+Run the pre-release maintenance checklist from `specs/maintenance.md`. Find and fix all issues before reporting.
 
 ## Arguments
 
@@ -28,7 +28,7 @@ Key tools: `cargo update`, `cargo outdated`, `cargo audit`, `cargo deny check`, 
 
 Ensure the threat model covers all features, security tests exist for all mitigated threats, and no OWASP-style issues exist in the codebase.
 
-Key references: `specs/006-threat-model.md`, `specs/005-security-testing.md`, `crates/bashkit/docs/threat-model.md`
+Key references: `specs/threat-model.md`, `specs/security-testing.md`, `crates/bashkit/docs/threat-model.md`
 
 ### 3. Tests are comprehensive and green
 
@@ -94,7 +94,7 @@ Key tools:
 - `gh run list --workflow=fuzz.yml --limit 7` (fuzz)
 - `gh api repos/OWNER/REPO/actions/runs/RUN_ID/jobs` (inspect failed jobs)
 
-If failures persist >2 days, escalate per `specs/012-maintenance.md`.
+If failures persist >2 days, escalate per `specs/maintenance.md`.
 If the agent cannot fix a failure, it MUST open a GitHub issue and report the
 pass as blocked — never silently skip.
 
@@ -108,6 +108,6 @@ pass as blocked — never silently skip.
 
 ## Notes
 
-- This is a goal-based checklist. The spec (`specs/012-maintenance.md`) defines *what* must be true. This skill defines *how* to verify and fix.
+- This is a goal-based checklist. The spec (`specs/maintenance.md`) defines *what* must be true. This skill defines *how* to verify and fix.
 - Use parallel agents for independent sections when possible.
 - For scoped runs, still verify that fixes don't break other areas (`just test` at minimum).

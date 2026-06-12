@@ -11,24 +11,10 @@ Bashkit ships a Python package as pre-built binary wheels on PyPI. Users install
 
 ## Package Layout
 
-```
-crates/bashkit-python/
-├── Cargo.toml              # Rust crate (cdylib via PyO3)
-├── pyproject.toml           # Python package metadata (maturin build backend)
-├── src/lib.rs               # PyO3 native module (BashTool, ExecResult)
-├── bashkit/
-│   ├── __init__.py          # Re-exports from native module
-│   ├── _bashkit.pyi         # Type stubs (PEP 561)
-│   ├── py.typed             # Marker for typed package
-│   ├── langchain.py         # LangChain integration
-│   ├── deepagents.py        # Deep Agents integration
-│   └── pydantic_ai.py       # PydanticAI integration
-├── examples/
-│   ├── bash_basics.py       # Bash interface walkthrough (runs in CI)
-│   └── k8s_orchestrator.py  # ScriptedTool multi-tool demo
-└── tests/
-    └── test_bashkit.py      # Pytest suite
-```
+`crates/bashkit-python/`: Rust crate (`src/lib.rs`, cdylib via PyO3),
+`pyproject.toml` (maturin backend), `bashkit/` Python package (`__init__.py`
+re-exports, `_bashkit.pyi` PEP 561 type stubs + `py.typed`, `langchain.py` /
+`deepagents.py` / `pydantic_ai.py` integrations), `examples/`, `tests/`.
 
 ## Build System
 
@@ -39,413 +25,196 @@ crates/bashkit-python/
 
 ## Versioning
 
-Python package version is read dynamically from workspace `Cargo.toml` via maturin.
-`pyproject.toml` declares `dynamic = ["version"]` — no manual sync needed.
-
-The version chain: `Cargo.toml` (workspace) → `Cargo.toml` (bashkit-python, inherits)
-→ maturin reads it → wheel metadata.
+Python package version is read dynamically from workspace `Cargo.toml` via maturin
+(`dynamic = ["version"]` in pyproject.toml) — no manual sync. Chain:
+workspace `Cargo.toml` → `bashkit-python` `Cargo.toml` (inherits) → maturin → wheel metadata.
 
 ## Supported Platforms
 
-### Python Versions
-
-3.9, 3.10, 3.11, 3.12, 3.13, 3.14
-
-### Wheel Matrix
-
-| OS | Architecture | Variant | CI Runner |
-|----|-------------|---------|-----------|
-| Linux | x86_64 | manylinux (glibc) | ubuntu-latest |
-| Linux | aarch64 | manylinux (glibc) | ubuntu-latest (cross) |
-| Linux | x86_64 | musllinux_1_1 | ubuntu-latest (Docker) |
-| Linux | aarch64 | musllinux_1_1 | ubuntu-latest (Docker) |
-| macOS | x86_64 | — | macos-latest (cross) |
-| macOS | aarch64 | — | macos-latest (native) |
-| Windows | x86_64 | MSVC | windows-latest |
-
-Total: ~42 wheels (7 platforms × 6 Python versions).
+Python 3.9–3.14 × 7 platforms ≈ 42 wheels: Linux x86_64/aarch64 (manylinux
+glibc + musllinux_1_1), macOS x86_64/aarch64, Windows x86_64 MSVC. Exact
+matrix and runners: `.github/workflows/publish-python.yml`.
 
 In addition, a **reduced-feature Pyodide/Emscripten wheel**
-(`wasm32-unknown-emscripten`) ships for browser / JupyterLite use. It is built and
-published separately (different toolchain, single Python version, no async/network/
-sqlite/realfs). See `specs/emscripten-wheels.md`.
+(`wasm32-unknown-emscripten`) ships for browser / JupyterLite use — built and
+published separately (different toolchain, single Python version, no
+async/network/sqlite/realfs). See `specs/emscripten-wheels.md`.
 
 ## PyPI Publishing
 
-### Workflow
+`.github/workflows/publish-python.yml`, triggered on GitHub Release: sdist +
+platform wheels → `twine check` → per-platform smoke test
+(`BashTool().execute_sync('echo hello')`) → `uv publish` to PyPI.
 
-File: `.github/workflows/publish-python.yml`
-
-```
-GitHub Release published
-    ├── build-sdist     (source distribution)
-    ├── build           (7 platform variants × 6 Python versions)
-    ├── inspect         (twine check all artifacts)
-    ├── test-builds     (smoke test on Linux/macOS/Windows)
-    └── publish         (uv publish → PyPI via OIDC)
-```
-
-### Authentication
-
-Uses PyPI trusted publishing (OIDC) — no API tokens needed.
-
-Prerequisites:
-1. GitHub environment `release-python` exists in repo settings
-2. PyPI trusted publisher configured:
-   - Owner: `everruns`, Repo: `bashkit`
-   - Workflow: `publish-python.yml`, Environment: `release-python`
-
-### Smoke Test
-
-Each platform runs after wheel build:
-```python
-from bashkit import BashTool
-t = BashTool()
-r = t.execute_sync('echo hello')
-assert r.exit_code == 0
-```
+Auth: PyPI trusted publishing (OIDC) — no API tokens. Prerequisites: GitHub
+environment `release-python` exists; PyPI trusted publisher configured for
+`everruns/bashkit`, workflow `publish-python.yml`, environment `release-python`.
 
 ## Public API
 
-### BashTool
+Full signatures: `crates/bashkit-python/bashkit/_bashkit.pyi`. Runnable
+examples: `crates/bashkit-python/examples/`.
 
-Primary class. Wraps the Rust `Bash` interpreter with `Arc<Mutex<>>` for thread safety.
+### BashTool / Bash
 
-```python
-from bashkit import BashTool
+`BashTool` wraps the Rust `Bash` interpreter with `Arc<Mutex<>>` for thread
+safety. Constructor kwargs: `username`, `hostname`, `max_commands`,
+`max_loop_iterations`, `readonly_filesystem`, `files` (initial files; values
+may be eager strings or lazy sync callables), `network`, `custom_builtins`,
+etc. Methods: `await execute(cmd)` / `execute_sync(cmd)` / `reset()`; direct
+text-oriented VFS helpers (`read_file`, `write_file`, `append_file`, `mkdir`,
+`exists`, `remove`, `stat`, `chmod`, `symlink`, `read_link`, `read_dir`,
+`ls`, `glob`); LLM metadata (`name`, `short_description`, `description()`,
+`help()`, `system_prompt()`, `input_schema()`, `output_schema()`, `version`).
 
-tool = BashTool(
-    username="user",           # optional, default "user"
-    hostname="sandbox",        # optional, default "sandbox"
-    max_commands=10000,        # optional
-    max_loop_iterations=100000, # optional
-    readonly_filesystem=False,  # optional: deny all VFS mutations after setup
-)
-
-# Async
-result = await tool.execute("echo hello")
-
-# Sync
-result = tool.execute_sync("echo hello")
-
-# Reset state
-tool.reset()
-
-# Initial files accept eager strings or lazy sync callables.
-tool = BashTool(files={
-    "/config/static.txt": "ready\n",
-    "/config/generated.json": lambda: '{"ok": true}\n",
-})
-# Snapshot / restore state
-blob = tool.snapshot()
-restored = BashTool.from_snapshot(blob, username="user")
-trusted_blob = tool.snapshot_keyed(b"32+ bytes of application secret")
-trusted_restored = BashTool.from_snapshot_keyed(trusted_blob, b"32+ bytes of application secret")
-
-# Capture shell state for prompt/UI inspection
-state = tool.shell_state()         # -> ShellState
-
-# Direct VFS helpers (text-oriented convenience wrappers)
-tool.read_file("/tmp/data.txt")      # -> str
-tool.write_file("/tmp/data.txt", "hello")
-tool.append_file("/tmp/data.txt", "\nworld")
-tool.mkdir("/tmp/nested", recursive=True)
-tool.exists("/tmp/data.txt")         # -> bool
-tool.remove("/tmp/nested", recursive=True)
-tool.stat("/tmp/data.txt")           # -> dict
-tool.chmod("/tmp/data.txt", 0o644)
-tool.symlink("/tmp/data.txt", "/tmp/link.txt")
-tool.read_link("/tmp/link.txt")      # -> str
-tool.read_dir("/tmp")                # -> list[dict]
-tool.ls("/tmp")                      # -> list[str]
-tool.glob("/tmp/*.txt")              # -> list[str]
-
-# LLM metadata
-tool.name              # "bashkit"
-tool.short_description # str
-tool.description()     # token-efficient description
-tool.help()            # Markdown help document
-tool.system_prompt()   # compact system prompt
-tool.input_schema()    # JSON schema string
-tool.output_schema()   # JSON schema string
-tool.version           # from Rust crate
-```
+Snapshot/restore on both `Bash` and `BashTool` (mirrors Node bindings):
+`snapshot()` / `snapshot(exclude_filesystem=True)` / `from_snapshot(blob)` /
+`restore_snapshot(blob)`, plus keyed variants `snapshot_keyed(secret)` /
+`from_snapshot_keyed(blob, secret)` / `restore_snapshot_keyed(blob, secret)`
+(secret ≥ 32 bytes). Unkeyed snapshot bytes are for local checkpoints and
+accidental-corruption detection only; callers loading snapshots from uploads,
+shared storage, or network transport must use the keyed variants so forged
+state is rejected before restore.
 
 ### Network configuration
 
 Outbound HTTP (`curl`, `wget`, `http`) is gated behind `NetworkAllowlist` in
-the Rust core and exposed via the optional `network=` constructor kwarg on
-both `Bash(...)` and `BashTool(...)`. The kwarg accepts a dict with
-`allow` (list of URL patterns) **or** `allow_all=True`, plus an optional
-`block_private_ips` flag (defaults to `True`). Omitting `network=` leaves
-the network disabled (the secure default).
+the Rust core and exposed via the optional `network=` kwarg on `Bash(...)`
+and `BashTool(...)`: a dict with `allow` (URL patterns) **or**
+`allow_all=True`, plus optional `block_private_ips` (default `True`).
+Omitting `network=` leaves the network disabled (secure default).
 
-```python
-Bash(network={"allow": ["https://api.github.com"]})
-Bash(network={"allow_all": True})
-Bash(network={"allow": ["http://127.0.0.1:8080"], "block_private_ips": False})
-```
-
-The `bashkit-python` crate compiles the core with `http_client`, so
-`reqwest` is available unconditionally — gating happens at the Python API
-layer. Configuration is persisted on the wrapper struct so `reset()` and
+The `bashkit-python` crate compiles the core with `http_client`, so `reqwest`
+is available unconditionally — gating happens at the Python API layer.
+Configuration is persisted on the wrapper struct so `reset()` and
 `from_snapshot(...)` rebuild with the same allowlist.
 
-Phase 2 (#1348) adds per-host credential injection through two optional
-keys on the same `network=` dict:
+Phase 2 (#1348) adds per-host credential injection via two optional keys on
+the same dict:
 
-- `credentials`: list of injection rules. Each rule has `pattern`, `kind`
-  (`"bearer"`, `"header"`, or `"headers"`), and the credential payload
-  (`token` for bearer, `name`/`value` for header, or a list of
-  `(name, value)` pairs for headers). The script never sees the secret —
-  the runtime adds the headers transparently after the allowlist check.
-- `credential_placeholders`: list of placeholder rules. Each rule adds an
-  `env` key (the env-var name visible to scripts) on top of the injection
-  fields. The runtime sets the env var to a randomly generated
-  `bk_placeholder_<hex>` token and replaces that token with the real
-  credential on the wire only for requests matching `pattern`.
+- `credentials`: injection rules — `pattern`, `kind` (`"bearer"`, `"header"`,
+  `"headers"`), and payload (`token`, `name`/`value`, or `(name, value)`
+  pairs). The script never sees the secret; the runtime adds headers
+  transparently after the allowlist check.
+- `credential_placeholders`: rules adding an `env` key (env-var name visible
+  to scripts). The runtime sets the env var to a random
+  `bk_placeholder_<hex>` token and substitutes the real credential on the
+  wire only for requests matching `pattern`.
 
-```python
-Bash(
-    network={
-        "allow": ["https://api.github.com", "https://api.openai.com/v1"],
-        "credentials": [
-            {"pattern": "https://api.github.com", "kind": "bearer",
-             "token": "ghp_xxx"},
-        ],
-        "credential_placeholders": [
-            {"env": "OPENAI_API_KEY", "pattern": "https://api.openai.com",
-             "kind": "bearer", "token": "sk-real-key"},
-        ],
-    },
-)
-```
+Credentials and placeholders are preserved across `reset()` and
+`from_snapshot(...)`. Each rebuild generates a fresh placeholder string, so
+scripts must re-read placeholder env vars after every reset/restore.
 
-Credentials and placeholders are also preserved across `reset()` and
-`from_snapshot(...)`. Each rebuild generates a fresh placeholder string,
-so scripts must read placeholder env vars after every reset/restore.
-
-Request callbacks (`http_handler`, `before_http`, `after_http`) and
-bot-auth ship in follow-up phases.
-
-Snapshot/restore methods also exist on `Bash` and mirror the Node bindings:
-
-```python
-from bashkit import Bash
-
-bash = Bash()
-bash.execute_sync("greet() { echo \"hi $1\"; }")
-blob = bash.snapshot()              # -> bytes
-restored = Bash.from_snapshot(blob) # -> Bash
-assert restored.execute_sync("greet agent").stdout.strip() == "hi agent"
-shell_only = bash.snapshot(exclude_filesystem=True)
-trusted = bash.snapshot_keyed(b"32+ bytes of application secret")
-bash.restore_snapshot_keyed(trusted, b"32+ bytes of application secret")
-```
-
-Unkeyed snapshot bytes are for local checkpoints and accidental-corruption
-detection only. Python callers that load snapshots from uploads, shared
-storage, or network transport must use `snapshot_keyed(...)`,
-`restore_snapshot_keyed(...)`, and `from_snapshot_keyed(...)` with an
-application secret so forged state is rejected before restore.
+Request callbacks (`http_handler`, `before_http`, `after_http`) and bot-auth
+ship in follow-up phases.
 
 ### ShellState
 
-`ShellState` is a read-only Python object returned by `Bash.shell_state()` and
-`BashTool.shell_state()` for prompt rendering and state inspection.
-It is a Python-friendly inspection view, not a full Rust `ShellState` mirror.
-
-```python
-state.cwd             # str
-state.env             # Mapping[str, str]
-state.variables       # Mapping[str, str]
-state.arrays          # Mapping[str, Mapping[int, str]]
-state.assoc_arrays    # Mapping[str, Mapping[str, str]]
-state.last_exit_code  # int
-state.aliases         # Mapping[str, str]
-state.traps           # Mapping[str, str]
-```
-
-Use `snapshot(exclude_filesystem=True)` when you need shell-only restore bytes.
-
-Transient fields follow Rust-core semantics: `last_exit_code` and `traps` are
-captured on the shell state object itself, but the next top-level `execute()` /
-`execute_sync()` clears them before running the new command.
+`Bash.shell_state()` / `BashTool.shell_state()` return a read-only
+inspection view (not a full Rust `ShellState` mirror) for prompt rendering:
+`cwd`, `env`, `variables`, `arrays`, `assoc_arrays`, `last_exit_code`,
+`aliases`, `traps`. Transient fields follow Rust-core semantics:
+`last_exit_code` and `traps` are captured on the state object, but the next
+top-level execute clears them before running the new command.
 
 ### ExecResult
 
-```python
-result.stdout     # str
-result.stderr     # str
-result.exit_code  # int
-result.error      # Optional[str]
-result.success    # bool (exit_code == 0)
-result.to_dict()  # dict
-```
+`stdout`, `stderr`, `exit_code`, `error`, `success` (`exit_code == 0`), `to_dict()`.
 
 ### create_langchain_tool_spec()
 
-Returns dict with `name`, `description`, `args_schema` for LangChain integration.
+Returns dict with `name`, `description`, `args_schema` for LangChain.
 
 ### custom_builtins and Async Callbacks
 
-`Bash` and `BashTool` accept `custom_builtins={"name": callback}` where each
-callback is
+`Bash` and `BashTool` accept `custom_builtins={"name": callback}`, callback =
 `Callable[[BuiltinContext], str | BuiltinResult | Awaitable[str | BuiltinResult]]`.
+`BuiltinResult` carries explicit `stdout`, `stderr`, `exit_code`.
 
-`BuiltinContext` exposes `name`, `argv`, `stdin`, `env`, `cwd`, and `fs`. The
-`fs` attribute is a `FileSystem` handle to the interpreter's *live* virtual
-filesystem (same API as `Bash.fs()`), so reads see files created by earlier
-commands and writes are visible to later ones. It wraps the same
-`Arc<dyn FileSystem>` the interpreter uses (mirroring how the embedded
-`python3`/Monty builtin receives `ctx.fs`) and operates on it directly without
-the interpreter lock. Because a custom builtin runs inside `execute_sync`'s
-current-thread `block_on`, `PyFileSystem::with_fs` detects the active runtime
-(`Handle::try_current`) and dispatches `ctx.fs` ops on a throwaway worker thread
-to avoid a nested-runtime panic. Each op on this path spawns a short-lived
-worker thread and runtime, so batching fs work in a callback is cheaper than
-many small ops in a tight loop. This is distinct from — and safe unlike —
-calling back into the owning instance's `Bash.fs()` / `Bash.read_file()`, which
-is unsupported re-entrancy: it re-enters the interpreter's runtime and panics
+`BuiltinContext` exposes `name`, `argv`, `stdin`, `env`, `cwd`, and `fs` — a
+`FileSystem` handle to the interpreter's *live* VFS (same API as
+`Bash.fs()`): reads see files created by earlier commands, writes are visible
+to later ones. It wraps the same `Arc<dyn FileSystem>` the interpreter uses
+(mirroring how the embedded `python3`/Monty builtin receives `ctx.fs`) and
+operates without the interpreter lock. Because a custom builtin runs inside
+`execute_sync`'s current-thread `block_on`, `PyFileSystem::with_fs` detects
+the active runtime (`Handle::try_current`) and dispatches `ctx.fs` ops on a
+throwaway worker thread to avoid a nested-runtime panic; each op spawns a
+short-lived thread + runtime, so batching fs work in a callback beats many
+small ops in a tight loop. This is distinct from — and safe unlike — calling
+back into the owning instance's `Bash.fs()` / `Bash.read_file()`, which is
+unsupported re-entrancy: it re-enters the interpreter's runtime and panics
 with a nested-runtime error (not a deadlock, and not caught by the
 `external_handler` reentry guard, which does not fire for custom builtins).
 A callback may retain `ctx.fs` beyond the invocation: the handle stays valid
-even after the `Bash` instance is dropped, and keeps the underlying VFS and
-its tokio runtime alive until the handle itself is released — so stashing it
-extends resource lifetime past `del bash` (see the teardown-determinism
-notes below).
+after the `Bash` drops and keeps the underlying VFS and its tokio runtime
+alive until released — stashing it extends resource lifetime past `del bash`
+(see teardown determinism below).
 
-**Sync callbacks** are called directly under the session's captured `contextvars`
-snapshot and may return either a stdout string or a `BuiltinResult` with
-explicit `stdout`, `stderr`, and `exit_code`.
+**Sync callbacks** are called directly under the session's captured
+`contextvars` snapshot.
 
-**Async callbacks** are driven to completion by one of two mechanisms depending
-on whether a running asyncio event loop is present on the calling thread:
+**Async callbacks** are driven to completion by one of three mechanisms:
 
 | Calling context | Mechanism |
 |---|---|
 | `await execute()` | Callback scheduled as a `Task` on the **caller's running loop** |
-| `execute_sync()` — no running loop | Callback driven by a **private event loop** shared across calls on the same `Bash` instance |
-| `execute_sync()` — running loop present (e.g. Jupyter / IPython) | Callback driven by a **background daemon thread** with its own fresh event loop |
+| `execute_sync()` — no running loop | **Private event loop** shared across calls on the same `Bash` instance |
+| `execute_sync()` — running loop present (e.g. Jupyter / IPython) | **Background daemon thread** with its own fresh event loop |
 
-The background-thread path is activated via `asyncio.get_running_loop()`. If the
-call succeeds (a loop is already running on the thread), the awaitable is dispatched
-to a daemon thread whose `run_until_complete` call is wrapped in `context.run()`
-so ContextVars propagate correctly despite the thread switch. The helper is
-cached on the `PyPrivateAsyncLoop` to avoid repeated module compilation.
+The background-thread path is selected via `asyncio.get_running_loop()`
+succeeding; the awaitable's `run_until_complete` is wrapped in
+`context.run()` so ContextVars propagate despite the thread switch. The
+helper is cached on the `PyPrivateAsyncLoop` to avoid repeated module
+compilation.
 
-**Teardown determinism** (TM-PY-030): while the interpreter is alive, dropping
-the last reference to a `Bash`/`BashTool`/`ScriptedTool` deterministically
-releases everything it owns *before* the drop returns — in-flight private-loop
-callbacks are cancelled cooperatively (each runs as an `asyncio.Task`;
-cancellation raises `asyncio.CancelledError` at the next await point), the
-private-loop worker thread is joined and closes its event loop (freeing its
-fds), and the tokio runtime's blocking pool is joined. All joins release the
-GIL first, so teardown cannot deadlock against callbacks that need to attach.
-Callbacks that block without awaiting (e.g. `time.sleep` inside `async def`)
-cannot be cancelled mid-section; teardown then waits for the current section
-to reach an await point or return. At interpreter exit (boundary: an `atexit`
-handler registered at module import), teardown goes hands-off — native threads
-must not touch a finalizing CPython — and the OS reclaims resources. The same
-hands-off path applies when the last runtime handle is dropped *inside* a tokio
-context (a `Bash` dropped while `await execute()` is still in flight finishes on
-a runtime worker thread): a blocking runtime join there would panic, so the drop
-falls back to `shutdown_background()` instead of the deterministic join.
+**Teardown determinism** (TM-PY-030): while the interpreter is alive,
+dropping the last reference to a `Bash`/`BashTool`/`ScriptedTool`
+deterministically releases everything it owns *before* the drop returns —
+in-flight private-loop callbacks are cancelled cooperatively (each runs as an
+`asyncio.Task`; cancellation raises `asyncio.CancelledError` at the next
+await point), the private-loop worker thread is joined and closes its event
+loop (freeing fds), and the tokio runtime's blocking pool is joined. All
+joins release the GIL first, so teardown cannot deadlock against callbacks
+that need to attach. Callbacks that block without awaiting (e.g. `time.sleep`
+inside `async def`) cannot be cancelled mid-section; teardown waits for the
+current section to reach an await point or return. At interpreter exit
+(boundary: an `atexit` handler registered at module import), teardown goes
+hands-off — native threads must not touch a finalizing CPython — and the OS
+reclaims resources. The same hands-off path applies when the last runtime
+handle is dropped *inside* a tokio context (a `Bash` dropped while
+`await execute()` is in flight finishes on a runtime worker thread): a
+blocking runtime join there would panic, so the drop falls back to
+`shutdown_background()` instead of the deterministic join.
 
-**ContextVar propagation**: ContextVars set before `execute()` or
+**ContextVar propagation**: ContextVars set before `execute()` /
 `execute_sync()` are captured at call time and replayed inside each callback
-invocation regardless of which mechanism is used.
-
-```python
-import asyncio, contextvars
-from bashkit import Bash, BuiltinContext, BuiltinResult
-
-trace_id = contextvars.ContextVar("trace_id")
-trace_id.set("req-42")
-
-async def fetch(ctx: BuiltinContext) -> str:
-    await asyncio.sleep(0)            # simulate async I/O
-    return f"trace={trace_id.get()}\n"
-
-bash = Bash(custom_builtins={"fetch": fetch})
-
-# Works in plain Python, asyncio.run(), Jupyter, or any async framework:
-result = bash.execute_sync("fetch")   # "trace=req-42"
-result = await bash.execute("fetch")  # same, callback runs on caller loop
-```
-
-```python
-from bashkit import BuiltinResult
-
-def view_image(ctx: BuiltinContext) -> BuiltinResult:
-    if not ctx.argv:
-        return BuiltinResult(stderr="view-image: missing path\n", exit_code=1)
-    return BuiltinResult(stdout="")
-```
-
-```python
-# ctx.fs reads/writes the interpreter's live VFS.
-def head(ctx: BuiltinContext) -> str:
-    data = ctx.fs.read_file(ctx.argv[0]).decode()      # bytes -> str
-    return "".join(data.splitlines(keepends=True)[:10])
-
-bash = Bash(custom_builtins={"head10": head}, files={"/log.txt": "..."})
-bash.execute_sync("head10 /log.txt")
-```
+invocation regardless of mechanism.
 
 ## Optional Dependencies
 
-```
-pip install bashkit[langchain]     # + langchain-core, langchain-anthropic
-pip install bashkit[deepagents]    # + deepagents, langchain-anthropic
-pip install bashkit[pydantic-ai]   # + pydantic-ai
-pip install bashkit[dev]           # + pytest, pytest-asyncio
-```
+`bashkit[langchain]`, `bashkit[deepagents]`, `bashkit[pydantic-ai]`,
+`bashkit[dev]` (pytest, pytest-asyncio).
 
 ## CI
 
-File: `.github/workflows/python.yml`
-
-Runs on push to main and PRs (path-filtered to `crates/bashkit-python/`,
-`crates/bashkit/`, `examples/*.py`, `examples/*.ipynb`, `Cargo.toml`,
-`Cargo.lock`).
-
-```
-PR / push to main
-    ├── lint          (ruff check + ruff format --check)
-    ├── test          (maturin develop + pytest, Python 3.9/3.12/3.13/3.14)
-    ├── examples      (build wheel + run crates/bashkit-python/examples/
-    │                  + execute examples/*.ipynb via nbconvert)
-    ├── build-wheel   (maturin build + twine check)
-    └── python-check  (gate job for branch protection)
-```
-
-Notebooks in `examples/` are executed with `jupyter nbconvert --execute
---ExecutePreprocessor.timeout=120`. A cell error fails the CI job.
+`.github/workflows/python.yml` — on push to main and PRs (path-filtered).
+Jobs: lint (ruff check + format), test (maturin develop + pytest on
+3.9/3.12/3.13/3.14), examples (wheel + `crates/bashkit-python/examples/` +
+`examples/*.ipynb` via `jupyter nbconvert --execute`, cell error fails CI),
+build-wheel (maturin + twine check), python-check (branch-protection gate).
 
 ## Linting
 
-- **Linter/formatter**: [ruff](https://docs.astral.sh/ruff/) (config in `pyproject.toml`)
-- **Rules**: E (pycodestyle), F (pyflakes), W (warnings), I (isort), UP (pyupgrade)
-- **Target**: Python 3.9, line-length 120
-
-```bash
-ruff check crates/bashkit-python        # lint
-ruff format --check crates/bashkit-python  # format check
-ruff format crates/bashkit-python        # auto-format
-```
+ruff (config in `crates/bashkit-python/pyproject.toml`; rules E/F/W/I/UP,
+target 3.9, line-length 120). Commands in `AGENTS.md` § Python.
 
 ## Local Development
 
 ```bash
 cd crates/bashkit-python
-pip install maturin
-maturin develop          # debug build, installs into current venv
-maturin develop --release  # optimized build
-pip install pytest pytest-asyncio
-pytest tests/ -v         # run tests
-ruff check .             # lint
-ruff format .            # format
+pip install maturin && maturin develop      # --release for optimized
+pip install pytest pytest-asyncio && pytest tests/ -v
 ```
 
 ## Design Decisions

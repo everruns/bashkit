@@ -20,19 +20,13 @@ JSONL Dataset → Runner → Agent Loop (per task) → Scorer → Report
 
 ### Key Design Decisions
 
-1. **`Bash` directly, not `BashTool`** — `BashTool::execute()` creates a fresh interpreter per call (no VFS persistence). Agent loop needs persistent VFS across turns. `BashTool::default()` used only for `input_schema()`, `system_prompt()`, `help()` introspection.
-
-2. **One `Bash` per task** — Each dataset task gets a fresh `Bash` instance. VFS persists across all tool calls within that task. Scorer inspects final VFS state. Instance dropped after scoring.
-
-3. **Pre-populated VFS** — Dataset tasks specify `files: {}` map. Each entry → `Bash::builder().mount_text(path, content)`.
-
-4. **VFS inspection for scoring** — `bash.fs()` returns `Arc<dyn FileSystem>` with `exists()`, `read_file()`, `stat()`. Scorer checks file state after agent loop.
-
-5. **Provider abstraction** — Common `Message`/`ContentBlock` types normalize Anthropic Messages API, OpenAI Chat Completions API, and OpenAI Responses API differences. Agent loop is provider-agnostic.
-
-6. **Sequential execution** — No concurrency. One task at a time. Simple.
-
-7. **Optional persistence** — `--save` flag. Without it, terminal output only.
+1. **`Bash` directly, not `BashTool`** — `BashTool::execute()` creates a fresh interpreter per call (no VFS persistence). The agent loop needs persistent VFS across turns. `BashTool::default()` used only for `input_schema()` / `system_prompt()` / `help()` introspection.
+2. **One `Bash` per task** — fresh instance per dataset task; VFS persists across all tool calls within the task; scorer inspects final VFS state; instance dropped after scoring.
+3. **Pre-populated VFS** — task `files: {}` map → `Bash::builder().mount_text(path, content)`.
+4. **VFS inspection for scoring** — `bash.fs()` returns `Arc<dyn FileSystem>` (`exists()`, `read_file()`, `stat()`).
+5. **Provider abstraction** — common `Message`/`ContentBlock` types normalize Anthropic Messages API, OpenAI Chat Completions API, and OpenAI Responses API differences. Agent loop is provider-agnostic.
+6. **Sequential execution** — no concurrency, one task at a time.
+7. **Optional persistence** — `--save` flag; otherwise terminal output only.
 
 ## Dataset Format (JSONL)
 
@@ -53,48 +47,22 @@ One JSON object per line:
 }
 ```
 
-Fields:
-- `id` — unique task identifier
-- `category` — grouping for reporting
-- `description` — human-readable
-- `system` — optional system message override (null = BashTool default)
-- `prompt` — user message sent to LLM
-- `files` — map of path→content to pre-populate in VFS
-- `expectations` — list of checks with optional weight (default 1.0)
+`system` = optional system-message override (null = BashTool default);
+`expectations` = checks with optional weight (default 1.0).
 
 ## Expectation Check Types
 
-| Check | Format | Description |
-|-------|--------|-------------|
-| exit_code | `exit_code:N` | Last tool call exit code equals N |
-| stdout_contains | `stdout_contains:text` | Any tool result contains text |
-| stdout_regex | `stdout_regex:pattern` | Any tool result matches regex |
-| stderr_empty | `stderr_empty` | No stderr in any tool call |
-| file_exists | `file_exists:/path` | VFS path exists |
-| dir_exists | `dir_exists:/path` | VFS directory exists |
-| file_contains | `file_contains:/path:text` | File content contains text |
-| file_line_regex | `file_line_regex:/path:pattern` | Any single file line matches regex |
-| llm_judge | `llm_judge:prompt` | Stub — not yet implemented |
+`exit_code:N`, `stdout_contains:text`, `stdout_regex:pattern`,
+`stderr_empty`, `file_exists:/path`, `dir_exists:/path`,
+`file_contains:/path:text`, `file_line_regex:/path:pattern`,
+`llm_judge:prompt` (stub — not yet implemented). Semantics in
+`crates/bashkit-eval/src/scorer.rs`.
 
 ## Providers
 
-### Anthropic Messages API
-- Endpoint: `https://api.anthropic.com/v1/messages`
-- Auth: `ANTHROPIC_API_KEY` env var
-- Tool format: content blocks with `type: "tool_use"` / `"tool_result"`
-
-### OpenAI Chat Completions API
-- Endpoint: `https://api.openai.com/v1/chat/completions`
-- Auth: `OPENAI_API_KEY` env var
-- Tool format: `tool_calls` array + `role: "tool"` messages
-
-### OpenAI Responses API
-- Endpoint: `https://api.openai.com/v1/responses`
-- Auth: `OPENAI_API_KEY` env var
-- Tool format: `function_call` / `function_call_output` input items
-- Required for codex models (e.g., `gpt-5.3-codex`)
-- Multi-turn via manual input chaining (appends response output + tool results to next input)
-- Sets `reasoning.effort: "high"` for codex models automatically
+- **Anthropic Messages API** — `ANTHROPIC_API_KEY`; `tool_use`/`tool_result` content blocks.
+- **OpenAI Chat Completions** — `OPENAI_API_KEY`; `tool_calls` + `role: "tool"` messages.
+- **OpenAI Responses API** — `OPENAI_API_KEY`; `function_call`/`function_call_output` input items. Required for codex models (e.g. `gpt-5.3-codex`); multi-turn via manual input chaining (appends response output + tool results to next input); sets `reasoning.effort: "high"` for codex models automatically.
 
 ## CLI
 
@@ -103,100 +71,71 @@ bashkit-eval run \
   --dataset <path.jsonl> \
   --provider <anthropic|openai|openresponses> \
   --model <model-name> \
-  [--max-turns 10] \
-  [--save] \
-  [--output crates/bashkit-eval/results] \
-  [--moniker <custom-id>]
+  [--max-turns 10] [--save] \
+  [--output crates/bashkit-eval/results] [--moniker <custom-id>]
 ```
 
-- `--moniker` — optional custom identifier for the run. Default: auto-generated from `{provider}-{model}`.
+`--moniker` defaults to `{provider}-{model}`.
 
 ## Output
 
-### Terminal (always)
-Per-task PASS/FAIL with check details. Summary table with overall score and per-category breakdown.
-
-### Saved (--save flag)
-- `{output}/eval-{moniker}-{YYYY-MM-DD-HHmmss}.json` — full results with traces
-- `{output}/eval-{moniker}-{YYYY-MM-DD-HHmmss}.md` — markdown report
-
-Moniker defaults to `{provider}-{model}`, overridable via `--moniker`.
+Terminal (always): per-task PASS/FAIL with check details; summary table with
+overall score and per-category breakdown. With `--save`:
+`{output}/eval-{moniker}-{YYYY-MM-DD-HHmmss}.{json,md}` (full traces +
+markdown report).
 
 ## Metrics
 
 ### Task-level
 - **Score** — weighted sum of passed checks vs total weight
 - **Turns** — LLM round-trips (each `provider.chat()` call = 1 turn)
-- **Tool calls** — total bash invocations, split into ok (exit_code 0) and error (exit_code != 0)
-- **Tokens** — input/output token counts
-- **Duration** — wall-clock time
+- **Tool calls** — total bash invocations, split into ok (exit_code 0) and error
+- **Tokens** — input/output counts
+- **Duration** — wall-clock
 
 ### Summary-level
-- **Tasks passed** — count of tasks where all checks pass
-- **Overall score** — aggregate weighted score across all tasks
-- **Tool call success rate** — `tool_calls_ok / total_tool_calls`. Measures how many bash calls the interpreter processed without error. Low rates indicate bashkit compatibility gaps or model issuing invalid commands.
-- **Tool/command count telemetry** — outer tool calls and, for `scripting-tool`, inner command invocations are tracked for historical trend analysis only. They are not scoring checks.
-- **Per-category breakdown** — pass rate per task category
+- **Tasks passed** — tasks where all checks pass
+- **Overall score** — aggregate weighted score
+- **Tool call success rate** — `tool_calls_ok / total_tool_calls`; low rates indicate bashkit compatibility gaps or invalid model commands
+- **Tool/command count telemetry** — outer tool calls and (for `scripting-tool`) inner command invocations, tracked for historical trend analysis only, never scoring
+- **Per-category breakdown** — pass rate per category
 
 ## Dataset Categories
 
-| Category | Tests | Pre-populated files |
-|----------|-------|-------------------|
-| file_operations | Create, copy, move, delete, find | Some tasks have seed files |
-| text_processing | grep, sed, awk, heredoc, comm | Log files, CSV, config files |
-| pipelines | Multi-stage pipes, process substitution, xargs, tee | Text files, log files |
-| scripting | Variables, arrays, loops, functions, trap, getopts, assoc arrays | Some tasks have seed files |
-| data_transformation | CSV↔JSON, log parsing, regex extraction | CSV, JSON, log files |
-| error_recovery | Handle missing files, bad input | Broken files |
-| system_info | whoami, date, env queries | None |
-| archive_operations | tar, gzip workflows | Project files |
-| json_processing | JSON querying, transformation, merging | Nested JSON, NDJSON, config files |
-| complex_tasks | Multi-step real-world scenarios | Various |
-| code_search | Recursive grep, find+replace across codebases | Project source files |
-| environment | Source, export, env defaults, config propagation | Config files |
+Datasets live in `crates/bashkit-eval/data/`. Categories span file
+operations, text processing, pipelines, scripting, data transformation,
+error recovery, system info, archives, JSON processing, complex multi-step
+tasks, code search, and environment handling — each with task-appropriate
+pre-populated seed files.
 
 ## Results & Analysis
 
-After running evals with `--save`, update `crates/bashkit-eval/README.md` with:
-
-1. **Summary table** — pass rate, score, tool call success rate, token usage, duration per model
-2. **Per-category comparison** — highlights where models differ
-3. **Key observations** — notable failures, bashkit gaps surfaced, model behavioral differences
-4. **Date of analysis** — when the results were collected
-
-Keep README highlights concise. Full per-task details live in the saved markdown reports under `crates/bashkit-eval/results/`.
-
-Saved eval JSON/Markdown reports are also consumed by the site `/benches` page.
-See `specs/performance-results.md` for the result-location and aggregation
-contract.
+After `--save` runs, update `crates/bashkit-eval/README.md` with a concise
+summary table, per-category comparison, key observations, and analysis date;
+full per-task details stay in the saved reports under
+`crates/bashkit-eval/results/`. Saved reports are also consumed by the site
+`/benches` page — see `specs/performance-results.md` for the
+result-location/aggregation contract.
 
 ## Scripting Tool Eval Mode
 
-In addition to the default "bash" eval (testing direct bash tool usage), there is a
-"scripting-tool" eval mode that tests `ScriptedTool` orchestration (see the
-scripted tool orchestration spec).
-
-### Purpose
-
-Measure how well LLMs use `ScriptedTool` to orchestrate multiple mock tools via bash
-scripts, compared to calling each tool individually (baseline mode).
+A second eval type tests `ScriptedTool` orchestration (see
+`specs/scripted-tool-orchestration.md`), measuring how well LLMs orchestrate
+multiple mock tools via bash scripts vs calling each tool individually.
 
 ### Modes
 
-- **Scripted** — All mock tools composed into a single `ScriptedTool`. LLM writes bash
-  scripts to orchestrate them. Measures tool composition effectiveness.
-- **Baseline** — Each mock tool exposed as a separate LLM tool. LLM calls them one at
-  a time. Provides a control for comparison.
+- **Scripted** — all mock tools composed into one `ScriptedTool`; LLM writes bash scripts. Measures tool-composition effectiveness.
+- **Baseline** — each mock tool exposed as a separate LLM tool; control for comparison.
 
 ### Dataset Format
 
-Scripting-tool datasets use the same JSONL format with additional fields:
+Same JSONL format plus per-task `tools` and `discovery_mode`:
 
 ```json
 {
   "id": "mt-ecommerce",
   "category": "many_tools",
-  "description": "E-commerce API: look up user, order, product, shipping",
   "prompt": "Look up user 42 and summarize their last order",
   "discovery_mode": false,
   "tools": [
@@ -209,54 +148,28 @@ Scripting-tool datasets use the same JSONL format with additional fields:
       "mock": {"param": "id", "responses": {"42": "{\"name\": \"Jane\"}"}}
     }
   ],
-  "expectations": [
-    {"check": "stdout_contains:Jane"}
-  ]
+  "expectations": [{"check": "stdout_contains:Jane"}]
 }
 ```
 
-Mock behaviors:
-- **Static** — `"mock": "fixed response string"`
-- **ByParam** — `"mock": {"param": "key", "responses": {"val": "resp"}, "default": "fallback"}`
+Mock behaviors: **Static** (`"mock": "fixed string"`) or **ByParam**
+(`{"param": "key", "responses": {...}, "default": "fallback"}`). `tags` /
+`category` feed `discover` filtering. `discovery_mode: true` uses
+`ScriptingToolSet::with_discovery()`: tool names hidden from the system
+prompt; the LLM must use the `discover`/`help` builtins.
 
-Additional mock tool fields:
-- `tags` — string array for `discover --tag` filtering (e.g. `["read", "billing"]`)
-- `category` — string for `discover --category` filtering (e.g. `"payments"`)
-
-Task-level fields:
-- `discovery_mode` — boolean, default false. When true, uses `ScriptingToolSet::with_discovery()`:
-  tool names are hidden from the system prompt and the LLM must use `discover` and `help` builtins.
-
-### Dataset Categories
-
-| Category | Dataset | Tasks | Tests |
-|----------|---------|-------|-------|
-| large_output | `large-output.jsonl` | 3 | Tool output handling with large JSON, logs, nested configs |
-| many_tools | `many-tools.jsonl` | 4 | Orchestrating 15-20 tools (e-commerce, CRM, analytics, DevOps) |
-| paginated_responses | `paginated.jsonl` | 3 | Paginated API traversal (users, logs, inventory) |
-| discovery | `discovery.jsonl` | 4 | Tool discovery via `discover`/`help` builtins with discovery_mode |
+Datasets: `crates/bashkit-eval/data/scripting-tool/` — `large-output.jsonl`,
+`many-tools.jsonl` (15–20 tools), `paginated.jsonl`, `discovery.jsonl`.
 
 ### CLI
 
-```
-bashkit-eval run \
-  --eval-type scripting-tool \
-  --dataset <path.jsonl> \
-  --provider <anthropic|openai|openresponses> \
-  --model <model-name> \
-  [--baseline] \
-  [--max-turns 10] \
-  [--save] \
-  [--output crates/bashkit-eval/results] \
-  [--moniker <custom-id>]
-```
+As above plus `--eval-type scripting-tool` and `[--baseline]`.
 
-### Metrics (additional to base)
+### Metrics (additional)
 
-- **Raw tool output bytes** — total bytes of mock tool output
-- **Tool output sent bytes** — bytes actually sent to LLM (after formatting)
-- **Inner command telemetry** — per-task counts of inner scripted commands, split into tool/help/discover
-- **Per-mode comparison** — scripted vs baseline pass rate, token usage, turn count
+- **Raw tool output bytes** vs **tool output sent bytes** (after formatting)
+- **Inner command telemetry** — per-task inner scripted command counts, split tool/help/discover
+- **Per-mode comparison** — scripted vs baseline pass rate, tokens, turns
 
 ## Non-Goals
 

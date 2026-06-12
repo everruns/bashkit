@@ -1,6 +1,7 @@
 import type { APIRoute } from "astro";
 import {
   agentSteps,
+  builtinCount,
   builtinPreview,
   defense,
   evalSnapshot,
@@ -66,7 +67,7 @@ export const GET: APIRoute = () => {
     "",
     `Preview: ${builtinPreview.map((name) => `\`${name}\``).join(", ")}.`,
     "",
-    "- [See all 160 builtins](/builtins)",
+    `- [See all ${builtinCount} builtins](/builtins)`,
     "",
     "## Security",
     "",

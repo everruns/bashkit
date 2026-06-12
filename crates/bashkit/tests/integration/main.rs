@@ -59,6 +59,7 @@ pub mod issue_872_test;
 pub mod issue_873_test;
 pub mod issue_875_test;
 pub mod jq_fuzz_scaffold_tests;
+pub mod limitations_doc_tests;
 pub mod live_mount_tests;
 pub mod mkfifo_tests;
 pub mod nested_subscript_tests;
