@@ -7,6 +7,7 @@ use crate::builtins::limits::{
     AWK_MAX_GETLINE_CACHE_BYTES as MAX_GETLINE_CACHE_BYTES,
     AWK_MAX_GETLINE_CACHED_FILES as MAX_GETLINE_CACHED_FILES,
     AWK_MAX_GETLINE_FILE_BYTES as MAX_GETLINE_FILE_BYTES,
+    AWK_MAX_MULTI_SUBSCRIPTS,
     AWK_MAX_OUTPUT_BYTES as MAX_OUTPUT_BYTES,
     AWK_MAX_OUTPUT_TARGETS as MAX_OUTPUT_TARGETS,
 };
@@ -591,6 +592,19 @@ async fn test_awk_multi_subscript() {
         .unwrap();
     assert_eq!(result.exit_code, 0);
     assert_eq!(result.stdout.trim(), "1");
+}
+
+#[tokio::test]
+async fn test_awk_rejects_too_many_multi_subscripts() {
+    // Regression: unbounded multi-subscript lists built a recursive SUBSEP_CONCAT AST.
+    let subscripts = std::iter::repeat_n("1", AWK_MAX_MULTI_SUBSCRIPTS + 1)
+        .collect::<Vec<_>>()
+        .join(",");
+    let program = format!("BEGIN {{ a[{subscripts}] = 1 }}");
+
+    let err = run_awk(&[&program], Some("")).await.unwrap_err();
+
+    assert!(err.to_string().contains("too many array subscripts"));
 }
 
 #[tokio::test]

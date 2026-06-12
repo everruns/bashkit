@@ -3,7 +3,10 @@
 use std::collections::HashMap;
 
 use super::{AwkAction, AwkExpr, AwkFunctionDef, AwkOutputTarget, AwkPattern, AwkProgram, AwkRule};
-use crate::builtins::limits::AWK_MAX_PARSER_DEPTH as MAX_AWK_PARSER_DEPTH;
+use crate::builtins::limits::{
+    AWK_MAX_MULTI_SUBSCRIPTS as MAX_AWK_MULTI_SUBSCRIPTS,
+    AWK_MAX_PARSER_DEPTH as MAX_AWK_PARSER_DEPTH,
+};
 use crate::builtins::search_common::build_regex;
 use crate::error::{Error, Result};
 
@@ -1484,8 +1487,15 @@ impl<'a> AwkParser<'a> {
                 self.pos += 1; // consume '['
                 let mut subscripts = vec![self.parse_expression()?];
                 self.skip_whitespace();
-                // Handle multi-subscript: arr[e1, e2, ...] joined by SUBSEP
+                // THREAT[TM-DOS-027]: SUBSEP_CONCAT still evaluates recursively, so cap
+                // attacker-controlled comma lists before folding them into a left-deep AST.
                 while self.pos < self.input.len() && self.current_char().unwrap() == ',' {
+                    if subscripts.len() >= MAX_AWK_MULTI_SUBSCRIPTS {
+                        return Err(Error::Execution(format!(
+                            "awk: too many array subscripts (max {})",
+                            MAX_AWK_MULTI_SUBSCRIPTS
+                        )));
+                    }
                     self.pos += 1; // consume ','
                     self.skip_whitespace();
                     subscripts.push(self.parse_expression()?);
