@@ -1422,6 +1422,56 @@ mod finding_mixed_quoted_word_quote_metadata {
     }
 
     #[tokio::test]
+    async fn literal_brace_expression_in_quoted_glob_prefix_stays_literal() {
+        // "{a,b}"/*/ is a QuotedGlobWord (unquoted glob suffix `*/`).  The quoted
+        // segment `{a,b}` must NOT brace-expand: the pattern should match the literal
+        // directory name `{a,b}`, not `a` and `b`.
+        //
+        // We create:
+        //   /tmp/tqgb/{a,b}/child   (literal dir named {a,b})
+        //   /tmp/tqgb/a/            (would match if brace-expansion fired)
+        //   /tmp/tqgb/b/            (would match if brace-expansion fired)
+        //
+        // Correct result: only /tmp/tqgb/{a,b}/child found.
+        let mut bash = tight_bash();
+        bash.exec("mkdir -p '/tmp/tqgb/{a,b}/child' /tmp/tqgb/a /tmp/tqgb/b")
+            .await
+            .unwrap();
+        let result = bash
+            .exec(
+                r#"shopt -s nullglob; res=(); for d in "/tmp/tqgb/{a,b}"/*/; do res+=("${d%/}"); done; echo "${res[*]}""#,
+            )
+            .await
+            .unwrap();
+        let stdout = result.stdout.trim().to_string();
+        // If brace-expansion fired incorrectly: matches /tmp/tqgb/a and /tmp/tqgb/b
+        // (but those dirs are empty so nullglob drops them → empty output).
+        // Either way, the literal {a,b}/child should be found.
+        assert!(
+            stdout.contains("/tmp/tqgb/{a,b}/child"),
+            "literal {{a,b}} in quoted glob prefix should not brace-expand; got: {stdout}"
+        );
+    }
+
+    #[tokio::test]
+    async fn subscript_var_expansion_in_quoted_glob_prefix_not_corrupted() {
+        // Regression: escape_glob_metas_in_quoted_ranges was escaping [ ] inside
+        // ${arr[0]}, producing ${arr\[0\]} which is not a valid subscript at runtime.
+        let mut bash = tight_bash();
+        bash.exec("mkdir -p /tmp/tqg4/sub").await.unwrap();
+        let result = bash
+            .exec(r#"dirs=("/tmp/tqg4"); for d in "${dirs[0]}"/sub; do echo "$d"; done"#)
+            .await
+            .unwrap();
+        assert_eq!(
+            result.stdout.trim(),
+            "/tmp/tqg4/sub",
+            "${{dirs[0]}} subscript in quoted glob prefix was not expanded \
+             (brackets escaped by escape_glob_metas_in_quoted_ranges)"
+        );
+    }
+
+    #[tokio::test]
     async fn var_expansion_in_quoted_glob_prefix_not_corrupted() {
         // Regression: escape_glob_metas_in_quoted_ranges was escaping { and }
         // inside ${ } variable references, producing $\{VAR\} which is not
@@ -1436,7 +1486,7 @@ mod finding_mixed_quoted_word_quote_metadata {
         assert_eq!(
             result.stdout.trim(),
             "/tmp/tqg/sub",
-            "${{VAR}} in quoted glob prefix was not expanded (braces escaped by escape_glob_metas_in_quoted_ranges)"
+            "${{MYDIR}} in quoted glob prefix was not expanded (braces escaped by escape_glob_metas_in_quoted_ranges)"
         );
     }
 
@@ -1454,7 +1504,7 @@ mod finding_mixed_quoted_word_quote_metadata {
         let stdout = result.stdout.trim().to_string();
         assert!(
             stdout.contains("/tmp/tqg2/a") && stdout.contains("/tmp/tqg2/b"),
-            "glob '\"${{VAR}}\"/*/` did not expand correctly, got: {stdout}"
+            "glob \"${{MYDIR}}\"/*/  did not expand correctly, got: {stdout}"
         );
     }
 }
