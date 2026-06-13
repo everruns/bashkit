@@ -1497,7 +1497,7 @@ mod finding_mixed_quoted_word_quote_metadata {
         bash.exec("mkdir -p /tmp/tqg2/a /tmp/tqg2/b").await.unwrap();
         let result = bash
             .exec(
-                r#"MYDIR=/tmp/tqg2; dirs=(); for d in "${MYDIR}"/*/; do dirs+=("${d%/}"); done; echo "${dirs[*]}""#,
+                r##"MYDIR=/tmp/tqg2; dirs=(); for d in "${MYDIR}"/*/; do dirs+=("${d%/}"); done; echo "${dirs[*]}""##,
             )
             .await
             .unwrap();
