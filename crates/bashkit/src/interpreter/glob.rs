@@ -697,6 +697,29 @@ impl Interpreter {
         }
     }
 
+    /// Strip backslash escapes (`\X` → `X`) from a path string.
+    ///
+    /// `escape_glob_metas_in_quoted_ranges` inserts `\` before metacharacters in
+    /// quoted segments to prevent brace-expansion.  Before using a path component
+    /// for filesystem lookup those escapes must be removed, because VFS paths are
+    /// stored without them.  The glob-pattern component (file_name) is left intact
+    /// because `glob_match_impl` and `contains_glob_chars` already understand `\`.
+    fn glob_path_unescape(s: &str) -> String {
+        let mut result = String::with_capacity(s.len());
+        let mut escaped = false;
+        for ch in s.chars() {
+            if escaped {
+                result.push(ch);
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else {
+                result.push(ch);
+            }
+        }
+        result
+    }
+
     /// Expand a glob pattern against the filesystem
     pub(crate) async fn expand_glob(&self, pattern: &str) -> Result<Vec<String>> {
         // Check for ** (recursive glob) — only when globstar is enabled
@@ -708,24 +731,36 @@ impl Interpreter {
         let dotglob = self.is_dotglob();
         let nocase = self.is_nocaseglob();
 
-        // Split pattern into directory and filename parts
+        // Split pattern into directory and filename parts.
+        // For absolute paths, `lookup_dir` is the unescaped directory PathBuf used for
+        // both VFS lookup and (via Path::join) output path construction.
+        // For relative paths, we keep the original parent string for output fidelity
+        // (to preserve `./` or `../` prefixes) but resolve against cwd for lookup.
         let path = Path::new(pattern);
-        let (dir, file_pattern) = if path.is_absolute() {
+        let (lookup_dir, rel_output_prefix, file_pattern) = if path.is_absolute() {
             let parent = path.parent().unwrap_or(Path::new("/"));
+            // Unescape: \{ \[ \* are glob escapes that prevent brace/glob expansion
+            // but must not appear in filesystem paths.
+            let unescaped = Self::glob_path_unescape(&parent.to_string_lossy());
             let name = path.file_name().map(|s| s.to_string_lossy().to_string());
-            (parent.to_path_buf(), name)
+            (PathBuf::from(&unescaped), None::<String>, name)
         } else {
-            // Relative path - use cwd
+            // Relative path — use the original parent string for output to preserve the
+            // `./` or relative prefix supplied by the caller; use the resolved absolute
+            // path for VFS lookup.
             let parent = path.parent();
             let name = path.file_name().map(|s| s.to_string_lossy().to_string());
             if let Some(p) = parent {
                 if p.as_os_str().is_empty() {
-                    (self.cwd.clone(), name)
+                    (self.cwd.clone(), Some(String::new()), name)
                 } else {
-                    (crate::fs::normalize_path(&self.cwd.join(p)), name)
+                    let unescaped = Self::glob_path_unescape(&p.to_string_lossy());
+                    let joined = crate::fs::normalize_path(&self.cwd.join(&unescaped));
+                    let original_prefix = p.to_string_lossy().to_string();
+                    (joined, Some(original_prefix), name)
                 }
             } else {
-                (self.cwd.clone(), name)
+                (self.cwd.clone(), Some(String::new()), name)
             }
         };
 
@@ -735,12 +770,12 @@ impl Interpreter {
         };
 
         // Check if the directory exists
-        if !self.fs.exists(&dir).await.unwrap_or(false) {
+        if !self.fs.exists(&lookup_dir).await.unwrap_or(false) {
             return Ok(matches);
         }
 
         // Read directory entries
-        let entries = match self.fs.read_dir(&dir).await {
+        let entries = match self.fs.read_dir(&lookup_dir).await {
             Ok(e) => e,
             Err(_) => return Ok(matches),
         };
@@ -756,20 +791,13 @@ impl Interpreter {
             }
 
             if self.glob_match_impl(&entry.name, &file_pattern, nocase, 0) {
-                // Construct the full path
-                let full_path = if path.is_absolute() {
-                    dir.join(&entry.name).to_string_lossy().to_string()
-                } else {
-                    // For relative patterns, return relative path
-                    if let Some(parent) = path.parent() {
-                        if parent.as_os_str().is_empty() {
-                            entry.name.clone()
-                        } else {
-                            format!("{}/{}", parent.to_string_lossy(), entry.name)
-                        }
-                    } else {
-                        entry.name.clone()
+                let full_path = match &rel_output_prefix {
+                    None => {
+                        // Absolute path: use PathBuf::join so root "/" is handled correctly.
+                        lookup_dir.join(&entry.name).to_string_lossy().to_string()
                     }
+                    Some(prefix) if prefix.is_empty() => entry.name.clone(),
+                    Some(prefix) => format!("{}/{}", prefix, entry.name),
                 };
                 matches.push(full_path);
             }

@@ -176,8 +176,12 @@ jobs:
 
       - name: Run ssh supabase.sh example and tests
         run: |
-          cargo run --example ssh_supabase --features ssh
-          cargo test --features ssh -p bashkit --test ssh_supabase_tests
+          if nc -z -w 5 supabase.sh 22 2>/dev/null; then
+            cargo run --example ssh_supabase --features ssh
+            cargo test --features ssh -p bashkit --test ssh_supabase_tests
+          else
+            echo "::warning::supabase.sh:22 unreachable from this runner — skipping live SSH tests"
+          fi
 
       - name: Run realfs bash example
         run: |

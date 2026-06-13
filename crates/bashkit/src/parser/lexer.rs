@@ -1468,28 +1468,93 @@ impl<'a> Lexer<'a> {
         if quoted_ranges.is_empty() {
             return s.to_string();
         }
+        // Collect chars with their byte positions for range-boundary checks.
+        let char_vec: Vec<(usize, char)> = {
+            let mut pos = 0usize;
+            s.chars()
+                .map(|c| {
+                    let p = pos;
+                    pos += c.len_utf8();
+                    (p, c)
+                })
+                .collect()
+        };
+
         let mut result = String::with_capacity(s.len() + 8);
-        let mut byte_pos = 0usize;
         let mut range_idx = 0usize;
-        for ch in s.chars() {
+        // Stack of opening delimiters ('{'  or  '(') for active ${ } / $( ) constructs.
+        // While non-empty we are inside an expansion and must NOT escape anything,
+        // because the content is still unexpanded at parse time and characters like
+        // { } [ ] are structural (e.g. ${arr[0]}, $(cmd)).
+        let mut expansion_stack: Vec<char> = Vec::new();
+        let n = char_vec.len();
+        let mut i = 0usize;
+
+        while i < n {
+            let (byte_pos, ch) = char_vec[i];
             let ch_end = byte_pos + ch.len_utf8();
-            // Advance past ranges that have ended.
+
+            // Advance past quoted-range entries that ended before this char.
             while range_idx < quoted_ranges.len() && quoted_ranges[range_idx].1 <= byte_pos {
                 range_idx += 1;
             }
             let in_quoted = range_idx < quoted_ranges.len()
                 && byte_pos >= quoted_ranges[range_idx].0
                 && ch_end <= quoted_ranges[range_idx].1;
-            if in_quoted
-                && matches!(
-                    ch,
-                    '\\' | '*' | '?' | '[' | ']' | '{' | '}' | '@' | '!' | '+' | '(' | ')' | '|'
-                )
-            {
-                result.push('\\');
+
+            if in_quoted {
+                if expansion_stack.is_empty() && ch == '$' {
+                    // Peek at next char to detect ${ or $(
+                    if let Some(&(_, next)) = char_vec.get(i + 1)
+                        && (next == '{' || next == '(')
+                    {
+                        expansion_stack.push(next);
+                        result.push(ch);
+                        result.push(next);
+                        i += 2;
+                        continue;
+                    }
+                } else if !expansion_stack.is_empty() {
+                    // Track nesting: ${ … { … } … } and $( … ( … ) … )
+                    let top = *expansion_stack.last().unwrap();
+                    match (top, ch) {
+                        ('{', '{') | ('(', '(') => expansion_stack.push(ch),
+                        ('{', '}') | ('(', ')') => {
+                            expansion_stack.pop();
+                        }
+                        _ => {}
+                    }
+                    result.push(ch);
+                    i += 1;
+                    continue;
+                }
+
+                // Outside any ${ }/$( ) construct: escape glob / brace / extglob metas
+                // so that runtime brace-expansion and glob-expansion treat them as literals,
+                // matching how bash handles metacharacters inside double quotes.
+                if expansion_stack.is_empty()
+                    && matches!(
+                        ch,
+                        '\\' | '*'
+                            | '?'
+                            | '['
+                            | ']'
+                            | '{'
+                            | '}'
+                            | '@'
+                            | '!'
+                            | '+'
+                            | '('
+                            | ')'
+                            | '|'
+                    )
+                {
+                    result.push('\\');
+                }
             }
+
             result.push(ch);
-            byte_pos = ch_end;
+            i += 1;
         }
         result
     }
