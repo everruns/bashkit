@@ -1480,12 +1480,14 @@ impl<'a> Lexer<'a> {
             let in_quoted = range_idx < quoted_ranges.len()
                 && byte_pos >= quoted_ranges[range_idx].0
                 && ch_end <= quoted_ranges[range_idx].1;
-            if in_quoted
-                && matches!(
-                    ch,
-                    '\\' | '*' | '?' | '[' | ']' | '{' | '}' | '@' | '!' | '+' | '(' | ')' | '|'
-                )
-            {
+            // Only escape the four POSIX glob metacharacters (*  ?  [  ]) and
+            // backslash.  Characters like { } ( ) @ ! + | may appear as part of
+            // ${ } or $( ) expansion syntax in the content string (which is
+            // stored pre-expansion at parse time) and must not be escaped here,
+            // or the runtime variable/command expansion that runs before glob
+            // expansion will silently fail (e.g. $\{VAR\} is not recognised as
+            // a variable reference, so the glob never sees the real path).
+            if in_quoted && matches!(ch, '\\' | '*' | '?' | '[' | ']') {
                 result.push('\\');
             }
             result.push(ch);

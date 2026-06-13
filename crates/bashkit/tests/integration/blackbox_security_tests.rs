@@ -1420,6 +1420,43 @@ mod finding_mixed_quoted_word_quote_metadata {
             "brace expression from quoted segment was expanded"
         );
     }
+
+    #[tokio::test]
+    async fn var_expansion_in_quoted_glob_prefix_not_corrupted() {
+        // Regression: escape_glob_metas_in_quoted_ranges was escaping { and }
+        // inside ${ } variable references, producing $\{VAR\} which is not
+        // recognised as a variable reference at runtime.  Pattern:
+        //   "${VAR}"/suffix   — quoted prefix + unquoted suffix
+        let mut bash = tight_bash();
+        bash.exec("mkdir -p /tmp/tqg/sub").await.unwrap();
+        let result = bash
+            .exec(r#"MYDIR=/tmp/tqg; for d in "${MYDIR}"/sub; do echo "$d"; done"#)
+            .await
+            .unwrap();
+        assert_eq!(
+            result.stdout.trim(),
+            "/tmp/tqg/sub",
+            "${{VAR}} in quoted glob prefix was not expanded (braces escaped by escape_glob_metas_in_quoted_ranges)"
+        );
+    }
+
+    #[tokio::test]
+    async fn var_expansion_in_quoted_glob_prefix_with_star() {
+        // Same regression but with an actual glob in the unquoted suffix.
+        let mut bash = tight_bash();
+        bash.exec("mkdir -p /tmp/tqg2/a /tmp/tqg2/b").await.unwrap();
+        let result = bash
+            .exec(
+                r#"MYDIR=/tmp/tqg2; dirs=(); for d in "${MYDIR}"/*/; do dirs+=("${d%/}"); done; echo "${dirs[*]}""#,
+            )
+            .await
+            .unwrap();
+        let stdout = result.stdout.trim().to_string();
+        assert!(
+            stdout.contains("/tmp/tqg2/a") && stdout.contains("/tmp/tqg2/b"),
+            "glob '\"${{VAR}}\"/*/` did not expand correctly, got: {stdout}"
+        );
+    }
 }
 
 mod state_isolation_passing {
