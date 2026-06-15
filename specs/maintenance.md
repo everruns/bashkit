@@ -189,11 +189,18 @@ improvements. The requirement is that they are **tracked**, not silently skipped
 
 ### Deferred items
 
-None currently open.
+Standing transitive limitation:
 
-Previously tracked items have been resolved: #880 (ArgParser migration),
-#881 (errexit propagation helper), and #1634 (RustCrypto 0.10/0.11 split —
-the `md-5`/`sha1`/`sha2` stack is now unified on the 0.11 line).
+- **RustCrypto 0.10/0.11 split** (was tracked as #1634, now closed). Our
+  directly-declared hashes (`md-5`/`sha1`/`sha2`) are on the 0.11 line, but the
+  dependency tree still pulls in the 0.10 line transitively — `aes-gcm 0.10.3`
+  (and its `digest 0.10` / `sha2 0.10` / `aead 0.5` / `cipher 0.4` chain) via
+  `turso_core`, plus the `russh` / `argon2` crypto stack. Resolution remains
+  blocked on those upstreams releasing on the 0.11 line; no in-tree action
+  available.
+
+Previously tracked items resolved: #880 (ArgParser migration), #881 (errexit
+propagation helper).
 
 ## Automation
 
