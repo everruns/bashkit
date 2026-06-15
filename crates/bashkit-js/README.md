@@ -89,6 +89,8 @@ import { Bash } from "@everruns/bashkit";
 const bash = new Bash({
   username: "agent",
   hostname: "sandbox",
+  cwd: "/home/agent",
+  env: { PROJECT: "bashkit" },
   maxCommands: 1000,
   maxLoopIterations: 10000,
   maxMemory: 10 * 1024 * 1024,
