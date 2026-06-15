@@ -465,6 +465,8 @@ class Bash:
         self,
         username: str | None = None,
         hostname: str | None = None,
+        cwd: str | None = None,
+        env: Mapping[str, str] | None = None,
         max_commands: int | None = None,
         max_loop_iterations: int | None = None,
         max_memory: int | None = None,
@@ -485,6 +487,10 @@ class Bash:
         Args:
             username: Custom username (default ``"user"``).
             hostname: Custom hostname (default ``"bashkit"``).
+            cwd: Initial working directory for the shell. Sets the starting
+                directory directly instead of running a leading ``cd``.
+            env: Initial environment variables applied before execution, so
+                scripts see them without an ``export`` prelude.
             max_commands: Limit total commands executed.
             max_loop_iterations: Limit iterations per loop.
             max_memory: Memory limit in bytes for the VFS.
@@ -716,6 +722,8 @@ class Bash:
         data: bytes,
         username: str | None = None,
         hostname: str | None = None,
+        cwd: str | None = None,
+        env: Mapping[str, str] | None = None,
         max_commands: int | None = None,
         max_loop_iterations: int | None = None,
         max_memory: int | None = None,
@@ -740,6 +748,8 @@ class Bash:
         key: bytes,
         username: str | None = None,
         hostname: str | None = None,
+        cwd: str | None = None,
+        env: Mapping[str, str] | None = None,
         max_commands: int | None = None,
         max_loop_iterations: int | None = None,
         max_memory: int | None = None,
@@ -922,6 +932,8 @@ class BashTool:
         self,
         username: str | None = None,
         hostname: str | None = None,
+        cwd: str | None = None,
+        env: Mapping[str, str] | None = None,
         max_commands: int | None = None,
         max_loop_iterations: int | None = None,
         max_memory: int | None = None,
@@ -938,6 +950,10 @@ class BashTool:
         Args:
             username: Custom username (default ``"user"``).
             hostname: Custom hostname (default ``"bashkit"``).
+            cwd: Initial working directory for the shell. Sets the starting
+                directory directly instead of running a leading ``cd``.
+            env: Initial environment variables applied before execution, so
+                scripts see them without an ``export`` prelude.
             max_commands: Limit total commands executed.
             max_loop_iterations: Limit iterations per loop.
             max_memory: Memory limit in bytes for the VFS.
@@ -1188,6 +1204,8 @@ class BashTool:
         data: bytes,
         username: str | None = None,
         hostname: str | None = None,
+        cwd: str | None = None,
+        env: Mapping[str, str] | None = None,
         max_commands: int | None = None,
         max_loop_iterations: int | None = None,
         max_memory: int | None = None,
@@ -1208,6 +1226,8 @@ class BashTool:
         key: bytes,
         username: str | None = None,
         hostname: str | None = None,
+        cwd: str | None = None,
+        env: Mapping[str, str] | None = None,
         max_commands: int | None = None,
         max_loop_iterations: int | None = None,
         max_memory: int | None = None,

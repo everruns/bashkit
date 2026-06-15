@@ -154,6 +154,30 @@ export type BuiltinCallback = (ctx: BuiltinContext) => string | Promise<string>;
 export interface BashOptions {
   username?: string;
   hostname?: string;
+  /**
+   * Initial working directory for the shell.
+   *
+   * Sets the starting `cwd` directly instead of running a leading
+   * `cd "${cwd}"` command, avoiding the parse/exec overhead.
+   *
+   * @example
+   * ```typescript
+   * const bash = new Bash({ cwd: "/home/user" });
+   * ```
+   */
+  cwd?: string;
+  /**
+   * Initial environment variables, applied before execution.
+   *
+   * Scripts see these immediately without an `export` prelude. Keys are
+   * variable names, values are their string values.
+   *
+   * @example
+   * ```typescript
+   * const bash = new Bash({ env: { HOME: "/home/user", LANG: "en_US.UTF-8" } });
+   * ```
+   */
+  env?: Record<string, string>;
   maxCommands?: number;
   maxLoopIterations?: number;
   maxTotalLoopIterations?: number;
@@ -550,6 +574,8 @@ function toNativeOptions(
   return {
     username: options?.username,
     hostname: options?.hostname,
+    cwd: options?.cwd,
+    env: options?.env,
     maxCommands: options?.maxCommands,
     maxLoopIterations: options?.maxLoopIterations,
     maxTotalLoopIterations: options?.maxTotalLoopIterations,

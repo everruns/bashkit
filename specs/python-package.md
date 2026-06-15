@@ -58,7 +58,8 @@ examples: `crates/bashkit-python/examples/`.
 ### BashTool / Bash
 
 `BashTool` wraps the Rust `Bash` interpreter with `Arc<Mutex<>>` for thread
-safety. Constructor kwargs: `username`, `hostname`, `max_commands`,
+safety. Constructor kwargs: `username`, `hostname`, `cwd` (initial working
+directory), `env` (initial environment variables), `max_commands`,
 `max_loop_iterations`, `readonly_filesystem`, `files` (initial files; values
 may be eager strings or lazy sync callables), `network`, `custom_builtins`,
 etc. Methods: `await execute(cmd)` / `execute_sync(cmd)` / `reset()`; direct

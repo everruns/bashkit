@@ -568,6 +568,8 @@ import {
 
 - `username?: string`
 - `hostname?: string`
+- `cwd?: string` — initial working directory (avoids a leading `cd`)
+- `env?: Record<string, string>` — initial environment variables (avoids an `export` prelude)
 - `maxCommands?: number`
 - `maxLoopIterations?: number`
 - `maxMemory?: number`

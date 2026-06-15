@@ -16,6 +16,11 @@ _categories = __import__("_bashkit_categories")
 _NAMES = (
     "test_bash_default_construction",
     "test_bash_custom_construction",
+    "test_bash_cwd_option_sets_starting_directory",
+    "test_bash_env_option_exposes_variables",
+    "test_bash_cwd_and_env_survive_reset",
+    "test_bashtool_cwd_and_env_options",
+    "test_bashtool_env_option_appears_in_help",
     "test_bash_echo",
     "test_bash_exit_code",
     "test_bash_stderr",

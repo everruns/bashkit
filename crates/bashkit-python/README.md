@@ -74,6 +74,8 @@ from bashkit import Bash
 bash = Bash(
     username="agent",
     hostname="sandbox",
+    cwd="/home/agent",
+    env={"LANG": "en_US.UTF-8"},
     max_commands=1000,
     max_loop_iterations=10000,
     max_memory=10 * 1024 * 1024,
