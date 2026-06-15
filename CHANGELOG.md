@@ -2,6 +2,48 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`cwd` and `env` construction options for the Node and Python bindings** —
+  callers can set the starting working directory and initial environment at
+  `Bash` construction time instead of paying for a leading `cd`/`export` prelude
+  ([#2072](https://github.com/everruns/bashkit/pull/2072)).
+- **Generated builtin inventory** (`specs/status/builtins.json`) plus a
+  `limitations.md` negative spec and a `builtins-drift` workflow that fails on
+  divergence between the registry and the committed inventory
+  ([#2038](https://github.com/everruns/bashkit/pull/2038)).
+
+### Fixed
+
+- **Security advisories** — patched the bundled esbuild and PyO3 advisories
+  ([#2069](https://github.com/everruns/bashkit/pull/2069)).
+- **Resource caps** — bounded the JS async execute queue with pre-queue input
+  validation, capped Python external-function handlers to the remaining
+  `max_duration` budget, added IFS word-split field and byte caps to the
+  interpreter, and capped awk multi-subscript arrays
+  ([#2055](https://github.com/everruns/bashkit/pull/2055)).
+- **Parser** — context-aware escaping in quoted glob word ranges, quote-metadata
+  preservation for mixed quoted/unquoted words, and ANSI-C NUL sentinel
+  collision escaping ([#2053](https://github.com/everruns/bashkit/pull/2053)).
+- **Builtins** — `rg` positive globs/type includes no longer unhide hidden
+  directories, `paste` handles a trailing `-d` flag
+  ([#2057](https://github.com/everruns/bashkit/pull/2057)), `compgen` lists
+  builtins from the live registry instead of a hardcoded copy
+  ([#2040](https://github.com/everruns/bashkit/pull/2040)), recursive delete
+  preserves child whiteouts ([#2056](https://github.com/everruns/bashkit/pull/2056)),
+  and a missing input-redirect file is now non-fatal.
+
+### Changed
+
+- **Dependencies** — bumped `zeroize` to 1.9.0 and `napi` to 3.9.2
+  ([#2071](https://github.com/everruns/bashkit/pull/2071)); bumped the
+  github-actions group (setup-uv, codecov, taiki-e)
+  ([#2070](https://github.com/everruns/bashkit/pull/2070)).
+- **Specs** — threat-model ledger backfilled with 12 code-cited IDs plus a drift
+  lint ([#2039](https://github.com/everruns/bashkit/pull/2039)); `limitations.md`
+  stance rows are now backed by evidence tests
+  ([#2051](https://github.com/everruns/bashkit/pull/2051)).
+
 ## [0.10.0] - 2026-06-11
 
 ### Highlights
