@@ -671,6 +671,68 @@ let bash = Bash::builder()
 // Commits use virtual identity, never host ~/.gitconfig
 ```
 
+### SSH Security (TM-SSH-*)
+
+The `ssh`/`scp`/`sftp` builtins (opt-in `ssh` feature) connect to remote hosts
+through a sandboxed client. Connections are default-deny: callers must allowlist
+each host via `SshConfig::allow(...)`, and credentials come only from the VFS —
+never the host `~/.ssh/`.
+
+| Threat | Attack Example | Mitigation | Status |
+|--------|---------------|------------|--------|
+| Unauthorized host access (TM-SSH-001) | Connect to arbitrary hosts | Host allowlist (default-deny) | MITIGATED |
+| Credential leakage (TM-SSH-002) | Read host `~/.ssh/` keys | Keys from VFS only | MITIGATED |
+| Session exhaustion (TM-SSH-003) | Open many concurrent sessions | Max concurrent sessions limit | MITIGATED |
+| OOM via large response (TM-SSH-004) | Server sends huge output | Streaming size limit | MITIGATED |
+| Connection hang (TM-SSH-005) | Server never responds | Configurable timeout | MITIGATED |
+| MITM via unverified host key (TM-SSH-006) | Attacker intercepts connection | Strict host key checking (default: on) | MITIGATED |
+| Non-standard port access (TM-SSH-007) | Connect to services on unexpected ports | Port allowlist | MITIGATED |
+| Remote command injection (TM-SSH-008) | Inject via remote path in SCP | Shell-escape remote paths | MITIGATED |
+
+### TypeScript / ZapCode Security (TM-TS-*)
+
+The `typescript` feature embeds the ZapCode runtime. Scripts run under
+wall-clock, memory, allocation, and stack-depth limits, and all filesystem
+access is bridged through Bashkit's VFS — never the host filesystem.
+
+| Threat | Attack Example | Mitigation | Status |
+|--------|---------------|------------|--------|
+| Infinite loop (TM-TS-001) | `while (true) {}` | ZapCode time limit (default 30s) | MITIGATED |
+| Memory exhaustion (TM-TS-002) | Large allocation | `max_memory` (64MB) + `max_allocations` (1M) | MITIGATED |
+| Stack overflow (TM-TS-003) | Deep recursion | `max_stack_depth` (512) | MITIGATED |
+| Allocation bomb (TM-TS-004) | Many small objects | `max_allocations` (1M) | MITIGATED |
+| Real filesystem read (TM-TS-005) | Read host files via VFS | VFS bridge reads only Bashkit VFS | MITIGATED |
+| VFS write escape (TM-TS-006) | Write to host | VFS bridge writes only Bashkit VFS | MITIGATED |
+| Path traversal (TM-TS-007) | `../../etc/passwd` | Paths resolved within sandbox | MITIGATED |
+| Host `/tmp` escape (TM-TS-011) | Operations escape to host | All operations through Bashkit VFS | MITIGATED |
+| Limit bypass (TM-TS-018) | Evade Bashkit caps via TS | Command budget still enforced | MITIGATED |
+
+Full per-threat coverage (TM-TS-001 … TM-TS-020), including error-isolation and
+exit-code propagation cases, lives in the spec and the `threat_ts_*` tests.
+
+### Request Signing & Snapshot Integrity (TM-CRY-*, TM-SNAP-*)
+
+The `bot-auth` request signer (Ed25519, RFC 9421) and the snapshot
+serialization API both handle key material and integrity tags.
+
+| Threat | Attack Example | Mitigation | Status |
+|--------|---------------|------------|--------|
+| Private key recovery (TM-CRY-001) | Heap/core-dump inspection of the Ed25519 seed | `BotAuthConfig` zeroizes the seed in `Drop`; debug output redacts key material | MITIGATED |
+| Snapshot forgery (TM-SNAP-001) | Forge a valid digest using the public `BKSNAP01` tag | Keyed HMAC API (`to_bytes_keyed`/`from_bytes_keyed`) for tamper-evident snapshots | MITIGATED |
+
+`from_bytes` uses `SHA-256(BKSNAP01 || payload)` (the tag is a public constant,
+so it detects accidental corruption, not forgery); `from_bytes_keyed` uses
+`HMAC-SHA256(secret_key, payload)` with a caller-provided key for authenticity.
+
+### RealFs Mount Security (TM-FS-*)
+
+The `realfs` feature can mount real host directories into the VFS. Mounts are
+read-only by default and gated by an allowlist.
+
+| Threat | Attack Example | Mitigation | Status |
+|--------|---------------|------------|--------|
+| Permissive RealFs mount (TM-FS-013) | `mount_real_readonly_at("/", …)` exposes the whole host | Allowlist-first: broad roots (`/`, `/etc`, `/root`, `/home`, …) and any path component matching `.ssh`, `.aws`, `.kube`, `.docker`, `.gnupg`, `.gcloud` are refused unless explicitly allowlisted | MITIGATED |
+
 ### Unicode Security (TM-UNI-*)
 
 Unicode input from untrusted scripts creates attack surface across the parser, builtins,
@@ -789,8 +851,13 @@ All threats use stable IDs in the format `TM-<CATEGORY>-<NUMBER>`:
 | TM-INT | Internal Error Handling |
 | TM-LOG | Logging Security |
 | TM-GIT | Git Security |
+| TM-SSH | SSH Security |
 | TM-PY | Python/Monty Security |
 | TM-SQL | SQLite Security |
+| TM-TS | TypeScript/ZapCode Security |
+| TM-CRY | Cryptography / Request Signing |
+| TM-SNAP | Snapshot Integrity |
+| TM-FS | RealFs Mount Security |
 | TM-UNI | Unicode Security |
 
 Full threat analysis: [`specs/threat-model.md`][spec]
