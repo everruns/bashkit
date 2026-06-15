@@ -34,6 +34,41 @@ def test_bash_custom_construction():
     assert bash is not None
 
 
+def test_bash_cwd_option_sets_starting_directory():
+    """cwd kwarg sets the starting directory without a leading `cd` (issue #2068)."""
+    bash = Bash(cwd="/home/user")
+    r = bash.execute_sync("pwd")
+    assert r.stdout.strip() == "/home/user"
+    assert bash.shell_state().cwd == "/home/user"
+
+
+def test_bash_env_option_exposes_variables():
+    """env kwarg exposes variables without an `export` prelude (issue #2068)."""
+    bash = Bash(env={"HOME": "/home/user", "LANG": "en_US.UTF-8"})
+    r = bash.execute_sync('echo "$HOME $LANG"')
+    assert r.stdout.strip() == "/home/user en_US.UTF-8"
+    assert bash.shell_state().env["HOME"] == "/home/user"
+
+
+def test_bash_cwd_and_env_survive_reset():
+    bash = Bash(cwd="/home/user", env={"TOKEN": "abc"})
+    bash.execute_sync("cd / ; unset TOKEN")
+    bash.reset()
+    r = bash.execute_sync('pwd ; echo "$TOKEN"')
+    assert r.stdout == "/home/user\nabc\n"
+
+
+def test_bashtool_cwd_and_env_options():
+    tool = BashTool(cwd="/srv", env={"APP": "bashkit"})
+    r = tool.execute_sync('pwd ; echo "$APP"')
+    assert r.stdout == "/srv\nbashkit\n"
+
+
+def test_bashtool_env_option_appears_in_help():
+    tool = BashTool(env={"API_BASE": "https://example.com"})
+    assert "API_BASE" in tool.help()
+
+
 # -- Bash: Sync execution --------------------------------------------------
 
 

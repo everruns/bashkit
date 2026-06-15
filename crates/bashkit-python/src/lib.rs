@@ -3695,6 +3695,10 @@ pub struct PyBash {
     cancelled: Arc<RwLock<Arc<AtomicBool>>>,
     username: Option<String>,
     hostname: Option<String>,
+    /// Initial working directory for the shell (mirrors `Bash::builder().cwd()`).
+    cwd: Option<String>,
+    /// Initial environment variables (mirrors `Bash::builder().env()`).
+    env: Option<HashMap<String, String>>,
     /// Whether Monty Python execution is enabled (`python`/`python3` builtins).
     python: bool,
     /// Whether the embedded SQLite (`sqlite`/`sqlite3`) builtin is enabled.
@@ -3752,6 +3756,14 @@ impl PyBash {
         if let Some(ref hostname) = self.hostname {
             builder = builder.hostname(hostname);
         }
+        if let Some(ref cwd) = self.cwd {
+            builder = builder.cwd(cwd.as_str());
+        }
+        if let Some(ref env) = self.env {
+            for (k, v) in env {
+                builder = builder.env(k, v);
+            }
+        }
 
         let mut limits = ExecutionLimits::new();
         if let Some(max_commands) = self.max_commands {
@@ -3805,6 +3817,8 @@ impl PyBash {
     #[pyo3(signature = (
         username=None,
         hostname=None,
+        cwd=None,
+        env=None,
         max_commands=None,
         max_loop_iterations=None,
         max_memory=None,
@@ -3825,6 +3839,8 @@ impl PyBash {
         py: Python<'_>,
         username: Option<String>,
         hostname: Option<String>,
+        cwd: Option<String>,
+        env: Option<HashMap<String, String>>,
         max_commands: Option<u64>,
         max_loop_iterations: Option<u64>,
         max_memory: Option<u64>,
@@ -3847,6 +3863,14 @@ impl PyBash {
         }
         if let Some(ref h) = hostname {
             builder = builder.hostname(h);
+        }
+        if let Some(ref c) = cwd {
+            builder = builder.cwd(c.as_str());
+        }
+        if let Some(ref env) = env {
+            for (k, v) in env {
+                builder = builder.env(k, v);
+            }
         }
 
         let mut limits = ExecutionLimits::new();
@@ -3942,6 +3966,8 @@ impl PyBash {
             cancelled,
             username,
             hostname,
+            cwd,
+            env,
             python,
             sqlite,
             external_functions: external_functions.unwrap_or_default(),
@@ -4253,6 +4279,8 @@ impl PyBash {
         data,
         username=None,
         hostname=None,
+        cwd=None,
+        env=None,
         max_commands=None,
         max_loop_iterations=None,
         max_memory=None,
@@ -4274,6 +4302,8 @@ impl PyBash {
         data: Vec<u8>,
         username: Option<String>,
         hostname: Option<String>,
+        cwd: Option<String>,
+        env: Option<HashMap<String, String>>,
         max_commands: Option<u64>,
         max_loop_iterations: Option<u64>,
         max_memory: Option<u64>,
@@ -4293,6 +4323,8 @@ impl PyBash {
             py,
             username,
             hostname,
+            cwd,
+            env,
             max_commands,
             max_loop_iterations,
             max_memory,
@@ -4319,6 +4351,8 @@ impl PyBash {
         key,
         username=None,
         hostname=None,
+        cwd=None,
+        env=None,
         max_commands=None,
         max_loop_iterations=None,
         max_memory=None,
@@ -4341,6 +4375,8 @@ impl PyBash {
         key: Vec<u8>,
         username: Option<String>,
         hostname: Option<String>,
+        cwd: Option<String>,
+        env: Option<HashMap<String, String>>,
         max_commands: Option<u64>,
         max_loop_iterations: Option<u64>,
         max_memory: Option<u64>,
@@ -4360,6 +4396,8 @@ impl PyBash {
             py,
             username,
             hostname,
+            cwd,
+            env,
             max_commands,
             max_loop_iterations,
             max_memory,
@@ -4564,6 +4602,10 @@ pub struct BashTool {
     cancelled: Arc<RwLock<Arc<AtomicBool>>>,
     username: Option<String>,
     hostname: Option<String>,
+    /// Initial working directory for the shell (mirrors `Bash::builder().cwd()`).
+    cwd: Option<String>,
+    /// Initial environment variables (mirrors `Bash::builder().env()`).
+    env: Option<HashMap<String, String>>,
     /// Tracking list for `is_async` flag detection (used by session capture).
     /// Kept in sync with `host_registry` by `add_builtin` / `remove_builtin`.
     /// Wrapped in `Arc<StdMutex<_>>` so post-construction registration works
@@ -4602,6 +4644,14 @@ impl BashTool {
         }
         if let Some(ref hostname) = self.hostname {
             builder = builder.hostname(hostname);
+        }
+        if let Some(ref cwd) = self.cwd {
+            builder = builder.cwd(cwd.as_str());
+        }
+        if let Some(ref env) = self.env {
+            for (k, v) in env {
+                builder = builder.env(k, v);
+            }
         }
 
         let mut limits = ExecutionLimits::new();
@@ -4648,6 +4698,14 @@ impl BashTool {
         if let Some(ref hostname) = self.hostname {
             builder = builder.hostname(hostname);
         }
+        if let Some(ref cwd) = self.cwd {
+            builder = builder.cwd(cwd.as_str());
+        }
+        if let Some(ref env) = self.env {
+            for (k, v) in env {
+                builder = builder.env(k, v);
+            }
+        }
 
         let mut limits = ExecutionLimits::new();
         if let Some(mc) = self.max_commands {
@@ -4687,6 +4745,8 @@ impl BashTool {
     #[pyo3(signature = (
         username=None,
         hostname=None,
+        cwd=None,
+        env=None,
         max_commands=None,
         max_loop_iterations=None,
         max_memory=None,
@@ -4702,6 +4762,8 @@ impl BashTool {
         py: Python<'_>,
         username: Option<String>,
         hostname: Option<String>,
+        cwd: Option<String>,
+        env: Option<HashMap<String, String>>,
         max_commands: Option<u64>,
         max_loop_iterations: Option<u64>,
         max_memory: Option<u64>,
@@ -4720,6 +4782,14 @@ impl BashTool {
         }
         if let Some(ref h) = hostname {
             builder = builder.hostname(h);
+        }
+        if let Some(ref c) = cwd {
+            builder = builder.cwd(c.as_str());
+        }
+        if let Some(ref env) = env {
+            for (k, v) in env {
+                builder = builder.env(k, v);
+            }
         }
 
         let mut limits = ExecutionLimits::new();
@@ -4771,6 +4841,8 @@ impl BashTool {
             cancelled,
             username,
             hostname,
+            cwd,
+            env,
             custom_builtins: Arc::new(StdMutex::new(custom_builtins)),
             host_registry,
             builtin_engine,
@@ -5036,6 +5108,8 @@ impl BashTool {
         data,
         username=None,
         hostname=None,
+        cwd=None,
+        env=None,
         max_commands=None,
         max_loop_iterations=None,
         max_memory=None,
@@ -5053,6 +5127,8 @@ impl BashTool {
         data: Vec<u8>,
         username: Option<String>,
         hostname: Option<String>,
+        cwd: Option<String>,
+        env: Option<HashMap<String, String>>,
         max_commands: Option<u64>,
         max_loop_iterations: Option<u64>,
         max_memory: Option<u64>,
@@ -5068,6 +5144,8 @@ impl BashTool {
             py,
             username,
             hostname,
+            cwd,
+            env,
             max_commands,
             max_loop_iterations,
             max_memory,
@@ -5090,6 +5168,8 @@ impl BashTool {
         key,
         username=None,
         hostname=None,
+        cwd=None,
+        env=None,
         max_commands=None,
         max_loop_iterations=None,
         max_memory=None,
@@ -5108,6 +5188,8 @@ impl BashTool {
         key: Vec<u8>,
         username: Option<String>,
         hostname: Option<String>,
+        cwd: Option<String>,
+        env: Option<HashMap<String, String>>,
         max_commands: Option<u64>,
         max_loop_iterations: Option<u64>,
         max_memory: Option<u64>,
@@ -5123,6 +5205,8 @@ impl BashTool {
             py,
             username,
             hostname,
+            cwd,
+            env,
             max_commands,
             max_loop_iterations,
             max_memory,

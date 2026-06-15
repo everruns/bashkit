@@ -226,6 +226,13 @@ def demo_config():
     print(f"hostname: {r.stdout.strip()}")
     assert r.stdout.strip() == "sandbox"
 
+    # Starting directory and environment — set directly instead of running a
+    # leading `cd`/`export`.
+    configured = Bash(cwd="/home/agent", env={"PROJECT": "bashkit"})
+    r = configured.execute_sync('echo "$PWD in $PROJECT"')
+    print(f"cwd/env:  {r.stdout.strip()}")
+    assert r.stdout.strip() == "/home/agent in bashkit"
+
     # Resource limits
     limited = Bash(max_loop_iterations=50)
     r = limited.execute_sync("i=0; while true; do i=$((i+1)); done; echo $i")

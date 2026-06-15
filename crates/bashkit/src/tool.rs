@@ -68,6 +68,7 @@ use futures_core::Stream;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::future::Future;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
@@ -557,6 +558,8 @@ pub struct BashToolBuilder {
     hostname: Option<String>,
     /// Execution limits
     limits: Option<ExecutionLimits>,
+    /// Initial working directory for the shell
+    cwd: Option<PathBuf>,
     /// Environment variables to set
     env_vars: Vec<(String, String)>,
     /// Custom builtins (name, implementation). Arc enables reuse across create_bash calls.
@@ -593,6 +596,12 @@ impl BashToolBuilder {
     /// Set execution limits
     pub fn limits(mut self, limits: ExecutionLimits) -> Self {
         self.limits = Some(limits);
+        self
+    }
+
+    /// Set the initial working directory for the shell
+    pub fn cwd(mut self, cwd: impl Into<PathBuf>) -> Self {
+        self.cwd = Some(cwd.into());
         self
     }
 
@@ -726,6 +735,7 @@ impl BashToolBuilder {
             username: self.username.clone(),
             hostname: self.hostname.clone(),
             limits: self.limits.clone(),
+            cwd: self.cwd.clone(),
             env_vars: self.env_vars.clone(),
             builtins: self.builtins.clone(),
             builtin_names,
@@ -780,6 +790,7 @@ pub struct BashTool {
     username: Option<String>,
     hostname: Option<String>,
     limits: Option<ExecutionLimits>,
+    cwd: Option<PathBuf>,
     env_vars: Vec<(String, String)>,
     builtins: Vec<(String, Arc<dyn Builtin>)>,
     /// Names of custom builtins (for documentation)
@@ -806,6 +817,9 @@ impl BashTool {
         }
         if let Some(ref limits) = self.limits {
             builder = builder.limits(limits.clone());
+        }
+        if let Some(ref cwd) = self.cwd {
+            builder = builder.cwd(cwd.clone());
         }
         for (key, value) in &self.env_vars {
             builder = builder.env(key, value);
@@ -958,6 +972,7 @@ impl Tool for BashTool {
             username: self.username.clone(),
             hostname: self.hostname.clone(),
             limits: self.limits.clone(),
+            cwd: self.cwd.clone(),
             env_vars: self.env_vars.clone(),
             builtins: self.builtins.clone(),
         }
@@ -970,6 +985,7 @@ impl Tool for BashTool {
             username: self.username.clone(),
             hostname: self.hostname.clone(),
             limits: self.limits.clone(),
+            cwd: self.cwd.clone(),
             env_vars: self.env_vars.clone(),
             builtins: self.builtins.clone(),
         }
@@ -1610,6 +1626,24 @@ mod tests {
         assert_eq!(resp.stdout, "hello\n");
         assert_eq!(resp.exit_code, 0);
         assert!(resp.error.is_none());
+    }
+
+    #[test]
+    fn test_bash_tool_builder_cwd() {
+        let tool = BashTool::builder().cwd("/tmp/work").build();
+        assert_eq!(tool.cwd, Some(PathBuf::from("/tmp/work")));
+    }
+
+    #[tokio::test]
+    async fn test_tool_cwd_sets_starting_directory() {
+        let tool = BashTool::builder().cwd("/tmp").build();
+        let req = ToolRequest {
+            commands: "pwd".to_string(),
+            timeout_ms: None,
+        };
+        let resp = tool.execute(req).await;
+        assert_eq!(resp.stdout, "/tmp\n");
+        assert_eq!(resp.exit_code, 0);
     }
 
     #[test]

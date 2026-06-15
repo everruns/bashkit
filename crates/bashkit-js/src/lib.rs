@@ -1271,6 +1271,12 @@ fn apply_network_options(
 pub struct BashOptions {
     pub username: Option<String>,
     pub hostname: Option<String>,
+    /// Initial working directory for the shell (mirrors `Bash::builder().cwd()`).
+    /// Avoids a leading `cd "$cwd"` command just to set the starting directory.
+    pub cwd: Option<String>,
+    /// Initial environment variables (mirrors `Bash::builder().env()`).
+    /// Applied before execution so scripts see them without an `export` prelude.
+    pub env: Option<HashMap<String, String>>,
     pub max_commands: Option<u32>,
     pub max_loop_iterations: Option<u32>,
     pub max_total_loop_iterations: Option<u32>,
@@ -1328,6 +1334,8 @@ fn default_opts() -> BashOptions {
     BashOptions {
         username: None,
         hostname: None,
+        cwd: None,
+        env: None,
         max_commands: None,
         max_loop_iterations: None,
         max_total_loop_iterations: None,
@@ -1397,6 +1405,8 @@ struct SharedState {
     async_execute_semaphore: Arc<Semaphore>,
     username: Option<String>,
     hostname: Option<String>,
+    cwd: Option<String>,
+    env: Option<HashMap<String, String>>,
     max_commands: Option<u32>,
     max_loop_iterations: Option<u32>,
     max_total_loop_iterations: Option<u32>,
@@ -2119,6 +2129,14 @@ impl BashTool {
         }
         if let Some(ref hostname) = state.hostname {
             builder = builder.hostname(hostname);
+        }
+        if let Some(ref cwd) = state.cwd {
+            builder = builder.cwd(cwd.as_str());
+        }
+        if let Some(ref env) = state.env {
+            for (k, v) in env {
+                builder = builder.env(k, v);
+            }
         }
 
         builder.limits(build_limits(state)).build()
@@ -3173,6 +3191,14 @@ fn build_bash_from_state(state: &SharedState, files: Option<&HashMap<String, Str
     if let Some(ref h) = state.hostname {
         builder = builder.hostname(h);
     }
+    if let Some(ref cwd) = state.cwd {
+        builder = builder.cwd(cwd.as_str());
+    }
+    if let Some(ref env) = state.env {
+        for (k, v) in env {
+            builder = builder.env(k, v);
+        }
+    }
 
     builder = builder.limits(build_limits(state));
 
@@ -3278,6 +3304,8 @@ fn shared_state_from_opts(
         async_execute_semaphore: Arc::new(Semaphore::new(MAX_PENDING_ASYNC_EXECUTIONS)),
         username: opts.username.clone(),
         hostname: opts.hostname.clone(),
+        cwd: opts.cwd.clone(),
+        env: opts.env.clone(),
         max_commands: opts.max_commands,
         max_loop_iterations: opts.max_loop_iterations,
         max_total_loop_iterations: opts.max_total_loop_iterations,
@@ -3328,6 +3356,8 @@ fn shared_state_from_opts(
         async_execute_semaphore: Arc::new(Semaphore::new(MAX_PENDING_ASYNC_EXECUTIONS)),
         username: opts.username,
         hostname: opts.hostname,
+        cwd: opts.cwd,
+        env: opts.env,
         max_commands: opts.max_commands,
         max_loop_iterations: opts.max_loop_iterations,
         max_total_loop_iterations: opts.max_total_loop_iterations,

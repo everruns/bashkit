@@ -89,6 +89,8 @@ import { Bash } from "@everruns/bashkit";
 const bash = new Bash({
   username: "agent",
   hostname: "sandbox",
+  cwd: "/home/agent",
+  env: { PROJECT: "bashkit" },
   maxCommands: 1000,
   maxLoopIterations: 10000,
   maxMemory: 10 * 1024 * 1024,
@@ -568,6 +570,8 @@ import {
 
 - `username?: string`
 - `hostname?: string`
+- `cwd?: string` — initial working directory (avoids a leading `cd`)
+- `env?: Record<string, string>` — initial environment variables (avoids an `export` prelude)
 - `maxCommands?: number`
 - `maxLoopIterations?: number`
 - `maxMemory?: number`
