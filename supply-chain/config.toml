@@ -1076,7 +1076,7 @@ version = "0.2.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.napi]]
-version = "3.9.1"
+version = "3.9.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.napi-build]]
@@ -2320,7 +2320,7 @@ version = "0.1.7"
 criteria = "safe-to-deploy"
 
 [[exemptions.zeroize]]
-version = "1.8.2"
+version = "1.9.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.zerotrie]]
