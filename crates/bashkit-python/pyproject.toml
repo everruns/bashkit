@@ -7,6 +7,7 @@ name = "bashkit"
 dynamic = ["version"]
 description = "A sandboxed bash interpreter for AI agents"
 readme = "README.md"
+authors = [{ name = "Mykhailo Chalyi", email = "mike@chaliy.name" }]
 license = { text = "MIT" }
 requires-python = ">=3.9"
 keywords = ["bash", "sandbox", "ai", "agent", "shell", "interpreter"]

@@ -7,6 +7,7 @@
   "browser": "bashkit.wasi-browser.js",
   "types": "wrapper.d.ts",
   "type": "module",
+  "author": "Mykhailo Chalyi <mike@chaliy.name>",
   "exports": {
     ".": {
       "browser": "./bashkit.wasi-browser.js",
