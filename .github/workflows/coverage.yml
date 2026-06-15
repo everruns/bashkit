@@ -37,7 +37,7 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Install cargo-tarpaulin
-        uses: taiki-e/install-action@3d6bdc41132a93ae9dbd2217ccd2bcb56d84eaa8 # cargo-tarpaulin
+        uses: taiki-e/install-action@7a79fe8c3a13344501c80d99cae481c1c9085912 # cargo-tarpaulin
 
       # `rg` differential tests compare against real ripgrep. Pin the
       # binary so coverage does not depend on the runner image package set.
@@ -83,7 +83,7 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@4bc351f7f2614e48088386e2a0ad917ca3a7e4ba # v2
+        uses: taiki-e/install-action@7a79fe8c3a13344501c80d99cae481c1c9085912 # v2
         with:
           tool: cargo-llvm-cov
 
@@ -91,7 +91,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
 
       - name: Generate Python-driven Rust coverage
         run: |
@@ -132,7 +132,7 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@4bc351f7f2614e48088386e2a0ad917ca3a7e4ba # v2
+        uses: taiki-e/install-action@7a79fe8c3a13344501c80d99cae481c1c9085912 # v2
         with:
           tool: cargo-llvm-cov
 
@@ -196,7 +196,7 @@ jobs:
 
       - name: Upload coverage to Codecov
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false }}
-        uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354 # v6
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v6
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: coverage/cobertura.xml,coverage/python-rust-coverage.json,coverage/node-rust-coverage.json
