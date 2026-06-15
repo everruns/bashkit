@@ -166,6 +166,9 @@ fn host_path_for(root: &std::path::Path, vpath: &str) -> PathBuf {
     root.join(stripped)
 }
 
+// VFS path used when stdin payload has no trailing newline and can't use heredoc.
+const STDIN_VPATH: &str = "/__bk_diff_stdin__";
+
 async fn run_bashkit(fx: &DiffFixture) -> (String, String, i32) {
     let mut builder = Bash::builder();
     for (vpath, body) in fx.files {
@@ -175,6 +178,20 @@ async fn run_bashkit(fx: &DiffFixture) -> (String, String, i32) {
         );
         builder = builder.mount_text(*vpath, text.to_string());
     }
+
+    // Heredoc requires the delimiter to appear on its own line. When stdin has
+    // no trailing newline the marker ends up concatenated with the last content
+    // byte (e.g. "three__BK_DIFF_EOF__"), which bash does not treat as the
+    // delimiter — the heredoc content then includes the marker as literal text,
+    // corrupting the input. Mount such payloads as a VFS file and use a stdin
+    // redirect instead so the exact bytes are preserved.
+    let use_file_redirect = fx.stdin.is_some_and(|p| !p.ends_with(b"\n"));
+    if use_file_redirect {
+        let payload_str =
+            std::str::from_utf8(fx.stdin.unwrap()).expect("stdin must be utf-8 in current harness");
+        builder = builder.mount_text(STDIN_VPATH, payload_str.to_string());
+    }
+
     let mut bash = builder.build();
 
     let argv: Vec<String> = std::iter::once(fx.util.to_string())
@@ -187,10 +204,11 @@ async fn run_bashkit(fx: &DiffFixture) -> (String, String, i32) {
         .join(" ");
 
     let cmd = match fx.stdin {
-        Some(payload) => format!(
+        Some(payload) if payload.ends_with(b"\n") => format!(
             "{line} <<'__BK_DIFF_EOF__'\n{}__BK_DIFF_EOF__\n",
             std::str::from_utf8(payload).expect("stdin must be utf-8 in current harness"),
         ),
+        Some(_) => format!("{line} < {}", shell_quote(STDIN_VPATH)),
         None => line,
     };
 
