@@ -208,7 +208,7 @@ async fn run_bashkit(fx: &DiffFixture) -> (String, String, i32) {
             "{line} <<'__BK_DIFF_EOF__'\n{}__BK_DIFF_EOF__\n",
             std::str::from_utf8(payload).expect("stdin must be utf-8 in current harness"),
         ),
-        Some(_) => format!("{line} < {STDIN_VPATH}"),
+        Some(_) => format!("{line} < {}", shell_quote(STDIN_VPATH)),
         None => line,
     };
 
