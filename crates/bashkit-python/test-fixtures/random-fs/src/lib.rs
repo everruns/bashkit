@@ -180,7 +180,7 @@ fn expected_random_text(seed: u64, path: &str) -> String {
 fn create_random_filesystem_capsule(py: Python<'_>, seed: u64) -> PyResult<Py<PyCapsule>> {
     let fs: Arc<dyn FileSystem> = Arc::new(SeededRandomFs::new(seed));
     let handle = export_filesystem(fs).map_err(|err| PyRuntimeError::new_err(err.to_string()))?;
-    let capsule = PyCapsule::new(py, handle, Some(FILESYSTEM_CAPSULE_NAME.to_owned()))?;
+    let capsule = PyCapsule::new_with_value(py, handle, FILESYSTEM_CAPSULE_NAME)?;
     Ok(capsule.unbind())
 }
 
