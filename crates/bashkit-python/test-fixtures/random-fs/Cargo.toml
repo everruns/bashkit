@@ -12,4 +12,4 @@ crate-type = ["cdylib"]
 
 [dependencies]
 bashkit = { path = "../../../bashkit", features = ["interop"] }
-pyo3 = { version = "0.28.2", features = ["extension-module"] }
+pyo3 = { version = "0.29.0", features = ["extension-module"] }
