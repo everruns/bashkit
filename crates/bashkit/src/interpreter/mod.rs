@@ -9585,32 +9585,36 @@ impl Interpreter {
         }
         // Strip quotes from operand before parsing.
         // For pattern-removal operators, quoted glob chars must stay literal.
-        // Track stripped double-quoted spans with a marker that is absent from
-        // the operand source, then consume that marker only from parsed literal
-        // parts. Expanded variable data is handled out-of-band so attacker data
-        // cannot inject quote-state toggles.
-        let quote_mark = Self::operand_quote_mark(operand);
-        let stripped = Self::strip_operand_quotes(operand, quote_mark);
-        // THREAT[TM-DOS-050]: Propagate caller-configured limits to word parsing
-        let word = Parser::parse_word_string_with_limits(
-            &stripped,
+        // Track stripped double-quoted spans with a marker that cannot be
+        // mistaken for a parsed top-level literal, then consume that marker
+        // only from parsed literal parts. Expanded variable data is handled
+        // out-of-band so attacker data cannot inject quote-state toggles.
+        let (word, quote_mark) = Self::parse_marked_operand(
+            operand,
             self.limits.max_ast_depth,
             self.limits.max_parser_operations,
         );
+        let force_quoted = quote_mark.is_none() && operand.contains('"');
         let mut result = String::new();
         let mut in_marked = false;
         for part in &word.parts {
             match part {
                 WordPart::Literal(s) => {
-                    Self::push_marked_literal(&mut result, s, quote_mark, &mut in_marked);
+                    Self::push_marked_literal(
+                        &mut result,
+                        s,
+                        quote_mark,
+                        &mut in_marked,
+                        force_quoted,
+                    );
                 }
                 WordPart::Variable(name) => {
                     let expanded = self.expand_variable(name);
-                    Self::push_operand_expansion(&mut result, &expanded, in_marked);
+                    Self::push_operand_expansion(&mut result, &expanded, in_marked || force_quoted);
                 }
                 WordPart::ArithmeticExpansion(expr) => {
                     let val = self.evaluate_arithmetic_with_assign(expr).to_string();
-                    Self::push_operand_expansion(&mut result, &val, in_marked);
+                    Self::push_operand_expansion(&mut result, &val, in_marked || force_quoted);
                 }
                 WordPart::ParameterExpansion {
                     name,
@@ -9627,11 +9631,11 @@ impl Interpreter {
                         *colon_variant,
                         is_set,
                     );
-                    Self::push_operand_expansion(&mut result, &expanded, in_marked);
+                    Self::push_operand_expansion(&mut result, &expanded, in_marked || force_quoted);
                 }
                 WordPart::Length(name) => {
                     let value = self.expand_variable(name).len().to_string();
-                    Self::push_operand_expansion(&mut result, &value, in_marked);
+                    Self::push_operand_expansion(&mut result, &value, in_marked || force_quoted);
                 }
                 // TODO: handle CommandSubstitution etc. in sync operand expansion
                 _ => {}
@@ -9644,11 +9648,14 @@ impl Interpreter {
     /// In patterns like `${var#./"$other"}`, the `"` around `$other` suppress
     /// globbing but should not appear as literal characters in the pattern.
     /// Escaped quotes (`\"`) and NUL-sentinel-marked chars (`\x00"`) are kept.
-    /// The caller-provided quote marker is absent from the source operand, so
-    /// parsed literal marker chars can only be stripped quote boundaries.
     fn strip_operand_quotes(operand: &str, quote_mark: Option<char>) -> String {
+        Self::strip_operand_quotes_with_count(operand, quote_mark).0
+    }
+
+    fn strip_operand_quotes_with_count(operand: &str, quote_mark: Option<char>) -> (String, usize) {
         let mut result = String::with_capacity(operand.len());
         let chars: Vec<char> = operand.chars().collect();
+        let mut inserted_marks = 0;
         let mut i = 0;
         while i < chars.len() {
             if chars[i] == '\x00' && i + 1 < chars.len() {
@@ -9663,10 +9670,9 @@ impl Interpreter {
                 i += 2;
             } else if chars[i] == '"' {
                 // Unescaped double quote: skip it (strip the quote character).
-                // If every bounded sentinel is already present, strip without
-                // marking rather than doing attacker-controlled exhaustive work.
                 if let Some(quote_mark) = quote_mark {
                     result.push(quote_mark);
+                    inserted_marks += 1;
                 }
                 i += 1;
             } else {
@@ -9674,7 +9680,7 @@ impl Interpreter {
                 i += 1;
             }
         }
-        result
+        (result, inserted_marks)
     }
 
     fn operand_quote_mark(operand: &str) -> Option<char> {
@@ -9684,26 +9690,63 @@ impl Interpreter {
             .find(|&ch| !operand.contains(ch))
     }
 
+    fn parse_marked_operand(
+        operand: &str,
+        max_depth: usize,
+        max_fuel: usize,
+    ) -> (Word, Option<char>) {
+        if let Some(quote_mark) = Self::operand_quote_mark(operand) {
+            let stripped = Self::strip_operand_quotes(operand, Some(quote_mark));
+            return (
+                Parser::parse_word_string_with_limits(&stripped, max_depth, max_fuel),
+                Some(quote_mark),
+            );
+        }
+
+        // Important decision: all source-level candidates may appear only inside
+        // nested/lazy expansions. In that case one candidate is still safe for
+        // this top-level operand if parsed literal parts contain exactly the
+        // quote-boundary markers we inserted. This preserves quote semantics
+        // without returning to an unbounded Unicode search.
+        for &quote_mark in OPERAND_QUOTE_MARK_CANDIDATES {
+            let (stripped, inserted_marks) =
+                Self::strip_operand_quotes_with_count(operand, Some(quote_mark));
+            let word = Parser::parse_word_string_with_limits(&stripped, max_depth, max_fuel);
+            if Self::top_level_literal_mark_count(&word, quote_mark) == inserted_marks {
+                return (word, Some(quote_mark));
+            }
+        }
+
+        let stripped = Self::strip_operand_quotes(operand, None);
+        (
+            Parser::parse_word_string_with_limits(&stripped, max_depth, max_fuel),
+            None,
+        )
+    }
+
+    fn top_level_literal_mark_count(word: &Word, quote_mark: char) -> usize {
+        word.parts
+            .iter()
+            .filter_map(|part| match part {
+                WordPart::Literal(s) => Some(s.chars().filter(|&ch| ch == quote_mark).count()),
+                _ => None,
+            })
+            .sum()
+    }
+
     fn push_marked_literal(
         out: &mut String,
         s: &str,
         quote_mark: Option<char>,
         in_marked: &mut bool,
+        force_quoted: bool,
     ) {
         for ch in s.chars() {
             if Some(ch) == quote_mark {
                 *in_marked = !*in_marked;
                 continue;
             }
-            if *in_marked
-                && matches!(
-                    ch,
-                    '*' | '?' | '[' | ']' | '(' | ')' | '|' | '+' | '@' | '!'
-                )
-            {
-                out.push('\\');
-            }
-            out.push(ch);
+            Self::push_operand_char(out, ch, *in_marked || force_quoted);
         }
     }
 
@@ -14694,11 +14737,15 @@ echo "count=$COUNT"
     }
 
     #[tokio::test]
-    async fn test_quoted_remove_prefix_operand_with_all_mark_candidates_does_not_panic() {
+    async fn test_quoted_remove_prefix_operand_with_all_mark_candidates_keeps_glob_literal() {
         let candidate_chars: String = OPERAND_QUOTE_MARK_CANDIDATES.iter().collect();
-        let script = format!(r#"val="axxxb"; echo "${{val#"{}a*"}}""#, candidate_chars);
+        let script = format!(
+            r#"val="axxxb"; pat="a*"; echo "${{val#${{unset+{}}}"$pat"}}""#,
+            candidate_chars
+        );
         let result = run_script(&script).await;
         assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "axxxb");
     }
 
     #[test]
