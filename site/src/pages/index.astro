@@ -77,7 +77,35 @@ import {
             </div>
           </article>
         </div>
+      </div>
 
+      <aside class="atlas-panel atlas-signal-panel" aria-label="Runtime example">
+        <div class="atlas-signal-panel__intro">
+          <p>
+            The core API is just `Bash`, plus virtual FS and limits. No sidecar
+            process, no container bootstrap.
+          </p>
+        </div>
+        <div class="atlas-proof-code">
+          <div class="atlas-proof-code__header">
+            <span>Rust</span>
+            <span>In-process execution</span>
+          </div>
+          <Code code={heroSnippet} lang="rust" theme="github-dark" wrap={true} />
+        </div>
+        <div class="atlas-signal-list">
+          {
+            signals.map((item) => (
+              <article class="atlas-signal-list__item">
+                <h3>{item.title}</h3>
+                <p>{item.detail}</p>
+              </article>
+            ))
+          }
+        </div>
+      </aside>
+
+      <div class="atlas-hero-runtime">
         <div class="atlas-stats">
           {
             heroStats.map((stat) => (
@@ -113,32 +141,6 @@ import {
           <a href="/builtins" class="atlas-inline-link">See all {builtinCount} builtins</a>
         </article>
       </div>
-
-      <aside class="atlas-panel atlas-signal-panel" aria-label="Runtime example">
-        <div class="atlas-signal-panel__intro">
-          <p>
-            The core API is just `Bash`, plus virtual FS and limits. No sidecar
-            process, no container bootstrap.
-          </p>
-        </div>
-        <div class="atlas-proof-code">
-          <div class="atlas-proof-code__header">
-            <span>Rust</span>
-            <span>In-process execution</span>
-          </div>
-          <Code code={heroSnippet} lang="rust" theme="github-dark" wrap={true} />
-        </div>
-        <div class="atlas-signal-list">
-          {
-            signals.map((item) => (
-              <article class="atlas-signal-list__item">
-                <h3>{item.title}</h3>
-                <p>{item.detail}</p>
-              </article>
-            ))
-          }
-        </div>
-      </aside>
     </div>
   </section>
 
@@ -530,11 +532,18 @@ import {
     font-size: 0.82rem;
     text-align: right;
   }
+  .atlas-hero-runtime {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: minmax(220px, 17rem) minmax(0, 1fr);
+    gap: 1rem;
+    align-items: stretch;
+  }
   .atlas-stats {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: 1fr;
+    grid-auto-rows: 1fr;
     gap: 1rem;
-    margin-top: 0.4rem;
   }
   .atlas-stat,
   .atlas-panel {
@@ -870,6 +879,7 @@ import {
       max-width: 18ch;
     }
     .atlas-hero-guide { grid-template-columns: 1fr; }
+    .atlas-hero-runtime { grid-template-columns: 1fr; }
     .atlas-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .atlas-lang-row { grid-template-columns: 1fr; }
   }
