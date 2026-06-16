@@ -77,43 +77,6 @@ import {
             </div>
           </article>
         </div>
-
-        <div class="atlas-hero-runtime">
-          <div class="atlas-stats">
-            {
-              heroStats.map((stat) => (
-                <a
-                  href={stat.href}
-                  class="atlas-stat atlas-stat--link"
-                  target={stat.external ? "_blank" : undefined}
-                  rel={stat.external ? "noopener noreferrer" : undefined}
-                >
-                  <span class="atlas-stat__label">{stat.label}</span>
-                  <strong>{stat.value}</strong>
-                </a>
-              ))
-            }
-          </div>
-
-          <article class="atlas-panel atlas-builtins-panel">
-            <div class="atlas-builtins-panel__copy">
-              <span class="atlas-eyebrow">Runtime surface</span>
-              <h3>Browse the builtins that make the sandbox usable.</h3>
-              <p>
-                Text processing, files, archives, network, Python, TypeScript,
-                and shell control all live in-process.
-              </p>
-            </div>
-            <div class="atlas-chip-list">
-              {
-                builtinPreview.map((name) => (
-                  <span class="atlas-chip">{name}</span>
-                ))
-              }
-            </div>
-            <a href="/builtins" class="atlas-inline-link">See all {builtinCount} builtins</a>
-          </article>
-        </div>
       </div>
 
       <aside class="atlas-panel atlas-signal-panel" aria-label="Runtime example">
@@ -141,6 +104,43 @@ import {
           }
         </div>
       </aside>
+
+      <div class="atlas-hero-runtime">
+        <div class="atlas-stats">
+          {
+            heroStats.map((stat) => (
+              <a
+                href={stat.href}
+                class="atlas-stat atlas-stat--link"
+                target={stat.external ? "_blank" : undefined}
+                rel={stat.external ? "noopener noreferrer" : undefined}
+              >
+                <span class="atlas-stat__label">{stat.label}</span>
+                <strong>{stat.value}</strong>
+              </a>
+            ))
+          }
+        </div>
+
+        <article class="atlas-panel atlas-builtins-panel">
+          <div class="atlas-builtins-panel__copy">
+            <span class="atlas-eyebrow">Runtime surface</span>
+            <h3>Browse the builtins that make the sandbox usable.</h3>
+            <p>
+              Text processing, files, archives, network, Python, TypeScript,
+              and shell control all live in-process.
+            </p>
+          </div>
+          <div class="atlas-chip-list">
+            {
+              builtinPreview.map((name) => (
+                <span class="atlas-chip">{name}</span>
+              ))
+            }
+          </div>
+          <a href="/builtins" class="atlas-inline-link">See all {builtinCount} builtins</a>
+        </article>
+      </div>
     </div>
   </section>
 
@@ -533,10 +533,10 @@ import {
     text-align: right;
   }
   .atlas-hero-runtime {
+    grid-column: 1 / -1;
     display: grid;
-    grid-template-columns: minmax(0, 0.8fr) minmax(0, 2fr);
+    grid-template-columns: minmax(220px, 17rem) minmax(0, 1fr);
     gap: 1rem;
-    margin-top: 0.4rem;
     align-items: stretch;
   }
   .atlas-stats {
