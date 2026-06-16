@@ -26,9 +26,9 @@ import {
 // scrolling to stay readable.
 // Decision: bias the homepage toward product proof, source-backed claims, and
 // concrete next steps instead of generic positioning copy.
-// Decision: use a custom proof code card in the hero instead of syntax-token
-// highlighting because the default highlighted output reads as visual noise at
-// landing-page scale.
+// Decision: render the hero runtime snippet with the shared `<Code>` component
+// (github-dark syntax highlighting, wrap=true) so it stays readable without a
+// horizontal scrollbar and matches the code blocks lower on the page.
 ---
 
 <BaseLayout>
@@ -114,10 +114,8 @@ import {
         </article>
       </div>
 
-      <aside class="atlas-panel atlas-signal-panel">
+      <aside class="atlas-panel atlas-signal-panel" aria-label="Runtime example">
         <div class="atlas-signal-panel__intro">
-          <span class="atlas-eyebrow">Proof</span>
-          <h2>The core runtime, in context.</h2>
           <p>
             The core API is just `Bash`, plus virtual FS and limits. No sidecar
             process, no container bootstrap.
@@ -128,7 +126,7 @@ import {
             <span>Rust</span>
             <span>In-process execution</span>
           </div>
-          <pre><code>{heroSnippet}</code></pre>
+          <Code code={heroSnippet} lang="rust" theme="github-dark" wrap={true} />
         </div>
         <div class="atlas-signal-list">
           {
@@ -396,6 +394,9 @@ import {
     gap: 1.5rem;
     align-items: start;
   }
+  .atlas-hero__grid {
+    grid-template-columns: minmax(0, 1.2fr) minmax(380px, 1fr);
+  }
   .atlas-hero__copy {
     display: grid;
     gap: 1.1rem;
@@ -419,16 +420,11 @@ import {
     color: var(--color-obsidian);
   }
   .atlas-section-heading h2,
-  .atlas-open-source__panel h2,
-  .atlas-signal-panel h2 {
+  .atlas-open-source__panel h2 {
     font-size: clamp(2rem, 4.4vw, 3.2rem);
     line-height: 1.05;
     letter-spacing: -0.02em;
     color: var(--color-obsidian);
-  }
-  .atlas-signal-panel h2 {
-    font-size: clamp(1.6rem, 2.6vw, 2rem);
-    max-width: 18ch;
   }
   .atlas-lede,
   .atlas-section-heading p,
@@ -713,16 +709,6 @@ import {
     text-transform: uppercase;
     color: rgb(237 242 251 / 0.72);
   }
-  .atlas-proof-code pre {
-    margin: 0;
-    padding: 1rem;
-    overflow-x: auto;
-  }
-  .atlas-proof-code code {
-    font-size: 0.9rem;
-    line-height: 1.8;
-    white-space: pre;
-  }
   .atlas-signal-list { display: grid; gap: 0.9rem; }
   .atlas-signal-list__item {
     display: grid;
@@ -805,7 +791,8 @@ import {
     white-space: pre-wrap;
   }
   .atlas-lang-row :global(.astro-code),
-  .atlas-code-panel :global(.astro-code) {
+  .atlas-code-panel :global(.astro-code),
+  .atlas-proof-code :global(.astro-code) {
     margin: 0;
     padding: 1rem;
     border: 1px solid rgb(255 255 255 / 0.08);
@@ -816,7 +803,8 @@ import {
     overflow: hidden;
   }
   .atlas-lang-row :global(.astro-code code),
-  .atlas-code-panel :global(.astro-code code) {
+  .atlas-code-panel :global(.astro-code code),
+  .atlas-proof-code :global(.astro-code code) {
     display: block;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
