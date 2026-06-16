@@ -2,47 +2,37 @@
 
 ## [Unreleased]
 
-### Added
+## [0.11.0] - 2026-06-16
+
+### Highlights
 
 - **`cwd` and `env` construction options for the Node and Python bindings** —
-  callers can set the starting working directory and initial environment at
-  `Bash` construction time instead of paying for a leading `cd`/`export` prelude
+  callers can now set the starting working directory and initial environment
+  directly at `Bash` construction time, instead of paying for a leading
+  `cd`/`export` prelude on every run
   ([#2072](https://github.com/everruns/bashkit/pull/2072)).
-- **Generated builtin inventory** (`specs/status/builtins.json`) plus a
-  `limitations.md` negative spec and a `builtins-drift` workflow that fails on
-  divergence between the registry and the committed inventory
-  ([#2038](https://github.com/everruns/bashkit/pull/2038)).
 
-### Fixed
+### What's Changed
 
-- **Security advisories** — patched the bundled esbuild and PyO3 advisories
-  ([#2069](https://github.com/everruns/bashkit/pull/2069)).
-- **Resource caps** — bounded the JS async execute queue with pre-queue input
-  validation, capped Python external-function handlers to the remaining
-  `max_duration` budget, added IFS word-split field and byte caps to the
-  interpreter, and capped awk multi-subscript arrays
-  ([#2055](https://github.com/everruns/bashkit/pull/2055)).
-- **Parser** — context-aware escaping in quoted glob word ranges, quote-metadata
-  preservation for mixed quoted/unquoted words, and ANSI-C NUL sentinel
-  collision escaping ([#2053](https://github.com/everruns/bashkit/pull/2053)).
-- **Builtins** — `rg` positive globs/type includes no longer unhide hidden
-  directories, `paste` handles a trailing `-d` flag
-  ([#2057](https://github.com/everruns/bashkit/pull/2057)), `compgen` lists
-  builtins from the live registry instead of a hardcoded copy
-  ([#2040](https://github.com/everruns/bashkit/pull/2040)), recursive delete
-  preserves child whiteouts ([#2056](https://github.com/everruns/bashkit/pull/2056)),
-  and a missing input-redirect file is now non-fatal.
+* feat(site): span runtime surface across full hero width ([#2079](https://github.com/everruns/bashkit/pull/2079)) by @chaliy
+* Add GitHub sponsor username ([#2078](https://github.com/everruns/bashkit/pull/2078)) by @chaliy
+* chore: pre-release maintenance — deps update, vet refresh, threat-model & changelog sync ([#2077](https://github.com/everruns/bashkit/pull/2077)) by @chaliy
+* feat(site): simplify hero runtime snippet card ([#2075](https://github.com/everruns/bashkit/pull/2075)) by @chaliy
+* chore: set package author metadata across PyPI, npm, and crates.io ([#2073](https://github.com/everruns/bashkit/pull/2073)) by @chaliy
+* feat(bindings): expose cwd and env options to Node and Python ([#2072](https://github.com/everruns/bashkit/pull/2072)) by @chaliy
+* chore(deps): bump zeroize to 1.9.0 and napi to 3.9.2 ([#2071](https://github.com/everruns/bashkit/pull/2071)) by @chaliy
+* chore(ci): bump github-actions group (setup-uv, codecov, taiki-e) ([#2070](https://github.com/everruns/bashkit/pull/2070)) by @chaliy
+* fix(deps): patch esbuild and PyO3 security advisories ([#2069](https://github.com/everruns/bashkit/pull/2069)) by @chaliy
+* fix(paste): handle trailing -d flag ([#2057](https://github.com/everruns/bashkit/pull/2057)) by @chaliy
+* fix(fs): preserve recursive delete child whiteouts ([#2056](https://github.com/everruns/bashkit/pull/2056)) by @chaliy
+* fix(awk): cap multi-subscript arrays ([#2055](https://github.com/everruns/bashkit/pull/2055)) by @chaliy
+* fix(parser): escape ANSI-C NUL sentinel collisions ([#2053](https://github.com/everruns/bashkit/pull/2053)) by @chaliy
+* test(specs): back limitations.md stance rows with evidence tests ([#2051](https://github.com/everruns/bashkit/pull/2051)) by @chaliy
+* fix(compgen): list builtins from the live registry, not hardcoded copies ([#2040](https://github.com/everruns/bashkit/pull/2040)) by @chaliy
+* chore(specs): threat-model ledger — backfill 12 code-cited IDs, add drift lint, compress 21 KB ([#2039](https://github.com/everruns/bashkit/pull/2039)) by @chaliy
+* feat: generated builtin inventory, limitations negative spec, spec/agent-config compression ([#2038](https://github.com/everruns/bashkit/pull/2038)) by @chaliy
 
-### Changed
-
-- **Dependencies** — bumped `zeroize` to 1.9.0 and `napi` to 3.9.2
-  ([#2071](https://github.com/everruns/bashkit/pull/2071)); bumped the
-  github-actions group (setup-uv, codecov, taiki-e)
-  ([#2070](https://github.com/everruns/bashkit/pull/2070)).
-- **Specs** — threat-model ledger backfilled with 12 code-cited IDs plus a drift
-  lint ([#2039](https://github.com/everruns/bashkit/pull/2039)); `limitations.md`
-  stance rows are now backed by evidence tests
-  ([#2051](https://github.com/everruns/bashkit/pull/2051)).
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.10.0...v0.11.0
 
 ## [0.10.0] - 2026-06-11
 
