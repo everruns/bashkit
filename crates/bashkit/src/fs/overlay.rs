@@ -965,7 +965,10 @@ impl FileSystem for OverlayFs {
                         self.upper.mkdir(parent, true).await?;
                     }
                     self.upper.symlink(&target, &path).await?;
-                    self.hide_lower_file(&path, 0);
+                    // Symlinks contribute their target byte length toward usage
+                    // (TM-DOS-013), so deduct the real size, not 0, to keep
+                    // compute_usage accurate now that hides are de-duplicated.
+                    self.hide_lower_file(&path, stat.size);
                 }
             }
 
@@ -1710,6 +1713,32 @@ mod tests {
         assert!(
             result.is_err(),
             "write should fail: recursive delete must not double-deduct a CoW-hidden child"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cow_symlink_touch_deducts_hidden_lower_bytes() {
+        // THREAT[TM-DOS-013]: A lower symlink contributes its target byte
+        // length toward usage. Copying it up via set_modified_time must hide the
+        // lower entry with the real size so total_bytes is not double counted.
+        let lower = Arc::new(InMemoryFs::new());
+        lower
+            .symlink(Path::new("/some/target/path"), Path::new("/link"))
+            .await
+            .unwrap();
+
+        let overlay = OverlayFs::new(lower);
+        let before = overlay.usage();
+
+        overlay
+            .set_modified_time(Path::new("/link"), SystemTime::now())
+            .await
+            .unwrap();
+
+        let after = overlay.usage();
+        assert_eq!(
+            before.total_bytes, after.total_bytes,
+            "CoW touch of a lower symlink must not change total byte usage"
         );
     }
 
