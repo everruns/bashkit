@@ -176,6 +176,9 @@ pub struct OverlayFs {
     // Tracks lower-layer usage that is hidden by upper overrides or whiteouts.
     // Updated incrementally in async methods so compute_usage (sync) stays accurate.
     lower_hidden: RwLock<FsUsage>,
+    // THREAT[TM-DOS-038]: Hidden lower usage is keyed by path so recursive
+    // delete cannot deduct a copy-on-write-hidden child a second time.
+    lower_hidden_paths: RwLock<HashSet<PathBuf>>,
 }
 
 impl OverlayFs {
@@ -247,6 +250,7 @@ impl OverlayFs {
             whiteouts: RwLock::new(HashSet::new()),
             limits,
             lower_hidden: RwLock::new(FsUsage::default()),
+            lower_hidden_paths: RwLock::new(HashSet::new()),
         }
     }
 
@@ -298,16 +302,29 @@ impl OverlayFs {
     }
 
     /// Record a lower-layer file as hidden (overridden or whited out).
-    fn hide_lower_file(&self, size: u64) {
+    fn hide_lower_file(&self, path: &Path, size: u64) {
+        if !self.record_hidden_path(path) {
+            return;
+        }
         let mut h = self.lower_hidden.write().unwrap();
         h.total_bytes = h.total_bytes.saturating_add(size);
         h.file_count = h.file_count.saturating_add(1);
     }
 
     /// Record a lower-layer directory as hidden.
-    fn hide_lower_dir(&self) {
+    fn hide_lower_dir(&self, path: &Path) {
+        if !self.record_hidden_path(path) {
+            return;
+        }
         let mut h = self.lower_hidden.write().unwrap();
         h.dir_count = h.dir_count.saturating_add(1);
+    }
+
+    /// Returns true when this path was not already counted as hidden.
+    fn record_hidden_path(&self, path: &Path) -> bool {
+        let path = Self::normalize_path(path);
+        let mut hidden_paths = self.lower_hidden_paths.write().unwrap();
+        hidden_paths.insert(path)
     }
 
     /// Recursively enumerate lower-layer children and record them as hidden.
@@ -324,11 +341,11 @@ impl OverlayFs {
                         FileType::File | FileType::Symlink | FileType::Fifo
                             if !self.upper.exists(&child).await.unwrap_or(false) =>
                         {
-                            self.hide_lower_file(meta.size);
+                            self.hide_lower_file(&child, meta.size);
                             self.add_whiteout(&child);
                         }
                         FileType::Directory => {
-                            self.hide_lower_dir();
+                            self.hide_lower_dir(&child);
                             // THREAT[TM-DOS-038]: Materialize child whiteouts so
                             // recreating the parent does not reveal accounted children.
                             Box::pin(self.hide_lower_children_recursive(&child)).await;
@@ -521,8 +538,8 @@ impl FileSystem for OverlayFs {
             && let Ok(meta) = self.lower.stat(&path).await
         {
             match meta.file_type {
-                FileType::File => self.hide_lower_file(meta.size),
-                FileType::Directory => self.hide_lower_dir(),
+                FileType::File => self.hide_lower_file(&path, meta.size),
+                FileType::Directory => self.hide_lower_dir(&path),
                 _ => {}
             }
         }
@@ -574,7 +591,7 @@ impl FileSystem for OverlayFs {
             self.upper.write_file(&path, &combined).await?;
 
             // Lower file is now hidden by the upper copy
-            self.hide_lower_file(lower_meta.size);
+            self.hide_lower_file(&path, lower_meta.size);
             return Ok(());
         }
 
@@ -630,11 +647,11 @@ impl FileSystem for OverlayFs {
             if let Ok(meta) = self.lower.stat(&path).await {
                 match meta.file_type {
                     FileType::File | FileType::Symlink | FileType::Fifo if !in_upper => {
-                        self.hide_lower_file(meta.size)
+                        self.hide_lower_file(&path, meta.size)
                     }
                     FileType::Directory => {
                         if !in_upper {
-                            self.hide_lower_dir();
+                            self.hide_lower_dir(&path);
                         }
                         // THREAT[TM-DOS-038]: Recursive delete must track all
                         // lower children for accurate usage deduction.
@@ -887,13 +904,13 @@ impl FileSystem for OverlayFs {
                 }
 
                 self.upper.write_file(&path, &content).await?;
-                self.hide_lower_file(stat.size);
+                self.hide_lower_file(&path, stat.size);
             } else if stat.file_type == FileType::Directory {
                 // THREAT[TM-DOS-037]: Check directory limits before CoW mkdir
                 let dirs_to_create = self.count_missing_upper_dirs(&path, true).await?;
                 self.check_dir_limits(dirs_to_create)?;
                 self.upper.mkdir(&path, true).await?;
-                self.hide_lower_dir();
+                self.hide_lower_dir(&path);
             }
 
             return self.upper.chmod(&path, mode).await;
@@ -931,13 +948,13 @@ impl FileSystem for OverlayFs {
                         self.upper.mkdir(parent, true).await?;
                     }
                     self.upper.write_file(&path, &content).await?;
-                    self.hide_lower_file(stat.size);
+                    self.hide_lower_file(&path, stat.size);
                 }
                 FileType::Directory => {
                     let dirs_to_create = self.count_missing_upper_dirs(&path, true).await?;
                     self.check_dir_limits(dirs_to_create)?;
                     self.upper.mkdir(&path, true).await?;
-                    self.hide_lower_dir();
+                    self.hide_lower_dir(&path);
                 }
                 FileType::Symlink => {
                     let target = self.lower.read_link(&path).await?;
@@ -948,7 +965,10 @@ impl FileSystem for OverlayFs {
                         self.upper.mkdir(parent, true).await?;
                     }
                     self.upper.symlink(&target, &path).await?;
-                    self.hide_lower_file(0);
+                    // Symlinks contribute their target byte length toward usage
+                    // (TM-DOS-013), so deduct the real size, not 0, to keep
+                    // compute_usage accurate now that hides are de-duplicated.
+                    self.hide_lower_file(&path, stat.size);
                 }
             }
 
@@ -1658,6 +1678,67 @@ mod tests {
         assert!(
             overlay.read_file(Path::new("/dir/a")).await.is_err(),
             "lower child must not reappear after mkdir removes parent whiteout"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_recursive_delete_skips_cow_hidden_children_for_limits() {
+        let lower = Arc::new(InMemoryFs::new());
+        lower.mkdir(Path::new("/dir"), true).await.unwrap();
+        lower
+            .write_file(Path::new("/dir/a"), &[b'a'; 10])
+            .await
+            .unwrap();
+        lower
+            .write_file(Path::new("/dir/b"), &[b'b'; 20])
+            .await
+            .unwrap();
+        lower
+            .write_file(Path::new("/keep"), &[b'k'; 50])
+            .await
+            .unwrap();
+
+        let probe = OverlayFs::new(lower.clone());
+        let base = probe.usage();
+        let limits = FsLimits::new()
+            .max_total_bytes(base.total_bytes + 1)
+            .max_file_count(base.file_count + 10)
+            .max_dir_count(base.dir_count + 10);
+        let overlay = OverlayFs::with_limits(lower, limits);
+
+        overlay.write_file(Path::new("/dir/a"), b"x").await.unwrap();
+        overlay.remove(Path::new("/dir"), true).await.unwrap();
+
+        let result = overlay.write_file(Path::new("/new.txt"), &[b'n'; 40]).await;
+        assert!(
+            result.is_err(),
+            "write should fail: recursive delete must not double-deduct a CoW-hidden child"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cow_symlink_touch_deducts_hidden_lower_bytes() {
+        // THREAT[TM-DOS-013]: A lower symlink contributes its target byte
+        // length toward usage. Copying it up via set_modified_time must hide the
+        // lower entry with the real size so total_bytes is not double counted.
+        let lower = Arc::new(InMemoryFs::new());
+        lower
+            .symlink(Path::new("/some/target/path"), Path::new("/link"))
+            .await
+            .unwrap();
+
+        let overlay = OverlayFs::new(lower);
+        let before = overlay.usage();
+
+        overlay
+            .set_modified_time(Path::new("/link"), SystemTime::now())
+            .await
+            .unwrap();
+
+        let after = overlay.usage();
+        assert_eq!(
+            before.total_bytes, after.total_bytes,
+            "CoW touch of a lower symlink must not change total byte usage"
         );
     }
 
