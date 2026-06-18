@@ -55,7 +55,9 @@ fn parse_strings_args(
         } else if p.flag("-a") {
             // Default behavior, ignore
         } else if let Some(arg) = p.current() {
-            if let Some(rest) = arg.strip_prefix('-')
+            if arg == "--" {
+                p.advance();
+            } else if let Some(rest) = arg.strip_prefix('-')
                 && !rest.is_empty()
                 && rest.chars().all(|c| c.is_ascii_digit())
             {
@@ -309,6 +311,14 @@ mod tests {
         let result = run_strings_with_fs(&["-data.bin"], &[("/-data.bin", data)]).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "dash-file\n");
+    }
+
+    #[tokio::test]
+    async fn test_strings_double_dash_delimits_options() {
+        let data = b"after-delimiter\0";
+        let result = run_strings_with_fs(&["--", "/test.bin"], &[("/test.bin", data)]).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "after-delimiter\n");
     }
 
     #[tokio::test]
