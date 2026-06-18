@@ -395,16 +395,16 @@ mod tests {
         .unwrap();
 
         let unquoted = check_file_line_regex(
-            "file_line_regex:/data/employees.csv:^\"?Alice Chen\"?,\"?Engineering\"?,\"?120000\"?$",
+            r#"file_line_regex:/data/employees.csv:^(?:\"Alice Chen\"|Alice Chen),(?:\"Engineering\"|Engineering),(?:\"120000\"|120000)$"#,
             1.0,
-            "/data/employees.csv:^\"?Alice Chen\"?,\"?Engineering\"?,\"?120000\"?$",
+            r#"/data/employees.csv:^(?:\"Alice Chen\"|Alice Chen),(?:\"Engineering\"|Engineering),(?:\"120000\"|120000)$"#,
             &fs,
         )
         .await;
         let quoted = check_file_line_regex(
-            "file_line_regex:/data/employees.csv:^\"?Bob Park\"?,\"?Marketing\"?,\"?95000\"?$",
+            r#"file_line_regex:/data/employees.csv:^(?:\"Bob Park\"|Bob Park),(?:\"Marketing\"|Marketing),(?:\"95000\"|95000)$"#,
             1.0,
-            "/data/employees.csv:^\"?Bob Park\"?,\"?Marketing\"?,\"?95000\"?$",
+            r#"/data/employees.csv:^(?:\"Bob Park\"|Bob Park),(?:\"Marketing\"|Marketing),(?:\"95000\"|95000)$"#,
             &fs,
         )
         .await;
@@ -425,13 +425,46 @@ mod tests {
         .unwrap();
 
         let result = check_file_line_regex(
-            "file_line_regex:/data/employees.csv:^\"?Alice Chen\"?,\"?Engineering\"?,\"?120000\"?$",
+            r#"file_line_regex:/data/employees.csv:^(?:\"Alice Chen\"|Alice Chen),(?:\"Engineering\"|Engineering),(?:\"120000\"|120000)$"#,
             1.0,
-            "/data/employees.csv:^\"?Alice Chen\"?,\"?Engineering\"?,\"?120000\"?$",
+            r#"/data/employees.csv:^(?:\"Alice Chen\"|Alice Chen),(?:\"Engineering\"|Engineering),(?:\"120000\"|120000)$"#,
             &fs,
         )
         .await;
 
         assert!(!result.passed);
+    }
+
+    #[tokio::test]
+    async fn json_to_csv_export_regexes_reject_unbalanced_quotes() {
+        let fs = InMemoryFs::new();
+        fs.mkdir(Path::new("/data"), false).await.unwrap();
+        fs.write_file(
+            Path::new("/data/employees.csv"),
+            b"name,department,salary\n\"Alice Chen,Engineering,120000\nBob Park\",Marketing,95000\n\"Carol Wu,Engineering,115000\nDave Kim\",Sales,88000\n",
+        )
+        .await
+        .unwrap();
+
+        let task = include_str!("../data/eval-tasks.jsonl")
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .find(|task| task["id"] == "json_to_csv_export")
+            .unwrap();
+        let checks = task["expectations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|exp| {
+                exp["check"]
+                    .as_str()
+                    .filter(|check| check.starts_with("file_line_regex:/data/employees.csv:"))
+            });
+
+        for check in checks {
+            let value = check.strip_prefix("file_line_regex:").unwrap();
+            let result = check_file_line_regex(check, 1.0, value, &fs).await;
+            assert!(!result.passed, "malformed CSV matched check: {check}");
+        }
     }
 }
