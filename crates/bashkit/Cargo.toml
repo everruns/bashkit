@@ -17,9 +17,11 @@ readme = "../../README.md"
 # Async runtime
 tokio = { workspace = true }
 async-trait = { workspace = true }
-futures-core = { workspace = true }
+# futures-core / tower are only pulled in by the LLM `BashTool` wrapper
+# (and the `scripted_tool` layer on top of it). Optional, gated under `tool`.
+futures-core = { workspace = true, optional = true }
 futures-util = { workspace = true }
-tower = { workspace = true }
+tower = { workspace = true, optional = true }
 
 # Error handling
 thiserror = { workspace = true }
@@ -108,7 +110,13 @@ zapcode-core = { version = "1.5", optional = true }
 turso_core = { workspace = true, optional = true }
 
 [features]
-default = []
+default = ["tool"]
+# Enable the LLM-facing `BashTool` wrapper: the `Tool` trait, `ToolExecution`,
+# OpenAI tool-definition/JSON-schema helpers, and the `tower::Service` bridge.
+# On by default. Disable with `--no-default-features` to compile just the
+# embeddable `Bash` interpreter and drop the `tower` / `futures-core` deps.
+# Usage: cargo build --no-default-features [--features <others>]
+tool = ["dep:tower", "dep:futures-core"]
 # Enable jq builtin via embedded jaq interpreter
 # Usage: cargo build --features jq
 jq = ["dep:jaq-core", "dep:jaq-std", "dep:jaq-json"]
@@ -130,8 +138,9 @@ git = []
 # Usage: cargo build --features ssh
 ssh = ["russh"]
 # Enable ScriptedTool: compose ToolDef+callback pairs into a single Tool
+# Builds on the `BashTool` contract, so it pulls in the `tool` feature.
 # Usage: cargo build --features scripted_tool
-scripted_tool = []
+scripted_tool = ["tool"]
 # Enable python/python3 builtins via embedded Monty interpreter
 # Monty is a git dep (not yet on crates.io) — feature unavailable from registry
 python = ["dep:monty"]
@@ -209,6 +218,10 @@ required-features = ["git"]
 [[example]]
 name = "ssh_supabase"
 required-features = ["ssh"]
+
+[[example]]
+name = "show_tool_output"
+required-features = ["tool"]
 
 [[example]]
 name = "scripted_tool"

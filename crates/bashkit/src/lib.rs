@@ -428,7 +428,9 @@ mod snapshot;
 /// invariants enforced (TM-INF-013, TM-INF-016, TM-INF-022).
 #[doc(hidden)]
 pub mod testing;
-/// Tool contract for LLM integration
+/// Tool contract for LLM integration.
+/// Requires the `tool` feature (enabled by default).
+#[cfg(feature = "tool")]
 pub mod tool;
 /// Reusable tool primitives: ToolDef, ToolArgs, ToolImpl, exec types.
 #[cfg(feature = "scripted_tool")]
@@ -463,7 +465,9 @@ pub use limits::{
 };
 pub use network::NetworkAllowlist;
 pub use snapshot::{Snapshot, SnapshotOptions};
+#[cfg(feature = "tool")]
 pub use tool::BashToolBuilder as ToolBuilder;
+#[cfg(feature = "tool")]
 pub use tool::{
     BashTool, BashToolBuilder, Tool, ToolError, ToolExecution, ToolImage, ToolOutput,
     ToolOutputChunk, ToolOutputMetadata, ToolRequest, ToolResponse, ToolService, ToolStatus,
