@@ -294,11 +294,16 @@ impl Builtin for Read {
                 continue;
             }
             let value = if i == var_names.len() - 1 {
-                // Bash gives the final variable the unsplit remaining input.
-                // Preserve original separators instead of reconstructing from IFS.
+                // Bash gives the final variable the unsplit remaining input,
+                // then strips trailing IFS whitespace. Preserve original
+                // separators without keeping whitespace Bash trims.
                 words
                     .get(i)
-                    .map(|field| line[field.start..].to_string())
+                    .map(|field| {
+                        line[field.start..]
+                            .trim_end_matches(|ch| ifs.contains(ch) && " \t\n".contains(ch))
+                            .to_string()
+                    })
                     .unwrap_or_default()
             } else if i < words.len() {
                 words[i].text.to_string()
@@ -679,6 +684,48 @@ mod tests {
         let vars = extract_vars(&result);
         assert_eq!(vars.get("A").unwrap(), "1");
         assert_eq!(vars.get("B").unwrap(), "2:3");
+    }
+
+    #[tokio::test]
+    async fn read_last_var_trims_trailing_ifs_whitespace() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let mut env = HashMap::new();
+        env.insert("IFS".to_string(), " ".to_string());
+        let args = vec!["A".to_string(), "B".to_string()];
+        let ctx = Context::new_for_test(
+            &args,
+            &env,
+            &mut variables,
+            &mut cwd,
+            fs.clone(),
+            Some("a   b  c  "),
+        );
+        let result = Read.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        let vars = extract_vars(&result);
+        assert_eq!(vars.get("A").unwrap(), "a");
+        assert_eq!(vars.get("B").unwrap(), "b  c");
+    }
+
+    #[tokio::test]
+    async fn read_last_var_trims_only_trailing_ifs_whitespace() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let mut env = HashMap::new();
+        env.insert("IFS".to_string(), ",:".to_string());
+        let args = vec!["A".to_string(), "B".to_string()];
+        let ctx = Context::new_for_test(
+            &args,
+            &env,
+            &mut variables,
+            &mut cwd,
+            fs.clone(),
+            Some("1,2:3  "),
+        );
+        let result = Read.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        let vars = extract_vars(&result);
+        assert_eq!(vars.get("A").unwrap(), "1");
+        assert_eq!(vars.get("B").unwrap(), "2:3  ");
     }
 
     #[tokio::test]

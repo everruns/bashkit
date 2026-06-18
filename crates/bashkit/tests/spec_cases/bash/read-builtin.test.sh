@@ -149,3 +149,17 @@ IFS=",:"; read -r a b <<< "1,2:3"; echo "$a|$b"
 ### expect
 1|2:3
 ### end
+
+### read_last_var_trims_trailing_ifs_whitespace
+# Last read variable preserves middle separators but strips trailing IFS whitespace
+IFS=" "; read -r a b <<< "a   b  c  "; printf 'a=<%s> b=<%s> len=%d\n' "$a" "$b" "${#b}"
+### expect
+a=<a> b=<b  c> len=4
+### end
+
+### read_last_var_keeps_trailing_non_ifs_whitespace
+# Trailing spaces remain when they are not IFS characters
+IFS=",:"; read -r a b <<< "1,2:3  "; printf 'a=<%s> b=<%s> len=%d\n' "$a" "$b" "${#b}"
+### expect
+a=<1> b=<2:3  > len=5
+### end
