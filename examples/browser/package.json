@@ -15,7 +15,7 @@
     "@napi-rs/wasm-runtime": "^1.1.1"
   },
   "devDependencies": {
-    "vite": "^6.4.2"
+    "vite": "^6.4.3"
   },
   "pnpm": {
     "overrides": {
