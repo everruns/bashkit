@@ -18,11 +18,11 @@ ToolBuilder (config) -> Tool (metadata) -> ToolExecution (single-use runtime)
 
 The entire tool layer (`tool` module: `Tool` trait, `BashTool*`,
 `ToolExecution`, `ToolService`, schema/OpenAI helpers) is gated behind the
-`tool` feature, which is **on by default**. Building with
+`bash_tool` feature, which is **on by default**. Building with
 `--no-default-features` drops the module and its exclusive dependencies
 (`tower`, `futures-core`), leaving just the embeddable `Bash` interpreter.
 
-- `scripted_tool` builds on this layer and so enables `tool`.
+- `scripted_tool` builds on this layer and so enables `bash_tool`.
 - Consumers that only drive `Bash` directly (e.g. `bashkit-cli`) set
   `default-features = false` to avoid pulling in the tool dependencies.
 

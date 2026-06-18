@@ -110,13 +110,13 @@ zapcode-core = { version = "1.5", optional = true }
 turso_core = { workspace = true, optional = true }
 
 [features]
-default = ["tool"]
+default = ["bash_tool"]
 # Enable the LLM-facing `BashTool` wrapper: the `Tool` trait, `ToolExecution`,
 # OpenAI tool-definition/JSON-schema helpers, and the `tower::Service` bridge.
 # On by default. Disable with `--no-default-features` to compile just the
 # embeddable `Bash` interpreter and drop the `tower` / `futures-core` deps.
 # Usage: cargo build --no-default-features [--features <others>]
-tool = ["dep:tower", "dep:futures-core"]
+bash_tool = ["dep:tower", "dep:futures-core"]
 # Enable jq builtin via embedded jaq interpreter
 # Usage: cargo build --features jq
 jq = ["dep:jaq-core", "dep:jaq-std", "dep:jaq-json"]
@@ -138,9 +138,9 @@ git = []
 # Usage: cargo build --features ssh
 ssh = ["russh"]
 # Enable ScriptedTool: compose ToolDef+callback pairs into a single Tool
-# Builds on the `BashTool` contract, so it pulls in the `tool` feature.
+# Builds on the `BashTool` contract, so it pulls in the `bash_tool` feature.
 # Usage: cargo build --features scripted_tool
-scripted_tool = ["tool"]
+scripted_tool = ["bash_tool"]
 # Enable python/python3 builtins via embedded Monty interpreter
 # Monty is a git dep (not yet on crates.io) — feature unavailable from registry
 python = ["dep:monty"]
@@ -221,7 +221,7 @@ required-features = ["ssh"]
 
 [[example]]
 name = "show_tool_output"
-required-features = ["tool"]
+required-features = ["bash_tool"]
 
 [[example]]
 name = "scripted_tool"
