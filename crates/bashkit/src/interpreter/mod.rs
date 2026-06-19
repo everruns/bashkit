@@ -590,8 +590,6 @@ pub(crate) fn is_internal_variable(name: &str) -> bool {
         || name.starts_with("_LOWER_")
         || name.starts_with("_INTEGER_")
         || name.starts_with("_ARRAY_READ_")
-        || name.starts_with("_BG_EXIT_")
-        || name.starts_with("_LAST_BG_")
         || name.starts_with("_DIRSTACK_")
         || name == "_SHIFT_COUNT"
         || name == "_SET_POSITIONAL"
@@ -1002,6 +1000,7 @@ struct SubshellSnapshot {
     exec_fd_table: HashMap<i32, FdTarget>,
     random_state: u32,
     getopts_char_idx: usize,
+    last_bg_pid: Option<String>,
 }
 
 /// Interpreter state.
@@ -1071,6 +1070,10 @@ pub struct Interpreter {
     /// `execute_getopts`; `0` means "at the start of the next option group".
     /// Previously stored in the user variable namespace as `_OPTCHAR_IDX`.
     getopts_char_idx: usize,
+    /// Sandboxed PID/job id of the most recent background command, surfaced as
+    /// `$!`. Interpreter-internal state (not a host PID); subshell-isolated like
+    /// any other shell state. Previously stored as the `_LAST_BG_PID` variable.
+    last_bg_pid: Option<String>,
     /// Optional callback for streaming output chunks during execution.
     /// When set, output is emitted incrementally via this callback in addition
     /// to being accumulated in the returned ExecResult.
@@ -1527,6 +1530,7 @@ impl Interpreter {
             ssh_client: None,
             pipeline_stdin: None,
             getopts_char_idx: 0,
+            last_bg_pid: None,
             output_callback: None,
             execution_extensions: Arc::new(StdMutex::new(Arc::new(
                 builtins::ExecutionExtensions::new(),
@@ -3948,8 +3952,7 @@ impl Interpreter {
             .insert(format!("{}_PID", name), virtual_pid.to_string());
 
         // Also set $! (last background PID)
-        self.vars_mut()
-            .insert("_LAST_BG_PID".to_string(), virtual_pid.to_string());
+        self.last_bg_pid = Some(virtual_pid.to_string());
 
         // Coproc itself returns success with empty output (stdout was captured)
         Ok(ExecResult::ok(String::new()))
@@ -4686,14 +4689,11 @@ impl Interpreter {
         let job_result = ExecResult::with_code(String::new(), exit_code);
         let handle = tokio::spawn(async move { job_result });
         let job_id = self.jobs.lock().await.spawn(handle);
-        self.vars_mut()
-            .insert("_LAST_BG_PID".to_string(), job_id.to_string());
+        self.last_bg_pid = Some(job_id.to_string());
 
-        // Background commands always return exit code 0 to the parent
+        // Background commands always return exit code 0 to the parent.
+        // The real exit code lives in the job table for `wait` to read.
         self.last_exit_code = 0;
-        // But store the real exit code for $? after wait
-        self.vars_mut()
-            .insert("_BG_EXIT_CODE".to_string(), exit_code.to_string());
         Ok(())
     }
 
@@ -8215,6 +8215,7 @@ impl Interpreter {
             exec_fd_table: self.exec_fd_table.clone(),
             random_state: self.random_state.load(Ordering::Relaxed),
             getopts_char_idx: self.getopts_char_idx,
+            last_bg_pid: self.last_bg_pid.clone(),
         }
     }
 
@@ -8227,6 +8228,7 @@ impl Interpreter {
         self.random_state
             .store(snap.random_state, Ordering::Relaxed);
         self.getopts_char_idx = snap.getopts_char_idx;
+        self.last_bg_pid = snap.last_bg_pid;
     }
 
     fn execute_cmd_subst<'a>(
@@ -8912,7 +8914,7 @@ impl Interpreter {
                 // $! - PID of most recent background command
                 // In Bashkit's virtual environment, background jobs run synchronously
                 // Return empty string or last job ID placeholder
-                if let Some(last_bg_pid) = self.scoped.variables.get("_LAST_BG_PID") {
+                if let Some(last_bg_pid) = &self.last_bg_pid {
                     return last_bg_pid.clone();
                 }
                 return String::new();
@@ -11963,8 +11965,6 @@ cat /tmp/test_fd_exec_public.txt"#,
             "_ARRAY_READ_a",
             "_SHIFT_COUNT",
             "_SET_POSITIONAL",
-            "_BG_EXIT_CODE",
-            "_LAST_BG_PID",
             "_DIRSTACK_SIZE",
             "_DIRSTACK_0",
             "SHOPT_e",
