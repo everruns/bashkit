@@ -448,10 +448,11 @@ mod tests {
 
         let task = include_str!("../data/eval-tasks.jsonl")
             .lines()
+            .filter(|line| !line.trim().is_empty())
             .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
             .find(|task| task["id"] == "json_to_csv_export")
             .unwrap();
-        let checks = task["expectations"]
+        let mut checks = task["expectations"]
             .as_array()
             .unwrap()
             .iter()
@@ -459,7 +460,13 @@ mod tests {
                 exp["check"]
                     .as_str()
                     .filter(|check| check.starts_with("file_line_regex:/data/employees.csv:"))
-            });
+            })
+            .peekable();
+
+        assert!(
+            checks.peek().is_some(),
+            "expected at least one file_line_regex check; task schema may have changed"
+        );
 
         for check in checks {
             let value = check.strip_prefix("file_line_regex:").unwrap();
