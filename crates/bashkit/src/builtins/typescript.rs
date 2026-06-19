@@ -23,16 +23,14 @@ use std::sync::Arc;
 use std::time::Duration;
 use zapcode_core::{ResourceLimits, RunResult, Value, VmState, ZapcodeRun};
 
-use super::{Builtin, Context, ExecutionDeadline, Extension, resolve_path};
+use super::{Builtin, Context, ExecutionDeadline, Extension, RuntimeLimits, resolve_path};
 use crate::error::Result;
 use crate::fs::FileSystem;
 use crate::interpreter::ExecResult;
 
-/// Default resource limits for virtual TypeScript execution.
-const DEFAULT_MAX_DURATION: Duration = Duration::from_secs(30);
-const DEFAULT_MAX_MEMORY: usize = 64 * 1024 * 1024; // 64 MB
+/// TypeScript's default call-stack-depth cap. The other VM limits (duration,
+/// memory, allocations) default via [`RuntimeLimits::default`].
 const DEFAULT_MAX_STACK_DEPTH: usize = 512;
-const DEFAULT_MAX_ALLOCATIONS: usize = 1_000_000;
 
 /// Resource limits for the embedded TypeScript (ZapCode) interpreter.
 ///
@@ -52,28 +50,26 @@ const DEFAULT_MAX_ALLOCATIONS: usize = 1_000_000;
 ///     .max_duration(Duration::from_secs(5))
 ///     .max_memory(16 * 1024 * 1024);
 ///
-/// assert_eq!(limits.max_duration, Duration::from_secs(5));
-/// assert_eq!(limits.max_memory, 16 * 1024 * 1024);
+/// assert_eq!(limits.common.max_duration, Duration::from_secs(5));
+/// assert_eq!(limits.common.max_memory, 16 * 1024 * 1024);
 /// ```
+/// The individual limit axes live on [`common`](Self::common) (a shared
+/// [`RuntimeLimits`]); read them as e.g. `limits.common.max_memory`. The fluent
+/// setters below configure them directly.
 #[derive(Debug, Clone)]
 pub struct TypeScriptLimits {
-    /// Maximum execution time (default: 30s).
-    pub max_duration: Duration,
-    /// Maximum memory in bytes (default: 64 MB).
-    pub max_memory: usize,
-    /// Maximum call stack depth (default: 512).
-    pub max_stack_depth: usize,
-    /// Maximum heap allocations (default: 1,000,000).
-    pub max_allocations: usize,
+    /// Shared VM resource limits (duration, memory, allocations, call depth).
+    pub common: RuntimeLimits,
 }
 
 impl Default for TypeScriptLimits {
     fn default() -> Self {
         Self {
-            max_duration: DEFAULT_MAX_DURATION,
-            max_memory: DEFAULT_MAX_MEMORY,
-            max_stack_depth: DEFAULT_MAX_STACK_DEPTH,
-            max_allocations: DEFAULT_MAX_ALLOCATIONS,
+            common: RuntimeLimits {
+                // TypeScript defaults to a call-stack depth of 512.
+                max_call_depth: DEFAULT_MAX_STACK_DEPTH,
+                ..RuntimeLimits::default()
+            },
         }
     }
 }
@@ -82,38 +78,38 @@ impl TypeScriptLimits {
     /// Set max execution duration.
     #[must_use]
     pub fn max_duration(mut self, d: Duration) -> Self {
-        self.max_duration = d;
+        self.common.max_duration = d;
         self
     }
 
     /// Set max memory in bytes.
     #[must_use]
     pub fn max_memory(mut self, bytes: usize) -> Self {
-        self.max_memory = bytes;
+        self.common.max_memory = bytes;
         self
     }
 
     /// Set max call stack depth.
     #[must_use]
     pub fn max_stack_depth(mut self, depth: usize) -> Self {
-        self.max_stack_depth = depth;
+        self.common.max_call_depth = depth;
         self
     }
 
     /// Set max heap allocations.
     #[must_use]
     pub fn max_allocations(mut self, n: usize) -> Self {
-        self.max_allocations = n;
+        self.common.max_allocations = n;
         self
     }
 
     /// Convert to ZapCode's `ResourceLimits`.
     fn to_zapcode_limits(&self) -> ResourceLimits {
         ResourceLimits {
-            memory_limit_bytes: self.max_memory,
-            time_limit_ms: self.max_duration.as_millis() as u64,
-            max_stack_depth: self.max_stack_depth,
-            max_allocations: self.max_allocations,
+            memory_limit_bytes: self.common.max_memory,
+            time_limit_ms: self.common.max_duration.as_millis() as u64,
+            max_stack_depth: self.common.max_call_depth,
+            max_allocations: self.common.max_allocations,
         }
     }
 }
@@ -188,7 +184,7 @@ const VFS_FUNCTIONS: &[&str] = &[
 ///     .limits(TypeScriptLimits::default().max_duration(Duration::from_secs(5)))
 ///     .compat_aliases(false)
 ///     .unsupported_mode_hint(false);
-/// assert_eq!(config.limits.max_duration, Duration::from_secs(5));
+/// assert_eq!(config.limits.common.max_duration, Duration::from_secs(5));
 /// assert!(!config.enable_compat_aliases);
 /// assert!(!config.enable_unsupported_mode_hint);
 /// ```
@@ -402,7 +398,7 @@ impl TypeScript {
     fn effective_limits(&self, deadline: Option<&ExecutionDeadline>) -> TypeScriptLimits {
         let mut limits = self.limits.clone();
         if let Some(deadline) = deadline {
-            limits.max_duration = limits.max_duration.min(deadline.remaining());
+            limits.common.max_duration = limits.common.max_duration.min(deadline.remaining());
         }
         limits
     }
@@ -1238,10 +1234,10 @@ mod tests {
     #[test]
     fn test_limits_default() {
         let limits = TypeScriptLimits::default();
-        assert_eq!(limits.max_duration, Duration::from_secs(30));
-        assert_eq!(limits.max_memory, 64 * 1024 * 1024);
-        assert_eq!(limits.max_stack_depth, 512);
-        assert_eq!(limits.max_allocations, 1_000_000);
+        assert_eq!(limits.common.max_duration, Duration::from_secs(30));
+        assert_eq!(limits.common.max_memory, 64 * 1024 * 1024);
+        assert_eq!(limits.common.max_call_depth, 512);
+        assert_eq!(limits.common.max_allocations, 1_000_000);
     }
 
     #[test]
@@ -1251,10 +1247,10 @@ mod tests {
             .max_memory(1024)
             .max_stack_depth(100)
             .max_allocations(500);
-        assert_eq!(limits.max_duration, Duration::from_secs(5));
-        assert_eq!(limits.max_memory, 1024);
-        assert_eq!(limits.max_stack_depth, 100);
-        assert_eq!(limits.max_allocations, 500);
+        assert_eq!(limits.common.max_duration, Duration::from_secs(5));
+        assert_eq!(limits.common.max_memory, 1024);
+        assert_eq!(limits.common.max_call_depth, 100);
+        assert_eq!(limits.common.max_allocations, 500);
     }
 
     #[test]
@@ -1282,7 +1278,7 @@ mod tests {
             .limits(TypeScriptLimits::default().max_duration(Duration::from_secs(5)));
         assert!(!config.enable_compat_aliases);
         assert!(!config.enable_unsupported_mode_hint);
-        assert_eq!(config.limits.max_duration, Duration::from_secs(5));
+        assert_eq!(config.limits.common.max_duration, Duration::from_secs(5));
     }
 
     // --- Unsupported mode hint tests ---

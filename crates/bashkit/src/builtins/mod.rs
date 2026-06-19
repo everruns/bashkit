@@ -122,6 +122,9 @@ pub(crate) mod git;
 
 pub(crate) mod ssh;
 
+#[cfg(any(feature = "python", feature = "typescript"))]
+mod runtime_limits;
+
 #[cfg(feature = "python")]
 mod python;
 
@@ -224,6 +227,9 @@ pub use git::Git;
 
 #[cfg(feature = "ssh")]
 pub use ssh::{Scp, Sftp, Ssh};
+
+#[cfg(any(feature = "python", feature = "typescript"))]
+pub use runtime_limits::RuntimeLimits;
 
 #[cfg(feature = "python")]
 pub(crate) use python::PythonInprocessOptIn;
