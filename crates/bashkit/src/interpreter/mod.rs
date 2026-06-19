@@ -720,6 +720,10 @@ pub struct ShellState {
     pub cwd: PathBuf,
     /// Last exit code
     pub last_exit_code: i32,
+    /// PID/job id of the most recent background command, surfaced as `$!`.
+    /// `Option` so older snapshots without the field deserialize cleanly.
+    #[serde(default)]
+    pub last_bg_pid: Option<String>,
     /// Defined shell functions
     #[serde(
         default,
@@ -2074,6 +2078,7 @@ impl Interpreter {
             assoc_arrays: (*self.scoped.assoc_arrays).clone(),
             cwd: self.cwd.clone(),
             last_exit_code: self.last_exit_code,
+            last_bg_pid: self.last_bg_pid.clone(),
             functions: if options.include_functions {
                 (*self.scoped.functions).clone()
             } else {
@@ -2121,6 +2126,7 @@ impl Interpreter {
         self.scoped.assoc_arrays = Arc::new(state.assoc_arrays.clone());
         self.cwd = state.cwd.clone();
         self.last_exit_code = state.last_exit_code;
+        self.last_bg_pid = state.last_bg_pid.clone();
         // THREAT[TM-DOS-061]: Re-parse and budget-check restored functions so
         // snapshots cannot bypass parser/memory limits via serialized AST.
         let mut restored_functions = HashMap::new();
@@ -12019,6 +12025,24 @@ cat /tmp/test_fd_exec_public.txt"#,
     }
 
     #[tokio::test]
+    async fn test_shell_state_roundtrips_last_bg_pid() {
+        let mut interp = Interpreter::new(Arc::new(InMemoryFs::new()));
+        let ast = Parser::new("true &").parse().unwrap();
+        interp.execute(&ast).await.unwrap();
+        let bang = interp.last_bg_pid.clone();
+        assert!(bang.is_some(), "$! should be set after backgrounding");
+
+        let state = interp.shell_state();
+        assert_eq!(state.last_bg_pid, bang);
+
+        let mut restored = Interpreter::new(Arc::new(InMemoryFs::new()));
+        restored.restore_shell_state(&state);
+        let echo = Parser::new("echo $!").parse().unwrap();
+        let out = restored.execute(&echo).await.unwrap();
+        assert_eq!(out.stdout.trim(), bang.unwrap());
+    }
+
+    #[tokio::test]
     async fn test_restore_shell_state_migrates_legacy_nameref_targets() {
         let state = ShellState {
             env: HashMap::new(),
@@ -12033,6 +12057,7 @@ cat /tmp/test_fd_exec_public.txt"#,
             assoc_arrays: HashMap::new(),
             cwd: PathBuf::from("/"),
             last_exit_code: 0,
+            last_bg_pid: None,
             functions: HashMap::new(),
             aliases: HashMap::new(),
             traps: HashMap::new(),
@@ -12070,6 +12095,7 @@ cat /tmp/test_fd_exec_public.txt"#,
             assoc_arrays: HashMap::new(),
             cwd: PathBuf::from("/"),
             last_exit_code: 0,
+            last_bg_pid: None,
             functions: HashMap::new(),
             aliases: HashMap::new(),
             traps: HashMap::new(),
