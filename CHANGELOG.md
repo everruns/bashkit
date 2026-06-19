@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Breaking
+
+- **`PythonLimits` / `TypeScriptLimits` fields moved under a shared `common: RuntimeLimits`.**
+  The two embedded-VM limit types now share a `RuntimeLimits` core (duration,
+  memory, allocations, call depth). The fluent builder API is unchanged
+  (`.max_duration()`, `.max_memory()`, `.max_recursion()` / `.max_stack_depth()`,
+  `default()`), but code that read the `pub max_*` fields directly must now go
+  through `.common` (e.g. `limits.common.max_memory`). SQLite is unaffected.
+
 ## [0.11.0] - 2026-06-16
 
 ### Highlights

@@ -53,6 +53,9 @@ const DEFAULT_MAX_STACK_DEPTH: usize = 512;
 /// assert_eq!(limits.common.max_duration, Duration::from_secs(5));
 /// assert_eq!(limits.common.max_memory, 16 * 1024 * 1024);
 /// ```
+/// The individual limit axes live on [`common`](Self::common) (a shared
+/// [`RuntimeLimits`]); read them as e.g. `limits.common.max_memory`. The fluent
+/// setters below configure them directly.
 #[derive(Debug, Clone)]
 pub struct TypeScriptLimits {
     /// Shared VM resource limits (duration, memory, allocations, call depth).

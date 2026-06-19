@@ -92,6 +92,9 @@ fn python_inprocess_enabled(ctx: &Context<'_>) -> bool {
 ///
 /// let bash = Bash::builder().python_with_limits(limits).build();
 /// ```
+/// The individual limit axes live on [`common`](Self::common) (a shared
+/// [`RuntimeLimits`]); read them as e.g. `limits.common.max_memory`. The fluent
+/// setters below configure them directly.
 #[derive(Debug, Clone)]
 pub struct PythonLimits {
     /// Shared VM resource limits (duration, memory, allocations, call depth).
