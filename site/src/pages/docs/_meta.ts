@@ -25,6 +25,16 @@ export const DOC_META: DocMeta[] = [
     section: "Getting started",
   },
   {
+    slug: "embedding",
+    title: "Embedding",
+    summary: "Run Bashkit as a library in Rust, Python, or TypeScript.",
+    seoTitle: "Embed Bashkit as a library in Rust, Python, TypeScript",
+    seoDescription:
+      "Embed the Bashkit sandbox as a library in Rust, Python, or TypeScript: run scripts in-process, persist shell state, set resource limits, and allowlist HTTP.",
+    section: "Getting started",
+    editPath: "docs/embedding.md",
+  },
+  {
     slug: "security",
     title: "Security",
     summary: "Sandbox boundaries, threat model, and what scripts cannot do.",
