@@ -590,7 +590,6 @@ pub(crate) fn is_internal_variable(name: &str) -> bool {
         || name.starts_with("_LAST_BG_")
         || name.starts_with("_DIRSTACK_")
         || name.starts_with("_OPTCHAR_")
-        || name == "_EVAL_CMD"
         || name == "_SHIFT_COUNT"
         || name == "_SET_POSITIONAL"
 }
@@ -15267,7 +15266,6 @@ cat /tmp/test_fd_exec_public.txt"#,
             "_LOWER_y",
             "_INTEGER_n",
             "_ARRAY_READ_a",
-            "_EVAL_CMD",
             "_SHIFT_COUNT",
             "_SET_POSITIONAL",
             "_BG_EXIT_CODE",

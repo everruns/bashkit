@@ -376,36 +376,30 @@ impl Builtin for Times {
     }
 }
 
-/// eval builtin - POSIX special built-in to construct and execute commands.
+/// eval builtin stub — real execution is in `Interpreter::execute_eval`.
 ///
-/// Concatenates arguments with spaces, then parses and executes the result.
-/// This enables dynamic command construction.
+/// `eval` is a POSIX special builtin: it concatenates its arguments and then
+/// parses and executes the result in the current shell context. That requires
+/// the interpreter (parsing, execution, redirects), so the interpreter
+/// intercepts `eval` before builtin dispatch (see `Interpreter::execute_eval`).
+/// This stub exists only so the builtin name is registered (e.g. for
+/// `type eval` lookups). It should never actually execute.
 ///
-/// Example:
-/// ```bash
-/// cmd="echo hello"
-/// eval $cmd  # prints "hello"
-/// ```
-///
-/// Note: eval stores the command in _EVAL_CMD for the interpreter to execute.
-/// The interpreter handles the actual parsing and execution.
+/// Historically this stub passed the command to the interpreter through a
+/// stringly-typed `_EVAL_CMD` shell variable. That channel was removed: the
+/// signal lived in the user-visible variable namespace and so had to be
+/// guarded against injection. The interpreter now owns `eval` end to end.
 pub struct Eval;
 
 #[async_trait]
 impl Builtin for Eval {
-    async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        if ctx.args.is_empty() {
-            return Ok(ExecResult::ok(String::new()));
-        }
-
-        // Concatenate all arguments with spaces
-        let cmd = ctx.args.join(" ");
-
-        // Store for interpreter to execute
-        // The interpreter will parse and execute this command
-        ctx.variables.insert("_EVAL_CMD".to_string(), cmd);
-
-        Ok(ExecResult::ok(String::new()))
+    async fn execute(&self, _ctx: Context<'_>) -> Result<ExecResult> {
+        // Unreachable: interpreter intercepts eval before builtin dispatch.
+        // If somehow reached, return error so it's obvious.
+        Ok(ExecResult::err(
+            "eval: internal error: should be handled by interpreter",
+            1,
+        ))
     }
 }
 

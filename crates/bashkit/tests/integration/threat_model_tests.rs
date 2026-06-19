@@ -403,11 +403,41 @@ mod injection_attacks {
     async fn threat_eval_is_sandboxed() {
         let mut bash = Bash::new();
 
-        // eval is now implemented - returns success
+        // eval is executed by the interpreter (Interpreter::execute_eval), not the
+        // Eval builtin stub, and in virtual mode can only run builtins.
         let result = bash.exec("eval echo test").await.unwrap();
         assert_eq!(result.exit_code, 0);
-        // Note: current impl stores command in _EVAL_CMD but doesn't execute it
-        // Even if it did execute, it can only run builtins
+        assert!(
+            result.stdout.contains("test"),
+            "eval should parse and execute its argument: {:?}",
+            result.stdout
+        );
+    }
+
+    /// Regression: the `_EVAL_CMD` magic-variable channel was removed. eval no
+    /// longer routes its command through a user-visible shell variable, so
+    /// `_EVAL_CMD` is now an ordinary variable with no special meaning and
+    /// setting it has no effect on eval.
+    #[tokio::test]
+    async fn threat_eval_cmd_channel_removed() {
+        let mut bash = Bash::new();
+
+        // _EVAL_CMD is no longer reserved: a user can assign it like any var.
+        let result = bash
+            .exec("_EVAL_CMD=hijack; eval echo safe; echo $_EVAL_CMD")
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert!(
+            result.stdout.contains("safe"),
+            "eval must execute its own argument, not $_EVAL_CMD: {:?}",
+            result.stdout
+        );
+        assert!(
+            result.stdout.contains("hijack"),
+            "_EVAL_CMD is now an ordinary variable: {:?}",
+            result.stdout
+        );
     }
 
     /// Test path with null byte (Rust prevents this)
@@ -2663,7 +2693,6 @@ mod variable_namespace_injection {
         "_UPPER_x",
         "_LOWER_x",
         "_ARRAY_READ_x",
-        "_EVAL_CMD",
         "_SHIFT_COUNT",
         "_SET_POSITIONAL",
     ];
