@@ -1422,6 +1422,28 @@ mod finding_mixed_quoted_word_quote_metadata {
     }
 
     #[tokio::test]
+    async fn unquoted_expansion_backslash_dot_in_glob_dir_stays_literal() {
+        // THREAT[TM-ESC-001]: glob directory unescape only removes parser-inserted
+        // metacharacter escapes. Literal backslashes produced by expansion must not
+        // turn `.\.` into `..` and redirect lookup outside the trusted prefix
+        // (path traversal).
+        let mut bash = tight_bash();
+        bash.exec("mkdir -p /tmp/safe /tmp/secret && touch /tmp/secret/flag.txt")
+            .await
+            .unwrap();
+
+        let result = bash
+            .exec(r#"shopt -s nullglob; p='/tmp/safe/.\./secret/*'; for f in $p; do printf '<%s>\n' "$f"; done"#)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            result.stdout, "",
+            "literal backslash-dot from expansion traversed during glob lookup"
+        );
+    }
+
+    #[tokio::test]
     async fn literal_brace_expression_in_quoted_glob_prefix_stays_literal() {
         // "{a,b}"/*/ is a QuotedGlobWord (unquoted glob suffix `*/`).  The quoted
         // segment `{a,b}` must NOT brace-expand: the pattern should match the literal

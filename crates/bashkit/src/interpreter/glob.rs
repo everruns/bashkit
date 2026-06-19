@@ -697,25 +697,34 @@ impl Interpreter {
         }
     }
 
-    /// Strip backslash escapes (`\X` → `X`) from a path string.
+    /// Strip only parser-inserted glob metacharacter escapes from a path string.
     ///
-    /// `escape_glob_metas_in_quoted_ranges` inserts `\` before metacharacters in
-    /// quoted segments to prevent brace-expansion.  Before using a path component
-    /// for filesystem lookup those escapes must be removed, because VFS paths are
-    /// stored without them.  The glob-pattern component (file_name) is left intact
-    /// because `glob_match_impl` and `contains_glob_chars` already understand `\`.
+    /// `quote_expansion_for_quoted_glob` inserts `\` before metacharacters in
+    /// quoted segments to keep them literal while an adjacent unquoted glob suffix
+    /// remains active.  Directory lookup must remove those synthetic escapes, but
+    /// must not remove arbitrary `\X` pairs from expanded data: parameter and
+    /// command substitution can produce literal backslashes after parsing, and
+    /// turning `.\.` into `..` would change the lookup directory.
+    ///
+    /// The metacharacter set below must stay in sync with the escape set in
+    /// `Interpreter::quote_expansion_for_quoted_glob` (interpreter/mod.rs); if
+    /// one side adds or drops a character, lookups break or escapes leak.
     fn glob_path_unescape(s: &str) -> String {
         let mut result = String::with_capacity(s.len());
-        let mut escaped = false;
-        for ch in s.chars() {
-            if escaped {
-                result.push(ch);
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else {
-                result.push(ch);
+        let mut chars = s.chars().peekable();
+        while let Some(ch) = chars.next() {
+            if ch == '\\'
+                && let Some(&next) = chars.peek()
+                && matches!(
+                    next,
+                    '\\' | '*' | '?' | '[' | ']' | '{' | '}' | '@' | '!' | '+' | '(' | ')' | '|'
+                )
+            {
+                result.push(next);
+                chars.next();
+                continue;
             }
+            result.push(ch);
         }
         result
     }
