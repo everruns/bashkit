@@ -1,7 +1,9 @@
 // Decision: publish /llms-full.txt (llmstxt.org) so an agent can pull the
-// entire documentation set in a single fetch. The body of each guide is the
-// canonical Markdown source file — the same text served at /docs/<slug>.md —
-// concatenated in navigation order so it stays in sync with the site.
+// entire documentation set in a single fetch. Each guide body is the canonical
+// Markdown source file (frontmatter and any leading H1 stripped, since we inject
+// the curated title), concatenated in navigation order so it stays in sync with
+// the site. This differs from /docs/<slug>.md, which serves the raw source plus
+// a generated navigation footer.
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { APIRoute } from "astro";
@@ -30,16 +32,23 @@ function stripFrontmatter(markdown: string): string {
   return match ? markdown.slice(match[0].length) : markdown;
 }
 
+// Drop a leading H1 so the injected meta title is the guide's only top-level
+// heading (most source files start with their own `# ...`).
+function stripLeadingH1(markdown: string): string {
+  return markdown.replace(/^#\s+[^\n]*(?:\r?\n)+/, "");
+}
+
 export const GET: APIRoute = async () => {
   const guides = await Promise.all(
     DOC_META.map(async (meta) => {
       const source = await readFile(sourcePath(meta), "utf8");
+      const body = stripLeadingH1(stripFrontmatter(source).trim());
       return [
         `# ${meta.title}`,
         "",
         `Source: ${SITE}/docs/${meta.slug}.md`,
         "",
-        stripFrontmatter(source).trim(),
+        body,
       ].join("\n");
     }),
   );

@@ -35,12 +35,20 @@ if (!llms.includes("https://bashkit.sh/llms-full.txt")) {
 
 // Every doc must be discoverable from both entry points.
 const metaSource = readFileSync(metaPath, "utf8");
-const objectPattern = /\{\s*slug:\s*"([^"]+)"[\s\S]*?title:\s*"([^"]+)"[\s\S]*?\}/g;
+// Match each doc object by slug only, then pull title from the block — field
+// order inside the object must not affect coverage (mirrors verify-doc-routes).
+const objectPattern = /\{\s*slug:\s*"([^"]+)"[\s\S]*?\}/g;
+
+function extractString(block, key) {
+  return new RegExp(`${key}:\\s*"([^"]+)"`).exec(block)?.[1];
+}
 
 let count = 0;
 let match;
 while ((match = objectPattern.exec(metaSource)) !== null) {
-  const [, slug, title] = match;
+  const block = match[0];
+  const slug = match[1];
+  const title = extractString(block, "title");
   const mdLink = `https://bashkit.sh/docs/${slug}.md`;
 
   if (!llms.includes(mdLink)) {
