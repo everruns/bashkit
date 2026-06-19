@@ -10,8 +10,12 @@
 // validating string contents. This is safe because we check for non-empty strings.
 #![allow(clippy::unwrap_used)]
 
+mod arithmetic;
+mod brace_expansion;
+mod expansion;
 mod glob;
 mod jobs;
+mod redirection;
 mod state;
 
 #[allow(unused_imports)]
@@ -955,22 +959,44 @@ impl BashFlags {
     }
 }
 
+/// CoW-snapshotted scoped shell state.
+///
+/// Groups the maps captured at every `$(...)` / arithmetic-substitution and
+/// subshell boundary. Each field is `Arc<HashMap>`, so cloning this struct is
+/// an O(1) refcount bump per field — a whole-state snapshot is one
+/// `ScopedState::clone()`. Mutations go through the `*_mut` accessors on
+/// [`Interpreter`], which `Arc::make_mut` (paying one deep clone only when a
+/// snapshot is still live).
+#[derive(Clone, Default)]
+struct ScopedState {
+    /// Shell variables.
+    variables: Arc<HashMap<String, String>>,
+    /// Variable attribute flags (readonly/integer/lower/upper/export), keyed by
+    /// the *resolved* (post-nameref) variable name. Empty entry == no attrs.
+    var_attrs: Arc<HashMap<String, VarAttrs>>,
+    /// Nameref bindings (`declare -n`): name -> target variable name.
+    namerefs: Arc<HashMap<String, String>>,
+    /// Indexed arrays: name -> index -> value.
+    arrays: Arc<HashMap<String, HashMap<usize, String>>>,
+    /// Associative arrays (`declare -A`): name -> key -> value.
+    assoc_arrays: Arc<HashMap<String, HashMap<String, String>>>,
+    /// Defined shell functions.
+    functions: Arc<HashMap<String, FunctionDef>>,
+    /// Trap handlers: signal/event name -> command string.
+    traps: Arc<HashMap<String, String>>,
+    /// Shell aliases: name -> expansion value.
+    aliases: Arc<HashMap<String, String>>,
+}
+
 /// All interpreter state mutated inside a `$(...)` / arithmetic substitution
 /// subshell. Captured before the substitution runs and restored after, so
-/// mutations don't leak to the parent. The `Arc<...>` fields snapshot in O(1)
-/// via a refcount bump; only mutations inside the subshell pay a clone
+/// mutations don't leak to the parent. The [`ScopedState`] snapshot is O(1)
+/// (per-field refcount bumps); only mutations inside the subshell pay a clone
 /// (`Arc::make_mut`). For substitutions that don't mutate state at all (the
 /// common case — `$(echo $x)`, command queries) this saves an entire deep
 /// HashMap clone per substitution.
 struct SubshellSnapshot {
-    variables: Arc<HashMap<String, String>>,
-    arrays: Arc<HashMap<String, HashMap<usize, String>>>,
-    assoc_arrays: Arc<HashMap<String, HashMap<String, String>>>,
-    functions: Arc<HashMap<String, FunctionDef>>,
-    traps: Arc<HashMap<String, String>>,
-    aliases: Arc<HashMap<String, String>>,
-    var_attrs: Arc<HashMap<String, VarAttrs>>,
-    namerefs: Arc<HashMap<String, String>>,
+    scoped: ScopedState,
     flags: BashFlags,
     cwd: PathBuf,
     memory_budget: crate::limits::MemoryBudget,
@@ -983,33 +1009,24 @@ pub struct Interpreter {
     fs: Arc<dyn FileSystem>,
     env: HashMap<String, String>,
     // Important decision: the maps that get snapshotted by subshell ($(...))
-    // boundaries are wrapped in `Arc<HashMap>` so the snapshot is an O(1)
-    // refcount bump instead of an O(n) HashMap clone. Mutations go through
-    // `vars_mut()` / `arrays_mut()` / etc. which call `Arc::make_mut`; when
-    // the refcount is 1 (no live snapshot) this is just a `&mut` borrow with
-    // zero clone cost. When the refcount is 2 (a subshell is active and
-    // mutates), it pays one clone — the same cost the eager-clone scheme
-    // paid unconditionally, but only when actually needed.
-    variables: Arc<HashMap<String, String>>,
-    /// Variable attribute flags (readonly/integer/lower/upper/export). Keyed by
-    /// the *resolved* variable name (post-nameref). Empty entry == no attrs.
-    var_attrs: Arc<HashMap<String, VarAttrs>>,
-    /// Nameref bindings: name → target variable name. Used by `declare -n`.
-    namerefs: Arc<HashMap<String, String>>,
+    // boundaries live in `scoped: ScopedState`, whose fields are `Arc<HashMap>`
+    // so the snapshot is an O(1) refcount bump instead of an O(n) HashMap clone.
+    // Mutations go through `vars_mut()` / `arrays_mut()` / etc. which call
+    // `Arc::make_mut`; when the refcount is 1 (no live snapshot) this is just a
+    // `&mut` borrow with zero clone cost. When the refcount is 2 (a subshell is
+    // active and mutates), it pays one clone — the same cost the eager-clone
+    // scheme paid unconditionally, but only when actually needed.
+    scoped: ScopedState,
     /// Cached shell option flags. Synchronized with `SHOPT_*` entries in
     /// `variables` via `set_shopt_flag` / `set_shopt_value`.
     flags: BashFlags,
-    /// Arrays - stored as name -> index -> value. Arc-wrapped for CoW subshell snapshots.
-    arrays: Arc<HashMap<String, HashMap<usize, String>>>,
-    /// Associative arrays (declare -A) - stored as name -> key -> value. Arc-wrapped for CoW subshell snapshots.
-    assoc_arrays: Arc<HashMap<String, HashMap<String, String>>>,
     cwd: PathBuf,
     last_exit_code: i32,
     /// Built-in commands (default + custom).
     ///
     /// Stored as `Arc` so the dispatcher can clone the handle out of the map
     /// and execute the builtin without keeping a borrow on `self.builtins`,
-    /// which lets it freely take `&mut self` for `self.variables`,
+    /// which lets it freely take `&mut self` for `self.scoped.variables`,
     /// `self.cwd`, etc. during execution.
     builtins: HashMap<String, Arc<dyn Builtin>>,
     /// Optional host-owned mutable registry. Consulted after shell functions
@@ -1017,8 +1034,6 @@ pub struct Interpreter {
     /// override baked-in commands. Survives `reset_transient_state` because
     /// it lives behind an `Arc<RwLock>` shared with the embedder.
     host_builtins: Option<crate::builtins::BuiltinRegistry>,
-    /// Defined functions. Arc-wrapped for CoW subshell snapshots.
-    functions: Arc<HashMap<String, FunctionDef>>,
     /// Call stack for local variable scoping
     call_stack: Vec<CallFrame>,
     /// Source file stack for BASH_SOURCE array
@@ -1068,12 +1083,8 @@ pub struct Interpreter {
     output_stream_stderr_bytes: usize,
     /// Pending nounset (set -u) error message, consumed by execute_command.
     nounset_error: Option<String>,
-    /// Trap handlers: signal/event name -> command string. Arc-wrapped for CoW subshell snapshots.
-    traps: Arc<HashMap<String, String>>,
     /// PIPESTATUS: exit codes of the last pipeline's commands
     pipestatus: Vec<i32>,
-    /// Shell aliases: name -> expansion value. Arc-wrapped for CoW subshell snapshots.
-    aliases: Arc<HashMap<String, String>>,
     /// Aliases currently being expanded (prevents infinite recursion).
     /// When alias `foo` expands to `foo bar`, the inner `foo` is not re-expanded.
     expanding_aliases: HashSet<String>,
@@ -1483,17 +1494,16 @@ impl Interpreter {
         Self {
             fs,
             env: HashMap::new(),
-            variables: Arc::new(variables),
-            var_attrs: Arc::new(HashMap::new()),
-            namerefs: Arc::new(HashMap::new()),
+            scoped: ScopedState {
+                variables: Arc::new(variables),
+                arrays: Arc::new(arrays),
+                ..Default::default()
+            },
             flags: BashFlags::empty(),
-            arrays: Arc::new(arrays),
-            assoc_arrays: Arc::new(HashMap::new()),
             cwd: PathBuf::from("/home/user"),
             last_exit_code: 0,
             builtins,
             host_builtins,
-            functions: Arc::new(HashMap::new()),
             call_stack: Vec::new(),
             bash_source_stack: Vec::new(),
             limits: ExecutionLimits::default(),
@@ -1519,9 +1529,7 @@ impl Interpreter {
             output_stream_stdout_bytes: 0,
             output_stream_stderr_bytes: 0,
             nounset_error: None,
-            traps: Arc::new(HashMap::new()),
             pipestatus: Vec::new(),
-            aliases: Arc::new(HashMap::new()),
             expanding_aliases: HashSet::new(),
             history: Vec::new(),
             history_bytes: 0,
@@ -1607,37 +1615,37 @@ impl Interpreter {
 
     #[inline]
     fn vars_mut(&mut self) -> &mut HashMap<String, String> {
-        Arc::make_mut(&mut self.variables)
+        Arc::make_mut(&mut self.scoped.variables)
     }
 
     #[inline]
     fn arrays_mut(&mut self) -> &mut HashMap<String, HashMap<usize, String>> {
-        Arc::make_mut(&mut self.arrays)
+        Arc::make_mut(&mut self.scoped.arrays)
     }
 
     #[inline]
     fn assoc_arrays_mut(&mut self) -> &mut HashMap<String, HashMap<String, String>> {
-        Arc::make_mut(&mut self.assoc_arrays)
+        Arc::make_mut(&mut self.scoped.assoc_arrays)
     }
 
     #[inline]
     fn functions_mut(&mut self) -> &mut HashMap<String, FunctionDef> {
-        Arc::make_mut(&mut self.functions)
+        Arc::make_mut(&mut self.scoped.functions)
     }
 
     #[inline]
     fn traps_mut(&mut self) -> &mut HashMap<String, String> {
-        Arc::make_mut(&mut self.traps)
+        Arc::make_mut(&mut self.scoped.traps)
     }
 
     #[inline]
     fn var_attrs_mut(&mut self) -> &mut HashMap<String, VarAttrs> {
-        Arc::make_mut(&mut self.var_attrs)
+        Arc::make_mut(&mut self.scoped.var_attrs)
     }
 
     #[inline]
     fn namerefs_mut(&mut self) -> &mut HashMap<String, String> {
-        Arc::make_mut(&mut self.namerefs)
+        Arc::make_mut(&mut self.scoped.namerefs)
     }
 
     /// Check if cancellation has been requested.
@@ -1677,11 +1685,11 @@ impl Interpreter {
     }
 
     /// Rehydrate the SHOPT flag cache from any `SHOPT_*` entries currently in
-    /// `self.variables`. Call after bulk-restoring `variables` from a snapshot
+    /// `self.scoped.variables`. Call after bulk-restoring `variables` from a snapshot
     /// or builder so the cache doesn't drift.
     fn refresh_shopt_flags(&mut self) {
         self.flags = BashFlags::empty();
-        for (name, value) in self.variables.iter() {
+        for (name, value) in self.scoped.variables.iter() {
             if let Some(bit) = BashFlags::from_shopt_name(name)
                 && value == "1"
             {
@@ -1696,7 +1704,7 @@ impl Interpreter {
     // approach has been removed from the hot path; see VarAttrs above.
 
     fn var_attrs_get(&self, name: &str) -> VarAttrs {
-        self.var_attrs.get(name).copied().unwrap_or_default()
+        self.scoped.var_attrs.get(name).copied().unwrap_or_default()
     }
 
     fn is_var_readonly(&self, name: &str) -> bool {
@@ -2044,24 +2052,25 @@ impl Interpreter {
         // it freely).
         ShellState {
             env: self.env.clone(),
-            variables: (*self.variables).clone(),
+            variables: (*self.scoped.variables).clone(),
             var_attrs: self
+                .scoped
                 .var_attrs
                 .iter()
                 .map(|(name, attrs)| (name.clone(), attrs.bits()))
                 .collect(),
-            namerefs: (*self.namerefs).clone(),
-            arrays: (*self.arrays).clone(),
-            assoc_arrays: (*self.assoc_arrays).clone(),
+            namerefs: (*self.scoped.namerefs).clone(),
+            arrays: (*self.scoped.arrays).clone(),
+            assoc_arrays: (*self.scoped.assoc_arrays).clone(),
             cwd: self.cwd.clone(),
             last_exit_code: self.last_exit_code,
             functions: if options.include_functions {
-                (*self.functions).clone()
+                (*self.scoped.functions).clone()
             } else {
                 HashMap::new()
             },
-            aliases: (*self.aliases).clone(),
-            traps: (*self.traps).clone(),
+            aliases: (*self.scoped.aliases).clone(),
+            traps: (*self.scoped.traps).clone(),
         }
     }
 
@@ -2069,13 +2078,13 @@ impl Interpreter {
     pub fn shell_state_view(&self) -> ShellStateView {
         ShellStateView {
             env: self.env.clone(),
-            variables: (*self.variables).clone(),
-            arrays: (*self.arrays).clone(),
-            assoc_arrays: (*self.assoc_arrays).clone(),
+            variables: (*self.scoped.variables).clone(),
+            arrays: (*self.scoped.arrays).clone(),
+            assoc_arrays: (*self.scoped.assoc_arrays).clone(),
             cwd: self.cwd.clone(),
             last_exit_code: self.last_exit_code,
-            aliases: (*self.aliases).clone(),
-            traps: (*self.traps).clone(),
+            aliases: (*self.scoped.aliases).clone(),
+            traps: (*self.scoped.traps).clone(),
         }
     }
 
@@ -2094,12 +2103,12 @@ impl Interpreter {
             &mut restored_var_attrs,
             &mut restored_namerefs,
         );
-        self.variables = Arc::new(restored_variables);
-        self.var_attrs = Arc::new(restored_var_attrs);
-        self.namerefs = Arc::new(restored_namerefs);
+        self.scoped.variables = Arc::new(restored_variables);
+        self.scoped.var_attrs = Arc::new(restored_var_attrs);
+        self.scoped.namerefs = Arc::new(restored_namerefs);
         self.refresh_shopt_flags();
-        self.arrays = Arc::new(state.arrays.clone());
-        self.assoc_arrays = Arc::new(state.assoc_arrays.clone());
+        self.scoped.arrays = Arc::new(state.arrays.clone());
+        self.scoped.assoc_arrays = Arc::new(state.assoc_arrays.clone());
         self.cwd = state.cwd.clone();
         self.last_exit_code = state.last_exit_code;
         // THREAT[TM-DOS-061]: Re-parse and budget-check restored functions so
@@ -2133,16 +2142,21 @@ impl Interpreter {
             function_memory_budget.record_function_insert(body_bytes, true, 0);
             restored_functions.insert(name, parsed_func);
         }
-        self.functions = Arc::new(restored_functions);
-        self.aliases = Arc::new(state.aliases.clone());
-        self.traps = Arc::new(state.traps.clone());
+        self.scoped.functions = Arc::new(restored_functions);
+        self.scoped.aliases = Arc::new(state.aliases.clone());
+        self.scoped.traps = Arc::new(state.traps.clone());
         // Recompute memory budget from restored state to prevent desync
-        let func_count = self.functions.len();
-        let func_bytes: usize = self.functions.values().map(function_storage_bytes).sum();
+        let func_count = self.scoped.functions.len();
+        let func_bytes: usize = self
+            .scoped
+            .functions
+            .values()
+            .map(function_storage_bytes)
+            .sum();
         self.memory_budget = crate::limits::MemoryBudget::recompute_from_state(
-            &self.variables,
-            &self.arrays,
-            &self.assoc_arrays,
+            &self.scoped.variables,
+            &self.scoped.arrays,
+            &self.scoped.assoc_arrays,
             func_count,
             func_bytes,
             Self::is_internal_variable,
@@ -2482,7 +2496,7 @@ impl Interpreter {
         // Run EXIT trap if registered (only for top-level execute)
         #[allow(clippy::collapsible_if)]
         if run_exit_trap {
-            if let Some(trap_cmd) = self.traps.get("EXIT").cloned() {
+            if let Some(trap_cmd) = self.scoped.traps.get("EXIT").cloned() {
                 // THREAT[TM-DOS-030]: Propagate interpreter parser limits
                 if let Ok(trap_script) = Parser::with_limits(
                     &trap_cmd,
@@ -2513,13 +2527,13 @@ impl Interpreter {
             // and bypass of stdout/stderr output limits.
             let mut final_env = HashMap::new();
             let mut remaining = self.limits.max_stdout_bytes;
-            let mut keys: Vec<&String> = self.variables.keys().collect();
+            let mut keys: Vec<&String> = self.scoped.variables.keys().collect();
             keys.sort_unstable();
             for key in keys {
                 if is_hidden_variable(key) {
                     continue;
                 }
-                let Some(value) = self.variables.get(key) else {
+                let Some(value) = self.scoped.variables.get(key) else {
                     continue;
                 };
                 let entry_bytes = key.len().saturating_add(value.len());
@@ -2702,11 +2716,12 @@ impl Interpreter {
                 Command::Function(func_def) => {
                     // THREAT[TM-DOS-060]: Check function count/size budget
                     let body_bytes = function_storage_bytes(func_def);
-                    let is_new = !self.functions.contains_key(&func_def.name);
+                    let is_new = !self.scoped.functions.contains_key(&func_def.name);
                     let old_body_bytes = if is_new {
                         0
                     } else {
-                        self.functions
+                        self.scoped
+                            .functions
                             .get(&func_def.name)
                             .map(function_storage_bytes)
                             .unwrap_or(0)
@@ -2760,9 +2775,9 @@ impl Interpreter {
                 let mut result = self.execute_command_sequence(commands).await;
 
                 // Fire EXIT trap set inside the subshell before restoring parent state
-                if let Some(trap_cmd) = self.traps.get("EXIT").cloned() {
+                if let Some(trap_cmd) = self.scoped.traps.get("EXIT").cloned() {
                     // Only fire if the subshell set its own EXIT trap (different from parent)
-                    let parent_had_same = snap.traps.get("EXIT") == Some(&trap_cmd);
+                    let parent_had_same = snap.scoped.traps.get("EXIT") == Some(&trap_cmd);
                     if !parent_had_same {
                         // THREAT[TM-DOS-030]: Propagate interpreter parser limits
                         if let Ok(trap_script) = Parser::with_limits(
@@ -3017,6 +3032,7 @@ impl Interpreter {
             .join("\n");
 
         let ps3 = self
+            .scoped
             .variables
             .get("PS3")
             .cloned()
@@ -3442,7 +3458,8 @@ impl Interpreter {
                         "-t" => {
                             // fd is a terminal — configurable via _TTY_N variables
                             let fd_key = format!("_TTY_{}", args[1]);
-                            self.variables
+                            self.scoped
+                                .variables
                                 .get(&fd_key)
                                 .map(|v| v == "1")
                                 .unwrap_or(false)
@@ -4318,6 +4335,7 @@ impl Interpreter {
     /// have just taken a snapshot to undo this on return. See issue #1777.
     fn reset_state_for_child_shell(&mut self) {
         let exported_names: Vec<String> = self
+            .scoped
             .var_attrs
             .iter()
             .filter(|(_, attrs)| attrs.contains(VarAttrs::EXPORT))
@@ -4325,7 +4343,7 @@ impl Interpreter {
             .collect();
         let mut next_vars: HashMap<String, String> = HashMap::with_capacity(exported_names.len());
         for name in &exported_names {
-            if let Some(val) = self.variables.get(name) {
+            if let Some(val) = self.scoped.variables.get(name) {
                 next_vars.insert(name.clone(), val.clone());
             }
         }
@@ -4353,7 +4371,7 @@ impl Interpreter {
             "MACHTYPE",
         ] {
             if !next_vars.contains_key(name)
-                && let Some(val) = self.variables.get(name)
+                && let Some(val) = self.scoped.variables.get(name)
             {
                 next_vars.insert(name.to_string(), val.clone());
             }
@@ -4365,7 +4383,7 @@ impl Interpreter {
         self.namerefs_mut().clear();
         // Aliases are parse-time anyway, but a fresh `bash -c` would not have
         // user-defined aliases — drop them for consistency.
-        self.aliases = Arc::new(HashMap::new());
+        self.scoped.aliases = Arc::new(HashMap::new());
         // Reset SHOPT_* flag bitfield so options from the parent don't leak.
         self.flags = BashFlags::empty();
     }
@@ -4857,9 +4875,10 @@ impl Interpreter {
                     let value = self.expand_word(word).await?;
                     if let Some(index_str) = &assignment.index {
                         let resolved_name = self.resolve_nameref(&assignment.name).to_string();
-                        if self.assoc_arrays.contains_key(&resolved_name) {
+                        if self.scoped.assoc_arrays.contains_key(&resolved_name) {
                             let key = self.expand_assoc_key(index_str).await?;
                             let is_new_entry = self
+                                .scoped
                                 .assoc_arrays
                                 .get(&resolved_name)
                                 .is_none_or(|a| !a.contains_key(&key));
@@ -4886,6 +4905,7 @@ impl Interpreter {
                             let index =
                                 self.resolve_indexed_array_subscript(&resolved_name, index_str);
                             let is_new_entry = self
+                                .scoped
                                 .arrays
                                 .get(&resolved_name)
                                 .is_none_or(|a| !a.contains_key(&index));
@@ -4920,14 +4940,18 @@ impl Interpreter {
                     // Expand directly into the replacement array so word-split expansions cannot
                     // accumulate an unbounded temporary Vec before max_array_entries is enforced.
                     let arr_name = self.resolve_nameref(&assignment.name).to_string();
-                    let old_entries = self.arrays.get(&arr_name).map_or(0, |arr| arr.len());
+                    let old_entries = self.scoped.arrays.get(&arr_name).map_or(0, |arr| arr.len());
                     let remaining_entries = self
                         .memory_limits
                         .max_array_entries
                         .saturating_sub(self.memory_budget.array_entries);
                     let max_new_entries = old_entries.saturating_add(remaining_entries);
                     let mut next_arr = if assignment.append {
-                        self.arrays.get(&arr_name).cloned().unwrap_or_default()
+                        self.scoped
+                            .arrays
+                            .get(&arr_name)
+                            .cloned()
+                            .unwrap_or_default()
                     } else {
                         HashMap::new()
                     };
@@ -5022,7 +5046,7 @@ impl Interpreter {
         {
             return None;
         }
-        let expansion = self.aliases.get(name).cloned()?;
+        let expansion = self.scoped.aliases.get(name).cloned()?;
 
         // Restore variable saves before re-executing
         for (vname, old) in var_saves.into_iter().rev() {
@@ -5042,7 +5066,7 @@ impl Interpreter {
         let mut args_iter = command.args.iter();
         if trailing_space && let Some(first_arg) = args_iter.next() {
             let arg_str = Self::format_word_for_alias_reparse(first_arg);
-            if let Some(arg_expansion) = self.aliases.get(&arg_str).cloned() {
+            if let Some(arg_expansion) = self.scoped.aliases.get(&arg_str).cloned() {
                 expanded_cmd.push_str(&arg_expansion);
             } else {
                 expanded_cmd.push_str(&arg_str);
@@ -5156,6 +5180,7 @@ impl Interpreter {
             return None;
         }
         let ps4 = self
+            .scoped
             .variables
             .get("PS4")
             .cloned()
@@ -5224,7 +5249,7 @@ impl Interpreter {
             let var_saves: Vec<(String, Option<String>)> = command
                 .assignments
                 .iter()
-                .map(|a| (a.name.clone(), self.variables.get(&a.name).cloned()))
+                .map(|a| (a.name.clone(), self.scoped.variables.get(&a.name).cloned()))
                 .collect();
 
             let pre_assign_subst_gen = self.subst_generation;
@@ -5277,7 +5302,7 @@ impl Interpreter {
             let mut env_saves: HashMap<String, Option<String>> = HashMap::new();
             for assignment in &command.assignments {
                 if assignment.index.is_none()
-                    && let Some(value) = self.variables.get(&assignment.name).cloned()
+                    && let Some(value) = self.scoped.variables.get(&assignment.name).cloned()
                 {
                     env_saves
                         .entry(assignment.name.clone())
@@ -5521,7 +5546,8 @@ impl Interpreter {
         for redirect in redirects {
             // Resolve fd from either explicit fd or {var} fd-variable syntax
             let resolved_fd_var: Option<i32> = redirect.fd_var.as_ref().and_then(|var_name| {
-                self.variables
+                self.scoped
+                    .variables
                     .get(var_name)
                     .and_then(|val| val.parse::<i32>().ok())
             });
@@ -5709,11 +5735,11 @@ impl Interpreter {
                 let shell_ref = ShellRef {
                     builtins: &self.builtins,
                     host_builtins: self.host_builtins.as_ref(),
-                    functions: &self.functions,
-                    aliases: Arc::make_mut(&mut self.aliases),
-                    traps: Arc::make_mut(&mut self.traps),
-                    var_attrs: Arc::make_mut(&mut self.var_attrs),
-                    namerefs: Arc::make_mut(&mut self.namerefs),
+                    functions: &self.scoped.functions,
+                    aliases: Arc::make_mut(&mut self.scoped.aliases),
+                    traps: Arc::make_mut(&mut self.scoped.traps),
+                    var_attrs: Arc::make_mut(&mut self.scoped.var_attrs),
+                    namerefs: Arc::make_mut(&mut self.scoped.namerefs),
                     call_stack: &self.call_stack,
                     history: &self.history,
                     limits: &self.limits,
@@ -5723,7 +5749,7 @@ impl Interpreter {
                 let plan_ctx = builtins::Context {
                     args,
                     env: &self.env,
-                    variables: Arc::make_mut(&mut self.variables),
+                    variables: Arc::make_mut(&mut self.scoped.variables),
                     cwd: &mut self.cwd,
                     fs: Arc::clone(&self.fs),
                     stdin,
@@ -5762,11 +5788,11 @@ impl Interpreter {
             let shell_ref = ShellRef {
                 builtins: &self.builtins,
                 host_builtins: self.host_builtins.as_ref(),
-                functions: &self.functions,
-                aliases: Arc::make_mut(&mut self.aliases),
-                traps: Arc::make_mut(&mut self.traps),
-                var_attrs: Arc::make_mut(&mut self.var_attrs),
-                namerefs: Arc::make_mut(&mut self.namerefs),
+                functions: &self.scoped.functions,
+                aliases: Arc::make_mut(&mut self.scoped.aliases),
+                traps: Arc::make_mut(&mut self.scoped.traps),
+                var_attrs: Arc::make_mut(&mut self.scoped.var_attrs),
+                namerefs: Arc::make_mut(&mut self.scoped.namerefs),
                 call_stack: &self.call_stack,
                 history: &self.history,
                 limits: &self.limits,
@@ -5776,7 +5802,7 @@ impl Interpreter {
             let ctx = builtins::Context {
                 args,
                 env: &self.env,
-                variables: Arc::make_mut(&mut self.variables),
+                variables: Arc::make_mut(&mut self.scoped.variables),
                 cwd: &mut self.cwd,
                 fs: Arc::clone(&self.fs),
                 stdin,
@@ -5811,10 +5837,10 @@ impl Interpreter {
                         if self.is_var_readonly(var_name) {
                             continue;
                         }
-                        if let Some(value) = self.variables.get(var_name) {
+                        if let Some(value) = self.scoped.variables.get(var_name) {
                             self.env.insert(var_name.to_string(), value.clone());
                         }
-                    } else if let Some(value) = self.variables.get(arg.as_str()) {
+                    } else if let Some(value) = self.scoped.variables.get(arg.as_str()) {
                         // export NAME (without =) — mark existing variable as exported
                         self.env.insert(arg.to_string(), value.clone());
                     }
@@ -5956,7 +5982,7 @@ impl Interpreter {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
         Box::pin(async move {
             // Check for functions first
-            if let Some(func_def) = self.functions.get(name).cloned() {
+            if let Some(func_def) = self.scoped.functions.get(name).cloned() {
                 return self
                     .execute_function_call(name, &func_def, args, stdin, &command.redirects)
                     .await;
@@ -6026,8 +6052,8 @@ impl Interpreter {
                 .builtins
                 .keys()
                 .map(|s| s.as_str())
-                .chain(self.functions.keys().map(|s| s.as_str()))
-                .chain(self.aliases.keys().map(|s| s.as_str()))
+                .chain(self.scoped.functions.keys().map(|s| s.as_str()))
+                .chain(self.scoped.aliases.keys().map(|s| s.as_str()))
                 .chain(host_names.iter().map(|s| s.as_str()))
                 .collect();
             let msg = command_not_found_message(name, &known);
@@ -6105,6 +6131,7 @@ impl Interpreter {
         }
 
         let path_var = self
+            .scoped
             .variables
             .get("PATH")
             .or_else(|| self.env.get("PATH"))
@@ -6137,6 +6164,7 @@ impl Interpreter {
         redirects: &[Redirect],
     ) -> Result<Option<ExecResult>> {
         let path_var = self
+            .scoped
             .variables
             .get("PATH")
             .or_else(|| self.env.get("PATH"))
@@ -6209,14 +6237,14 @@ impl Interpreter {
         // `bash -c '...'` subprocess: save then reset. Each Arc clone is an
         // O(1) refcount bump now; the child resets its own state and the
         // parent restores by dropping the child's Arcs and putting these back.
-        let saved_vars = Arc::clone(&self.variables);
-        let saved_arrays = Arc::clone(&self.arrays);
-        let saved_assoc = Arc::clone(&self.assoc_arrays);
-        let saved_functions = Arc::clone(&self.functions);
-        let saved_traps = Arc::clone(&self.traps);
-        let saved_aliases = Arc::clone(&self.aliases);
-        let saved_var_attrs = Arc::clone(&self.var_attrs);
-        let saved_namerefs = Arc::clone(&self.namerefs);
+        let saved_vars = Arc::clone(&self.scoped.variables);
+        let saved_arrays = Arc::clone(&self.scoped.arrays);
+        let saved_assoc = Arc::clone(&self.scoped.assoc_arrays);
+        let saved_functions = Arc::clone(&self.scoped.functions);
+        let saved_traps = Arc::clone(&self.scoped.traps);
+        let saved_aliases = Arc::clone(&self.scoped.aliases);
+        let saved_var_attrs = Arc::clone(&self.scoped.var_attrs);
+        let saved_namerefs = Arc::clone(&self.scoped.namerefs);
         let saved_flags = self.flags;
         let saved_call_stack = self.call_stack.clone();
         let saved_exit = self.last_exit_code;
@@ -6230,16 +6258,16 @@ impl Interpreter {
         // Clear nounset_error to prevent parent expansion errors from leaking.
         // Reset attributes/namerefs/flags too — the child gets a fresh option
         // surface like real bash.
-        self.variables = Arc::new(self.env.clone());
-        self.arrays = Arc::new(HashMap::new());
+        self.scoped.variables = Arc::new(self.env.clone());
+        self.scoped.arrays = Arc::new(HashMap::new());
         self.arrays_mut()
             .insert("BASH_VERSINFO".to_string(), compat_bash_versinfo_array());
-        self.assoc_arrays = Arc::new(HashMap::new());
-        self.functions = Arc::new(HashMap::new());
-        self.traps = Arc::new(HashMap::new());
-        self.aliases = Arc::new(HashMap::new());
-        self.var_attrs = Arc::new(HashMap::new());
-        self.namerefs = Arc::new(HashMap::new());
+        self.scoped.assoc_arrays = Arc::new(HashMap::new());
+        self.scoped.functions = Arc::new(HashMap::new());
+        self.scoped.traps = Arc::new(HashMap::new());
+        self.scoped.aliases = Arc::new(HashMap::new());
+        self.scoped.var_attrs = Arc::new(HashMap::new());
+        self.scoped.namerefs = Arc::new(HashMap::new());
         self.flags = BashFlags::empty();
         self.coproc_buffers.clear();
         self.last_exit_code = 0;
@@ -6266,14 +6294,14 @@ impl Interpreter {
         let result = self.execute_script_body(&script, true, false).await;
 
         // Restore full parent state — child mutations don't propagate
-        self.variables = saved_vars;
-        self.arrays = saved_arrays;
-        self.assoc_arrays = saved_assoc;
-        self.functions = saved_functions;
-        self.traps = saved_traps;
-        self.aliases = saved_aliases;
-        self.var_attrs = saved_var_attrs;
-        self.namerefs = saved_namerefs;
+        self.scoped.variables = saved_vars;
+        self.scoped.arrays = saved_arrays;
+        self.scoped.assoc_arrays = saved_assoc;
+        self.scoped.functions = saved_functions;
+        self.scoped.traps = saved_traps;
+        self.scoped.aliases = saved_aliases;
+        self.scoped.var_attrs = saved_var_attrs;
+        self.scoped.namerefs = saved_namerefs;
         self.flags = saved_flags;
         self.call_stack = saved_call_stack;
         self.last_exit_code = saved_exit;
@@ -6334,6 +6362,7 @@ impl Interpreter {
             // Search PATH for the file
             let mut found = None;
             let path_var = self
+                .scoped
                 .variables
                 .get("PATH")
                 .or_else(|| self.env.get("PATH"))
@@ -6536,7 +6565,8 @@ impl Interpreter {
 
     /// Check if expand_aliases is enabled via shopt.
     fn is_expand_aliases_enabled(&self) -> bool {
-        self.variables
+        self.scoped
+            .variables
             .get("SHOPT_expand_aliases")
             .map(|v| v == "1")
             .unwrap_or(false)
@@ -6832,6 +6862,7 @@ impl Interpreter {
         // own entries to FUNCNAME while inside the function; those were charged,
         // so credit them back as the array is discarded to avoid budget drift.
         let funcname_user_entries = self
+            .scoped
             .arrays
             .get("FUNCNAME")
             .map_or(0, |a| a.len())
@@ -7211,6 +7242,7 @@ impl Interpreter {
 
         // Get current OPTIND (1-based index into args)
         let optind: usize = self
+            .scoped
             .variables
             .get("OPTIND")
             .and_then(|v| v.parse().ok())
@@ -7252,6 +7284,7 @@ impl Interpreter {
 
         // Track position within the current argument for multi-char options
         let char_idx: usize = self
+            .scoped
             .variables
             .get("_OPTCHAR_IDX")
             .and_then(|v| v.parse().ok())
@@ -7408,7 +7441,7 @@ impl Interpreter {
         match mode {
             'v' => {
                 // command -v: print name/path if it's a known command
-                let output = if self.functions.contains_key(cmd_name.as_str())
+                let output = if self.scoped.functions.contains_key(cmd_name.as_str())
                     || self.builtins.contains_key(cmd_name.as_str())
                     || self.has_host_builtin(cmd_name)
                     || is_keyword(cmd_name)
@@ -7433,7 +7466,7 @@ impl Interpreter {
             }
             'V' => {
                 // command -V: verbose description
-                let description = if self.functions.contains_key(cmd_name.as_str()) {
+                let description = if self.scoped.functions.contains_key(cmd_name.as_str()) {
                     format!("{} is a function\n", cmd_name)
                 } else if self.has_host_builtin(cmd_name)
                     || self.builtins.contains_key(cmd_name.as_str())
@@ -7527,7 +7560,7 @@ impl Interpreter {
         if args.is_empty() {
             // declare with no args: print all variables, filtering hidden markers (TM-INF-017)
             let mut output = String::new();
-            let mut entries: Vec<_> = self.variables.iter().collect();
+            let mut entries: Vec<_> = self.scoped.variables.iter().collect();
             entries.sort_by_key(|(k, _)| (*k).clone());
             for (name, value) in entries {
                 if is_hidden_variable(name) {
@@ -7581,7 +7614,8 @@ impl Interpreter {
             let mut output = String::new();
             if names.is_empty() {
                 // List all functions
-                let mut func_names: Vec<_> = self.functions.keys().cloned().collect::<Vec<_>>();
+                let mut func_names: Vec<_> =
+                    self.scoped.functions.keys().cloned().collect::<Vec<_>>();
                 func_names.sort();
                 for fname in &func_names {
                     output.push_str(&format!("{} ()\n{{\n    ...\n}}\n", fname));
@@ -7589,7 +7623,7 @@ impl Interpreter {
             } else {
                 // Print specific functions — return 1 if any not found
                 for name in &names {
-                    if self.functions.contains_key(*name) {
+                    if self.scoped.functions.contains_key(*name) {
                         output.push_str(&format!("{} ()\n{{\n    ...\n}}\n", name));
                     } else {
                         let mut result = ExecResult::with_code(String::new(), 1);
@@ -7607,7 +7641,7 @@ impl Interpreter {
             let mut output = String::new();
             if names.is_empty() {
                 // Print all variables, filtering internal markers (TM-INF-017)
-                let mut entries: Vec<_> = self.variables.iter().collect();
+                let mut entries: Vec<_> = self.scoped.variables.iter().collect();
                 entries.sort_by_key(|(k, _)| (*k).clone());
                 for (name, value) in entries {
                     if is_internal_variable(name) {
@@ -7619,13 +7653,13 @@ impl Interpreter {
                 for name in &names {
                     // Strip =value if present
                     let var_name = name.split('=').next().unwrap_or(name);
-                    if let Some(value) = self.variables.get(var_name) {
+                    if let Some(value) = self.scoped.variables.get(var_name) {
                         let mut attrs = String::from("--");
                         if self.is_var_readonly(var_name) {
                             attrs = String::from("-r");
                         }
                         output.push_str(&format!("declare {} {}=\"{}\"\n", attrs, var_name, value));
-                    } else if let Some(arr) = self.assoc_arrays.get(var_name) {
+                    } else if let Some(arr) = self.scoped.assoc_arrays.get(var_name) {
                         let mut items: Vec<_> = arr.iter().collect();
                         items.sort_by_key(|(k, _)| (*k).clone());
                         let inner: String = items
@@ -7634,7 +7668,7 @@ impl Interpreter {
                             .collect::<Vec<_>>()
                             .join(" ");
                         output.push_str(&format!("declare -A {}=({})\n", var_name, inner));
-                    } else if let Some(arr) = self.arrays.get(var_name) {
+                    } else if let Some(arr) = self.scoped.arrays.get(var_name) {
                         let mut items: Vec<_> = arr.iter().collect();
                         items.sort_by_key(|(k, _)| *k);
                         let inner: String = items
@@ -7770,7 +7804,11 @@ impl Interpreter {
                 if is_export {
                     self.env.insert(
                         var_name.to_string(),
-                        self.variables.get(var_name).cloned().unwrap_or_default(),
+                        self.scoped
+                            .variables
+                            .get(var_name)
+                            .cloned()
+                            .unwrap_or_default(),
                     );
                 }
             } else {
@@ -7780,7 +7818,7 @@ impl Interpreter {
                     self.remove_nameref(name);
                 } else if flags.nameref {
                     // typeset -n ref (without =value): use existing variable value as target
-                    if let Some(existing) = self.variables.get(name.as_str()).cloned()
+                    if let Some(existing) = self.scoped.variables.get(name.as_str()).cloned()
                         && !existing.is_empty()
                     {
                         self.set_nameref(name, existing);
@@ -7791,7 +7829,7 @@ impl Interpreter {
                 } else if flags.array {
                     // Initialize empty indexed array
                     self.arrays_mut().entry(name.to_string()).or_default();
-                } else if !self.variables.contains_key(name.as_str()) {
+                } else if !self.scoped.variables.contains_key(name.as_str()) {
                     self.insert_variable_checked(name.to_string(), String::new());
                 }
                 // Set case conversion attribute markers
@@ -7812,7 +7850,8 @@ impl Interpreter {
                 if is_export {
                     self.env.insert(
                         name.to_string(),
-                        self.variables
+                        self.scoped
+                            .variables
                             .get(name.as_str())
                             .cloned()
                             .unwrap_or_default(),
@@ -7828,80 +7867,6 @@ impl Interpreter {
         };
         result = self.apply_redirections(result, redirects).await?;
         Ok(result)
-    }
-
-    /// Process input redirections (< file, <<< string)
-    async fn process_input_redirections(
-        &mut self,
-        existing_stdin: Option<String>,
-        redirects: &[Redirect],
-    ) -> Result<Option<String>> {
-        let mut stdin = existing_stdin;
-
-        for redirect in redirects {
-            match redirect.kind {
-                RedirectKind::Input => {
-                    if self.shell_profile.is_logic_only()
-                        && !word_is_literal_dev_null(&redirect.target)
-                    {
-                        return Err(crate::error::Error::Execution(format!(
-                            "bash: {}: filesystem redirection disabled",
-                            redirect_target_label(&redirect.target)
-                        )));
-                    }
-                    let target_path = self.expand_word(&redirect.target).await?;
-                    let path = self.resolve_path(&target_path);
-                    // Handle /dev/null at interpreter level - cannot be bypassed
-                    if is_dev_null(&path) {
-                        stdin = Some(String::new()); // EOF
-                    } else if self.shell_profile.is_logic_only() {
-                        return Err(crate::error::Error::Execution(format!(
-                            "bash: {}: filesystem redirection disabled",
-                            target_path
-                        )));
-                    } else {
-                        match self.fs.read_file(&path).await {
-                            Ok(content) => {
-                                stdin = Some(decode_file_bytes_for_path(&path, &content));
-                            }
-                            Err(e) => {
-                                return Err(crate::error::Error::CommandFailure(format!(
-                                    "bash: {target_path}: {e}\n"
-                                )));
-                            }
-                        }
-                    }
-                }
-                RedirectKind::HereString => {
-                    // <<< string - use the target as stdin content
-                    let content = self.expand_word(&redirect.target).await?;
-                    stdin = Some(format!("{}\n", content));
-                }
-                RedirectKind::HereDoc | RedirectKind::HereDocStrip => {
-                    // << EOF / <<- EOF - use the heredoc content as stdin
-                    let content = self.expand_word(&redirect.target).await?;
-                    stdin = Some(content);
-                }
-                RedirectKind::DupInput => {
-                    // <&FD - if FD is a coproc read FD, consume next line
-                    let target = self.expand_word(&redirect.target).await?;
-                    if let Ok(fd) = target.parse::<i32>()
-                        && let Some(buf) = self.coproc_buffers.get_mut(&fd)
-                    {
-                        if let Some(line) = buf.pop() {
-                            stdin = Some(format!("{}\n", line));
-                        } else {
-                            stdin = Some(String::new()); // EOF
-                        }
-                    }
-                }
-                _ => {
-                    // Output redirections handled separately
-                }
-            }
-        }
-
-        Ok(stdin)
     }
 
     /// Execute an [`ExecutionPlan`] returned by a builtin's `execution_plan()` method.
@@ -8183,379 +8148,6 @@ impl Interpreter {
         }
     }
 
-    /// Apply output redirections to command output
-    async fn apply_redirections(
-        &mut self,
-        mut result: ExecResult,
-        redirects: &[Redirect],
-    ) -> Result<ExecResult> {
-        if let Some(stderr) = self.logic_only_redirect_error(redirects) {
-            result.stdout = String::new();
-            result.stderr = stderr;
-            result.exit_code = 1;
-            return Ok(result);
-        }
-
-        // Skip the fd-table path when there are no DupOutput redirects mixed
-        // with file redirects — the simple single-pass logic is sufficient and
-        // avoids any behavioural delta for the common case.
-        let has_dup_output = redirects.iter().any(|r| r.kind == RedirectKind::DupOutput);
-        let has_file_redirect = redirects.iter().any(|r| {
-            matches!(
-                r.kind,
-                RedirectKind::Output
-                    | RedirectKind::Clobber
-                    | RedirectKind::Append
-                    | RedirectKind::OutputBoth
-            )
-        });
-
-        if has_dup_output && has_file_redirect {
-            return self.apply_redirections_fd_table(result, redirects).await;
-        }
-
-        // --- Fast path: no mixed dup+file redirects ---
-        for redirect in redirects {
-            match redirect.kind {
-                RedirectKind::Output | RedirectKind::Clobber => {
-                    let target_path = self.expand_word(&redirect.target).await?;
-                    let path = self.resolve_path(&target_path);
-                    if is_dev_null(&path) {
-                        match redirect.fd {
-                            Some(2) => result.stderr = String::new(),
-                            _ => {
-                                result.stdout = String::new();
-                                result.stdout_bytes = None;
-                            }
-                        }
-                    } else {
-                        if redirect.kind == RedirectKind::Output
-                            && self.variables.get("SHOPT_C").map(|v| v.as_str()) == Some("1")
-                            && self.fs.stat(&path).await.is_ok()
-                        {
-                            result.stdout = String::new();
-                            result.stderr =
-                                format!("bash: {}: cannot overwrite existing file\n", target_path);
-                            result.exit_code = 1;
-                            return Ok(result);
-                        }
-                        match redirect.fd {
-                            Some(2) => {
-                                if let Err(e) =
-                                    self.fs.write_file(&path, result.stderr.as_bytes()).await
-                                {
-                                    result.stderr = format!("bash: {}: {}\n", target_path, e);
-                                    result.exit_code = 1;
-                                    return Ok(result);
-                                }
-                                result.stderr = String::new();
-                            }
-                            _ => {
-                                let stdout = result
-                                    .stdout_bytes
-                                    .as_deref()
-                                    .unwrap_or(result.stdout.as_bytes());
-                                if let Err(e) = self.fs.write_file(&path, stdout).await {
-                                    result.stdout = String::new();
-                                    result.stdout_bytes = None;
-                                    result.stderr = format!("bash: {}: {}\n", target_path, e);
-                                    result.exit_code = 1;
-                                    return Ok(result);
-                                }
-                                result.stdout = String::new();
-                                result.stdout_bytes = None;
-                            }
-                        }
-                    }
-                }
-                RedirectKind::Append => {
-                    let target_path = self.expand_word(&redirect.target).await?;
-                    let path = self.resolve_path(&target_path);
-                    if is_dev_null(&path) {
-                        match redirect.fd {
-                            Some(2) => result.stderr = String::new(),
-                            _ => {
-                                result.stdout = String::new();
-                                result.stdout_bytes = None;
-                            }
-                        }
-                    } else {
-                        match redirect.fd {
-                            Some(2) => {
-                                if let Err(e) =
-                                    self.fs.append_file(&path, result.stderr.as_bytes()).await
-                                {
-                                    result.stderr = format!("bash: {}: {}\n", target_path, e);
-                                    result.exit_code = 1;
-                                    return Ok(result);
-                                }
-                                result.stderr = String::new();
-                            }
-                            _ => {
-                                let stdout = result
-                                    .stdout_bytes
-                                    .as_deref()
-                                    .unwrap_or(result.stdout.as_bytes());
-                                if let Err(e) = self.fs.append_file(&path, stdout).await {
-                                    result.stdout = String::new();
-                                    result.stdout_bytes = None;
-                                    result.stderr = format!("bash: {}: {}\n", target_path, e);
-                                    result.exit_code = 1;
-                                    return Ok(result);
-                                }
-                                result.stdout = String::new();
-                                result.stdout_bytes = None;
-                            }
-                        }
-                    }
-                }
-                RedirectKind::OutputBoth => {
-                    let target_path = self.expand_word(&redirect.target).await?;
-                    let path = self.resolve_path(&target_path);
-                    if is_dev_null(&path) {
-                        result.stdout = String::new();
-                        result.stdout_bytes = None;
-                        result.stderr = String::new();
-                    } else {
-                        let mut combined = result
-                            .stdout_bytes
-                            .clone()
-                            .unwrap_or_else(|| result.stdout.as_bytes().to_vec());
-                        combined.extend_from_slice(result.stderr.as_bytes());
-                        if let Err(e) = self.fs.write_file(&path, &combined).await {
-                            result.stderr = format!("bash: {}: {}\n", target_path, e);
-                            result.exit_code = 1;
-                            return Ok(result);
-                        }
-                        result.stdout = String::new();
-                        result.stdout_bytes = None;
-                        result.stderr = String::new();
-                    }
-                }
-                RedirectKind::DupOutput => {
-                    let target = self.expand_word(&redirect.target).await?;
-                    let target_fd: i32 = target.parse().unwrap_or(1);
-                    let src_fd = redirect.fd.unwrap_or(1);
-
-                    // Check exec_fd_table for persistent fd targets
-                    if let Some(fd_target) = self.exec_fd_table.get(&target_fd).cloned() {
-                        let data = if src_fd == 2 {
-                            std::mem::take(&mut result.stderr)
-                        } else {
-                            std::mem::take(&mut result.stdout)
-                        };
-                        match &fd_target {
-                            FdTarget::Stdout => result.stdout.push_str(&data),
-                            FdTarget::Stderr => result.stderr.push_str(&data),
-                            FdTarget::DevNull => {}
-                            FdTarget::WriteFile(path, _) | FdTarget::AppendFile(path, _) => {
-                                self.fs.append_file(path, data.as_bytes()).await?;
-                            }
-                        }
-                    } else {
-                        match (src_fd, target_fd) {
-                            (2, 1) => {
-                                result.stdout.push_str(&result.stderr);
-                                result.stderr = String::new();
-                            }
-                            (1, 2) => {
-                                result.stderr.push_str(&result.stdout);
-                                result.stdout = String::new();
-                            }
-                            (src, dst) if dst >= 3 => {
-                                let data = if src == 2 {
-                                    std::mem::take(&mut result.stderr)
-                                } else {
-                                    std::mem::take(&mut result.stdout)
-                                };
-                                if self.pending_fd_capture_depth > 0 {
-                                    // Move content to pending_fd_output for compound
-                                    // redirect routing (e.g. `echo msg 1>&3` inside
-                                    // `{ ... } 3>&1 >file`).
-                                    self.append_pending_fd_output(dst, &data);
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                RedirectKind::Input
-                | RedirectKind::HereString
-                | RedirectKind::HereDoc
-                | RedirectKind::HereDocStrip => {}
-                RedirectKind::DupInput => {}
-            }
-        }
-
-        Ok(result)
-    }
-
-    fn logic_only_redirect_error(&self, redirects: &[Redirect]) -> Option<String> {
-        if !self.shell_profile.is_logic_only() {
-            return None;
-        }
-
-        for redirect in redirects {
-            if word_has_process_substitution(&redirect.target) {
-                return Some("bash: process substitution disabled in logic-only shell".to_string());
-            }
-
-            if matches!(
-                redirect.kind,
-                RedirectKind::Output
-                    | RedirectKind::Clobber
-                    | RedirectKind::Append
-                    | RedirectKind::Input
-                    | RedirectKind::OutputBoth
-            ) && !word_is_literal_dev_null(&redirect.target)
-            {
-                return Some(format!(
-                    "bash: {}: filesystem redirection disabled\n",
-                    redirect_target_label(&redirect.target)
-                ));
-            }
-        }
-        None
-    }
-
-    /// Apply redirections using an fd-table model for correct left-to-right
-    /// ordering when DupOutput and file redirects are mixed (e.g. `2>&1 >file`).
-    async fn apply_redirections_fd_table(
-        &mut self,
-        mut result: ExecResult,
-        redirects: &[Redirect],
-    ) -> Result<ExecResult> {
-        // Build fd table: fd1 = stdout pipe, fd2 = stderr pipe
-        let mut fd1 = FdTarget::Stdout;
-        let mut fd2 = FdTarget::Stderr;
-        self.pending_fd_targets.clear();
-
-        for redirect in redirects {
-            match redirect.kind {
-                RedirectKind::Output | RedirectKind::Clobber => {
-                    let target_path = self.expand_word(&redirect.target).await?;
-                    let path = self.resolve_path(&target_path);
-
-                    if redirect.kind == RedirectKind::Output
-                        && self.variables.get("SHOPT_C").map(|v| v.as_str()) == Some("1")
-                        && !is_dev_null(&path)
-                        && self.fs.stat(&path).await.is_ok()
-                    {
-                        result.stdout = String::new();
-                        result.stderr =
-                            format!("bash: {}: cannot overwrite existing file\n", target_path);
-                        result.exit_code = 1;
-                        self.clear_pending_fd_redirect_state();
-                        return Ok(result);
-                    }
-
-                    let target = if is_dev_null(&path) {
-                        FdTarget::DevNull
-                    } else {
-                        FdTarget::WriteFile(path, target_path)
-                    };
-                    match redirect.fd {
-                        Some(2) => fd2 = target,
-                        _ => fd1 = target,
-                    }
-                }
-                RedirectKind::Append => {
-                    let target_path = self.expand_word(&redirect.target).await?;
-                    let path = self.resolve_path(&target_path);
-                    let target = if is_dev_null(&path) {
-                        FdTarget::DevNull
-                    } else {
-                        FdTarget::AppendFile(path, target_path)
-                    };
-                    match redirect.fd {
-                        Some(2) => fd2 = target,
-                        _ => fd1 = target,
-                    }
-                }
-                RedirectKind::OutputBoth => {
-                    let target_path = self.expand_word(&redirect.target).await?;
-                    let path = self.resolve_path(&target_path);
-                    let target = if is_dev_null(&path) {
-                        FdTarget::DevNull
-                    } else {
-                        FdTarget::WriteFile(path, target_path)
-                    };
-                    fd1 = target.clone();
-                    fd2 = target;
-                }
-                RedirectKind::DupOutput => {
-                    let target = self.expand_word(&redirect.target).await?;
-                    let target_fd: i32 = target.parse().unwrap_or(1);
-                    let src_fd = redirect.fd.unwrap_or(1);
-
-                    // Look up exec_fd_table for persistent fd targets
-                    if let Some(exec_target) = self.exec_fd_table.get(&target_fd).cloned() {
-                        match src_fd {
-                            2 => fd2 = exec_target,
-                            _ => fd1 = exec_target,
-                        }
-                    } else {
-                        // Resolve target from current fd table state
-                        let resolved = match target_fd {
-                            1 => Some(fd1.clone()),
-                            2 => Some(fd2.clone()),
-                            _ => None,
-                        };
-                        if let Some(target) = resolved {
-                            match src_fd {
-                                1 => fd1 = target,
-                                2 => fd2 = target,
-                                n if n >= 3 => {
-                                    // Store fd3+ target for routing pending_fd_output later
-                                    self.pending_fd_targets.push((n, target));
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-                RedirectKind::Input
-                | RedirectKind::HereString
-                | RedirectKind::HereDoc
-                | RedirectKind::HereDocStrip
-                | RedirectKind::DupInput => {}
-            }
-        }
-
-        // Route stdout/stderr/fd3+ to their targets (non-async to avoid state machine bloat)
-        let orig_stdout = std::mem::take(&mut result.stdout);
-        let orig_stderr = std::mem::take(&mut result.stderr);
-        let (new_stdout, mut new_stderr, file_writes) = route_fd_table_content(
-            &orig_stdout,
-            &orig_stderr,
-            &fd1,
-            &fd2,
-            &self.pending_fd_targets,
-            &self.pending_fd_output,
-        );
-        self.clear_pending_fd_redirect_state();
-
-        // Write files
-        for (path, (content, is_append, display_path)) in &file_writes {
-            let write_result = if *is_append {
-                self.fs.append_file(path, content.as_bytes()).await
-            } else {
-                self.fs.write_file(path, content.as_bytes()).await
-            };
-            if let Err(e) = write_result {
-                new_stderr = format!("bash: {}: {}\n", display_path, e);
-                result.exit_code = 1;
-                result.stdout = new_stdout;
-                result.stderr = new_stderr;
-                return Ok(result);
-            }
-        }
-
-        result.stdout = new_stdout;
-        result.stderr = new_stderr;
-        Ok(result)
-    }
-
     /// Resolve a path relative to cwd, normalizing `.` and `..` components.
     fn resolve_path(&self, path: &str) -> PathBuf {
         let p = Path::new(path);
@@ -8565,99 +8157,6 @@ impl Interpreter {
             self.cwd.join(p)
         };
         crate::fs::normalize_path(&joined)
-    }
-
-    /// Expand an array access expression (`${arr[index]}`).
-    fn expand_array_access_part(&self, name: &str, index: &str) -> String {
-        let resolved_name = self.resolve_nameref(name);
-        let (arr_name, extra_index) = parse_embedded_array_ref(resolved_name)
-            .map(|(arr_name, idx_part)| (arr_name, Some(idx_part.to_string())))
-            .unwrap_or((resolved_name, None));
-
-        let mut result = String::new();
-        if index == "@" || index == "*" {
-            let sep = if index == "*" {
-                self.get_ifs_separator()
-            } else {
-                " ".to_string()
-            };
-            if let Some(arr) = self.assoc_arrays.get(arr_name) {
-                let mut keys: Vec<_> = arr.keys().collect();
-                keys.sort();
-                let values: Vec<String> =
-                    keys.iter().filter_map(|k| arr.get(*k).cloned()).collect();
-                result.push_str(&values.join(&sep));
-            } else if let Some(arr) = self.arrays.get(arr_name) {
-                let mut indices: Vec<_> = arr.keys().collect();
-                indices.sort();
-                let values: Vec<_> = indices.iter().filter_map(|i| arr.get(i)).collect();
-                result.push_str(&values.into_iter().cloned().collect::<Vec<_>>().join(&sep));
-            }
-        } else if let Some(extra_idx) = extra_index {
-            if let Some(arr) = self.assoc_arrays.get(arr_name) {
-                if let Some(value) = arr.get(&extra_idx) {
-                    result.push_str(value);
-                }
-            } else {
-                let idx: usize = self.evaluate_arithmetic(&extra_idx).try_into().unwrap_or(0);
-                if let Some(arr) = self.arrays.get(arr_name)
-                    && let Some(value) = arr.get(&idx)
-                {
-                    result.push_str(value);
-                }
-            }
-        } else if let Some(arr) = self.assoc_arrays.get(arr_name) {
-            let key = self.expand_variable_or_literal(index);
-            if let Some(value) = arr.get(&key) {
-                result.push_str(value);
-            }
-        } else {
-            let idx = self.resolve_indexed_array_subscript(arr_name, index);
-            if let Some(arr) = self.arrays.get(arr_name)
-                && let Some(value) = arr.get(&idx)
-            {
-                result.push_str(value);
-            }
-        }
-        result
-    }
-
-    /// Apply a `${var@operator}` transformation.
-    fn apply_transformation(&self, name: &str, operator: char) -> String {
-        let value = self.expand_variable(name);
-        match operator {
-            'Q' => format!("'{}'", value.replace('\'', "'\\''")),
-            'E' => value
-                .replace("\\n", "\n")
-                .replace("\\t", "\t")
-                .replace("\\\\", "\\"),
-            'P' => value.clone(),
-            'A' => format!("{}='{}'", name, value.replace('\'', "'\\''")),
-            'K' => value.clone(),
-            'a' => {
-                let mut attrs = String::new();
-                if self.is_var_readonly(name) {
-                    attrs.push('r');
-                }
-                if self.env.contains_key(name) {
-                    attrs.push('x');
-                }
-                attrs
-            }
-            'u' | 'U' => {
-                if operator == 'U' {
-                    value.to_uppercase()
-                } else {
-                    let mut chars = value.chars();
-                    match chars.next() {
-                        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-                        None => String::new(),
-                    }
-                }
-            }
-            'L' => value.to_lowercase(),
-            _ => value.clone(),
-        }
     }
 
     /// Expand a process substitution (`<(cmd)` or `>(cmd)`).
@@ -8710,14 +8209,7 @@ impl Interpreter {
     /// for a real HashMap clone, and only the maps it actually touched.
     fn snapshot_subshell_state(&self) -> SubshellSnapshot {
         SubshellSnapshot {
-            variables: Arc::clone(&self.variables),
-            arrays: Arc::clone(&self.arrays),
-            assoc_arrays: Arc::clone(&self.assoc_arrays),
-            functions: Arc::clone(&self.functions),
-            traps: Arc::clone(&self.traps),
-            aliases: Arc::clone(&self.aliases),
-            var_attrs: Arc::clone(&self.var_attrs),
-            namerefs: Arc::clone(&self.namerefs),
+            scoped: self.scoped.clone(),
             flags: self.flags,
             cwd: self.cwd.clone(),
             memory_budget: self.memory_budget.clone(),
@@ -8727,14 +8219,7 @@ impl Interpreter {
     }
 
     fn restore_subshell_state(&mut self, snap: SubshellSnapshot) {
-        self.variables = snap.variables;
-        self.arrays = snap.arrays;
-        self.assoc_arrays = snap.assoc_arrays;
-        self.functions = snap.functions;
-        self.traps = snap.traps;
-        self.aliases = snap.aliases;
-        self.var_attrs = snap.var_attrs;
-        self.namerefs = snap.namerefs;
+        self.scoped = snap.scoped;
         self.flags = snap.flags;
         self.cwd = snap.cwd;
         self.memory_budget = snap.memory_budget;
@@ -8761,8 +8246,8 @@ impl Interpreter {
                 }
             }
             // Fire EXIT trap set inside the command substitution
-            if let Some(trap_cmd) = self.traps.get("EXIT").cloned()
-                && snapshot.traps.get("EXIT") != Some(&trap_cmd)
+            if let Some(trap_cmd) = self.scoped.traps.get("EXIT").cloned()
+                && snapshot.scoped.traps.get("EXIT") != Some(&trap_cmd)
                 && let Ok(trap_script) = Parser::with_limits(
                     &trap_cmd,
                     self.limits.max_ast_depth,
@@ -8783,1644 +8268,6 @@ impl Interpreter {
         })
     }
 
-    // THREAT[TM-DOS-089]: Box::pin the expand_word future to cap per-level
-    // stack usage. Without this, the async state machine of expand_word (which
-    // contains all WordPart match arms) is inlined into the caller's future,
-    // causing stack overflow at moderate command substitution depths.
-    fn expand_word<'a>(
-        &'a mut self,
-        word: &'a Word,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String>> + Send + 'a>> {
-        Box::pin(async move {
-            let expanded = self.expand_word_inner(word).await?;
-            Ok(Self::strip_quote_markers(&expanded))
-        })
-    }
-
-    /// Quote expansion output that came from a quoted segment of a mixed word.
-    /// THREAT[TM-INF-022]: Quoted user-controlled values must stay literal; only
-    /// unquoted suffix/prefix glob syntax in the source word may drive expansion.
-    fn quote_expansion_for_quoted_glob(value: &str) -> String {
-        let mut quoted = String::with_capacity(value.len());
-        for ch in value.chars() {
-            if matches!(
-                ch,
-                '\\' | '*' | '?' | '[' | ']' | '{' | '}' | '@' | '!' | '+' | '(' | ')' | '|'
-            ) {
-                quoted.push('\\');
-            }
-            quoted.push(ch);
-        }
-        quoted
-    }
-
-    fn append_expansion_for_word(result: &mut String, word: &Word, value: &str) {
-        if word.quoted && word.has_unquoted_glob {
-            result.push_str(&Self::quote_expansion_for_quoted_glob(value));
-        } else {
-            result.push_str(value);
-        }
-    }
-
-    async fn expand_word_inner(&mut self, word: &Word) -> Result<String> {
-        let mut result = String::new();
-        let mut is_first_part = true;
-
-        for part in &word.parts {
-            match part {
-                WordPart::Literal(s) => {
-                    // Tilde expansion: ~ at start of word expands to $HOME
-                    if is_first_part && s.starts_with('~') {
-                        let home = self
-                            .env
-                            .get("HOME")
-                            .or_else(|| self.variables.get("HOME"))
-                            .cloned()
-                            .unwrap_or_else(|| "/home/user".to_string());
-
-                        if s == "~" {
-                            result.push_str(&home);
-                        } else if s.starts_with("~/") {
-                            result.push_str(&home);
-                            result.push_str(&s[1..]);
-                        } else {
-                            result.push_str(s);
-                        }
-                    } else {
-                        result.push_str(s);
-                    }
-                }
-                WordPart::Variable(name) => {
-                    if self.is_nounset() && !self.is_variable_set(name) {
-                        self.nounset_error = Some(format!("bash: {}: unbound variable\n", name));
-                    }
-                    if name == "*" && word.quoted {
-                        let positional = self
-                            .call_stack
-                            .last()
-                            .map(|f| f.positional.clone())
-                            .unwrap_or_default();
-                        let sep = match self.variables.get("IFS") {
-                            Some(ifs) => ifs
-                                .chars()
-                                .next()
-                                .map(|c| c.to_string())
-                                .unwrap_or_default(),
-                            None => " ".to_string(),
-                        };
-                        Self::append_expansion_for_word(&mut result, word, &positional.join(&sep));
-                    } else {
-                        Self::append_expansion_for_word(
-                            &mut result,
-                            word,
-                            &self.expand_variable(name),
-                        );
-                    }
-                }
-                WordPart::CommandSubstitution(commands) => {
-                    // THREAT[TM-DOS-088]: Track substitution depth to prevent OOM.
-                    if self.counters.push_subst(&self.limits).is_err() {
-                        return Err(crate::error::Error::Execution(
-                            "maximum command substitution depth exceeded".to_string(),
-                        ));
-                    }
-                    // THREAT[TM-DOS-089]: Delegate to Box::pin-ed helper to
-                    // prevent stack growth proportional to nesting depth.
-                    let trimmed = self.execute_cmd_subst(commands).await?;
-                    Self::append_expansion_for_word(&mut result, word, &trimmed);
-                }
-                WordPart::ArithmeticExpansion(expr) => {
-                    let expanded_expr = if expr.contains("$(") {
-                        self.expand_command_subs_in_arithmetic(expr).await?
-                    } else {
-                        expr.to_string()
-                    };
-                    let value = self.evaluate_arithmetic_with_assign(&expanded_expr);
-                    Self::append_expansion_for_word(&mut result, word, &value.to_string());
-                }
-                WordPart::Length(name) => {
-                    let value = if let Some(bracket_pos) = name.find('[') {
-                        let arr_name = &name[..bracket_pos];
-                        // Search for ']' after '[' to avoid panic when malformed
-                        // input has ']' before '[' (e.g. null-byte-laden fuzz input).
-                        let index_end = name[bracket_pos..]
-                            .find(']')
-                            .map(|i| bracket_pos + i)
-                            .unwrap_or(name.len());
-                        let start = (bracket_pos + 1).min(index_end);
-                        let index_str = &name[start..index_end];
-                        let idx: usize =
-                            self.evaluate_arithmetic(index_str).try_into().unwrap_or(0);
-                        if let Some(arr) = self.arrays.get(arr_name) {
-                            arr.get(&idx).cloned().unwrap_or_default()
-                        } else {
-                            String::new()
-                        }
-                    } else {
-                        self.expand_variable(name)
-                    };
-                    result.push_str(&value.chars().count().to_string());
-                }
-                WordPart::ParameterExpansion {
-                    name,
-                    operator,
-                    operand,
-                    colon_variant,
-                } => {
-                    if name.is_empty()
-                        && !matches!(
-                            operator,
-                            ParameterOp::UseDefault
-                                | ParameterOp::AssignDefault
-                                | ParameterOp::UseReplacement
-                                | ParameterOp::Error
-                        )
-                    {
-                        self.nounset_error = Some("bash: ${}: bad substitution\n".to_string());
-                        continue;
-                    }
-
-                    let suppress_nounset = matches!(
-                        operator,
-                        ParameterOp::UseDefault
-                            | ParameterOp::AssignDefault
-                            | ParameterOp::UseReplacement
-                            | ParameterOp::Error
-                    );
-
-                    let (is_set, value) = self.resolve_param_expansion_name(name);
-
-                    if self.is_nounset() && !suppress_nounset && !is_set {
-                        self.nounset_error = Some(format!("bash: {}: unbound variable\n", name));
-                    }
-
-                    // Delegate to sync helper to avoid bloating the async state
-                    // machine with Vec<String> locals (causes stack overflow at
-                    // depth 32 in debug builds — see stack_overflow_regression_tests).
-                    let expanded = self.apply_param_op_maybe_per_element(
-                        &value,
-                        name,
-                        operator,
-                        operand,
-                        *colon_variant,
-                        is_set,
-                    );
-                    Self::append_expansion_for_word(&mut result, word, &expanded);
-                }
-                WordPart::ArrayAccess { name, index } => {
-                    Self::append_expansion_for_word(
-                        &mut result,
-                        word,
-                        &self.expand_array_access_part(name, index),
-                    );
-                }
-                WordPart::ArrayIndices(name) => {
-                    let resolved = self.resolve_nameref(name);
-                    if let Some(arr) = self.assoc_arrays.get(resolved) {
-                        let mut keys: Vec<_> = arr.keys().cloned().collect();
-                        keys.sort();
-                        Self::append_expansion_for_word(&mut result, word, &keys.join(" "));
-                    } else if let Some(arr) = self.arrays.get(resolved) {
-                        let mut indices: Vec<_> = arr.keys().collect();
-                        indices.sort();
-                        let index_strs: Vec<String> =
-                            indices.iter().map(|i| i.to_string()).collect();
-                        Self::append_expansion_for_word(&mut result, word, &index_strs.join(" "));
-                    }
-                }
-                WordPart::Substring {
-                    name,
-                    offset,
-                    length,
-                } => {
-                    let value = self.expand_variable(name);
-                    let char_count = value.chars().count();
-                    let offset_val: isize = self.evaluate_arithmetic(offset) as isize;
-                    let start = if offset_val < 0 {
-                        (char_count as isize + offset_val).max(0) as usize
-                    } else {
-                        (offset_val as usize).min(char_count)
-                    };
-                    let substr: String = if let Some(len_expr) = length {
-                        let len_val = self.evaluate_arithmetic(len_expr) as usize;
-                        value.chars().skip(start).take(len_val).collect()
-                    } else {
-                        value.chars().skip(start).collect()
-                    };
-                    Self::append_expansion_for_word(&mut result, word, &substr);
-                }
-                WordPart::ArraySlice {
-                    name,
-                    offset,
-                    length,
-                } => {
-                    if let Some(arr) = self.arrays.get(name) {
-                        let mut indices: Vec<_> = arr.keys().cloned().collect();
-                        indices.sort();
-                        let values: Vec<_> =
-                            indices.iter().filter_map(|i| arr.get(i).cloned()).collect();
-
-                        let offset_val: isize = self.evaluate_arithmetic(offset) as isize;
-                        let start = if offset_val < 0 {
-                            (values.len() as isize + offset_val).max(0) as usize
-                        } else {
-                            (offset_val as usize).min(values.len())
-                        };
-
-                        let sliced = if let Some(len_expr) = length {
-                            let len_val = self.evaluate_arithmetic(len_expr) as usize;
-                            let end = start.saturating_add(len_val).min(values.len());
-                            &values[start..end]
-                        } else {
-                            &values[start..]
-                        };
-                        Self::append_expansion_for_word(&mut result, word, &sliced.join(" "));
-                    }
-                }
-                WordPart::IndirectExpansion {
-                    name,
-                    operator,
-                    operand,
-                    colon_variant,
-                } => {
-                    let nameref_target = self.namerefs.get(name).cloned();
-                    let is_nameref = nameref_target.is_some();
-
-                    if is_nameref && operator.is_none() {
-                        // Nameref without operator: ${!ref} returns the
-                        // name the nameref points to (original behavior).
-                        if let Some(ref target) = nameref_target {
-                            Self::append_expansion_for_word(&mut result, word, target);
-                        }
-                    } else {
-                        // Resolve the indirect target variable name
-                        let resolved_name = if let Some(target) = nameref_target {
-                            target
-                        } else {
-                            self.expand_variable(name)
-                        };
-
-                        if let Some(op) = operator {
-                            // Indirect + operator: resolve indirect, then
-                            // apply op to the target variable
-                            let (is_set, value) = self.resolve_param_expansion_name(&resolved_name);
-                            let expanded = self.apply_parameter_op(
-                                &value,
-                                &resolved_name,
-                                op,
-                                operand,
-                                *colon_variant,
-                                is_set,
-                            );
-                            Self::append_expansion_for_word(&mut result, word, &expanded);
-                        } else {
-                            // Plain indirect expansion (no operator)
-                            if let Some(arr) = self.arrays.get(&resolved_name) {
-                                if let Some(first) = arr.get(&0) {
-                                    Self::append_expansion_for_word(&mut result, word, first);
-                                }
-                            } else {
-                                let value = self.expand_variable(&resolved_name);
-                                Self::append_expansion_for_word(&mut result, word, &value);
-                            }
-                        }
-                    }
-                }
-                WordPart::PrefixMatch(prefix) => {
-                    let mut names: Vec<String> = self
-                        .variables
-                        .keys()
-                        .filter(|k| k.starts_with(prefix.as_str()))
-                        // THREAT[TM-INF-017]: Hide internal/hidden marker variables
-                        .filter(|k| !Self::is_hidden_variable(k))
-                        .cloned()
-                        .collect();
-                    for k in self.env.keys() {
-                        if k.starts_with(prefix.as_str())
-                            && !names.contains(k)
-                            // THREAT[TM-INF-017]: Hide internal/hidden marker variables
-                            && !Self::is_hidden_variable(k)
-                        {
-                            names.push(k.clone());
-                        }
-                    }
-                    names.sort();
-                    Self::append_expansion_for_word(&mut result, word, &names.join(" "));
-                }
-                WordPart::ArrayLength(name) => {
-                    let resolved = self.resolve_nameref(name);
-                    if let Some(arr) = self.assoc_arrays.get(resolved) {
-                        result.push_str(&arr.len().to_string());
-                    } else if let Some(arr) = self.arrays.get(resolved) {
-                        result.push_str(&arr.len().to_string());
-                    } else {
-                        result.push('0');
-                    }
-                }
-                WordPart::ProcessSubstitution { commands, is_input } => {
-                    let expanded = self
-                        .expand_process_substitution(commands, *is_input)
-                        .await?;
-                    Self::append_expansion_for_word(&mut result, word, &expanded);
-                }
-                WordPart::Transformation { name, operator } => {
-                    Self::append_expansion_for_word(
-                        &mut result,
-                        word,
-                        &self.apply_transformation(name, *operator),
-                    );
-                }
-            }
-            is_first_part = false;
-        }
-
-        Ok(result)
-    }
-
-    /// Expand a word to multiple fields (for array iteration and command args)
-    /// Returns Vec<String> where array expansions like "${arr[@]}" produce multiple fields.
-    /// "${arr[*]}" in quoted context joins elements into a single field (bash behavior).
-    /// Boxed because nested command substitution repeatedly enters this helper through
-    /// `expand_command_args`, and its special-parameter/array handling still inflated
-    /// the recursive poll path enough to trip smaller stacks.
-    fn expand_word_to_fields<'a>(
-        &'a mut self,
-        word: &'a Word,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<String>>> + Send + 'a>> {
-        Box::pin(async move {
-            // Check if the word contains only an array expansion or $@/$*
-            if word.parts.len() == 1 {
-                // Handle $@ and $* as special parameters
-                if let WordPart::Variable(name) = &word.parts[0] {
-                    if name == "@" {
-                        let positional = self
-                            .call_stack
-                            .last()
-                            .map(|f| f.positional.clone())
-                            .unwrap_or_default();
-                        if word.quoted {
-                            // "$@" preserves individual positional params
-                            return Ok(positional);
-                        }
-                        // $@ unquoted: each param is subject to further IFS splitting
-                        let mut fields = Vec::new();
-                        for p in &positional {
-                            fields.extend(self.ifs_split(p)?);
-                        }
-                        return Ok(fields);
-                    }
-                    if name == "*" {
-                        let positional = self
-                            .call_stack
-                            .last()
-                            .map(|f| f.positional.clone())
-                            .unwrap_or_default();
-                        if word.quoted {
-                            // "$*" joins with first char of IFS.
-                            // IFS unset → space; IFS="" → no separator.
-                            let sep = match self.variables.get("IFS") {
-                                Some(ifs) => ifs
-                                    .chars()
-                                    .next()
-                                    .map(|c| c.to_string())
-                                    .unwrap_or_default(),
-                                None => " ".to_string(),
-                            };
-                            return Ok(vec![positional.join(&sep)]);
-                        }
-                        // $* unquoted: each param is subject to IFS splitting
-                        let mut fields = Vec::new();
-                        for p in &positional {
-                            fields.extend(self.ifs_split(p)?);
-                        }
-                        return Ok(fields);
-                    }
-                }
-                if let WordPart::ArrayAccess { name, index } = &word.parts[0]
-                    && (index == "@" || index == "*")
-                {
-                    // Check assoc arrays first
-                    if let Some(arr) = self.assoc_arrays.get(name) {
-                        let mut keys: Vec<_> = arr.keys().cloned().collect();
-                        keys.sort();
-                        let values: Vec<String> =
-                            keys.iter().filter_map(|k| arr.get(k).cloned()).collect();
-                        if word.quoted && index == "*" {
-                            let sep = self.get_ifs_separator();
-                            return Ok(vec![values.join(&sep)]);
-                        }
-                        return Ok(values);
-                    }
-                    if let Some(arr) = self.arrays.get(name) {
-                        let mut indices: Vec<_> = arr.keys().collect();
-                        indices.sort();
-                        let values: Vec<String> =
-                            indices.iter().filter_map(|i| arr.get(i).cloned()).collect();
-                        // "${arr[*]}" joins into single field with IFS; "${arr[@]}" keeps separate
-                        if word.quoted && index == "*" {
-                            let sep = self.get_ifs_separator();
-                            return Ok(vec![values.join(&sep)]);
-                        }
-                        return Ok(values);
-                    }
-                    return Ok(Vec::new());
-                }
-                // "${!arr[@]}" - array keys/indices as separate fields
-                if let WordPart::ArrayIndices(name) = &word.parts[0] {
-                    let resolved = self.resolve_nameref(name);
-                    if let Some(arr) = self.assoc_arrays.get(resolved) {
-                        let mut keys: Vec<_> = arr.keys().cloned().collect();
-                        keys.sort();
-                        return Ok(keys);
-                    }
-                    if let Some(arr) = self.arrays.get(resolved) {
-                        let mut indices: Vec<_> = arr.keys().collect();
-                        indices.sort();
-                        return Ok(indices.iter().map(|i| i.to_string()).collect());
-                    }
-                    return Ok(Vec::new());
-                }
-            }
-
-            let has_mixed_part_quotes =
-                word.part_quoted.iter().any(|q| *q) && word.part_quoted.iter().any(|q| !*q);
-            if has_mixed_part_quotes {
-                let mut segments = Vec::new();
-                let mut sentinel_haystack = self.variables.get("IFS").cloned().unwrap_or_default();
-                for (idx, part) in word.parts.iter().enumerate() {
-                    let part_is_quoted = word.part_quoted.get(idx).copied().unwrap_or(word.quoted);
-                    let part_has_expansion = matches!(
-                        part,
-                        WordPart::Variable(_)
-                            | WordPart::CommandSubstitution(_)
-                            | WordPart::ArithmeticExpansion(_)
-                            | WordPart::ParameterExpansion { .. }
-                            | WordPart::ArrayAccess { .. }
-                    );
-                    let value = if idx > 0
-                        && let WordPart::Literal(s) = part
-                    {
-                        s.clone()
-                    } else {
-                        let single = Word {
-                            parts: vec![part.clone()],
-                            quoted: part_is_quoted,
-                            has_unquoted_glob: false,
-                            part_quoted: vec![part_is_quoted],
-                        };
-                        self.expand_word(&single).await?
-                    };
-
-                    if part_has_expansion && !part_is_quoted {
-                        sentinel_haystack.push_str(&value);
-                        segments.push((value, false, false));
-                    } else {
-                        let value =
-                            if part_is_quoted && part_has_expansion && word.has_unquoted_glob {
-                                Self::quote_expansion_for_quoted_glob(&value)
-                            } else {
-                                value
-                            };
-                        let preserves_empty_field = part_is_quoted && value.is_empty();
-                        sentinel_haystack.push_str(&value);
-                        segments.push((value, true, preserves_empty_field));
-                    }
-                }
-
-                // Pick a sentinel char absent from the data so empty quoted
-                // fields survive splitting and can be stripped afterward. If no
-                // candidate is free (astronomically unlikely), skip the sentinel
-                // rather than fall back to NUL, which is a valid data byte.
-                let empty_field_sentinel = segments
-                    .iter()
-                    .any(|(_, _, preserves_empty_field)| *preserves_empty_field)
-                    .then(|| {
-                        OPERAND_QUOTE_MARK_CANDIDATES
-                            .iter()
-                            .copied()
-                            .find(|candidate| !sentinel_haystack.contains(*candidate))
-                    })
-                    .flatten();
-
-                let mut expanded_for_split = String::new();
-                for (value, is_protected, preserves_empty_field) in segments {
-                    if is_protected {
-                        // Field splitting scans the whole expanded word. Mark literal and
-                        // quoted segments as protected so unquoted expansion delimiters can
-                        // still create boundaries between adjacent protected segments.
-                        expanded_for_split.push(QUOTED_SEGMENT_START);
-                        if preserves_empty_field
-                            && let Some(empty_field_sentinel) = empty_field_sentinel
-                        {
-                            expanded_for_split.push(empty_field_sentinel);
-                        }
-                        expanded_for_split.push_str(&value);
-                        expanded_for_split.push(QUOTED_SEGMENT_END);
-                    } else {
-                        expanded_for_split.push_str(&value);
-                    }
-                }
-                let mut fields = self.ifs_split(&expanded_for_split)?;
-                if let Some(empty_field_sentinel) = empty_field_sentinel {
-                    for field in &mut fields {
-                        field.retain(|ch| ch != empty_field_sentinel);
-                    }
-                }
-                return Ok(fields);
-            }
-
-            // For other words, expand to a single field then apply IFS word splitting
-            // when the word is unquoted and contains an expansion.
-            // Per POSIX, unquoted variable/command/arithmetic expansion results undergo
-            // field splitting on IFS.
-            let expanded = self.expand_word_inner(word).await?;
-
-            // IFS splitting applies to unquoted expansions only.
-            // Skip splitting for assignment-like words (e.g., result="$1") where
-            // the lexer stripped quotes from a mixed-quoted word (produces Token::Word
-            // with quoted: false even though the expansion was inside double quotes).
-            let is_assignment_word =
-                matches!(word.parts.first(), Some(WordPart::Literal(s)) if s.contains('='));
-            let has_expansion = !word.quoted
-                && !is_assignment_word
-                && word.parts.iter().any(|p| {
-                    matches!(
-                        p,
-                        WordPart::Variable(_)
-                            | WordPart::CommandSubstitution(_)
-                            | WordPart::ArithmeticExpansion(_)
-                            | WordPart::ParameterExpansion { .. }
-                            | WordPart::ArrayAccess { .. }
-                    )
-                });
-
-            if has_expansion {
-                self.ifs_split(&expanded)
-            } else {
-                Ok(vec![Self::strip_quote_markers(&expanded)])
-            }
-        })
-    }
-
-    /// Resolve name for parameter expansion, handling array subscripts and special params.
-    /// Returns (is_set, expanded_value).
-    fn resolve_param_expansion_name(&self, name: &str) -> (bool, String) {
-        // Check for array subscript pattern: name[@] or name[*]
-        let is_star = name.ends_with("[*]");
-        if let Some(arr_name) = name
-            .strip_suffix("[@]")
-            .or_else(|| name.strip_suffix("[*]"))
-        {
-            // Resolve nameref: if arr_name is a nameref, follow it to the target
-            let resolved_arr_name = self.resolve_nameref(arr_name);
-            let sep = if is_star {
-                self.get_ifs_separator()
-            } else {
-                " ".to_string()
-            };
-            if let Some(arr) = self.assoc_arrays.get(resolved_arr_name) {
-                let is_set = !arr.is_empty();
-                let mut keys: Vec<_> = arr.keys().collect();
-                keys.sort();
-                let values: Vec<String> =
-                    keys.iter().filter_map(|k| arr.get(*k).cloned()).collect();
-                return (is_set, values.join(&sep));
-            }
-            if let Some(arr) = self.arrays.get(resolved_arr_name) {
-                let is_set = !arr.is_empty();
-                let mut indices: Vec<_> = arr.keys().collect();
-                indices.sort();
-                let values: Vec<_> = indices.iter().filter_map(|i| arr.get(i)).collect();
-                return (
-                    is_set,
-                    values.into_iter().cloned().collect::<Vec<_>>().join(&sep),
-                );
-            }
-            return (false, String::new());
-        }
-
-        // Check for array element subscript: name[key]
-        if let Some(bracket) = name.find('[')
-            && name.ends_with(']')
-        {
-            let arr_name = &name[..bracket];
-            // Resolve nameref: if arr_name is a nameref, follow it to the target
-            let resolved_arr_name = self.resolve_nameref(arr_name);
-            let key = &name[bracket + 1..name.len() - 1];
-            if let Some(arr) = self.assoc_arrays.get(resolved_arr_name) {
-                let expanded_key = self.expand_variable_or_literal(key);
-                return match arr.get(&expanded_key) {
-                    Some(v) => (true, v.clone()),
-                    None => (false, String::new()),
-                };
-            }
-            if let Some(arr) = self.arrays.get(resolved_arr_name) {
-                let idx = self.resolve_indexed_array_subscript(resolved_arr_name, key);
-                return match arr.get(&idx) {
-                    Some(v) => (true, v.clone()),
-                    None => (false, String::new()),
-                };
-            }
-            return (false, String::new());
-        }
-
-        // Special parameters @ and *
-        if name == "@" || name == "*" {
-            if let Some(frame) = self.call_stack.last() {
-                let is_set = !frame.positional.is_empty();
-                let sep = if name == "*" {
-                    self.get_ifs_separator()
-                } else {
-                    " ".to_string()
-                };
-                return (is_set, frame.positional.join(&sep));
-            }
-            return (false, String::new());
-        }
-
-        // Regular variable
-        let is_set = self.is_variable_set(name);
-        let value = self.expand_variable(name);
-        (is_set, value)
-    }
-
-    /// Return individual elements for multi-element parameter names ($@, $*, arr[@], arr[*]).
-    /// Returns None for scalar variables.
-    fn resolve_param_expansion_elements(&self, name: &str) -> Option<Vec<String>> {
-        if name == "@" || name == "*" {
-            if let Some(frame) = self.call_stack.last() {
-                return Some(frame.positional.clone());
-            }
-            return Some(Vec::new());
-        }
-        if let Some(arr_name) = name
-            .strip_suffix("[@]")
-            .or_else(|| name.strip_suffix("[*]"))
-        {
-            let resolved = self.resolve_nameref(arr_name);
-            if let Some(arr) = self.assoc_arrays.get(resolved) {
-                let mut keys: Vec<_> = arr.keys().collect();
-                keys.sort();
-                return Some(keys.iter().filter_map(|k| arr.get(*k).cloned()).collect());
-            }
-            if let Some(arr) = self.arrays.get(resolved) {
-                let mut indices: Vec<_> = arr.keys().collect();
-                indices.sort();
-                return Some(indices.iter().filter_map(|i| arr.get(i).cloned()).collect());
-            }
-            return Some(Vec::new());
-        }
-        None
-    }
-
-    fn strip_quote_markers(s: &str) -> String {
-        s.chars()
-            .filter(|&c| c != QUOTED_SEGMENT_START && c != QUOTED_SEGMENT_END)
-            .collect()
-    }
-
-    fn quote_marker_chars(s: &str) -> Vec<(char, bool)> {
-        let mut quoted = false;
-        let mut chars = Vec::new();
-        for c in s.chars() {
-            match c {
-                QUOTED_SEGMENT_START => quoted = true,
-                QUOTED_SEGMENT_END => quoted = false,
-                _ => chars.push((c, quoted)),
-            }
-        }
-        chars
-    }
-
-    /// Split a string on IFS characters according to POSIX rules.
-    ///
-    /// - IFS whitespace (space, tab, newline) collapses; leading/trailing stripped.
-    /// - IFS non-whitespace chars are significant delimiters. Two adjacent produce
-    ///   an empty field between them.
-    /// - `<ws><nws><ws>` = single delimiter (ws absorbed into the nws delimiter).
-    /// - Empty IFS → no splitting. Unset IFS → default " \t\n".
-    fn ifs_split(&self, s: &str) -> Result<Vec<String>> {
-        self.ifs_split_limited(s, self.limits.max_word_split_fields)
-    }
-
-    /// Split a string on IFS characters, returning an error if resource caps are exceeded.
-    fn ifs_split_limited(&self, s: &str, limit: usize) -> Result<Vec<String>> {
-        // Clamp so callers passing a larger value (e.g. remaining array capacity)
-        // cannot bypass the configured max_word_split_fields cap.
-        let limit = limit.min(self.limits.max_word_split_fields);
-        if limit == 0 {
-            return Ok(Vec::new());
-        }
-
-        let ifs = self
-            .variables
-            .get("IFS")
-            .cloned()
-            .unwrap_or_else(|| " \t\n".to_string());
-
-        if ifs.is_empty() {
-            let field = Self::strip_quote_markers(s);
-            let bytes = field.len();
-            return self.push_ifs_field(Vec::new(), field, limit, bytes);
-        }
-
-        let is_ifs = |c: char, quoted: bool| !quoted && ifs.contains(c);
-        let is_ifs_ws = |c: char, quoted: bool| !quoted && ifs.contains(c) && " \t\n".contains(c);
-        let is_ifs_nws = |c: char, quoted: bool| !quoted && ifs.contains(c) && !" \t\n".contains(c);
-        let all_whitespace_ifs = ifs.chars().all(|c| " \t\n".contains(c));
-        let chars = Self::quote_marker_chars(s);
-
-        if all_whitespace_ifs {
-            // IFS is only whitespace: split on unquoted runs, elide empties.
-            let mut fields = Vec::new();
-            let mut current = String::new();
-            let mut bytes = 0usize;
-            for &(c, quoted) in &chars {
-                if is_ifs(c, quoted) {
-                    if !current.is_empty() {
-                        bytes = bytes.saturating_add(current.len());
-                        fields = self.push_ifs_field(
-                            fields,
-                            std::mem::take(&mut current),
-                            limit,
-                            bytes,
-                        )?;
-                    }
-                } else {
-                    current.push(c);
-                }
-            }
-            if !current.is_empty() {
-                bytes = bytes.saturating_add(current.len());
-                fields = self.push_ifs_field(fields, current, limit, bytes)?;
-            }
-            return Ok(fields);
-        }
-
-        // Mixed or pure non-whitespace IFS.
-        let mut fields: Vec<String> = Vec::new();
-        let mut current = String::new();
-        let mut bytes = 0usize;
-        let mut i = 0;
-
-        // Skip leading IFS whitespace
-        while i < chars.len() && is_ifs_ws(chars[i].0, chars[i].1) {
-            i += 1;
-        }
-        // Leading non-whitespace IFS produces an empty first field
-        if i < chars.len() && is_ifs_nws(chars[i].0, chars[i].1) {
-            fields = self.push_ifs_field(fields, String::new(), limit, bytes)?;
-            i += 1;
-            while i < chars.len() && is_ifs_ws(chars[i].0, chars[i].1) {
-                i += 1;
-            }
-        }
-
-        while i < chars.len() {
-            let (c, quoted) = chars[i];
-            if is_ifs_nws(c, quoted) {
-                // Non-whitespace IFS delimiter: finalize current field
-                let field = std::mem::take(&mut current);
-                bytes = bytes.saturating_add(field.len());
-                fields = self.push_ifs_field(fields, field, limit, bytes)?;
-                i += 1;
-                // Consume trailing IFS whitespace
-                while i < chars.len() && is_ifs_ws(chars[i].0, chars[i].1) {
-                    i += 1;
-                }
-            } else if is_ifs_ws(c, quoted) {
-                // IFS whitespace: skip it, then check for non-ws delimiter
-                while i < chars.len() && is_ifs_ws(chars[i].0, chars[i].1) {
-                    i += 1;
-                }
-                if i < chars.len() && is_ifs_nws(chars[i].0, chars[i].1) {
-                    // <ws><nws> = single delimiter. Push current field.
-                    let field = std::mem::take(&mut current);
-                    bytes = bytes.saturating_add(field.len());
-                    fields = self.push_ifs_field(fields, field, limit, bytes)?;
-                    i += 1; // consume the nws char
-                    while i < chars.len() && is_ifs_ws(chars[i].0, chars[i].1) {
-                        i += 1;
-                    }
-                } else if i < chars.len() {
-                    // ws alone as delimiter (no nws follows)
-                    let field = std::mem::take(&mut current);
-                    bytes = bytes.saturating_add(field.len());
-                    fields = self.push_ifs_field(fields, field, limit, bytes)?;
-                }
-                // trailing ws at end → ignore (don't push empty field)
-            } else {
-                current.push(c);
-                i += 1;
-            }
-        }
-
-        if !current.is_empty() {
-            bytes = bytes.saturating_add(current.len());
-            fields = self.push_ifs_field(fields, current, limit, bytes)?;
-        }
-
-        Ok(fields)
-    }
-
-    fn push_ifs_field(
-        &self,
-        mut fields: Vec<String>,
-        field: String,
-        limit: usize,
-        bytes: usize,
-    ) -> Result<Vec<String>> {
-        if fields.len() >= limit {
-            return Err(crate::limits::LimitExceeded::Memory(format!(
-                "word split field limit ({limit}) exceeded"
-            ))
-            .into());
-        }
-        if bytes > self.limits.max_word_split_bytes {
-            return Err(crate::limits::LimitExceeded::Memory(format!(
-                "word split byte limit ({}) exceeded",
-                self.limits.max_word_split_bytes
-            ))
-            .into());
-        }
-        fields.push(field);
-        Ok(fields)
-    }
-
-    /// Expand an operand string from a parameter expansion (sync, lazy).
-    /// Only called when the operand is actually needed, providing lazy evaluation.
-    fn expand_operand(&mut self, operand: &str) -> String {
-        if operand.is_empty() {
-            return String::new();
-        }
-        // Strip quotes from operand before parsing.
-        // For pattern-removal operators, quoted glob chars must stay literal.
-        // Track stripped double-quoted spans with a marker that cannot be
-        // mistaken for a parsed top-level literal, then consume that marker
-        // only from parsed literal parts. Expanded variable data is handled
-        // out-of-band so attacker data cannot inject quote-state toggles.
-        let (word, quote_mark, force_quoted) = Self::parse_marked_operand(
-            operand,
-            self.limits.max_ast_depth,
-            self.limits.max_parser_operations,
-        );
-        let mut result = String::new();
-        let mut in_marked = false;
-        for part in &word.parts {
-            match part {
-                WordPart::Literal(s) => {
-                    Self::push_marked_literal(
-                        &mut result,
-                        s,
-                        quote_mark,
-                        &mut in_marked,
-                        force_quoted,
-                    );
-                }
-                WordPart::Variable(name) => {
-                    let expanded = self.expand_variable(name);
-                    Self::push_operand_expansion(&mut result, &expanded, in_marked || force_quoted);
-                }
-                WordPart::ArithmeticExpansion(expr) => {
-                    let val = self.evaluate_arithmetic_with_assign(expr).to_string();
-                    Self::push_operand_expansion(&mut result, &val, in_marked || force_quoted);
-                }
-                WordPart::ParameterExpansion {
-                    name,
-                    operator,
-                    operand: inner_operand,
-                    colon_variant,
-                } => {
-                    let (is_set, value) = self.resolve_param_expansion_name(name);
-                    let expanded = self.apply_parameter_op(
-                        &value,
-                        name,
-                        operator,
-                        inner_operand,
-                        *colon_variant,
-                        is_set,
-                    );
-                    Self::push_operand_expansion(&mut result, &expanded, in_marked || force_quoted);
-                }
-                WordPart::Length(name) => {
-                    let value = self.expand_variable(name).len().to_string();
-                    Self::push_operand_expansion(&mut result, &value, in_marked || force_quoted);
-                }
-                // TODO: handle CommandSubstitution etc. in sync operand expansion
-                _ => {}
-            }
-        }
-        result
-    }
-
-    /// Strip unescaped double-quote pairs from operand strings.
-    /// In patterns like `${var#./"$other"}`, the `"` around `$other` suppress
-    /// globbing but should not appear as literal characters in the pattern.
-    /// Escaped quotes (`\"`) and NUL-sentinel-marked chars (`\x00"`) are kept.
-    fn strip_operand_quotes(operand: &str, quote_mark: Option<char>) -> String {
-        Self::strip_operand_quotes_with_count(operand, quote_mark).0
-    }
-
-    /// Returns the stripped operand and the number of *unescaped* double quotes
-    /// removed. When `quote_mark` is `Some`, each such quote is replaced by the
-    /// marker (so the count equals the inserted-mark count); when `None`, the
-    /// quote is dropped but still counted so callers can tell whether any real
-    /// quote boundaries existed (escaped `\"` and NUL-sentinel quotes excluded).
-    fn strip_operand_quotes_with_count(operand: &str, quote_mark: Option<char>) -> (String, usize) {
-        let mut result = String::with_capacity(operand.len());
-        let chars: Vec<char> = operand.chars().collect();
-        let mut unescaped_quotes = 0;
-        let mut i = 0;
-        while i < chars.len() {
-            if chars[i] == '\x00' && i + 1 < chars.len() {
-                // NUL sentinel: next char is literal (from lexer escape processing)
-                result.push(chars[i]);
-                result.push(chars[i + 1]);
-                i += 2;
-            } else if chars[i] == '\\' && i + 1 < chars.len() && chars[i + 1] == '"' {
-                // Escaped double quote \" → literal " (keep both for parse_word)
-                result.push(chars[i]);
-                result.push(chars[i + 1]);
-                i += 2;
-            } else if chars[i] == '"' {
-                // Unescaped double quote: skip it (strip the quote character).
-                unescaped_quotes += 1;
-                if let Some(quote_mark) = quote_mark {
-                    result.push(quote_mark);
-                }
-                i += 1;
-            } else {
-                result.push(chars[i]);
-                i += 1;
-            }
-        }
-        (result, unescaped_quotes)
-    }
-
-    fn operand_quote_mark(operand: &str) -> Option<char> {
-        OPERAND_QUOTE_MARK_CANDIDATES
-            .iter()
-            .copied()
-            .find(|&ch| !operand.contains(ch))
-    }
-
-    /// Parse an operand while tracking stripped quote boundaries.
-    ///
-    /// Returns the parsed `Word`, the marker char chosen to flag quote
-    /// boundaries (when one is safe), and `force_quoted`: set only on the
-    /// fail-closed path where no safe marker exists but the operand really did
-    /// contain unescaped quotes, so expansions must be treated as quoted.
-    fn parse_marked_operand(
-        operand: &str,
-        max_depth: usize,
-        max_fuel: usize,
-    ) -> (Word, Option<char>, bool) {
-        // Fast path: no double quotes means there is no quote-state to preserve,
-        // so parse once and skip the bounded candidate search entirely. This
-        // also avoids attacker-amplified repeated parsing of quote-free operands.
-        if !operand.contains('"') {
-            let stripped = Self::strip_operand_quotes(operand, None);
-            return (
-                Parser::parse_word_string_with_limits(&stripped, max_depth, max_fuel),
-                None,
-                false,
-            );
-        }
-
-        if let Some(quote_mark) = Self::operand_quote_mark(operand) {
-            let stripped = Self::strip_operand_quotes(operand, Some(quote_mark));
-            return (
-                Parser::parse_word_string_with_limits(&stripped, max_depth, max_fuel),
-                Some(quote_mark),
-                false,
-            );
-        }
-
-        // Important decision: all source-level candidates may appear only inside
-        // nested/lazy expansions. In that case one candidate is still safe for
-        // this top-level operand if parsed literal parts contain exactly the
-        // quote-boundary markers we inserted. This preserves quote semantics
-        // without returning to an unbounded Unicode search.
-        for &quote_mark in OPERAND_QUOTE_MARK_CANDIDATES {
-            let (stripped, inserted_marks) =
-                Self::strip_operand_quotes_with_count(operand, Some(quote_mark));
-            let word = Parser::parse_word_string_with_limits(&stripped, max_depth, max_fuel);
-            if Self::top_level_literal_mark_count(&word, quote_mark) == inserted_marks {
-                return (word, Some(quote_mark), false);
-            }
-        }
-
-        // Fail-closed: no safe marker. Only force quoted handling when real
-        // unescaped quotes were stripped (not escaped `\"` or NUL-marked quotes).
-        let (stripped, unescaped_quotes) = Self::strip_operand_quotes_with_count(operand, None);
-        (
-            Parser::parse_word_string_with_limits(&stripped, max_depth, max_fuel),
-            None,
-            unescaped_quotes > 0,
-        )
-    }
-
-    fn top_level_literal_mark_count(word: &Word, quote_mark: char) -> usize {
-        word.parts
-            .iter()
-            .filter_map(|part| match part {
-                WordPart::Literal(s) => Some(s.chars().filter(|&ch| ch == quote_mark).count()),
-                _ => None,
-            })
-            .sum()
-    }
-
-    fn push_marked_literal(
-        out: &mut String,
-        s: &str,
-        quote_mark: Option<char>,
-        in_marked: &mut bool,
-        force_quoted: bool,
-    ) {
-        for ch in s.chars() {
-            if Some(ch) == quote_mark {
-                *in_marked = !*in_marked;
-                continue;
-            }
-            Self::push_operand_char(out, ch, *in_marked || force_quoted);
-        }
-    }
-
-    fn push_operand_expansion(out: &mut String, s: &str, in_marked: bool) {
-        for ch in s.chars() {
-            Self::push_operand_char(out, ch, in_marked);
-        }
-    }
-
-    fn push_operand_char(out: &mut String, ch: char, in_marked: bool) {
-        if in_marked
-            && matches!(
-                ch,
-                '*' | '?' | '[' | ']' | '(' | ')' | '|' | '+' | '@' | '!'
-            )
-        {
-            out.push('\\');
-        }
-        out.push(ch);
-    }
-
-    fn find_unescaped_char(pattern: &str, target: char) -> Option<usize> {
-        let mut escaped = false;
-        for (idx, ch) in pattern.char_indices() {
-            if escaped {
-                escaped = false;
-                continue;
-            }
-            if ch == '\\' {
-                escaped = true;
-                continue;
-            }
-            if ch == target {
-                return Some(idx);
-            }
-        }
-        None
-    }
-
-    fn has_unescaped_char(pattern: &str, target: char) -> bool {
-        Self::find_unescaped_char(pattern, target).is_some()
-    }
-
-    fn contains_unescaped_extglob(&self, pattern: &str) -> bool {
-        for op in ["@(", "*(", "?(", "+(", "!("] {
-            if let Some(pos) = pattern.find(op)
-                && !pattern[..pos].ends_with('\\')
-            {
-                return true;
-            }
-        }
-        false
-    }
-
-    fn unescape_pattern_literal(pattern: &str) -> String {
-        let mut out = String::with_capacity(pattern.len());
-        let mut escaped = false;
-        for ch in pattern.chars() {
-            if escaped {
-                out.push(ch);
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else {
-                out.push(ch);
-            }
-        }
-        if escaped {
-            out.push('\\');
-        }
-        out
-    }
-
-    /// Apply a parameter operator, handling per-element expansion for $@/$*/arr[@].
-    ///
-    /// Extracted from the async `expand_word_inner` path to keep `Vec<String>`
-    /// locals off the async state machine (prevents stack overflow at depth 32).
-    fn apply_param_op_maybe_per_element(
-        &mut self,
-        value: &str,
-        name: &str,
-        operator: &ParameterOp,
-        operand: &str,
-        colon_variant: bool,
-        is_set: bool,
-    ) -> String {
-        let needs_per_element = matches!(
-            operator,
-            ParameterOp::RemovePrefixShort
-                | ParameterOp::RemovePrefixLong
-                | ParameterOp::RemoveSuffixShort
-                | ParameterOp::RemoveSuffixLong
-                | ParameterOp::ReplaceFirst { .. }
-                | ParameterOp::ReplaceAll { .. }
-                | ParameterOp::UpperFirst
-                | ParameterOp::UpperAll
-                | ParameterOp::LowerFirst
-                | ParameterOp::LowerAll
-        );
-        if needs_per_element && let Some(elems) = self.resolve_param_expansion_elements(name) {
-            let mut result = String::new();
-            for elem in &elems {
-                let expanded =
-                    self.apply_parameter_op(elem, name, operator, operand, colon_variant, is_set);
-                let next_len = result
-                    .len()
-                    .checked_add(usize::from(!result.is_empty()))
-                    .and_then(|len| len.checked_add(expanded.len()));
-                let Some(next_len) = next_len else {
-                    return value.to_string();
-                };
-                if next_len > Self::MAX_EXPANSION_RESULT_BYTES {
-                    return value.to_string();
-                }
-                if !result.is_empty() {
-                    result.push(' ');
-                }
-                result.push_str(&expanded);
-            }
-            return result;
-        }
-        self.apply_parameter_op(value, name, operator, operand, colon_variant, is_set)
-    }
-
-    /// Apply parameter expansion operator.
-    /// `colon_variant`: true = check unset-or-empty, false = check unset-only.
-    /// `is_set`: whether the variable is defined (distinct from being empty).
-    fn apply_parameter_op(
-        &mut self,
-        value: &str,
-        name: &str,
-        operator: &ParameterOp,
-        operand: &str,
-        colon_variant: bool,
-        is_set: bool,
-    ) -> String {
-        // colon (:-) => trigger when unset OR empty
-        // no-colon (-) => trigger only when unset
-        let use_default = if colon_variant {
-            !is_set || value.is_empty()
-        } else {
-            !is_set
-        };
-        let use_replacement = if colon_variant {
-            is_set && !value.is_empty()
-        } else {
-            is_set
-        };
-
-        match operator {
-            ParameterOp::UseDefault => {
-                if use_default {
-                    self.expand_operand(operand)
-                } else {
-                    value.to_string()
-                }
-            }
-            ParameterOp::AssignDefault => {
-                if use_default {
-                    let expanded = self.expand_operand(operand);
-                    self.set_parameter_expansion_target(name, expanded.clone());
-                    expanded
-                } else {
-                    value.to_string()
-                }
-            }
-            ParameterOp::UseReplacement => {
-                if use_replacement {
-                    self.expand_operand(operand)
-                } else {
-                    String::new()
-                }
-            }
-            ParameterOp::Error => {
-                if use_default {
-                    let expanded = self.expand_operand(operand);
-                    let msg = if expanded.is_empty() {
-                        format!("bash: {}: parameter null or not set\n", name)
-                    } else {
-                        format!("bash: {}: {}\n", name, expanded)
-                    };
-                    self.nounset_error = Some(msg);
-                    String::new()
-                } else {
-                    value.to_string()
-                }
-            }
-            ParameterOp::RemovePrefixShort => {
-                // ${var#pattern} - remove shortest prefix match
-                let expanded = self.expand_operand(operand);
-                self.remove_pattern(value, &expanded, true, false)
-            }
-            ParameterOp::RemovePrefixLong => {
-                // ${var##pattern} - remove longest prefix match
-                let expanded = self.expand_operand(operand);
-                self.remove_pattern(value, &expanded, true, true)
-            }
-            ParameterOp::RemoveSuffixShort => {
-                // ${var%pattern} - remove shortest suffix match
-                let expanded = self.expand_operand(operand);
-                self.remove_pattern(value, &expanded, false, false)
-            }
-            ParameterOp::RemoveSuffixLong => {
-                // ${var%%pattern} - remove longest suffix match
-                let expanded = self.expand_operand(operand);
-                self.remove_pattern(value, &expanded, false, true)
-            }
-            ParameterOp::ReplaceFirst {
-                pattern,
-                replacement,
-            } => {
-                // ${var/pattern/replacement} - replace first occurrence
-                let expanded_rep = self.expand_operand(replacement);
-                self.replace_pattern(value, pattern, &expanded_rep, false)
-            }
-            ParameterOp::ReplaceAll {
-                pattern,
-                replacement,
-            } => {
-                // ${var//pattern/replacement} - replace all occurrences
-                let expanded_rep = self.expand_operand(replacement);
-                self.replace_pattern(value, pattern, &expanded_rep, true)
-            }
-            ParameterOp::UpperFirst => {
-                // ${var^} - uppercase first character
-                let mut chars = value.chars();
-                match chars.next() {
-                    Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-                    None => String::new(),
-                }
-            }
-            ParameterOp::UpperAll => {
-                // ${var^^} - uppercase all characters
-                value.to_uppercase()
-            }
-            ParameterOp::LowerFirst => {
-                // ${var,} - lowercase first character
-                let mut chars = value.chars();
-                match chars.next() {
-                    Some(first) => first.to_lowercase().collect::<String>() + chars.as_str(),
-                    None => String::new(),
-                }
-            }
-            ParameterOp::LowerAll => {
-                // ${var,,} - lowercase all characters
-                value.to_lowercase()
-            }
-        }
-    }
-
-    /// Replace pattern in value
-    /// THREAT[TM-DOS]: Maximum expansion result size (10MB) to prevent memory
-    /// amplification in global pattern replacement.
-    const MAX_EXPANSION_RESULT_BYTES: usize = 10 * 1024 * 1024;
-
-    fn replace_pattern(
-        &self,
-        value: &str,
-        pattern: &str,
-        replacement: &str,
-        global: bool,
-    ) -> String {
-        if pattern.is_empty() {
-            return value.to_string();
-        }
-
-        let concat_or_original = |parts: &[&str]| {
-            let mut total_len = 0usize;
-            for part in parts {
-                total_len = total_len.checked_add(part.len())?;
-                if total_len > Self::MAX_EXPANSION_RESULT_BYTES {
-                    return None;
-                }
-            }
-
-            let mut result = String::with_capacity(total_len);
-            for part in parts {
-                result.push_str(part);
-            }
-            Some(result)
-        };
-
-        // Handle # prefix anchor (match at start only)
-        if let Some(rest) = pattern.strip_prefix('#') {
-            if rest.is_empty() {
-                // ${var/#/rep} with empty pattern: prepend replacement
-                return concat_or_original(&[replacement, value])
-                    .unwrap_or_else(|| value.to_string());
-            }
-            if let Some(stripped) = value.strip_prefix(rest) {
-                return concat_or_original(&[replacement, stripped])
-                    .unwrap_or_else(|| value.to_string());
-            }
-            // Try glob match at prefix
-            if rest.contains('*') {
-                let matched = self.remove_pattern(value, rest, true, false);
-                if matched != value {
-                    let prefix_len = value.len() - matched.len();
-                    return concat_or_original(&[replacement, &value[prefix_len..]])
-                        .unwrap_or_else(|| value.to_string());
-                }
-            }
-            return value.to_string();
-        }
-
-        // Handle % suffix anchor (match at end only)
-        if let Some(rest) = pattern.strip_prefix('%') {
-            if rest.is_empty() {
-                // ${var/%/rep} with empty pattern: append replacement
-                return concat_or_original(&[value, replacement])
-                    .unwrap_or_else(|| value.to_string());
-            }
-            if let Some(stripped) = value.strip_suffix(rest) {
-                return concat_or_original(&[stripped, replacement])
-                    .unwrap_or_else(|| value.to_string());
-            }
-            // Try glob match at suffix
-            if rest.contains('*') {
-                let matched = self.remove_pattern(value, rest, false, false);
-                if matched != value {
-                    return concat_or_original(&[&matched, replacement])
-                        .unwrap_or_else(|| value.to_string());
-                }
-            }
-            return value.to_string();
-        }
-
-        // Handle glob pattern with *
-        if pattern.contains('*') {
-            // Convert glob to regex-like behavior
-            // For simplicity, we'll handle basic cases: prefix*, *suffix, *middle*
-            if pattern == "*" {
-                // Replace everything
-                if replacement.len() > Self::MAX_EXPANSION_RESULT_BYTES {
-                    return value.to_string();
-                }
-                return replacement.to_string();
-            }
-
-            if let Some(star_pos) = pattern.find('*') {
-                let prefix = &pattern[..star_pos];
-                let suffix = &pattern[star_pos + 1..];
-
-                if prefix.is_empty() && !suffix.is_empty() {
-                    // *suffix - match anything ending with suffix
-                    if let Some(pos) = value.find(suffix) {
-                        let after = &value[pos + suffix.len()..];
-                        if global {
-                            let result = replacement.to_string()
-                                + &self.replace_pattern(after, pattern, replacement, true);
-                            if result.len() > Self::MAX_EXPANSION_RESULT_BYTES {
-                                return value.to_string();
-                            }
-                            return result;
-                        } else {
-                            return concat_or_original(&[replacement, after])
-                                .unwrap_or_else(|| value.to_string());
-                        }
-                    }
-                } else if !prefix.is_empty() && suffix.is_empty() {
-                    // prefix* - match prefix and anything after
-                    if value.starts_with(prefix) {
-                        if replacement.len() > Self::MAX_EXPANSION_RESULT_BYTES {
-                            return value.to_string();
-                        }
-                        return replacement.to_string();
-                    }
-                }
-            }
-            // If we can't match the glob pattern, return as-is
-            return value.to_string();
-        }
-
-        // Simple string replacement
-        if global {
-            let result = value.replace(pattern, replacement);
-            if result.len() > Self::MAX_EXPANSION_RESULT_BYTES {
-                return value.to_string();
-            }
-            result
-        } else {
-            let result = value.replacen(pattern, replacement, 1);
-            if result.len() > Self::MAX_EXPANSION_RESULT_BYTES {
-                return value.to_string();
-            }
-            result
-        }
-    }
-
-    /// Remove prefix/suffix pattern from value
-    fn remove_pattern(&self, value: &str, pattern: &str, prefix: bool, longest: bool) -> String {
-        // Simple pattern matching with * glob
-        if pattern.is_empty() {
-            return value.to_string();
-        }
-
-        // Use glob_match for patterns with bracket expressions or extglob
-        if Self::has_unescaped_char(pattern, '[') || self.contains_unescaped_extglob(pattern) {
-            return self.remove_pattern_glob(value, pattern, prefix, longest);
-        }
-
-        let literal_pattern = Self::unescape_pattern_literal(pattern);
-
-        if prefix {
-            // Remove from beginning
-            if pattern == "*" {
-                if longest {
-                    return String::new();
-                } else if !value.is_empty() {
-                    return value.chars().skip(1).collect();
-                } else {
-                    return value.to_string();
-                }
-            }
-
-            // Check if pattern contains *
-            if let Some(star_pos) = Self::find_unescaped_char(pattern, '*') {
-                let prefix_part = &pattern[..star_pos];
-                let suffix_part = &pattern[star_pos + 1..];
-                let prefix_part = Self::unescape_pattern_literal(prefix_part);
-                let suffix_part = Self::unescape_pattern_literal(suffix_part);
-
-                if prefix_part.is_empty() {
-                    // Pattern is "*suffix" - find suffix and remove everything before it
-                    if longest {
-                        // Find last occurrence of suffix
-                        if let Some(pos) = value.rfind(&suffix_part) {
-                            return value[pos + suffix_part.len()..].to_string();
-                        }
-                    } else {
-                        // Find first occurrence of suffix
-                        if let Some(pos) = value.find(&suffix_part) {
-                            return value[pos + suffix_part.len()..].to_string();
-                        }
-                    }
-                } else if suffix_part.is_empty() {
-                    // Pattern is "prefix*" - match prefix and any chars after
-                    if let Some(rest) = value.strip_prefix(&prefix_part) {
-                        if longest {
-                            return String::new();
-                        } else {
-                            return rest.to_string();
-                        }
-                    }
-                } else {
-                    // Pattern is "prefix*suffix" - more complex matching
-                    if let Some(rest) = value.strip_prefix(&prefix_part) {
-                        if longest {
-                            if let Some(pos) = rest.rfind(&suffix_part) {
-                                return rest[pos + suffix_part.len()..].to_string();
-                            }
-                        } else if let Some(pos) = rest.find(&suffix_part) {
-                            return rest[pos + suffix_part.len()..].to_string();
-                        }
-                    }
-                }
-            } else if let Some(rest) = value.strip_prefix(&literal_pattern) {
-                return rest.to_string();
-            }
-        } else {
-            // Remove from end (suffix)
-            if pattern == "*" {
-                if longest {
-                    return String::new();
-                } else if !value.is_empty() {
-                    let mut s = value.to_string();
-                    s.pop();
-                    return s;
-                } else {
-                    return value.to_string();
-                }
-            }
-
-            // Check if pattern contains *
-            if let Some(star_pos) = Self::find_unescaped_char(pattern, '*') {
-                let prefix_part = &pattern[..star_pos];
-                let suffix_part = &pattern[star_pos + 1..];
-                let prefix_part = Self::unescape_pattern_literal(prefix_part);
-                let suffix_part = Self::unescape_pattern_literal(suffix_part);
-
-                if suffix_part.is_empty() {
-                    // Pattern is "prefix*" - find prefix and remove from there to end
-                    if longest {
-                        // Find first occurrence of prefix
-                        if let Some(pos) = value.find(&prefix_part) {
-                            return value[..pos].to_string();
-                        }
-                    } else {
-                        // Find last occurrence of prefix
-                        if let Some(pos) = value.rfind(&prefix_part) {
-                            return value[..pos].to_string();
-                        }
-                    }
-                } else if prefix_part.is_empty() {
-                    // Pattern is "*suffix" - match any chars before suffix
-                    if let Some(before) = value.strip_suffix(&suffix_part) {
-                        if longest {
-                            return String::new();
-                        } else {
-                            return before.to_string();
-                        }
-                    }
-                } else {
-                    // Pattern is "prefix*suffix" - more complex matching
-                    if let Some(before_suffix) = value.strip_suffix(&suffix_part) {
-                        if longest {
-                            if let Some(pos) = before_suffix.find(&prefix_part) {
-                                return value[..pos].to_string();
-                            }
-                        } else if let Some(pos) = before_suffix.rfind(&prefix_part) {
-                            return value[..pos].to_string();
-                        }
-                    }
-                }
-            } else if let Some(before) = value.strip_suffix(&literal_pattern) {
-                return before.to_string();
-            }
-        }
-
-        value.to_string()
-    }
-
-    /// Remove prefix/suffix using glob_match for patterns with brackets or extglob.
-    ///
-    /// THREAT[TM-DOS]: Cap glob_match invocations to prevent O(n^2) CPU
-    /// exhaustion on long strings with bracket/extglob patterns.
-    fn remove_pattern_glob(
-        &self,
-        value: &str,
-        pattern: &str,
-        prefix: bool,
-        longest: bool,
-    ) -> String {
-        const MAX_GLOB_MATCH_CALLS: usize = 10_000;
-        let chars: Vec<char> = value.chars().collect();
-        let mut calls = 0usize;
-        if prefix {
-            // Try each prefix length; shortest = first match, longest = last match
-            let mut last_match = None;
-            for i in 0..=chars.len() {
-                calls += 1;
-                if calls > MAX_GLOB_MATCH_CALLS {
-                    break;
-                }
-                let candidate: String = chars[..i].iter().collect();
-                if self.glob_match(&candidate, pattern) {
-                    if !longest {
-                        return chars[i..].iter().collect();
-                    }
-                    last_match = Some(i);
-                }
-            }
-            if let Some(i) = last_match {
-                return chars[i..].iter().collect();
-            }
-        } else {
-            // Suffix removal: try each suffix length
-            let mut last_match = None;
-            for i in (0..=chars.len()).rev() {
-                calls += 1;
-                if calls > MAX_GLOB_MATCH_CALLS {
-                    break;
-                }
-                let candidate: String = chars[i..].iter().collect();
-                if self.glob_match(&candidate, pattern) {
-                    if !longest {
-                        return chars[..i].iter().collect();
-                    }
-                    last_match = Some(i);
-                }
-            }
-            if let Some(i) = last_match {
-                return chars[..i].iter().collect();
-            }
-        }
-        value.to_string()
-    }
-
     /// Maximum recursion depth for arithmetic expression evaluation.
     /// THREAT[TM-DOS-026]: Prevents stack overflow via deeply nested arithmetic like
     /// $(((((((...)))))))
@@ -10431,986 +8278,6 @@ impl Interpreter {
     /// Maximum expanded arithmetic expression size accepted before fallback to 0.
     /// THREAT[TM-DOS-026]: Prevents attacker-controlled multi-megabyte arithmetic strings.
     const MAX_ARITHMETIC_EXPANSION_BYTES: usize = 64 * 1024;
-
-    /// Evaluate arithmetic with assignment support (e.g. `X = X + 1`).
-    /// Assignment must be handled before variable expansion so the LHS
-    /// variable name is preserved.
-    fn evaluate_arithmetic_with_assign(&mut self, expr: &str) -> i64 {
-        let expr = expr.trim();
-
-        // Handle comma operator (lowest precedence): evaluate all, return last
-        // But not inside parentheses
-        {
-            let mut depth = 0i32;
-            let chars: Vec<char> = expr.chars().collect();
-            let byte_offsets: Vec<usize> = expr.char_indices().map(|(b, _)| b).collect();
-            for i in (0..chars.len()).rev() {
-                match chars[i] {
-                    '(' => depth += 1,
-                    ')' => depth -= 1,
-                    ',' if depth == 0 => {
-                        let left = &expr[..byte_offsets[i]];
-                        let right = &expr[byte_offsets[i] + 1..];
-                        self.evaluate_arithmetic_with_assign(left);
-                        return self.evaluate_arithmetic_with_assign(right);
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        // Handle pre-increment/pre-decrement: ++var, --var
-        if let Some(var_name) = expr.strip_prefix("++") {
-            let var_name = var_name.trim();
-            if is_valid_var_name(var_name) {
-                let val = self.expand_variable(var_name).parse::<i64>().unwrap_or(0) + 1;
-                self.set_variable(var_name.to_string(), val.to_string());
-                return val;
-            }
-        }
-        if let Some(var_name) = expr.strip_prefix("--") {
-            let var_name = var_name.trim();
-            if is_valid_var_name(var_name) {
-                let val = self.expand_variable(var_name).parse::<i64>().unwrap_or(0) - 1;
-                self.set_variable(var_name.to_string(), val.to_string());
-                return val;
-            }
-        }
-
-        // Handle post-increment/post-decrement: var++, var--
-        if let Some(var_name) = expr.strip_suffix("++") {
-            let var_name = var_name.trim();
-            if is_valid_var_name(var_name) {
-                let old_val = self.expand_variable(var_name).parse::<i64>().unwrap_or(0);
-                self.set_variable(var_name.to_string(), (old_val + 1).to_string());
-                return old_val;
-            }
-        }
-        if let Some(var_name) = expr.strip_suffix("--") {
-            let var_name = var_name.trim();
-            if is_valid_var_name(var_name) {
-                let old_val = self.expand_variable(var_name).parse::<i64>().unwrap_or(0);
-                self.set_variable(var_name.to_string(), (old_val - 1).to_string());
-                return old_val;
-            }
-        }
-
-        // Check for compound assignments: +=, -=, *=, /=, %=, &=, |=, ^=, <<=, >>=
-        // and simple assignment: VAR = expr (but not == comparison)
-        if let Some(eq_pos) = expr.find('=') {
-            let before = &expr[..eq_pos];
-            let after_char = expr.as_bytes().get(eq_pos + 1);
-            // Not == or !=
-            if !before.ends_with('!') && after_char != Some(&b'=') {
-                // Detect compound operator: check multi-char ops first
-                let (var_name, op) = if let Some(s) = before.strip_suffix("<<") {
-                    (s.trim(), "<<")
-                } else if let Some(s) = before.strip_suffix(">>") {
-                    (s.trim(), ">>")
-                } else if let Some(s) = before.strip_suffix('+') {
-                    (s.trim(), "+")
-                } else if let Some(s) = before.strip_suffix('-') {
-                    (s.trim(), "-")
-                } else if let Some(s) = before.strip_suffix('*') {
-                    (s.trim(), "*")
-                } else if let Some(s) = before.strip_suffix('/') {
-                    (s.trim(), "/")
-                } else if let Some(s) = before.strip_suffix('%') {
-                    (s.trim(), "%")
-                } else if let Some(s) = before.strip_suffix('&') {
-                    (s.trim(), "&")
-                } else if let Some(s) = before.strip_suffix('|') {
-                    (s.trim(), "|")
-                } else if let Some(s) = before.strip_suffix('^') {
-                    (s.trim(), "^")
-                } else if !before.ends_with('<') && !before.ends_with('>') {
-                    (before.trim(), "")
-                } else {
-                    ("", "")
-                };
-
-                if is_valid_var_name(var_name) {
-                    let rhs = &expr[eq_pos + 1..];
-                    let rhs_val = self.evaluate_arithmetic(rhs);
-                    let value = if op.is_empty() {
-                        rhs_val
-                    } else {
-                        let lhs_val = self.expand_variable(var_name).parse::<i64>().unwrap_or(0);
-                        // THREAT[TM-DOS-043]: wrapping to prevent overflow panic
-                        match op {
-                            "+" => lhs_val.wrapping_add(rhs_val),
-                            "-" => lhs_val.wrapping_sub(rhs_val),
-                            "*" => lhs_val.wrapping_mul(rhs_val),
-                            "/" => {
-                                if rhs_val != 0 && !(lhs_val == i64::MIN && rhs_val == -1) {
-                                    lhs_val / rhs_val
-                                } else {
-                                    0
-                                }
-                            }
-                            "%" => {
-                                if rhs_val != 0 && !(lhs_val == i64::MIN && rhs_val == -1) {
-                                    lhs_val % rhs_val
-                                } else {
-                                    0
-                                }
-                            }
-                            "&" => lhs_val & rhs_val,
-                            "|" => lhs_val | rhs_val,
-                            "^" => lhs_val ^ rhs_val,
-                            "<<" => lhs_val.wrapping_shl((rhs_val & 63) as u32),
-                            ">>" => lhs_val.wrapping_shr((rhs_val & 63) as u32),
-                            _ => rhs_val,
-                        }
-                    };
-                    self.set_variable(var_name.to_string(), value.to_string());
-                    return value;
-                }
-            }
-        }
-
-        self.evaluate_arithmetic(expr)
-    }
-
-    /// Evaluate a simple arithmetic expression
-    fn evaluate_arithmetic(&self, expr: &str) -> i64 {
-        self.evaluate_arithmetic_depth(expr, 0)
-    }
-
-    /// Evaluate arithmetic while carrying recursion depth from caller contexts.
-    /// THREAT[TM-DOS-026]: Preserves the recursion guard across nested array index eval.
-    fn evaluate_arithmetic_depth(&self, expr: &str, depth: usize) -> i64 {
-        let mut state = ArithmeticExpansionState::new(Self::MAX_ARITHMETIC_EXPANSION_FUEL);
-        self.evaluate_arithmetic_depth_state(expr, depth, &mut state)
-    }
-
-    fn evaluate_arithmetic_depth_state(
-        &self,
-        expr: &str,
-        depth: usize,
-        state: &mut ArithmeticExpansionState,
-    ) -> i64 {
-        if depth >= Self::MAX_ARITHMETIC_DEPTH || !state.spend(expr.len().max(1)) {
-            return 0;
-        }
-        // Simple arithmetic evaluation - handles basic operations
-        let expr = expr.trim();
-
-        // First expand any variables in the expression
-        let expanded = self.expand_arithmetic_vars_depth_state(expr, depth + 1, state);
-        if expanded.len() > Self::MAX_ARITHMETIC_EXPANSION_BYTES {
-            return 0;
-        }
-
-        // Parse and evaluate with depth tracking (TM-DOS-026)
-        self.parse_arithmetic_impl(&expanded, depth + 1)
-    }
-
-    /// Recursively resolve a variable value in arithmetic context.
-    /// In bash arithmetic, bare variable names are recursively evaluated:
-    /// if b=a and a=3, then $((b)) evaluates b -> "a" -> 3.
-    /// If x='1 + 2', then $((x)) evaluates x -> "1 + 2" -> 3 (as sub-expression).
-    /// THREAT[TM-DOS-026]: `depth` prevents infinite recursion.
-    fn resolve_arith_var(
-        &self,
-        value: &str,
-        depth: usize,
-        state: &mut ArithmeticExpansionState,
-    ) -> String {
-        if depth >= Self::MAX_ARITHMETIC_DEPTH || !state.spend(value.len().max(1)) {
-            return "0".to_string();
-        }
-        let trimmed = value.trim();
-        if trimmed.is_empty() {
-            return "0".to_string();
-        }
-        // If value is a simple integer, return it directly
-        if trimmed.parse::<i64>().is_ok() {
-            return trimmed.to_string();
-        }
-        // If value looks like a variable name, recursively dereference
-        if is_valid_var_name(trimmed) {
-            let inner = self.expand_variable(trimmed);
-            return self.resolve_arith_named_var(trimmed, &inner, depth + 1, state);
-        }
-        // Value contains an expression (e.g. "1 + 2") — expand vars in it
-        // and wrap in parens to preserve grouping
-        let expanded = self.expand_arithmetic_vars_depth_state(trimmed, depth + 1, state);
-        if expanded.len() > Self::MAX_ARITHMETIC_EXPANSION_BYTES {
-            return "0".to_string();
-        }
-        format!("({})", expanded)
-    }
-
-    fn resolve_arith_named_var(
-        &self,
-        name: &str,
-        value: &str,
-        depth: usize,
-        state: &mut ArithmeticExpansionState,
-    ) -> String {
-        if !state.enter_var(name) {
-            return "0".to_string();
-        }
-        let resolved = self.resolve_arith_var(value, depth, state);
-        state.exit_var();
-        resolved
-    }
-
-    /// Expand variables in arithmetic expression (no $ needed in $((...))).
-    /// THREAT[TM-DOS-026]: `depth` prevents stack overflow via recursive variable values.
-    fn expand_arithmetic_vars_depth_state(
-        &self,
-        expr: &str,
-        depth: usize,
-        state: &mut ArithmeticExpansionState,
-    ) -> String {
-        if depth >= Self::MAX_ARITHMETIC_DEPTH || !state.spend(expr.len().max(1)) {
-            return "0".to_string();
-        }
-
-        // Strip double quotes — "$x" in arithmetic is the same as $x
-        let expr = expr.replace('"', "");
-
-        let mut result = String::new();
-        let mut chars = expr.chars().peekable();
-        // Track whether we're in a numeric literal context (after # or 0x)
-        let mut in_numeric_literal = false;
-
-        while let Some(ch) = chars.next() {
-            if ch == '$' {
-                in_numeric_literal = false;
-                if chars.peek() == Some(&'{') {
-                    // Handle ${...} syntax inside arithmetic
-                    chars.next(); // consume '{'
-                    let mut brace_content = String::new();
-                    let mut brace_depth = 1i32;
-                    while let Some(&c) = chars.peek() {
-                        chars.next();
-                        if c == '{' {
-                            brace_depth += 1;
-                            brace_content.push(c);
-                        } else if c == '}' {
-                            brace_depth -= 1;
-                            if brace_depth == 0 {
-                                break;
-                            }
-                            brace_content.push(c);
-                        } else {
-                            brace_content.push(c);
-                        }
-                    }
-                    let expanded =
-                        self.expand_brace_expr_in_arithmetic(&brace_content, depth + 1, state);
-                    if expanded.is_empty() {
-                        result.push('0');
-                    } else {
-                        result.push_str(&expanded);
-                    }
-                } else if let Some(&c) = chars.peek()
-                    && matches!(c, '#' | '?' | '$' | '!' | '@' | '*' | '-')
-                {
-                    // Handle special variables: $#, $?, $$, $!, $@, $*, $-
-                    chars.next();
-                    let value = self.expand_variable(&c.to_string());
-                    if value.is_empty() {
-                        result.push('0');
-                    } else {
-                        result.push_str(&value);
-                    }
-                } else {
-                    // Handle $var syntax (common in arithmetic)
-                    let mut name = String::new();
-                    while let Some(&c) = chars.peek() {
-                        if c.is_ascii_alphanumeric() || c == '_' {
-                            name.push(chars.next().unwrap());
-                        } else {
-                            break;
-                        }
-                    }
-                    if !name.is_empty() {
-                        // $var is direct text substitution — no recursive arithmetic eval.
-                        // Only bare names (without $) get recursive resolution.
-                        let value = self.expand_variable(&name);
-                        if value.is_empty() {
-                            result.push('0');
-                        } else {
-                            result.push_str(&value);
-                        }
-                    } else {
-                        result.push(ch);
-                    }
-                }
-            } else if ch == '#' {
-                // base#value syntax: digits before # are base, chars after are literal digits
-                result.push(ch);
-                in_numeric_literal = true;
-            } else if in_numeric_literal && (ch.is_ascii_alphanumeric() || ch == '_') {
-                // Part of a base#value literal — don't expand as variable
-                result.push(ch);
-            } else if ch.is_ascii_digit() {
-                result.push(ch);
-                // Check for 0x/0X hex prefix
-                if ch == '0'
-                    && let Some(&next) = chars.peek()
-                    && (next == 'x' || next == 'X')
-                {
-                    result.push(chars.next().unwrap());
-                    in_numeric_literal = true;
-                }
-            } else if ch.is_ascii_alphabetic() || ch == '_' {
-                in_numeric_literal = false;
-                // Could be a variable name
-                let mut name = String::new();
-                name.push(ch);
-                while let Some(&c) = chars.peek() {
-                    if c.is_ascii_alphanumeric() || c == '_' {
-                        name.push(chars.next().unwrap());
-                    } else {
-                        break;
-                    }
-                }
-
-                if chars.peek() == Some(&'[') {
-                    // Check for array access: name[expr]
-                    chars.next(); // consume '['
-                    let mut index_expr = String::new();
-                    let mut bracket_depth = 1;
-                    while let Some(&c) = chars.peek() {
-                        chars.next();
-                        if c == '[' {
-                            bracket_depth += 1;
-                            index_expr.push(c);
-                        } else if c == ']' {
-                            bracket_depth -= 1;
-                            if bracket_depth == 0 {
-                                break;
-                            }
-                            index_expr.push(c);
-                        } else {
-                            index_expr.push(c);
-                        }
-                    }
-                    // Evaluate the index expression as arithmetic
-                    let idx = self.evaluate_arithmetic_depth_state(&index_expr, depth + 1, state);
-                    // Look up array element
-                    if let Some(arr) = self.arrays.get(&name) {
-                        let idx_usize: usize = idx.try_into().unwrap_or(0);
-                        let value = arr.get(&idx_usize).cloned().unwrap_or_default();
-                        result.push_str(&self.resolve_arith_var(&value, depth, state));
-                    } else {
-                        // Not an array — treat as scalar (index 0 returns the var value)
-                        let value = self.expand_variable(&name);
-                        if idx == 0 {
-                            result.push_str(&self.resolve_arith_var(&value, depth, state));
-                        } else {
-                            result.push('0');
-                        }
-                    }
-                } else {
-                    // Expand the variable with recursive arithmetic resolution
-                    let value = self.expand_variable(&name);
-                    result.push_str(&self.resolve_arith_named_var(&name, &value, depth, state));
-                }
-            } else {
-                in_numeric_literal = false;
-                result.push(ch);
-            }
-            if result.len() > Self::MAX_ARITHMETIC_EXPANSION_BYTES {
-                return "0".to_string();
-            }
-        }
-
-        result
-    }
-
-    /// Expand a `${...}` expression encountered inside arithmetic context.
-    /// Handles: `${#arr[@]}`, `${#arr[*]}`, `${#var}`, `${arr[idx]}`, `${var}`.
-    fn expand_brace_expr_in_arithmetic(
-        &self,
-        inner: &str,
-        depth: usize,
-        state: &mut ArithmeticExpansionState,
-    ) -> String {
-        // ${#arr[@]} or ${#arr[*]} — array length
-        if let Some(rest) = inner.strip_prefix('#') {
-            if let Some(bracket) = rest.find('[') {
-                // Require a closing ']' — anything else (e.g. `${#arr[` with
-                // an unterminated index, or `${#arr[禧` whose final byte sits
-                // inside a multi-byte UTF-8 char) is malformed. Without this
-                // guard `end = rest.len() - 1` could land mid-codepoint and
-                // panic the slice below.
-                if !rest.ends_with(']') {
-                    return "0".to_string();
-                }
-                let end = rest.len() - 1;
-                if bracket + 1 > end {
-                    // Malformed — treat as string length of empty var
-                    return "0".to_string();
-                }
-                let arr_name = &rest[..bracket];
-                let idx = &rest[bracket + 1..end];
-                if idx == "@" || idx == "*" {
-                    if let Some(arr) = self.arrays.get(arr_name) {
-                        return arr.len().to_string();
-                    }
-                    if let Some(arr) = self.assoc_arrays.get(arr_name) {
-                        return arr.len().to_string();
-                    }
-                    return "0".to_string();
-                }
-                // ${#arr[n]} — length of element
-                let idx_val = self.evaluate_arithmetic_depth_state(idx, depth + 1, state);
-                let idx_usize: usize = idx_val.try_into().unwrap_or(0);
-                if let Some(arr) = self.arrays.get(arr_name) {
-                    return arr
-                        .get(&idx_usize)
-                        .map(|v| v.len().to_string())
-                        .unwrap_or_else(|| "0".to_string());
-                }
-                return "0".to_string();
-            }
-            // ${#var} — string length
-            let val = self.expand_variable(rest);
-            return val.len().to_string();
-        }
-
-        // ${arr[idx]} — array access
-        if let Some(bracket) = inner.find('[')
-            && inner.ends_with(']')
-        {
-            let arr_name = &inner[..bracket];
-            let idx_str = &inner[bracket + 1..inner.len() - 1];
-            if let Some(arr) = self.assoc_arrays.get(arr_name) {
-                let key = self.expand_variable_or_literal(idx_str);
-                return arr.get(&key).cloned().unwrap_or_default();
-            }
-            if let Some(arr) = self.arrays.get(arr_name) {
-                let idx_val = self.evaluate_arithmetic_depth_state(idx_str, depth + 1, state);
-                let idx_usize: usize = idx_val.try_into().unwrap_or(0);
-                return arr.get(&idx_usize).cloned().unwrap_or_default();
-            }
-            return String::new();
-        }
-
-        // Check for parameter expansion operators (%, %%, #, ##, :-, etc.)
-        // If present, handle expansion with the operator applied.
-        let has_operator = inner.contains("%%")
-            || inner.contains('%')
-            || (inner.contains('#') && !inner.starts_with('#'))
-            || inner.contains(":-");
-        if has_operator {
-            return self.expand_param_op_in_arithmetic(inner);
-        }
-
-        // ${var} — plain variable
-        self.expand_variable(inner)
-    }
-
-    /// Expand a parameter expansion with operators inside arithmetic context.
-    /// Handles common cases like ${var%%-*}, ${var##prefix}, etc.
-    fn expand_param_op_in_arithmetic(&self, inner: &str) -> String {
-        for (pos, ch) in inner.char_indices() {
-            match ch {
-                '%' => {
-                    let name = &inner[..pos];
-                    let value = self.expand_name_or_array_element(name);
-                    if inner[pos..].starts_with("%%") {
-                        let pattern = &inner[pos + 2..];
-                        return self.remove_pattern(&value, pattern, false, true);
-                    }
-                    let pattern = &inner[pos + 1..];
-                    return self.remove_pattern(&value, pattern, false, false);
-                }
-                '#' if pos > 0 => {
-                    let name = &inner[..pos];
-                    let value = self.expand_name_or_array_element(name);
-                    if inner[pos..].starts_with("##") {
-                        let pattern = &inner[pos + 2..];
-                        return self.remove_pattern(&value, pattern, true, true);
-                    }
-                    let pattern = &inner[pos + 1..];
-                    return self.remove_pattern(&value, pattern, true, false);
-                }
-                ':' if inner[pos..].starts_with(":-") => {
-                    let name = &inner[..pos];
-                    let default = &inner[pos + 2..];
-                    let value = self.expand_name_or_array_element(name);
-                    if value.is_empty() {
-                        return default.to_string();
-                    }
-                    return value;
-                }
-                _ => {}
-            }
-        }
-        // Fallback
-        self.expand_name_or_array_element(inner)
-    }
-
-    /// Resolve `name` or `arr[idx]` to its current string value.
-    /// Used by parameter expansion inside arithmetic so `${arr[$key]:-N}` and
-    /// friends can read associative/indexed array elements — `expand_variable`
-    /// alone only handles scalar names. Fixes issue #1776.
-    fn expand_name_or_array_element(&self, name: &str) -> String {
-        if let Some(bracket) = name.find('[')
-            && name.ends_with(']')
-        {
-            let arr_name = &name[..bracket];
-            let resolved = self.resolve_nameref(arr_name);
-            let idx_str = &name[bracket + 1..name.len() - 1];
-            if let Some(arr) = self.assoc_arrays.get(resolved) {
-                let key = self.expand_variable_or_literal(idx_str);
-                return arr.get(&key).cloned().unwrap_or_default();
-            }
-            if let Some(arr) = self.arrays.get(resolved) {
-                let idx_val = self.evaluate_arithmetic(idx_str);
-                let idx_usize: usize = idx_val.try_into().unwrap_or(0);
-                return arr.get(&idx_usize).cloned().unwrap_or_default();
-            }
-            return String::new();
-        }
-        self.expand_variable(name)
-    }
-
-    /// Parse and evaluate a simple arithmetic expression with depth tracking.
-    /// THREAT[TM-DOS-026]: `arith_depth` prevents stack overflow from deeply nested expressions.
-    /// Parse an arithmetic atom: unary operators, parenthesized expressions, and literals.
-    fn parse_arith_atom(&self, expr: &str, arith_depth: usize) -> i64 {
-        // Unary negation and bitwise NOT
-        if let Some(rest) = expr.strip_prefix('-') {
-            let rest = rest.trim();
-            if !rest.is_empty() {
-                // THREAT[TM-DOS-029]: wrapping to prevent i64::MIN negation panic
-                return self
-                    .parse_arithmetic_impl(rest, arith_depth + 1)
-                    .wrapping_neg();
-            }
-        }
-        if let Some(rest) = expr.strip_prefix('~') {
-            let rest = rest.trim();
-            if !rest.is_empty() {
-                return !self.parse_arithmetic_impl(rest, arith_depth + 1);
-            }
-        }
-        if let Some(rest) = expr.strip_prefix('!') {
-            let rest = rest.trim();
-            if !rest.is_empty() {
-                let val = self.parse_arithmetic_impl(rest, arith_depth + 1);
-                return if val == 0 { 1 } else { 0 };
-            }
-        }
-
-        // Base conversion: base#value (e.g., 16#ff = 255, 2#1010 = 10)
-        if let Some(hash_pos) = expr.find('#') {
-            let base_str = &expr[..hash_pos];
-            let value_str = &expr[hash_pos + 1..];
-            if let Ok(base) = base_str.parse::<u32>() {
-                if (2..=36).contains(&base) {
-                    return i64::from_str_radix(value_str, base).unwrap_or(0);
-                } else if (37..=64).contains(&base) {
-                    return Self::parse_base_n(value_str, base);
-                }
-            }
-        }
-
-        // Hex (0x...), octal (0...) literals
-        if expr.starts_with("0x") || expr.starts_with("0X") {
-            return i64::from_str_radix(&expr[2..], 16).unwrap_or(0);
-        }
-        if expr.starts_with('0') && expr.len() > 1 && expr.chars().all(|c| c.is_ascii_digit()) {
-            return i64::from_str_radix(&expr[1..], 8).unwrap_or(0);
-        }
-
-        // Parse as number or variable
-        expr.trim().parse().unwrap_or(0)
-    }
-
-    /// Try to parse a binary operator at the current precedence level.
-    /// Scans `chars`/`bo` for operators, splitting and recursing.
-    /// Returns `Some(value)` if an operator was found, `None` to try next level.
-    fn try_parse_arith_addmul(
-        &self,
-        expr: &str,
-        chars: &[char],
-        bo: &[usize],
-        arith_depth: usize,
-    ) -> Option<i64> {
-        let mut depth: i32 = 0;
-
-        // Addition/Subtraction
-        for i in (0..chars.len()).rev() {
-            match chars[i] {
-                '(' => depth += 1,
-                ')' => depth -= 1,
-                '+' | '-' if depth == 0 && i > 0 => {
-                    if chars[i] == '+' && i + 1 < chars.len() && chars[i + 1] == '+' {
-                        continue;
-                    }
-                    if chars[i] == '+' && i > 0 && chars[i - 1] == '+' {
-                        continue;
-                    }
-                    if chars[i] == '-' && i + 1 < chars.len() && chars[i + 1] == '-' {
-                        continue;
-                    }
-                    if chars[i] == '-' && i > 0 && chars[i - 1] == '-' {
-                        continue;
-                    }
-                    let left = self.parse_arithmetic_impl(&expr[..bo[i]], arith_depth + 1);
-                    let right = self.parse_arithmetic_impl(&expr[bo[i] + 1..], arith_depth + 1);
-                    return Some(if chars[i] == '+' {
-                        left.wrapping_add(right)
-                    } else {
-                        left.wrapping_sub(right)
-                    });
-                }
-                _ => {}
-            }
-        }
-
-        // Multiplication/Division/Modulo
-        depth = 0;
-        for i in (0..chars.len()).rev() {
-            match chars[i] {
-                '(' => depth += 1,
-                ')' => depth -= 1,
-                '*' if depth == 0 => {
-                    if i + 1 < chars.len() && chars[i + 1] == '*' {
-                        continue;
-                    }
-                    if i > 0 && chars[i - 1] == '*' {
-                        continue;
-                    }
-                    let left = self.parse_arithmetic_impl(&expr[..bo[i]], arith_depth + 1);
-                    let right = self.parse_arithmetic_impl(&expr[bo[i] + 1..], arith_depth + 1);
-                    return Some(left.wrapping_mul(right));
-                }
-                '/' | '%' if depth == 0 => {
-                    let left = self.parse_arithmetic_impl(&expr[..bo[i]], arith_depth + 1);
-                    let right = self.parse_arithmetic_impl(&expr[bo[i] + 1..], arith_depth + 1);
-                    return Some(match chars[i] {
-                        '/' if right != 0 => left.wrapping_div(right),
-                        '%' if right != 0 => left.wrapping_rem(right),
-                        _ => 0,
-                    });
-                }
-                _ => {}
-            }
-        }
-
-        // Exponentiation ** (right-associative)
-        depth = 0;
-        for i in 0..chars.len() {
-            match chars[i] {
-                '(' => depth += 1,
-                ')' => depth -= 1,
-                '*' if depth == 0 && i + 1 < chars.len() && chars[i + 1] == '*' => {
-                    let left = self.parse_arithmetic_impl(&expr[..bo[i]], arith_depth + 1);
-                    let right = self.parse_arithmetic_impl(&expr[bo[i] + 2..], arith_depth + 1);
-                    let exp = right.clamp(0, 63) as u32;
-                    return Some(left.wrapping_pow(exp));
-                }
-                _ => {}
-            }
-        }
-
-        None
-    }
-
-    /// Try to parse comparison and logical/bitwise operators.
-    fn try_parse_arith_comparison(
-        &self,
-        expr: &str,
-        chars: &[char],
-        bo: &[usize],
-        arith_depth: usize,
-    ) -> Option<i64> {
-        let mut depth: i32 = 0;
-
-        // Ternary operator (lowest precedence)
-        for i in 0..chars.len() {
-            match chars[i] {
-                '(' => depth += 1,
-                ')' => depth -= 1,
-                '?' if depth == 0 => {
-                    let mut colon_depth = 0;
-                    for j in (i + 1)..chars.len() {
-                        match chars[j] {
-                            '(' => colon_depth += 1,
-                            ')' => colon_depth -= 1,
-                            '?' => colon_depth += 1,
-                            ':' if colon_depth == 0 => {
-                                let cond =
-                                    self.parse_arithmetic_impl(&expr[..bo[i]], arith_depth + 1);
-                                let then_val = self.parse_arithmetic_impl(
-                                    &expr[bo[i] + 1..bo[j]],
-                                    arith_depth + 1,
-                                );
-                                let else_val =
-                                    self.parse_arithmetic_impl(&expr[bo[j] + 1..], arith_depth + 1);
-                                return Some(if cond != 0 { then_val } else { else_val });
-                            }
-                            ':' => colon_depth -= 1,
-                            _ => {}
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        // Logical OR (||)
-        depth = 0;
-        for i in (0..chars.len()).rev() {
-            match chars[i] {
-                '(' => depth += 1,
-                ')' => depth -= 1,
-                '|' if depth == 0 && i > 0 && chars[i - 1] == '|' => {
-                    let left = self.parse_arithmetic_impl(&expr[..bo[i - 1]], arith_depth + 1);
-                    if left != 0 {
-                        return Some(1);
-                    }
-                    let right = self.parse_arithmetic_impl(&expr[bo[i] + 1..], arith_depth + 1);
-                    return Some(if right != 0 { 1 } else { 0 });
-                }
-                _ => {}
-            }
-        }
-
-        // Logical AND (&&)
-        depth = 0;
-        for i in (0..chars.len()).rev() {
-            match chars[i] {
-                '(' => depth += 1,
-                ')' => depth -= 1,
-                '&' if depth == 0 && i > 0 && chars[i - 1] == '&' => {
-                    let left = self.parse_arithmetic_impl(&expr[..bo[i - 1]], arith_depth + 1);
-                    if left == 0 {
-                        return Some(0);
-                    }
-                    let right = self.parse_arithmetic_impl(&expr[bo[i] + 1..], arith_depth + 1);
-                    return Some(if right != 0 { 1 } else { 0 });
-                }
-                _ => {}
-            }
-        }
-
-        // Bitwise OR (|) - but not ||
-        depth = 0;
-        for i in (0..chars.len()).rev() {
-            match chars[i] {
-                '(' => depth += 1,
-                ')' => depth -= 1,
-                '|' if depth == 0
-                    && (i == 0 || chars[i - 1] != '|')
-                    && (i + 1 >= chars.len() || chars[i + 1] != '|') =>
-                {
-                    let left = self.parse_arithmetic_impl(&expr[..bo[i]], arith_depth + 1);
-                    let right = self.parse_arithmetic_impl(&expr[bo[i] + 1..], arith_depth + 1);
-                    return Some(left | right);
-                }
-                _ => {}
-            }
-        }
-
-        // Bitwise XOR (^)
-        depth = 0;
-        for i in (0..chars.len()).rev() {
-            match chars[i] {
-                '(' => depth += 1,
-                ')' => depth -= 1,
-                '^' if depth == 0 => {
-                    let left = self.parse_arithmetic_impl(&expr[..bo[i]], arith_depth + 1);
-                    let right = self.parse_arithmetic_impl(&expr[bo[i] + 1..], arith_depth + 1);
-                    return Some(left ^ right);
-                }
-                _ => {}
-            }
-        }
-
-        // Bitwise AND (&) - but not &&
-        depth = 0;
-        for i in (0..chars.len()).rev() {
-            match chars[i] {
-                '(' => depth += 1,
-                ')' => depth -= 1,
-                '&' if depth == 0
-                    && (i == 0 || chars[i - 1] != '&')
-                    && (i + 1 >= chars.len() || chars[i + 1] != '&') =>
-                {
-                    let left = self.parse_arithmetic_impl(&expr[..bo[i]], arith_depth + 1);
-                    let right = self.parse_arithmetic_impl(&expr[bo[i] + 1..], arith_depth + 1);
-                    return Some(left & right);
-                }
-                _ => {}
-            }
-        }
-
-        // Equality operators (==, !=)
-        depth = 0;
-        for i in (0..chars.len()).rev() {
-            match chars[i] {
-                '(' => depth += 1,
-                ')' => depth -= 1,
-                '=' if depth == 0 && i > 0 && chars[i - 1] == '=' => {
-                    let left = self.parse_arithmetic_impl(&expr[..bo[i - 1]], arith_depth + 1);
-                    let right = self.parse_arithmetic_impl(&expr[bo[i] + 1..], arith_depth + 1);
-                    return Some(if left == right { 1 } else { 0 });
-                }
-                '=' if depth == 0 && i > 0 && chars[i - 1] == '!' => {
-                    let left = self.parse_arithmetic_impl(&expr[..bo[i - 1]], arith_depth + 1);
-                    let right = self.parse_arithmetic_impl(&expr[bo[i] + 1..], arith_depth + 1);
-                    return Some(if left != right { 1 } else { 0 });
-                }
-                _ => {}
-            }
-        }
-
-        // Relational operators (<, >, <=, >=)
-        depth = 0;
-        for i in (0..chars.len()).rev() {
-            match chars[i] {
-                '(' => depth += 1,
-                ')' => depth -= 1,
-                '=' if depth == 0 && i > 0 && chars[i - 1] == '<' => {
-                    let left = self.parse_arithmetic_impl(&expr[..bo[i - 1]], arith_depth + 1);
-                    let right = self.parse_arithmetic_impl(&expr[bo[i] + 1..], arith_depth + 1);
-                    return Some(if left <= right { 1 } else { 0 });
-                }
-                '=' if depth == 0 && i > 0 && chars[i - 1] == '>' => {
-                    let left = self.parse_arithmetic_impl(&expr[..bo[i - 1]], arith_depth + 1);
-                    let right = self.parse_arithmetic_impl(&expr[bo[i] + 1..], arith_depth + 1);
-                    return Some(if left >= right { 1 } else { 0 });
-                }
-                '<' if depth == 0
-                    && (i + 1 >= chars.len() || (chars[i + 1] != '=' && chars[i + 1] != '<'))
-                    && (i == 0 || chars[i - 1] != '<') =>
-                {
-                    let left = self.parse_arithmetic_impl(&expr[..bo[i]], arith_depth + 1);
-                    let right = self.parse_arithmetic_impl(&expr[bo[i] + 1..], arith_depth + 1);
-                    return Some(if left < right { 1 } else { 0 });
-                }
-                '>' if depth == 0
-                    && (i + 1 >= chars.len() || (chars[i + 1] != '=' && chars[i + 1] != '>'))
-                    && (i == 0 || chars[i - 1] != '>') =>
-                {
-                    let left = self.parse_arithmetic_impl(&expr[..bo[i]], arith_depth + 1);
-                    let right = self.parse_arithmetic_impl(&expr[bo[i] + 1..], arith_depth + 1);
-                    return Some(if left > right { 1 } else { 0 });
-                }
-                _ => {}
-            }
-        }
-
-        // Bitwise shift (<< >>)
-        depth = 0;
-        for i in (0..chars.len()).rev() {
-            match chars[i] {
-                '(' => depth += 1,
-                ')' => depth -= 1,
-                '<' if depth == 0
-                    && i > 0
-                    && chars[i - 1] == '<'
-                    && (i < 2 || chars[i - 2] != '<')
-                    && (i + 1 >= chars.len() || chars[i + 1] != '=') =>
-                {
-                    let left = self.parse_arithmetic_impl(&expr[..bo[i - 1]], arith_depth + 1);
-                    let right = self.parse_arithmetic_impl(&expr[bo[i] + 1..], arith_depth + 1);
-                    let shift = right.clamp(0, 63) as u32;
-                    return Some(left.wrapping_shl(shift));
-                }
-                '>' if depth == 0
-                    && i > 0
-                    && chars[i - 1] == '>'
-                    && (i < 2 || chars[i - 2] != '>')
-                    && (i + 1 >= chars.len() || chars[i + 1] != '=') =>
-                {
-                    let left = self.parse_arithmetic_impl(&expr[..bo[i - 1]], arith_depth + 1);
-                    let right = self.parse_arithmetic_impl(&expr[bo[i] + 1..], arith_depth + 1);
-                    let shift = right.clamp(0, 63) as u32;
-                    return Some(left.wrapping_shr(shift));
-                }
-                _ => {}
-            }
-        }
-
-        None
-    }
-
-    fn parse_arithmetic_impl(&self, expr: &str, arith_depth: usize) -> i64 {
-        let expr = expr.trim();
-
-        if expr.is_empty() {
-            return 0;
-        }
-
-        if !expr.is_ascii() {
-            return 0;
-        }
-
-        // THREAT[TM-DOS-026]: Bail out if arithmetic nesting is too deep
-        if arith_depth >= Self::MAX_ARITHMETIC_DEPTH {
-            return 0;
-        }
-
-        // Handle parentheses
-        if expr.starts_with('(') && expr.ends_with(')') {
-            let mut depth = 0;
-            let mut balanced = true;
-            for (i, ch) in expr.chars().enumerate() {
-                match ch {
-                    '(' => depth += 1,
-                    ')' => {
-                        depth -= 1;
-                        if depth == 0 && i < expr.len() - 1 {
-                            balanced = false;
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            if balanced && depth == 0 {
-                return self.parse_arithmetic_impl(&expr[1..expr.len() - 1], arith_depth + 1);
-            }
-        }
-
-        let chars: Vec<char> = expr.chars().collect();
-        let bo: Vec<usize> = expr.char_indices().map(|(b, _)| b).collect();
-
-        // Try comparison/logical/bitwise operators (lowest precedence first)
-        if let Some(val) = self.try_parse_arith_comparison(expr, &chars, &bo, arith_depth) {
-            return val;
-        }
-
-        // Try additive/multiplicative/power operators
-        if let Some(val) = self.try_parse_arith_addmul(expr, &chars, &bo, arith_depth) {
-            return val;
-        }
-
-        // Atom: unary operators and literals
-        self.parse_arith_atom(expr, arith_depth)
-    }
-
-    /// Parse a number in base 37-64 using bash's extended charset: 0-9, a-z, A-Z, @, _
-    fn parse_base_n(value_str: &str, base: u32) -> i64 {
-        let mut result: i64 = 0;
-        for ch in value_str.chars() {
-            let digit = match ch {
-                '0'..='9' => ch as u32 - '0' as u32,
-                'a'..='z' => 10 + ch as u32 - 'a' as u32,
-                'A'..='Z' => 36 + ch as u32 - 'A' as u32,
-                '@' => 62,
-                '_' => 63,
-                _ => return 0,
-            };
-            if digit >= base {
-                return 0;
-            }
-            result = result.wrapping_mul(base as i64).wrapping_add(digit as i64);
-        }
-        result
-    }
 
     /// Expand a string as a variable reference, or return as literal.
     /// Used for associative array keys which may be variable refs or literals.
@@ -11567,6 +8434,7 @@ impl Interpreter {
         let raw_idx = self.evaluate_arithmetic(key);
         if raw_idx < 0 {
             let len = self
+                .scoped
                 .arrays
                 .get(arr_name)
                 .and_then(|a| a.keys().max().map(|m| m.saturating_add(1) as i128))
@@ -11586,9 +8454,10 @@ impl Interpreter {
             let key = &name[bracket + 1..name.len() - 1];
             let resolved_name = self.resolve_nameref(arr_name).to_string();
 
-            if self.assoc_arrays.contains_key(&resolved_name) {
+            if self.scoped.assoc_arrays.contains_key(&resolved_name) {
                 let expanded_key = self.expand_variable_or_literal(key);
                 let is_new_entry = self
+                    .scoped
                     .assoc_arrays
                     .get(&resolved_name)
                     .is_none_or(|a| !a.contains_key(&expanded_key));
@@ -11612,6 +8481,7 @@ impl Interpreter {
 
             let index = self.resolve_indexed_array_subscript(&resolved_name, key);
             let is_new_entry = self
+                .scoped
                 .arrays
                 .get(&resolved_name)
                 .is_none_or(|a| !a.contains_key(&index));
@@ -11642,11 +8512,14 @@ impl Interpreter {
     fn insert_variable_checked(&mut self, key: String, value: String) -> bool {
         let is_internal = Self::is_internal_variable(&key);
         if !is_internal {
-            let is_new = !self.variables.contains_key(&key);
+            let is_new = !self.scoped.variables.contains_key(&key);
             let (old_key_len, old_value_len) = if is_new {
                 (0, 0)
             } else {
-                (key.len(), self.variables.get(&key).map_or(0, |v| v.len()))
+                (
+                    key.len(),
+                    self.scoped.variables.get(&key).map_or(0, |v| v.len()),
+                )
             };
             if self
                 .memory_budget
@@ -11768,7 +8641,7 @@ impl Interpreter {
     /// binding being replaced is a transient local — not retained anywhere —
     /// so its entries must be released from the array budget.
     fn remember_local_array_binding(&mut self, name: &str) -> bool {
-        let previous = self.arrays.get(name).cloned();
+        let previous = self.scoped.arrays.get(name).cloned();
         if let Some(frame) = self.call_stack.last_mut() {
             if frame.local_arrays.contains_key(name) {
                 return false;
@@ -11783,7 +8656,7 @@ impl Interpreter {
     /// See [`remember_local_array_binding`](Self::remember_local_array_binding)
     /// for the meaning of the return value.
     fn remember_local_assoc_array_binding(&mut self, name: &str) -> bool {
-        let previous = self.assoc_arrays.get(name).cloned();
+        let previous = self.scoped.assoc_arrays.get(name).cloned();
         if let Some(frame) = self.call_stack.last_mut() {
             if frame.local_assoc_arrays.contains_key(name) {
                 return false;
@@ -11795,7 +8668,7 @@ impl Interpreter {
     }
 
     fn restore_array_binding(&mut self, name: &str, previous: Option<HashMap<usize, String>>) {
-        let old_entries = self.arrays.get(name).map_or(0, |a| a.len());
+        let old_entries = self.scoped.arrays.get(name).map_or(0, |a| a.len());
         // Saved bindings remain budgeted while shadowed; popping only releases
         // entries allocated by the local binding currently active in arrays.
         self.memory_budget.record_array_remove(old_entries);
@@ -11811,7 +8684,7 @@ impl Interpreter {
         name: &str,
         previous: Option<HashMap<String, String>>,
     ) {
-        let old_entries = self.assoc_arrays.get(name).map_or(0, |a| a.len());
+        let old_entries = self.scoped.assoc_arrays.get(name).map_or(0, |a| a.len());
         // Saved bindings remain budgeted while shadowed; popping only releases
         // entries allocated by the local binding currently active in assoc_arrays.
         self.memory_budget.record_array_remove(old_entries);
@@ -11826,7 +8699,7 @@ impl Interpreter {
     /// Returns true if the insert succeeded.
     fn insert_array_checked(&mut self, name: String, arr: HashMap<usize, String>) -> bool {
         let new_entries = arr.len();
-        let old_entries = self.arrays.get(&name).map_or(0, |a| a.len());
+        let old_entries = self.scoped.arrays.get(&name).map_or(0, |a| a.len());
         let net = new_entries.saturating_sub(old_entries);
         if net > 0
             && self
@@ -11847,7 +8720,7 @@ impl Interpreter {
     #[allow(dead_code)]
     fn insert_assoc_array_checked(&mut self, name: String, arr: HashMap<String, String>) -> bool {
         let new_entries = arr.len();
-        let old_entries = self.assoc_arrays.get(&name).map_or(0, |a| a.len());
+        let old_entries = self.scoped.assoc_arrays.get(&name).map_or(0, |a| a.len());
         let net = new_entries.saturating_sub(old_entries);
         if net > 0
             && self
@@ -11867,14 +8740,14 @@ impl Interpreter {
     /// follow the chain (up to 10 levels to prevent infinite loops).
     fn resolve_nameref<'a>(&'a self, name: &'a str) -> &'a str {
         // Fast path: most variables aren't namerefs. One hashmap lookup decides.
-        if self.namerefs.is_empty() {
+        if self.scoped.namerefs.is_empty() {
             return name;
         }
         let mut current = name;
         let mut visited = std::collections::HashSet::new();
         visited.insert(name);
         for _ in 0..10 {
-            if let Some(target) = self.namerefs.get(current) {
+            if let Some(target) = self.scoped.namerefs.get(current) {
                 // THREAT[TM-INJ-011]: Detect cyclic namerefs and stop.
                 if !visited.insert(target.as_str()) {
                     // Cycle detected — return original name (Bash emits a warning)
@@ -11979,7 +8852,7 @@ impl Interpreter {
             }
         }
 
-        if let Some(value) = self.variables.get(name) {
+        if let Some(value) = self.scoped.variables.get(name) {
             return Some(value.clone());
         }
 
@@ -11996,9 +8869,9 @@ impl Interpreter {
         {
             let arr_name = &name[..bracket];
             let idx_str = &name[bracket + 1..name.len() - 1];
-            if let Some(arr) = self.assoc_arrays.get(arr_name) {
+            if let Some(arr) = self.scoped.assoc_arrays.get(arr_name) {
                 return arr.get(idx_str).cloned().unwrap_or_default();
-            } else if let Some(arr) = self.arrays.get(arr_name) {
+            } else if let Some(arr) = self.scoped.arrays.get(arr_name) {
                 let idx: usize = self.evaluate_arithmetic(idx_str).try_into().unwrap_or(0);
                 return arr.get(&idx).cloned().unwrap_or_default();
             }
@@ -12038,7 +8911,7 @@ impl Interpreter {
                 // $! - PID of most recent background command
                 // In Bashkit's virtual environment, background jobs run synchronously
                 // Return empty string or last job ID placeholder
-                if let Some(last_bg_pid) = self.variables.get("_LAST_BG_PID") {
+                if let Some(last_bg_pid) = self.scoped.variables.get("_LAST_BG_PID") {
                     return last_bg_pid.clone();
                 }
                 return String::new();
@@ -12050,6 +8923,7 @@ impl Interpreter {
                 for opt in ['e', 'x', 'u', 'f', 'n', 'v', 'a', 'b', 'h', 'm'] {
                     let opt_name = format!("SHOPT_{}", opt);
                     if self
+                        .scoped
                         .variables
                         .get(&opt_name)
                         .map(|v| v == "1")
@@ -12076,13 +8950,13 @@ impl Interpreter {
                 return self.cwd.to_string_lossy().to_string();
             }
             "OLDPWD" => {
-                if let Some(v) = self.variables.get("OLDPWD") {
+                if let Some(v) = self.scoped.variables.get("OLDPWD") {
                     return v.clone();
                 }
                 return self.cwd.to_string_lossy().to_string();
             }
             "HOSTNAME" => {
-                if let Some(v) = self.variables.get("HOSTNAME") {
+                if let Some(v) = self.scoped.variables.get("HOSTNAME") {
                     return v.clone();
                 }
                 return "localhost".to_string();
@@ -12092,7 +8966,7 @@ impl Interpreter {
             }
             "SECONDS" => {
                 // Seconds since shell started - always 0 in stateless model
-                if let Some(v) = self.variables.get("SECONDS") {
+                if let Some(v) = self.scoped.variables.get("SECONDS") {
                     return v.clone();
                 }
                 return "0".to_string();
@@ -12166,7 +9040,7 @@ impl Interpreter {
             }
         }
         // Shell variables
-        if self.variables.contains_key(name) {
+        if self.scoped.variables.contains_key(name) {
             return true;
         }
         // Environment
@@ -12192,7 +9066,7 @@ impl Interpreter {
         if self.in_trap {
             return (String::new(), String::new());
         }
-        if let Some(trap_cmd) = self.traps.get("DEBUG").cloned() {
+        if let Some(trap_cmd) = self.scoped.traps.get("DEBUG").cloned() {
             // THREAT[TM-DOS-030]: Propagate interpreter parser limits
             if let Ok(trap_script) = Parser::with_limits(
                 &trap_cmd,
@@ -12220,7 +9094,7 @@ impl Interpreter {
         if self.in_trap {
             return;
         }
-        if let Some(trap_cmd) = self.traps.get("ERR").cloned() {
+        if let Some(trap_cmd) = self.scoped.traps.get("ERR").cloned() {
             // THREAT[TM-DOS-030]: Propagate interpreter parser limits
             if let Ok(trap_script) = Parser::with_limits(
                 &trap_cmd,
@@ -12248,273 +9122,6 @@ impl Interpreter {
         if let Some(frame) = self.call_stack.last_mut() {
             frame.locals.insert(name.to_string(), value.to_string());
         }
-    }
-
-    /// Check if a string contains glob characters
-    /// Expand brace patterns like {a,b,c} or {1..5}
-    /// Returns a Vec of expanded strings, or a single-element Vec if no braces
-    /// THREAT[TM-DOS-042]: Cap total expansion count to prevent combinatorial OOM.
-    fn expand_braces(&self, s: &str) -> Vec<String> {
-        const MAX_BRACE_EXPANSION_TOTAL: usize = 100_000;
-        let mut count = 0;
-        let mut bytes = 0;
-        self.expand_braces_capped(s, &mut count, &mut bytes, MAX_BRACE_EXPANSION_TOTAL, 0)
-    }
-
-    /// THREAT[TM-DOS-042]: The combinatorial `count` cap alone is insufficient
-    /// because it is only incremented *after* each recursive call returns, so
-    /// the first DFS path descends to the full nesting/sequence depth (one
-    /// level per brace group) with `count` still zero. An input like
-    /// `{a,b}{a,b}...` repeated tens of thousands of times (well under
-    /// `max_input_bytes`) therefore stack-overflows the worker thread, and
-    /// allocates O(depth * suffix) memory, before the count cap or execution
-    /// timeout can fire. The `depth` cap bounds the descent up front;
-    /// legitimate scripts never approach this many nested/sequential groups.
-    fn expand_braces_capped(
-        &self,
-        s: &str,
-        count: &mut usize,
-        bytes: &mut usize,
-        max: usize,
-        recursion_depth: usize,
-    ) -> Vec<String> {
-        const MAX_BRACE_EXPANSION_DEPTH: usize = 100;
-        if *count >= max
-            || *bytes >= Self::MAX_EXPANSION_RESULT_BYTES
-            || recursion_depth >= MAX_BRACE_EXPANSION_DEPTH
-        {
-            return vec![s.to_string()];
-        }
-
-        // Find the first brace that has a matching close brace
-        let mut depth = 0;
-        let mut brace_start = None;
-        let mut brace_end = None;
-        let chars: Vec<char> = s.chars().collect();
-
-        let mut escaped = false;
-        for (i, &ch) in chars.iter().enumerate() {
-            if escaped {
-                escaped = false;
-                continue;
-            }
-            if ch == '\\' {
-                escaped = true;
-                continue;
-            }
-            match ch {
-                '{' => {
-                    if depth == 0 {
-                        brace_start = Some(i);
-                    }
-                    depth += 1;
-                }
-                '}' => {
-                    if depth > 0 {
-                        depth -= 1;
-                    }
-                    if depth == 0 && brace_start.is_some() {
-                        brace_end = Some(i);
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        // No valid brace pattern found
-        let (start, end) = match (brace_start, brace_end) {
-            (Some(s), Some(e)) => (s, e),
-            _ => return vec![s.to_string()],
-        };
-
-        let prefix: String = chars[..start].iter().collect();
-        let suffix: String = chars[end + 1..].iter().collect();
-        let brace_content: String = chars[start + 1..end].iter().collect();
-
-        // Brace content with leading/trailing space is not expanded
-        if brace_content.starts_with(' ') || brace_content.ends_with(' ') {
-            return vec![s.to_string()];
-        }
-
-        // Check for range expansion like {1..5} or {a..z}
-        if let Some(range_result) = self.try_expand_range(&brace_content) {
-            let mut results = Vec::new();
-            for item in range_result {
-                if *count >= max || *bytes >= Self::MAX_EXPANSION_RESULT_BYTES {
-                    break;
-                }
-                let expanded = format!("{}{}{}", prefix, item, suffix);
-                let sub =
-                    self.expand_braces_capped(&expanded, count, bytes, max, recursion_depth + 1);
-                *count += sub.len();
-                *bytes += sub.iter().map(String::len).sum::<usize>();
-                results.extend(sub);
-            }
-            return results;
-        }
-
-        // List expansion like {a,b,c}
-        // Need to split by comma, but respect nested braces
-        let items = self.split_brace_items(&brace_content);
-        if items.len() <= 1 && !brace_content.contains(',') {
-            // Not a valid brace expansion (e.g., just {foo})
-            return vec![s.to_string()];
-        }
-
-        let mut results = Vec::new();
-        for item in items {
-            if *count >= max || *bytes >= Self::MAX_EXPANSION_RESULT_BYTES {
-                break;
-            }
-            let expanded = format!("{}{}{}", prefix, item, suffix);
-            let sub = self.expand_braces_capped(&expanded, count, bytes, max, recursion_depth + 1);
-            *count += sub.len();
-            *bytes += sub.iter().map(String::len).sum::<usize>();
-            results.extend(sub);
-        }
-
-        results
-    }
-
-    /// Try to expand a range like 1..5, a..z, or 1..10..2
-    /// THREAT[TM-DOS-041]: Cap range size to prevent OOM from {1..999999999}
-    fn try_expand_range(&self, content: &str) -> Option<Vec<String>> {
-        /// Maximum number of elements in a brace range expansion
-        const MAX_BRACE_RANGE: u64 = 10_000;
-
-        // Check for .. separator: accept {start..end} or {start..end..step}
-        let parts: Vec<&str> = content.split("..").collect();
-        if parts.len() != 2 && parts.len() != 3 {
-            return None;
-        }
-
-        let start = parts[0];
-        let end = parts[1];
-
-        // Try numeric range
-        if let (Ok(start_num), Ok(end_num)) = (start.parse::<i64>(), end.parse::<i64>()) {
-            // Parse optional step (default: 1 or -1 based on direction)
-            let step: i64 = if parts.len() == 3 {
-                match parts[2].parse::<i64>() {
-                    Ok(0) => return None, // step=0 is invalid
-                    Ok(s) => s,
-                    Err(_) => return None,
-                }
-            } else if start_num <= end_num {
-                1
-            } else {
-                -1
-            };
-
-            let abs_step = step.unsigned_abs() as u128;
-            let abs_diff = (end_num as i128 - start_num as i128).unsigned_abs();
-            let range_size = abs_diff / abs_step + 1;
-            if range_size > MAX_BRACE_RANGE as u128 {
-                return None; // Treat as literal — too large
-            }
-
-            let mut results = Vec::new();
-            // Bash behavior: direction is determined by start/end. Keep stepping in i128 so
-            // huge but valid i64 steps cannot overflow after the precomputed range cap passes.
-            let step_magnitude = step.unsigned_abs() as i128;
-            let effective_step = if start_num <= end_num {
-                step_magnitude
-            } else {
-                -step_magnitude
-            };
-
-            let mut i = start_num as i128;
-            let end = end_num as i128;
-            if effective_step > 0 {
-                while i <= end {
-                    results.push(i.to_string());
-                    i += effective_step;
-                }
-            } else {
-                while i >= end {
-                    results.push(i.to_string());
-                    i += effective_step;
-                }
-            }
-            return Some(results);
-        }
-
-        // Try character range (single chars only)
-        if start.len() == 1 && end.len() == 1 {
-            let start_char = start.chars().next().unwrap();
-            let end_char = end.chars().next().unwrap();
-
-            if start_char.is_ascii_alphabetic() && end_char.is_ascii_alphabetic() {
-                let step: i64 = if parts.len() == 3 {
-                    match parts[2].parse::<i64>() {
-                        Ok(0) => return None,
-                        Ok(s) => s,
-                        Err(_) => return None,
-                    }
-                } else {
-                    1
-                };
-                let abs_step = step.unsigned_abs();
-
-                let mut results = Vec::new();
-                let start_byte = u64::from(start_char as u8);
-                let end_byte = u64::from(end_char as u8);
-
-                if start_byte <= end_byte {
-                    let mut b = start_byte;
-                    while b <= end_byte {
-                        results.push(((b as u8) as char).to_string());
-                        b = match b.checked_add(abs_step) {
-                            Some(v) => v,
-                            None => break,
-                        };
-                    }
-                } else {
-                    let mut b = start_byte;
-                    while b >= end_byte {
-                        results.push(((b as u8) as char).to_string());
-                        b = match b.checked_sub(abs_step) {
-                            Some(v) => v,
-                            None => break,
-                        };
-                    }
-                }
-                return Some(results);
-            }
-        }
-
-        None
-    }
-
-    /// Split brace content by commas, respecting nested braces
-    fn split_brace_items(&self, content: &str) -> Vec<String> {
-        let mut items = Vec::new();
-        let mut current = String::new();
-        let mut depth = 0;
-
-        for ch in content.chars() {
-            match ch {
-                '{' => {
-                    depth += 1;
-                    current.push(ch);
-                }
-                '}' => {
-                    depth -= 1;
-                    current.push(ch);
-                }
-                ',' if depth == 0 => {
-                    items.push(current);
-                    current = String::new();
-                }
-                _ => {
-                    current.push(ch);
-                }
-            }
-        }
-        items.push(current);
-
-        items
     }
 }
 
@@ -12842,7 +9449,10 @@ mod tests {
         interp.set_variable("A".to_string(), "1".to_string());
         interp.set_variable("A".to_string(), "1234567890".to_string());
 
-        assert_eq!(interp.variables.get("A").map(String::as_str), Some("1"));
+        assert_eq!(
+            interp.scoped.variables.get("A").map(String::as_str),
+            Some("1")
+        );
         assert_eq!(interp.env.get("A").map(String::as_str), Some("1"));
     }
 
@@ -15432,7 +12042,7 @@ cat /tmp/test_fd_exec_public.txt"#,
         restored.restore_shell_state(&state);
 
         assert_eq!(restored.resolve_nameref("alias_var"), "POLICY");
-        assert!(!restored.variables.contains_key("_NAMEREF_alias_var"));
+        assert!(!restored.scoped.variables.contains_key("_NAMEREF_alias_var"));
 
         let ast = Parser::new("alias_var=unsafe; echo $POLICY")
             .parse()
@@ -15440,7 +12050,7 @@ cat /tmp/test_fd_exec_public.txt"#,
         let result = restored.execute(&ast).await.unwrap();
         assert_eq!(result.stdout.trim(), "safe");
         assert_eq!(
-            restored.variables.get("POLICY").map(String::as_str),
+            restored.scoped.variables.get("POLICY").map(String::as_str),
             Some("safe")
         );
     }
