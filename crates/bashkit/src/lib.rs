@@ -714,27 +714,19 @@ impl Bash {
     /// input size, then parses the script with a timeout, AST depth limit, and fuel limit,
     /// then executes the resulting AST.
     pub async fn exec(&mut self, script: &str) -> Result<ExecResult> {
-        self.exec_with_extensions(script, ExecutionExtensions::new())
-            .await
+        self.exec_with_options(script, ExecOptions::new()).await
     }
 
     /// Execute a bash script with per-execution builtin extensions.
+    ///
+    /// Convenience wrapper over [`exec_with_options`](Self::exec_with_options).
     pub async fn exec_with_extensions(
         &mut self,
         script: &str,
-        mut extensions: ExecutionExtensions,
+        extensions: ExecutionExtensions,
     ) -> Result<ExecResult> {
-        // Expose active execution limits and deadline to builtins that need to
-        // honor per-execution sandbox settings inside synchronous VM sections.
-        let active_limits = self.interpreter.limits().clone();
-        let _ = extensions.insert(active_limits.clone());
-        let _ = extensions.insert(builtins::ExecutionDeadline::new(active_limits.timeout));
-        #[cfg(feature = "python")]
-        let _ = extensions.insert(builtins::PythonInprocessOptIn(self.python_inprocess_opt_in));
-        #[cfg(feature = "sqlite")]
-        let _ = extensions.insert(builtins::SqliteInprocessOptIn(self.sqlite_inprocess_opt_in));
-        let _extensions_guard = self.interpreter.scoped_execution_extensions(extensions);
-        self.exec_impl(script).await
+        self.exec_with_options(script, ExecOptions::new().extensions(extensions))
+            .await
     }
 
     /// Execute a bash script with a single [`ExecOptions`] request value.
@@ -750,16 +742,26 @@ impl Bash {
         options: ExecOptions,
     ) -> Result<ExecResult> {
         let ExecOptions {
-            extensions,
+            mut extensions,
             output_callback,
         } = options;
+        // Expose active execution limits and deadline to builtins that need to
+        // honor per-execution sandbox settings inside synchronous VM sections.
+        let active_limits = self.interpreter.limits().clone();
+        let _ = extensions.insert(active_limits.clone());
+        let _ = extensions.insert(builtins::ExecutionDeadline::new(active_limits.timeout));
+        #[cfg(feature = "python")]
+        let _ = extensions.insert(builtins::PythonInprocessOptIn(self.python_inprocess_opt_in));
+        #[cfg(feature = "sqlite")]
+        let _ = extensions.insert(builtins::SqliteInprocessOptIn(self.sqlite_inprocess_opt_in));
         // Install the streaming callback for the duration of this execution, if
         // any. The guard holds a raw pointer (not a borrow), so the mutable
-        // interpreter borrow is released before `exec_with_extensions` runs and
-        // the callback is cleared on drop after the await completes.
+        // interpreter borrow is released before `exec_impl` runs and the
+        // callback is cleared on drop after the await completes.
         let _stream_guard =
             output_callback.map(|cb| OutputCallbackGuard::install(&mut self.interpreter, cb));
-        self.exec_with_extensions(script, extensions).await
+        let _extensions_guard = self.interpreter.scoped_execution_extensions(extensions);
+        self.exec_impl(script).await
     }
 
     async fn exec_impl(&mut self, script: &str) -> Result<ExecResult> {
@@ -1080,11 +1082,13 @@ impl Bash {
         script: &str,
         output_callback: OutputCallback,
     ) -> Result<ExecResult> {
-        self.exec_streaming_with_extensions(script, output_callback, ExecutionExtensions::new())
+        self.exec_with_options(script, ExecOptions::new().streaming(output_callback))
             .await
     }
 
     /// Execute a bash script with streaming output and per-execution builtin extensions.
+    ///
+    /// Convenience wrapper over [`exec_with_options`](Self::exec_with_options).
     pub async fn exec_streaming_with_extensions(
         &mut self,
         script: &str,
