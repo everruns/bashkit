@@ -11,7 +11,11 @@ cargo add bashkit
 Optional features:
 
 ```bash
+cargo add bashkit --features http_client
 cargo add bashkit --features git
+cargo add bashkit --features ssh
+cargo add bashkit --features jq
+cargo add bashkit --features bot-auth
 cargo add bashkit --features python
 cargo add bashkit --features typescript
 cargo add bashkit --features sqlite
