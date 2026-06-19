@@ -13,7 +13,7 @@
     "data:performance": "node scripts/build-performance-data.mjs",
     "prebuild": "node scripts/build-performance-data.mjs",
     "build": "astro build",
-    "postbuild": "node scripts/normalize-generated-html.mjs && node scripts/verify-doc-routes.mjs && node scripts/verify-doc-markdown-routes.mjs && node scripts/verify-public-links.mjs && node scripts/verify-sitemap.mjs && node scripts/verify-robots.mjs && node scripts/verify-agent-skills.mjs && node scripts/verify-link-headers.mjs",
+    "postbuild": "node scripts/normalize-generated-html.mjs && node scripts/verify-doc-routes.mjs && node scripts/verify-doc-markdown-routes.mjs && node scripts/verify-public-links.mjs && node scripts/verify-sitemap.mjs && node scripts/verify-robots.mjs && node scripts/verify-agent-skills.mjs && node scripts/verify-link-headers.mjs && node scripts/verify-llms.mjs",
     "preview": "wrangler dev",
     "deploy": "pnpm run build && wrangler deploy",
     "check": "astro check",
