@@ -130,3 +130,33 @@ pwd
 ### expect
 /tmp
 ### end
+
+### dirs_verbose
+# dirs -v shows numbered entries, current dir at index 0
+### bash_diff
+mkdir -p /tmp/dv1 /tmp/dv2
+cd /tmp
+pushd /tmp/dv1 > /dev/null
+pushd /tmp/dv2 > /dev/null
+dirs -v
+### expect
+ 0  /tmp/dv2
+ 1  /tmp/dv1
+ 2  /tmp
+### end
+
+### dirstack_internal_names_are_ordinary_vars
+# _DIRSTACK_SIZE / _DIRSTACK_0 are no longer the stack's storage; the stack is
+# typed interpreter state, so user variables of those names are inert.
+### bash_diff
+mkdir -p /tmp/di1
+cd /tmp
+_DIRSTACK_SIZE=99
+_DIRSTACK_0=/forged
+pushd /tmp/di1 > /dev/null
+dirs
+echo "vars=$_DIRSTACK_SIZE $_DIRSTACK_0"
+### expect
+/tmp/di1 /tmp
+vars=99 /forged
+### end

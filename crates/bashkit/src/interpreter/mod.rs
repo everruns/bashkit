@@ -304,6 +304,9 @@ pub(crate) struct ShellRef<'a> {
     pub(crate) var_attrs: &'a mut HashMap<String, VarAttrs>,
     /// Nameref bindings (`declare -n`). Mutable so `unset -n` can clear them.
     pub(crate) namerefs: &'a mut HashMap<String, String>,
+    /// Directory stack for `pushd`/`popd`/`dirs`. Direct mutable access backed
+    /// by `Arc::make_mut` of the parent's Arc-wrapped stack.
+    pub(crate) dir_stack: &'a mut Vec<String>,
     /// Registered builtin commands (read-only, accessed via `has_builtin`).
     pub(crate) builtins: &'a HashMap<String, Arc<dyn Builtin>>,
     /// Host-owned builtin registry, when configured (read-only). Needed so
@@ -590,7 +593,6 @@ pub(crate) fn is_internal_variable(name: &str) -> bool {
         || name.starts_with("_LOWER_")
         || name.starts_with("_INTEGER_")
         || name.starts_with("_ARRAY_READ_")
-        || name.starts_with("_DIRSTACK_")
         || name == "_SHIFT_COUNT"
         || name == "_SET_POSITIONAL"
 }
@@ -735,6 +737,9 @@ pub struct ShellState {
     pub aliases: HashMap<String, String>,
     /// Trap handlers
     pub traps: HashMap<String, String>,
+    /// Directory stack (`pushd`/`popd`/`dirs`); bottom-to-top, excluding `cwd`.
+    #[serde(default)]
+    pub dir_stack: Vec<String>,
 }
 
 /// Lightweight inspection view of shell state.
@@ -987,6 +992,11 @@ struct ScopedState {
     traps: Arc<HashMap<String, String>>,
     /// Shell aliases: name -> expansion value.
     aliases: Arc<HashMap<String, String>>,
+    /// Directory stack for `pushd`/`popd`/`dirs`. Index 0 is the bottom of the
+    /// stack; the top (most recently pushed) is last. The current directory is
+    /// `cwd`, not part of this vec. Previously stored as `_DIRSTACK_*` shell
+    /// variables; now typed state so it can't be forged from a script.
+    dir_stack: Arc<Vec<String>>,
 }
 
 /// All interpreter state mutated inside a `$(...)` / arithmetic substitution
@@ -2086,6 +2096,7 @@ impl Interpreter {
             },
             aliases: (*self.scoped.aliases).clone(),
             traps: (*self.scoped.traps).clone(),
+            dir_stack: (*self.scoped.dir_stack).clone(),
         }
     }
 
@@ -2161,6 +2172,7 @@ impl Interpreter {
         self.scoped.functions = Arc::new(restored_functions);
         self.scoped.aliases = Arc::new(state.aliases.clone());
         self.scoped.traps = Arc::new(state.traps.clone());
+        self.scoped.dir_stack = Arc::new(state.dir_stack.clone());
         // Recompute memory budget from restored state to prevent desync
         let func_count = self.scoped.functions.len();
         let func_bytes: usize = self
@@ -5752,6 +5764,7 @@ impl Interpreter {
                     traps: Arc::make_mut(&mut self.scoped.traps),
                     var_attrs: Arc::make_mut(&mut self.scoped.var_attrs),
                     namerefs: Arc::make_mut(&mut self.scoped.namerefs),
+                    dir_stack: Arc::make_mut(&mut self.scoped.dir_stack),
                     call_stack: &self.call_stack,
                     history: &self.history,
                     limits: &self.limits,
@@ -5805,6 +5818,7 @@ impl Interpreter {
                 traps: Arc::make_mut(&mut self.scoped.traps),
                 var_attrs: Arc::make_mut(&mut self.scoped.var_attrs),
                 namerefs: Arc::make_mut(&mut self.scoped.namerefs),
+                dir_stack: Arc::make_mut(&mut self.scoped.dir_stack),
                 call_stack: &self.call_stack,
                 history: &self.history,
                 limits: &self.limits,
@@ -11971,8 +11985,6 @@ cat /tmp/test_fd_exec_public.txt"#,
             "_ARRAY_READ_a",
             "_SHIFT_COUNT",
             "_SET_POSITIONAL",
-            "_DIRSTACK_SIZE",
-            "_DIRSTACK_0",
             "SHOPT_e",
             "SHOPT_x",
             "SHOPT_expand_aliases",
@@ -12043,6 +12055,31 @@ cat /tmp/test_fd_exec_public.txt"#,
     }
 
     #[tokio::test]
+    async fn test_shell_state_roundtrips_dir_stack() {
+        let fs = Arc::new(InMemoryFs::new());
+        fs.mkdir(Path::new("/tmp"), true).await.unwrap();
+        let mut interp = Interpreter::new(fs);
+        let ast = Parser::new("cd /tmp; pushd /tmp >/dev/null")
+            .parse()
+            .unwrap();
+        interp.execute(&ast).await.unwrap();
+        assert_eq!(&*interp.scoped.dir_stack, &["/tmp".to_string()]);
+
+        let state = interp.shell_state();
+        assert_eq!(state.dir_stack, vec!["/tmp".to_string()]);
+
+        let restored_fs = Arc::new(InMemoryFs::new());
+        let mut restored = Interpreter::new(restored_fs);
+        restored.restore_shell_state(&state);
+        assert_eq!(&*restored.scoped.dir_stack, &["/tmp".to_string()]);
+        let out = restored
+            .execute(&Parser::new("dirs").parse().unwrap())
+            .await
+            .unwrap();
+        assert!(out.stdout.contains("/tmp"));
+    }
+
+    #[tokio::test]
     async fn test_restore_shell_state_migrates_legacy_nameref_targets() {
         let state = ShellState {
             env: HashMap::new(),
@@ -12061,6 +12098,7 @@ cat /tmp/test_fd_exec_public.txt"#,
             functions: HashMap::new(),
             aliases: HashMap::new(),
             traps: HashMap::new(),
+            dir_stack: Vec::new(),
         };
 
         let mut restored = Interpreter::new(Arc::new(InMemoryFs::new()));
@@ -12099,6 +12137,7 @@ cat /tmp/test_fd_exec_public.txt"#,
             functions: HashMap::new(),
             aliases: HashMap::new(),
             traps: HashMap::new(),
+            dir_stack: Vec::new(),
         };
 
         interp.restore_shell_state(&clean_state);
