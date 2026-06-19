@@ -369,7 +369,7 @@ impl Interpreter {
                     // Evaluate the index expression as arithmetic
                     let idx = self.evaluate_arithmetic_depth_state(&index_expr, depth + 1, state);
                     // Look up array element
-                    if let Some(arr) = self.arrays.get(&name) {
+                    if let Some(arr) = self.scoped.arrays.get(&name) {
                         let idx_usize: usize = idx.try_into().unwrap_or(0);
                         let value = arr.get(&idx_usize).cloned().unwrap_or_default();
                         result.push_str(&self.resolve_arith_var(&value, depth, state));
@@ -426,10 +426,10 @@ impl Interpreter {
                 let arr_name = &rest[..bracket];
                 let idx = &rest[bracket + 1..end];
                 if idx == "@" || idx == "*" {
-                    if let Some(arr) = self.arrays.get(arr_name) {
+                    if let Some(arr) = self.scoped.arrays.get(arr_name) {
                         return arr.len().to_string();
                     }
-                    if let Some(arr) = self.assoc_arrays.get(arr_name) {
+                    if let Some(arr) = self.scoped.assoc_arrays.get(arr_name) {
                         return arr.len().to_string();
                     }
                     return "0".to_string();
@@ -437,7 +437,7 @@ impl Interpreter {
                 // ${#arr[n]} — length of element
                 let idx_val = self.evaluate_arithmetic_depth_state(idx, depth + 1, state);
                 let idx_usize: usize = idx_val.try_into().unwrap_or(0);
-                if let Some(arr) = self.arrays.get(arr_name) {
+                if let Some(arr) = self.scoped.arrays.get(arr_name) {
                     return arr
                         .get(&idx_usize)
                         .map(|v| v.len().to_string())
@@ -456,11 +456,11 @@ impl Interpreter {
         {
             let arr_name = &inner[..bracket];
             let idx_str = &inner[bracket + 1..inner.len() - 1];
-            if let Some(arr) = self.assoc_arrays.get(arr_name) {
+            if let Some(arr) = self.scoped.assoc_arrays.get(arr_name) {
                 let key = self.expand_variable_or_literal(idx_str);
                 return arr.get(&key).cloned().unwrap_or_default();
             }
-            if let Some(arr) = self.arrays.get(arr_name) {
+            if let Some(arr) = self.scoped.arrays.get(arr_name) {
                 let idx_val = self.evaluate_arithmetic_depth_state(idx_str, depth + 1, state);
                 let idx_usize: usize = idx_val.try_into().unwrap_or(0);
                 return arr.get(&idx_usize).cloned().unwrap_or_default();
@@ -534,11 +534,11 @@ impl Interpreter {
             let arr_name = &name[..bracket];
             let resolved = self.resolve_nameref(arr_name);
             let idx_str = &name[bracket + 1..name.len() - 1];
-            if let Some(arr) = self.assoc_arrays.get(resolved) {
+            if let Some(arr) = self.scoped.assoc_arrays.get(resolved) {
                 let key = self.expand_variable_or_literal(idx_str);
                 return arr.get(&key).cloned().unwrap_or_default();
             }
-            if let Some(arr) = self.arrays.get(resolved) {
+            if let Some(arr) = self.scoped.arrays.get(resolved) {
                 let idx_val = self.evaluate_arithmetic(idx_str);
                 let idx_usize: usize = idx_val.try_into().unwrap_or(0);
                 return arr.get(&idx_usize).cloned().unwrap_or_default();

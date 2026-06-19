@@ -129,7 +129,7 @@ impl Interpreter {
                         }
                     } else {
                         if redirect.kind == RedirectKind::Output
-                            && self.variables.get("SHOPT_C").map(|v| v.as_str()) == Some("1")
+                            && self.scoped.variables.get("SHOPT_C").map(|v| v.as_str()) == Some("1")
                             && self.fs.stat(&path).await.is_ok()
                         {
                             result.stdout = String::new();
@@ -336,7 +336,7 @@ impl Interpreter {
                     let path = self.resolve_path(&target_path);
 
                     if redirect.kind == RedirectKind::Output
-                        && self.variables.get("SHOPT_C").map(|v| v.as_str()) == Some("1")
+                        && self.scoped.variables.get("SHOPT_C").map(|v| v.as_str()) == Some("1")
                         && !is_dev_null(&path)
                         && self.fs.stat(&path).await.is_ok()
                     {

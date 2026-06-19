@@ -23,39 +23,39 @@ impl Interpreter {
             } else {
                 " ".to_string()
             };
-            if let Some(arr) = self.assoc_arrays.get(arr_name) {
+            if let Some(arr) = self.scoped.assoc_arrays.get(arr_name) {
                 let mut keys: Vec<_> = arr.keys().collect();
                 keys.sort();
                 let values: Vec<String> =
                     keys.iter().filter_map(|k| arr.get(*k).cloned()).collect();
                 result.push_str(&values.join(&sep));
-            } else if let Some(arr) = self.arrays.get(arr_name) {
+            } else if let Some(arr) = self.scoped.arrays.get(arr_name) {
                 let mut indices: Vec<_> = arr.keys().collect();
                 indices.sort();
                 let values: Vec<_> = indices.iter().filter_map(|i| arr.get(i)).collect();
                 result.push_str(&values.into_iter().cloned().collect::<Vec<_>>().join(&sep));
             }
         } else if let Some(extra_idx) = extra_index {
-            if let Some(arr) = self.assoc_arrays.get(arr_name) {
+            if let Some(arr) = self.scoped.assoc_arrays.get(arr_name) {
                 if let Some(value) = arr.get(&extra_idx) {
                     result.push_str(value);
                 }
             } else {
                 let idx: usize = self.evaluate_arithmetic(&extra_idx).try_into().unwrap_or(0);
-                if let Some(arr) = self.arrays.get(arr_name)
+                if let Some(arr) = self.scoped.arrays.get(arr_name)
                     && let Some(value) = arr.get(&idx)
                 {
                     result.push_str(value);
                 }
             }
-        } else if let Some(arr) = self.assoc_arrays.get(arr_name) {
+        } else if let Some(arr) = self.scoped.assoc_arrays.get(arr_name) {
             let key = self.expand_variable_or_literal(index);
             if let Some(value) = arr.get(&key) {
                 result.push_str(value);
             }
         } else {
             let idx = self.resolve_indexed_array_subscript(arr_name, index);
-            if let Some(arr) = self.arrays.get(arr_name)
+            if let Some(arr) = self.scoped.arrays.get(arr_name)
                 && let Some(value) = arr.get(&idx)
             {
                 result.push_str(value);
@@ -153,7 +153,7 @@ impl Interpreter {
                         let home = self
                             .env
                             .get("HOME")
-                            .or_else(|| self.variables.get("HOME"))
+                            .or_else(|| self.scoped.variables.get("HOME"))
                             .cloned()
                             .unwrap_or_else(|| "/home/user".to_string());
 
@@ -179,7 +179,7 @@ impl Interpreter {
                             .last()
                             .map(|f| f.positional.clone())
                             .unwrap_or_default();
-                        let sep = match self.variables.get("IFS") {
+                        let sep = match self.scoped.variables.get("IFS") {
                             Some(ifs) => ifs
                                 .chars()
                                 .next()
@@ -230,7 +230,7 @@ impl Interpreter {
                         let index_str = &name[start..index_end];
                         let idx: usize =
                             self.evaluate_arithmetic(index_str).try_into().unwrap_or(0);
-                        if let Some(arr) = self.arrays.get(arr_name) {
+                        if let Some(arr) = self.scoped.arrays.get(arr_name) {
                             arr.get(&idx).cloned().unwrap_or_default()
                         } else {
                             String::new()
@@ -295,11 +295,11 @@ impl Interpreter {
                 }
                 WordPart::ArrayIndices(name) => {
                     let resolved = self.resolve_nameref(name);
-                    if let Some(arr) = self.assoc_arrays.get(resolved) {
+                    if let Some(arr) = self.scoped.assoc_arrays.get(resolved) {
                         let mut keys: Vec<_> = arr.keys().cloned().collect();
                         keys.sort();
                         Self::append_expansion_for_word(&mut result, word, &keys.join(" "));
-                    } else if let Some(arr) = self.arrays.get(resolved) {
+                    } else if let Some(arr) = self.scoped.arrays.get(resolved) {
                         let mut indices: Vec<_> = arr.keys().collect();
                         indices.sort();
                         let index_strs: Vec<String> =
@@ -333,7 +333,7 @@ impl Interpreter {
                     offset,
                     length,
                 } => {
-                    if let Some(arr) = self.arrays.get(name) {
+                    if let Some(arr) = self.scoped.arrays.get(name) {
                         let mut indices: Vec<_> = arr.keys().cloned().collect();
                         indices.sort();
                         let values: Vec<_> =
@@ -362,7 +362,7 @@ impl Interpreter {
                     operand,
                     colon_variant,
                 } => {
-                    let nameref_target = self.namerefs.get(name).cloned();
+                    let nameref_target = self.scoped.namerefs.get(name).cloned();
                     let is_nameref = nameref_target.is_some();
 
                     if is_nameref && operator.is_none() {
@@ -394,7 +394,7 @@ impl Interpreter {
                             Self::append_expansion_for_word(&mut result, word, &expanded);
                         } else {
                             // Plain indirect expansion (no operator)
-                            if let Some(arr) = self.arrays.get(&resolved_name) {
+                            if let Some(arr) = self.scoped.arrays.get(&resolved_name) {
                                 if let Some(first) = arr.get(&0) {
                                     Self::append_expansion_for_word(&mut result, word, first);
                                 }
@@ -407,6 +407,7 @@ impl Interpreter {
                 }
                 WordPart::PrefixMatch(prefix) => {
                     let mut names: Vec<String> = self
+                        .scoped
                         .variables
                         .keys()
                         .filter(|k| k.starts_with(prefix.as_str()))
@@ -428,9 +429,9 @@ impl Interpreter {
                 }
                 WordPart::ArrayLength(name) => {
                     let resolved = self.resolve_nameref(name);
-                    if let Some(arr) = self.assoc_arrays.get(resolved) {
+                    if let Some(arr) = self.scoped.assoc_arrays.get(resolved) {
                         result.push_str(&arr.len().to_string());
-                    } else if let Some(arr) = self.arrays.get(resolved) {
+                    } else if let Some(arr) = self.scoped.arrays.get(resolved) {
                         result.push_str(&arr.len().to_string());
                     } else {
                         result.push('0');
@@ -497,7 +498,7 @@ impl Interpreter {
                         if word.quoted {
                             // "$*" joins with first char of IFS.
                             // IFS unset → space; IFS="" → no separator.
-                            let sep = match self.variables.get("IFS") {
+                            let sep = match self.scoped.variables.get("IFS") {
                                 Some(ifs) => ifs
                                     .chars()
                                     .next()
@@ -519,7 +520,7 @@ impl Interpreter {
                     && (index == "@" || index == "*")
                 {
                     // Check assoc arrays first
-                    if let Some(arr) = self.assoc_arrays.get(name) {
+                    if let Some(arr) = self.scoped.assoc_arrays.get(name) {
                         let mut keys: Vec<_> = arr.keys().cloned().collect();
                         keys.sort();
                         let values: Vec<String> =
@@ -530,7 +531,7 @@ impl Interpreter {
                         }
                         return Ok(values);
                     }
-                    if let Some(arr) = self.arrays.get(name) {
+                    if let Some(arr) = self.scoped.arrays.get(name) {
                         let mut indices: Vec<_> = arr.keys().collect();
                         indices.sort();
                         let values: Vec<String> =
@@ -547,12 +548,12 @@ impl Interpreter {
                 // "${!arr[@]}" - array keys/indices as separate fields
                 if let WordPart::ArrayIndices(name) = &word.parts[0] {
                     let resolved = self.resolve_nameref(name);
-                    if let Some(arr) = self.assoc_arrays.get(resolved) {
+                    if let Some(arr) = self.scoped.assoc_arrays.get(resolved) {
                         let mut keys: Vec<_> = arr.keys().cloned().collect();
                         keys.sort();
                         return Ok(keys);
                     }
-                    if let Some(arr) = self.arrays.get(resolved) {
+                    if let Some(arr) = self.scoped.arrays.get(resolved) {
                         let mut indices: Vec<_> = arr.keys().collect();
                         indices.sort();
                         return Ok(indices.iter().map(|i| i.to_string()).collect());
@@ -565,7 +566,12 @@ impl Interpreter {
                 word.part_quoted.iter().any(|q| *q) && word.part_quoted.iter().any(|q| !*q);
             if has_mixed_part_quotes {
                 let mut segments = Vec::new();
-                let mut sentinel_haystack = self.variables.get("IFS").cloned().unwrap_or_default();
+                let mut sentinel_haystack = self
+                    .scoped
+                    .variables
+                    .get("IFS")
+                    .cloned()
+                    .unwrap_or_default();
                 for (idx, part) in word.parts.iter().enumerate() {
                     let part_is_quoted = word.part_quoted.get(idx).copied().unwrap_or(word.quoted);
                     let part_has_expansion = matches!(
@@ -697,7 +703,7 @@ impl Interpreter {
             } else {
                 " ".to_string()
             };
-            if let Some(arr) = self.assoc_arrays.get(resolved_arr_name) {
+            if let Some(arr) = self.scoped.assoc_arrays.get(resolved_arr_name) {
                 let is_set = !arr.is_empty();
                 let mut keys: Vec<_> = arr.keys().collect();
                 keys.sort();
@@ -705,7 +711,7 @@ impl Interpreter {
                     keys.iter().filter_map(|k| arr.get(*k).cloned()).collect();
                 return (is_set, values.join(&sep));
             }
-            if let Some(arr) = self.arrays.get(resolved_arr_name) {
+            if let Some(arr) = self.scoped.arrays.get(resolved_arr_name) {
                 let is_set = !arr.is_empty();
                 let mut indices: Vec<_> = arr.keys().collect();
                 indices.sort();
@@ -726,14 +732,14 @@ impl Interpreter {
             // Resolve nameref: if arr_name is a nameref, follow it to the target
             let resolved_arr_name = self.resolve_nameref(arr_name);
             let key = &name[bracket + 1..name.len() - 1];
-            if let Some(arr) = self.assoc_arrays.get(resolved_arr_name) {
+            if let Some(arr) = self.scoped.assoc_arrays.get(resolved_arr_name) {
                 let expanded_key = self.expand_variable_or_literal(key);
                 return match arr.get(&expanded_key) {
                     Some(v) => (true, v.clone()),
                     None => (false, String::new()),
                 };
             }
-            if let Some(arr) = self.arrays.get(resolved_arr_name) {
+            if let Some(arr) = self.scoped.arrays.get(resolved_arr_name) {
                 let idx = self.resolve_indexed_array_subscript(resolved_arr_name, key);
                 return match arr.get(&idx) {
                     Some(v) => (true, v.clone()),
@@ -777,12 +783,12 @@ impl Interpreter {
             .or_else(|| name.strip_suffix("[*]"))
         {
             let resolved = self.resolve_nameref(arr_name);
-            if let Some(arr) = self.assoc_arrays.get(resolved) {
+            if let Some(arr) = self.scoped.assoc_arrays.get(resolved) {
                 let mut keys: Vec<_> = arr.keys().collect();
                 keys.sort();
                 return Some(keys.iter().filter_map(|k| arr.get(*k).cloned()).collect());
             }
-            if let Some(arr) = self.arrays.get(resolved) {
+            if let Some(arr) = self.scoped.arrays.get(resolved) {
                 let mut indices: Vec<_> = arr.keys().collect();
                 indices.sort();
                 return Some(indices.iter().filter_map(|i| arr.get(i).cloned()).collect());
@@ -832,6 +838,7 @@ impl Interpreter {
         }
 
         let ifs = self
+            .scoped
             .variables
             .get("IFS")
             .cloned()
@@ -1045,7 +1052,10 @@ impl Interpreter {
     /// marker (so the count equals the inserted-mark count); when `None`, the
     /// quote is dropped but still counted so callers can tell whether any real
     /// quote boundaries existed (escaped `\"` and NUL-sentinel quotes excluded).
-    pub(super) fn strip_operand_quotes_with_count(operand: &str, quote_mark: Option<char>) -> (String, usize) {
+    pub(super) fn strip_operand_quotes_with_count(
+        operand: &str,
+        quote_mark: Option<char>,
+    ) -> (String, usize) {
         let mut result = String::with_capacity(operand.len());
         let chars: Vec<char> = operand.chars().collect();
         let mut unescaped_quotes = 0;
@@ -1552,7 +1562,13 @@ impl Interpreter {
     }
 
     /// Remove prefix/suffix pattern from value
-    pub(super) fn remove_pattern(&self, value: &str, pattern: &str, prefix: bool, longest: bool) -> String {
+    pub(super) fn remove_pattern(
+        &self,
+        value: &str,
+        pattern: &str,
+        prefix: bool,
+        longest: bool,
+    ) -> String {
         // Simple pattern matching with * glob
         if pattern.is_empty() {
             return value.to_string();

@@ -620,7 +620,8 @@ impl Interpreter {
 
     /// Check if dotglob shopt is enabled
     pub(crate) fn is_dotglob(&self) -> bool {
-        self.variables
+        self.scoped
+            .variables
             .get("SHOPT_dotglob")
             .map(|v| v == "1")
             .unwrap_or(false)
@@ -628,7 +629,8 @@ impl Interpreter {
 
     /// Check if nocaseglob shopt is enabled
     pub(crate) fn is_nocaseglob(&self) -> bool {
-        self.variables
+        self.scoped
+            .variables
             .get("SHOPT_nocaseglob")
             .map(|v| v == "1")
             .unwrap_or(false)
@@ -636,7 +638,8 @@ impl Interpreter {
 
     /// Check if noglob (set -f) is enabled
     pub(crate) fn is_noglob(&self) -> bool {
-        self.variables
+        self.scoped
+            .variables
             .get("SHOPT_f")
             .map(|v| v == "1")
             .unwrap_or(false)
@@ -644,7 +647,8 @@ impl Interpreter {
 
     /// Check if failglob shopt is enabled
     pub(crate) fn is_failglob(&self) -> bool {
-        self.variables
+        self.scoped
+            .variables
             .get("SHOPT_failglob")
             .map(|v| v == "1")
             .unwrap_or(false)
@@ -652,7 +656,8 @@ impl Interpreter {
 
     /// Check if globstar shopt is enabled
     pub(crate) fn is_globstar(&self) -> bool {
-        self.variables
+        self.scoped
+            .variables
             .get("SHOPT_globstar")
             .map(|v| v == "1")
             .unwrap_or(false)
@@ -660,7 +665,8 @@ impl Interpreter {
 
     /// Check if extglob shopt is enabled
     pub(crate) fn is_extglob(&self) -> bool {
-        self.variables
+        self.scoped
+            .variables
             .get("SHOPT_extglob")
             .map(|v| v == "1")
             .unwrap_or(false)
@@ -683,6 +689,7 @@ impl Interpreter {
                 return Err(item.to_string());
             }
             let nullglob = self
+                .scoped
                 .variables
                 .get("SHOPT_nullglob")
                 .map(|v| v == "1")

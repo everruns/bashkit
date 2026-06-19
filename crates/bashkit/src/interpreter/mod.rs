@@ -959,22 +959,44 @@ impl BashFlags {
     }
 }
 
+/// CoW-snapshotted scoped shell state.
+///
+/// Groups the maps captured at every `$(...)` / arithmetic-substitution and
+/// subshell boundary. Each field is `Arc<HashMap>`, so cloning this struct is
+/// an O(1) refcount bump per field — a whole-state snapshot is one
+/// `ScopedState::clone()`. Mutations go through the `*_mut` accessors on
+/// [`Interpreter`], which `Arc::make_mut` (paying one deep clone only when a
+/// snapshot is still live).
+#[derive(Clone, Default)]
+struct ScopedState {
+    /// Shell variables.
+    variables: Arc<HashMap<String, String>>,
+    /// Variable attribute flags (readonly/integer/lower/upper/export), keyed by
+    /// the *resolved* (post-nameref) variable name. Empty entry == no attrs.
+    var_attrs: Arc<HashMap<String, VarAttrs>>,
+    /// Nameref bindings (`declare -n`): name -> target variable name.
+    namerefs: Arc<HashMap<String, String>>,
+    /// Indexed arrays: name -> index -> value.
+    arrays: Arc<HashMap<String, HashMap<usize, String>>>,
+    /// Associative arrays (`declare -A`): name -> key -> value.
+    assoc_arrays: Arc<HashMap<String, HashMap<String, String>>>,
+    /// Defined shell functions.
+    functions: Arc<HashMap<String, FunctionDef>>,
+    /// Trap handlers: signal/event name -> command string.
+    traps: Arc<HashMap<String, String>>,
+    /// Shell aliases: name -> expansion value.
+    aliases: Arc<HashMap<String, String>>,
+}
+
 /// All interpreter state mutated inside a `$(...)` / arithmetic substitution
 /// subshell. Captured before the substitution runs and restored after, so
-/// mutations don't leak to the parent. The `Arc<...>` fields snapshot in O(1)
-/// via a refcount bump; only mutations inside the subshell pay a clone
+/// mutations don't leak to the parent. The [`ScopedState`] snapshot is O(1)
+/// (per-field refcount bumps); only mutations inside the subshell pay a clone
 /// (`Arc::make_mut`). For substitutions that don't mutate state at all (the
 /// common case — `$(echo $x)`, command queries) this saves an entire deep
 /// HashMap clone per substitution.
 struct SubshellSnapshot {
-    variables: Arc<HashMap<String, String>>,
-    arrays: Arc<HashMap<String, HashMap<usize, String>>>,
-    assoc_arrays: Arc<HashMap<String, HashMap<String, String>>>,
-    functions: Arc<HashMap<String, FunctionDef>>,
-    traps: Arc<HashMap<String, String>>,
-    aliases: Arc<HashMap<String, String>>,
-    var_attrs: Arc<HashMap<String, VarAttrs>>,
-    namerefs: Arc<HashMap<String, String>>,
+    scoped: ScopedState,
     flags: BashFlags,
     cwd: PathBuf,
     memory_budget: crate::limits::MemoryBudget,
@@ -987,33 +1009,24 @@ pub struct Interpreter {
     fs: Arc<dyn FileSystem>,
     env: HashMap<String, String>,
     // Important decision: the maps that get snapshotted by subshell ($(...))
-    // boundaries are wrapped in `Arc<HashMap>` so the snapshot is an O(1)
-    // refcount bump instead of an O(n) HashMap clone. Mutations go through
-    // `vars_mut()` / `arrays_mut()` / etc. which call `Arc::make_mut`; when
-    // the refcount is 1 (no live snapshot) this is just a `&mut` borrow with
-    // zero clone cost. When the refcount is 2 (a subshell is active and
-    // mutates), it pays one clone — the same cost the eager-clone scheme
-    // paid unconditionally, but only when actually needed.
-    variables: Arc<HashMap<String, String>>,
-    /// Variable attribute flags (readonly/integer/lower/upper/export). Keyed by
-    /// the *resolved* variable name (post-nameref). Empty entry == no attrs.
-    var_attrs: Arc<HashMap<String, VarAttrs>>,
-    /// Nameref bindings: name → target variable name. Used by `declare -n`.
-    namerefs: Arc<HashMap<String, String>>,
+    // boundaries live in `scoped: ScopedState`, whose fields are `Arc<HashMap>`
+    // so the snapshot is an O(1) refcount bump instead of an O(n) HashMap clone.
+    // Mutations go through `vars_mut()` / `arrays_mut()` / etc. which call
+    // `Arc::make_mut`; when the refcount is 1 (no live snapshot) this is just a
+    // `&mut` borrow with zero clone cost. When the refcount is 2 (a subshell is
+    // active and mutates), it pays one clone — the same cost the eager-clone
+    // scheme paid unconditionally, but only when actually needed.
+    scoped: ScopedState,
     /// Cached shell option flags. Synchronized with `SHOPT_*` entries in
     /// `variables` via `set_shopt_flag` / `set_shopt_value`.
     flags: BashFlags,
-    /// Arrays - stored as name -> index -> value. Arc-wrapped for CoW subshell snapshots.
-    arrays: Arc<HashMap<String, HashMap<usize, String>>>,
-    /// Associative arrays (declare -A) - stored as name -> key -> value. Arc-wrapped for CoW subshell snapshots.
-    assoc_arrays: Arc<HashMap<String, HashMap<String, String>>>,
     cwd: PathBuf,
     last_exit_code: i32,
     /// Built-in commands (default + custom).
     ///
     /// Stored as `Arc` so the dispatcher can clone the handle out of the map
     /// and execute the builtin without keeping a borrow on `self.builtins`,
-    /// which lets it freely take `&mut self` for `self.variables`,
+    /// which lets it freely take `&mut self` for `self.scoped.variables`,
     /// `self.cwd`, etc. during execution.
     builtins: HashMap<String, Arc<dyn Builtin>>,
     /// Optional host-owned mutable registry. Consulted after shell functions
@@ -1021,8 +1034,6 @@ pub struct Interpreter {
     /// override baked-in commands. Survives `reset_transient_state` because
     /// it lives behind an `Arc<RwLock>` shared with the embedder.
     host_builtins: Option<crate::builtins::BuiltinRegistry>,
-    /// Defined functions. Arc-wrapped for CoW subshell snapshots.
-    functions: Arc<HashMap<String, FunctionDef>>,
     /// Call stack for local variable scoping
     call_stack: Vec<CallFrame>,
     /// Source file stack for BASH_SOURCE array
@@ -1072,12 +1083,8 @@ pub struct Interpreter {
     output_stream_stderr_bytes: usize,
     /// Pending nounset (set -u) error message, consumed by execute_command.
     nounset_error: Option<String>,
-    /// Trap handlers: signal/event name -> command string. Arc-wrapped for CoW subshell snapshots.
-    traps: Arc<HashMap<String, String>>,
     /// PIPESTATUS: exit codes of the last pipeline's commands
     pipestatus: Vec<i32>,
-    /// Shell aliases: name -> expansion value. Arc-wrapped for CoW subshell snapshots.
-    aliases: Arc<HashMap<String, String>>,
     /// Aliases currently being expanded (prevents infinite recursion).
     /// When alias `foo` expands to `foo bar`, the inner `foo` is not re-expanded.
     expanding_aliases: HashSet<String>,
@@ -1487,17 +1494,16 @@ impl Interpreter {
         Self {
             fs,
             env: HashMap::new(),
-            variables: Arc::new(variables),
-            var_attrs: Arc::new(HashMap::new()),
-            namerefs: Arc::new(HashMap::new()),
+            scoped: ScopedState {
+                variables: Arc::new(variables),
+                arrays: Arc::new(arrays),
+                ..Default::default()
+            },
             flags: BashFlags::empty(),
-            arrays: Arc::new(arrays),
-            assoc_arrays: Arc::new(HashMap::new()),
             cwd: PathBuf::from("/home/user"),
             last_exit_code: 0,
             builtins,
             host_builtins,
-            functions: Arc::new(HashMap::new()),
             call_stack: Vec::new(),
             bash_source_stack: Vec::new(),
             limits: ExecutionLimits::default(),
@@ -1523,9 +1529,7 @@ impl Interpreter {
             output_stream_stdout_bytes: 0,
             output_stream_stderr_bytes: 0,
             nounset_error: None,
-            traps: Arc::new(HashMap::new()),
             pipestatus: Vec::new(),
-            aliases: Arc::new(HashMap::new()),
             expanding_aliases: HashSet::new(),
             history: Vec::new(),
             history_bytes: 0,
@@ -1611,37 +1615,37 @@ impl Interpreter {
 
     #[inline]
     fn vars_mut(&mut self) -> &mut HashMap<String, String> {
-        Arc::make_mut(&mut self.variables)
+        Arc::make_mut(&mut self.scoped.variables)
     }
 
     #[inline]
     fn arrays_mut(&mut self) -> &mut HashMap<String, HashMap<usize, String>> {
-        Arc::make_mut(&mut self.arrays)
+        Arc::make_mut(&mut self.scoped.arrays)
     }
 
     #[inline]
     fn assoc_arrays_mut(&mut self) -> &mut HashMap<String, HashMap<String, String>> {
-        Arc::make_mut(&mut self.assoc_arrays)
+        Arc::make_mut(&mut self.scoped.assoc_arrays)
     }
 
     #[inline]
     fn functions_mut(&mut self) -> &mut HashMap<String, FunctionDef> {
-        Arc::make_mut(&mut self.functions)
+        Arc::make_mut(&mut self.scoped.functions)
     }
 
     #[inline]
     fn traps_mut(&mut self) -> &mut HashMap<String, String> {
-        Arc::make_mut(&mut self.traps)
+        Arc::make_mut(&mut self.scoped.traps)
     }
 
     #[inline]
     fn var_attrs_mut(&mut self) -> &mut HashMap<String, VarAttrs> {
-        Arc::make_mut(&mut self.var_attrs)
+        Arc::make_mut(&mut self.scoped.var_attrs)
     }
 
     #[inline]
     fn namerefs_mut(&mut self) -> &mut HashMap<String, String> {
-        Arc::make_mut(&mut self.namerefs)
+        Arc::make_mut(&mut self.scoped.namerefs)
     }
 
     /// Check if cancellation has been requested.
@@ -1681,11 +1685,11 @@ impl Interpreter {
     }
 
     /// Rehydrate the SHOPT flag cache from any `SHOPT_*` entries currently in
-    /// `self.variables`. Call after bulk-restoring `variables` from a snapshot
+    /// `self.scoped.variables`. Call after bulk-restoring `variables` from a snapshot
     /// or builder so the cache doesn't drift.
     fn refresh_shopt_flags(&mut self) {
         self.flags = BashFlags::empty();
-        for (name, value) in self.variables.iter() {
+        for (name, value) in self.scoped.variables.iter() {
             if let Some(bit) = BashFlags::from_shopt_name(name)
                 && value == "1"
             {
@@ -1700,7 +1704,7 @@ impl Interpreter {
     // approach has been removed from the hot path; see VarAttrs above.
 
     fn var_attrs_get(&self, name: &str) -> VarAttrs {
-        self.var_attrs.get(name).copied().unwrap_or_default()
+        self.scoped.var_attrs.get(name).copied().unwrap_or_default()
     }
 
     fn is_var_readonly(&self, name: &str) -> bool {
@@ -2048,24 +2052,25 @@ impl Interpreter {
         // it freely).
         ShellState {
             env: self.env.clone(),
-            variables: (*self.variables).clone(),
+            variables: (*self.scoped.variables).clone(),
             var_attrs: self
+                .scoped
                 .var_attrs
                 .iter()
                 .map(|(name, attrs)| (name.clone(), attrs.bits()))
                 .collect(),
-            namerefs: (*self.namerefs).clone(),
-            arrays: (*self.arrays).clone(),
-            assoc_arrays: (*self.assoc_arrays).clone(),
+            namerefs: (*self.scoped.namerefs).clone(),
+            arrays: (*self.scoped.arrays).clone(),
+            assoc_arrays: (*self.scoped.assoc_arrays).clone(),
             cwd: self.cwd.clone(),
             last_exit_code: self.last_exit_code,
             functions: if options.include_functions {
-                (*self.functions).clone()
+                (*self.scoped.functions).clone()
             } else {
                 HashMap::new()
             },
-            aliases: (*self.aliases).clone(),
-            traps: (*self.traps).clone(),
+            aliases: (*self.scoped.aliases).clone(),
+            traps: (*self.scoped.traps).clone(),
         }
     }
 
@@ -2073,13 +2078,13 @@ impl Interpreter {
     pub fn shell_state_view(&self) -> ShellStateView {
         ShellStateView {
             env: self.env.clone(),
-            variables: (*self.variables).clone(),
-            arrays: (*self.arrays).clone(),
-            assoc_arrays: (*self.assoc_arrays).clone(),
+            variables: (*self.scoped.variables).clone(),
+            arrays: (*self.scoped.arrays).clone(),
+            assoc_arrays: (*self.scoped.assoc_arrays).clone(),
             cwd: self.cwd.clone(),
             last_exit_code: self.last_exit_code,
-            aliases: (*self.aliases).clone(),
-            traps: (*self.traps).clone(),
+            aliases: (*self.scoped.aliases).clone(),
+            traps: (*self.scoped.traps).clone(),
         }
     }
 
@@ -2098,12 +2103,12 @@ impl Interpreter {
             &mut restored_var_attrs,
             &mut restored_namerefs,
         );
-        self.variables = Arc::new(restored_variables);
-        self.var_attrs = Arc::new(restored_var_attrs);
-        self.namerefs = Arc::new(restored_namerefs);
+        self.scoped.variables = Arc::new(restored_variables);
+        self.scoped.var_attrs = Arc::new(restored_var_attrs);
+        self.scoped.namerefs = Arc::new(restored_namerefs);
         self.refresh_shopt_flags();
-        self.arrays = Arc::new(state.arrays.clone());
-        self.assoc_arrays = Arc::new(state.assoc_arrays.clone());
+        self.scoped.arrays = Arc::new(state.arrays.clone());
+        self.scoped.assoc_arrays = Arc::new(state.assoc_arrays.clone());
         self.cwd = state.cwd.clone();
         self.last_exit_code = state.last_exit_code;
         // THREAT[TM-DOS-061]: Re-parse and budget-check restored functions so
@@ -2137,16 +2142,21 @@ impl Interpreter {
             function_memory_budget.record_function_insert(body_bytes, true, 0);
             restored_functions.insert(name, parsed_func);
         }
-        self.functions = Arc::new(restored_functions);
-        self.aliases = Arc::new(state.aliases.clone());
-        self.traps = Arc::new(state.traps.clone());
+        self.scoped.functions = Arc::new(restored_functions);
+        self.scoped.aliases = Arc::new(state.aliases.clone());
+        self.scoped.traps = Arc::new(state.traps.clone());
         // Recompute memory budget from restored state to prevent desync
-        let func_count = self.functions.len();
-        let func_bytes: usize = self.functions.values().map(function_storage_bytes).sum();
+        let func_count = self.scoped.functions.len();
+        let func_bytes: usize = self
+            .scoped
+            .functions
+            .values()
+            .map(function_storage_bytes)
+            .sum();
         self.memory_budget = crate::limits::MemoryBudget::recompute_from_state(
-            &self.variables,
-            &self.arrays,
-            &self.assoc_arrays,
+            &self.scoped.variables,
+            &self.scoped.arrays,
+            &self.scoped.assoc_arrays,
             func_count,
             func_bytes,
             Self::is_internal_variable,
@@ -2486,7 +2496,7 @@ impl Interpreter {
         // Run EXIT trap if registered (only for top-level execute)
         #[allow(clippy::collapsible_if)]
         if run_exit_trap {
-            if let Some(trap_cmd) = self.traps.get("EXIT").cloned() {
+            if let Some(trap_cmd) = self.scoped.traps.get("EXIT").cloned() {
                 // THREAT[TM-DOS-030]: Propagate interpreter parser limits
                 if let Ok(trap_script) = Parser::with_limits(
                     &trap_cmd,
@@ -2517,13 +2527,13 @@ impl Interpreter {
             // and bypass of stdout/stderr output limits.
             let mut final_env = HashMap::new();
             let mut remaining = self.limits.max_stdout_bytes;
-            let mut keys: Vec<&String> = self.variables.keys().collect();
+            let mut keys: Vec<&String> = self.scoped.variables.keys().collect();
             keys.sort_unstable();
             for key in keys {
                 if is_hidden_variable(key) {
                     continue;
                 }
-                let Some(value) = self.variables.get(key) else {
+                let Some(value) = self.scoped.variables.get(key) else {
                     continue;
                 };
                 let entry_bytes = key.len().saturating_add(value.len());
@@ -2706,11 +2716,12 @@ impl Interpreter {
                 Command::Function(func_def) => {
                     // THREAT[TM-DOS-060]: Check function count/size budget
                     let body_bytes = function_storage_bytes(func_def);
-                    let is_new = !self.functions.contains_key(&func_def.name);
+                    let is_new = !self.scoped.functions.contains_key(&func_def.name);
                     let old_body_bytes = if is_new {
                         0
                     } else {
-                        self.functions
+                        self.scoped
+                            .functions
                             .get(&func_def.name)
                             .map(function_storage_bytes)
                             .unwrap_or(0)
@@ -2764,9 +2775,9 @@ impl Interpreter {
                 let mut result = self.execute_command_sequence(commands).await;
 
                 // Fire EXIT trap set inside the subshell before restoring parent state
-                if let Some(trap_cmd) = self.traps.get("EXIT").cloned() {
+                if let Some(trap_cmd) = self.scoped.traps.get("EXIT").cloned() {
                     // Only fire if the subshell set its own EXIT trap (different from parent)
-                    let parent_had_same = snap.traps.get("EXIT") == Some(&trap_cmd);
+                    let parent_had_same = snap.scoped.traps.get("EXIT") == Some(&trap_cmd);
                     if !parent_had_same {
                         // THREAT[TM-DOS-030]: Propagate interpreter parser limits
                         if let Ok(trap_script) = Parser::with_limits(
@@ -3021,6 +3032,7 @@ impl Interpreter {
             .join("\n");
 
         let ps3 = self
+            .scoped
             .variables
             .get("PS3")
             .cloned()
@@ -3446,7 +3458,8 @@ impl Interpreter {
                         "-t" => {
                             // fd is a terminal — configurable via _TTY_N variables
                             let fd_key = format!("_TTY_{}", args[1]);
-                            self.variables
+                            self.scoped
+                                .variables
                                 .get(&fd_key)
                                 .map(|v| v == "1")
                                 .unwrap_or(false)
@@ -4322,6 +4335,7 @@ impl Interpreter {
     /// have just taken a snapshot to undo this on return. See issue #1777.
     fn reset_state_for_child_shell(&mut self) {
         let exported_names: Vec<String> = self
+            .scoped
             .var_attrs
             .iter()
             .filter(|(_, attrs)| attrs.contains(VarAttrs::EXPORT))
@@ -4329,7 +4343,7 @@ impl Interpreter {
             .collect();
         let mut next_vars: HashMap<String, String> = HashMap::with_capacity(exported_names.len());
         for name in &exported_names {
-            if let Some(val) = self.variables.get(name) {
+            if let Some(val) = self.scoped.variables.get(name) {
                 next_vars.insert(name.clone(), val.clone());
             }
         }
@@ -4357,7 +4371,7 @@ impl Interpreter {
             "MACHTYPE",
         ] {
             if !next_vars.contains_key(name)
-                && let Some(val) = self.variables.get(name)
+                && let Some(val) = self.scoped.variables.get(name)
             {
                 next_vars.insert(name.to_string(), val.clone());
             }
@@ -4369,7 +4383,7 @@ impl Interpreter {
         self.namerefs_mut().clear();
         // Aliases are parse-time anyway, but a fresh `bash -c` would not have
         // user-defined aliases — drop them for consistency.
-        self.aliases = Arc::new(HashMap::new());
+        self.scoped.aliases = Arc::new(HashMap::new());
         // Reset SHOPT_* flag bitfield so options from the parent don't leak.
         self.flags = BashFlags::empty();
     }
@@ -4861,9 +4875,10 @@ impl Interpreter {
                     let value = self.expand_word(word).await?;
                     if let Some(index_str) = &assignment.index {
                         let resolved_name = self.resolve_nameref(&assignment.name).to_string();
-                        if self.assoc_arrays.contains_key(&resolved_name) {
+                        if self.scoped.assoc_arrays.contains_key(&resolved_name) {
                             let key = self.expand_assoc_key(index_str).await?;
                             let is_new_entry = self
+                                .scoped
                                 .assoc_arrays
                                 .get(&resolved_name)
                                 .is_none_or(|a| !a.contains_key(&key));
@@ -4890,6 +4905,7 @@ impl Interpreter {
                             let index =
                                 self.resolve_indexed_array_subscript(&resolved_name, index_str);
                             let is_new_entry = self
+                                .scoped
                                 .arrays
                                 .get(&resolved_name)
                                 .is_none_or(|a| !a.contains_key(&index));
@@ -4924,14 +4940,18 @@ impl Interpreter {
                     // Expand directly into the replacement array so word-split expansions cannot
                     // accumulate an unbounded temporary Vec before max_array_entries is enforced.
                     let arr_name = self.resolve_nameref(&assignment.name).to_string();
-                    let old_entries = self.arrays.get(&arr_name).map_or(0, |arr| arr.len());
+                    let old_entries = self.scoped.arrays.get(&arr_name).map_or(0, |arr| arr.len());
                     let remaining_entries = self
                         .memory_limits
                         .max_array_entries
                         .saturating_sub(self.memory_budget.array_entries);
                     let max_new_entries = old_entries.saturating_add(remaining_entries);
                     let mut next_arr = if assignment.append {
-                        self.arrays.get(&arr_name).cloned().unwrap_or_default()
+                        self.scoped
+                            .arrays
+                            .get(&arr_name)
+                            .cloned()
+                            .unwrap_or_default()
                     } else {
                         HashMap::new()
                     };
@@ -5026,7 +5046,7 @@ impl Interpreter {
         {
             return None;
         }
-        let expansion = self.aliases.get(name).cloned()?;
+        let expansion = self.scoped.aliases.get(name).cloned()?;
 
         // Restore variable saves before re-executing
         for (vname, old) in var_saves.into_iter().rev() {
@@ -5046,7 +5066,7 @@ impl Interpreter {
         let mut args_iter = command.args.iter();
         if trailing_space && let Some(first_arg) = args_iter.next() {
             let arg_str = Self::format_word_for_alias_reparse(first_arg);
-            if let Some(arg_expansion) = self.aliases.get(&arg_str).cloned() {
+            if let Some(arg_expansion) = self.scoped.aliases.get(&arg_str).cloned() {
                 expanded_cmd.push_str(&arg_expansion);
             } else {
                 expanded_cmd.push_str(&arg_str);
@@ -5160,6 +5180,7 @@ impl Interpreter {
             return None;
         }
         let ps4 = self
+            .scoped
             .variables
             .get("PS4")
             .cloned()
@@ -5228,7 +5249,7 @@ impl Interpreter {
             let var_saves: Vec<(String, Option<String>)> = command
                 .assignments
                 .iter()
-                .map(|a| (a.name.clone(), self.variables.get(&a.name).cloned()))
+                .map(|a| (a.name.clone(), self.scoped.variables.get(&a.name).cloned()))
                 .collect();
 
             let pre_assign_subst_gen = self.subst_generation;
@@ -5281,7 +5302,7 @@ impl Interpreter {
             let mut env_saves: HashMap<String, Option<String>> = HashMap::new();
             for assignment in &command.assignments {
                 if assignment.index.is_none()
-                    && let Some(value) = self.variables.get(&assignment.name).cloned()
+                    && let Some(value) = self.scoped.variables.get(&assignment.name).cloned()
                 {
                     env_saves
                         .entry(assignment.name.clone())
@@ -5525,7 +5546,8 @@ impl Interpreter {
         for redirect in redirects {
             // Resolve fd from either explicit fd or {var} fd-variable syntax
             let resolved_fd_var: Option<i32> = redirect.fd_var.as_ref().and_then(|var_name| {
-                self.variables
+                self.scoped
+                    .variables
                     .get(var_name)
                     .and_then(|val| val.parse::<i32>().ok())
             });
@@ -5713,11 +5735,11 @@ impl Interpreter {
                 let shell_ref = ShellRef {
                     builtins: &self.builtins,
                     host_builtins: self.host_builtins.as_ref(),
-                    functions: &self.functions,
-                    aliases: Arc::make_mut(&mut self.aliases),
-                    traps: Arc::make_mut(&mut self.traps),
-                    var_attrs: Arc::make_mut(&mut self.var_attrs),
-                    namerefs: Arc::make_mut(&mut self.namerefs),
+                    functions: &self.scoped.functions,
+                    aliases: Arc::make_mut(&mut self.scoped.aliases),
+                    traps: Arc::make_mut(&mut self.scoped.traps),
+                    var_attrs: Arc::make_mut(&mut self.scoped.var_attrs),
+                    namerefs: Arc::make_mut(&mut self.scoped.namerefs),
                     call_stack: &self.call_stack,
                     history: &self.history,
                     limits: &self.limits,
@@ -5727,7 +5749,7 @@ impl Interpreter {
                 let plan_ctx = builtins::Context {
                     args,
                     env: &self.env,
-                    variables: Arc::make_mut(&mut self.variables),
+                    variables: Arc::make_mut(&mut self.scoped.variables),
                     cwd: &mut self.cwd,
                     fs: Arc::clone(&self.fs),
                     stdin,
@@ -5766,11 +5788,11 @@ impl Interpreter {
             let shell_ref = ShellRef {
                 builtins: &self.builtins,
                 host_builtins: self.host_builtins.as_ref(),
-                functions: &self.functions,
-                aliases: Arc::make_mut(&mut self.aliases),
-                traps: Arc::make_mut(&mut self.traps),
-                var_attrs: Arc::make_mut(&mut self.var_attrs),
-                namerefs: Arc::make_mut(&mut self.namerefs),
+                functions: &self.scoped.functions,
+                aliases: Arc::make_mut(&mut self.scoped.aliases),
+                traps: Arc::make_mut(&mut self.scoped.traps),
+                var_attrs: Arc::make_mut(&mut self.scoped.var_attrs),
+                namerefs: Arc::make_mut(&mut self.scoped.namerefs),
                 call_stack: &self.call_stack,
                 history: &self.history,
                 limits: &self.limits,
@@ -5780,7 +5802,7 @@ impl Interpreter {
             let ctx = builtins::Context {
                 args,
                 env: &self.env,
-                variables: Arc::make_mut(&mut self.variables),
+                variables: Arc::make_mut(&mut self.scoped.variables),
                 cwd: &mut self.cwd,
                 fs: Arc::clone(&self.fs),
                 stdin,
@@ -5815,10 +5837,10 @@ impl Interpreter {
                         if self.is_var_readonly(var_name) {
                             continue;
                         }
-                        if let Some(value) = self.variables.get(var_name) {
+                        if let Some(value) = self.scoped.variables.get(var_name) {
                             self.env.insert(var_name.to_string(), value.clone());
                         }
-                    } else if let Some(value) = self.variables.get(arg.as_str()) {
+                    } else if let Some(value) = self.scoped.variables.get(arg.as_str()) {
                         // export NAME (without =) — mark existing variable as exported
                         self.env.insert(arg.to_string(), value.clone());
                     }
@@ -5960,7 +5982,7 @@ impl Interpreter {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
         Box::pin(async move {
             // Check for functions first
-            if let Some(func_def) = self.functions.get(name).cloned() {
+            if let Some(func_def) = self.scoped.functions.get(name).cloned() {
                 return self
                     .execute_function_call(name, &func_def, args, stdin, &command.redirects)
                     .await;
@@ -6030,8 +6052,8 @@ impl Interpreter {
                 .builtins
                 .keys()
                 .map(|s| s.as_str())
-                .chain(self.functions.keys().map(|s| s.as_str()))
-                .chain(self.aliases.keys().map(|s| s.as_str()))
+                .chain(self.scoped.functions.keys().map(|s| s.as_str()))
+                .chain(self.scoped.aliases.keys().map(|s| s.as_str()))
                 .chain(host_names.iter().map(|s| s.as_str()))
                 .collect();
             let msg = command_not_found_message(name, &known);
@@ -6109,6 +6131,7 @@ impl Interpreter {
         }
 
         let path_var = self
+            .scoped
             .variables
             .get("PATH")
             .or_else(|| self.env.get("PATH"))
@@ -6141,6 +6164,7 @@ impl Interpreter {
         redirects: &[Redirect],
     ) -> Result<Option<ExecResult>> {
         let path_var = self
+            .scoped
             .variables
             .get("PATH")
             .or_else(|| self.env.get("PATH"))
@@ -6213,14 +6237,14 @@ impl Interpreter {
         // `bash -c '...'` subprocess: save then reset. Each Arc clone is an
         // O(1) refcount bump now; the child resets its own state and the
         // parent restores by dropping the child's Arcs and putting these back.
-        let saved_vars = Arc::clone(&self.variables);
-        let saved_arrays = Arc::clone(&self.arrays);
-        let saved_assoc = Arc::clone(&self.assoc_arrays);
-        let saved_functions = Arc::clone(&self.functions);
-        let saved_traps = Arc::clone(&self.traps);
-        let saved_aliases = Arc::clone(&self.aliases);
-        let saved_var_attrs = Arc::clone(&self.var_attrs);
-        let saved_namerefs = Arc::clone(&self.namerefs);
+        let saved_vars = Arc::clone(&self.scoped.variables);
+        let saved_arrays = Arc::clone(&self.scoped.arrays);
+        let saved_assoc = Arc::clone(&self.scoped.assoc_arrays);
+        let saved_functions = Arc::clone(&self.scoped.functions);
+        let saved_traps = Arc::clone(&self.scoped.traps);
+        let saved_aliases = Arc::clone(&self.scoped.aliases);
+        let saved_var_attrs = Arc::clone(&self.scoped.var_attrs);
+        let saved_namerefs = Arc::clone(&self.scoped.namerefs);
         let saved_flags = self.flags;
         let saved_call_stack = self.call_stack.clone();
         let saved_exit = self.last_exit_code;
@@ -6234,16 +6258,16 @@ impl Interpreter {
         // Clear nounset_error to prevent parent expansion errors from leaking.
         // Reset attributes/namerefs/flags too — the child gets a fresh option
         // surface like real bash.
-        self.variables = Arc::new(self.env.clone());
-        self.arrays = Arc::new(HashMap::new());
+        self.scoped.variables = Arc::new(self.env.clone());
+        self.scoped.arrays = Arc::new(HashMap::new());
         self.arrays_mut()
             .insert("BASH_VERSINFO".to_string(), compat_bash_versinfo_array());
-        self.assoc_arrays = Arc::new(HashMap::new());
-        self.functions = Arc::new(HashMap::new());
-        self.traps = Arc::new(HashMap::new());
-        self.aliases = Arc::new(HashMap::new());
-        self.var_attrs = Arc::new(HashMap::new());
-        self.namerefs = Arc::new(HashMap::new());
+        self.scoped.assoc_arrays = Arc::new(HashMap::new());
+        self.scoped.functions = Arc::new(HashMap::new());
+        self.scoped.traps = Arc::new(HashMap::new());
+        self.scoped.aliases = Arc::new(HashMap::new());
+        self.scoped.var_attrs = Arc::new(HashMap::new());
+        self.scoped.namerefs = Arc::new(HashMap::new());
         self.flags = BashFlags::empty();
         self.coproc_buffers.clear();
         self.last_exit_code = 0;
@@ -6270,14 +6294,14 @@ impl Interpreter {
         let result = self.execute_script_body(&script, true, false).await;
 
         // Restore full parent state — child mutations don't propagate
-        self.variables = saved_vars;
-        self.arrays = saved_arrays;
-        self.assoc_arrays = saved_assoc;
-        self.functions = saved_functions;
-        self.traps = saved_traps;
-        self.aliases = saved_aliases;
-        self.var_attrs = saved_var_attrs;
-        self.namerefs = saved_namerefs;
+        self.scoped.variables = saved_vars;
+        self.scoped.arrays = saved_arrays;
+        self.scoped.assoc_arrays = saved_assoc;
+        self.scoped.functions = saved_functions;
+        self.scoped.traps = saved_traps;
+        self.scoped.aliases = saved_aliases;
+        self.scoped.var_attrs = saved_var_attrs;
+        self.scoped.namerefs = saved_namerefs;
         self.flags = saved_flags;
         self.call_stack = saved_call_stack;
         self.last_exit_code = saved_exit;
@@ -6338,6 +6362,7 @@ impl Interpreter {
             // Search PATH for the file
             let mut found = None;
             let path_var = self
+                .scoped
                 .variables
                 .get("PATH")
                 .or_else(|| self.env.get("PATH"))
@@ -6540,7 +6565,8 @@ impl Interpreter {
 
     /// Check if expand_aliases is enabled via shopt.
     fn is_expand_aliases_enabled(&self) -> bool {
-        self.variables
+        self.scoped
+            .variables
             .get("SHOPT_expand_aliases")
             .map(|v| v == "1")
             .unwrap_or(false)
@@ -6836,6 +6862,7 @@ impl Interpreter {
         // own entries to FUNCNAME while inside the function; those were charged,
         // so credit them back as the array is discarded to avoid budget drift.
         let funcname_user_entries = self
+            .scoped
             .arrays
             .get("FUNCNAME")
             .map_or(0, |a| a.len())
@@ -7215,6 +7242,7 @@ impl Interpreter {
 
         // Get current OPTIND (1-based index into args)
         let optind: usize = self
+            .scoped
             .variables
             .get("OPTIND")
             .and_then(|v| v.parse().ok())
@@ -7256,6 +7284,7 @@ impl Interpreter {
 
         // Track position within the current argument for multi-char options
         let char_idx: usize = self
+            .scoped
             .variables
             .get("_OPTCHAR_IDX")
             .and_then(|v| v.parse().ok())
@@ -7412,7 +7441,7 @@ impl Interpreter {
         match mode {
             'v' => {
                 // command -v: print name/path if it's a known command
-                let output = if self.functions.contains_key(cmd_name.as_str())
+                let output = if self.scoped.functions.contains_key(cmd_name.as_str())
                     || self.builtins.contains_key(cmd_name.as_str())
                     || self.has_host_builtin(cmd_name)
                     || is_keyword(cmd_name)
@@ -7437,7 +7466,7 @@ impl Interpreter {
             }
             'V' => {
                 // command -V: verbose description
-                let description = if self.functions.contains_key(cmd_name.as_str()) {
+                let description = if self.scoped.functions.contains_key(cmd_name.as_str()) {
                     format!("{} is a function\n", cmd_name)
                 } else if self.has_host_builtin(cmd_name)
                     || self.builtins.contains_key(cmd_name.as_str())
@@ -7531,7 +7560,7 @@ impl Interpreter {
         if args.is_empty() {
             // declare with no args: print all variables, filtering hidden markers (TM-INF-017)
             let mut output = String::new();
-            let mut entries: Vec<_> = self.variables.iter().collect();
+            let mut entries: Vec<_> = self.scoped.variables.iter().collect();
             entries.sort_by_key(|(k, _)| (*k).clone());
             for (name, value) in entries {
                 if is_hidden_variable(name) {
@@ -7585,7 +7614,8 @@ impl Interpreter {
             let mut output = String::new();
             if names.is_empty() {
                 // List all functions
-                let mut func_names: Vec<_> = self.functions.keys().cloned().collect::<Vec<_>>();
+                let mut func_names: Vec<_> =
+                    self.scoped.functions.keys().cloned().collect::<Vec<_>>();
                 func_names.sort();
                 for fname in &func_names {
                     output.push_str(&format!("{} ()\n{{\n    ...\n}}\n", fname));
@@ -7593,7 +7623,7 @@ impl Interpreter {
             } else {
                 // Print specific functions — return 1 if any not found
                 for name in &names {
-                    if self.functions.contains_key(*name) {
+                    if self.scoped.functions.contains_key(*name) {
                         output.push_str(&format!("{} ()\n{{\n    ...\n}}\n", name));
                     } else {
                         let mut result = ExecResult::with_code(String::new(), 1);
@@ -7611,7 +7641,7 @@ impl Interpreter {
             let mut output = String::new();
             if names.is_empty() {
                 // Print all variables, filtering internal markers (TM-INF-017)
-                let mut entries: Vec<_> = self.variables.iter().collect();
+                let mut entries: Vec<_> = self.scoped.variables.iter().collect();
                 entries.sort_by_key(|(k, _)| (*k).clone());
                 for (name, value) in entries {
                     if is_internal_variable(name) {
@@ -7623,13 +7653,13 @@ impl Interpreter {
                 for name in &names {
                     // Strip =value if present
                     let var_name = name.split('=').next().unwrap_or(name);
-                    if let Some(value) = self.variables.get(var_name) {
+                    if let Some(value) = self.scoped.variables.get(var_name) {
                         let mut attrs = String::from("--");
                         if self.is_var_readonly(var_name) {
                             attrs = String::from("-r");
                         }
                         output.push_str(&format!("declare {} {}=\"{}\"\n", attrs, var_name, value));
-                    } else if let Some(arr) = self.assoc_arrays.get(var_name) {
+                    } else if let Some(arr) = self.scoped.assoc_arrays.get(var_name) {
                         let mut items: Vec<_> = arr.iter().collect();
                         items.sort_by_key(|(k, _)| (*k).clone());
                         let inner: String = items
@@ -7638,7 +7668,7 @@ impl Interpreter {
                             .collect::<Vec<_>>()
                             .join(" ");
                         output.push_str(&format!("declare -A {}=({})\n", var_name, inner));
-                    } else if let Some(arr) = self.arrays.get(var_name) {
+                    } else if let Some(arr) = self.scoped.arrays.get(var_name) {
                         let mut items: Vec<_> = arr.iter().collect();
                         items.sort_by_key(|(k, _)| *k);
                         let inner: String = items
@@ -7774,7 +7804,11 @@ impl Interpreter {
                 if is_export {
                     self.env.insert(
                         var_name.to_string(),
-                        self.variables.get(var_name).cloned().unwrap_or_default(),
+                        self.scoped
+                            .variables
+                            .get(var_name)
+                            .cloned()
+                            .unwrap_or_default(),
                     );
                 }
             } else {
@@ -7784,7 +7818,7 @@ impl Interpreter {
                     self.remove_nameref(name);
                 } else if flags.nameref {
                     // typeset -n ref (without =value): use existing variable value as target
-                    if let Some(existing) = self.variables.get(name.as_str()).cloned()
+                    if let Some(existing) = self.scoped.variables.get(name.as_str()).cloned()
                         && !existing.is_empty()
                     {
                         self.set_nameref(name, existing);
@@ -7795,7 +7829,7 @@ impl Interpreter {
                 } else if flags.array {
                     // Initialize empty indexed array
                     self.arrays_mut().entry(name.to_string()).or_default();
-                } else if !self.variables.contains_key(name.as_str()) {
+                } else if !self.scoped.variables.contains_key(name.as_str()) {
                     self.insert_variable_checked(name.to_string(), String::new());
                 }
                 // Set case conversion attribute markers
@@ -7816,7 +7850,8 @@ impl Interpreter {
                 if is_export {
                     self.env.insert(
                         name.to_string(),
-                        self.variables
+                        self.scoped
+                            .variables
                             .get(name.as_str())
                             .cloned()
                             .unwrap_or_default(),
@@ -7833,7 +7868,6 @@ impl Interpreter {
         result = self.apply_redirections(result, redirects).await?;
         Ok(result)
     }
-
 
     /// Execute an [`ExecutionPlan`] returned by a builtin's `execution_plan()` method.
     ///
@@ -8114,7 +8148,6 @@ impl Interpreter {
         }
     }
 
-
     /// Resolve a path relative to cwd, normalizing `.` and `..` components.
     fn resolve_path(&self, path: &str) -> PathBuf {
         let p = Path::new(path);
@@ -8125,7 +8158,6 @@ impl Interpreter {
         };
         crate::fs::normalize_path(&joined)
     }
-
 
     /// Expand a process substitution (`<(cmd)` or `>(cmd)`).
     async fn expand_process_substitution(
@@ -8177,14 +8209,7 @@ impl Interpreter {
     /// for a real HashMap clone, and only the maps it actually touched.
     fn snapshot_subshell_state(&self) -> SubshellSnapshot {
         SubshellSnapshot {
-            variables: Arc::clone(&self.variables),
-            arrays: Arc::clone(&self.arrays),
-            assoc_arrays: Arc::clone(&self.assoc_arrays),
-            functions: Arc::clone(&self.functions),
-            traps: Arc::clone(&self.traps),
-            aliases: Arc::clone(&self.aliases),
-            var_attrs: Arc::clone(&self.var_attrs),
-            namerefs: Arc::clone(&self.namerefs),
+            scoped: self.scoped.clone(),
             flags: self.flags,
             cwd: self.cwd.clone(),
             memory_budget: self.memory_budget.clone(),
@@ -8194,14 +8219,7 @@ impl Interpreter {
     }
 
     fn restore_subshell_state(&mut self, snap: SubshellSnapshot) {
-        self.variables = snap.variables;
-        self.arrays = snap.arrays;
-        self.assoc_arrays = snap.assoc_arrays;
-        self.functions = snap.functions;
-        self.traps = snap.traps;
-        self.aliases = snap.aliases;
-        self.var_attrs = snap.var_attrs;
-        self.namerefs = snap.namerefs;
+        self.scoped = snap.scoped;
         self.flags = snap.flags;
         self.cwd = snap.cwd;
         self.memory_budget = snap.memory_budget;
@@ -8228,8 +8246,8 @@ impl Interpreter {
                 }
             }
             // Fire EXIT trap set inside the command substitution
-            if let Some(trap_cmd) = self.traps.get("EXIT").cloned()
-                && snapshot.traps.get("EXIT") != Some(&trap_cmd)
+            if let Some(trap_cmd) = self.scoped.traps.get("EXIT").cloned()
+                && snapshot.scoped.traps.get("EXIT") != Some(&trap_cmd)
                 && let Ok(trap_script) = Parser::with_limits(
                     &trap_cmd,
                     self.limits.max_ast_depth,
@@ -8250,7 +8268,6 @@ impl Interpreter {
         })
     }
 
-
     /// Maximum recursion depth for arithmetic expression evaluation.
     /// THREAT[TM-DOS-026]: Prevents stack overflow via deeply nested arithmetic like
     /// $(((((((...)))))))
@@ -8261,7 +8278,6 @@ impl Interpreter {
     /// Maximum expanded arithmetic expression size accepted before fallback to 0.
     /// THREAT[TM-DOS-026]: Prevents attacker-controlled multi-megabyte arithmetic strings.
     const MAX_ARITHMETIC_EXPANSION_BYTES: usize = 64 * 1024;
-
 
     /// Expand a string as a variable reference, or return as literal.
     /// Used for associative array keys which may be variable refs or literals.
@@ -8418,6 +8434,7 @@ impl Interpreter {
         let raw_idx = self.evaluate_arithmetic(key);
         if raw_idx < 0 {
             let len = self
+                .scoped
                 .arrays
                 .get(arr_name)
                 .and_then(|a| a.keys().max().map(|m| m.saturating_add(1) as i128))
@@ -8437,9 +8454,10 @@ impl Interpreter {
             let key = &name[bracket + 1..name.len() - 1];
             let resolved_name = self.resolve_nameref(arr_name).to_string();
 
-            if self.assoc_arrays.contains_key(&resolved_name) {
+            if self.scoped.assoc_arrays.contains_key(&resolved_name) {
                 let expanded_key = self.expand_variable_or_literal(key);
                 let is_new_entry = self
+                    .scoped
                     .assoc_arrays
                     .get(&resolved_name)
                     .is_none_or(|a| !a.contains_key(&expanded_key));
@@ -8463,6 +8481,7 @@ impl Interpreter {
 
             let index = self.resolve_indexed_array_subscript(&resolved_name, key);
             let is_new_entry = self
+                .scoped
                 .arrays
                 .get(&resolved_name)
                 .is_none_or(|a| !a.contains_key(&index));
@@ -8493,11 +8512,14 @@ impl Interpreter {
     fn insert_variable_checked(&mut self, key: String, value: String) -> bool {
         let is_internal = Self::is_internal_variable(&key);
         if !is_internal {
-            let is_new = !self.variables.contains_key(&key);
+            let is_new = !self.scoped.variables.contains_key(&key);
             let (old_key_len, old_value_len) = if is_new {
                 (0, 0)
             } else {
-                (key.len(), self.variables.get(&key).map_or(0, |v| v.len()))
+                (
+                    key.len(),
+                    self.scoped.variables.get(&key).map_or(0, |v| v.len()),
+                )
             };
             if self
                 .memory_budget
@@ -8619,7 +8641,7 @@ impl Interpreter {
     /// binding being replaced is a transient local — not retained anywhere —
     /// so its entries must be released from the array budget.
     fn remember_local_array_binding(&mut self, name: &str) -> bool {
-        let previous = self.arrays.get(name).cloned();
+        let previous = self.scoped.arrays.get(name).cloned();
         if let Some(frame) = self.call_stack.last_mut() {
             if frame.local_arrays.contains_key(name) {
                 return false;
@@ -8634,7 +8656,7 @@ impl Interpreter {
     /// See [`remember_local_array_binding`](Self::remember_local_array_binding)
     /// for the meaning of the return value.
     fn remember_local_assoc_array_binding(&mut self, name: &str) -> bool {
-        let previous = self.assoc_arrays.get(name).cloned();
+        let previous = self.scoped.assoc_arrays.get(name).cloned();
         if let Some(frame) = self.call_stack.last_mut() {
             if frame.local_assoc_arrays.contains_key(name) {
                 return false;
@@ -8646,7 +8668,7 @@ impl Interpreter {
     }
 
     fn restore_array_binding(&mut self, name: &str, previous: Option<HashMap<usize, String>>) {
-        let old_entries = self.arrays.get(name).map_or(0, |a| a.len());
+        let old_entries = self.scoped.arrays.get(name).map_or(0, |a| a.len());
         // Saved bindings remain budgeted while shadowed; popping only releases
         // entries allocated by the local binding currently active in arrays.
         self.memory_budget.record_array_remove(old_entries);
@@ -8662,7 +8684,7 @@ impl Interpreter {
         name: &str,
         previous: Option<HashMap<String, String>>,
     ) {
-        let old_entries = self.assoc_arrays.get(name).map_or(0, |a| a.len());
+        let old_entries = self.scoped.assoc_arrays.get(name).map_or(0, |a| a.len());
         // Saved bindings remain budgeted while shadowed; popping only releases
         // entries allocated by the local binding currently active in assoc_arrays.
         self.memory_budget.record_array_remove(old_entries);
@@ -8677,7 +8699,7 @@ impl Interpreter {
     /// Returns true if the insert succeeded.
     fn insert_array_checked(&mut self, name: String, arr: HashMap<usize, String>) -> bool {
         let new_entries = arr.len();
-        let old_entries = self.arrays.get(&name).map_or(0, |a| a.len());
+        let old_entries = self.scoped.arrays.get(&name).map_or(0, |a| a.len());
         let net = new_entries.saturating_sub(old_entries);
         if net > 0
             && self
@@ -8698,7 +8720,7 @@ impl Interpreter {
     #[allow(dead_code)]
     fn insert_assoc_array_checked(&mut self, name: String, arr: HashMap<String, String>) -> bool {
         let new_entries = arr.len();
-        let old_entries = self.assoc_arrays.get(&name).map_or(0, |a| a.len());
+        let old_entries = self.scoped.assoc_arrays.get(&name).map_or(0, |a| a.len());
         let net = new_entries.saturating_sub(old_entries);
         if net > 0
             && self
@@ -8718,14 +8740,14 @@ impl Interpreter {
     /// follow the chain (up to 10 levels to prevent infinite loops).
     fn resolve_nameref<'a>(&'a self, name: &'a str) -> &'a str {
         // Fast path: most variables aren't namerefs. One hashmap lookup decides.
-        if self.namerefs.is_empty() {
+        if self.scoped.namerefs.is_empty() {
             return name;
         }
         let mut current = name;
         let mut visited = std::collections::HashSet::new();
         visited.insert(name);
         for _ in 0..10 {
-            if let Some(target) = self.namerefs.get(current) {
+            if let Some(target) = self.scoped.namerefs.get(current) {
                 // THREAT[TM-INJ-011]: Detect cyclic namerefs and stop.
                 if !visited.insert(target.as_str()) {
                     // Cycle detected — return original name (Bash emits a warning)
@@ -8830,7 +8852,7 @@ impl Interpreter {
             }
         }
 
-        if let Some(value) = self.variables.get(name) {
+        if let Some(value) = self.scoped.variables.get(name) {
             return Some(value.clone());
         }
 
@@ -8847,9 +8869,9 @@ impl Interpreter {
         {
             let arr_name = &name[..bracket];
             let idx_str = &name[bracket + 1..name.len() - 1];
-            if let Some(arr) = self.assoc_arrays.get(arr_name) {
+            if let Some(arr) = self.scoped.assoc_arrays.get(arr_name) {
                 return arr.get(idx_str).cloned().unwrap_or_default();
-            } else if let Some(arr) = self.arrays.get(arr_name) {
+            } else if let Some(arr) = self.scoped.arrays.get(arr_name) {
                 let idx: usize = self.evaluate_arithmetic(idx_str).try_into().unwrap_or(0);
                 return arr.get(&idx).cloned().unwrap_or_default();
             }
@@ -8889,7 +8911,7 @@ impl Interpreter {
                 // $! - PID of most recent background command
                 // In Bashkit's virtual environment, background jobs run synchronously
                 // Return empty string or last job ID placeholder
-                if let Some(last_bg_pid) = self.variables.get("_LAST_BG_PID") {
+                if let Some(last_bg_pid) = self.scoped.variables.get("_LAST_BG_PID") {
                     return last_bg_pid.clone();
                 }
                 return String::new();
@@ -8901,6 +8923,7 @@ impl Interpreter {
                 for opt in ['e', 'x', 'u', 'f', 'n', 'v', 'a', 'b', 'h', 'm'] {
                     let opt_name = format!("SHOPT_{}", opt);
                     if self
+                        .scoped
                         .variables
                         .get(&opt_name)
                         .map(|v| v == "1")
@@ -8927,13 +8950,13 @@ impl Interpreter {
                 return self.cwd.to_string_lossy().to_string();
             }
             "OLDPWD" => {
-                if let Some(v) = self.variables.get("OLDPWD") {
+                if let Some(v) = self.scoped.variables.get("OLDPWD") {
                     return v.clone();
                 }
                 return self.cwd.to_string_lossy().to_string();
             }
             "HOSTNAME" => {
-                if let Some(v) = self.variables.get("HOSTNAME") {
+                if let Some(v) = self.scoped.variables.get("HOSTNAME") {
                     return v.clone();
                 }
                 return "localhost".to_string();
@@ -8943,7 +8966,7 @@ impl Interpreter {
             }
             "SECONDS" => {
                 // Seconds since shell started - always 0 in stateless model
-                if let Some(v) = self.variables.get("SECONDS") {
+                if let Some(v) = self.scoped.variables.get("SECONDS") {
                     return v.clone();
                 }
                 return "0".to_string();
@@ -9017,7 +9040,7 @@ impl Interpreter {
             }
         }
         // Shell variables
-        if self.variables.contains_key(name) {
+        if self.scoped.variables.contains_key(name) {
             return true;
         }
         // Environment
@@ -9043,7 +9066,7 @@ impl Interpreter {
         if self.in_trap {
             return (String::new(), String::new());
         }
-        if let Some(trap_cmd) = self.traps.get("DEBUG").cloned() {
+        if let Some(trap_cmd) = self.scoped.traps.get("DEBUG").cloned() {
             // THREAT[TM-DOS-030]: Propagate interpreter parser limits
             if let Ok(trap_script) = Parser::with_limits(
                 &trap_cmd,
@@ -9071,7 +9094,7 @@ impl Interpreter {
         if self.in_trap {
             return;
         }
-        if let Some(trap_cmd) = self.traps.get("ERR").cloned() {
+        if let Some(trap_cmd) = self.scoped.traps.get("ERR").cloned() {
             // THREAT[TM-DOS-030]: Propagate interpreter parser limits
             if let Ok(trap_script) = Parser::with_limits(
                 &trap_cmd,
@@ -9100,7 +9123,6 @@ impl Interpreter {
             frame.locals.insert(name.to_string(), value.to_string());
         }
     }
-
 }
 
 #[cfg(test)]
@@ -9427,7 +9449,10 @@ mod tests {
         interp.set_variable("A".to_string(), "1".to_string());
         interp.set_variable("A".to_string(), "1234567890".to_string());
 
-        assert_eq!(interp.variables.get("A").map(String::as_str), Some("1"));
+        assert_eq!(
+            interp.scoped.variables.get("A").map(String::as_str),
+            Some("1")
+        );
         assert_eq!(interp.env.get("A").map(String::as_str), Some("1"));
     }
 
@@ -12017,7 +12042,7 @@ cat /tmp/test_fd_exec_public.txt"#,
         restored.restore_shell_state(&state);
 
         assert_eq!(restored.resolve_nameref("alias_var"), "POLICY");
-        assert!(!restored.variables.contains_key("_NAMEREF_alias_var"));
+        assert!(!restored.scoped.variables.contains_key("_NAMEREF_alias_var"));
 
         let ast = Parser::new("alias_var=unsafe; echo $POLICY")
             .parse()
@@ -12025,7 +12050,7 @@ cat /tmp/test_fd_exec_public.txt"#,
         let result = restored.execute(&ast).await.unwrap();
         assert_eq!(result.stdout.trim(), "safe");
         assert_eq!(
-            restored.variables.get("POLICY").map(String::as_str),
+            restored.scoped.variables.get("POLICY").map(String::as_str),
             Some("safe")
         );
     }
