@@ -97,6 +97,18 @@ echo "exit=$?"
 exit=1
 ### end
 
+### getopts_cursor_isolated_across_subshell
+# A $(...) subshell running its own getopts must not clobber the parent's
+# position within a clustered -abc group (parent resumes at 'b', like real bash).
+OPTIND=1
+getopts "abc" p -abc
+junk=$(OPTIND=1; while getopts "xy" q -xy; do :; done)
+getopts "abc" p2 -abc
+echo "$p $p2"
+### expect
+a b
+### end
+
 ### getopts_optchar_idx_is_ordinary_var
 ### bash_diff: real bash has no _OPTCHAR_IDX internal at all; this pins that bashkit's clustered-option cursor is interpreter state, not a shell variable
 # The cluster cursor that walks -abc is interpreter-internal state, not the

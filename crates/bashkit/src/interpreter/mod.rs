@@ -1001,6 +1001,7 @@ struct SubshellSnapshot {
     memory_budget: crate::limits::MemoryBudget,
     exec_fd_table: HashMap<i32, FdTarget>,
     random_state: u32,
+    getopts_char_idx: usize,
 }
 
 /// Interpreter state.
@@ -8213,6 +8214,7 @@ impl Interpreter {
             memory_budget: self.memory_budget.clone(),
             exec_fd_table: self.exec_fd_table.clone(),
             random_state: self.random_state.load(Ordering::Relaxed),
+            getopts_char_idx: self.getopts_char_idx,
         }
     }
 
@@ -8224,6 +8226,7 @@ impl Interpreter {
         self.exec_fd_table = snap.exec_fd_table;
         self.random_state
             .store(snap.random_state, Ordering::Relaxed);
+        self.getopts_char_idx = snap.getopts_char_idx;
     }
 
     fn execute_cmd_subst<'a>(
