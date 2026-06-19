@@ -36,6 +36,7 @@ pub mod credential_injection_tests;
 pub mod custom_builtins_tests;
 pub mod custom_fs_tests;
 pub mod dev_null_tests;
+pub mod exec_options_tests;
 pub mod final_env_tests;
 pub mod find_multi_path_tests;
 pub mod git_advanced_tests;
