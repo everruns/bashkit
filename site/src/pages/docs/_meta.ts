@@ -35,6 +35,16 @@ export const DOC_META: DocMeta[] = [
     editPath: "docs/embedding.md",
   },
   {
+    slug: "llm-tools",
+    title: "LLM tools",
+    summary: "Expose Bashkit as a sandboxed tool for agent frameworks.",
+    seoTitle: "Use Bashkit as an LLM tool for agent frameworks",
+    seoDescription:
+      "Expose Bashkit as an LLM tool with BashTool: discovery metadata, system prompts, streaming output, and sandboxed execution for Rust, Python, and JS agents.",
+    section: "Getting started",
+    editPath: "docs/llm-tools.md",
+  },
+  {
     slug: "security",
     title: "Security",
     summary: "Sandbox boundaries, threat model, and what scripts cannot do.",
