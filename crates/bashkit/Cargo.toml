@@ -18,7 +18,7 @@ readme = "../../README.md"
 tokio = { workspace = true }
 async-trait = { workspace = true }
 # futures-core / tower are only pulled in by the LLM `BashTool` wrapper
-# (and the `scripted_tool` layer on top of it). Optional, gated under `tool`.
+# (and the `scripted_tool` layer on top of it). Optional, gated under `bash_tool`.
 futures-core = { workspace = true, optional = true }
 futures-util = { workspace = true }
 tower = { workspace = true, optional = true }
