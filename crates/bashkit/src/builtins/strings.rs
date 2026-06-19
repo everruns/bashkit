@@ -37,9 +37,18 @@ fn parse_strings_args(
     };
     let mut files = Vec::new();
     let mut p = super::arg_parser::ArgParser::new(args);
+    // After a `--` delimiter every remaining argument is a filename, even if it
+    // looks like an option (e.g. `strings -- -8` treats `-8` as a file).
+    let mut no_more_options = false;
 
     while !p.is_done() {
-        if let Some(val) = p.flag_value("-n", "strings")? {
+        if no_more_options {
+            if let Some(file) = p.positional() {
+                files.push(file.to_string());
+            } else {
+                p.advance();
+            }
+        } else if let Some(val) = p.flag_value("-n", "strings")? {
             opts.min_length = val
                 .parse()
                 .map_err(|_| format!("strings: invalid minimum string length: '{}'", val))?;
@@ -56,6 +65,7 @@ fn parse_strings_args(
             // Default behavior, ignore
         } else if let Some(arg) = p.current() {
             if arg == "--" {
+                no_more_options = true;
                 p.advance();
             } else if let Some(rest) = arg.strip_prefix('-')
                 && !rest.is_empty()
@@ -319,6 +329,16 @@ mod tests {
         let result = run_strings_with_fs(&["--", "/test.bin"], &[("/test.bin", data)]).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "after-delimiter\n");
+    }
+
+    #[tokio::test]
+    async fn test_strings_double_dash_treats_option_like_arg_as_file() {
+        // After `--`, an option-looking name like `-8` is a filename, not the
+        // `-NUM` minimum-length shorthand.
+        let data = b"numeric-name\0";
+        let result = run_strings_with_fs(&["--", "-8"], &[("/-8", data)]).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "numeric-name\n");
     }
 
     #[tokio::test]
