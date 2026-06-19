@@ -13,7 +13,7 @@ it a real host shell.
 
 ```rust
 use bashkit::{BashTool, Tool};
-use futures::StreamExt;
+use futures_util::StreamExt;
 
 # #[tokio::main]
 # async fn main() -> anyhow::Result<()> {
