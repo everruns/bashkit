@@ -7440,6 +7440,23 @@ impl Interpreter {
                 let remaining = &args[cmd_args_start..];
                 let target = remaining[0].as_str();
                 let builtin_args = &remaining[1..];
+                // Interpreter-native (special) builtins like `eval`, `source`,
+                // `.`, `declare` are implemented in the interpreter, not as
+                // trait builtins — some are only registered as unreachable
+                // stubs. Route them through the special dispatch so
+                // `command eval echo ok` behaves like `eval echo ok` rather
+                // than hitting a stub. `command` already bypasses functions,
+                // and specials outrank functions in normal dispatch anyway.
+                if Self::is_special_builtin_name(target) {
+                    // Box::pin: this can recurse (e.g. `command command eval ...`).
+                    return Box::pin(self.execute_special_builtin_with_hooks(
+                        target,
+                        builtin_args,
+                        _stdin,
+                        redirects,
+                    ))
+                    .await;
+                }
                 // Resolve host-registered builtins first (same precedence as dispatch_command).
                 if let Some(builtin) = self
                     .host_builtins
