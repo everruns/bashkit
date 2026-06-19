@@ -71,23 +71,23 @@ impl Builtin for Pushd {
             let target = ctx.args[0].clone();
             let new_path = normalize_path(ctx.cwd, &target);
 
-            if !ctx.fs.exists(&new_path).await.unwrap_or(false) {
-                return Ok(ExecResult::err(
-                    format!("pushd: {}: No such file or directory\n", target),
-                    1,
-                ));
-            }
-            let is_dir = ctx
-                .fs
-                .stat(&new_path)
-                .await
-                .map(|m| m.file_type.is_dir())
-                .unwrap_or(false);
-            if !is_dir {
-                return Ok(ExecResult::err(
-                    format!("pushd: {}: Not a directory\n", target),
-                    1,
-                ));
+            // Single stat: distinguish "not found" from "not a directory" without
+            // a redundant exists() + stat() pair (which would misreport IO/TOCTOU
+            // errors as "Not a directory").
+            match ctx.fs.stat(&new_path).await {
+                Ok(meta) if meta.file_type.is_dir() => {}
+                Ok(_) => {
+                    return Ok(ExecResult::err(
+                        format!("pushd: {}: Not a directory\n", target),
+                        1,
+                    ));
+                }
+                Err(_) => {
+                    return Ok(ExecResult::err(
+                        format!("pushd: {}: No such file or directory\n", target),
+                        1,
+                    ));
+                }
             }
 
             let old_cwd = ctx.cwd.to_string_lossy().to_string();
@@ -165,28 +165,28 @@ impl Builtin for Dirs {
             return Ok(ExecResult::ok(String::new()));
         }
 
+        if !verbose && !per_line {
+            // Default output doesn't need to walk the stack separately.
+            return Ok(ExecResult::ok(format!("{}\n", format_stack(&ctx))));
+        }
+
         let cwd = ctx.cwd.to_string_lossy().to_string();
-        // Stack from top (most recent) to bottom.
-        let stack: Vec<String> = ctx
-            .shell
-            .as_ref()
-            .map(|s| s.dir_stack.iter().rev().cloned().collect())
-            .unwrap_or_default();
+        // Stack from top (most recent) to bottom, borrowed (no clone).
+        let empty: Vec<String> = Vec::new();
+        let stack = ctx.shell.as_ref().map(|s| &*s.dir_stack).unwrap_or(&empty);
 
         if verbose {
             let mut output = format!(" 0  {}\n", cwd);
-            for (n, dir) in stack.iter().enumerate() {
+            for (n, dir) in stack.iter().rev().enumerate() {
                 output.push_str(&format!(" {}  {}\n", n + 1, dir));
             }
             Ok(ExecResult::ok(output))
-        } else if per_line {
+        } else {
             let mut output = format!("{}\n", cwd);
-            for dir in &stack {
+            for dir in stack.iter().rev() {
                 output.push_str(&format!("{}\n", dir));
             }
             Ok(ExecResult::ok(output))
-        } else {
-            Ok(ExecResult::ok(format!("{}\n", format_stack(&ctx))))
         }
     }
 }
