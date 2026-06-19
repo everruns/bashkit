@@ -36,6 +36,9 @@ jobs:
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
+      - name: Clippy without default features (lean build, no bash_tool)
+        run: cargo clippy -p bashkit --no-default-features --lib --tests -- -D warnings
+
       - name: Build documentation
         run: cargo doc --no-deps --all-features
         env:
