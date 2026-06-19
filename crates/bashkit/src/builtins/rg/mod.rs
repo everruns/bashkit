@@ -5079,10 +5079,9 @@ fn rg_generate_kind(args: &[String]) -> Result<Option<String>> {
         if arg == "--" {
             break;
         }
-        if rg_option_takes_value(arg) {
-            i += 2;
-            continue;
-        }
+        // Check `--generate` before the value-skip: `--generate` is itself an
+        // option that takes a value, so the `rg_option_takes_value` skip below
+        // would otherwise consume both it and its kind before we could read it.
         if arg == "--generate" {
             let Some(kind) = args.get(i + 1) else {
                 return Err(Error::Execution(
@@ -5093,6 +5092,10 @@ fn rg_generate_kind(args: &[String]) -> Result<Option<String>> {
         }
         if let Some(kind) = arg.strip_prefix("--generate=") {
             return Ok(Some(kind.to_string()));
+        }
+        if rg_option_takes_value(arg) {
+            i += 2;
+            continue;
         }
         i += 1;
     }
