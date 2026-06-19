@@ -598,6 +598,12 @@ impl BashToolBuilder {
     /// (network allowlist, mounts, hooks, git/ssh config, …) is reachable here.
     /// The closure runs on a fresh builder each time the tool creates a shell,
     /// after the convenience setters above, so it can extend or override them.
+    ///
+    /// Note: `help()` / `system_prompt()` text is generated from the values set
+    /// via the convenience setters (`username`, `hostname`, `limits`, `cwd`,
+    /// `env`, custom builtins), **not** from inside this closure. Changes made
+    /// only here run for real but are not reflected in the documentation text —
+    /// use the convenience setters for any value that should be documented.
     pub fn configure<F>(mut self, f: F) -> Self
     where
         F: Fn(crate::BashBuilder) -> crate::BashBuilder + Send + Sync + 'static,
