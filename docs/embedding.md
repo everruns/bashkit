@@ -22,13 +22,19 @@ cargo add bashkit
 Opt-in features pull in heavier capabilities only when you need them:
 
 ```bash
+cargo add bashkit --features http_client
 cargo add bashkit --features git
-cargo add bashkit --features python
 cargo add bashkit --features typescript
 cargo add bashkit --features sqlite
 cargo add bashkit --features realfs
 cargo add bashkit --features scripted_tool
 ```
+
+`http_client` enables `curl`/`wget` and the network allowlist shown below.
+Embedded Python (Monty) is a git-only dependency, so there is no `python`
+feature from the crates.io release — to run Python inside the shell see the
+[Python builtin](python.md) guide. The `pip install bashkit` wheel below is a
+separate, standalone binding.
 
 ### Minimal execution
 
