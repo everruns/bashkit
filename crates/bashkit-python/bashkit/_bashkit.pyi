@@ -130,7 +130,7 @@ BuiltinCallback = Callable[
 ]
 
 class FileSystem:
-    """Direct access to BashKit's virtual filesystem or a standalone mountable FS.
+    """Direct access to Bashkit's virtual filesystem or a standalone mountable FS.
 
     Two ways to create:
 
