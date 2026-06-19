@@ -24,6 +24,7 @@ const linkValue = linkHeaders.join(", ");
 const expectedLinks = [
   '<https://bashkit.sh/>; rel="canonical"',
   '</index.md>; rel="alternate"; type="text/markdown"',
+  '</llms.txt>; rel="alternate"; type="text/plain"',
   '</.well-known/agent-skills/index.json>; rel="service-desc"; type="application/json"',
   '</docs/>; rel="service-doc"; type="text/html"',
   '</docs.md>; rel="service-doc"; type="text/markdown"',

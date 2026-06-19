@@ -3,4 +3,5 @@ Allow: /
 # Content Signals: allow search indexing, AI training, and AI-input/RAG use.
 Content-Signal: ai-train=yes, search=yes, ai-input=yes
 
+# Coding-agent entry point (llmstxt.org): https://bashkit.sh/llms.txt
 Sitemap: https://bashkit.sh/sitemap.xml
