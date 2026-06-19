@@ -1239,14 +1239,21 @@ impl<'a> Parser<'a> {
                     | Some(tokens::Token::QuotedWord(_))
                     | Some(tokens::Token::QuotedGlobWord(_))
             ) {
-                let w = match &self.current_token {
+                let pattern = match &self.current_token {
+                    Some(tokens::Token::LiteralWord(w)) => Word {
+                        // LiteralWord already decoded lexer-only sentinels and must not
+                        // be reparsed; otherwise escaped dollars can become expansions.
+                        parts: vec![WordPart::Literal(w.clone())],
+                        quoted: true,
+                        has_unquoted_glob: false,
+                        part_quoted: Vec::new(),
+                    },
                     Some(tokens::Token::Word(w))
-                    | Some(tokens::Token::LiteralWord(w))
                     | Some(tokens::Token::QuotedWord(w))
-                    | Some(tokens::Token::QuotedGlobWord(w)) => w.clone(),
+                    | Some(tokens::Token::QuotedGlobWord(w)) => self.parse_word(w.clone()),
                     _ => unreachable!(),
                 };
-                patterns.push(self.parse_word(w));
+                patterns.push(pattern);
                 self.advance();
 
                 // Check for | between patterns
@@ -4078,6 +4085,28 @@ mod tests {
         } else {
             panic!("expected simple command");
         }
+    }
+
+    #[test]
+    fn test_case_literal_pattern_escaped_dollar_continuation_stays_literal() {
+        let parser =
+            Parser::new(r#"case "xy" in 'x'"\$(echo y)") echo MATCH ;; *) echo NOMATCH ;; esac"#);
+        let script = parser.parse().unwrap();
+
+        let case = match &script.commands[0] {
+            Command::Compound(CompoundCommand::Case(case), _) => case,
+            other => panic!("expected case command, got: {other:?}"),
+        };
+        let pattern = &case.cases[0].patterns[0];
+        assert_eq!(pattern.to_string(), r#"x$(echo y)"#);
+        assert!(
+            pattern
+                .parts
+                .iter()
+                .all(|part| matches!(part, WordPart::Literal(_))),
+            "escaped dollar in literal case pattern must not parse as expansion: {:?}",
+            pattern.parts
+        );
     }
 
     #[test]
