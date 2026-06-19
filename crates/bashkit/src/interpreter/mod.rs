@@ -9226,7 +9226,8 @@ impl Interpreter {
             let has_mixed_part_quotes =
                 word.part_quoted.iter().any(|q| *q) && word.part_quoted.iter().any(|q| !*q);
             if has_mixed_part_quotes {
-                let mut fields = vec![String::new()];
+                let mut segments = Vec::new();
+                let mut sentinel_haystack = self.variables.get("IFS").cloned().unwrap_or_default();
                 for (idx, part) in word.parts.iter().enumerate() {
                     let part_is_quoted = word.part_quoted.get(idx).copied().unwrap_or(word.quoted);
                     let part_has_expansion = matches!(
@@ -9252,24 +9253,58 @@ impl Interpreter {
                     };
 
                     if part_has_expansion && !part_is_quoted {
-                        let split = self.ifs_split(&value)?;
-                        if let Some((first, rest)) = split.split_first() {
-                            if let Some(current) = fields.last_mut() {
-                                current.push_str(first);
-                            }
-                            for field in rest {
-                                fields.push(field.clone());
-                            }
+                        sentinel_haystack.push_str(&value);
+                        segments.push((value, false, false));
+                    } else {
+                        let value =
+                            if part_is_quoted && part_has_expansion && word.has_unquoted_glob {
+                                Self::quote_expansion_for_quoted_glob(&value)
+                            } else {
+                                value
+                            };
+                        let preserves_empty_field = part_is_quoted && value.is_empty();
+                        sentinel_haystack.push_str(&value);
+                        segments.push((value, true, preserves_empty_field));
+                    }
+                }
+
+                // Pick a sentinel char absent from the data so empty quoted
+                // fields survive splitting and can be stripped afterward. If no
+                // candidate is free (astronomically unlikely), skip the sentinel
+                // rather than fall back to NUL, which is a valid data byte.
+                let empty_field_sentinel = segments
+                    .iter()
+                    .any(|(_, _, preserves_empty_field)| *preserves_empty_field)
+                    .then(|| {
+                        OPERAND_QUOTE_MARK_CANDIDATES
+                            .iter()
+                            .copied()
+                            .find(|candidate| !sentinel_haystack.contains(*candidate))
+                    })
+                    .flatten();
+
+                let mut expanded_for_split = String::new();
+                for (value, is_protected, preserves_empty_field) in segments {
+                    if is_protected {
+                        // Field splitting scans the whole expanded word. Mark literal and
+                        // quoted segments as protected so unquoted expansion delimiters can
+                        // still create boundaries between adjacent protected segments.
+                        expanded_for_split.push(QUOTED_SEGMENT_START);
+                        if preserves_empty_field
+                            && let Some(empty_field_sentinel) = empty_field_sentinel
+                        {
+                            expanded_for_split.push(empty_field_sentinel);
                         }
-                    } else if let Some(current) = fields.last_mut() {
-                        // Quoted expansion results must not undergo brace/glob expansion
-                        // when an unquoted glob is elsewhere in the word. Escape special
-                        // chars so that expand_braces/expand_glob_item treat them as literals.
-                        if part_is_quoted && part_has_expansion && word.has_unquoted_glob {
-                            current.push_str(&Self::quote_expansion_for_quoted_glob(&value));
-                        } else {
-                            current.push_str(&value);
-                        }
+                        expanded_for_split.push_str(&value);
+                        expanded_for_split.push(QUOTED_SEGMENT_END);
+                    } else {
+                        expanded_for_split.push_str(&value);
+                    }
+                }
+                let mut fields = self.ifs_split(&expanded_for_split)?;
+                if let Some(empty_field_sentinel) = empty_field_sentinel {
+                    for field in &mut fields {
+                        field.retain(|ch| ch != empty_field_sentinel);
                     }
                 }
                 return Ok(fields);
@@ -15174,6 +15209,19 @@ cat /tmp/test_fd_exec_public.txt"#,
         assert_eq!(result.exit_code, 0);
         let lines: Vec<&str> = result.stdout.lines().collect();
         assert_eq!(lines, vec!["count:2", "arg1:x ya", "arg2:b"]);
+    }
+
+    // Regression: unquoted IFS delimiters in a mixed word separate adjacent
+    // literal/quoted segments even when the expansion contributes no field text.
+    #[tokio::test]
+    async fn test_mixed_quote_unquoted_ifs_boundary_before_quoted_suffix() {
+        let result = run_script(
+            r#"a=" "; b="q"; set -- p$a"$b"; echo "count:$#"; echo "arg1:$1"; echo "arg2:$2""#,
+        )
+        .await;
+        assert_eq!(result.exit_code, 0);
+        let lines: Vec<&str> = result.stdout.lines().collect();
+        assert_eq!(lines, vec!["count:2", "arg1:p", "arg2:q"]);
     }
 
     /// Issue #1184: input process substitution temp files must be cleaned up
