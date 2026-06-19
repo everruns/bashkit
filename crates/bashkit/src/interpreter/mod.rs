@@ -590,7 +590,6 @@ pub(crate) fn is_internal_variable(name: &str) -> bool {
         || name.starts_with("_LAST_BG_")
         || name.starts_with("_DIRSTACK_")
         || name.starts_with("_OPTCHAR_")
-        || name == "_EVAL_CMD"
         || name == "_SHIFT_COUNT"
         || name == "_SET_POSITIONAL"
 }
@@ -7441,6 +7440,23 @@ impl Interpreter {
                 let remaining = &args[cmd_args_start..];
                 let target = remaining[0].as_str();
                 let builtin_args = &remaining[1..];
+                // Interpreter-native (special) builtins like `eval`, `source`,
+                // `.`, `declare` are implemented in the interpreter, not as
+                // trait builtins — some are only registered as unreachable
+                // stubs. Route them through the special dispatch so
+                // `command eval echo ok` behaves like `eval echo ok` rather
+                // than hitting a stub. `command` already bypasses functions,
+                // and specials outrank functions in normal dispatch anyway.
+                if Self::is_special_builtin_name(target) {
+                    // Box::pin: this can recurse (e.g. `command command eval ...`).
+                    return Box::pin(self.execute_special_builtin_with_hooks(
+                        target,
+                        builtin_args,
+                        _stdin,
+                        redirects,
+                    ))
+                    .await;
+                }
                 // Resolve host-registered builtins first (same precedence as dispatch_command).
                 if let Some(builtin) = self
                     .host_builtins
@@ -15267,7 +15283,6 @@ cat /tmp/test_fd_exec_public.txt"#,
             "_LOWER_y",
             "_INTEGER_n",
             "_ARRAY_READ_a",
-            "_EVAL_CMD",
             "_SHIFT_COUNT",
             "_SET_POSITIONAL",
             "_BG_EXIT_CODE",

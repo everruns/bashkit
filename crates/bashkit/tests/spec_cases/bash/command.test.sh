@@ -64,3 +64,17 @@ command -v for
 ### expect
 for
 ### end
+
+### command_runs_special_eval
+# command routes special builtins (eval) through interpreter dispatch
+command eval echo ok
+### expect
+ok
+### end
+
+### command_eval_executes_statements
+# command eval actually parses and runs its argument, not a stub
+command eval 'x=5; echo $x'
+### expect
+5
+### end
