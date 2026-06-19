@@ -579,6 +579,66 @@ impl Drop for OutputCallbackGuard {
     }
 }
 
+/// Per-call options for [`Bash::exec_with_options`].
+///
+/// Bundles the optional inputs to a single execution — streaming output and
+/// per-call builtin extensions — into one request value so new options can be
+/// added as fields without multiplying the number of `exec*` methods. The
+/// convenience methods ([`Bash::exec`], [`Bash::exec_with_extensions`],
+/// [`Bash::exec_streaming`], [`Bash::exec_streaming_with_extensions`]) are thin
+/// wrappers over `exec_with_options`.
+///
+/// # Example
+///
+/// ```rust
+/// use bashkit::{Bash, ExecOptions};
+/// use std::sync::{Arc, Mutex};
+///
+/// # #[tokio::main]
+/// # async fn main() -> bashkit::Result<()> {
+/// let chunks: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+/// let chunks_cb = chunks.clone();
+/// let mut bash = Bash::new();
+/// let result = bash
+///     .exec_with_options(
+///         "for i in 1 2 3; do echo $i; done",
+///         ExecOptions::new().streaming(Box::new(move |stdout, _stderr| {
+///             chunks_cb.lock().unwrap().push(stdout.to_string());
+///         })),
+///     )
+///     .await?;
+/// assert_eq!(result.stdout, "1\n2\n3\n");
+/// assert_eq!(*chunks.lock().unwrap(), vec!["1\n", "2\n", "3\n"]);
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Default)]
+pub struct ExecOptions {
+    extensions: ExecutionExtensions,
+    output_callback: Option<OutputCallback>,
+}
+
+impl ExecOptions {
+    /// Create an empty set of options (no streaming, no extensions).
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Stream incremental `(stdout_chunk, stderr_chunk)` output to `callback`
+    /// as it is produced. See [`Bash::exec_streaming`] for callback semantics.
+    pub fn streaming(mut self, callback: OutputCallback) -> Self {
+        self.output_callback = Some(callback);
+        self
+    }
+
+    /// Attach per-execution builtin extensions (request-scoped typed data read
+    /// by builtins via `ctx.execution_extension::<T>()`).
+    pub fn extensions(mut self, extensions: ExecutionExtensions) -> Self {
+        self.extensions = extensions;
+        self
+    }
+}
+
 /// Main entry point for Bashkit.
 ///
 /// Provides a virtual bash interpreter with an in-memory virtual filesystem.
@@ -654,16 +714,37 @@ impl Bash {
     /// input size, then parses the script with a timeout, AST depth limit, and fuel limit,
     /// then executes the resulting AST.
     pub async fn exec(&mut self, script: &str) -> Result<ExecResult> {
-        self.exec_with_extensions(script, ExecutionExtensions::new())
-            .await
+        self.exec_with_options(script, ExecOptions::new()).await
     }
 
     /// Execute a bash script with per-execution builtin extensions.
+    ///
+    /// Convenience wrapper over [`exec_with_options`](Self::exec_with_options).
     pub async fn exec_with_extensions(
         &mut self,
         script: &str,
-        mut extensions: ExecutionExtensions,
+        extensions: ExecutionExtensions,
     ) -> Result<ExecResult> {
+        self.exec_with_options(script, ExecOptions::new().extensions(extensions))
+            .await
+    }
+
+    /// Execute a bash script with a single [`ExecOptions`] request value.
+    ///
+    /// This is the canonical entry point: streaming output and per-call builtin
+    /// extensions are carried as fields of [`ExecOptions`] rather than as
+    /// separate method overloads, so future per-call options can be added
+    /// without multiplying `exec*` methods. The other `exec*` methods are thin
+    /// wrappers over this one.
+    pub async fn exec_with_options(
+        &mut self,
+        script: &str,
+        options: ExecOptions,
+    ) -> Result<ExecResult> {
+        let ExecOptions {
+            mut extensions,
+            output_callback,
+        } = options;
         // Expose active execution limits and deadline to builtins that need to
         // honor per-execution sandbox settings inside synchronous VM sections.
         let active_limits = self.interpreter.limits().clone();
@@ -673,6 +754,12 @@ impl Bash {
         let _ = extensions.insert(builtins::PythonInprocessOptIn(self.python_inprocess_opt_in));
         #[cfg(feature = "sqlite")]
         let _ = extensions.insert(builtins::SqliteInprocessOptIn(self.sqlite_inprocess_opt_in));
+        // Install the streaming callback for the duration of this execution, if
+        // any. The guard holds a raw pointer (not a borrow), so the mutable
+        // interpreter borrow is released before `exec_impl` runs and the
+        // callback is cleared on drop after the await completes.
+        let _stream_guard =
+            output_callback.map(|cb| OutputCallbackGuard::install(&mut self.interpreter, cb));
         let _extensions_guard = self.interpreter.scoped_execution_extensions(extensions);
         self.exec_impl(script).await
     }
@@ -995,19 +1082,26 @@ impl Bash {
         script: &str,
         output_callback: OutputCallback,
     ) -> Result<ExecResult> {
-        self.exec_streaming_with_extensions(script, output_callback, ExecutionExtensions::new())
+        self.exec_with_options(script, ExecOptions::new().streaming(output_callback))
             .await
     }
 
     /// Execute a bash script with streaming output and per-execution builtin extensions.
+    ///
+    /// Convenience wrapper over [`exec_with_options`](Self::exec_with_options).
     pub async fn exec_streaming_with_extensions(
         &mut self,
         script: &str,
         output_callback: OutputCallback,
         extensions: ExecutionExtensions,
     ) -> Result<ExecResult> {
-        let _guard = OutputCallbackGuard::install(&mut self.interpreter, output_callback);
-        self.exec_with_extensions(script, extensions).await
+        self.exec_with_options(
+            script,
+            ExecOptions::new()
+                .streaming(output_callback)
+                .extensions(extensions),
+        )
+        .await
     }
 
     /// Return a shared cancellation token.
