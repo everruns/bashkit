@@ -1120,6 +1120,11 @@ pub struct Interpreter {
     /// True while executing a trap handler. Suppresses recursive DEBUG trap
     /// invocation to prevent amplification attacks (TM-DOS-035).
     in_trap: bool,
+    /// Depth of if/while/until condition evaluation.
+    /// Important decision: condition context is tracked as interpreter state so
+    /// nested AND-OR lists can suppress ERR traps without weakening top-level
+    /// final-command errexit behavior.
+    condition_sequence_depth: usize,
     /// Deferred output process substitutions: after a command writes to the
     /// virtual file path, run these commands with the file content as stdin.
     /// Each entry is (virtual_path, commands_to_run).
@@ -1534,6 +1539,7 @@ impl Interpreter {
             cancelled: Arc::new(AtomicBool::new(false)),
             hooks: crate::hooks::Hooks::default(),
             in_trap: false,
+            condition_sequence_depth: 0,
             deferred_proc_subs: Vec::new(),
             proc_sub_paths: HashSet::new(),
             random_state: AtomicU32::new(random_seed),
@@ -1794,6 +1800,7 @@ impl Interpreter {
         // handler is awaited; clear the re-entrancy guard before each exec so
         // one cancelled script cannot suppress traps in the next script.
         self.in_trap = false;
+        self.condition_sequence_depth = 0;
         self.deferred_proc_subs.clear();
         self.clear_pending_fd_redirect_state();
         // Top-level timeouts drop the interpreter future at await points, so
@@ -4481,7 +4488,14 @@ impl Interpreter {
     /// Execute a sequence of commands used as a condition (no errexit checking)
     /// Used for if/while/until conditions where failure is expected
     async fn execute_condition_sequence(&mut self, commands: &[Command]) -> Result<ExecResult> {
-        self.execute_command_sequence_impl(commands, false).await
+        self.condition_sequence_depth += 1;
+        let result = self.execute_command_sequence_impl(commands, false).await;
+        self.condition_sequence_depth -= 1;
+        result
+    }
+
+    fn is_in_condition_sequence(&self) -> bool {
+        self.condition_sequence_depth > 0
     }
 
     /// Execute commands whose stdout is captured by command substitution.
@@ -4709,7 +4723,7 @@ impl Interpreter {
                 .rest
                 .first()
                 .is_some_and(|(op, _)| matches!(op, ListOperator::Semicolon));
-            if exit_code != 0 && first_op_is_semicolon {
+            if exit_code != 0 && first_op_is_semicolon && !self.is_in_condition_sequence() {
                 self.run_err_trap(&mut stdout, &mut stderr).await;
             }
         }
@@ -4797,7 +4811,10 @@ impl Interpreter {
                     }
 
                     // ERR trap follows the same AND-OR suppression as errexit.
-                    if exit_code != 0 && !exit_code_from_conditional_context {
+                    if exit_code != 0
+                        && !exit_code_from_conditional_context
+                        && !self.is_in_condition_sequence()
+                    {
                         self.run_err_trap(&mut stdout, &mut stderr).await;
                     }
                 }
@@ -4807,8 +4824,10 @@ impl Interpreter {
         // Final errexit check for the last command. A non-zero status only
         // remains suppressed when it was carried from a short-circuited or
         // non-final AND-OR list element; a failing final &&/|| command exits.
-        let should_final_errexit_check =
-            self.is_errexit_enabled() && exit_code != 0 && !exit_code_from_conditional_context;
+        let should_final_errexit_check = self.is_errexit_enabled()
+            && exit_code != 0
+            && !exit_code_from_conditional_context
+            && !self.is_in_condition_sequence();
 
         if should_final_errexit_check {
             return Ok(ExecResult {

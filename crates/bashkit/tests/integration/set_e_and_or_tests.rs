@@ -430,3 +430,45 @@ echo "SHOULD NOT APPEAR"
     assert_eq!(result.exit_code, 1);
     assert!(!result.stdout.contains("SHOULD NOT APPEAR"));
 }
+
+/// ERR trap: final failing AND-OR command in an if condition is suppressed.
+#[tokio::test]
+async fn err_trap_suppressed_for_final_and_failure_in_if_condition() {
+    let mut bash = Bash::new();
+    let result = bash
+        .exec(
+            r#"
+set -e
+trap 'echo ERR_TRAP_FIRED' ERR
+if true && false; then
+    echo "THEN"
+fi
+echo "AFTER"
+"#,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(result.stdout.trim(), "AFTER");
+}
+
+/// ERR trap: final failing AND-OR command in a while condition is suppressed.
+#[tokio::test]
+async fn err_trap_suppressed_for_final_and_failure_in_while_condition() {
+    let mut bash = Bash::new();
+    let result = bash
+        .exec(
+            r#"
+set -e
+trap 'echo ERR_TRAP_FIRED' ERR
+while true && false; do
+    echo "BODY"
+done
+echo "AFTER"
+"#,
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(result.stdout.trim(), "AFTER");
+}
