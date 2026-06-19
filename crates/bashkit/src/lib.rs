@@ -506,6 +506,10 @@ pub use builtins::ssh::{SshClient, SshHandler, SshOutput, SshTarget};
 #[cfg(feature = "python")]
 pub use builtins::{PythonExternalFnHandler, PythonExternalFns, PythonLimits};
 
+// Shared resource-limit core for embedded language VMs (Python, TypeScript).
+#[cfg(any(feature = "python", feature = "typescript"))]
+pub use builtins::RuntimeLimits;
+
 #[cfg(feature = "sqlite")]
 pub use builtins::{Sqlite, SqliteBackend, SqliteLimits};
 // Re-export monty types needed by external handler consumers.

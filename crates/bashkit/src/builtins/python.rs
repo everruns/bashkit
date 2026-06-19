@@ -32,15 +32,13 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use super::{Builtin, Context, ExecutionDeadline, resolve_path};
+use super::{Builtin, Context, ExecutionDeadline, RuntimeLimits, resolve_path};
 use crate::error::Result;
 use crate::fs::{FileSystem, FileType};
 use crate::interpreter::ExecResult;
 
-/// Default resource limits for virtual Python execution.
-const DEFAULT_MAX_ALLOCATIONS: usize = 1_000_000;
-const DEFAULT_MAX_DURATION: Duration = Duration::from_secs(30);
-const DEFAULT_MAX_MEMORY: usize = 64 * 1024 * 1024; // 64 MB
+/// Python's default recursion-depth cap. The other VM limits (duration,
+/// memory, allocations) default via [`RuntimeLimits::default`].
 const DEFAULT_MAX_RECURSION: usize = 200;
 // Security hard-stop: catastrophic regex backtracking can bypass cooperative
 // interpreter budget checks, so disable regex stdlib module in untrusted code.
@@ -96,23 +94,18 @@ fn python_inprocess_enabled(ctx: &Context<'_>) -> bool {
 /// ```
 #[derive(Debug, Clone)]
 pub struct PythonLimits {
-    /// Maximum heap allocations (default: 1,000,000).
-    pub max_allocations: usize,
-    /// Maximum execution time (default: 30s).
-    pub max_duration: Duration,
-    /// Maximum memory in bytes (default: 64 MB).
-    pub max_memory: usize,
-    /// Maximum recursion depth (default: 200).
-    pub max_recursion: usize,
+    /// Shared VM resource limits (duration, memory, allocations, call depth).
+    pub common: RuntimeLimits,
 }
 
 impl Default for PythonLimits {
     fn default() -> Self {
         Self {
-            max_allocations: DEFAULT_MAX_ALLOCATIONS,
-            max_duration: DEFAULT_MAX_DURATION,
-            max_memory: DEFAULT_MAX_MEMORY,
-            max_recursion: DEFAULT_MAX_RECURSION,
+            common: RuntimeLimits {
+                // Python defaults to a recursion depth of 200.
+                max_call_depth: DEFAULT_MAX_RECURSION,
+                ..RuntimeLimits::default()
+            },
         }
     }
 }
@@ -121,28 +114,28 @@ impl PythonLimits {
     /// Set max heap allocations.
     #[must_use]
     pub fn max_allocations(mut self, n: usize) -> Self {
-        self.max_allocations = n;
+        self.common.max_allocations = n;
         self
     }
 
     /// Set max execution duration.
     #[must_use]
     pub fn max_duration(mut self, d: Duration) -> Self {
-        self.max_duration = d;
+        self.common.max_duration = d;
         self
     }
 
     /// Set max memory in bytes.
     #[must_use]
     pub fn max_memory(mut self, bytes: usize) -> Self {
-        self.max_memory = bytes;
+        self.common.max_memory = bytes;
         self
     }
 
     /// Set max recursion depth.
     #[must_use]
     pub fn max_recursion(mut self, depth: usize) -> Self {
-        self.max_recursion = depth;
+        self.common.max_call_depth = depth;
         self
     }
 }
@@ -450,7 +443,7 @@ impl Builtin for Python {
             .execution_extension::<ExecutionDeadline>()
             .map(ExecutionDeadline::remaining)
         {
-            limits.max_duration = limits.max_duration.min(remaining);
+            limits.common.max_duration = limits.common.max_duration.min(remaining);
         }
 
         run_python(
@@ -495,15 +488,15 @@ async fn run_python(
     };
 
     let limits = ResourceLimits::new()
-        .max_allocations(py_limits.max_allocations)
-        .max_duration(py_limits.max_duration)
-        .max_memory(py_limits.max_memory)
-        .max_recursion_depth(Some(py_limits.max_recursion));
+        .max_allocations(py_limits.common.max_allocations)
+        .max_duration(py_limits.common.max_duration)
+        .max_memory(py_limits.common.max_memory)
+        .max_recursion_depth(Some(py_limits.common.max_call_depth));
 
     let tracker = LimitedTracker::new(limits);
     // Important security decision: cap awaited host callbacks with the same wall-clock
     // budget as Monty so external functions cannot pin execution between VM steps.
-    let python_deadline = Instant::now().checked_add(py_limits.max_duration);
+    let python_deadline = Instant::now().checked_add(py_limits.common.max_duration);
 
     // Run the synchronous start() phase, then extract collected output.
     // PrintWriter::CollectString is not Send, so we scope it to avoid holding across .await.
@@ -1514,19 +1507,19 @@ mod tests {
             .max_duration(Duration::from_secs(10))
             .max_memory(1024)
             .max_recursion(50);
-        assert_eq!(limits.max_allocations, 500);
-        assert_eq!(limits.max_duration, Duration::from_secs(10));
-        assert_eq!(limits.max_memory, 1024);
-        assert_eq!(limits.max_recursion, 50);
+        assert_eq!(limits.common.max_allocations, 500);
+        assert_eq!(limits.common.max_duration, Duration::from_secs(10));
+        assert_eq!(limits.common.max_memory, 1024);
+        assert_eq!(limits.common.max_call_depth, 50);
     }
 
     #[test]
     fn test_python_limits_default() {
         let limits = PythonLimits::default();
-        assert_eq!(limits.max_allocations, 1_000_000);
-        assert_eq!(limits.max_duration, Duration::from_secs(30));
-        assert_eq!(limits.max_memory, 64 * 1024 * 1024);
-        assert_eq!(limits.max_recursion, 200);
+        assert_eq!(limits.common.max_allocations, 1_000_000);
+        assert_eq!(limits.common.max_duration, Duration::from_secs(30));
+        assert_eq!(limits.common.max_memory, 64 * 1024 * 1024);
+        assert_eq!(limits.common.max_call_depth, 200);
     }
 
     // --- External function tests ---
