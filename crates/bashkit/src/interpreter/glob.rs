@@ -705,6 +705,10 @@ impl Interpreter {
     /// must not remove arbitrary `\X` pairs from expanded data: parameter and
     /// command substitution can produce literal backslashes after parsing, and
     /// turning `.\.` into `..` would change the lookup directory.
+    ///
+    /// The metacharacter set below must stay in sync with the escape set in
+    /// `Interpreter::quote_expansion_for_quoted_glob` (interpreter/mod.rs); if
+    /// one side adds or drops a character, lookups break or escapes leak.
     fn glob_path_unescape(s: &str) -> String {
         let mut result = String::with_capacity(s.len());
         let mut chars = s.chars().peekable();

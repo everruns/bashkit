@@ -1423,9 +1423,10 @@ mod finding_mixed_quoted_word_quote_metadata {
 
     #[tokio::test]
     async fn unquoted_expansion_backslash_dot_in_glob_dir_stays_literal() {
-        // THREAT[TM-INF-022]: glob directory unescape only removes parser-inserted
+        // THREAT[TM-ESC-001]: glob directory unescape only removes parser-inserted
         // metacharacter escapes. Literal backslashes produced by expansion must not
-        // turn `.\.` into `..` and redirect lookup outside the trusted prefix.
+        // turn `.\.` into `..` and redirect lookup outside the trusted prefix
+        // (path traversal).
         let mut bash = tight_bash();
         bash.exec("mkdir -p /tmp/safe /tmp/secret && touch /tmp/secret/flag.txt")
             .await
