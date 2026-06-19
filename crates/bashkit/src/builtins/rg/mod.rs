@@ -5013,9 +5013,11 @@ fn rg_option_takes_value(arg: &str) -> bool {
             | "--context"
             | "-d"
             | "--max-depth"
+            | "--maxdepth"
             | "-E"
             | "--encoding"
             | "--engine"
+            | "--color"
             | "--field-context-separator"
             | "--field-match-separator"
             | "-g"
@@ -5046,13 +5048,28 @@ fn rg_option_takes_value(arg: &str) -> bool {
             | "--hostname-bin"
             | "--hyperlink-format"
             | "--colors"
+            | "--generate"
     )
 }
 
 fn rg_arg_before_delimiter(args: &[String], needle: &str) -> bool {
-    args.iter()
-        .take_while(|arg| arg.as_str() != "--")
-        .any(|arg| arg == needle)
+    // Match rg's parser: a literal `--` consumed as an option value is not a delimiter.
+    let mut i = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        if arg == "--" {
+            break;
+        }
+        if arg == needle {
+            return true;
+        }
+        if rg_option_takes_value(arg) {
+            i += 2;
+            continue;
+        }
+        i += 1;
+    }
+    false
 }
 
 fn rg_generate_kind(args: &[String]) -> Result<Option<String>> {
@@ -5062,10 +5079,9 @@ fn rg_generate_kind(args: &[String]) -> Result<Option<String>> {
         if arg == "--" {
             break;
         }
-        if rg_option_takes_value(arg) {
-            i += 2;
-            continue;
-        }
+        // Check `--generate` before the value-skip: `--generate` is itself an
+        // option that takes a value, so the `rg_option_takes_value` skip below
+        // would otherwise consume both it and its kind before we could read it.
         if arg == "--generate" {
             let Some(kind) = args.get(i + 1) else {
                 return Err(Error::Execution(
@@ -5076,6 +5092,10 @@ fn rg_generate_kind(args: &[String]) -> Result<Option<String>> {
         }
         if let Some(kind) = arg.strip_prefix("--generate=") {
             return Ok(Some(kind.to_string()));
+        }
+        if rg_option_takes_value(arg) {
+            i += 2;
+            continue;
         }
         i += 1;
     }
@@ -5205,8 +5225,11 @@ impl Builtin for Rg {
         if rg_arg_before_delimiter(ctx.args, "-V") {
             return Ok(ExecResult::ok("rg (bashkit) 0.1\n".to_string()));
         }
-        if let Some(r) = super::check_help_version(ctx.args, &help_text, Some("rg (bashkit) 0.1")) {
-            return Ok(r);
+        if rg_arg_before_delimiter(ctx.args, "--help") {
+            return Ok(ExecResult::ok(help_text));
+        }
+        if rg_arg_before_delimiter(ctx.args, "--version") {
+            return Ok(ExecResult::ok("rg (bashkit) 0.1\n".to_string()));
         }
         if rg_arg_before_delimiter(ctx.args, "--pcre2-version") {
             return Ok(ExecResult::ok(
@@ -13165,6 +13188,14 @@ mod tests {
         assert_eq!(short_help.exit_code, 0);
         assert_eq!(short_help.stdout, long_help.stdout);
 
+        let help_after_regexp_dash = run_rg(&["-e", "--", "-h"], None, &[]).await;
+        assert_eq!(help_after_regexp_dash.exit_code, 0);
+        assert_eq!(help_after_regexp_dash.stdout, long_help.stdout);
+
+        let long_help_after_regexp_dash = run_rg(&["-e", "--", "--help"], None, &[]).await;
+        assert_eq!(long_help_after_regexp_dash.exit_code, 0);
+        assert_eq!(long_help_after_regexp_dash.stdout, long_help.stdout);
+
         let version = run_rg(&["--version"], None, &[]).await;
         assert_eq!(version.exit_code, 0);
         assert_eq!(version.stdout, "rg (bashkit) 0.1\n");
@@ -13173,12 +13204,24 @@ mod tests {
         assert_eq!(short_version.exit_code, 0);
         assert_eq!(short_version.stdout, version.stdout);
 
+        let version_after_regexp_dash = run_rg(&["-e", "--", "-V"], None, &[]).await;
+        assert_eq!(version_after_regexp_dash.exit_code, 0);
+        assert_eq!(version_after_regexp_dash.stdout, version.stdout);
+
+        let long_version_after_regexp_dash = run_rg(&["-e", "--", "--version"], None, &[]).await;
+        assert_eq!(long_version_after_regexp_dash.exit_code, 0);
+        assert_eq!(long_version_after_regexp_dash.stdout, version.stdout);
+
         let pcre2_version = run_rg(&["--pcre2-version"], None, &[]).await;
         assert_eq!(pcre2_version.exit_code, 0);
         assert_eq!(
             pcre2_version.stdout,
             "PCRE2 10.45 is available (JIT is available)\n"
         );
+
+        let pcre2_after_regexp_dash = run_rg(&["-e", "--", "--pcre2-version"], None, &[]).await;
+        assert_eq!(pcre2_after_regexp_dash.exit_code, 0);
+        assert_eq!(pcre2_after_regexp_dash.stdout, pcre2_version.stdout);
     }
 
     #[tokio::test]
