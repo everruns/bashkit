@@ -593,7 +593,6 @@ pub(crate) fn is_internal_variable(name: &str) -> bool {
         || name.starts_with("_BG_EXIT_")
         || name.starts_with("_LAST_BG_")
         || name.starts_with("_DIRSTACK_")
-        || name.starts_with("_OPTCHAR_")
         || name == "_SHIFT_COUNT"
         || name == "_SET_POSITIONAL"
 }
@@ -1066,6 +1065,11 @@ pub struct Interpreter {
     /// Stdin inherited from pipeline for compound commands (while read, etc.)
     /// Each read operation consumes one line, advancing through the data.
     pipeline_stdin: Option<String>,
+    /// Position within the current argument while `getopts` walks a clustered
+    /// short-option group (e.g. `-abc`). Interpreter-internal working state for
+    /// `execute_getopts`; `0` means "at the start of the next option group".
+    /// Previously stored in the user variable namespace as `_OPTCHAR_IDX`.
+    getopts_char_idx: usize,
     /// Optional callback for streaming output chunks during execution.
     /// When set, output is emitted incrementally via this callback in addition
     /// to being accumulated in the returned ExecResult.
@@ -1521,6 +1525,7 @@ impl Interpreter {
             #[cfg(feature = "ssh")]
             ssh_client: None,
             pipeline_stdin: None,
+            getopts_char_idx: 0,
             output_callback: None,
             execution_extensions: Arc::new(StdMutex::new(Arc::new(
                 builtins::ExecutionExtensions::new(),
@@ -4292,7 +4297,7 @@ impl Interpreter {
             self.insert_variable_checked(var.to_string(), val.to_string());
         }
         self.insert_variable_checked("OPTIND".to_string(), "1".to_string());
-        self.vars_mut().remove("_OPTCHAR_IDX");
+        self.getopts_char_idx = 0;
 
         // Forward piped stdin to child when executing a script file or -c command
         let saved_stdin = self.pipeline_stdin.take();
@@ -7283,18 +7288,13 @@ impl Interpreter {
         let opt_chars: Vec<char> = current_arg[1..].chars().collect();
 
         // Track position within the current argument for multi-char options
-        let char_idx: usize = self
-            .scoped
-            .variables
-            .get("_OPTCHAR_IDX")
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0);
+        let char_idx: usize = self.getopts_char_idx;
 
         if char_idx >= opt_chars.len() {
             // Should not happen, but advance
             self.vars_mut()
                 .insert("OPTIND".to_string(), (optind + 1).to_string());
-            self.vars_mut().remove("_OPTCHAR_IDX");
+            self.getopts_char_idx = 0;
             self.insert_variable_checked(varname.clone(), "?".to_string());
             return Ok(ExecResult {
                 stdout: String::new(),
@@ -7322,20 +7322,20 @@ impl Interpreter {
                     self.insert_variable_checked("OPTARG".to_string(), arg_val);
                     self.vars_mut()
                         .insert("OPTIND".to_string(), (optind + 1).to_string());
-                    self.vars_mut().remove("_OPTCHAR_IDX");
+                    self.getopts_char_idx = 0;
                 } else if optind < parse_args.len() {
                     // Next arg is the argument
                     self.vars_mut()
                         .insert("OPTARG".to_string(), parse_args[optind].clone());
                     self.vars_mut()
                         .insert("OPTIND".to_string(), (optind + 2).to_string());
-                    self.vars_mut().remove("_OPTCHAR_IDX");
+                    self.getopts_char_idx = 0;
                 } else {
                     // Missing argument
                     self.vars_mut().remove("OPTARG");
                     self.vars_mut()
                         .insert("OPTIND".to_string(), (optind + 1).to_string());
-                    self.vars_mut().remove("_OPTCHAR_IDX");
+                    self.getopts_char_idx = 0;
                     if silent {
                         self.insert_variable_checked(varname.clone(), ":".to_string());
                         self.vars_mut()
@@ -7356,25 +7356,23 @@ impl Interpreter {
                 self.vars_mut().remove("OPTARG");
                 if char_idx + 1 < opt_chars.len() {
                     // More chars in this arg
-                    self.vars_mut()
-                        .insert("_OPTCHAR_IDX".to_string(), (char_idx + 1).to_string());
+                    self.getopts_char_idx = char_idx + 1;
                 } else {
                     // Move to next arg
                     self.vars_mut()
                         .insert("OPTIND".to_string(), (optind + 1).to_string());
-                    self.vars_mut().remove("_OPTCHAR_IDX");
+                    self.getopts_char_idx = 0;
                 }
             }
         } else {
             // Unknown option
             self.vars_mut().remove("OPTARG");
             if char_idx + 1 < opt_chars.len() {
-                self.vars_mut()
-                    .insert("_OPTCHAR_IDX".to_string(), (char_idx + 1).to_string());
+                self.getopts_char_idx = char_idx + 1;
             } else {
                 self.vars_mut()
                     .insert("OPTIND".to_string(), (optind + 1).to_string());
-                self.vars_mut().remove("_OPTCHAR_IDX");
+                self.getopts_char_idx = 0;
             }
 
             if silent {
@@ -11966,7 +11964,6 @@ cat /tmp/test_fd_exec_public.txt"#,
             "_LAST_BG_PID",
             "_DIRSTACK_SIZE",
             "_DIRSTACK_0",
-            "_OPTCHAR_IDX",
             "SHOPT_e",
             "SHOPT_x",
             "SHOPT_expand_aliases",

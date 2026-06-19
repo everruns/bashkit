@@ -96,3 +96,21 @@ echo "exit=$?"
 ### expect
 exit=1
 ### end
+
+### getopts_optchar_idx_is_ordinary_var
+### bash_diff: real bash has no _OPTCHAR_IDX internal at all; this pins that bashkit's clustered-option cursor is interpreter state, not a shell variable
+# The cluster cursor that walks -abc is interpreter-internal state, not the
+# user-visible _OPTCHAR_IDX variable. Setting that name must not affect getopts,
+# and it stays an ordinary variable throughout.
+OPTIND=1
+_OPTCHAR_IDX=hijack
+while getopts "abc" opt -abc; do
+  echo "$opt"
+done
+echo "var=$_OPTCHAR_IDX"
+### expect
+a
+b
+c
+var=hijack
+### end
