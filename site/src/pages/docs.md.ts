@@ -1,18 +1,11 @@
 // Decision: /docs has a Markdown representation for clients that prefer
 // text/markdown. Keep it generated from the same curated metadata as HTML nav.
 import type { APIRoute } from "astro";
-import { DOC_META } from "./docs/_meta";
+import { DOC_META, SECTION_ORDER } from "./docs/_meta";
 
 export const prerender = true;
 
-const sectionOrder = [
-  "Getting started",
-  "Reference",
-  "Features",
-  "Runtimes",
-  "Extending",
-  "Operations",
-];
+const sectionOrder = SECTION_ORDER;
 
 export const GET: APIRoute = () => {
   const markdown = [

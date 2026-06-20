@@ -14,6 +14,20 @@ export type DocMeta = {
   editPath?: string;
 };
 
+// Single source of truth for section display order, shared by the /docs index
+// (index.astro) and its Markdown twin (docs.md.ts). DOC_META is ordered to match
+// so the per-page prev/next flow follows the same grouping.
+export const SECTION_ORDER = [
+  "Getting started",
+  "LLM tools",
+  "Concepts",
+  "Networking",
+  "Runtimes",
+  "Reference",
+  "Extending",
+  "Operations",
+];
+
 export const DOC_META: DocMeta[] = [
   {
     slug: "cli",
@@ -41,8 +55,28 @@ export const DOC_META: DocMeta[] = [
     seoTitle: "Use Bashkit as an LLM tool for agent frameworks",
     seoDescription:
       "Expose Bashkit as an LLM tool with BashTool: discovery metadata, system prompts, streaming output, and sandboxed execution for Rust, Python, and JS agents.",
-    section: "Getting started",
+    section: "LLM tools",
     editPath: "docs/llm-tools.md",
+  },
+  {
+    slug: "scripted-tools",
+    title: "Scripted tool orchestration",
+    summary: "Compose many tools into one bash-scriptable tool the LLM calls once.",
+    seoTitle: "Bashkit scripted tool orchestration for LLM agents",
+    seoDescription:
+      "Compose ToolDef and callback pairs into one ScriptedTool so an LLM orchestrates many tools in a single bash script with pipes, loops, and jq.",
+    section: "LLM tools",
+    editPath: "docs/scripted-tools.md",
+  },
+  {
+    slug: "filesystem",
+    title: "Virtual filesystem",
+    summary: "The in-memory VFS, its layering stack, and host-mount opt-ins.",
+    seoTitle: "Bashkit virtual filesystem and sandbox layering",
+    seoDescription:
+      "Understand Bashkit's in-memory virtual filesystem: the FsBackend and FileSystem traits, layering stack, InMemoryFs, RealFs, device files, and host mounts.",
+    section: "Concepts",
+    editPath: "docs/filesystem.md",
   },
   {
     slug: "security",
@@ -51,7 +85,90 @@ export const DOC_META: DocMeta[] = [
     seoTitle: "Bashkit security model and sandbox boundaries",
     seoDescription:
       "Review Bashkit's virtual filesystem, resource limits, network allowlists, POSIX security deviations, and threat model guidance.",
-    section: "Operations",
+    section: "Concepts",
+  },
+  {
+    slug: "networking",
+    title: "Networking & HTTP",
+    summary: "Default-deny HTTP, the network allowlist, and SSRF protection.",
+    seoTitle: "Bashkit networking, HTTP allowlist, and SSRF protection",
+    seoDescription:
+      "Configure Bashkit outbound HTTP with curl, wget, and http: the default-deny NetworkAllowlist, pattern matching, and private-IP and SSRF blocking.",
+    section: "Networking",
+    editPath: "docs/networking.md",
+  },
+  {
+    slug: "credential-injection",
+    title: "Credential injection",
+    summary: "Inject outbound HTTP credentials without exposing secrets to scripts.",
+    seoTitle: "Bashkit credential injection for sandboxed HTTP",
+    seoDescription:
+      "Inject bearer tokens and headers into Bashkit outbound HTTP requests without exposing real secrets to sandboxed shell scripts.",
+    section: "Networking",
+    collection: "rustdocs",
+    editPath: "crates/bashkit/docs/credential-injection.md",
+  },
+  {
+    slug: "request-signing",
+    title: "Request signing",
+    summary: "Transparent Ed25519 bot identity (RFC 9421) on every HTTP request.",
+    seoTitle: "Bashkit request signing: cryptographic identity for AI agents",
+    seoDescription:
+      "Sign every outbound Bashkit HTTP request with Ed25519 per RFC 9421 (web-bot-auth): transparent bot identity and verifiable agent traffic.",
+    section: "Networking",
+    editPath: "docs/request-signing.md",
+  },
+  {
+    slug: "python",
+    title: "Python builtin",
+    summary: "Embedded Monty Python runtime, VFS bridging, limits, and caveats.",
+    seoTitle: "Bashkit Python builtin with Monty runtime",
+    seoDescription:
+      "Run embedded Python in Bashkit with Monty, virtual filesystem bridging, pipelines, command substitution, resource limits, and safety caveats.",
+    section: "Runtimes",
+    collection: "rustdocs",
+    editPath: "crates/bashkit/docs/python.md",
+  },
+  {
+    slug: "builtin_typescript",
+    title: "TypeScript builtin",
+    summary: "Embedded ZapCode TypeScript runtime shared with bash in-memory.",
+    seoTitle: "Bashkit TypeScript builtin with ZapCode runtime",
+    seoDescription:
+      "Run TypeScript inside Bashkit with ZapCode, VFS file sharing, pipelines, resource limits, and Node.js-compatible command aliases.",
+    section: "Runtimes",
+  },
+  {
+    slug: "sqlite",
+    title: "SQLite builtin",
+    summary: "Embedded Turso SQLite runtime, backends, output modes, and limits.",
+    seoTitle: "Bashkit SQLite builtin with Turso",
+    seoDescription:
+      "Use Bashkit's embedded SQLite builtin with Turso, VFS-backed databases, output modes, dot-commands, resource limits, and security notes.",
+    section: "Runtimes",
+    collection: "rustdocs",
+    editPath: "crates/bashkit/docs/sqlite.md",
+  },
+  {
+    slug: "ssh",
+    title: "SSH support",
+    summary: "Sandboxed ssh, scp, and sftp builtins with host allowlists.",
+    seoTitle: "Bashkit SSH, SCP, and SFTP builtin support",
+    seoDescription:
+      "Configure Bashkit ssh, scp, and sftp builtins with host allowlists, VFS-only keys, remote command execution, and transfer limits.",
+    section: "Runtimes",
+    collection: "rustdocs",
+    editPath: "crates/bashkit/docs/ssh.md",
+  },
+  {
+    slug: "git",
+    title: "Git",
+    summary: "Sandboxed git on the virtual filesystem with a configurable identity.",
+    seoTitle: "Bashkit sandboxed git on the virtual filesystem",
+    seoDescription:
+      "Run git inside Bashkit on the virtual filesystem: init, add, commit, branch, log, and allowlisted remotes with a configurable identity and no host access.",
+    section: "Runtimes",
+    editPath: "docs/git.md",
   },
   {
     slug: "compatibility",
@@ -76,55 +193,14 @@ export const DOC_META: DocMeta[] = [
     editPath: "crates/bashkit/docs/jq.md",
   },
   {
-    slug: "snapshotting",
-    title: "Snapshotting",
-    summary: "Serialize interpreter state and restore it for checkpoint/resume flows.",
-    seoTitle: "Bashkit snapshotting for checkpoint and resume workflows",
+    slug: "structured-data",
+    title: "Structured data",
+    summary: "CSV, JSON, YAML, and TOML builtins for everyday data wrangling.",
+    seoTitle: "Bashkit CSV, JSON, YAML, and TOML builtins",
     seoDescription:
-      "Use Bashkit snapshots to serialize and restore virtual shell state across Rust, Python, and Node.js checkpoint/resume workflows.",
-    section: "Features",
-  },
-  {
-    slug: "builtin_typescript",
-    title: "TypeScript builtin",
-    summary: "Embedded ZapCode TypeScript runtime shared with bash in-memory.",
-    seoTitle: "Bashkit TypeScript builtin with ZapCode runtime",
-    seoDescription:
-      "Run TypeScript inside Bashkit with ZapCode, VFS file sharing, pipelines, resource limits, and Node.js-compatible command aliases.",
-    section: "Features",
-  },
-  {
-    slug: "python",
-    title: "Python builtin",
-    summary: "Embedded Monty Python runtime, VFS bridging, limits, and caveats.",
-    seoTitle: "Bashkit Python builtin with Monty runtime",
-    seoDescription:
-      "Run embedded Python in Bashkit with Monty, virtual filesystem bridging, pipelines, command substitution, resource limits, and safety caveats.",
-    section: "Runtimes",
-    collection: "rustdocs",
-    editPath: "crates/bashkit/docs/python.md",
-  },
-  {
-    slug: "sqlite",
-    title: "SQLite builtin",
-    summary: "Embedded Turso SQLite runtime, backends, output modes, and limits.",
-    seoTitle: "Bashkit SQLite builtin with Turso",
-    seoDescription:
-      "Use Bashkit's embedded SQLite builtin with Turso, VFS-backed databases, output modes, dot-commands, resource limits, and security notes.",
-    section: "Runtimes",
-    collection: "rustdocs",
-    editPath: "crates/bashkit/docs/sqlite.md",
-  },
-  {
-    slug: "ssh",
-    title: "SSH support",
-    summary: "Sandboxed ssh, scp, and sftp builtins with host allowlists.",
-    seoTitle: "Bashkit SSH, SCP, and SFTP builtin support",
-    seoDescription:
-      "Configure Bashkit ssh, scp, and sftp builtins with host allowlists, VFS-only keys, remote command execution, and transfer limits.",
-    section: "Runtimes",
-    collection: "rustdocs",
-    editPath: "crates/bashkit/docs/ssh.md",
+      "Query and transform structured data in Bashkit with the csv, json, yaml, and tomlq builtins: column selection, filtering, and dotted-path lookups.",
+    section: "Reference",
+    editPath: "docs/structured-data.md",
   },
   {
     slug: "custom-builtins",
@@ -184,15 +260,13 @@ export const DOC_META: DocMeta[] = [
     editPath: "crates/bashkit/docs/live_mounts.md",
   },
   {
-    slug: "credential-injection",
-    title: "Credential injection",
-    summary: "Inject outbound HTTP credentials without exposing secrets to scripts.",
-    seoTitle: "Bashkit credential injection for sandboxed HTTP",
+    slug: "snapshotting",
+    title: "Snapshotting",
+    summary: "Serialize interpreter state and restore it for checkpoint/resume flows.",
+    seoTitle: "Bashkit snapshotting for checkpoint and resume workflows",
     seoDescription:
-      "Inject bearer tokens and headers into Bashkit outbound HTTP requests without exposing real secrets to sandboxed shell scripts.",
+      "Use Bashkit snapshots to serialize and restore virtual shell state across Rust, Python, and Node.js checkpoint/resume workflows.",
     section: "Operations",
-    collection: "rustdocs",
-    editPath: "crates/bashkit/docs/credential-injection.md",
   },
   {
     slug: "logging",
