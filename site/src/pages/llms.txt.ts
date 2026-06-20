@@ -11,20 +11,13 @@ import {
   resources,
   skillRepoUrl,
 } from "../content/home";
-import { DOC_META } from "./docs/_meta";
+import { DOC_META, SECTION_ORDER } from "./docs/_meta";
 
 export const prerender = true;
 
 const SITE = "https://bashkit.sh";
 
-const sectionOrder = [
-  "Getting started",
-  "Reference",
-  "Features",
-  "Runtimes",
-  "Extending",
-  "Operations",
-];
+const sectionOrder = SECTION_ORDER;
 
 export const GET: APIRoute = () => {
   const docSections = sectionOrder.flatMap((section) => {
