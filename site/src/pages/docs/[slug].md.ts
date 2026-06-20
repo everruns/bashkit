@@ -93,6 +93,8 @@ function renderNavigation(previous?: DocMeta, next?: DocMeta): string {
     links.push(`- [Next: ${next.title}](/docs/${next.slug}/)`);
   }
 
+  links.push("- [llms.txt](/llms.txt) - curated index of this site for agents");
+
   return ["---", "", "## Navigation", "", ...links].join("\n");
 }
 

@@ -68,6 +68,7 @@ dependency rot, or security gaps ship in a release.
 - Python docstrings match behavior
 - `README.md` feature list matches implemented builtins
 - Public docs (`docs/`) match current code: CLI flags, security boundaries, feature descriptions, test counts, and examples all reflect reality
+- Agent surfaces (`/llms.txt`, `/llms-full.txt`, Markdown routes) regenerate and pass `verify-llms` (auto-enforced in CI); refresh the agent-skills tarball/`index.json` digest if `skills/bashkit/` changed (see `specs/documentation.md` § Agent-facing site surfaces)
 - `CONTRIBUTING.md` instructions accurate
 - `CHANGELOG.md` has entries for all changes since last release
 

@@ -43,7 +43,7 @@ function extractString(block, key) {
   return new RegExp(`${key}:\\s*"([^"]+)"`).exec(block)?.[1];
 }
 
-let count = 0;
+const slugs = [];
 let match;
 while ((match = objectPattern.exec(metaSource)) !== null) {
   const block = match[0];
@@ -57,11 +57,32 @@ while ((match = objectPattern.exec(metaSource)) !== null) {
   if (!llmsFull.includes(`# ${title}\n`)) {
     throw new Error(`llms-full.txt missing inlined guide: ${title}`);
   }
-  count += 1;
+  slugs.push(slug);
 }
 
-if (count === 0) {
+if (slugs.length === 0) {
   throw new Error("No docs parsed from _meta.ts; verify-llms is misconfigured.");
 }
 
-console.log(`Verified llms.txt and llms-full.txt (${count} guides indexed).`);
+// The Markdown-negotiated surfaces (consumed by agents) must point back at the
+// curated index, so an agent landing on any .md page can find /llms.txt.
+function assertLinksToLlms(relPath) {
+  const filePath = path.join(distRoot, relPath);
+  if (!existsSync(filePath)) {
+    throw new Error(`Missing Markdown route for llms.txt back-link check: ${relPath}`);
+  }
+  // Require an actual Markdown link target, not just a mention of the path.
+  if (!readFileSync(filePath, "utf8").includes("](/llms.txt)")) {
+    throw new Error(`${relPath} does not contain a Markdown link to /llms.txt`);
+  }
+}
+
+assertLinksToLlms("index.md");
+assertLinksToLlms("docs.md");
+for (const slug of slugs) {
+  assertLinksToLlms(path.join("docs", `${slug}.md`));
+}
+
+console.log(
+  `Verified llms.txt and llms-full.txt (${slugs.length} guides indexed) and /llms.txt back-links.`,
+);
