@@ -53,6 +53,18 @@ export const evalSnapshot = {
 
 export const benchesHref = "/benches";
 
+// Human-readable skill source (SKILL.md + references) for "View skill contents".
+export const skillRepoUrl =
+  "https://github.com/everruns/bashkit/tree/main/skills/bashkit";
+
+// Ready-to-paste prompts for driving a coding agent that has the skill installed.
+export const commonPrompts = [
+  "Using bashkit, add a sandboxed bash tool to my agent.",
+  "Embed bashkit in my Rust service to run untrusted shell scripts in-memory.",
+  "Run this bash script in bashkit and return stdout, stderr, and the exit code.",
+  "Add a custom builtin to bashkit that calls my internal HTTP API.",
+];
+
 export const heroStats = [
   { label: "Built-in commands", value: String(builtinCount), href: "/builtins" },
   {

@@ -32,6 +32,14 @@ if (!/\n> /.test(llms)) {
 if (!llms.includes("https://bashkit.sh/llms-full.txt")) {
   throw new Error("llms.txt must link to llms-full.txt.");
 }
+// Agent-friendly ingredients: a link to the human-readable skill source and a
+// ready-to-paste prompts section.
+if (!llms.includes("github.com/everruns/bashkit/tree/main/skills/bashkit")) {
+  throw new Error("llms.txt must link to the skill source (View skill contents).");
+}
+if (!llms.includes("## Common prompts")) {
+  throw new Error("llms.txt must include a `## Common prompts` section.");
+}
 
 // Every doc must be discoverable from both entry points.
 const metaSource = readFileSync(metaPath, "utf8");
