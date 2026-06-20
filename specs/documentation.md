@@ -111,6 +111,16 @@ build-generated, gitignored `index.d.ts`), so it cannot run in the node-only
 output. A language's `/api/<slug>` route only appears once its markdown exists,
 so the `/api` index degrades gracefully if a page is missing.
 
+### Drift
+
+`apidocs-drift.yml` regenerates each reference and fails if the committed
+markdown is stale, same as `builtins-drift.yml`. It never auto-commits (a CI
+bot commit would violate the AGENTS.md commit-attribution rule) — a human runs
+`just apidocs` and commits. The Python check is cheap (static `griffe` parse,
+pinned) so it runs on every PR touching the Python surface; the TypeScript
+check needs a Rust `napi build`, so it runs only on the weekly schedule and on
+demand. Regenerate-and-commit is a release step (see `specs/release-process.md`).
+
 ### Constraints
 
 - Generated markdown must not contain local `*.md` links (`verify-public-links`

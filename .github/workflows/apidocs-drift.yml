@@ -1,0 +1,110 @@
+name: API Reference Drift
+
+# Fails when a committed self-hosted API reference no longer matches what its
+# generator produces from the package's source of truth. The markdown lives in
+# site/src/content/apidocs/*.md and feeds the /api/{python,typescript} pages;
+# the node-only site build just renders it, so it must be regenerated and
+# committed on release — fix drift by running `just apidocs` and committing.
+# See specs/documentation.md ("API reference hosting").
+#
+# Per AGENTS.md commit-attribution rules this workflow never auto-commits; it
+# only fails so a human regenerates and commits under a real identity.
+#
+# Two jobs, two cost profiles:
+#   python      — griffe statically parses the type stubs; no build needed, so
+#                 it runs on every PR that can change the surface.
+#   typescript  — the .ts wrappers import types from the napi-generated
+#                 index.d.ts, so regeneration needs a Rust build. Too heavy for
+#                 per-PR; runs on the weekly schedule and on demand only.
+
+on:
+  pull_request:
+    paths:
+      - 'crates/bashkit-python/bashkit/**'
+      - 'scripts/gen_python_apidocs.py'
+      - 'site/src/content/apidocs/python.md'
+      - '.github/workflows/apidocs-drift.yml'
+  schedule:
+    # Weekly Mondays 06:00 UTC, after the builtins (05:30) and coreutils (05:00) runs.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: Regenerate and diff Python API reference
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.12"
+
+      # Pinned: griffe parses the stubs; an upgrade could shift the parsed
+      # surface and flag false drift. Bump deliberately, then regenerate.
+      - name: Install griffe
+        run: pip install "griffe==2.1.0"
+
+      - name: Regenerate Python API reference
+        run: python3 scripts/gen_python_apidocs.py
+
+      - name: Fail on drift
+        run: |
+          if ! git diff --exit-code -- site/src/content/apidocs/python.md; then
+            echo "::error::site/src/content/apidocs/python.md is stale — run 'just apidocs-python' and commit the result"
+            exit 1
+          fi
+
+  typescript:
+    name: Regenerate and diff TypeScript API reference
+    # Needs a Rust napi build to materialize index.d.ts; keep it off per-PR.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: crates/bashkit-js
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: crates/bashkit-js/pnpm-lock.yaml
+
+      - name: Install JS deps
+        run: pnpm install --frozen-lockfile
+        working-directory: crates/bashkit-js
+
+      - name: Build napi addon (generates index.d.ts)
+        run: pnpm exec napi build --platform
+        working-directory: crates/bashkit-js
+
+      - name: Regenerate TypeScript API reference
+        # npx fetches the pinned typedoc at generation time (network required).
+        run: node scripts/gen_ts_apidocs.mjs
+
+      - name: Fail on drift
+        run: |
+          if ! git diff --exit-code -- site/src/content/apidocs/typescript.md; then
+            echo "::error::site/src/content/apidocs/typescript.md is stale — run 'just apidocs-ts' and commit the result"
+            exit 1
+          fi
