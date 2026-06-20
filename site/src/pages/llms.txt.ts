@@ -5,9 +5,11 @@
 import type { APIRoute } from "astro";
 import {
   agentSteps,
+  commonPrompts,
   homeHero,
   languages,
   resources,
+  skillRepoUrl,
 } from "../content/home";
 import { DOC_META } from "./docs/_meta";
 
@@ -53,10 +55,18 @@ export const GET: APIRoute = () => {
     "",
     "## Quickstarts",
     "",
-    ...languages.map(
-      (lang) => `- [${lang.eyebrow}: ${lang.title}](${SITE}/index.md): \`${lang.install}\``,
-    ),
-    "",
+    ...languages.flatMap((lang) => [
+      `### ${lang.eyebrow} — ${lang.title}`,
+      "",
+      "```sh",
+      lang.install,
+      "```",
+      "",
+      "```" + lang.lang,
+      lang.code,
+      "```",
+      "",
+    ]),
     "## Agent skill",
     "",
     ...agentSteps.map((step) =>
@@ -64,7 +74,14 @@ export const GET: APIRoute = () => {
         ? `- ${step.title}: ${step.detail} (\`${step.command}\`)`
         : `- ${step.title}: ${step.detail}`,
     ),
+    `- [View skill contents](${skillRepoUrl}): the SKILL.md and reference files the skill installs.`,
     `- [Agent Skills discovery index](${SITE}/.well-known/agent-skills/index.json): machine-readable skill manifest for coding agents.`,
+    "",
+    "## Common prompts",
+    "",
+    "Prompts to give a coding agent that has the skill installed:",
+    "",
+    ...commonPrompts.map((prompt) => `- ${prompt}`),
     "",
     ...docSections,
     "## Optional",

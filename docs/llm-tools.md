@@ -95,6 +95,16 @@ limits on commands and output, and a default-deny network allowlist. The model
 cannot escape to the host unless you explicitly mount a real filesystem or
 allow a domain.
 
+## Agent skill
+
+Give your coding agent Bashkit-specific context with the published skill:
+
+```sh
+npx skills add everruns/bashkit
+```
+
+[View skill contents](https://github.com/everruns/bashkit/tree/main/skills/bashkit) — the `SKILL.md` and reference files (CLI, Rust/Python/TS APIs, builtins, LLM tools, examples) the skill installs.
+
 ## Next steps
 
 - [Hooks](hooks.md) — observe, rewrite, or cancel tool calls and HTTP requests.

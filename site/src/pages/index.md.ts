@@ -13,6 +13,7 @@ import {
   languages,
   resources,
   signals,
+  skillRepoUrl,
   surfaces,
 } from "../content/home";
 import { DOC_META } from "./docs/_meta";
@@ -57,6 +58,8 @@ export const GET: APIRoute = () => {
       ...(step.command ? ["", "```sh", step.command, "```"] : []),
       "",
     ]),
+    `- [View skill contents](${skillRepoUrl}) - the SKILL.md and reference files the skill installs.`,
+    "",
     "## Product surface",
     "",
     ...surfaces.map((item) => `- **${item.title}** - ${item.detail}`),
