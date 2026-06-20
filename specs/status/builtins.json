@@ -35,6 +35,10 @@
     },
     {
       "feature": null,
+      "name": "bash"
+    },
+    {
+      "feature": null,
       "name": "bc"
     },
     {
@@ -79,6 +83,10 @@
     },
     {
       "feature": null,
+      "name": "command"
+    },
+    {
+      "feature": null,
       "name": "compgen"
     },
     {
@@ -104,6 +112,10 @@
     {
       "feature": null,
       "name": "date"
+    },
+    {
+      "feature": null,
+      "name": "declare"
     },
     {
       "feature": "typescript",
@@ -151,6 +163,10 @@
     },
     {
       "feature": null,
+      "name": "exec"
+    },
+    {
+      "feature": null,
       "name": "exit"
     },
     {
@@ -184,6 +200,10 @@
     {
       "feature": null,
       "name": "fold"
+    },
+    {
+      "feature": null,
+      "name": "getopts"
     },
     {
       "feature": "git",
@@ -260,6 +280,10 @@
     {
       "feature": null,
       "name": "less"
+    },
+    {
+      "feature": null,
+      "name": "let"
     },
     {
       "feature": null,
@@ -427,6 +451,10 @@
     },
     {
       "feature": null,
+      "name": "sh"
+    },
+    {
+      "feature": null,
       "name": "sha1sum"
     },
     {
@@ -555,6 +583,10 @@
     },
     {
       "feature": null,
+      "name": "typeset"
+    },
+    {
+      "feature": null,
       "name": "unalias"
     },
     {
@@ -626,5 +658,5 @@
       "name": "zip"
     }
   ],
-  "count": 156
+  "count": 164
 }

@@ -327,12 +327,26 @@ pub(crate) struct ShellRef<'a> {
     pub(crate) execution_extensions: Arc<builtins::ExecutionExtensions>,
 }
 
-/// Sorted, deduped union of baked-in/custom builtins and the host registry.
+// Interpreter-dispatched "special" builtins, listed here so the public
+// inventory and special-builtin dispatch share one source of truth. Some names
+// (e.g. `eval`, `local`, `unset`) are also in the registered builtin map, but
+// the interpreter dispatches them ahead of it because they need parser/
+// interpreter state; others (e.g. `bash`, `command`, `exec`, `getopts`) live
+// only here. Listing every name guarantees inventory completeness regardless of
+// map membership.
+const SPECIAL_BUILTIN_NAMES: &[&str] = &[
+    ".", "bash", "command", "declare", "eval", "exec", "getopts", "let", "local", "sh", "source",
+    "typeset", "unset",
+];
+
+/// Sorted, deduped union of baked-in/custom builtins, interpreter-special
+/// builtins, and the host registry.
 fn merged_builtin_names(
     builtins: &HashMap<String, Arc<dyn Builtin>>,
     host_builtins: Option<&crate::builtins::BuiltinRegistry>,
 ) -> Vec<String> {
     let mut names: Vec<String> = builtins.keys().cloned().collect();
+    names.extend(SPECIAL_BUILTIN_NAMES.iter().map(|name| (*name).to_string()));
     if let Some(reg) = host_builtins {
         names.extend(reg.names());
     }
@@ -352,7 +366,7 @@ impl ShellRef<'_> {
         self.builtins.contains_key(name)
     }
 
-    /// Sorted names of all registered builtins (baked-in + custom + host
+    /// Sorted names of all dispatchable builtins (registered + special + host
     /// registry) — same contract as [`crate::Bash::builtin_names`].
     pub(crate) fn builtin_names(&self) -> Vec<String> {
         merged_builtin_names(self.builtins, self.host_builtins)
@@ -5899,22 +5913,7 @@ impl Interpreter {
     }
 
     fn is_special_builtin_name(name: &str) -> bool {
-        matches!(
-            name,
-            "exec"
-                | "local"
-                | "bash"
-                | "sh"
-                | "source"
-                | "."
-                | "eval"
-                | "command"
-                | "declare"
-                | "typeset"
-                | "let"
-                | "unset"
-                | "getopts"
-        )
+        SPECIAL_BUILTIN_NAMES.contains(&name)
     }
 
     async fn execute_special_builtin_with_hooks(
@@ -5990,7 +5989,7 @@ impl Interpreter {
             .is_some_and(|reg| reg.lookup(name).is_some())
     }
 
-    /// Sorted names of all registered builtins (baked-in + custom + host
+    /// Sorted names of all dispatchable builtins (registered + special + host
     /// registry). See [`crate::Bash::builtin_names`].
     pub(crate) fn builtin_names(&self) -> Vec<String> {
         merged_builtin_names(&self.builtins, self.host_builtins.as_ref())
