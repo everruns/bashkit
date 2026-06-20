@@ -28,7 +28,7 @@ new Bash(options?: BashOptions): Bash
 ### `addBuiltin`
 
 ```typescript
-Bash.addBuiltin(name: string, callback: BuiltinCallback): void
+bash.addBuiltin(name: string, callback: BuiltinCallback): void
 ```
 
 Register a JS callback as a custom bash builtin.
@@ -44,7 +44,7 @@ Survives `reset()`.
 ### `appendFile`
 
 ```typescript
-Bash.appendFile(path: string, content: string): void
+bash.appendFile(path: string, content: string): void
 ```
 
 Append content to a file.
@@ -52,7 +52,7 @@ Append content to a file.
 ### `cancel`
 
 ```typescript
-Bash.cancel(): void
+bash.cancel(): void
 ```
 
 Cancel the currently running execution.
@@ -60,7 +60,7 @@ Cancel the currently running execution.
 ### `chmod`
 
 ```typescript
-Bash.chmod(path: string, mode: number): void
+bash.chmod(path: string, mode: number): void
 ```
 
 Change file permissions (octal mode, e.g. 0o755).
@@ -68,7 +68,7 @@ Change file permissions (octal mode, e.g. 0o755).
 ### `clearCancel`
 
 ```typescript
-Bash.clearCancel(): void
+bash.clearCancel(): void
 ```
 
 Clear the cancellation flag so subsequent executions proceed normally.
@@ -79,7 +79,7 @@ you want to reuse the same instance without discarding shell or VFS state.
 ### `execute`
 
 ```typescript
-Bash.execute(commands: string, options?: ExecuteOptions): Promise<ExecResult>
+bash.execute(commands: string, options?: ExecuteOptions): Promise<ExecResult>
 ```
 
 Execute bash commands asynchronously, returning a Promise.
@@ -98,7 +98,7 @@ console.log(result.stdout); // hello\n
 ### `executeOrThrow`
 
 ```typescript
-Bash.executeOrThrow(commands: string, options?: ExecuteOptions): Promise<ExecResult>
+bash.executeOrThrow(commands: string, options?: ExecuteOptions): Promise<ExecResult>
 ```
 
 Execute bash commands asynchronously. Throws `BashError` on non-zero exit.
@@ -106,7 +106,7 @@ Execute bash commands asynchronously. Throws `BashError` on non-zero exit.
 ### `executeSync`
 
 ```typescript
-Bash.executeSync(commands: string, options?: ExecuteOptions): ExecResult
+bash.executeSync(commands: string, options?: ExecuteOptions): ExecResult
 ```
 
 Execute bash commands synchronously and return the result.
@@ -120,7 +120,7 @@ same instance from `onOutput` via `execute*`, `readFile`, `fs()`, etc.
 ### `executeSyncOrThrow`
 
 ```typescript
-Bash.executeSyncOrThrow(commands: string, options?: ExecuteOptions): ExecResult
+bash.executeSyncOrThrow(commands: string, options?: ExecuteOptions): ExecResult
 ```
 
 Execute bash commands synchronously. Throws `BashError` on non-zero exit.
@@ -128,7 +128,7 @@ Execute bash commands synchronously. Throws `BashError` on non-zero exit.
 ### `exists`
 
 ```typescript
-Bash.exists(path: string): boolean
+bash.exists(path: string): boolean
 ```
 
 Check if a path exists in the virtual filesystem.
@@ -136,7 +136,7 @@ Check if a path exists in the virtual filesystem.
 ### `fs`
 
 ```typescript
-Bash.fs(): FileSystem
+bash.fs(): FileSystem
 ```
 
 Get a FileSystem handle for direct VFS operations.
@@ -144,7 +144,7 @@ Get a FileSystem handle for direct VFS operations.
 ### `glob`
 
 ```typescript
-Bash.glob(pattern: string): string[]
+bash.glob(pattern: string): string[]
 ```
 
 Find files matching a name pattern. Returns absolute paths.
@@ -152,7 +152,7 @@ Find files matching a name pattern. Returns absolute paths.
 ### `ls`
 
 ```typescript
-Bash.ls(path?: string): string[]
+bash.ls(path?: string): string[]
 ```
 
 List entry names in a directory. Returns empty array if directory does not exist.
@@ -160,7 +160,7 @@ List entry names in a directory. Returns empty array if directory does not exist
 ### `mkdir`
 
 ```typescript
-Bash.mkdir(path: string, recursive?: boolean): void
+bash.mkdir(path: string, recursive?: boolean): void
 ```
 
 Create a directory. If recursive is true, creates parents as needed.
@@ -168,7 +168,7 @@ Create a directory. If recursive is true, creates parents as needed.
 ### `mount`
 
 ```typescript
-Bash.mount(vfsPath: string, fs: FileSystem): void
+bash.mount(vfsPath: string, fs: FileSystem): void
 ```
 
 Mount either a host directory or a FileSystem into the VFS.
@@ -176,7 +176,7 @@ Mount either a host directory or a FileSystem into the VFS.
 ### `readDir`
 
 ```typescript
-Bash.readDir(path: string): ({ metadata: { created: number; fileType: string; mode: number; modified: number; size: number }; name: string })[]
+bash.readDir(path: string): ({ metadata: { created: number; fileType: string; mode: number; modified: number; size: number }; name: string })[]
 ```
 
 List directory entries with metadata.
@@ -184,7 +184,7 @@ List directory entries with metadata.
 ### `readFile`
 
 ```typescript
-Bash.readFile(path: string): string
+bash.readFile(path: string): string
 ```
 
 Read a file from the virtual filesystem as a UTF-8 string.
@@ -192,7 +192,7 @@ Read a file from the virtual filesystem as a UTF-8 string.
 ### `readLink`
 
 ```typescript
-Bash.readLink(path: string): string
+bash.readLink(path: string): string
 ```
 
 Read the target of a symbolic link.
@@ -200,7 +200,7 @@ Read the target of a symbolic link.
 ### `remove`
 
 ```typescript
-Bash.remove(path: string, recursive?: boolean): void
+bash.remove(path: string, recursive?: boolean): void
 ```
 
 Remove a file or directory. If recursive is true, removes contents.
@@ -208,7 +208,7 @@ Remove a file or directory. If recursive is true, removes contents.
 ### `removeBuiltin`
 
 ```typescript
-Bash.removeBuiltin(name: string): void
+bash.removeBuiltin(name: string): void
 ```
 
 Remove a previously registered custom builtin.
@@ -216,7 +216,7 @@ Remove a previously registered custom builtin.
 ### `reset`
 
 ```typescript
-Bash.reset(): void
+bash.reset(): void
 ```
 
 Reset interpreter to fresh state, preserving configuration.
@@ -224,7 +224,7 @@ Reset interpreter to fresh state, preserving configuration.
 ### `restoreSnapshot`
 
 ```typescript
-Bash.restoreSnapshot(data: Uint8Array, options?: SnapshotOptions): void
+bash.restoreSnapshot(data: Uint8Array, options?: SnapshotOptions): void
 ```
 
 Restore interpreter state from a previously captured snapshot.
@@ -234,7 +234,7 @@ shell state and VFS contents.
 ### `restoreSnapshotKeyed`
 
 ```typescript
-Bash.restoreSnapshotKeyed(data: Uint8Array, key: Uint8Array): void
+bash.restoreSnapshotKeyed(data: Uint8Array, key: Uint8Array): void
 ```
 
 Restore interpreter state from a HMAC-protected snapshot.
@@ -242,7 +242,7 @@ Restore interpreter state from a HMAC-protected snapshot.
 ### `shellState`
 
 ```typescript
-Bash.shellState(): ShellState
+bash.shellState(): ShellState
 ```
 
 Capture a lightweight snapshot of shell state (variables, env, cwd,
@@ -253,7 +253,7 @@ state capture/restore.
 ### `snapshot`
 
 ```typescript
-Bash.snapshot(options?: SnapshotOptions): Uint8Array
+bash.snapshot(options?: SnapshotOptions): Uint8Array
 ```
 
 Serialize interpreter state (variables, VFS, counters) to a Uint8Array.
@@ -274,7 +274,7 @@ const r = await bash2.execute("echo $x"); // "42\n"
 ### `snapshotKeyed`
 
 ```typescript
-Bash.snapshotKeyed(key: Uint8Array, options?: SnapshotOptions): Uint8Array
+bash.snapshotKeyed(key: Uint8Array, options?: SnapshotOptions): Uint8Array
 ```
 
 Serialize interpreter state with HMAC-SHA256 using a caller-provided key.
@@ -283,7 +283,7 @@ Use for snapshots crossing trust boundaries.
 ### `stat`
 
 ```typescript
-Bash.stat(path: string): { created: number; fileType: string; mode: number; modified: number; size: number }
+bash.stat(path: string): { created: number; fileType: string; mode: number; modified: number; size: number }
 ```
 
 Get metadata for a path (fileType, size, mode, timestamps).
@@ -291,7 +291,7 @@ Get metadata for a path (fileType, size, mode, timestamps).
 ### `symlink`
 
 ```typescript
-Bash.symlink(target: string, link: string): void
+bash.symlink(target: string, link: string): void
 ```
 
 Create a symbolic link pointing to target.
@@ -299,7 +299,7 @@ Create a symbolic link pointing to target.
 ### `unmount`
 
 ```typescript
-Bash.unmount(vfsPath: string): void
+bash.unmount(vfsPath: string): void
 ```
 
 Unmount a previously mounted filesystem.
@@ -307,7 +307,7 @@ Unmount a previously mounted filesystem.
 ### `writeFile`
 
 ```typescript
-Bash.writeFile(path: string, content: string): void
+bash.writeFile(path: string, content: string): void
 ```
 
 Write a string to a file in the virtual filesystem.
@@ -402,7 +402,7 @@ Tool version.
 ### `addBuiltin`
 
 ```typescript
-BashTool.addBuiltin(name: string, callback: BuiltinCallback): void
+bashTool.addBuiltin(name: string, callback: BuiltinCallback): void
 ```
 
 Register a JS callback as a custom builtin. See `Bash.addBuiltin`.
@@ -410,7 +410,7 @@ Register a JS callback as a custom builtin. See `Bash.addBuiltin`.
 ### `appendFile`
 
 ```typescript
-BashTool.appendFile(path: string, content: string): void
+bashTool.appendFile(path: string, content: string): void
 ```
 
 Append content to a file.
@@ -418,7 +418,7 @@ Append content to a file.
 ### `cancel`
 
 ```typescript
-BashTool.cancel(): void
+bashTool.cancel(): void
 ```
 
 Cancel the currently running execution.
@@ -426,7 +426,7 @@ Cancel the currently running execution.
 ### `chmod`
 
 ```typescript
-BashTool.chmod(path: string, mode: number): void
+bashTool.chmod(path: string, mode: number): void
 ```
 
 Change file permissions (octal mode, e.g. 0o755).
@@ -434,7 +434,7 @@ Change file permissions (octal mode, e.g. 0o755).
 ### `clearCancel`
 
 ```typescript
-BashTool.clearCancel(): void
+bashTool.clearCancel(): void
 ```
 
 Clear the cancellation flag so subsequent executions proceed normally.
@@ -445,7 +445,7 @@ you want to reuse the same instance without discarding shell or VFS state.
 ### `description`
 
 ```typescript
-BashTool.description(): string
+bashTool.description(): string
 ```
 
 Token-efficient tool description.
@@ -453,7 +453,7 @@ Token-efficient tool description.
 ### `execute`
 
 ```typescript
-BashTool.execute(commands: string, options?: ExecuteOptions): Promise<ExecResult>
+bashTool.execute(commands: string, options?: ExecuteOptions): Promise<ExecResult>
 ```
 
 Execute bash commands asynchronously, returning a Promise.
@@ -465,7 +465,7 @@ via `execute*`, `readFile`, `fs()`, etc.
 ### `executeOrThrow`
 
 ```typescript
-BashTool.executeOrThrow(commands: string, options?: ExecuteOptions): Promise<ExecResult>
+bashTool.executeOrThrow(commands: string, options?: ExecuteOptions): Promise<ExecResult>
 ```
 
 Execute bash commands asynchronously. Throws `BashError` on non-zero exit.
@@ -473,7 +473,7 @@ Execute bash commands asynchronously. Throws `BashError` on non-zero exit.
 ### `executeSync`
 
 ```typescript
-BashTool.executeSync(commands: string, options?: ExecuteOptions): ExecResult
+bashTool.executeSync(commands: string, options?: ExecuteOptions): ExecResult
 ```
 
 Execute bash commands synchronously and return the result.
@@ -485,7 +485,7 @@ via `execute*`, `readFile`, `fs()`, etc.
 ### `executeSyncOrThrow`
 
 ```typescript
-BashTool.executeSyncOrThrow(commands: string, options?: ExecuteOptions): ExecResult
+bashTool.executeSyncOrThrow(commands: string, options?: ExecuteOptions): ExecResult
 ```
 
 Execute bash commands synchronously. Throws `BashError` on non-zero exit.
@@ -493,7 +493,7 @@ Execute bash commands synchronously. Throws `BashError` on non-zero exit.
 ### `exists`
 
 ```typescript
-BashTool.exists(path: string): boolean
+bashTool.exists(path: string): boolean
 ```
 
 Check whether a path exists in the virtual filesystem.
@@ -501,7 +501,7 @@ Check whether a path exists in the virtual filesystem.
 ### `fs`
 
 ```typescript
-BashTool.fs(): FileSystem
+bashTool.fs(): FileSystem
 ```
 
 Get a FileSystem handle for direct VFS operations.
@@ -509,7 +509,7 @@ Get a FileSystem handle for direct VFS operations.
 ### `glob`
 
 ```typescript
-BashTool.glob(pattern: string): string[]
+bashTool.glob(pattern: string): string[]
 ```
 
 Find files matching a name pattern. Returns absolute paths.
@@ -517,7 +517,7 @@ Find files matching a name pattern. Returns absolute paths.
 ### `help`
 
 ```typescript
-BashTool.help(): string
+bashTool.help(): string
 ```
 
 Markdown help document.
@@ -525,7 +525,7 @@ Markdown help document.
 ### `inputSchema`
 
 ```typescript
-BashTool.inputSchema(): string
+bashTool.inputSchema(): string
 ```
 
 JSON input schema as string.
@@ -533,7 +533,7 @@ JSON input schema as string.
 ### `ls`
 
 ```typescript
-BashTool.ls(path?: string): string[]
+bashTool.ls(path?: string): string[]
 ```
 
 List entry names in a directory. Returns empty array if directory does not exist.
@@ -541,7 +541,7 @@ List entry names in a directory. Returns empty array if directory does not exist
 ### `mkdir`
 
 ```typescript
-BashTool.mkdir(path: string, recursive?: boolean): void
+bashTool.mkdir(path: string, recursive?: boolean): void
 ```
 
 Create a directory. If recursive is true, creates parents as needed.
@@ -549,7 +549,7 @@ Create a directory. If recursive is true, creates parents as needed.
 ### `mount`
 
 ```typescript
-BashTool.mount(vfsPath: string, fs: FileSystem): void
+bashTool.mount(vfsPath: string, fs: FileSystem): void
 ```
 
 Mount either a host directory or a FileSystem into the VFS.
@@ -557,7 +557,7 @@ Mount either a host directory or a FileSystem into the VFS.
 ### `outputSchema`
 
 ```typescript
-BashTool.outputSchema(): string
+bashTool.outputSchema(): string
 ```
 
 JSON output schema as string.
@@ -565,7 +565,7 @@ JSON output schema as string.
 ### `readDir`
 
 ```typescript
-BashTool.readDir(path: string): ({ metadata: { created: number; fileType: string; mode: number; modified: number; size: number }; name: string })[]
+bashTool.readDir(path: string): ({ metadata: { created: number; fileType: string; mode: number; modified: number; size: number }; name: string })[]
 ```
 
 List directory entries with metadata.
@@ -573,7 +573,7 @@ List directory entries with metadata.
 ### `readFile`
 
 ```typescript
-BashTool.readFile(path: string): string
+bashTool.readFile(path: string): string
 ```
 
 Read file contents from the virtual filesystem.
@@ -582,7 +582,7 @@ Throws `BashError` if the file does not exist.
 ### `readLink`
 
 ```typescript
-BashTool.readLink(path: string): string
+bashTool.readLink(path: string): string
 ```
 
 Read the target of a symbolic link.
@@ -590,7 +590,7 @@ Read the target of a symbolic link.
 ### `remove`
 
 ```typescript
-BashTool.remove(path: string, recursive?: boolean): void
+bashTool.remove(path: string, recursive?: boolean): void
 ```
 
 Remove a file or directory. If recursive is true, removes contents.
@@ -598,7 +598,7 @@ Remove a file or directory. If recursive is true, removes contents.
 ### `removeBuiltin`
 
 ```typescript
-BashTool.removeBuiltin(name: string): void
+bashTool.removeBuiltin(name: string): void
 ```
 
 Remove a previously registered custom builtin.
@@ -606,7 +606,7 @@ Remove a previously registered custom builtin.
 ### `reset`
 
 ```typescript
-BashTool.reset(): void
+bashTool.reset(): void
 ```
 
 Reset interpreter to fresh state, preserving configuration.
@@ -614,7 +614,7 @@ Reset interpreter to fresh state, preserving configuration.
 ### `restoreSnapshot`
 
 ```typescript
-BashTool.restoreSnapshot(data: Uint8Array, options: SnapshotOptions & { hmacKey: Uint8Array }): void
+bashTool.restoreSnapshot(data: Uint8Array, options: SnapshotOptions & { hmacKey: Uint8Array }): void
 ```
 
 Restore interpreter state from an HMAC-authenticated snapshot.
@@ -624,7 +624,7 @@ shell state and VFS contents.
 ### `restoreSnapshotKeyed`
 
 ```typescript
-BashTool.restoreSnapshotKeyed(data: Uint8Array, key: Uint8Array): void
+bashTool.restoreSnapshotKeyed(data: Uint8Array, key: Uint8Array): void
 ```
 
 Restore interpreter state from a HMAC-protected snapshot.
@@ -632,7 +632,7 @@ Restore interpreter state from a HMAC-protected snapshot.
 ### `shellState`
 
 ```typescript
-BashTool.shellState(): ShellState
+bashTool.shellState(): ShellState
 ```
 
 Capture a lightweight snapshot of shell state (variables, env, cwd,
@@ -643,7 +643,7 @@ state capture/restore.
 ### `snapshot`
 
 ```typescript
-BashTool.snapshot(options: SnapshotOptions & { hmacKey: Uint8Array }): Uint8Array
+bashTool.snapshot(options: SnapshotOptions & { hmacKey: Uint8Array }): Uint8Array
 ```
 
 Serialize interpreter state (variables, VFS, counters) to an
@@ -653,7 +653,7 @@ they include tenant-controlled shell state, VFS contents, and counters.
 ### `snapshotKeyed`
 
 ```typescript
-BashTool.snapshotKeyed(key: Uint8Array, options?: SnapshotOptions): Uint8Array
+bashTool.snapshotKeyed(key: Uint8Array, options?: SnapshotOptions): Uint8Array
 ```
 
 Serialize interpreter state with HMAC-SHA256 using a caller-provided key.
@@ -661,7 +661,7 @@ Serialize interpreter state with HMAC-SHA256 using a caller-provided key.
 ### `stat`
 
 ```typescript
-BashTool.stat(path: string): { created: number; fileType: string; mode: number; modified: number; size: number }
+bashTool.stat(path: string): { created: number; fileType: string; mode: number; modified: number; size: number }
 ```
 
 Get metadata for a path (fileType, size, mode, timestamps).
@@ -669,7 +669,7 @@ Get metadata for a path (fileType, size, mode, timestamps).
 ### `symlink`
 
 ```typescript
-BashTool.symlink(target: string, link: string): void
+bashTool.symlink(target: string, link: string): void
 ```
 
 Create a symbolic link pointing to target.
@@ -677,7 +677,7 @@ Create a symbolic link pointing to target.
 ### `systemPrompt`
 
 ```typescript
-BashTool.systemPrompt(): string
+bashTool.systemPrompt(): string
 ```
 
 Compact system prompt for orchestration.
@@ -685,7 +685,7 @@ Compact system prompt for orchestration.
 ### `unmount`
 
 ```typescript
-BashTool.unmount(vfsPath: string): void
+bashTool.unmount(vfsPath: string): void
 ```
 
 Unmount a previously mounted filesystem.
@@ -693,7 +693,7 @@ Unmount a previously mounted filesystem.
 ### `writeFile`
 
 ```typescript
-BashTool.writeFile(path: string, content: string): void
+bashTool.writeFile(path: string, content: string): void
 ```
 
 Write content to a file in the virtual filesystem.
@@ -777,7 +777,7 @@ Tool version.
 ### `addTool`
 
 ```typescript
-ScriptedTool.addTool(name: string, description: string, callback: ToolCallback, schema?: Record<string, unknown>): void
+scriptedTool.addTool(name: string, description: string, callback: ToolCallback, schema?: Record<string, unknown>): void
 ```
 
 Register a tool command.
@@ -785,7 +785,7 @@ Register a tool command.
 ### `description`
 
 ```typescript
-ScriptedTool.description(): string
+scriptedTool.description(): string
 ```
 
 Token-efficient tool description.
@@ -793,7 +793,7 @@ Token-efficient tool description.
 ### `env`
 
 ```typescript
-ScriptedTool.env(key: string, value: string): void
+scriptedTool.env(key: string, value: string): void
 ```
 
 Add an environment variable visible inside scripts.
@@ -801,7 +801,7 @@ Add an environment variable visible inside scripts.
 ### `execute`
 
 ```typescript
-ScriptedTool.execute(commands: string): Promise<ExecResult>
+scriptedTool.execute(commands: string): Promise<ExecResult>
 ```
 
 Execute a bash script asynchronously, returning a Promise.
@@ -812,7 +812,7 @@ tool callbacks require the Node.js event loop to be running.
 ### `executeOrThrow`
 
 ```typescript
-ScriptedTool.executeOrThrow(commands: string): Promise<ExecResult>
+scriptedTool.executeOrThrow(commands: string): Promise<ExecResult>
 ```
 
 Execute asynchronously. Throws `BashError` on non-zero exit.
@@ -820,7 +820,7 @@ Execute asynchronously. Throws `BashError` on non-zero exit.
 ### `executeSync`
 
 ```typescript
-ScriptedTool.executeSync(commands: string): ExecResult
+scriptedTool.executeSync(commands: string): ExecResult
 ```
 
 Execute a bash script synchronously.
@@ -834,7 +834,7 @@ that don't invoke any registered tools (e.g., pure bash).
 ### `executeSyncOrThrow`
 
 ```typescript
-ScriptedTool.executeSyncOrThrow(commands: string): ExecResult
+scriptedTool.executeSyncOrThrow(commands: string): ExecResult
 ```
 
 Execute synchronously. Throws `BashError` on non-zero exit.
@@ -845,7 +845,7 @@ require the blocked Node event loop. Use `executeOrThrow()` instead.
 ### `help`
 
 ```typescript
-ScriptedTool.help(): string
+scriptedTool.help(): string
 ```
 
 Markdown help document.
@@ -853,7 +853,7 @@ Markdown help document.
 ### `inputSchema`
 
 ```typescript
-ScriptedTool.inputSchema(): string
+scriptedTool.inputSchema(): string
 ```
 
 JSON input schema as string.
@@ -861,7 +861,7 @@ JSON input schema as string.
 ### `outputSchema`
 
 ```typescript
-ScriptedTool.outputSchema(): string
+scriptedTool.outputSchema(): string
 ```
 
 JSON output schema as string.
@@ -869,7 +869,7 @@ JSON output schema as string.
 ### `systemPrompt`
 
 ```typescript
-ScriptedTool.systemPrompt(): string
+scriptedTool.systemPrompt(): string
 ```
 
 Compact system prompt for orchestration.
@@ -877,7 +877,7 @@ Compact system prompt for orchestration.
 ### `toolCount`
 
 ```typescript
-ScriptedTool.toolCount(): number
+scriptedTool.toolCount(): number
 ```
 
 Number of registered tools.
@@ -893,85 +893,85 @@ new FileSystem(): FileSystem
 ### `appendFile`
 
 ```typescript
-FileSystem.appendFile(path: string, content: string): void
+fileSystem.appendFile(path: string, content: string): void
 ```
 
 ### `chmod`
 
 ```typescript
-FileSystem.chmod(path: string, mode: number): void
+fileSystem.chmod(path: string, mode: number): void
 ```
 
 ### `copy`
 
 ```typescript
-FileSystem.copy(fromPath: string, toPath: string): void
+fileSystem.copy(fromPath: string, toPath: string): void
 ```
 
 ### `exists`
 
 ```typescript
-FileSystem.exists(path: string): boolean
+fileSystem.exists(path: string): boolean
 ```
 
 ### `mkdir`
 
 ```typescript
-FileSystem.mkdir(path: string, recursive?: boolean): void
+fileSystem.mkdir(path: string, recursive?: boolean): void
 ```
 
 ### `readDir`
 
 ```typescript
-FileSystem.readDir(path: string): ({ metadata: { created: number; fileType: string; mode: number; modified: number; size: number }; name: string })[]
+fileSystem.readDir(path: string): ({ metadata: { created: number; fileType: string; mode: number; modified: number; size: number }; name: string })[]
 ```
 
 ### `readFile`
 
 ```typescript
-FileSystem.readFile(path: string): string
+fileSystem.readFile(path: string): string
 ```
 
 ### `readLink`
 
 ```typescript
-FileSystem.readLink(path: string): string
+fileSystem.readLink(path: string): string
 ```
 
 ### `remove`
 
 ```typescript
-FileSystem.remove(path: string, recursive?: boolean): void
+fileSystem.remove(path: string, recursive?: boolean): void
 ```
 
 ### `rename`
 
 ```typescript
-FileSystem.rename(fromPath: string, toPath: string): void
+fileSystem.rename(fromPath: string, toPath: string): void
 ```
 
 ### `stat`
 
 ```typescript
-FileSystem.stat(path: string): { created: number; fileType: string; mode: number; modified: number; size: number }
+fileSystem.stat(path: string): { created: number; fileType: string; mode: number; modified: number; size: number }
 ```
 
 ### `symlink`
 
 ```typescript
-FileSystem.symlink(target: string, link: string): void
+fileSystem.symlink(target: string, link: string): void
 ```
 
 ### `toExternal`
 
 ```typescript
-FileSystem.toExternal(): unknown
+fileSystem.toExternal(): unknown
 ```
 
 ### `writeFile`
 
 ```typescript
-FileSystem.writeFile(path: string, content: string): void
+fileSystem.writeFile(path: string, content: string): void
 ```
 
 ### `fromExternal`
@@ -1010,7 +1010,7 @@ new BashError(result: ExecResult): BashError
 ### `display`
 
 ```typescript
-BashError.display(): string
+bashError.display(): string
 ```
 
 ## getVersion()

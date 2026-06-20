@@ -86,6 +86,104 @@ def docstring_of(obj) -> str:
     return ""
 
 
+def _format_text(text: str) -> str:
+    """Render a free-text docstring section to markdown.
+
+    griffe hands us the dedented docstring verbatim. Doctest/example blocks are
+    indented under a label line (e.g. ``Example (basic):``) with no blank line
+    between, so Markdown folds them into the preceding paragraph as run-on
+    prose. Fence each indented block as a ```python``` code block and turn rST
+    ``::`` literal-block markers back into a plain colon.
+    """
+    lines = text.split("\n")
+    out: list[str] = []
+    i, n = 0, len(lines)
+    while i < n:
+        line = lines[i]
+        # rST literal-block marker on a label line: "Example::" -> "Example:".
+        if line.strip() and not line.startswith(" ") and line.rstrip().endswith("::"):
+            out.append(line.rstrip()[:-1])
+            i += 1
+            continue
+        if line.startswith(" ") and line.strip():
+            block: list[str] = []
+            while i < n:
+                cur = lines[i]
+                if not cur.strip():
+                    # Keep an interior blank line only if more indented
+                    # content follows; otherwise the block has ended.
+                    j = i + 1
+                    while j < n and not lines[j].strip():
+                        j += 1
+                    if j < n and lines[j].startswith(" "):
+                        block.append("")
+                        i += 1
+                        continue
+                    break
+                if cur.startswith(" "):
+                    block.append(cur)
+                    i += 1
+                else:
+                    break
+            indents = [len(b) - len(b.lstrip()) for b in block if b.strip()]
+            dedent = min(indents) if indents else 0
+            block = [b[dedent:] if len(b) >= dedent else b for b in block]
+            if out and out[-1].strip():
+                out.append("")
+            out.append("```python")
+            out.extend(block)
+            out.append("```")
+            out.append("")
+        else:
+            out.append(line)
+            i += 1
+    return "\n".join(out).strip()
+
+
+def _section_kind(sec) -> str:
+    return sec.kind.value if hasattr(sec.kind, "value") else str(sec.kind)
+
+
+def render_doc_sections(obj) -> list[str]:
+    """Parse a docstring into Google-style sections and render each as markdown.
+
+    Parameters/returns become real lists instead of indented blocks that
+    Markdown would otherwise collapse into a single run-on paragraph.
+    """
+    if not (obj.docstring and obj.docstring.value):
+        return []
+    out: list[str] = []
+    for sec in obj.docstring.parse("google"):
+        kind = _section_kind(sec)
+        if kind == "text":
+            out += [_format_text(sec.value), ""]
+        elif kind == "parameters":
+            out += ["**Parameters:**", ""]
+            for p in sec.value:
+                desc = " ".join((p.description or "").split())
+                out.append(f"- **`{p.name}`** — {desc}" if desc else f"- **`{p.name}`**")
+            out.append("")
+        elif kind == "returns":
+            desc = " ".join(
+                " ".join((r.description or "").split()) for r in sec.value
+            ).strip()
+            if desc:
+                out += [f"**Returns:** {desc}", ""]
+        elif kind == "raises":
+            out += ["**Raises:**", ""]
+            for r in sec.value:
+                ann = annotation_str(getattr(r, "annotation", None))
+                desc = " ".join((r.description or "").split())
+                label = f"`{ann}`" if ann else "error"
+                out.append(f"- **{label}** — {desc}" if desc else f"- **{label}**")
+            out.append("")
+        elif isinstance(sec.value, str):
+            out += [_format_text(sec.value), ""]
+    while out and not out[-1].strip():
+        out.pop()
+    return out + [""] if out else out
+
+
 def own_members(obj):
     return {n: m for n, m in obj.members.items() if not m.is_alias}
 
@@ -96,19 +194,13 @@ def render_function(name: str, func, *, heading: str, level: int) -> list[str]:
     lines.append(render_signature(name, func))
     lines.append("```")
     lines.append("")
-    doc = docstring_of(func)
-    if doc:
-        lines.append(doc)
-        lines.append("")
+    lines += render_doc_sections(func)
     return lines
 
 
 def render_class(name: str, cls) -> list[str]:
     lines = [f"## {name}", ""]
-    doc = docstring_of(cls)
-    if doc:
-        lines.append(doc)
-        lines.append("")
+    lines += render_doc_sections(cls)
 
     members = own_members(cls)
     methods = [

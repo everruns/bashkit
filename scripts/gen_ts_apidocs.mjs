@@ -198,6 +198,12 @@ function renderComment(comment, lines) {
 
 // ---- member rendering ------------------------------------------------------
 
+// Lowercase the leading character so a class name reads as an instance
+// receiver: `Bash` -> `bash`, `BashTool` -> `bashTool`.
+function instanceName(className) {
+  return className.charAt(0).toLowerCase() + className.slice(1);
+}
+
 // A field bullet: `- **name** — `type`` with the description as an indented
 // continuation paragraph. Multi-paragraph summaries must be indented under the
 // bullet, otherwise their blank lines terminate the list and the trailing
@@ -266,7 +272,10 @@ function renderClass(refl) {
     }
   }
   for (const m of methods) {
-    lines.push(...renderCallable(`${refl.name}.${m.name}`, m, 3, `\`${m.name}\``));
+    // Static methods are class-level (`Bash.create`); instance methods read as
+    // a call on an instance (`bash.addBuiltin`), not a static `Bash.addBuiltin`.
+    const receiver = m.flags?.isStatic ? refl.name : instanceName(refl.name);
+    lines.push(...renderCallable(`${receiver}.${m.name}`, m, 3, `\`${m.name}\``));
   }
   return lines;
 }

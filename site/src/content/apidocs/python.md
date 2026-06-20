@@ -12,20 +12,27 @@ State persists between calls — files created in one execute() are
 available in subsequent calls.
 
 Example (basic):
-    >>> bash = Bash()
-    >>> result = await bash.execute("echo 'Hello!'")
-    >>> print(result.stdout)
-    Hello!
+
+```python
+>>> bash = Bash()
+>>> result = await bash.execute("echo 'Hello!'")
+>>> print(result.stdout)
+Hello!
+```
+
 
 Example (Python execution with external function handler):
-    >>> async def handler(fn_name: str, args: list, kwargs: dict) -> Any:
-    ...     return await tool_executor.call(fn_name, kwargs)
-    >>> bash = Bash(
-    ...     python=True,
-    ...     external_functions=["api_request"],
-    ...     external_handler=handler,
-    ... )
-    >>> result = await bash.execute("python3 -c 'print(api_request())'")
+
+```python
+>>> async def handler(fn_name: str, args: list, kwargs: dict) -> Any:
+...     return await tool_executor.call(fn_name, kwargs)
+>>> bash = Bash(
+...     python=True,
+...     external_functions=["api_request"],
+...     external_handler=handler,
+... )
+>>> result = await bash.execute("python3 -c 'print(api_request())'")
+```
 
 ### Constructor
 
@@ -35,75 +42,46 @@ Bash(username: str | None = None, hostname: str | None = None, cwd: str | None =
 
 Create a new Bash interpreter.
 
-Args:
-    username: Custom username (default ``"user"``).
-    hostname: Custom hostname (default ``"bashkit"``).
-    cwd: Initial working directory for the shell. Sets the starting
-        directory directly instead of running a leading ``cd``.
-    env: Initial environment variables applied before execution, so
-        scripts see them without an ``export`` prelude.
-    max_commands: Limit total commands executed.
-    max_loop_iterations: Limit iterations per loop.
-    max_memory: Memory limit in bytes for the VFS.
-    timeout_seconds: Abort execution after this duration.
-    python: Enable embedded Python (``python3`` builtin).
-    sqlite: Enable embedded SQLite (``sqlite``/``sqlite3`` builtin).
-        Defaults to ``False``. When ``True``, the Turso-backed engine
-        is registered and ``BASHKIT_ALLOW_INPROCESS_SQLITE=1`` is
-        injected automatically. Default ``SqliteLimits`` apply: 4 MiB
-        script cap, 256 MiB DB cap, 30 s wall-clock budget,
-        resource-affecting PRAGMAs (`cache_size`, `mmap_size`, …)
-        rejected, ``ATTACH``/``DETACH`` rejected.
-    external_functions: Function names callable from Python code.
-    external_handler: Async callback for external function calls.
-        The callback must not call back into the same ``Bash`` instance
-        via live methods like ``read_file()``, ``fs()``, or
-        ``execute()``; those re-entrant calls are rejected.
-    files: Dict mapping VFS paths to file contents or lazy callables.
-    mounts: List of real host directory mount configs.
-    allowed_mount_paths: Host path prefixes allowed for real filesystem
-        mounts. Required when mounting sensitive host locations such as
-        paths under a user home directory.
-    readonly_filesystem: Deny all filesystem mutations after configured
-        files and mounts are applied.
-    custom_builtins: Constructor-time Python callbacks exposed as
-        bash builtins. Each callback receives a ``BuiltinContext``
-        with raw ``argv`` tokens, optional pipeline ``stdin``, and a
-        live ``fs`` handle to the virtual filesystem, and must return a
-        stdout string, a ``BuiltinResult``, or await either. Async
-        callbacks run on the caller's active asyncio loop for
-        ``await execute()`` and on a private loop for
-        ``execute_sync()``.
-    network: Optional outbound HTTP / network configuration. Pass
-        ``{"allow": [...]}`` for an explicit allowlist or
-        ``{"allow_all": True}`` to allow every URL (mirrors
-        ``NetworkAllowlist::allow_all()`` in the Rust core). Set
-        ``"block_private_ips": False`` to relax the SSRF guard.
-        Add ``"credentials": [...]`` to inject headers transparently
-        for matching URLs and ``"credential_placeholders": [...]``
-        to expose opaque placeholder env vars that are replaced with
-        the real secret on the wire. When omitted, network access
-        is disabled (current default). Preserved across ``reset()``
-        and ``from_snapshot()`` — placeholder env vars are
-        regenerated on each rebuild.
+**Parameters:**
 
-Example::
+- **`username`** — Custom username (default ``"user"``).
+- **`hostname`** — Custom hostname (default ``"bashkit"``).
+- **`cwd`** — Initial working directory for the shell. Sets the starting directory directly instead of running a leading ``cd``.
+- **`env`** — Initial environment variables applied before execution, so scripts see them without an ``export`` prelude.
+- **`max_commands`** — Limit total commands executed.
+- **`max_loop_iterations`** — Limit iterations per loop.
+- **`max_memory`** — Memory limit in bytes for the VFS.
+- **`timeout_seconds`** — Abort execution after this duration.
+- **`python`** — Enable embedded Python (``python3`` builtin).
+- **`sqlite`** — Enable embedded SQLite (``sqlite``/``sqlite3`` builtin). Defaults to ``False``. When ``True``, the Turso-backed engine is registered and ``BASHKIT_ALLOW_INPROCESS_SQLITE=1`` is injected automatically. Default ``SqliteLimits`` apply: 4 MiB script cap, 256 MiB DB cap, 30 s wall-clock budget, resource-affecting PRAGMAs (`cache_size`, `mmap_size`, …) rejected, ``ATTACH``/``DETACH`` rejected.
+- **`external_functions`** — Function names callable from Python code.
+- **`external_handler`** — Async callback for external function calls. The callback must not call back into the same ``Bash`` instance via live methods like ``read_file()``, ``fs()``, or ``execute()``; those re-entrant calls are rejected.
+- **`files`** — Dict mapping VFS paths to file contents or lazy callables.
+- **`mounts`** — List of real host directory mount configs.
+- **`allowed_mount_paths`** — Host path prefixes allowed for real filesystem mounts. Required when mounting sensitive host locations such as paths under a user home directory.
+- **`readonly_filesystem`** — Deny all filesystem mutations after configured files and mounts are applied.
+- **`custom_builtins`** — Constructor-time Python callbacks exposed as bash builtins. Each callback receives a ``BuiltinContext`` with raw ``argv`` tokens, optional pipeline ``stdin``, and a live ``fs`` handle to the virtual filesystem, and must return a stdout string, a ``BuiltinResult``, or await either. Async callbacks run on the caller's active asyncio loop for ``await execute()`` and on a private loop for ``execute_sync()``.
+- **`network`** — Optional outbound HTTP / network configuration. Pass ``{"allow": [...]}`` for an explicit allowlist or ``{"allow_all": True}`` to allow every URL (mirrors ``NetworkAllowlist::allow_all()`` in the Rust core). Set ``"block_private_ips": False`` to relax the SSRF guard. Add ``"credentials": [...]`` to inject headers transparently for matching URLs and ``"credential_placeholders": [...]`` to expose opaque placeholder env vars that are replaced with the real secret on the wire. When omitted, network access is disabled (current default). Preserved across ``reset()`` and ``from_snapshot()`` — placeholder env vars are regenerated on each rebuild.
 
-    >>> bash = Bash(
-    ...     timeout_seconds=30,
-    ...     files={"/input.txt": "some data"},
-    ...     custom_builtins={"ping": lambda ctx: "pong\n"},
-    ...     network={
-    ...         "allow": ["https://api.github.com"],
-    ...         "credentials": [
-    ...             {
-    ...                 "pattern": "https://api.github.com",
-    ...                 "kind": "bearer",
-    ...                 "token": "ghp_xxx",
-    ...             }
-    ...         ],
-    ...     },
-    ... )
+Example:
+
+```python
+>>> bash = Bash(
+...     timeout_seconds=30,
+...     files={"/input.txt": "some data"},
+...     custom_builtins={"ping": lambda ctx: "pong\n"},
+...     network={
+...         "allow": ["https://api.github.com"],
+...         "credentials": [
+...             {
+...                 "pattern": "https://api.github.com",
+...                 "kind": "bearer",
+...                 "token": "ghp_xxx",
+...             }
+...         ],
+...     },
+... )
+```
 
 ### `execute`
 
@@ -113,24 +91,25 @@ Bash.execute(commands: str, on_output: OutputHandler | None = None) -> ExecResul
 
 Execute bash commands asynchronously.
 
-Args:
-    commands: Bash script to run (like ``bash -c "commands"``).
-    on_output: Optional callback receiving chunked ``(stdout, stderr)``
-        pairs during execution. Must be synchronous.
+**Parameters:**
+
+- **`commands`** — Bash script to run (like ``bash -c "commands"``).
+- **`on_output`** — Optional callback receiving chunked ``(stdout, stderr)`` pairs during execution. Must be synchronous.
 
 Async ``custom_builtins`` callbacks run on the caller's active asyncio
 loop.
 
-Returns:
-    ExecResult with stdout, stderr, exit_code.
+**Returns:** ExecResult with stdout, stderr, exit_code.
 
-Example::
+Example:
 
-    >>> bash = Bash()
-    >>> result = await bash.execute("echo hello && echo world")
-    >>> print(result.stdout)
-    hello
-    world
+```python
+>>> bash = Bash()
+>>> result = await bash.execute("echo hello && echo world")
+>>> print(result.stdout)
+hello
+world
+```
 
 ### `execute_sync`
 
@@ -148,12 +127,14 @@ callbacks are dispatched to a background thread with their own loop so
 that asyncio's "cannot run while another loop is running" restriction
 is not triggered.
 
-Example::
+Example:
 
-    >>> bash = Bash()
-    >>> result = bash.execute_sync("date +%Y")
-    >>> print(result.exit_code)
-    0
+```python
+>>> bash = Bash()
+>>> result = bash.execute_sync("date +%Y")
+>>> print(result.exit_code)
+0
+```
 
 ### `execute_or_throw`
 
@@ -165,15 +146,17 @@ Execute commands asynchronously; raise ``BashError`` on non-zero exit.
 
 ``on_output`` must be synchronous.
 
-Example::
+Example:
 
-    >>> bash = Bash()
-    >>> result = await bash.execute_or_throw("echo ok")
-    >>> # Raises BashError if the command fails:
-    >>> await bash.execute_or_throw("false")  # doctest: +SKIP
-    Traceback (most recent call last):
-        ...
-    BashError: ...
+```python
+>>> bash = Bash()
+>>> result = await bash.execute_or_throw("echo ok")
+>>> # Raises BashError if the command fails:
+>>> await bash.execute_or_throw("false")  # doctest: +SKIP
+Traceback (most recent call last):
+    ...
+BashError: ...
+```
 
 ### `execute_sync_or_throw`
 
@@ -185,12 +168,14 @@ Execute commands synchronously; raise ``BashError`` on non-zero exit.
 
 ``on_output`` must be synchronous.
 
-Example::
+Example:
 
-    >>> bash = Bash()
-    >>> result = bash.execute_sync_or_throw("echo ok")
-    >>> print(result.stdout.strip())
-    ok
+```python
+>>> bash = Bash()
+>>> result = bash.execute_sync_or_throw("echo ok")
+>>> print(result.stdout.strip())
+ok
+```
 
 ### `cancel`
 
@@ -203,12 +188,14 @@ Cancel the currently running execution.
 Safe to call from any thread. Execution aborts at the next
 command boundary.
 
-Example::
+Example:
 
-    >>> import threading
-    >>> bash = Bash()
-    >>> threading.Timer(1.0, bash.cancel).start()
-    >>> # Long-running command will be cancelled after 1 second
+```python
+>>> import threading
+>>> bash = Bash()
+>>> threading.Timer(1.0, bash.cancel).start()
+>>> # Long-running command will be cancelled after 1 second
+```
 
 ### `clear_cancel`
 
@@ -228,14 +215,16 @@ allow that execution to continue past the cancellation point.
 Wait for the cancelled execution to finish before clearing
 (await the async call or let ``execute_sync`` return).
 
-Example::
+Example:
 
-    >>> bash = Bash()
-    >>> bash.cancel()
-    >>> bash.clear_cancel()
-    >>> result = bash.execute_sync("echo ok")
-    >>> result.exit_code
-    0
+```python
+>>> bash = Bash()
+>>> bash.cancel()
+>>> bash.clear_cancel()
+>>> result = bash.execute_sync("echo ok")
+>>> result.exit_code
+0
+```
 
 ### `reset`
 
@@ -249,14 +238,16 @@ Clears all VFS contents, environment variables, and shell state.
 Re-applies the original ``files``, ``mounts``, and
 ``custom_builtins`` configuration.
 
-Example::
+Example:
 
-    >>> bash = Bash()
-    >>> bash.execute_sync("echo hi > /tmp/file.txt")
-    >>> bash.reset()
-    >>> result = bash.execute_sync("cat /tmp/file.txt")
-    >>> result.exit_code  # file is gone after reset
-    1
+```python
+>>> bash = Bash()
+>>> bash.execute_sync("echo hi > /tmp/file.txt")
+>>> bash.reset()
+>>> result = bash.execute_sync("cat /tmp/file.txt")
+>>> result.exit_code  # file is gone after reset
+1
+```
 
 ### `snapshot`
 
@@ -429,13 +420,15 @@ Return a live filesystem handle.
 Each operation acquires the interpreter lock, so the handle always
 reflects the latest state (including after ``reset()``).
 
-Example::
+Example:
 
-    >>> bash = Bash()
-    >>> bash.execute_sync("echo hello > /greeting.txt")
-    >>> fs = bash.fs()
-    >>> fs.read_file("/greeting.txt")
-    b'hello\n'
+```python
+>>> bash = Bash()
+>>> bash.execute_sync("echo hello > /greeting.txt")
+>>> fs = bash.fs()
+>>> fs.read_file("/greeting.txt")
+b'hello\n'
+```
 
 ### `mount`
 
@@ -445,19 +438,22 @@ Bash.mount(vfs_path: str, fs: FileSystem) -> None
 
 Mount an external filesystem at the given VFS path.
 
-Args:
-    vfs_path: Mount point inside the VFS.
-    fs: FileSystem instance to mount.
+**Parameters:**
 
-Example::
+- **`vfs_path`** — Mount point inside the VFS.
+- **`fs`** — FileSystem instance to mount.
 
-    >>> bash = Bash()
-    >>> overlay = FileSystem()
-    >>> overlay.write_file("/data.csv", b"a,b,c")
-    >>> bash.mount("/mnt/data", overlay)
-    >>> result = bash.execute_sync("cat /mnt/data/data.csv")
-    >>> print(result.stdout)
-    a,b,c
+Example:
+
+```python
+>>> bash = Bash()
+>>> overlay = FileSystem()
+>>> overlay.write_file("/data.csv", b"a,b,c")
+>>> bash.mount("/mnt/data", overlay)
+>>> result = bash.execute_sync("cat /mnt/data/data.csv")
+>>> print(result.stdout)
+a,b,c
+```
 
 ### `unmount`
 
@@ -467,12 +463,14 @@ Bash.unmount(vfs_path: str) -> None
 
 Unmount a previously mounted filesystem.
 
-Example::
+Example:
 
-    >>> bash = Bash()
-    >>> overlay = FileSystem()
-    >>> bash.mount("/mnt/ext", overlay)
-    >>> bash.unmount("/mnt/ext")
+```python
+>>> bash = Bash()
+>>> overlay = FileSystem()
+>>> bash.mount("/mnt/ext", overlay)
+>>> bash.unmount("/mnt/ext")
+```
 
 ## BashTool
 
@@ -484,12 +482,6 @@ sandbox - no access to the real filesystem.
 
 Adds LLM-facing contract metadata (``description``, ``system_prompt``,
 ``input_schema``, ``output_schema``) on top of the core interpreter.
-
-Example:
-    >>> tool = BashTool()
-    >>> result = await tool.execute("echo 'Hello!'")
-    >>> print(result.stdout)
-    Hello!
 
 ### Fields
 
@@ -505,44 +497,34 @@ BashTool(username: str | None = None, hostname: str | None = None, cwd: str | No
 
 Create a new BashTool.
 
-Args:
-    username: Custom username (default ``"user"``).
-    hostname: Custom hostname (default ``"bashkit"``).
-    cwd: Initial working directory for the shell. Sets the starting
-        directory directly instead of running a leading ``cd``.
-    env: Initial environment variables applied before execution, so
-        scripts see them without an ``export`` prelude.
-    max_commands: Limit total commands executed.
-    max_loop_iterations: Limit iterations per loop.
-    max_memory: Memory limit in bytes for the VFS.
-    timeout_seconds: Abort execution after this duration.
-    files: Dict mapping VFS paths to file contents or lazy callables.
-    mounts: List of real host directory mount configs.
-    allowed_mount_paths: Host path prefixes allowed for real filesystem
-        mounts. Required when mounting sensitive host locations such as
-        paths under a user home directory.
-    readonly_filesystem: Deny all filesystem mutations after configured
-        files and mounts are applied.
-    custom_builtins: Constructor-time Python callbacks exposed as
-        bash builtins. Each callback receives a ``BuiltinContext``
-        (including a live ``fs`` handle to the virtual filesystem) and
-        must return a stdout string, a ``BuiltinResult``, or await
-        either. Async callbacks run on the caller's active asyncio
-        loop for ``await execute()`` and on a private loop for
-        ``execute_sync()``.
-    network: Optional outbound HTTP / network configuration. See
-        ``Bash.__init__`` for accepted keys. Preserved across
-        ``reset()`` and ``from_snapshot()``.
+**Parameters:**
 
-Example::
+- **`username`** — Custom username (default ``"user"``).
+- **`hostname`** — Custom hostname (default ``"bashkit"``).
+- **`cwd`** — Initial working directory for the shell. Sets the starting directory directly instead of running a leading ``cd``.
+- **`env`** — Initial environment variables applied before execution, so scripts see them without an ``export`` prelude.
+- **`max_commands`** — Limit total commands executed.
+- **`max_loop_iterations`** — Limit iterations per loop.
+- **`max_memory`** — Memory limit in bytes for the VFS.
+- **`timeout_seconds`** — Abort execution after this duration.
+- **`files`** — Dict mapping VFS paths to file contents or lazy callables.
+- **`mounts`** — List of real host directory mount configs.
+- **`allowed_mount_paths`** — Host path prefixes allowed for real filesystem mounts. Required when mounting sensitive host locations such as paths under a user home directory.
+- **`readonly_filesystem`** — Deny all filesystem mutations after configured files and mounts are applied.
+- **`custom_builtins`** — Constructor-time Python callbacks exposed as bash builtins. Each callback receives a ``BuiltinContext`` (including a live ``fs`` handle to the virtual filesystem) and must return a stdout string, a ``BuiltinResult``, or await either. Async callbacks run on the caller's active asyncio loop for ``await execute()`` and on a private loop for ``execute_sync()``.
+- **`network`** — Optional outbound HTTP / network configuration. See ``Bash.__init__`` for accepted keys. Preserved across ``reset()`` and ``from_snapshot()``.
 
-    >>> tool = BashTool(
-    ...     timeout_seconds=30,
-    ...     custom_builtins={"ping": lambda ctx: "pong\n"},
-    ...     network={"allow_all": True},
-    ... )
-    >>> print(tool.name)
-    bash
+Example:
+
+```python
+>>> tool = BashTool(
+...     timeout_seconds=30,
+...     custom_builtins={"ping": lambda ctx: "pong\n"},
+...     network={"allow_all": True},
+... )
+>>> print(tool.name)
+bash
+```
 
 ### `execute`
 
@@ -557,12 +539,14 @@ loop.
 
 ``on_output`` must be synchronous.
 
-Example::
+Example:
 
-    >>> tool = BashTool()
-    >>> result = await tool.execute("ls /")
-    >>> result.success
-    True
+```python
+>>> tool = BashTool()
+>>> result = await tool.execute("ls /")
+>>> result.success
+True
+```
 
 ### `execute_sync`
 
@@ -580,12 +564,14 @@ is not triggered.
 
 ``on_output`` must be synchronous.
 
-Example::
+Example:
 
-    >>> tool = BashTool()
-    >>> result = tool.execute_sync("echo 42")
-    >>> result.stdout.strip()
-    '42'
+```python
+>>> tool = BashTool()
+>>> result = tool.execute_sync("echo 42")
+>>> result.stdout.strip()
+'42'
+```
 
 ### `execute_or_throw`
 
@@ -597,12 +583,14 @@ Execute commands asynchronously; raise ``BashError`` on non-zero exit.
 
 ``on_output`` must be synchronous.
 
-Example::
+Example:
 
-    >>> tool = BashTool()
-    >>> result = await tool.execute_or_throw("echo ok")
-    >>> result.success
-    True
+```python
+>>> tool = BashTool()
+>>> result = await tool.execute_or_throw("echo ok")
+>>> result.success
+True
+```
 
 ### `execute_sync_or_throw`
 
@@ -614,12 +602,14 @@ Execute commands synchronously; raise ``BashError`` on non-zero exit.
 
 ``on_output`` must be synchronous.
 
-Example::
+Example:
 
-    >>> tool = BashTool()
-    >>> result = tool.execute_sync_or_throw("echo ok")
-    >>> result.stdout.strip()
-    'ok'
+```python
+>>> tool = BashTool()
+>>> result = tool.execute_sync_or_throw("echo ok")
+>>> result.stdout.strip()
+'ok'
+```
 
 ### `cancel`
 
@@ -631,10 +621,12 @@ Cancel the currently running execution.
 
 Safe to call from any thread.
 
-Example::
+Example:
 
-    >>> tool = BashTool()
-    >>> tool.cancel()  # no-op if nothing is running
+```python
+>>> tool = BashTool()
+>>> tool.cancel()  # no-op if nothing is running
+```
 
 ### `clear_cancel`
 
@@ -654,14 +646,16 @@ allow that execution to continue past the cancellation point.
 Wait for the cancelled execution to finish before clearing
 (await the async call or let ``execute_sync`` return).
 
-Example::
+Example:
 
-    >>> tool = BashTool()
-    >>> tool.cancel()
-    >>> tool.clear_cancel()
-    >>> result = tool.execute_sync("echo ok")
-    >>> result.exit_code
-    0
+```python
+>>> tool = BashTool()
+>>> tool.cancel()
+>>> tool.clear_cancel()
+>>> result = tool.execute_sync("echo ok")
+>>> result.exit_code
+0
+```
 
 ### `description`
 
@@ -671,12 +665,14 @@ BashTool.description() -> str
 
 Return the tool description for LLM consumption.
 
-Example::
+Example:
 
-    >>> tool = BashTool()
-    >>> desc = tool.description()
-    >>> "bash" in desc.lower()
-    True
+```python
+>>> tool = BashTool()
+>>> desc = tool.description()
+>>> "bash" in desc.lower()
+True
+```
 
 ### `help`
 
@@ -686,12 +682,14 @@ BashTool.help() -> str
 
 Return extended help text.
 
-Example::
+Example:
 
-    >>> tool = BashTool()
-    >>> help_text = tool.help()
-    >>> len(help_text) > 0
-    True
+```python
+>>> tool = BashTool()
+>>> help_text = tool.help()
+>>> len(help_text) > 0
+True
+```
 
 ### `system_prompt`
 
@@ -703,12 +701,14 @@ Return the system prompt for LLM agents.
 
 Includes tool description, usage guidelines, and capabilities.
 
-Example::
+Example:
 
-    >>> tool = BashTool()
-    >>> prompt = tool.system_prompt()
-    >>> "sandbox" in prompt.lower() or "bash" in prompt.lower()
-    True
+```python
+>>> tool = BashTool()
+>>> prompt = tool.system_prompt()
+>>> "sandbox" in prompt.lower() or "bash" in prompt.lower()
+True
+```
 
 ### `input_schema`
 
@@ -718,13 +718,15 @@ BashTool.input_schema() -> str
 
 Return the JSON Schema for tool input.
 
-Example::
+Example:
 
-    >>> import json
-    >>> tool = BashTool()
-    >>> schema = json.loads(tool.input_schema())
-    >>> "commands" in str(schema)
-    True
+```python
+>>> import json
+>>> tool = BashTool()
+>>> schema = json.loads(tool.input_schema())
+>>> "commands" in str(schema)
+True
+```
 
 ### `output_schema`
 
@@ -734,13 +736,15 @@ BashTool.output_schema() -> str
 
 Return the JSON Schema for tool output.
 
-Example::
+Example:
 
-    >>> import json
-    >>> tool = BashTool()
-    >>> schema = json.loads(tool.output_schema())
-    >>> isinstance(schema, dict)
-    True
+```python
+>>> import json
+>>> tool = BashTool()
+>>> schema = json.loads(tool.output_schema())
+>>> isinstance(schema, dict)
+True
+```
 
 ### `reset`
 
@@ -753,14 +757,16 @@ Reset the tool to initial state.
 Clears VFS, environment, and shell state while re-applying
 constructor-time ``custom_builtins``.
 
-Example::
+Example:
 
-    >>> tool = BashTool()
-    >>> tool.execute_sync("touch /tmp/file")
-    >>> tool.reset()
-    >>> result = tool.execute_sync("test -f /tmp/file")
-    >>> result.exit_code  # file is gone
-    1
+```python
+>>> tool = BashTool()
+>>> tool.execute_sync("touch /tmp/file")
+>>> tool.reset()
+>>> result = tool.execute_sync("test -f /tmp/file")
+>>> result.exit_code  # file is gone
+1
+```
 
 ### `snapshot`
 
@@ -933,13 +939,15 @@ Return a live filesystem handle.
 Each operation acquires the interpreter lock, so the handle always
 reflects the latest state (including after ``reset()``).
 
-Example::
+Example:
 
-    >>> tool = BashTool()
-    >>> tool.execute_sync("echo data > /out.txt")
-    >>> fs = tool.fs()
-    >>> fs.read_file("/out.txt")
-    b'data\n'
+```python
+>>> tool = BashTool()
+>>> tool.execute_sync("echo data > /out.txt")
+>>> fs = tool.fs()
+>>> fs.read_file("/out.txt")
+b'data\n'
+```
 
 ### `mount`
 
@@ -949,15 +957,17 @@ BashTool.mount(vfs_path: str, fs: FileSystem) -> None
 
 Mount an external filesystem at the given VFS path.
 
-Example::
+Example:
 
-    >>> tool = BashTool()
-    >>> ext = FileSystem()
-    >>> ext.write_file("/info.txt", b"external")
-    >>> tool.mount("/mnt/ext", ext)
-    >>> result = tool.execute_sync("cat /mnt/ext/info.txt")
-    >>> result.stdout.strip()
-    'external'
+```python
+>>> tool = BashTool()
+>>> ext = FileSystem()
+>>> ext.write_file("/info.txt", b"external")
+>>> tool.mount("/mnt/ext", ext)
+>>> result = tool.execute_sync("cat /mnt/ext/info.txt")
+>>> result.stdout.strip()
+'external'
+```
 
 ### `unmount`
 
@@ -967,12 +977,14 @@ BashTool.unmount(vfs_path: str) -> None
 
 Unmount a previously mounted filesystem.
 
-Example::
+Example:
 
-    >>> tool = BashTool()
-    >>> ext = FileSystem()
-    >>> tool.mount("/mnt/ext", ext)
-    >>> tool.unmount("/mnt/ext")
+```python
+>>> tool = BashTool()
+>>> ext = FileSystem()
+>>> tool.mount("/mnt/ext", ext)
+>>> tool.unmount("/mnt/ext")
+```
 
 ## ScriptedTool
 
@@ -980,15 +992,6 @@ Compose Python callbacks as bash builtins for multi-tool orchestration.
 
 Each registered tool becomes a bash builtin command. An LLM (or user)
 writes a single bash script that pipes, loops, and branches across tools.
-
-Example:
-    >>> tool = ScriptedTool("api")
-    >>> tool.add_tool("greet", "Greet user",
-    ...     callback=lambda p, s=None: f"hello {p.get('name', 'world')}\n",
-    ...     schema={"type": "object", "properties": {"name": {"type": "string"}}})
-    >>> result = tool.execute_sync("greet --name Alice")
-    >>> print(result.stdout.strip())
-    hello Alice
 
 ### Fields
 
@@ -1004,17 +1007,20 @@ ScriptedTool(name: str, short_description: str | None = None, max_commands: int 
 
 Create a new ScriptedTool.
 
-Args:
-    name: Tool name (used as the LLM tool identifier).
-    short_description: One-line description of the tool.
-    max_commands: Limit total commands per execution.
-    max_loop_iterations: Limit iterations per loop.
+**Parameters:**
 
-Example::
+- **`name`** — Tool name (used as the LLM tool identifier).
+- **`short_description`** — One-line description of the tool.
+- **`max_commands`** — Limit total commands per execution.
+- **`max_loop_iterations`** — Limit iterations per loop.
 
-    >>> tool = ScriptedTool("data_pipeline", short_description="ETL tools")
-    >>> print(tool.name)
-    data_pipeline
+Example:
+
+```python
+>>> tool = ScriptedTool("data_pipeline", short_description="ETL tools")
+>>> print(tool.name)
+data_pipeline
+```
 
 ### `add_tool`
 
@@ -1024,29 +1030,29 @@ ScriptedTool.add_tool(name: str, description: str, callback: Callable[[dict[str,
 
 Register a Python callback as a bash builtin command.
 
-Args:
-    name: Command name (becomes a bash builtin).
-    description: Human-readable description of the sub-tool.
-    callback: ``(params_dict, stdin_or_none) -> output_string`` or
-        an async callback that resolves to one. Async callbacks run on
-        the caller's active asyncio loop for ``await execute()`` and on
-        a private loop for ``execute_sync()``.
-    schema: Optional JSON Schema for the tool's parameters.
+**Parameters:**
 
-Example::
+- **`name`** — Command name (becomes a bash builtin).
+- **`description`** — Human-readable description of the sub-tool.
+- **`callback`** — ``(params_dict, stdin_or_none) -> output_string`` or an async callback that resolves to one. Async callbacks run on the caller's active asyncio loop for ``await execute()`` and on a private loop for ``execute_sync()``.
+- **`schema`** — Optional JSON Schema for the tool's parameters.
 
-    >>> tool = ScriptedTool("math")
-    >>> tool.add_tool(
-    ...     "add", "Add two numbers",
-    ...     callback=lambda p, s=None: str(int(p["a"]) + int(p["b"])) + "\n",
-    ...     schema={
-    ...         "type": "object",
-    ...         "properties": {"a": {"type": "integer"}, "b": {"type": "integer"}},
-    ...     },
-    ... )
-    >>> result = tool.execute_sync("add --a 2 --b 3")
-    >>> result.stdout.strip()
-    '5'
+Example:
+
+```python
+>>> tool = ScriptedTool("math")
+>>> tool.add_tool(
+...     "add", "Add two numbers",
+...     callback=lambda p, s=None: str(int(p["a"]) + int(p["b"])) + "\n",
+...     schema={
+...         "type": "object",
+...         "properties": {"a": {"type": "integer"}, "b": {"type": "integer"}},
+...     },
+... )
+>>> result = tool.execute_sync("add --a 2 --b 3")
+>>> result.stdout.strip()
+'5'
+```
 
 ### `env`
 
@@ -1056,13 +1062,15 @@ ScriptedTool.env(key: str, value: str) -> None
 
 Set an environment variable for subsequent executions.
 
-Example::
+Example:
 
-    >>> tool = ScriptedTool("demo")
-    >>> tool.env("API_KEY", "secret-123")
-    >>> result = tool.execute_sync("echo $API_KEY")
-    >>> result.stdout.strip()
-    'secret-123'
+```python
+>>> tool = ScriptedTool("demo")
+>>> tool.env("API_KEY", "secret-123")
+>>> result = tool.execute_sync("echo $API_KEY")
+>>> result.stdout.strip()
+'secret-123'
+```
 
 ### `execute`
 
@@ -1074,13 +1082,15 @@ Execute commands asynchronously.
 
 Async callbacks run on the caller's active asyncio loop.
 
-Example::
+Example:
 
-    >>> tool = ScriptedTool("demo")
-    >>> tool.add_tool("hi", "Say hi", callback=lambda p, s=None: "hi\n")
-    >>> result = await tool.execute("hi")
-    >>> result.stdout.strip()
-    'hi'
+```python
+>>> tool = ScriptedTool("demo")
+>>> tool.add_tool("hi", "Say hi", callback=lambda p, s=None: "hi\n")
+>>> result = await tool.execute("hi")
+>>> result.stdout.strip()
+'hi'
+```
 
 ### `execute_sync`
 
@@ -1092,13 +1102,15 @@ Execute commands synchronously (blocking).
 
 Async callbacks run on a private loop here.
 
-Example::
+Example:
 
-    >>> tool = ScriptedTool("demo")
-    >>> tool.add_tool("ping", "Ping", callback=lambda p, s=None: "pong\n")
-    >>> result = tool.execute_sync("ping")
-    >>> result.stdout.strip()
-    'pong'
+```python
+>>> tool = ScriptedTool("demo")
+>>> tool.add_tool("ping", "Ping", callback=lambda p, s=None: "pong\n")
+>>> result = tool.execute_sync("ping")
+>>> result.stdout.strip()
+'pong'
+```
 
 ### `tool_count`
 
@@ -1108,14 +1120,16 @@ ScriptedTool.tool_count() -> int
 
 Return the number of registered sub-tools.
 
-Example::
+Example:
 
-    >>> tool = ScriptedTool("demo")
-    >>> tool.tool_count()
-    0
-    >>> tool.add_tool("a", "A", callback=lambda p, s=None: "")
-    >>> tool.tool_count()
-    1
+```python
+>>> tool = ScriptedTool("demo")
+>>> tool.tool_count()
+0
+>>> tool.add_tool("a", "A", callback=lambda p, s=None: "")
+>>> tool.tool_count()
+1
+```
 
 ### `description`
 
@@ -1125,12 +1139,14 @@ ScriptedTool.description() -> str
 
 Return the tool description for LLM consumption.
 
-Example::
+Example:
 
-    >>> tool = ScriptedTool("api", short_description="API tools")
-    >>> desc = tool.description()
-    >>> len(desc) > 0
-    True
+```python
+>>> tool = ScriptedTool("api", short_description="API tools")
+>>> desc = tool.description()
+>>> len(desc) > 0
+True
+```
 
 ### `help`
 
@@ -1140,12 +1156,14 @@ ScriptedTool.help() -> str
 
 Return extended help text listing all registered sub-tools.
 
-Example::
+Example:
 
-    >>> tool = ScriptedTool("api")
-    >>> tool.add_tool("fetch", "Fetch URL", callback=lambda p, s=None: "")
-    >>> "fetch" in tool.help()
-    True
+```python
+>>> tool = ScriptedTool("api")
+>>> tool.add_tool("fetch", "Fetch URL", callback=lambda p, s=None: "")
+>>> "fetch" in tool.help()
+True
+```
 
 ### `system_prompt`
 
@@ -1157,13 +1175,15 @@ Return the system prompt for LLM agents.
 
 Includes descriptions of all registered sub-tools and usage examples.
 
-Example::
+Example:
 
-    >>> tool = ScriptedTool("api")
-    >>> tool.add_tool("fetch", "Fetch URL", callback=lambda p, s=None: "")
-    >>> prompt = tool.system_prompt()
-    >>> "fetch" in prompt.lower()
-    True
+```python
+>>> tool = ScriptedTool("api")
+>>> tool.add_tool("fetch", "Fetch URL", callback=lambda p, s=None: "")
+>>> prompt = tool.system_prompt()
+>>> "fetch" in prompt.lower()
+True
+```
 
 ### `input_schema`
 
@@ -1173,13 +1193,15 @@ ScriptedTool.input_schema() -> str
 
 Return the JSON Schema for tool input.
 
-Example::
+Example:
 
-    >>> import json
-    >>> tool = ScriptedTool("api")
-    >>> schema = json.loads(tool.input_schema())
-    >>> "commands" in str(schema)
-    True
+```python
+>>> import json
+>>> tool = ScriptedTool("api")
+>>> schema = json.loads(tool.input_schema())
+>>> "commands" in str(schema)
+True
+```
 
 ### `output_schema`
 
@@ -1189,13 +1211,15 @@ ScriptedTool.output_schema() -> str
 
 Return the JSON Schema for tool output.
 
-Example::
+Example:
 
-    >>> import json
-    >>> tool = ScriptedTool("api")
-    >>> schema = json.loads(tool.output_schema())
-    >>> isinstance(schema, dict)
-    True
+```python
+>>> import json
+>>> tool = ScriptedTool("api")
+>>> schema = json.loads(tool.output_schema())
+>>> isinstance(schema, dict)
+True
+```
 
 ## FileSystem
 
@@ -1203,18 +1227,23 @@ Direct access to Bashkit's virtual filesystem or a standalone mountable FS.
 
 Two ways to create:
 
-1. In-memory (default) — starts empty::
+1. In-memory (default) — starts empty:
 
-    >>> fs = FileSystem()
-    >>> fs.write_file("/hello.txt", b"hi")
-    >>> fs.read_file("/hello.txt")
-    b'hi'
+```python
+>>> fs = FileSystem()
+>>> fs.write_file("/hello.txt", b"hi")
+>>> fs.read_file("/hello.txt")
+b'hi'
+```
 
-2. Backed by a real host directory::
 
-    >>> fs = FileSystem.real("/tmp/data", writable=False)
-    >>> fs.exists("/some-host-file.txt")
-    True
+2. Backed by a real host directory:
+
+```python
+>>> fs = FileSystem.real("/tmp/data", writable=False)
+>>> fs.exists("/some-host-file.txt")
+True
+```
 
 ### Constructor
 
@@ -1224,11 +1253,13 @@ FileSystem() -> None
 
 Create a new empty in-memory filesystem.
 
-Example::
+Example:
 
-    >>> fs = FileSystem()
-    >>> fs.exists("/anything")
-    False
+```python
+>>> fs = FileSystem()
+>>> fs.exists("/anything")
+False
+```
 
 ### `real`
 
@@ -1238,14 +1269,17 @@ FileSystem.real(host_path: str, writable: bool = False) -> FileSystem
 
 Create a filesystem backed by a real host directory.
 
-Args:
-    host_path: Absolute path on the host to expose.
-    writable: Allow write operations (default read-only).
+**Parameters:**
 
-Example::
+- **`host_path`** — Absolute path on the host to expose.
+- **`writable`** — Allow write operations (default read-only).
 
-    >>> fs = FileSystem.real("/tmp/project", writable=True)
-    >>> fs.write_file("/tmp/project/out.txt", b"data")
+Example:
+
+```python
+>>> fs = FileSystem.real("/tmp/project", writable=True)
+>>> fs.write_file("/tmp/project/out.txt", b"data")
+```
 
 ### `from_capsule`
 
@@ -1273,18 +1307,20 @@ FileSystem.read_file(path: str) -> bytes
 
 Read the entire contents of a file.
 
-Args:
-    path: Absolute path in the filesystem.
+**Parameters:**
 
-Returns:
-    File contents as bytes.
+- **`path`** — Absolute path in the filesystem.
 
-Example::
+**Returns:** File contents as bytes.
 
-    >>> fs = FileSystem()
-    >>> fs.write_file("/demo.txt", b"hello")
-    >>> fs.read_file("/demo.txt")
-    b'hello'
+Example:
+
+```python
+>>> fs = FileSystem()
+>>> fs.write_file("/demo.txt", b"hello")
+>>> fs.read_file("/demo.txt")
+b'hello'
+```
 
 ### `write_file`
 
@@ -1294,14 +1330,17 @@ FileSystem.write_file(path: str, content: bytes) -> None
 
 Write content to a file, creating or overwriting it.
 
-Args:
-    path: Absolute path in the filesystem.
-    content: Data to write.
+**Parameters:**
 
-Example::
+- **`path`** — Absolute path in the filesystem.
+- **`content`** — Data to write.
 
-    >>> fs = FileSystem()
-    >>> fs.write_file("/output.txt", b"result data")
+Example:
+
+```python
+>>> fs = FileSystem()
+>>> fs.write_file("/output.txt", b"result data")
+```
 
 ### `append_file`
 
@@ -1311,17 +1350,20 @@ FileSystem.append_file(path: str, content: bytes) -> None
 
 Append content to an existing file.
 
-Args:
-    path: Absolute path in the filesystem.
-    content: Data to append.
+**Parameters:**
 
-Example::
+- **`path`** — Absolute path in the filesystem.
+- **`content`** — Data to append.
 
-    >>> fs = FileSystem()
-    >>> fs.write_file("/log.txt", b"line1\n")
-    >>> fs.append_file("/log.txt", b"line2\n")
-    >>> fs.read_file("/log.txt")
-    b'line1\nline2\n'
+Example:
+
+```python
+>>> fs = FileSystem()
+>>> fs.write_file("/log.txt", b"line1\n")
+>>> fs.append_file("/log.txt", b"line2\n")
+>>> fs.read_file("/log.txt")
+b'line1\nline2\n'
+```
 
 ### `mkdir`
 
@@ -1331,16 +1373,19 @@ FileSystem.mkdir(path: str, recursive: bool = False) -> None
 
 Create a directory.
 
-Args:
-    path: Absolute path for the new directory.
-    recursive: Create parent directories as needed.
+**Parameters:**
 
-Example::
+- **`path`** — Absolute path for the new directory.
+- **`recursive`** — Create parent directories as needed.
 
-    >>> fs = FileSystem()
-    >>> fs.mkdir("/a/b/c", recursive=True)
-    >>> fs.exists("/a/b/c")
-    True
+Example:
+
+```python
+>>> fs = FileSystem()
+>>> fs.mkdir("/a/b/c", recursive=True)
+>>> fs.exists("/a/b/c")
+True
+```
 
 ### `remove`
 
@@ -1350,17 +1395,20 @@ FileSystem.remove(path: str, recursive: bool = False) -> None
 
 Remove a file or directory.
 
-Args:
-    path: Absolute path to remove.
-    recursive: Remove directory contents recursively.
+**Parameters:**
 
-Example::
+- **`path`** — Absolute path to remove.
+- **`recursive`** — Remove directory contents recursively.
 
-    >>> fs = FileSystem()
-    >>> fs.write_file("/tmp.txt", b"x")
-    >>> fs.remove("/tmp.txt")
-    >>> fs.exists("/tmp.txt")
-    False
+Example:
+
+```python
+>>> fs = FileSystem()
+>>> fs.write_file("/tmp.txt", b"x")
+>>> fs.remove("/tmp.txt")
+>>> fs.exists("/tmp.txt")
+False
+```
 
 ### `stat`
 
@@ -1370,18 +1418,19 @@ FileSystem.stat(path: str) -> dict[str, Any]
 
 Get file metadata.
 
-Returns:
-    Dict with ``file_type``, ``size``, ``mode``, ``modified``, ``created``.
+**Returns:** Dict with ``file_type``, ``size``, ``mode``, ``modified``, ``created``.
 
-Example::
+Example:
 
-    >>> fs = FileSystem()
-    >>> fs.write_file("/f.txt", b"data")
-    >>> info = fs.stat("/f.txt")
-    >>> info["file_type"]
-    'file'
-    >>> info["size"]
-    4
+```python
+>>> fs = FileSystem()
+>>> fs.write_file("/f.txt", b"data")
+>>> info = fs.stat("/f.txt")
+>>> info["file_type"]
+'file'
+>>> info["size"]
+4
+```
 
 ### `read_dir`
 
@@ -1391,16 +1440,17 @@ FileSystem.read_dir(path: str) -> list[dict[str, Any]]
 
 List directory entries.
 
-Returns:
-    List of dicts, each with ``name`` and ``metadata`` keys.
+**Returns:** List of dicts, each with ``name`` and ``metadata`` keys.
 
-Example::
+Example:
 
-    >>> fs = FileSystem()
-    >>> fs.write_file("/dir/a.txt", b"a")
-    >>> entries = fs.read_dir("/dir")
-    >>> entries[0]["name"]
-    'a.txt'
+```python
+>>> fs = FileSystem()
+>>> fs.write_file("/dir/a.txt", b"a")
+>>> entries = fs.read_dir("/dir")
+>>> entries[0]["name"]
+'a.txt'
+```
 
 ### `exists`
 
@@ -1410,14 +1460,16 @@ FileSystem.exists(path: str) -> bool
 
 Check whether a path exists.
 
-Example::
+Example:
 
-    >>> fs = FileSystem()
-    >>> fs.exists("/nope")
-    False
-    >>> fs.write_file("/yes.txt", b"")
-    >>> fs.exists("/yes.txt")
-    True
+```python
+>>> fs = FileSystem()
+>>> fs.exists("/nope")
+False
+>>> fs.write_file("/yes.txt", b"")
+>>> fs.exists("/yes.txt")
+True
+```
 
 ### `rename`
 
@@ -1427,13 +1479,15 @@ FileSystem.rename(from_path: str, to_path: str) -> None
 
 Rename (move) a file or directory.
 
-Example::
+Example:
 
-    >>> fs = FileSystem()
-    >>> fs.write_file("/old.txt", b"data")
-    >>> fs.rename("/old.txt", "/new.txt")
-    >>> fs.exists("/new.txt")
-    True
+```python
+>>> fs = FileSystem()
+>>> fs.write_file("/old.txt", b"data")
+>>> fs.rename("/old.txt", "/new.txt")
+>>> fs.exists("/new.txt")
+True
+```
 
 ### `copy`
 
@@ -1443,13 +1497,15 @@ FileSystem.copy(from_path: str, to_path: str) -> None
 
 Copy a file.
 
-Example::
+Example:
 
-    >>> fs = FileSystem()
-    >>> fs.write_file("/src.txt", b"data")
-    >>> fs.copy("/src.txt", "/dst.txt")
-    >>> fs.read_file("/dst.txt")
-    b'data'
+```python
+>>> fs = FileSystem()
+>>> fs.write_file("/src.txt", b"data")
+>>> fs.copy("/src.txt", "/dst.txt")
+>>> fs.read_file("/dst.txt")
+b'data'
+```
 
 ### `symlink`
 
@@ -1459,17 +1515,20 @@ FileSystem.symlink(target: str, link: str) -> None
 
 Create a symbolic link.
 
-Args:
-    target: Path the symlink points to.
-    link: Path of the symlink itself.
+**Parameters:**
 
-Example::
+- **`target`** — Path the symlink points to.
+- **`link`** — Path of the symlink itself.
 
-    >>> fs = FileSystem()
-    >>> fs.write_file("/real.txt", b"data")
-    >>> fs.symlink("/real.txt", "/link.txt")
-    >>> fs.read_file("/link.txt")
-    b'data'
+Example:
+
+```python
+>>> fs = FileSystem()
+>>> fs.write_file("/real.txt", b"data")
+>>> fs.symlink("/real.txt", "/link.txt")
+>>> fs.read_file("/link.txt")
+b'data'
+```
 
 ### `chmod`
 
@@ -1479,15 +1538,18 @@ FileSystem.chmod(path: str, mode: int) -> None
 
 Change file permissions.
 
-Args:
-    path: Absolute path.
-    mode: Octal permission bits (e.g. ``0o755``).
+**Parameters:**
 
-Example::
+- **`path`** — Absolute path.
+- **`mode`** — Octal permission bits (e.g. ``0o755``).
 
-    >>> fs = FileSystem()
-    >>> fs.write_file("/script.sh", b"#!/bin/bash")
-    >>> fs.chmod("/script.sh", 0o755)
+Example:
+
+```python
+>>> fs = FileSystem()
+>>> fs.write_file("/script.sh", b"#!/bin/bash")
+>>> fs.chmod("/script.sh", 0o755)
+```
 
 ### `read_link`
 
@@ -1497,28 +1559,32 @@ FileSystem.read_link(path: str) -> str
 
 Read the target of a symbolic link.
 
-Example::
+Example:
 
-    >>> fs = FileSystem()
-    >>> fs.write_file("/target.txt", b"data")
-    >>> fs.symlink("/target.txt", "/link.txt")
-    >>> fs.read_link("/link.txt")
-    '/target.txt'
+```python
+>>> fs = FileSystem()
+>>> fs.write_file("/target.txt", b"data")
+>>> fs.symlink("/target.txt", "/link.txt")
+>>> fs.read_link("/link.txt")
+'/target.txt'
+```
 
 ## ExecResult
 
 Result from executing bash commands.
 
-Example::
+Example:
 
-    >>> bash = Bash()
-    >>> result = bash.execute_sync("echo hello")
-    >>> result.success
-    True
-    >>> result.stdout
-    'hello\n'
-    >>> result.exit_code
-    0
+```python
+>>> bash = Bash()
+>>> result = bash.execute_sync("echo hello")
+>>> result.success
+True
+>>> result.stdout
+'hello\n'
+>>> result.exit_code
+0
+```
 
 ### Fields
 
@@ -1536,19 +1602,19 @@ ExecResult.to_dict() -> dict[str, Any]
 
 Convert result to a plain dictionary.
 
-Returns:
-    Dict with ``stdout``, ``stderr``, ``exit_code``, ``error``,
-    ``stdout_truncated``, ``stderr_truncated``, ``final_env``.
+**Returns:** Dict with ``stdout``, ``stderr``, ``exit_code``, ``error``, ``stdout_truncated``, ``stderr_truncated``, ``final_env``.
 
-Example::
+Example:
 
-    >>> bash = Bash()
-    >>> result = bash.execute_sync("echo hi")
-    >>> d = result.to_dict()
-    >>> d["stdout"]
-    'hi\n'
-    >>> d["exit_code"]
-    0
+```python
+>>> bash = Bash()
+>>> result = bash.execute_sync("echo hi")
+>>> d = result.to_dict()
+>>> d["stdout"]
+'hi\n'
+>>> d["exit_code"]
+0
+```
 
 ## ShellState
 
@@ -1578,22 +1644,6 @@ clears them before running a new command.
 
 Invocation context for a custom builtin callback.
 
-Attributes:
-    name: Builtin command name.
-    argv: Raw argv tokens after shell parsing, excluding the command name.
-    stdin: Pipeline input from the previous command, if any.
-    env: Environment variables visible to the builtin.
-    cwd: Current working directory at invocation time.
-    fs: Live handle to the interpreter's virtual filesystem. Reads see
-        files created by earlier commands and writes are visible to later
-        ones. Same API as ``Bash.fs()`` — e.g. ``ctx.fs.read_file(path)``
-        returns ``bytes``. Operates directly on the interpreter's VFS, so
-        it is safe to use from inside the callback. Ops are synchronous and,
-        while a runtime is active, may run off-thread (relatively expensive
-        per call), so batch filesystem work rather than looping over many
-        tiny ops. May be retained past the callback: a stashed handle keeps
-        the VFS (and its runtime) alive even after the ``Bash`` is dropped.
-
 ### Fields
 
 - **`name`** — `str`
@@ -1606,11 +1656,6 @@ Attributes:
 ## BuiltinResult
 
 Shell-facing result for a custom builtin callback.
-
-Attributes:
-    stdout: Text written to stdout.
-    stderr: Text written to stderr.
-    exit_code: Shell exit status.
 
 ### Fields
 
@@ -1628,14 +1673,16 @@ BuiltinResult(stdout: str = '', stderr: str = '', exit_code: int = 0) -> None
 
 Exception raised when a bash command exits with non-zero status.
 
-Example::
+Example:
 
-    >>> bash = Bash()
-    >>> try:
-    ...     bash.execute_sync_or_throw("exit 42")
-    ... except BashError as e:
-    ...     print(e.exit_code)
-    42
+```python
+>>> bash = Bash()
+>>> try:
+...     bash.execute_sync_or_throw("exit 42")
+... except BashError as e:
+...     print(e.exit_code)
+42
+```
 
 ### Fields
 
@@ -1651,14 +1698,15 @@ create_langchain_tool_spec() -> dict[str, Any]
 
 Create a LangChain-compatible tool specification.
 
-Returns:
-    Dict with name, description, and args_schema.
+**Returns:** Dict with name, description, and args_schema.
 
-Example::
+Example:
 
-    >>> spec = create_langchain_tool_spec()
-    >>> spec["name"]
-    'bash'
+```python
+>>> spec = create_langchain_tool_spec()
+>>> spec["name"]
+'bash'
+```
 
 ## get_version()
 
@@ -1668,11 +1716,13 @@ get_version() -> str
 
 Get the bashkit version string.
 
-Example::
+Example:
 
-    >>> version = get_version()
-    >>> isinstance(version, str)
-    True
+```python
+>>> version = get_version()
+>>> isinstance(version, str)
+True
+```
 
 ---
 
@@ -1702,35 +1752,24 @@ bashkit.langchain.create_bash_tool(username: str | None = None, hostname: str | 
 
 Create a LangChain-compatible Bashkit tool.
 
-Args:
-    username: Custom username for sandbox
-    hostname: Custom hostname for sandbox
-    max_commands: Max commands to execute
-    max_loop_iterations: Max loop iterations
-    timeout_seconds: Execution timeout in seconds. When set, commands
-        that exceed this duration are aborted with exit code 124.
-    files: Static VFS file mounts keyed by sandbox path.
-    mounts: Real host directory mounts exposed inside the sandbox.
-        Mounts are read-only by default; pass ``{"writable": True}``
-        on a mount config to allow writes.
-    allowed_mount_paths: Host path prefixes allowed for real filesystem
-        mounts. Required when mounting sensitive host locations such as
-        paths under a user home directory.
-    readonly_filesystem: Deny all filesystem mutations after configured
-        files and mounts are applied.
-    max_output_length: Maximum number of characters returned to the
-        LangChain agent from one bash tool call before truncation.
+**Parameters:**
 
-Returns:
-    BashkitTool instance for use with LangChain agents
+- **`username`** — Custom username for sandbox
+- **`hostname`** — Custom hostname for sandbox
+- **`max_commands`** — Max commands to execute
+- **`max_loop_iterations`** — Max loop iterations
+- **`timeout_seconds`** — Execution timeout in seconds. When set, commands that exceed this duration are aborted with exit code 124.
+- **`files`** — Static VFS file mounts keyed by sandbox path.
+- **`mounts`** — Real host directory mounts exposed inside the sandbox. Mounts are read-only by default; pass ``{"writable": True}`` on a mount config to allow writes.
+- **`allowed_mount_paths`** — Host path prefixes allowed for real filesystem mounts. Required when mounting sensitive host locations such as paths under a user home directory.
+- **`readonly_filesystem`** — Deny all filesystem mutations after configured files and mounts are applied.
+- **`max_output_length`** — Maximum number of characters returned to the LangChain agent from one bash tool call before truncation.
 
-Raises:
-    ImportError: If langchain-core is not installed
+**Returns:** BashkitTool instance for use with LangChain agents
 
-Example:
-    >>> from bashkit.langchain import create_bash_tool
-    >>> tool = create_bash_tool(timeout_seconds=30)
-    >>> result = tool.invoke({"commands": "ls -la"})
+**Raises:**
+
+- **`ImportError`** — If langchain-core is not installed
 
 ### `create_scripted_tool`
 
@@ -1740,23 +1779,15 @@ bashkit.langchain.create_scripted_tool(scripted_tool: NativeScriptedTool) -> Scr
 
 Create a LangChain-compatible tool from a configured ScriptedTool.
 
-Args:
-    scripted_tool: A ScriptedTool with registered tool callbacks
+**Parameters:**
 
-Returns:
-    ScriptedToolLangChain instance for use with LangChain agents
+- **`scripted_tool`** — A ScriptedTool with registered tool callbacks
 
-Raises:
-    ImportError: If langchain-core is not installed
+**Returns:** ScriptedToolLangChain instance for use with LangChain agents
 
-Example:
-    >>> from bashkit import ScriptedTool
-    >>> from bashkit.langchain import create_scripted_tool
-    >>>
-    >>> st = ScriptedTool("api")
-    >>> st.add_tool("get_data", "Fetch data", callback=my_fn)
-    >>> tool = create_scripted_tool(st)
-    >>> # Use with: create_react_agent(model, [tool])
+**Raises:**
+
+- **`ImportError`** — If langchain-core is not installed
 
 ## `bashkit.pydantic_ai`
 
@@ -1770,25 +1801,19 @@ bashkit.pydantic_ai.create_bash_tool(username: str | None = None, hostname: str 
 
 Create a PydanticAI Tool wrapping Bashkit.
 
-Args:
-    username: Custom username for sandbox
-    hostname: Custom hostname for sandbox
-    max_commands: Max commands to execute
-    max_loop_iterations: Max loop iterations
-    timeout_seconds: Execution timeout in seconds. When set, commands
-        that exceed this duration are aborted with exit code 124.
+**Parameters:**
 
-Returns:
-    Tool for use with ``Agent(tools=[...])``
+- **`username`** — Custom username for sandbox
+- **`hostname`** — Custom hostname for sandbox
+- **`max_commands`** — Max commands to execute
+- **`max_loop_iterations`** — Max loop iterations
+- **`timeout_seconds`** — Execution timeout in seconds. When set, commands that exceed this duration are aborted with exit code 124.
 
-Raises:
-    ImportError: If pydantic-ai is not installed
+**Returns:** Tool for use with ``Agent(tools=[...])``
 
-Example:
-    >>> from bashkit.pydantic_ai import create_bash_tool
-    >>> tool = create_bash_tool(timeout_seconds=30)
-    >>> from pydantic_ai import Agent
-    >>> agent = Agent('anthropic:claude-sonnet-4-20250514', tools=[tool])
+**Raises:**
+
+- **`ImportError`** — If pydantic-ai is not installed
 
 ## `bashkit.deepagents`
 
