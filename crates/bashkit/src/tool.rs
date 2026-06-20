@@ -547,6 +547,11 @@ pub trait Tool: Send + Sync {
 // BashTool - Implementation
 // ============================================================================
 
+/// One configuration step applied to a fresh [`BashBuilder`](crate::BashBuilder)
+/// each time the tool creates a shell. `Fn` (not `FnOnce`) and `Arc`-wrapped so
+/// it can run on every `create_bash` call and the tool stays `Clone`.
+type ToolConfigStep = Arc<dyn Fn(crate::BashBuilder) -> crate::BashBuilder + Send + Sync>;
+
 /// Builder for configuring BashTool
 #[derive(Default)]
 pub struct BashToolBuilder {
@@ -564,6 +569,11 @@ pub struct BashToolBuilder {
     env_vars: Vec<(String, String)>,
     /// Custom builtins (name, implementation). Arc enables reuse across create_bash calls.
     builtins: Vec<(String, Arc<dyn Builtin>)>,
+    /// Extra `BashBuilder` configuration applied per shell via [`Self::configure`].
+    /// The convenience setters above cover the common knobs and feed the help /
+    /// system-prompt text; `configure` is the thin-adapter escape hatch for the
+    /// rest of the `BashBuilder` surface (network, mounts, hooks, git/ssh, …).
+    config: Vec<ToolConfigStep>,
 }
 
 impl BashToolBuilder {
@@ -578,6 +588,27 @@ impl BashToolBuilder {
     /// Set locale for descriptions, prompts, help, and user-facing errors.
     pub fn locale(mut self, locale: &str) -> Self {
         self.locale = locale.to_string();
+        self
+    }
+
+    /// Configure the underlying [`BashBuilder`](crate::BashBuilder) directly.
+    ///
+    /// This is the escape hatch that makes `BashToolBuilder` a thin adapter:
+    /// any `BashBuilder` capability not surfaced by a convenience method
+    /// (network allowlist, mounts, hooks, git/ssh config, …) is reachable here.
+    /// The closure runs on a fresh builder each time the tool creates a shell,
+    /// after the convenience setters above, so it can extend or override them.
+    ///
+    /// Note: `help()` / `system_prompt()` text is generated from the values set
+    /// via the convenience setters (`username`, `hostname`, `limits`, `cwd`,
+    /// `env`, custom builtins), **not** from inside this closure. Changes made
+    /// only here run for real but are not reflected in the documentation text —
+    /// use the convenience setters for any value that should be documented.
+    pub fn configure<F>(mut self, f: F) -> Self
+    where
+        F: Fn(crate::BashBuilder) -> crate::BashBuilder + Send + Sync + 'static,
+    {
+        self.config.push(Arc::new(f));
         self
     }
 
@@ -738,6 +769,7 @@ impl BashToolBuilder {
             cwd: self.cwd.clone(),
             env_vars: self.env_vars.clone(),
             builtins: self.builtins.clone(),
+            config: self.config.clone(),
             builtin_names,
             builtin_hints,
         }
@@ -793,6 +825,8 @@ pub struct BashTool {
     cwd: Option<PathBuf>,
     env_vars: Vec<(String, String)>,
     builtins: Vec<(String, Arc<dyn Builtin>)>,
+    /// Extra `BashBuilder` configuration applied per execution (via `configure`).
+    config: Vec<ToolConfigStep>,
     /// Names of custom builtins (for documentation)
     builtin_names: Vec<String>,
     /// LLM hints from registered builtins
@@ -805,7 +839,10 @@ impl BashTool {
         BashToolBuilder::new()
     }
 
-    /// Create a Bash instance with configured settings
+    /// Create a Bash instance with configured settings.
+    ///
+    /// Each configured step runs against a fresh `BashBuilder`, so the tool can
+    /// build an isolated shell per execution from cloneable configuration.
     fn create_bash(&self) -> Bash {
         let mut builder = Bash::builder();
 
@@ -827,6 +864,11 @@ impl BashTool {
         // Clone Arc builtins so they survive across multiple create_bash calls
         for (name, builtin) in &self.builtins {
             builder = builder.builtin(name.clone(), Box::new(Arc::clone(builtin)));
+        }
+        // Thin-adapter escape hatch: apply any extra BashBuilder configuration
+        // last so it can extend or override the convenience settings above.
+        for step in &self.config {
+            builder = step(builder);
         }
 
         builder.build()
@@ -967,29 +1009,11 @@ impl Tool for BashTool {
     }
 
     fn input_schema(&self) -> serde_json::Value {
-        BashToolBuilder {
-            locale: self.locale.clone(),
-            username: self.username.clone(),
-            hostname: self.hostname.clone(),
-            limits: self.limits.clone(),
-            cwd: self.cwd.clone(),
-            env_vars: self.env_vars.clone(),
-            builtins: self.builtins.clone(),
-        }
-        .build_input_schema()
+        tool_request_schema()
     }
 
     fn output_schema(&self) -> serde_json::Value {
-        BashToolBuilder {
-            locale: self.locale.clone(),
-            username: self.username.clone(),
-            hostname: self.hostname.clone(),
-            limits: self.limits.clone(),
-            cwd: self.cwd.clone(),
-            env_vars: self.env_vars.clone(),
-            builtins: self.builtins.clone(),
-        }
-        .build_output_schema()
+        tool_response_schema()
     }
 
     fn version(&self) -> &str {
@@ -1543,6 +1567,25 @@ mod tests {
         assert_eq!(output.result["stdout"], "hello\n");
         assert_eq!(output.metadata.extra["exit_code"], 0);
         assert!(output.metadata.duration >= Duration::from_millis(0));
+    }
+
+    #[tokio::test]
+    async fn test_configure_applies_to_underlying_bash_builder() {
+        // The configure escape hatch reaches BashBuilder directly, and runs
+        // after the convenience setters so it can override them.
+        let tool = BashTool::builder()
+            .env("FROM_CONVENIENCE", "a")
+            .configure(|b| b.env("FROM_CONFIGURE", "b").username("via_configure"))
+            .build();
+        let output = tool
+            .execution(
+                serde_json::json!({"commands": "echo $FROM_CONVENIENCE $FROM_CONFIGURE $USER"}),
+            )
+            .unwrap_or_else(|err| panic!("execution should be created: {err}"))
+            .execute()
+            .await
+            .unwrap_or_else(|err| panic!("execution should succeed: {err}"));
+        assert_eq!(output.result["stdout"], "a b via_configure\n");
     }
 
     #[tokio::test]
