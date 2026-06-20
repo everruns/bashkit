@@ -41,6 +41,8 @@ const nextRef = idx >= 0 && idx < available.length - 1 ? available[idx + 1] : nu
   editUrl={null}
   prevLink={prevRef ? { href: `/api/${prevRef.slug}`, title: prevRef.title } : null}
   nextLink={nextRef ? { href: `/api/${nextRef.slug}`, title: nextRef.title } : null}
+  wide
+  headings={headings}
 >
   <Content />
 </DocsLayout>
