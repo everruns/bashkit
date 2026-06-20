@@ -38,6 +38,10 @@ export const GET: APIRoute = () => {
         "",
       ];
     }),
+    "---",
+    "",
+    "For a curated, machine-readable index of the whole site, see [llms.txt](/llms.txt) (full text: [llms-full.txt](/llms-full.txt)).",
+    "",
   ].join("\n");
 
   return new Response(markdown, {

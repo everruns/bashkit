@@ -33,6 +33,8 @@ export const GET: APIRoute = () => {
     "## Navigation",
     "",
     ...homeNavigation.map((item) => `- [${item.label}](${item.href}) - ${item.detail}`),
+    "- [llms.txt](/llms.txt) - Curated, machine-readable index of this site for coding agents.",
+    "- [llms-full.txt](/llms-full.txt) - Every guide inlined into one document.",
     "",
     "## Quick starts",
     "",
