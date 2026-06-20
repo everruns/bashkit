@@ -71,8 +71,9 @@ function assertLinksToLlms(relPath) {
   if (!existsSync(filePath)) {
     throw new Error(`Missing Markdown route for llms.txt back-link check: ${relPath}`);
   }
-  if (!readFileSync(filePath, "utf8").includes("/llms.txt")) {
-    throw new Error(`${relPath} does not link back to /llms.txt`);
+  // Require an actual Markdown link target, not just a mention of the path.
+  if (!readFileSync(filePath, "utf8").includes("](/llms.txt)")) {
+    throw new Error(`${relPath} does not contain a Markdown link to /llms.txt`);
   }
 }
 
