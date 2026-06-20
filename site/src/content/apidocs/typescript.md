@@ -1027,74 +1027,100 @@ Options for creating a Bash or BashTool instance.
 
 ### Fields
 
-- **`allowedMountPaths?`** — `string[]` Allowlist of host path prefixes permitted for real filesystem mounts.
+- **`allowedMountPaths?`** — `string[]`
 
-Required for `mounts` and runtime `mount()` APIs. Mount targets must
-resolve under one of these prefixes; otherwise the call is rejected.
-- **`customBuiltins?`** — `Record<string, BuiltinCallback>` Custom JS callbacks registered as bash builtins.
+  Allowlist of host path prefixes permitted for real filesystem mounts.
 
-Each entry becomes a bash command that shares the instance's VFS — files
-created by the callback persist across `execute()` calls. Callbacks can be
-sync (`string` return) or async (`Promise<string>`); exceptions surface as
-stderr with exit code 1.
+  Required for `mounts` and runtime `mount()` APIs. Mount targets must
+  resolve under one of these prefixes; otherwise the call is rejected.
+- **`customBuiltins?`** — `Record<string, BuiltinCallback>`
 
-Equivalent to calling `addBuiltin(name, cb)` for each entry. Survives
-`reset()`; not preserved through `snapshot()`/`restoreSnapshot()` — pass
-the option again after restoring.
+  Custom JS callbacks registered as bash builtins.
 
-Override precedence: shell function > POSIX special builtin > custom
-builtin > baked-in builtin > PATH.
-- **`cwd?`** — `string` Initial working directory for the shell.
+  Each entry becomes a bash command that shares the instance's VFS — files
+  created by the callback persist across `execute()` calls. Callbacks can be
+  sync (`string` return) or async (`Promise<string>`); exceptions surface as
+  stderr with exit code 1.
 
-Sets the starting `cwd` directly instead of running a leading
-`cd "${cwd}"` command, avoiding the parse/exec overhead.
-- **`env?`** — `Record<string, string>` Initial environment variables, applied before execution.
+  Equivalent to calling `addBuiltin(name, cb)` for each entry. Survives
+  `reset()`; not preserved through `snapshot()`/`restoreSnapshot()` — pass
+  the option again after restoring.
 
-Scripts see these immediately without an `export` prelude. Keys are
-variable names, values are their string values.
-- **`externalFunctions?`** — `string[]` Names of external functions callable from embedded Python code.
+  Override precedence: shell function > POSIX special builtin > custom
+  builtin > baked-in builtin > PATH.
+- **`cwd?`** — `string`
 
-These function names become available as Python builtins within
-the embedded interpreter. When called, they invoke the external handler.
-- **`files?`** — `Record<string, FileValue>` Files to mount in the virtual filesystem.
-Keys are absolute paths, values are content strings or lazy providers.
+  Initial working directory for the shell.
 
-String values are mounted immediately. Function values are called on
-first read and the result is cached.
+  Sets the starting `cwd` directly instead of running a leading
+  `cd "${cwd}"` command, avoiding the parse/exec overhead.
+- **`env?`** — `Record<string, string>`
+
+  Initial environment variables, applied before execution.
+
+  Scripts see these immediately without an `export` prelude. Keys are
+  variable names, values are their string values.
+- **`externalFunctions?`** — `string[]`
+
+  Names of external functions callable from embedded Python code.
+
+  These function names become available as Python builtins within
+  the embedded interpreter. When called, they invoke the external handler.
+- **`files?`** — `Record<string, FileValue>`
+
+  Files to mount in the virtual filesystem.
+  Keys are absolute paths, values are content strings or lazy providers.
+
+  String values are mounted immediately. Function values are called on
+  first read and the result is cached.
 - **`hostname?`** — `string`
 - **`maxCommands?`** — `number`
-- **`maxInputBytes?`** — `number` Maximum script input size in UTF-8 bytes.
+- **`maxInputBytes?`** — `number`
 
-Async execute validates this before entering the per-instance queue so
-oversized calls cannot wait while retaining large command strings.
+  Maximum script input size in UTF-8 bytes.
+
+  Async execute validates this before entering the per-instance queue so
+  oversized calls cannot wait while retaining large command strings.
 - **`maxLoopIterations?`** — `number`
-- **`maxMemory?`** — `number` Maximum interpreter memory in bytes (variables, arrays, functions).
+- **`maxMemory?`** — `number`
 
-Caps the total byte budget for variable storage and function bodies.
-Prevents OOM from untrusted input such as exponential string doubling.
+  Maximum interpreter memory in bytes (variables, arrays, functions).
+
+  Caps the total byte budget for variable storage and function bodies.
+  Prevents OOM from untrusted input such as exponential string doubling.
 - **`maxTotalLoopIterations?`** — `number`
-- **`mounts?`** — `({ path: string; root: string; writable?: boolean })[]` Real filesystem mounts. Each mount maps a host directory into the VFS.
-- **`network?`** — `NetworkOptions` Outbound network configuration. When set, enables `curl`/`wget`
-restricted to the configured allowlist, with optional transparent
-credential injection. Omitted = network disabled (no `curl`/`wget`).
+- **`mounts?`** — `({ path: string; root: string; writable?: boolean })[]`
 
-Must specify either `allow` (list of URL patterns) or `allowAll: true`,
-not both. `blockPrivateIps` defaults to `true`.
-- **`python?`** — `boolean` Enable embedded Python execution (`python`/`python3` builtins).
+  Real filesystem mounts. Each mount maps a host directory into the VFS.
+- **`network?`** — `NetworkOptions`
 
-When true, bash scripts can use `python -c '...'` or `python3 script.py`
-to run Python code within the sandbox.
-- **`sqlite?`** — `boolean` Enable the embedded SQLite builtin (`sqlite`/`sqlite3`).
+  Outbound network configuration. When set, enables `curl`/`wget`
+  restricted to the configured allowlist, with optional transparent
+  credential injection. Omitted = network disabled (no `curl`/`wget`).
 
-Backed by Turso. When `true`, the binding both registers the builtin
-and injects `BASHKIT_ALLOW_INPROCESS_SQLITE=1` so the runtime gate is
-satisfied. Defaults to `false`. Default `SqliteLimits` apply: 4 MiB
-script cap, 256 MiB DB cap, 30 s wall-clock budget,
-resource-affecting PRAGMAs and `ATTACH`/`DETACH` rejected.
-- **`timeoutMs?`** — `number` Execution timeout in milliseconds.
+  Must specify either `allow` (list of URL patterns) or `allowAll: true`,
+  not both. `blockPrivateIps` defaults to `true`.
+- **`python?`** — `boolean`
 
-When set, commands that exceed this duration are aborted with
-exit code 124 (matching the bash `timeout` convention).
+  Enable embedded Python execution (`python`/`python3` builtins).
+
+  When true, bash scripts can use `python -c '...'` or `python3 script.py`
+  to run Python code within the sandbox.
+- **`sqlite?`** — `boolean`
+
+  Enable the embedded SQLite builtin (`sqlite`/`sqlite3`).
+
+  Backed by Turso. When `true`, the binding both registers the builtin
+  and injects `BASHKIT_ALLOW_INPROCESS_SQLITE=1` so the runtime gate is
+  satisfied. Defaults to `false`. Default `SqliteLimits` apply: 4 MiB
+  script cap, 256 MiB DB cap, 30 s wall-clock budget,
+  resource-affecting PRAGMAs and `ATTACH`/`DETACH` rejected.
+- **`timeoutMs?`** — `number`
+
+  Execution timeout in milliseconds.
+
+  When set, commands that exceed this duration are aborted with
+  exit code 124 (matching the bash `timeout` convention).
 - **`username?`** — `string`
 
 ## BuiltinContext
@@ -1108,15 +1134,27 @@ virtual filesystem.
 
 ### Fields
 
-- **`argv`** — `string[]` Arguments (not including the command name).
-- **`cwd`** — `string` Current working directory.
-- **`env`** — `Record<string, string>` Environment variables visible at the call site.
-- **`fs`** — `FileSystem` Live handle to the interpreter's virtual filesystem — the same VFS the
-executing script sees. Reads observe earlier script writes and writes
-are visible to subsequent commands. Inherits mounts and read-only
-configuration.
-- **`name`** — `string` The command name as invoked.
-- **`stdin`** — `null | string` Piped input, or `null` if there is no pipe.
+- **`argv`** — `string[]`
+
+  Arguments (not including the command name).
+- **`cwd`** — `string`
+
+  Current working directory.
+- **`env`** — `Record<string, string>`
+
+  Environment variables visible at the call site.
+- **`fs`** — `FileSystem`
+
+  Live handle to the interpreter's virtual filesystem — the same VFS the
+  executing script sees. Reads observe earlier script writes and writes
+  are visible to subsequent commands. Inherits mounts and read-only
+  configuration.
+- **`name`** — `string`
+
+  The command name as invoked.
+- **`stdin`** — `null | string`
+
+  Piped input, or `null` if there is no pipe.
 
 ## CredentialHeader
 
@@ -1140,18 +1178,22 @@ Result from executing bash commands.
 - **`stderrTruncated`** — `boolean`
 - **`stdout`** — `string`
 - **`stdoutTruncated`** — `boolean`
-- **`success`** — `boolean` True if exit_code is 0.
+- **`success`** — `boolean`
+
+  True if exit_code is 0.
 
 ## ExecuteOptions
 
 ### Fields
 
-- **`onOutput?`** — `OnOutput` Live chunk callback. Must be synchronous.
+- **`onOutput?`** — `OnOutput`
 
-Limitation: do not call back into the same `Bash` / `BashTool` instance
-from this handler (`execute*`, `readFile`, `fs()`, etc.). The current
-binding rejects same-instance re-entry to avoid deadlocks and runtime
-panics.
+  Live chunk callback. Must be synchronous.
+
+  Limitation: do not call back into the same `Bash` / `BashTool` instance
+  from this handler (`execute*`, `readFile`, `fs()`, etc.). The current
+  binding rejects same-instance re-entry to avoid deadlocks and runtime
+  panics.
 - **`signal?`** — `AbortSignal`
 
 ## FileSystemRealOptions
@@ -1173,12 +1215,24 @@ Scripts never see the secret — it is attached on the wire only.
 
 ### Fields
 
-- **`headers?`** — `CredentialHeader[]` Header list (for `kind: "headers"`).
-- **`kind`** — `string` One of `"bearer"`, `"header"`, `"headers"`.
-- **`name?`** — `string` Header name (for `kind: "header"`).
-- **`pattern`** — `string` URL pattern the credential applies to (e.g. `https://api.example.com/**`).
-- **`token?`** — `string` Bearer token (for `kind: "bearer"`).
-- **`value?`** — `string` Header value (for `kind: "header"`).
+- **`headers?`** — `CredentialHeader[]`
+
+  Header list (for `kind: "headers"`).
+- **`kind`** — `string`
+
+  One of `"bearer"`, `"header"`, `"headers"`.
+- **`name?`** — `string`
+
+  Header name (for `kind: "header"`).
+- **`pattern`** — `string`
+
+  URL pattern the credential applies to (e.g. `https://api.example.com/**`).
+- **`token?`** — `string`
+
+  Bearer token (for `kind: "bearer"`).
+- **`value?`** — `string`
+
+  Header value (for `kind: "header"`).
 
 ## NetworkCredentialPlaceholder
 
@@ -1188,13 +1242,27 @@ placeholder value visible to scripts; outbound requests matching
 
 ### Fields
 
-- **`env`** — `string` Environment variable that receives the placeholder value.
-- **`headers?`** — `CredentialHeader[]` Header list (for `kind: "headers"`).
-- **`kind`** — `string` One of `"bearer"`, `"header"`, `"headers"`.
-- **`name?`** — `string` Header name (for `kind: "header"`).
-- **`pattern`** — `string` URL pattern the credential applies to.
-- **`token?`** — `string` Bearer token (for `kind: "bearer"`).
-- **`value?`** — `string` Header value (for `kind: "header"`).
+- **`env`** — `string`
+
+  Environment variable that receives the placeholder value.
+- **`headers?`** — `CredentialHeader[]`
+
+  Header list (for `kind: "headers"`).
+- **`kind`** — `string`
+
+  One of `"bearer"`, `"header"`, `"headers"`.
+- **`name?`** — `string`
+
+  Header name (for `kind: "header"`).
+- **`pattern`** — `string`
+
+  URL pattern the credential applies to.
+- **`token?`** — `string`
+
+  Bearer token (for `kind: "bearer"`).
+- **`value?`** — `string`
+
+  Header value (for `kind: "header"`).
 
 ## NetworkOptions
 
@@ -1205,11 +1273,21 @@ not both. `blockPrivateIps` defaults to `true`.
 
 ### Fields
 
-- **`allow?`** — `string[]` URL patterns permitted for outbound requests.
-- **`allowAll?`** — `boolean` Allow all outbound requests (mutually exclusive with `allow`).
-- **`blockPrivateIps?`** — `boolean` Block requests resolving to private/loopback IPs (default: true).
-- **`credentialPlaceholders?`** — `NetworkCredentialPlaceholder[]` Placeholder-mode credential injection (see type docs).
-- **`credentials?`** — `NetworkCredential[]` Credentials injected transparently into matching requests.
+- **`allow?`** — `string[]`
+
+  URL patterns permitted for outbound requests.
+- **`allowAll?`** — `boolean`
+
+  Allow all outbound requests (mutually exclusive with `allow`).
+- **`blockPrivateIps?`** — `boolean`
+
+  Block requests resolving to private/loopback IPs (default: true).
+- **`credentialPlaceholders?`** — `NetworkCredentialPlaceholder[]`
+
+  Placeholder-mode credential injection (see type docs).
+- **`credentials?`** — `NetworkCredential[]`
+
+  Credentials injected transparently into matching requests.
 
 ## OutputChunk
 
@@ -1237,15 +1315,31 @@ definitions (use `snapshot()` for full state capture/restore).
 
 ### Fields
 
-- **`aliases`** — `Record<string, string>` Shell aliases.
-- **`arrays`** — `Record<string, Record<string, string>>` Indexed arrays: name → { index (as string) → value }. Sparse indices
-are preserved, hence a map rather than a dense JS array.
-- **`assocArrays`** — `Record<string, Record<string, string>>` Associative arrays: name → { key → value }.
-- **`cwd`** — `string` Current working directory.
-- **`env`** — `Record<string, string>` Environment variables.
-- **`lastExitCode`** — `number` Exit code of the last executed command.
-- **`traps`** — `Record<string, string>` Trap handlers keyed by signal/condition name.
-- **`variables`** — `Record<string, string>` Shell variables (non-exported).
+- **`aliases`** — `Record<string, string>`
+
+  Shell aliases.
+- **`arrays`** — `Record<string, Record<string, string>>`
+
+  Indexed arrays: name → { index (as string) → value }. Sparse indices
+  are preserved, hence a map rather than a dense JS array.
+- **`assocArrays`** — `Record<string, Record<string, string>>`
+
+  Associative arrays: name → { key → value }.
+- **`cwd`** — `string`
+
+  Current working directory.
+- **`env`** — `Record<string, string>`
+
+  Environment variables.
+- **`lastExitCode`** — `number`
+
+  Exit code of the last executed command.
+- **`traps`** — `Record<string, string>`
+
+  Trap handlers keyed by signal/condition name.
+- **`variables`** — `Record<string, string>`
+
+  Shell variables (non-exported).
 
 ## SnapshotOptions
 
@@ -1253,10 +1347,12 @@ are preserved, hence a map rather than a dense JS array.
 
 - **`excludeFilesystem?`** — `boolean`
 - **`excludeFunctions?`** — `boolean`
-- **`hmacKey?`** — `Uint8Array<ArrayBufferLike>` Secret key used to authenticate snapshot bytes with HMAC-SHA256.
-Required for BashTool snapshots because tool snapshots may cross tenant
-or network trust boundaries. Recommended for any snapshot accepted from
-users, shared storage, or remote callers.
+- **`hmacKey?`** — `Uint8Array<ArrayBufferLike>`
+
+  Secret key used to authenticate snapshot bytes with HMAC-SHA256.
+  Required for BashTool snapshots because tool snapshots may cross tenant
+  or network trust boundaries. Recommended for any snapshot accepted from
+  users, shared storage, or remote callers.
 
 ## BuiltinCallback
 
@@ -1422,18 +1518,26 @@ Return value of `bashTool()`.
 
 ### Fields
 
-- **`bash`** — `BashTool` The underlying BashTool instance for direct access.
-- **`handler`** — `(toolUse: ToolUseBlock, options: HandlerOptions) => Promise<ToolResult>` Handler that executes a tool_use block and returns a tool_result.
+- **`bash`** — `BashTool`
 
-Pass an AbortSignal via the options parameter to cancel execution
-when the framework aborts the tool call:
+  The underlying BashTool instance for direct access.
+- **`handler`** — `(toolUse: ToolUseBlock, options: HandlerOptions) => Promise<ToolResult>`
 
-```typescript
-const controller = new AbortController();
-const result = await bash.handler(block, { signal: controller.signal });
-```
-- **`system`** — `string` System prompt describing bash capabilities and constraints.
-- **`tools`** — `AnthropicTool[]` Tool definitions for Anthropic's messages.create() API.
+  Handler that executes a tool_use block and returns a tool_result.
+
+  Pass an AbortSignal via the options parameter to cancel execution
+  when the framework aborts the tool call:
+
+  ```typescript
+  const controller = new AbortController();
+  const result = await bash.handler(block, { signal: controller.signal });
+  ```
+- **`system`** — `string`
+
+  System prompt describing bash capabilities and constraints.
+- **`tools`** — `AnthropicTool[]`
+
+  Tool definitions for Anthropic's messages.create() API.
 
 ### BashToolOptions
 
@@ -1441,85 +1545,115 @@ Options for configuring the bash tool adapter.
 
 ### Fields
 
-- **`allowedMountPaths?`** — `string[]` Allowlist of host path prefixes permitted for real filesystem mounts.
+- **`allowedMountPaths?`** — `string[]`
 
-Required for `mounts` and runtime `mount()` APIs. Mount targets must
-resolve under one of these prefixes; otherwise the call is rejected.
-- **`customBuiltins?`** — `Record<string, BuiltinCallback>` Custom JS callbacks registered as bash builtins.
+  Allowlist of host path prefixes permitted for real filesystem mounts.
 
-Each entry becomes a bash command that shares the instance's VFS — files
-created by the callback persist across `execute()` calls. Callbacks can be
-sync (`string` return) or async (`Promise<string>`); exceptions surface as
-stderr with exit code 1.
+  Required for `mounts` and runtime `mount()` APIs. Mount targets must
+  resolve under one of these prefixes; otherwise the call is rejected.
+- **`customBuiltins?`** — `Record<string, BuiltinCallback>`
 
-Equivalent to calling `addBuiltin(name, cb)` for each entry. Survives
-`reset()`; not preserved through `snapshot()`/`restoreSnapshot()` — pass
-the option again after restoring.
+  Custom JS callbacks registered as bash builtins.
 
-Override precedence: shell function > POSIX special builtin > custom
-builtin > baked-in builtin > PATH.
-- **`cwd?`** — `string` Initial working directory for the shell.
+  Each entry becomes a bash command that shares the instance's VFS — files
+  created by the callback persist across `execute()` calls. Callbacks can be
+  sync (`string` return) or async (`Promise<string>`); exceptions surface as
+  stderr with exit code 1.
 
-Sets the starting `cwd` directly instead of running a leading
-`cd "${cwd}"` command, avoiding the parse/exec overhead.
-- **`env?`** — `Record<string, string>` Initial environment variables, applied before execution.
+  Equivalent to calling `addBuiltin(name, cb)` for each entry. Survives
+  `reset()`; not preserved through `snapshot()`/`restoreSnapshot()` — pass
+  the option again after restoring.
 
-Scripts see these immediately without an `export` prelude. Keys are
-variable names, values are their string values.
-- **`externalFunctions?`** — `string[]` Names of external functions callable from embedded Python code.
+  Override precedence: shell function > POSIX special builtin > custom
+  builtin > baked-in builtin > PATH.
+- **`cwd?`** — `string`
 
-These function names become available as Python builtins within
-the embedded interpreter. When called, they invoke the external handler.
-- **`files?`** — `Record<string, string>` Pre-populate VFS files. Keys are absolute paths, values are file contents.
+  Initial working directory for the shell.
+
+  Sets the starting `cwd` directly instead of running a leading
+  `cd "${cwd}"` command, avoiding the parse/exec overhead.
+- **`env?`** — `Record<string, string>`
+
+  Initial environment variables, applied before execution.
+
+  Scripts see these immediately without an `export` prelude. Keys are
+  variable names, values are their string values.
+- **`externalFunctions?`** — `string[]`
+
+  Names of external functions callable from embedded Python code.
+
+  These function names become available as Python builtins within
+  the embedded interpreter. When called, they invoke the external handler.
+- **`files?`** — `Record<string, string>`
+
+  Pre-populate VFS files. Keys are absolute paths, values are file contents.
 - **`hostname?`** — `string`
 - **`maxCommands?`** — `number`
-- **`maxInputBytes?`** — `number` Maximum script input size in UTF-8 bytes.
+- **`maxInputBytes?`** — `number`
 
-Async execute validates this before entering the per-instance queue so
-oversized calls cannot wait while retaining large command strings.
+  Maximum script input size in UTF-8 bytes.
+
+  Async execute validates this before entering the per-instance queue so
+  oversized calls cannot wait while retaining large command strings.
 - **`maxLoopIterations?`** — `number`
-- **`maxMemory?`** — `number` Maximum interpreter memory in bytes (variables, arrays, functions).
+- **`maxMemory?`** — `number`
 
-Caps the total byte budget for variable storage and function bodies.
-Prevents OOM from untrusted input such as exponential string doubling.
-- **`maxOutputLength?`** — `number` Maximum output length in characters (default: 100000).
+  Maximum interpreter memory in bytes (variables, arrays, functions).
 
-Output exceeding this limit is truncated with a `[truncated]` marker.
-Prevents context window flooding when scripts produce large output.
+  Caps the total byte budget for variable storage and function bodies.
+  Prevents OOM from untrusted input such as exponential string doubling.
+- **`maxOutputLength?`** — `number`
+
+  Maximum output length in characters (default: 100000).
+
+  Output exceeding this limit is truncated with a `[truncated]` marker.
+  Prevents context window flooding when scripts produce large output.
 - **`maxTotalLoopIterations?`** — `number`
-- **`mounts?`** — `({ path: string; root: string; writable?: boolean })[]` Real filesystem mounts. Each mount maps a host directory into the VFS.
-- **`network?`** — `NetworkOptions` Outbound network configuration. When set, enables `curl`/`wget`
-restricted to the configured allowlist, with optional transparent
-credential injection. Omitted = network disabled (no `curl`/`wget`).
+- **`mounts?`** — `({ path: string; root: string; writable?: boolean })[]`
 
-Must specify either `allow` (list of URL patterns) or `allowAll: true`,
-not both. `blockPrivateIps` defaults to `true`.
-- **`python?`** — `boolean` Enable embedded Python execution (`python`/`python3` builtins).
+  Real filesystem mounts. Each mount maps a host directory into the VFS.
+- **`network?`** — `NetworkOptions`
 
-When true, bash scripts can use `python -c '...'` or `python3 script.py`
-to run Python code within the sandbox.
-- **`sanitizeOutput?`** — `boolean` Wrap tool output in XML boundary markers (default: false).
+  Outbound network configuration. When set, enables `curl`/`wget`
+  restricted to the configured allowlist, with optional transparent
+  credential injection. Omitted = network disabled (no `curl`/`wget`).
 
-When enabled, output is wrapped in `<tool_output>...</tool_output>` tags
-to help LLMs distinguish tool output data from instructions, reducing
-prompt injection risk via tool output.
+  Must specify either `allow` (list of URL patterns) or `allowAll: true`,
+  not both. `blockPrivateIps` defaults to `true`.
+- **`python?`** — `boolean`
 
-**Security note:** This is a defense-in-depth measure. Tool output from
-untrusted sources (files, network) may contain text that attempts to
-manipulate LLM behavior. Boundary markers help but do not eliminate this risk.
-- **`sqlite?`** — `boolean` Enable the embedded SQLite builtin (`sqlite`/`sqlite3`).
+  Enable embedded Python execution (`python`/`python3` builtins).
 
-Backed by Turso. When `true`, the binding both registers the builtin
-and injects `BASHKIT_ALLOW_INPROCESS_SQLITE=1` so the runtime gate is
-satisfied. Defaults to `false`. Default `SqliteLimits` apply: 4 MiB
-script cap, 256 MiB DB cap, 30 s wall-clock budget,
-resource-affecting PRAGMAs and `ATTACH`/`DETACH` rejected.
-- **`timeoutMs?`** — `number` Execution timeout in milliseconds.
+  When true, bash scripts can use `python -c '...'` or `python3 script.py`
+  to run Python code within the sandbox.
+- **`sanitizeOutput?`** — `boolean`
 
-When set, this is passed to the underlying BashTool as `timeoutMs`.
-Commands exceeding this duration are aborted with exit code 124.
-Framework-level timeouts can be propagated here to ensure bashkit
-stops execution when the framework cancels a tool call.
+  Wrap tool output in XML boundary markers (default: false).
+
+  When enabled, output is wrapped in `<tool_output>...</tool_output>` tags
+  to help LLMs distinguish tool output data from instructions, reducing
+  prompt injection risk via tool output.
+
+  **Security note:** This is a defense-in-depth measure. Tool output from
+  untrusted sources (files, network) may contain text that attempts to
+  manipulate LLM behavior. Boundary markers help but do not eliminate this risk.
+- **`sqlite?`** — `boolean`
+
+  Enable the embedded SQLite builtin (`sqlite`/`sqlite3`).
+
+  Backed by Turso. When `true`, the binding both registers the builtin
+  and injects `BASHKIT_ALLOW_INPROCESS_SQLITE=1` so the runtime gate is
+  satisfied. Defaults to `false`. Default `SqliteLimits` apply: 4 MiB
+  script cap, 256 MiB DB cap, 30 s wall-clock budget,
+  resource-affecting PRAGMAs and `ATTACH`/`DETACH` rejected.
+- **`timeoutMs?`** — `number`
+
+  Execution timeout in milliseconds.
+
+  When set, this is passed to the underlying BashTool as `timeoutMs`.
+  Commands exceeding this duration are aborted with exit code 124.
+  Framework-level timeouts can be propagated here to ensure bashkit
+  stops execution when the framework cancels a tool call.
 - **`username?`** — `string`
 
 ### HandlerOptions
@@ -1528,7 +1662,9 @@ Options for handler invocation.
 
 ### Fields
 
-- **`signal?`** — `AbortSignal` AbortSignal to cancel execution when the framework aborts the tool call.
+- **`signal?`** — `AbortSignal`
+
+  AbortSignal to cancel execution when the framework aborts the tool call.
 
 ### ToolResult
 
@@ -1604,18 +1740,26 @@ Return value of `bashTool()`.
 
 ### Fields
 
-- **`bash`** — `BashTool` The underlying BashTool instance for direct access.
-- **`handler`** — `(toolCall: OpenAIToolCall, options: HandlerOptions) => Promise<ToolResult>` Handler that executes a tool_call and returns a tool message.
+- **`bash`** — `BashTool`
 
-Pass an AbortSignal via the options parameter to cancel execution
-when the framework aborts the tool call:
+  The underlying BashTool instance for direct access.
+- **`handler`** — `(toolCall: OpenAIToolCall, options: HandlerOptions) => Promise<ToolResult>`
 
-```typescript
-const controller = new AbortController();
-const result = await bash.handler(call, { signal: controller.signal });
-```
-- **`system`** — `string` System prompt describing bash capabilities and constraints.
-- **`tools`** — `OpenAITool[]` Tool definitions for OpenAI's chat.completions.create() API.
+  Handler that executes a tool_call and returns a tool message.
+
+  Pass an AbortSignal via the options parameter to cancel execution
+  when the framework aborts the tool call:
+
+  ```typescript
+  const controller = new AbortController();
+  const result = await bash.handler(call, { signal: controller.signal });
+  ```
+- **`system`** — `string`
+
+  System prompt describing bash capabilities and constraints.
+- **`tools`** — `OpenAITool[]`
+
+  Tool definitions for OpenAI's chat.completions.create() API.
 
 ### BashToolOptions
 
@@ -1623,81 +1767,111 @@ Options for configuring the bash tool adapter.
 
 ### Fields
 
-- **`allowedMountPaths?`** — `string[]` Allowlist of host path prefixes permitted for real filesystem mounts.
+- **`allowedMountPaths?`** — `string[]`
 
-Required for `mounts` and runtime `mount()` APIs. Mount targets must
-resolve under one of these prefixes; otherwise the call is rejected.
-- **`customBuiltins?`** — `Record<string, BuiltinCallback>` Custom JS callbacks registered as bash builtins.
+  Allowlist of host path prefixes permitted for real filesystem mounts.
 
-Each entry becomes a bash command that shares the instance's VFS — files
-created by the callback persist across `execute()` calls. Callbacks can be
-sync (`string` return) or async (`Promise<string>`); exceptions surface as
-stderr with exit code 1.
+  Required for `mounts` and runtime `mount()` APIs. Mount targets must
+  resolve under one of these prefixes; otherwise the call is rejected.
+- **`customBuiltins?`** — `Record<string, BuiltinCallback>`
 
-Equivalent to calling `addBuiltin(name, cb)` for each entry. Survives
-`reset()`; not preserved through `snapshot()`/`restoreSnapshot()` — pass
-the option again after restoring.
+  Custom JS callbacks registered as bash builtins.
 
-Override precedence: shell function > POSIX special builtin > custom
-builtin > baked-in builtin > PATH.
-- **`cwd?`** — `string` Initial working directory for the shell.
+  Each entry becomes a bash command that shares the instance's VFS — files
+  created by the callback persist across `execute()` calls. Callbacks can be
+  sync (`string` return) or async (`Promise<string>`); exceptions surface as
+  stderr with exit code 1.
 
-Sets the starting `cwd` directly instead of running a leading
-`cd "${cwd}"` command, avoiding the parse/exec overhead.
-- **`env?`** — `Record<string, string>` Initial environment variables, applied before execution.
+  Equivalent to calling `addBuiltin(name, cb)` for each entry. Survives
+  `reset()`; not preserved through `snapshot()`/`restoreSnapshot()` — pass
+  the option again after restoring.
 
-Scripts see these immediately without an `export` prelude. Keys are
-variable names, values are their string values.
-- **`externalFunctions?`** — `string[]` Names of external functions callable from embedded Python code.
+  Override precedence: shell function > POSIX special builtin > custom
+  builtin > baked-in builtin > PATH.
+- **`cwd?`** — `string`
 
-These function names become available as Python builtins within
-the embedded interpreter. When called, they invoke the external handler.
-- **`files?`** — `Record<string, string>` Pre-populate VFS files. Keys are absolute paths, values are file contents.
+  Initial working directory for the shell.
+
+  Sets the starting `cwd` directly instead of running a leading
+  `cd "${cwd}"` command, avoiding the parse/exec overhead.
+- **`env?`** — `Record<string, string>`
+
+  Initial environment variables, applied before execution.
+
+  Scripts see these immediately without an `export` prelude. Keys are
+  variable names, values are their string values.
+- **`externalFunctions?`** — `string[]`
+
+  Names of external functions callable from embedded Python code.
+
+  These function names become available as Python builtins within
+  the embedded interpreter. When called, they invoke the external handler.
+- **`files?`** — `Record<string, string>`
+
+  Pre-populate VFS files. Keys are absolute paths, values are file contents.
 - **`hostname?`** — `string`
 - **`maxCommands?`** — `number`
-- **`maxInputBytes?`** — `number` Maximum script input size in UTF-8 bytes.
+- **`maxInputBytes?`** — `number`
 
-Async execute validates this before entering the per-instance queue so
-oversized calls cannot wait while retaining large command strings.
+  Maximum script input size in UTF-8 bytes.
+
+  Async execute validates this before entering the per-instance queue so
+  oversized calls cannot wait while retaining large command strings.
 - **`maxLoopIterations?`** — `number`
-- **`maxMemory?`** — `number` Maximum interpreter memory in bytes (variables, arrays, functions).
+- **`maxMemory?`** — `number`
 
-Caps the total byte budget for variable storage and function bodies.
-Prevents OOM from untrusted input such as exponential string doubling.
-- **`maxOutputLength?`** — `number` Maximum output length in characters (default: 100000).
+  Maximum interpreter memory in bytes (variables, arrays, functions).
 
-Output exceeding this limit is truncated with a `[truncated]` marker.
-Prevents context window flooding when scripts produce large output.
+  Caps the total byte budget for variable storage and function bodies.
+  Prevents OOM from untrusted input such as exponential string doubling.
+- **`maxOutputLength?`** — `number`
+
+  Maximum output length in characters (default: 100000).
+
+  Output exceeding this limit is truncated with a `[truncated]` marker.
+  Prevents context window flooding when scripts produce large output.
 - **`maxTotalLoopIterations?`** — `number`
-- **`mounts?`** — `({ path: string; root: string; writable?: boolean })[]` Real filesystem mounts. Each mount maps a host directory into the VFS.
-- **`network?`** — `NetworkOptions` Outbound network configuration. When set, enables `curl`/`wget`
-restricted to the configured allowlist, with optional transparent
-credential injection. Omitted = network disabled (no `curl`/`wget`).
+- **`mounts?`** — `({ path: string; root: string; writable?: boolean })[]`
 
-Must specify either `allow` (list of URL patterns) or `allowAll: true`,
-not both. `blockPrivateIps` defaults to `true`.
-- **`python?`** — `boolean` Enable embedded Python execution (`python`/`python3` builtins).
+  Real filesystem mounts. Each mount maps a host directory into the VFS.
+- **`network?`** — `NetworkOptions`
 
-When true, bash scripts can use `python -c '...'` or `python3 script.py`
-to run Python code within the sandbox.
-- **`sanitizeOutput?`** — `boolean` Wrap tool output in XML boundary markers (default: false).
+  Outbound network configuration. When set, enables `curl`/`wget`
+  restricted to the configured allowlist, with optional transparent
+  credential injection. Omitted = network disabled (no `curl`/`wget`).
 
-When enabled, output is wrapped in `<tool_output>...</tool_output>` tags
-to help LLMs distinguish tool output data from instructions, reducing
-prompt injection risk via tool output.
-- **`sqlite?`** — `boolean` Enable the embedded SQLite builtin (`sqlite`/`sqlite3`).
+  Must specify either `allow` (list of URL patterns) or `allowAll: true`,
+  not both. `blockPrivateIps` defaults to `true`.
+- **`python?`** — `boolean`
 
-Backed by Turso. When `true`, the binding both registers the builtin
-and injects `BASHKIT_ALLOW_INPROCESS_SQLITE=1` so the runtime gate is
-satisfied. Defaults to `false`. Default `SqliteLimits` apply: 4 MiB
-script cap, 256 MiB DB cap, 30 s wall-clock budget,
-resource-affecting PRAGMAs and `ATTACH`/`DETACH` rejected.
-- **`timeoutMs?`** — `number` Execution timeout in milliseconds.
+  Enable embedded Python execution (`python`/`python3` builtins).
 
-When set, this is passed to the underlying BashTool as `timeoutMs`.
-Commands exceeding this duration are aborted with exit code 124.
-Framework-level timeouts can be propagated here to ensure bashkit
-stops execution when the framework cancels a tool call.
+  When true, bash scripts can use `python -c '...'` or `python3 script.py`
+  to run Python code within the sandbox.
+- **`sanitizeOutput?`** — `boolean`
+
+  Wrap tool output in XML boundary markers (default: false).
+
+  When enabled, output is wrapped in `<tool_output>...</tool_output>` tags
+  to help LLMs distinguish tool output data from instructions, reducing
+  prompt injection risk via tool output.
+- **`sqlite?`** — `boolean`
+
+  Enable the embedded SQLite builtin (`sqlite`/`sqlite3`).
+
+  Backed by Turso. When `true`, the binding both registers the builtin
+  and injects `BASHKIT_ALLOW_INPROCESS_SQLITE=1` so the runtime gate is
+  satisfied. Defaults to `false`. Default `SqliteLimits` apply: 4 MiB
+  script cap, 256 MiB DB cap, 30 s wall-clock budget,
+  resource-affecting PRAGMAs and `ATTACH`/`DETACH` rejected.
+- **`timeoutMs?`** — `number`
+
+  Execution timeout in milliseconds.
+
+  When set, this is passed to the underlying BashTool as `timeoutMs`.
+  Commands exceeding this duration are aborted with exit code 124.
+  Framework-level timeouts can be propagated here to ensure bashkit
+  stops execution when the framework cancels a tool call.
 - **`username?`** — `string`
 
 ### HandlerOptions
@@ -1706,7 +1880,9 @@ Options for handler invocation.
 
 ### Fields
 
-- **`signal?`** — `AbortSignal` AbortSignal to cancel execution when the framework aborts the tool call.
+- **`signal?`** — `AbortSignal`
+
+  AbortSignal to cancel execution when the framework aborts the tool call.
 
 ### ToolResult
 
@@ -1778,9 +1954,15 @@ Return value of `bashTool()`.
 
 ### Fields
 
-- **`bash`** — `BashTool` The underlying BashTool instance for direct access.
-- **`system`** — `string` System prompt describing bash capabilities and constraints.
-- **`tools`** — `Record<string, AiTool>` Tool definitions for Vercel AI SDK's generateText/streamText.
+- **`bash`** — `BashTool`
+
+  The underlying BashTool instance for direct access.
+- **`system`** — `string`
+
+  System prompt describing bash capabilities and constraints.
+- **`tools`** — `Record<string, AiTool>`
+
+  Tool definitions for Vercel AI SDK's generateText/streamText.
 
 ### BashToolOptions
 
@@ -1788,68 +1970,94 @@ Options for configuring the bash tool adapter.
 
 ### Fields
 
-- **`allowedMountPaths?`** — `string[]` Allowlist of host path prefixes permitted for real filesystem mounts.
+- **`allowedMountPaths?`** — `string[]`
 
-Required for `mounts` and runtime `mount()` APIs. Mount targets must
-resolve under one of these prefixes; otherwise the call is rejected.
-- **`customBuiltins?`** — `Record<string, BuiltinCallback>` Custom JS callbacks registered as bash builtins.
+  Allowlist of host path prefixes permitted for real filesystem mounts.
 
-Each entry becomes a bash command that shares the instance's VFS — files
-created by the callback persist across `execute()` calls. Callbacks can be
-sync (`string` return) or async (`Promise<string>`); exceptions surface as
-stderr with exit code 1.
+  Required for `mounts` and runtime `mount()` APIs. Mount targets must
+  resolve under one of these prefixes; otherwise the call is rejected.
+- **`customBuiltins?`** — `Record<string, BuiltinCallback>`
 
-Equivalent to calling `addBuiltin(name, cb)` for each entry. Survives
-`reset()`; not preserved through `snapshot()`/`restoreSnapshot()` — pass
-the option again after restoring.
+  Custom JS callbacks registered as bash builtins.
 
-Override precedence: shell function > POSIX special builtin > custom
-builtin > baked-in builtin > PATH.
-- **`cwd?`** — `string` Initial working directory for the shell.
+  Each entry becomes a bash command that shares the instance's VFS — files
+  created by the callback persist across `execute()` calls. Callbacks can be
+  sync (`string` return) or async (`Promise<string>`); exceptions surface as
+  stderr with exit code 1.
 
-Sets the starting `cwd` directly instead of running a leading
-`cd "${cwd}"` command, avoiding the parse/exec overhead.
-- **`env?`** — `Record<string, string>` Initial environment variables, applied before execution.
+  Equivalent to calling `addBuiltin(name, cb)` for each entry. Survives
+  `reset()`; not preserved through `snapshot()`/`restoreSnapshot()` — pass
+  the option again after restoring.
 
-Scripts see these immediately without an `export` prelude. Keys are
-variable names, values are their string values.
-- **`externalFunctions?`** — `string[]` Names of external functions callable from embedded Python code.
+  Override precedence: shell function > POSIX special builtin > custom
+  builtin > baked-in builtin > PATH.
+- **`cwd?`** — `string`
 
-These function names become available as Python builtins within
-the embedded interpreter. When called, they invoke the external handler.
-- **`files?`** — `Record<string, string>` Pre-populate VFS files. Keys are absolute paths, values are file contents.
+  Initial working directory for the shell.
+
+  Sets the starting `cwd` directly instead of running a leading
+  `cd "${cwd}"` command, avoiding the parse/exec overhead.
+- **`env?`** — `Record<string, string>`
+
+  Initial environment variables, applied before execution.
+
+  Scripts see these immediately without an `export` prelude. Keys are
+  variable names, values are their string values.
+- **`externalFunctions?`** — `string[]`
+
+  Names of external functions callable from embedded Python code.
+
+  These function names become available as Python builtins within
+  the embedded interpreter. When called, they invoke the external handler.
+- **`files?`** — `Record<string, string>`
+
+  Pre-populate VFS files. Keys are absolute paths, values are file contents.
 - **`hostname?`** — `string`
 - **`maxCommands?`** — `number`
-- **`maxInputBytes?`** — `number` Maximum script input size in UTF-8 bytes.
+- **`maxInputBytes?`** — `number`
 
-Async execute validates this before entering the per-instance queue so
-oversized calls cannot wait while retaining large command strings.
+  Maximum script input size in UTF-8 bytes.
+
+  Async execute validates this before entering the per-instance queue so
+  oversized calls cannot wait while retaining large command strings.
 - **`maxLoopIterations?`** — `number`
-- **`maxMemory?`** — `number` Maximum interpreter memory in bytes (variables, arrays, functions).
+- **`maxMemory?`** — `number`
 
-Caps the total byte budget for variable storage and function bodies.
-Prevents OOM from untrusted input such as exponential string doubling.
+  Maximum interpreter memory in bytes (variables, arrays, functions).
+
+  Caps the total byte budget for variable storage and function bodies.
+  Prevents OOM from untrusted input such as exponential string doubling.
 - **`maxTotalLoopIterations?`** — `number`
-- **`mounts?`** — `({ path: string; root: string; writable?: boolean })[]` Real filesystem mounts. Each mount maps a host directory into the VFS.
-- **`network?`** — `NetworkOptions` Outbound network configuration. When set, enables `curl`/`wget`
-restricted to the configured allowlist, with optional transparent
-credential injection. Omitted = network disabled (no `curl`/`wget`).
+- **`mounts?`** — `({ path: string; root: string; writable?: boolean })[]`
 
-Must specify either `allow` (list of URL patterns) or `allowAll: true`,
-not both. `blockPrivateIps` defaults to `true`.
-- **`python?`** — `boolean` Enable embedded Python execution (`python`/`python3` builtins).
+  Real filesystem mounts. Each mount maps a host directory into the VFS.
+- **`network?`** — `NetworkOptions`
 
-When true, bash scripts can use `python -c '...'` or `python3 script.py`
-to run Python code within the sandbox.
-- **`sqlite?`** — `boolean` Enable the embedded SQLite builtin (`sqlite`/`sqlite3`).
+  Outbound network configuration. When set, enables `curl`/`wget`
+  restricted to the configured allowlist, with optional transparent
+  credential injection. Omitted = network disabled (no `curl`/`wget`).
 
-Backed by Turso. When `true`, the binding both registers the builtin
-and injects `BASHKIT_ALLOW_INPROCESS_SQLITE=1` so the runtime gate is
-satisfied. Defaults to `false`. Default `SqliteLimits` apply: 4 MiB
-script cap, 256 MiB DB cap, 30 s wall-clock budget,
-resource-affecting PRAGMAs and `ATTACH`/`DETACH` rejected.
-- **`timeoutMs?`** — `number` Execution timeout in milliseconds.
+  Must specify either `allow` (list of URL patterns) or `allowAll: true`,
+  not both. `blockPrivateIps` defaults to `true`.
+- **`python?`** — `boolean`
 
-When set, commands that exceed this duration are aborted with
-exit code 124 (matching the bash `timeout` convention).
+  Enable embedded Python execution (`python`/`python3` builtins).
+
+  When true, bash scripts can use `python -c '...'` or `python3 script.py`
+  to run Python code within the sandbox.
+- **`sqlite?`** — `boolean`
+
+  Enable the embedded SQLite builtin (`sqlite`/`sqlite3`).
+
+  Backed by Turso. When `true`, the binding both registers the builtin
+  and injects `BASHKIT_ALLOW_INPROCESS_SQLITE=1` so the runtime gate is
+  satisfied. Defaults to `false`. Default `SqliteLimits` apply: 4 MiB
+  script cap, 256 MiB DB cap, 30 s wall-clock budget,
+  resource-affecting PRAGMAs and `ATTACH`/`DETACH` rejected.
+- **`timeoutMs?`** — `number`
+
+  Execution timeout in milliseconds.
+
+  When set, commands that exceed this duration are aborted with
+  exit code 124 (matching the bash `timeout` convention).
 - **`username?`** — `string`

@@ -198,6 +198,20 @@ function renderComment(comment, lines) {
 
 // ---- member rendering ------------------------------------------------------
 
+// A field bullet: `- **name** — `type`` with the description as an indented
+// continuation paragraph. Multi-paragraph summaries must be indented under the
+// bullet, otherwise their blank lines terminate the list and the trailing
+// paragraphs render dedented (one `<ul><li>` per field + orphaned `<p>`s).
+function fieldEntry(label, typeStr, summary) {
+  const head = `- **\`${label}\`** — \`${typeStr}\``;
+  if (!summary) return [head];
+  const body = summary
+    .split("\n")
+    .map((l) => (l.length ? `  ${l}` : ""))
+    .join("\n");
+  return [head, "", body];
+}
+
 function signatureString(name, sig) {
   const params = (sig.parameters ?? [])
     .map((p) => {
@@ -235,8 +249,7 @@ function renderClass(refl) {
     lines.push("### Properties", "");
     for (const p of props) {
       const { summary } = commentToMarkdown(p.comment);
-      const doc = summary ? ` ${summary}` : "";
-      lines.push(`- **\`${p.name}\`** — \`${typeToString(p.type)}\`${doc}`);
+      lines.push(...fieldEntry(p.name, typeToString(p.type), summary));
     }
     lines.push("");
   }
@@ -269,8 +282,7 @@ function renderInterface(refl) {
     for (const p of props) {
       const opt = p.flags?.isOptional ? "?" : "";
       const { summary } = commentToMarkdown(p.comment);
-      const doc = summary ? ` ${summary}` : "";
-      lines.push(`- **\`${p.name}${opt}\`** — \`${typeToString(p.type)}\`${doc}`);
+      lines.push(...fieldEntry(`${p.name}${opt}`, typeToString(p.type), summary));
     }
     lines.push("");
   }
