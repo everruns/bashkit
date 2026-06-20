@@ -1125,20 +1125,10 @@ impl Interpreter {
             );
         }
 
-        // Important decision: all source-level candidates may appear only inside
-        // nested/lazy expansions. In that case one candidate is still safe for
-        // this top-level operand if parsed literal parts contain exactly the
-        // quote-boundary markers we inserted. This preserves quote semantics
-        // without returning to an unbounded Unicode search.
-        for &quote_mark in OPERAND_QUOTE_MARK_CANDIDATES {
-            let (stripped, inserted_marks) =
-                Self::strip_operand_quotes_with_count(operand, Some(quote_mark));
-            let word = Parser::parse_word_string_with_limits(&stripped, max_depth, max_fuel);
-            if Self::top_level_literal_mark_count(&word, quote_mark) == inserted_marks {
-                return (word, Some(quote_mark), false);
-            }
-        }
-
+        // Important decision: marker provenance is lost after parsing. If every
+        // bounded candidate appears in the source operand, a source literal can
+        // masquerade as an inserted quote-boundary marker. Fail closed instead
+        // of reparsing with an unsafe marker.
         // Fail-closed: no safe marker. Only force quoted handling when real
         // unescaped quotes were stripped (not escaped `\"` or NUL-marked quotes).
         let (stripped, unescaped_quotes) = Self::strip_operand_quotes_with_count(operand, None);
@@ -1147,16 +1137,6 @@ impl Interpreter {
             None,
             unescaped_quotes > 0,
         )
-    }
-
-    pub(super) fn top_level_literal_mark_count(word: &Word, quote_mark: char) -> usize {
-        word.parts
-            .iter()
-            .filter_map(|part| match part {
-                WordPart::Literal(s) => Some(s.chars().filter(|&ch| ch == quote_mark).count()),
-                _ => None,
-            })
-            .sum()
     }
 
     pub(super) fn push_marked_literal(

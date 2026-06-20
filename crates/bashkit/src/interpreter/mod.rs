@@ -11497,6 +11497,18 @@ echo "count=$COUNT"
         assert_eq!(result.stdout.trim(), "axxxb");
     }
 
+    #[tokio::test]
+    async fn test_quoted_remove_prefix_operand_rejects_colliding_source_marker() {
+        let quote_mark = OPERAND_QUOTE_MARK_CANDIDATES[0];
+        let dead_candidates: String = OPERAND_QUOTE_MARK_CANDIDATES[1..].iter().collect();
+        let script = format!(
+            "val=\"axxxb\"; pat=\"a*\"; echo \"${{val#${{unset+{dead_candidates}}}{quote_mark}\\\"$pat\\\"{quote_mark}${{unset+\\\"\\\"}}}}\""
+        );
+        let result = run_script(&script).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "axxxb");
+    }
+
     #[test]
     fn test_command_not_found_suggestions_use_stable_tie_break() {
         let msg = command_not_found_message("grpe", &["type", "true", "tree", "grep"]);
