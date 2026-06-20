@@ -41,6 +41,10 @@ silently failed.
    workspace `Cargo.toml`, `crates/bashkit-cli/Cargo.toml` path-dep pin on
    `bashkit`, `crates/bashkit-js/package.json`, and `Cargo.lock`
    (`cargo update -p bashkit -p bashkit-cli ...`).
+   - Refresh the self-hosted API references: `just apidocs` and commit any
+     changes. The `apidocs-drift` workflow only checks TypeScript weekly (its
+     regen needs a Rust build), so a release is the reliable point to catch TS
+     drift. See `specs/documentation.md` ("API reference hosting").
 4. **Run local verification** — `cargo fmt --check`, `cargo clippy
    --all-targets --all-features -- -D warnings`, `cargo test`.
 5. **Verify publish-readiness** (catches what local tests don't — the

@@ -12,4 +12,11 @@ const rustdocs = defineCollection({
   loader: glob({ pattern: "*.md", base: "../crates/bashkit/docs" }),
 });
 
-export const collections = { docs, rustdocs };
+// API references for the PyPI/npm packages — the self-hosted analog to docs.rs
+// for Rust. Generated markdown (committed, regenerated on release) so the site
+// build stays node-only. See specs/documentation.md ("API reference hosting").
+const apidocs = defineCollection({
+  loader: glob({ pattern: "*.md", base: "./src/content/apidocs" }),
+});
+
+export const collections = { docs, rustdocs, apidocs };

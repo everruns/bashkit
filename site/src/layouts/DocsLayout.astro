@@ -2,52 +2,119 @@
 import BaseLayout from "./BaseLayout.astro";
 import { DOC_META, DOC_META_BY_SLUG } from "../pages/docs/_meta";
 
+type NavLink = { href: string; title: string };
+type Heading = { depth: number; slug: string; text: string };
+
 interface Props {
   slug: string;
   title: string;
   description?: string;
+  // Optional overrides so non-/docs sections (e.g. /api) can reuse this
+  // layout — and its branding — without being listed in DOC_META.
+  breadcrumb?: { href: string; label: string };
+  editUrl?: string | null;
+  prevLink?: NavLink | null;
+  nextLink?: NavLink | null;
+  // Reference pages (e.g. /api) opt into a wider column, word-wrapped code
+  // (long signatures don't clip), and a sticky "On this page" TOC built from
+  // the rendered headings.
+  wide?: boolean;
+  headings?: Heading[];
 }
 
-const { slug, title, description } = Astro.props;
+const { slug, title, description, breadcrumb, editUrl: editUrlProp, prevLink, nextLink, wide, headings } =
+  Astro.props;
+
+// H2-level TOC: the classes/types/modules. Method-level (H3) headings would
+// run to ~150 entries on the reference pages, so keep the nav scannable.
+const toc: Heading[] = wide ? (headings ?? []).filter((h) => h.depth === 2) : [];
+const showToc = toc.length > 0;
 
 const meta = DOC_META_BY_SLUG[slug];
 const index = DOC_META.findIndex((doc) => doc.slug === slug);
-const prev = index > 0 ? DOC_META[index - 1] : null;
-const next = index >= 0 && index < DOC_META.length - 1 ? DOC_META[index + 1] : null;
+const metaPrev = index > 0 ? DOC_META[index - 1] : null;
+const metaNext = index >= 0 && index < DOC_META.length - 1 ? DOC_META[index + 1] : null;
 
-const editPath = meta?.editPath ?? `docs/${slug}.md`;
-const editUrl = `https://github.com/everruns/bashkit/blob/main/${editPath}`;
+const prev: NavLink | null =
+  prevLink !== undefined
+    ? prevLink
+    : metaPrev
+      ? { href: `/docs/${metaPrev.slug}`, title: metaPrev.title }
+      : null;
+const next: NavLink | null =
+  nextLink !== undefined
+    ? nextLink
+    : metaNext
+      ? { href: `/docs/${metaNext.slug}`, title: metaNext.title }
+      : null;
+
+const breadcrumbHref = breadcrumb?.href ?? "/docs";
+const breadcrumbRoot = breadcrumb ? null : "Docs";
+const breadcrumbLabel = breadcrumb?.label ?? meta?.section ?? title;
+
+// editUrl: explicit null hides the link (generated pages have no editable
+// markdown source); undefined falls back to the GitHub source path.
+const editUrl =
+  editUrlProp === null
+    ? null
+    : (editUrlProp ??
+      `https://github.com/everruns/bashkit/blob/main/${meta?.editPath ?? `docs/${slug}.md`}`);
 ---
 
 <BaseLayout
   title={title}
   description={description ?? meta?.summary}
 >
-  <article class="doc section">
-    <div class="container doc__container">
+  <article class:list={["doc", "section", wide && "doc--wide"]}>
+    <div class:list={["container", "doc__container", wide && "doc__container--wide"]}>
       <nav class="doc__breadcrumb" aria-label="Breadcrumb">
-        <a href="/docs">Docs</a>
-        <span aria-hidden="true">/</span>
-        <span>{meta?.section ?? title}</span>
+        {breadcrumbRoot ? (
+          <>
+            <a href={breadcrumbHref}>{breadcrumbRoot}</a>
+            <span aria-hidden="true">/</span>
+            <span>{breadcrumbLabel}</span>
+          </>
+        ) : (
+          <a href={breadcrumbHref}>{breadcrumbLabel}</a>
+        )}
       </nav>
 
-      <div class="doc__body">
-        <slot />
+      <div class="doc__layout">
+        <div class="doc__body">
+          <slot />
+        </div>
+
+        {showToc && (
+          <aside class="doc__toc" aria-label="On this page">
+            <p class="doc__toc-title">On this page</p>
+            <nav>
+              <ul>
+                {toc.map((h) => (
+                  <li>
+                    <a href={`#${h.slug}`}>{h.text}</a>
+                  </li>
+                ))}
+              </ul>
+            </nav>
+          </aside>
+        )}
       </div>
 
       <footer class="doc__foot">
-        <a class="doc__edit" href={editUrl} target="_blank" rel="noopener noreferrer">
-          Edit this page on GitHub
-        </a>
+        {editUrl ? (
+          <a class="doc__edit" href={editUrl} target="_blank" rel="noopener noreferrer">
+            Edit this page on GitHub
+          </a>
+        ) : <span />}
         <div class="doc__nav">
           {prev ? (
-            <a class="doc__nav-link doc__nav-link--prev" href={`/docs/${prev.slug}`}>
+            <a class="doc__nav-link doc__nav-link--prev" href={prev.href}>
               <span class="doc__nav-eyebrow">Previous</span>
               <span class="doc__nav-title">{prev.title}</span>
             </a>
           ) : <span />}
           {next ? (
-            <a class="doc__nav-link doc__nav-link--next" href={`/docs/${next.slug}`}>
+            <a class="doc__nav-link doc__nav-link--next" href={next.href}>
               <span class="doc__nav-eyebrow">Next</span>
               <span class="doc__nav-title">{next.title}</span>
             </a>
@@ -64,6 +131,66 @@ const editUrl = `https://github.com/everruns/bashkit/blob/main/${editPath}`;
   }
   .doc__container {
     max-width: 44rem;
+  }
+  .doc__container--wide {
+    max-width: 76rem;
+  }
+  /* Reference pages: content + sticky "On this page" rail. */
+  .doc--wide .doc__layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 15rem;
+    gap: var(--space-xl);
+    align-items: start;
+  }
+  .doc__toc {
+    position: sticky;
+    top: calc(var(--header-height) + var(--space-md));
+    max-height: calc(100vh - var(--header-height) - var(--space-lg));
+    overflow-y: auto;
+    padding-left: 0.25rem;
+  }
+  .doc__toc-title {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--color-slate);
+    margin-bottom: 0.6rem;
+  }
+  .doc__toc ul {
+    list-style: none;
+    padding-left: 0;
+    margin: 0;
+  }
+  .doc__toc li {
+    margin-bottom: 0.1rem;
+  }
+  .doc__toc a {
+    display: block;
+    font-size: 0.85rem;
+    line-height: 1.35;
+    color: var(--color-slate);
+    text-decoration: none;
+    padding: 0.2rem 0 0.2rem 0.7rem;
+    border-left: 2px solid rgb(10 22 54 / 0.1);
+  }
+  .doc__toc a:hover {
+    color: var(--color-obsidian);
+    border-left-color: var(--color-gold);
+  }
+  /* Long signatures wrap instead of clipping/scrolling on reference pages. */
+  .doc--wide .doc__body :global(pre),
+  .doc--wide .doc__body :global(pre) :global(code) {
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+  }
+  @media (max-width: 1024px) {
+    .doc--wide .doc__layout {
+      grid-template-columns: 1fr;
+    }
+    .doc__toc {
+      display: none;
+    }
   }
   .doc__breadcrumb {
     display: flex;
@@ -96,12 +223,14 @@ const editUrl = `https://github.com/everruns/bashkit/blob/main/${editPath}`;
     margin-bottom: var(--space-sm);
     letter-spacing: -0.01em;
     color: var(--color-obsidian);
+    scroll-margin-top: calc(var(--header-height) + 1rem);
   }
   .doc__body :global(h3) {
     font-size: 1.15rem;
     margin-top: var(--space-lg);
     margin-bottom: var(--space-sm);
     color: var(--color-obsidian);
+    scroll-margin-top: calc(var(--header-height) + 1rem);
   }
   .doc__body :global(p),
   .doc__body :global(ul),

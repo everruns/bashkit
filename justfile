@@ -69,6 +69,23 @@ fuzz-diff-deep:
 clean:
     cargo clean
 
+# Regenerate the self-hosted Python API reference (docs.rs analog for PyPI).
+# Output committed at site/src/content/apidocs/python.md; refresh on release.
+# Needs griffe: pip install griffe. See specs/documentation.md.
+apidocs-python:
+    python3 scripts/gen_python_apidocs.py
+
+# Regenerate the self-hosted TypeScript API reference (docs.rs analog for npm).
+# Output committed at site/src/content/apidocs/typescript.md; refresh on release.
+# Requires `napi build` first (generates index.d.ts the .ts wrappers import).
+# Needs network for `npx typedoc`. See specs/documentation.md.
+apidocs-ts:
+    cd crates/bashkit-js && pnpm exec napi build --platform
+    node scripts/gen_ts_apidocs.mjs
+
+# Regenerate all self-hosted package API references.
+apidocs: apidocs-python apidocs-ts
+
 # Regenerate the canonical builtin inventory consumed by the site's
 # builtins page. Committed output; the builtins-drift workflow fails on diff.
 regen-builtins:
