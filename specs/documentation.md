@@ -100,14 +100,16 @@ as `site/src/data/performance-timeline.json`).
 | Language | Source of truth | Tool | Command |
 |----------|-----------------|------|---------|
 | Python | `crates/bashkit-python/bashkit/*.pyi` + integration modules | `griffe` (static, `allow_inspection=False`) | `just apidocs-python` |
-| TypeScript | `crates/bashkit-js/*.ts` + napi-generated `index.d.ts` | `typedoc` (planned) | _follow-up_ |
+| TypeScript | `crates/bashkit-js/*.ts` + napi-generated `index.d.ts` | `typedoc` (JSON) + custom renderer | `just apidocs-ts` |
 
-Python is fully wired (`scripts/gen_python_apidocs.py`). TypeScript is
-infrastructure-ready: the `/api` index shows it as "coming soon" and the route
-appears automatically once `site/src/content/apidocs/typescript.md` is
-committed. Its generation must run `napi build` first (the `.ts` wrappers import
-types from the build-generated, gitignored `index.d.ts`), so it cannot run in
-the node-only `site.yml` — it belongs in a Rust-capable release job.
+Both languages are wired (`scripts/gen_python_apidocs.py`,
+`scripts/gen_ts_apidocs.mjs`; `just apidocs` runs both). The Python generator
+parses type stubs statically — no build needed. The TypeScript generator must
+run `napi build` first (the `.ts` wrappers import types from the
+build-generated, gitignored `index.d.ts`), so it cannot run in the node-only
+`site.yml` — regenerate it in a Rust-capable release job, then commit the
+output. A language's `/api/<slug>` route only appears once its markdown exists,
+so the `/api` index degrades gracefully if a page is missing.
 
 ### Constraints
 
