@@ -50,10 +50,6 @@ INTEGRATIONS = [
 ]
 
 
-def slugify(name: str) -> str:
-    return name.replace("_", "-").lower()
-
-
 def annotation_str(ann) -> str:
     if ann is None:
         return ""

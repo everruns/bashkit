@@ -25,7 +25,7 @@ Example (Python execution with external function handler):
     ...     external_functions=["api_request"],
     ...     external_handler=handler,
     ... )
-    >>> result = await bash.execute("python3 -c 'print(api_request(url="/data"))'")
+    >>> result = await bash.execute("python3 -c 'print(api_request())'")
 
 ### Constructor
 

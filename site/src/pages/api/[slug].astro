@@ -1,7 +1,7 @@
 ---
 import { getCollection, render } from "astro:content";
 import DocsLayout from "../../layouts/DocsLayout.astro";
-import { API_REFS, API_REFS_BY_SLUG } from "./_meta";
+import { API_REFS } from "./_meta";
 
 export async function getStaticPaths() {
   const apidocs = await getCollection("apidocs");
@@ -23,10 +23,11 @@ const h1 = headings.find((heading) => heading.depth === 1);
 const title = h1?.text ?? ref.title;
 const seoTitle = ref.seoTitle ?? `${title} — Bashkit`;
 
-// Prev/next across the available API references for consistent doc-style nav.
-const available = API_REFS.filter(
-  (r) => r.slug === ref.slug || API_REFS_BY_SLUG[r.slug],
-);
+// Prev/next across the API references that actually have generated markdown,
+// so nav never points at a missing page (mirrors the getStaticPaths filter).
+const apidocs = await getCollection("apidocs");
+const ids = new Set(apidocs.map((entry) => entry.id));
+const available = API_REFS.filter((r) => ids.has(r.slug));
 const idx = available.findIndex((r) => r.slug === ref.slug);
 const prevRef = idx > 0 ? available[idx - 1] : null;
 const nextRef = idx >= 0 && idx < available.length - 1 ? available[idx + 1] : null;
