@@ -69,6 +69,12 @@ fuzz-diff-deep:
 clean:
     cargo clean
 
+# Regenerate the self-hosted Python API reference (docs.rs analog for PyPI).
+# Output committed at site/src/content/apidocs/python.md; refresh on release.
+# Needs griffe: pip install griffe. See specs/documentation.md.
+apidocs-python:
+    python3 scripts/gen_python_apidocs.py
+
 # Regenerate the canonical builtin inventory consumed by the site's
 # builtins page. Committed output; the builtins-drift workflow fails on diff.
 regen-builtins:

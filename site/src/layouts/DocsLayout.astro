@@ -2,21 +2,52 @@
 import BaseLayout from "./BaseLayout.astro";
 import { DOC_META, DOC_META_BY_SLUG } from "../pages/docs/_meta";
 
+type NavLink = { href: string; title: string };
+
 interface Props {
   slug: string;
   title: string;
   description?: string;
+  // Optional overrides so non-/docs sections (e.g. /api) can reuse this
+  // layout — and its branding — without being listed in DOC_META.
+  breadcrumb?: { href: string; label: string };
+  editUrl?: string | null;
+  prevLink?: NavLink | null;
+  nextLink?: NavLink | null;
 }
 
-const { slug, title, description } = Astro.props;
+const { slug, title, description, breadcrumb, editUrl: editUrlProp, prevLink, nextLink } =
+  Astro.props;
 
 const meta = DOC_META_BY_SLUG[slug];
 const index = DOC_META.findIndex((doc) => doc.slug === slug);
-const prev = index > 0 ? DOC_META[index - 1] : null;
-const next = index >= 0 && index < DOC_META.length - 1 ? DOC_META[index + 1] : null;
+const metaPrev = index > 0 ? DOC_META[index - 1] : null;
+const metaNext = index >= 0 && index < DOC_META.length - 1 ? DOC_META[index + 1] : null;
 
-const editPath = meta?.editPath ?? `docs/${slug}.md`;
-const editUrl = `https://github.com/everruns/bashkit/blob/main/${editPath}`;
+const prev: NavLink | null =
+  prevLink !== undefined
+    ? prevLink
+    : metaPrev
+      ? { href: `/docs/${metaPrev.slug}`, title: metaPrev.title }
+      : null;
+const next: NavLink | null =
+  nextLink !== undefined
+    ? nextLink
+    : metaNext
+      ? { href: `/docs/${metaNext.slug}`, title: metaNext.title }
+      : null;
+
+const breadcrumbHref = breadcrumb?.href ?? "/docs";
+const breadcrumbRoot = breadcrumb ? null : "Docs";
+const breadcrumbLabel = breadcrumb?.label ?? meta?.section ?? title;
+
+// editUrl: explicit null hides the link (generated pages have no editable
+// markdown source); undefined falls back to the GitHub source path.
+const editUrl =
+  editUrlProp === null
+    ? null
+    : (editUrlProp ??
+      `https://github.com/everruns/bashkit/blob/main/${meta?.editPath ?? `docs/${slug}.md`}`);
 ---
 
 <BaseLayout
@@ -26,9 +57,15 @@ const editUrl = `https://github.com/everruns/bashkit/blob/main/${editPath}`;
   <article class="doc section">
     <div class="container doc__container">
       <nav class="doc__breadcrumb" aria-label="Breadcrumb">
-        <a href="/docs">Docs</a>
-        <span aria-hidden="true">/</span>
-        <span>{meta?.section ?? title}</span>
+        {breadcrumbRoot ? (
+          <>
+            <a href={breadcrumbHref}>{breadcrumbRoot}</a>
+            <span aria-hidden="true">/</span>
+            <span>{breadcrumbLabel}</span>
+          </>
+        ) : (
+          <a href={breadcrumbHref}>{breadcrumbLabel}</a>
+        )}
       </nav>
 
       <div class="doc__body">
@@ -36,18 +73,20 @@ const editUrl = `https://github.com/everruns/bashkit/blob/main/${editPath}`;
       </div>
 
       <footer class="doc__foot">
-        <a class="doc__edit" href={editUrl} target="_blank" rel="noopener noreferrer">
-          Edit this page on GitHub
-        </a>
+        {editUrl ? (
+          <a class="doc__edit" href={editUrl} target="_blank" rel="noopener noreferrer">
+            Edit this page on GitHub
+          </a>
+        ) : <span />}
         <div class="doc__nav">
           {prev ? (
-            <a class="doc__nav-link doc__nav-link--prev" href={`/docs/${prev.slug}`}>
+            <a class="doc__nav-link doc__nav-link--prev" href={prev.href}>
               <span class="doc__nav-eyebrow">Previous</span>
               <span class="doc__nav-title">{prev.title}</span>
             </a>
           ) : <span />}
           {next ? (
-            <a class="doc__nav-link doc__nav-link--next" href={`/docs/${next.slug}`}>
+            <a class="doc__nav-link doc__nav-link--next" href={next.href}>
               <span class="doc__nav-eyebrow">Next</span>
               <span class="doc__nav-title">{next.title}</span>
             </a>

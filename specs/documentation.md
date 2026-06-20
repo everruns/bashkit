@@ -67,3 +67,51 @@ the canonical docs/content:
   (`site/public/_headers`), `robots.txt`, and a footer link.
 - All site verify scripts run in the `postbuild` chain (CI **Site Build** job),
   so these guarantees hold on every build.
+
+## API reference hosting
+
+### Problem
+
+Rust gets a hosted, versioned API reference for free via **docs.rs** on every
+crates.io release. The PyPI package (`bashkit`) and the npm package
+(`@everruns/bashkit`) have no equivalent — only a README and type definitions.
+
+### Decision
+
+Self-host per-language API references on **bashkit.sh** under `/api/`:
+
+- `/api` — index linking all three languages (Rust → docs.rs externally;
+  Python and TypeScript served locally).
+- `/api/python`, `/api/typescript` — generated reference pages.
+
+Generate **markdown** from each package's own source of truth and render it
+through the existing Astro `DocsLayout`, so API pages inherit site branding
+(colors, typography, Shiki theme) instead of shipping a foreign pdoc/TypeDoc
+theme. This reuses the same single-source pipeline as the rustdoc guides.
+
+**Latest-only** (no per-version archive): the page reflects the newest
+published release. **Generate-and-commit**: output lives in the `apidocs`
+content collection (`site/src/content/apidocs/*.md`) and is committed, so the
+node-only `site.yml` build just renders it. Regenerate on release (same pattern
+as `site/src/data/performance-timeline.json`).
+
+### Generators
+
+| Language | Source of truth | Tool | Command |
+|----------|-----------------|------|---------|
+| Python | `crates/bashkit-python/bashkit/*.pyi` + integration modules | `griffe` (static, `allow_inspection=False`) | `just apidocs-python` |
+| TypeScript | `crates/bashkit-js/*.ts` + napi-generated `index.d.ts` | `typedoc` (planned) | _follow-up_ |
+
+Python is fully wired (`scripts/gen_python_apidocs.py`). TypeScript is
+infrastructure-ready: the `/api` index shows it as "coming soon" and the route
+appears automatically once `site/src/content/apidocs/typescript.md` is
+committed. Its generation must run `napi build` first (the `.ts` wrappers import
+types from the build-generated, gitignored `index.d.ts`), so it cannot run in
+the node-only `site.yml` — it belongs in a Rust-capable release job.
+
+### Constraints
+
+- Generated markdown must not contain local `*.md` links (`verify-public-links`
+  fails on them) — use in-page anchors and absolute site/external links.
+- New `apidocs` pages are registered in `site/src/pages/api/_meta.ts`, not the
+  `/docs` `_meta.ts`, so `verify-doc-routes` does not require them.
