@@ -215,6 +215,15 @@ async fn builtin_names_lists_baked_in_and_host_builtins() {
     for expected in ["echo", "cd", "grep", "awk", "sed"] {
         assert!(names.iter().any(|n| n == expected), "missing {expected}");
     }
+    for special in [
+        ".", "bash", "command", "declare", "eval", "exec", "getopts", "let", "local", "sh",
+        "source", "typeset", "unset",
+    ] {
+        assert!(
+            names.iter().any(|n| n == special),
+            "missing special builtin {special}"
+        );
+    }
     let mut sorted = names.clone();
     sorted.sort();
     sorted.dedup();
