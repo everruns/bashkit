@@ -89,6 +89,11 @@ through the existing Astro `DocsLayout`, so API pages inherit site branding
 (colors, typography, Shiki theme) instead of shipping a foreign pdoc/TypeDoc
 theme. This reuses the same single-source pipeline as the rustdoc guides.
 
+Reference pages opt into `DocsLayout`'s `wide` mode (a 76rem column, a sticky
+"On this page" rail built from the H2 headings — classes/types/modules; H3
+method headings would run to ~150 entries — and word-wrapped code so long
+signatures don't clip). Prose guides keep their 44rem reading width.
+
 **Latest-only** (no per-version archive): the page reflects the newest
 published release. **Generate-and-commit**: output lives in the `apidocs`
 content collection (`site/src/content/apidocs/*.md`) and is committed, so the
