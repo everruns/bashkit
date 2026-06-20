@@ -327,8 +327,13 @@ pub(crate) struct ShellRef<'a> {
     pub(crate) execution_extensions: Arc<builtins::ExecutionExtensions>,
 }
 
-// Keep interpreter-dispatched builtins in the public inventory; these do not
-// live in the registered builtin map because they need parser/interpreter state.
+// Interpreter-dispatched "special" builtins, listed here so the public
+// inventory and special-builtin dispatch share one source of truth. Some names
+// (e.g. `eval`, `local`, `unset`) are also in the registered builtin map, but
+// the interpreter dispatches them ahead of it because they need parser/
+// interpreter state; others (e.g. `bash`, `command`, `exec`, `getopts`) live
+// only here. Listing every name guarantees inventory completeness regardless of
+// map membership.
 const SPECIAL_BUILTIN_NAMES: &[&str] = &[
     ".", "bash", "command", "declare", "eval", "exec", "getopts", "let", "local", "sh", "source",
     "typeset", "unset",
