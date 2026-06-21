@@ -48,6 +48,8 @@ pub(crate) const EXPAND_MAX_OUTPUT_BYTES: usize = 1_048_576;
 
 /// dirs/pushd/popd: max entries on the directory stack.
 pub(crate) const DIRSTACK_MAX_SIZE: usize = 4096;
+/// dirs/pushd/popd: max UTF-8 bytes per restored directory-stack entry.
+pub(crate) const DIRSTACK_MAX_ENTRY_BYTES: usize = 4096;
 
 /// find: total stdout cap for default and `-printf` output.
 pub(crate) const FIND_MAX_OUTPUT_BYTES: usize = 1_048_576;

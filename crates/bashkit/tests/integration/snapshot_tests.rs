@@ -692,6 +692,29 @@ async fn snapshot_restore_rejects_tampered_shell_state_that_exceeds_memory_limit
     );
 }
 
+#[tokio::test]
+async fn snapshot_restore_rejects_tampered_dir_stack_above_pushd_limit() {
+    let src = Bash::new();
+    let bytes = src.snapshot().unwrap();
+
+    let mut tampered_json: serde_json::Value = serde_json::from_slice(&bytes[32..]).unwrap();
+    tampered_json["shell"]["dir_stack"] = serde_json::Value::Array(
+        (0..4097)
+            .map(|n| serde_json::Value::String(format!("/tmp/{n}")))
+            .collect(),
+    );
+
+    let tampered_snapshot: Snapshot = serde_json::from_value(tampered_json).unwrap();
+    let tampered_bytes = tampered_snapshot.to_bytes().unwrap();
+
+    let mut restored = Bash::new();
+    let result = restored.restore_snapshot(&tampered_bytes);
+    assert!(
+        result.is_err(),
+        "restore must reject dir_stack states pushd could not create"
+    );
+}
+
 // ==================== Atomic restore (Issue #1576) ====================
 
 /// A malformed VFS snapshot (path validation failure) must cause
