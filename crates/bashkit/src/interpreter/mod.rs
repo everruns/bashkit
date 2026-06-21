@@ -1235,6 +1235,8 @@ impl Interpreter {
         &s[..end]
     }
 
+    // Decision: restored `$!` must match Bashkit-produced virtual numeric job ids.
+    const MAX_RESTORED_LAST_BG_PID_LEN: usize = 20;
     const MAX_GLOB_DEPTH: usize = 50;
 
     /// Create a new interpreter with the given filesystem.
@@ -2205,6 +2207,14 @@ impl Interpreter {
             func_bytes,
             Self::is_internal_variable,
         );
+        // Keep live budget consistent with validate_shell_state_restore_limits,
+        // which counts the restored `$!` toward variable bytes.
+        if let Some(last_bg_pid) = &self.last_bg_pid {
+            self.memory_budget.variable_bytes = self
+                .memory_budget
+                .variable_bytes
+                .saturating_add(last_bg_pid.len());
+        }
     }
 
     fn migrate_legacy_attr_markers(
@@ -2292,7 +2302,18 @@ impl Interpreter {
             }
         }
 
-        let budget = crate::limits::MemoryBudget::recompute_from_state(
+        if let Some(last_bg_pid) = &state.last_bg_pid
+            && (last_bg_pid.is_empty()
+                || last_bg_pid.len() > Self::MAX_RESTORED_LAST_BG_PID_LEN
+                || !last_bg_pid.bytes().all(|b| b.is_ascii_digit()))
+        {
+            return Err(crate::limits::LimitExceeded::Memory(
+                "invalid restored last background pid".to_string(),
+            )
+            .into());
+        }
+
+        let mut budget = crate::limits::MemoryBudget::recompute_from_state(
             &state.variables,
             &state.arrays,
             &state.assoc_arrays,
@@ -2300,6 +2321,9 @@ impl Interpreter {
             0,
             Self::is_internal_variable,
         );
+        if let Some(last_bg_pid) = &state.last_bg_pid {
+            budget.variable_bytes = budget.variable_bytes.saturating_add(last_bg_pid.len());
+        }
 
         if budget.variable_count > self.memory_limits.max_variable_count {
             return Err(crate::limits::LimitExceeded::Memory(format!(

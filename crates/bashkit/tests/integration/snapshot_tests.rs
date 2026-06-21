@@ -715,6 +715,32 @@ async fn snapshot_restore_rejects_tampered_dir_stack_above_pushd_limit() {
     );
 }
 
+#[tokio::test]
+async fn snapshot_restore_rejects_invalid_last_bg_pid() {
+    let mut src = Bash::new();
+    src.exec("true &").await.unwrap();
+    let bytes = src.snapshot().unwrap();
+
+    for invalid_pid in ["9".repeat(64), "not-a-pid".to_string()] {
+        let mut tampered_json: serde_json::Value = serde_json::from_slice(&bytes[32..]).unwrap();
+        tampered_json["shell"]["last_bg_pid"] = invalid_pid.into();
+
+        let tampered_snapshot: Snapshot = serde_json::from_value(tampered_json).unwrap();
+        let tampered_bytes = tampered_snapshot.to_bytes().unwrap();
+
+        // Use permissive limits so the rejection is attributable to last_bg_pid
+        // validation, not incidental variable-byte pressure from the snapshot.
+        let mut restored = Bash::new();
+        let err = restored
+            .restore_snapshot(&tampered_bytes)
+            .expect_err("restore must reject invalid snapshot-controlled last_bg_pid");
+        assert!(
+            err.to_string().contains("last background pid"),
+            "expected last_bg_pid validation error, got: {err}"
+        );
+    }
+}
+
 // ==================== Atomic restore (Issue #1576) ====================
 
 /// A malformed VFS snapshot (path validation failure) must cause
