@@ -279,12 +279,16 @@ impl Builtin for Read {
             return Ok(result);
         }
 
-        // If no variable names given, use REPLY
-        let var_names: Vec<&str> = if var_args.is_empty() {
-            vec!["REPLY"]
-        } else {
-            var_args
-        };
+        if var_args.is_empty() {
+            let mut result = ExecResult::ok(String::new());
+            result.side_effects.push(BuiltinSideEffect::SetVariable {
+                name: "REPLY".to_string(),
+                value: line,
+            });
+            return Ok(result);
+        }
+
+        let var_names = var_args;
 
         // Assign words to variables via side effects (respects local scoping)
         let mut result = ExecResult::ok(String::new());
@@ -380,6 +384,25 @@ mod tests {
         assert_eq!(result.exit_code, 0);
         let vars = extract_vars(&result);
         assert_eq!(vars.get("REPLY").unwrap(), "hello world");
+    }
+
+    #[tokio::test]
+    async fn read_into_reply_preserves_trailing_ifs_whitespace() {
+        let (fs, mut cwd, mut variables) = setup().await;
+        let env = HashMap::new();
+        let args: Vec<String> = vec![];
+        let ctx = Context::new_for_test(
+            &args,
+            &env,
+            &mut variables,
+            &mut cwd,
+            fs.clone(),
+            Some("secret  "),
+        );
+        let result = Read.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        let vars = extract_vars(&result);
+        assert_eq!(vars.get("REPLY").unwrap(), "secret  ");
     }
 
     // ==================== read into named variable ====================

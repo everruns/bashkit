@@ -163,3 +163,10 @@ IFS=",:"; read -r a b <<< "1,2:3  "; printf 'a=<%s> b=<%s> len=%d\n' "$a" "$b" "
 ### expect
 a=<1> b=<2:3  > len=5
 ### end
+
+### read_reply_preserves_trailing_ifs_whitespace
+# read without names assigns the raw line to REPLY, not an IFS-trimmed field
+read -r <<< "secret  "; printf 'reply=<%s> len=%d\n' "$REPLY" "${#REPLY}"
+### expect
+reply=<secret  > len=8
+### end
