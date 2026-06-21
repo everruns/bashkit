@@ -1860,6 +1860,7 @@ impl Interpreter {
                 self.flags.remove(bit);
             }
         }
+        self.getopts_char_idx = 0;
         self.pipeline_stdin = None;
         self.bash_source_stack.clear();
         self.arrays_mut().remove("BASH_SOURCE");
@@ -2187,6 +2188,7 @@ impl Interpreter {
         self.scoped.aliases = Arc::new(state.aliases.clone());
         self.scoped.traps = Arc::new(state.traps.clone());
         self.scoped.dir_stack = Arc::new(state.dir_stack.clone());
+        self.getopts_char_idx = 0;
         // Recompute memory budget from restored state to prevent desync
         let func_count = self.scoped.functions.len();
         let func_bytes: usize = self
@@ -11014,6 +11016,23 @@ bash /tmp/opts.sh -f xml -v
     }
 
     #[tokio::test]
+    async fn test_getopts_cluster_cursor_reset_between_top_level_execs() {
+        let mut bash = crate::Bash::new();
+
+        let first = bash
+            .exec(r#"OPTIND=1; getopts "ab" opt -ab; echo "$opt""#)
+            .await
+            .unwrap();
+        let second = bash
+            .exec(r#"OPTIND=1; getopts "ab" opt -ab; echo "$opt""#)
+            .await
+            .unwrap();
+
+        assert_eq!(first.stdout.trim(), "a");
+        assert_eq!(second.stdout.trim(), "a");
+    }
+
+    #[tokio::test]
     async fn test_wc_l_in_pipe() {
         let mut bash = crate::Bash::new();
         let result = bash.exec(r#"echo -e "a\nb\nc" | wc -l"#).await.unwrap();
@@ -12155,5 +12174,31 @@ cat /tmp/test_fd_exec_public.txt"#,
 
         assert!(!interp.is_var_readonly("POLICY"));
         assert!(interp.resolve_nameref("alias_var").eq("alias_var"));
+    }
+
+    #[test]
+    fn test_restore_shell_state_clears_stale_getopts_cursor() {
+        let mut interp = Interpreter::new(Arc::new(InMemoryFs::new()));
+        interp.getopts_char_idx = 1;
+
+        let clean_state = ShellState {
+            env: HashMap::new(),
+            variables: HashMap::new(),
+            var_attrs: HashMap::new(),
+            namerefs: HashMap::new(),
+            arrays: HashMap::new(),
+            assoc_arrays: HashMap::new(),
+            cwd: PathBuf::from("/"),
+            last_exit_code: 0,
+            last_bg_pid: None,
+            functions: HashMap::new(),
+            aliases: HashMap::new(),
+            traps: HashMap::new(),
+            dir_stack: Vec::new(),
+        };
+
+        interp.restore_shell_state(&clean_state);
+
+        assert_eq!(interp.getopts_char_idx, 0);
     }
 }
