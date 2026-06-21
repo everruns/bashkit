@@ -2264,6 +2264,32 @@ impl Interpreter {
     ///
     /// Used by snapshot restore paths before applying untrusted state.
     pub(crate) fn validate_shell_state_restore_limits(&self, state: &ShellState) -> Result<()> {
+        // THREAT[TM-DOS-061]: typed snapshot state must obey the same dirstack
+        // DoS bounds as pushd; otherwise forged snapshots bypass runtime growth
+        // limits before dirs/format_stack allocate output.
+        if state.dir_stack.len() > crate::builtins::limits::DIRSTACK_MAX_SIZE {
+            return Err(crate::limits::LimitExceeded::Memory(format!(
+                "directory stack entry limit ({}) exceeded",
+                crate::builtins::limits::DIRSTACK_MAX_SIZE
+            ))
+            .into());
+        }
+        for dir in &state.dir_stack {
+            if dir.len() > crate::builtins::limits::DIRSTACK_MAX_ENTRY_BYTES {
+                return Err(crate::limits::LimitExceeded::Memory(format!(
+                    "directory stack entry byte limit ({}) exceeded",
+                    crate::builtins::limits::DIRSTACK_MAX_ENTRY_BYTES
+                ))
+                .into());
+            }
+            if dir.contains('\0') {
+                return Err(crate::limits::LimitExceeded::Memory(
+                    "directory stack entry contains NUL".to_string(),
+                )
+                .into());
+            }
+        }
+
         let budget = crate::limits::MemoryBudget::recompute_from_state(
             &state.variables,
             &state.arrays,
@@ -12088,6 +12114,33 @@ cat /tmp/test_fd_exec_public.txt"#,
             .await
             .unwrap();
         assert!(out.stdout.contains("/tmp"));
+    }
+
+    #[test]
+    fn test_restore_validation_rejects_oversized_dir_stack() {
+        let mut state = Interpreter::new(Arc::new(InMemoryFs::new())).shell_state();
+        state.dir_stack = vec!["/tmp".to_string(); crate::builtins::limits::DIRSTACK_MAX_SIZE + 1];
+
+        let interp = Interpreter::new(Arc::new(InMemoryFs::new()));
+        assert!(
+            interp.validate_shell_state_restore_limits(&state).is_err(),
+            "restore must reject a dir_stack larger than pushd can create"
+        );
+    }
+
+    #[test]
+    fn test_restore_validation_rejects_oversized_dir_stack_entry() {
+        let mut state = Interpreter::new(Arc::new(InMemoryFs::new())).shell_state();
+        state.dir_stack = vec![format!(
+            "/{}",
+            "a".repeat(crate::builtins::limits::DIRSTACK_MAX_ENTRY_BYTES)
+        )];
+
+        let interp = Interpreter::new(Arc::new(InMemoryFs::new()));
+        assert!(
+            interp.validate_shell_state_restore_limits(&state).is_err(),
+            "restore must reject a dir_stack entry larger than path limits"
+        );
     }
 
     #[tokio::test]
