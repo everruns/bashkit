@@ -1,4 +1,5 @@
 import { defineConfig } from "astro/config";
+import { unified } from "@astrojs/markdown-remark";
 import sitemap from "@astrojs/sitemap";
 import sitemapEnhance from "./integrations/sitemap-enhance.mjs";
 
@@ -156,8 +157,12 @@ export default defineConfig({
   output: "static",
   markdown: {
     shikiConfig: { theme: "github-light" },
-    remarkPlugins: [normalizeGuideMarkdown],
-    rehypePlugins: [rewriteRenderedLinks],
+    // Astro 7: remark/rehype plugins move under `processor: unified({...})`.
+    // `shikiConfig` stays top-level (cross-cutting, processor-agnostic).
+    processor: unified({
+      remarkPlugins: [normalizeGuideMarkdown],
+      rehypePlugins: [rewriteRenderedLinks],
+    }),
   },
   integrations: [sitemap(), sitemapEnhance()],
 });
