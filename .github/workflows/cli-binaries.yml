@@ -34,7 +34,7 @@ jobs:
           fi
           echo "tag=$INPUT_TAG" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ steps.validate.outputs.tag }}
           fetch-depth: 0
@@ -84,7 +84,7 @@ jobs:
             archive: bashkit-x86_64-unknown-linux-gnu.tar.gz
 
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ needs.validate-tag.outputs.tag }}
           persist-credentials: false
