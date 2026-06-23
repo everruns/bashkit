@@ -146,7 +146,12 @@ for w in ['light', 'medium', 'heavy']:
 print()
 print('| Sessions | Sequential | Parallel | Shared FS | Par Speedup |')
 print('|----------|-----------|----------|-----------|-------------|')
-for n in [10, 50, 100, 200]:
+scaling_counts = sorted({
+    int(k.rsplit('/', 1)[1])
+    for k in results
+    if k.startswith('parallel_scaling/medium_seq/')
+})
+for n in scaling_counts:
     seq = results.get(f'parallel_scaling/medium_seq/{n}')
     par = results.get(f'parallel_scaling/medium_par/{n}')
     sfs = results.get(f'parallel_scaling/shared_fs/{n}')

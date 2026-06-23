@@ -14,8 +14,10 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 
-/// Number of parallel sessions to benchmark
-const SESSION_COUNTS: &[usize] = &[10, 50, 100, 200];
+/// Number of parallel sessions to benchmark.
+/// Goes up to 1000 to confirm large fan-outs stay healthy (no per-session
+/// thread/process; sessions are heap objects + tokio tasks).
+const SESSION_COUNTS: &[usize] = &[10, 50, 100, 200, 500, 1000];
 
 /// Heavy workload: file creation, text processing with grep/awk/sed
 const HEAVY_SCRIPT: &str = r#"
