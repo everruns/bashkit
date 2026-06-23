@@ -2,14 +2,87 @@
 
 ## [Unreleased]
 
-### Breaking
+## [0.12.0] - 2026-06-23
+
+### Highlights
+
+- **`ExecOptions` request struct + `exec_with_options` entry point** — a single,
+  extensible request object for configuring a run, replacing ad-hoc parameter
+  threading at the library boundary
+  ([#2093](https://github.com/everruns/bashkit/pull/2093)).
+- **`BashToolBuilder::configure` for full `BashBuilder` access** — LLM-tool
+  callers can now reach the complete builder surface when wiring up a tool
+  ([#2104](https://github.com/everruns/bashkit/pull/2104)).
+- **Self-hosted Python + TypeScript API references at `/api`** — the binding API
+  docs are now built and hosted from the repo, with new public guides and a
+  reorganized docs navigation
+  ([#2109](https://github.com/everruns/bashkit/pull/2109),
+  [#2111](https://github.com/everruns/bashkit/pull/2111)).
+- **`agents`-friendly site surfaces** — `llms.txt` agent entry points, linked
+  skill sources, and cross-linked Markdown surfaces make the site easier for
+  agents to consume ([#2099](https://github.com/everruns/bashkit/pull/2099),
+  [#2106](https://github.com/everruns/bashkit/pull/2106)).
+- **Interpreter correctness & security sweep** — typed-state refactors of the
+  directory stack, `$!`, and `getopts` cursors, plus a batch of parser/expansion
+  fixes and several dependency security-advisory patches.
+
+### Breaking Changes
 
 - **`PythonLimits` / `TypeScriptLimits` fields moved under a shared `common: RuntimeLimits`.**
   The two embedded-VM limit types now share a `RuntimeLimits` core (duration,
-  memory, allocations, call depth). The fluent builder API is unchanged
-  (`.max_duration()`, `.max_memory()`, `.max_recursion()` / `.max_stack_depth()`,
-  `default()`), but code that read the `pub max_*` fields directly must now go
-  through `.common` (e.g. `limits.common.max_memory`). SQLite is unaffected.
+  memory, allocations, call depth)
+  ([#2095](https://github.com/everruns/bashkit/pull/2095)). The fluent builder
+  API is unchanged, but code that read the `pub max_*` fields directly must now
+  go through `.common`. SQLite is unaffected.
+  - Before: `let mem = limits.max_memory;`
+  - After: `let mem = limits.common.max_memory;`
+
+### What's Changed
+
+* test(parallel): verify 1000-session fan-out and extend scaling bench ([#2120](https://github.com/everruns/bashkit/pull/2120)) by @chaliy
+* chore(site): upgrade to Astro 7 ([#2119](https://github.com/everruns/bashkit/pull/2119)) by @chaliy
+* chore(ci): bump the github-actions group with 5 updates ([#2118](https://github.com/everruns/bashkit/pull/2118)) by @dependabot
+* chore(deps): bump the rust-dependencies group with 4 updates ([#2117](https://github.com/everruns/bashkit/pull/2117)) by @dependabot
+* fix(read): preserve implicit REPLY whitespace ([#2116](https://github.com/everruns/bashkit/pull/2116)) by @chaliy
+* fix(interpreter): reset getopts cursor across shell boundaries ([#2115](https://github.com/everruns/bashkit/pull/2115)) by @chaliy
+* fix(snapshot): validate restored last background pid ([#2114](https://github.com/everruns/bashkit/pull/2114)) by @chaliy
+* fix(snapshot): validate restored directory stack ([#2113](https://github.com/everruns/bashkit/pull/2113)) by @chaliy
+* fix(deps): bump langsmith 0.8.5 -> 0.8.18 (GHSA-f4xh-w4cj-qxq8) ([#2112](https://github.com/everruns/bashkit/pull/2112)) by @chaliy
+* docs(site): add six public guides and reorganize docs nav ([#2111](https://github.com/everruns/bashkit/pull/2111)) by @chaliy
+* fix(site): expand too-short meta descriptions on docs and builtins pages ([#2110](https://github.com/everruns/bashkit/pull/2110)) by @chaliy
+* feat(site): self-host Python + TypeScript API references at /api ([#2109](https://github.com/everruns/bashkit/pull/2109)) by @chaliy
+* fix(builtins): include special builtins in inventory ([#2108](https://github.com/everruns/bashkit/pull/2108)) by @chaliy
+* fix(expansion): fail closed on quote marker collision ([#2107](https://github.com/everruns/bashkit/pull/2107)) by @chaliy
+* feat(site): link skill source and enrich llms.txt for agents ([#2106](https://github.com/everruns/bashkit/pull/2106)) by @chaliy
+* docs(site): cross-link Markdown surfaces to llms.txt + document contract ([#2105](https://github.com/everruns/bashkit/pull/2105)) by @chaliy
+* feat(tool): add BashToolBuilder::configure for full BashBuilder access ([#2104](https://github.com/everruns/bashkit/pull/2104)) by @chaliy
+* refactor(dirstack): move directory stack to typed interpreter state ([#2103](https://github.com/everruns/bashkit/pull/2103)) by @chaliy
+* docs(skills): list http_client, ssh, jq, bot-auth in rust install features ([#2102](https://github.com/everruns/bashkit/pull/2102)) by @chaliy
+* docs(site): add LLM tools guide ([#2101](https://github.com/everruns/bashkit/pull/2101)) by @chaliy
+* docs(site): add Embedding getting-started guide ([#2100](https://github.com/everruns/bashkit/pull/2100)) by @chaliy
+* feat(site): add llms.txt agent entry points ([#2099](https://github.com/everruns/bashkit/pull/2099)) by @chaliy
+* docs(python): fix BashKit → Bashkit in FileSystem docstring ([#2098](https://github.com/everruns/bashkit/pull/2098)) by @chaliy
+* refactor(interpreter): move $! to typed state, drop dead _BG_EXIT_CODE ([#2097](https://github.com/everruns/bashkit/pull/2097)) by @chaliy
+* refactor(interpreter): move getopts cluster cursor to typed state ([#2096](https://github.com/everruns/bashkit/pull/2096)) by @chaliy
+* refactor(builtins): share RuntimeLimits core across Python/TypeScript VMs ([#2095](https://github.com/everruns/bashkit/pull/2095)) by @chaliy
+* refactor(interpreter): decompose monolith + group scoped shell state ([#2094](https://github.com/everruns/bashkit/pull/2094)) by @chaliy
+* feat(lib): add ExecOptions request struct + exec_with_options entry point ([#2093](https://github.com/everruns/bashkit/pull/2093)) by @chaliy
+* refactor(interpreter): remove _EVAL_CMD magic-variable channel ([#2092](https://github.com/everruns/bashkit/pull/2092)) by @chaliy
+* feat(tool): gate BashTool wrapper behind default `bash_tool` feature ([#2091](https://github.com/everruns/bashkit/pull/2091)) by @chaliy
+* fix(deps): patch newly-disclosed dependency security advisories ([#2090](https://github.com/everruns/bashkit/pull/2090)) by @chaliy
+* fix(eval): require balanced CSV quote matches ([#2089](https://github.com/everruns/bashkit/pull/2089)) by @chaliy
+* fix(rg): skip option values in delimiter scan ([#2088](https://github.com/everruns/bashkit/pull/2088)) by @chaliy
+* fix(read): trim trailing IFS whitespace when assigning final variable ([#2087](https://github.com/everruns/bashkit/pull/2087)) by @chaliy
+* fix(parser): keep literal case patterns unexpanded ([#2086](https://github.com/everruns/bashkit/pull/2086)) by @chaliy
+* fix(interpreter): suppress ERR trap in conditions ([#2085](https://github.com/everruns/bashkit/pull/2085)) by @chaliy
+* fix(strings): preserve double-dash delimiter ([#2084](https://github.com/everruns/bashkit/pull/2084)) by @chaliy
+* fix(interpreter): preserve mixed word IFS boundaries ([#2083](https://github.com/everruns/bashkit/pull/2083)) by @chaliy
+* fix(deps): patch npm security advisories in lockfiles ([#2082](https://github.com/everruns/bashkit/pull/2082)) by @chaliy
+* fix(parser): preserve expanded backslashes in glob dirs ([#2081](https://github.com/everruns/bashkit/pull/2081)) by @chaliy
+* fix(expansion): preserve quoted operands when markers collide ([#2076](https://github.com/everruns/bashkit/pull/2076)) by @chaliy
+* fix(fs): avoid duplicate lower hide accounting ([#2074](https://github.com/everruns/bashkit/pull/2074)) by @chaliy
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.11.0...v0.12.0
 
 ## [0.11.0] - 2026-06-16
 

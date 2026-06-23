@@ -34,7 +34,7 @@ interactive = ["dep:rustyline", "dep:terminal_size", "dep:signal-hook"]
 # The CLI drives the `Bash` interpreter directly and never touches the LLM
 # `BashTool` wrapper, so it opts out of the default `bash_tool` feature to
 # avoid pulling in tower / futures-core.
-bashkit = { path = "../bashkit", version = "0.11.0", default-features = false, features = ["http_client", "git", "jq"] }
+bashkit = { path = "../bashkit", version = "0.12.0", default-features = false, features = ["http_client", "git", "jq"] }
 tokio = { workspace = true, features = ["macros", "net", "rt", "rt-multi-thread", "time"] }
 clap.workspace = true
 anyhow.workspace = true
