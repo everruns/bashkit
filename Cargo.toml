@@ -110,8 +110,8 @@ turso_core = "0.6"
 serial_test = "3"
 
 # Python bindings
-pyo3 = { version = "0.28.3", features = ["extension-module", "generate-import-lib"] }
-pyo3-async-runtimes = { version = "0.28", features = ["tokio-runtime"] }
+pyo3 = { version = "0.29", features = ["extension-module", "generate-import-lib"] }
+pyo3-async-runtimes = { version = "0.29", features = ["tokio-runtime"] }
 
 # JavaScript/Node.js bindings (NAPI-RS)
 napi = { version = "3.8.6", default-features = false, features = ["napi6", "compat-mode", "tokio_rt"] }
@@ -147,3 +147,21 @@ strip = "symbols"
 inherits = "release"
 lto = "fat"
 codegen-units = 1
+
+# Important decision (security): pin `jiter` to upstream main so the whole
+# workspace can run pyo3 0.29, which fixes GHSA-36hh-v3qg-5jq4 (high, OOB read
+# in PyList/PyTuple iterators) and GHSA-chgr-c6px-7xpp (missing `Sync` bound)
+# in the bashkit-python extension.
+#
+# Blocker: `monty` -> `jiter 0.15.0` declares an optional `pyo3 = "^0.28.2"`.
+# Although jiter's `python` feature is never activated here (monty only enables
+# `num-bigint`), the weak `pyo3?/num-bigint` reference plus pyo3-ffi's
+# `links = "python"` global uniqueness force the resolver to honour jiter's
+# 0.28 constraint, pinning the whole graph below pyo3 0.29.
+#
+# jiter `main` is still version 0.15.0 (semver-compatible with monty's
+# `^0.15.0`) but already bumped its pyo3 dependency to 0.29, so this patch
+# unblocks the upgrade without a fork. Drop it once monty ships a release that
+# tracks a published jiter with pyo3 0.29.
+[patch.crates-io]
+jiter = { git = "https://github.com/pydantic/jiter", rev = "6d57715e01ec78859c62fc5447073c0b5902de39" }

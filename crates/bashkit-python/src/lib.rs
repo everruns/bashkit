@@ -1777,7 +1777,7 @@ impl PyFileSystem {
     fn to_capsule<'py>(&self, py: Python<'py>) -> PyResult<Py<PyCapsule>> {
         let fs = self.export_fs(py)?;
         let exported = export_filesystem(fs).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        let capsule = PyCapsule::new(py, exported, Some(FILESYSTEM_CAPSULE_NAME.to_owned()))?;
+        let capsule = PyCapsule::new_with_value(py, exported, FILESYSTEM_CAPSULE_NAME)?;
         Ok(capsule.unbind())
     }
 
