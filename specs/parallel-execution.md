@@ -20,8 +20,17 @@ Run `cargo bench --bench parallel_execution` when changes touch:
 | Benchmark | What it measures |
 |-----------|------------------|
 | `workload_types/*` | Parallel vs sequential speedup |
-| `parallel_scaling/*` | Scaling with session count |
+| `parallel_scaling/*` | Scaling with session count (10–1000 sessions) |
 | `single_*` | Individual operation overhead |
+
+### Correctness at Scale
+
+Throughput numbers are meaningless if sessions silently error out. The
+`parallel_sessions_tests` integration suite asserts that a 1000-session
+fan-out (each its own `Bash`, sharing one `Arc<dyn FileSystem>`) actually
+produces correct per-session output, and that concurrent sessions sharing a
+filesystem don't cross-contaminate. Run via `just test` (no extra features).
+
 
 ### Expected Results
 
