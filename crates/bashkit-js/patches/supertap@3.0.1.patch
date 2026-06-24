@@ -1,0 +1,13 @@
+diff --git a/dist/index.js b/dist/index.js
+index ab236cc5173801c1efc330642ec112339786b779..aaa1355319147bba2f33049185c41967b074fa9e 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -43,7 +43,7 @@ export const test = (title, options) => {
+     ];
+     if (error) {
+         const object = error instanceof Error ? serializeErrorForTap(error) : error;
+-        output.push(['  ---', indentString(yaml.safeDump(object).trim(), 4), '  ...'].join('\n'));
++        output.push(['  ---', indentString(yaml.dump(object).trim(), 4), '  ...'].join('\n'));
+     }
+     return output.filter(Boolean).join('\n');
+ };
