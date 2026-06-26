@@ -8,13 +8,27 @@ use crate::interpreter::ExecResult;
 
 /// The xargs builtin - build and execute command lines from stdin.
 ///
-/// Usage: xargs [-I REPLACE] [-n MAX-ARGS] [-d DELIM] [COMMAND [ARGS...]]
+/// Usage: xargs [-I REPLACE] [-n MAX-ARGS] [-d DELIM] [-P N]
+///              [--process-slot-var=VAR] [COMMAND [ARGS...]]
 ///
 /// Options:
-///   -I REPLACE   Replace REPLACE with input (implies -n 1)
-///   -n MAX-ARGS  Use at most MAX-ARGS arguments per command
-///   -d DELIM     Use DELIM as delimiter instead of whitespace
-///   -0           Use NUL as delimiter (same as -d '\0')
+///   -I REPLACE              Replace REPLACE with input (implies -n 1)
+///   -n MAX-ARGS             Use at most MAX-ARGS arguments per command
+///   -d DELIM                Use DELIM as delimiter instead of whitespace
+///   -0                      Use NUL as delimiter (same as -d '\0')
+///   -P N, --max-procs=N     Allocate N parallel slots (see decision below)
+///   --process-slot-var=VAR  Set VAR to this invocation's slot index (0..N-1)
+///
+/// Important decision (parallelism): bashkit runs a single `Bash` interpreter
+/// sequentially — even background `&` jobs execute synchronously for
+/// deterministic output (see `specs/parallel-execution.md` and
+/// `interpreter/jobs.rs`). So `-P N` does NOT spawn N OS processes for
+/// wall-clock speedup; instead it allocates N round-robin *slots*, and the
+/// commands still run in order. The slot index is exposed via
+/// `--process-slot-var`, which is the behaviour real sharding logic depends
+/// on (`worker $SLOT of $N`). GNU's own `--process-slot-var` ranges 0..N-1
+/// and is 0 when N is 1, so this matches GNU exactly for the deterministic
+/// case while staying faithful to bashkit's no-hidden-concurrency model.
 pub struct Xargs;
 
 /// Parsed xargs options.
@@ -22,6 +36,11 @@ struct XargsOptions {
     replace_str: Option<String>,
     max_args: Option<usize>,
     delimiter: Option<char>,
+    /// `-P N` / `--max-procs=N`: number of parallel slots. `Some(0)` means
+    /// "as many as possible" (one slot per command). `None` means 1 slot.
+    max_procs: Option<usize>,
+    /// `--process-slot-var=VAR`: env var to expose the per-command slot index.
+    process_slot_var: Option<String>,
     command: Vec<String>,
 }
 
@@ -31,6 +50,8 @@ fn parse_xargs_args(args: &[String]) -> std::result::Result<XargsOptions, ExecRe
     let mut replace_str: Option<String> = None;
     let mut max_args: Option<usize> = None;
     let mut delimiter: Option<char> = None;
+    let mut max_procs: Option<usize> = None;
+    let mut process_slot_var: Option<String> = None;
     let mut command: Vec<String> = Vec::new();
     let mut p = super::arg_parser::ArgParser::new(args);
 
@@ -61,6 +82,34 @@ fn parse_xargs_args(args: &[String]) -> std::result::Result<XargsOptions, ExecRe
             delimiter = val.chars().next();
         } else if p.flag("-0") {
             delimiter = Some('\0');
+        } else if let Some(val) = p
+            .flag_value("-P", "xargs")
+            .map_err(|e| ExecResult::err(format!("{e}\n"), 1))?
+            .or(p
+                .long_value("--max-procs", "xargs")
+                .map_err(|e| ExecResult::err(format!("{e}\n"), 1))?)
+        {
+            // -P 0 / --max-procs=0 means "as many as possible" (GNU).
+            match val.parse::<usize>() {
+                Ok(n) => max_procs = Some(n),
+                _ => {
+                    return Err(ExecResult::err(
+                        format!("xargs: invalid number for -P option: '{}'\n", val),
+                        1,
+                    ));
+                }
+            }
+        } else if let Some(val) = p
+            .long_value("--process-slot-var", "xargs")
+            .map_err(|e| ExecResult::err(format!("{e}\n"), 1))?
+        {
+            if val.is_empty() {
+                return Err(ExecResult::err(
+                    "xargs: --process-slot-var requires a variable name\n".to_string(),
+                    1,
+                ));
+            }
+            process_slot_var = Some(val.to_string());
         } else if p.is_flag() && p.current() != Some("-") {
             let Some(s) = p.current() else {
                 p.advance();
@@ -84,6 +133,8 @@ fn parse_xargs_args(args: &[String]) -> std::result::Result<XargsOptions, ExecRe
         replace_str,
         max_args,
         delimiter,
+        max_procs,
+        process_slot_var,
         command,
     })
 }
@@ -107,9 +158,19 @@ fn build_xargs_commands(opts: &XargsOptions, input: &str) -> Vec<SubCommand> {
     let chunk_size = opts.max_args.unwrap_or(items.len());
     let chunks: Vec<Vec<&str>> = items.chunks(chunk_size).map(|c| c.to_vec()).collect();
 
+    // Number of parallel slots for --process-slot-var assignment. `-P 0`
+    // ("as many as possible") gives every command a distinct slot; absent
+    // `-P`, GNU uses a single slot so the index is always 0.
+    let slot_count = match opts.max_procs {
+        Some(0) => chunks.len().max(1),
+        Some(n) => n,
+        None => 1,
+    };
+
     chunks
         .into_iter()
-        .map(|chunk| {
+        .enumerate()
+        .map(|(idx, chunk)| {
             let cmd_args: Vec<String> = if let Some(ref repl) = opts.replace_str {
                 let item = chunk.first().unwrap_or(&"");
                 opts.command
@@ -122,12 +183,18 @@ fn build_xargs_commands(opts: &XargsOptions, input: &str) -> Vec<SubCommand> {
                 full
             };
 
+            let assignments = match opts.process_slot_var {
+                Some(ref var) => vec![(var.clone(), (idx % slot_count).to_string())],
+                None => Vec::new(),
+            };
+
             let name = cmd_args[0].clone();
             let args = cmd_args[1..].to_vec();
             SubCommand {
                 name,
                 args,
                 stdin: None,
+                assignments,
             }
         })
         .collect()
@@ -138,7 +205,7 @@ impl Builtin for Xargs {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         if let Some(r) = super::check_help_version(
             ctx.args,
-            "Usage: xargs [OPTION]... [COMMAND [ARGS]...]\nBuild and execute command lines from standard input.\n\n  -I REPLACE\treplace REPLACE with input (implies -n 1)\n  -n MAX-ARGS\tuse at most MAX-ARGS arguments per command\n  -d DELIM\tuse DELIM as delimiter instead of whitespace\n  -0\tuse NUL as delimiter\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            "Usage: xargs [OPTION]... [COMMAND [ARGS]...]\nBuild and execute command lines from standard input.\n\n  -I REPLACE\treplace REPLACE with input (implies -n 1)\n  -n MAX-ARGS\tuse at most MAX-ARGS arguments per command\n  -d DELIM\tuse DELIM as delimiter instead of whitespace\n  -0\tuse NUL as delimiter\n  -P, --max-procs=N\tallocate N parallel slots (runs sequentially)\n  --process-slot-var=VAR\tset VAR to the slot index (0..N-1)\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
             Some("xargs (bashkit) 0.1"),
         ) {
             return Ok(r);
@@ -160,9 +227,17 @@ impl Builtin for Xargs {
             return Ok(ExecResult::ok(String::new()));
         }
 
-        // Fallback: output what would be run (for standalone builtin context)
+        // Fallback: output what would be run (for standalone builtin context).
+        // Command-scoped assignments (e.g. the --process-slot-var index) are
+        // rendered as a `VAR=value` prefix so the slot is visible here too.
         let mut output = String::new();
         for cmd in &commands {
+            for (var, val) in &cmd.assignments {
+                output.push_str(var);
+                output.push('=');
+                output.push_str(val);
+                output.push(' ');
+            }
             output.push_str(&cmd.name);
             for arg in &cmd.args {
                 output.push(' ');
@@ -632,6 +707,230 @@ mod tests {
             }
             _ => panic!("expected Batch plan"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_xargs_p_option_accepted() {
+        // -P must no longer be rejected as an invalid option.
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+
+        let args = vec!["-P".to_string(), "4".to_string(), "echo".to_string()];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: Some("a b c"),
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+
+        let result = Xargs.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert!(result.stdout.contains("echo a b c"));
+    }
+
+    #[tokio::test]
+    async fn test_xargs_p_invalid_number() {
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+
+        let args = vec!["-P".to_string(), "abc".to_string(), "echo".to_string()];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: Some("a"),
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+
+        let result = Xargs.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid number for -P"));
+    }
+
+    #[tokio::test]
+    async fn test_xargs_process_slot_var_round_robin() {
+        // -P N with --process-slot-var assigns slots 0..N-1 round-robin.
+        // The fallback rendering shows them as a `VAR=value` prefix.
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+
+        let args = vec![
+            "-P".to_string(),
+            "2".to_string(),
+            "--process-slot-var=SLOT".to_string(),
+            "-n".to_string(),
+            "1".to_string(),
+            "echo".to_string(),
+        ];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: Some("a b c d"),
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+
+        let result = Xargs.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        let lines: Vec<_> = result.stdout.lines().collect();
+        assert_eq!(
+            lines,
+            vec![
+                "SLOT=0 echo a",
+                "SLOT=1 echo b",
+                "SLOT=0 echo c",
+                "SLOT=1 echo d",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_xargs_process_slot_var_single_slot_is_zero() {
+        // Without -P there is one slot, so the index is always 0 (GNU parity).
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+
+        let args = vec![
+            "--process-slot-var".to_string(),
+            "S".to_string(),
+            "-n".to_string(),
+            "1".to_string(),
+            "echo".to_string(),
+        ];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: Some("a b"),
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+
+        let result = Xargs.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        let lines: Vec<_> = result.stdout.lines().collect();
+        assert_eq!(lines, vec!["S=0 echo a", "S=0 echo b"]);
+    }
+
+    #[tokio::test]
+    async fn test_xargs_plan_carries_slot_assignment() {
+        // The execution plan must carry the per-command slot assignment so the
+        // interpreter runs each command with `VAR=slot cmd ...`.
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+
+        let args = vec![
+            "-P".to_string(),
+            "2".to_string(),
+            "--process-slot-var=SLOT".to_string(),
+            "-n".to_string(),
+            "1".to_string(),
+            "echo".to_string(),
+        ];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: Some("a b c"),
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+
+        let plan = Xargs.execution_plan(&ctx).await.unwrap();
+        match plan {
+            Some(ExecutionPlan::Batch { commands }) => {
+                assert_eq!(commands.len(), 3);
+                assert_eq!(
+                    commands[0].assignments,
+                    vec![("SLOT".to_string(), "0".to_string())]
+                );
+                assert_eq!(
+                    commands[1].assignments,
+                    vec![("SLOT".to_string(), "1".to_string())]
+                );
+                assert_eq!(
+                    commands[2].assignments,
+                    vec![("SLOT".to_string(), "0".to_string())]
+                );
+            }
+            _ => panic!("expected Batch plan"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_xargs_max_procs_long_form() {
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+
+        let args = vec![
+            "--max-procs=3".to_string(),
+            "--process-slot-var=S".to_string(),
+            "-n".to_string(),
+            "1".to_string(),
+            "echo".to_string(),
+        ];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: Some("a b c d"),
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+
+        let result = Xargs.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 0);
+        let lines: Vec<_> = result.stdout.lines().collect();
+        assert_eq!(
+            lines,
+            vec!["S=0 echo a", "S=1 echo b", "S=2 echo c", "S=0 echo d",]
+        );
     }
 
     // ==================== tee tests ====================

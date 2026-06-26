@@ -486,6 +486,10 @@ pub struct SubCommand {
     pub args: Vec<String>,
     /// Optional stdin to pipe into the command.
     pub stdin: Option<String>,
+    /// Command-scoped environment assignments (`VAR=value cmd ...`), applied
+    /// only to this command's environment. Used by `xargs --process-slot-var`
+    /// to expose a per-invocation parallel-slot index.
+    pub assignments: Vec<(String, String)>,
 }
 
 /// Execution plan returned by builtins that need to run sub-commands.

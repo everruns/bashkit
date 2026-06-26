@@ -252,6 +252,21 @@ use fail::fail_point;
 /// This is handled at the interpreter level to prevent custom filesystems from bypassing it.
 const DEV_NULL: &str = "/dev/null";
 
+/// Convert a [`SubCommand`](crate::builtins::SubCommand)'s command-scoped
+/// `(VAR, value)` pairs into AST [`Assignment`]s, so a plan's inner command
+/// runs with `VAR=value cmd ...` semantics (used by `xargs --process-slot-var`).
+fn subcommand_env_assignments(pairs: &[(String, String)]) -> Vec<Assignment> {
+    pairs
+        .iter()
+        .map(|(name, value)| Assignment {
+            name: name.clone(),
+            index: None,
+            value: AssignmentValue::Scalar(Word::quoted_literal(value.clone())),
+            append: false,
+        })
+        .collect()
+}
+
 /// Check if a name is a shell keyword (for `command -v`/`command -V`).
 fn is_keyword(name: &str) -> bool {
     matches!(
@@ -7976,7 +7991,7 @@ impl Interpreter {
                         .map(|s| Word::quoted_literal(s.clone()))
                         .collect(),
                     redirects: inner_redirects,
-                    assignments: Vec::new(),
+                    assignments: subcommand_env_assignments(&command.assignments),
                     span: Span::new(),
                 });
 
@@ -8030,7 +8045,7 @@ impl Interpreter {
                             .map(|s| Word::quoted_literal(s.clone()))
                             .collect(),
                         redirects: cmd_redirects,
-                        assignments: Vec::new(),
+                        assignments: subcommand_env_assignments(&cmd.assignments),
                         span: Span::new(),
                     });
 
@@ -8077,7 +8092,7 @@ impl Interpreter {
                             .map(|s| Word::quoted_literal(s.clone()))
                             .collect(),
                         redirects: cmd_redirects,
-                        assignments: Vec::new(),
+                        assignments: subcommand_env_assignments(&cmd.assignments),
                         span: Span::new(),
                     });
 

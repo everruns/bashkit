@@ -162,7 +162,24 @@ plan instead of using the `execute()` result.
 Variants: `Timeout { duration, preserve_status, command }`,
 `Batch { commands }` (`builtins/mod.rs`).
 
+Each `SubCommand` carries optional command-scoped `assignments`
+(`VAR=value cmd ...`), which the interpreter applies as the inner command's
+environment. `xargs --process-slot-var=VAR` uses this to expose a
+per-invocation parallel-slot index.
+
 **Current users:** `timeout` → Timeout, `xargs` → Batch, `find -exec` → Batch.
+
+#### `xargs -P` / `--process-slot-var` (parallelism)
+
+bashkit runs a single `Bash` interpreter sequentially — even background `&`
+jobs run synchronously for deterministic output (see
+`specs/parallel-execution.md`). So `xargs -P N` / `--max-procs=N` does **not**
+spawn N OS processes for wall-clock speedup. Instead it allocates N
+round-robin *slots* and the commands still run in order, with the slot index
+(0..N-1, `idx % N`) surfaced via `--process-slot-var`. This is the behaviour
+sharding logic depends on (`worker $SLOT of $N`) and matches GNU's
+`--process-slot-var` for the deterministic case (single slot ⇒ index always
+0). `-P 0` means "as many as possible" (one slot per command).
 
 **Adding new execution plans:** Add a variant to `ExecutionPlan` and handle it
 in the interpreter's plan fulfillment code (`interpreter/mod.rs`).
