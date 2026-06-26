@@ -191,32 +191,31 @@ bench-sqlite:
     ./scripts/bench-sqlite.sh
     pnpm --dir site run data:performance
 
-# === Eval ===
+# === Eval (mira study) ===
+# Evals run on the mira framework (github.com/everruns/mira). The crate is a
+# study binary the `mira` host CLI spawns over stdio; mira owns the model
+# matrix, scheduling, and reporting. Install the host once:
+#   cargo install mira-cli      # provides the `mira` binary
+# Targets are gated on ANTHROPIC_API_KEY / OPENAI_API_KEY — set the keys for
+# the models you want to run; unkeyed targets are skipped. See specs/eval.md.
 
-# Run LLM eval and save site-indexed JSON/Markdown results (requires ANTHROPIC_API_KEY or OPENAI_API_KEY)
-eval dataset="crates/bashkit-eval/data/eval-tasks.jsonl" provider="anthropic" model="claude-sonnet-4-20250514":
-    cargo run -p bashkit-eval --release -- run --dataset {{dataset}} --provider {{provider}} --model {{model}} --save
-    pnpm --dir site run data:performance
+# List advertised evals, samples, scorers, and targets
+eval-list:
+    mira --bin bashkit-eval list
 
-# Run eval and save results
-eval-save dataset="crates/bashkit-eval/data/eval-tasks.jsonl" provider="anthropic" model="claude-sonnet-4-20250514":
-    cargo run -p bashkit-eval --release -- run --dataset {{dataset}} --provider {{provider}} --model {{model}} --save
-    pnpm --dir site run data:performance
+# Run the bash agent eval. Pass extra mira flags through, e.g.
+#   just eval --targets 'anthropic/*' --tag json_processing --format html --out report.html
+eval *ARGS:
+    mira --bin bashkit-eval run bashkit_bash {{ARGS}}
 
-# Run scripting-tool eval (scripted mode) and save site-indexed JSON/Markdown results
-eval-scripting dataset="crates/bashkit-eval/data/scripting-tool/many-tools.jsonl" provider="openai" model="gpt-5.4":
-    cargo run -p bashkit-eval --release -- run --eval-type scripting-tool --dataset {{dataset}} --provider {{provider}} --model {{model}} --save
-    pnpm --dir site run data:performance
+# Quick 3-task smoke eval
+eval-smoke *ARGS:
+    mira --bin bashkit-eval run bashkit_smoke {{ARGS}}
 
-# Run scripting-tool eval (baseline mode — individual tools, no ScriptedTool) and save site-indexed JSON/Markdown results
-eval-scripting-baseline dataset="crates/bashkit-eval/data/scripting-tool/many-tools.jsonl" provider="openai" model="gpt-5.4":
-    cargo run -p bashkit-eval --release -- run --eval-type scripting-tool --baseline --dataset {{dataset}} --provider {{provider}} --model {{model}} --save
-    pnpm --dir site run data:performance
-
-# Run scripting-tool eval and save results
-eval-scripting-save dataset="crates/bashkit-eval/data/scripting-tool/many-tools.jsonl" provider="openai" model="gpt-5.4":
-    cargo run -p bashkit-eval --release -- run --eval-type scripting-tool --dataset {{dataset}} --provider {{provider}} --model {{model}} --save
-    pnpm --dir site run data:performance
+# Scripting-tool eval. The `mode` axis compares scripted vs baseline; select one
+# with `--axis mode=scripted` (omit to run both).
+eval-scripting *ARGS:
+    mira --bin bashkit-eval run bashkit_scripting {{ARGS}}
 
 # === Security ===
 

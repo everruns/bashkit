@@ -1,47 +1,55 @@
 # Bashkit Eval
 
-LLM evaluation harness for bashkit tool usage. Measures how well models use bashkit's bash tool in agentic workloads.
+A [mira](https://github.com/everruns/mira) eval study for bashkit tool usage.
+Measures how well models use bashkit's bash tool in agentic workloads.
+
+bashkit-eval is a **study binary** the `mira` host CLI spawns over stdio; mira
+owns the model matrix, scheduling, retries, resume, and reporting. bashkit
+supplies the subject (its agent loop over a persistent VFS) and the scorer (the
+deterministic expectation checks). See [`specs/eval.md`](../../specs/eval.md).
 
 ## Usage
 
+Install the host CLI once, then drive the study through it:
+
 ```bash
-# Run eval (terminal output only)
-ANTHROPIC_API_KEY=... cargo run -p bashkit-eval -- run \
-  --dataset crates/bashkit-eval/data/eval-tasks.jsonl \
-  --provider anthropic --model claude-sonnet-4-20250514
+cargo install mira-cli            # provides the `mira` binary
 
-# Run and save results (Chat Completions API)
-OPENAI_API_KEY=... cargo run -p bashkit-eval -- run \
-  --dataset crates/bashkit-eval/data/eval-tasks.jsonl \
-  --provider openai --model gpt-5.2 --save
+# List advertised evals, samples, scorers, and targets
+mira --bin bashkit-eval list
 
-# Run against OpenAI Responses API (required for codex models)
-OPENAI_API_KEY=... cargo run -p bashkit-eval -- run \
-  --dataset crates/bashkit-eval/data/eval-tasks.jsonl \
-  --provider openresponses --model gpt-5.3-codex --save
+# Run the bash agent eval (set keys for the models you want; unkeyed targets skip)
+ANTHROPIC_API_KEY=... OPENAI_API_KEY=... \
+  mira --bin bashkit-eval run bashkit_bash
 
-# Custom moniker
-cargo run -p bashkit-eval -- run \
-  --dataset crates/bashkit-eval/data/eval-tasks.jsonl \
-  --provider anthropic --model claude-sonnet-4-20250514 \
-  --save --moniker my-test-run
+# Only Anthropic models, only the json_processing category
+ANTHROPIC_API_KEY=... \
+  mira --bin bashkit-eval run bashkit_bash --targets 'anthropic/*' --tag json_processing
+
+# Scripting-tool eval, scripted mode only, self-contained HTML report
+OPENAI_API_KEY=... \
+  mira --bin bashkit-eval run bashkit_scripting --axis mode=scripted --format html --out report.html
 
 # Via just
-just eval
-just eval-save
+just eval-list
+just eval --targets 'anthropic/*'
+just eval-smoke
+just eval-scripting
 ```
 
-## Options
+Results are written by mira under `./results/<run_id>/`.
 
-| Option | Description |
-|--------|-------------|
-| `--dataset <path>` | Path to JSONL dataset file |
-| `--provider <name>` | `anthropic`, `openai`, or `openresponses` |
-| `--model <name>` | Model name (e.g., `claude-sonnet-4-20250514`, `gpt-5.2`, `gpt-5.3-codex`) |
-| `--max-turns <n>` | Max agent turns per task (default: 10) |
-| `--save` | Save JSON + Markdown results to disk |
-| `--output <dir>` | Output directory (default: `crates/bashkit-eval/results`) |
-| `--moniker <id>` | Custom run identifier (default: `{provider}-{model}`) |
+## Evals & selection
+
+| Eval | Samples | Selection |
+|------|---------|-----------|
+| `bashkit_bash` | 58 tasks, 15 categories | `--tag <category>`, `--samples <id>` |
+| `bashkit_smoke` | 3 tasks | quick verification |
+| `bashkit_scripting` | scripting-tool tasks | `--axis mode=scripted\|baseline` |
+
+Targets (model matrix) are defined in `src/mira_study.rs` and gated on
+`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`; offline runs skip them all. Select a
+subset with `--targets '<glob>'`.
 
 ## Dataset
 
@@ -50,6 +58,9 @@ just eval-save
 Smoke test dataset (`data/smoke-test.jsonl`) has 3 tasks for quick verification.
 
 ## Results
+
+> Historical results below were produced by the original (pre-mira) harness and
+> are retained as a record. New runs are reported by mira under `./results/`.
 
 ### 2026-05-26 — Opus 4.7 + GPT-5.5 Lineup (58 tasks, latest)
 

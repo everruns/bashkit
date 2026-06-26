@@ -13,16 +13,26 @@ directories:
 |---------|------------------|------------|
 | `bashkit-bench` | `crates/bashkit-bench/results/` | `bench-*.json` plus matching `bench-*.md` |
 | Criterion benches | `crates/bashkit/benches/results/` | `criterion-*.md` |
-| `bashkit-eval` | `crates/bashkit-eval/results/` | `eval-*.json`, `scripting-eval-*.json`, plus matching `.md` reports |
+| `bashkit-eval` (archived) | `crates/bashkit-eval/results/` | `eval-*.json`, `scripting-eval-*.json`, plus matching `.md` reports |
 
 Markdown files are the user-facing reports linked from `/benches`; JSON files
 are the aggregation input for benchmark and eval summaries.
 
+> `bashkit-eval` was reimplemented as a [mira](https://github.com/everruns/mira)
+> study (see `specs/eval.md`); mira now owns eval run output (written under
+> `./results/<run_id>/` in mira's own format). The `crates/bashkit-eval/results/`
+> directory is retained as an **archive** of pre-mira runs and remains the
+> `/benches` eval input until the site is re-wired to mira's output format
+> (follow-up).
+
 ## Run Commands
 
-Default recipes that represent a real benchmark/eval run MUST save artifacts in
-the directories above: `just bench`, `just eval`, `just eval-scripting`,
-`just bench-parallel`, `just bench-sqlite`.
+Default benchmark recipes that represent a real run MUST save artifacts in the
+directories above: `just bench`, `just bench-parallel`, `just bench-sqlite`.
+
+`bashkit-eval` runs through the `mira` host (`just eval`, `just eval-scripting`);
+mira writes its own run folder under `./results/<run_id>/` and is not part of the
+benchmark save contract above.
 
 Non-saving exploratory commands may exist, but their names or comments must make
 clear that they do not update the site.

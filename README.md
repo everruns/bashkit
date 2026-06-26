@@ -467,7 +467,7 @@ just pre-pr       # Pre-PR checks
 
 ## LLM Eval Results
 
-Bashkit includes an [eval harness](crates/bashkit-eval/) that measures how well LLMs use bashkit as a bash tool in agentic workloads — 58 tasks across 15 categories.
+Bashkit includes a [mira eval study](crates/bashkit-eval/) that measures how well LLMs use bashkit as a bash tool in agentic workloads — 58 tasks across 15 categories.
 
 | Model | Score | Tasks Passed | Tool Call Success | Duration |
 |-------|-------|-------------|-------------------|----------|
@@ -480,8 +480,10 @@ Bashkit includes an [eval harness](crates/bashkit-eval/) that measures how well 
 **Delta from 2026-02-28** (same 58 tasks): Opus 4.6→4.7 jumped +6 tasks (50→56), GPT-5.2→5.5 jumped +9 tasks (41→50). Haiku 4.5 ties with Opus 4.7 at 98% in ⅓ the wall-clock time. See the [detailed analysis](crates/bashkit-eval/README.md#results).
 
 ```bash
-just eval                    # Run eval with default model
-just eval-save               # Run and save results
+cargo install mira-cli       # one-time: the `mira` host CLI
+just eval-list               # list evals, samples, scorers, targets
+just eval                    # run the bash eval across the model matrix
+just eval-scripting          # run the scripting-tool eval
 ```
 
 ## Benchmarks

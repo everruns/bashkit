@@ -1,36 +1,74 @@
-# bashkit-eval: LLM Evaluation Harness
+# bashkit-eval: mira Eval Study
 
 ## Status
 
-Implemented
+Implemented (reimplemented on the [mira](https://github.com/everruns/mira) eval
+framework; supersedes the original hand-rolled harness).
 
 ## Purpose
 
-Evaluate how well LLM models use bashkit's bash tool in agentic workloads. Measure model capability across bash feature categories, identify bashkit compatibility gaps, and drive improvement.
+Evaluate how well LLM models use bashkit's bash tool in agentic workloads.
+Measure model capability across bash feature categories, identify bashkit
+compatibility gaps, and drive improvement.
 
 ## Architecture
 
+`bashkit-eval` is a **mira study**: a binary that advertises its evals to the
+`mira` host CLI over stdio. Mira owns the model matrix, scheduling, retries,
+resume, and reporting (JSON/JUnit/Markdown/HTML). bashkit supplies the
+subject-under-test and the scoring.
+
 ```
-JSONL Dataset → Runner → Agent Loop (per task) → Scorer → Report
-                           ↕                        ↕
-                     Provider (LLM)           Bash VFS inspection
-                           ↕
-                     Bash (bashkit)
+mira host CLI ──spawns──▶ bashkit-eval (study binary)
+   │                          │
+   │  model matrix            ├─ Sample   (one per JSONL task)
+   │  scheduling/retries      ├─ Subject  (bashkit agent loop)
+   │  reporting               └─ Scorer   (bashkit expectation checks)
 ```
+
+Three pieces wire bashkit into mira (`src/mira_study.rs`):
+
+1. **Samples** — each JSONL `EvalTask` / `ScriptingEvalTask` becomes a mira
+   `Sample`. The full task rides in `sample.metadata["task"]` (the subject's
+   source of truth); its `expectations` array in
+   `sample.metadata["expectations"]` (the scorer's source of truth). Datasets
+   are embedded via `include_str!` so there is no runtime path dependence.
+2. **Subject** — `bash_subject` / `scripting_subject` run bashkit's existing
+   agent loop against the case's target model (`cx.target.{provider,model}`),
+   then pack the result into a mira `Transcript`.
+3. **Scorer** — `expectations_scorer` replays the deterministic bashkit checks
+   against the Transcript. A case passes iff **every** check passes (mirrors the
+   original `TaskScore::all_passed`); the score value is the weighted pass rate.
 
 ### Key Design Decisions
 
-1. **`Bash` directly, not `BashTool`** — `BashTool::execute()` creates a fresh interpreter per call (no VFS persistence). The agent loop needs persistent VFS across turns. `BashTool::default()` used only for `input_schema()` / `system_prompt()` / `help()` introspection.
-2. **One `Bash` per task** — fresh instance per dataset task; VFS persists across all tool calls within the task; scorer inspects final VFS state; instance dropped after scoring.
-3. **Pre-populated VFS** — task `files: {}` map → `Bash::builder().mount_text(path, content)`.
-4. **VFS inspection for scoring** — `bash.fs()` returns `Arc<dyn FileSystem>` (`exists()`, `read_file()`, `stat()`).
-5. **Provider abstraction** — common `Message`/`ContentBlock` types normalize Anthropic Messages API, OpenAI Chat Completions API, and OpenAI Responses API differences. Agent loop is provider-agnostic.
-6. **Sequential execution** — no concurrency, one task at a time.
-7. **Optional persistence** — `--save` flag; otherwise terminal output only.
+1. **In-process Subject (mira "Path A"), not `mira-everruns`** — bashkit keeps
+   its own provider stack (Anthropic Messages, OpenAI Chat Completions, OpenAI
+   Responses) and agent loop. The study depends only on `mira-eval` (no
+   `mira-everruns`/`everruns-runtime`), keeping the dependency tree small.
+2. **`Bash` directly, not `BashTool`** — `BashTool::execute()` creates a fresh
+   interpreter per call (no VFS persistence). The agent loop needs a persistent
+   VFS across turns. `BashTool::builder()` is used only for
+   `input_schema()` / `system_prompt()` introspection.
+3. **One `Bash` per task** — fresh instance per sample; VFS persists across all
+   tool calls within the task; the snapshot is taken after the loop; the
+   instance is dropped after.
+4. **Pre-populated VFS** — task `files: {}` map → `Bash::builder().mount_text`.
+5. **Snapshot, not a live filesystem, is the scoring substrate** — a mira
+   `Scorer` only sees `&Sample` + `&Transcript`. After the run, the subject
+   walks the VFS into `transcript.files` (path → contents) and records a
+   `Snapshot` (tool-call stdout/stderr/exit codes + directory set) in
+   `transcript.metadata["bashkit"]`. The checks read those. See `src/snapshot.rs`.
+6. **Model matrix via mira `Target`s** — targets are gated on their provider's
+   API-key env var, so an offline run skips them all (CI stays green) and a
+   keyed run lights up the subset whose credentials are present.
+7. **No bespoke runner/report** — mira provides run orchestration, persistence
+   (`./results/<run_id>/`), and reports. The original `runner.rs`, `report.rs`,
+   and scripting equivalents are gone.
 
 ## Dataset Format (JSONL)
 
-One JSON object per line:
+Unchanged from the original harness. One JSON object per line:
 
 ```json
 {
@@ -55,82 +93,87 @@ One JSON object per line:
 `exit_code:N`, `stdout_contains:text`, `stdout_regex:pattern`,
 `stderr_empty`, `file_exists:/path`, `dir_exists:/path`,
 `file_contains:/path:text`, `file_line_regex:/path:pattern`,
-`llm_judge:prompt` (stub — not yet implemented). Semantics in
-`crates/bashkit-eval/src/scorer.rs`.
+`llm_judge:prompt` (stub — weight forced to 0). Semantics in
+`crates/bashkit-eval/src/checks.rs` (ported verbatim from the original scorer,
+with byte-for-byte the same pass/fail logic).
 
 ## Providers
 
-- **Anthropic Messages API** — `ANTHROPIC_API_KEY`; `tool_use`/`tool_result` content blocks.
-- **OpenAI Chat Completions** — `OPENAI_API_KEY`; `tool_calls` + `role: "tool"` messages.
-- **OpenAI Responses API** — `OPENAI_API_KEY`; `function_call`/`function_call_output` input items. Required for codex models (e.g. `gpt-5.3-codex`); multi-turn via manual input chaining (appends response output + tool results to next input); sets `reasoning.effort: "high"` for codex models automatically.
+Implemented under `src/provider/`, selected by the mira target's `provider` id:
+
+- **Anthropic Messages API** — target `Target::anthropic(model)`; `ANTHROPIC_API_KEY`.
+- **OpenAI Chat Completions** — target `Target::openai(model)`; `OPENAI_API_KEY`.
+- **OpenAI Responses API** — target `Target::cloud("openresponses", model,
+  "OPENAI_API_KEY")`. Required for codex models (e.g. `gpt-5.3-codex`);
+  multi-turn via manual input chaining; sets `reasoning.effort: "high"` for
+  codex models automatically.
+
+## Evals
+
+Three evals are advertised (`#[eval]` wrappers in `src/main.rs`):
+
+| Eval | Samples | Notes |
+|------|---------|-------|
+| `bashkit_bash` | 58 tasks across 15 categories | Samples tagged by category; select with `--tag <category>` |
+| `bashkit_smoke` | 3 tasks | Quick verification |
+| `bashkit_scripting` | scripting-tool tasks | `mode` axis: `scripted` vs `baseline` |
 
 ## CLI
 
+Run through the `mira` host (install via `cargo install mira-cli`):
+
 ```
-bashkit-eval run \
-  --dataset <path.jsonl> \
-  --provider <anthropic|openai|openresponses> \
-  --model <model-name> \
-  [--max-turns 10] [--save] \
-  [--output crates/bashkit-eval/results] [--moniker <custom-id>]
+mira --bin bashkit-eval list
+mira --bin bashkit-eval run bashkit_bash
+mira --bin bashkit-eval run bashkit_bash --targets 'anthropic/*' --tag json_processing
+mira --bin bashkit-eval run bashkit_scripting --axis mode=scripted
+mira --bin bashkit-eval run --format html --out report.html
+mira --bin bashkit-eval run --resume <run_id>
 ```
 
-`--moniker` defaults to `{provider}-{model}`.
+`just eval`, `just eval-smoke`, `just eval-scripting`, and `just eval-list`
+wrap these.
 
-## Output
+## Output / Metrics
 
-Terminal (always): per-task PASS/FAIL with check details; summary table with
-overall score and per-category breakdown. With `--save`:
-`{output}/eval-{moniker}-{YYYY-MM-DD-HHmmss}.{json,md}` (full traces +
-markdown report).
+Mira owns output (run folder under `./results/<run_id>/`, plus
+JSON/JUnit/Markdown/HTML). The subject records operational telemetry on the
+`Transcript` so mira surfaces it:
 
-## Metrics
+- **Score** — weighted pass rate of the `bashkit_expectations` scorer; pass iff
+  all checks pass.
+- **Usage** — input/output tokens (`transcript.usage`).
+- **Timing** — wall-clock (`transcript.timing.duration_ms`).
+- **Metrics** (`transcript.metrics`, open vocabulary): `turns`, `tool_calls`,
+  `tool_calls_ok`, `tool_calls_err`, `natural_stop`. Scripting adds
+  `baseline`, `inner_commands`, `inner_tool`, `inner_help`, `inner_discover`,
+  `raw_tool_output_bytes`, `tool_output_sent_bytes`.
 
-### Task-level
-- **Score** — weighted sum of passed checks vs total weight
-- **Turns** — LLM round-trips (each `provider.chat()` call = 1 turn)
-- **Tool calls** — total bash invocations, split into ok (exit_code 0) and error
-- **Tokens** — input/output counts
-- **Duration** — wall-clock
-
-### Summary-level
-- **Tasks passed** — tasks where all checks pass
-- **Overall score** — aggregate weighted score
-- **Tool call success rate** — `tool_calls_ok / total_tool_calls`; low rates indicate bashkit compatibility gaps or invalid model commands
-- **Tool/command count telemetry** — outer tool calls and (for `scripting-tool`) inner command invocations, tracked for historical trend analysis only, never scoring
-- **Per-category breakdown** — pass rate per category
+Low `tool_calls_ok / tool_calls` indicates bashkit compatibility gaps or invalid
+model commands.
 
 ## Dataset Categories
 
-Datasets live in `crates/bashkit-eval/data/`. Categories span file
-operations, text processing, pipelines, scripting, data transformation,
-error recovery, system info, archives, JSON processing, complex multi-step
-tasks, code search, and environment handling — each with task-appropriate
-pre-populated seed files.
+Datasets live in `crates/bashkit-eval/data/`. Categories span file operations,
+text processing, pipelines, scripting, data transformation, error recovery,
+system info, archives, JSON processing, complex multi-step tasks, code search,
+and environment handling — each with task-appropriate pre-populated seed files.
 
-## Results & Analysis
+## Scripting-Tool Eval
 
-After `--save` runs, update `crates/bashkit-eval/README.md` with a concise
-summary table, per-category comparison, key observations, and analysis date;
-full per-task details stay in the saved reports under
-`crates/bashkit-eval/results/`. Saved reports are also consumed by the site
-`/benches` page — see `specs/performance-results.md` for the
-result-location/aggregation contract.
-
-## Scripting Tool Eval Mode
-
-A second eval type tests `ScriptedTool` orchestration (see
+A second eval (`bashkit_scripting`) tests `ScriptedTool` orchestration (see
 `specs/scripted-tool-orchestration.md`), measuring how well LLMs orchestrate
-multiple mock tools via bash scripts vs calling each tool individually.
+multiple mock tools via bash scripts vs. calling each tool individually.
 
-### Modes
+### Modes (the `mode` axis)
 
-- **Scripted** — all mock tools composed into one `ScriptedTool`; LLM writes bash scripts. Measures tool-composition effectiveness.
-- **Baseline** — each mock tool exposed as a separate LLM tool; control for comparison.
+- **scripted** — all mock tools composed into one `ScriptedTool`; the LLM writes
+  bash scripts. Measures tool-composition effectiveness.
+- **baseline** — each mock tool exposed as a separate LLM tool; the control.
 
 ### Dataset Format
 
-Same JSONL format plus per-task `tools` and `discovery_mode`:
+Same JSONL plus per-task `tools` and `discovery_mode`:
 
 ```json
 {
@@ -155,26 +198,19 @@ Same JSONL format plus per-task `tools` and `discovery_mode`:
 Mock behaviors: **Static** (`"mock": "fixed string"`) or **ByParam**
 (`{"param": "key", "responses": {...}, "default": "fallback"}`). `tags` /
 `category` feed `discover` filtering. `discovery_mode: true` uses
-`ScriptingToolSet::with_discovery()`: tool names hidden from the system
-prompt; the LLM must use the `discover`/`help` builtins.
+`ScriptingToolSet::with_discovery()`: tool names hidden from the system prompt;
+the LLM must use the `discover`/`help` builtins. Scripting tasks score against
+mock-tool stdout (no VFS file checks).
 
 Datasets: `crates/bashkit-eval/data/scripting-tool/` — `large-output.jsonl`,
 `many-tools.jsonl` (15–20 tools), `paginated.jsonl`, `discovery.jsonl`.
 
-### CLI
-
-As above plus `--eval-type scripting-tool` and `[--baseline]`.
-
-### Metrics (additional)
-
-- **Raw tool output bytes** vs **tool output sent bytes** (after formatting)
-- **Inner command telemetry** — per-task inner scripted command counts, split tool/help/discover
-- **Per-mode comparison** — scripted vs baseline pass rate, tokens, turns
-
 ## Non-Goals
 
-- No concurrency / parallelism
-- No cost guardrails
-- No comparison against real bash
-- No streaming
-- No retries on LLM content errors (retries only on 429/5xx with exponential backoff)
+- No bespoke concurrency / scheduling — mira owns it.
+- No cost guardrails (mira budget scorers can be added if desired).
+- No comparison against real bash.
+- No streaming.
+- No retries on LLM content errors (the providers retry only on 429/5xx with
+  exponential backoff); provider/agent failures surface as
+  `Transcript::infra_error` → the case scores N/A, not a model failure.
