@@ -1,0 +1,68 @@
+{
+  "eval": "bashkit_smoke",
+  "sample": "smoke_grep",
+  "target": "anthropic/claude-opus-4-8",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Here are the results from `/var/log/test.log`:\n\n**Matching lines (case insensitive):**\n```\nERROR: failed\nerror: bad input\n```\n\n**Count: 2**\n\nThe commands used were:\n- `grep -i 'error' /var/log/test.log` — finds all lines containing \"error\" regardless of case (the `-i` flag makes it case insensitive)\n- `grep -ic 'error' /var/log/test.log` — the additional `-c` flag counts the matching lines\n\nNote: `grep -c` counts the number of *lines* containing a match (not total occurrences). If a line contained \"error\" twice, it would still count as 1. If you'd like to count total occurrences instead, let me know and I can use `grep -io 'error' | wc -l`.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "if [ -f /var/log/test.log ]; then echo \"File exists\"; ls -la /var/log/test.log; else echo \"File does not exist\"; fi",
+      "echo \"=== Matching lines ===\"\ngrep -i 'error' /var/log/test.log\necho \"\"\necho \"=== Count ===\"\ngrep -ic 'error' /var/log/test.log"
+    ],
+    "usage": {
+      "input_tokens": 2424,
+      "output_tokens": 513,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7644
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp",
+          "/var",
+          "/var/log"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "if [ -f /var/log/test.log ]; then echo \"File exists\"; ls -la /var/log/test.log; else echo \"File does not exist\"; fi",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "File exists\n-rw-r--r--       67 2026-07-11 04:30 /var/log/test.log\n"
+          },
+          {
+            "commands": "echo \"=== Matching lines ===\"\ngrep -i 'error' /var/log/test.log\necho \"\"\necho \"=== Count ===\"\ngrep -ic 'error' /var/log/test.log",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== Matching lines ===\nERROR: failed\nerror: bad input\n\n=== Count ===\n2\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

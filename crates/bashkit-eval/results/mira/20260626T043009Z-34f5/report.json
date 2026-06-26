@@ -1,0 +1,687 @@
+{
+  "cases": [
+    {
+      "aggregate": 1.0,
+      "eval": "bashkit_smoke",
+      "passed": true,
+      "sample": "smoke_echo",
+      "scores": [
+        {
+          "pass": true,
+          "reason": "2/2 checks passed (weighted rate 100%)",
+          "scorer": "bashkit_expectations",
+          "value": 1.0
+        }
+      ],
+      "skipped": false,
+      "target": "anthropic/claude-opus-4-8",
+      "transcript": {
+        "final_response": "Done. The command `echo 'hello world'` printed **hello world** to stdout.",
+        "iterations": 2,
+        "metadata": {
+          "bashkit": {
+            "dirs": [
+              "/dev",
+              "/dev/fd",
+              "/home",
+              "/home/user",
+              "/tmp"
+            ],
+            "last_exit_code": 0,
+            "tool_outputs": [
+              {
+                "commands": "echo 'hello world'",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": "hello world\n"
+              }
+            ]
+          }
+        },
+        "metrics": {
+          "natural_stop": 1.0,
+          "tool_calls": 1.0,
+          "tool_calls_err": 0.0,
+          "tool_calls_ok": 1.0,
+          "turns": 2.0
+        },
+        "timing": {
+          "duration_ms": 2723
+        },
+        "tool_calls": [
+          "echo 'hello world'"
+        ],
+        "tool_calls_count": 1,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 1313,
+          "output_tokens": 101
+        }
+      }
+    },
+    {
+      "aggregate": 1.0,
+      "eval": "bashkit_smoke",
+      "passed": true,
+      "sample": "smoke_echo",
+      "scores": [
+        {
+          "pass": true,
+          "reason": "2/2 checks passed (weighted rate 100%)",
+          "scorer": "bashkit_expectations",
+          "value": 1.0
+        }
+      ],
+      "skipped": false,
+      "target": "anthropic/claude-haiku-4-5",
+      "transcript": {
+        "final_response": "Done! The command `echo 'hello world'` printed \"hello world\" to stdout.",
+        "iterations": 2,
+        "metadata": {
+          "bashkit": {
+            "dirs": [
+              "/dev",
+              "/dev/fd",
+              "/home",
+              "/home/user",
+              "/tmp"
+            ],
+            "last_exit_code": 0,
+            "tool_outputs": [
+              {
+                "commands": "echo 'hello world'",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": "hello world\n"
+              }
+            ]
+          }
+        },
+        "metrics": {
+          "natural_stop": 1.0,
+          "tool_calls": 1.0,
+          "tool_calls_err": 0.0,
+          "tool_calls_ok": 1.0,
+          "turns": 2.0
+        },
+        "timing": {
+          "duration_ms": 1301
+        },
+        "tool_calls": [
+          "echo 'hello world'"
+        ],
+        "tool_calls_count": 1,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 1510,
+          "output_tokens": 80
+        }
+      }
+    },
+    {
+      "aggregate": 1.0,
+      "eval": "bashkit_smoke",
+      "passed": true,
+      "sample": "smoke_echo",
+      "scores": [
+        {
+          "pass": true,
+          "reason": "2/2 checks passed (weighted rate 100%)",
+          "scorer": "bashkit_expectations",
+          "value": 1.0
+        }
+      ],
+      "skipped": false,
+      "target": "anthropic/claude-sonnet-4-6",
+      "transcript": {
+        "final_response": "The output is:\n\n**hello world**\n\nThis was done using the `echo` command in Bash, which prints the given string to standard output (stdout).",
+        "iterations": 2,
+        "metadata": {
+          "bashkit": {
+            "dirs": [
+              "/dev",
+              "/dev/fd",
+              "/home",
+              "/home/user",
+              "/tmp"
+            ],
+            "last_exit_code": 0,
+            "tool_outputs": [
+              {
+                "commands": "echo 'hello world'",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": "hello world\n"
+              }
+            ]
+          }
+        },
+        "metrics": {
+          "natural_stop": 1.0,
+          "tool_calls": 1.0,
+          "tool_calls_err": 0.0,
+          "tool_calls_ok": 1.0,
+          "turns": 2.0
+        },
+        "timing": {
+          "duration_ms": 2724
+        },
+        "tool_calls": [
+          "echo 'hello world'"
+        ],
+        "tool_calls_count": 1,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 1512,
+          "output_tokens": 94
+        }
+      }
+    },
+    {
+      "aggregate": 0.0,
+      "eval": "bashkit_smoke",
+      "passed": false,
+      "sample": "smoke_echo",
+      "scores": [],
+      "skipped": true,
+      "target": "openai/gpt-5.5",
+      "transcript": {
+        "final_response": "",
+        "iterations": 0,
+        "tool_calls_count": 0,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 0,
+          "output_tokens": 0
+        }
+      }
+    },
+    {
+      "aggregate": 0.0,
+      "eval": "bashkit_smoke",
+      "passed": false,
+      "sample": "smoke_echo",
+      "scores": [],
+      "skipped": true,
+      "target": "openresponses/gpt-5.3-codex",
+      "transcript": {
+        "final_response": "",
+        "iterations": 0,
+        "tool_calls_count": 0,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 0,
+          "output_tokens": 0
+        }
+      }
+    },
+    {
+      "aggregate": 1.0,
+      "eval": "bashkit_smoke",
+      "passed": true,
+      "sample": "smoke_file_create",
+      "scores": [
+        {
+          "pass": true,
+          "reason": "4/4 checks passed (weighted rate 100%)",
+          "scorer": "bashkit_expectations",
+          "value": 1.0
+        }
+      ],
+      "skipped": false,
+      "target": "anthropic/claude-opus-4-8",
+      "transcript": {
+        "final_response": "Done. I created `/tmp/greeting.txt` with the content `hi there` and read it back—the file contains:\n\n```\nhi there\n```",
+        "iterations": 2,
+        "metadata": {
+          "bashkit": {
+            "dirs": [
+              "/dev",
+              "/dev/fd",
+              "/home",
+              "/home/user",
+              "/tmp"
+            ],
+            "last_exit_code": 0,
+            "tool_outputs": [
+              {
+                "commands": "echo 'hi there' > /tmp/greeting.txt\ncat /tmp/greeting.txt",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": "hi there\n"
+              }
+            ]
+          }
+        },
+        "metrics": {
+          "natural_stop": 1.0,
+          "tool_calls": 1.0,
+          "tool_calls_err": 0.0,
+          "tool_calls_ok": 1.0,
+          "turns": 2.0
+        },
+        "timing": {
+          "duration_ms": 3004
+        },
+        "tool_calls": [
+          "echo 'hi there' > /tmp/greeting.txt\ncat /tmp/greeting.txt"
+        ],
+        "tool_calls_count": 1,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 1367,
+          "output_tokens": 138
+        }
+      }
+    },
+    {
+      "aggregate": 1.0,
+      "eval": "bashkit_smoke",
+      "passed": true,
+      "sample": "smoke_file_create",
+      "scores": [
+        {
+          "pass": true,
+          "reason": "4/4 checks passed (weighted rate 100%)",
+          "scorer": "bashkit_expectations",
+          "value": 1.0
+        }
+      ],
+      "skipped": false,
+      "target": "anthropic/claude-haiku-4-5",
+      "transcript": {
+        "final_response": "Done! I've successfully:\n1. Created the file `/tmp/greeting.txt` with the content `hi there`\n2. Read it back using `cat`, which displays: `hi there`",
+        "iterations": 2,
+        "metadata": {
+          "bashkit": {
+            "dirs": [
+              "/dev",
+              "/dev/fd",
+              "/home",
+              "/home/user",
+              "/tmp"
+            ],
+            "last_exit_code": 0,
+            "tool_outputs": [
+              {
+                "commands": "echo 'hi there' > /tmp/greeting.txt && cat /tmp/greeting.txt",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": "hi there\n"
+              }
+            ]
+          }
+        },
+        "metrics": {
+          "natural_stop": 1.0,
+          "tool_calls": 1.0,
+          "tool_calls_err": 0.0,
+          "tool_calls_ok": 1.0,
+          "turns": 2.0
+        },
+        "timing": {
+          "duration_ms": 1730
+        },
+        "tool_calls": [
+          "echo 'hi there' > /tmp/greeting.txt && cat /tmp/greeting.txt"
+        ],
+        "tool_calls_count": 1,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 1553,
+          "output_tokens": 118
+        }
+      }
+    },
+    {
+      "aggregate": 1.0,
+      "eval": "bashkit_smoke",
+      "passed": true,
+      "sample": "smoke_file_create",
+      "scores": [
+        {
+          "pass": true,
+          "reason": "4/4 checks passed (weighted rate 100%)",
+          "scorer": "bashkit_expectations",
+          "value": 1.0
+        }
+      ],
+      "skipped": false,
+      "target": "anthropic/claude-sonnet-4-6",
+      "transcript": {
+        "final_response": "Here's what happened:\n\n1. **Created** `/tmp/greeting.txt` using `echo 'hi there' > /tmp/greeting.txt` — this writes the text `hi there` into the file.\n2. **Read back** the file using `cat /tmp/greeting.txt` — which confirmed the content is exactly `hi there`.\n\nEverything worked perfectly! ✅",
+        "iterations": 2,
+        "metadata": {
+          "bashkit": {
+            "dirs": [
+              "/dev",
+              "/dev/fd",
+              "/home",
+              "/home/user",
+              "/tmp"
+            ],
+            "last_exit_code": 0,
+            "tool_outputs": [
+              {
+                "commands": "echo 'hi there' > /tmp/greeting.txt && cat /tmp/greeting.txt",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": "hi there\n"
+              }
+            ]
+          }
+        },
+        "metrics": {
+          "natural_stop": 1.0,
+          "tool_calls": 1.0,
+          "tool_calls_err": 0.0,
+          "tool_calls_ok": 1.0,
+          "turns": 2.0
+        },
+        "timing": {
+          "duration_ms": 4202
+        },
+        "tool_calls": [
+          "echo 'hi there' > /tmp/greeting.txt && cat /tmp/greeting.txt"
+        ],
+        "tool_calls_count": 1,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 1574,
+          "output_tokens": 179
+        }
+      }
+    },
+    {
+      "aggregate": 0.0,
+      "eval": "bashkit_smoke",
+      "passed": false,
+      "sample": "smoke_file_create",
+      "scores": [],
+      "skipped": true,
+      "target": "openai/gpt-5.5",
+      "transcript": {
+        "final_response": "",
+        "iterations": 0,
+        "tool_calls_count": 0,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 0,
+          "output_tokens": 0
+        }
+      }
+    },
+    {
+      "aggregate": 0.0,
+      "eval": "bashkit_smoke",
+      "passed": false,
+      "sample": "smoke_file_create",
+      "scores": [],
+      "skipped": true,
+      "target": "openresponses/gpt-5.3-codex",
+      "transcript": {
+        "final_response": "",
+        "iterations": 0,
+        "tool_calls_count": 0,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 0,
+          "output_tokens": 0
+        }
+      }
+    },
+    {
+      "aggregate": 1.0,
+      "eval": "bashkit_smoke",
+      "passed": true,
+      "sample": "smoke_grep",
+      "scores": [
+        {
+          "pass": true,
+          "reason": "2/2 checks passed (weighted rate 100%)",
+          "scorer": "bashkit_expectations",
+          "value": 1.0
+        }
+      ],
+      "skipped": false,
+      "target": "anthropic/claude-opus-4-8",
+      "transcript": {
+        "final_response": "Here are the results from `/var/log/test.log`:\n\n**Matching lines (case insensitive):**\n```\nERROR: failed\nerror: bad input\n```\n\n**Count: 2**\n\nThe commands used were:\n- `grep -i 'error' /var/log/test.log` — finds all lines containing \"error\" regardless of case (the `-i` flag makes it case insensitive)\n- `grep -ic 'error' /var/log/test.log` — the additional `-c` flag counts the matching lines\n\nNote: `grep -c` counts the number of *lines* containing a match (not total occurrences). If a line contained \"error\" twice, it would still count as 1. If you'd like to count total occurrences instead, let me know and I can use `grep -io 'error' | wc -l`.",
+        "iterations": 3,
+        "metadata": {
+          "bashkit": {
+            "dirs": [
+              "/dev",
+              "/dev/fd",
+              "/home",
+              "/home/user",
+              "/tmp",
+              "/var",
+              "/var/log"
+            ],
+            "last_exit_code": 0,
+            "tool_outputs": [
+              {
+                "commands": "if [ -f /var/log/test.log ]; then echo \"File exists\"; ls -la /var/log/test.log; else echo \"File does not exist\"; fi",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": "File exists\n-rw-r--r--       67 2026-07-11 04:30 /var/log/test.log\n"
+              },
+              {
+                "commands": "echo \"=== Matching lines ===\"\ngrep -i 'error' /var/log/test.log\necho \"\"\necho \"=== Count ===\"\ngrep -ic 'error' /var/log/test.log",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": "=== Matching lines ===\nERROR: failed\nerror: bad input\n\n=== Count ===\n2\n"
+              }
+            ]
+          }
+        },
+        "metrics": {
+          "natural_stop": 1.0,
+          "tool_calls": 2.0,
+          "tool_calls_err": 0.0,
+          "tool_calls_ok": 2.0,
+          "turns": 3.0
+        },
+        "timing": {
+          "duration_ms": 7644
+        },
+        "tool_calls": [
+          "if [ -f /var/log/test.log ]; then echo \"File exists\"; ls -la /var/log/test.log; else echo \"File does not exist\"; fi",
+          "echo \"=== Matching lines ===\"\ngrep -i 'error' /var/log/test.log\necho \"\"\necho \"=== Count ===\"\ngrep -ic 'error' /var/log/test.log"
+        ],
+        "tool_calls_count": 2,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 2424,
+          "output_tokens": 513
+        }
+      }
+    },
+    {
+      "aggregate": 1.0,
+      "eval": "bashkit_smoke",
+      "passed": true,
+      "sample": "smoke_grep",
+      "scores": [
+        {
+          "pass": true,
+          "reason": "2/2 checks passed (weighted rate 100%)",
+          "scorer": "bashkit_expectations",
+          "value": 1.0
+        }
+      ],
+      "skipped": false,
+      "target": "anthropic/claude-haiku-4-5",
+      "transcript": {
+        "final_response": "**Summary:**\n- **Total count:** 2 lines\n- **Lines found:**\n  1. `ERROR: failed`\n  2. `error: bad input`",
+        "iterations": 3,
+        "metadata": {
+          "bashkit": {
+            "dirs": [
+              "/dev",
+              "/dev/fd",
+              "/home",
+              "/home/user",
+              "/tmp",
+              "/var",
+              "/var/log"
+            ],
+            "last_exit_code": 0,
+            "tool_outputs": [
+              {
+                "commands": "grep -i 'error' /var/log/test.log | wc -l",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": "2\n"
+              },
+              {
+                "commands": "grep -i 'error' /var/log/test.log",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": "ERROR: failed\nerror: bad input\n"
+              }
+            ]
+          }
+        },
+        "metrics": {
+          "natural_stop": 1.0,
+          "tool_calls": 2.0,
+          "tool_calls_err": 0.0,
+          "tool_calls_ok": 2.0,
+          "turns": 3.0
+        },
+        "timing": {
+          "duration_ms": 2733
+        },
+        "tool_calls": [
+          "grep -i 'error' /var/log/test.log | wc -l",
+          "grep -i 'error' /var/log/test.log"
+        ],
+        "tool_calls_count": 2,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 2503,
+          "output_tokens": 213
+        }
+      }
+    },
+    {
+      "aggregate": 1.0,
+      "eval": "bashkit_smoke",
+      "passed": true,
+      "sample": "smoke_grep",
+      "scores": [
+        {
+          "pass": true,
+          "reason": "2/2 checks passed (weighted rate 100%)",
+          "scorer": "bashkit_expectations",
+          "value": 1.0
+        }
+      ],
+      "skipped": false,
+      "target": "anthropic/claude-sonnet-4-6",
+      "transcript": {
+        "final_response": "Here are the results from searching `/var/log/test.log` for lines containing **'error'** (case-insensitive):\n\n---\n\n### 🔍 Matching Lines\n\n| # | Line Content |\n|---|---|\n| 1 | `ERROR: failed` |\n| 2 | `error: bad input` |\n\n---\n\n### 📊 Summary\n\n- **Total matching lines: 2**\n- The search used `grep -i 'error'`, where `-i` makes it **case-insensitive**, catching both `ERROR` and `error` (and any other casing variations).",
+        "iterations": 3,
+        "metadata": {
+          "bashkit": {
+            "dirs": [
+              "/dev",
+              "/dev/fd",
+              "/home",
+              "/home/user",
+              "/tmp",
+              "/var",
+              "/var/log"
+            ],
+            "last_exit_code": 0,
+            "tool_outputs": [
+              {
+                "commands": "grep -i 'error' /var/log/test.log | tee /dev/stderr | wc -l",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": "2\n"
+              },
+              {
+                "commands": "grep -i 'error' /var/log/test.log",
+                "exit_code": 0,
+                "stderr": "",
+                "stdout": "ERROR: failed\nerror: bad input\n"
+              }
+            ]
+          }
+        },
+        "metrics": {
+          "natural_stop": 1.0,
+          "tool_calls": 2.0,
+          "tool_calls_err": 0.0,
+          "tool_calls_ok": 2.0,
+          "turns": 3.0
+        },
+        "timing": {
+          "duration_ms": 6246
+        },
+        "tool_calls": [
+          "grep -i 'error' /var/log/test.log | tee /dev/stderr | wc -l",
+          "grep -i 'error' /var/log/test.log"
+        ],
+        "tool_calls_count": 2,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 2484,
+          "output_tokens": 287
+        }
+      }
+    },
+    {
+      "aggregate": 0.0,
+      "eval": "bashkit_smoke",
+      "passed": false,
+      "sample": "smoke_grep",
+      "scores": [],
+      "skipped": true,
+      "target": "openai/gpt-5.5",
+      "transcript": {
+        "final_response": "",
+        "iterations": 0,
+        "tool_calls_count": 0,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 0,
+          "output_tokens": 0
+        }
+      }
+    },
+    {
+      "aggregate": 0.0,
+      "eval": "bashkit_smoke",
+      "passed": false,
+      "sample": "smoke_grep",
+      "scores": [],
+      "skipped": true,
+      "target": "openresponses/gpt-5.3-codex",
+      "transcript": {
+        "final_response": "",
+        "iterations": 0,
+        "tool_calls_count": 0,
+        "usage": {
+          "cost_usd": 0.0,
+          "input_tokens": 0,
+          "output_tokens": 0
+        }
+      }
+    }
+  ],
+  "summary": {
+    "failed": 0,
+    "na": 0,
+    "passed": 9,
+    "scored": 9,
+    "skipped": 6,
+    "total_cost_usd": 0.0,
+    "total_duration_ms": 32307,
+    "total_tokens": 17963,
+    "total_tool_calls": 12
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "eval": "bashkit_smoke",
+  "sample": "smoke_file_create",
+  "target": "anthropic/claude-haiku-4-5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done! I've successfully:\n1. Created the file `/tmp/greeting.txt` with the content `hi there`\n2. Read it back using `cat`, which displays: `hi there`",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "echo 'hi there' > /tmp/greeting.txt && cat /tmp/greeting.txt"
+    ],
+    "usage": {
+      "input_tokens": 1553,
+      "output_tokens": 118,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 1730
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "echo 'hi there' > /tmp/greeting.txt && cat /tmp/greeting.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "hi there\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

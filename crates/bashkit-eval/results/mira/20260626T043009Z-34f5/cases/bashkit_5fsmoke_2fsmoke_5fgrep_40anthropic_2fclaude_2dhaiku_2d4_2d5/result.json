@@ -1,0 +1,68 @@
+{
+  "eval": "bashkit_smoke",
+  "sample": "smoke_grep",
+  "target": "anthropic/claude-haiku-4-5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "**Summary:**\n- **Total count:** 2 lines\n- **Lines found:**\n  1. `ERROR: failed`\n  2. `error: bad input`",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "grep -i 'error' /var/log/test.log | wc -l",
+      "grep -i 'error' /var/log/test.log"
+    ],
+    "usage": {
+      "input_tokens": 2503,
+      "output_tokens": 213,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 2733
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp",
+          "/var",
+          "/var/log"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "grep -i 'error' /var/log/test.log | wc -l",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "2\n"
+          },
+          {
+            "commands": "grep -i 'error' /var/log/test.log",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "ERROR: failed\nerror: bad input\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}
