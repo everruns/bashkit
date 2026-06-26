@@ -1,0 +1,74 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_json_query",
+  "target": "anthropic/claude-haiku-4-5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Perfect! The items with quantity less than 10 are:\n\n```\nscrews\nwashers\nnails\n```",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "cat /data/inventory.json",
+      "cat /data/inventory.json | grep -o '\"name\":\"[^\"]*\"' | grep -o '[^\"]*$' | awk 'NR % 1 == 1' | head -n 10 && cat /data/inventory.json | grep -o '\"quantity\":[0-9]*' | grep -o '[0-9]*$' | awk '$1 < 10 {print NR}' ",
+      "cat /data/inventory.json | grep -o '{\"name\":\"[^\"]*\",\"quantity\":[0-9]*}' | while IFS= read -r line; do\n  name=$(echo \"$line\" | grep -o '\"name\":\"[^\"]*\"' | cut -d'\"' -f4)\n  quantity=$(echo \"$line\" | grep -o '\"quantity\":[0-9]*' | cut -d':' -f2)\n  if [ \"$quantity\" -lt 10 ]; then\n    echo \"$name\"\n  fi\ndone"
+    ],
+    "usage": {
+      "input_tokens": 3896,
+      "output_tokens": 442,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 4938
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat /data/inventory.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[{\"name\":\"screws\",\"quantity\":5},{\"name\":\"bolts\",\"quantity\":50},{\"name\":\"washers\",\"quantity\":3},{\"name\":\"nuts\",\"quantity\":100},{\"name\":\"nails\",\"quantity\":8}]"
+          },
+          {
+            "commands": "cat /data/inventory.json | grep -o '\"name\":\"[^\"]*\"' | grep -o '[^\"]*$' | awk 'NR % 1 == 1' | head -n 10 && cat /data/inventory.json | grep -o '\"quantity\":[0-9]*' | grep -o '[0-9]*$' | awk '$1 < 10 {print NR}' ",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "1\n3\n5\n"
+          },
+          {
+            "commands": "cat /data/inventory.json | grep -o '{\"name\":\"[^\"]*\",\"quantity\":[0-9]*}' | while IFS= read -r line; do\n  name=$(echo \"$line\" | grep -o '\"name\":\"[^\"]*\"' | cut -d'\"' -f4)\n  quantity=$(echo \"$line\" | grep -o '\"quantity\":[0-9]*' | cut -d':' -f2)\n  if [ \"$quantity\" -lt 10 ]; then\n    echo \"$name\"\n  fi\ndone",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "screws\nwashers\nnails\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

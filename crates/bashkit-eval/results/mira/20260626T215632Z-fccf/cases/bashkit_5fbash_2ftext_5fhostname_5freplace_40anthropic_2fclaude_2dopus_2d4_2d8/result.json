@@ -1,0 +1,67 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "text_hostname_replace",
+  "target": "anthropic/claude-opus-4-8",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The replacement is complete and verified. Here's a summary:\n\n**What was done:**\n- Replaced all occurrences of `localhost` with `db.prod.internal` in `/etc/app.conf` using `sed -i` (in-place edit).\n\n**Verification results:**\n- ✅ **0** remaining occurrences of `localhost`\n- ✅ **2** occurrences of `db.prod.internal` (matching the original 2 instances)\n\nThe two changed lines:\n- `db_host=localhost` → `db_host=db.prod.internal`\n- `cache_host=localhost` → `cache_host=db.prod.internal`\n\nAll other lines (`db_port`, `db_name`, `log_level`) were left untouched.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /etc/app.conf 2>&1; echo \"---EXIT: $?---\"",
+      "sed -i 's/localhost/db.prod.internal/g' /etc/app.conf\necho \"=== New contents ===\"\ncat /etc/app.conf\necho \"=== Remaining 'localhost' occurrences ===\"\ngrep -c 'localhost' /etc/app.conf || echo \"0 (none found)\"\necho \"=== 'db.prod.internal' occurrences ===\"\ngrep -c 'db.prod.internal' /etc/app.conf"
+    ],
+    "usage": {
+      "input_tokens": 2675,
+      "output_tokens": 594,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 8437
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/etc",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat /etc/app.conf 2>&1; echo \"---EXIT: $?---\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "db_host=localhost\ndb_port=5432\ndb_name=myapp\ncache_host=localhost\nlog_level=info\n---EXIT: 0---\n"
+          },
+          {
+            "commands": "sed -i 's/localhost/db.prod.internal/g' /etc/app.conf\necho \"=== New contents ===\"\ncat /etc/app.conf\necho \"=== Remaining 'localhost' occurrences ===\"\ngrep -c 'localhost' /etc/app.conf || echo \"0 (none found)\"\necho \"=== 'db.prod.internal' occurrences ===\"\ngrep -c 'db.prod.internal' /etc/app.conf",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== New contents ===\ndb_host=db.prod.internal\ndb_port=5432\ndb_name=myapp\ncache_host=db.prod.internal\nlog_level=info\n=== Remaining 'localhost' occurrences ===\n0\n0 (none found)\n=== 'db.prod.internal' occurrences ===\n2\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

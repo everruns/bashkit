@@ -1,0 +1,67 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_regex_extract",
+  "target": "anthropic/claude-opus-4-8",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The script works correctly. Here's what it does:\n\n**Output:**\n```\nSLOW: POST /api/orders took 850ms (200)\nSLOW: GET /api/reports took 1200ms (200)\nSLOW: POST /api/payments took 2000ms (500)\nSLOW: PUT /api/users took 620ms (200)\nSlow requests: 4 of 8 total\n```\n\n**How it works:**\n\n1. **Regex with `[[ =~ ]]`** — The pattern `^\\[([^]]+)\\] ([0-9]+) ([A-Z]+) ([^ ]+) ([0-9]+)$` captures five fields in groups:\n   - `[^]]+` → timestamp (everything inside the brackets)\n   - `[0-9]+` → status code\n   - `[A-Z]+` → HTTP method\n   - `[^ ]+` → URL (non-space)\n   - `[0-9]+` → duration\n\n2. **`BASH_REMATCH`** — After a successful match, `BASH_REMATCH[1..5]` hold the captured groups, which I assign to named variables.\n\n3. **Filtering** — Each matched line increments `total`; lines where `duration > 500` increment `slow` and get printed in the `SLOW:` format.\n\n4. **Summary** — At the end it prints the count of slow vs. total requests.\n\nThe 4 slow requests (orders, reports, payments, users) all exceed 500ms, while users/missing/health/products under 500ms and the 404 are excluded from the slow list.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /data/access.log 2>/dev/null | head -20; echo \"---EXIT:$?---\"",
+      "cat > /tmp/parse.sh <<'EOF'\n#!/usr/bin/env bash\nregex='^\\[([^]]+)\\] ([0-9]+) ([A-Z]+) ([^ ]+) ([0-9]+)$'\ntotal=0\nslow=0\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n    [[ -z \"$line\" ]] && continue\n    if [[ \"$line\" =~ $regex ]]; then\n        status=\"${BASH_REMATCH[2]}\"\n        method=\"${BASH_REMATCH[3]}\"\n        url=\"${BASH_REMATCH[4]}\"\n        duration=\"${BASH_REMATCH[5]}\"\n        ((total++))\n        if (( duration > 500 )); then\n            ((slow++))\n            echo \"SLOW: $method $url took ${duration}ms ($status)\"\n        fi\n    fi\ndone < /data/access.log\necho \"Slow requests: $slow of $total total\"\nEOF\nbash /tmp/parse.sh"
+    ],
+    "usage": {
+      "input_tokens": 3411,
+      "output_tokens": 989,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 12871
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat /data/access.log 2>/dev/null | head -20; echo \"---EXIT:$?---\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[2024-01-15T10:00:01] 200 GET /api/users 150\n[2024-01-15T10:00:02] 200 POST /api/orders 850\n[2024-01-15T10:00:03] 404 GET /api/missing 50\n[2024-01-15T10:00:04] 200 GET /api/reports 1200\n[2024-01-15T10:00:05] 500 POST /api/payments 2000\n[2024-01-15T10:00:06] 200 GET /api/health 30\n[2024-01-15T10:00:07] 200 GET /api/products 450\n[2024-01-15T10:00:08] 200 PUT /api/users 620\n---EXIT:0---\n"
+          },
+          {
+            "commands": "cat > /tmp/parse.sh <<'EOF'\n#!/usr/bin/env bash\nregex='^\\[([^]]+)\\] ([0-9]+) ([A-Z]+) ([^ ]+) ([0-9]+)$'\ntotal=0\nslow=0\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n    [[ -z \"$line\" ]] && continue\n    if [[ \"$line\" =~ $regex ]]; then\n        status=\"${BASH_REMATCH[2]}\"\n        method=\"${BASH_REMATCH[3]}\"\n        url=\"${BASH_REMATCH[4]}\"\n        duration=\"${BASH_REMATCH[5]}\"\n        ((total++))\n        if (( duration > 500 )); then\n            ((slow++))\n            echo \"SLOW: $method $url took ${duration}ms ($status)\"\n        fi\n    fi\ndone < /data/access.log\necho \"Slow requests: $slow of $total total\"\nEOF\nbash /tmp/parse.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "SLOW: POST /api/orders took 850ms (200)\nSLOW: GET /api/reports took 1200ms (200)\nSLOW: POST /api/payments took 2000ms (500)\nSLOW: PUT /api/users took 620ms (200)\nSlow requests: 4 of 8 total\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

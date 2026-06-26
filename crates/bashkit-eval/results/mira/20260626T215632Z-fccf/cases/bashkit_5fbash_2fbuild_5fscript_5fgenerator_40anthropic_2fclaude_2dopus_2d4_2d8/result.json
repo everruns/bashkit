@@ -1,0 +1,76 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "build_script_generator",
+  "target": "anthropic/claude-opus-4-8",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The build completed successfully.\n\n## Summary\n\n**Dependency structure** (`/project/deps.txt`):\n- `app` depends on `lib` and `utils`\n- `lib` depends on `core`\n- `utils` depends on `core`\n- `core` has no dependencies\n\n**`/project/build.sh`** parses the deps file and performs a topological sort (DFS-based) so each dependency is built before any target that needs it. It also detects cycles. Each target is built by writing `built: <target>` to a file in `/project/out/`.\n\n**Build order:**\n```\ncore lib utils app\n```\n\nThis ordering is correct: `core` (no deps) first, then `lib` and `utils` (which need `core`), and finally `app` (which needs `lib` and `utils`). Each target file was created in `/project/out/` with the expected content.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "cat /project/deps.txt",
+      "cat > /project/build.sh << 'EOF'\n#!/usr/bin/env bash\nset -euo pipefail\n\nDEPS=\"/project/deps.txt\"\nOUT=\"/project/out\"\nmkdir -p \"$OUT\"\n\ndeclare -A DEPMAP\ndeclare -A SEEN\nORDER=()\n\n# Parse deps.txt\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n    # skip blank lines\n    [[ -z \"${line// /}\" ]] && continue\n    target=\"${line%%:*}\"\n    rest=\"${line#*:}\"\n    target=\"${target// /}\"\n    DEPMAP[\"$target\"]=\"$rest\"\n    # ensure target exists in seen-tracking\n    : \"${SEEN[$target]:=0}\"\ndone < \"$DEPS\"\n\n# Topological sort via DFS\nvisit() {\n    local node=\"$1\"\n    case \"${SEEN[$node]:-0}\" in\n        1) return 0 ;;          # done\n        2) echo \"Cycle detected at $node\" >&2; exit 1 ;;\n    esac\n    SEEN[\"$node\"]=2             # in-progress\n    local deps=\"${DEPMAP[$node]:-}\"\n    for d in $deps; do\n        visit \"$d\"\n    done\n    SEEN[\"$node\"]=1             # done\n    ORDER+=(\"$node\")\n}\n\nfor t in \"${!DEPMAP[@]}\"; do\n    visit \"$t\"\ndone\n\n# Build in order\nfor t in \"${ORDER[@]}\"; do\n    echo \"built: $t\" > \"$OUT/$t\"\ndone\n\n# Print build order\necho \"Build order: ${ORDER[*]}\"\nEOF\nchmod +x /project/build.sh\necho \"created\"",
+      "/project/build.sh\necho \"--- out dir ---\"\nfor f in /project/out/*; do echo \"$f -> $(cat \"$f\")\"; done"
+    ],
+    "usage": {
+      "input_tokens": 4629,
+      "output_tokens": 1083,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 13959
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/project",
+          "/project/out",
+          "/project/src",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat /project/deps.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "app: lib utils\nlib: core\nutils: core\ncore:\n"
+          },
+          {
+            "commands": "cat > /project/build.sh << 'EOF'\n#!/usr/bin/env bash\nset -euo pipefail\n\nDEPS=\"/project/deps.txt\"\nOUT=\"/project/out\"\nmkdir -p \"$OUT\"\n\ndeclare -A DEPMAP\ndeclare -A SEEN\nORDER=()\n\n# Parse deps.txt\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n    # skip blank lines\n    [[ -z \"${line// /}\" ]] && continue\n    target=\"${line%%:*}\"\n    rest=\"${line#*:}\"\n    target=\"${target// /}\"\n    DEPMAP[\"$target\"]=\"$rest\"\n    # ensure target exists in seen-tracking\n    : \"${SEEN[$target]:=0}\"\ndone < \"$DEPS\"\n\n# Topological sort via DFS\nvisit() {\n    local node=\"$1\"\n    case \"${SEEN[$node]:-0}\" in\n        1) return 0 ;;          # done\n        2) echo \"Cycle detected at $node\" >&2; exit 1 ;;\n    esac\n    SEEN[\"$node\"]=2             # in-progress\n    local deps=\"${DEPMAP[$node]:-}\"\n    for d in $deps; do\n        visit \"$d\"\n    done\n    SEEN[\"$node\"]=1             # done\n    ORDER+=(\"$node\")\n}\n\nfor t in \"${!DEPMAP[@]}\"; do\n    visit \"$t\"\ndone\n\n# Build in order\nfor t in \"${ORDER[@]}\"; do\n    echo \"built: $t\" > \"$OUT/$t\"\ndone\n\n# Print build order\necho \"Build order: ${ORDER[*]}\"\nEOF\nchmod +x /project/build.sh\necho \"created\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "created\n"
+          },
+          {
+            "commands": "/project/build.sh\necho \"--- out dir ---\"\nfor f in /project/out/*; do echo \"$f -> $(cat \"$f\")\"; done",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Build order: core lib utils app\n--- out dir ---\n/project/out/app -> built: app\n/project/out/core -> built: core\n/project/out/lib -> built: lib\n/project/out/utils -> built: utils\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

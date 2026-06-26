@@ -1,0 +1,89 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "archive_selective",
+  "target": "anthropic/claude-opus-4-8",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "3/3 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "All tasks are complete. Here's a summary:\n\n## Summary\n\n| Task | Result |\n|------|--------|\n| Create `/tmp/notes.txt` | ✅ Contains `remember this` |\n| Create `/tmp/data.csv` | ✅ Contains `a,b,c` |\n| Create `/tmp/script.sh` | ✅ Contains `#!/bin/bash` |\n| Create `/tmp/bundle.tar.gz` | ✅ Archive with all 3 files |\n| List archive contents | ✅ `notes.txt`, `data.csv`, `script.sh` |\n| Extract only `notes.txt` to `/output/` | ✅ Only `notes.txt` present |\n\n**Commands used for the core tasks:**\n```bash\necho 'remember this' > /tmp/notes.txt\necho 'a,b,c' > /tmp/data.csv\necho '#!/bin/bash' > /tmp/script.sh\ntar -czf /tmp/bundle.tar.gz -C /tmp notes.txt data.csv script.sh\ntar -tzf /tmp/bundle.tar.gz   # list contents\n```\n\n**Note on the final step:** This sandbox's `tar` does not honor selective extraction (passing `notes.txt` as an argument still extracts the whole archive). To get the requested result — *only* `notes.txt` in `/output/` — I extracted the archive into a clean `/output` and then removed `data.csv` and `script.sh`. The final `/output/` directory contains just `notes.txt` with the correct content `remember this`.",
+    "iterations": 6,
+    "tool_calls_count": 5,
+    "tool_calls": [
+      "echo 'remember this' > /tmp/notes.txt\necho 'a,b,c' > /tmp/data.csv\necho '#!/bin/bash' > /tmp/script.sh\n\n# Create tar.gz archive containing all three files\ntar -czf /tmp/bundle.tar.gz -C /tmp notes.txt data.csv script.sh\n\necho \"=== Files created ===\"\nls -l /tmp/notes.txt /tmp/data.csv /tmp/script.sh /tmp/bundle.tar.gz\n\necho \"\"\necho \"=== Archive contents ===\"\ntar -tzf /tmp/bundle.tar.gz",
+      "mkdir -p /output\ntar -xzf /tmp/bundle.tar.gz -C /output notes.txt\n\necho \"=== /output contents ===\"\nls -l /output\n\necho \"\"\necho \"=== Extracted notes.txt content ===\"\ncat /output/notes.txt",
+      "# Clean /output to ensure only notes.txt is extracted, as requested\nrm -rf /output\nmkdir -p /output\n\n# Extract ONLY notes.txt from the archive\ntar -xzf /tmp/bundle.tar.gz -C /output notes.txt\n\necho \"=== /output contents (should contain only notes.txt) ===\"\nls -l /output\n\necho \"\"\necho \"=== notes.txt content ===\"\ncat /output/notes.txt",
+      "# Investigate the behavior of /output\necho \"=== Try a fresh empty dir to confirm tar selective extraction works ===\"\nrm -rf /tmp/testout && mkdir -p /tmp/testout\ntar -xzf /tmp/bundle.tar.gz -C /tmp/testout notes.txt\nls -l /tmp/testout\n\necho \"\"\necho \"=== Check if /output is a symlink or special mount ===\"\nls -ld /output\nmount 2>/dev/null | grep output || echo \"(no mount info)\"\n\necho \"\"\necho \"=== Try removing just data.csv from /output to test writability ===\"\nrm -f /output/data.csv\nls -l /output",
+      "# Start clean\nrm -rf /output && mkdir -p /output\n\n# Extract the archive (tar extracts all here), then keep only notes.txt\ntar -xzf /tmp/bundle.tar.gz -C /output\nrm -f /output/data.csv /output/script.sh\n\necho \"=== Final /output contents (only notes.txt) ===\"\nls -l /output\n\necho \"\"\necho \"=== notes.txt content ===\"\ncat /output/notes.txt"
+    ],
+    "usage": {
+      "input_tokens": 10529,
+      "output_tokens": 1956,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 25387
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 5.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 5.0,
+      "turns": 6.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/output",
+          "/tmp",
+          "/tmp/testout"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "echo 'remember this' > /tmp/notes.txt\necho 'a,b,c' > /tmp/data.csv\necho '#!/bin/bash' > /tmp/script.sh\n\n# Create tar.gz archive containing all three files\ntar -czf /tmp/bundle.tar.gz -C /tmp notes.txt data.csv script.sh\n\necho \"=== Files created ===\"\nls -l /tmp/notes.txt /tmp/data.csv /tmp/script.sh /tmp/bundle.tar.gz\n\necho \"\"\necho \"=== Archive contents ===\"\ntar -tzf /tmp/bundle.tar.gz",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== Files created ===\n-rw-r--r--       14 2026-07-11 21:57 /tmp/notes.txt\n-rw-r--r--        6 2026-07-11 21:57 /tmp/data.csv\n-rw-r--r--       12 2026-07-11 21:57 /tmp/script.sh\n-rw-r--r--      167 2026-07-11 21:57 /tmp/bundle.tar.gz\n\n=== Archive contents ===\nnotes.txt\ndata.csv\nscript.sh\n"
+          },
+          {
+            "commands": "mkdir -p /output\ntar -xzf /tmp/bundle.tar.gz -C /output notes.txt\n\necho \"=== /output contents ===\"\nls -l /output\n\necho \"\"\necho \"=== Extracted notes.txt content ===\"\ncat /output/notes.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== /output contents ===\n-rw-r--r--        6 2026-07-11 21:57 data.csv\n-rw-r--r--       14 2026-07-11 21:57 notes.txt\n-rw-r--r--       12 2026-07-11 21:57 script.sh\n\n=== Extracted notes.txt content ===\nremember this\n"
+          },
+          {
+            "commands": "# Clean /output to ensure only notes.txt is extracted, as requested\nrm -rf /output\nmkdir -p /output\n\n# Extract ONLY notes.txt from the archive\ntar -xzf /tmp/bundle.tar.gz -C /output notes.txt\n\necho \"=== /output contents (should contain only notes.txt) ===\"\nls -l /output\n\necho \"\"\necho \"=== notes.txt content ===\"\ncat /output/notes.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== /output contents (should contain only notes.txt) ===\n-rw-r--r--        6 2026-07-11 21:57 data.csv\n-rw-r--r--       14 2026-07-11 21:57 notes.txt\n-rw-r--r--       12 2026-07-11 21:57 script.sh\n\n=== notes.txt content ===\nremember this\n"
+          },
+          {
+            "commands": "# Investigate the behavior of /output\necho \"=== Try a fresh empty dir to confirm tar selective extraction works ===\"\nrm -rf /tmp/testout && mkdir -p /tmp/testout\ntar -xzf /tmp/bundle.tar.gz -C /tmp/testout notes.txt\nls -l /tmp/testout\n\necho \"\"\necho \"=== Check if /output is a symlink or special mount ===\"\nls -ld /output\nmount 2>/dev/null | grep output || echo \"(no mount info)\"\n\necho \"\"\necho \"=== Try removing just data.csv from /output to test writability ===\"\nrm -f /output/data.csv\nls -l /output",
+            "exit_code": 0,
+            "stderr": "ls: option(s) not yet implemented in bashkit: directory\n",
+            "stdout": "=== Try a fresh empty dir to confirm tar selective extraction works ===\n-rw-r--r--        6 2026-07-11 21:57 data.csv\n-rw-r--r--       14 2026-07-11 21:57 notes.txt\n-rw-r--r--       12 2026-07-11 21:57 script.sh\n\n=== Check if /output is a symlink or special mount ===\n(no mount info)\n\n=== Try removing just data.csv from /output to test writability ===\n-rw-r--r--       14 2026-07-11 21:57 notes.txt\n-rw-r--r--       12 2026-07-11 21:57 script.sh\n"
+          },
+          {
+            "commands": "# Start clean\nrm -rf /output && mkdir -p /output\n\n# Extract the archive (tar extracts all here), then keep only notes.txt\ntar -xzf /tmp/bundle.tar.gz -C /output\nrm -f /output/data.csv /output/script.sh\n\necho \"=== Final /output contents (only notes.txt) ===\"\nls -l /output\n\necho \"\"\necho \"=== notes.txt content ===\"\ncat /output/notes.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== Final /output contents (only notes.txt) ===\n-rw-r--r--       14 2026-07-11 21:57 notes.txt\n\n=== notes.txt content ===\nremember this\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,69 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "file_ops_find_and_delete",
+  "target": "anthropic/claude-haiku-4-5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "**Number of .tmp files deleted: 3**\n\nAll .tmp files have been found and deleted from /workspace and its subdirectories.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "find /workspace -name \"*.tmp\" -type f -delete && find /workspace -name \"*.tmp\" -type f 2>/dev/null | wc -l || echo \"0\"",
+      "\n# First, count the .tmp files\ncount=$(find /workspace -name \"*.tmp\" -type f 2>/dev/null | wc -l)\n\n# Delete them\nfind /workspace -name \"*.tmp\" -type f 2>/dev/null | xargs rm -f 2>/dev/null\n\n# Print the count\necho \"Number of .tmp files deleted: $count\"\n"
+    ],
+    "usage": {
+      "input_tokens": 2633,
+      "output_tokens": 290,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3106
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp",
+          "/workspace",
+          "/workspace/sub",
+          "/workspace/sub/deep"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "find /workspace -name \"*.tmp\" -type f -delete && find /workspace -name \"*.tmp\" -type f 2>/dev/null | wc -l || echo \"0\"",
+            "exit_code": 0,
+            "stderr": "find: unknown predicate '-delete'\n",
+            "stdout": "0\n"
+          },
+          {
+            "commands": "\n# First, count the .tmp files\ncount=$(find /workspace -name \"*.tmp\" -type f 2>/dev/null | wc -l)\n\n# Delete them\nfind /workspace -name \"*.tmp\" -type f 2>/dev/null | xargs rm -f 2>/dev/null\n\n# Print the count\necho \"Number of .tmp files deleted: $count\"\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Number of .tmp files deleted: 3\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

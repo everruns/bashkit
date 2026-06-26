@@ -1,0 +1,124 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_release_notes",
+  "target": "anthropic/claude-haiku-4-5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Great! Now I understand - I need to use parameter expansion instead of regex. Let me rewrite the script:",
+    "iterations": 10,
+    "tool_calls_count": 10,
+    "tool_calls": [
+      "cat /data/commits.log",
+      "\n# Create the release directory if it doesn't exist\nmkdir -p /release\n\n# Create arrays to store commits by type\ndeclare -A features=()\ndeclare -A bugfixes=()\ndeclare -A other=()\n\n# Read the commits log and parse each line\nwhile IFS= read -r line; do\n  # Extract type using regex: type(scope): message\n  if [[ $line =~ ^([a-z]+)\\(([^)]+)\\):[[:space:]]*(.*)$ ]]; then\n    type=\"${BASH_REMATCH[1]}\"\n    scope=\"${BASH_REMATCH[2]}\"\n    message=\"${BASH_REMATCH[3]}\"\n    \n    # Group by type\n    case \"$type\" in\n      feat)\n        features[\"$scope\"]=\"$message\"\n        ;;\n      fix)\n        bugfixes[\"$scope\"]=\"$message\"\n        ;;\n      *)\n        other[\"$scope:$type\"]=\"$message\"\n        ;;\n    esac\n  fi\ndone < /data/commits.log\n\n# Generate the CHANGELOG.md file\n{\n  echo \"# Changelog\"\n  echo \"\"\n  \n  # Features section\n  if [ ${#features[@]} -gt 0 ]; then\n    echo \"## Features\"\n    echo \"\"\n    for scope in $(echo \"${!features[@]}\" | tr ' ' '\\n' | sort); do\n      echo \"- $scope: ${features[$scope]}\"\n    done\n    echo \"\"\n  fi\n  \n  # Bug Fixes section\n  if [ ${#bugfixes[@]} -gt 0 ]; then\n    echo \"## Bug Fixes\"\n    echo \"\"\n    for scope in $(echo \"${!bugfixes[@]}\" | tr ' ' '\\n' | sort); do\n      echo \"- $scope: ${bugfixes[$scope]}\"\n    done\n    echo \"\"\n  fi\n  \n  # Other section\n  if [ ${#other[@]} -gt 0 ]; then\n    echo \"## Other\"\n    echo \"\"\n    for scope in $(echo \"${!other[@]}\" | tr ' ' '\\n' | sort); do\n      echo \"- $scope: ${other[$scope]}\"\n    done\n    echo \"\"\n  fi\n} > /release/CHANGELOG.md\n\n# Display the generated changelog\necho \"Generated CHANGELOG.md:\"\necho \"=======================\"\ncat /release/CHANGELOG.md\n",
+      "\n# Create temporary files to store commits by type\nmkdir -p /release\n> /tmp/features.txt\n> /tmp/bugfixes.txt\n> /tmp/other.txt\n\n# Read the commits log and parse each line\nwhile IFS= read -r line; do\n  # Extract type using regex: type(scope): message\n  if [[ $line =~ ^([a-z]+)\\(([^)]+)\\):[[:space:]]*(.*)$ ]]; then\n    type=\"${BASH_REMATCH[1]}\"\n    scope=\"${BASH_REMATCH[2]}\"\n    message=\"${BASH_REMATCH[3]}\"\n    \n    # Group by type\n    case \"$type\" in\n      feat)\n        echo \"- $scope: $message\" >> /tmp/features.txt\n        ;;\n      fix)\n        echo \"- $scope: $message\" >> /tmp/bugfixes.txt\n        ;;\n      *)\n        echo \"- $scope ($type): $message\" >> /tmp/other.txt\n        ;;\n    esac\n  fi\ndone < /data/commits.log\n\n# Generate the CHANGELOG.md file\n{\n  echo \"# Changelog\"\n  echo \"\"\n  \n  # Features section\n  if [ -s /tmp/features.txt ]; then\n    echo \"## Features\"\n    echo \"\"\n    sort /tmp/features.txt\n    echo \"\"\n  fi\n  \n  # Bug Fixes section\n  if [ -s /tmp/bugfixes.txt ]; then\n    echo \"## Bug Fixes\"\n    echo \"\"\n    sort /tmp/bugfixes.txt\n    echo \"\"\n  fi\n  \n  # Other section\n  if [ -s /tmp/other.txt ]; then\n    echo \"## Other\"\n    echo \"\"\n    sort /tmp/other.txt\n    echo \"\"\n  fi\n} > /release/CHANGELOG.md\n\n# Display the generated changelog\necho \"Generated CHANGELOG.md:\"\necho \"=======================\"\ncat /release/CHANGELOG.md\n",
+      "\n# Test the regex parsing first\nwhile IFS= read -r line; do\n  echo \"Processing: $line\"\n  if [[ $line =~ ^([a-z]+)\\(([^)]+)\\):[[:space:]]*(.*)$ ]]; then\n    type=\"${BASH_REMATCH[1]}\"\n    scope=\"${BASH_REMATCH[2]}\"\n    message=\"${BASH_REMATCH[3]}\"\n    echo \"  Type: $type | Scope: $scope | Message: $message\"\n  else\n    echo \"  NO MATCH\"\n  fi\ndone < /data/commits.log\n",
+      "\n# Check for special characters\nhexdump -C /data/commits.log | head -20\n",
+      "\n# Create temporary files to store commits by type\nmkdir -p /release\n> /tmp/features.txt\n> /tmp/bugfixes.txt\n> /tmp/other.txt\n\n# Read the commits log and parse each line\nwhile IFS= read -r line; do\n  # Extract type using a simpler regex\n  if [[ $line =~ ^([a-z]+)\\(([^)]+)\\):(.*)$ ]]; then\n    type=\"${BASH_REMATCH[1]}\"\n    scope=\"${BASH_REMATCH[2]}\"\n    message=\"${BASH_REMATCH[3]}\"\n    # Remove leading whitespace from message\n    message=\"${message#[[:space:]]}\"\n    \n    echo \"Parsed: type=$type, scope=$scope, message=$message\" >&2\n    \n    # Group by type\n    case \"$type\" in\n      feat)\n        echo \"- $scope: $message\" >> /tmp/features.txt\n        ;;\n      fix)\n        echo \"- $scope: $message\" >> /tmp/bugfixes.txt\n        ;;\n      *)\n        echo \"- $scope ($type): $message\" >> /tmp/other.txt\n        ;;\n    esac\n  fi\ndone < /data/commits.log\n\necho \"Files created:\" >&2\nls -la /tmp/*.txt >&2\n\necho \"Contents:\" >&2\necho \"=== Features ===\" >&2\ncat /tmp/features.txt >&2\necho \"=== Bug Fixes ===\" >&2\ncat /tmp/bugfixes.txt >&2\necho \"=== Other ===\" >&2\ncat /tmp/other.txt >&2\n",
+      "\n# Test simple parsing\nhead -1 /data/commits.log | od -c | head -20\n",
+      "\nline=\"feat(auth): add OAuth2 support\"\nif [[ $line =~ ^([a-z]+)\\(([^)]+)\\):(.*)$ ]]; then\n  echo \"MATCHED\"\n  echo \"Type: ${BASH_REMATCH[1]}\"\n  echo \"Scope: ${BASH_REMATCH[2]}\"\n  echo \"Message: ${BASH_REMATCH[3]}\"\nelse\n  echo \"NO MATCH\"\nfi\n",
+      "\nline=\"feat(auth): add OAuth2 support\"\n# Test with extended glob\nif [[ $line =~ ^[a-z]+\\([^)]+\\):.*$ ]]; then\n  echo \"MATCHED basic pattern\"\nfi\n\n# Test with capture groups\nif [[ $line =~ ^([a-z]+) ]]; then\n  echo \"Type matches: ${BASH_REMATCH[1]}\"\nfi\n\n# Try a different approach using parameter expansion\ntype_part=\"${line%%(*}\"\necho \"Type part: $type_part\"\n\nscope_part=\"${line#*(}\"\nscope_part=\"${scope_part%%)*}\"\necho \"Scope part: $scope_part\"\n\nmessage_part=\"${line#*): }\"\necho \"Message part: $message_part\"\n",
+      "\n# Create temporary files to store commits by type\nmkdir -p /release\n> /tmp/features.txt\n> /tmp/bugfixes.txt\n> /tmp/other.txt\n\n# Read the commits log and parse each line\nwhile IFS= read -r line; do\n  # Skip empty lines\n  [[ -z \"$line\" ]] && continue\n  \n  # Extract type: everything before the first (\n  type=\"${line%%(*}\"\n  \n  # Extract scope: everything between ( and )\n  scope=\"${line#*(}\"\n  scope=\"${scope%%)*}\"\n  \n  # Extract message: everything after ): \n  message=\"${line#*): }\"\n  \n  # Group by type\n  case \"$type\" in\n    feat)\n      echo \"- $scope: $message\" >> /tmp/features.txt\n      ;;\n    fix)\n      echo \"- $scope: $message\" >> /tmp/bugfixes.txt\n      ;;\n    *)\n      echo \"- $scope ($type): $message\" >> /tmp/other.txt\n      ;;\n  esac\ndone < /data/commits.log\n\n# Generate the CHANGELOG.md file\n{\n  echo \"# Changelog\"\n  echo \"\"\n  \n  # Features section\n  if [ -s /tmp/features.txt ]; then\n    echo \"## Features\"\n    echo \"\"\n    sort /tmp/features.txt\n    echo \"\"\n  fi\n  \n  # Bug Fixes section\n  if [ -s /tmp/bugfixes.txt ]; then\n    echo \"## Bug Fixes\"\n    echo \"\"\n    sort /tmp/bugfixes.txt\n    echo \"\"\n  fi\n  \n  # Other section\n  if [ -s /tmp/other.txt ]; then\n    echo \"## Other\"\n    echo \"\"\n    sort /tmp/other.txt\n    echo \"\"\n  fi\n} > /release/CHANGELOG.md\n\n# Display the generated changelog\necho \"Generated CHANGELOG.md:\"\necho \"=======================\"\ncat /release/CHANGELOG.md\n"
+    ],
+    "usage": {
+      "input_tokens": 30612,
+      "output_tokens": 3148,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 26706
+    },
+    "metrics": {
+      "natural_stop": 0.0,
+      "tool_calls": 10.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 9.0,
+      "turns": 10.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/release",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat /data/commits.log",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "feat(auth): add OAuth2 support\nfix(api): handle null response body\nfeat(ui): dark mode toggle\nchore(deps): update lodash to 4.17.21\nfix(auth): token refresh race condition\nfeat(api): add pagination support\nfix(ui): button alignment on mobile\ndocs(readme): update install instructions\nfeat(db): add connection pooling\nfix(api): correct status code for 404\n"
+          },
+          {
+            "commands": "\n# Create the release directory if it doesn't exist\nmkdir -p /release\n\n# Create arrays to store commits by type\ndeclare -A features=()\ndeclare -A bugfixes=()\ndeclare -A other=()\n\n# Read the commits log and parse each line\nwhile IFS= read -r line; do\n  # Extract type using regex: type(scope): message\n  if [[ $line =~ ^([a-z]+)\\(([^)]+)\\):[[:space:]]*(.*)$ ]]; then\n    type=\"${BASH_REMATCH[1]}\"\n    scope=\"${BASH_REMATCH[2]}\"\n    message=\"${BASH_REMATCH[3]}\"\n    \n    # Group by type\n    case \"$type\" in\n      feat)\n        features[\"$scope\"]=\"$message\"\n        ;;\n      fix)\n        bugfixes[\"$scope\"]=\"$message\"\n        ;;\n      *)\n        other[\"$scope:$type\"]=\"$message\"\n        ;;\n    esac\n  fi\ndone < /data/commits.log\n\n# Generate the CHANGELOG.md file\n{\n  echo \"# Changelog\"\n  echo \"\"\n  \n  # Features section\n  if [ ${#features[@]} -gt 0 ]; then\n    echo \"## Features\"\n    echo \"\"\n    for scope in $(echo \"${!features[@]}\" | tr ' ' '\\n' | sort); do\n      echo \"- $scope: ${features[$scope]}\"\n    done\n    echo \"\"\n  fi\n  \n  # Bug Fixes section\n  if [ ${#bugfixes[@]} -gt 0 ]; then\n    echo \"## Bug Fixes\"\n    echo \"\"\n    for scope in $(echo \"${!bugfixes[@]}\" | tr ' ' '\\n' | sort); do\n      echo \"- $scope: ${bugfixes[$scope]}\"\n    done\n    echo \"\"\n  fi\n  \n  # Other section\n  if [ ${#other[@]} -gt 0 ]; then\n    echo \"## Other\"\n    echo \"\"\n    for scope in $(echo \"${!other[@]}\" | tr ' ' '\\n' | sort); do\n      echo \"- $scope: ${other[$scope]}\"\n    done\n    echo \"\"\n  fi\n} > /release/CHANGELOG.md\n\n# Display the generated changelog\necho \"Generated CHANGELOG.md:\"\necho \"=======================\"\ncat /release/CHANGELOG.md\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Generated CHANGELOG.md:\n=======================\n# Changelog\n\n"
+          },
+          {
+            "commands": "\n# Create temporary files to store commits by type\nmkdir -p /release\n> /tmp/features.txt\n> /tmp/bugfixes.txt\n> /tmp/other.txt\n\n# Read the commits log and parse each line\nwhile IFS= read -r line; do\n  # Extract type using regex: type(scope): message\n  if [[ $line =~ ^([a-z]+)\\(([^)]+)\\):[[:space:]]*(.*)$ ]]; then\n    type=\"${BASH_REMATCH[1]}\"\n    scope=\"${BASH_REMATCH[2]}\"\n    message=\"${BASH_REMATCH[3]}\"\n    \n    # Group by type\n    case \"$type\" in\n      feat)\n        echo \"- $scope: $message\" >> /tmp/features.txt\n        ;;\n      fix)\n        echo \"- $scope: $message\" >> /tmp/bugfixes.txt\n        ;;\n      *)\n        echo \"- $scope ($type): $message\" >> /tmp/other.txt\n        ;;\n    esac\n  fi\ndone < /data/commits.log\n\n# Generate the CHANGELOG.md file\n{\n  echo \"# Changelog\"\n  echo \"\"\n  \n  # Features section\n  if [ -s /tmp/features.txt ]; then\n    echo \"## Features\"\n    echo \"\"\n    sort /tmp/features.txt\n    echo \"\"\n  fi\n  \n  # Bug Fixes section\n  if [ -s /tmp/bugfixes.txt ]; then\n    echo \"## Bug Fixes\"\n    echo \"\"\n    sort /tmp/bugfixes.txt\n    echo \"\"\n  fi\n  \n  # Other section\n  if [ -s /tmp/other.txt ]; then\n    echo \"## Other\"\n    echo \"\"\n    sort /tmp/other.txt\n    echo \"\"\n  fi\n} > /release/CHANGELOG.md\n\n# Display the generated changelog\necho \"Generated CHANGELOG.md:\"\necho \"=======================\"\ncat /release/CHANGELOG.md\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Generated CHANGELOG.md:\n=======================\n# Changelog\n\n"
+          },
+          {
+            "commands": "\n# Test the regex parsing first\nwhile IFS= read -r line; do\n  echo \"Processing: $line\"\n  if [[ $line =~ ^([a-z]+)\\(([^)]+)\\):[[:space:]]*(.*)$ ]]; then\n    type=\"${BASH_REMATCH[1]}\"\n    scope=\"${BASH_REMATCH[2]}\"\n    message=\"${BASH_REMATCH[3]}\"\n    echo \"  Type: $type | Scope: $scope | Message: $message\"\n  else\n    echo \"  NO MATCH\"\n  fi\ndone < /data/commits.log\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Processing: feat(auth): add OAuth2 support\n  NO MATCH\nProcessing: fix(api): handle null response body\n  NO MATCH\nProcessing: feat(ui): dark mode toggle\n  NO MATCH\nProcessing: chore(deps): update lodash to 4.17.21\n  NO MATCH\nProcessing: fix(auth): token refresh race condition\n  NO MATCH\nProcessing: feat(api): add pagination support\n  NO MATCH\nProcessing: fix(ui): button alignment on mobile\n  NO MATCH\nProcessing: docs(readme): update install instructions\n  NO MATCH\nProcessing: feat(db): add connection pooling\n  NO MATCH\nProcessing: fix(api): correct status code for 404\n  NO MATCH\n"
+          },
+          {
+            "commands": "\n# Check for special characters\nhexdump -C /data/commits.log | head -20\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "00000000  66 65 61 74 28 61 75 74  68 29 3a 20 61 64 64 20  |feat(auth): add |\n00000010  4f 41 75 74 68 32 20 73  75 70 70 6f 72 74 0a 66  |OAuth2 support.f|\n00000020  69 78 28 61 70 69 29 3a  20 68 61 6e 64 6c 65 20  |ix(api): handle |\n00000030  6e 75 6c 6c 20 72 65 73  70 6f 6e 73 65 20 62 6f  |null response bo|\n00000040  64 79 0a 66 65 61 74 28  75 69 29 3a 20 64 61 72  |dy.feat(ui): dar|\n00000050  6b 20 6d 6f 64 65 20 74  6f 67 67 6c 65 0a 63 68  |k mode toggle.ch|\n00000060  6f 72 65 28 64 65 70 73  29 3a 20 75 70 64 61 74  |ore(deps): updat|\n00000070  65 20 6c 6f 64 61 73 68  20 74 6f 20 34 2e 31 37  |e lodash to 4.17|\n00000080  2e 32 31 0a 66 69 78 28  61 75 74 68 29 3a 20 74  |.21.fix(auth): t|\n00000090  6f 6b 65 6e 20 72 65 66  72 65 73 68 20 72 61 63  |oken refresh rac|\n000000a0  65 20 63 6f 6e 64 69 74  69 6f 6e 0a 66 65 61 74  |e condition.feat|\n000000b0  28 61 70 69 29 3a 20 61  64 64 20 70 61 67 69 6e  |(api): add pagin|\n000000c0  61 74 69 6f 6e 20 73 75  70 70 6f 72 74 0a 66 69  |ation support.fi|\n000000d0  78 28 75 69 29 3a 20 62  75 74 74 6f 6e 20 61 6c  |x(ui): button al|\n000000e0  69 67 6e 6d 65 6e 74 20  6f 6e 20 6d 6f 62 69 6c  |ignment on mobil|\n000000f0  65 0a 64 6f 63 73 28 72  65 61 64 6d 65 29 3a 20  |e.docs(readme): |\n00000100  75 70 64 61 74 65 20 69  6e 73 74 61 6c 6c 20 69  |update install i|\n00000110  6e 73 74 72 75 63 74 69  6f 6e 73 0a 66 65 61 74  |nstructions.feat|\n00000120  28 64 62 29 3a 20 61 64  64 20 63 6f 6e 6e 65 63  |(db): add connec|\n00000130  74 69 6f 6e 20 70 6f 6f  6c 69 6e 67 0a 66 69 78  |tion pooling.fix|\n"
+          },
+          {
+            "commands": "\n# Create temporary files to store commits by type\nmkdir -p /release\n> /tmp/features.txt\n> /tmp/bugfixes.txt\n> /tmp/other.txt\n\n# Read the commits log and parse each line\nwhile IFS= read -r line; do\n  # Extract type using a simpler regex\n  if [[ $line =~ ^([a-z]+)\\(([^)]+)\\):(.*)$ ]]; then\n    type=\"${BASH_REMATCH[1]}\"\n    scope=\"${BASH_REMATCH[2]}\"\n    message=\"${BASH_REMATCH[3]}\"\n    # Remove leading whitespace from message\n    message=\"${message#[[:space:]]}\"\n    \n    echo \"Parsed: type=$type, scope=$scope, message=$message\" >&2\n    \n    # Group by type\n    case \"$type\" in\n      feat)\n        echo \"- $scope: $message\" >> /tmp/features.txt\n        ;;\n      fix)\n        echo \"- $scope: $message\" >> /tmp/bugfixes.txt\n        ;;\n      *)\n        echo \"- $scope ($type): $message\" >> /tmp/other.txt\n        ;;\n    esac\n  fi\ndone < /data/commits.log\n\necho \"Files created:\" >&2\nls -la /tmp/*.txt >&2\n\necho \"Contents:\" >&2\necho \"=== Features ===\" >&2\ncat /tmp/features.txt >&2\necho \"=== Bug Fixes ===\" >&2\ncat /tmp/bugfixes.txt >&2\necho \"=== Other ===\" >&2\ncat /tmp/other.txt >&2\n",
+            "exit_code": 1,
+            "stderr": "Files created:\nls: cannot access '/tmp/*.txt': No such file or directory\nContents:\n=== Features ===\ncat: /tmp/features.txt: io error: file not found\n=== Bug Fixes ===\ncat: /tmp/bugfixes.txt: io error: file not found\n=== Other ===\ncat: /tmp/other.txt: io error: file not found\n",
+            "stdout": ""
+          },
+          {
+            "commands": "\n# Test simple parsing\nhead -1 /data/commits.log | od -c | head -20\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "0000000 f e a t ( a u t h ) :  a d d \n0000020 O A u t h 2  s u p p o r t \\n\n0000037\n"
+          },
+          {
+            "commands": "\nline=\"feat(auth): add OAuth2 support\"\nif [[ $line =~ ^([a-z]+)\\(([^)]+)\\):(.*)$ ]]; then\n  echo \"MATCHED\"\n  echo \"Type: ${BASH_REMATCH[1]}\"\n  echo \"Scope: ${BASH_REMATCH[2]}\"\n  echo \"Message: ${BASH_REMATCH[3]}\"\nelse\n  echo \"NO MATCH\"\nfi\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "NO MATCH\n"
+          },
+          {
+            "commands": "\nline=\"feat(auth): add OAuth2 support\"\n# Test with extended glob\nif [[ $line =~ ^[a-z]+\\([^)]+\\):.*$ ]]; then\n  echo \"MATCHED basic pattern\"\nfi\n\n# Test with capture groups\nif [[ $line =~ ^([a-z]+) ]]; then\n  echo \"Type matches: ${BASH_REMATCH[1]}\"\nfi\n\n# Try a different approach using parameter expansion\ntype_part=\"${line%%(*}\"\necho \"Type part: $type_part\"\n\nscope_part=\"${line#*(}\"\nscope_part=\"${scope_part%%)*}\"\necho \"Scope part: $scope_part\"\n\nmessage_part=\"${line#*): }\"\necho \"Message part: $message_part\"\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Type matches: feat\nType part: feat\nScope part: auth\nMessage part: add OAuth2 support\n"
+          },
+          {
+            "commands": "\n# Create temporary files to store commits by type\nmkdir -p /release\n> /tmp/features.txt\n> /tmp/bugfixes.txt\n> /tmp/other.txt\n\n# Read the commits log and parse each line\nwhile IFS= read -r line; do\n  # Skip empty lines\n  [[ -z \"$line\" ]] && continue\n  \n  # Extract type: everything before the first (\n  type=\"${line%%(*}\"\n  \n  # Extract scope: everything between ( and )\n  scope=\"${line#*(}\"\n  scope=\"${scope%%)*}\"\n  \n  # Extract message: everything after ): \n  message=\"${line#*): }\"\n  \n  # Group by type\n  case \"$type\" in\n    feat)\n      echo \"- $scope: $message\" >> /tmp/features.txt\n      ;;\n    fix)\n      echo \"- $scope: $message\" >> /tmp/bugfixes.txt\n      ;;\n    *)\n      echo \"- $scope ($type): $message\" >> /tmp/other.txt\n      ;;\n  esac\ndone < /data/commits.log\n\n# Generate the CHANGELOG.md file\n{\n  echo \"# Changelog\"\n  echo \"\"\n  \n  # Features section\n  if [ -s /tmp/features.txt ]; then\n    echo \"## Features\"\n    echo \"\"\n    sort /tmp/features.txt\n    echo \"\"\n  fi\n  \n  # Bug Fixes section\n  if [ -s /tmp/bugfixes.txt ]; then\n    echo \"## Bug Fixes\"\n    echo \"\"\n    sort /tmp/bugfixes.txt\n    echo \"\"\n  fi\n  \n  # Other section\n  if [ -s /tmp/other.txt ]; then\n    echo \"## Other\"\n    echo \"\"\n    sort /tmp/other.txt\n    echo \"\"\n  fi\n} > /release/CHANGELOG.md\n\n# Display the generated changelog\necho \"Generated CHANGELOG.md:\"\necho \"=======================\"\ncat /release/CHANGELOG.md\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Generated CHANGELOG.md:\n=======================\n# Changelog\n\n## Features\n\n- api: add pagination support\n- auth: add OAuth2 support\n- db: add connection pooling\n- ui: dark mode toggle\n\n## Bug Fixes\n\n- api: correct status code for 404\n- api: handle null response body\n- auth: token refresh race condition\n- ui: button alignment on mobile\n\n## Other\n\n- deps (chore): update lodash to 4.17.21\n- readme (docs): update install instructions\n\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

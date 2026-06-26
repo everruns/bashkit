@@ -1,0 +1,69 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "file_ops_find_and_delete",
+  "target": "anthropic/claude-sonnet-4-6",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Here's a summary of what was done:\n\n- **Searched** recursively under `/workspace` for all files matching `*.tmp`.\n- **Found 3 `.tmp` files:**\n  - `/workspace/a.tmp`\n  - `/workspace/sub/c.tmp`\n  - `/workspace/sub/deep/d.tmp`\n- **Deleted** all 3 files using `rm -f`.\n- **Result:** `3 .tmp files deleted.`",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "find /workspace -type f -name \"*.tmp\" 2>/dev/null",
+      "\n# Find, count, and delete all .tmp files under /workspace\nmapfile -t tmp_files < <(find /workspace -type f -name \"*.tmp\" 2>/dev/null)\ncount=${#tmp_files[@]}\n\nfor f in \"${tmp_files[@]}\"; do\n  rm -f \"$f\"\ndone\n\necho \"Deleted $count .tmp file(s).\"\n"
+    ],
+    "usage": {
+      "input_tokens": 2575,
+      "output_tokens": 321,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 8488
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp",
+          "/workspace",
+          "/workspace/sub",
+          "/workspace/sub/deep"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "find /workspace -type f -name \"*.tmp\" 2>/dev/null",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/workspace/a.tmp\n/workspace/sub/c.tmp\n/workspace/sub/deep/d.tmp\n"
+          },
+          {
+            "commands": "\n# Find, count, and delete all .tmp files under /workspace\nmapfile -t tmp_files < <(find /workspace -type f -name \"*.tmp\" 2>/dev/null)\ncount=${#tmp_files[@]}\n\nfor f in \"${tmp_files[@]}\"; do\n  rm -f \"$f\"\ndone\n\necho \"Deleted $count .tmp file(s).\"\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Deleted 3 .tmp file(s).\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

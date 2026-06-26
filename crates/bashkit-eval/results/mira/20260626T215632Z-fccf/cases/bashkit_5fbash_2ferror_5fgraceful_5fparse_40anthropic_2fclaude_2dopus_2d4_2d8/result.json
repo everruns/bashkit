@@ -1,0 +1,74 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "error_graceful_parse",
+  "target": "anthropic/claude-opus-4-8",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done. Here's a summary of what I did:\n\n1. **Read** `/data/broken.json` — it contained invalid JSON with a trailing comma:\n   ```json\n   {\"name\": \"test-app\", \"version\": \"1.0\", \"debug\": true, }\n   ```\n\n2. **Fixed** the JSON by removing the trailing comma (using `sed` to strip a comma followed by optional whitespace before the closing brace) and saved it back to the same file:\n   ```json\n   {\"name\": \"test-app\", \"version\": \"1.0\", \"debug\": true}\n   ```\n\n3. **Parsed** the now-valid JSON with `jq` to extract and print the `name` field:\n\n   **`name` = `test-app`**\n\nThe file is now valid JSON and the trailing comma has been removed.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "cat /data/broken.json",
+      "# Remove trailing comma before closing brace (handles optional whitespace)\nsed -i -E 's/,[[:space:]]*}/}/g' /data/broken.json\necho \"Fixed content:\"\ncat /data/broken.json",
+      "# Validate and extract 'name' field\nif command -v jq >/dev/null 2>&1; then\n  echo \"Using jq:\"\n  jq -r '.name' /data/broken.json\nelse\n  echo \"jq not available, extracting with grep/sed:\"\n  grep -oE '\"name\"[[:space:]]*:[[:space:]]*\"[^\"]*\"' /data/broken.json | sed -E 's/.*:[[:space:]]*\"([^\"]*)\"/\\1/'\nfi"
+    ],
+    "usage": {
+      "input_tokens": 3673,
+      "output_tokens": 720,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 10306
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat /data/broken.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\"name\": \"test-app\", \"version\": \"1.0\", \"debug\": true, }"
+          },
+          {
+            "commands": "# Remove trailing comma before closing brace (handles optional whitespace)\nsed -i -E 's/,[[:space:]]*}/}/g' /data/broken.json\necho \"Fixed content:\"\ncat /data/broken.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Fixed content:\n{\"name\": \"test-app\", \"version\": \"1.0\", \"debug\": true}\n"
+          },
+          {
+            "commands": "# Validate and extract 'name' field\nif command -v jq >/dev/null 2>&1; then\n  echo \"Using jq:\"\n  jq -r '.name' /data/broken.json\nelse\n  echo \"jq not available, extracting with grep/sed:\"\n  grep -oE '\"name\"[[:space:]]*:[[:space:]]*\"[^\"]*\"' /data/broken.json | sed -E 's/.*:[[:space:]]*\"([^\"]*)\"/\\1/'\nfi",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Using jq:\ntest-app\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

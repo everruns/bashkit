@@ -1,0 +1,82 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_release_notes",
+  "target": "anthropic/claude-sonnet-4-6",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The changelog has been generated at `/release/CHANGELOG.md`. Here's a summary of what was done:\n\n---\n\n### How it works\n\n1. **Read** `/data/commits.log` — 10 conventional commit lines in `type(scope): message` format.\n2. **Parse** each line with `awk` using `index()` to reliably extract three parts:\n   - **type** — everything before the first `(`\n   - **scope** — everything between `(` and `)`\n   - **message** — everything after `): `\n3. **Group** into three buckets: `feat` → Features, `fix` → Bug Fixes, everything else → Other.\n4. **Write** `/release/CHANGELOG.md` with the formatted sections.\n\n---\n\n### Generated `/release/CHANGELOG.md`\n\n| Section | Entries |\n|---|---|\n| **## Features** | auth, ui, api, db |\n| **## Bug Fixes** | api (×2), auth, ui |\n| **## Other** | deps (chore), readme (docs) |\n\n- **4 features** (`feat`) — OAuth2 support, dark mode toggle, pagination support, connection pooling\n- **4 bug fixes** (`fix`) — null response body, token refresh race condition, button alignment, 404 status code\n- **2 other** (`chore` + `docs`) — lodash update, readme install instructions",
+    "iterations": 5,
+    "tool_calls_count": 4,
+    "tool_calls": [
+      "cat /data/commits.log",
+      "mkdir -p /release\n\n# Parse commits.log, group by type, and generate CHANGELOG.md\nawk -F'[():]' '\n{\n    type  = $1\n    scope = $2\n    # message: everything after \"type(scope): \", strip leading space\n    msg = $0\n    sub(/^[^:]*\\([^)]*\\): /, \"\", msg)\n\n    if (type == \"feat\") {\n        feat[feat_n++] = scope \": \" msg\n    } else if (type == \"fix\") {\n        fix[fix_n++] = scope \": \" msg\n    } else {\n        other[other_n++] = scope \": \" msg\n    }\n}\nEND {\n    print \"# Changelog\"\n    print \"\"\n\n    print \"## Features\"\n    for (i = 0; i < feat_n; i++) print \"- \" feat[i]\n    print \"\"\n\n    print \"## Bug Fixes\"\n    for (i = 0; i < fix_n; i++) print \"- \" fix[i]\n    print \"\"\n\n    print \"## Other\"\n    for (i = 0; i < other_n; i++) print \"- \" other[i]\n}\n' /data/commits.log > /release/CHANGELOG.md\n\ncat /release/CHANGELOG.md",
+      "# Diagnose the actual delimiter / field layout\nhead -3 /data/commits.log | cat -A",
+      "# Use a regex-based approach with match() for reliable parsing\nawk '\n/^[a-zA-Z]+\\([^)]+\\): / {\n    # Extract type\n    type = substr($0, 1, index($0, \"(\") - 1)\n\n    # Extract scope (between first \"(\" and first \")\")\n    scope_start = index($0, \"(\") + 1\n    scope_end   = index($0, \")\") - 1\n    scope = substr($0, scope_start, scope_end - scope_start + 1)\n\n    # Extract message (after \"): \")\n    msg = substr($0, index($0, \"): \") + 3)\n\n    entry = scope \": \" msg\n\n    if (type == \"feat\") {\n        feat[feat_n++] = entry\n    } else if (type == \"fix\") {\n        fix[fix_n++] = entry\n    } else {\n        other[other_n++] = entry\n    }\n}\nEND {\n    print \"# Changelog\"\n    print \"\"\n\n    print \"## Features\"\n    for (i = 0; i < feat_n; i++) print \"- \" feat[i]\n    print \"\"\n\n    print \"## Bug Fixes\"\n    for (i = 0; i < fix_n; i++) print \"- \" fix[i]\n    print \"\"\n\n    print \"## Other\"\n    for (i = 0; i < other_n; i++) print \"- \" other[i]\n}\n' /data/commits.log > /release/CHANGELOG.md\n\ncat /release/CHANGELOG.md"
+    ],
+    "usage": {
+      "input_tokens": 6895,
+      "output_tokens": 1260,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 24715
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 4.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 4.0,
+      "turns": 5.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/release",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat /data/commits.log",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "feat(auth): add OAuth2 support\nfix(api): handle null response body\nfeat(ui): dark mode toggle\nchore(deps): update lodash to 4.17.21\nfix(auth): token refresh race condition\nfeat(api): add pagination support\nfix(ui): button alignment on mobile\ndocs(readme): update install instructions\nfeat(db): add connection pooling\nfix(api): correct status code for 404\n"
+          },
+          {
+            "commands": "mkdir -p /release\n\n# Parse commits.log, group by type, and generate CHANGELOG.md\nawk -F'[():]' '\n{\n    type  = $1\n    scope = $2\n    # message: everything after \"type(scope): \", strip leading space\n    msg = $0\n    sub(/^[^:]*\\([^)]*\\): /, \"\", msg)\n\n    if (type == \"feat\") {\n        feat[feat_n++] = scope \": \" msg\n    } else if (type == \"fix\") {\n        fix[fix_n++] = scope \": \" msg\n    } else {\n        other[other_n++] = scope \": \" msg\n    }\n}\nEND {\n    print \"# Changelog\"\n    print \"\"\n\n    print \"## Features\"\n    for (i = 0; i < feat_n; i++) print \"- \" feat[i]\n    print \"\"\n\n    print \"## Bug Fixes\"\n    for (i = 0; i < fix_n; i++) print \"- \" fix[i]\n    print \"\"\n\n    print \"## Other\"\n    for (i = 0; i < other_n; i++) print \"- \" other[i]\n}\n' /data/commits.log > /release/CHANGELOG.md\n\ncat /release/CHANGELOG.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Changelog\n\n## Features\n\n## Bug Fixes\n\n## Other\n- : add OAuth2 support\n- : handle null response body\n- : dark mode toggle\n- : update lodash to 4.17.21\n- : token refresh race condition\n- : add pagination support\n- : button alignment on mobile\n- : update install instructions\n- : add connection pooling\n- : correct status code for 404\n"
+          },
+          {
+            "commands": "# Diagnose the actual delimiter / field layout\nhead -3 /data/commits.log | cat -A",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "feat(auth): add OAuth2 support$\nfix(api): handle null response body$\nfeat(ui): dark mode toggle$\n"
+          },
+          {
+            "commands": "# Use a regex-based approach with match() for reliable parsing\nawk '\n/^[a-zA-Z]+\\([^)]+\\): / {\n    # Extract type\n    type = substr($0, 1, index($0, \"(\") - 1)\n\n    # Extract scope (between first \"(\" and first \")\")\n    scope_start = index($0, \"(\") + 1\n    scope_end   = index($0, \")\") - 1\n    scope = substr($0, scope_start, scope_end - scope_start + 1)\n\n    # Extract message (after \"): \")\n    msg = substr($0, index($0, \"): \") + 3)\n\n    entry = scope \": \" msg\n\n    if (type == \"feat\") {\n        feat[feat_n++] = entry\n    } else if (type == \"fix\") {\n        fix[fix_n++] = entry\n    } else {\n        other[other_n++] = entry\n    }\n}\nEND {\n    print \"# Changelog\"\n    print \"\"\n\n    print \"## Features\"\n    for (i = 0; i < feat_n; i++) print \"- \" feat[i]\n    print \"\"\n\n    print \"## Bug Fixes\"\n    for (i = 0; i < fix_n; i++) print \"- \" fix[i]\n    print \"\"\n\n    print \"## Other\"\n    for (i = 0; i < other_n; i++) print \"- \" other[i]\n}\n' /data/commits.log > /release/CHANGELOG.md\n\ncat /release/CHANGELOG.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Changelog\n\n## Features\n- auth: add OAuth2 support\n- ui: dark mode toggle\n- api: add pagination support\n- db: add connection pooling\n\n## Bug Fixes\n- api: handle null response body\n- auth: token refresh race condition\n- ui: button alignment on mobile\n- api: correct status code for 404\n\n## Other\n- deps: update lodash to 4.17.21\n- readme: update install instructions\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

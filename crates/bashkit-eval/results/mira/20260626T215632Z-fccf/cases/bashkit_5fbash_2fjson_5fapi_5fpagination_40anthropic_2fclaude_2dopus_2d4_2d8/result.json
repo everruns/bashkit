@@ -1,0 +1,74 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_api_pagination",
+  "target": "anthropic/claude-opus-4-8",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Here are the results from `/data/response.json`:\n\n- **Current page number:** 2\n- **Total count:** 15\n- **Item IDs:**\n  ```\n  201\n  202\n  203\n  ```",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "cat /data/response.json",
+      "command -v jq >/dev/null 2>&1 && echo \"jq available\" || echo \"no jq\"",
+      "echo \"Current page: $(jq -r '.page' /data/response.json)\"\necho \"Total count: $(jq -r '.total' /data/response.json)\"\necho \"Item IDs:\"\njq -r '.items[].id' /data/response.json"
+    ],
+    "usage": {
+      "input_tokens": 3516,
+      "output_tokens": 414,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7324
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat /data/response.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\"page\":2,\"per_page\":3,\"total\":15,\"items\":[{\"id\":201,\"name\":\"alpha\",\"status\":\"active\"},{\"id\":202,\"name\":\"beta\",\"status\":\"inactive\"},{\"id\":203,\"name\":\"gamma\",\"status\":\"active\"}]}"
+          },
+          {
+            "commands": "command -v jq >/dev/null 2>&1 && echo \"jq available\" || echo \"no jq\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "jq available\n"
+          },
+          {
+            "commands": "echo \"Current page: $(jq -r '.page' /data/response.json)\"\necho \"Total count: $(jq -r '.total' /data/response.json)\"\necho \"Item IDs:\"\njq -r '.items[].id' /data/response.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Current page: 2\nTotal count: 15\nItem IDs:\n201\n202\n203\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

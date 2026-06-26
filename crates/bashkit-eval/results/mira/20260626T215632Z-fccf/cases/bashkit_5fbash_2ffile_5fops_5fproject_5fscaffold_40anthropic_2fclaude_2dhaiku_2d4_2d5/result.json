@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "file_ops_project_scaffold",
+  "target": "anthropic/claude-haiku-4-5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Perfect! I've successfully created your Python project at `/home/eval/myproject` with the following structure:\n\n```\nmyproject/\n├── README.md           (contains: # My Project)\n├── src/\n│   └── __init__.py\n├── tests/\n│   └── __init__.py\n└── docs/\n```\n\nThe project is now ready for development with:\n- **src/** - for your Python source code\n- **tests/** - for your unit tests\n- **docs/** - for documentation\n- **README.md** - with the title \"# My Project\"\n\nAll `__init__.py` files are in place to make the directories proper Python packages.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "\n# Create the project directory\nmkdir -p /home/eval/myproject\n\n# Create subdirectories\nmkdir -p /home/eval/myproject/src\nmkdir -p /home/eval/myproject/tests\nmkdir -p /home/eval/myproject/docs\n\n# Create __init__.py files\ntouch /home/eval/myproject/src/__init__.py\ntouch /home/eval/myproject/tests/__init__.py\n\n# Create README.md with the specified content\ncat > /home/eval/myproject/README.md << 'EOF'\n# My Project\nEOF\n\n# Verify the structure\necho \"Project structure created:\"\ntree /home/eval/myproject || find /home/eval/myproject -type f -o -type d | sort\n"
+    ],
+    "usage": {
+      "input_tokens": 1839,
+      "output_tokens": 394,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3421
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/eval",
+          "/home/eval/myproject",
+          "/home/eval/myproject/docs",
+          "/home/eval/myproject/src",
+          "/home/eval/myproject/tests",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "\n# Create the project directory\nmkdir -p /home/eval/myproject\n\n# Create subdirectories\nmkdir -p /home/eval/myproject/src\nmkdir -p /home/eval/myproject/tests\nmkdir -p /home/eval/myproject/docs\n\n# Create __init__.py files\ntouch /home/eval/myproject/src/__init__.py\ntouch /home/eval/myproject/tests/__init__.py\n\n# Create README.md with the specified content\ncat > /home/eval/myproject/README.md << 'EOF'\n# My Project\nEOF\n\n# Verify the structure\necho \"Project structure created:\"\ntree /home/eval/myproject || find /home/eval/myproject -type f -o -type d | sort\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Project structure created:\n/home/eval/myproject\n├── README.md\n├── docs\n├── src\n│   └── __init__.py\n└── tests\n    └── __init__.py\n\n3 directories, 3 files\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,61 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "text_heredoc_config",
+  "target": "anthropic/claude-sonnet-4-6",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Here's a breakdown of everything that was done:\n\n---\n\n### 1. Variables Set\n| Variable | Value |\n|---|---|\n| `APP_NAME` | `myservice` |\n| `APP_PORT` | `8080` |\n| `DB_HOST` | `db.prod.internal` |\n| `DB_PORT` | `5432` |\n| `LOG_LEVEL` | `warn` |\n\n---\n\n### 2. Directory Created\n`mkdir -p /etc/app` — creates the target directory (and any missing parents) without error if it already exists.\n\n---\n\n### 3. Heredoc Explained\n```bash\ncat <<EOF > /etc/app/config.yaml\n  ...\nEOF\n```\n- `<<EOF` opens the heredoc block — everything until the closing `EOF` is treated as stdin for `cat`.\n- `> /etc/app/config.yaml` redirects that output into the file.\n- **Variable interpolation happens automatically** inside an unquoted heredoc — `${APP_NAME}`, `${APP_PORT}`, etc. are expanded by the shell before writing.\n- The closing `EOF` must appear **alone on its line** with no leading whitespace to terminate the block.\n\n---\n\n### 4. Generated File (`/etc/app/config.yaml`)\n```yaml\napp:\n  name: myservice\n  port: 8080\n\ndatabase:\n  host: db.prod.internal\n  port: 5432\n\nlogging:\n  level: warn\n```\nAll five variables were cleanly interpolated into their respective YAML sections: `app:`, `database:`, and `logging:`.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "\n# Set variables\nAPP_NAME='myservice'\nAPP_PORT=8080\nDB_HOST='db.prod.internal'\nDB_PORT=5432\nLOG_LEVEL='warn'\n\n# Create target directory\nmkdir -p /etc/app\n\n# Generate config.yaml using heredoc with variable interpolation\ncat <<EOF > /etc/app/config.yaml\napp:\n  name: ${APP_NAME}\n  port: ${APP_PORT}\n\ndatabase:\n  host: ${DB_HOST}\n  port: ${DB_PORT}\n\nlogging:\n  level: ${LOG_LEVEL}\nEOF\n\n# Print the generated file contents\necho \"=== /etc/app/config.yaml ===\"\ncat /etc/app/config.yaml\n"
+    ],
+    "usage": {
+      "input_tokens": 1932,
+      "output_tokens": 607,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 9853
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/etc",
+          "/etc/app",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "\n# Set variables\nAPP_NAME='myservice'\nAPP_PORT=8080\nDB_HOST='db.prod.internal'\nDB_PORT=5432\nLOG_LEVEL='warn'\n\n# Create target directory\nmkdir -p /etc/app\n\n# Generate config.yaml using heredoc with variable interpolation\ncat <<EOF > /etc/app/config.yaml\napp:\n  name: ${APP_NAME}\n  port: ${APP_PORT}\n\ndatabase:\n  host: ${DB_HOST}\n  port: ${DB_PORT}\n\nlogging:\n  level: ${LOG_LEVEL}\nEOF\n\n# Print the generated file contents\necho \"=== /etc/app/config.yaml ===\"\ncat /etc/app/config.yaml\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== /etc/app/config.yaml ===\napp:\n  name: myservice\n  port: 8080\n\ndatabase:\n  host: db.prod.internal\n  port: 5432\n\nlogging:\n  level: warn\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,89 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_test_output",
+  "target": "anthropic/claude-haiku-4-5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "10/10 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Excellent! Here's the summary of the test results:\n\n## Summary\n\n**Statistics:**\n- **Total Tests:** 12\n- **Passed:** 9\n- **Failed:** 3\n\n**Failing Tests:**\n1. test_login_expired_token\n2. test_signup_duplicate_email\n3. test_session_timeout\n\nThe summary report has been successfully generated and saved to `/reports/test-summary.md` with:\n- A header titled \"# Test Summary\"\n- A statistics line showing Total: 12 | Passed: 9 | Failed: 3\n- A \"## Failures\" section listing all three failed tests as bullet points",
+    "iterations": 6,
+    "tool_calls_count": 5,
+    "tool_calls": [
+      "cat /data/test-results.txt",
+      "\n# Parse the test results\ntotal=0\npassed=0\nfailed=0\nfailed_tests=()\n\nwhile IFS= read -r line; do\n  if [[ $line =~ ^(PASS|FAIL)[[:space:]]+(.+)$ ]]; then\n    status=\"${BASH_REMATCH[1]}\"\n    test_name=\"${BASH_REMATCH[2]}\"\n    \n    ((total++))\n    \n    if [[ \"$status\" == \"PASS\" ]]; then\n      ((passed++))\n    else\n      ((failed++))\n      failed_tests+=(\"$test_name\")\n    fi\n  fi\ndone < /data/test-results.txt\n\n# Create the report directory if it doesn't exist\nmkdir -p /reports\n\n# Generate the summary report\n{\n  echo \"# Test Summary\"\n  echo \"\"\n  echo \"Total: $total | Passed: $passed | Failed: $failed\"\n  echo \"\"\n  echo \"## Failures\"\n  \n  if [[ $failed -gt 0 ]]; then\n    for test in \"${failed_tests[@]}\"; do\n      echo \"- $test\"\n    done\n  else\n    echo \"No failures!\"\n  fi\n} > /reports/test-summary.md\n\n# Display the summary\ncat /reports/test-summary.md\n",
+      "\n# Let's debug by checking what we're reading\nhexdump -C /data/test-results.txt | head -20\n",
+      "\n# Parse the test results using a simpler approach\ntotal=$(wc -l < /data/test-results.txt)\npassed=$(grep -c \"^PASS \" /data/test-results.txt)\nfailed=$(grep -c \"^FAIL \" /data/test-results.txt)\n\n# Extract failed test names\nfailed_tests=$(grep \"^FAIL \" /data/test-results.txt | awk '{print $2}')\n\n# Create the report directory if it doesn't exist\nmkdir -p /reports\n\n# Generate the summary report\n{\n  echo \"# Test Summary\"\n  echo \"\"\n  echo \"Total: $total | Passed: $passed | Failed: $failed\"\n  echo \"\"\n  echo \"## Failures\"\n  \n  if [[ $failed -gt 0 ]]; then\n    echo \"$failed_tests\" | while read test; do\n      echo \"- $test\"\n    done\n  else\n    echo \"No failures!\"\n  fi\n} > /reports/test-summary.md\n\n# Display the summary\ncat /reports/test-summary.md\n",
+      "\n# Verify the report file exists and display it\necho \"=== Report File Location ===\" && \\\nls -lh /reports/test-summary.md && \\\necho \"\" && \\\necho \"=== Report Contents ===\" && \\\ncat /reports/test-summary.md\n"
+    ],
+    "usage": {
+      "input_tokens": 11880,
+      "output_tokens": 1170,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 10099
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 5.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 5.0,
+      "turns": 6.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/reports",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat /data/test-results.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "PASS test_login_valid\nPASS test_login_invalid_password\nFAIL test_login_expired_token\nPASS test_signup_new_user\nFAIL test_signup_duplicate_email\nPASS test_logout\nPASS test_password_reset\nFAIL test_session_timeout\nPASS test_profile_update\nPASS test_profile_delete\nPASS test_api_rate_limit\nPASS test_api_auth_header\n"
+          },
+          {
+            "commands": "\n# Parse the test results\ntotal=0\npassed=0\nfailed=0\nfailed_tests=()\n\nwhile IFS= read -r line; do\n  if [[ $line =~ ^(PASS|FAIL)[[:space:]]+(.+)$ ]]; then\n    status=\"${BASH_REMATCH[1]}\"\n    test_name=\"${BASH_REMATCH[2]}\"\n    \n    ((total++))\n    \n    if [[ \"$status\" == \"PASS\" ]]; then\n      ((passed++))\n    else\n      ((failed++))\n      failed_tests+=(\"$test_name\")\n    fi\n  fi\ndone < /data/test-results.txt\n\n# Create the report directory if it doesn't exist\nmkdir -p /reports\n\n# Generate the summary report\n{\n  echo \"# Test Summary\"\n  echo \"\"\n  echo \"Total: $total | Passed: $passed | Failed: $failed\"\n  echo \"\"\n  echo \"## Failures\"\n  \n  if [[ $failed -gt 0 ]]; then\n    for test in \"${failed_tests[@]}\"; do\n      echo \"- $test\"\n    done\n  else\n    echo \"No failures!\"\n  fi\n} > /reports/test-summary.md\n\n# Display the summary\ncat /reports/test-summary.md\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Test Summary\n\nTotal: 0 | Passed: 0 | Failed: 0\n\n## Failures\nNo failures!\n"
+          },
+          {
+            "commands": "\n# Let's debug by checking what we're reading\nhexdump -C /data/test-results.txt | head -20\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "00000000  50 41 53 53 20 74 65 73  74 5f 6c 6f 67 69 6e 5f  |PASS test_login_|\n00000010  76 61 6c 69 64 0a 50 41  53 53 20 74 65 73 74 5f  |valid.PASS test_|\n00000020  6c 6f 67 69 6e 5f 69 6e  76 61 6c 69 64 5f 70 61  |login_invalid_pa|\n00000030  73 73 77 6f 72 64 0a 46  41 49 4c 20 74 65 73 74  |ssword.FAIL test|\n00000040  5f 6c 6f 67 69 6e 5f 65  78 70 69 72 65 64 5f 74  |_login_expired_t|\n00000050  6f 6b 65 6e 0a 50 41 53  53 20 74 65 73 74 5f 73  |oken.PASS test_s|\n00000060  69 67 6e 75 70 5f 6e 65  77 5f 75 73 65 72 0a 46  |ignup_new_user.F|\n00000070  41 49 4c 20 74 65 73 74  5f 73 69 67 6e 75 70 5f  |AIL test_signup_|\n00000080  64 75 70 6c 69 63 61 74  65 5f 65 6d 61 69 6c 0a  |duplicate_email.|\n00000090  50 41 53 53 20 74 65 73  74 5f 6c 6f 67 6f 75 74  |PASS test_logout|\n000000a0  0a 50 41 53 53 20 74 65  73 74 5f 70 61 73 73 77  |.PASS test_passw|\n000000b0  6f 72 64 5f 72 65 73 65  74 0a 46 41 49 4c 20 74  |ord_reset.FAIL t|\n000000c0  65 73 74 5f 73 65 73 73  69 6f 6e 5f 74 69 6d 65  |est_session_time|\n000000d0  6f 75 74 0a 50 41 53 53  20 74 65 73 74 5f 70 72  |out.PASS test_pr|\n000000e0  6f 66 69 6c 65 5f 75 70  64 61 74 65 0a 50 41 53  |ofile_update.PAS|\n000000f0  53 20 74 65 73 74 5f 70  72 6f 66 69 6c 65 5f 64  |S test_profile_d|\n00000100  65 6c 65 74 65 0a 50 41  53 53 20 74 65 73 74 5f  |elete.PASS test_|\n00000110  61 70 69 5f 72 61 74 65  5f 6c 69 6d 69 74 0a 50  |api_rate_limit.P|\n00000120  41 53 53 20 74 65 73 74  5f 61 70 69 5f 61 75 74  |ASS test_api_aut|\n00000130  68 5f 68 65 61 64 65 72  0a                       |h_header.|\n"
+          },
+          {
+            "commands": "\n# Parse the test results using a simpler approach\ntotal=$(wc -l < /data/test-results.txt)\npassed=$(grep -c \"^PASS \" /data/test-results.txt)\nfailed=$(grep -c \"^FAIL \" /data/test-results.txt)\n\n# Extract failed test names\nfailed_tests=$(grep \"^FAIL \" /data/test-results.txt | awk '{print $2}')\n\n# Create the report directory if it doesn't exist\nmkdir -p /reports\n\n# Generate the summary report\n{\n  echo \"# Test Summary\"\n  echo \"\"\n  echo \"Total: $total | Passed: $passed | Failed: $failed\"\n  echo \"\"\n  echo \"## Failures\"\n  \n  if [[ $failed -gt 0 ]]; then\n    echo \"$failed_tests\" | while read test; do\n      echo \"- $test\"\n    done\n  else\n    echo \"No failures!\"\n  fi\n} > /reports/test-summary.md\n\n# Display the summary\ncat /reports/test-summary.md\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Test Summary\n\nTotal: 12 | Passed: 9 | Failed: 3\n\n## Failures\n- test_login_expired_token\n- test_signup_duplicate_email\n- test_session_timeout\n"
+          },
+          {
+            "commands": "\n# Verify the report file exists and display it\necho \"=== Report File Location ===\" && \\\nls -lh /reports/test-summary.md && \\\necho \"\" && \\\necho \"=== Report Contents ===\" && \\\ncat /reports/test-summary.md\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== Report File Location ===\n-rw-r--r--    143 2026-07-11 22:00 /reports/test-summary.md\n\n=== Report Contents ===\n# Test Summary\n\nTotal: 12 | Passed: 9 | Failed: 3\n\n## Failures\n- test_login_expired_token\n- test_signup_duplicate_email\n- test_session_timeout\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "file_ops_project_scaffold",
+  "target": "anthropic/claude-sonnet-4-6",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The project has been created successfully at `/home/eval/myproject`. Here's a summary of what was set up:\n\n```\nmyproject/\n├── README.md          ← Contains \"# My Project\"\n├── docs/              ← Empty docs directory\n├── src/\n│   └── __init__.py    ← Empty init file (marks src as a package)\n└── tests/\n    └── __init__.py    ← Empty init file (marks tests as a package)\n```\n\n**What each part does:**\n- **`README.md`** — Project root documentation file with the heading `# My Project`.\n- **`src/`** — Main source package directory; the `__init__.py` makes it a proper Python package.\n- **`tests/`** — Test suite directory; the `__init__.py` makes it a proper Python package, enabling relative imports in tests.\n- **`docs/`** — Placeholder directory for project documentation (e.g., Sphinx, MkDocs, etc.).",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "\nmkdir -p /home/eval/myproject/src \\\n         /home/eval/myproject/tests \\\n         /home/eval/myproject/docs && \\\ntouch /home/eval/myproject/src/__init__.py \\\n      /home/eval/myproject/tests/__init__.py && \\\necho '# My Project' > /home/eval/myproject/README.md\n",
+      "find /home/eval/myproject -print | sort"
+    ],
+    "usage": {
+      "input_tokens": 2766,
+      "output_tokens": 440,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 12556
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/eval",
+          "/home/eval/myproject",
+          "/home/eval/myproject/docs",
+          "/home/eval/myproject/src",
+          "/home/eval/myproject/tests",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "\nmkdir -p /home/eval/myproject/src \\\n         /home/eval/myproject/tests \\\n         /home/eval/myproject/docs && \\\ntouch /home/eval/myproject/src/__init__.py \\\n      /home/eval/myproject/tests/__init__.py && \\\necho '# My Project' > /home/eval/myproject/README.md\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "find /home/eval/myproject -print | sort",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/home/eval/myproject\n/home/eval/myproject/README.md\n/home/eval/myproject/docs\n/home/eval/myproject/src\n/home/eval/myproject/src/__init__.py\n/home/eval/myproject/tests\n/home/eval/myproject/tests/__init__.py\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

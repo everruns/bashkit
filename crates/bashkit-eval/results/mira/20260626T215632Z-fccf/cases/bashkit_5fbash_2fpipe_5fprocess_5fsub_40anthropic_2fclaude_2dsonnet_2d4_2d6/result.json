@@ -1,0 +1,74 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "pipe_process_sub",
+  "target": "anthropic/claude-sonnet-4-6",
+  "passed": false,
+  "aggregate": 0.8571428571428571,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 0.8571428571428571,
+      "pass": false,
+      "reason": "6/7 checks passed (weighted rate 86%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The script works perfectly. Here's a full breakdown of everything that happened:\n\n---\n\n## How It Works\n\n### The Core Mechanic — Process Substitution\n```bash\ndiff <(sort \"$INSTALLED\") <(sort \"$REQUIRED\")\n```\n| Syntax | What Bash does |\n|---|---|\n| `<(sort file)` | Runs `sort file` in a subshell and presents its output as a **virtual file descriptor** (e.g. `/dev/fd/63`) |\n| `diff` receives | Two readable streams — **no temp files ever touch disk** |\n\n---\n\n### Reading `diff` Output\n`diff` prefixes each differing line to tell you *which side* it came from:\n\n| Prefix | Meaning | Action |\n|---|---|---|\n| `<` | Line is in **left** file (installed) but **not right** (required) | **Remove** it |\n| `>` | Line is in **right** file (required) but **not left** (installed) | **Install** it |\n\n---\n\n### Extraction Steps\n```bash\n# Packages to INSTALL — in required but missing from installed\ngrep '^>' <<< \"$diff_output\" | sed 's/^> //'\n\n# Packages to REMOVE — in installed but not in required\ngrep '^<' <<< \"$diff_output\" | sed 's/^< //'\n```\n- `grep '^>'` / `grep '^<'` — filters lines by their diff prefix  \n- `sed 's/^> //'` — strips the prefix, leaving the bare package name  \n\n---\n\n### Results\n\n| To Install (missing) | To Remove (extra) |\n|---|---|\n| `apache2` | `htop` |\n| `mysql` | `vim` |\n| `php` | `wget` |\n\n**Key advantage:** The entire comparison is done **in-memory via file descriptors** — no `sort installed_sorted.txt`, no `sort required_sorted.txt`, no cleanup needed.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "\n# Setup: create the data directory and sample files\nmkdir -p /data\n\ncat << 'EOF' > /data/installed.txt\nnginx\ncurl\nvim\ngit\nwget\nhtop\ntmux\nnodejs\npython3\ndocker\nEOF\n\ncat << 'EOF' > /data/required.txt\nnginx\ncurl\ngit\ntmux\nnodejs\npython3\ndocker\napache2\nphp\nmysql\nEOF\n",
+      "\n# Show the files before running the script\necho \"===== /data/installed.txt =====\"\ncat /data/installed.txt\n\necho \"\"\necho \"===== /data/required.txt =====\"\ncat /data/required.txt\n",
+      "\n#!/bin/bash\n\n# ─────────────────────────────────────────────\n# compare_packages.sh\n# Uses process substitution to diff two package\n# lists without creating any temporary files.\n# ─────────────────────────────────────────────\n\nINSTALLED=\"/data/installed.txt\"\nREQUIRED=\"/data/required.txt\"\n\necho \"============================================\"\necho \"       Package Comparison Report\"\necho \"============================================\"\necho \"\"\n\n# ── Core diff (process substitution) ──────────\n# diff <(sort A) <(sort B)\n#   Lines starting with '<' → in A (installed) but NOT in B (required) → TO REMOVE\n#   Lines starting with '>' → in B (required)  but NOT in A (installed) → TO INSTALL\n\ndiff_output=$(diff <(sort \"$INSTALLED\") <(sort \"$REQUIRED\"))\n\n# ── Extract packages to INSTALL (missing from installed) ──\necho \"To install:\"\nto_install=$(grep '^>' <<< \"$diff_output\" | sed 's/^> //')\nif [[ -z \"$to_install\" ]]; then\n    echo \"  (none)\"\nelse\n    while IFS= read -r pkg; do\n        echo \"  + $pkg\"\n    done <<< \"$to_install\"\nfi\n\necho \"\"\n\n# ── Extract packages to REMOVE (extra in installed) ────────\necho \"To remove:\"\nto_remove=$(grep '^<' <<< \"$diff_output\" | sed 's/^< //')\nif [[ -z \"$to_remove\" ]]; then\n    echo \"  (none)\"\nelse\n    while IFS= read -r pkg; do\n        echo \"  - $pkg\"\n    done <<< \"$to_remove\"\nfi\n\necho \"\"\necho \"============================================\"\necho \"Summary:\"\necho \"  Packages to install : $(echo \"$to_install\" | grep -c '.')\"\necho \"  Packages to remove  : $(echo \"$to_remove\"  | grep -c '.')\"\necho \"============================================\"\n"
+    ],
+    "usage": {
+      "input_tokens": 4755,
+      "output_tokens": 1259,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 22658
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "\n# Setup: create the data directory and sample files\nmkdir -p /data\n\ncat << 'EOF' > /data/installed.txt\nnginx\ncurl\nvim\ngit\nwget\nhtop\ntmux\nnodejs\npython3\ndocker\nEOF\n\ncat << 'EOF' > /data/required.txt\nnginx\ncurl\ngit\ntmux\nnodejs\npython3\ndocker\napache2\nphp\nmysql\nEOF\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "\n# Show the files before running the script\necho \"===== /data/installed.txt =====\"\ncat /data/installed.txt\n\necho \"\"\necho \"===== /data/required.txt =====\"\ncat /data/required.txt\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "===== /data/installed.txt =====\nnginx\ncurl\nvim\ngit\nwget\nhtop\ntmux\nnodejs\npython3\ndocker\n\n===== /data/required.txt =====\nnginx\ncurl\ngit\ntmux\nnodejs\npython3\ndocker\napache2\nphp\nmysql\n"
+          },
+          {
+            "commands": "\n#!/bin/bash\n\n# ─────────────────────────────────────────────\n# compare_packages.sh\n# Uses process substitution to diff two package\n# lists without creating any temporary files.\n# ─────────────────────────────────────────────\n\nINSTALLED=\"/data/installed.txt\"\nREQUIRED=\"/data/required.txt\"\n\necho \"============================================\"\necho \"       Package Comparison Report\"\necho \"============================================\"\necho \"\"\n\n# ── Core diff (process substitution) ──────────\n# diff <(sort A) <(sort B)\n#   Lines starting with '<' → in A (installed) but NOT in B (required) → TO REMOVE\n#   Lines starting with '>' → in B (required)  but NOT in A (installed) → TO INSTALL\n\ndiff_output=$(diff <(sort \"$INSTALLED\") <(sort \"$REQUIRED\"))\n\n# ── Extract packages to INSTALL (missing from installed) ──\necho \"To install:\"\nto_install=$(grep '^>' <<< \"$diff_output\" | sed 's/^> //')\nif [[ -z \"$to_install\" ]]; then\n    echo \"  (none)\"\nelse\n    while IFS= read -r pkg; do\n        echo \"  + $pkg\"\n    done <<< \"$to_install\"\nfi\n\necho \"\"\n\n# ── Extract packages to REMOVE (extra in installed) ────────\necho \"To remove:\"\nto_remove=$(grep '^<' <<< \"$diff_output\" | sed 's/^< //')\nif [[ -z \"$to_remove\" ]]; then\n    echo \"  (none)\"\nelse\n    while IFS= read -r pkg; do\n        echo \"  - $pkg\"\n    done <<< \"$to_remove\"\nfi\n\necho \"\"\necho \"============================================\"\necho \"Summary:\"\necho \"  Packages to install : $(echo \"$to_install\" | grep -c '.')\"\necho \"  Packages to remove  : $(echo \"$to_remove\"  | grep -c '.')\"\necho \"============================================\"\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "============================================\n       Package Comparison Report\n============================================\n\nTo install:\n  + apache2\n  + mysql\n  + php\n\nTo remove:\n  - htop\n  - vim\n  - wget\n\n============================================\nSummary:\n  Packages to install : 3\n  Packages to remove  : 3\n============================================\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

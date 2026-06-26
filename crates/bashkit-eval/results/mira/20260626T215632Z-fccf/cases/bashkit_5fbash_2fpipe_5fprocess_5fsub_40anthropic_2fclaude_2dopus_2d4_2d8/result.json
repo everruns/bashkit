@@ -1,0 +1,67 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "pipe_process_sub",
+  "target": "anthropic/claude-opus-4-8",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The comparison worked using **process substitution** — no temporary files were created.\n\n## How it works\n\nProcess substitution `<(command)` makes a command's output appear as a file (via a `/dev/fd/N` descriptor), so tools that expect file arguments can read from a pipeline directly:\n\n```bash\ndiff <(sort /data/installed.txt) <(sort /data/required.txt)\n```\n\nI used `comm` (which also accepts the substituted \"files\") to cleanly split the differences:\n- `comm -13` → lines only in the **second** file (required) = **packages to install**\n- `comm -23` → lines only in the **first** file (installed) = **packages to remove**\n\n## Results\n\n```\nTo install:\nnodejs\nredis\n\nTo remove:\nnginx\nvim\n```\n\n**Summary:**\n- **To install** (in `required.txt` but not installed): `nodejs`, `redis`\n- **To remove** (installed but not in `required.txt`): `nginx`, `vim`\n- Already correct (in both): `curl`, `git`, `python3`, `wget`\n\nNo temporary files were ever written to disk — everything was streamed through process substitution.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "echo \"=== installed.txt ===\" ; cat /data/installed.txt 2>/dev/null || echo \"NOT FOUND\"; echo \"=== required.txt ===\"; cat /data/required.txt 2>/dev/null || echo \"NOT FOUND\"",
+      "# Show the diff with process substitution (no temp files)\necho \"=== diff <(sort installed) <(sort required) ===\"\ndiff <(sort /data/installed.txt) <(sort /data/required.txt)\n\necho\necho \"=== Result ===\"\n\n# To install: in required but NOT in installed (lines unique to required)\necho \"To install:\"\ncomm -13 <(sort /data/installed.txt) <(sort /data/required.txt)\n\necho\n# To remove: in installed but NOT in required (lines unique to installed)\necho \"To remove:\"\ncomm -23 <(sort /data/installed.txt) <(sort /data/required.txt)"
+    ],
+    "usage": {
+      "input_tokens": 3058,
+      "output_tokens": 806,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 11637
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "echo \"=== installed.txt ===\" ; cat /data/installed.txt 2>/dev/null || echo \"NOT FOUND\"; echo \"=== required.txt ===\"; cat /data/required.txt 2>/dev/null || echo \"NOT FOUND\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== installed.txt ===\ncurl\ngit\nnginx\nvim\nwget\npython3\n=== required.txt ===\ncurl\ngit\nnodejs\npython3\nwget\nredis\n"
+          },
+          {
+            "commands": "# Show the diff with process substitution (no temp files)\necho \"=== diff <(sort installed) <(sort required) ===\"\ndiff <(sort /data/installed.txt) <(sort /data/required.txt)\n\necho\necho \"=== Result ===\"\n\n# To install: in required but NOT in installed (lines unique to required)\necho \"To install:\"\ncomm -13 <(sort /data/installed.txt) <(sort /data/required.txt)\n\necho\n# To remove: in installed but NOT in required (lines unique to installed)\necho \"To remove:\"\ncomm -23 <(sort /data/installed.txt) <(sort /data/required.txt)",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== diff <(sort installed) <(sort required) ===\n3c3\n< nginx\n---\n> nodejs\n5c5\n< vim\n---\n> redis\n\n=== Result ===\nTo install:\nnodejs\nredis\n\nTo remove:\nnginx\nvim\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,67 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_json_query",
+  "target": "anthropic/claude-sonnet-4-6",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Here are the items with a quantity less than 10:\n\n- **screws** (qty: 5)\n- **washers** (qty: 3)\n- **nails** (qty: 8)\n\n**How it works:**\n- `jq -r` runs `jq` in raw output mode (no quotes around strings).\n- `.[]` iterates over every object in the JSON array.\n- `select(.quantity < 10)` filters to only objects where `quantity` is less than 10.\n- `.name` extracts just the name field, printing one per line.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /data/inventory.json",
+      "jq -r '.[] | select(.quantity < 10) | .name' /data/inventory.json"
+    ],
+    "usage": {
+      "input_tokens": 2558,
+      "output_tokens": 269,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 6518
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat /data/inventory.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[{\"name\":\"screws\",\"quantity\":5},{\"name\":\"bolts\",\"quantity\":50},{\"name\":\"washers\",\"quantity\":3},{\"name\":\"nuts\",\"quantity\":100},{\"name\":\"nails\",\"quantity\":8}]"
+          },
+          {
+            "commands": "jq -r '.[] | select(.quantity < 10) | .name' /data/inventory.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "screws\nwashers\nnails\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

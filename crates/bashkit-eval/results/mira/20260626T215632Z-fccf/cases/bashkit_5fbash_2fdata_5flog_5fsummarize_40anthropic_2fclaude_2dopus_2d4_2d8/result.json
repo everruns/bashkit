@@ -1,0 +1,68 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_log_summarize",
+  "target": "anthropic/claude-opus-4-8",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Here are the log level counts from `/var/log/app.log`:\n\n```\nINFO: 5\nWARN: 2\nERROR: 3\n```\n\nThe file contains 10 log lines total. I counted each level by matching lines that begin with the level name followed by a colon (e.g. `INFO:`), so substring mentions of a level within a message body wouldn't be miscounted.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -l /var/log/app.log 2>&1; echo \"---\"; head -20 /var/log/app.log 2>&1",
+      "for level in INFO WARN ERROR; do\n  n=$(grep -c -E \"^${level}:\" /var/log/app.log)\n  echo \"${level}: ${n}\"\ndone"
+    ],
+    "usage": {
+      "input_tokens": 2592,
+      "output_tokens": 338,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 6033
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp",
+          "/var",
+          "/var/log"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "ls -l /var/log/app.log 2>&1; echo \"---\"; head -20 /var/log/app.log 2>&1",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      228 2026-07-11 21:57 /var/log/app.log\n---\nINFO: app started\nINFO: connected to db\nWARN: slow query detected\nERROR: connection timeout\nINFO: retry succeeded\nWARN: high memory usage\nERROR: write failed\nINFO: request completed\nERROR: connection timeout\nINFO: shutting down\n"
+          },
+          {
+            "commands": "for level in INFO WARN ERROR; do\n  n=$(grep -c -E \"^${level}:\" /var/log/app.log)\n  echo \"${level}: ${n}\"\ndone",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "INFO: 5\nWARN: 2\nERROR: 3\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

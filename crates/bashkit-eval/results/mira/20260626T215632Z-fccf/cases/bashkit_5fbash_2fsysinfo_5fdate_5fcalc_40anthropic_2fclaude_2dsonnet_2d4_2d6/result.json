@@ -1,0 +1,59 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "sysinfo_date_calc",
+  "target": "anthropic/claude-sonnet-4-6",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Here are the results:\n\n| Label | Date |\n|---|---|\n| **Today's date** | `2026-06-26` |\n| **30 days ago** | `2026-05-27` |\n\n- **Today** is **June 26, 2026**.\n- **30 days ago** was **May 27, 2026**.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "\ntoday=$(date +%Y-%m-%d)\nthirty_days_ago=$(date -d \"30 days ago\" +%Y-%m-%d)\necho \"Today's date:    $today\"\necho \"30 days ago:     $thirty_days_ago\"\n"
+    ],
+    "usage": {
+      "input_tokens": 1648,
+      "output_tokens": 201,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7203
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "\ntoday=$(date +%Y-%m-%d)\nthirty_days_ago=$(date -d \"30 days ago\" +%Y-%m-%d)\necho \"Today's date:    $today\"\necho \"30 days ago:     $thirty_days_ago\"\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Today's date:    2026-06-26\n30 days ago:     2026-05-27\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,67 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_api_schema_migration",
+  "target": "anthropic/claude-sonnet-4-6",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "All 3 records transformed and saved. Here's a breakdown of every change made:\n\n| v1 field | v2 field | Transformation |\n|---|---|---|\n| `id` | `id` | Kept as-is |\n| `firstName` + `lastName` | `fullName` | Concatenated with a space (`\"Alice\" + \" \" + \"Smith\"`) |\n| `emailAddress` | `email` | Simple rename |\n| `address.city` | `location` | Extracted from the nested `address` object to the top level |\n| *(absent)* | `migrated` | New boolean field hardcoded to `true` |\n\nAll other v1 fields (`address.street`, `address.state`) were intentionally dropped as they weren't part of the v2 spec. The result is a clean, flat v2 structure written to `/data/users_v2.json`.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /data/users_v1.json",
+      "jq '[\n  .[] | {\n    id,\n    fullName:   (.firstName + \" \" + .lastName),\n    email:      .emailAddress,\n    location:   .address.city,\n    migrated:   true\n  }\n]' /data/users_v1.json | tee /data/users_v2.json"
+    ],
+    "usage": {
+      "input_tokens": 3288,
+      "output_tokens": 451,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 9832
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat /data/users_v1.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[{\"id\":1,\"firstName\":\"Alice\",\"lastName\":\"Smith\",\"emailAddress\":\"alice@example.com\",\"address\":{\"street\":\"123 Main St\",\"city\":\"Seattle\",\"state\":\"WA\"}},{\"id\":2,\"firstName\":\"Bob\",\"lastName\":\"Jones\",\"emailAddress\":\"bob@example.com\",\"address\":{\"street\":\"456 Oak Ave\",\"city\":\"Portland\",\"state\":\"OR\"}},{\"id\":3,\"firstName\":\"Carol\",\"lastName\":\"Davis\",\"emailAddress\":\"carol@example.com\",\"address\":{\"street\":\"789 Pine Rd\",\"city\":\"Denver\",\"state\":\"CO\"}}]"
+          },
+          {
+            "commands": "jq '[\n  .[] | {\n    id,\n    fullName:   (.firstName + \" \" + .lastName),\n    email:      .emailAddress,\n    location:   .address.city,\n    migrated:   true\n  }\n]' /data/users_v1.json | tee /data/users_v2.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[\n  {\n    \"id\": 1,\n    \"fullName\": \"Alice Smith\",\n    \"email\": \"alice@example.com\",\n    \"location\": \"Seattle\",\n    \"migrated\": true\n  },\n  {\n    \"id\": 2,\n    \"fullName\": \"Bob Jones\",\n    \"email\": \"bob@example.com\",\n    \"location\": \"Portland\",\n    \"migrated\": true\n  },\n  {\n    \"id\": 3,\n    \"fullName\": \"Carol Davis\",\n    \"email\": \"carol@example.com\",\n    \"location\": \"Denver\",\n    \"migrated\": true\n  }\n]\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

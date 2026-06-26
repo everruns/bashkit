@@ -1,0 +1,74 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_markdown_toc",
+  "target": "anthropic/claude-haiku-4-5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Perfect! I've successfully:\n\n1. **Read** the README.md file from `/doc/README.md`\n2. **Extracted** all the headings (## level headings):\n   - Installation\n   - Usage\n   - API Reference\n   - Contributing\n3. **Generated** a markdown table of contents with proper formatting:\n   - Each entry is a markdown link: `[Heading Text](#anchor)`\n   - Anchors are created by lowercasing the text and replacing spaces with hyphens\n4. **Inserted** the TOC after the first heading (`# Project Alpha`) with a blank line separator\n5. **Written** the updated content back to the file\n\nThe table of contents is now ready to use as a navigation aid for the document!",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "cat /doc/README.md",
+      "cat > /doc/README.md << 'EOF'\n# Project Alpha\n\n- [Installation](#installation)\n- [Usage](#usage)\n- [API Reference](#api-reference)\n- [Contributing](#contributing)\n\nIntroduction to the project.\n\n## Installation\n\nRun the installer.\n\n## Usage\n\nHow to use it.\n\n## API Reference\n\nEndpoint documentation.\n\n## Contributing\n\nPR guidelines.\nEOF\n",
+      "cat /doc/README.md"
+    ],
+    "usage": {
+      "input_tokens": 4057,
+      "output_tokens": 480,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5244
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/doc",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat /doc/README.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Project Alpha\n\nIntroduction to the project.\n\n## Installation\n\nRun the installer.\n\n## Usage\n\nHow to use it.\n\n## API Reference\n\nEndpoint documentation.\n\n## Contributing\n\nPR guidelines.\n"
+          },
+          {
+            "commands": "cat > /doc/README.md << 'EOF'\n# Project Alpha\n\n- [Installation](#installation)\n- [Usage](#usage)\n- [API Reference](#api-reference)\n- [Contributing](#contributing)\n\nIntroduction to the project.\n\n## Installation\n\nRun the installer.\n\n## Usage\n\nHow to use it.\n\n## API Reference\n\nEndpoint documentation.\n\n## Contributing\n\nPR guidelines.\nEOF\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cat /doc/README.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Project Alpha\n\n- [Installation](#installation)\n- [Usage](#usage)\n- [API Reference](#api-reference)\n- [Contributing](#contributing)\n\nIntroduction to the project.\n\n## Installation\n\nRun the installer.\n\n## Usage\n\nHow to use it.\n\n## API Reference\n\nEndpoint documentation.\n\n## Contributing\n\nPR guidelines.\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

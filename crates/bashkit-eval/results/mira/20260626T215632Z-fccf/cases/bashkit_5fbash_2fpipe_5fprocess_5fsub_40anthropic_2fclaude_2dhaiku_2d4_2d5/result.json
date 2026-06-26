@@ -1,0 +1,81 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "pipe_process_sub",
+  "target": "anthropic/claude-haiku-4-5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Perfect! Here's a summary of what the script does:\n\n## Process Substitution Explanation\n\nThe command `diff <(sort /data/installed.txt) <(sort /data/required.txt)` uses **process substitution** to:\n- `<(sort /data/installed.txt)` - Creates a sorted version of installed packages on-the-fly\n- `<(sort /data/required.txt)` - Creates a sorted version of required packages on-the-fly\n- `diff` compares these sorted lists **without creating temporary files**\n\n## Results\n\n**To install:** (packages in required but not in installed)\n- `nodejs`\n- `redis`\n\n**To remove:** (packages in installed but not in required)\n- `nginx`\n- `vim`\n\nThe diff output format shows:\n- Lines with `<` = only in installed (left side) → **to remove**\n- Lines with `>` = only in required (right side) → **to install**\n\nThis approach is efficient and clean because it avoids creating temporary files while comparing the two lists!",
+    "iterations": 5,
+    "tool_calls_count": 4,
+    "tool_calls": [
+      "cat /data/installed.txt",
+      "cat /data/required.txt",
+      "diff <(sort /data/installed.txt) <(sort /data/required.txt)",
+      "\n# Use diff with process substitution to find differences\ndiff_output=$(diff <(sort /data/installed.txt) <(sort /data/required.txt))\n\n# Initialize arrays for packages to remove and install\nto_remove=()\nto_install=()\n\n# Parse the diff output\n# Lines starting with '<' are in installed but not in required (remove)\n# Lines starting with '>' are in required but not in installed (install)\nwhile IFS= read -r line; do\n    if [[ $line == \\<\\ * ]]; then\n        # Extract package name (remove \"< \" prefix)\n        package=\"${line#< }\"\n        to_remove+=(\"$package\")\n    elif [[ $line == \\>\\ * ]]; then\n        # Extract package name (remove \"> \" prefix)\n        package=\"${line#> }\"\n        to_install+=(\"$package\")\n    fi\ndone <<< \"$diff_output\"\n\n# Print results\necho \"To install:\"\nif [ ${#to_install[@]} -eq 0 ]; then\n    echo \"  (none)\"\nelse\n    for pkg in \"${to_install[@]}\"; do\n        echo \"  $pkg\"\n    done\nfi\n\necho \"\"\necho \"To remove:\"\nif [ ${#to_remove[@]} -eq 0 ]; then\n    echo \"  (none)\"\nelse\n    for pkg in \"${to_remove[@]}\"; do\n        echo \"  $pkg\"\n    done\nfi\n"
+    ],
+    "usage": {
+      "input_tokens": 5535,
+      "output_tokens": 896,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 8096
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 4.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 3.0,
+      "turns": 5.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat /data/installed.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "curl\ngit\nnginx\nvim\nwget\npython3\n"
+          },
+          {
+            "commands": "cat /data/required.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "curl\ngit\nnodejs\npython3\nwget\nredis\n"
+          },
+          {
+            "commands": "diff <(sort /data/installed.txt) <(sort /data/required.txt)",
+            "exit_code": 1,
+            "stderr": "",
+            "stdout": "3c3\n< nginx\n---\n> nodejs\n5c5\n< vim\n---\n> redis\n"
+          },
+          {
+            "commands": "\n# Use diff with process substitution to find differences\ndiff_output=$(diff <(sort /data/installed.txt) <(sort /data/required.txt))\n\n# Initialize arrays for packages to remove and install\nto_remove=()\nto_install=()\n\n# Parse the diff output\n# Lines starting with '<' are in installed but not in required (remove)\n# Lines starting with '>' are in required but not in installed (install)\nwhile IFS= read -r line; do\n    if [[ $line == \\<\\ * ]]; then\n        # Extract package name (remove \"< \" prefix)\n        package=\"${line#< }\"\n        to_remove+=(\"$package\")\n    elif [[ $line == \\>\\ * ]]; then\n        # Extract package name (remove \"> \" prefix)\n        package=\"${line#> }\"\n        to_install+=(\"$package\")\n    fi\ndone <<< \"$diff_output\"\n\n# Print results\necho \"To install:\"\nif [ ${#to_install[@]} -eq 0 ]; then\n    echo \"  (none)\"\nelse\n    for pkg in \"${to_install[@]}\"; do\n        echo \"  $pkg\"\n    done\nfi\n\necho \"\"\necho \"To remove:\"\nif [ ${#to_remove[@]} -eq 0 ]; then\n    echo \"  (none)\"\nelse\n    for pkg in \"${to_remove[@]}\"; do\n        echo \"  $pkg\"\n    done\nfi\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "To install:\n  nodejs\n  redis\n\nTo remove:\n  nginx\n  vim\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

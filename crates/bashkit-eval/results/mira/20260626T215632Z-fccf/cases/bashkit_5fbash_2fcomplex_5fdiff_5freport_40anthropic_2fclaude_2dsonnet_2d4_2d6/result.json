@@ -1,0 +1,67 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_diff_report",
+  "target": "anthropic/claude-sonnet-4-6",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Here's the complete summary of differences between `v1.conf` and `v2.conf`:\n\n---\n\n### 🟢 Added (1 key)\n| Key | Value |\n|---|---|\n| `timeout` | `30` |\n\n### 🔴 Removed (1 key)\n| Key | Old Value |\n|---|---|\n| `max_connections` | `100` |\n\n### 🟡 Changed (3 keys)\n| Key | v1 Value | v2 Value |\n|---|---|---|\n| `host` | `localhost` | `0.0.0.0` |\n| `log_level` | `info` | `debug` |\n| `port` | `8080` | `9090` |\n\n---\n\n**Total changes: 5** — The config shifted from a local dev-style setup to something more production-like: the server now listens on all interfaces (`0.0.0.0`), uses a different port (`9090`), enables `debug` logging, introduces a `timeout`, and drops the `max_connections` cap.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /data/v1.conf && echo \"---SEPARATOR---\" && cat /data/v2.conf",
+      "bash << 'EOF'\nV1=/data/v1.conf\nV2=/data/v2.conf\n\ndeclare -A v1 v2\n\n# Parse v1\nwhile IFS='=' read -r key value; do\n  [[ -z \"$key\" || \"$key\" == \\#* ]] && continue\n  v1[\"$key\"]=\"$value\"\ndone < \"$V1\"\n\n# Parse v2\nwhile IFS='=' read -r key value; do\n  [[ -z \"$key\" || \"$key\" == \\#* ]] && continue\n  v2[\"$key\"]=\"$value\"\ndone < \"$V2\"\n\nadded=()\nremoved=()\nchanged=()\n\n# Find removed and changed (keys in v1)\nfor key in \"${!v1[@]}\"; do\n  if [[ -z \"${v2[$key]+set}\" ]]; then\n    removed+=(\"$key\")\n  elif [[ \"${v1[$key]}\" != \"${v2[$key]}\" ]]; then\n    changed+=(\"$key\")\n  fi\ndone\n\n# Find added (keys in v2 not in v1)\nfor key in \"${!v2[@]}\"; do\n  if [[ -z \"${v1[$key]+set}\" ]]; then\n    added+=(\"$key\")\n  fi\ndone\n\n# Sort arrays for consistent output\nIFS=$'\\n' added=($(sort  <<< \"${added[*]}\")); unset IFS\nIFS=$'\\n' removed=($(sort <<< \"${removed[*]}\")); unset IFS\nIFS=$'\\n' changed=($(sort <<< \"${changed[*]}\")); unset IFS\n\necho \"==============================\"\necho \"  Config Diff: v1 vs v2\"\necho \"==============================\"\n\necho \"\"\necho \"🟢 ADDED (${#added[@]} key(s))\"\necho \"------------------------------\"\nif [[ ${#added[@]} -eq 0 ]]; then\n  echo \"  (none)\"\nelse\n  for key in \"${added[@]}\"; do\n    printf \"  + %-20s = %s\\n\" \"$key\" \"${v2[$key]}\"\n  done\nfi\n\necho \"\"\necho \"🔴 REMOVED (${#removed[@]} key(s))\"\necho \"------------------------------\"\nif [[ ${#removed[@]} -eq 0 ]]; then\n  echo \"  (none)\"\nelse\n  for key in \"${removed[@]}\"; do\n    printf \"  - %-20s = %s\\n\" \"$key\" \"${v1[$key]}\"\n  done\nfi\n\necho \"\"\necho \"🟡 CHANGED (${#changed[@]} key(s))\"\necho \"------------------------------\"\nif [[ ${#changed[@]} -eq 0 ]]; then\n  echo \"  (none)\"\nelse\n  for key in \"${changed[@]}\"; do\n    printf \"  ~ %-20s : %s  →  %s\\n\" \"$key\" \"${v1[$key]}\" \"${v2[$key]}\"\n  done\nfi\n\necho \"\"\necho \"==============================\"\ntotal=$(( ${#added[@]} + ${#removed[@]} + ${#changed[@]} ))\necho \"  Total changes: $total\"\necho \"==============================\"\nEOF"
+    ],
+    "usage": {
+      "input_tokens": 3601,
+      "output_tokens": 1192,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 17186
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat /data/v1.conf && echo \"---SEPARATOR---\" && cat /data/v2.conf",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "port=8080\nhost=localhost\nlog_level=info\nworkers=4\nmax_connections=100\n---SEPARATOR---\nport=9090\nhost=0.0.0.0\nlog_level=debug\nworkers=4\ntimeout=30\n"
+          },
+          {
+            "commands": "bash << 'EOF'\nV1=/data/v1.conf\nV2=/data/v2.conf\n\ndeclare -A v1 v2\n\n# Parse v1\nwhile IFS='=' read -r key value; do\n  [[ -z \"$key\" || \"$key\" == \\#* ]] && continue\n  v1[\"$key\"]=\"$value\"\ndone < \"$V1\"\n\n# Parse v2\nwhile IFS='=' read -r key value; do\n  [[ -z \"$key\" || \"$key\" == \\#* ]] && continue\n  v2[\"$key\"]=\"$value\"\ndone < \"$V2\"\n\nadded=()\nremoved=()\nchanged=()\n\n# Find removed and changed (keys in v1)\nfor key in \"${!v1[@]}\"; do\n  if [[ -z \"${v2[$key]+set}\" ]]; then\n    removed+=(\"$key\")\n  elif [[ \"${v1[$key]}\" != \"${v2[$key]}\" ]]; then\n    changed+=(\"$key\")\n  fi\ndone\n\n# Find added (keys in v2 not in v1)\nfor key in \"${!v2[@]}\"; do\n  if [[ -z \"${v1[$key]+set}\" ]]; then\n    added+=(\"$key\")\n  fi\ndone\n\n# Sort arrays for consistent output\nIFS=$'\\n' added=($(sort  <<< \"${added[*]}\")); unset IFS\nIFS=$'\\n' removed=($(sort <<< \"${removed[*]}\")); unset IFS\nIFS=$'\\n' changed=($(sort <<< \"${changed[*]}\")); unset IFS\n\necho \"==============================\"\necho \"  Config Diff: v1 vs v2\"\necho \"==============================\"\n\necho \"\"\necho \"🟢 ADDED (${#added[@]} key(s))\"\necho \"------------------------------\"\nif [[ ${#added[@]} -eq 0 ]]; then\n  echo \"  (none)\"\nelse\n  for key in \"${added[@]}\"; do\n    printf \"  + %-20s = %s\\n\" \"$key\" \"${v2[$key]}\"\n  done\nfi\n\necho \"\"\necho \"🔴 REMOVED (${#removed[@]} key(s))\"\necho \"------------------------------\"\nif [[ ${#removed[@]} -eq 0 ]]; then\n  echo \"  (none)\"\nelse\n  for key in \"${removed[@]}\"; do\n    printf \"  - %-20s = %s\\n\" \"$key\" \"${v1[$key]}\"\n  done\nfi\n\necho \"\"\necho \"🟡 CHANGED (${#changed[@]} key(s))\"\necho \"------------------------------\"\nif [[ ${#changed[@]} -eq 0 ]]; then\n  echo \"  (none)\"\nelse\n  for key in \"${changed[@]}\"; do\n    printf \"  ~ %-20s : %s  →  %s\\n\" \"$key\" \"${v1[$key]}\" \"${v2[$key]}\"\n  done\nfi\n\necho \"\"\necho \"==============================\"\ntotal=$(( ${#added[@]} + ${#removed[@]} + ${#changed[@]} ))\necho \"  Total changes: $total\"\necho \"==============================\"\nEOF",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "==============================\n  Config Diff: v1 vs v2\n==============================\n\n🟢 ADDED (1 key(s))\n------------------------------\n  + timeout              = 30\n\n🔴 REMOVED (1 key(s))\n------------------------------\n  - max_connections      = 100\n\n🟡 CHANGED (3 key(s))\n------------------------------\n  ~ host                 : localhost  →  0.0.0.0\n  ~ log_level            : info  →  debug\n  ~ port                 : 8080  →  9090\n\n==============================\n  Total changes: 5\n==============================\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

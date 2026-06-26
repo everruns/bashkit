@@ -1,0 +1,75 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_trap_cleanup",
+  "target": "anthropic/claude-sonnet-4-6",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Everything works perfectly. Here's a full breakdown of what happened:\n\n---\n\n### 📄 Script: `/scripts/deploy.sh`\n\n| Step | Action | Detail |\n|------|--------|--------|\n| **1** | `mktemp -d` | Created unique temp dir `/tmp/tmp.a7d3042a65`, stored in `$TMPDIR` |\n| **2** | `trap ... EXIT` | Registered a hook to `rm -rf \"$TMPDIR\"` and print the cleanup message on any exit |\n| **3** | `cp /app/config.json \"$TMPDIR/\"` | Copied the config file into the temp workspace |\n| **4** | `echo \"deployed at $TMPDIR\" > /app/deploy.log` | Wrote the deploy log with the actual temp path |\n| **5** | `exit 0` | Triggered the `EXIT` trap before the process ended |\n\n---\n\n### ✅ Verification Results\n\n- **Exit code `0`** — script succeeded cleanly.\n- **Cleanup message printed** — `\"Cleanup: removed temp dir\"` was the last line of output, confirming the `trap` fired on `EXIT`.\n- **Temp dir gone** — `/tmp/tmp.a7d3042a65` no longer exists on the filesystem.\n- **Deploy log created** — `/app/deploy.log` exists and contains `deployed at /tmp/tmp.a7d3042a65`, embedding the real path as required.\n\n---\n\n### 💡 Key Concept — `trap ... EXIT`\n\nThe `trap` on `EXIT` is the critical pattern here. It **guarantees** cleanup runs no matter *how* the script exits — whether via `exit 0`, an error, or even `Ctrl+C` — making it far more reliable than manually calling cleanup at the end of the script.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "mkdir -p /scripts /app && echo '{\"app\":\"myapp\",\"version\":\"1.0\"}' > /app/config.json",
+      "cat << 'EOF' > /scripts/deploy.sh\n#!/usr/bin/env bash\n\n# 1) Create a temp directory and store its path in TMPDIR\nTMPDIR=$(mktemp -d)\necho \"Created temp dir: $TMPDIR\"\n\n# 2) Trap EXIT to clean up the temp directory\ntrap 'rm -rf \"$TMPDIR\"; echo \"Cleanup: removed temp dir\"' EXIT\n\n# 3) Copy /app/config.json into the temp dir\ncp /app/config.json \"$TMPDIR/\"\necho \"Copied config.json to temp dir\"\n\n# 4) Simulate work: write deploy log with the actual temp dir path\necho \"deployed at $TMPDIR\" > /app/deploy.log\necho \"Created deploy log: /app/deploy.log\"\n\n# 5) Exit with code 0\nexit 0\nEOF\nchmod +x /scripts/deploy.sh",
+      "# Run the script and capture its output and exit code\noutput=$(/scripts/deploy.sh 2>&1)\nexit_code=$?\n\necho \"=== Script Output ===\"\necho \"$output\"\necho \"\"\necho \"=== Exit Code ===\"\necho \"$exit_code\"\n\n# Extract the TMPDIR path from the script output to verify it was removed\nTMPDIR_PATH=$(echo \"$output\" | grep \"Created temp dir:\" | awk '{print $4}')\n\necho \"\"\necho \"=== Verification: Temp Directory Cleaned Up ===\"\nif [ -d \"$TMPDIR_PATH\" ]; then\n  echo \"FAIL: Temp dir '$TMPDIR_PATH' still exists!\"\nelse\n  echo \"PASS: Temp dir '$TMPDIR_PATH' no longer exists — cleaned up successfully.\"\nfi\n\necho \"\"\necho \"=== Verification: /app/deploy.log Exists ===\"\nif [ -f \"/app/deploy.log\" ]; then\n  echo \"PASS: /app/deploy.log exists.\"\n  echo \"Contents: $(cat /app/deploy.log)\"\nelse\n  echo \"FAIL: /app/deploy.log does not exist!\"\nfi"
+    ],
+    "usage": {
+      "input_tokens": 4782,
+      "output_tokens": 1124,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 19846
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/app",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/scripts",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /scripts /app && echo '{\"app\":\"myapp\",\"version\":\"1.0\"}' > /app/config.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cat << 'EOF' > /scripts/deploy.sh\n#!/usr/bin/env bash\n\n# 1) Create a temp directory and store its path in TMPDIR\nTMPDIR=$(mktemp -d)\necho \"Created temp dir: $TMPDIR\"\n\n# 2) Trap EXIT to clean up the temp directory\ntrap 'rm -rf \"$TMPDIR\"; echo \"Cleanup: removed temp dir\"' EXIT\n\n# 3) Copy /app/config.json into the temp dir\ncp /app/config.json \"$TMPDIR/\"\necho \"Copied config.json to temp dir\"\n\n# 4) Simulate work: write deploy log with the actual temp dir path\necho \"deployed at $TMPDIR\" > /app/deploy.log\necho \"Created deploy log: /app/deploy.log\"\n\n# 5) Exit with code 0\nexit 0\nEOF\nchmod +x /scripts/deploy.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "# Run the script and capture its output and exit code\noutput=$(/scripts/deploy.sh 2>&1)\nexit_code=$?\n\necho \"=== Script Output ===\"\necho \"$output\"\necho \"\"\necho \"=== Exit Code ===\"\necho \"$exit_code\"\n\n# Extract the TMPDIR path from the script output to verify it was removed\nTMPDIR_PATH=$(echo \"$output\" | grep \"Created temp dir:\" | awk '{print $4}')\n\necho \"\"\necho \"=== Verification: Temp Directory Cleaned Up ===\"\nif [ -d \"$TMPDIR_PATH\" ]; then\n  echo \"FAIL: Temp dir '$TMPDIR_PATH' still exists!\"\nelse\n  echo \"PASS: Temp dir '$TMPDIR_PATH' no longer exists — cleaned up successfully.\"\nfi\n\necho \"\"\necho \"=== Verification: /app/deploy.log Exists ===\"\nif [ -f \"/app/deploy.log\" ]; then\n  echo \"PASS: /app/deploy.log exists.\"\n  echo \"Contents: $(cat /app/deploy.log)\"\nelse\n  echo \"FAIL: /app/deploy.log does not exist!\"\nfi",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== Script Output ===\nCreated temp dir: /tmp/tmp.a7d3042a65\nCopied config.json to temp dir\nCreated deploy log: /app/deploy.log\nCleanup: removed temp dir\n\n=== Exit Code ===\n0\n\n=== Verification: Temp Directory Cleaned Up ===\nPASS: Temp dir '/tmp/tmp.a7d3042a65' no longer exists — cleaned up successfully.\n\n=== Verification: /app/deploy.log Exists ===\nPASS: /app/deploy.log exists.\nContents: deployed at /tmp/tmp.a7d3042a65\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

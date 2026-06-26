@@ -1,0 +1,67 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "pipe_word_frequency",
+  "target": "anthropic/claude-haiku-4-5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The 3 most frequently used words in the poem are:\n\n```\nthe 8\non 3\ncat 2\n```\n\nThe word \"the\" appears 8 times, \"on\" appears 3 times, and \"cat\" appears 2 times.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /data/poem.txt",
+      "cat /data/poem.txt | tr ' ' '\\n' | grep -v '^$' | tr '[:upper:]' '[:lower:]' | sort | uniq -c | sort -rn | head -3 | awk '{print $2, $1}'"
+    ],
+    "usage": {
+      "input_tokens": 2581,
+      "output_tokens": 251,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3082
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat /data/poem.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "the cat sat on the mat\nthe cat in the hat\nthe dog on the log\nthe frog on the bog\n"
+          },
+          {
+            "commands": "cat /data/poem.txt | tr ' ' '\\n' | grep -v '^$' | tr '[:upper:]' '[:lower:]' | sort | uniq -c | sort -rn | head -3 | awk '{print $2, $1}'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "the 8\non 3\ncat 2\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

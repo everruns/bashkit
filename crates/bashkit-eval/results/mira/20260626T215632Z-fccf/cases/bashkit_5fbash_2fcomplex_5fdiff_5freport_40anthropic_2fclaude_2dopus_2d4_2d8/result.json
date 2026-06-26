@@ -1,0 +1,67 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_diff_report",
+  "target": "anthropic/claude-opus-4-8",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The comparison is complete. Here's the human-readable summary of the differences between `/data/v1.conf` and `/data/v2.conf`:\n\n## Summary\n\n**Added keys (1)** — present in v2 but not v1:\n- `timeout = 30`\n\n**Removed keys (1)** — present in v1 but not v2:\n- `max_connections = 100`\n\n**Changed values (3)** — same key, different value:\n- `host` : `localhost` → `0.0.0.0`\n- `log_level` : `info` → `debug`\n- `port` : `8080` → `9090`\n\n**Unchanged:** `workers` (stayed at `4`).\n\n### How it works\nThe script (`/tmp/diffconf.sh`) parses each file into associative arrays of `key=value` pairs (skipping blank lines and `#` comments, and trimming whitespace), then:\n- A key in v2 but missing from v1 → **added**\n- A key in v1 but missing from v2 → **removed**\n- A key in both with differing values → **changed**\n\nIt's reusable on any two `key=value`-style config files — just pass them as arguments:\n```bash\nbash /tmp/diffconf.sh fileA.conf fileB.conf\n```",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "echo \"=== v1.conf ===\"; cat /data/v1.conf; echo; echo \"=== v2.conf ===\"; cat /data/v2.conf",
+      "cat > /tmp/diffconf.sh << 'EOF'\n#!/usr/bin/env bash\nset -euo pipefail\n\nf1=\"$1\"\nf2=\"$2\"\n\ndeclare -A v1 v2\n\n# Read key=value pairs (skip blanks and comments)\nread_conf() {\n    local file=\"$1\" name=\"$2\" line key val\n    while IFS= read -r line || [[ -n \"$line\" ]]; do\n        # strip leading/trailing whitespace\n        line=\"${line#\"${line%%[![:space:]]*}\"}\"\n        line=\"${line%\"${line##*[![:space:]]}\"}\"\n        [[ -z \"$line\" ]] && continue\n        [[ \"$line\" == \\#* ]] && continue\n        [[ \"$line\" != *=* ]] && continue\n        key=\"${line%%=*}\"\n        val=\"${line#*=}\"\n        # trim around key\n        key=\"${key%\"${key##*[![:space:]]}\"}\"\n        key=\"${key#\"${key%%[![:space:]]*}\"}\"\n        eval \"$name[\\\"\\$key\\\"]=\\\"\\$val\\\"\"\n    done < \"$file\"\n}\n\nread_conf \"$f1\" v1\nread_conf \"$f2\" v2\n\nadded=()\nremoved=()\nchanged=()\n\nfor k in \"${!v2[@]}\"; do\n    if [[ -z \"${v1[$k]+x}\" ]]; then\n        added+=(\"$k\")\n    elif [[ \"${v1[$k]}\" != \"${v2[$k]}\" ]]; then\n        changed+=(\"$k\")\n    fi\ndone\n\nfor k in \"${!v1[@]}\"; do\n    if [[ -z \"${v2[$k]+x}\" ]]; then\n        removed+=(\"$k\")\n    fi\ndone\n\n# sort helper\nsort_arr() { printf '%s\\n' \"$@\" | sort; }\n\necho \"Config comparison: $f1 -> $f2\"\necho \"==================================================\"\n\necho\necho \"Added keys (${#added[@]}):\"\nif (( ${#added[@]} )); then\n    while read -r k; do printf '  + %s = %s\\n' \"$k\" \"${v2[$k]}\"; done < <(sort_arr \"${added[@]}\")\nelse\n    echo \"  (none)\"\nfi\n\necho\necho \"Removed keys (${#removed[@]}):\"\nif (( ${#removed[@]} )); then\n    while read -r k; do printf '  - %s = %s\\n' \"$k\" \"${v1[$k]}\"; done < <(sort_arr \"${removed[@]}\")\nelse\n    echo \"  (none)\"\nfi\n\necho\necho \"Changed values (${#changed[@]}):\"\nif (( ${#changed[@]} )); then\n    while read -r k; do printf '  ~ %s : %s -> %s\\n' \"$k\" \"${v1[$k]}\" \"${v2[$k]}\"; done < <(sort_arr \"${changed[@]}\")\nelse\n    echo \"  (none)\"\nfi\nEOF\nchmod +x /tmp/diffconf.sh\nbash /tmp/diffconf.sh /data/v1.conf /data/v2.conf"
+    ],
+    "usage": {
+      "input_tokens": 3615,
+      "output_tokens": 1589,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 17233
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "echo \"=== v1.conf ===\"; cat /data/v1.conf; echo; echo \"=== v2.conf ===\"; cat /data/v2.conf",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== v1.conf ===\nport=8080\nhost=localhost\nlog_level=info\nworkers=4\nmax_connections=100\n\n=== v2.conf ===\nport=9090\nhost=0.0.0.0\nlog_level=debug\nworkers=4\ntimeout=30\n"
+          },
+          {
+            "commands": "cat > /tmp/diffconf.sh << 'EOF'\n#!/usr/bin/env bash\nset -euo pipefail\n\nf1=\"$1\"\nf2=\"$2\"\n\ndeclare -A v1 v2\n\n# Read key=value pairs (skip blanks and comments)\nread_conf() {\n    local file=\"$1\" name=\"$2\" line key val\n    while IFS= read -r line || [[ -n \"$line\" ]]; do\n        # strip leading/trailing whitespace\n        line=\"${line#\"${line%%[![:space:]]*}\"}\"\n        line=\"${line%\"${line##*[![:space:]]}\"}\"\n        [[ -z \"$line\" ]] && continue\n        [[ \"$line\" == \\#* ]] && continue\n        [[ \"$line\" != *=* ]] && continue\n        key=\"${line%%=*}\"\n        val=\"${line#*=}\"\n        # trim around key\n        key=\"${key%\"${key##*[![:space:]]}\"}\"\n        key=\"${key#\"${key%%[![:space:]]*}\"}\"\n        eval \"$name[\\\"\\$key\\\"]=\\\"\\$val\\\"\"\n    done < \"$file\"\n}\n\nread_conf \"$f1\" v1\nread_conf \"$f2\" v2\n\nadded=()\nremoved=()\nchanged=()\n\nfor k in \"${!v2[@]}\"; do\n    if [[ -z \"${v1[$k]+x}\" ]]; then\n        added+=(\"$k\")\n    elif [[ \"${v1[$k]}\" != \"${v2[$k]}\" ]]; then\n        changed+=(\"$k\")\n    fi\ndone\n\nfor k in \"${!v1[@]}\"; do\n    if [[ -z \"${v2[$k]+x}\" ]]; then\n        removed+=(\"$k\")\n    fi\ndone\n\n# sort helper\nsort_arr() { printf '%s\\n' \"$@\" | sort; }\n\necho \"Config comparison: $f1 -> $f2\"\necho \"==================================================\"\n\necho\necho \"Added keys (${#added[@]}):\"\nif (( ${#added[@]} )); then\n    while read -r k; do printf '  + %s = %s\\n' \"$k\" \"${v2[$k]}\"; done < <(sort_arr \"${added[@]}\")\nelse\n    echo \"  (none)\"\nfi\n\necho\necho \"Removed keys (${#removed[@]}):\"\nif (( ${#removed[@]} )); then\n    while read -r k; do printf '  - %s = %s\\n' \"$k\" \"${v1[$k]}\"; done < <(sort_arr \"${removed[@]}\")\nelse\n    echo \"  (none)\"\nfi\n\necho\necho \"Changed values (${#changed[@]}):\"\nif (( ${#changed[@]} )); then\n    while read -r k; do printf '  ~ %s : %s -> %s\\n' \"$k\" \"${v1[$k]}\" \"${v2[$k]}\"; done < <(sort_arr \"${changed[@]}\")\nelse\n    echo \"  (none)\"\nfi\nEOF\nchmod +x /tmp/diffconf.sh\nbash /tmp/diffconf.sh /data/v1.conf /data/v2.conf",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Config comparison: /data/v1.conf -> /data/v2.conf\n==================================================\n\nAdded keys (1):\n  + timeout = 30\n\nRemoved keys (1):\n  - max_connections = 100\n\nChanged values (3):\n  ~ host : localhost -> 0.0.0.0\n  ~ log_level : info -> debug\n  ~ port : 8080 -> 9090\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

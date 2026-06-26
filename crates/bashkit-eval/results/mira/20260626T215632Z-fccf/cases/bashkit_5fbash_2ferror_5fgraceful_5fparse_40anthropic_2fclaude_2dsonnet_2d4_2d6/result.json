@@ -1,0 +1,67 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "error_graceful_parse",
+  "target": "anthropic/claude-sonnet-4-6",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Here's a summary of everything that was done:\n\n1. **Read** `/data/broken.json` — the file contained invalid JSON:\n   ```json\n   {\"name\": \"test-app\", \"version\": \"1.0\", \"debug\": true, }\n   ```\n   The problem was the trailing comma (`, `) before the closing `}`.\n\n2. **Fixed** the JSON using `sed 's/,\\s*}/}/'`, which strips any trailing comma (along with optional whitespace) immediately before the closing brace. The corrected file now contains:\n   ```json\n   {\"name\": \"test-app\", \"version\": \"1.0\", \"debug\": true}\n   ```\n\n3. **Saved** the fixed content back to `/data/broken.json`.\n\n4. **Parsed** the file with `jq` and printed the `name` field:\n   ```\n   test-app\n   ```",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /data/broken.json",
+      "# Step 1: Remove the trailing comma before the closing brace and overwrite the file\nsed 's/,\\s*}/}/' /data/broken.json > /tmp/fixed.json && mv /tmp/fixed.json /data/broken.json\n\n# Step 2: Verify the fixed contents\necho \"Fixed JSON:\"\ncat /data/broken.json\n\n# Step 3: Parse and print the 'name' field using jq\necho \"\"\necho \"Parsed 'name' field:\"\njq -r '.name' /data/broken.json"
+    ],
+    "usage": {
+      "input_tokens": 2803,
+      "output_tokens": 513,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 10462
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat /data/broken.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\"name\": \"test-app\", \"version\": \"1.0\", \"debug\": true, }"
+          },
+          {
+            "commands": "# Step 1: Remove the trailing comma before the closing brace and overwrite the file\nsed 's/,\\s*}/}/' /data/broken.json > /tmp/fixed.json && mv /tmp/fixed.json /data/broken.json\n\n# Step 2: Verify the fixed contents\necho \"Fixed JSON:\"\ncat /data/broken.json\n\n# Step 3: Parse and print the 'name' field using jq\necho \"\"\necho \"Parsed 'name' field:\"\njq -r '.name' /data/broken.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Fixed JSON:\n{\"name\": \"test-app\", \"version\": \"1.0\", \"debug\": true}\n\nParsed 'name' field:\ntest-app\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

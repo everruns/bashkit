@@ -1,0 +1,59 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_array_stats",
+  "target": "anthropic/claude-sonnet-4-6",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Here is the script and a breakdown of how it works:\n\n```bash\n#!/bin/bash\n\nnumbers=(42 17 93 8 55 71 3 88 29 64)\n\nmin=${numbers[0]}\nmax=${numbers[0]}\nsum=0\n\nfor n in \"${numbers[@]}\"; do\n    (( n < min )) && min=$n\n    (( n > max )) && max=$n\n    (( sum += n ))\ndone\n\necho \"min: $min\"\necho \"max: $max\"\necho \"sum: $sum\"\n```\n\n**Output:**\n```\nmin: 3\nmax: 93\nsum: 470\n```\n\n---\n\n### How it works\n\n| Step | Detail |\n|---|---|\n| **Array** | All 10 numbers are stored in a Bash array `numbers`. |\n| **Initialization** | `min` and `max` are seeded with the first element (`42`); `sum` starts at `0`. |\n| **Loop** | Every element is visited once — O(n) — updating `min`, `max`, and `sum` in a single pass. |\n| **Arithmetic** | `(( ... ))` performs integer arithmetic/comparison natively in Bash, no external tools needed. |\n| **Output** | Three `echo` statements produce exactly the required lines. |\n\n### Verification\n- **min `3`** — the smallest number in the set ✔  \n- **max `93`** — the largest number in the set ✔  \n- **sum `470`** — 42+17+93+8+55+71+3+88+29+64 = 470 ✔",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "cat << 'EOF' > stats.sh\n#!/bin/bash\n\nnumbers=(42 17 93 8 55 71 3 88 29 64)\n\nmin=${numbers[0]}\nmax=${numbers[0]}\nsum=0\n\nfor n in \"${numbers[@]}\"; do\n    (( n < min )) && min=$n\n    (( n > max )) && max=$n\n    (( sum += n ))\ndone\n\necho \"min: $min\"\necho \"max: $max\"\necho \"sum: $sum\"\nEOF\nchmod +x stats.sh\nbash stats.sh"
+    ],
+    "usage": {
+      "input_tokens": 1766,
+      "output_tokens": 584,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 9705
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat << 'EOF' > stats.sh\n#!/bin/bash\n\nnumbers=(42 17 93 8 55 71 3 88 29 64)\n\nmin=${numbers[0]}\nmax=${numbers[0]}\nsum=0\n\nfor n in \"${numbers[@]}\"; do\n    (( n < min )) && min=$n\n    (( n > max )) && max=$n\n    (( sum += n ))\ndone\n\necho \"min: $min\"\necho \"max: $max\"\necho \"sum: $sum\"\nEOF\nchmod +x stats.sh\nbash stats.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "min: 3\nmax: 93\nsum: 470\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

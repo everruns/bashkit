@@ -1,0 +1,125 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "build_script_generator",
+  "target": "anthropic/claude-sonnet-4-6",
+  "passed": false,
+  "aggregate": 0.4,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 0.4,
+      "pass": false,
+      "reason": "2/5 checks passed (weighted rate 40%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 10,
+    "tool_calls_count": 10,
+    "tool_calls": [
+      "cat /project/deps.txt",
+      "cat << 'EOF' > /project/build.sh\n#!/usr/bin/env bash\nset -euo pipefail\n\nDEPS_FILE=\"/project/deps.txt\"\nOUT_DIR=\"/project/out\"\nmkdir -p \"$OUT_DIR\"\n\n# ── 1. Parse deps.txt into associative arrays ──────────────────────────────\ndeclare -A deps   # deps[target]=\"dep1 dep2 ...\"\ndeclare -A in_degree\ndeclare -a all_targets\n\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"$line\" || \"$line\" =~ ^# ]] && continue\n  target=\"${line%%:*}\"\n  target=\"${target// /}\"\n  rest=\"${line#*:}\"\n  deps[\"$target\"]=\"${rest# }\"   # may be empty string\n  all_targets+=(\"$target\")\ndone < \"$DEPS_FILE\"\n\n# Initialise in-degree counters\nfor t in \"${all_targets[@]}\"; do\n  in_degree[\"$t\"]=0\ndone\n\n# Count how many declared targets depend on each node\nfor t in \"${all_targets[@]}\"; do\n  for dep in ${deps[$t]}; do\n    (( in_degree[\"$t\"]++ )) || true   # actually count t's own deps\n    :\n  done\ndone\n\n# Re-compute correctly: in_degree[t] = number of deps t still needs\ndeclare -A remaining\nfor t in \"${all_targets[@]}\"; do\n  count=0\n  for dep in ${deps[$t]}; do\n    (( count++ )) || true\n  done\n  remaining[\"$t\"]=$count\ndone\n\n# ── 2. Topological sort (Kahn's algorithm) ─────────────────────────────────\ndeclare -a order=()\ndeclare -a queue=()\n\n# Seed queue with nodes that have no dependencies\nfor t in \"${all_targets[@]}\"; do\n  [[ \"${remaining[$t]}\" -eq 0 ]] && queue+=(\"$t\")\ndone\n\nwhile [[ ${#queue[@]} -gt 0 ]]; do\n  # Pop front\n  node=\"${queue[0]}\"\n  queue=(\"${queue[@]:1}\")\n  order+=(\"$node\")\n\n  # For every other target that lists `node` as a dep, decrement its counter\n  for t in \"${all_targets[@]}\"; do\n    for dep in ${deps[$t]}; do\n      if [[ \"$dep\" == \"$node\" ]]; then\n        (( remaining[\"$t\"]-- )) || true\n        [[ \"${remaining[$t]}\" -eq 0 ]] && queue+=(\"$t\")\n      fi\n    done\n  done\ndone\n\n# Cycle / missing-dep check\nif [[ ${#order[@]} -ne ${#all_targets[@]} ]]; then\n  echo \"ERROR: cycle or unresolved dependency detected – cannot determine build order.\" >&2\n  exit 1\nfi\n\n# ── 3. Build each target in order ──────────────────────────────────────────\necho \"Build order: ${order[*]}\"\necho \"──────────────────────────────\"\nfor target in \"${order[@]}\"; do\n  echo \"  Building $target …\"\n  echo \"built: $target\" > \"$OUT_DIR/$target\"\n  echo \"  ✔  $OUT_DIR/$target written\"\ndone\necho \"──────────────────────────────\"\necho \"All targets built successfully.\"\nEOF\nchmod +x /project/build.sh",
+      "bash /project/build.sh\n\necho \"\"\necho \"── Verify output files ───────────────────────\"\nfor f in /project/out/*; do\n  echo \"$f → $(cat \"$f\")\"\ndone",
+      "# Debug: check how the file was parsed\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  echo \"LINE: [$line]\"\n  target=\"${line%%:*}\"\n  target=\"${target// /}\"\n  echo \"  target=[$target]\"\ndone < /project/deps.txt",
+      "# The issue: all_targets is populated inside the while loop's subshell (pipe).\n# Fix: use process substitution instead of a pipe so variables persist in the current shell.\ncat << 'EOF' > /project/build.sh\n#!/usr/bin/env bash\nset -euo pipefail\n\nDEPS_FILE=\"/project/deps.txt\"\nOUT_DIR=\"/project/out\"\nmkdir -p \"$OUT_DIR\"\n\n# ── 1. Parse deps.txt ──────────────────────────────────────────────────────\ndeclare -A deps        # deps[target]=\"dep1 dep2 ...\"\ndeclare -a all_targets\n\n# Use process substitution (< <(...)) so the while loop runs in *this* shell,\n# keeping array assignments visible after the loop.\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"$line\" || \"$line\" =~ ^# ]] && continue\n  target=\"${line%%:*}\"\n  target=\"${target//[[:space:]]/}\"\n  rest=\"${line#*:}\"\n  rest=\"${rest# }\"   # strip leading space; may be empty\n  deps[\"$target\"]=\"$rest\"\n  all_targets+=(\"$target\")\ndone < <(grep -v '^[[:space:]]*$' \"$DEPS_FILE\")\n\n# ── 2. Topological sort – Kahn's algorithm ─────────────────────────────────\ndeclare -A remaining   # remaining[t] = number of unbuilt deps\n\nfor t in \"${all_targets[@]}\"; do\n  count=0\n  for dep in ${deps[$t]-}; do\n    (( count++ )) || true\n  done\n  remaining[\"$t\"]=$count\ndone\n\ndeclare -a order=()\ndeclare -a queue=()\n\nfor t in \"${all_targets[@]}\"; do\n  [[ \"${remaining[$t]}\" -eq 0 ]] && queue+=(\"$t\")\ndone\n\nwhile [[ ${#queue[@]} -gt 0 ]]; do\n  node=\"${queue[0]}\"\n  queue=(\"${queue[@]:1}\")\n  order+=(\"$node\")\n\n  for t in \"${all_targets[@]}\"; do\n    for dep in ${deps[$t]-}; do\n      if [[ \"$dep\" == \"$node\" ]]; then\n        (( remaining[\"$t\"]-- )) || true\n        [[ \"${remaining[$t]}\" -eq 0 ]] && queue+=(\"$t\")\n      fi\n    done\n  done\ndone\n\nif [[ ${#order[@]} -ne ${#all_targets[@]} ]]; then\n  echo \"ERROR: cycle or unresolved dependency detected.\" >&2\n  exit 1\nfi\n\n# ── 3. Build ───────────────────────────────────────────────────────────────\necho \"Build order: ${order[*]}\"\necho \"──────────────────────────────\"\nfor target in \"${order[@]}\"; do\n  echo \"  Building $target …\"\n  echo \"built: $target\" > \"$OUT_DIR/$target\"\n  echo \"  ✔  $OUT_DIR/$target\"\ndone\necho \"──────────────────────────────\"\necho \"All targets built successfully.\"\nEOF\nchmod +x /project/build.sh",
+      "rm -f /project/out/*\nbash /project/build.sh\n\necho \"\"\necho \"── Verify output files ───────────────────────\"\nfor f in /project/out/*; do\n  echo \"  $f  →  $(cat \"$f\")\"\ndone",
+      "# Deep debug: check associative array contents after the loop\nbash -c '\ndeclare -A deps\ndeclare -a all_targets\n\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"$line\" || \"$line\" =~ ^# ]] && continue\n  target=\"${line%%:*}\"\n  target=\"${target//[[:space:]]/}\"\n  rest=\"${line#*:}\"\n  rest=\"${rest# }\"\n  deps[\"$target\"]=\"$rest\"\n  all_targets+=(\"$target\")\ndone < <(grep -v \"^[[:space:]]*$\" /project/deps.txt)\n\necho \"all_targets count: ${#all_targets[@]}\"\necho \"all_targets: ${all_targets[*]}\"\nfor k in \"${!deps[@]}\"; do echo \"  deps[$k]=[${deps[$k]}]\"; done\n'",
+      "# Check bash version – older bash may lack certain features\nbash --version",
+      "# Test what actually works in this environment\ndeclare -A mymap\nmymap[\"foo\"]=\"bar\"\necho \"map: ${mymap[foo]}\"\n\ndeclare -a myarr\nmyarr+=(\"a\")\nmyarr+=(\"b\")\necho \"arr: ${myarr[*]}\"\necho \"len: ${#myarr[@]}\"",
+      "# Test reading file with process substitution\ndeclare -a lines\nwhile IFS= read -r line; do\n  lines+=(\"$line\")\ndone < <(cat /project/deps.txt)\necho \"lines: ${#lines[@]}\"\nfor l in \"${lines[@]}\"; do echo \"  [$l]\"; done"
+    ],
+    "usage": {
+      "input_tokens": 24858,
+      "output_tokens": 2758,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 45908
+    },
+    "metrics": {
+      "natural_stop": 0.0,
+      "tool_calls": 10.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 9.0,
+      "turns": 10.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/project",
+          "/project/out",
+          "/project/src",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat /project/deps.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "app: lib utils\nlib: core\nutils: core\ncore:\n"
+          },
+          {
+            "commands": "cat << 'EOF' > /project/build.sh\n#!/usr/bin/env bash\nset -euo pipefail\n\nDEPS_FILE=\"/project/deps.txt\"\nOUT_DIR=\"/project/out\"\nmkdir -p \"$OUT_DIR\"\n\n# ── 1. Parse deps.txt into associative arrays ──────────────────────────────\ndeclare -A deps   # deps[target]=\"dep1 dep2 ...\"\ndeclare -A in_degree\ndeclare -a all_targets\n\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"$line\" || \"$line\" =~ ^# ]] && continue\n  target=\"${line%%:*}\"\n  target=\"${target// /}\"\n  rest=\"${line#*:}\"\n  deps[\"$target\"]=\"${rest# }\"   # may be empty string\n  all_targets+=(\"$target\")\ndone < \"$DEPS_FILE\"\n\n# Initialise in-degree counters\nfor t in \"${all_targets[@]}\"; do\n  in_degree[\"$t\"]=0\ndone\n\n# Count how many declared targets depend on each node\nfor t in \"${all_targets[@]}\"; do\n  for dep in ${deps[$t]}; do\n    (( in_degree[\"$t\"]++ )) || true   # actually count t's own deps\n    :\n  done\ndone\n\n# Re-compute correctly: in_degree[t] = number of deps t still needs\ndeclare -A remaining\nfor t in \"${all_targets[@]}\"; do\n  count=0\n  for dep in ${deps[$t]}; do\n    (( count++ )) || true\n  done\n  remaining[\"$t\"]=$count\ndone\n\n# ── 2. Topological sort (Kahn's algorithm) ─────────────────────────────────\ndeclare -a order=()\ndeclare -a queue=()\n\n# Seed queue with nodes that have no dependencies\nfor t in \"${all_targets[@]}\"; do\n  [[ \"${remaining[$t]}\" -eq 0 ]] && queue+=(\"$t\")\ndone\n\nwhile [[ ${#queue[@]} -gt 0 ]]; do\n  # Pop front\n  node=\"${queue[0]}\"\n  queue=(\"${queue[@]:1}\")\n  order+=(\"$node\")\n\n  # For every other target that lists `node` as a dep, decrement its counter\n  for t in \"${all_targets[@]}\"; do\n    for dep in ${deps[$t]}; do\n      if [[ \"$dep\" == \"$node\" ]]; then\n        (( remaining[\"$t\"]-- )) || true\n        [[ \"${remaining[$t]}\" -eq 0 ]] && queue+=(\"$t\")\n      fi\n    done\n  done\ndone\n\n# Cycle / missing-dep check\nif [[ ${#order[@]} -ne ${#all_targets[@]} ]]; then\n  echo \"ERROR: cycle or unresolved dependency detected – cannot determine build order.\" >&2\n  exit 1\nfi\n\n# ── 3. Build each target in order ──────────────────────────────────────────\necho \"Build order: ${order[*]}\"\necho \"──────────────────────────────\"\nfor target in \"${order[@]}\"; do\n  echo \"  Building $target …\"\n  echo \"built: $target\" > \"$OUT_DIR/$target\"\n  echo \"  ✔  $OUT_DIR/$target written\"\ndone\necho \"──────────────────────────────\"\necho \"All targets built successfully.\"\nEOF\nchmod +x /project/build.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "bash /project/build.sh\n\necho \"\"\necho \"── Verify output files ───────────────────────\"\nfor f in /project/out/*; do\n  echo \"$f → $(cat \"$f\")\"\ndone",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Build order: \n──────────────────────────────\n──────────────────────────────\nAll targets built successfully.\n\n── Verify output files ───────────────────────\n/project/out/* → \n"
+          },
+          {
+            "commands": "# Debug: check how the file was parsed\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  echo \"LINE: [$line]\"\n  target=\"${line%%:*}\"\n  target=\"${target// /}\"\n  echo \"  target=[$target]\"\ndone < /project/deps.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "LINE: [app: lib utils]\n  target=[app]\nLINE: [lib: core]\n  target=[lib]\nLINE: [utils: core]\n  target=[utils]\nLINE: [core:]\n  target=[core]\n"
+          },
+          {
+            "commands": "# The issue: all_targets is populated inside the while loop's subshell (pipe).\n# Fix: use process substitution instead of a pipe so variables persist in the current shell.\ncat << 'EOF' > /project/build.sh\n#!/usr/bin/env bash\nset -euo pipefail\n\nDEPS_FILE=\"/project/deps.txt\"\nOUT_DIR=\"/project/out\"\nmkdir -p \"$OUT_DIR\"\n\n# ── 1. Parse deps.txt ──────────────────────────────────────────────────────\ndeclare -A deps        # deps[target]=\"dep1 dep2 ...\"\ndeclare -a all_targets\n\n# Use process substitution (< <(...)) so the while loop runs in *this* shell,\n# keeping array assignments visible after the loop.\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"$line\" || \"$line\" =~ ^# ]] && continue\n  target=\"${line%%:*}\"\n  target=\"${target//[[:space:]]/}\"\n  rest=\"${line#*:}\"\n  rest=\"${rest# }\"   # strip leading space; may be empty\n  deps[\"$target\"]=\"$rest\"\n  all_targets+=(\"$target\")\ndone < <(grep -v '^[[:space:]]*$' \"$DEPS_FILE\")\n\n# ── 2. Topological sort – Kahn's algorithm ─────────────────────────────────\ndeclare -A remaining   # remaining[t] = number of unbuilt deps\n\nfor t in \"${all_targets[@]}\"; do\n  count=0\n  for dep in ${deps[$t]-}; do\n    (( count++ )) || true\n  done\n  remaining[\"$t\"]=$count\ndone\n\ndeclare -a order=()\ndeclare -a queue=()\n\nfor t in \"${all_targets[@]}\"; do\n  [[ \"${remaining[$t]}\" -eq 0 ]] && queue+=(\"$t\")\ndone\n\nwhile [[ ${#queue[@]} -gt 0 ]]; do\n  node=\"${queue[0]}\"\n  queue=(\"${queue[@]:1}\")\n  order+=(\"$node\")\n\n  for t in \"${all_targets[@]}\"; do\n    for dep in ${deps[$t]-}; do\n      if [[ \"$dep\" == \"$node\" ]]; then\n        (( remaining[\"$t\"]-- )) || true\n        [[ \"${remaining[$t]}\" -eq 0 ]] && queue+=(\"$t\")\n      fi\n    done\n  done\ndone\n\nif [[ ${#order[@]} -ne ${#all_targets[@]} ]]; then\n  echo \"ERROR: cycle or unresolved dependency detected.\" >&2\n  exit 1\nfi\n\n# ── 3. Build ───────────────────────────────────────────────────────────────\necho \"Build order: ${order[*]}\"\necho \"──────────────────────────────\"\nfor target in \"${order[@]}\"; do\n  echo \"  Building $target …\"\n  echo \"built: $target\" > \"$OUT_DIR/$target\"\n  echo \"  ✔  $OUT_DIR/$target\"\ndone\necho \"──────────────────────────────\"\necho \"All targets built successfully.\"\nEOF\nchmod +x /project/build.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "rm -f /project/out/*\nbash /project/build.sh\n\necho \"\"\necho \"── Verify output files ───────────────────────\"\nfor f in /project/out/*; do\n  echo \"  $f  →  $(cat \"$f\")\"\ndone",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Build order: \n──────────────────────────────\n──────────────────────────────\nAll targets built successfully.\n\n── Verify output files ───────────────────────\n  /project/out/*  →  \n"
+          },
+          {
+            "commands": "# Deep debug: check associative array contents after the loop\nbash -c '\ndeclare -A deps\ndeclare -a all_targets\n\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"$line\" || \"$line\" =~ ^# ]] && continue\n  target=\"${line%%:*}\"\n  target=\"${target//[[:space:]]/}\"\n  rest=\"${line#*:}\"\n  rest=\"${rest# }\"\n  deps[\"$target\"]=\"$rest\"\n  all_targets+=(\"$target\")\ndone < <(grep -v \"^[[:space:]]*$\" /project/deps.txt)\n\necho \"all_targets count: ${#all_targets[@]}\"\necho \"all_targets: ${all_targets[*]}\"\nfor k in \"${!deps[@]}\"; do echo \"  deps[$k]=[${deps[$k]}]\"; done\n'",
+            "exit_code": 2,
+            "stderr": "bash: syntax error: parse error: unexpected end of input in [[ ]]\n",
+            "stdout": ""
+          },
+          {
+            "commands": "# Check bash version – older bash may lack certain features\nbash --version",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Bashkit 0.12.0 (virtual bash interpreter)\n"
+          },
+          {
+            "commands": "# Test what actually works in this environment\ndeclare -A mymap\nmymap[\"foo\"]=\"bar\"\necho \"map: ${mymap[foo]}\"\n\ndeclare -a myarr\nmyarr+=(\"a\")\nmyarr+=(\"b\")\necho \"arr: ${myarr[*]}\"\necho \"len: ${#myarr[@]}\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "map: bar\narr: a b\nlen: 2\n"
+          },
+          {
+            "commands": "# Test reading file with process substitution\ndeclare -a lines\nwhile IFS= read -r line; do\n  lines+=(\"$line\")\ndone < <(cat /project/deps.txt)\necho \"lines: ${#lines[@]}\"\nfor l in \"${lines[@]}\"; do echo \"  [$l]\"; done",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "lines: 4\n  [app: lib utils]\n  [lib: core]\n  [utils: core]\n  [core:]\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

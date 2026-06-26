@@ -1,0 +1,75 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "text_multifile_replace",
+  "target": "anthropic/claude-haiku-4-5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "## Summary\n\n✅ **Renaming complete!** Here's what was modified:\n\n| File | Replacements |\n|------|-------------|\n| `/src/main.py` | 2 |\n| `/src/utils.py` | 2 |\n| `/src/tests/test_utils.py` | 3 |\n\n**Total: 3 files modified with 7 total replacements**\n\nAll occurrences of `getData` have been successfully renamed to `fetchRecords` across all Python files in the /src/ directory.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "find /src/ -type f -name \"*.py\" 2>/dev/null | head -20",
+      "for file in $(find /src/ -type f -name \"*.py\"); do\n  count=$(grep -o \"getData\" \"$file\" 2>/dev/null | wc -l)\n  if [ \"$count\" -gt 0 ]; then\n    echo \"File: $file - Found $count occurrence(s)\"\n    sed -i 's/getData/fetchRecords/g' \"$file\"\n    echo \"✓ Replaced\"\n    echo \"\"\n  fi\ndone\n",
+      "echo \"=== Modified Files Content ===\" && echo \"\"\nfor file in /src/main.py /src/utils.py /src/tests/test_utils.py; do\n  echo \"File: $file\"\n  echo \"---\"\n  cat \"$file\"\n  echo \"\"\ndone"
+    ],
+    "usage": {
+      "input_tokens": 4286,
+      "output_tokens": 556,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5360
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/src",
+          "/src/tests",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "find /src/ -type f -name \"*.py\" 2>/dev/null | head -20",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/src//main.py\n/src//tests/test_utils.py\n/src//utils.py\n"
+          },
+          {
+            "commands": "for file in $(find /src/ -type f -name \"*.py\"); do\n  count=$(grep -o \"getData\" \"$file\" 2>/dev/null | wc -l)\n  if [ \"$count\" -gt 0 ]; then\n    echo \"File: $file - Found $count occurrence(s)\"\n    sed -i 's/getData/fetchRecords/g' \"$file\"\n    echo \"✓ Replaced\"\n    echo \"\"\n  fi\ndone\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "File: /src//main.py - Found 2 occurrence(s)\n✓ Replaced\n\nFile: /src//tests/test_utils.py - Found 3 occurrence(s)\n✓ Replaced\n\nFile: /src//utils.py - Found 2 occurrence(s)\n✓ Replaced\n\n"
+          },
+          {
+            "commands": "echo \"=== Modified Files Content ===\" && echo \"\"\nfor file in /src/main.py /src/utils.py /src/tests/test_utils.py; do\n  echo \"File: $file\"\n  echo \"---\"\n  cat \"$file\"\n  echo \"\"\ndone",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== Modified Files Content ===\n\nFile: /src/main.py\n---\nfrom utils import fetchRecords\n\ndef run():\n    result = fetchRecords()\n    print(result)\n\nFile: /src/utils.py\n---\ndef fetchRecords():\n    return [1, 2, 3]\n\ndef processData():\n    data = fetchRecords()\n    return [x * 2 for x in data]\n\nFile: /src/tests/test_utils.py\n---\nfrom utils import fetchRecords\n\ndef test_fetchRecords():\n    assert fetchRecords() == [1, 2, 3]\n\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

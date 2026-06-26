@@ -1,0 +1,82 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_ndjson_error_aggregate",
+  "target": "anthropic/claude-opus-4-8",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Here are the ERROR-level counts per service, sorted by count descending:\n\n```\nauth: 3\npayments: 2\napi: 1\n```\n\n**How it works:**\n- `jq -r 'select(.level==\"ERROR\") | .service'` — properly parses each JSON line and emits the service name only for ERROR-level entries.\n- `sort | uniq -c` — groups and counts occurrences per service.\n- `sort -rn` — sorts by count, descending.\n- `awk '{print $2\": \"$1}'` — reformats from `count service` into the requested `service: count` format.",
+    "iterations": 5,
+    "tool_calls_count": 4,
+    "tool_calls": [
+      "head -5 /var/log/services.jsonl; echo \"---\"; wc -l /var/log/services.jsonl",
+      "cat /var/log/services.jsonl",
+      "command -v jq || echo \"no jq\"",
+      "jq -r 'select(.level==\"ERROR\") | .service' /var/log/services.jsonl \\\n  | sort | uniq -c | sort -rn \\\n  | awk '{print $2\": \"$1}'"
+    ],
+    "usage": {
+      "input_tokens": 6876,
+      "output_tokens": 595,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 10519
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 4.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 4.0,
+      "turns": 5.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp",
+          "/var",
+          "/var/log"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "head -5 /var/log/services.jsonl; echo \"---\"; wc -l /var/log/services.jsonl",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\"timestamp\":\"2024-01-01T10:00:00Z\",\"service\":\"auth\",\"level\":\"ERROR\",\"message\":\"token expired\"}\n{\"timestamp\":\"2024-01-01T10:00:01Z\",\"service\":\"api\",\"level\":\"INFO\",\"message\":\"request received\"}\n{\"timestamp\":\"2024-01-01T10:00:02Z\",\"service\":\"auth\",\"level\":\"ERROR\",\"message\":\"invalid credentials\"}\n{\"timestamp\":\"2024-01-01T10:00:03Z\",\"service\":\"payments\",\"level\":\"ERROR\",\"message\":\"gateway timeout\"}\n{\"timestamp\":\"2024-01-01T10:00:04Z\",\"service\":\"auth\",\"level\":\"INFO\",\"message\":\"login success\"}\n---\n      9 /var/log/services.jsonl\n"
+          },
+          {
+            "commands": "cat /var/log/services.jsonl",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\"timestamp\":\"2024-01-01T10:00:00Z\",\"service\":\"auth\",\"level\":\"ERROR\",\"message\":\"token expired\"}\n{\"timestamp\":\"2024-01-01T10:00:01Z\",\"service\":\"api\",\"level\":\"INFO\",\"message\":\"request received\"}\n{\"timestamp\":\"2024-01-01T10:00:02Z\",\"service\":\"auth\",\"level\":\"ERROR\",\"message\":\"invalid credentials\"}\n{\"timestamp\":\"2024-01-01T10:00:03Z\",\"service\":\"payments\",\"level\":\"ERROR\",\"message\":\"gateway timeout\"}\n{\"timestamp\":\"2024-01-01T10:00:04Z\",\"service\":\"auth\",\"level\":\"INFO\",\"message\":\"login success\"}\n{\"timestamp\":\"2024-01-01T10:00:05Z\",\"service\":\"api\",\"level\":\"ERROR\",\"message\":\"rate limited\"}\n{\"timestamp\":\"2024-01-01T10:00:06Z\",\"service\":\"auth\",\"level\":\"ERROR\",\"message\":\"token expired\"}\n{\"timestamp\":\"2024-01-01T10:00:07Z\",\"service\":\"payments\",\"level\":\"ERROR\",\"message\":\"invalid card\"}\n{\"timestamp\":\"2024-01-01T10:00:08Z\",\"service\":\"api\",\"level\":\"INFO\",\"message\":\"health check ok\"}\n{\"timestamp\":\"2024-01-01T10:00:09Z\",\"service\":\"payments\",\"level\":\"INFO\",\"message\":\"payment processed\"}"
+          },
+          {
+            "commands": "command -v jq || echo \"no jq\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "jq\n"
+          },
+          {
+            "commands": "jq -r 'select(.level==\"ERROR\") | .service' /var/log/services.jsonl \\\n  | sort | uniq -c | sort -rn \\\n  | awk '{print $2\": \"$1}'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "auth: 3\npayments: 2\napi: 1\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,88 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_markdown_toc",
+  "target": "anthropic/claude-sonnet-4-6",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The file has been updated. Here's a summary of exactly what was done:\n\n---\n\n### What happened\n\n1. **Read** `/doc/README.md` and scanned every line matching `#` or `##` headings.\n2. **Skipped** the first heading (`# Project Alpha`) — that's the document title, not a TOC entry.\n3. **Built** four TOC entries from the remaining `##` headings, formatting each anchor by lowercasing the text and replacing spaces with hyphens:\n   | Heading | Anchor |\n   |---|---|\n   | Installation | `#installation` |\n   | Usage | `#usage` |\n   | API Reference | `#api-reference` |\n   | Contributing | `#contributing` |\n4. **Inserted** the TOC block immediately after the first heading line, followed by a blank line before the original intro paragraph.\n\n### Final structure of `/doc/README.md`\n\n```markdown\n# Project Alpha\n\n- [Installation](#installation)\n- [Usage](#usage)\n- [API Reference](#api-reference)\n- [Contributing](#contributing)\n\nIntroduction to the project.\n\n## Installation\n...\n```",
+    "iterations": 6,
+    "tool_calls_count": 5,
+    "tool_calls": [
+      "cat /doc/README.md",
+      "python3 - << 'EOF'\nimport re\n\nwith open(\"/doc/README.md\", \"r\") as f:\n    content = f.read()\n\nlines = content.split(\"\\n\")\n\n# Collect all headings (# or ##), skip the very first one (the title)\nheadings = []\nfirst_heading_skipped = False\nfor line in lines:\n    if re.match(r'^#{1,2} ', line):\n        if not first_heading_skipped:\n            first_heading_skipped = True\n            continue\n        text = re.sub(r'^#{1,2} ', '', line)\n        anchor = text.lower().replace(' ', '-')\n        headings.append(f\"- [{text}](#{anchor})\")\n\ntoc_block = \"\\n\".join(headings)\n\n# Insert TOC after the first heading line (and its trailing newline)\nfirst_heading_match = re.search(r'^#{1,2} .+$', content, re.MULTILINE)\ninsert_pos = first_heading_match.end()\n\nnew_content = content[:insert_pos] + \"\\n\\n\" + toc_block + content[insert_pos:]\n\nwith open(\"/doc/README.md\", \"w\") as f:\n    f.write(new_content)\n\nprint(\"Done. New content:\")\nprint(new_content)\nEOF",
+      "\nFILE=\"/doc/README.md\"\n\n# ── 1. Build the TOC lines (skip the very first heading = the title) ──────────\ntoc=\"\"\nfirst_skipped=false\nwhile IFS= read -r line; do\n    if [[ \"$line\" =~ ^(#{1,2})\\ (.+)$ ]]; then\n        if [[ \"$first_skipped\" == false ]]; then\n            first_skipped=true\n            continue\n        fi\n        text=\"${BASH_REMATCH[2]}\"\n        # lowercase + spaces → hyphens for the anchor\n        anchor=\"${text,,}\"\n        anchor=\"${anchor// /-}\"\n        toc+=\"- [${text}](#${anchor})\"$'\\n'\n    fi\ndone < \"$FILE\"\n\n# Remove trailing newline from toc block\ntoc=\"${toc%$'\\n'}\"\n\necho \"=== TOC block ===\"\necho \"$toc\"\n\n# ── 2. Insert the TOC after the first heading line ────────────────────────────\nawk -v toc=\"$toc\" '\n    !inserted && /^#{1,2} / {\n        print          # print the first heading\n        print \"\"       # blank line\n        print toc      # table of contents\n        inserted = 1\n        next\n    }\n    { print }\n' \"$FILE\" > \"${FILE}.tmp\" && mv \"${FILE}.tmp\" \"$FILE\"\n\necho \"\"\necho \"=== Final file ===\"\ncat \"$FILE\"",
+      "FILE=\"/doc/README.md\"\n\n# ── 1. Build TOC (skip the very first heading = the document title) ───────────\ntoc=\"\"\nfirst_skipped=false\n\nwhile IFS= read -r line; do\n    if [[ \"$line\" =~ ^(\\#{1,2})\\ (.+)$ ]]; then\n        if [[ \"$first_skipped\" == false ]]; then\n            first_skipped=true\n            continue\n        fi\n        text=\"${BASH_REMATCH[2]}\"\n        anchor=\"${text,,}\"          # lowercase\n        anchor=\"${anchor// /-}\"     # spaces → hyphens\n        toc=\"${toc}- [${text}](#${anchor})\"$'\\n'\n    fi\ndone < \"$FILE\"\n\ntoc=\"${toc%$'\\n'}\"   # strip trailing newline\n\necho \"=== TOC block ===\"\necho \"$toc\"\necho \"==================\"",
+      "FILE=\"/doc/README.md\"\n\n# Rebuild TOC variable (same logic as before)\ntoc=\"\"\nfirst_skipped=false\nwhile IFS= read -r line; do\n    if [[ \"$line\" =~ ^(\\#{1,2})\\ (.+)$ ]]; then\n        if [[ \"$first_skipped\" == false ]]; then\n            first_skipped=true\n            continue\n        fi\n        text=\"${BASH_REMATCH[2]}\"\n        anchor=\"${text,,}\"\n        anchor=\"${anchor// /-}\"\n        toc=\"${toc}- [${text}](#${anchor})\"$'\\n'\n    fi\ndone < \"$FILE\"\ntoc=\"${toc%$'\\n'}\"\n\n# ── 2. Write a helper script so awk receives the toc safely via a temp file ───\necho \"$toc\" > /tmp/toc.txt\n\nawk '\n    !inserted && /^#{1,2} / {\n        print           # the first (title) heading\n        print \"\"        # blank separator\n        while ((getline tocline < \"/tmp/toc.txt\") > 0) {\n            print tocline\n        }\n        print \"\"        # blank line after TOC\n        inserted = 1\n        next\n    }\n    { print }\n' \"$FILE\" > \"${FILE}.tmp\" && mv \"${FILE}.tmp\" \"$FILE\"\n\necho \"=== Final README.md ===\"\ncat \"$FILE\""
+    ],
+    "usage": {
+      "input_tokens": 9610,
+      "output_tokens": 1832,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 29930
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 5.0,
+      "tool_calls_err": 2.0,
+      "tool_calls_ok": 3.0,
+      "turns": 6.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/doc",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat /doc/README.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Project Alpha\n\nIntroduction to the project.\n\n## Installation\n\nRun the installer.\n\n## Usage\n\nHow to use it.\n\n## API Reference\n\nEndpoint documentation.\n\n## Contributing\n\nPR guidelines.\n"
+          },
+          {
+            "commands": "python3 - << 'EOF'\nimport re\n\nwith open(\"/doc/README.md\", \"r\") as f:\n    content = f.read()\n\nlines = content.split(\"\\n\")\n\n# Collect all headings (# or ##), skip the very first one (the title)\nheadings = []\nfirst_heading_skipped = False\nfor line in lines:\n    if re.match(r'^#{1,2} ', line):\n        if not first_heading_skipped:\n            first_heading_skipped = True\n            continue\n        text = re.sub(r'^#{1,2} ', '', line)\n        anchor = text.lower().replace(' ', '-')\n        headings.append(f\"- [{text}](#{anchor})\")\n\ntoc_block = \"\\n\".join(headings)\n\n# Insert TOC after the first heading line (and its trailing newline)\nfirst_heading_match = re.search(r'^#{1,2} .+$', content, re.MULTILINE)\ninsert_pos = first_heading_match.end()\n\nnew_content = content[:insert_pos] + \"\\n\\n\" + toc_block + content[insert_pos:]\n\nwith open(\"/doc/README.md\", \"w\") as f:\n    f.write(new_content)\n\nprint(\"Done. New content:\")\nprint(new_content)\nEOF",
+            "exit_code": 127,
+            "stderr": "bash: python3: command not found",
+            "stdout": ""
+          },
+          {
+            "commands": "\nFILE=\"/doc/README.md\"\n\n# ── 1. Build the TOC lines (skip the very first heading = the title) ──────────\ntoc=\"\"\nfirst_skipped=false\nwhile IFS= read -r line; do\n    if [[ \"$line\" =~ ^(#{1,2})\\ (.+)$ ]]; then\n        if [[ \"$first_skipped\" == false ]]; then\n            first_skipped=true\n            continue\n        fi\n        text=\"${BASH_REMATCH[2]}\"\n        # lowercase + spaces → hyphens for the anchor\n        anchor=\"${text,,}\"\n        anchor=\"${anchor// /-}\"\n        toc+=\"- [${text}](#${anchor})\"$'\\n'\n    fi\ndone < \"$FILE\"\n\n# Remove trailing newline from toc block\ntoc=\"${toc%$'\\n'}\"\n\necho \"=== TOC block ===\"\necho \"$toc\"\n\n# ── 2. Insert the TOC after the first heading line ────────────────────────────\nawk -v toc=\"$toc\" '\n    !inserted && /^#{1,2} / {\n        print          # print the first heading\n        print \"\"       # blank line\n        print toc      # table of contents\n        inserted = 1\n        next\n    }\n    { print }\n' \"$FILE\" > \"${FILE}.tmp\" && mv \"${FILE}.tmp\" \"$FILE\"\n\necho \"\"\necho \"=== Final file ===\"\ncat \"$FILE\"",
+            "exit_code": 1,
+            "stderr": "parse error at line 18, column 5: expected 'done'",
+            "stdout": ""
+          },
+          {
+            "commands": "FILE=\"/doc/README.md\"\n\n# ── 1. Build TOC (skip the very first heading = the document title) ───────────\ntoc=\"\"\nfirst_skipped=false\n\nwhile IFS= read -r line; do\n    if [[ \"$line\" =~ ^(\\#{1,2})\\ (.+)$ ]]; then\n        if [[ \"$first_skipped\" == false ]]; then\n            first_skipped=true\n            continue\n        fi\n        text=\"${BASH_REMATCH[2]}\"\n        anchor=\"${text,,}\"          # lowercase\n        anchor=\"${anchor// /-}\"     # spaces → hyphens\n        toc=\"${toc}- [${text}](#${anchor})\"$'\\n'\n    fi\ndone < \"$FILE\"\n\ntoc=\"${toc%$'\\n'}\"   # strip trailing newline\n\necho \"=== TOC block ===\"\necho \"$toc\"\necho \"==================\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== TOC block ===\n- [Installation](#installation)\n- [Usage](#usage)\n- [API Reference](#api-reference)\n- [Contributing](#contributing)\n==================\n"
+          },
+          {
+            "commands": "FILE=\"/doc/README.md\"\n\n# Rebuild TOC variable (same logic as before)\ntoc=\"\"\nfirst_skipped=false\nwhile IFS= read -r line; do\n    if [[ \"$line\" =~ ^(\\#{1,2})\\ (.+)$ ]]; then\n        if [[ \"$first_skipped\" == false ]]; then\n            first_skipped=true\n            continue\n        fi\n        text=\"${BASH_REMATCH[2]}\"\n        anchor=\"${text,,}\"\n        anchor=\"${anchor// /-}\"\n        toc=\"${toc}- [${text}](#${anchor})\"$'\\n'\n    fi\ndone < \"$FILE\"\ntoc=\"${toc%$'\\n'}\"\n\n# ── 2. Write a helper script so awk receives the toc safely via a temp file ───\necho \"$toc\" > /tmp/toc.txt\n\nawk '\n    !inserted && /^#{1,2} / {\n        print           # the first (title) heading\n        print \"\"        # blank separator\n        while ((getline tocline < \"/tmp/toc.txt\") > 0) {\n            print tocline\n        }\n        print \"\"        # blank line after TOC\n        inserted = 1\n        next\n    }\n    { print }\n' \"$FILE\" > \"${FILE}.tmp\" && mv \"${FILE}.tmp\" \"$FILE\"\n\necho \"=== Final README.md ===\"\ncat \"$FILE\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== Final README.md ===\n# Project Alpha\n\n- [Installation](#installation)\n- [Usage](#usage)\n- [API Reference](#api-reference)\n- [Contributing](#contributing)\n\n\nIntroduction to the project.\n\n## Installation\n\nRun the installer.\n\n## Usage\n\nHow to use it.\n\n## API Reference\n\nEndpoint documentation.\n\n## Contributing\n\nPR guidelines.\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

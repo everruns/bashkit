@@ -1,0 +1,67 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_config_merge",
+  "target": "anthropic/claude-sonnet-4-6",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The deep merge is complete and saved to `/config/merged.json`. Here's a breakdown of every decision made:\n\n---\n\n### 🔀 Deep Merge Result — Key-by-Key Decisions\n\n| Key Path | `defaults.json` | `production.json` | `merged.json` | Reason |\n|---|---|---|---|---|\n| `app.name` | `\"myservice\"` | *(absent)* | ✅ `\"myservice\"` | Only in defaults → **preserved** |\n| `app.port` | `3000` | `8080` | ✅ `8080` | In both → **production wins** |\n| `app.debug` | `true` | `false` | ✅ `false` | In both → **production wins** |\n| `db.host` | `\"localhost\"` | `\"db.prod.internal\"` | ✅ `\"db.prod.internal\"` | In both → **production wins** |\n| `db.port` | `5432` | *(absent)* | ✅ `5432` | Only in defaults → **preserved** |\n| `db.pool_size` | `5` | `20` | ✅ `20` | In both → **production wins** |\n| `log.level` | `\"debug\"` | `\"warn\"` | ✅ `\"warn\"` | In both → **production wins** |\n| `log.format` | `\"text\"` | `\"json\"` | ✅ `\"json\"` | In both → **production wins** |\n\n---\n\n### 🛠️ How it works\n- A **recursive `deep_merge` function** in `jq` walks every key in both objects.\n- If a key exists in **both** and both values are **objects** → it recurses deeper (true deep merge).\n- If a key exists in **both** and either value is a **scalar/array** → production value wins outright.\n- If a key exists **only in defaults** → it is preserved as-is.\n- If a key exists **only in production** → it is included as-is.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /config/defaults.json && echo \"---\" && cat /config/production.json",
+      "jq -s '\n  # Recursive deep-merge: b overrides a, but nested objects are merged rather than replaced\n  def deep_merge(a; b):\n    a as $a | b as $b |\n    if ($a | type) == \"object\" and ($b | type) == \"object\"\n    then\n      # Union all keys from both objects\n      ([$a, $b | keys[]] | unique) as $keys |\n      reduce $keys[] as $k (\n        {};\n        if   ($a | has($k)) and ($b | has($k))\n        then . + { ($k): deep_merge($a[$k]; $b[$k]) }   # key in both → recurse\n        elif ($b | has($k))\n        then . + { ($k): $b[$k] }                        # key only in b → take b\n        else . + { ($k): $a[$k] }                        # key only in a → keep a\n        end\n      )\n    else $b   # non-object (scalar / array) → production wins\n    end;\n\n  deep_merge(.[0]; .[1])\n' /config/defaults.json /config/production.json | tee /config/merged.json"
+    ],
+    "usage": {
+      "input_tokens": 3149,
+      "output_tokens": 954,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 16893
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/config",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat /config/defaults.json && echo \"---\" && cat /config/production.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\"app\":{\"name\":\"myservice\",\"port\":3000,\"debug\":true},\"db\":{\"host\":\"localhost\",\"port\":5432,\"pool_size\":5},\"log\":{\"level\":\"debug\",\"format\":\"text\"}}---\n{\"app\":{\"port\":8080,\"debug\":false},\"db\":{\"host\":\"db.prod.internal\",\"pool_size\":20},\"log\":{\"level\":\"warn\",\"format\":\"json\"}}"
+          },
+          {
+            "commands": "jq -s '\n  # Recursive deep-merge: b overrides a, but nested objects are merged rather than replaced\n  def deep_merge(a; b):\n    a as $a | b as $b |\n    if ($a | type) == \"object\" and ($b | type) == \"object\"\n    then\n      # Union all keys from both objects\n      ([$a, $b | keys[]] | unique) as $keys |\n      reduce $keys[] as $k (\n        {};\n        if   ($a | has($k)) and ($b | has($k))\n        then . + { ($k): deep_merge($a[$k]; $b[$k]) }   # key in both → recurse\n        elif ($b | has($k))\n        then . + { ($k): $b[$k] }                        # key only in b → take b\n        else . + { ($k): $a[$k] }                        # key only in a → keep a\n        end\n      )\n    else $b   # non-object (scalar / array) → production wins\n    end;\n\n  deep_merge(.[0]; .[1])\n' /config/defaults.json /config/production.json | tee /config/merged.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\n  \"app\": {\n    \"debug\": false,\n    \"name\": \"myservice\",\n    \"port\": 8080\n  },\n  \"db\": {\n    \"host\": \"db.prod.internal\",\n    \"pool_size\": 20,\n    \"port\": 5432\n  },\n  \"log\": {\n    \"format\": \"json\",\n    \"level\": \"warn\"\n  }\n}\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

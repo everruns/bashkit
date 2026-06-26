@@ -1,0 +1,61 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "text_log_error_count",
+  "target": "anthropic/claude-haiku-4-5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Perfect! Here are the results:\n\n**Total count of ERROR lines: 3**\n\n**ERROR lines found:**\n1. `2024-01-01 08:05:12 ERROR Connection refused to database`\n2. `2024-01-01 08:05:20 ERROR Timeout waiting for response`\n3. `2024-01-01 09:15:33 ERROR Disk space critical`\n\nThe command used:\n- `grep -c \"ERROR\" /var/log/app.log` - counts the total number of lines containing \"ERROR\"\n- `grep \"ERROR\" /var/log/app.log` - displays all lines containing \"ERROR\"",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "grep -c \"ERROR\" /var/log/app.log && echo \"---\" && grep \"ERROR\" /var/log/app.log"
+    ],
+    "usage": {
+      "input_tokens": 1651,
+      "output_tokens": 256,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 2231
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp",
+          "/var",
+          "/var/log"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "grep -c \"ERROR\" /var/log/app.log && echo \"---\" && grep \"ERROR\" /var/log/app.log",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "3\n---\n2024-01-01 08:05:12 ERROR Connection refused to database\n2024-01-01 08:05:20 ERROR Timeout waiting for response\n2024-01-01 09:15:33 ERROR Disk space critical\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

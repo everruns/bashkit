@@ -1,0 +1,67 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "text_csv_revenue",
+  "target": "anthropic/claude-sonnet-4-6",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "**329**\n\nHere's how the total revenue breaks down:\n\n| Product | Price | Quantity | Revenue |\n|-----------|-------|----------|---------|\n| widget | 10 | 5 | 50 |\n| gadget | 25 | 3 | 75 |\n| doohickey | 7 | 12 | 84 |\n| sprocket | 15 | 8 | 120 |\n| **Total** | | | **329** |\n\nThe `awk` command skips the header (`NR>1`), multiplies `price × quantity` for each row, accumulates the sum, and prints the final total: **329**.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /data/sales.csv",
+      "awk -F',' 'NR>1 { total += $2 * $3 } END { print total }' /data/sales.csv"
+    ],
+    "usage": {
+      "input_tokens": 2566,
+      "output_tokens": 305,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 6411
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat /data/sales.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "product,price,quantity\nwidget,10,5\ngadget,25,3\ndoohickey,7,12\nsprocket,15,8\n"
+          },
+          {
+            "commands": "awk -F',' 'NR>1 { total += $2 * $3 } END { print total }' /data/sales.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "329\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

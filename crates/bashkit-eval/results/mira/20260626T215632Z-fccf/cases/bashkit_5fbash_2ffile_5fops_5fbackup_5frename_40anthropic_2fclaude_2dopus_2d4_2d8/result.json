@@ -1,0 +1,67 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "file_ops_backup_rename",
+  "target": "anthropic/claude-opus-4-8",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done. Both operations completed successfully:\n\n1. **Backup created** at `/data/config.yaml.bak` — contains the original 3 lines (`version: 1`, `mode: production`, `retries: 3`).\n2. **Line appended** to the original `/data/config.yaml` — now has `updated: true` added as the 4th line.\n\nThe backup preserves the original content (39 bytes), while the original file now reflects the new line (53 bytes).",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -la /data/config.yaml 2>&1; echo \"---\"; cat /data/config.yaml 2>&1",
+      "cp /data/config.yaml /data/config.yaml.bak\necho 'updated: true' >> /data/config.yaml\necho \"=== Backup (/data/config.yaml.bak) ===\"; cat /data/config.yaml.bak\necho \"=== Original (/data/config.yaml) ===\"; cat /data/config.yaml\necho \"===\"; ls -la /data/config.yaml /data/config.yaml.bak"
+    ],
+    "usage": {
+      "input_tokens": 2648,
+      "output_tokens": 464,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7104
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "ls -la /data/config.yaml 2>&1; echo \"---\"; cat /data/config.yaml 2>&1",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       39 2026-07-11 21:56 /data/config.yaml\n---\nversion: 1\nmode: production\nretries: 3\n"
+          },
+          {
+            "commands": "cp /data/config.yaml /data/config.yaml.bak\necho 'updated: true' >> /data/config.yaml\necho \"=== Backup (/data/config.yaml.bak) ===\"; cat /data/config.yaml.bak\necho \"=== Original (/data/config.yaml) ===\"; cat /data/config.yaml\necho \"===\"; ls -la /data/config.yaml /data/config.yaml.bak",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== Backup (/data/config.yaml.bak) ===\nversion: 1\nmode: production\nretries: 3\n=== Original (/data/config.yaml) ===\nversion: 1\nmode: production\nretries: 3\nupdated: true\n===\n-rw-r--r--       53 2026-07-11 21:56 /data/config.yaml\n-rw-r--r--       39 2026-07-11 21:56 /data/config.yaml.bak\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

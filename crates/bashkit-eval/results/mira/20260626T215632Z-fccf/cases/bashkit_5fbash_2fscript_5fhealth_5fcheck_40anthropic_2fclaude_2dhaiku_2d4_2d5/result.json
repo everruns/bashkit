@@ -1,0 +1,78 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_health_check",
+  "target": "anthropic/claude-haiku-4-5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Perfect! The healthcheck script has been successfully created and executed. Here's what happened:\n\n**Script Summary:**\n- ✅ **Check 1**: `/app/config.json` exists and contains valid JSON - **PASS**\n- ✅ **Check 2**: `/var/log` directory exists - **PASS**\n- ✅ **Check 3**: `/app/data` directory contains at least 2 files (3 found) - **PASS**\n\n**Exit Code**: 0 (all checks passed)\n\nThe script uses `jq` to validate JSON, `test` flags (`-f` for files, `-d` for directories), and `find` to count files in the `/app/data` directory. It properly sets an exit code of 0 when all checks pass and would exit with 1 if any check failed.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "mkdir -p /scripts",
+      "cat > /scripts/healthcheck.sh << 'EOF'\n#!/bin/bash\n\n# Initialize status\nall_passed=true\n\n# Check 1: /app/config.json exists and contains valid JSON\nif [[ -f /app/config.json ]]; then\n    if jq empty /app/config.json 2>/dev/null; then\n        echo \"PASS: /app/config.json exists and contains valid JSON\"\n    else\n        echo \"FAIL: /app/config.json exists but contains invalid JSON\"\n        all_passed=false\n    fi\nelse\n    echo \"FAIL: /app/config.json does not exist\"\n    all_passed=false\nfi\n\n# Check 2: /var/log directory exists\nif [[ -d /var/log ]]; then\n    echo \"PASS: /var/log directory exists\"\nelse\n    echo \"FAIL: /var/log directory does not exist\"\n    all_passed=false\nfi\n\n# Check 3: /app/data directory contains at least 2 files\nif [[ -d /app/data ]]; then\n    file_count=$(find /app/data -maxdepth 1 -type f | wc -l)\n    if (( file_count >= 2 )); then\n        echo \"PASS: /app/data directory contains at least 2 files ($file_count files found)\"\n    else\n        echo \"FAIL: /app/data directory contains fewer than 2 files ($file_count files found)\"\n        all_passed=false\n    fi\nelse\n    echo \"FAIL: /app/data directory does not exist\"\n    all_passed=false\nfi\n\n# Exit with appropriate code\nif [[ \"$all_passed\" == true ]]; then\n    exit 0\nelse\n    exit 1\nfi\nEOF\nchmod +x /scripts/healthcheck.sh\n",
+      "/scripts/healthcheck.sh\necho \"Exit code: $?\"\n"
+    ],
+    "usage": {
+      "input_tokens": 4655,
+      "output_tokens": 843,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 6385
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/app",
+          "/app/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/scripts",
+          "/tmp",
+          "/var",
+          "/var/log"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /scripts",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cat > /scripts/healthcheck.sh << 'EOF'\n#!/bin/bash\n\n# Initialize status\nall_passed=true\n\n# Check 1: /app/config.json exists and contains valid JSON\nif [[ -f /app/config.json ]]; then\n    if jq empty /app/config.json 2>/dev/null; then\n        echo \"PASS: /app/config.json exists and contains valid JSON\"\n    else\n        echo \"FAIL: /app/config.json exists but contains invalid JSON\"\n        all_passed=false\n    fi\nelse\n    echo \"FAIL: /app/config.json does not exist\"\n    all_passed=false\nfi\n\n# Check 2: /var/log directory exists\nif [[ -d /var/log ]]; then\n    echo \"PASS: /var/log directory exists\"\nelse\n    echo \"FAIL: /var/log directory does not exist\"\n    all_passed=false\nfi\n\n# Check 3: /app/data directory contains at least 2 files\nif [[ -d /app/data ]]; then\n    file_count=$(find /app/data -maxdepth 1 -type f | wc -l)\n    if (( file_count >= 2 )); then\n        echo \"PASS: /app/data directory contains at least 2 files ($file_count files found)\"\n    else\n        echo \"FAIL: /app/data directory contains fewer than 2 files ($file_count files found)\"\n        all_passed=false\n    fi\nelse\n    echo \"FAIL: /app/data directory does not exist\"\n    all_passed=false\nfi\n\n# Exit with appropriate code\nif [[ \"$all_passed\" == true ]]; then\n    exit 0\nelse\n    exit 1\nfi\nEOF\nchmod +x /scripts/healthcheck.sh\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "/scripts/healthcheck.sh\necho \"Exit code: $?\"\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "PASS: /app/config.json exists and contains valid JSON\nPASS: /var/log directory exists\nPASS: /app/data directory contains at least 2 files (3 files found)\nExit code: 0\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

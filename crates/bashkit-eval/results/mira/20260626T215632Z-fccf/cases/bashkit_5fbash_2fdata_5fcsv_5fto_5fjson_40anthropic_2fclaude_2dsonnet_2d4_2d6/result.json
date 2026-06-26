@@ -1,0 +1,67 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_csv_to_json",
+  "target": "anthropic/claude-sonnet-4-6",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Here's the resulting JSON array printed to stdout. Here's a breakdown of what was done:\n\n1. **Read the CSV** with `cat` first to inspect its structure: 3 columns (`name`, `age`, `city`) and 3 data rows.\n2. **Converted with `awk`**:\n   - `NR==1` — The first row is treated as the **header**, storing each field name in a `headers` array.\n   - `NR>1` — Each subsequent row becomes a **JSON object**, with header names as keys and row values as string values.\n   - Commas are correctly placed **between** objects (not trailing), and the whole thing is wrapped in a `[...]` array.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /data/users.csv",
+      "\nawk '\nBEGIN { FS=\",\"; ORS=\"\"; print \"[\\n\" }\nNR==1 {\n  # Store header fields\n  for (i=1; i<=NF; i++) headers[i] = $i\n  ncols = NF\n  next\n}\n{\n  if (NR > 2) print \",\\n\"   # comma separator between objects\n  print \"  {\"\n  for (i=1; i<=ncols; i++) {\n    printf \"\\\"%s\\\": \\\"%s\\\"\", headers[i], $i\n    if (i < ncols) printf \", \"\n  }\n  print \"}\"\n}\nEND { print \"\\n]\\n\" }\n' /data/users.csv\n"
+    ],
+    "usage": {
+      "input_tokens": 2785,
+      "output_tokens": 504,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 10818
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat /data/users.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name,age,city\nalice,30,seattle\nbob,25,portland\ncharlie,35,denver\n"
+          },
+          {
+            "commands": "\nawk '\nBEGIN { FS=\",\"; ORS=\"\"; print \"[\\n\" }\nNR==1 {\n  # Store header fields\n  for (i=1; i<=NF; i++) headers[i] = $i\n  ncols = NF\n  next\n}\n{\n  if (NR > 2) print \",\\n\"   # comma separator between objects\n  print \"  {\"\n  for (i=1; i<=ncols; i++) {\n    printf \"\\\"%s\\\": \\\"%s\\\"\", headers[i], $i\n    if (i < ncols) printf \", \"\n  }\n  print \"}\"\n}\nEND { print \"\\n]\\n\" }\n' /data/users.csv\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[\n  {\"name\": \"alice\", \"age\": \"30\", \"city\": \"seattle\"},\n  {\"name\": \"bob\", \"age\": \"25\", \"city\": \"portland\"},\n  {\"name\": \"charlie\", \"age\": \"35\", \"city\": \"denver\"}\n]\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

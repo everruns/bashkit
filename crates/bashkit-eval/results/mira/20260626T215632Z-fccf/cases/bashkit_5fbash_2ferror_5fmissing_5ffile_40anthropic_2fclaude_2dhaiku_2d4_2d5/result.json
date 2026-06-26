@@ -1,0 +1,60 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "error_missing_file",
+  "target": "anthropic/claude-haiku-4-5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Perfect! The file `/data/input.txt` did not exist, so I:\n1. Created the `/data` directory\n2. Created the file with the content `'default data'`\n3. Read and printed the file contents\n\n**Output:** `default data`",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "\nif [ ! -f /data/input.txt ]; then\n  # File doesn't exist, create directory if needed\n  mkdir -p /data\n  # Create file with default content\n  echo 'default data' > /data/input.txt\nfi\n# Read and print the file contents\ncat /data/input.txt\n"
+    ],
+    "usage": {
+      "input_tokens": 1679,
+      "output_tokens": 216,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 2412
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "\nif [ ! -f /data/input.txt ]; then\n  # File doesn't exist, create directory if needed\n  mkdir -p /data\n  # Create file with default content\n  echo 'default data' > /data/input.txt\nfi\n# Read and print the file contents\ncat /data/input.txt\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "default data\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

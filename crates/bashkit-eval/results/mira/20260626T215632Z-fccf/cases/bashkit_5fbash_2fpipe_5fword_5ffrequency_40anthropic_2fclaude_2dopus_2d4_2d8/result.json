@@ -1,0 +1,74 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "pipe_word_frequency",
+  "target": "anthropic/claude-opus-4-8",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Confirmed. The full breakdown shows a clear top 3, with \"cat\" being the only word appearing exactly twice (all others appear once). The result is:\n\n```\nthe 8\non 3\ncat 2\n```",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "cat /data/poem.txt",
+      "tr ' ' '\\n' < /data/poem.txt | grep -v '^$' | sort | uniq -c | sort -rn | head -3 | awk '{print $2, $1}'",
+      "tr ' ' '\\n' < /data/poem.txt | grep -v '^$' | sort | uniq -c | sort -rn"
+    ],
+    "usage": {
+      "input_tokens": 3468,
+      "output_tokens": 462,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 8241
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat /data/poem.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "the cat sat on the mat\nthe cat in the hat\nthe dog on the log\nthe frog on the bog\n"
+          },
+          {
+            "commands": "tr ' ' '\\n' < /data/poem.txt | grep -v '^$' | sort | uniq -c | sort -rn | head -3 | awk '{print $2, $1}'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "the 8\non 3\ncat 2\n"
+          },
+          {
+            "commands": "tr ' ' '\\n' < /data/poem.txt | grep -v '^$' | sort | uniq -c | sort -rn",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "      8 the\n      3 on\n      2 cat\n      1 sat\n      1 mat\n      1 log\n      1 in\n      1 hat\n      1 frog\n      1 dog\n      1 bog\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}
