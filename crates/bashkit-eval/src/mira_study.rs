@@ -39,8 +39,8 @@ pub const MAX_TURNS: usize = 10;
 /// `mira run --targets 'anthropic/*'`.
 pub fn default_targets() -> Vec<Target> {
     vec![
-        Target::anthropic("claude-opus-4-7"),
-        Target::anthropic("claude-haiku-4-5-20251001"),
+        Target::anthropic("claude-opus-4-8"),
+        Target::anthropic("claude-haiku-4-5"),
         Target::anthropic("claude-sonnet-4-6"),
         Target::openai("gpt-5.5"),
         // Codex models require the OpenAI Responses API; route on a custom
