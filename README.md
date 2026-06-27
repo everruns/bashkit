@@ -469,15 +469,19 @@ just pre-pr       # Pre-PR checks
 
 Bashkit includes a [mira eval study](crates/bashkit-eval/) that measures how well LLMs use bashkit as a bash tool in agentic workloads — 58 tasks across 15 categories.
 
+_Latest run: 2026-06-27, on the mira eval framework (58 tasks)._
+
 | Model | Score | Tasks Passed | Tool Call Success | Duration |
 |-------|-------|-------------|-------------------|----------|
-| Claude Opus 4.7 | **98%** | **56/58** | 90% | 22.6 min |
-| Claude Haiku 4.5 | **98%** | 54/58 | 92% | **8.0 min** |
-| Claude Sonnet 4.6 | 94% | 49/58 | 91% | 19.7 min |
-| GPT-5.5 | 93% | 50/58 | 92% | 11.2 min |
-| GPT-5.3-Codex | 93% | 54/58 | 87% | 13.7 min |
+| Claude Opus 4.8 | **95%** | **55/58** | **96%** | 12.8 min |
+| Claude Haiku 4.5 | **95%** | **55/58** | 94% | **7.4 min** |
+| GPT-5.3-Codex | 93% | 54/58 | 85% | 12.1 min |
+| GPT-5.5 | 88% | 51/58 | 90% | 8.2 min |
+| Claude Sonnet 4.6 | 84% | 49/58 | 93% | 19.9 min |
 
-**Delta from 2026-02-28** (same 58 tasks): Opus 4.6→4.7 jumped +6 tasks (50→56), GPT-5.2→5.5 jumped +9 tasks (41→50). Haiku 4.5 ties with Opus 4.7 at 98% in ⅓ the wall-clock time. See the [detailed analysis](crates/bashkit-eval/README.md#results).
+Opus 4.8 and Haiku 4.5 lead at 55/58 — Haiku matches Opus in ~⅗ the wall-clock
+time. Two tasks trip every model (`file_path_organizer`, `script_getopts_parser`).
+See the [detailed analysis](crates/bashkit-eval/README.md#results).
 
 ```bash
 cargo install mira-cli       # one-time: the `mira` host CLI

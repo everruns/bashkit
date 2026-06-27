@@ -5,7 +5,7 @@
 //
 //     mira --bin bashkit-eval list
 //     ANTHROPIC_API_KEY=... mira --bin bashkit-eval run --tag smoke
-//     mira --bin bashkit-eval run --targets 'anthropic/*' --format html --out report.html
+//     mira --bin bashkit-eval run --targets anthropic/claude-opus-4-8 --format html --out report.html
 //
 // The `#[eval]` wrappers live here (in the bin crate) so their inventory
 // registrations are guaranteed to link into this binary; the heavy lifting is

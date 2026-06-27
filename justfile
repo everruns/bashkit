@@ -203,8 +203,9 @@ bench-sqlite:
 eval-list:
     mira --bin bashkit-eval list
 
-# Run the bash agent eval. Pass extra mira flags through, e.g.
-#   just eval --targets 'anthropic/*' --tag json_processing --format html --out report.html
+# Run the bash agent eval. Pass extra mira flags through, e.g. (--targets takes
+# exact labels, comma-separated — globs are not supported):
+#   just eval --targets anthropic/claude-opus-4-8 --tag json_processing --format html --out report.html
 eval *ARGS:
     mira --bin bashkit-eval run bashkit_bash {{ARGS}}
 

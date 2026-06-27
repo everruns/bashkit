@@ -125,7 +125,7 @@ Run through the `mira` host (install via `cargo install mira-cli`):
 ```
 mira --bin bashkit-eval list
 mira --bin bashkit-eval run bashkit_bash
-mira --bin bashkit-eval run bashkit_bash --targets 'anthropic/*' --tag json_processing
+mira --bin bashkit-eval run bashkit_bash --targets anthropic/claude-opus-4-8 --tag json_processing
 mira --bin bashkit-eval run bashkit_scripting --axis mode=scripted
 mira --bin bashkit-eval run --format html --out report.html
 mira --bin bashkit-eval run --resume <run_id>

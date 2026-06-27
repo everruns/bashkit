@@ -22,9 +22,9 @@ mira --bin bashkit-eval list
 ANTHROPIC_API_KEY=... OPENAI_API_KEY=... \
   mira --bin bashkit-eval run bashkit_bash
 
-# Only Anthropic models, only the json_processing category
+# A specific model + one category (--targets takes exact labels, comma-separated)
 ANTHROPIC_API_KEY=... \
-  mira --bin bashkit-eval run bashkit_bash --targets 'anthropic/*' --tag json_processing
+  mira --bin bashkit-eval run bashkit_bash --targets anthropic/claude-opus-4-8 --tag json_processing
 
 # Scripting-tool eval, scripted mode only, self-contained HTML report
 OPENAI_API_KEY=... \
@@ -32,7 +32,7 @@ OPENAI_API_KEY=... \
 
 # Via just
 just eval-list
-just eval --targets 'anthropic/*'
+just eval --targets anthropic/claude-opus-4-8
 just eval-smoke
 just eval-scripting
 ```
@@ -49,7 +49,8 @@ Results are written by mira under `./results/<run_id>/`.
 
 Targets (model matrix) are defined in `src/mira_study.rs` and gated on
 `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`; offline runs skip them all. Select a
-subset with `--targets '<glob>'`.
+subset with `--targets <label>` — **exact** labels, comma-separated (globs are
+not supported), e.g. `--targets anthropic/claude-opus-4-8,openai/gpt-5.5`.
 
 ## Dataset
 
@@ -59,10 +60,39 @@ Smoke test dataset (`data/smoke-test.jsonl`) has 3 tasks for quick verification.
 
 ## Results
 
-> Historical results below were produced by the original (pre-mira) harness and
-> are retained as a record. New runs are reported by mira under `./results/`.
+> Runs from 2026-06-27 onward use the mira eval framework (saved under
+> `results/mira/<run_id>/`). Earlier entries were produced by the original
+> (pre-mira) harness and are retained as a record.
 
-### 2026-05-26 — Opus 4.7 + GPT-5.5 Lineup (58 tasks, latest)
+### 2026-06-27 — mira harness, 5-model lineup (58 tasks, latest)
+
+First full run on the [mira](https://github.com/everruns/mira) framework, model
+lineup refreshed to `claude-opus-4-8` and `claude-haiku-4-5`. Anthropic and
+OpenAI targets were run separately (two run folders under `results/mira/`).
+
+| Metric | Opus 4.8 | Haiku 4.5 | GPT-5.3-Codex | GPT-5.5 | Sonnet 4.6 |
+|--------|----------|-----------|---------------|---------|------------|
+| Tasks passed | **55/58** | **55/58** | 54/58 | 51/58 | 49/58 |
+| Score | **95%** | **95%** | 93% | 88% | 84% |
+| Tool-call success | **96%** | 94% | 85% | 90% | 93% |
+| Tokens (in/out) | 282K / 55K | 388K / 51K | 116K / 57K | 116K / 31K | 412K / 68K |
+| Duration | 12.8 min | **7.4 min** | 12.1 min | 8.2 min | 19.9 min |
+
+#### Highlights
+
+1. **Opus 4.8 and Haiku 4.5 tie at 55/58 (95%)** — Haiku matches Opus in ~⅗ the
+   wall-clock time and ~⅓-fewer reasoning tokens out; the value pick.
+2. **GPT-5.3-Codex at 54/58 (93%)** — strongest OpenAI model, but the lowest
+   tool-call success (85%); GPT-5.5 trails at 51/58 (88%).
+3. **Sonnet 4.6 at 49/58 (84%)** — consistent with prior runs, trips on a wider
+   spread of categories than the flagships.
+4. **Two tasks fail across every model** — `file_path_organizer` and
+   `script_getopts_parser` — plus `script_array_stats` for all three non-Anthropic
+   runs. These also exposed real bashkit gaps (see the filed issues): `ls -d`
+   unimplemented, the awk parser rejecting bracket/pipe constructs, and writes to
+   `$HOME` failing because the user's home directory isn't created.
+
+### 2026-05-26 — Opus 4.7 + GPT-5.5 Lineup (58 tasks, pre-mira)
 
 Refreshed model lineup: upgraded flagships to `claude-opus-4-7` (from 4.6) and
 `gpt-5.5` (from 5.2). Haiku 4.5, Sonnet 4.6, and GPT-5.3-Codex kept as

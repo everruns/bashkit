@@ -36,7 +36,7 @@ pub const MAX_TURNS: usize = 10;
 /// Default model matrix. Each target is gated on its provider's API-key env var,
 /// so an offline run skips them all (CI stays green) and a keyed run lights up
 /// the subset whose credentials are present. Select subsets with
-/// `mira run --targets 'anthropic/*'`.
+/// `mira run --targets anthropic/claude-opus-4-8` (exact labels, comma-separated).
 pub fn default_targets() -> Vec<Target> {
     vec![
         Target::anthropic("claude-opus-4-8"),
