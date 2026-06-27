@@ -1,0 +1,60 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "text_comm_setops",
+  "target": "openai/gpt-5.5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Only Team A:\n```text\nalice\ndave\neve\n```\nCount: 3\n\nOnly Team B:\n```text\nfrank\ngrace\n```\nCount: 2\n\nBoth teams:\n```text\nbob\ncarol\n```\nCount: 2",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "printf 'Only Team A:\\n'\ncomm -23 /data/team_a.txt /data/team_b.txt | tee /tmp/only_a.txt\nprintf 'Count: %s\\n\\n' \"$(wc -l < /tmp/only_a.txt)\"\nprintf 'Only Team B:\\n'\ncomm -13 /data/team_a.txt /data/team_b.txt | tee /tmp/only_b.txt\nprintf 'Count: %s\\n\\n' \"$(wc -l < /tmp/only_b.txt)\"\nprintf 'Both teams:\\n'\ncomm -12 /data/team_a.txt /data/team_b.txt | tee /tmp/both.txt\nprintf 'Count: %s\\n' \"$(wc -l < /tmp/both.txt)\""
+    ],
+    "usage": {
+      "input_tokens": 929,
+      "output_tokens": 267,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 4469
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "printf 'Only Team A:\\n'\ncomm -23 /data/team_a.txt /data/team_b.txt | tee /tmp/only_a.txt\nprintf 'Count: %s\\n\\n' \"$(wc -l < /tmp/only_a.txt)\"\nprintf 'Only Team B:\\n'\ncomm -13 /data/team_a.txt /data/team_b.txt | tee /tmp/only_b.txt\nprintf 'Count: %s\\n\\n' \"$(wc -l < /tmp/only_b.txt)\"\nprintf 'Both teams:\\n'\ncomm -12 /data/team_a.txt /data/team_b.txt | tee /tmp/both.txt\nprintf 'Count: %s\\n' \"$(wc -l < /tmp/both.txt)\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Only Team A:\nalice\ndave\neve\nCount: 3\n\nOnly Team B:\nfrank\ngrace\nCount: 2\n\nBoth teams:\nbob\ncarol\nCount: 2\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,60 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_api_pagination",
+  "target": "anthropic/claude-sonnet-4-6",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Here are the details from `/data/response.json`:\n\n- **Current Page:** 2\n- **Total Count:** 15\n- **Item IDs:**\n  - 201\n  - 202\n  - 203\n\n### Breakdown\n| Field | Value |\n|---|---|\n| `page` | 2 |\n| `per_page` | 3 |\n| `total` | 15 |\n| Item IDs | 201, 202, 203 |\n\nThe response is page **2** of a paginated dataset with **15** total items (5 pages at 3 items per page). This page contains **3 items** with IDs **201**, **202**, and **203**.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "cat /data/response.json"
+    ],
+    "usage": {
+      "input_tokens": 1622,
+      "output_tokens": 225,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5021
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat /data/response.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\"page\":2,\"per_page\":3,\"total\":15,\"items\":[{\"id\":201,\"name\":\"alpha\",\"status\":\"active\"},{\"id\":202,\"name\":\"beta\",\"status\":\"inactive\"},{\"id\":203,\"name\":\"gamma\",\"status\":\"active\"}]}"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

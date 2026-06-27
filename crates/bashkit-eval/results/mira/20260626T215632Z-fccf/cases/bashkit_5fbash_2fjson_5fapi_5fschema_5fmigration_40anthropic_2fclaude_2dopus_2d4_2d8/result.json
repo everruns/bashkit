@@ -1,0 +1,74 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_api_schema_migration",
+  "target": "anthropic/claude-opus-4-8",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The transformation is complete. I read `/data/users_v1.json`, transformed each record to v2 format, and saved the result to `/data/users_v2.json`.\n\n**Transformations applied per record:**\n- **`fullName`** — combined `firstName` + `lastName` (space-separated), e.g. `\"Alice\" + \"Smith\"` → `\"Alice Smith\"`\n- **`email`** — renamed from `emailAddress`\n- **`location`** — extracted `city` from the nested `address` object up to top level\n- **`migrated`** — added as a boolean set to `true`\n- **`id`** — kept as-is\n\n**Result (`/data/users_v2.json`):**\n```json\n[\n  { \"id\": 1, \"fullName\": \"Alice Smith\", \"email\": \"alice@example.com\", \"location\": \"Seattle\", \"migrated\": true },\n  { \"id\": 2, \"fullName\": \"Bob Jones\",   \"email\": \"bob@example.com\",   \"location\": \"Portland\", \"migrated\": true },\n  { \"id\": 3, \"fullName\": \"Carol Davis\", \"email\": \"carol@example.com\", \"location\": \"Denver\",   \"migrated\": true }\n]\n```\n\nAll 3 user records were migrated successfully, and the discarded fields (`street`, `state`, and the original `firstName`/`lastName`/`emailAddress`/`address`) were dropped as intended.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "cat /data/users_v1.json",
+      "which jq node 2>/dev/null; echo \"---\"; jq --version 2>/dev/null || echo \"no jq\"",
+      "jq '[.[] | {\n  id: .id,\n  fullName: (.firstName + \" \" + .lastName),\n  email: .emailAddress,\n  location: .address.city,\n  migrated: true\n}]' /data/users_v1.json > /data/users_v2.json\n\necho \"=== /data/users_v2.json ===\"\ncat /data/users_v2.json"
+    ],
+    "usage": {
+      "input_tokens": 4502,
+      "output_tokens": 793,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 10861
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat /data/users_v1.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[{\"id\":1,\"firstName\":\"Alice\",\"lastName\":\"Smith\",\"emailAddress\":\"alice@example.com\",\"address\":{\"street\":\"123 Main St\",\"city\":\"Seattle\",\"state\":\"WA\"}},{\"id\":2,\"firstName\":\"Bob\",\"lastName\":\"Jones\",\"emailAddress\":\"bob@example.com\",\"address\":{\"street\":\"456 Oak Ave\",\"city\":\"Portland\",\"state\":\"OR\"}},{\"id\":3,\"firstName\":\"Carol\",\"lastName\":\"Davis\",\"emailAddress\":\"carol@example.com\",\"address\":{\"street\":\"789 Pine Rd\",\"city\":\"Denver\",\"state\":\"CO\"}}]"
+          },
+          {
+            "commands": "which jq node 2>/dev/null; echo \"---\"; jq --version 2>/dev/null || echo \"no jq\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "jq\n---\njq-1.8\n"
+          },
+          {
+            "commands": "jq '[.[] | {\n  id: .id,\n  fullName: (.firstName + \" \" + .lastName),\n  email: .emailAddress,\n  location: .address.city,\n  migrated: true\n}]' /data/users_v1.json > /data/users_v2.json\n\necho \"=== /data/users_v2.json ===\"\ncat /data/users_v2.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== /data/users_v2.json ===\n[\n  {\n    \"id\": 1,\n    \"fullName\": \"Alice Smith\",\n    \"email\": \"alice@example.com\",\n    \"location\": \"Seattle\",\n    \"migrated\": true\n  },\n  {\n    \"id\": 2,\n    \"fullName\": \"Bob Jones\",\n    \"email\": \"bob@example.com\",\n    \"location\": \"Portland\",\n    \"migrated\": true\n  },\n  {\n    \"id\": 3,\n    \"fullName\": \"Carol Davis\",\n    \"email\": \"carol@example.com\",\n    \"location\": \"Denver\",\n    \"migrated\": true\n  }\n]\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

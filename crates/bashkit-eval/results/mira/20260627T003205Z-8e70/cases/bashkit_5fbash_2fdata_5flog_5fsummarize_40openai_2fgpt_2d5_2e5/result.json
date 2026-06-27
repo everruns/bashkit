@@ -1,0 +1,61 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_log_summarize",
+  "target": "openai/gpt-5.5",
+  "passed": false,
+  "aggregate": 0.5714285714285714,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 0.5714285714285714,
+      "pass": false,
+      "reason": "4/7 checks passed (weighted rate 57%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "INFO: 0\nWARN: 0\nERROR: 0",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "if [[ -r /var/log/app.log ]]; then\n  awk '{c[$1]++} END {print \"INFO: \" (c[\"INFO\"]+0); print \"WARN: \" (c[\"WARN\"]+0); print \"ERROR: \" (c[\"ERROR\"]+0)}' /var/log/app.log\nelse\n  echo 'Cannot read /var/log/app.log' >&2\n  exit 1\nfi"
+    ],
+    "usage": {
+      "input_tokens": 725,
+      "output_tokens": 143,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3302
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp",
+          "/var",
+          "/var/log"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "if [[ -r /var/log/app.log ]]; then\n  awk '{c[$1]++} END {print \"INFO: \" (c[\"INFO\"]+0); print \"WARN: \" (c[\"WARN\"]+0); print \"ERROR: \" (c[\"ERROR\"]+0)}' /var/log/app.log\nelse\n  echo 'Cannot read /var/log/app.log' >&2\n  exit 1\nfi",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "INFO: 0\nWARN: 0\nERROR: 0\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

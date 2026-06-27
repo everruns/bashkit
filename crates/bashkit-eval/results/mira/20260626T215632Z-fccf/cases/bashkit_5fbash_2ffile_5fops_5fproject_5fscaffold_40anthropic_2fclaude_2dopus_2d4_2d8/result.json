@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "file_ops_project_scaffold",
+  "target": "anthropic/claude-opus-4-8",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The Python project has been created successfully at `/home/eval/myproject` with the requested structure:\n\n```\nmyproject/\n├── README.md          # contains '# My Project'\n├── src/\n│   └── __init__.py\n├── tests/\n│   └── __init__.py\n└── docs/\n```\n\nEverything is in place:\n- **`src/`** directory with `__init__.py`\n- **`tests/`** directory with `__init__.py`\n- **`docs/`** directory (empty)\n- **`README.md`** at the project root containing the text `# My Project`",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "mkdir -p /home/eval/myproject/src /home/eval/myproject/tests /home/eval/myproject/docs\ntouch /home/eval/myproject/src/__init__.py\ntouch /home/eval/myproject/tests/__init__.py\necho '# My Project' > /home/eval/myproject/README.md\n\n# Verify the structure\necho \"=== Directory structure ===\"\nfind /home/eval/myproject -print | sort\necho \"\"\necho \"=== README.md contents ===\"\ncat /home/eval/myproject/README.md"
+    ],
+    "usage": {
+      "input_tokens": 1719,
+      "output_tokens": 414,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5602
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/eval",
+          "/home/eval/myproject",
+          "/home/eval/myproject/docs",
+          "/home/eval/myproject/src",
+          "/home/eval/myproject/tests",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /home/eval/myproject/src /home/eval/myproject/tests /home/eval/myproject/docs\ntouch /home/eval/myproject/src/__init__.py\ntouch /home/eval/myproject/tests/__init__.py\necho '# My Project' > /home/eval/myproject/README.md\n\n# Verify the structure\necho \"=== Directory structure ===\"\nfind /home/eval/myproject -print | sort\necho \"\"\necho \"=== README.md contents ===\"\ncat /home/eval/myproject/README.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== Directory structure ===\n/home/eval/myproject\n/home/eval/myproject/README.md\n/home/eval/myproject/docs\n/home/eval/myproject/src\n/home/eval/myproject/src/__init__.py\n/home/eval/myproject/tests\n/home/eval/myproject/tests/__init__.py\n\n=== README.md contents ===\n# My Project\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

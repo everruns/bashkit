@@ -1,0 +1,67 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "search_find_replace",
+  "target": "openai/gpt-5.5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "/src/app.js: 1 replacements  \n/src/index.js: 2 replacements  \n/src/middleware.js: 2 replacements  \nFiles modified: 3",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "total=0\nif [ -d /src ]; then\n  while IFS= read -r -d '' file; do\n    count=$(grep -oF 'console.log' \"$file\" | wc -l)\n    count=${count//[[:space:]]/}\n    if [ \"$count\" -gt 0 ]; then\n      sed -i 's/console\\.log/logger.info/g' \"$file\"\n      printf '%s: %s replacements\\n' \"$file\" \"$count\"\n      total=$((total + 1))\n    fi\n  done < <(find /src -type f -name '*.js' -print0)\nfi\nprintf 'Files modified: %d\\n' \"$total\"",
+      "tmp=$(mktemp)\n: > \"$tmp\"\nif [ -d /src ]; then\n  find /src -type f -name '*.js' -exec bash -c '\n    for file do\n      count=$(grep -oF \"console.log\" \"$file\" | wc -l)\n      count=${count//[[:space:]]/}\n      if (( count > 0 )); then\n        sed -i \"s/console\\.log/logger.info/g\" \"$file\"\n        printf \"%s: %d replacements\\n\" \"$file\" \"$count\"\n      fi\n    done\n  ' _ {} + | tee \"$tmp\"\nfi\nn=$(wc -l < \"$tmp\")\nn=${n//[[:space:]]/}\nrm -f \"$tmp\"\nprintf 'Files modified: %d\\n' \"$n\""
+    ],
+    "usage": {
+      "input_tokens": 1724,
+      "output_tokens": 1338,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 18791
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/src",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "total=0\nif [ -d /src ]; then\n  while IFS= read -r -d '' file; do\n    count=$(grep -oF 'console.log' \"$file\" | wc -l)\n    count=${count//[[:space:]]/}\n    if [ \"$count\" -gt 0 ]; then\n      sed -i 's/console\\.log/logger.info/g' \"$file\"\n      printf '%s: %s replacements\\n' \"$file\" \"$count\"\n      total=$((total + 1))\n    fi\n  done < <(find /src -type f -name '*.js' -print0)\nfi\nprintf 'Files modified: %d\\n' \"$total\"",
+            "exit_code": 0,
+            "stderr": "sed: /src/app.js\u0000/src/index.js\u0000/src/middleware.js\u0000/src/utils.js\u0000: io error: unsafe character U+0000 in path component 'app.js\u0000'\n",
+            "stdout": "/src/app.js\u0000/src/index.js\u0000/src/middleware.js\u0000/src/utils.js\u0000: 1 replacements\nFiles modified: 1\n"
+          },
+          {
+            "commands": "tmp=$(mktemp)\n: > \"$tmp\"\nif [ -d /src ]; then\n  find /src -type f -name '*.js' -exec bash -c '\n    for file do\n      count=$(grep -oF \"console.log\" \"$file\" | wc -l)\n      count=${count//[[:space:]]/}\n      if (( count > 0 )); then\n        sed -i \"s/console\\.log/logger.info/g\" \"$file\"\n        printf \"%s: %d replacements\\n\" \"$file\" \"$count\"\n      fi\n    done\n  ' _ {} + | tee \"$tmp\"\nfi\nn=$(wc -l < \"$tmp\")\nn=${n//[[:space:]]/}\nrm -f \"$tmp\"\nprintf 'Files modified: %d\\n' \"$n\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/src/app.js: 1 replacements\n/src/index.js: 2 replacements\n/src/middleware.js: 2 replacements\nFiles modified: 3\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

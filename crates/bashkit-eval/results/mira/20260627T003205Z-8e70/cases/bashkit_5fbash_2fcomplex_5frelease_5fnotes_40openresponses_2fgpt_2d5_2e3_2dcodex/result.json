@@ -1,0 +1,61 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_release_notes",
+  "target": "openresponses/gpt-5.3-codex",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Generated `/release/CHANGELOG.md`:\n\n## Features\n- auth: add OAuth2 support\n- ui: dark mode toggle\n- api: add pagination support\n- db: add connection pooling\n\n## Bug Fixes\n- api: handle null response body\n- auth: token refresh race condition\n- ui: button alignment on mobile\n- api: correct status code for 404\n\n## Other\n- deps: update lodash to 4.17.21\n- readme: update install instructions",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "mkdir -p /release\nawk '\nBEGIN { feat_n=0; fix_n=0; oth_n=0 }\n{\n  if (match($0, /^([^()]+)\\(([^)]*)\\):[[:space:]]*(.*)$/, m)) {\n    type = m[1];\n    scope = m[2];\n    msg = m[3];\n    item = \"- \" scope \": \" msg;\n\n    if (type == \"feat\") {\n      feat[++feat_n] = item;\n    } else if (type == \"fix\") {\n      fix[++fix_n] = item;\n    } else {\n      oth[++oth_n] = item;\n    }\n  }\n}\nEND {\n  print \"## Features\";\n  for (i = 1; i <= feat_n; i++) print feat[i];\n  print \"\";\n\n  print \"## Bug Fixes\";\n  for (i = 1; i <= fix_n; i++) print fix[i];\n  print \"\";\n\n  print \"## Other\";\n  for (i = 1; i <= oth_n; i++) print oth[i];\n}\n' /data/commits.log > /release/CHANGELOG.md\n\ncat /release/CHANGELOG.md"
+    ],
+    "usage": {
+      "input_tokens": 971,
+      "output_tokens": 884,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 8622
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/release",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /release\nawk '\nBEGIN { feat_n=0; fix_n=0; oth_n=0 }\n{\n  if (match($0, /^([^()]+)\\(([^)]*)\\):[[:space:]]*(.*)$/, m)) {\n    type = m[1];\n    scope = m[2];\n    msg = m[3];\n    item = \"- \" scope \": \" msg;\n\n    if (type == \"feat\") {\n      feat[++feat_n] = item;\n    } else if (type == \"fix\") {\n      fix[++fix_n] = item;\n    } else {\n      oth[++oth_n] = item;\n    }\n  }\n}\nEND {\n  print \"## Features\";\n  for (i = 1; i <= feat_n; i++) print feat[i];\n  print \"\";\n\n  print \"## Bug Fixes\";\n  for (i = 1; i <= fix_n; i++) print fix[i];\n  print \"\";\n\n  print \"## Other\";\n  for (i = 1; i <= oth_n; i++) print oth[i];\n}\n' /data/commits.log > /release/CHANGELOG.md\n\ncat /release/CHANGELOG.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "## Features\n- auth: add OAuth2 support\n- ui: dark mode toggle\n- api: add pagination support\n- db: add connection pooling\n\n## Bug Fixes\n- api: handle null response body\n- auth: token refresh race condition\n- ui: button alignment on mobile\n- api: correct status code for 404\n\n## Other\n- deps: update lodash to 4.17.21\n- readme: update install instructions\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

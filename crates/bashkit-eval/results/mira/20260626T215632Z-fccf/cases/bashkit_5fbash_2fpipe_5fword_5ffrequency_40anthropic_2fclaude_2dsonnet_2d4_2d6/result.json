@@ -1,0 +1,67 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "pipe_word_frequency",
+  "target": "anthropic/claude-sonnet-4-6",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Here are the **3 most frequently used words** in `/data/poem.txt`:\n\n| Word | Count |\n|------|-------|\n| `the` | 8 |\n| `on` | 3 |\n| `cat` | 2 |\n\n**How it works:**\n1. `tr ' ' '\\n'` — splits each word onto its own line\n2. `sort | uniq -c` — sorts and counts unique occurrences\n3. `sort -rn` — sorts by count in descending order\n4. `head -3` — takes the top 3\n5. `awk '{print $2, $1}'` — reorders output to `word count`",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /data/poem.txt",
+      "tr ' ' '\\n' < /data/poem.txt | tr -d '\\r' | sort | uniq -c | sort -rn | head -3 | awk '{print $2, $1}'"
+    ],
+    "usage": {
+      "input_tokens": 2552,
+      "output_tokens": 319,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7163
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat /data/poem.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "the cat sat on the mat\nthe cat in the hat\nthe dog on the log\nthe frog on the bog\n"
+          },
+          {
+            "commands": "tr ' ' '\\n' < /data/poem.txt | tr -d '\\r' | sort | uniq -c | sort -rn | head -3 | awk '{print $2, $1}'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "the 8\non 3\ncat 2\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

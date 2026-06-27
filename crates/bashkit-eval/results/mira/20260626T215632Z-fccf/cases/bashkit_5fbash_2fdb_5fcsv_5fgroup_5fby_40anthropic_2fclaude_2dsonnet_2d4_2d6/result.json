@@ -1,0 +1,74 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "db_csv_group_by",
+  "target": "anthropic/claude-sonnet-4-6",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Here are the **total sales per region**, sorted by total descending:\n\n| Region | Total Amount |\n|--------|-------------|\n| north  | 850         |\n| south  | 750         |\n| east   | 650         |\n\n---\n\n**How it works (pipeline breakdown):**\n\n1. **`awk -F',' 'NR>1 { totals[$1] += $3 }'`**\n   - Splits each line on `,`\n   - Skips the header row (`NR>1`)\n   - Uses an associative array `totals` keyed by `region` (`$1`), accumulating the `amount` (`$3`) — equivalent to `GROUP BY region, SUM(amount)`\n\n2. **`END { for (r in totals) print totals[r], r }`**\n   - After all rows are processed, prints `total region` for each group\n\n3. **`sort -rn`**\n   - Sorts numerically (`-n`) in reverse/descending order (`-r`) by the first field (total)\n\n4. **`awk '{ print $2 \": \" $1 }'`**\n   - Reformats output to `region: total`",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "cat /data/sales.csv",
+      "awk -F',' '\n  NR > 1 {\n    region[tolower($1)] += $3\n  }\n  END {\n    for (r in region)\n      print region[r], r\n  }\n' /data/sales.csv | sort -rn | awk '{ print $2 \": \" $1 }'",
+      "awk -F',' 'NR>1 { totals[$1] += $3 } END { for (r in totals) print totals[r], r }' /data/sales.csv \\\n  | sort -rn \\\n  | awk '{ print $2 \": \" $1 }'"
+    ],
+    "usage": {
+      "input_tokens": 4042,
+      "output_tokens": 653,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 13744
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 2.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat /data/sales.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "region,product,amount\nnorth,widgets,500\nsouth,gadgets,300\nnorth,bolts,200\neast,widgets,400\nsouth,widgets,350\nnorth,gadgets,150\neast,bolts,250\nsouth,bolts,100\n"
+          },
+          {
+            "commands": "awk -F',' '\n  NR > 1 {\n    region[tolower($1)] += $3\n  }\n  END {\n    for (r in region)\n      print region[r], r\n  }\n' /data/sales.csv | sort -rn | awk '{ print $2 \": \" $1 }'",
+            "exit_code": 1,
+            "stderr": "execution error: awk: unexpected character: ;",
+            "stdout": ""
+          },
+          {
+            "commands": "awk -F',' 'NR>1 { totals[$1] += $3 } END { for (r in totals) print totals[r], r }' /data/sales.csv \\\n  | sort -rn \\\n  | awk '{ print $2 \": \" $1 }'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "north: 850\nsouth: 750\neast: 650\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

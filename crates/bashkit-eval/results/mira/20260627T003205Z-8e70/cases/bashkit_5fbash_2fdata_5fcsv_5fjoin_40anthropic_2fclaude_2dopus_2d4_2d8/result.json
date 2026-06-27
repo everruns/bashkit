@@ -1,0 +1,19 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_csv_join",
+  "target": "anthropic/claude-opus-4-8",
+  "passed": false,
+  "aggregate": 0.0,
+  "scores": [],
+  "transcript": {
+    "final_response": "",
+    "iterations": 0,
+    "tool_calls_count": 0,
+    "usage": {
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": 0.0
+    }
+  },
+  "skipped": true
+}

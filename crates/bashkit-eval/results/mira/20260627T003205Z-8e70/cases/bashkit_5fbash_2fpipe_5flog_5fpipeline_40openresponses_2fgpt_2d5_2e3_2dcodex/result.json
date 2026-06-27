@@ -1,0 +1,61 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "pipe_log_pipeline",
+  "target": "openresponses/gpt-5.3-codex",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "3/3 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "/api/items 4\n/api/users 4\n/api/health 2",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "if [ -f /var/log/access.log ]; then awk '{c[$2]++} END {for (u in c) print u, c[u]}' /var/log/access.log | sort -k2,2nr -k1,1 | head -n 3; else echo 'FILE_NOT_FOUND'; fi"
+    ],
+    "usage": {
+      "input_tokens": 555,
+      "output_tokens": 186,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3098
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp",
+          "/var",
+          "/var/log"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "if [ -f /var/log/access.log ]; then awk '{c[$2]++} END {for (u in c) print u, c[u]}' /var/log/access.log | sort -k2,2nr -k1,1 | head -n 3; else echo 'FILE_NOT_FOUND'; fi",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/api/items 4\n/api/users 4\n/api/health 2\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

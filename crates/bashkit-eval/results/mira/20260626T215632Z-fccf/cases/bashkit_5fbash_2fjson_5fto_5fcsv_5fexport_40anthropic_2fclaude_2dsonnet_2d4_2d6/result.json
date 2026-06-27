@@ -1,0 +1,67 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_to_csv_export",
+  "target": "anthropic/claude-sonnet-4-6",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Here's what was done and how it works:\n\n**Command breakdown (`jq`):**\n| Part | Purpose |\n|---|---|\n| `[\"name\",\"department\",\"salary\"]` | Emits the header row as an array |\n| `.[] \\| [.name, .department, (.salary \\| tostring)]` | Iterates each object and builds a value array per row; `tostring` converts the numeric salary to a string |\n| `join(\",\")` | Joins each array into a comma-separated string |\n| `-r` (raw output) | Prints plain strings without JSON quoting |\n| `tee /data/employees.csv` | Writes to the file **and** prints to stdout simultaneously |\n\n**Result saved to `/data/employees.csv`:**\n```\nname,department,salary\nAlice Chen,Engineering,120000\nBob Park,Marketing,95000\nCarol Wu,Engineering,115000\nDave Kim,Sales,88000\n```",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /data/employees.json",
+      "jq -r '\n  [\"name\",\"department\",\"salary\"],\n  (.[] | [.name, .department, (.salary | tostring)])\n  | join(\",\")\n' /data/employees.json | tee /data/employees.csv"
+    ],
+    "usage": {
+      "input_tokens": 2762,
+      "output_tokens": 403,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 9509
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat /data/employees.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[{\"name\":\"Alice Chen\",\"department\":\"Engineering\",\"salary\":120000},{\"name\":\"Bob Park\",\"department\":\"Marketing\",\"salary\":95000},{\"name\":\"Carol Wu\",\"department\":\"Engineering\",\"salary\":115000},{\"name\":\"Dave Kim\",\"department\":\"Sales\",\"salary\":88000}]"
+          },
+          {
+            "commands": "jq -r '\n  [\"name\",\"department\",\"salary\"],\n  (.[] | [.name, .department, (.salary | tostring)])\n  | join(\",\")\n' /data/employees.json | tee /data/employees.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name,department,salary\nAlice Chen,Engineering,120000\nBob Park,Marketing,95000\nCarol Wu,Engineering,115000\nDave Kim,Sales,88000\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

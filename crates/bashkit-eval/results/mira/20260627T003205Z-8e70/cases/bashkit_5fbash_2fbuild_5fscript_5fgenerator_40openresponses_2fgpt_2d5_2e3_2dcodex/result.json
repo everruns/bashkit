@@ -1,0 +1,69 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "build_script_generator",
+  "target": "openresponses/gpt-5.3-codex",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done.\n\nI read `/project/deps.txt`, generated `/project/build.sh`, ran it, and it built targets in dependency order by creating files in `/project/out/` with the required contents.\n\n**Build order:**\n`core lib utils app`\n\nThe output files created were:\n- `/project/out/core` → `built: core`\n- `/project/out/lib` → `built: lib`\n- `/project/out/utils` → `built: utils`\n- `/project/out/app` → `built: app`",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -l /project && echo '---' && cat /project/deps.txt",
+      "cat > /project/build.sh <<'EOF'\n#!/usr/bin/env bash\nset -euo pipefail\n\nDEPS_FILE=\"/project/deps.txt\"\nOUT_DIR=\"/project/out\"\n\ntrim() {\n  local s=\"$1\"\n  s=\"${s#\"${s%%[![:space:]]*}\"}\"\n  s=\"${s%\"${s##*[![:space:]]}\"}\"\n  printf '%s' \"$s\"\n}\n\ndeclare -A deps_map\n\ndeclare -a declared_targets\n\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"${line//[[:space:]]/}\" ]] && continue\n\n  local_target=\"${line%%:*}\"\n  local_deps=\"${line#*:}\"\n\n  local_target=\"$(trim \"$local_target\")\"\n  local_deps=\"$(trim \"$local_deps\")\"\n\n  declared_targets+=(\"$local_target\")\n  deps_map[\"$local_target\"]=\"$local_deps\"\ndone < \"$DEPS_FILE\"\n\ndeclare -A visiting\n\ndeclare -A visited\n\ndeclare -a build_order\n\nvisit() {\n  local node=\"$1\"\n\n  if [[ -n \"${visited[$node]+x}\" ]]; then\n    return\n  fi\n\n  if [[ -n \"${visiting[$node]+x}\" ]]; then\n    echo \"Error: cycle detected involving target '$node'\" >&2\n    exit 1\n  fi\n\n  visiting[\"$node\"]=1\n\n  local dep\n  for dep in ${deps_map[$node]-}; do\n    visit \"$dep\"\n  done\n\n  unset 'visiting[$node]'\n  visited[\"$node\"]=1\n  build_order+=(\"$node\")\n}\n\nfor target in \"${declared_targets[@]}\"; do\n  visit \"$target\"\ndone\n\nmkdir -p \"$OUT_DIR\"\n\nfor target in \"${build_order[@]}\"; do\n  printf 'built: %s\\n' \"$target\" > \"$OUT_DIR/$target\"\ndone\n\necho \"Build order: ${build_order[*]}\"\nEOF\n\nchmod +x /project/build.sh\n/project/build.sh\n\necho '--- out files ---'\nls -1 /project/out\n\necho '--- sample contents ---'\nfor f in /project/out/*; do echo \"$(basename \"$f\"): $(cat \"$f\")\"; done"
+    ],
+    "usage": {
+      "input_tokens": 1633,
+      "output_tokens": 1643,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 32177
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/project",
+          "/project/out",
+          "/project/src",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "ls -l /project && echo '---' && cat /project/deps.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       43 2026-07-12 00:34 deps.txt\ndrwxr-xr-x        0 2026-07-12 00:34 src\n---\napp: lib utils\nlib: core\nutils: core\ncore:\n"
+          },
+          {
+            "commands": "cat > /project/build.sh <<'EOF'\n#!/usr/bin/env bash\nset -euo pipefail\n\nDEPS_FILE=\"/project/deps.txt\"\nOUT_DIR=\"/project/out\"\n\ntrim() {\n  local s=\"$1\"\n  s=\"${s#\"${s%%[![:space:]]*}\"}\"\n  s=\"${s%\"${s##*[![:space:]]}\"}\"\n  printf '%s' \"$s\"\n}\n\ndeclare -A deps_map\n\ndeclare -a declared_targets\n\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"${line//[[:space:]]/}\" ]] && continue\n\n  local_target=\"${line%%:*}\"\n  local_deps=\"${line#*:}\"\n\n  local_target=\"$(trim \"$local_target\")\"\n  local_deps=\"$(trim \"$local_deps\")\"\n\n  declared_targets+=(\"$local_target\")\n  deps_map[\"$local_target\"]=\"$local_deps\"\ndone < \"$DEPS_FILE\"\n\ndeclare -A visiting\n\ndeclare -A visited\n\ndeclare -a build_order\n\nvisit() {\n  local node=\"$1\"\n\n  if [[ -n \"${visited[$node]+x}\" ]]; then\n    return\n  fi\n\n  if [[ -n \"${visiting[$node]+x}\" ]]; then\n    echo \"Error: cycle detected involving target '$node'\" >&2\n    exit 1\n  fi\n\n  visiting[\"$node\"]=1\n\n  local dep\n  for dep in ${deps_map[$node]-}; do\n    visit \"$dep\"\n  done\n\n  unset 'visiting[$node]'\n  visited[\"$node\"]=1\n  build_order+=(\"$node\")\n}\n\nfor target in \"${declared_targets[@]}\"; do\n  visit \"$target\"\ndone\n\nmkdir -p \"$OUT_DIR\"\n\nfor target in \"${build_order[@]}\"; do\n  printf 'built: %s\\n' \"$target\" > \"$OUT_DIR/$target\"\ndone\n\necho \"Build order: ${build_order[*]}\"\nEOF\n\nchmod +x /project/build.sh\n/project/build.sh\n\necho '--- out files ---'\nls -1 /project/out\n\necho '--- sample contents ---'\nfor f in /project/out/*; do echo \"$(basename \"$f\"): $(cat \"$f\")\"; done",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Build order: core lib utils app\n--- out files ---\napp\ncore\nlib\nutils\n--- sample contents ---\napp: built: app\ncore: built: core\nlib: built: lib\nutils: built: utils\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

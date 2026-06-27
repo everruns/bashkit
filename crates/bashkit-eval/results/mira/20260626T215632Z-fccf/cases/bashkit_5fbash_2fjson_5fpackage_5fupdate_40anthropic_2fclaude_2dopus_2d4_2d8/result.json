@@ -1,0 +1,88 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_package_update",
+  "target": "anthropic/claude-opus-4-8",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "All three changes have been applied to `/app/package.json` and saved successfully:\n\n| Field | Before | After |\n|-------|--------|-------|\n| `version` | `1.2.3` | `2.0.0` |\n| `main` | `src/index.js` | `dist/index.js` |\n| `dependencies.lodash` | *(absent)* | `^4.17.21` |\n\nThe final, formatted contents of `/app/package.json`:\n\n```json\n{\n  \"dependencies\": {\n    \"cors\": \"^2.8.5\",\n    \"express\": \"^4.18.0\",\n    \"lodash\": \"^4.17.21\"\n  },\n  \"devDependencies\": {\n    \"jest\": \"^29.0.0\",\n    \"typescript\": \"^5.0.0\"\n  },\n  \"main\": \"dist/index.js\",\n  \"name\": \"my-service\",\n  \"scripts\": {\n    \"build\": \"tsc\",\n    \"test\": \"jest\"\n  },\n  \"version\": \"2.0.0\"\n}\n```\n\n**One note:** the sandbox only had `jq` (no `node`/`python`/`perl`), and this `jq` 1.8 build alphabetizes object keys by default. The JSON is valid and all values are correct — only the key ordering differs cosmetically from the original. If preserving the exact original key order matters for your tooling, let me know and I can reorder the keys for you.",
+    "iterations": 6,
+    "tool_calls_count": 5,
+    "tool_calls": [
+      "cat /app/package.json",
+      "which node jq 2>/dev/null; echo \"---\"; node --version 2>/dev/null; jq --version 2>/dev/null",
+      "cd /app\njq '.version = \"2.0.0\"\n    | .main = \"dist/index.js\"\n    | .dependencies.lodash = \"^4.17.21\"' package.json > package.json.tmp \\\n  && mv package.json.tmp package.json\necho \"=== Updated /app/package.json ===\"\ncat package.json",
+      "cd /app\n# Re-derive from a preserved-order perspective using jq's --sort-keys disabled (default keeps insertion order)\n# Reconstruct keeping original ordering: name, version, main, scripts, dependencies, devDependencies\ncat > package.json <<'EOF'\n{\"name\":\"my-service\",\"version\":\"1.2.3\",\"main\":\"src/index.js\",\"scripts\":{\"build\":\"tsc\",\"test\":\"jest\"},\"dependencies\":{\"express\":\"^4.18.0\",\"cors\":\"^2.8.5\"},\"devDependencies\":{\"typescript\":\"^5.0.0\",\"jest\":\"^29.0.0\"}}\nEOF\n\njq '.version = \"2.0.0\" | .main = \"dist/index.js\" | .dependencies.lodash = \"^4.17.21\"' package.json > package.json.tmp \\\n  && mv package.json.tmp package.json\necho \"=== Final /app/package.json (original key order preserved) ===\"\ncat package.json",
+      "cd /app\necho \"version:  $(jq -r .version package.json)\"\necho \"main:     $(jq -r .main package.json)\"\necho \"lodash:   $(jq -r .dependencies.lodash package.json)\""
+    ],
+    "usage": {
+      "input_tokens": 8412,
+      "output_tokens": 1416,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 18740
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 5.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 5.0,
+      "turns": 6.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/app",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat /app/package.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\"name\":\"my-service\",\"version\":\"1.2.3\",\"main\":\"src/index.js\",\"scripts\":{\"build\":\"tsc\",\"test\":\"jest\"},\"dependencies\":{\"express\":\"^4.18.0\",\"cors\":\"^2.8.5\"},\"devDependencies\":{\"typescript\":\"^5.0.0\",\"jest\":\"^29.0.0\"}}"
+          },
+          {
+            "commands": "which node jq 2>/dev/null; echo \"---\"; node --version 2>/dev/null; jq --version 2>/dev/null",
+            "exit_code": 0,
+            "stderr": "bash: node: command not found. Compilers and build tools are not available in the sandbox.",
+            "stdout": "jq\n---\njq-1.8\n"
+          },
+          {
+            "commands": "cd /app\njq '.version = \"2.0.0\"\n    | .main = \"dist/index.js\"\n    | .dependencies.lodash = \"^4.17.21\"' package.json > package.json.tmp \\\n  && mv package.json.tmp package.json\necho \"=== Updated /app/package.json ===\"\ncat package.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== Updated /app/package.json ===\n{\n  \"dependencies\": {\n    \"cors\": \"^2.8.5\",\n    \"express\": \"^4.18.0\",\n    \"lodash\": \"^4.17.21\"\n  },\n  \"devDependencies\": {\n    \"jest\": \"^29.0.0\",\n    \"typescript\": \"^5.0.0\"\n  },\n  \"main\": \"dist/index.js\",\n  \"name\": \"my-service\",\n  \"scripts\": {\n    \"build\": \"tsc\",\n    \"test\": \"jest\"\n  },\n  \"version\": \"2.0.0\"\n}\n"
+          },
+          {
+            "commands": "cd /app\n# Re-derive from a preserved-order perspective using jq's --sort-keys disabled (default keeps insertion order)\n# Reconstruct keeping original ordering: name, version, main, scripts, dependencies, devDependencies\ncat > package.json <<'EOF'\n{\"name\":\"my-service\",\"version\":\"1.2.3\",\"main\":\"src/index.js\",\"scripts\":{\"build\":\"tsc\",\"test\":\"jest\"},\"dependencies\":{\"express\":\"^4.18.0\",\"cors\":\"^2.8.5\"},\"devDependencies\":{\"typescript\":\"^5.0.0\",\"jest\":\"^29.0.0\"}}\nEOF\n\njq '.version = \"2.0.0\" | .main = \"dist/index.js\" | .dependencies.lodash = \"^4.17.21\"' package.json > package.json.tmp \\\n  && mv package.json.tmp package.json\necho \"=== Final /app/package.json (original key order preserved) ===\"\ncat package.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== Final /app/package.json (original key order preserved) ===\n{\n  \"dependencies\": {\n    \"cors\": \"^2.8.5\",\n    \"express\": \"^4.18.0\",\n    \"lodash\": \"^4.17.21\"\n  },\n  \"devDependencies\": {\n    \"jest\": \"^29.0.0\",\n    \"typescript\": \"^5.0.0\"\n  },\n  \"main\": \"dist/index.js\",\n  \"name\": \"my-service\",\n  \"scripts\": {\n    \"build\": \"tsc\",\n    \"test\": \"jest\"\n  },\n  \"version\": \"2.0.0\"\n}\n"
+          },
+          {
+            "commands": "cd /app\necho \"version:  $(jq -r .version package.json)\"\necho \"main:     $(jq -r .main package.json)\"\necho \"lodash:   $(jq -r .dependencies.lodash package.json)\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "version:  2.0.0\nmain:     dist/index.js\nlodash:   ^4.17.21\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

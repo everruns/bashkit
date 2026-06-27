@@ -1,0 +1,124 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "config_env_template",
+  "target": "anthropic/claude-haiku-4-5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Perfect! Now let me use sed for the extraction:",
+    "iterations": 10,
+    "tool_calls_count": 10,
+    "tool_calls": [
+      "cat /config/template.env /config/overrides.txt 2>/dev/null || echo \"Files may not exist, let me check...\"",
+      "\n# Create /app directory if it doesn't exist\nmkdir -p /app\n\n# Create associative arrays to store data\ndeclare -A overrides\ndeclare -A final_values\n\n# Read overrides.txt and populate the overrides array\nwhile IFS='=' read -r key value; do\n    # Skip empty lines\n    [[ -z \"$key\" ]] && continue\n    overrides[\"$key\"]=\"$value\"\ndone < /config/overrides.txt\n\n# Read template.env and process each line\nwhile IFS= read -r line; do\n    # Skip empty lines and comments\n    [[ -z \"$line\" || \"$line\" =~ ^# ]] && continue\n    \n    # Extract KEY from KEY=${VALUE:-default}\n    key=\"${line%%=*}\"\n    \n    # Extract the default value using parameter expansion pattern\n    # Matches: ${VARNAME:-default}\n    if [[ \"$line\" =~ \\$\\{[^:]*:-([^}]*)\\} ]]; then\n        default=\"${BASH_REMATCH[1]}\"\n    else\n        default=\"\"\n    fi\n    \n    # Check if override exists, otherwise use default\n    if [[ -n \"${overrides[$key]}\" ]]; then\n        final_values[\"$key\"]=\"${overrides[$key]}\"\n    else\n        final_values[\"$key\"]=\"$default\"\n    fi\ndone < /config/template.env\n\n# Write to /app/.env\n: > /app/.env  # Clear the file\n\nfor key in \"${!final_values[@]}\"; do\n    echo \"$key=${final_values[$key]}\" >> /app/.env\ndone\n\n# Sort for consistent output\nsort /app/.env -o /app/.env\n\n# Print the result\necho \"=== Final /app/.env ===\"\ncat /app/.env\n",
+      "\n# Create /app directory if it doesn't exist\nmkdir -p /app\n\n# Create associative arrays to store data\ndeclare -A overrides\ndeclare -A final_values\n\n# Read overrides.txt and populate the overrides array\nwhile IFS='=' read -r key value; do\n    # Skip empty lines\n    [[ -z \"$key\" ]] && continue\n    overrides[\"$key\"]=\"$value\"\ndone < /config/overrides.txt\n\n# Read template.env and process each line\nwhile IFS= read -r line; do\n    # Skip empty lines and comments\n    if [[ -z \"$line\" ]] || [[ \"$line\" =~ ^# ]]; then\n        continue\n    fi\n    \n    # Extract KEY from KEY=${VALUE:-default}\n    key=\"${line%%=*}\"\n    \n    # Extract the default value using parameter expansion pattern\n    # Matches: ${VARNAME:-default}\n    if [[ \"$line\" =~ \\$\\{[^:]*:-([^}]*)\\} ]]; then\n        default=\"${BASH_REMATCH[1]}\"\n    else\n        default=\"\"\n    fi\n    \n    # Check if override exists, otherwise use default\n    if [[ -n \"${overrides[$key]}\" ]]; then\n        final_values[\"$key\"]=\"${overrides[$key]}\"\n    else\n        final_values[\"$key\"]=\"$default\"\n    fi\ndone < /config/template.env\n\n# Write to /app/.env\n: > /app/.env  # Clear the file\n\nfor key in \"${!final_values[@]}\"; do\n    echo \"$key=${final_values[$key]}\" >> /app/.env\ndone\n\n# Sort for consistent output\nsort /app/.env -o /app/.env\n\n# Print the result\necho \"=== Final /app/.env ===\"\ncat /app/.env\n",
+      "\n# Debug: check the overrides file\necho \"=== Content of overrides.txt ===\"\ncat /config/overrides.txt\necho \"\"\n\n# Read overrides.txt more carefully\ndeclare -A overrides\n\nwhile read -r line; do\n    if [[ -z \"$line\" ]]; then\n        continue\n    fi\n    key=\"${line%%=*}\"\n    value=\"${line#*=}\"\n    echo \"Override: key='$key' value='$value'\"\n    overrides[\"$key\"]=\"$value\"\ndone < /config/overrides.txt\n\necho \"\"\necho \"=== Stored overrides ===\"\nfor k in \"${!overrides[@]}\"; do\n    echo \"$k = ${overrides[$k]}\"\ndone\n",
+      "\n# Create /app directory if it doesn't exist\nmkdir -p /app\n\n# Create associative arrays to store data\ndeclare -A overrides\ndeclare -A final_values\n\n# Read overrides.txt\nwhile read -r line; do\n    [[ -z \"$line\" ]] && continue\n    key=\"${line%%=*}\"\n    value=\"${line#*=}\"\n    overrides[\"$key\"]=\"$value\"\ndone < /config/overrides.txt\n\necho \"=== Processing template.env ===\"\n\n# Read template.env and process each line\nwhile read -r line; do\n    # Skip empty lines and comments\n    [[ -z \"$line\" ]] && continue\n    [[ \"$line\" =~ ^# ]] && continue\n    \n    # Extract KEY from KEY=${VALUE:-default}\n    key=\"${line%%=*}\"\n    \n    # Extract the default value using parameter expansion pattern\n    # Matches: ${VARNAME:-default}\n    default=\"\"\n    if [[ \"$line\" =~ \\$\\{[^:]*:-([^}]*)\\} ]]; then\n        default=\"${BASH_REMATCH[1]}\"\n    fi\n    \n    echo \"Template line: $line\"\n    echo \"  Key: $key, Default: $default\"\n    \n    # Check if override exists, otherwise use default\n    if [[ -v overrides[$key] ]]; then\n        final_values[\"$key\"]=\"${overrides[$key]}\"\n        echo \"  Using override: ${overrides[$key]}\"\n    else\n        final_values[\"$key\"]=\"$default\"\n        echo \"  Using default: $default\"\n    fi\ndone < /config/template.env\n\necho \"\"\necho \"=== Final /app/.env ===\"\n\n# Clear the file\n> /app/.env\n\n# Write to /app/.env in sorted order\nfor key in $(printf '%s\\n' \"${!final_values[@]}\" | sort); do\n    echo \"$key=${final_values[$key]}\" | tee -a /app/.env\ndone\n",
+      "bash --version | head -3",
+      "\nmkdir -p /app\n\n# Create temporary files for processing\nTMP_OVERRIDES=$(mktemp)\nTMP_TEMPLATE=$(mktemp)\nTMP_FINAL=$(mktemp)\n\n# Copy files to temp\ncp /config/overrides.txt \"$TMP_OVERRIDES\"\ncp /config/template.env \"$TMP_TEMPLATE\"\n\n# Create a simple awk/shell script to process\ncat > /tmp/process.sh << 'SCRIPT'\n#!/bin/bash\n\n# Read overrides into variables\ndeclare -A overrides\nwhile read -r line; do\n    [ -z \"$line\" ] && continue\n    key=\"${line%%=*}\"\n    value=\"${line#*=}\"\n    overrides[\"$key\"]=\"$value\"\ndone < /config/overrides.txt\n\n# Process template\nwhile read -r line; do\n    [ -z \"$line\" ] && continue\n    [ \"${line:0:1}\" = \"#\" ] && continue\n    \n    # Extract key (everything before first =)\n    key=\"${line%%=*}\"\n    \n    # Extract default value\n    # Line format: KEY=${KEY:-default}\n    # Extract what's between ${ and }\n    remainder=\"${line#*\\${}\"\n    remainder=\"${remainder%\\}}\"\n    \n    # Get part after :-\n    default=\"${remainder#*:-}\"\n    \n    # Use override if exists, else use default\n    if [ -n \"${overrides[$key]}\" ]; then\n        echo \"$key=${overrides[$key]}\"\n    else\n        echo \"$key=$default\"\n    fi\ndone < /config/template.env | sort > /app/.env\n\necho \"=== Final /app/.env ===\"\ncat /app/.env\nSCRIPT\n\nbash /tmp/process.sh\n",
+      "\nmkdir -p /app\n\ncat > /tmp/process.sh << 'SCRIPT'\n#!/bin/bash\n\n# Read overrides into an associative array\ndeclare -A overrides\nwhile IFS='=' read -r key value; do\n    [ -z \"$key\" ] && continue\n    overrides[\"$key\"]=\"$value\"\ndone < /config/overrides.txt\n\n# Process template\nwhile IFS= read -r line; do\n    [ -z \"$line\" ] && continue\n    [ \"${line:0:1}\" = \"#\" ] && continue\n    \n    # Extract key (everything before first =)\n    key=\"${line%%=*}\"\n    \n    # Extract default value from ${KEY:-default} pattern\n    # First, remove everything before :- \n    temp=\"${line#*:-}\"\n    # Then remove the closing brace\n    default=\"${temp%\\}}\"\n    \n    # Use override if exists, else use default\n    if [ -n \"${overrides[$key]}\" ]; then\n        echo \"$key=${overrides[$key]}\"\n    else\n        echo \"$key=$default\"\n    fi\ndone < /config/template.env | sort > /app/.env\n\necho \"=== Final /app/.env ===\"\ncat /app/.env\nSCRIPT\n\nbash /tmp/process.sh\n",
+      "\nmkdir -p /app\n\n# Test the extraction logic first\necho \"=== Testing default value extraction ===\"\nline='DB_NAME=${DB_NAME:-myapp}'\necho \"Original: $line\"\n\n# Use sed to extract the default\ndefault=$(echo \"$line\" | sed 's/.*:-\\([^}]*\\).*/\\1/')\necho \"Extracted default: $default\"\n",
+      "\nmkdir -p /app\n\ncat > /tmp/process.sh << 'SCRIPT'\n#!/bin/bash\n\n# Read overrides into an associative array\ndeclare -A overrides\nwhile IFS='=' read -r key value; do\n    [ -z \"$key\" ] && continue\n    overrides[\"$key\"]=\"$value\"\ndone < /config/overrides.txt\n\n# Process template\nwhile IFS= read -r line; do\n    [ -z \"$line\" ] && continue\n    [ \"${line:0:1}\" = \"#\" ] && continue\n    \n    # Extract key (everything before first =)\n    key=\"${line%%=*}\"\n    \n    # Extract default value from ${KEY:-default} pattern using sed\n    default=$(echo \"$line\" | sed 's/.*:-\\([^}]*\\).*/\\1/')\n    \n    # Use override if exists, else use default\n    if [ -n \"${overrides[$key]}\" ]; then\n        echo \"$key=${overrides[$key]}\"\n    else\n        echo \"$key=$default\"\n    fi\ndone < /config/template.env | sort > /app/.env\n\necho \"=== Final /app/.env ===\"\ncat /app/.env\nSCRIPT\n\nbash /tmp/process.sh\n"
+    ],
+    "usage": {
+      "input_tokens": 26032,
+      "output_tokens": 3374,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 23315
+    },
+    "metrics": {
+      "natural_stop": 0.0,
+      "tool_calls": 10.0,
+      "tool_calls_err": 2.0,
+      "tool_calls_ok": 8.0,
+      "turns": 10.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/app",
+          "/config",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat /config/template.env /config/overrides.txt 2>/dev/null || echo \"Files may not exist, let me check...\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "DB_HOST=${DB_HOST:-localhost}\nDB_PORT=${DB_PORT:-5432}\nDB_NAME=${DB_NAME:-myapp}\nREDIS_URL=${REDIS_URL:-redis://localhost:6379}\nLOG_LEVEL=${LOG_LEVEL:-info}\nDB_HOST=db.prod.internal\nLOG_LEVEL=warn\n"
+          },
+          {
+            "commands": "\n# Create /app directory if it doesn't exist\nmkdir -p /app\n\n# Create associative arrays to store data\ndeclare -A overrides\ndeclare -A final_values\n\n# Read overrides.txt and populate the overrides array\nwhile IFS='=' read -r key value; do\n    # Skip empty lines\n    [[ -z \"$key\" ]] && continue\n    overrides[\"$key\"]=\"$value\"\ndone < /config/overrides.txt\n\n# Read template.env and process each line\nwhile IFS= read -r line; do\n    # Skip empty lines and comments\n    [[ -z \"$line\" || \"$line\" =~ ^# ]] && continue\n    \n    # Extract KEY from KEY=${VALUE:-default}\n    key=\"${line%%=*}\"\n    \n    # Extract the default value using parameter expansion pattern\n    # Matches: ${VARNAME:-default}\n    if [[ \"$line\" =~ \\$\\{[^:]*:-([^}]*)\\} ]]; then\n        default=\"${BASH_REMATCH[1]}\"\n    else\n        default=\"\"\n    fi\n    \n    # Check if override exists, otherwise use default\n    if [[ -n \"${overrides[$key]}\" ]]; then\n        final_values[\"$key\"]=\"${overrides[$key]}\"\n    else\n        final_values[\"$key\"]=\"$default\"\n    fi\ndone < /config/template.env\n\n# Write to /app/.env\n: > /app/.env  # Clear the file\n\nfor key in \"${!final_values[@]}\"; do\n    echo \"$key=${final_values[$key]}\" >> /app/.env\ndone\n\n# Sort for consistent output\nsort /app/.env -o /app/.env\n\n# Print the result\necho \"=== Final /app/.env ===\"\ncat /app/.env\n",
+            "exit_code": 1,
+            "stderr": "parse error at line 26, column 47: expected 'done'",
+            "stdout": ""
+          },
+          {
+            "commands": "\n# Create /app directory if it doesn't exist\nmkdir -p /app\n\n# Create associative arrays to store data\ndeclare -A overrides\ndeclare -A final_values\n\n# Read overrides.txt and populate the overrides array\nwhile IFS='=' read -r key value; do\n    # Skip empty lines\n    [[ -z \"$key\" ]] && continue\n    overrides[\"$key\"]=\"$value\"\ndone < /config/overrides.txt\n\n# Read template.env and process each line\nwhile IFS= read -r line; do\n    # Skip empty lines and comments\n    if [[ -z \"$line\" ]] || [[ \"$line\" =~ ^# ]]; then\n        continue\n    fi\n    \n    # Extract KEY from KEY=${VALUE:-default}\n    key=\"${line%%=*}\"\n    \n    # Extract the default value using parameter expansion pattern\n    # Matches: ${VARNAME:-default}\n    if [[ \"$line\" =~ \\$\\{[^:]*:-([^}]*)\\} ]]; then\n        default=\"${BASH_REMATCH[1]}\"\n    else\n        default=\"\"\n    fi\n    \n    # Check if override exists, otherwise use default\n    if [[ -n \"${overrides[$key]}\" ]]; then\n        final_values[\"$key\"]=\"${overrides[$key]}\"\n    else\n        final_values[\"$key\"]=\"$default\"\n    fi\ndone < /config/template.env\n\n# Write to /app/.env\n: > /app/.env  # Clear the file\n\nfor key in \"${!final_values[@]}\"; do\n    echo \"$key=${final_values[$key]}\" >> /app/.env\ndone\n\n# Sort for consistent output\nsort /app/.env -o /app/.env\n\n# Print the result\necho \"=== Final /app/.env ===\"\ncat /app/.env\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== Final /app/.env ===\n=\n"
+          },
+          {
+            "commands": "\n# Debug: check the overrides file\necho \"=== Content of overrides.txt ===\"\ncat /config/overrides.txt\necho \"\"\n\n# Read overrides.txt more carefully\ndeclare -A overrides\n\nwhile read -r line; do\n    if [[ -z \"$line\" ]]; then\n        continue\n    fi\n    key=\"${line%%=*}\"\n    value=\"${line#*=}\"\n    echo \"Override: key='$key' value='$value'\"\n    overrides[\"$key\"]=\"$value\"\ndone < /config/overrides.txt\n\necho \"\"\necho \"=== Stored overrides ===\"\nfor k in \"${!overrides[@]}\"; do\n    echo \"$k = ${overrides[$k]}\"\ndone\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== Content of overrides.txt ===\nDB_HOST=db.prod.internal\nLOG_LEVEL=warn\n\nOverride: key='DB_HOST' value='db.prod.internal'\nOverride: key='LOG_LEVEL' value='warn'\n\n=== Stored overrides ===\nDB_HOST = db.prod.internal\nLOG_LEVEL = warn\n"
+          },
+          {
+            "commands": "\n# Create /app directory if it doesn't exist\nmkdir -p /app\n\n# Create associative arrays to store data\ndeclare -A overrides\ndeclare -A final_values\n\n# Read overrides.txt\nwhile read -r line; do\n    [[ -z \"$line\" ]] && continue\n    key=\"${line%%=*}\"\n    value=\"${line#*=}\"\n    overrides[\"$key\"]=\"$value\"\ndone < /config/overrides.txt\n\necho \"=== Processing template.env ===\"\n\n# Read template.env and process each line\nwhile read -r line; do\n    # Skip empty lines and comments\n    [[ -z \"$line\" ]] && continue\n    [[ \"$line\" =~ ^# ]] && continue\n    \n    # Extract KEY from KEY=${VALUE:-default}\n    key=\"${line%%=*}\"\n    \n    # Extract the default value using parameter expansion pattern\n    # Matches: ${VARNAME:-default}\n    default=\"\"\n    if [[ \"$line\" =~ \\$\\{[^:]*:-([^}]*)\\} ]]; then\n        default=\"${BASH_REMATCH[1]}\"\n    fi\n    \n    echo \"Template line: $line\"\n    echo \"  Key: $key, Default: $default\"\n    \n    # Check if override exists, otherwise use default\n    if [[ -v overrides[$key] ]]; then\n        final_values[\"$key\"]=\"${overrides[$key]}\"\n        echo \"  Using override: ${overrides[$key]}\"\n    else\n        final_values[\"$key\"]=\"$default\"\n        echo \"  Using default: $default\"\n    fi\ndone < /config/template.env\n\necho \"\"\necho \"=== Final /app/.env ===\"\n\n# Clear the file\n> /app/.env\n\n# Write to /app/.env in sorted order\nfor key in $(printf '%s\\n' \"${!final_values[@]}\" | sort); do\n    echo \"$key=${final_values[$key]}\" | tee -a /app/.env\ndone\n",
+            "exit_code": 1,
+            "stderr": "parse error at line 31, column 47: expected 'done'",
+            "stdout": ""
+          },
+          {
+            "commands": "bash --version | head -3",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Bashkit 0.12.0 (virtual bash interpreter)\n"
+          },
+          {
+            "commands": "\nmkdir -p /app\n\n# Create temporary files for processing\nTMP_OVERRIDES=$(mktemp)\nTMP_TEMPLATE=$(mktemp)\nTMP_FINAL=$(mktemp)\n\n# Copy files to temp\ncp /config/overrides.txt \"$TMP_OVERRIDES\"\ncp /config/template.env \"$TMP_TEMPLATE\"\n\n# Create a simple awk/shell script to process\ncat > /tmp/process.sh << 'SCRIPT'\n#!/bin/bash\n\n# Read overrides into variables\ndeclare -A overrides\nwhile read -r line; do\n    [ -z \"$line\" ] && continue\n    key=\"${line%%=*}\"\n    value=\"${line#*=}\"\n    overrides[\"$key\"]=\"$value\"\ndone < /config/overrides.txt\n\n# Process template\nwhile read -r line; do\n    [ -z \"$line\" ] && continue\n    [ \"${line:0:1}\" = \"#\" ] && continue\n    \n    # Extract key (everything before first =)\n    key=\"${line%%=*}\"\n    \n    # Extract default value\n    # Line format: KEY=${KEY:-default}\n    # Extract what's between ${ and }\n    remainder=\"${line#*\\${}\"\n    remainder=\"${remainder%\\}}\"\n    \n    # Get part after :-\n    default=\"${remainder#*:-}\"\n    \n    # Use override if exists, else use default\n    if [ -n \"${overrides[$key]}\" ]; then\n        echo \"$key=${overrides[$key]}\"\n    else\n        echo \"$key=$default\"\n    fi\ndone < /config/template.env | sort > /app/.env\n\necho \"=== Final /app/.env ===\"\ncat /app/.env\nSCRIPT\n\nbash /tmp/process.sh\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== Final /app/.env ===\nDB_HOST=db.prod.internal\nDB_NAME=myapp}}\nDB_PORT=5432}}\nLOG_LEVEL=warn\nREDIS_URL=redis://localhost:6379}}\n"
+          },
+          {
+            "commands": "\nmkdir -p /app\n\ncat > /tmp/process.sh << 'SCRIPT'\n#!/bin/bash\n\n# Read overrides into an associative array\ndeclare -A overrides\nwhile IFS='=' read -r key value; do\n    [ -z \"$key\" ] && continue\n    overrides[\"$key\"]=\"$value\"\ndone < /config/overrides.txt\n\n# Process template\nwhile IFS= read -r line; do\n    [ -z \"$line\" ] && continue\n    [ \"${line:0:1}\" = \"#\" ] && continue\n    \n    # Extract key (everything before first =)\n    key=\"${line%%=*}\"\n    \n    # Extract default value from ${KEY:-default} pattern\n    # First, remove everything before :- \n    temp=\"${line#*:-}\"\n    # Then remove the closing brace\n    default=\"${temp%\\}}\"\n    \n    # Use override if exists, else use default\n    if [ -n \"${overrides[$key]}\" ]; then\n        echo \"$key=${overrides[$key]}\"\n    else\n        echo \"$key=$default\"\n    fi\ndone < /config/template.env | sort > /app/.env\n\necho \"=== Final /app/.env ===\"\ncat /app/.env\nSCRIPT\n\nbash /tmp/process.sh\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== Final /app/.env ===\nDB_HOST=db.prod.internal\nDB_NAME=myapp}}\nDB_PORT=5432}}\nLOG_LEVEL=warn\nREDIS_URL=redis://localhost:6379}}\n"
+          },
+          {
+            "commands": "\nmkdir -p /app\n\n# Test the extraction logic first\necho \"=== Testing default value extraction ===\"\nline='DB_NAME=${DB_NAME:-myapp}'\necho \"Original: $line\"\n\n# Use sed to extract the default\ndefault=$(echo \"$line\" | sed 's/.*:-\\([^}]*\\).*/\\1/')\necho \"Extracted default: $default\"\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== Testing default value extraction ===\nOriginal: DB_NAME=${DB_NAME:-myapp}\nExtracted default: myapp\n"
+          },
+          {
+            "commands": "\nmkdir -p /app\n\ncat > /tmp/process.sh << 'SCRIPT'\n#!/bin/bash\n\n# Read overrides into an associative array\ndeclare -A overrides\nwhile IFS='=' read -r key value; do\n    [ -z \"$key\" ] && continue\n    overrides[\"$key\"]=\"$value\"\ndone < /config/overrides.txt\n\n# Process template\nwhile IFS= read -r line; do\n    [ -z \"$line\" ] && continue\n    [ \"${line:0:1}\" = \"#\" ] && continue\n    \n    # Extract key (everything before first =)\n    key=\"${line%%=*}\"\n    \n    # Extract default value from ${KEY:-default} pattern using sed\n    default=$(echo \"$line\" | sed 's/.*:-\\([^}]*\\).*/\\1/')\n    \n    # Use override if exists, else use default\n    if [ -n \"${overrides[$key]}\" ]; then\n        echo \"$key=${overrides[$key]}\"\n    else\n        echo \"$key=$default\"\n    fi\ndone < /config/template.env | sort > /app/.env\n\necho \"=== Final /app/.env ===\"\ncat /app/.env\nSCRIPT\n\nbash /tmp/process.sh\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== Final /app/.env ===\nDB_HOST=db.prod.internal\nDB_NAME=myapp\nDB_PORT=5432\nLOG_LEVEL=warn\nREDIS_URL=redis://localhost:6379\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,68 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_release_notes",
+  "target": "anthropic/claude-opus-4-8",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The changelog has been generated successfully at `/release/CHANGELOG.md`.\n\n## Summary\n\nI parsed `/data/commits.log` (10 conventional commits in `type(scope): message` format), grouped them by type, and produced the changelog below:\n\n```markdown\n## Features\n- auth: add OAuth2 support\n- ui: dark mode toggle\n- api: add pagination support\n- db: add connection pooling\n\n## Bug Fixes\n- api: handle null response body\n- auth: token refresh race condition\n- ui: button alignment on mobile\n- api: correct status code for 404\n\n## Other\n- deps: update lodash to 4.17.21\n- readme: update install instructions\n```\n\n**How it works:**\n- **`## Features`** — the 4 `feat` commits\n- **`## Bug Fixes`** — the 4 `fix` commits\n- **`## Other`** — everything else (`chore`, `docs`)\n\nEach commit's `type(scope): message` was split into its parts, and items are listed as `- scope: message`, preserving the original file order within each section.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /data/commits.log; echo \"---EXIT $?---\"",
+      "mkdir -p /release\n\nawk '\n{\n  line = $0\n  # find first \"(\" and \"):\"\n  type = line\n  sub(/\\(.*/, \"\", type)              # text before first (\n  rest = line\n  sub(/^[^(]*\\(/, \"\", rest)          # remove type and (\n  scope = rest\n  sub(/\\).*/, \"\", scope)             # scope up to first )\n  msg = rest\n  sub(/^[^)]*\\): /, \"\", msg)         # message after \"): \"\n\n  item = \"- \" scope \": \" msg\n  if (type == \"feat\")      feat[++fn] = item\n  else if (type == \"fix\")  fix[++xn]  = item\n  else                     other[++on] = item\n}\nEND {\n  print \"## Features\"\n  for (i=1;i<=fn;i++) print feat[i]\n  print \"\"\n  print \"## Bug Fixes\"\n  for (i=1;i<=xn;i++) print fix[i]\n  print \"\"\n  print \"## Other\"\n  for (i=1;i<=on;i++) print other[i]\n}\n' /data/commits.log > /release/CHANGELOG.md\n\ncat /release/CHANGELOG.md"
+    ],
+    "usage": {
+      "input_tokens": 3247,
+      "output_tokens": 865,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 11054
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/release",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat /data/commits.log; echo \"---EXIT $?---\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "feat(auth): add OAuth2 support\nfix(api): handle null response body\nfeat(ui): dark mode toggle\nchore(deps): update lodash to 4.17.21\nfix(auth): token refresh race condition\nfeat(api): add pagination support\nfix(ui): button alignment on mobile\ndocs(readme): update install instructions\nfeat(db): add connection pooling\nfix(api): correct status code for 404\n---EXIT 0---\n"
+          },
+          {
+            "commands": "mkdir -p /release\n\nawk '\n{\n  line = $0\n  # find first \"(\" and \"):\"\n  type = line\n  sub(/\\(.*/, \"\", type)              # text before first (\n  rest = line\n  sub(/^[^(]*\\(/, \"\", rest)          # remove type and (\n  scope = rest\n  sub(/\\).*/, \"\", scope)             # scope up to first )\n  msg = rest\n  sub(/^[^)]*\\): /, \"\", msg)         # message after \"): \"\n\n  item = \"- \" scope \": \" msg\n  if (type == \"feat\")      feat[++fn] = item\n  else if (type == \"fix\")  fix[++xn]  = item\n  else                     other[++on] = item\n}\nEND {\n  print \"## Features\"\n  for (i=1;i<=fn;i++) print feat[i]\n  print \"\"\n  print \"## Bug Fixes\"\n  for (i=1;i<=xn;i++) print fix[i]\n  print \"\"\n  print \"## Other\"\n  for (i=1;i<=on;i++) print other[i]\n}\n' /data/commits.log > /release/CHANGELOG.md\n\ncat /release/CHANGELOG.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "## Features\n- auth: add OAuth2 support\n- ui: dark mode toggle\n- api: add pagination support\n- db: add connection pooling\n\n## Bug Fixes\n- api: handle null response body\n- auth: token refresh race condition\n- ui: button alignment on mobile\n- api: correct status code for 404\n\n## Other\n- deps: update lodash to 4.17.21\n- readme: update install instructions\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

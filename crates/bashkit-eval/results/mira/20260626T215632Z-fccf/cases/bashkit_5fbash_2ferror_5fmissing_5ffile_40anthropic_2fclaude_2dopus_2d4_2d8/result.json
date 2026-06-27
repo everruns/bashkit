@@ -1,0 +1,60 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "error_missing_file",
+  "target": "anthropic/claude-opus-4-8",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The file `/data/input.txt` did not exist, so I handled it as requested:\n\n1. **Checked for the file** — it was not present.\n2. **Created the `/data` directory** using `mkdir -p` (which safely creates it only if needed).\n3. **Created the file** with the content `default data`.\n4. **Read and printed the contents**, which confirmed: `default data`\n\nEverything completed successfully.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "if [ -f /data/input.txt ]; then\n  echo \"File exists. Contents:\"\n  cat /data/input.txt\nelse\n  echo \"File does not exist. Creating it...\"\n  mkdir -p /data\n  echo -n 'default data' > /data/input.txt\n  echo \"File created. Contents:\"\n  cat /data/input.txt\nfi"
+    ],
+    "usage": {
+      "input_tokens": 1524,
+      "output_tokens": 317,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 6821
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "if [ -f /data/input.txt ]; then\n  echo \"File exists. Contents:\"\n  cat /data/input.txt\nelse\n  echo \"File does not exist. Creating it...\"\n  mkdir -p /data\n  echo -n 'default data' > /data/input.txt\n  echo \"File created. Contents:\"\n  cat /data/input.txt\nfi",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "File does not exist. Creating it...\nFile created. Contents:\ndefault data"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

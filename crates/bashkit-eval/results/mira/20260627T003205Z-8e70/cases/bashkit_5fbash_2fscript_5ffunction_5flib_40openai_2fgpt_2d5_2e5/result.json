@@ -1,0 +1,61 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_function_lib",
+  "target": "openai/gpt-5.5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created `/lib/utils.sh` with the requested Bash functions and demonstrated them:\n\n```text\nto_upper: HELLO WORLD\ncount_lines: 5\nfile_size: 49\n```",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "mkdir -p /lib\ncat > /lib/utils.sh <<'EOF'\n#!/usr/bin/env bash\n\n# Read stdin and convert to uppercase.\nto_upper() {\n  tr '[:lower:]' '[:upper:]'\n}\n\n# Print the number of lines in the given file.\ncount_lines() {\n  local file=$1\n  wc -l < \"$file\"\n}\n\n# Print the byte count of the given file.\nfile_size() {\n  local file=$1\n  wc -c < \"$file\"\n}\nEOF\n\nsource /lib/utils.sh\nprintf 'to_upper: '\nprintf 'hello world' | to_upper\nprintf '\\ncount_lines: '\ncount_lines /data/sample.txt\nprintf 'file_size: '\nfile_size /data/sample.txt"
+    ],
+    "usage": {
+      "input_tokens": 929,
+      "output_tokens": 276,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 4942
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/lib",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /lib\ncat > /lib/utils.sh <<'EOF'\n#!/usr/bin/env bash\n\n# Read stdin and convert to uppercase.\nto_upper() {\n  tr '[:lower:]' '[:upper:]'\n}\n\n# Print the number of lines in the given file.\ncount_lines() {\n  local file=$1\n  wc -l < \"$file\"\n}\n\n# Print the byte count of the given file.\nfile_size() {\n  local file=$1\n  wc -c < \"$file\"\n}\nEOF\n\nsource /lib/utils.sh\nprintf 'to_upper: '\nprintf 'hello world' | to_upper\nprintf '\\ncount_lines: '\ncount_lines /data/sample.txt\nprintf 'file_size: '\nfile_size /data/sample.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "to_upper: HELLO WORLD\ncount_lines: 5\nfile_size: 49\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

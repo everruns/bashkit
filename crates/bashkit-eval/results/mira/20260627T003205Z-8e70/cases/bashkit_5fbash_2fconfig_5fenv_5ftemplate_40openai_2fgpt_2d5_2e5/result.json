@@ -1,0 +1,110 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "config_env_template",
+  "target": "openai/gpt-5.5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Generated `/app/.env`:\n\n```env\nDB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nREDIS_URL=redis://localhost:6379\nLOG_LEVEL=warn\n```",
+    "iterations": 9,
+    "tool_calls_count": 8,
+    "tool_calls": [
+      "set -euo pipefail\nprintf '--- template ---\\n'\ncat /config/template.env\nprintf '\\n--- overrides ---\\n'\ncat /config/overrides.txt\n",
+      "set -euo pipefail\nmkdir -p /app\n: > /app/.env\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"$line\" ]] && continue\n  if [[ \"$line\" =~ ^([^=]+)=\\$\\{[^:}]+:-([^}]*)\\}$ ]]; then\n    key=\"${BASH_REMATCH[1]}\"\n    default=\"${BASH_REMATCH[2]}\"\n    if override_line=$(grep -m1 -E \"^${key}=\" /config/overrides.txt 2>/dev/null); then\n      value=\"${override_line#*=}\"\n    else\n      value=\"$default\"\n    fi\n    printf '%s=%s\\n' \"$key\" \"$value\" >> /app/.env\n  fi\ndone < /config/template.env\ncat /app/.env",
+      "ls -l /app/.env; od -c /config/template.env | head; bash --version | head -1\nwhile IFS= read -r line; do echo \"LINE:[$line]\"; if [[ \"$line\" =~ ^([^=]+)=\\$\\{[^:}]+:-([^}]*)\\}$ ]]; then echo match \"${BASH_REMATCH[1]}\" \"${BASH_REMATCH[2]}\"; else echo no; fi; done < /config/template.env",
+      "set -euo pipefail\nmkdir -p /app\n: > /app/.env\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"$line\" ]] && continue\n  key=\"${line%%=*}\"\n  default=\"${line#*:-}\"\n  default=\"${default%?}\"\n  value=\"$default\"\n  while IFS= read -r oline || [[ -n \"$oline\" ]]; do\n    [[ -z \"$oline\" ]] && continue\n    okey=\"${oline%%=*}\"\n    if [[ \"$okey\" == \"$key\" ]]; then\n      value=\"${oline#*=}\"\n      break\n    fi\n  done < /config/overrides.txt\n  printf '%s=%s\\n' \"$key\" \"$value\" >> /app/.env\ndone < /config/template.env\ncat /app/.env",
+      "set -euo pipefail\nmkdir -p /app\n: > /app/.env\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"$line\" ]] && continue\n  key=\"${line%%=*}\"\n  default=\"${line#*:-}\"\n  default=\"${default%\\}}\"\n  value=\"$default\"\n  while IFS= read -r oline || [[ -n \"$oline\" ]]; do\n    [[ -z \"$oline\" ]] && continue\n    okey=\"${oline%%=*}\"\n    if [[ \"$okey\" == \"$key\" ]]; then\n      value=\"${oline#*=}\"\n      break\n    fi\n  done < /config/overrides.txt\n  printf '%s=%s\\n' \"$key\" \"$value\" >> /app/.env\ndone < /config/template.env\ncat /app/.env",
+      "line='DB_PORT=${DB_PORT:-5432}'\ndefault=\"${line#*:-}\"\necho \"a=[$default]\"\ndefault=\"${default%\\}}\"\necho \"b=[$default]\"\ndefault2=\"${line#*:-}\"\ndefault2=\"${default2%?}\"\necho \"c=[$default2]\"",
+      "echo 'DB_PORT=${DB_PORT:-5432}' | sed -E 's/^[^=]+=\\$\\{[^:]+:-([^}]*)\\}$/\\1/'\necho 'x' | awk '{print $1}'",
+      "set -euo pipefail\nmkdir -p /app\n: > /app/.env\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"$line\" ]] && continue\n  key=\"${line%%=*}\"\n  default=$(printf '%s\\n' \"$line\" | sed -E 's/^[^=]+=\\$\\{[^:]+:-([^}]*)\\}$/\\1/')\n  value=\"$default\"\n  while IFS= read -r oline || [[ -n \"$oline\" ]]; do\n    [[ -z \"$oline\" ]] && continue\n    okey=\"${oline%%=*}\"\n    if [[ \"$okey\" == \"$key\" ]]; then\n      value=\"${oline#*=}\"\n      break\n    fi\n  done < /config/overrides.txt\n  printf '%s=%s\\n' \"$key\" \"$value\" >> /app/.env\ndone < /config/template.env\ncat /app/.env"
+    ],
+    "usage": {
+      "input_tokens": 11460,
+      "output_tokens": 1830,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 27958
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 8.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 8.0,
+      "turns": 9.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/app",
+          "/config",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "set -euo pipefail\nprintf '--- template ---\\n'\ncat /config/template.env\nprintf '\\n--- overrides ---\\n'\ncat /config/overrides.txt\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "--- template ---\nDB_HOST=${DB_HOST:-localhost}\nDB_PORT=${DB_PORT:-5432}\nDB_NAME=${DB_NAME:-myapp}\nREDIS_URL=${REDIS_URL:-redis://localhost:6379}\nLOG_LEVEL=${LOG_LEVEL:-info}\n\n--- overrides ---\nDB_HOST=db.prod.internal\nLOG_LEVEL=warn\n"
+          },
+          {
+            "commands": "set -euo pipefail\nmkdir -p /app\n: > /app/.env\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"$line\" ]] && continue\n  if [[ \"$line\" =~ ^([^=]+)=\\$\\{[^:}]+:-([^}]*)\\}$ ]]; then\n    key=\"${BASH_REMATCH[1]}\"\n    default=\"${BASH_REMATCH[2]}\"\n    if override_line=$(grep -m1 -E \"^${key}=\" /config/overrides.txt 2>/dev/null); then\n      value=\"${override_line#*=}\"\n    else\n      value=\"$default\"\n    fi\n    printf '%s=%s\\n' \"$key\" \"$value\" >> /app/.env\n  fi\ndone < /config/template.env\ncat /app/.env",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "ls -l /app/.env; od -c /config/template.env | head; bash --version | head -1\nwhile IFS= read -r line; do echo \"LINE:[$line]\"; if [[ \"$line\" =~ ^([^=]+)=\\$\\{[^:}]+:-([^}]*)\\}$ ]]; then echo match \"${BASH_REMATCH[1]}\" \"${BASH_REMATCH[2]}\"; else echo no; fi; done < /config/template.env",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--        0 2026-07-12 00:34 /app/.env\n0000000 D B _ H O S T = $ { D B _ H O S\n0000020 T : - l o c a l h o s t } \\n D B\n0000040 _ P O R T = $ { D B _ P O R T :\n0000060 - 5 4 3 2 } \\n D B _ N A M E = $\n0000100 { D B _ N A M E : - m y a p p }\n0000120 \\n R E D I S _ U R L = $ { R E D\n0000140 I S _ U R L : - r e d i s : / /\n0000160 l o c a l h o s t : 6 3 7 9 } \\n\n0000200 L O G _ L E V E L = $ { L O G _\n0000220 L E V E L : - i n f o } \\n\nBashkit 0.12.0 (virtual bash interpreter)\nLINE:[DB_HOST=${DB_HOST:-localhost}]\nno\nLINE:[DB_PORT=${DB_PORT:-5432}]\nno\nLINE:[DB_NAME=${DB_NAME:-myapp}]\nno\nLINE:[REDIS_URL=${REDIS_URL:-redis://localhost:6379}]\nno\nLINE:[LOG_LEVEL=${LOG_LEVEL:-info}]\nno\n"
+          },
+          {
+            "commands": "set -euo pipefail\nmkdir -p /app\n: > /app/.env\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"$line\" ]] && continue\n  key=\"${line%%=*}\"\n  default=\"${line#*:-}\"\n  default=\"${default%?}\"\n  value=\"$default\"\n  while IFS= read -r oline || [[ -n \"$oline\" ]]; do\n    [[ -z \"$oline\" ]] && continue\n    okey=\"${oline%%=*}\"\n    if [[ \"$okey\" == \"$key\" ]]; then\n      value=\"${oline#*=}\"\n      break\n    fi\n  done < /config/overrides.txt\n  printf '%s=%s\\n' \"$key\" \"$value\" >> /app/.env\ndone < /config/template.env\ncat /app/.env",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "DB_HOST=db.prod.internal\nDB_PORT=5432}\nDB_NAME=myapp}\nREDIS_URL=redis://localhost:6379}\nLOG_LEVEL=warn\n"
+          },
+          {
+            "commands": "set -euo pipefail\nmkdir -p /app\n: > /app/.env\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"$line\" ]] && continue\n  key=\"${line%%=*}\"\n  default=\"${line#*:-}\"\n  default=\"${default%\\}}\"\n  value=\"$default\"\n  while IFS= read -r oline || [[ -n \"$oline\" ]]; do\n    [[ -z \"$oline\" ]] && continue\n    okey=\"${oline%%=*}\"\n    if [[ \"$okey\" == \"$key\" ]]; then\n      value=\"${oline#*=}\"\n      break\n    fi\n  done < /config/overrides.txt\n  printf '%s=%s\\n' \"$key\" \"$value\" >> /app/.env\ndone < /config/template.env\ncat /app/.env",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "DB_HOST=db.prod.internal\nDB_PORT=5432}}\nDB_NAME=myapp}}\nREDIS_URL=redis://localhost:6379}}\nLOG_LEVEL=warn\n"
+          },
+          {
+            "commands": "line='DB_PORT=${DB_PORT:-5432}'\ndefault=\"${line#*:-}\"\necho \"a=[$default]\"\ndefault=\"${default%\\}}\"\necho \"b=[$default]\"\ndefault2=\"${line#*:-}\"\ndefault2=\"${default2%?}\"\necho \"c=[$default2]\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "a=[5432}]\nb=[5432}}]\nc=[5432}]\n"
+          },
+          {
+            "commands": "echo 'DB_PORT=${DB_PORT:-5432}' | sed -E 's/^[^=]+=\\$\\{[^:]+:-([^}]*)\\}$/\\1/'\necho 'x' | awk '{print $1}'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "5432\nx\n"
+          },
+          {
+            "commands": "set -euo pipefail\nmkdir -p /app\n: > /app/.env\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"$line\" ]] && continue\n  key=\"${line%%=*}\"\n  default=$(printf '%s\\n' \"$line\" | sed -E 's/^[^=]+=\\$\\{[^:]+:-([^}]*)\\}$/\\1/')\n  value=\"$default\"\n  while IFS= read -r oline || [[ -n \"$oline\" ]]; do\n    [[ -z \"$oline\" ]] && continue\n    okey=\"${oline%%=*}\"\n    if [[ \"$okey\" == \"$key\" ]]; then\n      value=\"${oline#*=}\"\n      break\n    fi\n  done < /config/overrides.txt\n  printf '%s=%s\\n' \"$key\" \"$value\" >> /app/.env\ndone < /config/template.env\ncat /app/.env",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "DB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nREDIS_URL=redis://localhost:6379\nLOG_LEVEL=warn\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

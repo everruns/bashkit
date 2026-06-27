@@ -1,0 +1,60 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "db_csv_group_by",
+  "target": "openresponses/gpt-5.3-codex",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "north: 850.0000000000  \nsouth: 750.0000000000  \neast: 650.0000000000",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "awk -F, 'NR>1 {gsub(/^[ \\t]+|[ \\t]+$/, \"\", $1); gsub(/^[ \\t]+|[ \\t]+$/, \"\", $3); sum[$1] += $3} END {for (r in sum) printf \"%s\\t%.10g\\n\", r, sum[r]}' /data/sales.csv | sort -k2,2nr | awk -F'\\t' '{print $1\": \"$2}'"
+    ],
+    "usage": {
+      "input_tokens": 617,
+      "output_tokens": 273,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 4046
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "awk -F, 'NR>1 {gsub(/^[ \\t]+|[ \\t]+$/, \"\", $1); gsub(/^[ \\t]+|[ \\t]+$/, \"\", $3); sum[$1] += $3} END {for (r in sum) printf \"%s\\t%.10g\\n\", r, sum[r]}' /data/sales.csv | sort -k2,2nr | awk -F'\\t' '{print $1\": \"$2}'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "north: 850.0000000000\nsouth: 750.0000000000\neast: 650.0000000000\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

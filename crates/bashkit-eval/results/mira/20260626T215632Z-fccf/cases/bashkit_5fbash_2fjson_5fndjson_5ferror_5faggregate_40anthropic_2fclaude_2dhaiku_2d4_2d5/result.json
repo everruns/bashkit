@@ -1,0 +1,75 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_ndjson_error_aggregate",
+  "target": "anthropic/claude-haiku-4-5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Perfect! Here are the results:\n\n**ERROR-level entries by service (sorted by count descending):**\n```\nauth: 3\npayments: 2\napi: 1\n```\n\nThe analysis shows:\n- **auth** service has 3 ERROR entries (token expired, invalid credentials, token expired)\n- **payments** service has 2 ERROR entries (gateway timeout, invalid card)\n- **api** service has 1 ERROR entry (rate limited)",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "cat /var/log/services.jsonl",
+      "grep -o '\"level\":\"ERROR\"[^}]*\"service\":\"[^\"]*\"' /var/log/services.jsonl | grep -o '\"service\":\"[^\"]*\"' | sort | uniq -c | while read count service; do service_name=$(echo \"$service\" | cut -d'\"' -f4); echo \"$service_name: $count\"; done | sort -rn -k2 -t':'",
+      "awk -F'\"' '/ERROR/ {for(i=1;i<=NF;i++){if($i==\"service\"&&$(i+2)!=\"\"){service=$(i+2);i++}if($i==\"level\"&&$(i+2)==\"ERROR\"){count[service]++}}}END{for(s in count)print s\": \"count[s]}' /var/log/services.jsonl | sort -t':' -k2 -rn"
+    ],
+    "usage": {
+      "input_tokens": 4807,
+      "output_tokens": 503,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5528
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp",
+          "/var",
+          "/var/log"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat /var/log/services.jsonl",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\"timestamp\":\"2024-01-01T10:00:00Z\",\"service\":\"auth\",\"level\":\"ERROR\",\"message\":\"token expired\"}\n{\"timestamp\":\"2024-01-01T10:00:01Z\",\"service\":\"api\",\"level\":\"INFO\",\"message\":\"request received\"}\n{\"timestamp\":\"2024-01-01T10:00:02Z\",\"service\":\"auth\",\"level\":\"ERROR\",\"message\":\"invalid credentials\"}\n{\"timestamp\":\"2024-01-01T10:00:03Z\",\"service\":\"payments\",\"level\":\"ERROR\",\"message\":\"gateway timeout\"}\n{\"timestamp\":\"2024-01-01T10:00:04Z\",\"service\":\"auth\",\"level\":\"INFO\",\"message\":\"login success\"}\n{\"timestamp\":\"2024-01-01T10:00:05Z\",\"service\":\"api\",\"level\":\"ERROR\",\"message\":\"rate limited\"}\n{\"timestamp\":\"2024-01-01T10:00:06Z\",\"service\":\"auth\",\"level\":\"ERROR\",\"message\":\"token expired\"}\n{\"timestamp\":\"2024-01-01T10:00:07Z\",\"service\":\"payments\",\"level\":\"ERROR\",\"message\":\"invalid card\"}\n{\"timestamp\":\"2024-01-01T10:00:08Z\",\"service\":\"api\",\"level\":\"INFO\",\"message\":\"health check ok\"}\n{\"timestamp\":\"2024-01-01T10:00:09Z\",\"service\":\"payments\",\"level\":\"INFO\",\"message\":\"payment processed\"}"
+          },
+          {
+            "commands": "grep -o '\"level\":\"ERROR\"[^}]*\"service\":\"[^\"]*\"' /var/log/services.jsonl | grep -o '\"service\":\"[^\"]*\"' | sort | uniq -c | while read count service; do service_name=$(echo \"$service\" | cut -d'\"' -f4); echo \"$service_name: $count\"; done | sort -rn -k2 -t':'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "awk -F'\"' '/ERROR/ {for(i=1;i<=NF;i++){if($i==\"service\"&&$(i+2)!=\"\"){service=$(i+2);i++}if($i==\"level\"&&$(i+2)==\"ERROR\"){count[service]++}}}END{for(s in count)print s\": \"count[s]}' /var/log/services.jsonl | sort -t':' -k2 -rn",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "auth: 3\npayments: 2\napi: 1\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

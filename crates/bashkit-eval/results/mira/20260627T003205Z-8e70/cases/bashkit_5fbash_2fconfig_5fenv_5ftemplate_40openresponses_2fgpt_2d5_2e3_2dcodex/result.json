@@ -1,0 +1,103 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "config_env_template",
+  "target": "openresponses/gpt-5.3-codex",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done — I created `/app/.env` from the template defaults plus overrides and printed the result:\n\n```env\nDB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nREDIS_URL=redis://localhost:6379\nLOG_LEVEL=warn\n```",
+    "iterations": 8,
+    "tool_calls_count": 7,
+    "tool_calls": [
+      "set -euo pipefail\nls -l /config /app\nprintf '--- template ---\\n'; cat /config/template.env\nprintf '\\n--- overrides ---\\n'; cat /config/overrides.txt\n",
+      "set -u\nls -l /config || true\nls -l /app || true\nprintf '--- template ---\\n'; cat /config/template.env\nprintf '\\n--- overrides ---\\n'; cat /config/overrides.txt\n",
+      "set -euo pipefail\nmkdir -p /app\n\ndeclare -A overrides\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"$line\" ]] && continue\n  [[ \"$line\" =~ ^[[:space:]]*# ]] && continue\n  key=${line%%=*}\n  val=${line#*=}\n  overrides[\"$key\"]=\"$val\"\ndone < /config/overrides.txt\n\n: > /app/.env\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"$line\" ]] && continue\n  [[ \"$line\" =~ ^[[:space:]]*# ]] && continue\n\n  if [[ \"$line\" =~ ^([^=]+)=\\$\\{[^:}]+:-([^}]*)\\}$ ]]; then\n    key=\"${BASH_REMATCH[1]}\"\n    def=\"${BASH_REMATCH[2]}\"\n    if [[ -v overrides[\"$key\"] ]]; then\n      printf '%s=%s\\n' \"$key\" \"${overrides[$key]}\" >> /app/.env\n    else\n      printf '%s=%s\\n' \"$key\" \"$def\" >> /app/.env\n    fi\n  fi\ndone < /config/template.env\n\ncat /app/.env\n",
+      "set -euo pipefail\nmkdir -p /app\n\ndeclare -A overrides\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"$line\" ]] && continue\n  [[ \"$line\" == \\#* ]] && continue\n  key=${line%%=*}\n  val=${line#*=}\n  overrides[\"$key\"]=\"$val\"\ndone < /config/overrides.txt\n\n: > /app/.env\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"$line\" ]] && continue\n  [[ \"$line\" == \\#* ]] && continue\n\n  key=${line%%=*}\n  rhs=${line#*=}\n  def=${rhs#*:-}\n  def=${def%\\}}\n\n  if [[ -v overrides[\"$key\"] ]]; then\n    printf '%s=%s\\n' \"$key\" \"${overrides[$key]}\" >> /app/.env\n  else\n    printf '%s=%s\\n' \"$key\" \"$def\" >> /app/.env\n  fi\ndone < /config/template.env\n\ncat /app/.env\n",
+      "set -euo pipefail\nmkdir -p /app\n\ndeclare -A overrides\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"$line\" ]] && continue\n  [[ \"$line\" == \\#* ]] && continue\n  key=${line%%=*}\n  val=${line#*=}\n  overrides[$key]=\"$val\"\ndone < /config/overrides.txt\n\n: > /app/.env\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"$line\" ]] && continue\n  [[ \"$line\" == \\#* ]] && continue\n\n  key=${line%%=*}\n  rhs=${line#*=}\n  def=${rhs#*:-}\n  def=${def%\\}}\n\n  if [[ ${overrides[$key]+set} == set ]]; then\n    printf '%s=%s\\n' \"$key\" \"${overrides[$key]}\" >> /app/.env\n  else\n    printf '%s=%s\\n' \"$key\" \"$def\" >> /app/.env\n  fi\ndone < /config/template.env\n\ncat /app/.env\n",
+      "set -euo pipefail\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  echo \"$line\"\ndone < /config/template.env\n",
+      "set -euo pipefail\nmkdir -p /app\nawk '\n  FNR==NR {\n    if ($0 ~ /^[[:space:]]*$/ || $0 ~ /^[[:space:]]*#/) next\n    p = index($0, \"=\")\n    if (p == 0) next\n    k = substr($0, 1, p-1)\n    v = substr($0, p+1)\n    overrides[k] = v\n    next\n  }\n  {\n    if ($0 ~ /^[[:space:]]*$/ || $0 ~ /^[[:space:]]*#/) next\n    p = index($0, \"=\")\n    if (p == 0) next\n    key = substr($0, 1, p-1)\n    rhs = substr($0, p+1)\n\n    def = rhs\n    sub(/^\\$\\{[^:}]+:-/, \"\", def)\n    sub(/\\}$/, \"\", def)\n\n    if (key in overrides) {\n      print key \"=\" overrides[key]\n    } else {\n      print key \"=\" def\n    }\n  }\n' /config/overrides.txt /config/template.env > /app/.env\n\ncat /app/.env\n"
+    ],
+    "usage": {
+      "input_tokens": 8621,
+      "output_tokens": 2844,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 31145
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 7.0,
+      "tool_calls_err": 4.0,
+      "tool_calls_ok": 3.0,
+      "turns": 8.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/app",
+          "/config",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "set -euo pipefail\nls -l /config /app\nprintf '--- template ---\\n'; cat /config/template.env\nprintf '\\n--- overrides ---\\n'; cat /config/overrides.txt\n",
+            "exit_code": 2,
+            "stderr": "ls: cannot access '/app': No such file or directory\n",
+            "stdout": ""
+          },
+          {
+            "commands": "set -u\nls -l /config || true\nls -l /app || true\nprintf '--- template ---\\n'; cat /config/template.env\nprintf '\\n--- overrides ---\\n'; cat /config/overrides.txt\n",
+            "exit_code": 0,
+            "stderr": "ls: cannot access '/app': No such file or directory\n",
+            "stdout": "-rw-r--r--       40 2026-07-12 00:34 overrides.txt\n-rw-r--r--      157 2026-07-12 00:34 template.env\n--- template ---\nDB_HOST=${DB_HOST:-localhost}\nDB_PORT=${DB_PORT:-5432}\nDB_NAME=${DB_NAME:-myapp}\nREDIS_URL=${REDIS_URL:-redis://localhost:6379}\nLOG_LEVEL=${LOG_LEVEL:-info}\n\n--- overrides ---\nDB_HOST=db.prod.internal\nLOG_LEVEL=warn\n"
+          },
+          {
+            "commands": "set -euo pipefail\nmkdir -p /app\n\ndeclare -A overrides\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"$line\" ]] && continue\n  [[ \"$line\" =~ ^[[:space:]]*# ]] && continue\n  key=${line%%=*}\n  val=${line#*=}\n  overrides[\"$key\"]=\"$val\"\ndone < /config/overrides.txt\n\n: > /app/.env\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"$line\" ]] && continue\n  [[ \"$line\" =~ ^[[:space:]]*# ]] && continue\n\n  if [[ \"$line\" =~ ^([^=]+)=\\$\\{[^:}]+:-([^}]*)\\}$ ]]; then\n    key=\"${BASH_REMATCH[1]}\"\n    def=\"${BASH_REMATCH[2]}\"\n    if [[ -v overrides[\"$key\"] ]]; then\n      printf '%s=%s\\n' \"$key\" \"${overrides[$key]}\" >> /app/.env\n    else\n      printf '%s=%s\\n' \"$key\" \"$def\" >> /app/.env\n    fi\n  fi\ndone < /config/template.env\n\ncat /app/.env\n",
+            "exit_code": 1,
+            "stderr": "parse error at line 14, column 46: expected 'done'",
+            "stdout": ""
+          },
+          {
+            "commands": "set -euo pipefail\nmkdir -p /app\n\ndeclare -A overrides\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"$line\" ]] && continue\n  [[ \"$line\" == \\#* ]] && continue\n  key=${line%%=*}\n  val=${line#*=}\n  overrides[\"$key\"]=\"$val\"\ndone < /config/overrides.txt\n\n: > /app/.env\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"$line\" ]] && continue\n  [[ \"$line\" == \\#* ]] && continue\n\n  key=${line%%=*}\n  rhs=${line#*=}\n  def=${rhs#*:-}\n  def=${def%\\}}\n\n  if [[ -v overrides[\"$key\"] ]]; then\n    printf '%s=%s\\n' \"$key\" \"${overrides[$key]}\" >> /app/.env\n  else\n    printf '%s=%s\\n' \"$key\" \"$def\" >> /app/.env\n  fi\ndone < /config/template.env\n\ncat /app/.env\n",
+            "exit_code": 1,
+            "stderr": "parse error at line 21, column 15: expected 'done'",
+            "stdout": ""
+          },
+          {
+            "commands": "set -euo pipefail\nmkdir -p /app\n\ndeclare -A overrides\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"$line\" ]] && continue\n  [[ \"$line\" == \\#* ]] && continue\n  key=${line%%=*}\n  val=${line#*=}\n  overrides[$key]=\"$val\"\ndone < /config/overrides.txt\n\n: > /app/.env\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"$line\" ]] && continue\n  [[ \"$line\" == \\#* ]] && continue\n\n  key=${line%%=*}\n  rhs=${line#*=}\n  def=${rhs#*:-}\n  def=${def%\\}}\n\n  if [[ ${overrides[$key]+set} == set ]]; then\n    printf '%s=%s\\n' \"$key\" \"${overrides[$key]}\" >> /app/.env\n  else\n    printf '%s=%s\\n' \"$key\" \"$def\" >> /app/.env\n  fi\ndone < /config/template.env\n\ncat /app/.env\n",
+            "exit_code": 1,
+            "stderr": "parse error at line 21, column 15: expected 'done'",
+            "stdout": ""
+          },
+          {
+            "commands": "set -euo pipefail\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  echo \"$line\"\ndone < /config/template.env\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "DB_HOST=${DB_HOST:-localhost}\nDB_PORT=${DB_PORT:-5432}\nDB_NAME=${DB_NAME:-myapp}\nREDIS_URL=${REDIS_URL:-redis://localhost:6379}\nLOG_LEVEL=${LOG_LEVEL:-info}\n"
+          },
+          {
+            "commands": "set -euo pipefail\nmkdir -p /app\nawk '\n  FNR==NR {\n    if ($0 ~ /^[[:space:]]*$/ || $0 ~ /^[[:space:]]*#/) next\n    p = index($0, \"=\")\n    if (p == 0) next\n    k = substr($0, 1, p-1)\n    v = substr($0, p+1)\n    overrides[k] = v\n    next\n  }\n  {\n    if ($0 ~ /^[[:space:]]*$/ || $0 ~ /^[[:space:]]*#/) next\n    p = index($0, \"=\")\n    if (p == 0) next\n    key = substr($0, 1, p-1)\n    rhs = substr($0, p+1)\n\n    def = rhs\n    sub(/^\\$\\{[^:}]+:-/, \"\", def)\n    sub(/\\}$/, \"\", def)\n\n    if (key in overrides) {\n      print key \"=\" overrides[key]\n    } else {\n      print key \"=\" def\n    }\n  }\n' /config/overrides.txt /config/template.env > /app/.env\n\ncat /app/.env\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "DB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nREDIS_URL=redis://localhost:6379\nLOG_LEVEL=warn\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

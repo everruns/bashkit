@@ -1,0 +1,61 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "pipe_log_pipeline",
+  "target": "anthropic/claude-haiku-4-5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "3/3 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Perfect! Here are the top 3 most requested URL paths from `/var/log/access.log`:\n\n| Count | URL Path |\n|-------|----------|\n| 4 | /api/users |\n| 4 | /api/items |\n| 2 | /api/health |\n\nThe results show that `/api/users` and `/api/items` are tied for the most frequently requested paths with 4 requests each, followed by `/api/health` with 2 requests.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "cat /var/log/access.log | awk '{print $2}' | sort | uniq -c | sort -rn | head -3"
+    ],
+    "usage": {
+      "input_tokens": 1652,
+      "output_tokens": 222,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 2287
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp",
+          "/var",
+          "/var/log"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat /var/log/access.log | awk '{print $2}' | sort | uniq -c | sort -rn | head -3",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "      4 /api/users\n      4 /api/items\n      2 /api/health\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

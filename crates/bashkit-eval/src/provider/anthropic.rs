@@ -6,8 +6,8 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 
 use super::{
-    ContentBlock, Message, Provider, ProviderResponse, Role, ToolDefinition,
-    ensure_rustls_crypto_provider,
+    ContentBlock, Message, Provider, ProviderResponse, Role, ToolDefinition, build_http_client,
+    ensure_rustls_crypto_provider, is_retryable_error,
 };
 
 pub struct AnthropicProvider {
@@ -22,7 +22,7 @@ impl AnthropicProvider {
         let api_key =
             std::env::var("ANTHROPIC_API_KEY").context("ANTHROPIC_API_KEY env var not set")?;
         Ok(Self {
-            client: reqwest::Client::new(),
+            client: build_http_client()?,
             api_key,
             model: model.to_string(),
         })
@@ -175,8 +175,8 @@ impl Provider for AnthropicProvider {
                 .as_str()
                 .unwrap_or("unknown error");
 
-            // Retry on 429 (rate limit) and 529 (overloaded)
-            let retryable = status.as_u16() == 429 || status.as_u16() == 529;
+            // Retry transient errors only; fast-fail on quota/billing/auth.
+            let retryable = is_retryable_error(status, &resp_body);
             if retryable && let Some(&delay) = delays.get(attempt) {
                 eprintln!(
                     "  [retry] Anthropic {} — waiting {}s (attempt {}/{})",

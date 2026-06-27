@@ -875,6 +875,10 @@ criteria = "safe-to-deploy"
 version = "0.9.7"
 criteria = "safe-to-deploy"
 
+[[exemptions.inventory]]
+version = "0.3.24"
+criteria = "safe-to-deploy"
+
 [[exemptions.ipnet]]
 version = "2.12.0"
 criteria = "safe-to-deploy"
@@ -1065,6 +1069,14 @@ criteria = "safe-to-deploy"
 
 [[exemptions.mio]]
 version = "1.2.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.mira-eval]]
+version = "0.2.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.mira-macros]]
+version = "0.2.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.ml-kem]]

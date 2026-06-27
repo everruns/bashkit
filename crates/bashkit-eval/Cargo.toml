@@ -1,6 +1,10 @@
-# bashkit-eval: LLM evaluation harness for bashkit tool usage
-# Measures how well models use a sandboxed bash tool in agentic workloads
-# See specs/eval.md for design decisions
+# bashkit-eval: mira eval study for bashkit tool usage
+# Measures how well models use a sandboxed bash tool in agentic workloads.
+# Reimplemented on the mira eval framework (github.com/everruns/mira):
+# bashkit drives the agent loop as a mira `Subject`; tasks are mira `Sample`s;
+# the bashkit expectation checks run as a mira `Scorer`. The `mira` CLI hosts
+# this binary over stdio and owns the model matrix, scheduling, and reporting.
+# See specs/eval.md for design decisions.
 
 [package]
 name = "bashkit-eval"
@@ -8,18 +12,22 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "LLM evaluation harness for bashkit tool usage"
+description = "Mira eval study for bashkit tool usage"
 
 [[bin]]
 name = "bashkit-eval"
 path = "src/main.rs"
 
 [dependencies]
+# Mira eval framework (crates.io). Imported as `mira`; the `macros` feature
+# provides the #[eval] discovery attribute. We use the in-process Subject path
+# (our own agent loop + provider stack) so we do NOT need mira-everruns.
+mira-eval = { version = "0.2", features = ["macros"] }
+
 bashkit = { path = "../bashkit", features = ["scripted_tool", "jq"] }
-tokio = { workspace = true, features = ["rt-multi-thread"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "io-std", "io-util", "fs"] }
 serde.workspace = true
 serde_json.workspace = true
-clap.workspace = true
 anyhow.workspace = true
 reqwest.workspace = true
 # Direct rustls dep so we can install the `ring` crypto provider before

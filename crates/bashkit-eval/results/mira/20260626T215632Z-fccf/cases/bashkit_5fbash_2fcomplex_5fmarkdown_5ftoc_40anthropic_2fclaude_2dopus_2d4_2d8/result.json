@@ -1,0 +1,81 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_markdown_toc",
+  "target": "anthropic/claude-opus-4-8",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done. I read `/doc/README.md`, generated a table of contents from all `#` and `##` headings, and inserted it right after the first heading.\n\nThe result:\n- **TOC location**: placed immediately after the first heading (`# Project Alpha`), separated by a blank line.\n- **Format**: a markdown list with `- [Heading Text](#anchor)`.\n- **Anchors**: heading text lowercased with spaces replaced by hyphens (e.g., `API Reference` → `#api-reference`).\n\nThe file has been written back with the TOC including all five headings (Project Alpha, Installation, Usage, API Reference, Contributing), and the original body content preserved below it.",
+    "iterations": 5,
+    "tool_calls_count": 4,
+    "tool_calls": [
+      "cat /doc/README.md",
+      "cd /doc\n\n# Build TOC into a temp file\n> /tmp/toc.md\nfirst_heading_line=\"\"\nwhile IFS= read -r line; do\n  if [[ \"$line\" =~ ^#{1,2}[[:space:]] ]]; then\n    # strip leading #'s and spaces\n    text=\"${line#\"${line%%[^#]*}\"}\"\n    text=\"${text#\"${text%%[^[:space:]]*}\"}\"\n    # anchor: lowercase, spaces -> hyphens\n    anchor=\"${text,,}\"\n    anchor=\"${anchor// /-}\"\n    echo \"- [$text](#$anchor)\" >> /tmp/toc.md\n  fi\ndone < README.md\n\ncat /tmp/toc.md",
+      "cd /doc\ncat > /tmp/gen.sh <<'SCRIPT'\n#!/bin/bash\n> /tmp/toc.md\nwhile IFS= read -r line; do\n  case \"$line\" in\n    \"# \"*|\"## \"*)\n      # strip leading #'s\n      text=\"${line#\\#}\"\n      while [ \"${text#\\#}\" != \"$text\" ]; do text=\"${text#\\#}\"; done\n      # trim leading spaces\n      text=\"${text#\"${text%%[![:space:]]*}\"}\"\n      anchor=\"${text,,}\"\n      anchor=\"${anchor// /-}\"\n      echo \"- [$text](#$anchor)\" >> /tmp/toc.md\n      ;;\n  esac\ndone < README.md\nSCRIPT\nbash /tmp/gen.sh\ncat /tmp/toc.md",
+      "cd /doc\ncat > /tmp/insert.sh <<'SCRIPT'\n#!/bin/bash\ninserted=0\n> /tmp/out.md\nwhile IFS= read -r line; do\n  printf '%s\\n' \"$line\" >> /tmp/out.md\n  if [ \"$inserted\" -eq 0 ]; then\n    case \"$line\" in\n      \"# \"*|\"## \"*)\n        printf '\\n' >> /tmp/out.md\n        cat /tmp/toc.md >> /tmp/out.md\n        inserted=1\n        ;;\n    esac\n  fi\ndone < README.md\nmv /tmp/out.md README.md\nSCRIPT\nbash /tmp/insert.sh\ncat README.md"
+    ],
+    "usage": {
+      "input_tokens": 6543,
+      "output_tokens": 1296,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 17251
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 4.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 3.0,
+      "turns": 5.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/doc",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat /doc/README.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Project Alpha\n\nIntroduction to the project.\n\n## Installation\n\nRun the installer.\n\n## Usage\n\nHow to use it.\n\n## API Reference\n\nEndpoint documentation.\n\n## Contributing\n\nPR guidelines.\n"
+          },
+          {
+            "commands": "cd /doc\n\n# Build TOC into a temp file\n> /tmp/toc.md\nfirst_heading_line=\"\"\nwhile IFS= read -r line; do\n  if [[ \"$line\" =~ ^#{1,2}[[:space:]] ]]; then\n    # strip leading #'s and spaces\n    text=\"${line#\"${line%%[^#]*}\"}\"\n    text=\"${text#\"${text%%[^[:space:]]*}\"}\"\n    # anchor: lowercase, spaces -> hyphens\n    anchor=\"${text,,}\"\n    anchor=\"${anchor// /-}\"\n    echo \"- [$text](#$anchor)\" >> /tmp/toc.md\n  fi\ndone < README.md\n\ncat /tmp/toc.md",
+            "exit_code": 1,
+            "stderr": "parse error: unexpected end of input in [[ ]]",
+            "stdout": ""
+          },
+          {
+            "commands": "cd /doc\ncat > /tmp/gen.sh <<'SCRIPT'\n#!/bin/bash\n> /tmp/toc.md\nwhile IFS= read -r line; do\n  case \"$line\" in\n    \"# \"*|\"## \"*)\n      # strip leading #'s\n      text=\"${line#\\#}\"\n      while [ \"${text#\\#}\" != \"$text\" ]; do text=\"${text#\\#}\"; done\n      # trim leading spaces\n      text=\"${text#\"${text%%[![:space:]]*}\"}\"\n      anchor=\"${text,,}\"\n      anchor=\"${anchor// /-}\"\n      echo \"- [$text](#$anchor)\" >> /tmp/toc.md\n      ;;\n  esac\ndone < README.md\nSCRIPT\nbash /tmp/gen.sh\ncat /tmp/toc.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "- [Project Alpha](#project-alpha)\n- [Installation](#installation)\n- [Usage](#usage)\n- [API Reference](#api-reference)\n- [Contributing](#contributing)\n"
+          },
+          {
+            "commands": "cd /doc\ncat > /tmp/insert.sh <<'SCRIPT'\n#!/bin/bash\ninserted=0\n> /tmp/out.md\nwhile IFS= read -r line; do\n  printf '%s\\n' \"$line\" >> /tmp/out.md\n  if [ \"$inserted\" -eq 0 ]; then\n    case \"$line\" in\n      \"# \"*|\"## \"*)\n        printf '\\n' >> /tmp/out.md\n        cat /tmp/toc.md >> /tmp/out.md\n        inserted=1\n        ;;\n    esac\n  fi\ndone < README.md\nmv /tmp/out.md README.md\nSCRIPT\nbash /tmp/insert.sh\ncat README.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Project Alpha\n\n- [Project Alpha](#project-alpha)\n- [Installation](#installation)\n- [Usage](#usage)\n- [API Reference](#api-reference)\n- [Contributing](#contributing)\n\nIntroduction to the project.\n\n## Installation\n\nRun the installer.\n\n## Usage\n\nHow to use it.\n\n## API Reference\n\nEndpoint documentation.\n\n## Contributing\n\nPR guidelines.\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

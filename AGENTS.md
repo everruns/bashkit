@@ -37,7 +37,7 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 | tool-contract | Public LLM Tool trait contract |
 | git-support | Sandboxed git operations on VFS |
 | python-builtin | Embedded Python via Monty, security, resource limits |
-| eval | LLM evaluation harness, dataset format, scoring |
+| eval | LLM eval study on the mira framework, dataset format, scoring |
 | maintenance | Pre-release maintenance requirements |
 | python-package | Python package, PyPI wheels, platform matrix |
 | scripted-tool-orchestration | Compose ToolDef+callback pairs into OrchestratorTool via bash scripts |

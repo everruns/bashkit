@@ -1,0 +1,67 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "db_csv_group_by",
+  "target": "anthropic/claude-haiku-4-5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Perfect! Here are the results sorted by total amount in descending order:\n\n```\nnorth: 850\nsouth: 750\neast: 650\n```\n\n**Breakdown:**\n- **north**: 500 + 200 + 150 = **850**\n- **south**: 300 + 350 + 100 = **750**\n- **east**: 400 + 250 = **650**",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /data/sales.csv",
+      "awk -F',' 'NR>1 {sum[$1]+=$3} END {for (region in sum) print region, sum[region]}' /data/sales.csv | sort -k2 -rn | awk '{print $1\": \"$2}'"
+    ],
+    "usage": {
+      "input_tokens": 2695,
+      "output_tokens": 286,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 4001
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat /data/sales.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "region,product,amount\nnorth,widgets,500\nsouth,gadgets,300\nnorth,bolts,200\neast,widgets,400\nsouth,widgets,350\nnorth,gadgets,150\neast,bolts,250\nsouth,bolts,100\n"
+          },
+          {
+            "commands": "awk -F',' 'NR>1 {sum[$1]+=$3} END {for (region in sum) print region, sum[region]}' /data/sales.csv | sort -k2 -rn | awk '{print $1\": \"$2}'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "north: 850\nsouth: 750\neast: 650\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

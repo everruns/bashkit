@@ -1,0 +1,67 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "config_ini_merge",
+  "target": "openai/gpt-5.5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "[server]\nhost=0.0.0.0\nport=9090\nworkers=8\n\n[database]\nhost=localhost\nport=5432\npool_size=5\n\n[logging]\nlevel=debug\nformat=json",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -l /config && printf '%s\n' '--- defaults.ini ---' && cat /config/defaults.ini && printf '%s\n' '--- custom.ini ---' && cat /config/custom.ini",
+      "awk '\nfunction trim(s){ sub(/^[[:space:]]+/,\"\",s); sub(/[[:space:]]+$/,\"\",s); return s }\nfunction add_section(sec){ if (!(sec in seen_sec)) { seen_sec[sec]=1; sec_order[++nsec]=sec } }\nfunction add_key(sec,key){ idx=sec SUBSEP key; if (!(idx in seen_key)) { seen_key[idx]=1; key_order[sec,++key_count[sec]]=key } }\nBEGIN { sec=\"\" }\nFNR==1 { file_index++ }\n/^[[:space:]]*$/ { next }\n/^[[:space:]]*\\[/ {\n  line=$0\n  sub(/^[[:space:]]*\\[/,\"\",line); sub(/\\][[:space:]]*$/,\"\",line)\n  sec=trim(line)\n  add_section(sec)\n  next\n}\n{\n  pos=index($0,\"=\")\n  if (pos>0 && sec != \"\") {\n    key=trim(substr($0,1,pos-1))\n    val=trim(substr($0,pos+1))\n    add_key(sec,key)\n    values[sec,key]=val\n  }\n}\nEND {\n  for (i=1; i<=nsec; i++) {\n    sec=sec_order[i]\n    print \"[\" sec \"]\"\n    for (j=1; j<=key_count[sec]; j++) {\n      key=key_order[sec,j]\n      print key \"=\" values[sec,key]\n    }\n    if (i<nsec) print \"\"\n  }\n}\n' /config/defaults.ini /config/custom.ini > /config/merged.ini\ncat /config/merged.ini"
+    ],
+    "usage": {
+      "input_tokens": 1804,
+      "output_tokens": 700,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 9722
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/config",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "ls -l /config && printf '%s\n' '--- defaults.ini ---' && cat /config/defaults.ini && printf '%s\n' '--- custom.ini ---' && cat /config/custom.ini",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       64 2026-07-12 00:34 custom.ini\n-rw-r--r--      125 2026-07-12 00:34 defaults.ini\n--- defaults.ini ---\n[server]\nhost=0.0.0.0\nport=8080\nworkers=4\n\n[database]\nhost=localhost\nport=5432\npool_size=5\n\n[logging]\nlevel=info\nformat=text\n--- custom.ini ---\n[server]\nport=9090\nworkers=8\n\n[logging]\nlevel=debug\nformat=json\n"
+          },
+          {
+            "commands": "awk '\nfunction trim(s){ sub(/^[[:space:]]+/,\"\",s); sub(/[[:space:]]+$/,\"\",s); return s }\nfunction add_section(sec){ if (!(sec in seen_sec)) { seen_sec[sec]=1; sec_order[++nsec]=sec } }\nfunction add_key(sec,key){ idx=sec SUBSEP key; if (!(idx in seen_key)) { seen_key[idx]=1; key_order[sec,++key_count[sec]]=key } }\nBEGIN { sec=\"\" }\nFNR==1 { file_index++ }\n/^[[:space:]]*$/ { next }\n/^[[:space:]]*\\[/ {\n  line=$0\n  sub(/^[[:space:]]*\\[/,\"\",line); sub(/\\][[:space:]]*$/,\"\",line)\n  sec=trim(line)\n  add_section(sec)\n  next\n}\n{\n  pos=index($0,\"=\")\n  if (pos>0 && sec != \"\") {\n    key=trim(substr($0,1,pos-1))\n    val=trim(substr($0,pos+1))\n    add_key(sec,key)\n    values[sec,key]=val\n  }\n}\nEND {\n  for (i=1; i<=nsec; i++) {\n    sec=sec_order[i]\n    print \"[\" sec \"]\"\n    for (j=1; j<=key_count[sec]; j++) {\n      key=key_order[sec,j]\n      print key \"=\" values[sec,key]\n    }\n    if (i<nsec) print \"\"\n  }\n}\n' /config/defaults.ini /config/custom.ini > /config/merged.ini\ncat /config/merged.ini",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[server]\nhost=0.0.0.0\nport=9090\nworkers=8\n\n[database]\nhost=localhost\nport=5432\npool_size=5\n\n[logging]\nlevel=debug\nformat=json\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,67 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "pipe_process_sub",
+  "target": "openresponses/gpt-5.3-codex",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "To install:\nnodejs\nredis\nTo remove:\nnginx\nvim",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -l /data && echo '---' && head -n 5 /data/installed.txt && echo '---' && head -n 5 /data/required.txt",
+      "echo 'To install:'\ndiff <(sort /data/installed.txt) <(sort /data/required.txt) | grep '^>' | sed 's/^> //'\necho 'To remove:'\ndiff <(sort /data/installed.txt) <(sort /data/required.txt) | grep '^<' | sed 's/^< //'"
+    ],
+    "usage": {
+      "input_tokens": 1250,
+      "output_tokens": 502,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 8868
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "ls -l /data && echo '---' && head -n 5 /data/installed.txt && echo '---' && head -n 5 /data/required.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       32 2026-07-12 00:33 installed.txt\n-rw-r--r--       35 2026-07-12 00:33 required.txt\n---\ncurl\ngit\nnginx\nvim\nwget\n---\ncurl\ngit\nnodejs\npython3\nwget\n"
+          },
+          {
+            "commands": "echo 'To install:'\ndiff <(sort /data/installed.txt) <(sort /data/required.txt) | grep '^>' | sed 's/^> //'\necho 'To remove:'\ndiff <(sort /data/installed.txt) <(sort /data/required.txt) | grep '^<' | sed 's/^< //'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "To install:\nnodejs\nredis\nTo remove:\nnginx\nvim\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

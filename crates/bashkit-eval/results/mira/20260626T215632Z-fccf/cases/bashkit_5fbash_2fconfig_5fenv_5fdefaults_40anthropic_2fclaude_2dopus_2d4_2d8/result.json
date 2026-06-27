@@ -1,0 +1,67 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "config_env_defaults",
+  "target": "anthropic/claude-opus-4-8",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done. The script `/scripts/start.sh` is created and working correctly.\n\n## What it does\n\nThe script reads four environment variables, applying defaults via bash parameter expansion (`${VAR:-default}`):\n\n- `DB_HOST` → `localhost`\n- `DB_PORT` → `5432`\n- `DB_NAME` → `myapp`\n- `LOG_LEVEL` → `info`\n\nIt prints the resolved config as `key=value` lines. To detect whether `DB_HOST` was *explicitly set*, it checks `${DB_HOST+x}` **before** applying the default — this distinguishes \"unset\" from \"set\" (even to an empty value), which the plain `:-` fallback alone can't do. When set, it appends `custom_db=true`.\n\n## Test results\n\n**Run 1 — defaults (no env vars):**\n```\nDB_HOST=localhost\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\n```\nNo `custom_db` line, as expected.\n\n**Run 2 — `DB_HOST=db.prod.internal`:**\n```\nDB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\ncustom_db=true\n```\nThe override takes effect and `custom_db=true` appears.\n\n> Note: I initially tried `env -u` to clear variables, but it's not supported here, so I used a subshell with `unset` instead — same effect, fully isolated per run.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "mkdir -p /scripts\ncat > /scripts/start.sh <<'EOF'\n#!/usr/bin/env bash\n# Configure a service from environment variables with sensible defaults.\n\nDB_HOST_SET=false\nif [ -n \"${DB_HOST+x}\" ]; then\n    DB_HOST_SET=true\nfi\n\nDB_HOST=\"${DB_HOST:-localhost}\"\nDB_PORT=\"${DB_PORT:-5432}\"\nDB_NAME=\"${DB_NAME:-myapp}\"\nLOG_LEVEL=\"${LOG_LEVEL:-info}\"\n\necho \"DB_HOST=${DB_HOST}\"\necho \"DB_PORT=${DB_PORT}\"\necho \"DB_NAME=${DB_NAME}\"\necho \"LOG_LEVEL=${LOG_LEVEL}\"\n\nif [ \"$DB_HOST_SET\" = true ]; then\n    echo \"custom_db=true\"\nfi\nEOF\nchmod +x /scripts/start.sh\necho \"--- Run 1: no env vars (defaults) ---\"\nenv -u DB_HOST -u DB_PORT -u DB_NAME -u LOG_LEVEL /scripts/start.sh\necho\necho \"--- Run 2: DB_HOST override ---\"\nDB_HOST=db.prod.internal /scripts/start.sh",
+      "echo \"--- Run 1: no env vars (defaults) ---\"\n(unset DB_HOST DB_PORT DB_NAME LOG_LEVEL; /scripts/start.sh)\necho\necho \"--- Run 2: DB_HOST override ---\"\n(unset DB_HOST DB_PORT DB_NAME LOG_LEVEL; DB_HOST=db.prod.internal /scripts/start.sh)"
+    ],
+    "usage": {
+      "input_tokens": 3986,
+      "output_tokens": 1239,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 14363
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/scripts",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /scripts\ncat > /scripts/start.sh <<'EOF'\n#!/usr/bin/env bash\n# Configure a service from environment variables with sensible defaults.\n\nDB_HOST_SET=false\nif [ -n \"${DB_HOST+x}\" ]; then\n    DB_HOST_SET=true\nfi\n\nDB_HOST=\"${DB_HOST:-localhost}\"\nDB_PORT=\"${DB_PORT:-5432}\"\nDB_NAME=\"${DB_NAME:-myapp}\"\nLOG_LEVEL=\"${LOG_LEVEL:-info}\"\n\necho \"DB_HOST=${DB_HOST}\"\necho \"DB_PORT=${DB_PORT}\"\necho \"DB_NAME=${DB_NAME}\"\necho \"LOG_LEVEL=${LOG_LEVEL}\"\n\nif [ \"$DB_HOST_SET\" = true ]; then\n    echo \"custom_db=true\"\nfi\nEOF\nchmod +x /scripts/start.sh\necho \"--- Run 1: no env vars (defaults) ---\"\nenv -u DB_HOST -u DB_PORT -u DB_NAME -u LOG_LEVEL /scripts/start.sh\necho\necho \"--- Run 2: DB_HOST override ---\"\nDB_HOST=db.prod.internal /scripts/start.sh",
+            "exit_code": 0,
+            "stderr": "env: -u option not supported\n",
+            "stdout": "--- Run 1: no env vars (defaults) ---\n\n--- Run 2: DB_HOST override ---\nDB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\ncustom_db=true\n"
+          },
+          {
+            "commands": "echo \"--- Run 1: no env vars (defaults) ---\"\n(unset DB_HOST DB_PORT DB_NAME LOG_LEVEL; /scripts/start.sh)\necho\necho \"--- Run 2: DB_HOST override ---\"\n(unset DB_HOST DB_PORT DB_NAME LOG_LEVEL; DB_HOST=db.prod.internal /scripts/start.sh)",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "--- Run 1: no env vars (defaults) ---\nDB_HOST=localhost\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\n\n--- Run 2: DB_HOST override ---\nDB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\ncustom_db=true\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

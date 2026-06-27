@@ -1,0 +1,74 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_diff_report",
+  "target": "anthropic/claude-haiku-4-5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Perfect! Here's the human-readable summary of the configuration changes from v1.conf to v2.conf:\n\n**CONFIGURATION COMPARISON SUMMARY: v1.conf → v2.conf**\n\n**✓ KEYS ADDED (1):**\n- `timeout = 30`\n\n**✗ KEYS REMOVED (1):**\n- `max_connections = 100`\n\n**⟲ KEYS CHANGED (3):**\n- `host`\n  - OLD: `localhost`\n  - NEW: `0.0.0.0`\n- `log_level`\n  - OLD: `info`\n  - NEW: `debug`\n- `port`\n  - OLD: `8080`\n  - NEW: `9090`\n\nIn summary: the configuration was updated to listen on all network interfaces (0.0.0.0) on a different port (9090), enable debug logging, add a 30-second timeout, and remove the max_connections limit.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "cat /data/v1.conf && echo \"---\" && cat /data/v2.conf",
+      "cat > /tmp/compare_conf.sh << 'EOF'\n#!/bin/bash\n\n# Parse config files into associative arrays\ndeclare -A v1\ndeclare -A v2\n\nwhile IFS='=' read -r key value; do\n    [[ -z \"$key\" || \"$key\" =~ ^[[:space:]]*# ]] && continue\n    v1[\"$key\"]=\"$value\"\ndone < /data/v1.conf\n\nwhile IFS='=' read -r key value; do\n    [[ -z \"$key\" || \"$key\" =~ ^[[:space:]]*# ]] && continue\n    v2[\"$key\"]=\"$value\"\ndone < /data/v2.conf\n\n# Collect results\nadded=()\nremoved=()\nchanged=()\n\n# Find added and changed keys\nfor key in \"${!v2[@]}\"; do\n    if [[ -z \"${v1[$key]}\" ]]; then\n        added+=(\"$key\")\n    elif [[ \"${v1[$key]}\" != \"${v2[$key]}\" ]]; then\n        changed+=(\"$key\")\n    fi\ndone\n\n# Find removed keys\nfor key in \"${!v1[@]}\"; do\n    if [[ -z \"${v2[$key]}\" ]]; then\n        removed+=(\"$key\")\n    fi\ndone\n\n# Print summary\necho \"═══════════════════════════════════════════════════════════════════\"\necho \"CONFIGURATION COMPARISON SUMMARY: v1.conf → v2.conf\"\necho \"═══════════════════════════════════════════════════════════════════\"\necho \"\"\n\nif [[ ${#added[@]} -gt 0 ]]; then\n    echo \"✓ KEYS ADDED (${#added[@]}):\"\n    for key in \"${added[@]}\"; do\n        echo \"  • $key = ${v2[$key]}\"\n    done\n    echo \"\"\nfi\n\nif [[ ${#removed[@]} -gt 0 ]]; then\n    echo \"✗ KEYS REMOVED (${#removed[@]}):\"\n    for key in \"${removed[@]}\"; do\n        echo \"  • $key = ${v1[$key]}\"\n    done\n    echo \"\"\nfi\n\nif [[ ${#changed[@]} -gt 0 ]]; then\n    echo \"⟲ KEYS CHANGED (${#changed[@]}):\"\n    for key in \"${changed[@]}\"; do\n        echo \"  • $key\"\n        echo \"    OLD: ${v1[$key]}\"\n        echo \"    NEW: ${v2[$key]}\"\n    done\n    echo \"\"\nfi\n\nif [[ ${#added[@]} -eq 0 && ${#removed[@]} -eq 0 && ${#changed[@]} -eq 0 ]]; then\n    echo \"No differences found between v1.conf and v2.conf\"\n    echo \"\"\nfi\n\necho \"═══════════════════════════════════════════════════════════════════\"\nEOF\n\nbash /tmp/compare_conf.sh\n",
+      "cat > /tmp/compare_conf.sh << 'EOF'\n#!/bin/bash\n\n# Parse config files into associative arrays\ndeclare -A v1\ndeclare -A v2\n\nwhile IFS='=' read -r key value; do\n    [[ -z \"$key\" ]] && continue\n    v1[\"$key\"]=\"$value\"\ndone < /data/v1.conf\n\nwhile IFS='=' read -r key value; do\n    [[ -z \"$key\" ]] && continue\n    v2[\"$key\"]=\"$value\"\ndone < /data/v2.conf\n\n# Collect results\nadded=()\nremoved=()\nchanged=()\n\n# Find added and changed keys\nfor key in \"${!v2[@]}\"; do\n    if [[ -z \"${v1[$key]}\" ]]; then\n        added+=(\"$key\")\n    elif [[ \"${v1[$key]}\" != \"${v2[$key]}\" ]]; then\n        changed+=(\"$key\")\n    fi\ndone\n\n# Find removed keys\nfor key in \"${!v1[@]}\"; do\n    if [[ -z \"${v2[$key]}\" ]]; then\n        removed+=(\"$key\")\n    fi\ndone\n\n# Print summary\necho \"═══════════════════════════════════════════════════════════════════\"\necho \"CONFIGURATION COMPARISON SUMMARY: v1.conf → v2.conf\"\necho \"═══════════════════════════════════════════════════════════════════\"\necho \"\"\n\nif [[ ${#added[@]} -gt 0 ]]; then\n    echo \"✓ KEYS ADDED (${#added[@]}):\"\n    for key in \"${added[@]}\"; do\n        echo \"  • $key = ${v2[$key]}\"\n    done\n    echo \"\"\nfi\n\nif [[ ${#removed[@]} -gt 0 ]]; then\n    echo \"✗ KEYS REMOVED (${#removed[@]}):\"\n    for key in \"${removed[@]}\"; do\n        echo \"  • $key = ${v1[$key]}\"\n    done\n    echo \"\"\nfi\n\nif [[ ${#changed[@]} -gt 0 ]]; then\n    echo \"⟲ KEYS CHANGED (${#changed[@]}):\"\n    for key in \"${changed[@]}\"; do\n        echo \"  • $key\"\n        echo \"    OLD: ${v1[$key]}\"\n        echo \"    NEW: ${v2[$key]}\"\n    done\n    echo \"\"\nfi\n\nif [[ ${#added[@]} -eq 0 && ${#removed[@]} -eq 0 && ${#changed[@]} -eq 0 ]]; then\n    echo \"No differences found between v1.conf and v2.conf\"\n    echo \"\"\nfi\n\necho \"═══════════════════════════════════════════════════════════════════\"\nEOF\n\nbash /tmp/compare_conf.sh\n"
+    ],
+    "usage": {
+      "input_tokens": 6125,
+      "output_tokens": 1852,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 10583
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 2.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat /data/v1.conf && echo \"---\" && cat /data/v2.conf",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "port=8080\nhost=localhost\nlog_level=info\nworkers=4\nmax_connections=100\n---\nport=9090\nhost=0.0.0.0\nlog_level=debug\nworkers=4\ntimeout=30\n"
+          },
+          {
+            "commands": "cat > /tmp/compare_conf.sh << 'EOF'\n#!/bin/bash\n\n# Parse config files into associative arrays\ndeclare -A v1\ndeclare -A v2\n\nwhile IFS='=' read -r key value; do\n    [[ -z \"$key\" || \"$key\" =~ ^[[:space:]]*# ]] && continue\n    v1[\"$key\"]=\"$value\"\ndone < /data/v1.conf\n\nwhile IFS='=' read -r key value; do\n    [[ -z \"$key\" || \"$key\" =~ ^[[:space:]]*# ]] && continue\n    v2[\"$key\"]=\"$value\"\ndone < /data/v2.conf\n\n# Collect results\nadded=()\nremoved=()\nchanged=()\n\n# Find added and changed keys\nfor key in \"${!v2[@]}\"; do\n    if [[ -z \"${v1[$key]}\" ]]; then\n        added+=(\"$key\")\n    elif [[ \"${v1[$key]}\" != \"${v2[$key]}\" ]]; then\n        changed+=(\"$key\")\n    fi\ndone\n\n# Find removed keys\nfor key in \"${!v1[@]}\"; do\n    if [[ -z \"${v2[$key]}\" ]]; then\n        removed+=(\"$key\")\n    fi\ndone\n\n# Print summary\necho \"═══════════════════════════════════════════════════════════════════\"\necho \"CONFIGURATION COMPARISON SUMMARY: v1.conf → v2.conf\"\necho \"═══════════════════════════════════════════════════════════════════\"\necho \"\"\n\nif [[ ${#added[@]} -gt 0 ]]; then\n    echo \"✓ KEYS ADDED (${#added[@]}):\"\n    for key in \"${added[@]}\"; do\n        echo \"  • $key = ${v2[$key]}\"\n    done\n    echo \"\"\nfi\n\nif [[ ${#removed[@]} -gt 0 ]]; then\n    echo \"✗ KEYS REMOVED (${#removed[@]}):\"\n    for key in \"${removed[@]}\"; do\n        echo \"  • $key = ${v1[$key]}\"\n    done\n    echo \"\"\nfi\n\nif [[ ${#changed[@]} -gt 0 ]]; then\n    echo \"⟲ KEYS CHANGED (${#changed[@]}):\"\n    for key in \"${changed[@]}\"; do\n        echo \"  • $key\"\n        echo \"    OLD: ${v1[$key]}\"\n        echo \"    NEW: ${v2[$key]}\"\n    done\n    echo \"\"\nfi\n\nif [[ ${#added[@]} -eq 0 && ${#removed[@]} -eq 0 && ${#changed[@]} -eq 0 ]]; then\n    echo \"No differences found between v1.conf and v2.conf\"\n    echo \"\"\nfi\n\necho \"═══════════════════════════════════════════════════════════════════\"\nEOF\n\nbash /tmp/compare_conf.sh\n",
+            "exit_code": 2,
+            "stderr": "bash: syntax error: parse error at line 24, column 32: expected 'done'\n",
+            "stdout": ""
+          },
+          {
+            "commands": "cat > /tmp/compare_conf.sh << 'EOF'\n#!/bin/bash\n\n# Parse config files into associative arrays\ndeclare -A v1\ndeclare -A v2\n\nwhile IFS='=' read -r key value; do\n    [[ -z \"$key\" ]] && continue\n    v1[\"$key\"]=\"$value\"\ndone < /data/v1.conf\n\nwhile IFS='=' read -r key value; do\n    [[ -z \"$key\" ]] && continue\n    v2[\"$key\"]=\"$value\"\ndone < /data/v2.conf\n\n# Collect results\nadded=()\nremoved=()\nchanged=()\n\n# Find added and changed keys\nfor key in \"${!v2[@]}\"; do\n    if [[ -z \"${v1[$key]}\" ]]; then\n        added+=(\"$key\")\n    elif [[ \"${v1[$key]}\" != \"${v2[$key]}\" ]]; then\n        changed+=(\"$key\")\n    fi\ndone\n\n# Find removed keys\nfor key in \"${!v1[@]}\"; do\n    if [[ -z \"${v2[$key]}\" ]]; then\n        removed+=(\"$key\")\n    fi\ndone\n\n# Print summary\necho \"═══════════════════════════════════════════════════════════════════\"\necho \"CONFIGURATION COMPARISON SUMMARY: v1.conf → v2.conf\"\necho \"═══════════════════════════════════════════════════════════════════\"\necho \"\"\n\nif [[ ${#added[@]} -gt 0 ]]; then\n    echo \"✓ KEYS ADDED (${#added[@]}):\"\n    for key in \"${added[@]}\"; do\n        echo \"  • $key = ${v2[$key]}\"\n    done\n    echo \"\"\nfi\n\nif [[ ${#removed[@]} -gt 0 ]]; then\n    echo \"✗ KEYS REMOVED (${#removed[@]}):\"\n    for key in \"${removed[@]}\"; do\n        echo \"  • $key = ${v1[$key]}\"\n    done\n    echo \"\"\nfi\n\nif [[ ${#changed[@]} -gt 0 ]]; then\n    echo \"⟲ KEYS CHANGED (${#changed[@]}):\"\n    for key in \"${changed[@]}\"; do\n        echo \"  • $key\"\n        echo \"    OLD: ${v1[$key]}\"\n        echo \"    NEW: ${v2[$key]}\"\n    done\n    echo \"\"\nfi\n\nif [[ ${#added[@]} -eq 0 && ${#removed[@]} -eq 0 && ${#changed[@]} -eq 0 ]]; then\n    echo \"No differences found between v1.conf and v2.conf\"\n    echo \"\"\nfi\n\necho \"═══════════════════════════════════════════════════════════════════\"\nEOF\n\nbash /tmp/compare_conf.sh\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "═══════════════════════════════════════════════════════════════════\nCONFIGURATION COMPARISON SUMMARY: v1.conf → v2.conf\n═══════════════════════════════════════════════════════════════════\n\n✓ KEYS ADDED (1):\n  • timeout = 30\n\n✗ KEYS REMOVED (1):\n  • max_connections = 100\n\n⟲ KEYS CHANGED (3):\n  • host\n    OLD: localhost\n    NEW: 0.0.0.0\n  • log_level\n    OLD: info\n    NEW: debug\n  • port\n    OLD: 8080\n    NEW: 9090\n\n═══════════════════════════════════════════════════════════════════\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

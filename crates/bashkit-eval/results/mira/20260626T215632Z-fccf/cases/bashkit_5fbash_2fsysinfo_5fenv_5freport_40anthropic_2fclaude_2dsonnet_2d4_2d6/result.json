@@ -1,0 +1,59 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "sysinfo_env_report",
+  "target": "anthropic/claude-sonnet-4-6",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Here is the system report:\n\n- **user:** eval — the currently logged-in user, retrieved via `whoami`\n- **host:** bashkit-eval — the machine's hostname, retrieved via `hostname`\n- **cwd:** /home/user — the current working directory, retrieved via `pwd`\n- **shell:** bash — the shell in use",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "echo \"user: $(whoami)\"\necho \"host: $(hostname)\"\necho \"cwd: $(pwd)\"\necho \"shell: bash\""
+    ],
+    "usage": {
+      "input_tokens": 1638,
+      "output_tokens": 164,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3586
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "echo \"user: $(whoami)\"\necho \"host: $(hostname)\"\necho \"cwd: $(pwd)\"\necho \"shell: bash\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "user: eval\nhost: bashkit-eval\ncwd: /home/user\nshell: bash\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

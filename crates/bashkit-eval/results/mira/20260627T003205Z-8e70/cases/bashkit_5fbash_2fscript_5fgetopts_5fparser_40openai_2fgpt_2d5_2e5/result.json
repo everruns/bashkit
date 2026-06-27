@@ -1,0 +1,68 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_getopts_parser",
+  "target": "openai/gpt-5.5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created `/scripts/report.sh` and ran:\n\n```bash\nbash /scripts/report.sh -f json -v\n```\n\nOutput:\n\n```json\nVerbose: processing 3 rows\n{\"name\":\"alice\",\"score\":\"95\"}\n{\"name\":\"bob\",\"score\":\"87\"}\n{\"name\":\"carol\",\"score\":\"92\"}\n```",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -l /data 2>/dev/null || true\nls -l /scripts 2>/dev/null || true\n[ -f /data/input.csv ] && { echo '---input---'; cat /data/input.csv; } || echo 'no input'",
+      "mkdir -p /scripts\ncat > /scripts/report.sh <<'EOF'\n#!/usr/bin/env bash\n\nset -euo pipefail\n\nusage() {\n  cat <<'USAGE'\nUsage: report.sh [-f csv|json] [-o file] [-v] [-h]\n\nOptions:\n  -f <format>  Output format: csv or json (default: csv)\n  -o <file>    Output file (default: stdout)\n  -v           Verbose mode\n  -h           Print this usage and exit\nUSAGE\n}\n\nformat=\"csv\"\noutfile=\"\"\nverbose=0\ninput=\"/data/input.csv\"\n\nwhile getopts \":f:o:vh\" opt; do\n  case \"$opt\" in\n    f)\n      case \"$OPTARG\" in\n        csv|json) format=\"$OPTARG\" ;;\n        *) echo \"Error: invalid format '$OPTARG' (must be csv or json)\" >&2; usage >&2; exit 1 ;;\n      esac\n      ;;\n    o)\n      outfile=\"$OPTARG\"\n      ;;\n    v)\n      verbose=1\n      ;;\n    h)\n      usage\n      exit 0\n      ;;\n    :)\n      echo \"Error: option -$OPTARG requires an argument\" >&2\n      usage >&2\n      exit 1\n      ;;\n    \\?)\n      echo \"Error: unknown option -$OPTARG\" >&2\n      usage >&2\n      exit 1\n      ;;\n  esac\ndone\nshift $((OPTIND - 1))\n\nif [ ! -f \"$input\" ]; then\n  echo \"Error: input file '$input' not found\" >&2\n  exit 1\nfi\n\nemit_report() {\n  if [ \"$verbose\" -eq 1 ]; then\n    rows=$(awk 'END { print (NR > 0 ? NR - 1 : 0) }' \"$input\")\n    echo \"Verbose: processing ${rows} rows\"\n  fi\n\n  if [ \"$format\" = \"csv\" ]; then\n    cat \"$input\"\n  else\n    awk -F',' '\n      function json_escape(s) {\n        gsub(/\\\\/, \"\\\\\\\\\", s)\n        gsub(/\"/, \"\\\\\\\"\", s)\n        gsub(/\\t/, \"\\\\t\", s)\n        gsub(/\\r/, \"\\\\r\", s)\n        gsub(/\\n/, \"\\\\n\", s)\n        return s\n      }\n      NR == 1 {\n        for (i = 1; i <= NF; i++) header[i] = $i\n        next\n      }\n      {\n        printf \"{\"\n        for (i = 1; i <= NF; i++) {\n          printf \"%s\\\"%s\\\":\\\"%s\\\"\", (i > 1 ? \",\" : \"\"), json_escape(header[i]), json_escape($i)\n        }\n        print \"}\"\n      }\n    ' \"$input\"\n  fi\n}\n\nif [ -n \"$outfile\" ]; then\n  emit_report > \"$outfile\"\nelse\n  emit_report\nfi\nEOF\nchmod +x /scripts/report.sh\nbash /scripts/report.sh -f json -v"
+    ],
+    "usage": {
+      "input_tokens": 2243,
+      "output_tokens": 1320,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 14781
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/scripts",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "ls -l /data 2>/dev/null || true\nls -l /scripts 2>/dev/null || true\n[ -f /data/input.csv ] && { echo '---input---'; cat /data/input.csv; } || echo 'no input'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       36 2026-07-12 00:33 input.csv\n---input---\nname,score\nalice,95\nbob,87\ncarol,92\n"
+          },
+          {
+            "commands": "mkdir -p /scripts\ncat > /scripts/report.sh <<'EOF'\n#!/usr/bin/env bash\n\nset -euo pipefail\n\nusage() {\n  cat <<'USAGE'\nUsage: report.sh [-f csv|json] [-o file] [-v] [-h]\n\nOptions:\n  -f <format>  Output format: csv or json (default: csv)\n  -o <file>    Output file (default: stdout)\n  -v           Verbose mode\n  -h           Print this usage and exit\nUSAGE\n}\n\nformat=\"csv\"\noutfile=\"\"\nverbose=0\ninput=\"/data/input.csv\"\n\nwhile getopts \":f:o:vh\" opt; do\n  case \"$opt\" in\n    f)\n      case \"$OPTARG\" in\n        csv|json) format=\"$OPTARG\" ;;\n        *) echo \"Error: invalid format '$OPTARG' (must be csv or json)\" >&2; usage >&2; exit 1 ;;\n      esac\n      ;;\n    o)\n      outfile=\"$OPTARG\"\n      ;;\n    v)\n      verbose=1\n      ;;\n    h)\n      usage\n      exit 0\n      ;;\n    :)\n      echo \"Error: option -$OPTARG requires an argument\" >&2\n      usage >&2\n      exit 1\n      ;;\n    \\?)\n      echo \"Error: unknown option -$OPTARG\" >&2\n      usage >&2\n      exit 1\n      ;;\n  esac\ndone\nshift $((OPTIND - 1))\n\nif [ ! -f \"$input\" ]; then\n  echo \"Error: input file '$input' not found\" >&2\n  exit 1\nfi\n\nemit_report() {\n  if [ \"$verbose\" -eq 1 ]; then\n    rows=$(awk 'END { print (NR > 0 ? NR - 1 : 0) }' \"$input\")\n    echo \"Verbose: processing ${rows} rows\"\n  fi\n\n  if [ \"$format\" = \"csv\" ]; then\n    cat \"$input\"\n  else\n    awk -F',' '\n      function json_escape(s) {\n        gsub(/\\\\/, \"\\\\\\\\\", s)\n        gsub(/\"/, \"\\\\\\\"\", s)\n        gsub(/\\t/, \"\\\\t\", s)\n        gsub(/\\r/, \"\\\\r\", s)\n        gsub(/\\n/, \"\\\\n\", s)\n        return s\n      }\n      NR == 1 {\n        for (i = 1; i <= NF; i++) header[i] = $i\n        next\n      }\n      {\n        printf \"{\"\n        for (i = 1; i <= NF; i++) {\n          printf \"%s\\\"%s\\\":\\\"%s\\\"\", (i > 1 ? \",\" : \"\"), json_escape(header[i]), json_escape($i)\n        }\n        print \"}\"\n      }\n    ' \"$input\"\n  fi\n}\n\nif [ -n \"$outfile\" ]; then\n  emit_report > \"$outfile\"\nelse\n  emit_report\nfi\nEOF\nchmod +x /scripts/report.sh\nbash /scripts/report.sh -f json -v",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Verbose: processing 3 rows\n{\"name\":\"alice\",\"score\":\"95\"}\n{\"name\":\"bob\",\"score\":\"87\"}\n{\"name\":\"carol\",\"score\":\"92\"}\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

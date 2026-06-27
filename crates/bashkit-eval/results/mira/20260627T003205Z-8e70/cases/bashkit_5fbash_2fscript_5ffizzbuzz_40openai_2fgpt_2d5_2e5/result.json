@@ -1,0 +1,59 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_fizzbuzz",
+  "target": "openai/gpt-5.5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created and executed `fizzbuzz.sh`:\n\n```bash\n#!/usr/bin/env bash\n\nfor i in {1..20}; do\n  if (( i % 15 == 0 )); then\n    echo \"FizzBuzz\"\n  elif (( i % 3 == 0 )); then\n    echo \"Fizz\"\n  elif (( i % 5 == 0 )); then\n    echo \"Buzz\"\n  else\n    echo \"$i\"\n  fi\ndone\n```\n\nOutput:\n\n```text\n1\n2\nFizz\n4\nBuzz\nFizz\n7\n8\nFizz\nBuzz\n11\nFizz\n13\n14\nFizzBuzz\n16\n17\nFizz\n19\nBuzz\n```",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "cat > fizzbuzz.sh <<'EOF'\n#!/usr/bin/env bash\n\nfor i in {1..20}; do\n  if (( i % 15 == 0 )); then\n    echo \"FizzBuzz\"\n  elif (( i % 3 == 0 )); then\n    echo \"Fizz\"\n  elif (( i % 5 == 0 )); then\n    echo \"Buzz\"\n  else\n    echo \"$i\"\n  fi\ndone\nEOF\nchmod +x fizzbuzz.sh\n./fizzbuzz.sh"
+    ],
+    "usage": {
+      "input_tokens": 816,
+      "output_tokens": 303,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 4494
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat > fizzbuzz.sh <<'EOF'\n#!/usr/bin/env bash\n\nfor i in {1..20}; do\n  if (( i % 15 == 0 )); then\n    echo \"FizzBuzz\"\n  elif (( i % 3 == 0 )); then\n    echo \"Fizz\"\n  elif (( i % 5 == 0 )); then\n    echo \"Buzz\"\n  else\n    echo \"$i\"\n  fi\ndone\nEOF\nchmod +x fizzbuzz.sh\n./fizzbuzz.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "1\n2\nFizz\n4\nBuzz\nFizz\n7\n8\nFizz\nBuzz\n11\nFizz\n13\n14\nFizzBuzz\n16\n17\nFizz\n19\nBuzz\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

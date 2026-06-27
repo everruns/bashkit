@@ -1,0 +1,60 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "pipe_word_frequency",
+  "target": "openresponses/gpt-5.3-codex",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "the 8\non 3\ncat 2",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "grep -oE \"[[:alpha:]]+\" /data/poem.txt | tr '[:upper:]' '[:lower:]' | sort | uniq -c | sort -k1,1nr -k2,2 | head -n 3 | awk '{print $2\" \"$1}'"
+    ],
+    "usage": {
+      "input_tokens": 537,
+      "output_tokens": 248,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 4198
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "grep -oE \"[[:alpha:]]+\" /data/poem.txt | tr '[:upper:]' '[:lower:]' | sort | uniq -c | sort -k1,1nr -k2,2 | head -n 3 | awk '{print $2\" \"$1}'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "the 8\non 3\ncat 2\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

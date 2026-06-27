@@ -1,0 +1,60 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_todo_app",
+  "target": "openai/gpt-5.5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created `/app/todo.sh` with support for:\n\n- `add <task>` — appends a task to `/app/tasks.txt`\n- `list` — prints tasks with line numbers\n- `done <number>` — removes the specified task line\n\nDemonstration output:\n\n```text\nInitial task list:\n1. Buy groceries\n2. Write tests\n3. Deploy app\n\nAfter marking task 1 as done:\n1. Write tests\n2. Deploy app\n```",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "mkdir -p /app\ncat > /app/todo.sh <<'EOF'\n#!/usr/bin/env bash\nset -euo pipefail\n\nTASK_FILE=\"/app/tasks.txt\"\nmkdir -p \"$(dirname \"$TASK_FILE\")\"\ntouch \"$TASK_FILE\"\n\nusage() {\n  echo \"Usage: $0 {add <task>|list|done <number>}\" >&2\n}\n\ncase \"${1:-}\" in\n  add)\n    shift\n    if [[ $# -eq 0 ]]; then\n      echo \"Error: missing task\" >&2\n      usage\n      exit 1\n    fi\n    printf '%s\\n' \"$*\" >> \"$TASK_FILE\"\n    ;;\n  list)\n    if [[ ! -s \"$TASK_FILE\" ]]; then\n      echo \"No tasks.\"\n    else\n      nl -w1 -s'. ' \"$TASK_FILE\"\n    fi\n    ;;\n  done)\n    if [[ $# -ne 2 || ! \"$2\" =~ ^[0-9]+$ || \"$2\" -eq 0 ]]; then\n      echo \"Error: provide a positive task number\" >&2\n      usage\n      exit 1\n    fi\n    num=\"$2\"\n    total=$(wc -l < \"$TASK_FILE\")\n    if (( num > total )); then\n      echo \"Error: task number $num does not exist\" >&2\n      exit 1\n    fi\n    tmp=$(mktemp)\n    sed \"${num}d\" \"$TASK_FILE\" > \"$tmp\"\n    mv \"$tmp\" \"$TASK_FILE\"\n    ;;\n  *)\n    usage\n    exit 1\n    ;;\nesac\nEOF\nchmod +x /app/todo.sh\n\n# Demonstration (start with a clean task file)\n: > /app/tasks.txt\n/app/todo.sh add 'Buy groceries'\n/app/todo.sh add 'Write tests'\n/app/todo.sh add 'Deploy app'\necho 'Initial task list:'\n/app/todo.sh list\n/app/todo.sh done 1\necho\necho 'After marking task 1 as done:'\n/app/todo.sh list\n"
+    ],
+    "usage": {
+      "input_tokens": 1258,
+      "output_tokens": 657,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7333
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/app",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /app\ncat > /app/todo.sh <<'EOF'\n#!/usr/bin/env bash\nset -euo pipefail\n\nTASK_FILE=\"/app/tasks.txt\"\nmkdir -p \"$(dirname \"$TASK_FILE\")\"\ntouch \"$TASK_FILE\"\n\nusage() {\n  echo \"Usage: $0 {add <task>|list|done <number>}\" >&2\n}\n\ncase \"${1:-}\" in\n  add)\n    shift\n    if [[ $# -eq 0 ]]; then\n      echo \"Error: missing task\" >&2\n      usage\n      exit 1\n    fi\n    printf '%s\\n' \"$*\" >> \"$TASK_FILE\"\n    ;;\n  list)\n    if [[ ! -s \"$TASK_FILE\" ]]; then\n      echo \"No tasks.\"\n    else\n      nl -w1 -s'. ' \"$TASK_FILE\"\n    fi\n    ;;\n  done)\n    if [[ $# -ne 2 || ! \"$2\" =~ ^[0-9]+$ || \"$2\" -eq 0 ]]; then\n      echo \"Error: provide a positive task number\" >&2\n      usage\n      exit 1\n    fi\n    num=\"$2\"\n    total=$(wc -l < \"$TASK_FILE\")\n    if (( num > total )); then\n      echo \"Error: task number $num does not exist\" >&2\n      exit 1\n    fi\n    tmp=$(mktemp)\n    sed \"${num}d\" \"$TASK_FILE\" > \"$tmp\"\n    mv \"$tmp\" \"$TASK_FILE\"\n    ;;\n  *)\n    usage\n    exit 1\n    ;;\nesac\nEOF\nchmod +x /app/todo.sh\n\n# Demonstration (start with a clean task file)\n: > /app/tasks.txt\n/app/todo.sh add 'Buy groceries'\n/app/todo.sh add 'Write tests'\n/app/todo.sh add 'Deploy app'\necho 'Initial task list:'\n/app/todo.sh list\n/app/todo.sh done 1\necho\necho 'After marking task 1 as done:'\n/app/todo.sh list\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Initial task list:\n1. Buy groceries\n2. Write tests\n3. Deploy app\n\nAfter marking task 1 as done:\n1. Write tests\n2. Deploy app\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,61 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_log_summarize",
+  "target": "anthropic/claude-haiku-4-5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The log analysis is complete. Here are the counts per log level from `/var/log/app.log`:\n\n```\nERROR: 3\nINFO: 5\nWARN: 2\n```\n\nThe breakdown shows:\n- **INFO**: 5 entries\n- **WARN**: 2 entries\n- **ERROR**: 3 entries",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "grep -o '\\(INFO\\|WARN\\|ERROR\\)' /var/log/app.log | sort | uniq -c | awk '{print $2\": \"$1}'"
+    ],
+    "usage": {
+      "input_tokens": 1621,
+      "output_tokens": 172,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 1928
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp",
+          "/var",
+          "/var/log"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "grep -o '\\(INFO\\|WARN\\|ERROR\\)' /var/log/app.log | sort | uniq -c | awk '{print $2\": \"$1}'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "ERROR: 3\nINFO: 5\nWARN: 2\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

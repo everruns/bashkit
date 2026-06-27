@@ -1,0 +1,96 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_trap_cleanup",
+  "target": "anthropic/claude-haiku-4-5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Perfect! ✅ **All requirements have been successfully completed:**\n\n## Summary\n\n1. ✅ **Script created**: `/scripts/deploy.sh` with all required functionality\n2. ✅ **Temp directory created**: Used `mktemp -d` to create a temp directory\n3. ✅ **Trap set**: EXIT trap configured to remove temp dir and print cleanup message\n4. ✅ **Config copied**: `/app/config.json` was copied to the temp directory\n5. ✅ **Deploy log created**: `/app/deploy.log` was created with the path of the temp directory (`deployed at /tmp/tmp.dad5bf150b`)\n6. ✅ **Exit code 0**: Script exited successfully with code 0\n7. ✅ **Cleanup verified**: The temp directory (`/tmp/tmp.dad5bf150b`) no longer exists\n8. ✅ **Deploy log verified**: `/app/deploy.log` exists and contains the expected content\n\nWhen the script ran, it printed `\"Cleanup: removed temp dir\"` confirming the trap executed successfully on exit.",
+    "iterations": 7,
+    "tool_calls_count": 6,
+    "tool_calls": [
+      "mkdir -p /scripts",
+      "cat > /scripts/deploy.sh << 'EOF'\n#!/bin/bash\n\n# 1) Create a temp directory and store path in TMPDIR\nTMPDIR=$(mktemp -d)\n\n# 2) Set a trap on EXIT to remove temp directory and print cleanup message\ntrap 'rm -rf \"$TMPDIR\" && echo \"Cleanup: removed temp dir\"' EXIT\n\n# 3) Copy /app/config.json to the temp dir\ncp /app/config.json \"$TMPDIR/\"\n\n# 4) Simulate work by creating /app/deploy.log with the deployed message\necho \"deployed at $TMPDIR\" > /app/deploy.log\n\n# 5) Exit with code 0\nexit 0\nEOF\nchmod +x /scripts/deploy.sh\n",
+      "mkdir -p /app && echo '{\"config\": \"value\"}' > /app/config.json",
+      "/scripts/deploy.sh",
+      "echo \"=== Checking if /app/deploy.log exists ===\" && ls -la /app/deploy.log && echo \"\" && echo \"=== Contents of /app/deploy.log ===\" && cat /app/deploy.log",
+      "echo \"=== Script contents ===\" && cat /scripts/deploy.sh && echo \"\" && echo \"=== Verifying temp directory was cleaned up ===\" && ls /tmp/tmp.dad5bf150b 2>&1 || echo \"✓ Temp directory confirmed removed (no longer exists)\""
+    ],
+    "usage": {
+      "input_tokens": 9260,
+      "output_tokens": 1001,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 9788
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 6.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 6.0,
+      "turns": 7.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/app",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/scripts",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /scripts",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cat > /scripts/deploy.sh << 'EOF'\n#!/bin/bash\n\n# 1) Create a temp directory and store path in TMPDIR\nTMPDIR=$(mktemp -d)\n\n# 2) Set a trap on EXIT to remove temp directory and print cleanup message\ntrap 'rm -rf \"$TMPDIR\" && echo \"Cleanup: removed temp dir\"' EXIT\n\n# 3) Copy /app/config.json to the temp dir\ncp /app/config.json \"$TMPDIR/\"\n\n# 4) Simulate work by creating /app/deploy.log with the deployed message\necho \"deployed at $TMPDIR\" > /app/deploy.log\n\n# 5) Exit with code 0\nexit 0\nEOF\nchmod +x /scripts/deploy.sh\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "mkdir -p /app && echo '{\"config\": \"value\"}' > /app/config.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "/scripts/deploy.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Cleanup: removed temp dir\n"
+          },
+          {
+            "commands": "echo \"=== Checking if /app/deploy.log exists ===\" && ls -la /app/deploy.log && echo \"\" && echo \"=== Contents of /app/deploy.log ===\" && cat /app/deploy.log",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== Checking if /app/deploy.log exists ===\n-rw-r--r--       32 2026-07-11 21:59 /app/deploy.log\n\n=== Contents of /app/deploy.log ===\ndeployed at /tmp/tmp.dad5bf150b\n"
+          },
+          {
+            "commands": "echo \"=== Script contents ===\" && cat /scripts/deploy.sh && echo \"\" && echo \"=== Verifying temp directory was cleaned up ===\" && ls /tmp/tmp.dad5bf150b 2>&1 || echo \"✓ Temp directory confirmed removed (no longer exists)\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== Script contents ===\n#!/bin/bash\n\n# 1) Create a temp directory and store path in TMPDIR\nTMPDIR=$(mktemp -d)\n\n# 2) Set a trap on EXIT to remove temp directory and print cleanup message\ntrap 'rm -rf \"$TMPDIR\" && echo \"Cleanup: removed temp dir\"' EXIT\n\n# 3) Copy /app/config.json to the temp dir\ncp /app/config.json \"$TMPDIR/\"\n\n# 4) Simulate work by creating /app/deploy.log with the deployed message\necho \"deployed at $TMPDIR\" > /app/deploy.log\n\n# 5) Exit with code 0\nexit 0\n\n=== Verifying temp directory was cleaned up ===\nls: cannot access '/tmp/tmp.dad5bf150b': No such file or directory\n✓ Temp directory confirmed removed (no longer exists)\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

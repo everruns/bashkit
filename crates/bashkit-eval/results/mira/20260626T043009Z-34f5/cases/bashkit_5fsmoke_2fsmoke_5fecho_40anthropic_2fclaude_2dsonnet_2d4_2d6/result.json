@@ -1,0 +1,59 @@
+{
+  "eval": "bashkit_smoke",
+  "sample": "smoke_echo",
+  "target": "anthropic/claude-sonnet-4-6",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "The output is:\n\n**hello world**\n\nThis was done using the `echo` command in Bash, which prints the given string to standard output (stdout).",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "echo 'hello world'"
+    ],
+    "usage": {
+      "input_tokens": 1512,
+      "output_tokens": 94,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 2724
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "echo 'hello world'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "hello world\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

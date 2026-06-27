@@ -1,0 +1,60 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "file_ops_backup_rename",
+  "target": "anthropic/claude-sonnet-4-6",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Both steps completed successfully! Here's what was done:\n\n1. **Backup created** — `/data/config.yaml` was copied to `/data/config.yaml.bak` using `cp`.\n2. **Line appended** — The line `updated: true` was appended to the original `/data/config.yaml` using `echo ... >>`.\n\nThe original file now has the new line at the end, while the backup at `/data/config.yaml.bak` preserves the previous state of the file.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "cp /data/config.yaml /data/config.yaml.bak && echo 'updated: true' >> /data/config.yaml"
+    ],
+    "usage": {
+      "input_tokens": 1602,
+      "output_tokens": 200,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 4609
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cp /data/config.yaml /data/config.yaml.bak && echo 'updated: true' >> /data/config.yaml",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

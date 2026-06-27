@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "file_ops_project_scaffold",
+  "target": "openresponses/gpt-5.3-codex",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done — I created the project at:\n\n`/home/eval/myproject`\n\nwith this structure:\n\n- `src/__init__.py`\n- `tests/__init__.py`\n- `docs/`\n- `README.md` containing:\n\n```md\n# My Project\n```",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "mkdir -p /home/eval/myproject/src /home/eval/myproject/tests /home/eval/myproject/docs\n: > /home/eval/myproject/src/__init__.py\n: > /home/eval/myproject/tests/__init__.py\nprintf '# My Project\n' > /home/eval/myproject/README.md\nfind /home/eval/myproject -maxdepth 2 -print | sort"
+    ],
+    "usage": {
+      "input_tokens": 644,
+      "output_tokens": 220,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 4130
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/eval",
+          "/home/eval/myproject",
+          "/home/eval/myproject/docs",
+          "/home/eval/myproject/src",
+          "/home/eval/myproject/tests",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /home/eval/myproject/src /home/eval/myproject/tests /home/eval/myproject/docs\n: > /home/eval/myproject/src/__init__.py\n: > /home/eval/myproject/tests/__init__.py\nprintf '# My Project\n' > /home/eval/myproject/README.md\nfind /home/eval/myproject -maxdepth 2 -print | sort",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/home/eval/myproject\n/home/eval/myproject/README.md\n/home/eval/myproject/docs\n/home/eval/myproject/src\n/home/eval/myproject/src/__init__.py\n/home/eval/myproject/tests\n/home/eval/myproject/tests/__init__.py\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

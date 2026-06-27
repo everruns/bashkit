@@ -1,0 +1,67 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "db_csv_join_aggregate",
+  "target": "openai/gpt-5.5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "electronics: 450  \nhardware: 165",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -l /data && echo 'orders:' && head -5 /data/orders.csv && echo 'products:' && head -5 /data/products.csv",
+      "awk -F, 'NR==FNR { if (FNR>1) { cat[$1]=$3; price[$1]=$4 } next } FNR>1 { rev[cat[$2]] += $3 * price[$2] } END { for (c in rev) print c \": \" rev[c] }' /data/products.csv /data/orders.csv | sort -t: -k2,2nr"
+    ],
+    "usage": {
+      "input_tokens": 1375,
+      "output_tokens": 199,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 4913
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "ls -l /data && echo 'orders:' && head -5 /data/orders.csv && echo 'products:' && head -5 /data/products.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       77 2026-07-12 00:34 orders.csv\n-rw-r--r--      101 2026-07-12 00:34 products.csv\norders:\norder_id,product_id,quantity\n1,101,3\n2,102,5\n3,101,2\n4,103,1\nproducts:\nproduct_id,name,category,price\n101,Widget,hardware,25\n102,Gadget,electronics,50\n103,Bolt,hardware,10\n"
+          },
+          {
+            "commands": "awk -F, 'NR==FNR { if (FNR>1) { cat[$1]=$3; price[$1]=$4 } next } FNR>1 { rev[cat[$2]] += $3 * price[$2] } END { for (c in rev) print c \": \" rev[c] }' /data/products.csv /data/orders.csv | sort -t: -k2,2nr",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "electronics: 450\nhardware: 165\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

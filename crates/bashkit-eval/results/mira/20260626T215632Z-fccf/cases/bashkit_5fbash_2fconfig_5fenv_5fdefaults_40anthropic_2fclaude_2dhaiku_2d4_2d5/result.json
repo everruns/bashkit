@@ -1,0 +1,109 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "config_env_defaults",
+  "target": "anthropic/claude-haiku-4-5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Perfect! Here's a summary of what I created:\n\n## Summary\n\nI've created `/scripts/start.sh` that:\n\n### Features:\n1. **Reads environment variables with defaults:**\n   - `DB_HOST` → defaults to `localhost`\n   - `DB_PORT` → defaults to `5432`\n   - `DB_NAME` → defaults to `myapp`\n   - `LOG_LEVEL` → defaults to `info`\n\n2. **Prints resolved config** as `key=value` lines\n\n3. **Conditional custom_db flag:** Only prints `custom_db=true` when `DB_HOST` is explicitly set in the environment (not using the default)\n\n### Test Results:\n\n**Test 1 - No environment variables (defaults):**\n```\nDB_HOST=localhost\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\n```\n✓ No `custom_db` flag (as expected, using defaults)\n\n**Test 2 - DB_HOST override:**\n```\nDB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\ncustom_db=true\n```\n✓ `custom_db=true` printed because `DB_HOST` was explicitly set to `db.prod.internal`",
+    "iterations": 8,
+    "tool_calls_count": 8,
+    "tool_calls": [
+      "mkdir -p /scripts",
+      "cat > /scripts/start.sh << 'EOF'\n#!/bin/bash\n\n# Read environment variables with defaults\nDB_HOST=\"${DB_HOST:-localhost}\"\nDB_PORT=\"${DB_PORT:-5432}\"\nDB_NAME=\"${DB_NAME:-myapp}\"\nLOG_LEVEL=\"${LOG_LEVEL:-info}\"\n\n# Print resolved config\necho \"DB_HOST=$DB_HOST\"\necho \"DB_PORT=$DB_PORT\"\necho \"DB_NAME=$DB_NAME\"\necho \"LOG_LEVEL=$LOG_LEVEL\"\n\n# Check if DB_HOST was explicitly set (not using default)\nif [[ -n \"${!DB_HOST@}\" ]] || [[ -v DB_HOST ]] && [[ \"$DB_HOST\" != \"localhost\" || -v DB_HOST ]]; then\n  # More reliable check: if DB_HOST exists in environment\n  if env | grep -q \"^DB_HOST=\"; then\n    echo \"custom_db=true\"\n  fi\nfi\nEOF\nchmod +x /scripts/start.sh\n",
+      "cat > /scripts/start.sh << 'EOF'\n#!/bin/bash\n\n# Check if DB_HOST was explicitly set in the environment\nif [[ -v DB_HOST ]]; then\n  DB_HOST_EXPLICIT=true\nelse\n  DB_HOST_EXPLICIT=false\nfi\n\n# Read environment variables with defaults\nDB_HOST=\"${DB_HOST:-localhost}\"\nDB_PORT=\"${DB_PORT:-5432}\"\nDB_NAME=\"${DB_NAME:-myapp}\"\nLOG_LEVEL=\"${LOG_LEVEL:-info}\"\n\n# Print resolved config\necho \"DB_HOST=$DB_HOST\"\necho \"DB_PORT=$DB_PORT\"\necho \"DB_NAME=$DB_NAME\"\necho \"LOG_LEVEL=$LOG_LEVEL\"\n\n# Print custom_db flag if DB_HOST was explicitly set\nif [[ \"$DB_HOST_EXPLICIT\" == \"true\" ]]; then\n  echo \"custom_db=true\"\nfi\nEOF\nchmod +x /scripts/start.sh\n",
+      "echo \"=== Test 1: No environment variables set (using defaults) ===\" && /scripts/start.sh",
+      "cat > /scripts/start.sh << 'EOF'\n#!/bin/bash\n\n# Capture whether DB_HOST is set in the environment before any assignments\n# We check the parent environment\nDB_HOST_SET=false\nif env | grep -q \"^DB_HOST=\"; then\n  DB_HOST_SET=true\nfi\n\n# Read environment variables with defaults\nDB_HOST=\"${DB_HOST:-localhost}\"\nDB_PORT=\"${DB_PORT:-5432}\"\nDB_NAME=\"${DB_NAME:-myapp}\"\nLOG_LEVEL=\"${LOG_LEVEL:-info}\"\n\n# Print resolved config\necho \"DB_HOST=$DB_HOST\"\necho \"DB_PORT=$DB_PORT\"\necho \"DB_NAME=$DB_NAME\"\necho \"LOG_LEVEL=$LOG_LEVEL\"\n\n# Print custom_db flag if DB_HOST was explicitly set in environment\nif [[ \"$DB_HOST_SET\" == \"true\" ]]; then\n  echo \"custom_db=true\"\nfi\nEOF\nchmod +x /scripts/start.sh\n",
+      "echo \"=== Test 1: No environment variables set (using defaults) ===\" && /scripts/start.sh",
+      "echo \"\" && echo \"=== Test 2: DB_HOST=db.prod.internal (override) ===\" && DB_HOST=db.prod.internal /scripts/start.sh",
+      "cat /scripts/start.sh"
+    ],
+    "usage": {
+      "input_tokens": 13384,
+      "output_tokens": 1630,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 13370
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 8.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 8.0,
+      "turns": 8.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/scripts",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /scripts",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cat > /scripts/start.sh << 'EOF'\n#!/bin/bash\n\n# Read environment variables with defaults\nDB_HOST=\"${DB_HOST:-localhost}\"\nDB_PORT=\"${DB_PORT:-5432}\"\nDB_NAME=\"${DB_NAME:-myapp}\"\nLOG_LEVEL=\"${LOG_LEVEL:-info}\"\n\n# Print resolved config\necho \"DB_HOST=$DB_HOST\"\necho \"DB_PORT=$DB_PORT\"\necho \"DB_NAME=$DB_NAME\"\necho \"LOG_LEVEL=$LOG_LEVEL\"\n\n# Check if DB_HOST was explicitly set (not using default)\nif [[ -n \"${!DB_HOST@}\" ]] || [[ -v DB_HOST ]] && [[ \"$DB_HOST\" != \"localhost\" || -v DB_HOST ]]; then\n  # More reliable check: if DB_HOST exists in environment\n  if env | grep -q \"^DB_HOST=\"; then\n    echo \"custom_db=true\"\n  fi\nfi\nEOF\nchmod +x /scripts/start.sh\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "cat > /scripts/start.sh << 'EOF'\n#!/bin/bash\n\n# Check if DB_HOST was explicitly set in the environment\nif [[ -v DB_HOST ]]; then\n  DB_HOST_EXPLICIT=true\nelse\n  DB_HOST_EXPLICIT=false\nfi\n\n# Read environment variables with defaults\nDB_HOST=\"${DB_HOST:-localhost}\"\nDB_PORT=\"${DB_PORT:-5432}\"\nDB_NAME=\"${DB_NAME:-myapp}\"\nLOG_LEVEL=\"${LOG_LEVEL:-info}\"\n\n# Print resolved config\necho \"DB_HOST=$DB_HOST\"\necho \"DB_PORT=$DB_PORT\"\necho \"DB_NAME=$DB_NAME\"\necho \"LOG_LEVEL=$LOG_LEVEL\"\n\n# Print custom_db flag if DB_HOST was explicitly set\nif [[ \"$DB_HOST_EXPLICIT\" == \"true\" ]]; then\n  echo \"custom_db=true\"\nfi\nEOF\nchmod +x /scripts/start.sh\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "echo \"=== Test 1: No environment variables set (using defaults) ===\" && /scripts/start.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== Test 1: No environment variables set (using defaults) ===\nDB_HOST=localhost\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\ncustom_db=true\n"
+          },
+          {
+            "commands": "cat > /scripts/start.sh << 'EOF'\n#!/bin/bash\n\n# Capture whether DB_HOST is set in the environment before any assignments\n# We check the parent environment\nDB_HOST_SET=false\nif env | grep -q \"^DB_HOST=\"; then\n  DB_HOST_SET=true\nfi\n\n# Read environment variables with defaults\nDB_HOST=\"${DB_HOST:-localhost}\"\nDB_PORT=\"${DB_PORT:-5432}\"\nDB_NAME=\"${DB_NAME:-myapp}\"\nLOG_LEVEL=\"${LOG_LEVEL:-info}\"\n\n# Print resolved config\necho \"DB_HOST=$DB_HOST\"\necho \"DB_PORT=$DB_PORT\"\necho \"DB_NAME=$DB_NAME\"\necho \"LOG_LEVEL=$LOG_LEVEL\"\n\n# Print custom_db flag if DB_HOST was explicitly set in environment\nif [[ \"$DB_HOST_SET\" == \"true\" ]]; then\n  echo \"custom_db=true\"\nfi\nEOF\nchmod +x /scripts/start.sh\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "echo \"=== Test 1: No environment variables set (using defaults) ===\" && /scripts/start.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== Test 1: No environment variables set (using defaults) ===\nDB_HOST=localhost\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\n"
+          },
+          {
+            "commands": "echo \"\" && echo \"=== Test 2: DB_HOST=db.prod.internal (override) ===\" && DB_HOST=db.prod.internal /scripts/start.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "\n=== Test 2: DB_HOST=db.prod.internal (override) ===\nDB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\ncustom_db=true\n"
+          },
+          {
+            "commands": "cat /scripts/start.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "#!/bin/bash\n\n# Capture whether DB_HOST is set in the environment before any assignments\n# We check the parent environment\nDB_HOST_SET=false\nif env | grep -q \"^DB_HOST=\"; then\n  DB_HOST_SET=true\nfi\n\n# Read environment variables with defaults\nDB_HOST=\"${DB_HOST:-localhost}\"\nDB_PORT=\"${DB_PORT:-5432}\"\nDB_NAME=\"${DB_NAME:-myapp}\"\nLOG_LEVEL=\"${LOG_LEVEL:-info}\"\n\n# Print resolved config\necho \"DB_HOST=$DB_HOST\"\necho \"DB_PORT=$DB_PORT\"\necho \"DB_NAME=$DB_NAME\"\necho \"LOG_LEVEL=$LOG_LEVEL\"\n\n# Print custom_db flag if DB_HOST was explicitly set in environment\nif [[ \"$DB_HOST_SET\" == \"true\" ]]; then\n  echo \"custom_db=true\"\nfi\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

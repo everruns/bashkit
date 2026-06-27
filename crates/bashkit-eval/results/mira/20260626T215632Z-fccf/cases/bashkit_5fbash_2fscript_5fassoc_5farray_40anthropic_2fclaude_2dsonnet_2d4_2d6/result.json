@@ -1,0 +1,123 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_assoc_array",
+  "target": "anthropic/claude-sonnet-4-6",
+  "passed": false,
+  "aggregate": 0.7142857142857143,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 0.7142857142857143,
+      "pass": false,
+      "reason": "5/7 checks passed (weighted rate 71%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 10,
+    "tool_calls_count": 10,
+    "tool_calls": [
+      "\n# Create the sample visitors.csv first\nmkdir -p /data\ncat <<'EOF' > /data/visitors.csv\nname,country_code\nAlice,US\nBob,GB\nCarlos,DE\nYuki,JP\nMarie,FR\nJohn,US\nEmma,GB\nHans,DE\nSakura,JP\nPierre,FR\nLiam,US\nOlivia,GB\nKlaus,DE\nHana,JP\nSophie,FR\nNoah,US\nAmelia,GB\nEOF\n",
+      "\n#!/usr/bin/env bash\n\n# ── 1. Build the country-code lookup ────────────────────────────────────────\ndeclare -A countries=(\n  [US]=\"United States\"\n  [GB]=\"United Kingdom\"\n  [DE]=\"Germany\"\n  [JP]=\"Japan\"\n  [FR]=\"France\"\n)\n\n# ── 2. Build a count-per-country accumulator ─────────────────────────────────\ndeclare -A counts\n\n# ── 3. Read the CSV (skip the header row) ────────────────────────────────────\necho \"=== Visitor Log ===\"\nfirst=1\nwhile IFS=',' read -r name code; do\n  # skip header\n  if (( first )); then first=0; continue; fi\n\n  full=\"${countries[$code]:-Unknown ($code)}\"\n  echo \"$name visited from $full\"\n  (( counts[$full]++ ))\ndone < /data/visitors.csv\n\n# ── 4. Print counts sorted by count descending ───────────────────────────────\necho \"\"\necho \"=== Visitors per Country ===\"\nfor country in \"${!counts[@]}\"; do\n  echo \"${counts[$country]} $country\"\ndone | sort -rn | while read -r n country; do\n  echo \"$country: $n visitors\"\ndone\n",
+      "\n#!/usr/bin/env bash\n\n# ── 1. Build the country-code lookup ────────────────────────────────────────\ndeclare -A countries\ncountries[US]=\"United States\"\ncountries[GB]=\"United Kingdom\"\ncountries[DE]=\"Germany\"\ncountries[JP]=\"Japan\"\ncountries[FR]=\"France\"\n\n# ── 2. Count accumulator (same shell — no pipe/subshell) ─────────────────────\ndeclare -A counts\n\n# ── 3. Read CSV into an array first so we stay in the same shell ─────────────\nmapfile -t lines < /data/visitors.csv   # reads every line into ${lines[@]}\n\necho \"=== Visitor Log ===\"\nheader=1\nfor line in \"${lines[@]}\"; do\n  if (( header )); then header=0; continue; fi   # skip header\n\n  # Split on the single comma\n  name=\"${line%%,*}\"\n  code=\"${line##*,}\"\n\n  full=\"${countries[$code]}\"\n  [[ -z \"$full\" ]] && full=\"Unknown ($code)\"\n\n  echo \"$name visited from $full\"\n  (( counts[\"$full\"]++ ))\ndone\n\n# ── 4. Print counts sorted by count descending ───────────────────────────────\necho \"\"\necho \"=== Visitors per Country ===\"\n\n# Build a sortable \"N<TAB>country\" list, sort it, then reformat\nfor country in \"${!counts[@]}\"; do\n  printf '%d\\t%s\\n' \"${counts[$country]}\" \"$country\"\ndone | sort -t$'\\t' -k1,1rn | while IFS=$'\\t' read -r n country; do\n  echo \"$country: $n visitors\"\ndone\n",
+      "\n#!/usr/bin/env bash\n\n# ── 1. Country-code lookup (keys with spaces need individual assignment) ──────\ndeclare -A countries\ncountries[US]=\"United States\"\ncountries[GB]=\"United Kingdom\"\ncountries[DE]=\"Germany\"\ncountries[JP]=\"Japan\"\ncountries[FR]=\"France\"\n\n# ── 2. Count accumulator ──────────────────────────────────────────────────────\ndeclare -A counts\n\n# ── 3. Read CSV with mapfile so the loop stays in the current shell ───────────\nmapfile -t lines < /data/visitors.csv\n\necho \"=== Visitor Log ===\"\nheader=1\nfor line in \"${lines[@]}\"; do\n  (( header )) && { header=0; continue; }   # skip header row\n\n  name=\"${line%%,*}\"\n  code=\"${line##*,}\"\n  full=\"${countries[$code]:-Unknown ($code)}\"\n\n  echo \"$name visited from $full\"\n  (( counts[\"$full\"]++ ))\ndone\n\n# ── 4. Summary: write \"N<TAB>country\" to a temp file, sort, display ──────────\ntmpfile=$(mktemp)\nfor country in \"${!counts[@]}\"; do\n  printf '%d\\t%s\\n' \"${counts[$country]}\" \"$country\"\ndone > \"$tmpfile\"\n\necho \"\"\necho \"=== Visitors per Country ===\"\nsort -t$'\\t' -k1,1rn \"$tmpfile\" | while IFS=$'\\t' read -r n country; do\n  printf '%s: %d visitors\\n' \"$country\" \"$n\"\ndone\n\nrm -f \"$tmpfile\"\n",
+      "\n#!/usr/bin/env bash\n\n# ── 1. Country-code lookup ───────────────────────────────────────────────────\ndeclare -A countries\ncountries[US]=\"United States\"\ncountries[GB]=\"United Kingdom\"\ncountries[DE]=\"Germany\"\ncountries[JP]=\"Japan\"\ncountries[FR]=\"France\"\n\n# ── 2. Count accumulator ─────────────────────────────────────────────────────\ndeclare -A counts\n\n# ── 3. Load CSV with mapfile (keeps loop in current shell, no subshell) ──────\nmapfile -t lines < /data/visitors.csv\n\necho \"=== Visitor Log ===\"\nheader=1\nfor line in \"${lines[@]}\"; do\n  (( header )) && { header=0; continue; }\n\n  name=\"${line%%,*}\"\n  code=\"${line##*,}\"\n  full=\"${countries[$code]:-Unknown ($code)}\"\n\n  echo \"$name visited from $full\"\n  (( counts[\"$full\"]++ ))\ndone\n\n# Verify counts are populated\necho \"\"\necho \"DEBUG counts array size: ${#counts[@]}\"\nfor k in \"${!counts[@]}\"; do\n  echo \"  [$k] = ${counts[$k]}\"\ndone\n\n# ── 4. Build temp file OUTSIDE any subshell ──────────────────────────────────\ntmpfile=$(mktemp)\nfor country in \"${!counts[@]}\"; do\n  printf '%d\\t%s\\n' \"${counts[$country]}\" \"$country\" >> \"$tmpfile\"\ndone\n\necho \"\"\necho \"=== Visitors per Country ===\"\nsort -t$'\\t' -k1,1rn \"$tmpfile\" | while IFS=$'\\t' read -r n country; do\n  printf '%s: %d visitors\\n' \"$country\" \"$n\"\ndone\n\nrm -f \"$tmpfile\"\n",
+      "bash --version | head -1",
+      "\n#!/usr/bin/env bash\n\n# ── 1. Country-code lookup ───────────────────────────────────────────────────\ndeclare -A countries\ncountries[US]=\"United States\"\ncountries[GB]=\"United Kingdom\"\ncountries[DE]=\"Germany\"\ncountries[JP]=\"Japan\"\ncountries[FR]=\"France\"\n\n# ── 2. Count accumulator ─────────────────────────────────────────────────────\ndeclare -A counts\n\n# ── 3. Read CSV line-by-line using a file descriptor (no subshell!) ──────────\necho \"=== Visitor Log ===\"\nexec 3< /data/visitors.csv\nread -r _header <&3          # discard the header line\n\nwhile IFS=',' read -r name code <&3; do\n  full=\"${countries[$code]:-Unknown ($code)}\"\n  echo \"$name visited from $full\"\n  counts[\"$full\"]=$(( ${counts[\"$full\"]:-0} + 1 ))\ndone\nexec 3<&-                    # close the fd\n\n# ── 4. Write counts to temp file, sort, display ───────────────────────────────\ntmpfile=$(mktemp)\nfor country in \"${!counts[@]}\"; do\n  printf '%d\\t%s\\n' \"${counts[$country]}\" \"$country\" >> \"$tmpfile\"\ndone\n\necho \"\"\necho \"=== Visitors per Country ===\"\nsort -t$'\\t' -k1,1rn \"$tmpfile\" | while IFS=$'\\t' read -r n country; do\n  printf '%s: %d visitors\\n' \"$country\" \"$n\"\ndone\n\nrm -f \"$tmpfile\"\n",
+      "\n# Diagnose: does a basic while-read loop using a fd work at all?\nexec 3< /data/visitors.csv\nread -r line <&3\necho \"first line: $line\"\nread -r line <&3\necho \"second line: $line\"\nexec 3<&-\n",
+      "\n# Diagnose: does (( )) cause the command count explosion?\n# Test a minimal counted loop\ndeclare -A counts\ncounts[\"United States\"]=0\ncounts[\"United States\"]=$(( ${counts[\"United States\"]} + 1 ))\necho \"${counts[\"United States\"]}\"\n",
+      "\n# Test: read all lines into an array via fd, then process with a C-style for loop\ndeclare -A countries\ncountries[US]=\"United States\"\ncountries[GB]=\"United Kingdom\"\ncountries[DE]=\"Germany\"\ncountries[JP]=\"Japan\"\ncountries[FR]=\"France\"\n\n# Read all lines into a plain array using fd\nlines=()\nexec 3< /data/visitors.csv\nread -r _hdr <&3            # skip header\nwhile IFS= read -r ln <&3; do\n  lines+=(\"$ln\")\ndone\nexec 3<&-\n\necho \"Lines read: ${#lines[@]}\"\necho \"Sample: ${lines[0]}\"\n"
+    ],
+    "usage": {
+      "input_tokens": 28013,
+      "output_tokens": 3102,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 55203
+    },
+    "metrics": {
+      "natural_stop": 0.0,
+      "tool_calls": 10.0,
+      "tool_calls_err": 2.0,
+      "tool_calls_ok": 8.0,
+      "turns": 10.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 1,
+        "tool_outputs": [
+          {
+            "commands": "\n# Create the sample visitors.csv first\nmkdir -p /data\ncat <<'EOF' > /data/visitors.csv\nname,country_code\nAlice,US\nBob,GB\nCarlos,DE\nYuki,JP\nMarie,FR\nJohn,US\nEmma,GB\nHans,DE\nSakura,JP\nPierre,FR\nLiam,US\nOlivia,GB\nKlaus,DE\nHana,JP\nSophie,FR\nNoah,US\nAmelia,GB\nEOF\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "\n#!/usr/bin/env bash\n\n# ── 1. Build the country-code lookup ────────────────────────────────────────\ndeclare -A countries=(\n  [US]=\"United States\"\n  [GB]=\"United Kingdom\"\n  [DE]=\"Germany\"\n  [JP]=\"Japan\"\n  [FR]=\"France\"\n)\n\n# ── 2. Build a count-per-country accumulator ─────────────────────────────────\ndeclare -A counts\n\n# ── 3. Read the CSV (skip the header row) ────────────────────────────────────\necho \"=== Visitor Log ===\"\nfirst=1\nwhile IFS=',' read -r name code; do\n  # skip header\n  if (( first )); then first=0; continue; fi\n\n  full=\"${countries[$code]:-Unknown ($code)}\"\n  echo \"$name visited from $full\"\n  (( counts[$full]++ ))\ndone < /data/visitors.csv\n\n# ── 4. Print counts sorted by count descending ───────────────────────────────\necho \"\"\necho \"=== Visitors per Country ===\"\nfor country in \"${!counts[@]}\"; do\n  echo \"${counts[$country]} $country\"\ndone | sort -rn | while read -r n country; do\n  echo \"$country: $n visitors\"\ndone\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== Visitor Log ===\nAlice visited from United\nBob visited from United\nCarlos visited from Germany\nYuki visited from Japan\nMarie visited from France\nJohn visited from United\nEmma visited from United\nHans visited from Germany\nSakura visited from Japan\nPierre visited from France\nLiam visited from United\nOlivia visited from United\nKlaus visited from Germany\nHana visited from Japan\nSophie visited from France\nNoah visited from United\nAmelia visited from United\n\n=== Visitors per Country ===\n"
+          },
+          {
+            "commands": "\n#!/usr/bin/env bash\n\n# ── 1. Build the country-code lookup ────────────────────────────────────────\ndeclare -A countries\ncountries[US]=\"United States\"\ncountries[GB]=\"United Kingdom\"\ncountries[DE]=\"Germany\"\ncountries[JP]=\"Japan\"\ncountries[FR]=\"France\"\n\n# ── 2. Count accumulator (same shell — no pipe/subshell) ─────────────────────\ndeclare -A counts\n\n# ── 3. Read CSV into an array first so we stay in the same shell ─────────────\nmapfile -t lines < /data/visitors.csv   # reads every line into ${lines[@]}\n\necho \"=== Visitor Log ===\"\nheader=1\nfor line in \"${lines[@]}\"; do\n  if (( header )); then header=0; continue; fi   # skip header\n\n  # Split on the single comma\n  name=\"${line%%,*}\"\n  code=\"${line##*,}\"\n\n  full=\"${countries[$code]}\"\n  [[ -z \"$full\" ]] && full=\"Unknown ($code)\"\n\n  echo \"$name visited from $full\"\n  (( counts[\"$full\"]++ ))\ndone\n\n# ── 4. Print counts sorted by count descending ───────────────────────────────\necho \"\"\necho \"=== Visitors per Country ===\"\n\n# Build a sortable \"N<TAB>country\" list, sort it, then reformat\nfor country in \"${!counts[@]}\"; do\n  printf '%d\\t%s\\n' \"${counts[$country]}\" \"$country\"\ndone | sort -t$'\\t' -k1,1rn | while IFS=$'\\t' read -r n country; do\n  echo \"$country: $n visitors\"\ndone\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== Visitor Log ===\nAlice visited from United States\nBob visited from United Kingdom\nCarlos visited from Germany\nYuki visited from Japan\nMarie visited from France\nJohn visited from United States\nEmma visited from United Kingdom\nHans visited from Germany\nSakura visited from Japan\nPierre visited from France\nLiam visited from United States\nOlivia visited from United Kingdom\nKlaus visited from Germany\nHana visited from Japan\nSophie visited from France\nNoah visited from United States\nAmelia visited from United Kingdom\n\n=== Visitors per Country ===\n"
+          },
+          {
+            "commands": "\n#!/usr/bin/env bash\n\n# ── 1. Country-code lookup (keys with spaces need individual assignment) ──────\ndeclare -A countries\ncountries[US]=\"United States\"\ncountries[GB]=\"United Kingdom\"\ncountries[DE]=\"Germany\"\ncountries[JP]=\"Japan\"\ncountries[FR]=\"France\"\n\n# ── 2. Count accumulator ──────────────────────────────────────────────────────\ndeclare -A counts\n\n# ── 3. Read CSV with mapfile so the loop stays in the current shell ───────────\nmapfile -t lines < /data/visitors.csv\n\necho \"=== Visitor Log ===\"\nheader=1\nfor line in \"${lines[@]}\"; do\n  (( header )) && { header=0; continue; }   # skip header row\n\n  name=\"${line%%,*}\"\n  code=\"${line##*,}\"\n  full=\"${countries[$code]:-Unknown ($code)}\"\n\n  echo \"$name visited from $full\"\n  (( counts[\"$full\"]++ ))\ndone\n\n# ── 4. Summary: write \"N<TAB>country\" to a temp file, sort, display ──────────\ntmpfile=$(mktemp)\nfor country in \"${!counts[@]}\"; do\n  printf '%d\\t%s\\n' \"${counts[$country]}\" \"$country\"\ndone > \"$tmpfile\"\n\necho \"\"\necho \"=== Visitors per Country ===\"\nsort -t$'\\t' -k1,1rn \"$tmpfile\" | while IFS=$'\\t' read -r n country; do\n  printf '%s: %d visitors\\n' \"$country\" \"$n\"\ndone\n\nrm -f \"$tmpfile\"\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== Visitor Log ===\nAlice visited from United States\nBob visited from United Kingdom\nCarlos visited from Germany\nYuki visited from Japan\nMarie visited from France\nJohn visited from United States\nEmma visited from United Kingdom\nHans visited from Germany\nSakura visited from Japan\nPierre visited from France\nLiam visited from United States\nOlivia visited from United Kingdom\nKlaus visited from Germany\nHana visited from Japan\nSophie visited from France\nNoah visited from United States\nAmelia visited from United Kingdom\n\n=== Visitors per Country ===\n"
+          },
+          {
+            "commands": "\n#!/usr/bin/env bash\n\n# ── 1. Country-code lookup ───────────────────────────────────────────────────\ndeclare -A countries\ncountries[US]=\"United States\"\ncountries[GB]=\"United Kingdom\"\ncountries[DE]=\"Germany\"\ncountries[JP]=\"Japan\"\ncountries[FR]=\"France\"\n\n# ── 2. Count accumulator ─────────────────────────────────────────────────────\ndeclare -A counts\n\n# ── 3. Load CSV with mapfile (keeps loop in current shell, no subshell) ──────\nmapfile -t lines < /data/visitors.csv\n\necho \"=== Visitor Log ===\"\nheader=1\nfor line in \"${lines[@]}\"; do\n  (( header )) && { header=0; continue; }\n\n  name=\"${line%%,*}\"\n  code=\"${line##*,}\"\n  full=\"${countries[$code]:-Unknown ($code)}\"\n\n  echo \"$name visited from $full\"\n  (( counts[\"$full\"]++ ))\ndone\n\n# Verify counts are populated\necho \"\"\necho \"DEBUG counts array size: ${#counts[@]}\"\nfor k in \"${!counts[@]}\"; do\n  echo \"  [$k] = ${counts[$k]}\"\ndone\n\n# ── 4. Build temp file OUTSIDE any subshell ──────────────────────────────────\ntmpfile=$(mktemp)\nfor country in \"${!counts[@]}\"; do\n  printf '%d\\t%s\\n' \"${counts[$country]}\" \"$country\" >> \"$tmpfile\"\ndone\n\necho \"\"\necho \"=== Visitors per Country ===\"\nsort -t$'\\t' -k1,1rn \"$tmpfile\" | while IFS=$'\\t' read -r n country; do\n  printf '%s: %d visitors\\n' \"$country\" \"$n\"\ndone\n\nrm -f \"$tmpfile\"\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== Visitor Log ===\nAlice visited from United States\nBob visited from United Kingdom\nCarlos visited from Germany\nYuki visited from Japan\nMarie visited from France\nJohn visited from United States\nEmma visited from United Kingdom\nHans visited from Germany\nSakura visited from Japan\nPierre visited from France\nLiam visited from United States\nOlivia visited from United Kingdom\nKlaus visited from Germany\nHana visited from Japan\nSophie visited from France\nNoah visited from United States\nAmelia visited from United Kingdom\n\nDEBUG counts array size: 0\n\n=== Visitors per Country ===\n"
+          },
+          {
+            "commands": "bash --version | head -1",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Bashkit 0.12.0 (virtual bash interpreter)\n"
+          },
+          {
+            "commands": "\n#!/usr/bin/env bash\n\n# ── 1. Country-code lookup ───────────────────────────────────────────────────\ndeclare -A countries\ncountries[US]=\"United States\"\ncountries[GB]=\"United Kingdom\"\ncountries[DE]=\"Germany\"\ncountries[JP]=\"Japan\"\ncountries[FR]=\"France\"\n\n# ── 2. Count accumulator ─────────────────────────────────────────────────────\ndeclare -A counts\n\n# ── 3. Read CSV line-by-line using a file descriptor (no subshell!) ──────────\necho \"=== Visitor Log ===\"\nexec 3< /data/visitors.csv\nread -r _header <&3          # discard the header line\n\nwhile IFS=',' read -r name code <&3; do\n  full=\"${countries[$code]:-Unknown ($code)}\"\n  echo \"$name visited from $full\"\n  counts[\"$full\"]=$(( ${counts[\"$full\"]:-0} + 1 ))\ndone\nexec 3<&-                    # close the fd\n\n# ── 4. Write counts to temp file, sort, display ───────────────────────────────\ntmpfile=$(mktemp)\nfor country in \"${!counts[@]}\"; do\n  printf '%d\\t%s\\n' \"${counts[$country]}\" \"$country\" >> \"$tmpfile\"\ndone\n\necho \"\"\necho \"=== Visitors per Country ===\"\nsort -t$'\\t' -k1,1rn \"$tmpfile\" | while IFS=$'\\t' read -r n country; do\n  printf '%s: %d visitors\\n' \"$country\" \"$n\"\ndone\n\nrm -f \"$tmpfile\"\n",
+            "exit_code": 1,
+            "stderr": "resource limit exceeded: maximum command count exceeded (10000)",
+            "stdout": ""
+          },
+          {
+            "commands": "\n# Diagnose: does a basic while-read loop using a fd work at all?\nexec 3< /data/visitors.csv\nread -r line <&3\necho \"first line: $line\"\nread -r line <&3\necho \"second line: $line\"\nexec 3<&-\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "first line: name,country_code\nsecond line: Alice,US\n"
+          },
+          {
+            "commands": "\n# Diagnose: does (( )) cause the command count explosion?\n# Test a minimal counted loop\ndeclare -A counts\ncounts[\"United States\"]=0\ncounts[\"United States\"]=$(( ${counts[\"United States\"]} + 1 ))\necho \"${counts[\"United States\"]}\"\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "1\n"
+          },
+          {
+            "commands": "\n# Test: read all lines into an array via fd, then process with a C-style for loop\ndeclare -A countries\ncountries[US]=\"United States\"\ncountries[GB]=\"United Kingdom\"\ncountries[DE]=\"Germany\"\ncountries[JP]=\"Japan\"\ncountries[FR]=\"France\"\n\n# Read all lines into a plain array using fd\nlines=()\nexec 3< /data/visitors.csv\nread -r _hdr <&3            # skip header\nwhile IFS= read -r ln <&3; do\n  lines+=(\"$ln\")\ndone\nexec 3<&-\n\necho \"Lines read: ${#lines[@]}\"\necho \"Sample: ${lines[0]}\"\n",
+            "exit_code": 1,
+            "stderr": "resource limit exceeded: maximum command count exceeded (10000)",
+            "stdout": ""
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

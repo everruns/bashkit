@@ -1,0 +1,69 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "search_recursive_grep",
+  "target": "anthropic/claude-sonnet-4-6",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Here's a summary of all matches found across the `.py` files under `/project`:\n\n---\n\n### 🔍 Search Results — `validate` in `.py` files\n\n| File | Line | Matched Line |\n|------|------|--------------|\n| `/project/app/auth.py` | 1 | `def validate_token(token):` |\n| `/project/app/auth.py` | 8 | `return validate_token(token)` |\n| `/project/app/forms.py` | 1 | `def validate_email(email):` |\n| `/project/app/forms.py` | 4 | `def validate_name(name):` |\n| `/project/app/forms.py` | 8 | `if validate_email(data['email']):` |\n| `/project/tests/test_auth.py` | 1 | `from app.auth import validate_token` |\n| `/project/tests/test_auth.py` | 3 | `def test_validate_token():` |\n| `/project/tests/test_auth.py` | 4 | `assert validate_token('abcdefghijk')` |\n| `/project/tests/test_auth.py` | 5 | `assert not validate_token('')` |\n\n---\n\n**Total matches: 9**\n\n### Breakdown by file:\n- **`/project/app/auth.py`** — 2 matches: defines `validate_token` and calls it internally.\n- **`/project/app/forms.py`** — 3 matches: defines `validate_email` and `validate_name`, and calls `validate_email`.\n- **`/project/tests/test_auth.py`** — 4 matches: imports and tests `validate_token` across multiple assertions.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "\ngrep -rn --include=\"*.py\" \"validate\" /project | grep -i \"def .*validate\\|validate.*def\" ; \\\necho \"---\" ; \\\n# Full search: find lines with 'validate' inside function definitions (def lines) across all .py files\ngrep -rn --include=\"*.py\" \"def .*validate\\|validate\" /project | awk -F: '{print $1\":\"$2\": \"$3}' | head -200\n",
+      "\n# Clean, precise search: all lines in .py files containing 'validate', formatted correctly\nmatches=$(grep -rn --include=\"*.py\" \"validate\" /project)\necho \"$matches\" | while IFS=: read -r file linenum rest; do\n  echo \"$file:$linenum: $rest\"\ndone\necho \"\"\ncount=$(echo \"$matches\" | wc -l)\necho \"Total matches: $count\"\n"
+    ],
+    "usage": {
+      "input_tokens": 3596,
+      "output_tokens": 739,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 12191
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/project",
+          "/project/app",
+          "/project/tests",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "\ngrep -rn --include=\"*.py\" \"validate\" /project | grep -i \"def .*validate\\|validate.*def\" ; \\\necho \"---\" ; \\\n# Full search: find lines with 'validate' inside function definitions (def lines) across all .py files\ngrep -rn --include=\"*.py\" \"def .*validate\\|validate\" /project | awk -F: '{print $1\":\"$2\": \"$3}' | head -200\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/project/tests/test_auth.py:3:def test_validate_token():\n/project/tests/test_auth.py:4:    assert validate_token('abcdefghijk')\n/project/app/forms.py:1:def validate_email(email):\n/project/app/forms.py:4:def validate_name(name):\n/project/app/auth.py:1:def validate_token(token):\n---\n/project/app/auth.py:1: def validate_token(token)\n/project/app/auth.py:8:     return validate_token(token)\n/project/app/forms.py:1: def validate_email(email)\n/project/app/forms.py:4: def validate_name(name)\n/project/app/forms.py:8:     if validate_email(data['email'])\n/project/tests/test_auth.py:1: from app.auth import validate_token\n/project/tests/test_auth.py:3: def test_validate_token()\n/project/tests/test_auth.py:4:     assert validate_token('abcdefghijk')\n/project/tests/test_auth.py:5:     assert not validate_token('')\n"
+          },
+          {
+            "commands": "\n# Clean, precise search: all lines in .py files containing 'validate', formatted correctly\nmatches=$(grep -rn --include=\"*.py\" \"validate\" /project)\necho \"$matches\" | while IFS=: read -r file linenum rest; do\n  echo \"$file:$linenum: $rest\"\ndone\necho \"\"\ncount=$(echo \"$matches\" | wc -l)\necho \"Total matches: $count\"\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/project/app/auth.py:1: def validate_token(token):\n/project/app/auth.py:8:     return validate_token(token)\n/project/app/forms.py:1: def validate_email(email):\n/project/app/forms.py:4: def validate_name(name):\n/project/app/forms.py:8:     if validate_email(data['email']):\n/project/tests/test_auth.py:1: from app.auth import validate_token\n/project/tests/test_auth.py:3: def test_validate_token():\n/project/tests/test_auth.py:4:     assert validate_token('abcdefghijk')\n/project/tests/test_auth.py:5:     assert not validate_token('')\n\nTotal matches: 9\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

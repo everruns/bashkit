@@ -1,0 +1,74 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_api_schema_migration",
+  "target": "openresponses/gpt-5.3-codex",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done — I transformed `/data/users_v1.json` to v2 format, saved it to `/data/users_v2.json`, and printed it:\n\n```json\n[\n  {\n    \"id\": 1,\n    \"fullName\": \"Alice Smith\",\n    \"email\": \"alice@example.com\",\n    \"location\": \"Seattle\",\n    \"migrated\": true\n  },\n  {\n    \"id\": 2,\n    \"fullName\": \"Bob Jones\",\n    \"email\": \"bob@example.com\",\n    \"location\": \"Portland\",\n    \"migrated\": true\n  },\n  {\n    \"id\": 3,\n    \"fullName\": \"Carol Davis\",\n    \"email\": \"carol@example.com\",\n    \"location\": \"Denver\",\n    \"migrated\": true\n  }\n]\n```",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "ls -l /data && echo '---' && sed -n '1,120p' /data/users_v1.json",
+      "jq --version",
+      "jq '[.[] | {id, fullName: (.firstName + \" \" + .lastName), email: .emailAddress, location: .address.city, migrated: true}]' /data/users_v1.json > /data/users_v2.json\ncat /data/users_v2.json"
+    ],
+    "usage": {
+      "input_tokens": 2103,
+      "output_tokens": 432,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 6388
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "ls -l /data && echo '---' && sed -n '1,120p' /data/users_v1.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      441 2026-07-12 00:32 users_v1.json\n---\n[{\"id\":1,\"firstName\":\"Alice\",\"lastName\":\"Smith\",\"emailAddress\":\"alice@example.com\",\"address\":{\"street\":\"123 Main St\",\"city\":\"Seattle\",\"state\":\"WA\"}},{\"id\":2,\"firstName\":\"Bob\",\"lastName\":\"Jones\",\"emailAddress\":\"bob@example.com\",\"address\":{\"street\":\"456 Oak Ave\",\"city\":\"Portland\",\"state\":\"OR\"}},{\"id\":3,\"firstName\":\"Carol\",\"lastName\":\"Davis\",\"emailAddress\":\"carol@example.com\",\"address\":{\"street\":\"789 Pine Rd\",\"city\":\"Denver\",\"state\":\"CO\"}}]\n"
+          },
+          {
+            "commands": "jq --version",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "jq-1.8\n"
+          },
+          {
+            "commands": "jq '[.[] | {id, fullName: (.firstName + \" \" + .lastName), email: .emailAddress, location: .address.city, migrated: true}]' /data/users_v1.json > /data/users_v2.json\ncat /data/users_v2.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[\n  {\n    \"id\": 1,\n    \"fullName\": \"Alice Smith\",\n    \"email\": \"alice@example.com\",\n    \"location\": \"Seattle\",\n    \"migrated\": true\n  },\n  {\n    \"id\": 2,\n    \"fullName\": \"Bob Jones\",\n    \"email\": \"bob@example.com\",\n    \"location\": \"Portland\",\n    \"migrated\": true\n  },\n  {\n    \"id\": 3,\n    \"fullName\": \"Carol Davis\",\n    \"email\": \"carol@example.com\",\n    \"location\": \"Denver\",\n    \"migrated\": true\n  }\n]\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

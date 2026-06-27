@@ -1,0 +1,67 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "error_graceful_parse",
+  "target": "openai/gpt-5.5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "test-app",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "set -euo pipefail\nprintf 'Original file:\\n'\ncat /data/broken.json\n# Remove a trailing comma immediately before a closing brace, preserving whitespace/newlines\nperl -0pi -e 's/,\\s*}/}/g' /data/broken.json\nprintf '\\nFixed file:\\n'\ncat /data/broken.json\nprintf '\\nname field:\\n'\n# Parse JSON enough to print name. Use perl core JSON? JSON::PP may be available. Fallback simple extraction after validation.\nperl -MJSON::PP -e 'local $/; my $data = decode_json(<STDIN>); print $data->{name}, \"\\n\"' < /data/broken.json",
+      "set -euo pipefail\n# Remove the trailing comma before the closing brace and save in-place.\nsed -i 's/,\\([[:space:]]*}\\)/\\1/' /data/broken.json\n# Print the name field from the fixed JSON.\nif command -v jq >/dev/null 2>&1; then\n  jq -r '.name' /data/broken.json\nelse\n  sed -n 's/.*\"name\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p' /data/broken.json\nfi"
+    ],
+    "usage": {
+      "input_tokens": 1552,
+      "output_tokens": 418,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 9112
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 1.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "set -euo pipefail\nprintf 'Original file:\\n'\ncat /data/broken.json\n# Remove a trailing comma immediately before a closing brace, preserving whitespace/newlines\nperl -0pi -e 's/,\\s*}/}/g' /data/broken.json\nprintf '\\nFixed file:\\n'\ncat /data/broken.json\nprintf '\\nname field:\\n'\n# Parse JSON enough to print name. Use perl core JSON? JSON::PP may be available. Fallback simple extraction after validation.\nperl -MJSON::PP -e 'local $/; my $data = decode_json(<STDIN>); print $data->{name}, \"\\n\"' < /data/broken.json",
+            "exit_code": 127,
+            "stderr": "bash: perl: command not found. Did you mean: curl?",
+            "stdout": "Original file:\n{\"name\": \"test-app\", \"version\": \"1.0\", \"debug\": true, }"
+          },
+          {
+            "commands": "set -euo pipefail\n# Remove the trailing comma before the closing brace and save in-place.\nsed -i 's/,\\([[:space:]]*}\\)/\\1/' /data/broken.json\n# Print the name field from the fixed JSON.\nif command -v jq >/dev/null 2>&1; then\n  jq -r '.name' /data/broken.json\nelse\n  sed -n 's/.*\"name\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p' /data/broken.json\nfi",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "test-app\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

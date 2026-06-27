@@ -1,0 +1,75 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_trap_cleanup",
+  "target": "anthropic/claude-opus-4-8",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Everything works as required. Here's a summary:\n\n## Summary\n\nI created `/scripts/deploy.sh` that performs all 5 requested steps:\n\n1. **Temp directory** — `TMPDIR=$(mktemp -d)` creates and stores the path.\n2. **EXIT trap** — `trap 'rm -rf \"$TMPDIR\"; echo \"Cleanup: removed temp dir\"' EXIT` removes the dir and prints the message whenever the script exits (success, error, or via the explicit `exit 0`).\n3. **Copy config** — `cp /app/config.json \"$TMPDIR\"/`.\n4. **Simulate work** — writes `deployed at <actual-temp-path>` to `/app/deploy.log`.\n5. **Exit 0** — `exit 0`.\n\n### Run result\n- The script printed `Cleanup: removed temp dir` (trap fired) and returned **exit code 0**.\n\n### Verification\n- ✅ `/app/deploy.log` exists and contains `deployed at /tmp/tmp.9f2101c2ce`.\n- ✅ The temp directory `/tmp/tmp.9f2101c2ce` (extracted from the log) **no longer exists**, confirming the EXIT trap cleaned it up.\n\nA couple of implementation notes:\n- I used `set -euo pipefail` for robustness. The EXIT trap will still fire and clean up even if a command fails partway through.\n- The verification extracts the actual path from the log line rather than hardcoding it, so it stays correct across runs.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "set -e\nmkdir -p /scripts /app\necho '{\"name\": \"myapp\", \"version\": \"1.0\"}' > /app/config.json\n\ncat > /scripts/deploy.sh << 'EOF'\n#!/usr/bin/env bash\nset -euo pipefail\n\n# 1) Create temp directory\nTMPDIR=$(mktemp -d)\n\n# 2) Trap on EXIT to clean up\ntrap 'rm -rf \"$TMPDIR\"; echo \"Cleanup: removed temp dir\"' EXIT\n\n# 3) Copy config into temp dir\ncp /app/config.json \"$TMPDIR\"/\n\n# 4) Simulate work - write deploy.log with actual path\necho \"deployed at $TMPDIR\" > /app/deploy.log\n\n# 5) Exit 0\nexit 0\nEOF\n\nchmod +x /scripts/deploy.sh\necho \"Script created:\"\ncat /scripts/deploy.sh",
+      "/scripts/deploy.sh\necho \"Exit code: $?\"",
+      "echo \"=== /app/deploy.log contents ===\"\ncat /app/deploy.log\n\n# Extract the temp dir path from the log line \"deployed at <PATH>\"\nTMP_PATH=$(awk '{print $3}' /app/deploy.log)\necho\necho \"=== Verification ===\"\n\nif [ -f /app/deploy.log ]; then\n  echo \"PASS: /app/deploy.log exists\"\nelse\n  echo \"FAIL: /app/deploy.log missing\"\nfi\n\nif [ ! -d \"$TMP_PATH\" ]; then\n  echo \"PASS: temp dir '$TMP_PATH' was cleaned up (no longer exists)\"\nelse\n  echo \"FAIL: temp dir '$TMP_PATH' still exists\"\nfi"
+    ],
+    "usage": {
+      "input_tokens": 5710,
+      "output_tokens": 1320,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 18282
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/app",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/scripts",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "set -e\nmkdir -p /scripts /app\necho '{\"name\": \"myapp\", \"version\": \"1.0\"}' > /app/config.json\n\ncat > /scripts/deploy.sh << 'EOF'\n#!/usr/bin/env bash\nset -euo pipefail\n\n# 1) Create temp directory\nTMPDIR=$(mktemp -d)\n\n# 2) Trap on EXIT to clean up\ntrap 'rm -rf \"$TMPDIR\"; echo \"Cleanup: removed temp dir\"' EXIT\n\n# 3) Copy config into temp dir\ncp /app/config.json \"$TMPDIR\"/\n\n# 4) Simulate work - write deploy.log with actual path\necho \"deployed at $TMPDIR\" > /app/deploy.log\n\n# 5) Exit 0\nexit 0\nEOF\n\nchmod +x /scripts/deploy.sh\necho \"Script created:\"\ncat /scripts/deploy.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Script created:\n#!/usr/bin/env bash\nset -euo pipefail\n\n# 1) Create temp directory\nTMPDIR=$(mktemp -d)\n\n# 2) Trap on EXIT to clean up\ntrap 'rm -rf \"$TMPDIR\"; echo \"Cleanup: removed temp dir\"' EXIT\n\n# 3) Copy config into temp dir\ncp /app/config.json \"$TMPDIR\"/\n\n# 4) Simulate work - write deploy.log with actual path\necho \"deployed at $TMPDIR\" > /app/deploy.log\n\n# 5) Exit 0\nexit 0\n"
+          },
+          {
+            "commands": "/scripts/deploy.sh\necho \"Exit code: $?\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Cleanup: removed temp dir\nExit code: 0\n"
+          },
+          {
+            "commands": "echo \"=== /app/deploy.log contents ===\"\ncat /app/deploy.log\n\n# Extract the temp dir path from the log line \"deployed at <PATH>\"\nTMP_PATH=$(awk '{print $3}' /app/deploy.log)\necho\necho \"=== Verification ===\"\n\nif [ -f /app/deploy.log ]; then\n  echo \"PASS: /app/deploy.log exists\"\nelse\n  echo \"FAIL: /app/deploy.log missing\"\nfi\n\nif [ ! -d \"$TMP_PATH\" ]; then\n  echo \"PASS: temp dir '$TMP_PATH' was cleaned up (no longer exists)\"\nelse\n  echo \"FAIL: temp dir '$TMP_PATH' still exists\"\nfi",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== /app/deploy.log contents ===\ndeployed at /tmp/tmp.9f2101c2ce\n\n=== Verification ===\nPASS: /app/deploy.log exists\nPASS: temp dir '/tmp/tmp.9f2101c2ce' was cleaned up (no longer exists)\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

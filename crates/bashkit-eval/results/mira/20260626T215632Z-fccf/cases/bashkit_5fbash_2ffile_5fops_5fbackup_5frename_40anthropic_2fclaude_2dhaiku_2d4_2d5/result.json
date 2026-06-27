@@ -1,0 +1,74 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "file_ops_backup_rename",
+  "target": "anthropic/claude-haiku-4-5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Perfect! I've successfully:\n\n1. ✅ Created a backup of `/data/config.yaml` at `/data/config.yaml.bak`\n2. ✅ Appended the line `'updated: true'` to the original `/data/config.yaml` file\n\nThe backup file contains the original content (version, mode, and retries), while the updated original file now includes the new line at the end.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "cp /data/config.yaml /data/config.yaml.bak",
+      "echo 'updated: true' >> /data/config.yaml",
+      "echo \"=== Backup file ===\" && cat /data/config.yaml.bak && echo -e \"\\n=== Original file (updated) ===\" && cat /data/config.yaml"
+    ],
+    "usage": {
+      "input_tokens": 3681,
+      "output_tokens": 373,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 4058
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cp /data/config.yaml /data/config.yaml.bak",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "echo 'updated: true' >> /data/config.yaml",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "echo \"=== Backup file ===\" && cat /data/config.yaml.bak && echo -e \"\\n=== Original file (updated) ===\" && cat /data/config.yaml",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== Backup file ===\nversion: 1\nmode: production\nretries: 3\n\n=== Original file (updated) ===\nversion: 1\nmode: production\nretries: 3\nupdated: true\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

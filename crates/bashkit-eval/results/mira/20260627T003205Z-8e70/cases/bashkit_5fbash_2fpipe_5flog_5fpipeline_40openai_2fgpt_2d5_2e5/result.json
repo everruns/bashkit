@@ -1,0 +1,61 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "pipe_log_pipeline",
+  "target": "openai/gpt-5.5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "3/3 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "/api/users 4\n/api/items 4\n/api/health 2",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "awk '{count[$2]++} END {for (p in count) print count[p], p}' /var/log/access.log | sort -rn | head -3 | awk '{print $2, $1}'"
+    ],
+    "usage": {
+      "input_tokens": 689,
+      "output_tokens": 98,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3187
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp",
+          "/var",
+          "/var/log"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "awk '{count[$2]++} END {for (p in count) print count[p], p}' /var/log/access.log | sort -rn | head -3 | awk '{print $2, $1}'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/api/users 4\n/api/items 4\n/api/health 2\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

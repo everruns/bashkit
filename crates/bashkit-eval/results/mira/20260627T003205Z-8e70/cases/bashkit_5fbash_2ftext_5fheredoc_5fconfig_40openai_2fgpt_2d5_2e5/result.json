@@ -1,0 +1,61 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "text_heredoc_config",
+  "target": "openai/gpt-5.5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "```yaml\napp:\n  name: myservice\n  port: 8080\ndatabase:\n  host: db.prod.internal\n  port: 5432\nlogging:\n  level: warn\n```",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "set -e\nAPP_NAME='myservice'\nAPP_PORT=8080\nDB_HOST='db.prod.internal'\nDB_PORT=5432\nLOG_LEVEL='warn'\n\nmkdir -p /etc/app\ncat <<EOF > /etc/app/config.yaml\napp:\n  name: ${APP_NAME}\n  port: ${APP_PORT}\ndatabase:\n  host: ${DB_HOST}\n  port: ${DB_PORT}\nlogging:\n  level: ${LOG_LEVEL}\nEOF\n\ncat /etc/app/config.yaml"
+    ],
+    "usage": {
+      "input_tokens": 883,
+      "output_tokens": 224,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 4545
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/etc",
+          "/etc/app",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "set -e\nAPP_NAME='myservice'\nAPP_PORT=8080\nDB_HOST='db.prod.internal'\nDB_PORT=5432\nLOG_LEVEL='warn'\n\nmkdir -p /etc/app\ncat <<EOF > /etc/app/config.yaml\napp:\n  name: ${APP_NAME}\n  port: ${APP_PORT}\ndatabase:\n  host: ${DB_HOST}\n  port: ${DB_PORT}\nlogging:\n  level: ${LOG_LEVEL}\nEOF\n\ncat /etc/app/config.yaml",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "app:\n  name: myservice\n  port: 8080\ndatabase:\n  host: db.prod.internal\n  port: 5432\nlogging:\n  level: warn\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

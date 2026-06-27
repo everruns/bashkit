@@ -1,0 +1,49 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_array_stats",
+  "target": "openai/gpt-5.5",
+  "passed": false,
+  "aggregate": 0.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": -0.0,
+      "pass": false,
+      "reason": "0/4 checks passed (weighted rate -0%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "```bash\n#!/usr/bin/env bash\n\nnums=(42 17 93 8 55 71 3 88 29 64)\n\nmin=${nums[0]}\nmax=${nums[0]}\nsum=0\n\nfor n in \"${nums[@]}\"; do\n  (( n < min )) && min=$n\n  (( n > max )) && max=$n\n  (( sum += n ))\ndone\n\necho \"min: $min\"\necho \"max: $max\"\necho \"sum: $sum\"\n```",
+    "iterations": 1,
+    "tool_calls_count": 0,
+    "usage": {
+      "input_tokens": 321,
+      "output_tokens": 150,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 2778
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 0.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 0.0,
+      "turns": 1.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": null,
+        "tool_outputs": []
+      }
+    }
+  },
+  "skipped": false
+}

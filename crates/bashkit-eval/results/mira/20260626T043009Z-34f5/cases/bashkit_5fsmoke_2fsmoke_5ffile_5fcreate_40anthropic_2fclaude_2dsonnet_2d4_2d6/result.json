@@ -1,0 +1,59 @@
+{
+  "eval": "bashkit_smoke",
+  "sample": "smoke_file_create",
+  "target": "anthropic/claude-sonnet-4-6",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Here's what happened:\n\n1. **Created** `/tmp/greeting.txt` using `echo 'hi there' > /tmp/greeting.txt` — this writes the text `hi there` into the file.\n2. **Read back** the file using `cat /tmp/greeting.txt` — which confirmed the content is exactly `hi there`.\n\nEverything worked perfectly! ✅",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "echo 'hi there' > /tmp/greeting.txt && cat /tmp/greeting.txt"
+    ],
+    "usage": {
+      "input_tokens": 1574,
+      "output_tokens": 179,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 4202
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "echo 'hi there' > /tmp/greeting.txt && cat /tmp/greeting.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "hi there\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

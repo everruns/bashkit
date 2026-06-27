@@ -1,0 +1,82 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "text_multifile_replace",
+  "target": "openresponses/gpt-5.3-codex",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Modified files and replacement counts:\n\n- `/src/main.py` — 2 replacements  \n- `/src/tests/test_utils.py` — 2 replacements  \n- `/src/utils.py` — 2 replacements",
+    "iterations": 5,
+    "tool_calls_count": 4,
+    "tool_calls": [
+      "set -euo pipefail\nif [ ! -d /src ]; then\n  echo \"/src directory not found\" >&2\n  exit 1\nfi\n\nfind /src -type f -name '*.py' -print0 | while IFS= read -r -d '' file; do\n  count=$(awk '{c+=gsub(/\\<getData\\>/,\"fetchRecords\")} END{print c+0}' \"$file\")\n  if [ \"$count\" -gt 0 ]; then\n    tmp=$(mktemp)\n    sed 's/\\<getData\\>/fetchRecords/g' \"$file\" > \"$tmp\"\n    mv \"$tmp\" \"$file\"\n    echo \"$file $count\"\n  fi\ndone",
+      "if [ ! -d /src ]; then\n  echo \"NO_SRC\"\n  ls -la /\n  exit 0\nfi\nfind /src -type f -name '*.py' | head -n 5\n",
+      "set -u\nfind /src -type f -name '*.py' -print0 | while IFS= read -r -d '' file; do\n  count=$(grep -o -w 'getData' \"$file\" | wc -l)\n  if [ \"$count\" -gt 0 ]; then\n    tmp=$(mktemp)\n    sed 's/\\<getData\\>/fetchRecords/g' \"$file\" > \"$tmp\"\n    mv \"$tmp\" \"$file\"\n    echo \"$file $count\"\n  fi\ndone\n",
+      "set -e\nfind /src -type f -name '*.py' | while IFS= read -r file; do\n  count=$(awk '{c+=gsub(/\\<getData\\>/,\"fetchRecords\")} END{print c+0}' \"$file\")\n  if [ \"$count\" -gt 0 ]; then\n    tmp=$(mktemp)\n    awk '{gsub(/\\<getData\\>/,\"fetchRecords\")}1' \"$file\" > \"$tmp\"\n    mv \"$tmp\" \"$file\"\n    echo \"$file $count\"\n  fi\ndone"
+    ],
+    "usage": {
+      "input_tokens": 2853,
+      "output_tokens": 2024,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 25456
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 4.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 3.0,
+      "turns": 5.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/src",
+          "/src/tests",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "set -euo pipefail\nif [ ! -d /src ]; then\n  echo \"/src directory not found\" >&2\n  exit 1\nfi\n\nfind /src -type f -name '*.py' -print0 | while IFS= read -r -d '' file; do\n  count=$(awk '{c+=gsub(/\\<getData\\>/,\"fetchRecords\")} END{print c+0}' \"$file\")\n  if [ \"$count\" -gt 0 ]; then\n    tmp=$(mktemp)\n    sed 's/\\<getData\\>/fetchRecords/g' \"$file\" > \"$tmp\"\n    mv \"$tmp\" \"$file\"\n    echo \"$file $count\"\n  fi\ndone",
+            "exit_code": 1,
+            "stderr": "",
+            "stdout": ""
+          },
+          {
+            "commands": "if [ ! -d /src ]; then\n  echo \"NO_SRC\"\n  ls -la /\n  exit 0\nfi\nfind /src -type f -name '*.py' | head -n 5\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/src/main.py\n/src/tests/test_utils.py\n/src/utils.py\n"
+          },
+          {
+            "commands": "set -u\nfind /src -type f -name '*.py' -print0 | while IFS= read -r -d '' file; do\n  count=$(grep -o -w 'getData' \"$file\" | wc -l)\n  if [ \"$count\" -gt 0 ]; then\n    tmp=$(mktemp)\n    sed 's/\\<getData\\>/fetchRecords/g' \"$file\" > \"$tmp\"\n    mv \"$tmp\" \"$file\"\n    echo \"$file $count\"\n  fi\ndone\n",
+            "exit_code": 0,
+            "stderr": "sed: /src/main.py\u0000/src/tests/test_utils.py\u0000/src/utils.py\u0000: io error: unsafe character U+0000 in path component 'main.py\u0000'\nmv: cannot move '/tmp/tmp.9d961a3843': io error: unsafe character U+0000 in path component 'main.py\u0000'\n",
+            "stdout": "/src/main.py\u0000/src/tests/test_utils.py\u0000/src/utils.py\u0000 1\n"
+          },
+          {
+            "commands": "set -e\nfind /src -type f -name '*.py' | while IFS= read -r file; do\n  count=$(awk '{c+=gsub(/\\<getData\\>/,\"fetchRecords\")} END{print c+0}' \"$file\")\n  if [ \"$count\" -gt 0 ]; then\n    tmp=$(mktemp)\n    awk '{gsub(/\\<getData\\>/,\"fetchRecords\")}1' \"$file\" > \"$tmp\"\n    mv \"$tmp\" \"$file\"\n    echo \"$file $count\"\n  fi\ndone",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/src/main.py 2\n/src/tests/test_utils.py 2\n/src/utils.py 2\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

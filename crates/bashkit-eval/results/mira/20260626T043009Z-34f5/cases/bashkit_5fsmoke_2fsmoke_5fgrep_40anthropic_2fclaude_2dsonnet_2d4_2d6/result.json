@@ -1,0 +1,68 @@
+{
+  "eval": "bashkit_smoke",
+  "sample": "smoke_grep",
+  "target": "anthropic/claude-sonnet-4-6",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Here are the results from searching `/var/log/test.log` for lines containing **'error'** (case-insensitive):\n\n---\n\n### 🔍 Matching Lines\n\n| # | Line Content |\n|---|---|\n| 1 | `ERROR: failed` |\n| 2 | `error: bad input` |\n\n---\n\n### 📊 Summary\n\n- **Total matching lines: 2**\n- The search used `grep -i 'error'`, where `-i` makes it **case-insensitive**, catching both `ERROR` and `error` (and any other casing variations).",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "grep -i 'error' /var/log/test.log | tee /dev/stderr | wc -l",
+      "grep -i 'error' /var/log/test.log"
+    ],
+    "usage": {
+      "input_tokens": 2484,
+      "output_tokens": 287,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 6246
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp",
+          "/var",
+          "/var/log"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "grep -i 'error' /var/log/test.log | tee /dev/stderr | wc -l",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "2\n"
+          },
+          {
+            "commands": "grep -i 'error' /var/log/test.log",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "ERROR: failed\nerror: bad input\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,81 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_to_csv_export",
+  "target": "anthropic/claude-opus-4-8",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done. The conversion is complete and saved to `/data/employees.csv`.\n\n**Output:**\n```\nname,department,salary\nAlice Chen,Engineering,120000\nBob Park,Marketing,95000\nCarol Wu,Engineering,115000\nDave Kim,Sales,88000\n```\n\nThe CSV has:\n- The header row `name,department,salary`\n- One data row per object from the JSON array (4 employees)\n\nI used `jq` with `join(\",\")` to produce clean, unquoted fields matching the requested header format. Note: this works because none of the field values contain commas, quotes, or newlines. If your data could contain such characters, the strictly RFC-4180-safe approach would be `@csv` (which quotes all string fields).",
+    "iterations": 5,
+    "tool_calls_count": 4,
+    "tool_calls": [
+      "cat /data/employees.json",
+      "which jq node awk 2>/dev/null; echo \"---\"",
+      "jq -r '[\"name\",\"department\",\"salary\"], (.[] | [.name, .department, .salary]) | @csv' /data/employees.json > /data/employees.csv\ncat /data/employees.csv",
+      "jq -r '[\"name\",\"department\",\"salary\"], (.[] | [.name, .department, (.salary|tostring)]) | join(\",\")' /data/employees.json > /data/employees.csv\necho \"=== /data/employees.csv ===\"\ncat /data/employees.csv"
+    ],
+    "usage": {
+      "input_tokens": 5153,
+      "output_tokens": 745,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 12935
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 4.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 4.0,
+      "turns": 5.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat /data/employees.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[{\"name\":\"Alice Chen\",\"department\":\"Engineering\",\"salary\":120000},{\"name\":\"Bob Park\",\"department\":\"Marketing\",\"salary\":95000},{\"name\":\"Carol Wu\",\"department\":\"Engineering\",\"salary\":115000},{\"name\":\"Dave Kim\",\"department\":\"Sales\",\"salary\":88000}]"
+          },
+          {
+            "commands": "which jq node awk 2>/dev/null; echo \"---\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "jq\nawk\n---\n"
+          },
+          {
+            "commands": "jq -r '[\"name\",\"department\",\"salary\"], (.[] | [.name, .department, .salary]) | @csv' /data/employees.json > /data/employees.csv\ncat /data/employees.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "\"name\",\"department\",\"salary\"\n\"Alice Chen\",\"Engineering\",120000\n\"Bob Park\",\"Marketing\",95000\n\"Carol Wu\",\"Engineering\",115000\n\"Dave Kim\",\"Sales\",88000\n"
+          },
+          {
+            "commands": "jq -r '[\"name\",\"department\",\"salary\"], (.[] | [.name, .department, (.salary|tostring)]) | join(\",\")' /data/employees.json > /data/employees.csv\necho \"=== /data/employees.csv ===\"\ncat /data/employees.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== /data/employees.csv ===\nname,department,salary\nAlice Chen,Engineering,120000\nBob Park,Marketing,95000\nCarol Wu,Engineering,115000\nDave Kim,Sales,88000\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,59 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "sysinfo_env_report",
+  "target": "openresponses/gpt-5.3-codex",
+  "passed": false,
+  "aggregate": 0.25,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 0.25,
+      "pass": false,
+      "reason": "1/4 checks passed (weighted rate 25%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "user: eval  \nhost: bashkit-eval  \ncwd: /home/user  \nshell: bash",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "whoami\nhostname\npwd"
+    ],
+    "usage": {
+      "input_tokens": 498,
+      "output_tokens": 119,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3966
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "whoami\nhostname\npwd",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "eval\nbashkit-eval\n/home/user\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

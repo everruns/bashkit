@@ -1,0 +1,67 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_order_totals",
+  "target": "anthropic/claude-sonnet-4-6",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Here are the results — each customer's total spending, sorted highest to lowest:\n\n| Customer | Total |\n|----------|-------|\n| globex   | 500   |\n| acme     | 325   |\n| initech  | 75    |\n\n**How it works (two-pass `jq` pipeline):**\n\n1. **Pass 1** — groups the array by `.customer`, then for each group produces a `{customer, total}` object by summing `.amount` with `map(.amount) | add`.\n2. **Pass 2** — collects all those objects into a single array (`-s` / slurp), sorts descending by `-.total`, and formats each entry as `\"customer: total\"`.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "cat /data/orders.json",
+      "jq -r '\n  group_by(.customer)[]\n  | {customer: .[0].customer, total: (map(.amount) | add)}\n' /data/orders.json \\\n| jq -rs '\n  sort_by(-.total)[]\n  | \"\\(.customer): \\(.total)\"\n'"
+    ],
+    "usage": {
+      "input_tokens": 2803,
+      "output_tokens": 352,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 10289
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cat /data/orders.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[{\"customer\":\"acme\",\"product\":\"widgets\",\"amount\":150},{\"customer\":\"globex\",\"product\":\"gadgets\",\"amount\":200},{\"customer\":\"acme\",\"product\":\"bolts\",\"amount\":75},{\"customer\":\"initech\",\"product\":\"paper\",\"amount\":50},{\"customer\":\"globex\",\"product\":\"widgets\",\"amount\":300},{\"customer\":\"acme\",\"product\":\"nuts\",\"amount\":100},{\"customer\":\"initech\",\"product\":\"staples\",\"amount\":25}]"
+          },
+          {
+            "commands": "jq -r '\n  group_by(.customer)[]\n  | {customer: .[0].customer, total: (map(.amount) | add)}\n' /data/orders.json \\\n| jq -rs '\n  sort_by(-.total)[]\n  | \"\\(.customer): \\(.total)\"\n'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "globex: 500\nacme: 325\ninitech: 75\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

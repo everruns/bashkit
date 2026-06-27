@@ -1,0 +1,74 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "pipe_process_sub",
+  "target": "openai/gpt-5.5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "To install:\nnodejs\nredis\n\nTo remove:\nnginx\nvim",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "set -euo pipefail\ncd /home/eval\nprintf 'To install:\\n'\ndiff <(sort /data/installed.txt) <(sort /data/required.txt) | sed -n 's/^> //p'\nprintf 'To remove:\\n'\ndiff <(sort /data/installed.txt) <(sort /data/required.txt) | sed -n 's/^< //p'",
+      "set -euo pipefail\nprintf 'To install:\\n'\ndiff <(sort /data/installed.txt) <(sort /data/required.txt) | sed -n 's/^> //p'\nprintf 'To remove:\\n'\ndiff <(sort /data/installed.txt) <(sort /data/required.txt) | sed -n 's/^< //p'",
+      "printf 'To install:\\n'\ndiff <(sort /data/installed.txt) <(sort /data/required.txt) | sed -n 's/^> //p'\nprintf 'To remove:\\n'\ndiff <(sort /data/installed.txt) <(sort /data/required.txt) | sed -n 's/^< //p'"
+    ],
+    "usage": {
+      "input_tokens": 2236,
+      "output_tokens": 443,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7484
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 2.0,
+      "tool_calls_ok": 1.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "set -euo pipefail\ncd /home/eval\nprintf 'To install:\\n'\ndiff <(sort /data/installed.txt) <(sort /data/required.txt) | sed -n 's/^> //p'\nprintf 'To remove:\\n'\ndiff <(sort /data/installed.txt) <(sort /data/required.txt) | sed -n 's/^< //p'",
+            "exit_code": 1,
+            "stderr": "cd: /home/eval: No such file or directory\n",
+            "stdout": ""
+          },
+          {
+            "commands": "set -euo pipefail\nprintf 'To install:\\n'\ndiff <(sort /data/installed.txt) <(sort /data/required.txt) | sed -n 's/^> //p'\nprintf 'To remove:\\n'\ndiff <(sort /data/installed.txt) <(sort /data/required.txt) | sed -n 's/^< //p'",
+            "exit_code": 1,
+            "stderr": "",
+            "stdout": "To install:\nnodejs\nredis\n"
+          },
+          {
+            "commands": "printf 'To install:\\n'\ndiff <(sort /data/installed.txt) <(sort /data/required.txt) | sed -n 's/^> //p'\nprintf 'To remove:\\n'\ndiff <(sort /data/installed.txt) <(sort /data/required.txt) | sed -n 's/^< //p'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "To install:\nnodejs\nredis\nTo remove:\nnginx\nvim\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

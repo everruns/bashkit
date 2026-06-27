@@ -1,0 +1,89 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_release_notes",
+  "target": "openai/gpt-5.5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Generated `/release/CHANGELOG.md`:\n\n```markdown\n# Changelog\n\n## Features\n- auth: add OAuth2 support\n- ui: dark mode toggle\n- api: add pagination support\n- db: add connection pooling\n\n## Bug Fixes\n- api: handle null response body\n- auth: token refresh race condition\n- ui: button alignment on mobile\n- api: correct status code for 404\n\n## Other\n- deps: update lodash to 4.17.21\n- readme: update install instructions\n```",
+    "iterations": 6,
+    "tool_calls_count": 5,
+    "tool_calls": [
+      "set -euo pipefail\nmkdir -p /release\nif [[ ! -f /data/commits.log ]]; then echo 'Missing /data/commits.log' >&2; exit 1; fi\nfeatures=()\nfixes=()\nothers=()\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"$line\" ]] && continue\n  if [[ \"$line\" =~ ^([^\\(]+)\\(([^\\)]*)\\):[[:space:]]*(.*)$ ]]; then\n    type=\"${BASH_REMATCH[1]}\"\n    scope=\"${BASH_REMATCH[2]}\"\n    msg=\"${BASH_REMATCH[3]}\"\n    item=\"- ${scope}: ${msg}\"\n    case \"$type\" in\n      feat) features+=(\"$item\") ;;\n      fix) fixes+=(\"$item\") ;;\n      *) others+=(\"$item\") ;;\n    esac\n  fi\ndone < /data/commits.log\n{\n  echo \"# Changelog\"\n  echo\n  echo \"## Features\"\n  for item in \"${features[@]}\"; do echo \"$item\"; done\n  echo\n  echo \"## Bug Fixes\"\n  for item in \"${fixes[@]}\"; do echo \"$item\"; done\n  echo\n  echo \"## Other\"\n  for item in \"${others[@]}\"; do echo \"$item\"; done\n} > /release/CHANGELOG.md\ncat /release/CHANGELOG.md",
+      "ls -l /data /data/commits.log 2>&1; echo '---'; sed -n '1,20p' /data/commits.log | cat -vet",
+      "line='feat(auth): add OAuth2 support'\nif [[ \"$line\" =~ ^([^\\(]+)\\(([^\\)]*)\\):[[:space:]]*(.*)$ ]]; then echo yes ${BASH_REMATCH[1]} ${BASH_REMATCH[2]} \"${BASH_REMATCH[3]}\"; else echo no; fi\nif [[ \"$line\" =~ ^([^(]+)\\(([^)]*)\\):[[:space:]]*(.*)$ ]]; then echo yes2 ${BASH_REMATCH[1]} ${BASH_REMATCH[2]} \"${BASH_REMATCH[3]}\"; else echo no2; fi",
+      "line='feat(auth): add OAuth2 support'\nregex='^([^()]*)\\(([^)]*)\\):[[:space:]]*(.*)$'\nif [[ $line =~ $regex ]]; then declare -p BASH_REMATCH; else echo no; fi",
+      "set -euo pipefail\nmkdir -p /release\nfeatures=()\nfixes=()\nothers=()\nregex='^([^()]*)\\(([^)]*)\\):[[:space:]]*(.*)$'\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"$line\" ]] && continue\n  if [[ $line =~ $regex ]]; then\n    type=\"${BASH_REMATCH[1]}\"\n    scope=\"${BASH_REMATCH[2]}\"\n    msg=\"${BASH_REMATCH[3]}\"\n    item=\"- ${scope}: ${msg}\"\n    case \"$type\" in\n      feat) features+=(\"$item\") ;;\n      fix) fixes+=(\"$item\") ;;\n      *) others+=(\"$item\") ;;\n    esac\n  fi\ndone < /data/commits.log\n{\n  echo \"# Changelog\"\n  echo\n  echo \"## Features\"\n  for item in \"${features[@]}\"; do echo \"$item\"; done\n  echo\n  echo \"## Bug Fixes\"\n  for item in \"${fixes[@]}\"; do echo \"$item\"; done\n  echo\n  echo \"## Other\"\n  for item in \"${others[@]}\"; do echo \"$item\"; done\n} > /release/CHANGELOG.md\ncat /release/CHANGELOG.md"
+    ],
+    "usage": {
+      "input_tokens": 6085,
+      "output_tokens": 1331,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 17056
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 5.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 5.0,
+      "turns": 6.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/release",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "set -euo pipefail\nmkdir -p /release\nif [[ ! -f /data/commits.log ]]; then echo 'Missing /data/commits.log' >&2; exit 1; fi\nfeatures=()\nfixes=()\nothers=()\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"$line\" ]] && continue\n  if [[ \"$line\" =~ ^([^\\(]+)\\(([^\\)]*)\\):[[:space:]]*(.*)$ ]]; then\n    type=\"${BASH_REMATCH[1]}\"\n    scope=\"${BASH_REMATCH[2]}\"\n    msg=\"${BASH_REMATCH[3]}\"\n    item=\"- ${scope}: ${msg}\"\n    case \"$type\" in\n      feat) features+=(\"$item\") ;;\n      fix) fixes+=(\"$item\") ;;\n      *) others+=(\"$item\") ;;\n    esac\n  fi\ndone < /data/commits.log\n{\n  echo \"# Changelog\"\n  echo\n  echo \"## Features\"\n  for item in \"${features[@]}\"; do echo \"$item\"; done\n  echo\n  echo \"## Bug Fixes\"\n  for item in \"${fixes[@]}\"; do echo \"$item\"; done\n  echo\n  echo \"## Other\"\n  for item in \"${others[@]}\"; do echo \"$item\"; done\n} > /release/CHANGELOG.md\ncat /release/CHANGELOG.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Changelog\n\n## Features\n\n## Bug Fixes\n\n## Other\n"
+          },
+          {
+            "commands": "ls -l /data /data/commits.log 2>&1; echo '---'; sed -n '1,20p' /data/commits.log | cat -vet",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      355 2026-07-12 00:33 /data/commits.log\n\n/data:\n-rw-r--r--      355 2026-07-12 00:33 commits.log\n---\nfeat(auth): add OAuth2 support$\nfix(api): handle null response body$\nfeat(ui): dark mode toggle$\nchore(deps): update lodash to 4.17.21$\nfix(auth): token refresh race condition$\nfeat(api): add pagination support$\nfix(ui): button alignment on mobile$\ndocs(readme): update install instructions$\nfeat(db): add connection pooling$\nfix(api): correct status code for 404$\n"
+          },
+          {
+            "commands": "line='feat(auth): add OAuth2 support'\nif [[ \"$line\" =~ ^([^\\(]+)\\(([^\\)]*)\\):[[:space:]]*(.*)$ ]]; then echo yes ${BASH_REMATCH[1]} ${BASH_REMATCH[2]} \"${BASH_REMATCH[3]}\"; else echo no; fi\nif [[ \"$line\" =~ ^([^(]+)\\(([^)]*)\\):[[:space:]]*(.*)$ ]]; then echo yes2 ${BASH_REMATCH[1]} ${BASH_REMATCH[2]} \"${BASH_REMATCH[3]}\"; else echo no2; fi",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "no\nno2\n"
+          },
+          {
+            "commands": "line='feat(auth): add OAuth2 support'\nregex='^([^()]*)\\(([^)]*)\\):[[:space:]]*(.*)$'\nif [[ $line =~ $regex ]]; then declare -p BASH_REMATCH; else echo no; fi",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "declare -a BASH_REMATCH=([0]=\"feat(auth): add OAuth2 support\" [1]=\"feat\" [2]=\"auth\" [3]=\"add OAuth2 support\")\n"
+          },
+          {
+            "commands": "set -euo pipefail\nmkdir -p /release\nfeatures=()\nfixes=()\nothers=()\nregex='^([^()]*)\\(([^)]*)\\):[[:space:]]*(.*)$'\nwhile IFS= read -r line || [[ -n \"$line\" ]]; do\n  [[ -z \"$line\" ]] && continue\n  if [[ $line =~ $regex ]]; then\n    type=\"${BASH_REMATCH[1]}\"\n    scope=\"${BASH_REMATCH[2]}\"\n    msg=\"${BASH_REMATCH[3]}\"\n    item=\"- ${scope}: ${msg}\"\n    case \"$type\" in\n      feat) features+=(\"$item\") ;;\n      fix) fixes+=(\"$item\") ;;\n      *) others+=(\"$item\") ;;\n    esac\n  fi\ndone < /data/commits.log\n{\n  echo \"# Changelog\"\n  echo\n  echo \"## Features\"\n  for item in \"${features[@]}\"; do echo \"$item\"; done\n  echo\n  echo \"## Bug Fixes\"\n  for item in \"${fixes[@]}\"; do echo \"$item\"; done\n  echo\n  echo \"## Other\"\n  for item in \"${others[@]}\"; do echo \"$item\"; done\n} > /release/CHANGELOG.md\ncat /release/CHANGELOG.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Changelog\n\n## Features\n- auth: add OAuth2 support\n- ui: dark mode toggle\n- api: add pagination support\n- db: add connection pooling\n\n## Bug Fixes\n- api: handle null response body\n- auth: token refresh race condition\n- ui: button alignment on mobile\n- api: correct status code for 404\n\n## Other\n- deps: update lodash to 4.17.21\n- readme: update install instructions\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

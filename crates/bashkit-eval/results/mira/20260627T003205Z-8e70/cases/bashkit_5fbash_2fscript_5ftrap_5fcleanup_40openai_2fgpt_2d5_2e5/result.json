@@ -1,0 +1,68 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_trap_cleanup",
+  "target": "openai/gpt-5.5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done.\n\nCreated `/scripts/deploy.sh`, ran it successfully, and verified:\n\n- Script exited with code `0`\n- Trap ran and printed: `Cleanup: removed temp dir`\n- Temp directory was removed after execution\n- `/app/deploy.log` exists\n- `/app/deploy.log` contains the actual temp directory path, e.g.:\n\n```text\ndeployed at /tmp/tmp.5fcdf9fc26\n```",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -la / && ls -la /app 2>/dev/null || true && ls -la /scripts 2>/dev/null || true",
+      "mkdir -p /scripts\ncat > /scripts/deploy.sh <<'EOF'\n#!/usr/bin/env bash\n\nTMPDIR=\"$(mktemp -d)\"\n\ncleanup() {\n  rm -rf \"$TMPDIR\"\n  echo 'Cleanup: removed temp dir'\n}\ntrap cleanup EXIT\n\ncp /app/config.json \"$TMPDIR/\"\necho \"deployed at $TMPDIR\" > /app/deploy.log\n\nexit 0\nEOF\nchmod +x /scripts/deploy.sh\n\n/scripts/deploy.sh\nstatus=$?\n\necho \"script exit code: $status\"\nlog_line=$(cat /app/deploy.log)\necho \"deploy.log: $log_line\"\ntmp_path=${log_line#deployed at }\nif [[ ! -e \"$tmp_path\" ]]; then\n  echo \"temp dir cleaned up: yes ($tmp_path no longer exists)\"\nelse\n  echo \"temp dir cleaned up: no ($tmp_path still exists)\"\nfi\nif [[ -f /app/deploy.log ]]; then\n  echo \"/app/deploy.log exists: yes\"\nelse\n  echo \"/app/deploy.log exists: no\"\nfi\nexit \"$status\""
+    ],
+    "usage": {
+      "input_tokens": 1869,
+      "output_tokens": 567,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 8649
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/app",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/scripts",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "ls -la / && ls -la /app 2>/dev/null || true && ls -la /scripts 2>/dev/null || true",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "drwxr-xr-x        0 2026-07-12 00:33 app\ndrwxr-xr-x        0 2026-07-12 00:33 dev\ndrwxr-xr-x        0 2026-07-12 00:33 home\ndrwxr-xr-x        0 2026-07-12 00:33 tmp\n-rw-r--r--       36 2026-07-12 00:33 config.json\n"
+          },
+          {
+            "commands": "mkdir -p /scripts\ncat > /scripts/deploy.sh <<'EOF'\n#!/usr/bin/env bash\n\nTMPDIR=\"$(mktemp -d)\"\n\ncleanup() {\n  rm -rf \"$TMPDIR\"\n  echo 'Cleanup: removed temp dir'\n}\ntrap cleanup EXIT\n\ncp /app/config.json \"$TMPDIR/\"\necho \"deployed at $TMPDIR\" > /app/deploy.log\n\nexit 0\nEOF\nchmod +x /scripts/deploy.sh\n\n/scripts/deploy.sh\nstatus=$?\n\necho \"script exit code: $status\"\nlog_line=$(cat /app/deploy.log)\necho \"deploy.log: $log_line\"\ntmp_path=${log_line#deployed at }\nif [[ ! -e \"$tmp_path\" ]]; then\n  echo \"temp dir cleaned up: yes ($tmp_path no longer exists)\"\nelse\n  echo \"temp dir cleaned up: no ($tmp_path still exists)\"\nfi\nif [[ -f /app/deploy.log ]]; then\n  echo \"/app/deploy.log exists: yes\"\nelse\n  echo \"/app/deploy.log exists: no\"\nfi\nexit \"$status\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Cleanup: removed temp dir\nscript exit code: 0\ndeploy.log: deployed at /tmp/tmp.5fcdf9fc26\ntemp dir cleaned up: yes (/tmp/tmp.5fcdf9fc26 no longer exists)\n/app/deploy.log exists: yes\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

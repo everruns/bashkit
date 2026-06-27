@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_health_check",
+  "target": "openresponses/gpt-5.3-codex",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done — I created `/scripts/healthcheck.sh` and ran it.\n\nOutput:\n- `PASS: /app/config.json exists and contains valid JSON`\n- `PASS: /var/log directory exists`\n- `PASS: /app/data directory contains at least 2 files`\n\nExit code: `0`",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "mkdir -p /scripts\ncat > /scripts/healthcheck.sh <<'EOF'\n#!/usr/bin/env bash\n\nall_pass=true\n\n# 1) /app/config.json exists and contains valid JSON\nif [[ -f /app/config.json ]]; then\n  if command -v jq >/dev/null 2>&1 && jq empty /app/config.json >/dev/null 2>&1; then\n    echo \"PASS: /app/config.json exists and contains valid JSON\"\n  else\n    echo \"FAIL: /app/config.json exists and contains valid JSON\"\n    all_pass=false\n  fi\nelse\n  echo \"FAIL: /app/config.json exists and contains valid JSON\"\n  all_pass=false\nfi\n\n# 2) /var/log directory exists\nif [[ -d /var/log ]]; then\n  echo \"PASS: /var/log directory exists\"\nelse\n  echo \"FAIL: /var/log directory exists\"\n  all_pass=false\nfi\n\n# 3) /app/data directory contains at least 2 files\nif [[ -d /app/data ]]; then\n  file_count=$(find /app/data -maxdepth 1 -type f 2>/dev/null | wc -l)\n  if [[ \"$file_count\" -ge 2 ]]; then\n    echo \"PASS: /app/data directory contains at least 2 files\"\n  else\n    echo \"FAIL: /app/data directory contains at least 2 files\"\n    all_pass=false\n  fi\nelse\n  echo \"FAIL: /app/data directory contains at least 2 files\"\n  all_pass=false\nfi\n\nif [[ \"$all_pass\" == true ]]; then\n  exit 0\nelse\n  exit 1\nfi\nEOF\nchmod +x /scripts/healthcheck.sh\n/scripts/healthcheck.sh; echo \"__EXIT_CODE:$?\""
+    ],
+    "usage": {
+      "input_tokens": 1001,
+      "output_tokens": 777,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7998
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/app",
+          "/app/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/scripts",
+          "/tmp",
+          "/var",
+          "/var/log"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /scripts\ncat > /scripts/healthcheck.sh <<'EOF'\n#!/usr/bin/env bash\n\nall_pass=true\n\n# 1) /app/config.json exists and contains valid JSON\nif [[ -f /app/config.json ]]; then\n  if command -v jq >/dev/null 2>&1 && jq empty /app/config.json >/dev/null 2>&1; then\n    echo \"PASS: /app/config.json exists and contains valid JSON\"\n  else\n    echo \"FAIL: /app/config.json exists and contains valid JSON\"\n    all_pass=false\n  fi\nelse\n  echo \"FAIL: /app/config.json exists and contains valid JSON\"\n  all_pass=false\nfi\n\n# 2) /var/log directory exists\nif [[ -d /var/log ]]; then\n  echo \"PASS: /var/log directory exists\"\nelse\n  echo \"FAIL: /var/log directory exists\"\n  all_pass=false\nfi\n\n# 3) /app/data directory contains at least 2 files\nif [[ -d /app/data ]]; then\n  file_count=$(find /app/data -maxdepth 1 -type f 2>/dev/null | wc -l)\n  if [[ \"$file_count\" -ge 2 ]]; then\n    echo \"PASS: /app/data directory contains at least 2 files\"\n  else\n    echo \"FAIL: /app/data directory contains at least 2 files\"\n    all_pass=false\n  fi\nelse\n  echo \"FAIL: /app/data directory contains at least 2 files\"\n  all_pass=false\nfi\n\nif [[ \"$all_pass\" == true ]]; then\n  exit 0\nelse\n  exit 1\nfi\nEOF\nchmod +x /scripts/healthcheck.sh\n/scripts/healthcheck.sh; echo \"__EXIT_CODE:$?\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "PASS: /app/config.json exists and contains valid JSON\nPASS: /var/log directory exists\nPASS: /app/data directory contains at least 2 files\n__EXIT_CODE:0\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

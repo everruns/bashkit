@@ -1,0 +1,67 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_diff_report",
+  "target": "openresponses/gpt-5.3-codex",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Configuration comparison summary (`v1.conf` → `v2.conf`)\n\n**Added keys**\n- `timeout=30`\n\n**Removed keys**\n- `max_connections` (was `100`)\n\n**Changed values**\n- `port`: `8080` → `9090`\n- `host`: `localhost` → `0.0.0.0`\n- `log_level`: `info` → `debug`",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -l /data && echo '--- v1 ---' && sed -n '1,200p' /data/v1.conf && echo '--- v2 ---' && sed -n '1,200p' /data/v2.conf",
+      "awk -F= '\nFNR==NR {a[$1]=$2; next}\n{b[$1]=$2}\nEND {\n  print \"Configuration comparison summary:\";\n  print \"\";\n\n  # Added keys\n  added_count=0;\n  for (k in b) if (!(k in a)) {added[++added_count]=k}\n  if (added_count==0) {\n    print \"Added keys: none\";\n  } else {\n    print \"Added keys:\";\n    n=asorti(added, idx);\n    for (i=1; i<=n; i++) {\n      key=added[idx[i]];\n      printf \"  - %s=%s\\n\", key, b[key];\n    }\n  }\n  print \"\";\n\n  # Removed keys\n  removed_count=0;\n  for (k in a) if (!(k in b)) {removed[++removed_count]=k}\n  if (removed_count==0) {\n    print \"Removed keys: none\";\n  } else {\n    print \"Removed keys:\";\n    n=asorti(removed, idx2);\n    for (i=1; i<=n; i++) {\n      key=removed[idx2[i]];\n      printf \"  - %s (was %s)\\n\", key, a[key];\n    }\n  }\n  print \"\";\n\n  # Changed keys\n  changed_count=0;\n  for (k in a) if ((k in b) && a[k] != b[k]) {changed[++changed_count]=k}\n  if (changed_count==0) {\n    print \"Changed keys: none\";\n  } else {\n    print \"Changed keys:\";\n    n=asorti(changed, idx3);\n    for (i=1; i<=n; i++) {\n      key=changed[idx3[i]];\n      printf \"  - %s: %s -> %s\\n\", key, a[key], b[key];\n    }\n  }\n}\n' /data/v1.conf /data/v2.conf"
+    ],
+    "usage": {
+      "input_tokens": 1574,
+      "output_tokens": 995,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 11436
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "ls -l /data && echo '--- v1 ---' && sed -n '1,200p' /data/v1.conf && echo '--- v2 ---' && sed -n '1,200p' /data/v2.conf",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       70 2026-07-12 00:32 v1.conf\n-rw-r--r--       60 2026-07-12 00:32 v2.conf\n--- v1 ---\nport=8080\nhost=localhost\nlog_level=info\nworkers=4\nmax_connections=100\n--- v2 ---\nport=9090\nhost=0.0.0.0\nlog_level=debug\nworkers=4\ntimeout=30\n"
+          },
+          {
+            "commands": "awk -F= '\nFNR==NR {a[$1]=$2; next}\n{b[$1]=$2}\nEND {\n  print \"Configuration comparison summary:\";\n  print \"\";\n\n  # Added keys\n  added_count=0;\n  for (k in b) if (!(k in a)) {added[++added_count]=k}\n  if (added_count==0) {\n    print \"Added keys: none\";\n  } else {\n    print \"Added keys:\";\n    n=asorti(added, idx);\n    for (i=1; i<=n; i++) {\n      key=added[idx[i]];\n      printf \"  - %s=%s\\n\", key, b[key];\n    }\n  }\n  print \"\";\n\n  # Removed keys\n  removed_count=0;\n  for (k in a) if (!(k in b)) {removed[++removed_count]=k}\n  if (removed_count==0) {\n    print \"Removed keys: none\";\n  } else {\n    print \"Removed keys:\";\n    n=asorti(removed, idx2);\n    for (i=1; i<=n; i++) {\n      key=removed[idx2[i]];\n      printf \"  - %s (was %s)\\n\", key, a[key];\n    }\n  }\n  print \"\";\n\n  # Changed keys\n  changed_count=0;\n  for (k in a) if ((k in b) && a[k] != b[k]) {changed[++changed_count]=k}\n  if (changed_count==0) {\n    print \"Changed keys: none\";\n  } else {\n    print \"Changed keys:\";\n    n=asorti(changed, idx3);\n    for (i=1; i<=n; i++) {\n      key=changed[idx3[i]];\n      printf \"  - %s: %s -> %s\\n\", key, a[key], b[key];\n    }\n  }\n}\n' /data/v1.conf /data/v2.conf",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Configuration comparison summary:\n\nAdded keys:\n\nRemoved keys:\n\nChanged keys:\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

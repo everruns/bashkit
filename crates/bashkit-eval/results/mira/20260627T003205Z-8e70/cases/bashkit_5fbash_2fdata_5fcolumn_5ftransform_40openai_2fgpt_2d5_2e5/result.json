@@ -1,0 +1,60 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_column_transform",
+  "target": "openai/gpt-5.5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "email,first_name,last_name,department\nalice@co.com,Alice,Smith,Eng\nbob@co.com,Bob,Jones,Sales\ncarol@co.com,Carol,Davis,Eng\ndave@co.com,Dave,Wilson,HR",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "set -euo pipefail\nawk -F '\\t' 'BEGIN{OFS=\",\"; print \"email\",\"first_name\",\"last_name\",\"department\"} NR>1 {print $4,$3,$2,$5}' /data/export.tsv > /data/import.csv\ncat /data/import.csv"
+    ],
+    "usage": {
+      "input_tokens": 798,
+      "output_tokens": 154,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3519
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "set -euo pipefail\nawk -F '\\t' 'BEGIN{OFS=\",\"; print \"email\",\"first_name\",\"last_name\",\"department\"} NR>1 {print $4,$3,$2,$5}' /data/export.tsv > /data/import.csv\ncat /data/import.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "email,first_name,last_name,department\nalice@co.com,Alice,Smith,Eng\nbob@co.com,Bob,Jones,Sales\ncarol@co.com,Carol,Davis,Eng\ndave@co.com,Dave,Wilson,HR\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,88 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_regex_extract",
+  "target": "openai/gpt-5.5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "SLOW: POST /api/orders took 850ms (200)  \nSLOW: GET /api/reports took 1200ms (200)  \nSLOW: POST /api/payments took 2000ms (500)  \nSLOW: PUT /api/users took 620ms (200)  \nSlow requests: 4 of 8 total",
+    "iterations": 6,
+    "tool_calls_count": 5,
+    "tool_calls": [
+      "count=0\nslow=0\nwhile IFS= read -r line; do\n  [[ -z $line ]] && continue\n  if [[ $line =~ ^\\[([^]]+)\\][[:space:]]+([0-9]{3})[[:space:]]+([A-Z]+)[[:space:]]+([^[:space:]]+)[[:space:]]+([0-9]+)ms$ ]]; then\n    timestamp=${BASH_REMATCH[1]}\n    status=${BASH_REMATCH[2]}\n    method=${BASH_REMATCH[3]}\n    url=${BASH_REMATCH[4]}\n    duration=${BASH_REMATCH[5]}\n    ((count++))\n    if (( duration > 500 )); then\n      ((slow++))\n      printf 'SLOW: %s %s took %sms (%s)\\n' \"$method\" \"$url\" \"$duration\" \"$status\"\n    fi\n  fi\ndone < /data/access.log\nprintf 'Slow requests: %d of %d total\\n' \"$slow\" \"$count\"",
+      "ls -l /data/access.log && sed -n '1,10p' /data/access.log | cat -vet",
+      "count=0\nslow=0\nwhile IFS= read -r line; do\n  [[ -z $line ]] && continue\n  if [[ $line =~ ^\\[([^]]+)\\][[:space:]]+([0-9]{3})[[:space:]]+([A-Z]+)[[:space:]]+([^[:space:]]+)[[:space:]]+([0-9]+)$ ]]; then\n    timestamp=${BASH_REMATCH[1]}\n    status=${BASH_REMATCH[2]}\n    method=${BASH_REMATCH[3]}\n    url=${BASH_REMATCH[4]}\n    duration=${BASH_REMATCH[5]}\n    ((count++))\n    if (( duration > 500 )); then\n      ((slow++))\n      printf 'SLOW: %s %s took %sms (%s)\\n' \"$method\" \"$url\" \"$duration\" \"$status\"\n    fi\n  fi\ndone < /data/access.log\nprintf 'Slow requests: %d of %d total\\n' \"$slow\" \"$count\"",
+      "line='[2024-01-15T10:00:01] 200 GET /api/users 150'\nregex='^\\[([^]]+)\\][[:space:]]+([0-9]{3})[[:space:]]+([A-Z]+)[[:space:]]+([^[:space:]]+)[[:space:]]+([0-9]+)$'\nif [[ $line =~ $regex ]]; then declare -p BASH_REMATCH; else echo no; fi\nregex2='^\\[([^]]+)\\]'\n[[ $line =~ $regex2 ]] && declare -p BASH_REMATCH || echo no2\n",
+      "count=0\nslow=0\nregex='^\\[([^]]+)\\][[:space:]]+([0-9]{3})[[:space:]]+([A-Z]+)[[:space:]]+([^[:space:]]+)[[:space:]]+([0-9]+)$'\nwhile IFS= read -r line; do\n  [[ -z $line ]] && continue\n  if [[ $line =~ $regex ]]; then\n    timestamp=${BASH_REMATCH[1]}\n    status=${BASH_REMATCH[2]}\n    method=${BASH_REMATCH[3]}\n    url=${BASH_REMATCH[4]}\n    duration=${BASH_REMATCH[5]}\n    ((count++))\n    if (( duration > 500 )); then\n      ((slow++))\n      printf 'SLOW: %s %s took %sms (%s)\\n' \"$method\" \"$url\" \"$duration\" \"$status\"\n    fi\n  fi\ndone < /data/access.log\nprintf 'Slow requests: %d of %d total\\n' \"$slow\" \"$count\""
+    ],
+    "usage": {
+      "input_tokens": 6365,
+      "output_tokens": 1446,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 19146
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 5.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 5.0,
+      "turns": 6.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "count=0\nslow=0\nwhile IFS= read -r line; do\n  [[ -z $line ]] && continue\n  if [[ $line =~ ^\\[([^]]+)\\][[:space:]]+([0-9]{3})[[:space:]]+([A-Z]+)[[:space:]]+([^[:space:]]+)[[:space:]]+([0-9]+)ms$ ]]; then\n    timestamp=${BASH_REMATCH[1]}\n    status=${BASH_REMATCH[2]}\n    method=${BASH_REMATCH[3]}\n    url=${BASH_REMATCH[4]}\n    duration=${BASH_REMATCH[5]}\n    ((count++))\n    if (( duration > 500 )); then\n      ((slow++))\n      printf 'SLOW: %s %s took %sms (%s)\\n' \"$method\" \"$url\" \"$duration\" \"$status\"\n    fi\n  fi\ndone < /data/access.log\nprintf 'Slow requests: %d of %d total\\n' \"$slow\" \"$count\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Slow requests: 0 of 0 total\n"
+          },
+          {
+            "commands": "ls -l /data/access.log && sed -n '1,10p' /data/access.log | cat -vet",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      374 2026-07-12 00:34 /data/access.log\n[2024-01-15T10:00:01] 200 GET /api/users 150$\n[2024-01-15T10:00:02] 200 POST /api/orders 850$\n[2024-01-15T10:00:03] 404 GET /api/missing 50$\n[2024-01-15T10:00:04] 200 GET /api/reports 1200$\n[2024-01-15T10:00:05] 500 POST /api/payments 2000$\n[2024-01-15T10:00:06] 200 GET /api/health 30$\n[2024-01-15T10:00:07] 200 GET /api/products 450$\n[2024-01-15T10:00:08] 200 PUT /api/users 620$\n"
+          },
+          {
+            "commands": "count=0\nslow=0\nwhile IFS= read -r line; do\n  [[ -z $line ]] && continue\n  if [[ $line =~ ^\\[([^]]+)\\][[:space:]]+([0-9]{3})[[:space:]]+([A-Z]+)[[:space:]]+([^[:space:]]+)[[:space:]]+([0-9]+)$ ]]; then\n    timestamp=${BASH_REMATCH[1]}\n    status=${BASH_REMATCH[2]}\n    method=${BASH_REMATCH[3]}\n    url=${BASH_REMATCH[4]}\n    duration=${BASH_REMATCH[5]}\n    ((count++))\n    if (( duration > 500 )); then\n      ((slow++))\n      printf 'SLOW: %s %s took %sms (%s)\\n' \"$method\" \"$url\" \"$duration\" \"$status\"\n    fi\n  fi\ndone < /data/access.log\nprintf 'Slow requests: %d of %d total\\n' \"$slow\" \"$count\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Slow requests: 0 of 0 total\n"
+          },
+          {
+            "commands": "line='[2024-01-15T10:00:01] 200 GET /api/users 150'\nregex='^\\[([^]]+)\\][[:space:]]+([0-9]{3})[[:space:]]+([A-Z]+)[[:space:]]+([^[:space:]]+)[[:space:]]+([0-9]+)$'\nif [[ $line =~ $regex ]]; then declare -p BASH_REMATCH; else echo no; fi\nregex2='^\\[([^]]+)\\]'\n[[ $line =~ $regex2 ]] && declare -p BASH_REMATCH || echo no2\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "declare -a BASH_REMATCH=([0]=\"[2024-01-15T10:00:01] 200 GET /api/users 150\" [1]=\"2024-01-15T10:00:01\" [2]=\"200\" [3]=\"GET\" [4]=\"/api/users\" [5]=\"150\")\ndeclare -a BASH_REMATCH=([0]=\"[2024-01-15T10:00:01]\" [1]=\"2024-01-15T10:00:01\")\n"
+          },
+          {
+            "commands": "count=0\nslow=0\nregex='^\\[([^]]+)\\][[:space:]]+([0-9]{3})[[:space:]]+([A-Z]+)[[:space:]]+([^[:space:]]+)[[:space:]]+([0-9]+)$'\nwhile IFS= read -r line; do\n  [[ -z $line ]] && continue\n  if [[ $line =~ $regex ]]; then\n    timestamp=${BASH_REMATCH[1]}\n    status=${BASH_REMATCH[2]}\n    method=${BASH_REMATCH[3]}\n    url=${BASH_REMATCH[4]}\n    duration=${BASH_REMATCH[5]}\n    ((count++))\n    if (( duration > 500 )); then\n      ((slow++))\n      printf 'SLOW: %s %s took %sms (%s)\\n' \"$method\" \"$url\" \"$duration\" \"$status\"\n    fi\n  fi\ndone < /data/access.log\nprintf 'Slow requests: %d of %d total\\n' \"$slow\" \"$count\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "SLOW: POST /api/orders took 850ms (200)\nSLOW: GET /api/reports took 1200ms (200)\nSLOW: POST /api/payments took 2000ms (500)\nSLOW: PUT /api/users took 620ms (200)\nSlow requests: 4 of 8 total\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -12,7 +12,7 @@ Bashkit uses a Cargo workspace with multiple crates:
 | `crates/bashkit-cli/` | CLI binary |
 | `crates/bashkit-python/` | Python bindings (PyO3) |
 | `crates/bashkit-js/` | JavaScript bindings (NAPI-RS) |
-| `crates/bashkit-eval/` | LLM evaluation harness |
+| `crates/bashkit-eval/` | LLM eval study (mira framework) |
 
 Core library modules: `parser/`, `interpreter/`, `fs/`, `builtins/`,
 `network/`, `git/`, `ssh/`, `scripted_tool/`. See source — structure evolves.

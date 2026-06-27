@@ -1,0 +1,67 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "text_csv_revenue",
+  "target": "anthropic/claude-opus-4-8",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "329",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "head -5 /data/sales.csv; echo \"---\"; wc -l /data/sales.csv",
+      "awk -F, 'NR>1 && NF>=3 {sum += $2 * $3} END {print sum}' /data/sales.csv"
+    ],
+    "usage": {
+      "input_tokens": 2435,
+      "output_tokens": 240,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5420
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "head -5 /data/sales.csv; echo \"---\"; wc -l /data/sales.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "product,price,quantity\nwidget,10,5\ngadget,25,3\ndoohickey,7,12\nsprocket,15,8\n---\n      5 /data/sales.csv\n"
+          },
+          {
+            "commands": "awk -F, 'NR>1 && NF>=3 {sum += $2 * $3} END {print sum}' /data/sales.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "329\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,68 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "pipe_xargs_batch",
+  "target": "openresponses/gpt-5.3-codex",
+  "passed": false,
+  "aggregate": 0.3333333333333333,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 0.3333333333333333,
+      "pass": false,
+      "reason": "1/3 checks passed (weighted rate 33%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Total log lines: 0  \nTotal errors: 0",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "line_total=$(find /workspace -type f -name '*.log' -print0 | xargs -0 -r wc -l | awk 'END { print $1+0 }')\nerror_total=$(find /workspace -type f -name '*.log' -print0 | xargs -0 -r grep -h 'ERROR' | wc -l)\necho \"Total log lines: $line_total\"\necho \"Total errors: $error_total\"",
+      "line_total=$(find /workspace -type f -name '*.log' -print0 | xargs -0 -r cat | wc -l)\nerror_total=$(find /workspace -type f -name '*.log' -print0 | xargs -0 -r grep -h 'ERROR' | wc -l)\necho \"Total log lines: $line_total\"\necho \"Total errors: $error_total\""
+    ],
+    "usage": {
+      "input_tokens": 1152,
+      "output_tokens": 1307,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 15232
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 1.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp",
+          "/workspace",
+          "/workspace/sub"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "line_total=$(find /workspace -type f -name '*.log' -print0 | xargs -0 -r wc -l | awk 'END { print $1+0 }')\nerror_total=$(find /workspace -type f -name '*.log' -print0 | xargs -0 -r grep -h 'ERROR' | wc -l)\necho \"Total log lines: $line_total\"\necho \"Total errors: $error_total\"",
+            "exit_code": 1,
+            "stderr": "execution error: awk: invalid number: 1+0",
+            "stdout": ""
+          },
+          {
+            "commands": "line_total=$(find /workspace -type f -name '*.log' -print0 | xargs -0 -r cat | wc -l)\nerror_total=$(find /workspace -type f -name '*.log' -print0 | xargs -0 -r grep -h 'ERROR' | wc -l)\necho \"Total log lines: $line_total\"\necho \"Total errors: $error_total\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Total log lines: 0\nTotal errors: 0\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

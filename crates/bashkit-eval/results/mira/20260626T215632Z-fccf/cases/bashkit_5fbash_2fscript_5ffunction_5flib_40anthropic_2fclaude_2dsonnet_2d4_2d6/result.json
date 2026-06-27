@@ -1,0 +1,68 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_function_lib",
+  "target": "anthropic/claude-sonnet-4-6",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Everything works perfectly. Here's a full breakdown of what was done:\n\n---\n\n### `/lib/utils.sh` — Function Details\n\n| Function | Mechanism | Usage |\n|---|---|---|\n| `to_upper` | Pipes stdin through `tr '[:lower:]' '[:upper:]'` to convert every lowercase character to its uppercase equivalent | `echo \"text\" \\| to_upper` |\n| `count_lines` | Accepts a filename as `$1`, validates it exists, then feeds it to `wc -l` (redirected via `<` to suppress the filename from output) | `count_lines /path/to/file` |\n| `file_size` | Accepts a filename as `$1`, validates it exists, then feeds it to `wc -c` (same redirection trick) to get the raw byte count | `file_size /path/to/file` |\n\nBoth `count_lines` and `file_size` include **guard clauses** — they emit a descriptive error to `stderr` and return exit code `1` if no argument is given or the file doesn't exist.\n\n---\n\n### Demo Results\n\n- **`to_upper`** → `hello world` became **`HELLO WORLD`**\n- **`count_lines`** → `/data/sample.txt` has **5 lines**\n- **`file_size`** → `/data/sample.txt` is **199 bytes**",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "mkdir -p /lib /data\n\n# Create /lib/utils.sh with the three utility functions\ncat << 'EOF' > /lib/utils.sh\n#!/usr/bin/env bash\n\n# Reads from stdin and converts all characters to uppercase\nto_upper() {\n    tr '[:lower:]' '[:upper:]'\n}\n\n# Takes a filename argument and prints the number of lines\ncount_lines() {\n    local file=\"$1\"\n    if [[ -z \"$file\" ]]; then\n        echo \"count_lines: no filename provided\" >&2\n        return 1\n    fi\n    if [[ ! -f \"$file\" ]]; then\n        echo \"count_lines: file not found: $file\" >&2\n        return 1\n    fi\n    wc -l < \"$file\"\n}\n\n# Takes a filename argument and prints the byte count\nfile_size() {\n    local file=\"$1\"\n    if [[ -z \"$file\" ]]; then\n        echo \"file_size: no filename provided\" >&2\n        return 1\n    fi\n    if [[ ! -f \"$file\" ]]; then\n        echo \"file_size: file not found: $file\" >&2\n        return 1\n    fi\n    wc -c < \"$file\"\n}\nEOF\n\n# Create a sample text file to demo count_lines / file_size against\ncat << 'EOF' > /data/sample.txt\nThe quick brown fox jumps over the lazy dog.\nPack my box with five dozen liquor jugs.\nHow vexingly quick daft zebras jump!\nThe five boxing wizards jump quickly.\nSphinx of black quartz, judge my vow.\nEOF\n\necho \"=== /lib/utils.sh created ===\"\ncat /lib/utils.sh",
+      "# Source the library and demonstrate all three functions\nsource /lib/utils.sh\n\necho \"--- Demo 1: to_upper on 'hello world' ---\"\necho \"hello world\" | to_upper\n\necho \"\"\necho \"--- Demo 2: count_lines on /data/sample.txt ---\"\ncount_lines /data/sample.txt\n\necho \"\"\necho \"--- Demo 3: file_size on /data/sample.txt ---\"\nfile_size /data/sample.txt"
+    ],
+    "usage": {
+      "input_tokens": 4270,
+      "output_tokens": 1001,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 15708
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/lib",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /lib /data\n\n# Create /lib/utils.sh with the three utility functions\ncat << 'EOF' > /lib/utils.sh\n#!/usr/bin/env bash\n\n# Reads from stdin and converts all characters to uppercase\nto_upper() {\n    tr '[:lower:]' '[:upper:]'\n}\n\n# Takes a filename argument and prints the number of lines\ncount_lines() {\n    local file=\"$1\"\n    if [[ -z \"$file\" ]]; then\n        echo \"count_lines: no filename provided\" >&2\n        return 1\n    fi\n    if [[ ! -f \"$file\" ]]; then\n        echo \"count_lines: file not found: $file\" >&2\n        return 1\n    fi\n    wc -l < \"$file\"\n}\n\n# Takes a filename argument and prints the byte count\nfile_size() {\n    local file=\"$1\"\n    if [[ -z \"$file\" ]]; then\n        echo \"file_size: no filename provided\" >&2\n        return 1\n    fi\n    if [[ ! -f \"$file\" ]]; then\n        echo \"file_size: file not found: $file\" >&2\n        return 1\n    fi\n    wc -c < \"$file\"\n}\nEOF\n\n# Create a sample text file to demo count_lines / file_size against\ncat << 'EOF' > /data/sample.txt\nThe quick brown fox jumps over the lazy dog.\nPack my box with five dozen liquor jugs.\nHow vexingly quick daft zebras jump!\nThe five boxing wizards jump quickly.\nSphinx of black quartz, judge my vow.\nEOF\n\necho \"=== /lib/utils.sh created ===\"\ncat /lib/utils.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "=== /lib/utils.sh created ===\n#!/usr/bin/env bash\n\n# Reads from stdin and converts all characters to uppercase\nto_upper() {\n    tr '[:lower:]' '[:upper:]'\n}\n\n# Takes a filename argument and prints the number of lines\ncount_lines() {\n    local file=\"$1\"\n    if [[ -z \"$file\" ]]; then\n        echo \"count_lines: no filename provided\" >&2\n        return 1\n    fi\n    if [[ ! -f \"$file\" ]]; then\n        echo \"count_lines: file not found: $file\" >&2\n        return 1\n    fi\n    wc -l < \"$file\"\n}\n\n# Takes a filename argument and prints the byte count\nfile_size() {\n    local file=\"$1\"\n    if [[ -z \"$file\" ]]; then\n        echo \"file_size: no filename provided\" >&2\n        return 1\n    fi\n    if [[ ! -f \"$file\" ]]; then\n        echo \"file_size: file not found: $file\" >&2\n        return 1\n    fi\n    wc -c < \"$file\"\n}\n"
+          },
+          {
+            "commands": "# Source the library and demonstrate all three functions\nsource /lib/utils.sh\n\necho \"--- Demo 1: to_upper on 'hello world' ---\"\necho \"hello world\" | to_upper\n\necho \"\"\necho \"--- Demo 2: count_lines on /data/sample.txt ---\"\ncount_lines /data/sample.txt\n\necho \"\"\necho \"--- Demo 3: file_size on /data/sample.txt ---\"\nfile_size /data/sample.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "--- Demo 1: to_upper on 'hello world' ---\nHELLO WORLD\n\n--- Demo 2: count_lines on /data/sample.txt ---\n5\n\n--- Demo 3: file_size on /data/sample.txt ---\n199\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

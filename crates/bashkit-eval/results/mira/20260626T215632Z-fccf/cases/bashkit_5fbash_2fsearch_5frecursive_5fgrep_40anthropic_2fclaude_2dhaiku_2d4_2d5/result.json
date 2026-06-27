@@ -1,0 +1,62 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "search_recursive_grep",
+  "target": "anthropic/claude-haiku-4-5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Perfect! Here are all the matches:\n\n```\n/project/tests/test_auth.py:3:def test_validate_token():\n/project/app/auth.py:1:def validate_token(token):\n/project/app/forms.py:1:def validate_email(email):\n/project/app/forms.py:4:def validate_name(name):\nTotal matches: 4\n```\n\nThe search found **4 functions** containing the word 'validate' in their definitions:\n1. `test_validate_token()` in `/project/tests/test_auth.py` at line 3\n2. `validate_token()` in `/project/app/auth.py` at line 1\n3. `validate_email()` in `/project/app/forms.py` at line 1\n4. `validate_name()` in `/project/app/forms.py` at line 4",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "grep -rn \"def.*validate\" /project --include=\"*.py\" && echo \"---\" && grep -rn \"def.*validate\" /project --include=\"*.py\" | wc -l | xargs -I {} echo \"Total matches: {}\""
+    ],
+    "usage": {
+      "input_tokens": 1763,
+      "output_tokens": 345,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 2643
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/project",
+          "/project/app",
+          "/project/tests",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "grep -rn \"def.*validate\" /project --include=\"*.py\" && echo \"---\" && grep -rn \"def.*validate\" /project --include=\"*.py\" | wc -l | xargs -I {} echo \"Total matches: {}\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/project/tests/test_auth.py:3:def test_validate_token():\n/project/app/auth.py:1:def validate_token(token):\n/project/app/forms.py:1:def validate_email(email):\n/project/app/forms.py:4:def validate_name(name):\n---\nTotal matches: 4\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}
