@@ -326,6 +326,7 @@ pub(super) fn build_find_exec_commands(
             name: cmd_args[0].clone(),
             args: cmd_args[1..].to_vec(),
             stdin: None,
+            assignments: Vec::new(),
         }]
     } else {
         // Per-file mode: -exec cmd {} \;
@@ -341,6 +342,7 @@ pub(super) fn build_find_exec_commands(
                     name: cmd_args[0].clone(),
                     args: cmd_args[1..].to_vec(),
                     stdin: None,
+                    assignments: Vec::new(),
                 }
             })
             .collect()

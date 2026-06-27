@@ -150,6 +150,46 @@ impl<'a> ArgParser<'a> {
         Ok(None)
     }
 
+    /// Try to consume a long option with a value, handling both
+    /// `--name=value` and `--name value` forms.
+    ///
+    /// Unlike [`flag_value`](Self::flag_value), the attached form requires an
+    /// explicit `=` separator (GNU long-option convention), so `--max-procs4`
+    /// is not mistaken for `--max-procs=4`. Returns `Ok(Some(value))` if
+    /// matched, `Err` if matched but no value follows, `Ok(None)` otherwise.
+    pub fn long_value(
+        &mut self,
+        name: &str,
+        cmd: &str,
+    ) -> std::result::Result<Option<&'a str>, String> {
+        let arg = match self.args.get(self.pos) {
+            Some(a) => a.as_str(),
+            None => return Ok(None),
+        };
+
+        if arg == name {
+            // Separate form: --name value
+            self.pos += 1;
+            return match self.args.get(self.pos) {
+                Some(val) => {
+                    self.pos += 1;
+                    Ok(Some(val.as_str()))
+                }
+                None => Err(format!("{cmd}: {name} requires an argument")),
+            };
+        }
+
+        // Attached form: --name=value
+        if let Some(rest) = arg.strip_prefix(name)
+            && let Some(val) = rest.strip_prefix('=')
+        {
+            self.pos += 1;
+            return Ok(Some(val));
+        }
+
+        Ok(None)
+    }
+
     /// Try to consume a flag with a value, silently returning None if
     /// the flag matches but no value is available (for lenient parsers).
     pub fn flag_value_opt(&mut self, name: &str) -> Option<&'a str> {
@@ -322,6 +362,48 @@ mod tests {
         let a = args(&["--output"]);
         let mut p = ArgParser::new(&a);
         assert!(p.flag_value_any(&["-o", "--output"], "cmd").is_err());
+    }
+
+    #[test]
+    fn test_long_value_attached() {
+        let a = args(&["--max-procs=4", "cmd"]);
+        let mut p = ArgParser::new(&a);
+        assert_eq!(p.long_value("--max-procs", "xargs").unwrap(), Some("4"));
+        assert_eq!(p.current(), Some("cmd"));
+    }
+
+    #[test]
+    fn test_long_value_separate() {
+        let a = args(&["--process-slot-var", "SLOT", "cmd"]);
+        let mut p = ArgParser::new(&a);
+        assert_eq!(
+            p.long_value("--process-slot-var", "xargs").unwrap(),
+            Some("SLOT")
+        );
+        assert_eq!(p.current(), Some("cmd"));
+    }
+
+    #[test]
+    fn test_long_value_no_match() {
+        let a = args(&["-P", "4"]);
+        let mut p = ArgParser::new(&a);
+        assert_eq!(p.long_value("--max-procs", "xargs").unwrap(), None);
+        assert_eq!(p.current(), Some("-P"));
+    }
+
+    #[test]
+    fn test_long_value_missing() {
+        let a = args(&["--max-procs"]);
+        let mut p = ArgParser::new(&a);
+        assert!(p.long_value("--max-procs", "xargs").is_err());
+    }
+
+    #[test]
+    fn test_long_value_attached_empty() {
+        // `--max-procs=` yields an empty value, not None.
+        let a = args(&["--max-procs="]);
+        let mut p = ArgParser::new(&a);
+        assert_eq!(p.long_value("--max-procs", "xargs").unwrap(), Some(""));
     }
 
     #[test]

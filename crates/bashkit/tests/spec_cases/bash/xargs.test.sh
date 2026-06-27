@@ -50,3 +50,32 @@ echo -n "" | xargs
 ### expect
 
 ### end
+
+### xargs_max_procs_accepted
+# -P is accepted (no longer an "invalid option" error); a single batched
+# invocation is order-deterministic and matches real bash.
+printf "a\nb\nc\n" | xargs -P 4 echo
+### expect
+a b c
+### end
+
+### xargs_process_slot_var
+### bash_diff: real xargs -P runs children in parallel (non-deterministic slot/order); bashkit runs deterministically in order with round-robin slot assignment
+# --process-slot-var exposes a distinct slot index (0..N-1) per invocation,
+# so sharding logic like `worker $SLOT` works instead of always reading 0.
+printf "0\n1\n2\n3\n" | xargs -P 2 --process-slot-var=SLOT -I{} sh -c 'echo {} slot=$SLOT'
+### expect
+0 slot=0
+1 slot=1
+2 slot=0
+3 slot=1
+### end
+
+### xargs_process_slot_var_single_slot
+### bash_diff: real xargs parallel scheduling is non-deterministic; bashkit is deterministic
+# Without -P, there is a single slot, so the index is always 0 (matches GNU).
+printf "x\ny\n" | xargs --process-slot-var=SLOT -I{} sh -c 'echo {} slot=$SLOT'
+### expect
+x slot=0
+y slot=0
+### end

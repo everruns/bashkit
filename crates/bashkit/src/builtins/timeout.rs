@@ -185,6 +185,7 @@ impl Builtin for Timeout {
                         name: cmd_name,
                         args: cmd_args,
                         stdin: ctx.stdin.map(|s| s.to_string()),
+                        assignments: Vec::new(),
                     },
                 }))
             }
