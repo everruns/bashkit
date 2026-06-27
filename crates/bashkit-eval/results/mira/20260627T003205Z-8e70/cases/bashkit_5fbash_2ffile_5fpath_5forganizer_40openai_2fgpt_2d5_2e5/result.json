@@ -1,0 +1,74 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "file_path_organizer",
+  "target": "openai/gpt-5.5",
+  "passed": false,
+  "aggregate": 0.125,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 0.125,
+      "pass": false,
+      "reason": "1/8 checks passed (weighted rate 12%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created an executable script:\n\n```bash\n./organize_uploads.sh\n```\n\nIt will:\n\n- Move files in `/uploads` into extension-named directories\n- Put files with no extension into `/uploads/other/`\n- Print each move as:\n\n```text\nmoved: FILENAME -> EXTENSION_DIR/\n```\n\n- Print a final summary like:\n\n```text\ntxt: 2 files\ncsv: 2 files\nother: 1 files\n```\n\nRun it with:\n\n```bash\n./organize_uploads.sh\n```",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "ls -la /uploads 2>/dev/null || echo '/uploads not found'\nls -la",
+      "cat > /home/eval/organize_uploads.sh <<'EOF'\n#!/usr/bin/env bash\nset -euo pipefail\n\nUPLOAD_DIR=\"/uploads\"\n\ndeclare -A counts\nextensions=()\n\n# Process only regular files directly under /uploads.\nshopt -s nullglob dotglob\nfor path in \"$UPLOAD_DIR\"/*; do\n    [[ -f \"$path\" ]] || continue\n\n    filename=${path##*/}\n\n    # A file has an extension only if there is a dot that is not the first\n    # character and there is at least one character after the final dot.\n    if [[ \"$filename\" == *.* && \"$filename\" != .* && \"${filename##*.}\" != \"\" ]]; then\n        ext=${filename##*.}\n    else\n        ext=\"other\"\n    fi\n\n    dest_dir=\"$UPLOAD_DIR/$ext\"\n    mkdir -p \"$dest_dir\"\n    mv -- \"$path\" \"$dest_dir/\"\n\n    if [[ -z \"${counts[$ext]+set}\" ]]; then\n        counts[$ext]=0\n        extensions+=(\"$ext\")\n    fi\n    counts[$ext]=$(( counts[$ext] + 1 ))\n\n    printf 'moved: %s -> %s/\\n' \"$filename\" \"$ext\"\ndone\n\nfor ext in \"${extensions[@]}\"; do\n    printf '%s: %d files\\n' \"$ext\" \"${counts[$ext]}\"\ndone\nEOF\nchmod +x /home/eval/organize_uploads.sh\nls -l /home/eval/organize_uploads.sh\nsed -n '1,200p' /home/eval/organize_uploads.sh",
+      "pwd\nls -la /\ncat > ./organize_uploads.sh <<'EOF'\n#!/usr/bin/env bash\nset -euo pipefail\n\nUPLOAD_DIR=\"/uploads\"\n\ndeclare -A counts\nextensions=()\n\n# Process only regular files directly under /uploads.\nshopt -s nullglob dotglob\nfor path in \"$UPLOAD_DIR\"/*; do\n    [[ -f \"$path\" ]] || continue\n\n    filename=${path##*/}\n\n    # A file has an extension only if there is a dot that is not the first\n    # character and there is at least one character after the final dot.\n    if [[ \"$filename\" == *.* && \"$filename\" != .* && \"${filename##*.}\" != \"\" ]]; then\n        ext=${filename##*.}\n    else\n        ext=\"other\"\n    fi\n\n    dest_dir=\"$UPLOAD_DIR/$ext\"\n    mkdir -p \"$dest_dir\"\n    mv -- \"$path\" \"$dest_dir/\"\n\n    if [[ -z \"${counts[$ext]+set}\" ]]; then\n        counts[$ext]=0\n        extensions+=(\"$ext\")\n    fi\n    counts[$ext]=$(( counts[$ext] + 1 ))\n\n    printf 'moved: %s -> %s/\\n' \"$filename\" \"$ext\"\ndone\n\nfor ext in \"${extensions[@]}\"; do\n    printf '%s: %d files\\n' \"$ext\" \"${counts[$ext]}\"\ndone\nEOF\nchmod +x ./organize_uploads.sh\nls -l ./organize_uploads.sh"
+    ],
+    "usage": {
+      "input_tokens": 3670,
+      "output_tokens": 1543,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 19882
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 2.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp",
+          "/uploads"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "ls -la /uploads 2>/dev/null || echo '/uploads not found'\nls -la",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       17 2026-07-12 00:33 README\n-rw-r--r--       13 2026-07-12 00:33 config.json\n-rw-r--r--        5 2026-07-12 00:33 data.csv\n-rw-r--r--        8 2026-07-12 00:33 image.png\n-rw-r--r--       13 2026-07-12 00:33 notes.txt\n-rw-r--r--       14 2026-07-12 00:33 report.txt\n-rw-r--r--        5 2026-07-12 00:33 results.csv\n"
+          },
+          {
+            "commands": "cat > /home/eval/organize_uploads.sh <<'EOF'\n#!/usr/bin/env bash\nset -euo pipefail\n\nUPLOAD_DIR=\"/uploads\"\n\ndeclare -A counts\nextensions=()\n\n# Process only regular files directly under /uploads.\nshopt -s nullglob dotglob\nfor path in \"$UPLOAD_DIR\"/*; do\n    [[ -f \"$path\" ]] || continue\n\n    filename=${path##*/}\n\n    # A file has an extension only if there is a dot that is not the first\n    # character and there is at least one character after the final dot.\n    if [[ \"$filename\" == *.* && \"$filename\" != .* && \"${filename##*.}\" != \"\" ]]; then\n        ext=${filename##*.}\n    else\n        ext=\"other\"\n    fi\n\n    dest_dir=\"$UPLOAD_DIR/$ext\"\n    mkdir -p \"$dest_dir\"\n    mv -- \"$path\" \"$dest_dir/\"\n\n    if [[ -z \"${counts[$ext]+set}\" ]]; then\n        counts[$ext]=0\n        extensions+=(\"$ext\")\n    fi\n    counts[$ext]=$(( counts[$ext] + 1 ))\n\n    printf 'moved: %s -> %s/\\n' \"$filename\" \"$ext\"\ndone\n\nfor ext in \"${extensions[@]}\"; do\n    printf '%s: %d files\\n' \"$ext\" \"${counts[$ext]}\"\ndone\nEOF\nchmod +x /home/eval/organize_uploads.sh\nls -l /home/eval/organize_uploads.sh\nsed -n '1,200p' /home/eval/organize_uploads.sh",
+            "exit_code": 1,
+            "stderr": "bash: /home/eval/organize_uploads.sh: io error: parent directory not found\nchmod: cannot access '/home/eval/organize_uploads.sh': No such file or directory\nls: cannot access '/home/eval/organize_uploads.sh': No such file or directory\nsed: /home/eval/organize_uploads.sh: io error: file not found\n",
+            "stdout": ""
+          },
+          {
+            "commands": "pwd\nls -la /\ncat > ./organize_uploads.sh <<'EOF'\n#!/usr/bin/env bash\nset -euo pipefail\n\nUPLOAD_DIR=\"/uploads\"\n\ndeclare -A counts\nextensions=()\n\n# Process only regular files directly under /uploads.\nshopt -s nullglob dotglob\nfor path in \"$UPLOAD_DIR\"/*; do\n    [[ -f \"$path\" ]] || continue\n\n    filename=${path##*/}\n\n    # A file has an extension only if there is a dot that is not the first\n    # character and there is at least one character after the final dot.\n    if [[ \"$filename\" == *.* && \"$filename\" != .* && \"${filename##*.}\" != \"\" ]]; then\n        ext=${filename##*.}\n    else\n        ext=\"other\"\n    fi\n\n    dest_dir=\"$UPLOAD_DIR/$ext\"\n    mkdir -p \"$dest_dir\"\n    mv -- \"$path\" \"$dest_dir/\"\n\n    if [[ -z \"${counts[$ext]+set}\" ]]; then\n        counts[$ext]=0\n        extensions+=(\"$ext\")\n    fi\n    counts[$ext]=$(( counts[$ext] + 1 ))\n\n    printf 'moved: %s -> %s/\\n' \"$filename\" \"$ext\"\ndone\n\nfor ext in \"${extensions[@]}\"; do\n    printf '%s: %d files\\n' \"$ext\" \"${counts[$ext]}\"\ndone\nEOF\nchmod +x ./organize_uploads.sh\nls -l ./organize_uploads.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/home/user\ndrwxr-xr-x        0 2026-07-12 00:33 dev\ndrwxr-xr-x        0 2026-07-12 00:33 home\ndrwxr-xr-x        0 2026-07-12 00:33 tmp\ndrwxr-xr-x        0 2026-07-12 00:33 uploads\n-rwxr-xr-x      949 2026-07-12 00:33 ./organize_uploads.sh\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

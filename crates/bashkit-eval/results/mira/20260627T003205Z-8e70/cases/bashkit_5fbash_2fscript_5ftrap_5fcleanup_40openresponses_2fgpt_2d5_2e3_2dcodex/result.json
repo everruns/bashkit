@@ -1,0 +1,61 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_trap_cleanup",
+  "target": "openresponses/gpt-5.3-codex",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done. I created and ran `/scripts/deploy.sh` with the requested behavior:\n\n- Uses `mktemp -d` and stores it in `TMPDIR`\n- Sets an `EXIT` trap to delete the temp dir and print:\n  - `Cleanup: removed temp dir`\n- Copies `/app/config.json` into the temp dir\n- Writes `/app/deploy.log` with:\n  - `deployed at <actual TMPDIR path>`\n- Exits with code `0`\n\nVerification results after running:\n\n- `VERIFY_TEMPDIR_CLEANED=PASS` (temp dir from deploy log no longer exists)\n- `VERIFY_DEPLOY_LOG_EXISTS=PASS` (`/app/deploy.log` exists)\n\nObserved runtime output included:\n\n- `Cleanup: removed temp dir`\n- `/app/deploy.log` content:\n  - `deployed at /tmp/tmp.13a23b2383`",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "set -e\nmkdir -p /scripts /app\n# Ensure source config exists for the copy step\nif [ ! -f /app/config.json ]; then\n  echo '{\"env\":\"prod\"}' > /app/config.json\nfi\ncat > /scripts/deploy.sh <<'EOF'\n#!/usr/bin/env bash\nTMPDIR=$(mktemp -d)\ntrap 'rm -rf \"$TMPDIR\"; echo \"Cleanup: removed temp dir\"' EXIT\n\ncp /app/config.json \"$TMPDIR/\"\necho \"deployed at $TMPDIR\" > /app/deploy.log\n\nexit 0\nEOF\nchmod +x /scripts/deploy.sh\n\n# Run the script\n/scripts/deploy.sh\n\n# Verification\nDEPLOYED_PATH=$(sed -n 's/^deployed at //p' /app/deploy.log)\nif [ -n \"$DEPLOYED_PATH\" ] && [ ! -e \"$DEPLOYED_PATH\" ]; then\n  echo \"VERIFY_TEMPDIR_CLEANED=PASS ($DEPLOYED_PATH does not exist)\"\nelse\n  echo \"VERIFY_TEMPDIR_CLEANED=FAIL\"\nfi\n\nif [ -f /app/deploy.log ]; then\n  echo \"VERIFY_DEPLOY_LOG_EXISTS=PASS\"\nelse\n  echo \"VERIFY_DEPLOY_LOG_EXISTS=FAIL\"\nfi\n\necho \"--- /app/deploy.log ---\"\ncat /app/deploy.log\n"
+    ],
+    "usage": {
+      "input_tokens": 1034,
+      "output_tokens": 854,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 9863
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/app",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/scripts",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "set -e\nmkdir -p /scripts /app\n# Ensure source config exists for the copy step\nif [ ! -f /app/config.json ]; then\n  echo '{\"env\":\"prod\"}' > /app/config.json\nfi\ncat > /scripts/deploy.sh <<'EOF'\n#!/usr/bin/env bash\nTMPDIR=$(mktemp -d)\ntrap 'rm -rf \"$TMPDIR\"; echo \"Cleanup: removed temp dir\"' EXIT\n\ncp /app/config.json \"$TMPDIR/\"\necho \"deployed at $TMPDIR\" > /app/deploy.log\n\nexit 0\nEOF\nchmod +x /scripts/deploy.sh\n\n# Run the script\n/scripts/deploy.sh\n\n# Verification\nDEPLOYED_PATH=$(sed -n 's/^deployed at //p' /app/deploy.log)\nif [ -n \"$DEPLOYED_PATH\" ] && [ ! -e \"$DEPLOYED_PATH\" ]; then\n  echo \"VERIFY_TEMPDIR_CLEANED=PASS ($DEPLOYED_PATH does not exist)\"\nelse\n  echo \"VERIFY_TEMPDIR_CLEANED=FAIL\"\nfi\n\nif [ -f /app/deploy.log ]; then\n  echo \"VERIFY_DEPLOY_LOG_EXISTS=PASS\"\nelse\n  echo \"VERIFY_DEPLOY_LOG_EXISTS=FAIL\"\nfi\n\necho \"--- /app/deploy.log ---\"\ncat /app/deploy.log\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Cleanup: removed temp dir\nVERIFY_TEMPDIR_CLEANED=PASS (/tmp/tmp.13a23b2383 does not exist)\nVERIFY_DEPLOY_LOG_EXISTS=PASS\n--- /app/deploy.log ---\ndeployed at /tmp/tmp.13a23b2383\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

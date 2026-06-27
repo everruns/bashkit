@@ -1,0 +1,60 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_json_query",
+  "target": "openresponses/gpt-5.3-codex",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "screws\nwashers\nnails",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "if command -v jq >/dev/null 2>&1; then jq -r '.[] | select(.quantity < 10) | .name' /data/inventory.json; else echo 'jq not found' >&2; fi"
+    ],
+    "usage": {
+      "input_tokens": 510,
+      "output_tokens": 149,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3119
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "if command -v jq >/dev/null 2>&1; then jq -r '.[] | select(.quantity < 10) | .name' /data/inventory.json; else echo 'jq not found' >&2; fi",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "screws\nwashers\nnails\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

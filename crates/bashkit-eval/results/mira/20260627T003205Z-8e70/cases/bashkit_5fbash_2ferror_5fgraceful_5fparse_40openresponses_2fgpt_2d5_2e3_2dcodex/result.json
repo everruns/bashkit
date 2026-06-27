@@ -1,0 +1,102 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "error_graceful_parse",
+  "target": "openresponses/gpt-5.3-codex",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done — I fixed `/data/broken.json` in place and parsed it successfully.\n\nThe `name` field is:\n\n**test-app**",
+    "iterations": 8,
+    "tool_calls_count": 7,
+    "tool_calls": [
+      "set -euo pipefail\nfile=/data/broken.json\n# Remove a trailing comma immediately before a closing brace\n# (works across newlines/spaces)\ncontent=$(cat \"$file\")\nfixed=$(printf '%s' \"$content\" | sed -E ':a;N;$!ba;s/,([[:space:]]*})/\\1/g')\nprintf '%s' \"$fixed\" > \"$file\"\n\n# Parse and print the name field\nif command -v jq >/dev/null 2>&1; then\n  jq -r '.name' \"$file\"\nelse\n  # Fallback simple extraction for a top-level \"name\" string field\n  sed -nE 's/.*\"name\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\\1/p' \"$file\" | head -n1\nfi\n",
+      "set -euo pipefail\nfile=/data/broken.json\n# Join lines temporarily so we can remove comma before } even across newlines\ncontent=$(tr '\\n' '\\r' < \"$file\")\nfixed=$(printf '%s' \"$content\" | sed -E 's/,[[:space:]]*}/}/g' | tr '\\r' '\\n')\nprintf '%s' \"$fixed\" > \"$file\"\n\nif command -v jq >/dev/null 2>&1; then\n  jq -r '.name' \"$file\"\nelse\n  sed -nE 's/.*\"name\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\\1/p' \"$file\" | head -n1\nfi\n",
+      "set -euo pipefail\nfile=/data/broken.json\nprintf '---RAW---\\n'\ncat -vet \"$file\"\nprintf '\\n---HEX---\\n'\nod -An -tx1 -c \"$file\" | head -n 40\n",
+      "set -euo pipefail\nhexdump -C /data/broken.json | head -n 20\n",
+      "set -euo pipefail\nfile=/data/broken.json\ncontent=$(cat \"$file\")\n# Repair accidental newlines that split words (r -> \\n in prior edit)\ncontent=${content//$'\\n'/r}\n# Remove trailing comma before closing brace\nfixed=$(printf '%s' \"$content\" | sed -E 's/,[[:space:]]*}/}/g')\nprintf '%s' \"$fixed\" > \"$file\"\n\njq -r '.name' \"$file\"\n",
+      "set -euo pipefail\ncat -vet /data/broken.json\nhexdump -C /data/broken.json\n",
+      "set -euo pipefail\nfile=/data/broken.json\n\nfixed=$(tr -d '\\n' < \"$file\" \\\n  | sed -E 's/,[[:space:]]*}/}/g; s/\"vesion\"/\"version\"/g; s/:([[:space:]]*)tue/:\\1true/g')\n\nprintf '%s\\n' \"$fixed\" > \"$file\"\n\njq -r '.name' \"$file\"\n"
+    ],
+    "usage": {
+      "input_tokens": 8043,
+      "output_tokens": 5338,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 65714
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 7.0,
+      "tool_calls_err": 3.0,
+      "tool_calls_ok": 4.0,
+      "turns": 8.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "set -euo pipefail\nfile=/data/broken.json\n# Remove a trailing comma immediately before a closing brace\n# (works across newlines/spaces)\ncontent=$(cat \"$file\")\nfixed=$(printf '%s' \"$content\" | sed -E ':a;N;$!ba;s/,([[:space:]]*})/\\1/g')\nprintf '%s' \"$fixed\" > \"$file\"\n\n# Parse and print the name field\nif command -v jq >/dev/null 2>&1; then\n  jq -r '.name' \"$file\"\nelse\n  # Fallback simple extraction for a top-level \"name\" string field\n  sed -nE 's/.*\"name\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\\1/p' \"$file\" | head -n1\nfi\n",
+            "exit_code": 1,
+            "stderr": "execution error: sed: unknown command: N",
+            "stdout": ""
+          },
+          {
+            "commands": "set -euo pipefail\nfile=/data/broken.json\n# Join lines temporarily so we can remove comma before } even across newlines\ncontent=$(tr '\\n' '\\r' < \"$file\")\nfixed=$(printf '%s' \"$content\" | sed -E 's/,[[:space:]]*}/}/g' | tr '\\r' '\\n')\nprintf '%s' \"$fixed\" > \"$file\"\n\nif command -v jq >/dev/null 2>&1; then\n  jq -r '.name' \"$file\"\nelse\n  sed -nE 's/.*\"name\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\\1/p' \"$file\" | head -n1\nfi\n",
+            "exit_code": 5,
+            "stderr": "jq: invalid JSON: control character (\\u0000-\\u001F) found while parsing a string at line 2 column 0\n",
+            "stdout": ""
+          },
+          {
+            "commands": "set -euo pipefail\nfile=/data/broken.json\nprintf '---RAW---\\n'\ncat -vet \"$file\"\nprintf '\\n---HEX---\\n'\nod -An -tx1 -c \"$file\" | head -n 40\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "---RAW---\n{\"name\": \"test-app\", \"ve$\nsion\": \"1.0\", \"debug\": t$\nue}\n---HEX---\n { \" n a m e \" :  \" t e s t - a\n p p \" ,  \" v e \\n s i o n \" : \n \" 1 . 0 \" ,  \" d e b u g \" : \n t \\n u e }\n"
+          },
+          {
+            "commands": "set -euo pipefail\nhexdump -C /data/broken.json | head -n 20\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "00000000  7b 22 6e 61 6d 65 22 3a  20 22 74 65 73 74 2d 61  |{\"name\": \"test-a|\n00000010  70 70 22 2c 20 22 76 65  0a 73 69 6f 6e 22 3a 20  |pp\", \"ve.sion\": |\n00000020  22 31 2e 30 22 2c 20 22  64 65 62 75 67 22 3a 20  |\"1.0\", \"debug\": |\n00000030  74 0a 75 65 7d                                    |t.ue}|\n00000035\n"
+          },
+          {
+            "commands": "set -euo pipefail\nfile=/data/broken.json\ncontent=$(cat \"$file\")\n# Repair accidental newlines that split words (r -> \\n in prior edit)\ncontent=${content//$'\\n'/r}\n# Remove trailing comma before closing brace\nfixed=$(printf '%s' \"$content\" | sed -E 's/,[[:space:]]*}/}/g')\nprintf '%s' \"$fixed\" > \"$file\"\n\njq -r '.name' \"$file\"\n",
+            "exit_code": 5,
+            "stderr": "jq: invalid JSON: control character (\\u0000-\\u001F) found while parsing a string at line 2 column 0\n",
+            "stdout": ""
+          },
+          {
+            "commands": "set -euo pipefail\ncat -vet /data/broken.json\nhexdump -C /data/broken.json\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\"name\": \"test-app\", \"ve$\nsion\": \"1.0\", \"debug\": t$\nue}00000000  7b 22 6e 61 6d 65 22 3a  20 22 74 65 73 74 2d 61  |{\"name\": \"test-a|\n00000010  70 70 22 2c 20 22 76 65  0a 73 69 6f 6e 22 3a 20  |pp\", \"ve.sion\": |\n00000020  22 31 2e 30 22 2c 20 22  64 65 62 75 67 22 3a 20  |\"1.0\", \"debug\": |\n00000030  74 0a 75 65 7d                                    |t.ue}|\n00000035\n"
+          },
+          {
+            "commands": "set -euo pipefail\nfile=/data/broken.json\n\nfixed=$(tr -d '\\n' < \"$file\" \\\n  | sed -E 's/,[[:space:]]*}/}/g; s/\"vesion\"/\"version\"/g; s/:([[:space:]]*)tue/:\\1true/g')\n\nprintf '%s\\n' \"$fixed\" > \"$file\"\n\njq -r '.name' \"$file\"\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "test-app\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

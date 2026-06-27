@@ -1,0 +1,61 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "env_source_export",
+  "target": "openai/gpt-5.5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done.\n\nCreated `/etc/env.conf` with:\n\n```bash\nAPP_ENV=production\nAPP_DEBUG=false\nAPP_SECRET=s3cret123\n```\n\nSourced and exported all three variables, created `/scripts/check_env.sh`, and verified:\n\n```text\nAPP_ENV=production\nAPP_DEBUG=false\nAPP_SECRET=s3cret123\n```\n\nAlso confirmed via:\n\n```bash\nenv | grep APP_\n```\n\nOutput:\n\n```text\nAPP_DEBUG=false\nAPP_ENV=production\nAPP_SECRET=s3cret123\n```\n\nEnvironment variables propagated correctly.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "set -euo pipefail\nmkdir -p /etc /scripts\ncat > /etc/env.conf <<'EOF'\nAPP_ENV=production\nAPP_DEBUG=false\nAPP_SECRET=s3cret123\nEOF\n\nsource /etc/env.conf\nexport APP_ENV APP_DEBUG APP_SECRET\n\ncat > /scripts/check_env.sh <<'EOF'\n#!/usr/bin/env bash\nset -euo pipefail\nprintf 'APP_ENV=%s\\n' \"${APP_ENV:-}\"\nprintf 'APP_DEBUG=%s\\n' \"${APP_DEBUG:-}\"\nprintf 'APP_SECRET=%s\\n' \"${APP_SECRET:-}\"\nEOF\nchmod +x /scripts/check_env.sh\n\necho 'Running /scripts/check_env.sh:'\nbash /scripts/check_env.sh\n\necho\necho \"Running env | grep APP_:\"\nenv | grep APP_ | sort\n\necho\necho 'Verification:'\n[[ \"$APP_ENV\" == \"production\" ]]\n[[ \"$APP_DEBUG\" == \"false\" ]]\n[[ \"$APP_SECRET\" == \"s3cret123\" ]]\n[[ \"$(bash /scripts/check_env.sh)\" == $'APP_ENV=production\nAPP_DEBUG=false\nAPP_SECRET=s3cret123' ]]\necho 'Environment variables propagated correctly.'"
+    ],
+    "usage": {
+      "input_tokens": 1069,
+      "output_tokens": 470,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 6015
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/etc",
+          "/home",
+          "/home/user",
+          "/scripts",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "set -euo pipefail\nmkdir -p /etc /scripts\ncat > /etc/env.conf <<'EOF'\nAPP_ENV=production\nAPP_DEBUG=false\nAPP_SECRET=s3cret123\nEOF\n\nsource /etc/env.conf\nexport APP_ENV APP_DEBUG APP_SECRET\n\ncat > /scripts/check_env.sh <<'EOF'\n#!/usr/bin/env bash\nset -euo pipefail\nprintf 'APP_ENV=%s\\n' \"${APP_ENV:-}\"\nprintf 'APP_DEBUG=%s\\n' \"${APP_DEBUG:-}\"\nprintf 'APP_SECRET=%s\\n' \"${APP_SECRET:-}\"\nEOF\nchmod +x /scripts/check_env.sh\n\necho 'Running /scripts/check_env.sh:'\nbash /scripts/check_env.sh\n\necho\necho \"Running env | grep APP_:\"\nenv | grep APP_ | sort\n\necho\necho 'Verification:'\n[[ \"$APP_ENV\" == \"production\" ]]\n[[ \"$APP_DEBUG\" == \"false\" ]]\n[[ \"$APP_SECRET\" == \"s3cret123\" ]]\n[[ \"$(bash /scripts/check_env.sh)\" == $'APP_ENV=production\nAPP_DEBUG=false\nAPP_SECRET=s3cret123' ]]\necho 'Environment variables propagated correctly.'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Running /scripts/check_env.sh:\nAPP_ENV=production\nAPP_DEBUG=false\nAPP_SECRET=s3cret123\n\nRunning env | grep APP_:\nAPP_DEBUG=false\nAPP_ENV=production\nAPP_SECRET=s3cret123\n\nVerification:\nEnvironment variables propagated correctly.\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

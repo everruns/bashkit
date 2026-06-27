@@ -1,0 +1,83 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "search_recursive_grep",
+  "target": "openresponses/gpt-5.3-codex",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "/project/tests/test_auth.py:3:def test_validate_token():\n/project/app/auth.py:1:def validate_token(token):\n/project/app/forms.py:1:def validate_email(email):\n/project/app/forms.py:4:def validate_name(name):\nTotal matches: 4",
+    "iterations": 5,
+    "tool_calls_count": 4,
+    "tool_calls": [
+      "matches=$(grep -RIn --include='*.py' -E '^[[:space:]]*(async[[:space:]]+def|def)[[:space:]]+[^(:]*validate[^(:]*[[:space:]]*\\(' /project || true)\nif [[ -n \"$matches\" ]]; then\n  printf '%s\n' \"$matches\"\n  count=$(printf '%s\n' \"$matches\" | wc -l)\nelse\n  count=0\nfi\necho \"Total matches: $count\"",
+      "grep -RIn --include='*.py' -E '^[[:space:]]*(async[[:space:]]+def|def)[[:space:]]+[^(:]*validate[^(:]*[[:space:]]*[(]' /project",
+      "count=$(grep -RIn --include='*.py' -E '^[[:space:]]*(async[[:space:]]+def|def)[[:space:]]+[^(:]*validate[^(:]*[[:space:]]*[(]' /project | wc -l)\necho \"Total matches: $count\"",
+      "grep -RIn --include='*.py' -E '^[[:space:]]*(async[[:space:]]+def|def)[[:space:]]+[^(:]*validate[^(:]*[[:space:]]*[(]' /project > /tmp/validate_matches.txt || true\ncat /tmp/validate_matches.txt\nwc -l < /tmp/validate_matches.txt | sed 's/^/Total matches: /'"
+    ],
+    "usage": {
+      "input_tokens": 2711,
+      "output_tokens": 1260,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 15214
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 4.0,
+      "tool_calls_err": 2.0,
+      "tool_calls_ok": 2.0,
+      "turns": 5.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/project",
+          "/project/app",
+          "/project/tests",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "matches=$(grep -RIn --include='*.py' -E '^[[:space:]]*(async[[:space:]]+def|def)[[:space:]]+[^(:]*validate[^(:]*[[:space:]]*\\(' /project || true)\nif [[ -n \"$matches\" ]]; then\n  printf '%s\n' \"$matches\"\n  count=$(printf '%s\n' \"$matches\" | wc -l)\nelse\n  count=0\nfi\necho \"Total matches: $count\"",
+            "exit_code": 1,
+            "stderr": "parse error at line 1, column 1: syntax error: unterminated command substitution",
+            "stdout": ""
+          },
+          {
+            "commands": "grep -RIn --include='*.py' -E '^[[:space:]]*(async[[:space:]]+def|def)[[:space:]]+[^(:]*validate[^(:]*[[:space:]]*[(]' /project",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/project/tests/test_auth.py:3:def test_validate_token():\n/project/app/auth.py:1:def validate_token(token):\n/project/app/forms.py:1:def validate_email(email):\n/project/app/forms.py:4:def validate_name(name):\n"
+          },
+          {
+            "commands": "count=$(grep -RIn --include='*.py' -E '^[[:space:]]*(async[[:space:]]+def|def)[[:space:]]+[^(:]*validate[^(:]*[[:space:]]*[(]' /project | wc -l)\necho \"Total matches: $count\"",
+            "exit_code": 1,
+            "stderr": "parse error at line 1, column 1: syntax error: unterminated command substitution",
+            "stdout": ""
+          },
+          {
+            "commands": "grep -RIn --include='*.py' -E '^[[:space:]]*(async[[:space:]]+def|def)[[:space:]]+[^(:]*validate[^(:]*[[:space:]]*[(]' /project > /tmp/validate_matches.txt || true\ncat /tmp/validate_matches.txt\nwc -l < /tmp/validate_matches.txt | sed 's/^/Total matches: /'",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/project/tests/test_auth.py:3:def test_validate_token():\n/project/app/auth.py:1:def validate_token(token):\n/project/app/forms.py:1:def validate_email(email):\n/project/app/forms.py:4:def validate_name(name):\nTotal matches: 4\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

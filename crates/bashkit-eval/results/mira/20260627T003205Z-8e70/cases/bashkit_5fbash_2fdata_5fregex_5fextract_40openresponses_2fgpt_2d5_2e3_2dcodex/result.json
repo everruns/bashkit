@@ -1,0 +1,95 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "data_regex_extract",
+  "target": "openresponses/gpt-5.3-codex",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "SLOW: POST /api/orders took 850ms (200)\nSLOW: GET /api/reports took 1200ms (200)\nSLOW: POST /api/payments took 2000ms (500)\nSLOW: PUT /api/users took 620ms (200)\nSlow requests: 4 of 8 total",
+    "iterations": 7,
+    "tool_calls_count": 6,
+    "tool_calls": [
+      "ls -l /data && echo '---' && sed -n '1,10p' /data/access.log",
+      "total=0\nslow=0\nwhile IFS= read -r line; do\n  if [[ $line =~ ^\\[([^]]+)\\][[:space:]]+([0-9]{3})[[:space:]]+([A-Z]+)[[:space:]]+([^[:space:]]+)[[:space:]]+([0-9]+)$ ]]; then\n    ts=\"${BASH_REMATCH[1]}\"\n    status=\"${BASH_REMATCH[2]}\"\n    method=\"${BASH_REMATCH[3]}\"\n    url=\"${BASH_REMATCH[4]}\"\n    duration=\"${BASH_REMATCH[5]}\"\n    ((total++))\n    if (( duration > 500 )); then\n      ((slow++))\n      echo \"SLOW: $method $url took ${duration}ms ($status)\"\n    fi\n  fi\ndone < /data/access.log\n\necho \"Slow requests: $slow of $total total\"",
+      "while IFS= read -r line; do\n  printf 'LINE:%q\\n' \"$line\"\n  if [[ $line =~ ^\\[([^]]+)\\][[:space:]]+([0-9]{3})[[:space:]]+([A-Z]+)[[:space:]]+([^[:space:]]+)[[:space:]]+([0-9]+)$ ]]; then\n    echo match\n  else\n    echo no\n  fi\ndone < /data/access.log",
+      "line='[2024-01-15T10:00:01] 200 GET /api/users 150'\nif [[ $line =~ ^\\[.*\\] ]]; then echo yes; else echo no; fi\nif [[ $line =~ ^\\[([^]]+)\\] ]]; then echo yes2; else echo no2; fi\nif [[ $line =~ ^\\[([^\\]]+)\\] ]]; then echo yes3; else echo no3; fi",
+      "line='[2024-01-15T10:00:01] 200 GET /api/users 150'\npat='^\\[([^\\]]+)\\][[:space:]]+([0-9]{3})[[:space:]]+([A-Z]+)[[:space:]]+([^[:space:]]+)[[:space:]]+([0-9]+)$'\nif [[ $line =~ $pat ]]; then echo ok; declare -p BASH_REMATCH; else echo fail; fi",
+      "total=0\nslow=0\npat='^\\[([^\\]]+)\\][[:space:]]+([0-9]{3})[[:space:]]+([A-Z]+)[[:space:]]+([^[:space:]]+)[[:space:]]+([0-9]+)$'\nwhile IFS= read -r line; do\n  if [[ $line =~ $pat ]]; then\n    ts=\"${BASH_REMATCH[1]}\"\n    status=\"${BASH_REMATCH[2]}\"\n    method=\"${BASH_REMATCH[3]}\"\n    url=\"${BASH_REMATCH[4]}\"\n    duration=\"${BASH_REMATCH[5]}\"\n    ((total++))\n    if (( duration > 500 )); then\n      ((slow++))\n      echo \"SLOW: $method $url took ${duration}ms ($status)\"\n    fi\n  fi\ndone < /data/access.log\n\necho \"Slow requests: $slow of $total total\""
+    ],
+    "usage": {
+      "input_tokens": 7563,
+      "output_tokens": 1426,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 15378
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 6.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 6.0,
+      "turns": 7.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "ls -l /data && echo '---' && sed -n '1,10p' /data/access.log",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      374 2026-07-12 00:34 access.log\n---\n[2024-01-15T10:00:01] 200 GET /api/users 150\n[2024-01-15T10:00:02] 200 POST /api/orders 850\n[2024-01-15T10:00:03] 404 GET /api/missing 50\n[2024-01-15T10:00:04] 200 GET /api/reports 1200\n[2024-01-15T10:00:05] 500 POST /api/payments 2000\n[2024-01-15T10:00:06] 200 GET /api/health 30\n[2024-01-15T10:00:07] 200 GET /api/products 450\n[2024-01-15T10:00:08] 200 PUT /api/users 620\n"
+          },
+          {
+            "commands": "total=0\nslow=0\nwhile IFS= read -r line; do\n  if [[ $line =~ ^\\[([^]]+)\\][[:space:]]+([0-9]{3})[[:space:]]+([A-Z]+)[[:space:]]+([^[:space:]]+)[[:space:]]+([0-9]+)$ ]]; then\n    ts=\"${BASH_REMATCH[1]}\"\n    status=\"${BASH_REMATCH[2]}\"\n    method=\"${BASH_REMATCH[3]}\"\n    url=\"${BASH_REMATCH[4]}\"\n    duration=\"${BASH_REMATCH[5]}\"\n    ((total++))\n    if (( duration > 500 )); then\n      ((slow++))\n      echo \"SLOW: $method $url took ${duration}ms ($status)\"\n    fi\n  fi\ndone < /data/access.log\n\necho \"Slow requests: $slow of $total total\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Slow requests: 0 of 0 total\n"
+          },
+          {
+            "commands": "while IFS= read -r line; do\n  printf 'LINE:%q\\n' \"$line\"\n  if [[ $line =~ ^\\[([^]]+)\\][[:space:]]+([0-9]{3})[[:space:]]+([A-Z]+)[[:space:]]+([^[:space:]]+)[[:space:]]+([0-9]+)$ ]]; then\n    echo match\n  else\n    echo no\n  fi\ndone < /data/access.log",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "LINE:\\[2024-01-15T10:00:01\\]\\ 200\\ GET\\ /api/users\\ 150\nno\nLINE:\\[2024-01-15T10:00:02\\]\\ 200\\ POST\\ /api/orders\\ 850\nno\nLINE:\\[2024-01-15T10:00:03\\]\\ 404\\ GET\\ /api/missing\\ 50\nno\nLINE:\\[2024-01-15T10:00:04\\]\\ 200\\ GET\\ /api/reports\\ 1200\nno\nLINE:\\[2024-01-15T10:00:05\\]\\ 500\\ POST\\ /api/payments\\ 2000\nno\nLINE:\\[2024-01-15T10:00:06\\]\\ 200\\ GET\\ /api/health\\ 30\nno\nLINE:\\[2024-01-15T10:00:07\\]\\ 200\\ GET\\ /api/products\\ 450\nno\nLINE:\\[2024-01-15T10:00:08\\]\\ 200\\ PUT\\ /api/users\\ 620\nno\n"
+          },
+          {
+            "commands": "line='[2024-01-15T10:00:01] 200 GET /api/users 150'\nif [[ $line =~ ^\\[.*\\] ]]; then echo yes; else echo no; fi\nif [[ $line =~ ^\\[([^]]+)\\] ]]; then echo yes2; else echo no2; fi\nif [[ $line =~ ^\\[([^\\]]+)\\] ]]; then echo yes3; else echo no3; fi",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "no\nyes2\nyes3\n"
+          },
+          {
+            "commands": "line='[2024-01-15T10:00:01] 200 GET /api/users 150'\npat='^\\[([^\\]]+)\\][[:space:]]+([0-9]{3})[[:space:]]+([A-Z]+)[[:space:]]+([^[:space:]]+)[[:space:]]+([0-9]+)$'\nif [[ $line =~ $pat ]]; then echo ok; declare -p BASH_REMATCH; else echo fail; fi",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "ok\ndeclare -a BASH_REMATCH=([0]=\"[2024-01-15T10:00:01] 200 GET /api/users 150\" [1]=\"2024-01-15T10:00:01\" [2]=\"200\" [3]=\"GET\" [4]=\"/api/users\" [5]=\"150\")\n"
+          },
+          {
+            "commands": "total=0\nslow=0\npat='^\\[([^\\]]+)\\][[:space:]]+([0-9]{3})[[:space:]]+([A-Z]+)[[:space:]]+([^[:space:]]+)[[:space:]]+([0-9]+)$'\nwhile IFS= read -r line; do\n  if [[ $line =~ $pat ]]; then\n    ts=\"${BASH_REMATCH[1]}\"\n    status=\"${BASH_REMATCH[2]}\"\n    method=\"${BASH_REMATCH[3]}\"\n    url=\"${BASH_REMATCH[4]}\"\n    duration=\"${BASH_REMATCH[5]}\"\n    ((total++))\n    if (( duration > 500 )); then\n      ((slow++))\n      echo \"SLOW: $method $url took ${duration}ms ($status)\"\n    fi\n  fi\ndone < /data/access.log\n\necho \"Slow requests: $slow of $total total\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "SLOW: POST /api/orders took 850ms (200)\nSLOW: GET /api/reports took 1200ms (200)\nSLOW: POST /api/payments took 2000ms (500)\nSLOW: PUT /api/users took 620ms (200)\nSlow requests: 4 of 8 total\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

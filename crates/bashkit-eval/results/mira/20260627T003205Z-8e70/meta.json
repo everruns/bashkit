@@ -1,0 +1,32 @@
+{
+  "format": 1,
+  "run_id": "20260627T003205Z-8e70",
+  "study": "mira-eval",
+  "study_version": "0.2.0",
+  "started_unix": 1782520325,
+  "finished_unix": 1782520495,
+  "environment": {
+    "git": {
+      "commit": "1d1c77bfbabb6b5d0adba209b86f314ed9d93219",
+      "branch": "claude/evals-migrate-mira-dhrrpz",
+      "dirty": false
+    },
+    "os": "linux",
+    "arch": "x86_64",
+    "hostname": "vm",
+    "cpus": 4,
+    "mem_total_mib": 16075,
+    "mira_version": "0.2.0"
+  },
+  "summary": {
+    "scored": 116,
+    "passed": 105,
+    "failed": 11,
+    "na": 0,
+    "skipped": 174,
+    "total_tokens": 322361,
+    "total_cost_usd": 0.0,
+    "total_tool_calls": 260,
+    "total_duration_ms": 1222093
+  }
+}

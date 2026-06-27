@@ -1,0 +1,123 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_markdown_toc",
+  "target": "openai/gpt-5.5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 10,
+    "tool_calls_count": 10,
+    "tool_calls": [
+      "cd /home/eval && sed -n '1,200p' /doc/README.md",
+      "pwd; ls -la /; ls -la /doc 2>/dev/null || true; sed -n '1,200p' /doc/README.md",
+      "tmp=$(mktemp)\n{\n  IFS= read -r first < /doc/README.md\n  printf '%s\\n\\n' \"$first\"\n  grep -E '^#{1,2} ' /doc/README.md | while IFS= read -r line; do\n    text=${line#\\# }\n    text=${text#\\#\\# }\n    anchor=${text,,}\n    anchor=${anchor// /-}\n    printf -- '- [%s](#%s)\\n' \"$text\" \"$anchor\"\n  done\n  tail -n +2 /doc/README.md\n} > \"$tmp\"\nmv \"$tmp\" /doc/README.md\ncat /doc/README.md",
+      "nl -ba /doc/README.md; od -An -tx1 -c /doc/README.md | head -30",
+      "grep -E '^#{1,2} ' /doc/README.md | while IFS= read -r line; do\n  text=${line#\\# }\n  text=${text#\\#\\# }\n  anchor=${text,,}\n  anchor=${anchor// /-}\n  declare -p line text anchor\n  printf '%s\\n' \"- [$text](#$anchor)\"\ndone",
+      "tmp=$(mktemp)\n{\n  IFS= read -r first < /doc/README.md\n  printf '%s\\n\\n' \"$first\"\n  grep -E '^#{1,2} ' /doc/README.md | while IFS= read -r line; do\n    if [[ $line == '## '* ]]; then\n      text=${line#'## '}\n    elif [[ $line == '# '* ]]; then\n      text=${line#'# '}\n    else\n      continue\n    fi\n    anchor=${text,,}\n    anchor=${anchor// /-}\n    printf '%s\\n' \"- [$text](#$anchor)\"\n  done\n  printf '\\n'\n  # append body after the first heading, removing the previously inserted dashed placeholder if present\n  tail -n +2 /doc/README.md | sed '/^----------$/d' | sed '1{/^$/d;}'\n} > \"$tmp\"\nmv \"$tmp\" /doc/README.md\ncat /doc/README.md",
+      "tmp=$(mktemp)\n{\n  IFS= read -r first < /doc/README.md\n  printf '%s\\n\\n' \"$first\"\n  grep -E '^#{1,2} ' /doc/README.md | while IFS= read -r line; do\n    case \"$line\" in\n      '## '*) text=${line#'## '} ;;\n      '# '*) text=${line#'# '} ;;\n      *) continue ;;\n    esac\n    anchor=${text,,}\n    anchor=${anchor// /-}\n    printf '%s\\n' \"- [$text](#$anchor)\"\n  done\n  printf '\\n'\n  tail -n +2 /doc/README.md | sed '/^- \\[/d' | sed '1{/^$/d;}'\n} > \"$tmp\"\nmv \"$tmp\" /doc/README.md\ncat /doc/README.md",
+      "line='# Project Alpha'; text=${line#'# '}; declare -p text\nline='## Installation'; text=${line#'## '}; declare -p text\ncase \"# Project Alpha\" in '# '*) echo yes;; *) echo no;; esac",
+      "tmp=$(mktemp)\n{\n  IFS= read -r first < /doc/README.md\n  printf '%s\\n\\n' \"$first\"\n  grep -E '^#{1,2} ' /doc/README.md | while IFS= read -r line; do\n    text=$(printf '%s\\n' \"$line\" | sed -e 's/^## //' -e 's/^# //')\n    anchor=${text,,}\n    anchor=${anchor// /-}\n    printf '%s\\n' \"- [$text](#$anchor)\"\n  done\n  printf '\\n'\n  tail -n +2 /doc/README.md | sed '/^- \\[/d' | sed ':a; /^$/ { N; ba }; s/^\\n*//'\n} > \"$tmp\"\nmv \"$tmp\" /doc/README.md\ncat /doc/README.md",
+      "ls -l /doc/README.md; cat /doc/README.md"
+    ],
+    "usage": {
+      "input_tokens": 13887,
+      "output_tokens": 3169,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 48252
+    },
+    "metrics": {
+      "natural_stop": 0.0,
+      "tool_calls": 10.0,
+      "tool_calls_err": 2.0,
+      "tool_calls_ok": 8.0,
+      "turns": 10.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/doc",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cd /home/eval && sed -n '1,200p' /doc/README.md",
+            "exit_code": 1,
+            "stderr": "cd: /home/eval: No such file or directory\n",
+            "stdout": ""
+          },
+          {
+            "commands": "pwd; ls -la /; ls -la /doc 2>/dev/null || true; sed -n '1,200p' /doc/README.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/home/user\ndrwxr-xr-x        0 2026-07-12 00:32 dev\ndrwxr-xr-x        0 2026-07-12 00:32 doc\ndrwxr-xr-x        0 2026-07-12 00:32 home\ndrwxr-xr-x        0 2026-07-12 00:32 tmp\n-rw-r--r--      185 2026-07-12 00:32 README.md\n# Project Alpha\n\nIntroduction to the project.\n\n## Installation\n\nRun the installer.\n\n## Usage\n\nHow to use it.\n\n## API Reference\n\nEndpoint documentation.\n\n## Contributing\n\nPR guidelines.\n"
+          },
+          {
+            "commands": "tmp=$(mktemp)\n{\n  IFS= read -r first < /doc/README.md\n  printf '%s\\n\\n' \"$first\"\n  grep -E '^#{1,2} ' /doc/README.md | while IFS= read -r line; do\n    text=${line#\\# }\n    text=${text#\\#\\# }\n    anchor=${text,,}\n    anchor=${anchor// /-}\n    printf -- '- [%s](#%s)\\n' \"$text\" \"$anchor\"\n  done\n  tail -n +2 /doc/README.md\n} > \"$tmp\"\nmv \"$tmp\" /doc/README.md\ncat /doc/README.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Project Alpha\n\n----------\nIntroduction to the project.\n\n## Installation\n\nRun the installer.\n\n## Usage\n\nHow to use it.\n\n## API Reference\n\nEndpoint documentation.\n\n## Contributing\n\nPR guidelines.\n"
+          },
+          {
+            "commands": "nl -ba /doc/README.md; od -An -tx1 -c /doc/README.md | head -30",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "     1\t# Project Alpha\n     2\t\n     3\t----------\n     4\tIntroduction to the project.\n     5\t\n     6\t## Installation\n     7\t\n     8\tRun the installer.\n     9\t\n    10\t## Usage\n    11\t\n    12\tHow to use it.\n    13\t\n    14\t## API Reference\n    15\t\n    16\tEndpoint documentation.\n    17\t\n    18\t## Contributing\n    19\t\n    20\tPR guidelines.\n #  P r o j e c t  A l p h a \\n\n \\n - - - - - - - - - - \\n I n t r\n o d u c t i o n  t o  t h e \n p r o j e c t . \\n \\n # #  I n s\n t a l l a t i o n \\n \\n R u n  t\n h e  i n s t a l l e r . \\n \\n #\n #  U s a g e \\n \\n H o w  t o \n u s e  i t . \\n \\n # #  A P I \n R e f e r e n c e \\n \\n E n d p o\n i n t  d o c u m e n t a t i o\n n . \\n \\n # #  C o n t r i b u t\n i n g \\n \\n P R  g u i d e l i n\n e s . \\n\n"
+          },
+          {
+            "commands": "grep -E '^#{1,2} ' /doc/README.md | while IFS= read -r line; do\n  text=${line#\\# }\n  text=${text#\\#\\# }\n  anchor=${text,,}\n  anchor=${anchor// /-}\n  declare -p line text anchor\n  printf '%s\\n' \"- [$text](#$anchor)\"\ndone",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "declare -- line=\"# Project Alpha\"\ndeclare -- text=\"Project Alpha\"\ndeclare -- anchor=\"project-alpha\"\n- [Project Alpha](#project-alpha)\ndeclare -- line=\"## Installation\"\ndeclare -- text=\"Installation\"\ndeclare -- anchor=\"installation\"\n- [Installation](#installation)\ndeclare -- line=\"## Usage\"\ndeclare -- text=\"Usage\"\ndeclare -- anchor=\"usage\"\n- [Usage](#usage)\ndeclare -- line=\"## API Reference\"\ndeclare -- text=\"API Reference\"\ndeclare -- anchor=\"api-reference\"\n- [API Reference](#api-reference)\ndeclare -- line=\"## Contributing\"\ndeclare -- text=\"Contributing\"\ndeclare -- anchor=\"contributing\"\n- [Contributing](#contributing)\n"
+          },
+          {
+            "commands": "tmp=$(mktemp)\n{\n  IFS= read -r first < /doc/README.md\n  printf '%s\\n\\n' \"$first\"\n  grep -E '^#{1,2} ' /doc/README.md | while IFS= read -r line; do\n    if [[ $line == '## '* ]]; then\n      text=${line#'## '}\n    elif [[ $line == '# '* ]]; then\n      text=${line#'# '}\n    else\n      continue\n    fi\n    anchor=${text,,}\n    anchor=${anchor// /-}\n    printf '%s\\n' \"- [$text](#$anchor)\"\n  done\n  printf '\\n'\n  # append body after the first heading, removing the previously inserted dashed placeholder if present\n  tail -n +2 /doc/README.md | sed '/^----------$/d' | sed '1{/^$/d;}'\n} > \"$tmp\"\nmv \"$tmp\" /doc/README.md\ncat /doc/README.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Project Alpha\n\n- [# Project Alpha](##-project-alpha)\n- [## Installation](###-installation)\n- [## Usage](###-usage)\n- [## API Reference](###-api-reference)\n- [## Contributing](###-contributing)\n\nIntroduction to the project.\n\n## Installation\n\nRun the installer.\n\n## Usage\n\nHow to use it.\n\n## API Reference\n\nEndpoint documentation.\n\n## Contributing\n\nPR guidelines.\n"
+          },
+          {
+            "commands": "tmp=$(mktemp)\n{\n  IFS= read -r first < /doc/README.md\n  printf '%s\\n\\n' \"$first\"\n  grep -E '^#{1,2} ' /doc/README.md | while IFS= read -r line; do\n    case \"$line\" in\n      '## '*) text=${line#'## '} ;;\n      '# '*) text=${line#'# '} ;;\n      *) continue ;;\n    esac\n    anchor=${text,,}\n    anchor=${anchor// /-}\n    printf '%s\\n' \"- [$text](#$anchor)\"\n  done\n  printf '\\n'\n  tail -n +2 /doc/README.md | sed '/^- \\[/d' | sed '1{/^$/d;}'\n} > \"$tmp\"\nmv \"$tmp\" /doc/README.md\ncat /doc/README.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Project Alpha\n\n- [# Project Alpha](##-project-alpha)\n- [## Installation](###-installation)\n- [## Usage](###-usage)\n- [## API Reference](###-api-reference)\n- [## Contributing](###-contributing)\n\n\nIntroduction to the project.\n\n## Installation\n\nRun the installer.\n\n## Usage\n\nHow to use it.\n\n## API Reference\n\nEndpoint documentation.\n\n## Contributing\n\nPR guidelines.\n"
+          },
+          {
+            "commands": "line='# Project Alpha'; text=${line#'# '}; declare -p text\nline='## Installation'; text=${line#'## '}; declare -p text\ncase \"# Project Alpha\" in '# '*) echo yes;; *) echo no;; esac",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "declare -- text=\"# Project Alpha\"\ndeclare -- text=\"## Installation\"\nyes\n"
+          },
+          {
+            "commands": "tmp=$(mktemp)\n{\n  IFS= read -r first < /doc/README.md\n  printf '%s\\n\\n' \"$first\"\n  grep -E '^#{1,2} ' /doc/README.md | while IFS= read -r line; do\n    text=$(printf '%s\\n' \"$line\" | sed -e 's/^## //' -e 's/^# //')\n    anchor=${text,,}\n    anchor=${anchor// /-}\n    printf '%s\\n' \"- [$text](#$anchor)\"\n  done\n  printf '\\n'\n  tail -n +2 /doc/README.md | sed '/^- \\[/d' | sed ':a; /^$/ { N; ba }; s/^\\n*//'\n} > \"$tmp\"\nmv \"$tmp\" /doc/README.md\ncat /doc/README.md",
+            "exit_code": 1,
+            "stderr": "execution error: sed: unknown command:  ",
+            "stdout": ""
+          },
+          {
+            "commands": "ls -l /doc/README.md; cat /doc/README.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      365 2026-07-12 00:33 /doc/README.md\n# Project Alpha\n\n- [# Project Alpha](##-project-alpha)\n- [## Installation](###-installation)\n- [## Usage](###-usage)\n- [## API Reference](###-api-reference)\n- [## Contributing](###-contributing)\n\n\nIntroduction to the project.\n\n## Installation\n\nRun the installer.\n\n## Usage\n\nHow to use it.\n\n## API Reference\n\nEndpoint documentation.\n\n## Contributing\n\nPR guidelines.\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

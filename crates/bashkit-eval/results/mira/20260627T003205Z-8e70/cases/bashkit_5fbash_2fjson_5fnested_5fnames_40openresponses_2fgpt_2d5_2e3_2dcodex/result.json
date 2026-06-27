@@ -1,0 +1,67 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_nested_names",
+  "target": "openresponses/gpt-5.3-codex",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "alice\nbob\ncharlie\ndave",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -l /data && echo '---' && head -c 1000 /data/org.json",
+      "jq -r '.teams[].members[].name' /data/org.json | sort -u"
+    ],
+    "usage": {
+      "input_tokens": 981,
+      "output_tokens": 186,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3945
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "ls -l /data && echo '---' && head -c 1000 /data/org.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      203 2026-07-12 00:32 org.json\n---\n{\"teams\":[{\"name\":\"backend\",\"members\":[{\"name\":\"alice\"},{\"name\":\"bob\"}]},{\"name\":\"frontend\",\"members\":[{\"name\":\"charlie\"},{\"name\":\"alice\"}]},{\"name\":\"devops\",\"members\":[{\"name\":\"dave\"},{\"name\":\"bob\"}]}]}"
+          },
+          {
+            "commands": "jq -r '.teams[].members[].name' /data/org.json | sort -u",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "alice\nbob\ncharlie\ndave\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

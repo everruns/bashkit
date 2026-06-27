@@ -1,0 +1,96 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "archive_selective",
+  "target": "openresponses/gpt-5.3-codex",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "3/3 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done — all requested steps have been completed.\n\n### Created files\n- `/tmp/notes.txt` → `remember this`\n- `/tmp/data.csv` → `a,b,c`\n- `/tmp/script.sh` → `#!/bin/bash`\n\n### Created archive\n- `/tmp/bundle.tar.gz` containing all three files.\n\n### Archive contents\n- `notes.txt`\n- `data.csv`\n- `script.sh`\n\n### Extracted only `notes.txt` to `/output/`\n- `/output/notes.txt` exists and contains:\n  - `remember this`",
+    "iterations": 7,
+    "tool_calls_count": 6,
+    "tool_calls": [
+      "set -e\nmkdir -p /tmp /output\nprintf 'remember this' > /tmp/notes.txt\nprintf 'a,b,c' > /tmp/data.csv\nprintf '#!/bin/bash' > /tmp/script.sh\n\ntar -czf /tmp/bundle.tar.gz -C /tmp notes.txt data.csv script.sh\n\ntar -tzf /tmp/bundle.tar.gz\n\ntar -xzf /tmp/bundle.tar.gz -C /output notes.txt\n\nls -l /output",
+      "set -e\nrm -rf /output/*\ntar -xzf /tmp/bundle.tar.gz -C /output -- notes.txt\nls -l /output\nprintf '\\nExtracted file content:\\n'\ncat /output/notes.txt",
+      "set -e\nrm -rf /output && mkdir -p /output\n# try member-select extraction variants\n( tar -xzf /tmp/bundle.tar.gz -C /output notes.txt ) || true\necho 'After variant1:'\nfind /output -maxdepth 1 -type f -printf '%f\\n' | sort\nrm -rf /output/*\n( tar -xvf /tmp/bundle.tar.gz -C /output notes.txt >/dev/null ) || true\necho 'After variant2:'\nfind /output -maxdepth 1 -type f -printf '%f\\n' | sort\nrm -rf /output/*\n( tar -xz -f /tmp/bundle.tar.gz -C /output notes.txt ) || true\necho 'After variant3:'\nfind /output -maxdepth 1 -type f -printf '%f\\n' | sort\nrm -rf /output/*\n( tar -xzf /tmp/bundle.tar.gz -C /output ./notes.txt ) || true\necho 'After variant4:'\nfind /output -maxdepth 1 -type f -printf '%f\\n' | sort",
+      "set -e\nmkdir -p /output\n# Extract archive to /output, then keep only notes.txt\nrm -rf /output/*\ntar -xzf /tmp/bundle.tar.gz -C /output\nfind /output -maxdepth 1 -type f ! -name 'notes.txt' -delete\n\necho 'Final /output contents:'\nfind /output -maxdepth 1 -type f -printf '%f\\n' | sort\n\necho 'notes.txt content:'\ncat /output/notes.txt",
+      "set -e\nmkdir -p /tmp /output\n\n# Create requested files\nprintf 'remember this' > /tmp/notes.txt\nprintf 'a,b,c' > /tmp/data.csv\nprintf '#!/bin/bash' > /tmp/script.sh\n\n# Create archive with all three files\ntar -czf /tmp/bundle.tar.gz -C /tmp notes.txt data.csv script.sh\n\n# List archive contents\necho 'Archive contents:'\ntar -tzf /tmp/bundle.tar.gz\n\n# Extract only notes.txt into /output/\nrm -rf /output/*\ntar -xzf /tmp/bundle.tar.gz -O notes.txt > /output/notes.txt\n\necho '\\n/output contents:'\nls -l /output\n\necho '\\n/output/notes.txt:'\ncat /output/notes.txt",
+      "set -e\n# Recreate files exactly as requested\nmkdir -p /tmp /output /tmp/extract_tmp\nprintf 'remember this' > /tmp/notes.txt\nprintf 'a,b,c' > /tmp/data.csv\nprintf '#!/bin/bash' > /tmp/script.sh\n\n# Build archive\ntar -czf /tmp/bundle.tar.gz -C /tmp notes.txt data.csv script.sh\n\n# List archive contents\necho 'Archive contents:'\ntar -tzf /tmp/bundle.tar.gz\n\n# Extract only notes.txt to /output using temp dir workaround\nrm -rf /tmp/extract_tmp/* /output/*\ntar -xzf /tmp/bundle.tar.gz -C /tmp/extract_tmp\ncp /tmp/extract_tmp/notes.txt /output/notes.txt\n\n# Verify\nprintf '\\n/output contents:\\n'\nls -l /output\nprintf '\\n/output/notes.txt content:\\n'\ncat /output/notes.txt"
+    ],
+    "usage": {
+      "input_tokens": 6211,
+      "output_tokens": 2325,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 27394
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 6.0,
+      "tool_calls_err": 2.0,
+      "tool_calls_ok": 4.0,
+      "turns": 7.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/output",
+          "/tmp",
+          "/tmp/extract_tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "set -e\nmkdir -p /tmp /output\nprintf 'remember this' > /tmp/notes.txt\nprintf 'a,b,c' > /tmp/data.csv\nprintf '#!/bin/bash' > /tmp/script.sh\n\ntar -czf /tmp/bundle.tar.gz -C /tmp notes.txt data.csv script.sh\n\ntar -tzf /tmp/bundle.tar.gz\n\ntar -xzf /tmp/bundle.tar.gz -C /output notes.txt\n\nls -l /output",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "notes.txt\ndata.csv\nscript.sh\n-rw-r--r--        5 2026-07-12 00:32 data.csv\n-rw-r--r--       13 2026-07-12 00:32 notes.txt\n-rw-r--r--       11 2026-07-12 00:32 script.sh\n"
+          },
+          {
+            "commands": "set -e\nrm -rf /output/*\ntar -xzf /tmp/bundle.tar.gz -C /output -- notes.txt\nls -l /output\nprintf '\\nExtracted file content:\\n'\ncat /output/notes.txt",
+            "exit_code": 2,
+            "stderr": "tar: invalid option -- '-'\n",
+            "stdout": ""
+          },
+          {
+            "commands": "set -e\nrm -rf /output && mkdir -p /output\n# try member-select extraction variants\n( tar -xzf /tmp/bundle.tar.gz -C /output notes.txt ) || true\necho 'After variant1:'\nfind /output -maxdepth 1 -type f -printf '%f\\n' | sort\nrm -rf /output/*\n( tar -xvf /tmp/bundle.tar.gz -C /output notes.txt >/dev/null ) || true\necho 'After variant2:'\nfind /output -maxdepth 1 -type f -printf '%f\\n' | sort\nrm -rf /output/*\n( tar -xz -f /tmp/bundle.tar.gz -C /output notes.txt ) || true\necho 'After variant3:'\nfind /output -maxdepth 1 -type f -printf '%f\\n' | sort\nrm -rf /output/*\n( tar -xzf /tmp/bundle.tar.gz -C /output ./notes.txt ) || true\necho 'After variant4:'\nfind /output -maxdepth 1 -type f -printf '%f\\n' | sort",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "After variant1:\ndata.csv\nnotes.txt\nscript.sh\nAfter variant2:\nAfter variant3:\ndata.csv\nnotes.txt\nscript.sh\nAfter variant4:\ndata.csv\nnotes.txt\nscript.sh\n"
+          },
+          {
+            "commands": "set -e\nmkdir -p /output\n# Extract archive to /output, then keep only notes.txt\nrm -rf /output/*\ntar -xzf /tmp/bundle.tar.gz -C /output\nfind /output -maxdepth 1 -type f ! -name 'notes.txt' -delete\n\necho 'Final /output contents:'\nfind /output -maxdepth 1 -type f -printf '%f\\n' | sort\n\necho 'notes.txt content:'\ncat /output/notes.txt",
+            "exit_code": 1,
+            "stderr": "find: unknown predicate '-delete'\n",
+            "stdout": ""
+          },
+          {
+            "commands": "set -e\nmkdir -p /tmp /output\n\n# Create requested files\nprintf 'remember this' > /tmp/notes.txt\nprintf 'a,b,c' > /tmp/data.csv\nprintf '#!/bin/bash' > /tmp/script.sh\n\n# Create archive with all three files\ntar -czf /tmp/bundle.tar.gz -C /tmp notes.txt data.csv script.sh\n\n# List archive contents\necho 'Archive contents:'\ntar -tzf /tmp/bundle.tar.gz\n\n# Extract only notes.txt into /output/\nrm -rf /output/*\ntar -xzf /tmp/bundle.tar.gz -O notes.txt > /output/notes.txt\n\necho '\\n/output contents:'\nls -l /output\n\necho '\\n/output/notes.txt:'\ncat /output/notes.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Archive contents:\nnotes.txt\ndata.csv\nscript.sh\n\\n/output contents:\n-rw-r--r--       29 2026-07-12 00:32 notes.txt\n\\n/output/notes.txt:\nremember thisa,b,c#!/bin/bash"
+          },
+          {
+            "commands": "set -e\n# Recreate files exactly as requested\nmkdir -p /tmp /output /tmp/extract_tmp\nprintf 'remember this' > /tmp/notes.txt\nprintf 'a,b,c' > /tmp/data.csv\nprintf '#!/bin/bash' > /tmp/script.sh\n\n# Build archive\ntar -czf /tmp/bundle.tar.gz -C /tmp notes.txt data.csv script.sh\n\n# List archive contents\necho 'Archive contents:'\ntar -tzf /tmp/bundle.tar.gz\n\n# Extract only notes.txt to /output using temp dir workaround\nrm -rf /tmp/extract_tmp/* /output/*\ntar -xzf /tmp/bundle.tar.gz -C /tmp/extract_tmp\ncp /tmp/extract_tmp/notes.txt /output/notes.txt\n\n# Verify\nprintf '\\n/output contents:\\n'\nls -l /output\nprintf '\\n/output/notes.txt content:\\n'\ncat /output/notes.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Archive contents:\nnotes.txt\ndata.csv\nscript.sh\n\n/output contents:\n-rw-r--r--       13 2026-07-12 00:32 notes.txt\n\n/output/notes.txt content:\nremember this"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

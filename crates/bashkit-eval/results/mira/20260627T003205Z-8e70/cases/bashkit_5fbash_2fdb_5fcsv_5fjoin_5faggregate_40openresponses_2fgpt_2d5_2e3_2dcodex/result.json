@@ -1,0 +1,74 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "db_csv_join_aggregate",
+  "target": "openresponses/gpt-5.3-codex",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "electronics: 450\nhardware: 165",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "ls -l /data && echo '--- orders ---' && head -n 5 /data/orders.csv && echo '--- products ---' && head -n 5 /data/products.csv",
+      "echo 'orders:'; cat /data/orders.csv; echo 'products:'; cat /data/products.csv",
+      "awk -F, 'NR==FNR{if(FNR>1){cat[$1]=$3;price[$1]=$4}next} FNR>1{rev[cat[$2]]+=$3*price[$2]} END{for(c in rev) printf \"%s: %s\\n\", c, rev[c]}' /data/products.csv /data/orders.csv | sort -t: -k2,2nr"
+    ],
+    "usage": {
+      "input_tokens": 1856,
+      "output_tokens": 522,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7748
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "ls -l /data && echo '--- orders ---' && head -n 5 /data/orders.csv && echo '--- products ---' && head -n 5 /data/products.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       77 2026-07-12 00:34 orders.csv\n-rw-r--r--      101 2026-07-12 00:34 products.csv\n--- orders ---\norder_id,product_id,quantity\n1,101,3\n2,102,5\n3,101,2\n4,103,1\n--- products ---\nproduct_id,name,category,price\n101,Widget,hardware,25\n102,Gadget,electronics,50\n103,Bolt,hardware,10\n"
+          },
+          {
+            "commands": "echo 'orders:'; cat /data/orders.csv; echo 'products:'; cat /data/products.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "orders:\norder_id,product_id,quantity\n1,101,3\n2,102,5\n3,101,2\n4,103,1\n5,102,4\n6,103,3\nproducts:\nproduct_id,name,category,price\n101,Widget,hardware,25\n102,Gadget,electronics,50\n103,Bolt,hardware,10\n"
+          },
+          {
+            "commands": "awk -F, 'NR==FNR{if(FNR>1){cat[$1]=$3;price[$1]=$4}next} FNR>1{rev[cat[$2]]+=$3*price[$2]} END{for(c in rev) printf \"%s: %s\\n\", c, rev[c]}' /data/products.csv /data/orders.csv | sort -t: -k2,2nr",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "electronics: 450\nhardware: 165\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

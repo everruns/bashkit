@@ -1,0 +1,67 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_api_pagination",
+  "target": "openresponses/gpt-5.3-codex",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "2\n15\n201\n202\n203",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -l /data && echo '---' && head -c 500 /data/response.json",
+      "if command -v jq >/dev/null 2>&1; then jq -r '.page, .total, (.items[] .id)' /data/response.json; else\n  page=$(grep -o '\"page\":[0-9]\\+' /data/response.json | head -n1 | cut -d: -f2)\n  total=$(grep -o '\"total\":[0-9]\\+' /data/response.json | head -n1 | cut -d: -f2)\n  echo \"$page\"\n  echo \"$total\"\n  grep -o '\"id\":[0-9]\\+' /data/response.json | cut -d: -f2\nfi"
+    ],
+    "usage": {
+      "input_tokens": 1102,
+      "output_tokens": 414,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5509
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "ls -l /data && echo '---' && head -c 500 /data/response.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      177 2026-07-12 00:32 response.json\n---\n{\"page\":2,\"per_page\":3,\"total\":15,\"items\":[{\"id\":201,\"name\":\"alpha\",\"status\":\"active\"},{\"id\":202,\"name\":\"beta\",\"status\":\"inactive\"},{\"id\":203,\"name\":\"gamma\",\"status\":\"active\"}]}"
+          },
+          {
+            "commands": "if command -v jq >/dev/null 2>&1; then jq -r '.page, .total, (.items[] .id)' /data/response.json; else\n  page=$(grep -o '\"page\":[0-9]\\+' /data/response.json | head -n1 | cut -d: -f2)\n  total=$(grep -o '\"total\":[0-9]\\+' /data/response.json | head -n1 | cut -d: -f2)\n  echo \"$page\"\n  echo \"$total\"\n  grep -o '\"id\":[0-9]\\+' /data/response.json | cut -d: -f2\nfi",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "2\n15\n201\n202\n203\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

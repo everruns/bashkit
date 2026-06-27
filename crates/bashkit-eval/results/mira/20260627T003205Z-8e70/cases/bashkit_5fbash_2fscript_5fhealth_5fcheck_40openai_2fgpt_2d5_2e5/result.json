@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_health_check",
+  "target": "openai/gpt-5.5",
+  "passed": false,
+  "aggregate": 0.75,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 0.75,
+      "pass": false,
+      "reason": "3/4 checks passed (weighted rate 75%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created `/scripts/healthcheck.sh` and ran it.\n\nOutput:\n\n```text\nPASS: /app/config.json exists and contains valid JSON\nPASS: /var/log directory exists\nFAIL: /app/data directory contains at least 2 files\n\nExit code: 1\n```",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "set -e\nmkdir -p /scripts\ncat > /scripts/healthcheck.sh <<'EOF'\n#!/usr/bin/env bash\n\nall_pass=true\n\npass() {\n  echo \"PASS: $1\"\n}\n\nfail() {\n  echo \"FAIL: $1\"\n  all_pass=false\n}\n\n# Check 1: /app/config.json exists and contains valid JSON\njson_desc=\"/app/config.json exists and contains valid JSON\"\nif [[ -f /app/config.json ]]; then\n  if command -v jq >/dev/null 2>&1; then\n    if jq empty /app/config.json >/dev/null 2>&1; then\n      pass \"$json_desc\"\n    else\n      fail \"$json_desc\"\n    fi\n  elif command -v node >/dev/null 2>&1; then\n    if node -e 'const fs=require(\"fs\"); JSON.parse(fs.readFileSync(\"/app/config.json\", \"utf8\"));' >/dev/null 2>&1; then\n      pass \"$json_desc\"\n    else\n      fail \"$json_desc\"\n    fi\n  elif command -v ruby >/dev/null 2>&1; then\n    if ruby -rjson -e 'JSON.parse(File.read(\"/app/config.json\"))' >/dev/null 2>&1; then\n      pass \"$json_desc\"\n    else\n      fail \"$json_desc\"\n    fi\n  elif command -v php >/dev/null 2>&1; then\n    if php -r '$s=file_get_contents(\"/app/config.json\"); json_decode($s); exit(json_last_error() === JSON_ERROR_NONE ? 0 : 1);' >/dev/null 2>&1; then\n      pass \"$json_desc\"\n    else\n      fail \"$json_desc\"\n    fi\n  else\n    fail \"$json_desc\"\n  fi\nelse\n  fail \"$json_desc\"\nfi\n\n# Check 2: /var/log directory exists\nlog_desc=\"/var/log directory exists\"\nif [[ -d /var/log ]]; then\n  pass \"$log_desc\"\nelse\n  fail \"$log_desc\"\nfi\n\n# Check 3: /app/data directory contains at least 2 files\ndata_desc=\"/app/data directory contains at least 2 files\"\nfile_count=0\nif [[ -d /app/data ]]; then\n  while IFS= read -r -d '' _; do\n    ((file_count++))\n    if (( file_count >= 2 )); then\n      break\n    fi\n  done < <(find /app/data -maxdepth 1 -type f -print0 2>/dev/null)\nfi\n\nif (( file_count >= 2 )); then\n  pass \"$data_desc\"\nelse\n  fail \"$data_desc\"\nfi\n\nif [[ \"$all_pass\" == true ]]; then\n  exit 0\nelse\n  exit 1\nfi\nEOF\nchmod +x /scripts/healthcheck.sh\n/scripts/healthcheck.sh; status=$?\necho \"Exit code: $status\"\nexit 0"
+    ],
+    "usage": {
+      "input_tokens": 1434,
+      "output_tokens": 859,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 9247
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 0.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/app",
+          "/app/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/scripts",
+          "/tmp",
+          "/var",
+          "/var/log"
+        ],
+        "last_exit_code": 1,
+        "tool_outputs": [
+          {
+            "commands": "set -e\nmkdir -p /scripts\ncat > /scripts/healthcheck.sh <<'EOF'\n#!/usr/bin/env bash\n\nall_pass=true\n\npass() {\n  echo \"PASS: $1\"\n}\n\nfail() {\n  echo \"FAIL: $1\"\n  all_pass=false\n}\n\n# Check 1: /app/config.json exists and contains valid JSON\njson_desc=\"/app/config.json exists and contains valid JSON\"\nif [[ -f /app/config.json ]]; then\n  if command -v jq >/dev/null 2>&1; then\n    if jq empty /app/config.json >/dev/null 2>&1; then\n      pass \"$json_desc\"\n    else\n      fail \"$json_desc\"\n    fi\n  elif command -v node >/dev/null 2>&1; then\n    if node -e 'const fs=require(\"fs\"); JSON.parse(fs.readFileSync(\"/app/config.json\", \"utf8\"));' >/dev/null 2>&1; then\n      pass \"$json_desc\"\n    else\n      fail \"$json_desc\"\n    fi\n  elif command -v ruby >/dev/null 2>&1; then\n    if ruby -rjson -e 'JSON.parse(File.read(\"/app/config.json\"))' >/dev/null 2>&1; then\n      pass \"$json_desc\"\n    else\n      fail \"$json_desc\"\n    fi\n  elif command -v php >/dev/null 2>&1; then\n    if php -r '$s=file_get_contents(\"/app/config.json\"); json_decode($s); exit(json_last_error() === JSON_ERROR_NONE ? 0 : 1);' >/dev/null 2>&1; then\n      pass \"$json_desc\"\n    else\n      fail \"$json_desc\"\n    fi\n  else\n    fail \"$json_desc\"\n  fi\nelse\n  fail \"$json_desc\"\nfi\n\n# Check 2: /var/log directory exists\nlog_desc=\"/var/log directory exists\"\nif [[ -d /var/log ]]; then\n  pass \"$log_desc\"\nelse\n  fail \"$log_desc\"\nfi\n\n# Check 3: /app/data directory contains at least 2 files\ndata_desc=\"/app/data directory contains at least 2 files\"\nfile_count=0\nif [[ -d /app/data ]]; then\n  while IFS= read -r -d '' _; do\n    ((file_count++))\n    if (( file_count >= 2 )); then\n      break\n    fi\n  done < <(find /app/data -maxdepth 1 -type f -print0 2>/dev/null)\nfi\n\nif (( file_count >= 2 )); then\n  pass \"$data_desc\"\nelse\n  fail \"$data_desc\"\nfi\n\nif [[ \"$all_pass\" == true ]]; then\n  exit 0\nelse\n  exit 1\nfi\nEOF\nchmod +x /scripts/healthcheck.sh\n/scripts/healthcheck.sh; status=$?\necho \"Exit code: $status\"\nexit 0",
+            "exit_code": 1,
+            "stderr": "",
+            "stdout": "PASS: /app/config.json exists and contains valid JSON\nPASS: /var/log directory exists\nFAIL: /app/data directory contains at least 2 files\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

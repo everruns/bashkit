@@ -1,0 +1,75 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_getopts_parser",
+  "target": "openresponses/gpt-5.3-codex",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done — I created `/scripts/report.sh` with `getopts` parsing for:\n\n- `-f <format>` (`csv` or `json`, default `csv`)\n- `-o <file>` (default stdout)\n- `-v` (verbose mode)\n- `-h` (usage/help)\n\nThen I ran:\n\n```bash\nbash /scripts/report.sh -f json -v\n```\n\nAnd got:\n\n```text\nVerbose: processing 3 rows\n{\"name\":\"alice\",\"score\":\"95\"}\n{\"name\":\"bob\",\"score\":\"87\"}\n{\"name\":\"carol\",\"score\":\"92\"}\n```\n\nSo it’s working as requested with verbose output and JSON row conversion from `/data/input.csv`.",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "ls -R /",
+      "cat /data/input.csv",
+      "mkdir -p /scripts\ncat > /scripts/report.sh <<'EOF'\n#!/usr/bin/env bash\n\nset -e\n\nformat=\"csv\"\noutput_file=\"\"\nverbose=0\ninput_file=\"/data/input.csv\"\n\nusage() {\n  cat <<USAGE\nUsage: report.sh [-f format] [-o file] [-v] [-h]\n\nOptions:\n  -f <format>  Output format: csv or json (default: csv)\n  -o <file>    Output file (default: stdout)\n  -v           Verbose mode\n  -h           Print this help and exit\nUSAGE\n}\n\nwhile getopts \":f:o:vh\" opt; do\n  case \"$opt\" in\n    f)\n      format=\"$OPTARG\"\n      ;;\n    o)\n      output_file=\"$OPTARG\"\n      ;;\n    v)\n      verbose=1\n      ;;\n    h)\n      usage\n      exit 0\n      ;;\n    :)\n      echo \"Error: Option -$OPTARG requires an argument.\" >&2\n      usage >&2\n      exit 1\n      ;;\n    \\?)\n      echo \"Error: Invalid option: -$OPTARG\" >&2\n      usage >&2\n      exit 1\n      ;;\n  esac\ndone\n\nshift $((OPTIND - 1))\n\nif [[ \"$format\" != \"csv\" && \"$format\" != \"json\" ]]; then\n  echo \"Error: Invalid format '$format'. Use 'csv' or 'json'.\" >&2\n  exit 1\nfi\n\nif [[ ! -f \"$input_file\" ]]; then\n  echo \"Error: Input file not found: $input_file\" >&2\n  exit 1\nfi\n\nrow_count=$(awk 'NR > 1 {count++} END {print count + 0}' \"$input_file\")\n\nif [[ \"$verbose\" -eq 1 ]]; then\n  echo \"Verbose: processing $row_count rows\"\nfi\n\ngenerate_output() {\n  if [[ \"$format\" == \"csv\" ]]; then\n    cat \"$input_file\"\n  else\n    awk -F',' '\n      NR == 1 {\n        for (i = 1; i <= NF; i++) {\n          header[i] = $i\n        }\n        next\n      }\n      {\n        printf \"{\"\n        for (i = 1; i <= NF; i++) {\n          value = $i\n          gsub(/\\\\/, \"\\\\\\\\\", value)\n          gsub(/\\\"/, \"\\\\\\\"\", value)\n          printf \"\\\"%s\\\":\\\"%s\\\"\", header[i], value\n          if (i < NF) {\n            printf \",\"\n          }\n        }\n        print \"}\"\n      }\n    ' \"$input_file\"\n  fi\n}\n\nif [[ -n \"$output_file\" ]]; then\n  generate_output > \"$output_file\"\nelse\n  generate_output\nfi\nEOF\nchmod +x /scripts/report.sh\nbash /scripts/report.sh -f json -v"
+    ],
+    "usage": {
+      "input_tokens": 2386,
+      "output_tokens": 1759,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 20404
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 3.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/scripts",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "ls -R /",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/:\ndata\ndev\nhome\ntmp\n\n//data:\ninput.csv\n\n//dev:\nfd\nnull\nrandom\nurandom\n\n//dev/fd:\n\n//home:\nuser\n\n//home/user:\n\n//tmp:\n"
+          },
+          {
+            "commands": "cat /data/input.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name,score\nalice,95\nbob,87\ncarol,92\n"
+          },
+          {
+            "commands": "mkdir -p /scripts\ncat > /scripts/report.sh <<'EOF'\n#!/usr/bin/env bash\n\nset -e\n\nformat=\"csv\"\noutput_file=\"\"\nverbose=0\ninput_file=\"/data/input.csv\"\n\nusage() {\n  cat <<USAGE\nUsage: report.sh [-f format] [-o file] [-v] [-h]\n\nOptions:\n  -f <format>  Output format: csv or json (default: csv)\n  -o <file>    Output file (default: stdout)\n  -v           Verbose mode\n  -h           Print this help and exit\nUSAGE\n}\n\nwhile getopts \":f:o:vh\" opt; do\n  case \"$opt\" in\n    f)\n      format=\"$OPTARG\"\n      ;;\n    o)\n      output_file=\"$OPTARG\"\n      ;;\n    v)\n      verbose=1\n      ;;\n    h)\n      usage\n      exit 0\n      ;;\n    :)\n      echo \"Error: Option -$OPTARG requires an argument.\" >&2\n      usage >&2\n      exit 1\n      ;;\n    \\?)\n      echo \"Error: Invalid option: -$OPTARG\" >&2\n      usage >&2\n      exit 1\n      ;;\n  esac\ndone\n\nshift $((OPTIND - 1))\n\nif [[ \"$format\" != \"csv\" && \"$format\" != \"json\" ]]; then\n  echo \"Error: Invalid format '$format'. Use 'csv' or 'json'.\" >&2\n  exit 1\nfi\n\nif [[ ! -f \"$input_file\" ]]; then\n  echo \"Error: Input file not found: $input_file\" >&2\n  exit 1\nfi\n\nrow_count=$(awk 'NR > 1 {count++} END {print count + 0}' \"$input_file\")\n\nif [[ \"$verbose\" -eq 1 ]]; then\n  echo \"Verbose: processing $row_count rows\"\nfi\n\ngenerate_output() {\n  if [[ \"$format\" == \"csv\" ]]; then\n    cat \"$input_file\"\n  else\n    awk -F',' '\n      NR == 1 {\n        for (i = 1; i <= NF; i++) {\n          header[i] = $i\n        }\n        next\n      }\n      {\n        printf \"{\"\n        for (i = 1; i <= NF; i++) {\n          value = $i\n          gsub(/\\\\/, \"\\\\\\\\\", value)\n          gsub(/\\\"/, \"\\\\\\\"\", value)\n          printf \"\\\"%s\\\":\\\"%s\\\"\", header[i], value\n          if (i < NF) {\n            printf \",\"\n          }\n        }\n        print \"}\"\n      }\n    ' \"$input_file\"\n  fi\n}\n\nif [[ -n \"$output_file\" ]]; then\n  generate_output > \"$output_file\"\nelse\n  generate_output\nfi\nEOF\nchmod +x /scripts/report.sh\nbash /scripts/report.sh -f json -v",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Verbose: processing 3 rows\n{\"name\":\"alice\",\"score\":\"95\"}\n{\"name\":\"bob\",\"score\":\"87\"}\n{\"name\":\"carol\",\"score\":\"92\"}\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

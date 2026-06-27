@@ -1,0 +1,60 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "text_hostname_replace",
+  "target": "openai/gpt-5.5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Updated `/etc/app.conf` successfully.\n\nVerification:\n- Replaced all occurrences of `localhost` with `db.prod.internal`\n- No remaining `localhost` entries found\n\nUpdated lines:\n```conf\n1:db_host=db.prod.internal\n4:cache_host=db.prod.internal\n```",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "set -e\nif [ ! -f /etc/app.conf ]; then echo \"ERROR: /etc/app.conf not found\" >&2; exit 1; fi\nprintf 'Before replacement, matching lines:\\n'\ngrep -n 'localhost' /etc/app.conf || true\nsed -i 's/localhost/db.prod.internal/g' /etc/app.conf\nprintf '\\nAfter replacement, any remaining localhost occurrences:\\n'\nif grep -n 'localhost' /etc/app.conf; then\n  echo \"ERROR: Some occurrences remain\" >&2\n  exit 1\nelse\n  echo \"None\"\nfi\nprintf '\\nLines containing db.prod.internal:\\n'\ngrep -n 'db\\.prod\\.internal' /etc/app.conf || true"
+    ],
+    "usage": {
+      "input_tokens": 835,
+      "output_tokens": 261,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 4293
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/etc",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "set -e\nif [ ! -f /etc/app.conf ]; then echo \"ERROR: /etc/app.conf not found\" >&2; exit 1; fi\nprintf 'Before replacement, matching lines:\\n'\ngrep -n 'localhost' /etc/app.conf || true\nsed -i 's/localhost/db.prod.internal/g' /etc/app.conf\nprintf '\\nAfter replacement, any remaining localhost occurrences:\\n'\nif grep -n 'localhost' /etc/app.conf; then\n  echo \"ERROR: Some occurrences remain\" >&2\n  exit 1\nelse\n  echo \"None\"\nfi\nprintf '\\nLines containing db.prod.internal:\\n'\ngrep -n 'db\\.prod\\.internal' /etc/app.conf || true",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Before replacement, matching lines:\n1:db_host=localhost\n4:cache_host=localhost\n\nAfter replacement, any remaining localhost occurrences:\nNone\n\nLines containing db.prod.internal:\n1:db_host=db.prod.internal\n4:cache_host=db.prod.internal\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

@@ -1,0 +1,123 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_assoc_array",
+  "target": "openresponses/gpt-5.3-codex",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "",
+    "iterations": 10,
+    "tool_calls_count": 10,
+    "tool_calls": [
+      "ls -l /data/visitors.csv 2>/dev/null || echo 'missing' && if [ -f /data/visitors.csv ]; then echo '---'; head -n 5 /data/visitors.csv; fi",
+      "cat /data/visitors.csv",
+      "declare -A country_map=(\n  [US]='United States'\n  [GB]='United Kingdom'\n  [DE]='Germany'\n  [JP]='Japan'\n  [FR]='France'\n)\n\ndeclare -A counts\n\nwhile IFS=, read -r name country_code; do\n  [[ $name == \"name\" && $country_code == \"country_code\" ]] && continue\n\n  country_name=${country_map[$country_code]}\n  if [[ -z $country_name ]]; then\n    country_name=\"Unknown ($country_code)\"\n  fi\n\n  echo \"$name visited from $country_name\"\n  ((counts[\"$country_name\"]++))\ndone < /data/visitors.csv\n\necho\nfor country in \"${!counts[@]}\"; do\n  echo \"$country: ${counts[$country]} visitors\"\ndone | sort -t: -k2,2nr",
+      "declare -A m=( [US]='United States' [GB]='United Kingdom' ); declare -p m; echo \"US=${m[US]}\"; echo \"GB=${m[GB]}\"",
+      "declare -A m=([US]=\"United States\" [GB]=\"United Kingdom\"); declare -p m; echo \"US=${m[US]}\"; echo \"GB=${m[GB]}\"",
+      "declare -A country_map=(\n  [US]=\"United States\"\n  [GB]=\"United Kingdom\"\n  [DE]=\"Germany\"\n  [JP]=\"Japan\"\n  [FR]=\"France\"\n)\n\ndeclare -A counts\n\nwhile IFS=, read -r name country_code; do\n  [[ $name == \"name\" && $country_code == \"country_code\" ]] && continue\n\n  country_name=${country_map[$country_code]}\n  if [[ -z $country_name ]]; then\n    country_name=\"Unknown ($country_code)\"\n  fi\n\n  echo \"$name visited from $country_name\"\n  ((counts[\"$country_name\"]++))\ndone < /data/visitors.csv\n\necho\nfor country in \"${!counts[@]}\"; do\n  echo \"$country: ${counts[$country]} visitors\"\ndone | sort -t: -k2,2nr",
+      "set -x\ndeclare -A m=( [US]=\"United States\" [GB]=\"United Kingdom\" )\ndeclare -p m\n",
+      "declare -A c\nk=\"United States\"\n((c[\"$k\"]++))\ndeclare -p c\necho \"${c[\"United States\"]}\"; echo \"${c[United]}\"",
+      "declare -A country_map=(\n  [US]=\"United States\"\n  [GB]=\"United Kingdom\"\n  [DE]=\"Germany\"\n  [JP]=\"Japan\"\n  [FR]=\"France\"\n)\ndeclare -p country_map\nwhile IFS=, read -r name country_code; do\n  [[ $name == \"name\" && $country_code == \"country_code\" ]] && continue\n  printf 'code=<%s> value=<%s>\\n' \"$country_code\" \"${country_map[$country_code]}\"\ndone < /data/visitors.csv",
+      "declare -A country_map\ncountry_map[US]=\"United States\"\ncountry_map[GB]=\"United Kingdom\"\ncountry_map[DE]=\"Germany\"\ncountry_map[JP]=\"Japan\"\ncountry_map[FR]=\"France\"\n\ndeclare -A counts\n\nwhile IFS=, read -r name country_code; do\n  [[ -z $name && -z $country_code ]] && continue\n  [[ $name == \"name\" && $country_code == \"country_code\" ]] && continue\n\n  full_country=${country_map[$country_code]}\n  [[ -z $full_country ]] && full_country=\"Unknown ($country_code)\"\n\n  echo \"$name visited from $full_country\"\n  counts[\"$full_country\"]=$(( ${counts[\"$full_country\"]:-0} + 1 ))\ndone < /data/visitors.csv\n\necho\nfor country in \"${!counts[@]}\"; do\n  printf '%s\\t%s\\n' \"$country\" \"${counts[$country]}\"\ndone | sort -k2,2nr | while IFS=$'\\t' read -r country n; do\n  echo \"$country: $n visitors\"\ndone"
+    ],
+    "usage": {
+      "input_tokens": 9518,
+      "output_tokens": 3702,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 44288
+    },
+    "metrics": {
+      "natural_stop": 0.0,
+      "tool_calls": 10.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 10.0,
+      "turns": 10.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "ls -l /data/visitors.csv 2>/dev/null || echo 'missing' && if [ -f /data/visitors.csv ]; then echo '---'; head -n 5 /data/visitors.csv; fi",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       76 2026-07-12 00:33 /data/visitors.csv\n---\nname,country_code\nAlice,US\nBob,GB\nCarol,US\nDave,JP\n"
+          },
+          {
+            "commands": "cat /data/visitors.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "name,country_code\nAlice,US\nBob,GB\nCarol,US\nDave,JP\nEve,DE\nFrank,US\nGrace,GB\n"
+          },
+          {
+            "commands": "declare -A country_map=(\n  [US]='United States'\n  [GB]='United Kingdom'\n  [DE]='Germany'\n  [JP]='Japan'\n  [FR]='France'\n)\n\ndeclare -A counts\n\nwhile IFS=, read -r name country_code; do\n  [[ $name == \"name\" && $country_code == \"country_code\" ]] && continue\n\n  country_name=${country_map[$country_code]}\n  if [[ -z $country_name ]]; then\n    country_name=\"Unknown ($country_code)\"\n  fi\n\n  echo \"$name visited from $country_name\"\n  ((counts[\"$country_name\"]++))\ndone < /data/visitors.csv\n\necho\nfor country in \"${!counts[@]}\"; do\n  echo \"$country: ${counts[$country]} visitors\"\ndone | sort -t: -k2,2nr",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Alice visited from United\nBob visited from United\nCarol visited from United\nDave visited from Japan\nEve visited from Germany\nFrank visited from United\nGrace visited from United\n\n"
+          },
+          {
+            "commands": "declare -A m=( [US]='United States' [GB]='United Kingdom' ); declare -p m; echo \"US=${m[US]}\"; echo \"GB=${m[GB]}\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "declare -A m=([GB]=\"'United\" [US]=\"'United\")\nUS='United\nGB='United\n"
+          },
+          {
+            "commands": "declare -A m=([US]=\"United States\" [GB]=\"United Kingdom\"); declare -p m; echo \"US=${m[US]}\"; echo \"GB=${m[GB]}\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "declare -A m=([GB]=\"United Kingdom\" [US]=\"United States\")\nUS=United States\nGB=United Kingdom\n"
+          },
+          {
+            "commands": "declare -A country_map=(\n  [US]=\"United States\"\n  [GB]=\"United Kingdom\"\n  [DE]=\"Germany\"\n  [JP]=\"Japan\"\n  [FR]=\"France\"\n)\n\ndeclare -A counts\n\nwhile IFS=, read -r name country_code; do\n  [[ $name == \"name\" && $country_code == \"country_code\" ]] && continue\n\n  country_name=${country_map[$country_code]}\n  if [[ -z $country_name ]]; then\n    country_name=\"Unknown ($country_code)\"\n  fi\n\n  echo \"$name visited from $country_name\"\n  ((counts[\"$country_name\"]++))\ndone < /data/visitors.csv\n\necho\nfor country in \"${!counts[@]}\"; do\n  echo \"$country: ${counts[$country]} visitors\"\ndone | sort -t: -k2,2nr",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Alice visited from United\nBob visited from United\nCarol visited from United\nDave visited from Japan\nEve visited from Germany\nFrank visited from United\nGrace visited from United\n\n"
+          },
+          {
+            "commands": "set -x\ndeclare -A m=( [US]=\"United States\" [GB]=\"United Kingdom\" )\ndeclare -p m\n",
+            "exit_code": 0,
+            "stderr": "+ declare -A 'm=( [US]=\"United States\" [GB]=\"United Kingdom\" )'\n+ declare -p m\n",
+            "stdout": "declare -A m=([GB]=\"United Kingdom\" [US]=\"United States\")\n"
+          },
+          {
+            "commands": "declare -A c\nk=\"United States\"\n((c[\"$k\"]++))\ndeclare -p c\necho \"${c[\"United States\"]}\"; echo \"${c[United]}\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "declare -A c=()\n\n\n"
+          },
+          {
+            "commands": "declare -A country_map=(\n  [US]=\"United States\"\n  [GB]=\"United Kingdom\"\n  [DE]=\"Germany\"\n  [JP]=\"Japan\"\n  [FR]=\"France\"\n)\ndeclare -p country_map\nwhile IFS=, read -r name country_code; do\n  [[ $name == \"name\" && $country_code == \"country_code\" ]] && continue\n  printf 'code=<%s> value=<%s>\\n' \"$country_code\" \"${country_map[$country_code]}\"\ndone < /data/visitors.csv",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "declare -A country_map=([DE]=\"Germany\" [FR]=\"France\" [GB]=\"United\" [JP]=\"Japan\" [US]=\"United\")\ncode=<US> value=<United>\ncode=<GB> value=<United>\ncode=<US> value=<United>\ncode=<JP> value=<Japan>\ncode=<DE> value=<Germany>\ncode=<US> value=<United>\ncode=<GB> value=<United>\n"
+          },
+          {
+            "commands": "declare -A country_map\ncountry_map[US]=\"United States\"\ncountry_map[GB]=\"United Kingdom\"\ncountry_map[DE]=\"Germany\"\ncountry_map[JP]=\"Japan\"\ncountry_map[FR]=\"France\"\n\ndeclare -A counts\n\nwhile IFS=, read -r name country_code; do\n  [[ -z $name && -z $country_code ]] && continue\n  [[ $name == \"name\" && $country_code == \"country_code\" ]] && continue\n\n  full_country=${country_map[$country_code]}\n  [[ -z $full_country ]] && full_country=\"Unknown ($country_code)\"\n\n  echo \"$name visited from $full_country\"\n  counts[\"$full_country\"]=$(( ${counts[\"$full_country\"]:-0} + 1 ))\ndone < /data/visitors.csv\n\necho\nfor country in \"${!counts[@]}\"; do\n  printf '%s\\t%s\\n' \"$country\" \"${counts[$country]}\"\ndone | sort -k2,2nr | while IFS=$'\\t' read -r country n; do\n  echo \"$country: $n visitors\"\ndone",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Alice visited from United States\nBob visited from United Kingdom\nCarol visited from United States\nDave visited from Japan\nEve visited from Germany\nFrank visited from United States\nGrace visited from United Kingdom\n\nGermany: 1 visitors\nJapan: 1 visitors\nUnited Kingdom: 2 visitors\nUnited States: 3 visitors\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

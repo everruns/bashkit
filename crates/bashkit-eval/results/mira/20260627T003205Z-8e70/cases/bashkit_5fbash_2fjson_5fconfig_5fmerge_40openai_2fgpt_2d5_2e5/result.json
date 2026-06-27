@@ -1,0 +1,67 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_config_merge",
+  "target": "openai/gpt-5.5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "8/8 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Merged result saved to `/config/merged.json`:\n\n```json\n{\n  \"app\": {\n    \"debug\": false,\n    \"name\": \"myservice\",\n    \"port\": 8080\n  },\n  \"db\": {\n    \"host\": \"db.prod.internal\",\n    \"pool_size\": 20,\n    \"port\": 5432\n  },\n  \"log\": {\n    \"format\": \"json\",\n    \"level\": \"warn\"\n  }\n}\n```",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -l /config && printf 'defaults:\\n' && cat /config/defaults.json && printf '\\nproduction:\\n' && cat /config/production.json",
+      "if command -v jq >/dev/null; then jq -s '.[0] * .[1]' /config/defaults.json /config/production.json > /config/merged.json && cat /config/merged.json; else echo 'jq not found' >&2; exit 1; fi"
+    ],
+    "usage": {
+      "input_tokens": 1491,
+      "output_tokens": 263,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5090
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/config",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "ls -l /config && printf 'defaults:\\n' && cat /config/defaults.json && printf '\\nproduction:\\n' && cat /config/production.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      145 2026-07-12 00:32 defaults.json\n-rw-r--r--      122 2026-07-12 00:32 production.json\ndefaults:\n{\"app\":{\"name\":\"myservice\",\"port\":3000,\"debug\":true},\"db\":{\"host\":\"localhost\",\"port\":5432,\"pool_size\":5},\"log\":{\"level\":\"debug\",\"format\":\"text\"}}\nproduction:\n{\"app\":{\"port\":8080,\"debug\":false},\"db\":{\"host\":\"db.prod.internal\",\"pool_size\":20},\"log\":{\"level\":\"warn\",\"format\":\"json\"}}"
+          },
+          {
+            "commands": "if command -v jq >/dev/null; then jq -s '.[0] * .[1]' /config/defaults.json /config/production.json > /config/merged.json && cat /config/merged.json; else echo 'jq not found' >&2; exit 1; fi",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\n  \"app\": {\n    \"debug\": false,\n    \"name\": \"myservice\",\n    \"port\": 8080\n  },\n  \"db\": {\n    \"host\": \"db.prod.internal\",\n    \"pool_size\": 20,\n    \"port\": 5432\n  },\n  \"log\": {\n    \"format\": \"json\",\n    \"level\": \"warn\"\n  }\n}\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

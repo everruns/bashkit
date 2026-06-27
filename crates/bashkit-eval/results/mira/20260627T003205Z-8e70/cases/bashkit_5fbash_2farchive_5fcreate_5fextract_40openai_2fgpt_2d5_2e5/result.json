@@ -1,0 +1,71 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "archive_create_extract",
+  "target": "openai/gpt-5.5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done. Created `/tmp/project.tar.gz`, extracted it into `/backup`, and verified that `/backup/project` exists with files matching `/project`.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "set -e\n# Create tar.gz archive of /project, preserving directory contents under project/\ntar -czf /tmp/project.tar.gz -C / project\n\n# Create /backup and extract archive there\nmkdir -p /backup\ntar -xzf /tmp/project.tar.gz -C /backup\n\n# Verify archive and extracted files/directories exist\necho \"Archive:\"\nls -l /tmp/project.tar.gz\n\necho \"\\nExtracted backup contents:\"\nfind /backup -mindepth 1 -maxdepth 3 -print | sort\n\n# Basic verification that /backup/project exists and contains entries matching /project\nif [[ -d /backup/project ]]; then\n  echo \"\\nVerification: /backup/project exists.\"\nelse\n  echo \"Verification failed: /backup/project does not exist.\" >&2\n  exit 1\nfi\n\n# Compare file list relative paths between source and extracted copy\nsrc_list=$(mktemp)\nbak_list=$(mktemp)\nfind /project -printf '%P\\n' | sort > \"$src_list\"\nfind /backup/project -printf '%P\\n' | sort > \"$bak_list\"\nif diff -u \"$src_list\" \"$bak_list\"; then\n  echo \"Verification: extracted file list matches /project.\"\nelse\n  echo \"Verification failed: extracted file list differs from /project.\" >&2\n  exit 1\nfi",
+      "set -e\n# Ensure archive exists and backup extraction exists\ntest -f /tmp/project.tar.gz\ntest -d /backup/project\n\n# Verify by comparing relative paths (portable path stripping)\nsrc_list=$(mktemp)\nbak_list=$(mktemp)\nfind /project | sed 's#^/project##' | sort > \"$src_list\"\nfind /backup/project | sed 's#^/backup/project##' | sort > \"$bak_list\"\n\necho \"Archive created:\"\nls -l /tmp/project.tar.gz\n\necho \"Backup files:\"\nfind /backup -mindepth 1 -print | sort\n\nif diff -u \"$src_list\" \"$bak_list\"; then\n  echo \"Verification successful: files exist in /backup and match /project.\"\nelse\n  echo \"Verification failed: /backup/project differs from /project.\" >&2\n  exit 1\nfi"
+    ],
+    "usage": {
+      "input_tokens": 2208,
+      "output_tokens": 713,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 9153
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 1.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/backup",
+          "/backup/project",
+          "/backup/project/src",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/project",
+          "/project/src",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "set -e\n# Create tar.gz archive of /project, preserving directory contents under project/\ntar -czf /tmp/project.tar.gz -C / project\n\n# Create /backup and extract archive there\nmkdir -p /backup\ntar -xzf /tmp/project.tar.gz -C /backup\n\n# Verify archive and extracted files/directories exist\necho \"Archive:\"\nls -l /tmp/project.tar.gz\n\necho \"\\nExtracted backup contents:\"\nfind /backup -mindepth 1 -maxdepth 3 -print | sort\n\n# Basic verification that /backup/project exists and contains entries matching /project\nif [[ -d /backup/project ]]; then\n  echo \"\\nVerification: /backup/project exists.\"\nelse\n  echo \"Verification failed: /backup/project does not exist.\" >&2\n  exit 1\nfi\n\n# Compare file list relative paths between source and extracted copy\nsrc_list=$(mktemp)\nbak_list=$(mktemp)\nfind /project -printf '%P\\n' | sort > \"$src_list\"\nfind /backup/project -printf '%P\\n' | sort > \"$bak_list\"\nif diff -u \"$src_list\" \"$bak_list\"; then\n  echo \"Verification: extracted file list matches /project.\"\nelse\n  echo \"Verification failed: extracted file list differs from /project.\" >&2\n  exit 1\nfi",
+            "exit_code": 1,
+            "stderr": "Verification failed: extracted file list differs from /project.\n",
+            "stdout": "Archive:\n-rw-r--r--      229 2026-07-12 00:32 /tmp/project.tar.gz\n\\nExtracted backup contents:\n/backup/project\n/backup/project/README.md\n/backup/project/src\n/backup/project/src/main.sh\n\\nVerification: /backup/project exists.\n--- /tmp/tmp.7c8399ab6b\n+++ /tmp/tmp.3a5860c1c4\n@@ -1,4 +1,4 @@\n-/project\n-/project/README.md\n-/project/src\n-/project/src/main.sh\n+/backup/project\n+/backup/project/README.md\n+/backup/project/src\n+/backup/project/src/main.sh\n"
+          },
+          {
+            "commands": "set -e\n# Ensure archive exists and backup extraction exists\ntest -f /tmp/project.tar.gz\ntest -d /backup/project\n\n# Verify by comparing relative paths (portable path stripping)\nsrc_list=$(mktemp)\nbak_list=$(mktemp)\nfind /project | sed 's#^/project##' | sort > \"$src_list\"\nfind /backup/project | sed 's#^/backup/project##' | sort > \"$bak_list\"\n\necho \"Archive created:\"\nls -l /tmp/project.tar.gz\n\necho \"Backup files:\"\nfind /backup -mindepth 1 -print | sort\n\nif diff -u \"$src_list\" \"$bak_list\"; then\n  echo \"Verification successful: files exist in /backup and match /project.\"\nelse\n  echo \"Verification failed: /backup/project differs from /project.\" >&2\n  exit 1\nfi",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Archive created:\n-rw-r--r--      229 2026-07-12 00:32 /tmp/project.tar.gz\nBackup files:\n/backup/project\n/backup/project/README.md\n/backup/project/src\n/backup/project/src/main.sh\nVerification successful: files exist in /backup and match /project.\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

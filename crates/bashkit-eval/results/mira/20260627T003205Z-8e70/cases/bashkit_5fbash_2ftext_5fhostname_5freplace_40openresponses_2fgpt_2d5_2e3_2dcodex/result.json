@@ -1,0 +1,67 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "text_hostname_replace",
+  "target": "openresponses/gpt-5.3-codex",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done — I replaced all `localhost` occurrences in `/etc/app.conf` with `db.prod.internal` and verified the result.\n\nCurrent matching lines:\n- `1:db_host=db.prod.internal`\n- `4:cache_host=db.prod.internal`\n\nNo `localhost` entries remain in those checked lines.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "set -e\nif [ -f /etc/app.conf ]; then\n  echo \"FOUND\"\n  grep -n \"localhost\\|db.prod.internal\" /etc/app.conf || true\nelse\n  echo \"MISSING\"\nfi\n",
+      "set -e\nsed -i 's/localhost/db.prod.internal/g' /etc/app.conf\ngrep -n \"localhost\\|db.prod.internal\" /etc/app.conf || true\n"
+    ],
+    "usage": {
+      "input_tokens": 934,
+      "output_tokens": 283,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 4563
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/etc",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "set -e\nif [ -f /etc/app.conf ]; then\n  echo \"FOUND\"\n  grep -n \"localhost\\|db.prod.internal\" /etc/app.conf || true\nelse\n  echo \"MISSING\"\nfi\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "FOUND\n1:db_host=localhost\n4:cache_host=localhost\n"
+          },
+          {
+            "commands": "set -e\nsed -i 's/localhost/db.prod.internal/g' /etc/app.conf\ngrep -n \"localhost\\|db.prod.internal\" /etc/app.conf || true\n",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "1:db_host=db.prod.internal\n4:cache_host=db.prod.internal\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

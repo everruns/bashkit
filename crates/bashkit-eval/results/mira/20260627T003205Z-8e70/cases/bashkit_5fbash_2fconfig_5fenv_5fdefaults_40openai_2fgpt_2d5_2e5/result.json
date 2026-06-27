@@ -1,0 +1,88 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "config_env_defaults",
+  "target": "openai/gpt-5.5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Created `/scripts/start.sh` and ran it twice.\n\nOutput with no env vars set:\n\n```text\nDB_HOST=localhost\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\n```\n\nOutput with `DB_HOST=db.prod.internal`:\n\n```text\nDB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\ncustom_db=true\n```",
+    "iterations": 6,
+    "tool_calls_count": 5,
+    "tool_calls": [
+      "mkdir -p /scripts\ncat > /scripts/start.sh <<'EOF'\n#!/bin/bash\n\nif [[ -v DB_HOST ]]; then\n  db_host_was_set=1\nelse\n  db_host_was_set=0\nfi\n\nDB_HOST_RESOLVED=${DB_HOST-localhost}\nDB_PORT_RESOLVED=${DB_PORT-5432}\nDB_NAME_RESOLVED=${DB_NAME-myapp}\nLOG_LEVEL_RESOLVED=${LOG_LEVEL-info}\n\nprintf 'DB_HOST=%s\\n' \"$DB_HOST_RESOLVED\"\nprintf 'DB_PORT=%s\\n' \"$DB_PORT_RESOLVED\"\nprintf 'DB_NAME=%s\\n' \"$DB_NAME_RESOLVED\"\nprintf 'LOG_LEVEL=%s\\n' \"$LOG_LEVEL_RESOLVED\"\n\nif [[ $db_host_was_set -eq 1 ]]; then\n  printf 'custom_db=true\\n'\nfi\nEOF\nchmod +x /scripts/start.sh\n\necho '--- no env vars ---'\nenv -i /scripts/start.sh\n\necho '--- DB_HOST override ---'\nenv -i DB_HOST=db.prod.internal /scripts/start.sh",
+      "echo '--- no env vars ---'\nunset DB_HOST DB_PORT DB_NAME LOG_LEVEL\n/scripts/start.sh\n\necho '--- DB_HOST override ---'\nunset DB_HOST DB_PORT DB_NAME LOG_LEVEL\nDB_HOST=db.prod.internal /scripts/start.sh",
+      "unset DB_HOST DB_PORT DB_NAME LOG_LEVEL\nbash -c '[[ -v DB_HOST ]]; echo v=$? val=${DB_HOST-unset}'\nbash -x /scripts/start.sh",
+      "unset DB_HOST DB_PORT DB_NAME LOG_LEVEL\ndeclare -p DB_HOST 2>&1 || true\n[[ -v DB_HOST ]]; echo status=$?\n[[ -z ${DB_HOST+x} ]]; echo xstatus=$? x='<'${DB_HOST+x}'>'\nset | grep '^DB_HOST' || true\nbash --version | head -1",
+      "cat > /scripts/start.sh <<'EOF'\n#!/bin/bash\n\nif [[ ${DB_HOST+x} == x ]]; then\n  db_host_was_set=1\nelse\n  db_host_was_set=0\nfi\n\nDB_HOST_RESOLVED=${DB_HOST-localhost}\nDB_PORT_RESOLVED=${DB_PORT-5432}\nDB_NAME_RESOLVED=${DB_NAME-myapp}\nLOG_LEVEL_RESOLVED=${LOG_LEVEL-info}\n\nprintf 'DB_HOST=%s\\n' \"$DB_HOST_RESOLVED\"\nprintf 'DB_PORT=%s\\n' \"$DB_PORT_RESOLVED\"\nprintf 'DB_NAME=%s\\n' \"$DB_NAME_RESOLVED\"\nprintf 'LOG_LEVEL=%s\\n' \"$LOG_LEVEL_RESOLVED\"\n\nif [[ $db_host_was_set -eq 1 ]]; then\n  printf 'custom_db=true\\n'\nfi\nEOF\nchmod +x /scripts/start.sh\n\necho '--- no env vars ---'\nunset DB_HOST DB_PORT DB_NAME LOG_LEVEL\n/scripts/start.sh\n\necho '--- DB_HOST override ---'\nunset DB_HOST DB_PORT DB_NAME LOG_LEVEL\nDB_HOST=db.prod.internal /scripts/start.sh"
+    ],
+    "usage": {
+      "input_tokens": 5437,
+      "output_tokens": 1671,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 24410
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 5.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 4.0,
+      "turns": 6.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/scripts",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "mkdir -p /scripts\ncat > /scripts/start.sh <<'EOF'\n#!/bin/bash\n\nif [[ -v DB_HOST ]]; then\n  db_host_was_set=1\nelse\n  db_host_was_set=0\nfi\n\nDB_HOST_RESOLVED=${DB_HOST-localhost}\nDB_PORT_RESOLVED=${DB_PORT-5432}\nDB_NAME_RESOLVED=${DB_NAME-myapp}\nLOG_LEVEL_RESOLVED=${LOG_LEVEL-info}\n\nprintf 'DB_HOST=%s\\n' \"$DB_HOST_RESOLVED\"\nprintf 'DB_PORT=%s\\n' \"$DB_PORT_RESOLVED\"\nprintf 'DB_NAME=%s\\n' \"$DB_NAME_RESOLVED\"\nprintf 'LOG_LEVEL=%s\\n' \"$LOG_LEVEL_RESOLVED\"\n\nif [[ $db_host_was_set -eq 1 ]]; then\n  printf 'custom_db=true\\n'\nfi\nEOF\nchmod +x /scripts/start.sh\n\necho '--- no env vars ---'\nenv -i /scripts/start.sh\n\necho '--- DB_HOST override ---'\nenv -i DB_HOST=db.prod.internal /scripts/start.sh",
+            "exit_code": 126,
+            "stderr": "env: executing commands not supported in virtual mode\nenv: executing commands not supported in virtual mode\n",
+            "stdout": "--- no env vars ---\n--- DB_HOST override ---\n"
+          },
+          {
+            "commands": "echo '--- no env vars ---'\nunset DB_HOST DB_PORT DB_NAME LOG_LEVEL\n/scripts/start.sh\n\necho '--- DB_HOST override ---'\nunset DB_HOST DB_PORT DB_NAME LOG_LEVEL\nDB_HOST=db.prod.internal /scripts/start.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "--- no env vars ---\nDB_HOST=localhost\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\ncustom_db=true\n--- DB_HOST override ---\nDB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\ncustom_db=true\n"
+          },
+          {
+            "commands": "unset DB_HOST DB_PORT DB_NAME LOG_LEVEL\nbash -c '[[ -v DB_HOST ]]; echo v=$? val=${DB_HOST-unset}'\nbash -x /scripts/start.sh",
+            "exit_code": 0,
+            "stderr": "+ printf DB_HOST=%s\\n localhost\n+ printf DB_PORT=%s\\n 5432\n+ printf DB_NAME=%s\\n myapp\n+ printf LOG_LEVEL=%s\\n info\n+ printf custom_db=true\\n\n",
+            "stdout": "v=0 val=unset\nDB_HOST=localhost\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\ncustom_db=true\n"
+          },
+          {
+            "commands": "unset DB_HOST DB_PORT DB_NAME LOG_LEVEL\ndeclare -p DB_HOST 2>&1 || true\n[[ -v DB_HOST ]]; echo status=$?\n[[ -z ${DB_HOST+x} ]]; echo xstatus=$? x='<'${DB_HOST+x}'>'\nset | grep '^DB_HOST' || true\nbash --version | head -1",
+            "exit_code": 0,
+            "stderr": "bash: declare: DB_HOST: not found\n",
+            "stdout": "status=0\nxstatus=0 x=<>\nBashkit 0.12.0 (virtual bash interpreter)\n"
+          },
+          {
+            "commands": "cat > /scripts/start.sh <<'EOF'\n#!/bin/bash\n\nif [[ ${DB_HOST+x} == x ]]; then\n  db_host_was_set=1\nelse\n  db_host_was_set=0\nfi\n\nDB_HOST_RESOLVED=${DB_HOST-localhost}\nDB_PORT_RESOLVED=${DB_PORT-5432}\nDB_NAME_RESOLVED=${DB_NAME-myapp}\nLOG_LEVEL_RESOLVED=${LOG_LEVEL-info}\n\nprintf 'DB_HOST=%s\\n' \"$DB_HOST_RESOLVED\"\nprintf 'DB_PORT=%s\\n' \"$DB_PORT_RESOLVED\"\nprintf 'DB_NAME=%s\\n' \"$DB_NAME_RESOLVED\"\nprintf 'LOG_LEVEL=%s\\n' \"$LOG_LEVEL_RESOLVED\"\n\nif [[ $db_host_was_set -eq 1 ]]; then\n  printf 'custom_db=true\\n'\nfi\nEOF\nchmod +x /scripts/start.sh\n\necho '--- no env vars ---'\nunset DB_HOST DB_PORT DB_NAME LOG_LEVEL\n/scripts/start.sh\n\necho '--- DB_HOST override ---'\nunset DB_HOST DB_PORT DB_NAME LOG_LEVEL\nDB_HOST=db.prod.internal /scripts/start.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "--- no env vars ---\nDB_HOST=localhost\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\n--- DB_HOST override ---\nDB_HOST=db.prod.internal\nDB_PORT=5432\nDB_NAME=myapp\nLOG_LEVEL=info\ncustom_db=true\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

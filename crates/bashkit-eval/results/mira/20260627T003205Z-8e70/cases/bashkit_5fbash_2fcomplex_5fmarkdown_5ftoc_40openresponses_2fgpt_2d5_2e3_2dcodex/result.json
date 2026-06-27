@@ -1,0 +1,67 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_markdown_toc",
+  "target": "openresponses/gpt-5.3-codex",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "5/5 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done — I read `/doc/README.md`, generated a TOC from all `#` and `##` headings, inserted it right after the first heading, and wrote the updated content back to the file.",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -R /doc && echo '---' && sed -n '1,200p' /doc/README.md",
+      "set -euo pipefail\nfile=/doc/README.md\nmapfile -t headings < <(grep -E '^(# |## )' \"$file\" | sed -E 's/^##? //')\n\ntoc=\"\"\nfor h in \"${headings[@]}\"; do\n  anchor=$(printf '%s' \"$h\" | tr '[:upper:]' '[:lower:]' | sed 's/ /-/g')\n  toc+=\"- [$h](#$anchor)\"$'\\n'\ndone\n\ntmp=$(mktemp)\nawk -v toc=\"$toc\" '\nBEGIN { inserted=0 }\n{\n  print\n  if (!inserted && ($0 ~ /^# / || $0 ~ /^## /)) {\n    print \"\"\n    printf \"%s\", toc\n    print \"\"\n    inserted=1\n  }\n}\n' \"$file\" > \"$tmp\"\n\nmv \"$tmp\" \"$file\"\n\nsed -n '1,200p' \"$file\""
+    ],
+    "usage": {
+      "input_tokens": 1301,
+      "output_tokens": 926,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 10593
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/doc",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "ls -R /doc && echo '---' && sed -n '1,200p' /doc/README.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/doc:\nREADME.md\n---\n# Project Alpha\n\nIntroduction to the project.\n\n## Installation\n\nRun the installer.\n\n## Usage\n\nHow to use it.\n\n## API Reference\n\nEndpoint documentation.\n\n## Contributing\n\nPR guidelines.\n"
+          },
+          {
+            "commands": "set -euo pipefail\nfile=/doc/README.md\nmapfile -t headings < <(grep -E '^(# |## )' \"$file\" | sed -E 's/^##? //')\n\ntoc=\"\"\nfor h in \"${headings[@]}\"; do\n  anchor=$(printf '%s' \"$h\" | tr '[:upper:]' '[:lower:]' | sed 's/ /-/g')\n  toc+=\"- [$h](#$anchor)\"$'\\n'\ndone\n\ntmp=$(mktemp)\nawk -v toc=\"$toc\" '\nBEGIN { inserted=0 }\n{\n  print\n  if (!inserted && ($0 ~ /^# / || $0 ~ /^## /)) {\n    print \"\"\n    printf \"%s\", toc\n    print \"\"\n    inserted=1\n  }\n}\n' \"$file\" > \"$tmp\"\n\nmv \"$tmp\" \"$file\"\n\nsed -n '1,200p' \"$file\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Project Alpha\n\n- [Project Alpha](#project-alpha)\n- [Installation](#installation)\n- [Usage](#usage)\n- [API Reference](#api-reference)\n- [Contributing](#contributing)\n\n\nIntroduction to the project.\n\n## Installation\n\nRun the installer.\n\n## Usage\n\nHow to use it.\n\n## API Reference\n\nEndpoint documentation.\n\n## Contributing\n\nPR guidelines.\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

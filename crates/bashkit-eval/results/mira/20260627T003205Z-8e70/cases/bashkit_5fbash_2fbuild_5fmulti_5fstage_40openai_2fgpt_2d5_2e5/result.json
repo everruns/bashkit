@@ -1,0 +1,62 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "build_multi_stage",
+  "target": "openai/gpt-5.5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Stage 1: Checking source files...\nStage 1: OK\n\nStage 2: Compiling source files...\nCompiled `/src/main.c` -> `/build/main.o`  \nCompiled `/src/utils.c` -> `/build/utils.o`  \nStage 2: OK\n\nStage 3: Linking object files...\nCreated `/build/program`  \nStage 3: OK\n\nStage 4: Packaging build artifacts...\nCreated `/dist/release.tar.gz`  \nStage 4: OK\n\nBuild pipeline completed successfully.",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "set -euo pipefail\n\nfail() {\n  echo \"ERROR: $1\" >&2\n  exit 1\n}\n\necho \"Stage 1: Checking source files...\"\nfor src in /src/main.c /src/utils.c; do\n  if [[ ! -f \"$src\" ]]; then\n    fail \"Required source file missing: $src\"\n  fi\ndone\necho \"Stage 1: OK\"\n\necho \"Stage 2: Compiling source files...\"\nmkdir -p /build || fail \"Could not create /build\"\nfor src in /src/main.c /src/utils.c; do\n  obj=\"/build/$(basename \"${src%.c}\").o\"\n  {\n    echo \"// compiled\"\n    cat \"$src\"\n  } > \"$obj\" || fail \"Failed to compile $src to $obj\"\n  echo \"  Compiled $src -> $obj\"\ndone\necho \"Stage 2: OK\"\n\necho \"Stage 3: Linking object files...\"\n{\n  echo \"// linked\"\n  cat /build/*.o\n} > /build/program || fail \"Failed to link object files into /build/program\"\necho \"Stage 3: OK (/build/program)\"\n\necho \"Stage 4: Packaging build artifacts...\"\nmkdir -p /dist || fail \"Could not create /dist\"\ntar -czf /dist/release.tar.gz -C / build || fail \"Failed to create /dist/release.tar.gz\"\necho \"Stage 4: OK (/dist/release.tar.gz)\"\n\necho \"Build pipeline completed successfully.\""
+    ],
+    "usage": {
+      "input_tokens": 1239,
+      "output_tokens": 520,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 6879
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/build",
+          "/dev",
+          "/dev/fd",
+          "/dist",
+          "/home",
+          "/home/user",
+          "/src",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "set -euo pipefail\n\nfail() {\n  echo \"ERROR: $1\" >&2\n  exit 1\n}\n\necho \"Stage 1: Checking source files...\"\nfor src in /src/main.c /src/utils.c; do\n  if [[ ! -f \"$src\" ]]; then\n    fail \"Required source file missing: $src\"\n  fi\ndone\necho \"Stage 1: OK\"\n\necho \"Stage 2: Compiling source files...\"\nmkdir -p /build || fail \"Could not create /build\"\nfor src in /src/main.c /src/utils.c; do\n  obj=\"/build/$(basename \"${src%.c}\").o\"\n  {\n    echo \"// compiled\"\n    cat \"$src\"\n  } > \"$obj\" || fail \"Failed to compile $src to $obj\"\n  echo \"  Compiled $src -> $obj\"\ndone\necho \"Stage 2: OK\"\n\necho \"Stage 3: Linking object files...\"\n{\n  echo \"// linked\"\n  cat /build/*.o\n} > /build/program || fail \"Failed to link object files into /build/program\"\necho \"Stage 3: OK (/build/program)\"\n\necho \"Stage 4: Packaging build artifacts...\"\nmkdir -p /dist || fail \"Could not create /dist\"\ntar -czf /dist/release.tar.gz -C / build || fail \"Failed to create /dist/release.tar.gz\"\necho \"Stage 4: OK (/dist/release.tar.gz)\"\n\necho \"Build pipeline completed successfully.\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Stage 1: Checking source files...\nStage 1: OK\nStage 2: Compiling source files...\n  Compiled /src/main.c -> /build/main.o\n  Compiled /src/utils.c -> /build/utils.o\nStage 2: OK\nStage 3: Linking object files...\nStage 3: OK (/build/program)\nStage 4: Packaging build artifacts...\nStage 4: OK (/dist/release.tar.gz)\nBuild pipeline completed successfully.\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

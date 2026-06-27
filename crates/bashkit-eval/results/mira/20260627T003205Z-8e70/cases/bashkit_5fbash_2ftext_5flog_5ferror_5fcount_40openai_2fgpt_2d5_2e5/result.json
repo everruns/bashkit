@@ -1,0 +1,61 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "text_log_error_count",
+  "target": "openai/gpt-5.5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "2024-01-01 08:05:12 ERROR Connection refused to database  \n2024-01-01 08:05:20 ERROR Timeout waiting for response  \n2024-01-01 09:15:33 ERROR Disk space critical  \n\nTotal ERROR lines: 3",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "if [[ -f /var/log/app.log ]]; then grep 'ERROR' /var/log/app.log; echo \"Total ERROR lines: $(grep -c 'ERROR' /var/log/app.log)\"; else echo '/var/log/app.log not found' >&2; exit 1; fi"
+    ],
+    "usage": {
+      "input_tokens": 720,
+      "output_tokens": 156,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3552
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp",
+          "/var",
+          "/var/log"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "if [[ -f /var/log/app.log ]]; then grep 'ERROR' /var/log/app.log; echo \"Total ERROR lines: $(grep -c 'ERROR' /var/log/app.log)\"; else echo '/var/log/app.log not found' >&2; exit 1; fi",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "2024-01-01 08:05:12 ERROR Connection refused to database\n2024-01-01 08:05:20 ERROR Timeout waiting for response\n2024-01-01 09:15:33 ERROR Disk space critical\nTotal ERROR lines: 3\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

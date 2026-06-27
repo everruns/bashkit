@@ -1,0 +1,69 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "file_ops_find_and_delete",
+  "target": "openresponses/gpt-5.3-codex",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "4/4 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "1",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "count=$(find /workspace -type f -name '*.tmp' | wc -l)\nfind /workspace -type f -name '*.tmp' -delete\necho \"$count\"",
+      "count=0\nwhile IFS= read -r -d '' f; do\n  rm -f -- \"$f\" && count=$((count+1))\ndone < <(find /workspace -type f -name '*.tmp' -print0)\necho \"$count\""
+    ],
+    "usage": {
+      "input_tokens": 867,
+      "output_tokens": 495,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 7254
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp",
+          "/workspace",
+          "/workspace/sub",
+          "/workspace/sub/deep"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "count=$(find /workspace -type f -name '*.tmp' | wc -l)\nfind /workspace -type f -name '*.tmp' -delete\necho \"$count\"",
+            "exit_code": 0,
+            "stderr": "find: unknown predicate '-delete'\n",
+            "stdout": "3\n"
+          },
+          {
+            "commands": "count=0\nwhile IFS= read -r -d '' f; do\n  rm -f -- \"$f\" && count=$((count+1))\ndone < <(find /workspace -type f -name '*.tmp' -print0)\necho \"$count\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "1\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

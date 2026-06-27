@@ -1,0 +1,68 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "complex_test_output",
+  "target": "openai/gpt-5.5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "10/10 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "# Test Summary\n\nTotal: 12 | Passed: 9 | Failed: 3\n\n## Failures\n- test_login_expired_token\n- test_signup_duplicate_email\n- test_session_timeout",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "set -euo pipefail\nls -l /data/test-results.txt\nsed -n '1,200p' /data/test-results.txt",
+      "set -euo pipefail\nmkdir -p /reports\nawk '\n  $1==\"PASS\" {passed++; total++; next}\n  $1==\"FAIL\" {failed++; total++; failures[++nf]=$2; next}\n  NF {total++}\n  END {\n    print \"# Test Summary\"\n    print \"\"\n    printf \"Total: %d | Passed: %d | Failed: %d\\n\", total, passed, failed\n    print \"\"\n    print \"## Failures\"\n    for (i=1; i<=nf; i++) print \"- \" failures[i]\n  }\n' /data/test-results.txt | tee /reports/test-summary.md"
+    ],
+    "usage": {
+      "input_tokens": 1601,
+      "output_tokens": 316,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5152
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/reports",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "set -euo pipefail\nls -l /data/test-results.txt\nsed -n '1,200p' /data/test-results.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      313 2026-07-12 00:33 /data/test-results.txt\nPASS test_login_valid\nPASS test_login_invalid_password\nFAIL test_login_expired_token\nPASS test_signup_new_user\nFAIL test_signup_duplicate_email\nPASS test_logout\nPASS test_password_reset\nFAIL test_session_timeout\nPASS test_profile_update\nPASS test_profile_delete\nPASS test_api_rate_limit\nPASS test_api_auth_header\n"
+          },
+          {
+            "commands": "set -euo pipefail\nmkdir -p /reports\nawk '\n  $1==\"PASS\" {passed++; total++; next}\n  $1==\"FAIL\" {failed++; total++; failures[++nf]=$2; next}\n  NF {total++}\n  END {\n    print \"# Test Summary\"\n    print \"\"\n    printf \"Total: %d | Passed: %d | Failed: %d\\n\", total, passed, failed\n    print \"\"\n    print \"## Failures\"\n    for (i=1; i<=nf; i++) print \"- \" failures[i]\n  }\n' /data/test-results.txt | tee /reports/test-summary.md",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "# Test Summary\n\nTotal: 12 | Passed: 9 | Failed: 3\n\n## Failures\n- test_login_expired_token\n- test_signup_duplicate_email\n- test_session_timeout\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

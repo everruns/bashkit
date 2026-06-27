@@ -1,0 +1,61 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_ndjson_error_aggregate",
+  "target": "openresponses/gpt-5.3-codex",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "auth: 3  \npayments: 2  \napi: 1",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "set -euo pipefail\nif [ -f /var/log/services.jsonl ]; then\n  :\nelse\n  echo \"File not found\" >&2\n  exit 1\nfi\n# use jq if available\nif command -v jq >/dev/null 2>&1; then\n  jq -r 'select(.level==\"ERROR\") | .service' /var/log/services.jsonl \\\n    | sort | uniq -c | sort -k1,1nr -k2,2 \\\n    | awk '{count=$1; $1=\"\"; sub(/^ /,\"\"); print $0 \": \" count}'\nelse\n  # fallback naive parser for expected stable json format\n  awk '\n    {\n      if ($0 ~ /\"level\"[[:space:]]*:[[:space:]]*\"ERROR\"/) {\n        match($0, /\"service\"[[:space:]]*:[[:space:]]*\"([^\"]+)\"/, m)\n        if (m[1] != \"\") cnt[m[1]]++\n      }\n    }\n    END {\n      for (s in cnt) printf \"%s %d\\n\", s, cnt[s]\n    }\n  ' /var/log/services.jsonl | sort -k2,2nr -k1,1 | awk '{print $1 \": \" $2}'\nfi"
+    ],
+    "usage": {
+      "input_tokens": 832,
+      "output_tokens": 405,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5034
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp",
+          "/var",
+          "/var/log"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "set -euo pipefail\nif [ -f /var/log/services.jsonl ]; then\n  :\nelse\n  echo \"File not found\" >&2\n  exit 1\nfi\n# use jq if available\nif command -v jq >/dev/null 2>&1; then\n  jq -r 'select(.level==\"ERROR\") | .service' /var/log/services.jsonl \\\n    | sort | uniq -c | sort -k1,1nr -k2,2 \\\n    | awk '{count=$1; $1=\"\"; sub(/^ /,\"\"); print $0 \": \" count}'\nelse\n  # fallback naive parser for expected stable json format\n  awk '\n    {\n      if ($0 ~ /\"level\"[[:space:]]*:[[:space:]]*\"ERROR\"/) {\n        match($0, /\"service\"[[:space:]]*:[[:space:]]*\"([^\"]+)\"/, m)\n        if (m[1] != \"\") cnt[m[1]]++\n      }\n    }\n    END {\n      for (s in cnt) printf \"%s %d\\n\", s, cnt[s]\n    }\n  ' /var/log/services.jsonl | sort -k2,2nr -k1,1 | awk '{print $1 \": \" $2}'\nfi",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "auth: 3\npayments: 2\napi: 1\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

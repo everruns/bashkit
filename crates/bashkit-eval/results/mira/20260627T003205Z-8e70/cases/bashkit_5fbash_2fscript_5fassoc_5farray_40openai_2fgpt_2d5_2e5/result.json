@@ -1,0 +1,109 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "script_assoc_array",
+  "target": "openai/gpt-5.5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Alice visited from United States  \nBob visited from United Kingdom  \nCarol visited from United States  \nDave visited from Japan  \nEve visited from Germany  \nFrank visited from United States  \nGrace visited from United Kingdom  \n\nUnited States: 3 visitors  \nUnited Kingdom: 2 visitors  \nGermany: 1 visitors  \nJapan: 1 visitors",
+    "iterations": 9,
+    "tool_calls_count": 8,
+    "tool_calls": [
+      "set -euo pipefail\nif [[ -f /data/visitors.csv ]]; then\n  declare -A country=( [US]='United States' [GB]='United Kingdom' [DE]='Germany' [JP]='Japan' [FR]='France' )\n  declare -A counts=()\n  tail -n +2 /data/visitors.csv | while IFS=, read -r name code; do\n    full=${country[$code]:-Unknown}\n    printf '%s visited from %s\\n' \"$name\" \"$full\"\n    # counts in subshell issue due pipe, so do different below? \n  done\nelse\n  echo missing\nfi",
+      "printf '--- file ---\\n'; cat /data/visitors.csv | sed -n '1,20p' | cat -vet",
+      "declare -A country=( [US]='United States' [GB]='United Kingdom' [DE]='Germany' [JP]='Japan' [FR]='France' ); declare -p country; printf '<%s>\\n' \"${country[US]}\"",
+      "declare -A country=( [US]=\"United States\" [GB]=\"United Kingdom\" [DE]=\"Germany\" [JP]=\"Japan\" [FR]=\"France\" )\ndeclare -p country\nprintf '<%s>\\n' \"${country[US]}\"",
+      "set -euo pipefail\n\n# Build country-code lookup with a Bash associative array.\ndeclare -A country=(\n  [US]=\"United States\"\n  [GB]=\"United Kingdom\"\n  [DE]=\"Germany\"\n  [JP]=\"Japan\"\n  [FR]=\"France\"\n)\n\ndeclare -A counts=()\n\n# Read CSV, skip header, print visits, and count by full country name.\n{\n  IFS= read -r header\n  while IFS=, read -r name country_code; do\n    [[ -z ${name}${country_code} ]] && continue\n    full_country=${country[$country_code]:-Unknown}\n    printf '%s visited from %s\\n' \"$name\" \"$full_country\"\n    (( counts[\"$full_country\"]++ )) || true\n  done\n} < /data/visitors.csv\n\n# Print counts sorted by count descending.\nfor full_country in \"${!counts[@]}\"; do\n  printf '%s\\t%s\\n' \"${counts[$full_country]}\" \"$full_country\"\ndone | sort -rn | while IFS=$'\\t' read -r count full_country; do\n  printf '%s: %s visitors\\n' \"$full_country\" \"$count\"\ndone",
+      "declare -A country=(\n  [US]=\"United States\"\n  [GB]=\"United Kingdom\"\n  [DE]=\"Germany\"\n  [JP]=\"Japan\"\n  [FR]=\"France\"\n)\ndeclare -p country",
+      "set -euo pipefail\n\ndeclare -A country=([US]=United\\ States [GB]=United\\ Kingdom [DE]=Germany [JP]=Japan [FR]=France)\ndeclare -A counts=()\n\n{\n  IFS= read -r header\n  while IFS=, read -r name country_code; do\n    [[ -z ${name}${country_code} ]] && continue\n    full_country=${country[$country_code]:-Unknown}\n    printf '%s visited from %s\\n' \"$name\" \"$full_country\"\n    counts[\"$full_country\"]=$(( ${counts[\"$full_country\"]:-0} + 1 ))\n  done\n} < /data/visitors.csv\n\nfor full_country in \"${!counts[@]}\"; do\n  printf '%s\\t%s\\n' \"${counts[$full_country]}\" \"$full_country\"\ndone | sort -rn | while IFS=$'\\t' read -r count full_country; do\n  printf '%s: %s visitors\\n' \"$full_country\" \"$count\"\ndone",
+      "cat > /tmp/vis.sh <<'EOF'\n#!/usr/bin/env bash\nset -euo pipefail\n\ndeclare -A country\ncountry[US]='United States'\ncountry[GB]='United Kingdom'\ncountry[DE]='Germany'\ncountry[JP]='Japan'\ncountry[FR]='France'\n\ndeclare -A counts\n\n{\n  IFS= read -r header\n  while IFS=, read -r name country_code; do\n    [[ -z $name && -z $country_code ]] && continue\n    full_country=${country[$country_code]:-Unknown}\n    printf '%s visited from %s\\n' \"$name\" \"$full_country\"\n    counts[$full_country]=$(( ${counts[$full_country]:-0} + 1 ))\n  done\n} < /data/visitors.csv\n\nfor full_country in \"${!counts[@]}\"; do\n  printf '%s\\t%s\\n' \"${counts[$full_country]}\" \"$full_country\"\ndone | sort -k1,1nr -k2,2 | while IFS=$'\\t' read -r count full_country; do\n  printf '%s: %s visitors\\n' \"$full_country\" \"$count\"\ndone\nEOF\nbash /tmp/vis.sh"
+    ],
+    "usage": {
+      "input_tokens": 9896,
+      "output_tokens": 2416,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 35379
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 8.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 8.0,
+      "turns": 9.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "set -euo pipefail\nif [[ -f /data/visitors.csv ]]; then\n  declare -A country=( [US]='United States' [GB]='United Kingdom' [DE]='Germany' [JP]='Japan' [FR]='France' )\n  declare -A counts=()\n  tail -n +2 /data/visitors.csv | while IFS=, read -r name code; do\n    full=${country[$code]:-Unknown}\n    printf '%s visited from %s\\n' \"$name\" \"$full\"\n    # counts in subshell issue due pipe, so do different below? \n  done\nelse\n  echo missing\nfi",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Alice visited from 'United\nBob visited from 'United\nCarol visited from 'United\nDave visited from 'Japan'\nEve visited from 'Germany'\nFrank visited from 'United\nGrace visited from 'United\n"
+          },
+          {
+            "commands": "printf '--- file ---\\n'; cat /data/visitors.csv | sed -n '1,20p' | cat -vet",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "--- file ---\nname,country_code$\nAlice,US$\nBob,GB$\nCarol,US$\nDave,JP$\nEve,DE$\nFrank,US$\nGrace,GB$\n"
+          },
+          {
+            "commands": "declare -A country=( [US]='United States' [GB]='United Kingdom' [DE]='Germany' [JP]='Japan' [FR]='France' ); declare -p country; printf '<%s>\\n' \"${country[US]}\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "declare -A country=([DE]=\"'Germany'\" [FR]=\"'France'\" [GB]=\"'United\" [JP]=\"'Japan'\" [US]=\"'United\")\n<'United>\n"
+          },
+          {
+            "commands": "declare -A country=( [US]=\"United States\" [GB]=\"United Kingdom\" [DE]=\"Germany\" [JP]=\"Japan\" [FR]=\"France\" )\ndeclare -p country\nprintf '<%s>\\n' \"${country[US]}\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "declare -A country=([DE]=\"Germany\" [FR]=\"France\" [GB]=\"United Kingdom\" [JP]=\"Japan\" [US]=\"United States\")\n<United States>\n"
+          },
+          {
+            "commands": "set -euo pipefail\n\n# Build country-code lookup with a Bash associative array.\ndeclare -A country=(\n  [US]=\"United States\"\n  [GB]=\"United Kingdom\"\n  [DE]=\"Germany\"\n  [JP]=\"Japan\"\n  [FR]=\"France\"\n)\n\ndeclare -A counts=()\n\n# Read CSV, skip header, print visits, and count by full country name.\n{\n  IFS= read -r header\n  while IFS=, read -r name country_code; do\n    [[ -z ${name}${country_code} ]] && continue\n    full_country=${country[$country_code]:-Unknown}\n    printf '%s visited from %s\\n' \"$name\" \"$full_country\"\n    (( counts[\"$full_country\"]++ )) || true\n  done\n} < /data/visitors.csv\n\n# Print counts sorted by count descending.\nfor full_country in \"${!counts[@]}\"; do\n  printf '%s\\t%s\\n' \"${counts[$full_country]}\" \"$full_country\"\ndone | sort -rn | while IFS=$'\\t' read -r count full_country; do\n  printf '%s: %s visitors\\n' \"$full_country\" \"$count\"\ndone",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Alice visited from United\nBob visited from United\nCarol visited from United\nDave visited from Japan\nEve visited from Germany\nFrank visited from United\nGrace visited from United\n"
+          },
+          {
+            "commands": "declare -A country=(\n  [US]=\"United States\"\n  [GB]=\"United Kingdom\"\n  [DE]=\"Germany\"\n  [JP]=\"Japan\"\n  [FR]=\"France\"\n)\ndeclare -p country",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "declare -A country=([DE]=\"Germany\" [FR]=\"France\" [GB]=\"United\" [JP]=\"Japan\" [US]=\"United\")\n"
+          },
+          {
+            "commands": "set -euo pipefail\n\ndeclare -A country=([US]=United\\ States [GB]=United\\ Kingdom [DE]=Germany [JP]=Japan [FR]=France)\ndeclare -A counts=()\n\n{\n  IFS= read -r header\n  while IFS=, read -r name country_code; do\n    [[ -z ${name}${country_code} ]] && continue\n    full_country=${country[$country_code]:-Unknown}\n    printf '%s visited from %s\\n' \"$name\" \"$full_country\"\n    counts[\"$full_country\"]=$(( ${counts[\"$full_country\"]:-0} + 1 ))\n  done\n} < /data/visitors.csv\n\nfor full_country in \"${!counts[@]}\"; do\n  printf '%s\\t%s\\n' \"${counts[$full_country]}\" \"$full_country\"\ndone | sort -rn | while IFS=$'\\t' read -r count full_country; do\n  printf '%s: %s visitors\\n' \"$full_country\" \"$count\"\ndone",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Alice visited from United\\\nBob visited from United\\\nCarol visited from United\\\nDave visited from Japan\nEve visited from Germany\nFrank visited from United\\\nGrace visited from United\\\nUnited\\: 5 visitors\nJapan: 1 visitors\nGermany: 1 visitors\n"
+          },
+          {
+            "commands": "cat > /tmp/vis.sh <<'EOF'\n#!/usr/bin/env bash\nset -euo pipefail\n\ndeclare -A country\ncountry[US]='United States'\ncountry[GB]='United Kingdom'\ncountry[DE]='Germany'\ncountry[JP]='Japan'\ncountry[FR]='France'\n\ndeclare -A counts\n\n{\n  IFS= read -r header\n  while IFS=, read -r name country_code; do\n    [[ -z $name && -z $country_code ]] && continue\n    full_country=${country[$country_code]:-Unknown}\n    printf '%s visited from %s\\n' \"$name\" \"$full_country\"\n    counts[$full_country]=$(( ${counts[$full_country]:-0} + 1 ))\n  done\n} < /data/visitors.csv\n\nfor full_country in \"${!counts[@]}\"; do\n  printf '%s\\t%s\\n' \"${counts[$full_country]}\" \"$full_country\"\ndone | sort -k1,1nr -k2,2 | while IFS=$'\\t' read -r count full_country; do\n  printf '%s: %s visitors\\n' \"$full_country\" \"$count\"\ndone\nEOF\nbash /tmp/vis.sh",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Alice visited from United States\nBob visited from United Kingdom\nCarol visited from United States\nDave visited from Japan\nEve visited from Germany\nFrank visited from United States\nGrace visited from United Kingdom\nUnited States: 3 visitors\nUnited Kingdom: 2 visitors\nGermany: 1 visitors\nJapan: 1 visitors\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

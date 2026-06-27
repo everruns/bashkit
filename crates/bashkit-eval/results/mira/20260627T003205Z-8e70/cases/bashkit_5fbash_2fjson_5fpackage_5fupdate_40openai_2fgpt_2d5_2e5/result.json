@@ -1,0 +1,74 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_package_update",
+  "target": "openai/gpt-5.5",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Updated `/app/package.json`:\n\n```json\n{\n  \"dependencies\": {\n    \"cors\": \"^2.8.5\",\n    \"express\": \"^4.18.0\",\n    \"lodash\": \"^4.17.21\"\n  },\n  \"devDependencies\": {\n    \"jest\": \"^29.0.0\",\n    \"typescript\": \"^5.0.0\"\n  },\n  \"main\": \"dist/index.js\",\n  \"name\": \"my-service\",\n  \"scripts\": {\n    \"build\": \"tsc\",\n    \"test\": \"jest\"\n  },\n  \"version\": \"2.0.0\"\n}\n```",
+    "iterations": 4,
+    "tool_calls_count": 3,
+    "tool_calls": [
+      "cd /home/eval && if [ -f /app/package.json ]; then cat /app/package.json; else echo 'missing'; fi",
+      "pwd; ls -la /; ls -la /app 2>/dev/null || true; cat /app/package.json 2>/dev/null || true",
+      "if command -v node >/dev/null 2>&1; then node -e 'const fs=require(\"fs\"); const p=\"/app/package.json\"; const pkg=JSON.parse(fs.readFileSync(p,\"utf8\")); pkg.version=\"2.0.0\"; pkg.main=\"dist/index.js\"; pkg.dependencies=pkg.dependencies||{}; pkg.dependencies.lodash=\"^4.17.21\"; fs.writeFileSync(p, JSON.stringify(pkg,null,2)+\"\\n\"); console.log(fs.readFileSync(p,\"utf8\"));'; elif command -v jq >/dev/null 2>&1; then tmp=$(mktemp); jq '.version=\"2.0.0\" | .main=\"dist/index.js\" | .dependencies.lodash=\"^4.17.21\"' /app/package.json > \"$tmp\" && mv \"$tmp\" /app/package.json && cat /app/package.json; else sed -i 's/\"version\":\"1\\.2\\.3\"/\"version\":\"2.0.0\"/; s/\"main\":\"src\\/index\\.js\"/\"main\":\"dist\\/index.js\"/; s/\"dependencies\":{\\([^}]*\\)}/\"dependencies\":{\\1,\"lodash\":\"^4.17.21\"}/' /app/package.json; cat /app/package.json; fi"
+    ],
+    "usage": {
+      "input_tokens": 2518,
+      "output_tokens": 691,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 10205
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 3.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 2.0,
+      "turns": 4.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/app",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "cd /home/eval && if [ -f /app/package.json ]; then cat /app/package.json; else echo 'missing'; fi",
+            "exit_code": 1,
+            "stderr": "cd: /home/eval: No such file or directory\n",
+            "stdout": ""
+          },
+          {
+            "commands": "pwd; ls -la /; ls -la /app 2>/dev/null || true; cat /app/package.json 2>/dev/null || true",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/home/user\ndrwxr-xr-x        0 2026-07-12 00:32 app\ndrwxr-xr-x        0 2026-07-12 00:32 dev\ndrwxr-xr-x        0 2026-07-12 00:32 home\ndrwxr-xr-x        0 2026-07-12 00:32 tmp\n-rw-r--r--      213 2026-07-12 00:32 package.json\n{\"name\":\"my-service\",\"version\":\"1.2.3\",\"main\":\"src/index.js\",\"scripts\":{\"build\":\"tsc\",\"test\":\"jest\"},\"dependencies\":{\"express\":\"^4.18.0\",\"cors\":\"^2.8.5\"},\"devDependencies\":{\"typescript\":\"^5.0.0\",\"jest\":\"^29.0.0\"}}"
+          },
+          {
+            "commands": "if command -v node >/dev/null 2>&1; then node -e 'const fs=require(\"fs\"); const p=\"/app/package.json\"; const pkg=JSON.parse(fs.readFileSync(p,\"utf8\")); pkg.version=\"2.0.0\"; pkg.main=\"dist/index.js\"; pkg.dependencies=pkg.dependencies||{}; pkg.dependencies.lodash=\"^4.17.21\"; fs.writeFileSync(p, JSON.stringify(pkg,null,2)+\"\\n\"); console.log(fs.readFileSync(p,\"utf8\"));'; elif command -v jq >/dev/null 2>&1; then tmp=$(mktemp); jq '.version=\"2.0.0\" | .main=\"dist/index.js\" | .dependencies.lodash=\"^4.17.21\"' /app/package.json > \"$tmp\" && mv \"$tmp\" /app/package.json && cat /app/package.json; else sed -i 's/\"version\":\"1\\.2\\.3\"/\"version\":\"2.0.0\"/; s/\"main\":\"src\\/index\\.js\"/\"main\":\"dist\\/index.js\"/; s/\"dependencies\":{\\([^}]*\\)}/\"dependencies\":{\\1,\"lodash\":\"^4.17.21\"}/' /app/package.json; cat /app/package.json; fi",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "{\n  \"dependencies\": {\n    \"cors\": \"^2.8.5\",\n    \"express\": \"^4.18.0\",\n    \"lodash\": \"^4.17.21\"\n  },\n  \"devDependencies\": {\n    \"jest\": \"^29.0.0\",\n    \"typescript\": \"^5.0.0\"\n  },\n  \"main\": \"dist/index.js\",\n  \"name\": \"my-service\",\n  \"scripts\": {\n    \"build\": \"tsc\",\n    \"test\": \"jest\"\n  },\n  \"version\": \"2.0.0\"\n}\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

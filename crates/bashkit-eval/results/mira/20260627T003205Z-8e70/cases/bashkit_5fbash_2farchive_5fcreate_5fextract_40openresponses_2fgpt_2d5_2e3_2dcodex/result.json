@@ -1,0 +1,64 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "archive_create_extract",
+  "target": "openresponses/gpt-5.3-codex",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "2/2 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Done.\n\nI created the archive and extracted it:\n\n- Archive created: **`/tmp/project.tar.gz`**\n- Backup directory created: **`/backup`**\n- Archive extracted into: **`/backup`** (resulting in **`/backup/project`**)\n\nVerification shows files exist in `/backup/project`, including:\n\n- `/backup/project/README.md`\n- `/backup/project/src/main.sh`\n\nAnd the archive file is present:\n\n- `/tmp/project.tar.gz` (229 bytes)",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "set -euo pipefail\n# Create compressed archive of /project\ntar -czf /tmp/project.tar.gz -C / project\n\n# Create backup directory and extract archive there\nmkdir -p /backup\ntar -xzf /tmp/project.tar.gz -C /backup\n\n# Verify extracted files\nif [ -d /backup/project ]; then\n  echo \"Extraction successful: /backup/project exists\"\n  echo \"Contents (up to 50 entries):\"\n  find /backup/project -maxdepth 3 | head -n 50\nelse\n  echo \"Extraction failed: /backup/project does not exist\" >&2\n  exit 1\nfi\n\n# Confirm archive exists\nls -l /tmp/project.tar.gz"
+    ],
+    "usage": {
+      "input_tokens": 695,
+      "output_tokens": 452,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5930
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/backup",
+          "/backup/project",
+          "/backup/project/src",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/project",
+          "/project/src",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "set -euo pipefail\n# Create compressed archive of /project\ntar -czf /tmp/project.tar.gz -C / project\n\n# Create backup directory and extract archive there\nmkdir -p /backup\ntar -xzf /tmp/project.tar.gz -C /backup\n\n# Verify extracted files\nif [ -d /backup/project ]; then\n  echo \"Extraction successful: /backup/project exists\"\n  echo \"Contents (up to 50 entries):\"\n  find /backup/project -maxdepth 3 | head -n 50\nelse\n  echo \"Extraction failed: /backup/project does not exist\" >&2\n  exit 1\nfi\n\n# Confirm archive exists\nls -l /tmp/project.tar.gz",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Extraction successful: /backup/project exists\nContents (up to 50 entries):\n/backup/project\n/backup/project/README.md\n/backup/project/src\n/backup/project/src/main.sh\n-rw-r--r--      229 2026-07-12 00:32 /tmp/project.tar.gz\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

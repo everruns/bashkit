@@ -1,0 +1,67 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "text_comm_setops",
+  "target": "openresponses/gpt-5.3-codex",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "Only Team A:\nalice\ndave\neve\nCount: 3\n\nOnly Team B:\nfrank\ngrace\nCount: 2\n\nBoth teams:\nbob\ncarol\nCount: 2",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -l /data && echo '---' && head -n 5 /data/team_a.txt && echo '---' && head -n 5 /data/team_b.txt",
+      "echo 'Only Team A:'\ncomm -23 /data/team_a.txt /data/team_b.txt\ncount_a=$(comm -23 /data/team_a.txt /data/team_b.txt | wc -l)\necho \"Count: $count_a\"\necho\necho 'Only Team B:'\ncomm -13 /data/team_a.txt /data/team_b.txt\ncount_b=$(comm -13 /data/team_a.txt /data/team_b.txt | wc -l)\necho \"Count: $count_b\"\necho\necho 'Both teams:'\ncomm -12 /data/team_a.txt /data/team_b.txt\ncount_both=$(comm -12 /data/team_a.txt /data/team_b.txt | wc -l)\necho \"Count: $count_both\""
+    ],
+    "usage": {
+      "input_tokens": 1329,
+      "output_tokens": 366,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 5001
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "ls -l /data && echo '---' && head -n 5 /data/team_a.txt && echo '---' && head -n 5 /data/team_b.txt",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--       25 2026-07-12 00:33 team_a.txt\n-rw-r--r--       22 2026-07-12 00:33 team_b.txt\n---\nalice\nbob\ncarol\ndave\neve\n---\nbob\ncarol\nfrank\ngrace\n"
+          },
+          {
+            "commands": "echo 'Only Team A:'\ncomm -23 /data/team_a.txt /data/team_b.txt\ncount_a=$(comm -23 /data/team_a.txt /data/team_b.txt | wc -l)\necho \"Count: $count_a\"\necho\necho 'Only Team B:'\ncomm -13 /data/team_a.txt /data/team_b.txt\ncount_b=$(comm -13 /data/team_a.txt /data/team_b.txt | wc -l)\necho \"Count: $count_b\"\necho\necho 'Both teams:'\ncomm -12 /data/team_a.txt /data/team_b.txt\ncount_both=$(comm -12 /data/team_a.txt /data/team_b.txt | wc -l)\necho \"Count: $count_both\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "Only Team A:\nalice\ndave\neve\nCount: 3\n\nOnly Team B:\nfrank\ngrace\nCount: 2\n\nBoth teams:\nbob\ncarol\nCount: 2\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

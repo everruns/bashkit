@@ -1,0 +1,67 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_order_totals",
+  "target": "openresponses/gpt-5.3-codex",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "7/7 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "globex: 500\nacme: 325\ninitech: 75",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "ls -l /data && head -c 500 /data/orders.json",
+      "jq -r 'group_by(.customer)|map({customer:.[0].customer,total:(map(.amount)|add)})|sort_by(-.total)|.[]|\"\\(.customer): \\(.total)\"' /data/orders.json"
+    ],
+    "usage": {
+      "input_tokens": 1140,
+      "output_tokens": 236,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 4339
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 2.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "ls -l /data && head -c 500 /data/orders.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "-rw-r--r--      372 2026-07-12 00:32 orders.json\n[{\"customer\":\"acme\",\"product\":\"widgets\",\"amount\":150},{\"customer\":\"globex\",\"product\":\"gadgets\",\"amount\":200},{\"customer\":\"acme\",\"product\":\"bolts\",\"amount\":75},{\"customer\":\"initech\",\"product\":\"paper\",\"amount\":50},{\"customer\":\"globex\",\"product\":\"widgets\",\"amount\":300},{\"customer\":\"acme\",\"product\":\"nuts\",\"amount\":100},{\"customer\":\"initech\",\"product\":\"staples\",\"amount\":25}]"
+          },
+          {
+            "commands": "jq -r 'group_by(.customer)|map({customer:.[0].customer,total:(map(.amount)|add)})|sort_by(-.total)|.[]|\"\\(.customer): \\(.total)\"' /data/orders.json",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "globex: 500\nacme: 325\ninitech: 75\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

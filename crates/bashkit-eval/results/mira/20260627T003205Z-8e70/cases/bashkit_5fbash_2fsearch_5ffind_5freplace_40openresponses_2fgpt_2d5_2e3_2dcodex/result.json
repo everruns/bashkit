@@ -1,0 +1,67 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "search_find_replace",
+  "target": "openresponses/gpt-5.3-codex",
+  "passed": true,
+  "aggregate": 1.0,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 1.0,
+      "pass": true,
+      "reason": "6/6 checks passed (weighted rate 100%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "/src/app.js: 1  \n/src/index.js: 2  \n/src/middleware.js: 2  \nFiles modified: 3",
+    "iterations": 3,
+    "tool_calls_count": 2,
+    "tool_calls": [
+      "set -euo pipefail\nshopt -s nullglob\nmodified=0\nwhile IFS= read -r -d '' file; do\n  count=$(grep -oF 'console.log' \"$file\" | wc -l || true)\n  count=${count//[[:space:]]/}\n  if [[ \"$count\" -gt 0 ]]; then\n    sed -i 's/console\\.log/logger.info/g' \"$file\"\n    printf '%s: %s\\n' \"$file\" \"$count\"\n    modified=$((modified + 1))\n  fi\ndone < <(find /src -type f -name '*.js' -print0)\nprintf 'Files modified: %s\\n' \"$modified\"",
+      "set -euo pipefail\nmodified=0\nwhile IFS= read -r file; do\n  count=$(grep -oF 'console.log' \"$file\" | wc -l || true)\n  count=$(echo \"$count\" | tr -d '[:space:]')\n  if [[ \"$count\" -gt 0 ]]; then\n    sed -i 's/console\\.log/logger.info/g' \"$file\"\n    printf '%s: %s\\n' \"$file\" \"$count\"\n    modified=$((modified + 1))\n  fi\ndone < <(find /src -type f -name '*.js')\nprintf 'Files modified: %s\\n' \"$modified\""
+    ],
+    "usage": {
+      "input_tokens": 1420,
+      "output_tokens": 1499,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 18106
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 2.0,
+      "tool_calls_err": 1.0,
+      "tool_calls_ok": 1.0,
+      "turns": 3.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/src",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "set -euo pipefail\nshopt -s nullglob\nmodified=0\nwhile IFS= read -r -d '' file; do\n  count=$(grep -oF 'console.log' \"$file\" | wc -l || true)\n  count=${count//[[:space:]]/}\n  if [[ \"$count\" -gt 0 ]]; then\n    sed -i 's/console\\.log/logger.info/g' \"$file\"\n    printf '%s: %s\\n' \"$file\" \"$count\"\n    modified=$((modified + 1))\n  fi\ndone < <(find /src -type f -name '*.js' -print0)\nprintf 'Files modified: %s\\n' \"$modified\"",
+            "exit_code": 1,
+            "stderr": "sed: /src/app.js\u0000/src/index.js\u0000/src/middleware.js\u0000/src/utils.js\u0000: io error: unsafe character U+0000 in path component 'app.js\u0000'\n",
+            "stdout": ""
+          },
+          {
+            "commands": "set -euo pipefail\nmodified=0\nwhile IFS= read -r file; do\n  count=$(grep -oF 'console.log' \"$file\" | wc -l || true)\n  count=$(echo \"$count\" | tr -d '[:space:]')\n  if [[ \"$count\" -gt 0 ]]; then\n    sed -i 's/console\\.log/logger.info/g' \"$file\"\n    printf '%s: %s\\n' \"$file\" \"$count\"\n    modified=$((modified + 1))\n  fi\ndone < <(find /src -type f -name '*.js')\nprintf 'Files modified: %s\\n' \"$modified\"",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "/src/app.js: 1\n/src/index.js: 2\n/src/middleware.js: 2\nFiles modified: 3\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}

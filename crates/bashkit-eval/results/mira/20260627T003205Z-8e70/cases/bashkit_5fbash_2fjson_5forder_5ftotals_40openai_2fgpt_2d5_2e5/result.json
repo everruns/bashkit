@@ -1,0 +1,60 @@
+{
+  "eval": "bashkit_bash",
+  "sample": "json_order_totals",
+  "target": "openai/gpt-5.5",
+  "passed": false,
+  "aggregate": 0.7142857142857143,
+  "scores": [
+    {
+      "scorer": "bashkit_expectations",
+      "value": 0.7142857142857143,
+      "pass": false,
+      "reason": "5/7 checks passed (weighted rate 71%)"
+    }
+  ],
+  "transcript": {
+    "final_response": "globex: 500\nacme: 325\ninitech: 75",
+    "iterations": 2,
+    "tool_calls_count": 1,
+    "tool_calls": [
+      "if [ -f /data/orders.json ]; then sed -n '1,120p' /data/orders.json; else echo 'no file'; fi"
+    ],
+    "usage": {
+      "input_tokens": 790,
+      "output_tokens": 147,
+      "cost_usd": 0.0
+    },
+    "timing": {
+      "duration_ms": 3670
+    },
+    "metrics": {
+      "natural_stop": 1.0,
+      "tool_calls": 1.0,
+      "tool_calls_err": 0.0,
+      "tool_calls_ok": 1.0,
+      "turns": 2.0
+    },
+    "metadata": {
+      "bashkit": {
+        "dirs": [
+          "/data",
+          "/dev",
+          "/dev/fd",
+          "/home",
+          "/home/user",
+          "/tmp"
+        ],
+        "last_exit_code": 0,
+        "tool_outputs": [
+          {
+            "commands": "if [ -f /data/orders.json ]; then sed -n '1,120p' /data/orders.json; else echo 'no file'; fi",
+            "exit_code": 0,
+            "stderr": "",
+            "stdout": "[{\"customer\":\"acme\",\"product\":\"widgets\",\"amount\":150},{\"customer\":\"globex\",\"product\":\"gadgets\",\"amount\":200},{\"customer\":\"acme\",\"product\":\"bolts\",\"amount\":75},{\"customer\":\"initech\",\"product\":\"paper\",\"amount\":50},{\"customer\":\"globex\",\"product\":\"widgets\",\"amount\":300},{\"customer\":\"acme\",\"product\":\"nuts\",\"amount\":100},{\"customer\":\"initech\",\"product\":\"staples\",\"amount\":25}]\n"
+          }
+        ]
+      }
+    }
+  },
+  "skipped": false
+}
