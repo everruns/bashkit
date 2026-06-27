@@ -211,6 +211,11 @@ Datasets: `crates/bashkit-eval/data/scripting-tool/` — `large-output.jsonl`,
 - No cost guardrails (mira budget scorers can be added if desired).
 - No comparison against real bash.
 - No streaming.
-- No retries on LLM content errors (the providers retry only on 429/5xx with
-  exponential backoff); provider/agent failures surface as
-  `Transcript::infra_error` → the case scores N/A, not a model failure.
+- No retries on LLM content errors. The providers retry only *transient* errors
+  (rate-limit 429s, 5xx, Anthropic 529) with exponential backoff, and **fast-fail
+  on permanent errors** — `insufficient_quota` / billing limits / auth (401/403) —
+  so an exhausted account errors immediately instead of hanging in a retry storm.
+  All provider HTTP requests use a connect (15s) + total (300s) timeout so a
+  single call can never stall a run. Provider/agent failures surface as
+  `Transcript::infra_error` → the case scores N/A, not a model failure. mira adds
+  its own bounded retry layer (`--max-retries`, default 4).

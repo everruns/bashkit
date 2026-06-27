@@ -3,3 +3,12 @@
 # with the repo and can be resumed / re-reported. See specs/eval.md.
 [results]
 dir = "crates/bashkit-eval/results/mira"
+
+# Hang / cost protection. mira has no per-case wall-clock timeout flag, so the
+# primary guard is the providers' own HTTP timeouts (connect 15s, total 300s)
+# plus fast-fail on permanent errors (insufficient_quota / billing / auth) — see
+# crates/bashkit-eval/src/provider/mod.rs. mira adds a bounded retry layer on top
+# of that, tunable from the CLI:
+#   mira run ... --max-retries 4              # default; bounds rate-limit retries
+#   mira run ... --provider-concurrency openai=4,anthropic=2
+#   mira run ... -j 8                         # global concurrency

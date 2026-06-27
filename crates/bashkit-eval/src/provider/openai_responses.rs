@@ -8,8 +8,8 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 
 use super::{
-    ContentBlock, Message, Provider, ProviderResponse, Role, ToolDefinition,
-    ensure_rustls_crypto_provider,
+    ContentBlock, Message, Provider, ProviderResponse, Role, ToolDefinition, build_http_client,
+    ensure_rustls_crypto_provider, is_retryable_error,
 };
 
 pub struct OpenAiResponsesProvider {
@@ -23,7 +23,7 @@ impl OpenAiResponsesProvider {
         ensure_rustls_crypto_provider()?;
         let api_key = std::env::var("OPENAI_API_KEY").context("OPENAI_API_KEY env var not set")?;
         Ok(Self {
-            client: reqwest::Client::new(),
+            client: build_http_client()?,
             api_key,
             model: model.to_string(),
         })
@@ -248,8 +248,8 @@ impl Provider for OpenAiResponsesProvider {
                 .as_str()
                 .unwrap_or("unknown error");
 
-            // Retry on 429 (rate limit) and 5xx (server errors)
-            let retryable = status.as_u16() == 429 || status.is_server_error();
+            // Retry transient errors only; fast-fail on quota/billing/auth.
+            let retryable = is_retryable_error(status, &resp_body);
             if retryable && let Some(&delay) = delays.get(attempt) {
                 eprintln!(
                     "  [retry] OpenAI Responses {} — waiting {}s (attempt {}/{})",

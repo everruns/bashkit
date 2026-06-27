@@ -45,6 +45,105 @@ mod tests {
         let result = ensure_rustls_crypto_provider();
         assert!(result.is_ok());
     }
+
+    use super::is_retryable_error;
+    use reqwest::StatusCode;
+
+    fn err_body(type_: &str, code: &str) -> serde_json::Value {
+        serde_json::json!({"error": {"type": type_, "code": code, "message": "x"}})
+    }
+
+    #[test]
+    fn quota_429_is_not_retryable() {
+        // The insufficient_quota trap: a permanent 429 must fast-fail, not loop.
+        let by_code = err_body("", "insufficient_quota");
+        let by_type = err_body("insufficient_quota", "");
+        assert!(!is_retryable_error(StatusCode::TOO_MANY_REQUESTS, &by_code));
+        assert!(!is_retryable_error(StatusCode::TOO_MANY_REQUESTS, &by_type));
+        assert!(!is_retryable_error(
+            StatusCode::TOO_MANY_REQUESTS,
+            &err_body("", "billing_hard_limit_reached")
+        ));
+    }
+
+    #[test]
+    fn rate_limit_429_is_retryable() {
+        let rate = err_body("rate_limit_error", "rate_limit_exceeded");
+        assert!(is_retryable_error(StatusCode::TOO_MANY_REQUESTS, &rate));
+        // A bare 429 with no error body is treated as a transient rate limit.
+        assert!(is_retryable_error(
+            StatusCode::TOO_MANY_REQUESTS,
+            &serde_json::json!({})
+        ));
+    }
+
+    #[test]
+    fn auth_errors_are_not_retryable() {
+        let b = serde_json::json!({});
+        assert!(!is_retryable_error(StatusCode::UNAUTHORIZED, &b));
+        assert!(!is_retryable_error(StatusCode::FORBIDDEN, &b));
+    }
+
+    #[test]
+    fn server_errors_are_retryable() {
+        let b = serde_json::json!({});
+        assert!(is_retryable_error(StatusCode::INTERNAL_SERVER_ERROR, &b));
+        assert!(is_retryable_error(StatusCode::SERVICE_UNAVAILABLE, &b));
+        // Anthropic's 529 "overloaded".
+        assert!(is_retryable_error(StatusCode::from_u16(529).unwrap(), &b));
+    }
+
+    #[test]
+    fn client_errors_are_not_retryable() {
+        // e.g. 400/404 (bad model id) — surface immediately as an infra error.
+        let b = serde_json::json!({});
+        assert!(!is_retryable_error(StatusCode::BAD_REQUEST, &b));
+        assert!(!is_retryable_error(StatusCode::NOT_FOUND, &b));
+    }
+}
+
+/// Connect timeout for provider HTTP requests. A blocked/blackholed socket
+/// fails here instead of hanging forever (the original `Client::new()` had no
+/// timeouts).
+const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Total per-request timeout. Generous enough for slow high-effort reasoning
+/// (codex via the Responses API) while still bounding a genuine hang.
+const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// Build the shared HTTP client used by every provider, with connect + total
+/// timeouts so a single request can never stall a run indefinitely.
+pub fn build_http_client() -> anyhow::Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(REQUEST_TIMEOUT)
+        .build()
+        .map_err(|e| anyhow::anyhow!("failed to build HTTP client: {e}"))
+}
+
+/// Decide whether a failed HTTP response is worth retrying.
+///
+/// Protects against the `insufficient_quota` trap: OpenAI returns HTTP 429 for
+/// *both* transient rate limits (retry) and a permanently exhausted quota /
+/// missing billing (do NOT retry — every attempt 429s, turning the run into a
+/// long backoff hang). We classify a 429 as non-retryable when the body marks
+/// it as a quota/billing error. Auth failures (401/403) are never retryable.
+/// Transient: other 429s, 5xx, and Anthropic's 529 "overloaded".
+pub fn is_retryable_error(status: reqwest::StatusCode, body: &serde_json::Value) -> bool {
+    let code = status.as_u16();
+    if code == 401 || code == 403 {
+        return false;
+    }
+    if code == 429 {
+        let err_type = body["error"]["type"].as_str().unwrap_or("");
+        let err_code = body["error"]["code"].as_str().unwrap_or("");
+        let permanent = ["insufficient_quota", "billing_hard_limit_reached"];
+        if permanent.contains(&err_type) || permanent.contains(&err_code) {
+            return false;
+        }
+        return true;
+    }
+    status.is_server_error() || code == 529
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
