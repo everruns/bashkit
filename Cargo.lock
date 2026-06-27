@@ -404,7 +404,7 @@ dependencies = [
  "async-trait",
  "bashkit",
  "chrono",
- "clap",
+ "mira-eval",
  "regex",
  "reqwest",
  "rustls",
@@ -2131,6 +2131,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "inventory"
+version = "0.3.24"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4f0c30c76f2f4ccee3fe55a2435f691ca00c0e4bd87abe4f4a851b1d4dac39b"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "ipnet"
 version = "2.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2514,6 +2523,33 @@ dependencies = [
  "libc",
  "wasi",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "mira-eval"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9fee2dcd277811402b7ddf08c1c59d49965e864998341e44cda300c91c10b0f5"
+dependencies = [
+ "async-trait",
+ "inventory",
+ "mira-macros",
+ "regex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "mira-macros"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a95d6edf1d47285aada4966c9e87d7a372020ce2e7d1786f9459ad4d01fc05d8"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
