@@ -905,6 +905,50 @@ impl InMemoryFs {
         );
     }
 
+    /// Add a directory (and any missing parents) synchronously, for initial
+    /// setup.
+    ///
+    /// Used by [`BashBuilder`](crate::BashBuilder) to provision a home
+    /// directory for a configured username so writes to `$HOME` / `~` succeed.
+    /// For runtime use the async [`FileSystem::mkdir`] instead. Existing
+    /// entries are left untouched; a path that violates VFS limits is ignored.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::InMemoryFs;
+    ///
+    /// let fs = InMemoryFs::new();
+    /// fs.add_dir("/home/eval", 0o755);
+    /// ```
+    pub fn add_dir(&self, path: impl AsRef<Path>, mode: u32) {
+        let path = Self::normalize_path(path.as_ref());
+
+        if self.limits.validate_path(&path).is_err() {
+            return;
+        }
+
+        let mut entries = self.entries.write().unwrap();
+
+        // Create each path component as a directory if it does not already
+        // exist, mirroring the parent-creation logic in `add_file`.
+        let mut current = PathBuf::from("/");
+        for component in path.components().skip(1) {
+            current.push(component);
+            entries
+                .entry(current.clone())
+                .or_insert_with(|| FsEntry::Directory {
+                    metadata: Metadata {
+                        file_type: FileType::Directory,
+                        size: 0,
+                        mode,
+                        modified: SystemTime::now(),
+                        created: SystemTime::now(),
+                    },
+                });
+        }
+    }
+
     /// Add a lazy file whose content is loaded on first read.
     ///
     /// The `loader` closure is called at most once when the file is first read.

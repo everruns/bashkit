@@ -39,6 +39,10 @@ Do you need a custom filesystem?
 #### InMemoryFs
 - `HashMap<PathBuf, FsEntry>`, thread-safe via `RwLock`; no persistence
 - Initial directories: `/`, `/tmp`, `/home`, `/home/user`, `/dev`
+- When `BashBuilder::username(name)` is set, the default VFS also provisions
+  `/home/<name>` (matching the interpreter's `HOME`/`~` default) so writes to
+  `$HOME` / `~` succeed; custom filesystems are responsible for their own home
+  dirs. See `InMemoryFs::add_dir`.
 - Special handling for `/dev/null`, `/dev/urandom`, `/dev/random`
 - Mount files at build time via `BashBuilder::mount_text()` /
   `mount_readonly_text()`

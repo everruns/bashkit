@@ -2653,11 +2653,22 @@ impl BashBuilder {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn build(self) -> Bash {
+    pub fn build(mut self) -> Bash {
         let base_fs: Arc<dyn FileSystem> = if self.shell_profile.is_logic_only() {
             Arc::new(fs::DisabledFs)
+        } else if let Some(fs) = self.fs.take() {
+            fs
         } else {
-            self.fs.unwrap_or_else(|| Arc::new(InMemoryFs::new()))
+            // Default in-memory VFS. The interpreter sets `HOME` (and `~`) to
+            // `/home/<username>` (see `Interpreter::with_config`), but the VFS
+            // only pre-creates `/home/user`. Provision `/home/<username>` for a
+            // configured username so writes to `$HOME` / `~` succeed instead of
+            // failing with "parent directory not found" (issue #2128).
+            let mem = InMemoryFs::new();
+            if let Some(ref username) = self.username {
+                mem.add_dir(format!("/home/{username}"), 0o755);
+            }
+            Arc::new(mem)
         };
 
         // Layer 1: Apply real filesystem mounts (if any)
@@ -4688,6 +4699,43 @@ fn
         let mut bash = Bash::builder().username("charlie").build();
         let result = bash.exec("echo $USER").await.unwrap();
         assert_eq!(result.stdout, "charlie\n");
+    }
+
+    #[tokio::test]
+    async fn test_username_provisions_home_dir() {
+        // issue #2128: a configured username must get an existing, writable
+        // home directory so writes to $HOME / ~ don't fail.
+        let mut bash = Bash::builder().username("eval").build();
+        let result = bash
+            .exec("echo hi > /home/eval/x.sh && cat /home/eval/x.sh")
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0, "stderr: {}", result.stderr);
+        assert_eq!(result.stdout, "hi\n");
+    }
+
+    #[tokio::test]
+    async fn test_username_home_tilde_write() {
+        // ~ and $HOME expand to /home/<username>; writes there must succeed.
+        let mut bash = Bash::builder().username("agent").build();
+        let result = bash
+            .exec("echo data > ~/script.sh && cat $HOME/script.sh")
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0, "stderr: {}", result.stderr);
+        assert_eq!(result.stdout, "data\n");
+    }
+
+    #[tokio::test]
+    async fn test_default_username_home_still_present() {
+        // The default user's home (/home/user) must remain provisioned.
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("echo ok > /home/user/f && cat /home/user/f")
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0, "stderr: {}", result.stderr);
+        assert_eq!(result.stdout, "ok\n");
     }
 
     #[tokio::test]
