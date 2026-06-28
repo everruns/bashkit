@@ -7,18 +7,4 @@ ignore = [
     # Transitive via russh-keys -> ssh-key -> rsa
     # Only used for RSA key parsing in SSH; no direct exposure
     "RUSTSEC-2023-0071",
-    # pyo3: OOB read in PyList/PyTuple nth/nth_back (RUSTSEC-2026-0176)
-    # Patched in pyo3 >=0.29. Blocked from upgrading: pyo3-async-runtimes
-    # (the asyncio bridge in bashkit-python) has no 0.29 release yet and its
-    # main branch still pins pyo3 0.28. pyo3 here powers the host-side Python
-    # bindings only, not the sandboxed-script path, so sandboxed bash cannot
-    # reach the vulnerable iterators. Remove once pyo3-async-runtimes ships
-    # a 0.29-compatible release and we bump pyo3.
-    "RUSTSEC-2026-0176",
-    # pyo3: missing Sync bound on PyCFunction::new_closure (RUSTSEC-2026-0177)
-    # Patched in pyo3 >=0.29; same pyo3-async-runtimes blocker as above.
-    # Stronger justification: `PyCFunction::new_closure` is not called
-    # anywhere in this workspace, so the unsound API is unreachable.
-    # Remove on the same pyo3 0.29 bump.
-    "RUSTSEC-2026-0177",
 ]
