@@ -96,7 +96,7 @@ for sandbox security reasons. See the compliance spec for details.
 | `curl` | `-s`, `-o`, `-X`, `-d`, `-H`, `-I`, `-f`, `-L`, `-w`, `--compressed`, `-u`, `-A`, `-e`, `-v`, `-m` | HTTP client (requires http_client feature) |
 | `wget` | `-q`, `-O`, `--spider`, `--header`, `-U`, `--post-data`, `-t` | Download files (requires http_client feature) |
 | `timeout` | `DURATION COMMAND` | Run with time limit (stub) |
-| `ls` | `-l`, `-a`, `-h`, `-1`, `-R` | List directory contents |
+| `ls` | `-l`, `-a`, `-h`, `-1`, `-R`, `-t`, `-F`, `-C`, `-d` | List directory contents |
 | `find` | `-name`, `-type`, `-maxdepth`, `-print` | Search for files |
 | `rmdir` | `-p` | Remove empty directories |
 | `xargs` | `-I`, `-n`, `-d` | Build commands from stdin |
