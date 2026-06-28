@@ -33,7 +33,9 @@
   "pnpm": {
     "overrides": {
       "esbuild": ">=0.28.1",
-      "undici": "^7.28.0"
+      "undici": "^7.28.0",
+      "ws": ">=8.21.0",
+      "yaml": ">=2.8.3"
     },
     "onlyBuiltDependencies": [
       "esbuild",
