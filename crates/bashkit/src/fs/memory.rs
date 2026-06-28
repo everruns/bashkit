@@ -905,6 +905,54 @@ impl InMemoryFs {
         );
     }
 
+    /// Add a directory, creating parent directories as needed (synchronous,
+    /// for initial setup).
+    ///
+    /// Like [`add_file`](Self::add_file), this is intended for pre-populating
+    /// the filesystem during construction (e.g. provisioning a user's `$HOME`).
+    /// For runtime operations use the async [`FileSystem::mkdir`] method.
+    /// Existing directories are left untouched (idempotent).
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Absolute path of the directory to create
+    /// * `mode` - Unix permission mode (e.g., `0o755`)
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use bashkit::InMemoryFs;
+    ///
+    /// let fs = InMemoryFs::new();
+    /// fs.add_dir("/home/agent", 0o755);
+    /// ```
+    pub fn add_dir(&self, path: impl AsRef<Path>, mode: u32) {
+        let path = Self::normalize_path(path.as_ref());
+
+        if self.limits.validate_path(&path).is_err() {
+            return;
+        }
+
+        let mut entries = self.entries.write().unwrap();
+
+        // Create the directory and every ancestor that does not already exist.
+        let mut current = PathBuf::from("/");
+        for component in path.components().skip(1) {
+            current.push(component);
+            entries
+                .entry(current.clone())
+                .or_insert_with(|| FsEntry::Directory {
+                    metadata: Metadata {
+                        file_type: FileType::Directory,
+                        size: 0,
+                        mode,
+                        modified: SystemTime::now(),
+                        created: SystemTime::now(),
+                    },
+                });
+        }
+    }
+
     /// Add a lazy file whose content is loaded on first read.
     ///
     /// The `loader` closure is called at most once when the file is first read.
