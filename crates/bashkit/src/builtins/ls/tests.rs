@@ -2706,3 +2706,139 @@ async fn test_find_printf_rejects_oversized_aggregate_output() {
         result.stdout.len()
     );
 }
+
+// ==================== ls -d / --directory tests ====================
+
+/// `ls -d DIR` lists the directory entry itself, not its contents.
+#[tokio::test]
+async fn test_ls_directory_flag() {
+    let (fs, mut cwd, mut variables) = create_test_ctx().await;
+    let env = HashMap::new();
+
+    fs.mkdir(&cwd.join("subdir"), false).await.unwrap();
+    fs.write_file(&cwd.join("subdir/inner.txt"), b"x")
+        .await
+        .unwrap();
+
+    let args = vec!["-d".to_string(), "subdir".to_string()];
+    let ctx = Context {
+        args: &args,
+        env: &env,
+        variables: &mut variables,
+        cwd: &mut cwd,
+        fs: fs.clone(),
+        stdin: None,
+        #[cfg(feature = "http_client")]
+        http_client: None,
+        #[cfg(feature = "git")]
+        git_client: None,
+        #[cfg(feature = "ssh")]
+        ssh_client: None,
+        shell: None,
+    };
+
+    let result = Ls.execute(ctx).await.unwrap();
+    assert_eq!(result.exit_code, 0, "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "subdir\n");
+    // The directory's contents must NOT be listed.
+    assert!(!result.stdout.contains("inner.txt"));
+}
+
+/// `--directory` long form behaves like `-d`.
+#[tokio::test]
+async fn test_ls_directory_long_flag() {
+    let (fs, mut cwd, mut variables) = create_test_ctx().await;
+    let env = HashMap::new();
+
+    fs.mkdir(&cwd.join("d1"), false).await.unwrap();
+
+    let args = vec!["--directory".to_string(), "d1".to_string()];
+    let ctx = Context {
+        args: &args,
+        env: &env,
+        variables: &mut variables,
+        cwd: &mut cwd,
+        fs: fs.clone(),
+        stdin: None,
+        #[cfg(feature = "http_client")]
+        http_client: None,
+        #[cfg(feature = "git")]
+        git_client: None,
+        #[cfg(feature = "ssh")]
+        ssh_client: None,
+        shell: None,
+    };
+
+    let result = Ls.execute(ctx).await.unwrap();
+    assert_eq!(result.exit_code, 0, "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "d1\n");
+}
+
+/// `ls -d` of multiple directory args (the `ls -d */` idiom, after the
+/// shell expands the glob) lists each directory entry, not their contents.
+#[tokio::test]
+async fn test_ls_directory_multiple() {
+    let (fs, mut cwd, mut variables) = create_test_ctx().await;
+    let env = HashMap::new();
+
+    fs.mkdir(&cwd.join("alpha"), false).await.unwrap();
+    fs.mkdir(&cwd.join("beta"), false).await.unwrap();
+    fs.write_file(&cwd.join("alpha/inner.txt"), b"x")
+        .await
+        .unwrap();
+
+    let args = vec!["-d".to_string(), "alpha".to_string(), "beta".to_string()];
+    let ctx = Context {
+        args: &args,
+        env: &env,
+        variables: &mut variables,
+        cwd: &mut cwd,
+        fs: fs.clone(),
+        stdin: None,
+        #[cfg(feature = "http_client")]
+        http_client: None,
+        #[cfg(feature = "git")]
+        git_client: None,
+        #[cfg(feature = "ssh")]
+        ssh_client: None,
+        shell: None,
+    };
+
+    let result = Ls.execute(ctx).await.unwrap();
+    assert_eq!(result.exit_code, 0, "stderr: {}", result.stderr);
+    assert!(result.stdout.contains("alpha"));
+    assert!(result.stdout.contains("beta"));
+    // No header lines and no descent into contents.
+    assert!(!result.stdout.contains("alpha:"));
+    assert!(!result.stdout.contains("inner.txt"));
+}
+
+/// `ls -dF DIR` appends the `/` classify suffix to the directory name.
+#[tokio::test]
+async fn test_ls_directory_classify() {
+    let (fs, mut cwd, mut variables) = create_test_ctx().await;
+    let env = HashMap::new();
+
+    fs.mkdir(&cwd.join("mydir"), false).await.unwrap();
+
+    let args = vec!["-d".to_string(), "-F".to_string(), "mydir".to_string()];
+    let ctx = Context {
+        args: &args,
+        env: &env,
+        variables: &mut variables,
+        cwd: &mut cwd,
+        fs: fs.clone(),
+        stdin: None,
+        #[cfg(feature = "http_client")]
+        http_client: None,
+        #[cfg(feature = "git")]
+        git_client: None,
+        #[cfg(feature = "ssh")]
+        ssh_client: None,
+        shell: None,
+    };
+
+    let result = Ls.execute(ctx).await.unwrap();
+    assert_eq!(result.exit_code, 0, "stderr: {}", result.stderr);
+    assert_eq!(result.stdout, "mydir/\n");
+}
