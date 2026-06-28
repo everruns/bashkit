@@ -681,7 +681,13 @@ impl Default for Bash {
 impl Bash {
     /// Create a new Bash instance with default settings.
     pub fn new() -> Self {
-        let base_fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        // Provision the default user's home directory so `$HOME` / `~` is a
+        // real, writable directory. HOME defaults to `/home/<DEFAULT_USERNAME>`
+        // (see Interpreter), which InMemoryFs::new does not create on its own.
+        // See issue #2128. (BashBuilder::build does the same for custom users.)
+        let base_inmem = InMemoryFs::new();
+        base_inmem.add_dir(format!("/home/{}", builtins::DEFAULT_USERNAME), 0o755);
+        let base_fs: Arc<dyn FileSystem> = Arc::new(base_inmem);
         let mountable = Arc::new(MountableFs::new(base_fs));
         let fs: Arc<dyn FileSystem> = Arc::clone(&mountable) as Arc<dyn FileSystem>;
         let interpreter = Interpreter::new(Arc::clone(&fs));
@@ -2656,8 +2662,24 @@ impl BashBuilder {
     pub fn build(self) -> Bash {
         let base_fs: Arc<dyn FileSystem> = if self.shell_profile.is_logic_only() {
             Arc::new(fs::DisabledFs)
+        } else if let Some(fs) = self.fs {
+            fs
         } else {
-            self.fs.unwrap_or_else(|| Arc::new(InMemoryFs::new()))
+            // No custom filesystem was supplied: provision the default
+            // in-memory VFS with a home directory for the configured user so
+            // that `$HOME` / `~` is a real, writable directory. HOME defaults
+            // to `/home/<username>` (see Interpreter::with_config), and
+            // InMemoryFs::new only ever creates `/home/user` — so a non-default
+            // `username("eval")` would leave HOME=/home/eval pointing at a
+            // nonexistent directory and writes to `~` fail with "parent
+            // directory not found". See issue #2128.
+            let fs = InMemoryFs::new();
+            let username = self
+                .username
+                .as_deref()
+                .unwrap_or(builtins::DEFAULT_USERNAME);
+            fs.add_dir(format!("/home/{username}"), 0o755);
+            Arc::new(fs)
         };
 
         // Layer 1: Apply real filesystem mounts (if any)
@@ -4688,6 +4710,45 @@ fn
         let mut bash = Bash::builder().username("charlie").build();
         let result = bash.exec("echo $USER").await.unwrap();
         assert_eq!(result.stdout, "charlie\n");
+    }
+
+    #[tokio::test]
+    async fn test_custom_username_provisions_home_dir() {
+        // Regression for #2128: a configured username must make $HOME a real,
+        // writable directory. Previously HOME=/home/eval pointed at a
+        // nonexistent directory and writes to ~ failed with
+        // "parent directory not found".
+        let mut bash = Bash::builder().username("eval").build();
+        let result = bash
+            .exec("echo hi > /home/eval/x.sh && cat /home/eval/x.sh")
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0, "stderr: {}", result.stderr);
+        assert_eq!(result.stdout, "hi\n");
+    }
+
+    #[tokio::test]
+    async fn test_custom_username_home_tilde_write() {
+        // `~` / `$HOME` must resolve to the provisioned, writable home dir.
+        let mut bash = Bash::builder().username("agent").build();
+        let result = bash
+            .exec("echo $HOME; echo data > ~/file.txt && cat ~/file.txt")
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0, "stderr: {}", result.stderr);
+        assert_eq!(result.stdout, "/home/agent\ndata\n");
+    }
+
+    #[tokio::test]
+    async fn test_default_username_provisions_home_dir() {
+        // The default user's $HOME must also exist and be writable.
+        let mut bash = Bash::new();
+        let result = bash
+            .exec("echo data > $HOME/f && cat $HOME/f")
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0, "stderr: {}", result.stderr);
+        assert_eq!(result.stdout, "data\n");
     }
 
     #[tokio::test]
