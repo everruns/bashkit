@@ -28,6 +28,7 @@ const LS_SUPPORTED_IDS: &[&str] = &[
     "t",              // -t
     "classify",       // -F / --classify
     "C",              // -C
+    "directory",      // -d / --directory
     // Non-flag positional + always-supported infrastructure.
     "paths",
     "help",
@@ -43,6 +44,7 @@ pub(super) struct LsOptions {
     pub(super) sort_by_time: bool,
     pub(super) classify: bool,
     pub(super) columns: bool,
+    pub(super) directory: bool,
 }
 
 /// The ls builtin - list directory contents.
@@ -58,6 +60,7 @@ pub(super) struct LsOptions {
 ///   -t   Sort by modification time, newest first
 ///   -F   Append indicator (/ for dirs, * for executables, @ for symlinks, | for FIFOs)
 ///   -C   List entries in columns (multi-column output)
+///   -d   List directories themselves, not their contents
 pub struct Ls;
 
 #[async_trait]
@@ -134,6 +137,7 @@ impl Builtin for Ls {
             sort_by_time: matches.get_flag("t"),
             classify,
             columns: matches.get_flag("C"),
+            directory: matches.get_flag("directory"),
         };
 
         // PATHS holds OsString values; convert to owned strings for the
@@ -172,7 +176,10 @@ impl Builtin for Ls {
 
             let metadata = ctx.fs.stat(&path).await?;
 
-            if metadata.file_type.is_file() {
+            // With -d, a directory operand is listed as itself (like a file
+            // argument) rather than being descended into. POSIX: enables the
+            // common `ls -d */` idiom to enumerate subdirectories.
+            if metadata.file_type.is_file() || opts.directory {
                 file_args.push((path_str, metadata));
             } else {
                 dir_args.push((i, path_str, path));

@@ -311,6 +311,103 @@ async fn test_ls_file() {
 }
 
 #[tokio::test]
+async fn test_ls_directory_flag_lists_dir_itself() {
+    // `ls -d DIR` prints the directory operand, not its contents (issue #2127).
+    let (fs, mut cwd, mut variables) = create_test_ctx().await;
+    let env = HashMap::new();
+
+    fs.mkdir(&cwd.join("sub"), false).await.unwrap();
+    fs.write_file(&cwd.join("sub/inside.txt"), b"x")
+        .await
+        .unwrap();
+
+    let args = vec!["-d".to_string(), "sub".to_string()];
+    let ctx = Context {
+        args: &args,
+        env: &env,
+        variables: &mut variables,
+        cwd: &mut cwd,
+        fs: fs.clone(),
+        stdin: None,
+        #[cfg(feature = "http_client")]
+        http_client: None,
+        #[cfg(feature = "git")]
+        git_client: None,
+        #[cfg(feature = "ssh")]
+        ssh_client: None,
+        shell: None,
+    };
+
+    let result = Ls.execute(ctx).await.unwrap();
+    assert_eq!(result.exit_code, 0);
+    assert_eq!(result.stdout, "sub\n");
+    assert!(!result.stdout.contains("inside.txt"));
+}
+
+#[tokio::test]
+async fn test_ls_directory_flag_long_format() {
+    // `ls -ld DIR` shows the directory's own long entry (type 'd').
+    let (fs, mut cwd, mut variables) = create_test_ctx().await;
+    let env = HashMap::new();
+
+    fs.mkdir(&cwd.join("sub"), false).await.unwrap();
+
+    let args = vec!["-ld".to_string(), "sub".to_string()];
+    let ctx = Context {
+        args: &args,
+        env: &env,
+        variables: &mut variables,
+        cwd: &mut cwd,
+        fs: fs.clone(),
+        stdin: None,
+        #[cfg(feature = "http_client")]
+        http_client: None,
+        #[cfg(feature = "git")]
+        git_client: None,
+        #[cfg(feature = "ssh")]
+        ssh_client: None,
+        shell: None,
+    };
+
+    let result = Ls.execute(ctx).await.unwrap();
+    assert_eq!(result.exit_code, 0);
+    assert!(result.stdout.starts_with('d'), "got: {:?}", result.stdout); // debug-ok: test-only assertion message, not builtin stderr
+    assert!(result.stdout.trim_end().ends_with("sub"));
+}
+
+#[tokio::test]
+async fn test_ls_directory_flag_multiple_dirs() {
+    // The `ls -d a/ b/` idiom: each directory operand printed as-is.
+    let (fs, mut cwd, mut variables) = create_test_ctx().await;
+    let env = HashMap::new();
+
+    fs.mkdir(&cwd.join("alpha"), false).await.unwrap();
+    fs.mkdir(&cwd.join("beta"), false).await.unwrap();
+
+    let args = vec!["-d".to_string(), "alpha".to_string(), "beta".to_string()];
+    let ctx = Context {
+        args: &args,
+        env: &env,
+        variables: &mut variables,
+        cwd: &mut cwd,
+        fs: fs.clone(),
+        stdin: None,
+        #[cfg(feature = "http_client")]
+        http_client: None,
+        #[cfg(feature = "git")]
+        git_client: None,
+        #[cfg(feature = "ssh")]
+        ssh_client: None,
+        shell: None,
+    };
+
+    let result = Ls.execute(ctx).await.unwrap();
+    assert_eq!(result.exit_code, 0);
+    assert!(result.stdout.contains("alpha"));
+    assert!(result.stdout.contains("beta"));
+}
+
+#[tokio::test]
 async fn test_ls_recursive() {
     let (fs, mut cwd, mut variables) = create_test_ctx().await;
     let env = HashMap::new();
