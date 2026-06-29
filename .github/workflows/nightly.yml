@@ -23,7 +23,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Install Rust nightly with Miri
-        uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # nightly
+        uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # nightly
         with:
           components: miri
 
@@ -87,7 +87,7 @@ jobs:
         uses: ./.github/actions/free-disk-space
 
       - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # nightly
+        uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # nightly
         with:
           components: rust-src
 
