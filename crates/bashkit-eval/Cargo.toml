@@ -22,7 +22,7 @@ path = "src/main.rs"
 # Mira eval framework (crates.io). Imported as `mira`; the `macros` feature
 # provides the #[eval] discovery attribute. We use the in-process Subject path
 # (our own agent loop + provider stack) so we do NOT need mira-everruns.
-mira-eval = { version = "0.2", features = ["macros"] }
+mira-eval = { version = "0.3", features = ["macros"] }
 
 bashkit = { path = "../bashkit", features = ["scripted_tool", "jq"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "io-std", "io-util", "fs"] }
