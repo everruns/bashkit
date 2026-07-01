@@ -104,7 +104,7 @@ version = "0.2.9"
 criteria = "safe-to-deploy"
 
 [[exemptions.anyhow]]
-version = "1.0.102"
+version = "1.0.103"
 criteria = "safe-to-deploy"
 
 [[exemptions.arc-swap]]
@@ -1072,11 +1072,11 @@ version = "1.2.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.mira-eval]]
-version = "0.2.0"
+version = "0.3.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.mira-macros]]
-version = "0.2.0"
+version = "0.3.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.ml-kem]]
@@ -1088,7 +1088,7 @@ version = "0.2.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.napi]]
-version = "3.9.3"
+version = "3.9.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.napi-build]]
@@ -1096,11 +1096,11 @@ version = "2.3.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.napi-derive]]
-version = "3.5.6"
+version = "3.5.7"
 criteria = "safe-to-deploy"
 
 [[exemptions.napi-derive-backend]]
-version = "5.0.4"
+version = "5.0.5"
 criteria = "safe-to-deploy"
 
 [[exemptions.napi-sys]]
@@ -1596,7 +1596,7 @@ version = "1.1.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.rustls]]
-version = "0.23.40"
+version = "0.23.41"
 criteria = "safe-to-deploy"
 
 [[exemptions.rustls-native-certs]]
@@ -1628,7 +1628,7 @@ version = "0.3.1"
 criteria = "safe-to-run"
 
 [[exemptions.rustyline]]
-version = "18.0.0"
+version = "18.0.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.ryu]]
