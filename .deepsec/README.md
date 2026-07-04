@@ -9,7 +9,9 @@ Currently configured project: `bashkit` (target: `..`).
 
 ## Setup
 
-1. `pnpm install` — installs deepsec.
+1. Use `npx deepsec@2.1.2 ...` for one-off runs, or `pnpm install` if
+   you want a local `pnpm deepsec` binary. The lockfile is intentionally
+   ignored; DeepSec is a maintenance scanner, not shipped runtime code.
 2. Add an AI Gateway / Anthropic / OpenAI token to `.env.local`. If
    you already have `claude` or `codex` CLI logged in on this
    machine, you can skip the token for non-sandbox runs (`process` /
@@ -23,10 +25,10 @@ Currently configured project: `bashkit` (target: `..`).
 ## Daily commands
 
 ```bash
-pnpm deepsec scan
-pnpm deepsec process     --concurrency 5
-pnpm deepsec revalidate  --concurrency 5                  # cuts FP rate
-pnpm deepsec export      --format md-dir --out ./findings
+npx deepsec@2.1.2 scan
+npx deepsec@2.1.2 process     --concurrency 5
+npx deepsec@2.1.2 revalidate  --concurrency 5                  # cuts FP rate
+npx deepsec@2.1.2 export      --format md-dir --out ./findings
 ```
 
 `--project-id` is auto-resolved while there's only one project in
@@ -65,7 +67,7 @@ AGENTS.md                Pointer for coding agents
 
 ## Docs
 
-After `pnpm install`:
+After `pnpm install` or `npx deepsec@2.1.2 ...`:
 
 - Skill: `node_modules/deepsec/SKILL.md`
 - Full docs: `node_modules/deepsec/dist/docs/{getting-started,configuration,models,writing-matchers,plugins,architecture,data-layout,vercel-setup,faq}.md`

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-05-26T03:01:00.000Z",
+  "generatedAt": "2026-06-22T22:43:59.000Z",
   "sources": {
     "bench": "crates/bashkit-bench/results/*.json",
     "criterion": "crates/bashkit/benches/results/*.md",
@@ -7,7 +7,7 @@
   },
   "summary": {
     "benchRuns": 6,
-    "criterionRuns": 5,
+    "criterionRuns": 7,
     "evalRuns": 38,
     "latestBench": {
       "id": "bench-vm-linux-x86_64-1779764460",
@@ -1164,6 +1164,48 @@
       "fastestCase": {
         "name": "`startup/empty`",
         "us": 34.4
+      },
+      "bestImprovement": null
+    },
+    {
+      "id": "criterion-parallel-vm-linux-x86_64-1782162173",
+      "kind": "criterion",
+      "family": "parallel",
+      "label": "Criterion Parallel Execution Benchmark",
+      "date": "2026-06-22",
+      "timestamp": "2026-06-22T21:02:53.000Z",
+      "source": "crates/bashkit/benches/results/criterion-parallel-vm-linux-x86_64-1782162173.md",
+      "reportSource": "crates/bashkit/benches/results/criterion-parallel-vm-linux-x86_64-1782162173.md",
+      "cases": 27,
+      "medianUs": 2801.5,
+      "p95Us": 41360.2,
+      "medianChangePct": null,
+      "meanChangePct": null,
+      "bestChangePct": null,
+      "fastestCase": {
+        "name": "single_bash_new",
+        "us": 31.67
+      },
+      "bestImprovement": null
+    },
+    {
+      "id": "criterion-parallel-vm-linux-x86_64-1782168239",
+      "kind": "criterion",
+      "family": "parallel",
+      "label": "Criterion Parallel Execution Benchmark",
+      "date": "2026-06-22",
+      "timestamp": "2026-06-22T22:43:59.000Z",
+      "source": "crates/bashkit/benches/results/criterion-parallel-vm-linux-x86_64-1782168239.md",
+      "reportSource": "crates/bashkit/benches/results/criterion-parallel-vm-linux-x86_64-1782168239.md",
+      "cases": 33,
+      "medianUs": 5296.8,
+      "p95Us": 157252,
+      "medianChangePct": null,
+      "meanChangePct": null,
+      "bestChangePct": null,
+      "fastestCase": {
+        "name": "single_bash_new",
+        "us": 39.9
       },
       "bestImprovement": null
     }
@@ -4849,6 +4891,24 @@
       "detail": "96 parity/perf cases on vm-linux-x86_64; output match 100%.",
       "metric": 20.9,
       "source": "crates/bashkit-bench/results/bench-vm-linux-x86_64-1779764460.json"
+    },
+    {
+      "date": "2026-06-22",
+      "timestamp": "2026-06-22T21:02:53.000Z",
+      "kind": "Criterion",
+      "title": "parallel",
+      "detail": "single_bash_new at 31.67 us median",
+      "metric": 2801.5,
+      "source": "crates/bashkit/benches/results/criterion-parallel-vm-linux-x86_64-1782162173.md"
+    },
+    {
+      "date": "2026-06-22",
+      "timestamp": "2026-06-22T22:43:59.000Z",
+      "kind": "Criterion",
+      "title": "parallel",
+      "detail": "single_bash_new at 39.9 us median",
+      "metric": 5296.8,
+      "source": "crates/bashkit/benches/results/criterion-parallel-vm-linux-x86_64-1782168239.md"
     }
   ]
 }
