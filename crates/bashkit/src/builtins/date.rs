@@ -451,7 +451,7 @@ impl Builtin for Date {
             let path = resolve_path(ctx.cwd, file);
             match ctx.fs.stat(&path).await {
                 Ok(meta) => {
-                    dt_utc = meta.modified.into();
+                    dt_utc = crate::time_compat::to_chrono_utc(meta.modified);
                     epoch_input = false;
                 }
                 Err(_) => {

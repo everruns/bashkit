@@ -40,10 +40,10 @@
 //! }
 //! ```
 
+use crate::time_compat::SystemTime;
 use async_trait::async_trait;
 use std::io::{Error as IoError, ErrorKind};
 use std::path::Path;
-use std::time::SystemTime;
 
 use super::limits::{FsLimits, FsUsage};
 use crate::error::Result;

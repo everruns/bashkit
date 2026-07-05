@@ -332,7 +332,7 @@ async fn add_file_to_tar(
     // Mtime (12 bytes, octal)
     let mtime = metadata
         .modified
-        .duration_since(std::time::UNIX_EPOCH)
+        .duration_since(crate::time_compat::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
     write_octal(&mut header[136..148], mtime, 11);
@@ -403,7 +403,7 @@ fn add_directory_to_tar<'a>(
         // Mtime
         let mtime = metadata
             .modified
-            .duration_since(std::time::UNIX_EPOCH)
+            .duration_since(crate::time_compat::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
         write_octal(&mut header[136..148], mtime, 11);

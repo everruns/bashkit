@@ -2,10 +2,10 @@
 // Decision: touch delegates mtime changes to the filesystem layer so `touch`
 // and `touch -t` stay consistent across in-memory, overlay, and realfs backends.
 
+use crate::time_compat::SystemTime;
 use async_trait::async_trait;
 use chrono::{Datelike, Local, LocalResult, NaiveDate, TimeZone};
 use std::path::Path;
-use std::time::SystemTime;
 
 use super::limits::MKTEMP_MAX_ATTEMPTS;
 use super::{Builtin, Context, resolve_path};
@@ -376,7 +376,7 @@ fn parse_touch_timestamp(raw: &str) -> std::result::Result<SystemTime, String> {
         LocalResult::None => return Err(format!("touch: invalid date format '{}'\n", raw)),
     };
 
-    Ok(local.into())
+    Ok(crate::time_compat::from_chrono(local))
 }
 
 #[async_trait]

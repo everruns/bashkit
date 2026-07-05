@@ -44,6 +44,30 @@ jobs:
         env:
           RUSTDOCFLAGS: "-D warnings"
 
+  wasm:
+    # std::time panics on wasm32-unknown-unknown, so bashkit routes clock reads
+    # through src/time_compat.rs (web-time on wasm32). This job keeps the crate
+    # compiling for browser/wasm-bindgen consumers; the feature list is the
+    # supported wasm32-unknown-unknown surface (python is excluded: monty pulls
+    # getrandom 0.3 without its wasm_js feature).
+    name: WASM (wasm32-unknown-unknown)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - name: Check bashkit for wasm32-unknown-unknown
+        run: cargo check -p bashkit --target wasm32-unknown-unknown --features scripted_tool,jq
+        env:
+          # getrandom needs an explicit JS backend opt-in on this target.
+          RUSTFLAGS: --cfg getrandom_backend="wasm_js" -D warnings
+
   audit:
     name: Audit
     runs-on: ubuntu-latest
