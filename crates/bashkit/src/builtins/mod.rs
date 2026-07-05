@@ -400,7 +400,7 @@ pub struct ExecutionExtensions {
 #[derive(Debug, Clone)]
 pub(crate) struct ExecutionDeadline {
     #[allow(dead_code)]
-    started_at: std::time::Instant,
+    started_at: crate::time_compat::Instant,
     timeout: std::time::Duration,
 }
 
@@ -408,7 +408,7 @@ impl ExecutionDeadline {
     /// Create a deadline anchored at the start of `Bash::exec*`.
     pub(crate) fn new(timeout: std::time::Duration) -> Self {
         Self {
-            started_at: std::time::Instant::now(),
+            started_at: crate::time_compat::Instant::now(),
             timeout,
         }
     }

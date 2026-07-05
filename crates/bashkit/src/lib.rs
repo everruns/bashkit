@@ -428,6 +428,7 @@ mod snapshot;
 /// invariants enforced (TM-INF-013, TM-INF-016, TM-INF-022).
 #[doc(hidden)]
 pub mod testing;
+mod time_compat;
 /// Tool contract for LLM integration.
 /// Requires the `bash_tool` feature (enabled by default).
 #[cfg(feature = "bash_tool")]
@@ -954,7 +955,7 @@ impl Bash {
         // Load persisted history on first exec (no-op if already loaded)
         self.interpreter.load_history().await;
 
-        let exec_start = std::time::Instant::now();
+        let exec_start = crate::time_compat::Instant::now();
         // THREAT[TM-DOS-057]: Wrap execution with timeout to prevent sleep/blocking bypass.
         // Only the native path arms the tokio timeout; wasm has no reliable timer driver.
         #[cfg(not(target_family = "wasm"))]

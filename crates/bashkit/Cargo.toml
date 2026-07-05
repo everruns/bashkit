@@ -262,3 +262,9 @@ required-features = ["sqlite"]
 # Additional tokio features needed only on native (not WASM)
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "fs"] }
+
+# std::time::{Instant,SystemTime} panic on wasm32-unknown-unknown; see
+# time_compat.rs. Only pulled in for wasm32 — everywhere else time_compat
+# re-exports std::time directly with zero overhead.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-time = { workspace = true }

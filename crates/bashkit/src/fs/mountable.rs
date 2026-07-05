@@ -7,12 +7,12 @@
 // while holding lock). This is intentional - corrupted state should not propagate.
 #![allow(clippy::unwrap_used)]
 
+use crate::time_compat::SystemTime;
 use async_trait::async_trait;
 use std::collections::BTreeMap;
 use std::io::Error as IoError;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
-use std::time::SystemTime;
 
 use super::limits::{FsLimits, FsUsage};
 use super::traits::{DirEntry, FileSystem, FileSystemExt, FileType, Metadata};
@@ -420,8 +420,8 @@ impl FileSystem for MountableFs {
                             file_type: FileType::Directory,
                             size: 0,
                             mode: 0o755,
-                            modified: std::time::SystemTime::now(),
-                            created: std::time::SystemTime::now(),
+                            modified: crate::time_compat::SystemTime::now(),
+                            created: crate::time_compat::SystemTime::now(),
                         },
                     });
                 }

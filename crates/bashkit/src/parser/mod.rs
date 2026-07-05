@@ -26,7 +26,8 @@ pub use span::{Position, Span};
 
 use crate::error::{Error, Result};
 use crate::limits::LimitExceeded;
-use std::time::{Duration, Instant};
+use crate::time_compat::Instant;
+use std::time::Duration;
 
 /// Default maximum AST depth (matches ExecutionLimits default)
 const DEFAULT_MAX_AST_DEPTH: usize = 100;
