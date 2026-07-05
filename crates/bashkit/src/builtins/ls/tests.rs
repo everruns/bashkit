@@ -2842,3 +2842,75 @@ async fn test_ls_directory_classify() {
     assert_eq!(result.exit_code, 0, "stderr: {}", result.stderr);
     assert_eq!(result.stdout, "mydir/\n");
 }
+
+/// `ls -l` must render the actual UTC calendar date of the mtime.
+/// Regression test for the "approximate date calculation" that ignored
+/// leap years (~1 day of drift per 4 years) and used 30-day months
+/// (up to ±5 more days depending on the month): by 2026 an mtime of
+/// July 5 rendered as `2026-07-20`.
+async fn ls_long_date_for(mtime_secs: u64) -> String {
+    let (fs, mut cwd, mut variables) = create_test_ctx().await;
+    let path = cwd.join("dated.txt");
+    fs.write_file(&path, b"x").await.unwrap();
+    fs.set_modified_time(
+        &path,
+        crate::time_compat::UNIX_EPOCH + std::time::Duration::from_secs(mtime_secs),
+    )
+    .await
+    .unwrap();
+
+    let env = HashMap::new();
+    let args = vec!["-l".to_string(), "dated.txt".to_string()];
+    let ctx = Context {
+        args: &args,
+        env: &env,
+        variables: &mut variables,
+        cwd: &mut cwd,
+        fs: fs.clone(),
+        stdin: None,
+        #[cfg(feature = "http_client")]
+        http_client: None,
+        #[cfg(feature = "git")]
+        git_client: None,
+        #[cfg(feature = "ssh")]
+        ssh_client: None,
+        shell: None,
+    };
+
+    let result = Ls.execute(ctx).await.unwrap();
+    assert_eq!(result.exit_code, 0, "stderr: {}", result.stderr);
+    result.stdout
+}
+
+#[tokio::test]
+async fn test_ls_long_format_renders_exact_utc_date() {
+    // 2026-07-05T20:05:00Z — the drifted code rendered 2026-07-20
+    let stdout = ls_long_date_for(1_783_281_900).await;
+    assert!(
+        stdout.contains("2026-07-05 20:05"),
+        "expected mtime rendered as 2026-07-05 20:05, got: {}",
+        stdout
+    );
+}
+
+#[tokio::test]
+async fn test_ls_long_format_date_leap_day() {
+    // 2024-02-29T12:00:00Z — a date the 30-day-month math can't produce
+    let stdout = ls_long_date_for(1_709_208_000).await;
+    assert!(
+        stdout.contains("2024-02-29 12:00"),
+        "expected leap day rendered as 2024-02-29 12:00, got: {}",
+        stdout
+    );
+}
+
+#[tokio::test]
+async fn test_ls_long_format_date_year_boundary() {
+    // 2026-12-31T23:59:00Z — days/365 overshoots into the next year here
+    let stdout = ls_long_date_for(1_798_761_540).await;
+    assert!(
+        stdout.contains("2026-12-31 23:59"),
+        "expected year boundary rendered as 2026-12-31 23:59, got: {}",
+        stdout
+    );
+}
