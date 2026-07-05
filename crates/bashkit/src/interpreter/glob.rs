@@ -189,10 +189,35 @@ impl Interpreter {
         let mut value_chars = value.chars().peekable();
         let mut pattern_chars = pattern.chars().peekable();
 
+        // THREAT[TM-DOS-031]: `*` matching uses a single backtracking restore
+        // point (the classic linear wildcard algorithm) instead of recursing
+        // over every value position. A run of `*` — consecutive (`****`) or
+        // separated (`*a*b*c`) — no longer causes exponential blowup: each new
+        // `*` simply overwrites the restore point (an earlier `*` is provably
+        // never needed again), keeping the worst case O(value.len * pattern.len).
+        let mut star_pat: Option<std::iter::Peekable<std::str::Chars>> = None;
+        let mut star_val: Option<std::iter::Peekable<std::str::Chars>> = None;
+
+        // On a content mismatch, resume from the most recent `*`, letting it
+        // consume one more value char. With no active `*`, the match fails.
+        macro_rules! backtrack {
+            () => {{
+                if let (Some(sp), Some(sv)) = (&star_pat, star_val.as_mut()) {
+                    if sv.peek().is_some() {
+                        sv.next();
+                        pattern_chars = sp.clone();
+                        value_chars = sv.clone();
+                        continue;
+                    }
+                }
+                return false;
+            }};
+        }
+
         loop {
             match (pattern_chars.peek().copied(), value_chars.peek().copied()) {
                 (None, None) => return true,
-                (None, Some(_)) => return false,
+                (None, Some(_)) => backtrack!(),
                 (Some('\\'), Some(v)) => {
                     pattern_chars.next();
                     let literal = pattern_chars.next().unwrap_or('\\');
@@ -204,10 +229,10 @@ impl Interpreter {
                     if matches {
                         value_chars.next();
                     } else {
-                        return false;
+                        backtrack!();
                     }
                 }
-                (Some('\\'), None) => return false,
+                (Some('\\'), None) => backtrack!(),
                 (Some('*'), _) => {
                     // Check for extglob *(...)
                     let mut pc_clone = pattern_chars.clone();
@@ -216,22 +241,6 @@ impl Interpreter {
                         // Extglob *(pattern-list) — collect remaining pattern
                         let remaining_pattern: String = pattern_chars.collect();
                         let remaining_value: String = value_chars.collect();
-                        return self.glob_match_impl(
-                            &remaining_value,
-                            &remaining_pattern,
-                            nocase,
-                            depth + 1,
-                        );
-                    }
-                    pattern_chars.next();
-                    // * matches zero or more characters
-                    if pattern_chars.peek().is_none() {
-                        return true; // * at end matches everything
-                    }
-                    // Try matching from each position
-                    while value_chars.peek().is_some() {
-                        let remaining_value: String = value_chars.clone().collect();
-                        let remaining_pattern: String = pattern_chars.clone().collect();
                         if self.glob_match_impl(
                             &remaining_value,
                             &remaining_pattern,
@@ -240,11 +249,19 @@ impl Interpreter {
                         ) {
                             return true;
                         }
-                        value_chars.next();
+                        backtrack!();
                     }
-                    // Also try with empty match
-                    let remaining_pattern: String = pattern_chars.collect();
-                    return self.glob_match_impl("", &remaining_pattern, nocase, depth + 1);
+                    pattern_chars.next();
+                    // * matches zero or more characters
+                    if pattern_chars.peek().is_none() {
+                        return true; // * at end matches everything
+                    }
+                    // Record a restore point: the pattern after this `*` is
+                    // matched greedily against the current value position. On a
+                    // later mismatch, `backtrack!` lets the `*` consume one more
+                    // value char and retries. Overwrites any earlier `*`.
+                    star_pat = Some(pattern_chars.clone());
+                    star_val = Some(value_chars.clone());
                 }
                 (Some('?'), _) => {
                     // Check for extglob ?(...)
@@ -253,18 +270,21 @@ impl Interpreter {
                     if extglob && pc_clone.peek() == Some(&'(') {
                         let remaining_pattern: String = pattern_chars.collect();
                         let remaining_value: String = value_chars.collect();
-                        return self.glob_match_impl(
+                        if self.glob_match_impl(
                             &remaining_value,
                             &remaining_pattern,
                             nocase,
                             depth + 1,
-                        );
+                        ) {
+                            return true;
+                        }
+                        backtrack!();
                     }
                     if value_chars.peek().is_some() {
                         pattern_chars.next();
                         value_chars.next();
                     } else {
-                        return false;
+                        backtrack!();
                     }
                 }
                 (Some('['), Some(v)) => {
@@ -274,7 +294,7 @@ impl Interpreter {
                         if v == '[' {
                             value_chars.next();
                         } else {
-                            return false;
+                            backtrack!();
                         }
                         continue;
                     }
@@ -290,7 +310,7 @@ impl Interpreter {
                         if matched {
                             value_chars.next();
                         } else {
-                            return false;
+                            backtrack!();
                         }
                     } else {
                         // Invalid bracket expression — treat '[' as literal
@@ -305,11 +325,11 @@ impl Interpreter {
                         if match_ok {
                             value_chars.next();
                         } else {
-                            return false;
+                            backtrack!();
                         }
                     }
                 }
-                (Some('['), None) => return false,
+                (Some('['), None) => backtrack!(),
                 (Some(p), Some(v)) => {
                     // Check for extglob operators: @(, +(, !(
                     if extglob && matches!(p, '@' | '+' | '!') {
@@ -318,12 +338,15 @@ impl Interpreter {
                         if pc_clone.peek() == Some(&'(') {
                             let remaining_pattern: String = pattern_chars.collect();
                             let remaining_value: String = value_chars.collect();
-                            return self.glob_match_impl(
+                            if self.glob_match_impl(
                                 &remaining_value,
                                 &remaining_pattern,
                                 nocase,
                                 depth + 1,
-                            );
+                            ) {
+                                return true;
+                            }
+                            backtrack!();
                         }
                     }
                     let matches = if nocase {
@@ -335,10 +358,10 @@ impl Interpreter {
                         pattern_chars.next();
                         value_chars.next();
                     } else {
-                        return false;
+                        backtrack!();
                     }
                 }
-                (Some(_), None) => return false,
+                (Some(_), None) => backtrack!(),
             }
         }
     }
@@ -957,5 +980,46 @@ mod tests {
         assert!(interp.pattern_matches("[]", "[]"));
         assert!(interp.pattern_matches("[", "["));
         assert!(interp.pattern_matches("a", "[a]"));
+    }
+
+    // THREAT[TM-DOS-031]: a run of `*` must not cause exponential backtracking.
+    // Before the linear restore-point rewrite, patterns like `****…%=` (found
+    // by `glob_fuzz`) or `*a*a*…b` blew up to a libFuzzer timeout. These cases
+    // finish instantly now; if the exponential path returns, the test hangs.
+    #[test]
+    fn many_stars_do_not_blow_up() {
+        let interp = interp();
+
+        // The reproducer minimized by `glob_fuzz`: a leading byte, a long run
+        // of `*`, then a suffix the value never ends with → must fail fast.
+        let pathological = format!("\u{1}{}%=", "*".repeat(1000));
+        assert!(!interp.pattern_matches("hello.world", &pathological));
+        assert!(!interp.pattern_matches("test.txt", &pathological));
+
+        // Consecutive `*` collapse to a single wildcard (matches anything).
+        assert!(interp.pattern_matches("anything at all", &"*".repeat(1000)));
+        assert!(interp.pattern_matches("test.txt", &format!("{}txt", "*".repeat(500))));
+
+        // Separated stars are the other classic exponential shape.
+        let separated = format!("{}b", "a*".repeat(500));
+        assert!(!interp.pattern_matches(&"a".repeat(2000), &separated));
+        assert!(interp.pattern_matches(&format!("{}b", "a".repeat(2000)), &separated));
+    }
+
+    // Ordinary `*` / `?` / literal semantics are unchanged by the rewrite.
+    #[test]
+    fn star_matching_semantics_preserved() {
+        let interp = interp();
+
+        assert!(interp.pattern_matches("test.txt", "*.txt"));
+        assert!(!interp.pattern_matches("test.md", "*.txt"));
+        assert!(interp.pattern_matches("axxbyyc", "a*b*c"));
+        assert!(!interp.pattern_matches("axxbyy", "a*b*c"));
+        assert!(interp.pattern_matches("abcabc", "*abc"));
+        assert!(interp.pattern_matches("abc", "a?c"));
+        assert!(!interp.pattern_matches("ac", "a?c"));
+        assert!(interp.pattern_matches("hello", "he*"));
+        assert!(interp.pattern_matches("hello", "*llo"));
+        assert!(interp.pattern_matches("hello", "*"));
     }
 }
