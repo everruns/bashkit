@@ -242,7 +242,7 @@ runaway scripts without permanently breaking the session.
 | TM-DOS-028 | Diff algorithm DoS | `diff` on two large unrelated files | LCS matrix capped at 10M cells; falls back to simple line-by-line output | **MITIGATED** |
 | TM-DOS-029 | Arithmetic overflow/panic | `$(( 2 ** -1 ))`, `$(( 1 << 64 ))`, `i64::MIN / -1` | `wrapping_*` / saturating ops; `wrapping_neg` for `i64::MIN / -1` and unary negate; `<<`/`>>` clamp shift amount | **MITIGATED** |
 | TM-DOS-030 | Parser limit bypass via eval/source/trap | `eval`, `source`, trap handlers now use `Parser::with_limits()` | — | **FIXED** (2026-03 audit verified) |
-| TM-DOS-031 | ExtGlob exponential blowup | `+(a\|aa)` against long string causes O(n!) recursion in `glob_match_impl` | `glob_match_impl` carries a recursion-depth cap and bails on excessive depth (`interpreter/glob.rs:162,324`); aliases that expand to huge brace ranges go through the same parser-budget check (`interpreter/mod.rs:4216`) | **MITIGATED** |
+| TM-DOS-031 | Glob/ExtGlob exponential blowup | `+(a\|aa)` against long string causes O(n!) recursion in `glob_match_impl`; a run of plain `*` (consecutive `****…` or separated `*a*b*…`) previously recursed per value position and blew up (a 33-`*` pattern timed out `glob_fuzz`) | Plain `*` now matches via a single backtracking restore point (the classic linear wildcard algorithm) — worst case O(value·pattern), no per-position recursion; `glob_match_impl` still carries a recursion-depth cap for extglob nesting and bails on excessive depth; aliases that expand to huge brace ranges go through the same parser-budget check (`interpreter/mod.rs:4216`) | **MITIGATED** |
 | TM-DOS-035 | DEBUG trap recursive amplification | `trap 'a=1;b=2;...' DEBUG` amplifies N commands to N*M | Suppress DEBUG trap inside trap handlers (`in_trap` guard) | **FIXED** |
 | TM-DOS-032 | Tokio runtime exhaustion (Python) | Rapid `execute_sync()` calls each create new tokio runtime, exhausting OS threads | `PyBash` and `BashTool` create one `Arc<Runtime>` per instance in `__new__` via `make_runtime()` and reuse it for every `execute_sync` call; no per-call runtime construction | **MITIGATED** |
 | TM-DOS-033 | AWK unbounded loops | `BEGIN { while(1){} }` has no iteration limit in AWK interpreter | Timeout (30s) backstop | **PARTIAL** |
@@ -281,7 +281,7 @@ panicked. Resolved with `wrapping_*` ops, masked shift amounts, clamped exponent
 `execute_script_body(.., run_exit_trap=false)` (like `source`) so they do not fire the EXIT trap
 — previously `trap 'eval :' EXIT` could recurse one command per level until the budget aborted.
 
-**TM-DOS-031** (mitigated): see table — recursion-depth cap in `glob_match_impl`
+**TM-DOS-031** (mitigated): see table — linear backtracking for plain `*`, plus a recursion-depth cap for extglob nesting in `glob_match_impl`
 (`interpreter/glob.rs`).
 
 **Implementation**: `timeout` 30s + `parser_timeout` 5s + `max_parser_operations` 100K in `limits.rs` (TM-DOS-023/024); `MAX_AWK_PARSER_DEPTH` 100 (`builtins/awk.rs`) and `MAX_JQ_JSON_DEPTH` 100 (`builtins/jq/`) for TM-DOS-027; `MAX_LCS_CELLS` 10M (`builtins/diff.rs`) for TM-DOS-028.
