@@ -229,11 +229,48 @@ jobs:
           doppler run --only-secrets OPENAI_API_KEY -- ${{ matrix.run }} vercel_ai_tool.mjs
           doppler run --only-secrets OPENAI_API_KEY -- ${{ matrix.run }} langchain_agent.mjs
 
+  # Keeps the wasm32-wasip1-threads target from silently rotting between
+  # releases: publish-js.yml builds it with --release, so a PR that breaks
+  # the wasm feature gating would otherwise only surface at publish time.
+  # Debug profile here — same compile errors, much faster.
+  wasm-build:
+    name: WASM build (wasm32-wasip1-threads)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+        with:
+          targets: wasm32-wasip1-threads
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+        with:
+          version: 10.33.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: crates/bashkit-js/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: crates/bashkit-js
+
+      - name: Build wasm binding
+        run: pnpm exec napi build --platform --target wasm32-wasip1-threads
+        working-directory: crates/bashkit-js
+
   # Gate job for branch protection
   js-check:
     name: JS Check
     if: always()
-    needs: [typecheck, build-and-test]
+    needs: [typecheck, build-and-test, wasm-build]
     runs-on: ubuntu-latest
     steps:
       - name: Verify all jobs passed
@@ -244,5 +281,9 @@ jobs:
           fi
           if [[ "${{ needs.build-and-test.result }}" != "success" ]]; then
             echo "JS build/test failed"
+            exit 1
+          fi
+          if [[ "${{ needs.wasm-build.result }}" != "success" ]]; then
+            echo "WASM build failed"
             exit 1
           fi

@@ -14,11 +14,27 @@ repository.workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
-bashkit = { path = "../bashkit", features = ["scripted_tool", "python", "realfs", "jq", "interop", "http_client", "sqlite"] }
 napi = { workspace = true }
 napi-derive = { workspace = true }
 serde_json = { workspace = true }
 tokio = { version = "1", features = ["sync", "macros", "io-util", "rt", "time"] }
+
+# wasm drops four features present on every other target (see the matching
+# `#[cfg(not(target_arch = "wasm32"))]` gates in src/lib.rs):
+# - `interop`/`sqlite`: both force `tokio/rt-multi-thread` on, which pulls in
+#   mio -> socket2, and socket2 hard-fails to compile on any wasm target.
+# - `http_client`: reqwest's TCP client needs `tokio::net` (real OS sockets),
+#   which WASI preview1 doesn't expose. reqwest's fetch-based wasm backend
+#   only targets wasm32-unknown-unknown (browser via web-sys), not
+#   wasm32-wasip1-threads, so there's no working backend to fall back to here.
+# - `realfs`: mounts the *host* filesystem into the sandbox. Meaningless in a
+#   browser (no host filesystem to mount) and needs tokio/fs, which is only
+#   pulled in on non-wasm (see crates/bashkit/Cargo.toml).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+bashkit = { path = "../bashkit", features = ["scripted_tool", "python", "realfs", "jq", "interop", "http_client", "sqlite"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+bashkit = { path = "../bashkit", features = ["scripted_tool", "python", "jq"] }
 
 [build-dependencies]
 napi-build = { workspace = true }

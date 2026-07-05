@@ -6,8 +6,10 @@
 
 use std::ffi::{OsStr, OsString};
 
-#[cfg(any(unix, target_os = "wasi"))]
+#[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
+#[cfg(target_os = "wasi")]
+use std::os::wasi::ffi::OsStrExt;
 
 #[derive(Debug)]
 pub struct NonUtf8OsStrError {

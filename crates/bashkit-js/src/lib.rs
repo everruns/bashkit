@@ -13,26 +13,43 @@
 //! work. This prevents CodeQL `rust/access-invalid-pointer` alerts caused by
 //! holding a raw-pointer-derived `&self` across `block_on` or `.await` points.
 
+// interop::fs (native FS-handle export/import) and the sqlite builder need
+// tokio/rt-multi-thread, which mio/socket2 don't support on any wasm target.
+// bashkit-js only requests both bashkit features on non-wasm (see Cargo.toml);
+// gate their use here to match.
+#[cfg(not(target_arch = "wasm32"))]
 use bashkit::interop::fs::{
     BashkitFsAbiHandleV1, BashkitFsAbiOwnedHandleV1, export_filesystem, import_filesystem,
 };
 use bashkit::tool::VERSION;
+// `realfs` mounts the *host* filesystem into the sandbox — meaningless in a
+// browser (no host filesystem) and needs tokio/fs, which isn't available on
+// wasm (see Cargo.toml). PosixFs itself isn't feature-gated, but every use
+// of it here is via a RealFs backend, so it moves with the other two.
+#[cfg(not(target_arch = "wasm32"))]
+use bashkit::NetworkAllowlist;
 use bashkit::{
     Bash as RustBash, BashTool as RustBashTool, Builtin, BuiltinContext, BuiltinRegistry,
-    Credential, ExecResult as RustExecResult, ExecutionLimits, ExtFunctionResult,
-    FileSystem as BashFileSystem, FileType, InMemoryFs, Metadata, MontyObject, NetworkAllowlist,
-    OutputCallback, PosixFs, PythonExternalFnHandler, PythonLimits, RealFs, RealFsMode,
-    ScriptedTool as RustScriptedTool, SnapshotOptions as RustSnapshotOptions, Tool, ToolArgs,
-    ToolDef, ToolRequest, async_trait,
+    ExecResult as RustExecResult, ExecutionLimits, ExtFunctionResult, FileSystem as BashFileSystem,
+    FileType, InMemoryFs, Metadata, MontyObject, OutputCallback, PythonExternalFnHandler,
+    PythonLimits, ScriptedTool as RustScriptedTool, SnapshotOptions as RustSnapshotOptions, Tool,
+    ToolArgs, ToolDef, ToolRequest, async_trait,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use bashkit::{Credential, PosixFs, RealFs, RealFsMode};
 use napi::bindgen_prelude::External;
-use napi::{Env, JsValue, Unknown, ValueType, sys};
+#[cfg(not(target_arch = "wasm32"))]
+use napi::{Env, ValueType, sys};
+use napi::{JsValue, Unknown};
 use napi_derive::napi;
 use std::collections::HashMap;
+#[cfg(not(target_arch = "wasm32"))]
 use std::ffi::c_void;
+#[cfg(not(target_arch = "wasm32"))]
 use std::mem::{MaybeUninit, size_of};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
+#[cfg(not(target_arch = "wasm32"))]
 use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
@@ -57,11 +74,18 @@ fn callback_runtime() -> &'static tokio::runtime::Runtime {
     use std::sync::OnceLock;
     static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
     RT.get_or_init(|| {
-        tokio::runtime::Builder::new_multi_thread()
+        // rt-multi-thread isn't available on wasm (see Cargo.toml); fall
+        // back to a current-thread runtime there.
+        #[cfg(not(target_arch = "wasm32"))]
+        let builder_result = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
-            .build()
-            .expect("failed to create shared callback runtime")
+            .build();
+        #[cfg(target_arch = "wasm32")]
+        let builder_result = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build();
+        builder_result.expect("failed to create shared callback runtime")
     })
 }
 
@@ -319,11 +343,15 @@ impl NativeFileSystemState {
         }
     }
 
+    // Only used by to_external (native-only: the fs-handle ABI export has no
+    // wasm consumer).
+    #[cfg(not(target_arch = "wasm32"))]
     fn export_fs(&self) -> napi::Result<Arc<dyn BashFileSystem>> {
         self.with_fs(|fs| async move { Ok(fs) })
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 unsafe extern "C" fn finalize_owned_file_system_handle(
     _env: sys::napi_env,
     data: *mut c_void,
@@ -336,6 +364,7 @@ unsafe extern "C" fn finalize_owned_file_system_handle(
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn napi_status_result(status: sys::napi_status, action: &str) -> napi::Result<()> {
     if status == sys::Status::napi_ok {
         return Ok(());
@@ -345,6 +374,7 @@ fn napi_status_result(status: sys::napi_status, action: &str) -> napi::Result<()
     )))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn create_file_system_external(
     env: &Env,
     handle: BashkitFsAbiOwnedHandleV1,
@@ -369,6 +399,7 @@ fn create_file_system_external(
     Ok(unsafe { Unknown::from_raw_unchecked(env.raw(), raw_external) })
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn file_system_external_handle(external: Unknown<'_>) -> napi::Result<BashkitFsAbiHandleV1> {
     if external.get_type()? != ValueType::External {
         return Err(napi::Error::from_reason(
@@ -395,6 +426,7 @@ fn file_system_external_handle(external: Unknown<'_>) -> napi::Result<BashkitFsA
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn import_external_file_system(external: Unknown<'_>) -> napi::Result<Arc<dyn BashFileSystem>> {
     let handle = file_system_external_handle(external)?;
     // SAFETY: `external` was created by export_external_file_system; the
@@ -403,6 +435,7 @@ fn import_external_file_system(external: Unknown<'_>) -> napi::Result<Arc<dyn Ba
 }
 
 impl NativeFileSystemState {
+    #[cfg(not(target_arch = "wasm32"))]
     fn real(
         host_path: String,
         writable: Option<bool>,
@@ -431,11 +464,13 @@ impl NativeFileSystemState {
         Ok(Self::from_static(fs))
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn import_external(external: Unknown<'_>) -> napi::Result<Self> {
         let fs = import_external_file_system(external)?;
         Ok(Self::from_static(fs))
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn to_external(&self, env: Env) -> napi::Result<Unknown<'static>> {
         let fs = self.export_fs()?;
         let handle = export_filesystem(fs).map_err(|e| napi::Error::from_reason(e.to_string()))?;
@@ -573,6 +608,7 @@ pub fn create_file_system() -> External<NativeFileSystemState> {
     External::new(NativeFileSystemState::new())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[napi(js_name = "__realFileSystem")]
 pub fn real_file_system(
     host_path: String,
@@ -586,6 +622,7 @@ pub fn real_file_system(
     )?))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[napi(js_name = "__importFileSystem")]
 pub fn import_file_system(external: Unknown<'_>) -> napi::Result<External<NativeFileSystemState>> {
     Ok(External::new(NativeFileSystemState::import_external(
@@ -593,6 +630,7 @@ pub fn import_file_system(external: Unknown<'_>) -> napi::Result<External<Native
     )?))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[napi(js_name = "__fileSystemToExternal")]
 pub fn file_system_to_external(
     fs: &External<NativeFileSystemState>,
@@ -1110,6 +1148,7 @@ pub struct NetworkOptions {
 
 /// Build a core [`Credential`] from the kind-discriminated option fields.
 /// Mirrors the Python binding's `parse_credential_spec` validation rules.
+#[cfg(not(target_arch = "wasm32"))]
 fn credential_from_parts(
     label: &str,
     kind: &str,
@@ -1185,6 +1224,7 @@ fn credential_from_parts(
 
 /// Validate `NetworkOptions` up front so `build_bash_from_state` (also used
 /// by `reset()`) can apply them infallibly later.
+#[cfg(not(target_arch = "wasm32"))]
 fn validate_network_options(net: &NetworkOptions) -> napi::Result<()> {
     let allow_all = net.allow_all.unwrap_or(false);
     if allow_all && net.allow.is_some() {
@@ -1228,6 +1268,7 @@ fn validate_network_options(net: &NetworkOptions) -> napi::Result<()> {
 /// Apply pre-validated network options to the builder. Panics are impossible
 /// for inputs that passed [`validate_network_options`]; on the (unreachable)
 /// invalid path the credential is skipped.
+#[cfg(not(target_arch = "wasm32"))]
 fn apply_network_options(
     mut builder: bashkit::BashBuilder,
     net: &NetworkOptions,
@@ -1421,6 +1462,9 @@ struct SharedState {
     max_memory: Option<f64>,
     capture_final_env: Option<bool>,
     mounts: Option<Vec<MountConfig>>,
+    // Only read by the native arms of the body-branched mount methods; kept
+    // unconditional so SharedState construction stays cfg-free.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     allowed_mount_paths: Option<Vec<String>>,
     python: bool,
     sqlite: bool,
@@ -2031,6 +2075,11 @@ impl Bash {
     /// **Security**: Writable mounts log a warning. Consider using
     /// `allowedMountPaths` in `BashOptions` to restrict which host paths
     /// may be mounted.
+    // Item-level `#[cfg]` on methods inside a `#[napi] impl` block doesn't
+    // reliably work: napi-rs's macro sees the raw (un-cfg-stripped) tokens
+    // of the whole block and emits a callback-trampoline reference for every
+    // method it finds, so a cfg'd-out method leaves a dangling reference.
+    // Branch inside the body instead, keeping one `#[napi]` item per method.
     #[napi]
     pub fn mount(
         &self,
@@ -2038,42 +2087,62 @@ impl Bash {
         vfs_path: String,
         writable: Option<bool>,
     ) -> napi::Result<()> {
-        let is_writable = writable.unwrap_or(false);
-        if is_writable {
-            eprintln!(
-                "bashkit: warning: writable mount at {} — scripts can modify host files",
-                host_path
-            );
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (host_path, vfs_path, writable);
+            return Err(napi::Error::from_reason(
+                "Bash.mount is not supported in the wasm/browser build: there is no host filesystem to mount",
+            ));
         }
-        enforce_mount_policy(
-            self.state.allowed_mount_paths.as_deref(),
-            &host_path,
-            "Bash.mount",
-        )?;
-        block_on_with(&self.state, |s| async move {
-            let bash = s.inner.lock().await;
-            let mode = if is_writable {
-                RealFsMode::ReadWrite
-            } else {
-                RealFsMode::ReadOnly
-            };
-            let real_backend = RealFs::new(&host_path, mode)
-                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-            let fs: Arc<dyn BashFileSystem> = Arc::new(PosixFs::new(real_backend));
-            bash.mount(Path::new(&vfs_path), fs)
-                .map_err(|e| napi::Error::from_reason(e.to_string()))
-        })
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let is_writable = writable.unwrap_or(false);
+            if is_writable {
+                eprintln!(
+                    "bashkit: warning: writable mount at {} — scripts can modify host files",
+                    host_path
+                );
+            }
+            enforce_mount_policy(
+                self.state.allowed_mount_paths.as_deref(),
+                &host_path,
+                "Bash.mount",
+            )?;
+            block_on_with(&self.state, |s| async move {
+                let bash = s.inner.lock().await;
+                let mode = if is_writable {
+                    RealFsMode::ReadWrite
+                } else {
+                    RealFsMode::ReadOnly
+                };
+                let real_backend = RealFs::new(&host_path, mode)
+                    .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+                let fs: Arc<dyn BashFileSystem> = Arc::new(PosixFs::new(real_backend));
+                bash.mount(Path::new(&vfs_path), fs)
+                    .map_err(|e| napi::Error::from_reason(e.to_string()))
+            })
+        }
     }
 
     /// Mount a filesystem handle without rebuilding the interpreter.
     #[napi]
     pub fn mount_file_system(&self, vfs_path: String, fs: Unknown<'_>) -> napi::Result<()> {
-        let mounted_fs = import_external_file_system(fs)?;
-        block_on_with(&self.state, |s| async move {
-            let bash = s.inner.lock().await;
-            bash.mount(Path::new(&vfs_path), mounted_fs)
-                .map_err(|e| napi::Error::from_reason(e.to_string()))
-        })
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (vfs_path, fs);
+            return Err(napi::Error::from_reason(
+                "Bash.mountFileSystem is not supported in the wasm/browser build",
+            ));
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let mounted_fs = import_external_file_system(fs)?;
+            block_on_with(&self.state, |s| async move {
+                let bash = s.inner.lock().await;
+                bash.mount(Path::new(&vfs_path), mounted_fs)
+                    .map_err(|e| napi::Error::from_reason(e.to_string()))
+            })
+        }
     }
 
     /// Unmount a previously mounted filesystem.
@@ -2663,42 +2732,62 @@ impl BashTool {
         vfs_path: String,
         writable: Option<bool>,
     ) -> napi::Result<()> {
-        let is_writable = writable.unwrap_or(false);
-        if is_writable {
-            eprintln!(
-                "bashkit: warning: writable mount at {} — scripts can modify host files",
-                host_path
-            );
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (host_path, vfs_path, writable);
+            return Err(napi::Error::from_reason(
+                "BashTool.mount is not supported in the wasm/browser build: there is no host filesystem to mount",
+            ));
         }
-        enforce_mount_policy(
-            self.state.allowed_mount_paths.as_deref(),
-            &host_path,
-            "BashTool.mount",
-        )?;
-        block_on_with(&self.state, |s| async move {
-            let bash = s.inner.lock().await;
-            let mode = if is_writable {
-                RealFsMode::ReadWrite
-            } else {
-                RealFsMode::ReadOnly
-            };
-            let real_backend = RealFs::new(&host_path, mode)
-                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-            let fs: Arc<dyn BashFileSystem> = Arc::new(PosixFs::new(real_backend));
-            bash.mount(Path::new(&vfs_path), fs)
-                .map_err(|e| napi::Error::from_reason(e.to_string()))
-        })
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let is_writable = writable.unwrap_or(false);
+            if is_writable {
+                eprintln!(
+                    "bashkit: warning: writable mount at {} — scripts can modify host files",
+                    host_path
+                );
+            }
+            enforce_mount_policy(
+                self.state.allowed_mount_paths.as_deref(),
+                &host_path,
+                "BashTool.mount",
+            )?;
+            block_on_with(&self.state, |s| async move {
+                let bash = s.inner.lock().await;
+                let mode = if is_writable {
+                    RealFsMode::ReadWrite
+                } else {
+                    RealFsMode::ReadOnly
+                };
+                let real_backend = RealFs::new(&host_path, mode)
+                    .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+                let fs: Arc<dyn BashFileSystem> = Arc::new(PosixFs::new(real_backend));
+                bash.mount(Path::new(&vfs_path), fs)
+                    .map_err(|e| napi::Error::from_reason(e.to_string()))
+            })
+        }
     }
 
     /// Mount a filesystem handle without rebuilding the interpreter.
     #[napi]
     pub fn mount_file_system(&self, vfs_path: String, fs: Unknown<'_>) -> napi::Result<()> {
-        let mounted_fs = import_external_file_system(fs)?;
-        block_on_with(&self.state, |s| async move {
-            let bash = s.inner.lock().await;
-            bash.mount(Path::new(&vfs_path), mounted_fs)
-                .map_err(|e| napi::Error::from_reason(e.to_string()))
-        })
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (vfs_path, fs);
+            return Err(napi::Error::from_reason(
+                "BashTool.mountFileSystem is not supported in the wasm/browser build",
+            ));
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let mounted_fs = import_external_file_system(fs)?;
+            block_on_with(&self.state, |s| async move {
+                let bash = s.inner.lock().await;
+                bash.mount(Path::new(&vfs_path), mounted_fs)
+                    .map_err(|e| napi::Error::from_reason(e.to_string()))
+            })
+        }
     }
 
     /// Unmount a previously mounted filesystem.
@@ -3168,6 +3257,7 @@ fn build_limits(state: &SharedState) -> ExecutionLimits {
     limits
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn derive_sqlite_limits(state: &SharedState) -> bashkit::SqliteLimits {
     let mut limits = bashkit::SqliteLimits::default();
     if let Some(ms) = state.timeout_ms {
@@ -3213,21 +3303,32 @@ fn build_bash_from_state(state: &SharedState, files: Option<&HashMap<String, Str
         }
     }
 
-    // Apply real filesystem mounts
-    if let Some(ref allowed_mount_paths) = state.allowed_mount_paths {
-        builder = builder.allowed_mount_paths(allowed_mount_paths.iter().cloned());
-    }
-
-    if let Some(ref mounts) = state.mounts {
-        for m in mounts {
-            let writable = m.writable.unwrap_or(false);
-            builder = match (writable, &m.vfs_path) {
-                (false, None) => builder.mount_real_readonly(&m.host_path),
-                (false, Some(vfs)) => builder.mount_real_readonly_at(&m.host_path, vfs),
-                (true, None) => builder.mount_real_readwrite(&m.host_path),
-                (true, Some(vfs)) => builder.mount_real_readwrite_at(&m.host_path, vfs),
-            };
+    // Apply real filesystem mounts. Unavailable on wasm: there's no host
+    // filesystem to mount from a browser, and RealFs needs tokio/fs, which
+    // isn't available on wasm (see Cargo.toml).
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        if let Some(ref allowed_mount_paths) = state.allowed_mount_paths {
+            builder = builder.allowed_mount_paths(allowed_mount_paths.iter().cloned());
         }
+
+        if let Some(ref mounts) = state.mounts {
+            for m in mounts {
+                let writable = m.writable.unwrap_or(false);
+                builder = match (writable, &m.vfs_path) {
+                    (false, None) => builder.mount_real_readonly(&m.host_path),
+                    (false, Some(vfs)) => builder.mount_real_readonly_at(&m.host_path, vfs),
+                    (true, None) => builder.mount_real_readwrite(&m.host_path),
+                    (true, Some(vfs)) => builder.mount_real_readwrite_at(&m.host_path, vfs),
+                };
+            }
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    if state.mounts.is_some() {
+        eprintln!(
+            "bashkit: warning: real filesystem mounts are not supported in the wasm/browser build; ignoring"
+        );
     }
 
     // Enable Python/Monty. Passing `python: true` from JS is the explicit
@@ -3253,15 +3354,31 @@ fn build_bash_from_state(state: &SharedState, files: Option<&HashMap<String, Str
 
     // Enable embedded SQLite (Turso). Passing `sqlite: true` from JS is the
     // explicit opt-in that must also flip the in-process SQLite env gate.
+    // Unavailable on wasm: the `sqlite` bashkit feature pulls in
+    // tokio/rt-multi-thread, which mio/socket2 don't support there.
+    #[cfg(not(target_arch = "wasm32"))]
     if state.sqlite {
         builder = builder.sqlite_with_limits(derive_sqlite_limits(state));
         builder = builder.env("BASHKIT_ALLOW_INPROCESS_SQLITE", "1");
     }
+    #[cfg(target_arch = "wasm32")]
+    if state.sqlite {
+        eprintln!("bashkit: warning: sqlite is not supported in the wasm/browser build; ignoring");
+    }
 
     // Enable outbound network (curl/wget). Options were validated at
-    // construction time, so application here is infallible.
+    // construction time, so application here is infallible. Unavailable on
+    // wasm: reqwest needs real TCP sockets (tokio::net), which WASI
+    // preview1 doesn't expose (see Cargo.toml).
+    #[cfg(not(target_arch = "wasm32"))]
     if let Some(ref network) = state.network {
         builder = apply_network_options(builder, network);
+    }
+    #[cfg(target_arch = "wasm32")]
+    if state.network.is_some() {
+        eprintln!(
+            "bashkit: warning: outbound network (curl/wget) is not supported in the wasm/browser build; ignoring"
+        );
     }
 
     // Attach the host-owned builtin registry. Entries inserted via JS
@@ -3281,6 +3398,7 @@ fn shared_state_from_opts(
     let ext_fns = opts.external_functions.clone().unwrap_or_default();
     let mounts = opts.mounts.clone();
     let allowed_mount_paths = opts.allowed_mount_paths.clone();
+    #[cfg(not(target_arch = "wasm32"))]
     if let Some(ref network) = opts.network {
         validate_network_options(network)?;
     }

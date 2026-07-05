@@ -17,6 +17,9 @@ importers:
 
   .:
     devDependencies:
+      '@emnapi/core':
+        specifier: 1.10.0
+        version: 1.10.0
       '@langchain/core':
         specifier: ^1.1.39
         version: 1.1.48
@@ -1612,7 +1615,6 @@ snapshots:
     dependencies:
       '@emnapi/wasi-threads': 1.2.1
       tslib: 2.8.1
-    optional: true
 
   '@emnapi/runtime@1.10.0':
     dependencies:
@@ -1622,7 +1624,6 @@ snapshots:
   '@emnapi/wasi-threads@1.2.1':
     dependencies:
       tslib: 2.8.1
-    optional: true
 
   '@esbuild/aix-ppc64@0.28.1':
     optional: true
@@ -2858,8 +2859,7 @@ snapshots:
 
   tr46@0.0.3: {}
 
-  tslib@2.8.1:
-    optional: true
+  tslib@2.8.1: {}
 
   tsx@4.22.3:
     dependencies:

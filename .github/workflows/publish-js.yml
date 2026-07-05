@@ -74,11 +74,13 @@ jobs:
           - host: windows-latest
             target: x86_64-pc-windows-msvc
             build: pnpm exec napi build --platform --release --target x86_64-pc-windows-msvc && pnpm run build:cjs && pnpm run build:ts
-          # TODO: WASM disabled — tokio "full" features (from bashkit core) are
-          # unsupported on wasm32. Needs architectural fix to gate tokio features.
-          # - host: ubuntu-latest
-          #   target: wasm32-wasip1-threads
-          #   build: pnpm exec napi build --platform --release --target wasm32-wasip1-threads && pnpm run build:cjs && pnpm run build:ts
+          # wasm32 builds bashkit with a reduced feature set (no interop/
+          # sqlite/http_client/realfs — see crates/bashkit-js/Cargo.toml for
+          # the per-feature reasons) so tokio stays on the wasm-compatible
+          # current-thread runtime.
+          - host: ubuntu-latest
+            target: wasm32-wasip1-threads
+            build: pnpm exec napi build --platform --release --target wasm32-wasip1-threads && pnpm run build:cjs && pnpm run build:ts
 
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -375,8 +377,10 @@ jobs:
           sh -c "node examples/openai_tool.mjs && node examples/vercel_ai_tool.mjs && node examples/langchain_agent.mjs"
 
   # ============================================================================
-  # Test WASI target — disabled until tokio feature gating is resolved
-  # TODO: Re-enable when bashkit core gates tokio "full" behind a feature flag
+  # Test WASI target — the tokio feature gating that blocked this is resolved
+  # (the wasm32-wasip1-threads matrix entry above builds), but running the
+  # test suite under the WASI runtime is unverified. TODO: re-enable after
+  # confirming the ava suite passes with NAPI_RS_FORCE_WASI=1.
   # ============================================================================
   # test-js-wasi:
   #   name: Test WASI target
