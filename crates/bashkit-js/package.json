@@ -109,6 +109,7 @@
   },
   "devDependencies": {
     "@emnapi/core": "1.10.0",
+    "@emnapi/runtime": "1.10.0",
     "@langchain/core": "^1.1.39",
     "@napi-rs/cli": "^3.0.0",
     "@types/node": "^25.5.0",
