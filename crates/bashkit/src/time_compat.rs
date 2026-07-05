@@ -28,8 +28,21 @@ pub(crate) fn to_chrono_utc(t: SystemTime) -> chrono::DateTime<chrono::Utc> {
         Ok(dur) => chrono::DateTime::from_timestamp(dur.as_secs() as i64, dur.subsec_nanos())
             .unwrap_or_else(epoch),
         Err(e) => {
+            // `dur` is how far *before* the epoch `t` is. chrono represents
+            // negative timestamps as (floor_secs, nanos) where nanos is the
+            // non-negative remainder added back — e.g. epoch - 500ms is
+            // (-1, 500_000_000), not (0, 0). Preserve that decomposition
+            // instead of truncating the subsecond part.
             let dur = e.duration();
-            chrono::DateTime::from_timestamp(-(dur.as_secs() as i64), 0).unwrap_or_else(epoch)
+            let (secs, nanos) = if dur.subsec_nanos() == 0 {
+                (-(dur.as_secs() as i64), 0)
+            } else {
+                (
+                    -(dur.as_secs() as i64) - 1,
+                    1_000_000_000 - dur.subsec_nanos(),
+                )
+            };
+            chrono::DateTime::from_timestamp(secs, nanos).unwrap_or_else(epoch)
         }
     }
 }
@@ -42,7 +55,67 @@ pub(crate) fn from_chrono<Tz: chrono::TimeZone>(dt: chrono::DateTime<Tz>) -> Sys
     let nanos = utc.timestamp_subsec_nanos();
     if secs >= 0 {
         UNIX_EPOCH + std::time::Duration::new(secs as u64, nanos)
-    } else {
+    } else if nanos == 0 {
         UNIX_EPOCH - std::time::Duration::new((-secs) as u64, 0)
+    } else {
+        // Mirror of the decomposition in `to_chrono_utc`: `secs` is the
+        // floor, so the actual distance before the epoch is one second
+        // less than `-secs`, plus the complementary nanos.
+        UNIX_EPOCH - std::time::Duration::new((-secs - 1) as u64, 1_000_000_000 - nanos)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn to_chrono_utc_epoch() {
+        let dt = to_chrono_utc(UNIX_EPOCH);
+        assert_eq!((dt.timestamp(), dt.timestamp_subsec_nanos()), (0, 0));
+    }
+
+    #[test]
+    fn to_chrono_utc_pre_epoch_whole_second() {
+        let t = UNIX_EPOCH - std::time::Duration::from_secs(2);
+        let dt = to_chrono_utc(t);
+        assert_eq!((dt.timestamp(), dt.timestamp_subsec_nanos()), (-2, 0));
+    }
+
+    #[test]
+    fn to_chrono_utc_pre_epoch_subsecond() {
+        // Reviewer's case: 500ms before the epoch must round-trip as
+        // 1969-12-31T23:59:59.500Z, i.e. (-1, 500_000_000) — not (0, 0).
+        let t = UNIX_EPOCH - std::time::Duration::from_millis(500);
+        let dt = to_chrono_utc(t);
+        assert_eq!(
+            (dt.timestamp(), dt.timestamp_subsec_nanos()),
+            (-1, 500_000_000)
+        );
+        assert_eq!(dt.to_rfc3339(), "1969-12-31T23:59:59.500+00:00");
+    }
+
+    #[test]
+    fn from_chrono_pre_epoch_subsecond() {
+        let dt = chrono::DateTime::from_timestamp(-1, 500_000_000).unwrap();
+        let t = from_chrono(dt);
+        assert_eq!(
+            t.duration_since(UNIX_EPOCH).unwrap_err().duration(),
+            std::time::Duration::from_millis(500)
+        );
+    }
+
+    #[test]
+    fn round_trip_pre_epoch_subsecond() {
+        let original = UNIX_EPOCH - std::time::Duration::from_millis(500);
+        let round_tripped = from_chrono(to_chrono_utc(original));
+        assert_eq!(round_tripped, original);
+    }
+
+    #[test]
+    fn round_trip_post_epoch_subsecond() {
+        let original = UNIX_EPOCH + std::time::Duration::from_millis(500);
+        let round_tripped = from_chrono(to_chrono_utc(original));
+        assert_eq!(round_tripped, original);
     }
 }
