@@ -23,7 +23,7 @@ pyo3 = { workspace = true }
 serde_json = { workspace = true }
 
 # Big-integer support for py_to_monty BigInt extraction
-num-bigint = "^0.4.6"  # must be compatible with the version pulled in by bashkit core
+num-bigint = "^0.5.1"  # must be compatible with the version pulled in by bashkit core
 
 # Native (non-wasm) targets: full feature set.
 # realfs: always-on so Python callers can use mount_real_* APIs.
