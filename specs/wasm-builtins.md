@@ -76,18 +76,39 @@ bashkit-specific SDK; any toolchain targeting `wasm32-wasip2` (Rust, Go,
 C/C++, JS via componentize-js, Python via componentize-py) produces a valid
 plugin; existing wasip2 CLI tools work as-is.
 
+**Enforcement model.** A wasm guest has no syscalls and no ambient
+authority: guest libc `open()`/`connect()` compile to calls of *imported
+functions*, and the host decides at link time what implementation — if any —
+sits behind each import. So "runs against the VFS" is not a per-call policy
+check; it is the only topology that exists. WASI path operations are also
+capability-scoped: every op is relative to a preopened directory descriptor
+the host hands over — there is no ambient root through which the host FS
+could even be named. Guarantee is as strong as (a) bashkit's shim code
+(bug in shim = hole; hence the no-leak/fuzz obligations below) and
+(b) wasmtime's isolation correctness (TM-WASM-009).
+
 Host-side WASI implementation:
 
-- `wasi:filesystem` backed by `Arc<dyn FileSystem>` (the VFS). Preopen `/`,
-  cwd from `Context`. `FsLimits` enforced at the VFS layer as today; symlink
-  policy inherited (stored, never followed, L-FS-001). No host FS reachable
-  by construction — `realfs` mounts visible only if mounted into the VFS.
-- `wasi:sockets` denied (L-NET-001 parity). Network for plugins, if ever,
-  only via a host interface routed through the existing `HttpClient`
-  pipeline (allowlist → SSRF filter → credential hooks → bot-auth signing),
-  so the security boundary stays in bashkit.
-- `wasi:cli` environment = `ctx.env` only, never host env (TM-INF-013 fuzz
-  canary applies).
+- `wasi:filesystem`: bashkit implements the filesystem host interface
+  itself, backed by `Arc<dyn FileSystem>` (the VFS). **Never use
+  wasmtime-wasi's stock implementation — its preopens map to the real OS
+  FS.** This custom shim is the main Phase 1 work. Preopen exactly one
+  root: `/` = VFS root; cwd from `Context`. `FsLimits`, `ReadOnlyFs`
+  layers, and symlink policy (stored, never followed, L-FS-001) are
+  enforced inside the VFS below the shim, so plugins can't bypass them any
+  more than `cat` can. No host FS reachable by construction — `realfs`
+  mounts visible only if mounted into the VFS.
+- `wasi:sockets`: linked as denying stubs — every operation returns
+  `access-denied` (L-NET-001 parity). Stubs, not omission: components
+  whose toolchain pulls in the import without using it still instantiate.
+  Raw sockets stay unimplemented permanently. Network for plugins, if
+  ever, only via `wasi:http/outgoing-handler` implemented on the existing
+  `HttpClient` pipeline (allowlist → SSRF filter → credential hooks →
+  bot-auth signing), so the security boundary stays in bashkit.
+- `wasi:cli` environment = `ctx.env` only; host process env is never
+  passed in (TM-INF-013 fuzz canary applies). stdin from pipeline input;
+  stdout/stderr are host-side sinks feeding `ExecResult`, so existing 1 MB
+  caps apply before guest output is observable.
 - Clocks/random: allowed (virtualizable later if determinism needed).
 
 Phase 3 (optional, additive): custom `bashkit:host` WIT world for richer
