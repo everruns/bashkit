@@ -22,8 +22,12 @@ pyo3 = { workspace = true }
 # Serialization
 serde_json = { workspace = true }
 
-# Big-integer support for py_to_monty BigInt extraction
-num-bigint = "^0.4.6"  # must be compatible with the version pulled in by bashkit core
+# Big-integer support for py_to_monty BigInt extraction.
+# Pinned to 0.4.x: py_to_monty parses Python ints into `num_bigint::BigInt` and
+# hands them to `MontyObject::BigInt`, and monty (git tag v0.0.18) depends on
+# num-bigint 0.4. Bumping to 0.5 makes the two BigInt types mismatch and fails
+# to compile, so this must track whatever major version bashkit core / monty use.
+num-bigint = "^0.4.6"
 
 # Native (non-wasm) targets: full feature set.
 # realfs: always-on so Python callers can use mount_real_* APIs.

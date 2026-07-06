@@ -108,7 +108,7 @@ tracing = "0.1"
 tower = { version = "0.5", features = ["util"] }
 
 # SSH client (for ssh/scp/sftp builtins)
-russh = "0.61"
+russh = "0.62"
 # Embedded SQLite engine (Turso, pure Rust). Upstream is BETA — gated behind
 # the `sqlite` feature and disabled by default; see specs/sqlite-builtin.md.
 turso_core = "0.6"
