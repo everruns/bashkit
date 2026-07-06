@@ -98,13 +98,27 @@ Host-side WASI implementation:
   enforced inside the VFS below the shim, so plugins can't bypass them any
   more than `cat` can. No host FS reachable by construction — `realfs`
   mounts visible only if mounted into the VFS.
-- `wasi:sockets`: linked as denying stubs — every operation returns
-  `access-denied` (L-NET-001 parity). Stubs, not omission: components
-  whose toolchain pulls in the import without using it still instantiate.
-  Raw sockets stay unimplemented permanently. Network for plugins, if
-  ever, only via `wasi:http/outgoing-handler` implemented on the existing
-  `HttpClient` pipeline (allowlist → SSRF filter → credential hooks →
-  bot-auth signing), so the security boundary stays in bashkit.
+- `wasi:http` (**required**, not optional): plugin networking goes through
+  the exact same channel as `curl`/`wget` today. Bashkit implements
+  `wasi:http/outgoing-handler` on top of the existing `HttpClient`, so
+  every plugin request runs the full pipeline per hop: allowlist (literal
+  host match, no DNS) → private-IP/SSRF filter → `before_http` hooks
+  (credential injection — placeholders like `bk_placeholder_<32hex>`
+  resolve host-side; the guest never sees raw secrets) → bot-auth signing
+  → `after_http` hooks. No redirect following in the host (allowlist-bypass
+  prevention, as today): 3xx is returned to the guest; if the guest
+  re-requests, the new host is re-checked. Single egress path — the shim
+  must not construct its own reqwest client. Gated on the `http_client`
+  cargo feature *and* a configured allowlist, exactly like the curl
+  builtin; otherwise linked as denying stubs. Guest-side implication:
+  plugins must use wasi:http-native clients (Rust: `wstd`/`waki`;
+  TinyGo `net/http` via wasi-http; componentize-js `fetch()`); HTTP stacks
+  built on raw sockets won't work — by design, since sockets are stubbed.
+- `wasi:sockets`: linked as denying stubs permanently — every operation
+  returns `access-denied` (L-NET-001/002 parity: raw TCP/UDP would bypass
+  the allowlist and the no-DNS-resolution model). Stubs, not omission:
+  components whose toolchain pulls in the import without using it still
+  instantiate.
 - `wasi:cli` environment = `ctx.env` only; host process env is never
   passed in (TM-INF-013 fuzz canary applies). stdin from pipeline input;
   stdout/stderr are host-side sinks feeding `ExecResult`, so existing 1 MB
@@ -112,7 +126,7 @@ Host-side WASI implementation:
 - Clocks/random: allowed (virtualizable later if determinism needed).
 
 Phase 3 (optional, additive): custom `bashkit:host` WIT world for richer
-plugins — shell variable access, execution extensions, mediated HTTP.
+plugins — shell variable access, execution extensions.
 
 ### Host integration
 
@@ -156,20 +170,27 @@ plugins — shell variable access, execution extensions, mediated HTTP.
 | TM-WASM-007 | Cross-execution state leak | Fresh `Store` per exec |
 | TM-WASM-008 | Malicious precompiled artifact | Source-bytes compilation by default; `.cwasm` behind unsafe API |
 | TM-WASM-009 | Supply chain: wasmtime itself | Pin + `cargo deny`; feature off by default |
+| TM-WASM-010 | Plugin HTTP bypasses allowlist/SSRF/credential pipeline | Single egress path: `wasi:http` shim delegates to `HttpClient` only; no redirect following host-side; `wasi:sockets` stubbed |
+| TM-WASM-011 | Plugin exfiltrates injected credentials | Placeholder resolution host-side only; response bodies pass through `after_http` hooks; guest sees placeholders, never raw secrets |
+| TM-WASM-012 | HTTP response flood into guest | Guest linear-memory cap bounds what the plugin can hold; response size cap in shim (open question below) |
 
 ### Phasing
 
 1. **Phase 1 (MVP):** `wasm` feature (native-only). `WasmBuiltin` running
    `wasi:cli/command` components; VFS-backed `wasi:filesystem` shim; sockets
-   denied; limits mapping; example Rust plugin built to `wasm32-wasip2` and
-   exercised in CI; security tests + `no_leak_wasm` + fuzz target; criterion
-   baseline saved under `crates/bashkit/benches/results/`.
+   stubbed; `wasi:http` shim over `HttpClient` (with `http_client` feature;
+   stubs otherwise) — the two shims are the bulk of the work; limits
+   mapping; example Rust plugin built to `wasm32-wasip2` and exercised in
+   CI, including an HTTP-using plugin against the allowlist tests; security
+   tests + `no_leak_wasm` + fuzz target; criterion baseline saved under
+   `crates/bashkit/benches/results/`.
 2. **Phase 2:** runtime loading via `BuiltinRegistry`; AOT cache; expose in
    `bashkit-python`/`bashkit-js` and the Tool layer (kwarg fails loudly on
    wasm targets, like `sqlite=`).
 3. **Phase 3 (each a separate decision):** `bashkit:host` WIT world
-   (variables, mediated HTTP); `wasmi` backend for wasm32 hosts; per-builtin
-   migration of high-risk native parsers, gated on `just bench` deltas.
+   (variables, execution extensions); `wasmi` backend for wasm32 hosts;
+   per-builtin migration of high-risk native parsers, gated on
+   `just bench` deltas.
 
 ### Open questions
 
@@ -179,6 +200,10 @@ plugins — shell variable access, execution extensions, mediated HTTP.
   typed interfaces); p1 fallback shrinks the dependency if needed.
 - Plugin packaging/discovery: host application's job initially; no registry
   or search-path magic in bashkit.
+- Per-plugin HTTP limits: response size cap and max requests per exec in
+  the `wasi:http` shim (guest memory cap bounds retention, not transfer);
+  whether to stream or buffer responses (buffer in Phase 1; `HttpClient`
+  is buffered today).
 - Streaming stdout: `ExecResult` is buffered; fine for Phase 1.
 
 ## See also
