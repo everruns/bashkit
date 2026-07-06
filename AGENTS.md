@@ -50,6 +50,7 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 | credential-injection | Per-host HTTP credential injection without exposing secrets |
 | performance-results | Benchmark/eval result locations and `/benches` site aggregation contract |
 | emscripten-wheels | Reduced-feature Pyodide/Emscripten Python wheel |
+| wasm-builtins | Proposal: WASM/WASI sandboxed external builtin plugins |
 
 ### Documentation
 
