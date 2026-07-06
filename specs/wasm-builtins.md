@@ -192,6 +192,52 @@ plugins — shell variable access, execution extensions.
    per-builtin migration of high-risk native parsers, gated on
    `just bench` deltas.
 
+### Alternative considered: whole interpreter as a WASM guest
+
+Run entire `Bash` sessions inside wasmtime, so any fault in the interpreter
+is a handleable trap. Feasible in principle — bashkit already runs as a
+wasm guest (browser build gate, Pyodide wheel) — and the fault-containment
+gains are real and honest to state:
+
+- Stack overflow: native stack exhaustion aborts the process
+  (`catch_unwind` can't catch it); today prevented only cooperatively via
+  depth caps. In wasm: trap.
+- Memory: no memory cap on the interpreter today; Rust aborts on alloc
+  failure. In wasm: hard linear-memory ceiling, trap.
+- CPU: fuel is per-instruction; catches hot native loops between
+  `tick_command` checks.
+- `abort()`/`process::exit` in a dep (TM-INF-023 class): trap, not host
+  death.
+
+Rejected as *the library execution model* because:
+
+1. **API boundary.** Bashkit's embedding surface is in-process trait
+   objects/closures invoked during execution: custom `Builtin` impls,
+   `ToolDef` callbacks, Python/TS external-fn handlers, `HttpHandler`,
+   credential hooks, `BuiltinRegistry` (host-mutated mid-session), typed
+   execution extensions, shared `Arc<dyn FileSystem>` (cross-session).
+   Guest-side interpreter turns all of it into a serialized WIT/RPC
+   contract; closures and `Any`-typed extensions can't cross. Second
+   product to maintain.
+2. **Feature collapse.** wasm32 excludes `http_client`, `sqlite`, `ssh`,
+   `realfs`, interop (`specs/emscripten-wheels.md`); no threads in wasip2.
+   pyo3/napi bindings would need to embed wasmtime and proxy.
+3. **Tax on 100% of execution.** Wasm overhead on branchy interpreter
+   code, boundary crossing per FS op if VFS stays host-side, per-instance
+   linear memory. Isolation boundary belongs where trust changes: plugins
+   are third-party/cold-path; the core is first-party, covered by safe
+   Rust + limits + fuzzing + `catch_unwind`.
+
+Trap semantics also ≠ recovery: a trap kills the instance; the session
+restarts (same blast radius as process isolation, cheaper).
+
+**Pragmatic alternative** (possible future work, separate decision):
+publish `bashkit-cli` as a `wasm32-wasip2` command artifact. Operators
+wanting whole-session containment run sessions inside wasmtime at their
+level (stdio contract, reduced features, host-imposed fuel + memory cap).
+No API redesign; composes with this proposal (guest bashkit simply builds
+without the `wasm` feature — no nested runtime).
+
 ### Open questions
 
 - Binary/compile-time budget: measure wasmtime impact before committing;
