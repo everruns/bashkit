@@ -298,6 +298,17 @@
 //! - No automatic redirects (prevents allowlist bypass)
 //! - Zip bomb protection for compressed responses
 //!
+//! HTTP is **disabled by default**: the `http_client` feature must be
+//! compiled in *and* an allowlist must be configured via
+//! [`BashBuilder::network`]; otherwise curl/wget cannot reach the network at
+//! all.
+//!
+//! Embedding hosts can replace the built-in connectivity with their own —
+//! e.g. to route all sandbox traffic through an egress gateway — by
+//! injecting an [`HttpTransport`] via [`BashBuilder::http_transport`].
+//! Policy (allowlist, SSRF precheck, hooks, signing, size caps) stays in
+//! bashkit and runs before the transport is called.
+//!
 //! See [`NetworkAllowlist`] for allowlist configuration options.
 //!
 //! # Experimental: Git Support
@@ -489,9 +500,16 @@ pub use scripted_tool::{
 pub use tool_def::{AsyncToolExec, SyncToolExec, ToolImpl};
 
 #[cfg(feature = "http_client")]
-pub use network::{HttpClient, HttpHandler};
+pub use network::HttpClient;
 
-/// Re-exported network response type for custom HTTP handler implementations.
+#[cfg(feature = "http_client")]
+pub use network::{HttpTransport, HttpTransportError, HttpTransportRequest};
+
+/// Re-exported request method type for custom HTTP transport implementations.
+#[cfg(feature = "http_client")]
+pub use network::Method as HttpMethod;
+
+/// Re-exported network response type for custom HTTP transport implementations.
 #[cfg(feature = "http_client")]
 pub use network::Response as HttpResponse;
 
@@ -1438,8 +1456,9 @@ pub struct BashBuilder {
     #[cfg(feature = "http_client")]
     network_allowlist: Option<NetworkAllowlist>,
     /// Custom HTTP handler for request interception
+    /// Custom HTTP transport for curl/wget.
     #[cfg(feature = "http_client")]
-    http_handler: Option<Box<dyn network::HttpHandler>>,
+    http_transport: Option<Arc<dyn network::HttpTransport>>,
     /// Bot-auth config for transparent request signing
     #[cfg(feature = "bot-auth")]
     bot_auth_config: Option<network::BotAuthConfig>,
@@ -1688,48 +1707,70 @@ impl BashBuilder {
         self
     }
 
-    /// Set a custom HTTP handler for request interception.
+    /// Set a custom HTTP transport for all curl/wget/http traffic.
     ///
-    /// The handler is called after the URL allowlist check, so the security
-    /// boundary stays in bashkit. Use this for:
-    /// - Corporate proxies
-    /// - Logging/auditing
-    /// - Caching responses
-    /// - Rate limiting
-    /// - Mocking HTTP responses in tests
+    /// The transport replaces the built-in reqwest connectivity while every
+    /// policy step stays in bashkit and runs *before* the transport is
+    /// called: URL allowlist check, DNS/private-IP SSRF precheck,
+    /// `before_http` hooks (including credential injection), and bot-auth
+    /// request signing. The [`HttpTransportRequest`] the transport receives
+    /// carries the merged headers (signing + credentials), timeouts, the
+    /// precheck's pinned addresses, and the response size cap. Redirects are
+    /// followed manually by curl/wget, so every hop is re-validated,
+    /// re-signed, and re-dispatched through the transport.
+    ///
+    /// Use this to direct sandbox traffic through a host-owned boundary:
+    /// - an egress service or gateway (route, audit, and deny centrally)
+    /// - corporate proxies
+    /// - logging/auditing, caching, rate limiting
+    /// - mocking HTTP responses in tests
+    ///
+    /// The `Arc` can be shared across many `Bash` instances, so hosts that
+    /// build one interpreter per execution reuse a single transport.
+    ///
+    /// Network access remains **disabled by default**: without
+    /// [`network`](Self::network) configuring an allowlist, no HTTP builtin
+    /// can make requests and the transport is never called.
+    ///
+    /// # Errors and limits
+    ///
+    /// Return [`HttpTransportError::Denied`] for host-policy denials,
+    /// [`HttpTransportError::Timeout`] / [`HttpTransportError::TooLarge`]
+    /// for deadline and size violations — curl/wget map them to their
+    /// native exit codes (7, 28, 63). See [`HttpTransportError`].
     ///
     /// # Example
     ///
-    /// ```ignore
-    /// use bashkit::network::HttpHandler;
+    /// ```
+    /// use bashkit::{
+    ///     Bash, HttpResponse, HttpTransport, HttpTransportError, HttpTransportRequest,
+    ///     NetworkAllowlist,
+    /// };
+    /// use std::sync::Arc;
     ///
-    /// struct MyHandler;
+    /// /// Routes every sandbox request through a host egress boundary.
+    /// struct EgressTransport;
     ///
     /// #[async_trait::async_trait]
-    /// impl HttpHandler for MyHandler {
-    ///     async fn request(
+    /// impl HttpTransport for EgressTransport {
+    ///     async fn execute(
     ///         &self,
-    ///         method: &str,
-    ///         url: &str,
-    ///         body: Option<&[u8]>,
-    ///         headers: &[(String, String)],
-    ///     ) -> Result<bashkit::network::Response, String> {
-    ///         Ok(bashkit::network::Response {
-    ///             status: 200,
-    ///             headers: vec![],
-    ///             body: b"mocked".to_vec(),
-    ///         })
+    ///         request: HttpTransportRequest,
+    ///     ) -> Result<HttpResponse, HttpTransportError> {
+    ///         // Forward request.method/url/headers/body/timeout/pinned_addrs
+    ///         // to the host's egress client; map policy denials to `Denied`.
+    ///         Ok(HttpResponse { status: 200, headers: vec![], body: b"ok".to_vec() })
     ///     }
     /// }
     ///
     /// let bash = Bash::builder()
     ///     .network(NetworkAllowlist::allow_all())
-    ///     .http_handler(Box::new(MyHandler))
+    ///     .http_transport(Arc::new(EgressTransport))
     ///     .build();
     /// ```
     #[cfg(feature = "http_client")]
-    pub fn http_handler(mut self, handler: Box<dyn network::HttpHandler>) -> Self {
-        self.http_handler = Some(handler);
+    pub fn http_transport(mut self, transport: Arc<dyn network::HttpTransport>) -> Self {
+        self.http_transport = Some(transport);
         self
     }
 
@@ -2741,7 +2782,7 @@ impl BashBuilder {
             #[cfg(feature = "http_client")]
             self.network_allowlist,
             #[cfg(feature = "http_client")]
-            self.http_handler,
+            self.http_transport,
             #[cfg(feature = "bot-auth")]
             self.bot_auth_config,
             #[cfg(feature = "logging")]
@@ -2982,7 +3023,7 @@ impl BashBuilder {
         host_builtins: Option<BuiltinRegistry>,
         history_file: Option<PathBuf>,
         #[cfg(feature = "http_client")] network_allowlist: Option<NetworkAllowlist>,
-        #[cfg(feature = "http_client")] http_handler: Option<Box<dyn network::HttpHandler>>,
+        #[cfg(feature = "http_client")] http_transport: Option<Arc<dyn network::HttpTransport>>,
         #[cfg(feature = "bot-auth")] bot_auth_config: Option<network::BotAuthConfig>,
         #[cfg(feature = "logging")] log_config: Option<logging::LogConfig>,
         #[cfg(feature = "git")] git_config: Option<GitConfig>,
@@ -3038,8 +3079,8 @@ impl BashBuilder {
         #[cfg(feature = "http_client")]
         if let Some(allowlist) = network_allowlist {
             let mut client = network::HttpClient::new(allowlist);
-            if let Some(handler) = http_handler {
-                client.set_handler(handler);
+            if let Some(transport) = http_transport {
+                client.set_transport(transport);
             }
             #[cfg(feature = "bot-auth")]
             if let Some(bot_auth) = bot_auth_config {

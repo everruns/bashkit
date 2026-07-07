@@ -25,7 +25,7 @@ Signing happens in `HttpClient` at the same layer as the allowlist check. **All*
 |------|--------|-----|
 | `HttpClient::request_with_headers` (default reqwest) | Yes | `bot_auth_headers()` injected before `request.send()` |
 | `HttpClient::request_with_timeouts` (per-request timeout) | Yes | Same `bot_auth_headers()` injection |
-| Custom `HttpHandler` | Yes | Signing headers merged into the handler's `headers` slice |
+| Custom `HttpTransport` | Yes | Signing headers merged into `HttpTransportRequest.headers` before dispatch (see `specs/http-transport.md`) |
 | Redirects (manual follow in curl/wget) | Yes | Each redirect is a new `HttpClient` request, re-signed with the new authority |
 
 Every HTTP builtin — `curl`, `wget`, `http` — goes through `HttpClient`, so no builtin can bypass signing.

@@ -902,25 +902,26 @@ mod decompression_security {
 }
 
 // =============================================================================
-// CUSTOM HTTP HANDLER TESTS
+// CUSTOM HTTP TRANSPORT TESTS
 // =============================================================================
 
-mod custom_handler {
+// Test URLs use a public IP literal so the SSRF precheck validates the
+// literal without a DNS lookup - hermetic regardless of environment DNS.
+mod custom_transport {
     use super::*;
-    use bashkit::{HttpHandler, HttpResponse as Response};
+    use bashkit::{
+        HttpResponse as Response, HttpTransport, HttpTransportError, HttpTransportRequest,
+    };
     use std::sync::{Arc, Mutex};
 
-    struct MockHandler;
+    struct MockTransport;
 
     #[async_trait::async_trait]
-    impl HttpHandler for MockHandler {
-        async fn request(
+    impl HttpTransport for MockTransport {
+        async fn execute(
             &self,
-            _method: &str,
-            _url: &str,
-            _body: Option<&[u8]>,
-            _headers: &[(String, String)],
-        ) -> std::result::Result<Response, String> {
+            _request: HttpTransportRequest,
+        ) -> std::result::Result<Response, HttpTransportError> {
             Ok(Response {
                 status: 200,
                 headers: vec![("content-type".to_string(), "text/plain".to_string())],
@@ -930,31 +931,28 @@ mod custom_handler {
     }
 
     #[tokio::test]
-    async fn custom_handler_intercepts_requests() {
+    async fn custom_transport_intercepts_requests() {
         let allowlist = NetworkAllowlist::allow_all();
         let mut bash = Bash::builder()
             .network(allowlist)
-            .http_handler(Box::new(MockHandler))
+            .http_transport(Arc::new(MockTransport))
             .build();
 
-        let result = bash.exec("curl -s https://example.com").await.unwrap();
+        let result = bash.exec("curl -s http://93.184.216.34").await.unwrap();
         assert_eq!(result.stdout.trim(), "mocked-response");
     }
 
-    struct HeaderCaptureHandler {
+    struct HeaderCaptureTransport {
         headers: Arc<Mutex<Vec<(String, String)>>>,
     }
 
     #[async_trait::async_trait]
-    impl HttpHandler for HeaderCaptureHandler {
-        async fn request(
+    impl HttpTransport for HeaderCaptureTransport {
+        async fn execute(
             &self,
-            _method: &str,
-            _url: &str,
-            _body: Option<&[u8]>,
-            headers: &[(String, String)],
-        ) -> std::result::Result<Response, String> {
-            *self.headers.lock().unwrap() = headers.to_vec();
+            request: HttpTransportRequest,
+        ) -> std::result::Result<Response, HttpTransportError> {
+            *self.headers.lock().unwrap() = request.headers.clone();
             Ok(Response {
                 status: 200,
                 headers: vec![("content-type".to_string(), "text/plain".to_string())],
@@ -977,12 +975,12 @@ mod custom_handler {
         let headers = Arc::new(Mutex::new(Vec::new()));
         let mut bash = Bash::builder()
             .network(NetworkAllowlist::allow_all())
-            .http_handler(Box::new(HeaderCaptureHandler {
+            .http_transport(Arc::new(HeaderCaptureTransport {
                 headers: headers.clone(),
             }))
             .build();
 
-        let result = bash.exec("curl -s https://example.com").await.unwrap();
+        let result = bash.exec("curl -s http://93.184.216.34").await.unwrap();
 
         assert_eq!(result.exit_code, 0);
         assert_eq!(captured_user_agent(&headers).as_deref(), Some("curl/8.7.1"));
@@ -993,13 +991,13 @@ mod custom_handler {
         let headers = Arc::new(Mutex::new(Vec::new()));
         let mut bash = Bash::builder()
             .network(NetworkAllowlist::allow_all())
-            .http_handler(Box::new(HeaderCaptureHandler {
+            .http_transport(Arc::new(HeaderCaptureTransport {
                 headers: headers.clone(),
             }))
             .build();
 
         let result = bash
-            .exec("curl -s -A 'CustomAgent/1.0' https://example.com")
+            .exec("curl -s -A 'CustomAgent/1.0' http://93.184.216.34")
             .await
             .unwrap();
 
@@ -1015,13 +1013,13 @@ mod custom_handler {
         let headers = Arc::new(Mutex::new(Vec::new()));
         let mut bash = Bash::builder()
             .network(NetworkAllowlist::allow_all())
-            .http_handler(Box::new(HeaderCaptureHandler {
+            .http_transport(Arc::new(HeaderCaptureTransport {
                 headers: headers.clone(),
             }))
             .build();
 
         let result = bash
-            .exec("curl -s -H 'User-Agent: HeaderAgent/1.0' https://example.com")
+            .exec("curl -s -H 'User-Agent: HeaderAgent/1.0' http://93.184.216.34")
             .await
             .unwrap();
 
@@ -1033,16 +1031,98 @@ mod custom_handler {
     }
 
     #[tokio::test]
-    async fn custom_handler_allowlist_still_enforced() {
-        // Even with a custom handler, the allowlist should be checked first
+    async fn custom_transport_allowlist_still_enforced() {
+        // Even with a custom transport, the allowlist should be checked first
         let allowlist = NetworkAllowlist::new(); // empty = blocks all
         let mut bash = Bash::builder()
             .network(allowlist)
-            .http_handler(Box::new(MockHandler))
+            .http_transport(Arc::new(MockTransport))
             .build();
 
-        let result = bash.exec("curl -s https://example.com 2>&1").await.unwrap();
-        // Should be blocked by allowlist, not reaching the handler
+        let result = bash
+            .exec("curl -s http://93.184.216.34 2>&1")
+            .await
+            .unwrap();
+        // Should be blocked by allowlist, not reaching the transport
         assert!(result.stdout.contains("access denied") || result.stderr.contains("access denied"));
+    }
+
+    /// Transport that always fails with the given error.
+    struct FailingTransport(fn() -> HttpTransportError);
+
+    #[async_trait::async_trait]
+    impl HttpTransport for FailingTransport {
+        async fn execute(
+            &self,
+            _request: HttpTransportRequest,
+        ) -> std::result::Result<Response, HttpTransportError> {
+            Err((self.0)())
+        }
+    }
+
+    async fn curl_with_failing_transport(error: fn() -> HttpTransportError) -> (String, i32) {
+        let mut bash = Bash::builder()
+            .network(NetworkAllowlist::allow_all())
+            .http_transport(Arc::new(FailingTransport(error)))
+            .build();
+        let result = bash
+            .exec("curl -s http://93.184.216.34 2>&1")
+            .await
+            .unwrap();
+        (result.stdout, result.exit_code)
+    }
+
+    // Host-boundary errors must surface as the curl exit codes scripts (and
+    // the LLMs driving them) already understand.
+
+    #[tokio::test]
+    async fn transport_denied_maps_to_curl_exit_7() {
+        let (output, exit_code) =
+            curl_with_failing_transport(|| HttpTransportError::Denied("blocked by host".into()))
+                .await;
+        assert_eq!(exit_code, 7, "got: {output}");
+        assert!(output.contains("access denied"), "got: {output}");
+    }
+
+    #[tokio::test]
+    async fn transport_timeout_maps_to_curl_exit_28() {
+        let (output, exit_code) = curl_with_failing_transport(|| HttpTransportError::Timeout).await;
+        assert_eq!(exit_code, 28, "got: {output}");
+        assert!(output.contains("timed out"), "got: {output}");
+    }
+
+    #[tokio::test]
+    async fn transport_too_large_maps_to_curl_exit_63() {
+        let (output, exit_code) = curl_with_failing_transport(|| {
+            HttpTransportError::TooLarge("body exceeded 10485760 bytes".into())
+        })
+        .await;
+        assert_eq!(exit_code, 63, "got: {output}");
+        assert!(output.contains("response too large"), "got: {output}");
+    }
+
+    #[tokio::test]
+    async fn transport_error_maps_to_curl_exit_1() {
+        let (output, exit_code) = curl_with_failing_transport(|| {
+            HttpTransportError::Transport("connection refused".into())
+        })
+        .await;
+        assert_eq!(exit_code, 1, "got: {output}");
+        assert!(output.contains("connection refused"), "got: {output}");
+    }
+
+    #[tokio::test]
+    async fn wget_uses_custom_transport() {
+        let mut bash = Bash::builder()
+            .network(NetworkAllowlist::allow_all())
+            .http_transport(Arc::new(MockTransport))
+            .build();
+
+        let result = bash
+            .exec("wget -q -O - http://93.184.216.34")
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout.trim(), "mocked-response");
     }
 }

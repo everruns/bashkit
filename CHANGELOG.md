@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### Highlights
+
+- **Pluggable `HttpTransport` for curl/wget** — embedding hosts can direct all
+  sandbox HTTP through their own boundary (egress gateway, proxy, audit layer)
+  by injecting a transport via `BashBuilder::http_transport`. bashkit keeps
+  enforcing policy (allowlist, SSRF precheck, hooks, credential injection,
+  bot-auth signing, response caps) before every dispatch; the transport
+  receives the merged signed headers, timeouts, the SSRF precheck's pinned
+  addresses, and the response size cap, and returns typed errors
+  (`Denied`/`Timeout`/`TooLarge`/`Transport`) that map onto curl exit codes
+  (7/28/63/1). Mirrors fetchkit's transport injection so one host egress
+  implementation can back both libraries. See `specs/http-transport.md`.
+
+### Breaking Changes
+
+- **`HttpHandler` removed.** `BashBuilder::http_handler` and
+  `HttpClient::set_handler` are replaced by `BashBuilder::http_transport` /
+  `HttpClient::set_transport` (no compatibility shim, per repo policy).
+  Migration: implement `HttpTransport` — wrap the old
+  `(method, url, body, headers)` logic in `execute(HttpTransportRequest)`
+  and return `HttpTransportError` variants instead of `String`.
+  - Before: `.http_handler(Box::new(MyHandler))`
+  - After: `.http_transport(Arc::new(MyTransport))`
+
 ## [0.12.0] - 2026-06-23
 
 ### Highlights

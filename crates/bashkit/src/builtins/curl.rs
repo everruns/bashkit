@@ -1792,17 +1792,15 @@ mod tests {
             assert_eq!(reads.load(std::sync::atomic::Ordering::SeqCst), 0);
         }
 
-        struct OkHandler;
+        struct OkTransport;
 
         #[async_trait::async_trait]
-        impl crate::network::HttpHandler for OkHandler {
-            async fn request(
+        impl crate::network::HttpTransport for OkTransport {
+            async fn execute(
                 &self,
-                _method: &str,
-                _url: &str,
-                _body: Option<&[u8]>,
-                _headers: &[(String, String)],
-            ) -> std::result::Result<crate::network::Response, String> {
+                _request: crate::network::HttpTransportRequest,
+            ) -> std::result::Result<crate::network::Response, crate::network::HttpTransportError>
+            {
                 Ok(crate::network::Response {
                     status: 200,
                     headers: vec![],
@@ -1827,7 +1825,7 @@ mod tests {
             let mut bash = crate::Bash::builder()
                 .fs(fs)
                 .network(crate::NetworkAllowlist::allow_all())
-                .http_handler(Box::new(OkHandler))
+                .http_transport(Arc::new(OkTransport))
                 .build();
 
             let result = bash
@@ -1844,7 +1842,7 @@ mod tests {
         async fn test_curl_multipart_missing_upload_file_returns_error() {
             let mut bash = crate::Bash::builder()
                 .network(crate::NetworkAllowlist::allow_all())
-                .http_handler(Box::new(OkHandler))
+                .http_transport(Arc::new(OkTransport))
                 .build();
 
             let result = bash
