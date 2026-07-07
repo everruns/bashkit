@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.13.0] - 2026-07-07
 
 ### Highlights
 
@@ -13,7 +13,18 @@
   addresses, and the response size cap, and returns typed errors
   (`Denied`/`Timeout`/`TooLarge`/`Transport`) that map onto curl exit codes
   (7/28/63/1). Mirrors fetchkit's transport injection so one host egress
-  implementation can back both libraries. See `specs/http-transport.md`.
+  implementation can back both libraries. See `specs/http-transport.md`
+  ([#2147](https://github.com/everruns/bashkit/pull/2147)).
+- **`xargs -P` parallel execution** — `-P/--max-procs` runs command batches
+  concurrently, with `--process-slot-var` exposing the slot index to each child
+  ([#2126](https://github.com/everruns/bashkit/pull/2126)).
+- **`ls -d/--directory`** — list directories themselves instead of their
+  contents ([#2134](https://github.com/everruns/bashkit/pull/2134)).
+- **`bashkit-eval` reimplemented on the mira framework** — the LLM eval harness
+  now runs on mira ([#2129](https://github.com/everruns/bashkit/pull/2129)).
+- **Linear-time glob `*` matching (TM-DOS-031)** — replaces the pathological
+  backtracking that allowed exponential blowup on adversarial patterns
+  ([#2142](https://github.com/everruns/bashkit/pull/2142)).
 
 ### Breaking Changes
 
@@ -25,6 +36,32 @@
   and return `HttpTransportError` variants instead of `String`.
   - Before: `.http_handler(Box::new(MyHandler))`
   - After: `.http_transport(Arc::new(MyTransport))`
+
+### What's Changed
+
+* fix(test): exclude host-dependent vars from differential fuzzer ([#2150](https://github.com/everruns/bashkit/pull/2150)) by @chaliy
+* fix(eval): bound transcript VFS snapshots ([#2149](https://github.com/everruns/bashkit/pull/2149)) by @chaliy
+* feat(network): pluggable HttpTransport for host-routed HTTP egress ([#2147](https://github.com/everruns/bashkit/pull/2147)) by @chaliy
+* chore(ci): bump the github-actions group with 3 updates ([#2146](https://github.com/everruns/bashkit/pull/2146)) by @dependabot
+* chore(deps): bump the rust-dependencies group with 5 updates ([#2145](https://github.com/everruns/bashkit/pull/2145)) by @dependabot
+* fix(ls): render actual UTC calendar dates in long format ([#2144](https://github.com/everruns/bashkit/pull/2144)) by @a0preetham
+* fix(security): update fuzz cmov lockfile ([#2143](https://github.com/everruns/bashkit/pull/2143)) by @chaliy
+* fix(glob): linear-time * matching to stop exponential blowup (TM-DOS-031) ([#2142](https://github.com/everruns/bashkit/pull/2142)) by @chaliy
+* fix(wasm): route clock reads through web-time so bashkit runs on wasm32-unknown-unknown ([#2140](https://github.com/everruns/bashkit/pull/2140)) by @a0preetham
+* chore(deps): bump the rust-dependencies group with 6 updates ([#2138](https://github.com/everruns/bashkit/pull/2138)) by @dependabot
+* chore(ci): bump the github-actions group with 4 updates ([#2137](https://github.com/everruns/bashkit/pull/2137)) by @dependabot
+* fix(deps): bump langgraph-checkpoint to 4.1.1 (GHSA-fjqc-hq36-qh5p) ([#2136](https://github.com/everruns/bashkit/pull/2136)) by @chaliy
+* fix(vfs): provision user home directory so $HOME is writable ([#2135](https://github.com/everruns/bashkit/pull/2135)) by @chaliy
+* feat(ls): support -d/--directory to list directories themselves ([#2134](https://github.com/everruns/bashkit/pull/2134)) by @chaliy
+* chore(security): drop stale pyo3 ignore from audit.toml + bump site ws/yaml ([#2131](https://github.com/everruns/bashkit/pull/2131)) by @chaliy
+* fix(deps): remove stale pyo3 advisory ignores ([#2130](https://github.com/everruns/bashkit/pull/2130)) by @chaliy
+* feat(eval): reimplement bashkit-eval on the mira framework ([#2129](https://github.com/everruns/bashkit/pull/2129)) by @chaliy
+* feat(xargs): support -P/--max-procs and --process-slot-var ([#2126](https://github.com/everruns/bashkit/pull/2126)) by @chaliy
+* fix(js): bump js-yaml to >=4.2.0 (GHSA-h67p-54hq-rp68) ([#2124](https://github.com/everruns/bashkit/pull/2124)) by @chaliy
+* fix(parser): treat do/done as words inside for/select in-list ([#2123](https://github.com/everruns/bashkit/pull/2123)) by @chaliy
+* fix(deps): bump pyo3 to 0.29 to resolve two security advisories ([#2122](https://github.com/everruns/bashkit/pull/2122)) by @chaliy
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.12.0...v0.13.0
 
 ## [0.12.0] - 2026-06-23
 
