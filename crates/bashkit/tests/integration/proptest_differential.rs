@@ -43,9 +43,40 @@ async fn run_bashkit(script: &str) -> (String, i32) {
 
 // === Grammar-based script generators ===
 
-/// Generate a simple variable name (lowercase letters only for safety)
+/// Bash special, readonly, and dynamic variables whose value is tied to the
+/// host user/process (UID/EUID/PPID/RANDOM/...) or the ambient environment
+/// (PATH/HOME/...). The differential fuzzer must never use these as generated
+/// variable names: bashkit reports fixed sandbox defaults (e.g. UID=1000) while
+/// real bash reflects the runner, so comparing them is host-dependent and
+/// flaky. Counterexample that motivated this filter (fails only when the
+/// runner uid != 1000): `UID=a echo done; echo ${UID:-unset}`.
+const HOST_DEPENDENT_VARS: &[&str] = &[
+    "BASH", "BASHOPTS", "BASHPID", "CDPATH", "COLUMNS", "DIRSTACK", "EDITOR", "ENV", "EUID",
+    "FCEDIT", "FIGNORE", "FUNCNAME", "GROUPS", "HISTCMD", "HISTFILE", "HISTSIZE", "HOME",
+    "HOSTFILE", "HOSTNAME", "HOSTTYPE", "IFS", "INPUTRC", "LANG", "LINENO", "LINES", "LOGNAME",
+    "MACHTYPE", "MAIL", "MAILPATH", "OLDPWD", "OPTARG", "OPTERR", "OPTIND", "OSTYPE", "PAGER",
+    "PATH", "PPID", "PWD", "RANDOM", "REPLY", "SECONDS", "SHELL", "SHLVL", "SRANDOM", "TERM",
+    "TMOUT", "TMPDIR", "TZ", "UID", "USER", "VISUAL",
+];
+
+/// True when `name` must not be generated as a fresh user variable: it is a
+/// known bash special/host-dependent variable, or it is already present in the
+/// process environment inherited by the comparison `bash` (so its value would
+/// diverge from bashkit's sandbox defaults). Catches host-exported variables
+/// generically, independent of the runner.
+fn is_host_dependent_var(name: &str) -> bool {
+    HOST_DEPENDENT_VARS.contains(&name) || std::env::var_os(name).is_some()
+}
+
+/// Generate a simple variable name. Uppercased to avoid bash reserved words
+/// (which are lowercase), and filtered to avoid bash special/host-dependent
+/// variables so differential comparisons stay deterministic across runners.
 fn var_name_strategy() -> impl Strategy<Value = String> {
-    "[a-z]{1,8}".prop_map(|s| s.to_uppercase())
+    "[a-z]{1,8}"
+        .prop_map(|s| s.to_uppercase())
+        .prop_filter("avoid host-dependent bash variables", |name| {
+            !is_host_dependent_var(name)
+        })
 }
 
 /// Generate a safe literal value (no special chars that could cause issues)
@@ -594,6 +625,29 @@ async fn differential_edge_cases() {
             bashkit_exit, bash_exit,
             "Exit code mismatch for '{}'\nScript: {}",
             name, script
+        );
+    }
+}
+
+/// The generated variable-name filter must reject bash special/host-dependent
+/// variables while still allowing ordinary user names. Regression guard for the
+/// flaky `UID=a echo done; echo ${UID:-unset}` differential (bashkit reports the
+/// sandbox UID=1000 while real bash reports the runner's uid).
+#[test]
+fn host_dependent_vars_are_excluded() {
+    for name in [
+        "UID", "EUID", "PPID", "RANDOM", "PATH", "HOME", "IFS", "PWD", "SECONDS", "HOSTNAME",
+    ] {
+        assert!(
+            is_host_dependent_var(name),
+            "{name} must be treated as host-dependent and excluded from the fuzzer"
+        );
+    }
+    // Ordinary user variable names, not present in the environment, are allowed.
+    for name in ["XZQV", "MYVAR", "FOOBAR", "ABCDEFGH"] {
+        assert!(
+            !is_host_dependent_var(name),
+            "{name} is a safe user variable and must remain generatable"
         );
     }
 }
