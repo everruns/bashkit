@@ -11,8 +11,8 @@
 // See specs/eval.md ("Scoring") for why the snapshot, not a live filesystem
 // handle, is the scoring substrate.
 
-use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
 
 use bashkit::{FileSystem, FileType};
 use serde::{Deserialize, Serialize};
@@ -34,7 +34,7 @@ pub struct Snapshot {
     pub tool_outputs: Vec<ToolOutput>,
     /// Exit code of the final tool call (`None` if no tool was ever called).
     pub last_exit_code: Option<i32>,
-    /// Absolute paths of every directory in the VFS after the run.
+    /// Absolute paths of expectation-relevant directories in the VFS after the run.
     pub dirs: Vec<String>,
 }
 
@@ -55,49 +55,133 @@ impl Snapshot {
     }
 }
 
-/// Walk an entire bashkit VFS into a flat `(files, dirs)` pair. `files` maps
-/// absolute path -> UTF-8-lossy contents; `dirs` is the sorted set of absolute
-/// directory paths. Symlinks/FIFOs are ignored (no eval scores on them).
-pub async fn snapshot_fs(fs: &dyn FileSystem) -> (BTreeMap<String, String>, Vec<String>) {
+/// Maximum bytes retained from any one expected file in a transcript snapshot.
+pub const MAX_SNAPSHOT_FILE_BYTES: usize = 1024 * 1024;
+
+/// File and directory paths needed by the deterministic expectation checks.
+#[derive(Debug, Clone, Default)]
+pub struct SnapshotTargets {
+    pub files: BTreeSet<String>,
+    pub dirs: BTreeSet<String>,
+}
+
+impl SnapshotTargets {
+    /// Derive the minimal VFS snapshot target set from task expectations.
+    pub fn from_expectations(expectations: &[(String, f64)]) -> Self {
+        let mut targets = Self::default();
+        for (check, _) in expectations {
+            let (check_type, check_value) = check.split_once(':').unwrap_or((check, ""));
+            match check_type {
+                "file_exists" => {
+                    targets.files.insert(check_value.to_string());
+                    targets.dirs.insert(check_value.to_string());
+                }
+                "dir_exists" => {
+                    targets.dirs.insert(check_value.to_string());
+                }
+                "file_contains" | "file_line_regex" => {
+                    if let Some((path, _)) = check_value.split_once(':') {
+                        targets.files.insert(path.to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+        targets
+    }
+}
+
+/// Snapshot only expectation-relevant VFS state into transcript data. Full VFS
+/// capture is intentionally avoided: model-controlled evals can create many
+/// large files, and transcript/reporting code retains this map in memory.
+pub async fn snapshot_fs(
+    fs: &dyn FileSystem,
+    targets: &SnapshotTargets,
+) -> (BTreeMap<String, String>, Vec<String>) {
     let mut files = BTreeMap::new();
+    for path in &targets.files {
+        let path_buf = PathBuf::from(path);
+        let Ok(metadata) = fs.stat(&path_buf).await else {
+            continue;
+        };
+        if metadata.file_type != FileType::File {
+            continue;
+        }
+        if let Ok(bytes) = fs.read_file(&path_buf).await {
+            files.insert(path.clone(), lossy_truncated(&bytes));
+        }
+    }
+
     let mut dirs = Vec::new();
-    walk(fs, PathBuf::from("/"), &mut files, &mut dirs).await;
+    for path in &targets.dirs {
+        let path_buf = PathBuf::from(path);
+        let Ok(metadata) = fs.stat(&path_buf).await else {
+            continue;
+        };
+        if metadata.file_type == FileType::Directory {
+            dirs.push(path.clone());
+        }
+    }
     dirs.sort();
     (files, dirs)
 }
 
-fn walk<'a>(
-    fs: &'a dyn FileSystem,
-    dir: PathBuf,
-    files: &'a mut BTreeMap<String, String>,
-    dirs: &'a mut Vec<String>,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
-    Box::pin(async move {
-        let entries = match fs.read_dir(&dir).await {
-            Ok(e) => e,
-            Err(_) => return,
-        };
-        for entry in entries {
-            let path = dir.join(&entry.name);
-            match entry.metadata.file_type {
-                FileType::Directory => {
-                    dirs.push(path_string(&path));
-                    walk(fs, path, files, dirs).await;
-                }
-                FileType::File => {
-                    if let Ok(bytes) = fs.read_file(&path).await {
-                        files.insert(
-                            path_string(&path),
-                            String::from_utf8_lossy(&bytes).into_owned(),
-                        );
-                    }
-                }
-                FileType::Symlink | FileType::Fifo => {}
-            }
-        }
-    })
+fn lossy_truncated(bytes: &[u8]) -> String {
+    let capped = bytes.len().min(MAX_SNAPSHOT_FILE_BYTES);
+    let mut content = String::from_utf8_lossy(&bytes[..capped]).into_owned();
+    if bytes.len() > capped {
+        content.push_str("\n[... truncated by bashkit-eval transcript snapshot ...]");
+    }
+    content
 }
 
-fn path_string(path: &Path) -> String {
-    path.to_string_lossy().into_owned()
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bashkit::InMemoryFs;
+
+    #[tokio::test]
+    async fn snapshot_reads_only_expectation_files() {
+        let fs = InMemoryFs::new();
+        fs.mkdir(std::path::Path::new("/wanted"), false)
+            .await
+            .unwrap();
+        fs.write_file(std::path::Path::new("/wanted/file.txt"), b"keep")
+            .await
+            .unwrap();
+        fs.write_file(std::path::Path::new("/ignored.txt"), b"drop")
+            .await
+            .unwrap();
+
+        let expectations = vec![
+            ("file_contains:/wanted/file.txt:keep".to_string(), 1.0),
+            ("dir_exists:/wanted".to_string(), 1.0),
+        ];
+        let targets = SnapshotTargets::from_expectations(&expectations);
+        let (files, dirs) = snapshot_fs(&fs, &targets).await;
+
+        assert_eq!(
+            files.get("/wanted/file.txt").map(String::as_str),
+            Some("keep")
+        );
+        assert!(!files.contains_key("/ignored.txt"));
+        assert_eq!(dirs, vec!["/wanted".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn snapshot_truncates_expected_large_files() {
+        let fs = InMemoryFs::new();
+        let bytes = vec![b'a'; MAX_SNAPSHOT_FILE_BYTES + 1024];
+        fs.write_file(std::path::Path::new("/large.txt"), &bytes)
+            .await
+            .unwrap();
+
+        let expectations = vec![("file_contains:/large.txt:a".to_string(), 1.0)];
+        let targets = SnapshotTargets::from_expectations(&expectations);
+        let (files, _) = snapshot_fs(&fs, &targets).await;
+        let content = files.get("/large.txt").unwrap();
+
+        assert!(content.len() < String::from_utf8_lossy(&bytes).len());
+        assert!(content.ends_with("[... truncated by bashkit-eval transcript snapshot ...]"));
+    }
 }
