@@ -38,20 +38,28 @@ Two gaps in the current model:
 
 What it does **not** change:
 
-- Bash parser/interpreter stays native — script input still hits native code
-  first. WASM hardens the builtin/plugin layer, not the core.
+- By default the parser/interpreter stays native — script input hits native
+  code first. Core containment is the opt-in session isolation mode below.
 - Trusted host-code extension points remain (they're features, not bugs).
 - In-process timing/speculation side channels between tenants: out of scope,
   unchanged.
 
 ## Decision (proposed)
 
-Do **not** retrofit existing builtins into WASM — native perf matters on hot
-paths (awk, jq, grep) and they're already covered by the testing layers.
-Introduce WASM as the contract for **external builtins**: a new, feature-gated
-plugin surface where isolation buys a genuinely new capability — running
-semi-trusted, language-agnostic plugins. Per-builtin migration of risky
-parsing cores stays a possible later, bench-gated decision.
+Two deliverables, one runtime dependency:
+
+1. **External builtin plugins** — WASM as the contract for a new,
+   feature-gated plugin surface where isolation buys a genuinely new
+   capability: semi-trusted, language-agnostic plugins.
+2. **Opt-in session isolation** — `Bash::builder().wasm_isolation()` runs
+   the whole interpreter as a wasm guest behind the unchanged `Bash` API,
+   for embedders who want fault containment for the core (see the
+   dedicated section below).
+
+Do **not** retrofit individual builtins into WASM — native perf matters on
+hot paths (awk, jq, grep) and they're already covered by the testing
+layers; session isolation subsumes that goal wholesale. Per-builtin
+migration stays a possible later, bench-gated decision.
 
 ### Runtime: wasmtime + component model + WASI 0.2
 
@@ -173,6 +181,9 @@ plugins — shell variable access, execution extensions.
 | TM-WASM-010 | Plugin HTTP bypasses allowlist/SSRF/credential pipeline | Single egress path: `wasi:http` shim delegates to `HttpClient` only; no redirect following host-side; `wasi:sockets` stubbed |
 | TM-WASM-011 | Plugin exfiltrates injected credentials | Placeholder resolution host-side only; response bodies pass through `after_http` hooks; guest sees placeholders, never raw secrets |
 | TM-WASM-012 | HTTP response flood into guest | Guest linear-memory cap bounds what the plugin can hold; response size cap in shim (open question below) |
+| TM-WASM-013 | Isolated/native behavioral divergence | Integration suite parameterized over both modes; differential tests |
+| TM-WASM-014 | Stale/poisoned session after guest trap | Distinct `IsolationFault` error; fresh guest per subsequent exec; VFS host-side so FS state unaffected |
+| TM-WASM-015 | Version skew between host crate and embedded guest artifact | Guest built from same crate version in release pipeline; version handshake on instantiation |
 
 ### Phasing
 
@@ -187,17 +198,23 @@ plugins — shell variable access, execution extensions.
 2. **Phase 2:** runtime loading via `BuiltinRegistry`; AOT cache; expose in
    `bashkit-python`/`bashkit-js` and the Tool layer (kwarg fails loudly on
    wasm targets, like `sqlite=`).
-3. **Phase 3 (each a separate decision):** `bashkit:host` WIT world
-   (variables, execution extensions); `wasmi` backend for wasm32 hosts;
-   per-builtin migration of high-risk native parsers, gated on
-   `just bench` deltas.
+3. **Phase 3 — session isolation:** `bashkit:session` WIT world; guest
+   build of the crate (`wasm32-wasip2` component) wired into the release
+   pipeline; `host-fs`/`host-builtin`/`host-http` import shims (reuse the
+   Phase 1 shim internals — same `Arc<dyn FileSystem>`/`HttpClient`
+   delegation, different WIT surface); `BashBuilder::wasm_isolation()` +
+   `IsolationFault` semantics; integration suite parameterized over
+   native/isolated; bench comparison saved as baseline.
+4. **Phase 4 (each a separate decision):** `bashkit:host` WIT world for
+   richer plugins (variables, execution extensions); guest
+   `snapshot`/`restore`; `wasmi` backend for wasm32 hosts; per-builtin
+   migration of high-risk native parsers, gated on `just bench` deltas.
 
-### Alternative considered: whole interpreter as a WASM guest
+### Session isolation: `Bash::builder().wasm_isolation()`
 
-Run entire `Bash` sessions inside wasmtime, so any fault in the interpreter
-is a handleable trap. Feasible in principle — bashkit already runs as a
-wasm guest (browser build gate, Pyodide wheel) — and the fault-containment
-gains are real and honest to state:
+Opt-in mode running the **whole interpreter** as a wasm guest behind the
+unchanged `Bash` API. Any fault anywhere in the interpreter — including
+classes today's mitigations don't fully cover — becomes a handleable trap:
 
 - Stack overflow: native stack exhaustion aborts the process
   (`catch_unwind` can't catch it); today prevented only cooperatively via
@@ -209,34 +226,55 @@ gains are real and honest to state:
 - `abort()`/`process::exit` in a dep (TM-INF-023 class): trap, not host
   death.
 
-Rejected as *the library execution model* because:
+**Architecture: guest interpreter, host capabilities.** Not the naive
+"move everything into the guest" (closures/`Any`-typed extensions can't
+cross a wasm boundary). Instead `Bash` becomes a facade: bashkit itself is
+compiled to `wasm32-wasip2` as a component exporting a custom
+`bashkit:session` world (`exec(script) -> exec-result`, later
+`snapshot`/`restore`), and everything host-owned stays host-side, reached
+via imports:
 
-1. **API boundary.** Bashkit's embedding surface is in-process trait
-   objects/closures invoked during execution: custom `Builtin` impls,
-   `ToolDef` callbacks, Python/TS external-fn handlers, `HttpHandler`,
-   credential hooks, `BuiltinRegistry` (host-mutated mid-session), typed
-   execution extensions, shared `Arc<dyn FileSystem>` (cross-session).
-   Guest-side interpreter turns all of it into a serialized WIT/RPC
-   contract; closures and `Any`-typed extensions can't cross. Second
-   product to maintain.
-2. **Feature collapse.** wasm32 excludes `http_client`, `sqlite`, `ssh`,
-   `realfs`, interop (`specs/emscripten-wheels.md`); no threads in wasip2.
-   pyo3/napi bindings would need to embed wasmtime and proxy.
-3. **Tax on 100% of execution.** Wasm overhead on branchy interpreter
-   code, boundary crossing per FS op if VFS stays host-side, per-instance
-   linear memory. Isolation boundary belongs where trust changes: plugins
-   are third-party/cold-path; the core is first-party, covered by safe
-   Rust + limits + fuzzing + `catch_unwind`.
+- `host-fs.*`: the guest's `FileSystem` is a proxy delegating every op to
+  the host's real `Arc<dyn FileSystem>`. VFS sharing, mounts, `OverlayFs`,
+  even `realfs` keep working — and survive a guest crash, since state
+  lives host-side. Cost: one boundary crossing per FS op.
+- `host-builtin.invoke(name, argv, env, vars, cwd, stdin) -> exec-result`:
+  custom `Builtin` impls, `ToolDef` callbacks, and `BuiltinRegistry`
+  lookups execute **natively in the host**, exactly as today — the closure
+  never crosses, the guest RPCs to it. Guest dispatch order treats
+  host-registered names like the registry does now. `Context.variables`
+  mutations round-trip in the result. Note the honest boundary: a fault in
+  the *user's own native builtin* is NOT contained — isolation covers
+  bashkit's interpreter + bundled builtins.
+- `host-http.request`: guest HTTP backend delegates to the host
+  `HttpClient` pipeline (allowlist → SSRF → credential hooks → signing).
+  Security improvement over native mode: raw secrets never enter the
+  fault-isolated guest's memory.
 
-Trap semantics also ≠ recovery: a trap kills the instance; the session
-restarts (same blast radius as process isolation, cheaper).
+**Semantics.** `exec()` signature unchanged. A trap surfaces as a distinct
+error (`Error::IsolationFault`); the guest instance is dead — next `exec`
+gets a fresh guest (shell variables/functions lost; VFS intact because it
+is host-side). No silent auto-restore; embedder decides (later:
+`snapshot`/`restore` for state recovery).
 
-**Pragmatic alternative** (possible future work, separate decision):
-publish `bashkit-cli` as a `wasm32-wasip2` command artifact. Operators
-wanting whole-session containment run sessions inside wasmtime at their
-level (stdio contract, reduced features, host-imposed fuel + memory cap).
-No API redesign; composes with this proposal (guest bashkit simply builds
-without the `wasm` feature — no nested runtime).
+**Constraints.**
+- Feature subset in guest: `sqlite`/`ssh` unavailable initially (turso
+  threads, russh on wasm32); `.sqlite()` + `.wasm_isolation()` fails
+  loudly at `build()`. Python/TS/jq/coreutils work (proven by the
+  Pyodide/browser builds). HTTP works via `host-http`.
+- Feature-gated (`wasm-isolation`, implies `wasm` runtime dep),
+  native-only, off by default.
+- Composes with plugin builtins: plugins are host-side registrations, so
+  an isolated session invokes them via `host-builtin` and they run in
+  their own host-side wasmtime store — no nested runtime in the guest.
+- Perf tax is on everything (wasm overhead on branchy interpreter code +
+  boundary crossing per FS/builtin/HTTP op) — that is exactly why it's
+  per-`Bash`-object opt-in, not the default. Bench both modes; the
+  existing integration suite must run parameterized over native/isolated
+  to prevent behavioral divergence.
+- Release complexity: the guest `.wasm` artifact must be built from the
+  same crate version and embedded (build-script two-stage build or
+  release-pipeline artifact) — touches `specs/release-process.md`.
 
 ### Open questions
 
@@ -251,6 +289,17 @@ without the `wasm` feature — no nested runtime).
   whether to stream or buffer responses (buffer in Phase 1; `HttpClient`
   is buffered today).
 - Streaming stdout: `ExecResult` is buffered; fine for Phase 1.
+- Guest artifact distribution for session isolation: `include_bytes!` of a
+  release-pipeline-built `.wasm` (crate size grows by several MB, offline
+  builds work) vs. separate download/path config (small crate, setup
+  friction). Leaning embedded, behind the `wasm-isolation` feature so
+  non-users pay nothing.
+- Session-isolation state after trap: fresh-guest-per-next-exec (proposed)
+  vs. poisoned-`Bash`-requiring-explicit-reset — decide with API review.
+- Python/TS external-fn handlers under isolation: same `host-builtin`-style
+  import trick applies (handlers stay host-side), but MontyObject
+  marshalling across the boundary needs a serialization format — scope in
+  Phase 3 or defer those handlers to native mode only initially.
 
 ## See also
 
