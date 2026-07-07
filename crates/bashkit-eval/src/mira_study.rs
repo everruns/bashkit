@@ -28,7 +28,7 @@ use crate::provider::{
 };
 use crate::scripting_agent::{ScriptingTrace, run_baseline_agent, run_scripted_agent};
 use crate::scripting_dataset::ScriptingEvalTask;
-use crate::snapshot::{Snapshot, ToolOutput, snapshot_fs};
+use crate::snapshot::{Snapshot, SnapshotTargets, ToolOutput, snapshot_fs};
 
 /// Default agent-turn budget per task (matches the original harness).
 pub const MAX_TURNS: usize = 10;
@@ -157,8 +157,10 @@ fn bash_subject() -> impl Subject {
             Err(e) => return Transcript::infra_error(format!("agent loop failed: {e:#}")),
         };
 
+        let expectations = expectations_from_sample(&sample);
+        let targets = SnapshotTargets::from_expectations(&expectations);
         let fs = bash.fs();
-        let (files, dirs) = snapshot_fs(fs.as_ref()).await;
+        let (files, dirs) = snapshot_fs(fs.as_ref(), &targets).await;
 
         let tool_outputs: Vec<ToolOutput> = trace
             .tool_calls
