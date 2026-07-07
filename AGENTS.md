@@ -48,6 +48,7 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 | sqlite-builtin | Embedded SQLite via Turso (MemoryIO + VfsIO backends, dot-commands) |
 | coreutils-args-port | Codegen port of uutils clap definitions + uucore modules |
 | credential-injection | Per-host HTTP credential injection without exposing secrets |
+| http-transport | Pluggable HTTP transport: route curl/wget via host egress boundary |
 | performance-results | Benchmark/eval result locations and `/benches` site aggregation contract |
 | emscripten-wheels | Reduced-feature Pyodide/Emscripten Python wheel |
 

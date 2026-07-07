@@ -106,7 +106,7 @@ Credentials and placeholders are preserved across `reset()` and
 `from_snapshot(...)`. Each rebuild generates a fresh placeholder string, so
 scripts must re-read placeholder env vars after every reset/restore.
 
-Request callbacks (`http_handler`, `before_http`, `after_http`) and bot-auth
+Request callbacks (`http_transport`, `before_http`, `after_http`) and bot-auth
 ship in follow-up phases.
 
 ### ShellState

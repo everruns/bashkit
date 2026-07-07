@@ -86,6 +86,9 @@ pub mod bot_auth;
 #[cfg(feature = "http_client")]
 mod client;
 
+#[cfg(feature = "http_client")]
+mod transport;
+
 #[allow(unused_imports)] // UrlMatch is used internally but may not be exported
 pub use allowlist::{NetworkAllowlist, UrlMatch, is_private_ip};
 
@@ -94,3 +97,9 @@ pub use bot_auth::{BotAuthConfig, BotAuthError, BotAuthPublicKey, derive_bot_aut
 
 #[cfg(feature = "http_client")]
 pub use client::{HttpClient, HttpHandler, Method, Response};
+
+#[cfg(feature = "http_client")]
+pub(crate) use transport::HandlerTransport;
+
+#[cfg(feature = "http_client")]
+pub use transport::{HttpTransport, HttpTransportError, HttpTransportRequest};

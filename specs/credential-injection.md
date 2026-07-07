@@ -36,7 +36,7 @@ Request pipeline (unchanged from #1255; injection is step 3):
 2. Private IP / SSRF check      ← SSRF protection
 3. before_http hooks            ← credential injection lives here
 4. Bot-auth signing             ← Ed25519 headers
-5. Custom HttpHandler OR reqwest
+5. Custom HttpTransport OR reqwest (see specs/http-transport.md)
 6. after_http hooks             ← observational
 ```
 

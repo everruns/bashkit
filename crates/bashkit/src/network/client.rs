@@ -21,11 +21,12 @@
 
 use reqwest::Client;
 use reqwest::dns::{Name, Resolve, Resolving};
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use super::allowlist::{NetworkAllowlist, UrlMatch, is_private_ip};
+use super::transport::{HandlerTransport, HttpTransport, HttpTransportRequest};
 use crate::error::{Error, Result};
 
 /// THREAT[TM-NET-002 TOCTOU]: DNS resolver wrapper that rejects any
@@ -88,20 +89,16 @@ pub const MIN_TIMEOUT_SECS: u64 = 1;
 
 /// Trait for custom HTTP request handling.
 ///
-/// Embedders can implement this trait to intercept, proxy, log, cache,
-/// or mock HTTP requests made by scripts running in the sandbox.
+/// Deprecated in favor of [`HttpTransport`](super::HttpTransport), which
+/// carries the full request context (typed method, timeouts, pinned
+/// addresses from the SSRF precheck, response size cap) and returns typed
+/// errors that map onto curl/wget exit codes. Existing handlers keep
+/// working through an internal adapter.
 ///
 /// The allowlist check and the DNS / private-IP precheck both run
 /// _before_ the handler is called, and the precheck fails closed on
 /// DNS lookup errors (#1570). The security boundary stays in bashkit
 /// for allowlist policy.
-///
-/// # Default
-///
-/// When no custom handler is set, `HttpClient` uses `reqwest` directly,
-/// with a private-IP-filtering DNS resolver installed on the connector
-/// that rejects private IPs at connect time. This catches DNS rebinding
-/// that happens between the precheck and the actual TCP connect.
 ///
 /// # SSRF responsibility for handlers (TM-NET-023, #1570)
 ///
@@ -148,8 +145,8 @@ pub struct HttpClient {
     default_timeout: Duration,
     /// Maximum response body size in bytes
     max_response_bytes: usize,
-    /// Optional custom HTTP handler for request interception
-    handler: Option<Box<dyn HttpHandler>>,
+    /// Optional custom transport that replaces the built-in reqwest path
+    transport: Option<Arc<dyn HttpTransport>>,
     /// Optional bot-auth config for transparent request signing
     #[cfg(feature = "bot-auth")]
     bot_auth: Option<super::bot_auth::BotAuthConfig>,
@@ -182,7 +179,8 @@ impl Method {
         }
     }
 
-    fn as_str(self) -> &'static str {
+    /// The method name in canonical uppercase form (`"GET"`, `"POST"`, ...).
+    pub fn as_str(self) -> &'static str {
         match self {
             Method::Get => "GET",
             Method::Post => "POST",
@@ -254,7 +252,7 @@ impl HttpClient {
             allowlist,
             default_timeout: timeout,
             max_response_bytes,
-            handler: None,
+            transport: None,
             #[cfg(feature = "bot-auth")]
             bot_auth: None,
             before_http: Vec::new(),
@@ -262,13 +260,27 @@ impl HttpClient {
         }
     }
 
+    /// Set a custom HTTP transport that replaces the built-in reqwest path.
+    ///
+    /// The transport is called after the URL allowlist check, the SSRF
+    /// precheck, `before_http` hooks, and bot-auth signing, so the security
+    /// boundary stays in bashkit. See [`HttpTransport`] for the contract,
+    /// including the SSRF responsibility of network-dialing transports.
+    pub fn set_transport(&mut self, transport: Arc<dyn HttpTransport>) {
+        self.transport = Some(transport);
+    }
+
     /// Set a custom HTTP handler for request interception.
     ///
     /// The handler is called after the URL allowlist check, so the security
-    /// boundary stays in bashkit. The default reqwest-based handler is used
-    /// when no custom handler is set.
+    /// boundary stays in bashkit. The default reqwest-based transport is used
+    /// when no custom handler or transport is set.
+    #[deprecated(
+        since = "0.13.0",
+        note = "implement `HttpTransport` and use `set_transport`; it carries timeouts, pinned addresses, and the response cap, and returns typed errors"
+    )]
     pub fn set_handler(&mut self, handler: Box<dyn HttpHandler>) {
-        self.handler = Some(handler);
+        self.transport = Some(Arc::new(HandlerTransport(handler)));
     }
 
     /// Enable bot-auth request signing.
@@ -416,15 +428,19 @@ impl HttpClient {
 
     /// Validate a URL against the same allowlist and private-IP policy used before requests.
     pub(crate) async fn validate_url(&self, url: &str) -> Result<()> {
-        self.enforce_url_security(url).await
+        self.enforce_url_security(url).await.map(|_| ())
     }
 
-    pub(crate) async fn enforce_url_security(&self, url: &str) -> Result<()> {
+    /// Enforce the allowlist and SSRF policy, returning the addresses the
+    /// precheck resolved and validated (resolve-then-check). Empty when no
+    /// resolution happened. Forwarded to custom transports as
+    /// `pinned_addrs` so host boundaries can close the rebind TOCTOU window.
+    pub(crate) async fn enforce_url_security(&self, url: &str) -> Result<Vec<IpAddr>> {
         self.check_allowlist(url)?;
         if self.allowlist.is_blocking_private_ips() {
-            self.check_private_ip(url).await?;
+            return self.check_private_ip(url).await;
         }
-        Ok(())
+        Ok(Vec::new())
     }
 
     /// THREAT[TM-NET-002/004/023]: Pre-resolve DNS and block private IPs.
@@ -440,7 +456,7 @@ impl HttpClient {
     /// #1570) and the connect-time `PrivateIpFilteringResolver` on the
     /// default reqwest path. Direct-IP and successful-resolution paths
     /// remain fail-closed.
-    pub(crate) async fn check_private_ip(&self, url: &str) -> Result<()> {
+    pub(crate) async fn check_private_ip(&self, url: &str) -> Result<Vec<IpAddr>> {
         let parsed = url::Url::parse(url)
             .map_err(|e| Error::Network(format!("invalid URL for SSRF precheck: {e}")))?;
         let Some(host) = parsed.host_str() else {
@@ -448,24 +464,25 @@ impl HttpClient {
                 "access denied: URL has no host (SSRF protection)".to_string(),
             ));
         };
-        if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        if let Ok(ip) = host.parse::<IpAddr>() {
             if is_private_ip(&ip) {
                 return Err(Error::Network(format!(
                     "access denied: {} is a private IP (SSRF protection)",
                     host
                 )));
             }
-            return Ok(());
+            return Ok(vec![ip]);
         }
         let port = parsed
             .port()
             .unwrap_or(if parsed.scheme() == "https" { 443 } else { 80 });
         let addr = format!("{}:{}", host, port);
         let Ok(addrs) = tokio::net::lookup_host(&addr).await else {
-            // DNS lookup failed — fall through. See the function-level
-            // doc for why this stays fail-open.
-            return Ok(());
+            // DNS lookup failed — fall through with no pinned addresses.
+            // See the function-level doc for why this stays fail-open.
+            return Ok(Vec::new());
         };
+        let mut validated = Vec::new();
         for a in addrs {
             if is_private_ip(&a.ip()) {
                 return Err(Error::Network(format!(
@@ -474,8 +491,9 @@ impl HttpClient {
                     a.ip()
                 )));
             }
+            validated.push(a.ip());
         }
-        Ok(())
+        Ok(validated)
     }
 
     /// Make an HTTP request with custom headers.
@@ -492,127 +510,10 @@ impl HttpClient {
         body: Option<&[u8]>,
         headers: &[(String, String)],
     ) -> Result<Response> {
-        // Check allowlist + private IP policy BEFORE making any network request.
-        self.enforce_url_security(url).await?;
-
-        // Fire before_http hooks — may modify URL/headers or cancel the request.
-        // Hooks fire AFTER the allowlist check so the security boundary stays in bashkit.
-        let (url, headers) = if !self.before_http.is_empty() {
-            let event = crate::hooks::HttpRequestEvent {
-                method: method.as_str().to_string(),
-                url: url.to_string(),
-                headers: headers.to_vec(),
-            };
-            match self.fire_before_http(event) {
-                Some(modified) => (
-                    std::borrow::Cow::Owned(modified.url),
-                    std::borrow::Cow::Owned(modified.headers),
-                ),
-                None => {
-                    return Err(Error::Network("cancelled by before_http hook".to_string()));
-                }
-            }
-        } else {
-            (
-                std::borrow::Cow::Borrowed(url),
-                std::borrow::Cow::Borrowed(headers),
-            )
-        };
-        let url: &str = &url;
-        let headers: &[(String, String)] = &headers;
-        // Re-check security after hooks in case URL was rewritten.
-        self.enforce_url_security(url).await?;
-
-        // Compute bot-auth signing headers (transparent, non-blocking)
-        #[cfg(feature = "bot-auth")]
-        let signing_headers = self.bot_auth_headers(method, url);
-        #[cfg(not(feature = "bot-auth"))]
-        let signing_headers: Vec<(String, String)> = Vec::new();
-
-        // Delegate to custom handler if set
-        if let Some(handler) = &self.handler {
-            let method_str = method.as_str();
-            let mut all_headers: Vec<(String, String)> = headers.to_vec();
-            all_headers.extend(signing_headers);
-            let response = tokio::time::timeout(
-                self.default_timeout,
-                handler.request(method_str, url, body, &all_headers),
-            )
+        // Single request pipeline: allowlist, SSRF precheck, hooks, signing,
+        // and transport dispatch all live in `request_with_timeouts`.
+        self.request_with_timeouts(method, url, body, headers, None, None)
             .await
-            .map_err(|_| Error::Network("operation timed out".to_string()))?
-            .map_err(Error::Network)?;
-            if response.body.len() > self.max_response_bytes {
-                return Err(Error::Network(format!(
-                    "response too large: {} bytes (max: {} bytes)",
-                    response.body.len(),
-                    self.max_response_bytes
-                )));
-            }
-            self.fire_after_http(crate::hooks::HttpResponseEvent {
-                url: url.to_string(),
-                status: response.status,
-                headers: response.headers.clone(),
-            });
-            return Ok(response);
-        }
-
-        // Build request
-        let mut request = self.client()?.request(method.as_reqwest(), url);
-
-        // Add custom headers
-        for (name, value) in headers {
-            request = request.header(name.as_str(), value.as_str());
-        }
-
-        // Add bot-auth signing headers
-        for (name, value) in &signing_headers {
-            request = request.header(name.as_str(), value.as_str());
-        }
-
-        if let Some(body_data) = body {
-            request = request.body(body_data.to_vec());
-        }
-
-        // Send request
-        let response = request
-            .send()
-            .await
-            .map_err(|e| Error::network_sanitized("request failed", &e))?;
-
-        // Extract response data
-        let status = response.status().as_u16();
-        let resp_headers: Vec<(String, String)> = response
-            .headers()
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
-            .collect();
-
-        // Fire after_http hooks
-        self.fire_after_http(crate::hooks::HttpResponseEvent {
-            url: url.to_string(),
-            status,
-            headers: resp_headers.clone(),
-        });
-
-        // Check Content-Length header to fail fast on large responses
-        if let Some(content_length) = response.content_length()
-            && usize::try_from(content_length).unwrap_or(usize::MAX) > self.max_response_bytes
-        {
-            return Err(Error::Network(format!(
-                "response too large: {} bytes (max: {} bytes)",
-                content_length, self.max_response_bytes
-            )));
-        }
-
-        // Read body with size limit enforcement
-        // We stream the response to avoid loading huge responses into memory
-        let body = self.read_body_with_limit(response).await?;
-
-        Ok(Response {
-            status,
-            headers: resp_headers,
-            body,
-        })
     }
 
     /// Read response body with size limit enforcement.
@@ -736,8 +637,9 @@ impl HttpClient {
         };
         let url: &str = &url;
         let headers: &[(String, String)] = &headers;
-        // Re-check security after hooks in case URL was rewritten.
-        self.enforce_url_security(url).await?;
+        // Re-check security after hooks in case URL was rewritten. The
+        // resolved addresses are pinned into custom transport requests.
+        let pinned_addrs = self.enforce_url_security(url).await?;
 
         // Compute bot-auth signing headers (transparent, non-blocking)
         #[cfg(feature = "bot-auth")]
@@ -747,22 +649,36 @@ impl HttpClient {
 
         // Clamp timeout values to safe range [MIN_TIMEOUT_SECS, MAX_TIMEOUT_SECS]
         let clamp_timeout = |secs: u64| secs.clamp(MIN_TIMEOUT_SECS, MAX_TIMEOUT_SECS);
-        let request_timeout = timeout_secs.map_or(Duration::from_secs(DEFAULT_TIMEOUT_SECS), |s| {
+        let request_timeout = timeout_secs.map_or(self.default_timeout, |s| {
             Duration::from_secs(clamp_timeout(s))
         });
 
-        // Delegate to custom handler if set
-        if let Some(handler) = &self.handler {
-            let method_str = method.as_str();
+        // Delegate to the custom transport if set. Policy has already run:
+        // allowlist, SSRF precheck, hooks (credential injection), signing.
+        if let Some(transport) = &self.transport {
             let mut all_headers: Vec<(String, String)> = headers.to_vec();
             all_headers.extend(signing_headers);
-            let response = tokio::time::timeout(
-                request_timeout,
-                handler.request(method_str, url, body, &all_headers),
-            )
-            .await
-            .map_err(|_| Error::Network("operation timed out".to_string()))?
-            .map_err(Error::Network)?;
+            let transport_request = HttpTransportRequest {
+                method,
+                url: url.to_string(),
+                headers: all_headers,
+                body: body.map(|b| b.to_vec()),
+                timeout: Some(request_timeout),
+                connect_timeout: connect_timeout_secs
+                    .map(|s| Duration::from_secs(clamp_timeout(s))),
+                pinned_addrs,
+                max_response_bytes: self.max_response_bytes,
+            };
+            // The deadline is enforced here regardless of whether the
+            // transport honors `timeout` itself.
+            let response =
+                tokio::time::timeout(request_timeout, transport.execute(transport_request))
+                    .await
+                    .map_err(|_| Error::Network("operation timed out".to_string()))?
+                    .map_err(|e| Error::Network(e.to_string()))?;
+            // Transports are asked to stop at max_response_bytes; enforce
+            // the cap here anyway so a misbehaving transport cannot hand an
+            // oversized body to the script.
             if response.body.len() > self.max_response_bytes {
                 return Err(Error::Network(format!(
                     "response too large: {} bytes (max: {} bytes)",
@@ -917,19 +833,19 @@ mod tests {
     use std::time::Duration as StdDuration;
     use tokio::time::sleep;
 
-    struct StaticHandler {
+    use super::super::transport::HttpTransportError;
+    use std::sync::Mutex;
+
+    struct StaticTransport {
         response: Response,
     }
 
     #[async_trait::async_trait]
-    impl HttpHandler for StaticHandler {
-        async fn request(
+    impl HttpTransport for StaticTransport {
+        async fn execute(
             &self,
-            _method: &str,
-            _url: &str,
-            _body: Option<&[u8]>,
-            _headers: &[(String, String)],
-        ) -> std::result::Result<Response, String> {
+            _request: HttpTransportRequest,
+        ) -> std::result::Result<Response, HttpTransportError> {
             Ok(Response {
                 status: self.response.status,
                 headers: self.response.headers.clone(),
@@ -938,20 +854,38 @@ mod tests {
         }
     }
 
-    struct SlowHandler {
+    struct SlowTransport {
         delay: StdDuration,
     }
 
     #[async_trait::async_trait]
-    impl HttpHandler for SlowHandler {
-        async fn request(
+    impl HttpTransport for SlowTransport {
+        async fn execute(
             &self,
-            _method: &str,
-            _url: &str,
-            _body: Option<&[u8]>,
-            _headers: &[(String, String)],
-        ) -> std::result::Result<Response, String> {
+            _request: HttpTransportRequest,
+        ) -> std::result::Result<Response, HttpTransportError> {
             sleep(self.delay).await;
+            Ok(Response {
+                status: 200,
+                headers: vec![],
+                body: b"ok".to_vec(),
+            })
+        }
+    }
+
+    /// Records the full transport request it receives and returns 200 OK.
+    #[derive(Default)]
+    struct CapturingTransport {
+        seen: Mutex<Vec<HttpTransportRequest>>,
+    }
+
+    #[async_trait::async_trait]
+    impl HttpTransport for CapturingTransport {
+        async fn execute(
+            &self,
+            request: HttpTransportRequest,
+        ) -> std::result::Result<Response, HttpTransportError> {
+            self.seen.lock().unwrap().push(request);
             Ok(Response {
                 status: 200,
                 headers: vec![],
@@ -1236,10 +1170,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_custom_handler_enforces_max_response_bytes() {
+    async fn test_custom_transport_enforces_max_response_bytes() {
         let mut client =
             HttpClient::with_config(NetworkAllowlist::allow_all(), Duration::from_secs(30), 4);
-        client.set_handler(Box::new(StaticHandler {
+        client.set_transport(Arc::new(StaticTransport {
             response: Response {
                 status: 200,
                 headers: vec![],
@@ -1261,7 +1195,7 @@ mod tests {
     async fn test_before_http_hook_cannot_bypass_allowlist_request_with_headers() {
         let allowlist = NetworkAllowlist::new().allow("https://allowed.com");
         let mut client = HttpClient::new(allowlist);
-        client.set_handler(Box::new(StaticHandler {
+        client.set_transport(Arc::new(StaticTransport {
             response: Response {
                 status: 200,
                 headers: vec![],
@@ -1284,7 +1218,7 @@ mod tests {
     async fn test_before_http_hook_cannot_bypass_allowlist_request_with_timeouts() {
         let allowlist = NetworkAllowlist::new().allow("https://allowed.com");
         let mut client = HttpClient::new(allowlist);
-        client.set_handler(Box::new(StaticHandler {
+        client.set_transport(Arc::new(StaticTransport {
             response: Response {
                 status: 200,
                 headers: vec![],
@@ -1304,13 +1238,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_custom_handler_enforces_request_timeout() {
+    async fn test_custom_transport_enforces_request_timeout() {
         let mut client = HttpClient::with_config(
             NetworkAllowlist::allow_all(),
             Duration::from_secs(30),
             DEFAULT_MAX_RESPONSE_BYTES,
         );
-        client.set_handler(Box::new(SlowHandler {
+        client.set_transport(Arc::new(SlowTransport {
             delay: StdDuration::from_millis(1200),
         }));
 
@@ -1324,6 +1258,159 @@ mod tests {
                 .to_string()
                 .contains("operation timed out")
         );
+    }
+
+    #[tokio::test]
+    async fn test_deprecated_handler_still_works_via_shim() {
+        struct OkHandler;
+        #[async_trait::async_trait]
+        impl HttpHandler for OkHandler {
+            async fn request(
+                &self,
+                _method: &str,
+                _url: &str,
+                _body: Option<&[u8]>,
+                _headers: &[(String, String)],
+            ) -> std::result::Result<Response, String> {
+                Ok(Response {
+                    status: 200,
+                    headers: vec![],
+                    body: b"legacy".to_vec(),
+                })
+            }
+        }
+
+        let mut client = HttpClient::new(NetworkAllowlist::allow_all());
+        #[allow(deprecated)] // exercising the migration shim on purpose
+        client.set_handler(Box::new(OkHandler));
+
+        let response = client.get("http://93.184.216.34/").await.unwrap();
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body, b"legacy");
+    }
+
+    #[tokio::test]
+    async fn test_transport_receives_pinned_addrs_for_ip_literal() {
+        // An IP-literal host skips DNS but must still pin the validated
+        // address so host boundaries can enforce resolve-then-check.
+        let transport = Arc::new(CapturingTransport::default());
+        let mut client = HttpClient::new(NetworkAllowlist::allow_all());
+        client.set_transport(transport.clone());
+
+        client.get("http://93.184.216.34/data").await.unwrap();
+
+        let seen = transport.seen.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(
+            seen[0].pinned_addrs,
+            vec!["93.184.216.34".parse::<IpAddr>().unwrap()]
+        );
+        assert_eq!(seen[0].url, "http://93.184.216.34/data");
+        assert_eq!(seen[0].method, Method::Get);
+    }
+
+    #[tokio::test]
+    async fn test_transport_receives_timeouts_and_response_cap() {
+        let transport = Arc::new(CapturingTransport::default());
+        let mut client =
+            HttpClient::with_config(NetworkAllowlist::allow_all(), Duration::from_secs(30), 4096);
+        client.set_transport(transport.clone());
+
+        client
+            .request_with_timeouts(
+                Method::Post,
+                "http://93.184.216.34/submit",
+                Some(b"payload"),
+                &[("X-Test".to_string(), "1".to_string())],
+                Some(20),
+                Some(5),
+            )
+            .await
+            .unwrap();
+
+        let seen = transport.seen.lock().unwrap();
+        let request = &seen[0];
+        assert_eq!(request.timeout, Some(Duration::from_secs(20)));
+        assert_eq!(request.connect_timeout, Some(Duration::from_secs(5)));
+        assert_eq!(request.max_response_bytes, 4096);
+        assert_eq!(request.body.as_deref(), Some(b"payload".as_slice()));
+        assert!(
+            request
+                .headers
+                .iter()
+                .any(|(name, value)| name == "X-Test" && value == "1")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_transport_default_timeout_forwarded_when_unspecified() {
+        let transport = Arc::new(CapturingTransport::default());
+        let mut client = HttpClient::with_timeout(
+            NetworkAllowlist::allow_all(),
+            Duration::from_secs(7), // custom client-wide default
+        );
+        client.set_transport(transport.clone());
+
+        client.get("http://93.184.216.34/").await.unwrap();
+
+        let seen = transport.seen.lock().unwrap();
+        assert_eq!(seen[0].timeout, Some(Duration::from_secs(7)));
+        assert_eq!(seen[0].connect_timeout, None);
+    }
+
+    #[tokio::test]
+    async fn test_transport_denied_error_maps_to_access_denied_message() {
+        struct DenyingTransport;
+        #[async_trait::async_trait]
+        impl HttpTransport for DenyingTransport {
+            async fn execute(
+                &self,
+                request: HttpTransportRequest,
+            ) -> std::result::Result<Response, HttpTransportError> {
+                Err(HttpTransportError::Denied(format!(
+                    "host policy blocked {}",
+                    request.url
+                )))
+            }
+        }
+
+        let mut client = HttpClient::new(NetworkAllowlist::allow_all());
+        client.set_transport(Arc::new(DenyingTransport));
+
+        let error = client.get("http://93.184.216.34/").await.unwrap_err();
+        let msg = error.to_string();
+        // The "access denied" prefix drives curl exit code 7.
+        assert!(msg.contains("access denied"), "got: {msg}");
+        assert!(msg.contains("host policy blocked"), "got: {msg}");
+    }
+
+    #[cfg(feature = "bot-auth")]
+    #[tokio::test]
+    async fn test_transport_receives_bot_auth_signing_headers() {
+        // Signing must keep working when traffic is routed through a custom
+        // transport: headers are computed in bashkit and merged before
+        // dispatch, exactly like the built-in reqwest path.
+        let transport = Arc::new(CapturingTransport::default());
+        let mut client = HttpClient::new(NetworkAllowlist::allow_all());
+        client.set_transport(transport.clone());
+        client.set_bot_auth(
+            super::super::bot_auth::BotAuthConfig::from_seed([7u8; 32])
+                .with_agent_fqdn("bot.example.com"),
+        );
+
+        client.get("http://93.184.216.34/signed").await.unwrap();
+
+        let seen = transport.seen.lock().unwrap();
+        let headers = &seen[0].headers;
+        for expected in ["signature", "signature-input", "signature-agent"] {
+            assert!(
+                headers
+                    .iter()
+                    .any(|(name, _)| name.eq_ignore_ascii_case(expected)),
+                "missing {expected} header, got: {:?}",
+                headers.iter().map(|(name, _)| name).collect::<Vec<_>>()
+            );
+        }
     }
 
     // Note: Integration tests that actually make network requests
