@@ -500,7 +500,7 @@ pub use scripted_tool::{
 pub use tool_def::{AsyncToolExec, SyncToolExec, ToolImpl};
 
 #[cfg(feature = "http_client")]
-pub use network::{HttpClient, HttpHandler};
+pub use network::HttpClient;
 
 #[cfg(feature = "http_client")]
 pub use network::{HttpTransport, HttpTransportError, HttpTransportRequest};
@@ -1456,8 +1456,7 @@ pub struct BashBuilder {
     #[cfg(feature = "http_client")]
     network_allowlist: Option<NetworkAllowlist>,
     /// Custom HTTP handler for request interception
-    /// Custom HTTP transport for curl/wget (deprecated `http_handler` wraps
-    /// into this via an adapter).
+    /// Custom HTTP transport for curl/wget.
     #[cfg(feature = "http_client")]
     http_transport: Option<Arc<dyn network::HttpTransport>>,
     /// Bot-auth config for transparent request signing
@@ -1772,23 +1771,6 @@ impl BashBuilder {
     #[cfg(feature = "http_client")]
     pub fn http_transport(mut self, transport: Arc<dyn network::HttpTransport>) -> Self {
         self.http_transport = Some(transport);
-        self
-    }
-
-    /// Set a custom HTTP handler for request interception.
-    ///
-    /// Deprecated: [`http_transport`](Self::http_transport) receives the
-    /// full request context (typed method, timeouts, pinned addresses from
-    /// the SSRF precheck, response size cap) and returns typed errors that
-    /// map onto curl/wget exit codes. Existing handlers keep working through
-    /// an internal adapter.
-    #[cfg(feature = "http_client")]
-    #[deprecated(
-        since = "0.13.0",
-        note = "implement `HttpTransport` and use `http_transport` instead"
-    )]
-    pub fn http_handler(mut self, handler: Box<dyn network::HttpHandler>) -> Self {
-        self.http_transport = Some(Arc::new(network::HandlerTransport(handler)));
         self
     }
 

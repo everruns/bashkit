@@ -26,7 +26,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use super::allowlist::{NetworkAllowlist, UrlMatch, is_private_ip};
-use super::transport::{HandlerTransport, HttpTransport, HttpTransportRequest};
+use super::transport::{HttpTransport, HttpTransportRequest};
 use crate::error::{Error, Result};
 
 /// THREAT[TM-NET-002 TOCTOU]: DNS resolver wrapper that rejects any
@@ -86,50 +86,6 @@ pub const MAX_TIMEOUT_SECS: u64 = 600;
 
 /// Minimum allowed timeout (1 second) - prevents instant timeouts that waste resources
 pub const MIN_TIMEOUT_SECS: u64 = 1;
-
-/// Trait for custom HTTP request handling.
-///
-/// Deprecated in favor of [`HttpTransport`](super::HttpTransport), which
-/// carries the full request context (typed method, timeouts, pinned
-/// addresses from the SSRF precheck, response size cap) and returns typed
-/// errors that map onto curl/wget exit codes. Existing handlers keep
-/// working through an internal adapter.
-///
-/// The allowlist check and the DNS / private-IP precheck both run
-/// _before_ the handler is called, and the precheck fails closed on
-/// DNS lookup errors (#1570). The security boundary stays in bashkit
-/// for allowlist policy.
-///
-/// # SSRF responsibility for handlers (TM-NET-023, #1570)
-///
-/// **Custom HTTP handlers DO NOT inherit reqwest's connect-time IP
-/// filter.** The DNS precheck bashkit runs is best-effort and is
-/// vulnerable to a rebind window between the precheck and the moment
-/// the handler opens its own socket. If a handler performs real network
-/// I/O (proxies, custom transports, sidecar HTTP clients) it MUST
-/// re-resolve the host and re-apply private-IP filtering itself before
-/// connecting, or constrain its egress at a lower layer. The internal
-/// classifier `bashkit::network::allowlist::is_private_ip` (re-exported
-/// at `bashkit::network::is_private_ip` when used from inside this
-/// crate) is the same one the default reqwest path uses. Handlers that
-/// only consult fixtures or in-memory state (mocks, test doubles) have
-/// no exposure here.
-#[async_trait::async_trait]
-pub trait HttpHandler: Send + Sync {
-    /// Handle an HTTP request and return a response.
-    ///
-    /// Called after the URL has been validated against the allowlist
-    /// and the DNS / private-IP precheck. See the trait-level
-    /// documentation for SSRF responsibilities of network-capable
-    /// handlers.
-    async fn request(
-        &self,
-        method: &str,
-        url: &str,
-        body: Option<&[u8]>,
-        headers: &[(String, String)],
-    ) -> std::result::Result<Response, String>;
-}
 
 /// HTTP client with allowlist-based access control.
 ///
@@ -268,19 +224,6 @@ impl HttpClient {
     /// including the SSRF responsibility of network-dialing transports.
     pub fn set_transport(&mut self, transport: Arc<dyn HttpTransport>) {
         self.transport = Some(transport);
-    }
-
-    /// Set a custom HTTP handler for request interception.
-    ///
-    /// The handler is called after the URL allowlist check, so the security
-    /// boundary stays in bashkit. The default reqwest-based transport is used
-    /// when no custom handler or transport is set.
-    #[deprecated(
-        since = "0.13.0",
-        note = "implement `HttpTransport` and use `set_transport`; it carries timeouts, pinned addresses, and the response cap, and returns typed errors"
-    )]
-    pub fn set_handler(&mut self, handler: Box<dyn HttpHandler>) {
-        self.transport = Some(Arc::new(HandlerTransport(handler)));
     }
 
     /// Enable bot-auth request signing.
@@ -452,7 +395,7 @@ impl HttpClient {
     /// here breaks any caller that intentionally targets an unresolved
     /// hostname before a `before_http` hook rewrites or cancels the
     /// request. The primary mitigation for the rebind / fail-open
-    /// window is the trait-level requirement on `HttpHandler` (see
+    /// window is the trait-level requirement on `HttpTransport` (see
     /// #1570) and the connect-time `PrivateIpFilteringResolver` on the
     /// default reqwest path. Direct-IP and successful-resolution paths
     /// remain fail-closed.
@@ -663,7 +606,7 @@ impl HttpClient {
                 url: url.to_string(),
                 headers: all_headers,
                 body: body.map(|b| b.to_vec()),
-                timeout: Some(request_timeout),
+                timeout: request_timeout,
                 connect_timeout: connect_timeout_secs
                     .map(|s| Duration::from_secs(clamp_timeout(s))),
                 pinned_addrs,
@@ -1261,35 +1204,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_deprecated_handler_still_works_via_shim() {
-        struct OkHandler;
-        #[async_trait::async_trait]
-        impl HttpHandler for OkHandler {
-            async fn request(
-                &self,
-                _method: &str,
-                _url: &str,
-                _body: Option<&[u8]>,
-                _headers: &[(String, String)],
-            ) -> std::result::Result<Response, String> {
-                Ok(Response {
-                    status: 200,
-                    headers: vec![],
-                    body: b"legacy".to_vec(),
-                })
-            }
-        }
-
-        let mut client = HttpClient::new(NetworkAllowlist::allow_all());
-        #[allow(deprecated)] // exercising the migration shim on purpose
-        client.set_handler(Box::new(OkHandler));
-
-        let response = client.get("http://93.184.216.34/").await.unwrap();
-        assert_eq!(response.status, 200);
-        assert_eq!(response.body, b"legacy");
-    }
-
-    #[tokio::test]
     async fn test_transport_receives_pinned_addrs_for_ip_literal() {
         // An IP-literal host skips DNS but must still pin the validated
         // address so host boundaries can enforce resolve-then-check.
@@ -1330,7 +1244,7 @@ mod tests {
 
         let seen = transport.seen.lock().unwrap();
         let request = &seen[0];
-        assert_eq!(request.timeout, Some(Duration::from_secs(20)));
+        assert_eq!(request.timeout, Duration::from_secs(20));
         assert_eq!(request.connect_timeout, Some(Duration::from_secs(5)));
         assert_eq!(request.max_response_bytes, 4096);
         assert_eq!(request.body.as_deref(), Some(b"payload".as_slice()));
@@ -1354,7 +1268,7 @@ mod tests {
         client.get("http://93.184.216.34/").await.unwrap();
 
         let seen = transport.seen.lock().unwrap();
-        assert_eq!(seen[0].timeout, Some(Duration::from_secs(7)));
+        assert_eq!(seen[0].timeout, Duration::from_secs(7));
         assert_eq!(seen[0].connect_timeout, None);
     }
 

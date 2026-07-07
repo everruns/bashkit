@@ -16,7 +16,7 @@ Embedding hosts (reference consumer: [everruns](https://github.com/everruns/ever
 6. **Signing is preserved.** Bot-auth signing headers are computed in `HttpClient` and merged into `HttpTransportRequest.headers` before dispatch — identical to the built-in reqwest path. Redirects are followed manually by curl/wget, so every hop is re-validated, re-signed, and re-dispatched through the transport (fetchkit parity: one transport call per hop).
 7. **Limits are communicated, then enforced.** `max_response_bytes` and the effective timeout ride on the request so a well-behaved transport stops early with `TooLarge`/`Timeout`; bashkit still enforces both after the fact (`tokio::time::timeout` around the call, size re-check on the returned body), so a misbehaving transport cannot exceed them.
 8. **Disabled by default, unchanged.** The transport does not widen network access: without the `http_client` feature *and* a `BashBuilder::network(allowlist)` call, HTTP builtins cannot make requests and the transport is never invoked.
-9. **`HttpHandler` deprecated, not removed.** `set_handler`/`http_handler` wrap the handler in an internal `HandlerTransport` adapter, preserving behavior (errors surface verbatim as `Transport`). One extension point going forward.
+9. **`HttpHandler` removed, not deprecated.** Per repo policy (no compatibility shims), the legacy `HttpHandler`/`set_handler`/`http_handler` surface is deleted in the same release; `HttpTransport` is the single extension point. Migration is mechanical: wrap the old `(method, url, body, headers)` logic in `execute(HttpTransportRequest)` and return typed errors.
 10. **`Arc`, not `Box`.** Hosts that build one `Bash` per execution share a single transport across instances.
 
 ## Request Pipeline
@@ -37,8 +37,8 @@ Embedding hosts (reference consumer: [everruns](https://github.com/everruns/ever
 
 ## Testing
 
-- Unit (`network/client.rs`, `network/transport.rs`): merged signing headers reach the transport, pinned addrs for IP literals, timeout/cap forwarding, deadline + size enforcement around misbehaving transports, deprecated-handler shim, error Display ↔ exit-code contract.
-- Integration (`tests/integration/network_security_tests.rs`, `custom_transport` module): curl/wget end-to-end through a mock transport, allowlist still enforced ahead of the transport, `Denied`→7 / `Timeout`→28 / `TooLarge`→63 / `Transport`→1 exit codes, deprecated `http_handler` builder path.
+- Unit (`network/client.rs`, `network/transport.rs`): merged signing headers reach the transport, pinned addrs for IP literals, timeout/cap forwarding, deadline + size enforcement around misbehaving transports; error Display ↔ exit-code contract.
+- Integration (`tests/integration/network_security_tests.rs`, `custom_transport` module): curl/wget end-to-end through a mock transport, allowlist still enforced ahead of the transport, `Denied`→7 / `Timeout`→28 / `TooLarge`→63 / `Transport`→1 exit codes.
 
 ## See also
 

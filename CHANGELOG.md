@@ -15,12 +15,16 @@
   (7/28/63/1). Mirrors fetchkit's transport injection so one host egress
   implementation can back both libraries. See `specs/http-transport.md`.
 
-### Deprecations
+### Breaking Changes
 
-- **`HttpHandler` injection points** — `BashBuilder::http_handler` and
-  `HttpClient::set_handler` are deprecated in favor of
-  `BashBuilder::http_transport` / `HttpClient::set_transport`. Existing
-  handlers keep working through an internal adapter.
+- **`HttpHandler` removed.** `BashBuilder::http_handler` and
+  `HttpClient::set_handler` are replaced by `BashBuilder::http_transport` /
+  `HttpClient::set_transport` (no compatibility shim, per repo policy).
+  Migration: implement `HttpTransport` — wrap the old
+  `(method, url, body, headers)` logic in `execute(HttpTransportRequest)`
+  and return `HttpTransportError` variants instead of `String`.
+  - Before: `.http_handler(Box::new(MyHandler))`
+  - After: `.http_transport(Arc::new(MyTransport))`
 
 ## [0.12.0] - 2026-06-23
 

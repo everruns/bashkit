@@ -16,7 +16,7 @@
 use std::net::IpAddr;
 use std::time::Duration;
 
-use super::client::{HttpHandler, Method, Response};
+use super::client::{Method, Response};
 
 /// Outbound HTTP request handed to an [`HttpTransport`].
 ///
@@ -43,11 +43,11 @@ pub struct HttpTransportRequest {
     pub body: Option<Vec<u8>>,
     /// Effective overall deadline for the request (curl `--max-time`,
     /// clamped to bashkit's timeout bounds, defaulting to the client
-    /// timeout). bashkit *also* enforces this deadline around the transport
-    /// call, so a transport that ignores it is still cut off — but a
-    /// transport that forwards it (e.g. to an egress request timeout) gives
-    /// callers cleaner error reporting.
-    pub timeout: Option<Duration>,
+    /// timeout). Always present — bashkit *also* enforces this deadline
+    /// around the transport call, so a transport that ignores it is still
+    /// cut off; a transport that forwards it (e.g. to an egress request
+    /// timeout) gives callers cleaner error reporting.
+    pub timeout: Duration,
     /// Connect-phase deadline (curl `--connect-timeout`), when the script
     /// requested one. Transports that cannot separate connect from transfer
     /// may fold it into the overall deadline or ignore it.
@@ -170,30 +170,6 @@ pub trait HttpTransport: Send + Sync {
     ) -> std::result::Result<Response, HttpTransportError>;
 }
 
-/// Adapts a deprecated [`HttpHandler`] to the [`HttpTransport`] contract so
-/// existing handlers keep working while embedders migrate.
-pub(crate) struct HandlerTransport(pub(crate) Box<dyn HttpHandler>);
-
-#[async_trait::async_trait]
-impl HttpTransport for HandlerTransport {
-    async fn execute(
-        &self,
-        request: HttpTransportRequest,
-    ) -> std::result::Result<Response, HttpTransportError> {
-        self.0
-            .request(
-                request.method.as_str(),
-                &request.url,
-                request.body.as_deref(),
-                &request.headers,
-            )
-            .await
-            // HttpHandler's stringly-typed errors historically surfaced
-            // verbatim; Transport's Display is pass-through, preserving that.
-            .map_err(HttpTransportError::Transport)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -217,42 +193,6 @@ mod tests {
         assert_eq!(
             HttpTransportError::Transport("connection refused".into()).to_string(),
             "connection refused"
-        );
-    }
-
-    #[tokio::test]
-    async fn handler_shim_forwards_and_maps_errors() {
-        struct FailingHandler;
-        #[async_trait::async_trait]
-        impl HttpHandler for FailingHandler {
-            async fn request(
-                &self,
-                method: &str,
-                url: &str,
-                _body: Option<&[u8]>,
-                _headers: &[(String, String)],
-            ) -> std::result::Result<Response, String> {
-                Err(format!("{method} {url} failed"))
-            }
-        }
-
-        let shim = HandlerTransport(Box::new(FailingHandler));
-        let err = shim
-            .execute(HttpTransportRequest {
-                method: Method::Get,
-                url: "https://example.com/".to_string(),
-                headers: vec![],
-                body: None,
-                timeout: None,
-                connect_timeout: None,
-                pinned_addrs: vec![],
-                max_response_bytes: 1024,
-            })
-            .await
-            .unwrap_err();
-        assert_eq!(
-            err,
-            HttpTransportError::Transport("GET https://example.com/ failed".to_string())
         );
     }
 }

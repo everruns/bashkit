@@ -942,40 +942,6 @@ mod custom_transport {
         assert_eq!(result.stdout.trim(), "mocked-response");
     }
 
-    #[tokio::test]
-    async fn deprecated_http_handler_still_intercepts_requests() {
-        // Migration shim: existing HttpHandler embedders keep working.
-        use bashkit::HttpHandler;
-
-        struct LegacyHandler;
-
-        #[async_trait::async_trait]
-        impl HttpHandler for LegacyHandler {
-            async fn request(
-                &self,
-                _method: &str,
-                _url: &str,
-                _body: Option<&[u8]>,
-                _headers: &[(String, String)],
-            ) -> std::result::Result<Response, String> {
-                Ok(Response {
-                    status: 200,
-                    headers: vec![],
-                    body: b"legacy-response".to_vec(),
-                })
-            }
-        }
-
-        #[allow(deprecated)] // exercising the migration shim on purpose
-        let mut bash = Bash::builder()
-            .network(NetworkAllowlist::allow_all())
-            .http_handler(Box::new(LegacyHandler))
-            .build();
-
-        let result = bash.exec("curl -s http://93.184.216.34").await.unwrap();
-        assert_eq!(result.stdout.trim(), "legacy-response");
-    }
-
     struct HeaderCaptureTransport {
         headers: Arc<Mutex<Vec<(String, String)>>>,
     }

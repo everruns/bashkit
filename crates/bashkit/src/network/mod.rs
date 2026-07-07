@@ -96,10 +96,7 @@ pub use allowlist::{NetworkAllowlist, UrlMatch, is_private_ip};
 pub use bot_auth::{BotAuthConfig, BotAuthError, BotAuthPublicKey, derive_bot_auth_public_key};
 
 #[cfg(feature = "http_client")]
-pub use client::{HttpClient, HttpHandler, Method, Response};
-
-#[cfg(feature = "http_client")]
-pub(crate) use transport::HandlerTransport;
+pub use client::{HttpClient, Method, Response};
 
 #[cfg(feature = "http_client")]
 pub use transport::{HttpTransport, HttpTransportError, HttpTransportRequest};
