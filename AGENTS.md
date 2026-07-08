@@ -220,7 +220,11 @@ bot-like author names.
 
 ### PRs
 
-Squash and Merge. Use PR template if exists.
+Squash and Merge. Use `.github/pull_request_template.md` for the description.
+
+Center the description on functional change and impact, not a code-location
+walkthrough (the diff shows that). Add a Before / After with proof — CLI output,
+logs, differential-test results, or screenshots for UI — whenever behavior changes.
 
 **NEVER add links to Claude sessions in PR body or commits. Never attribute commit or merge commit to coding agents, always use real user.**
 
