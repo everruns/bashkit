@@ -109,7 +109,7 @@
     "oxlint": "^0.16.0",
     "prettier": "^3.4.0",
     "tsx": "^4.21.0",
-    "typescript": "^5.7.0",
+    "typescript": "^7.0.2",
     "zod": "^3"
   },
   "overrides": {
