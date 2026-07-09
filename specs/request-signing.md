@@ -2,6 +2,9 @@
 
 > Ed25519 request signing for all outbound HTTP requests per RFC 9421 / web-bot-auth profile.
 
+## Status
+Implemented
+
 ## Problem
 
 The [toolkit library contract](https://github.com/everruns/everruns/blob/main/specs/toolkit-library-contract.md) section 9 requires HTTP-capable kits to support Ed25519 request signing. bashkit's curl/wget/http builtins make outbound HTTP requests; target servers need cryptographic bot-identity verification.

@@ -1,7 +1,7 @@
 # Coreutils argument-surface port
 
 ## Status
-Active (`cat`, `tac`, `ls`, `shuf`, `readlink`, `truncate`)
+Active (`cat`, `ls`, `mktemp`, `od`, `readlink`, `realpath`, `shuf`, `stat`, `tac`, `tee`, `truncate`)
 
 ## Decision
 

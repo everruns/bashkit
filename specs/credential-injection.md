@@ -2,6 +2,9 @@
 
 > Transparent per-host credential injection for outbound HTTP requests, without exposing secrets to sandboxed scripts.
 
+## Status
+Implemented
+
 ## Problem
 
 AI agents generate scripts that call external APIs. Passing secrets as env
