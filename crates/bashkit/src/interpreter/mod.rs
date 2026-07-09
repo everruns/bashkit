@@ -267,6 +267,34 @@ fn subcommand_env_assignments(pairs: &[(String, String)]) -> Vec<Assignment> {
         .collect()
 }
 
+/// Lower an [`ExecutionPlan`](builtins::ExecutionPlan) [`SubCommand`](builtins::SubCommand)
+/// into an executable [`Command::Simple`], wiring any stdin through a here-string
+/// redirect and command-scoped `VAR=value` assignments. Shared by the `Timeout`,
+/// `Batch`, and `BatchWithStatus` plan arms.
+fn subcommand_to_command(cmd: &builtins::SubCommand) -> Command {
+    let redirects = if let Some(ref stdin_data) = cmd.stdin {
+        vec![Redirect {
+            fd: None,
+            fd_var: None,
+            kind: RedirectKind::HereString,
+            target: Word::literal(stdin_data.trim_end_matches('\n').to_string()),
+        }]
+    } else {
+        Vec::new()
+    };
+    Command::Simple(SimpleCommand {
+        name: Word::quoted_literal(cmd.name.clone()),
+        args: cmd
+            .args
+            .iter()
+            .map(|s| Word::quoted_literal(s.clone()))
+            .collect(),
+        redirects,
+        assignments: subcommand_env_assignments(&cmd.assignments),
+        span: Span::new(),
+    })
+}
+
 /// Check if a name is a shell keyword (for `command -v`/`command -V`).
 fn is_keyword(name: &str) -> bool {
     matches!(
@@ -7976,28 +8004,7 @@ impl Interpreter {
                 use tokio::time::timeout;
 
                 // Build inner command with optional stdin via here-string
-                let inner_redirects = if let Some(ref stdin_data) = command.stdin {
-                    vec![Redirect {
-                        fd: None,
-                        fd_var: None,
-                        kind: RedirectKind::HereString,
-                        target: Word::literal(stdin_data.trim_end_matches('\n').to_string()),
-                    }]
-                } else {
-                    Vec::new()
-                };
-
-                let inner_cmd = Command::Simple(SimpleCommand {
-                    name: Word::quoted_literal(command.name),
-                    args: command
-                        .args
-                        .iter()
-                        .map(|s| Word::quoted_literal(s.clone()))
-                        .collect(),
-                    redirects: inner_redirects,
-                    assignments: subcommand_env_assignments(&command.assignments),
-                    span: Span::new(),
-                });
+                let inner_cmd = subcommand_to_command(&command);
 
                 let baseline_call_stack_len = self.call_stack.len();
                 let baseline_bash_source_len = self.bash_source_stack.len();
@@ -8030,28 +8037,7 @@ impl Interpreter {
                 let mut last_exit_code = 0;
 
                 for cmd in commands {
-                    let cmd_redirects = if let Some(ref stdin_data) = cmd.stdin {
-                        vec![Redirect {
-                            fd: None,
-                            fd_var: None,
-                            kind: RedirectKind::HereString,
-                            target: Word::literal(stdin_data.trim_end_matches('\n').to_string()),
-                        }]
-                    } else {
-                        Vec::new()
-                    };
-
-                    let inner_cmd = Command::Simple(SimpleCommand {
-                        name: Word::quoted_literal(cmd.name),
-                        args: cmd
-                            .args
-                            .iter()
-                            .map(|s| Word::quoted_literal(s.clone()))
-                            .collect(),
-                        redirects: cmd_redirects,
-                        assignments: subcommand_env_assignments(&cmd.assignments),
-                        span: Span::new(),
-                    });
+                    let inner_cmd = subcommand_to_command(&cmd);
 
                     let result = self.execute_command(&inner_cmd).await?;
                     combined_stdout.push_str(&result.stdout);
@@ -8077,28 +8063,7 @@ impl Interpreter {
                 let mut last_exit_code = 0;
 
                 for cmd in commands {
-                    let cmd_redirects = if let Some(ref stdin_data) = cmd.stdin {
-                        vec![Redirect {
-                            fd: None,
-                            fd_var: None,
-                            kind: RedirectKind::HereString,
-                            target: Word::literal(stdin_data.trim_end_matches('\n').to_string()),
-                        }]
-                    } else {
-                        Vec::new()
-                    };
-
-                    let inner_cmd = Command::Simple(SimpleCommand {
-                        name: Word::quoted_literal(cmd.name),
-                        args: cmd
-                            .args
-                            .iter()
-                            .map(|s| Word::quoted_literal(s.clone()))
-                            .collect(),
-                        redirects: cmd_redirects,
-                        assignments: subcommand_env_assignments(&cmd.assignments),
-                        span: Span::new(),
-                    });
+                    let inner_cmd = subcommand_to_command(&cmd);
 
                     let result = self.execute_command(&inner_cmd).await?;
                     combined_stdout.push_str(&result.stdout);
