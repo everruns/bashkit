@@ -1,5 +1,8 @@
 # Security Testing with Fail Points
 
+## Status
+Implemented
+
 ## Overview
 
 Bashkit uses [fail-rs](https://github.com/tikv/fail-rs) for fault injection

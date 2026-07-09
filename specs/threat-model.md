@@ -28,6 +28,7 @@ All threats use a stable ID format: `TM-<CATEGORY>-<NUMBER>`
 | TM-INF | Information Disclosure | Secrets access, host info leakage, data exfiltration |
 | TM-INJ | Injection | Command injection, path injection |
 | TM-NET | Network Security | DNS manipulation, HTTP attacks, network bypass |
+| TM-AVAIL | Availability | Fail-open design choices that keep requests flowing when optional auth/signing steps fail |
 | TM-ISO | Isolation | Multi-tenant cross-access |
 | TM-INT | Internal Errors | Panic recovery, error message safety, unexpected failures |
 | TM-GIT | Git Security | Repository access, identity leak, remote operations |
@@ -613,6 +614,33 @@ matches literal host strings exactly, never resolved IPs; no DNS lookup.
 
 **Bot-auth signing** (feature `bot-auth`): When configured, all outbound HTTP requests from curl/wget/http builtins are transparently signed with Ed25519 per RFC 9421. Signing is non-blocking — failures send requests unsigned. See `specs/request-signing.md`.
 
+#### 5.4 Credential Injection
+
+Per-host HTTP credentials injected by the embedding host without exposing the
+secret to the script. See `specs/credential-injection.md`.
+
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-NET-024 | Real credential exposed to script | Script reads an env var to recover the secret | Injection mode never puts the secret in the script environment; placeholder mode exposes only a random opaque placeholder, replaced on the wire | **MITIGATED** |
+| TM-NET-025 | Injected credential exfiltrated to unapproved host | Script sends the credential/placeholder to an attacker host | Injection scoped to allowlist `scheme+host+port+path-prefix` patterns; placeholder substitution only fires for matching destinations, and the allowlist blocks unapproved hosts | **MITIGATED** |
+| TM-NET-026 | `Authorization` header spoofing | Script sets a competing same-name header to impersonate a credential | Overwrite semantics — injected headers replace script-set same-name headers before dispatch | **MITIGATED** |
+| TM-NET-027 | Injected credential leak in errors/traces | Credential value surfaces in an error message or trace log | Values redacted on all error paths (extends TM-INF-015); traces show `[CREDENTIAL]` / `[CREDENTIAL_PLACEHOLDER]`; the `Credential` `Debug` impl redacts header values. Tested by `test_credential_debug_redacts` and `test_placeholder_does_not_leak_raw_credential` | **MITIGATED** |
+
+**Accepted risks (v1):** an approved host that reflects the `Authorization`
+header in its response body (echo attack) is out of scope — limit approved hosts
+to trusted APIs; response scrubbing via `after_http` is future work. Placeholder
+strings reveal that a credential *exists* (not its value) — accepted metadata
+leakage.
+
+**Current Risk**: LOW — injection is scoped to the allowlist and values are
+redacted everywhere they could surface.
+
+#### 5.5 Availability (Fail-Open Auth)
+
+| ID | Threat | Attack Vector | Mitigation | Status |
+|----|--------|--------------|------------|--------|
+| TM-AVAIL-001 | Optional auth failure blocks legitimate requests | A transient signing or credential-injection failure (missing placeholder, callback error, key load failure) hard-fails an otherwise valid request | **Non-blocking by design**: bot-auth signing and credential injection fail open — on failure the request is sent unsigned / without the credential rather than aborted. The security enforcement (allowlist, SSRF precheck) still runs; only the *optional* auth augmentation is skipped. Accepted trade-off: availability over strict auth attachment, since the destination enforces its own authn. See `specs/request-signing.md`, `specs/credential-injection.md` | **ACCEPTED** |
+
 **Implementation**: `network/client.rs` — `DEFAULT_MAX_RESPONSE_BYTES` 10MB, timeouts default
 30s / connect 10s, clamped to [1s, 10min] (TM-NET-008/009/010); `redirect(Policy::none())`
 (TM-NET-011/014); `.no_gzip().no_brotli().no_deflate()` (TM-NET-013); `.no_proxy()`
@@ -1086,7 +1114,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | ~~TM-DOS-049~~ | ~~`collect_dirs_recursive` has no depth limit~~ | ~~Deep recursion on VFS trees~~ | Capped using `FsLimits::max_path_depth` (**FIXED**) |
 | ~~TM-DOS-050~~ | ~~`parse_word_string` uses default parser limits~~ | ~~Caller-configured tighter limits ignored for parameter expansion~~ | ~~Propagate limits through `parse_word_string()`~~ (**FIXED**) |
 | ~~TM-PY-028~~ | ~~BashTool.reset() in Python drops security config~~ | ~~Resource limits silently removed after reset~~ | `BashTool::reset` rebuilds via `replace_live_bash_with_builder` matching `PyBash::reset` (**FIXED**) |
-| TM-PY-029 | ContextVar capture may include sensitive state | `copy_context()` snapshots all caller ContextVars, not just intended ones | Accepted: same semantics as `asyncio.Task` context inheritance; caller controls what is set |
+| TM-PY-031 | ContextVar capture may include sensitive state | `copy_context()` snapshots all caller ContextVars, not just intended ones | Accepted: same semantics as `asyncio.Task` context inheritance; caller controls what is set |
 
 ### Open (From 2026-03 Blackbox Security Testing)
 

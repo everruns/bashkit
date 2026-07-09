@@ -2,6 +2,9 @@
 
 > Host-injectable transport for all outbound HTTP made by the `curl`/`wget`/`http` builtins, so embedders can direct sandbox traffic through their own boundary (egress gateway, proxy, audit layer) while bashkit keeps enforcing HTTP policy.
 
+## Status
+Implemented
+
 ## Problem
 
 Embedding hosts (reference consumer: [everruns](https://github.com/everruns/everruns), `specs/egress.md` there) must route *all* outbound traffic through a host-owned egress boundary — for network policy, audit, signing, and airgapped deployments. bashkit's built-in reqwest connectivity dials the network directly and deliberately ignores host proxy env vars (TM-NET-015), so without an injection point an embedder cannot centralize sandbox HTTP. The legacy `HttpHandler` hook was too weak for this: loose `(method, url, body, headers)` args, no timeouts, no SSRF precheck result, stringly-typed errors that could not distinguish a host policy denial from a connect failure.

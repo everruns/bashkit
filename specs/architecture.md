@@ -1,5 +1,8 @@
 # Architecture
 
+## Status
+Implemented
+
 ## Decision
 
 **Official name:** "Bashkit" (not "BashKit"). Crate/package identifiers use lowercase `bashkit`.

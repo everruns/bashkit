@@ -1,5 +1,8 @@
 # Performance Results and Site Aggregation
 
+## Status
+Implemented
+
 Benchmark, Criterion, and LLM evaluation runs are historical artifacts. The
 static site exposes the latest snapshot at `/benches` by aggregating those
 artifacts during site build.

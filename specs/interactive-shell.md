@@ -1,5 +1,8 @@
 # Interactive Shell Mode
 
+## Status
+Implemented
+
 ## Decision
 
 Bashkit provides an interactive REPL via `bashkit` (no arguments); add

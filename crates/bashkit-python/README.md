@@ -10,7 +10,7 @@ Homepage: [bashkit.sh](https://bashkit.sh)
 
 - Sandboxed execution in-process, without containers or subprocess orchestration
 - Full bash syntax: variables, pipelines, redirects, loops, functions, and arrays
-- 156 built-in commands including `grep`, `sed`, `awk`, `jq`, `curl`, and `find`
+- 164 built-in commands including `grep`, `sed`, `awk`, `jq`, `curl`, and `find`
 - Persistent interpreter state across calls, including variables, cwd, and VFS contents
 - Direct virtual filesystem APIs, constructor mounts, and live host mounts
 - Snapshot and restore support on `Bash` and `BashTool`

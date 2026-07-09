@@ -56,7 +56,7 @@ These decisions are documented in [`specs/limitations.md`](../specs/limitations.
 
 Bashkit uses multiple layers of security testing:
 
-**Threat model tests** — 185 tests in `threat_model_tests.rs` that directly
+**Threat model tests** — 232 tests in `threat_model_tests.rs` that directly
 validate mitigations against documented threat IDs. Each test maps to a specific
 `TM-*` threat.
 
@@ -64,7 +64,7 @@ validate mitigations against documented threat IDs. Each test maps to a specific
 that injects failures at specific points to verify the interpreter handles them
 safely. 14+ tests in `security_failpoint_tests.rs`.
 
-**Network security tests** — 53 tests covering allowlist enforcement, URL
+**Network security tests** — 68 tests covering allowlist enforcement, URL
 validation, timeout behaviour, and response limits.
 
 **Error handling tests** — 39 tests verifying that builtins wrapped with

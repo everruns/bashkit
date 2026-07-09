@@ -310,6 +310,26 @@ Network access is disabled by default. When enabled, strict controls apply.
 | Compression bomb (TM-NET-013) | 10KB to 10GB gzip | Auto-decompression disabled | MITIGATED |
 | DNS rebind via redirect (TM-NET-014) | Redirect to rebinded IP | Redirect requires allowlist check | MITIGATED |
 
+**Credential Injection (TM-NET-024–027):**
+
+Per-host HTTP credentials injected by the embedding host without exposing the
+secret to the script (see `specs/credential-injection.md`).
+
+| Threat | Attack Example | Mitigation | Status |
+|--------|---------------|------------|--------|
+| Real credential exposed to script (TM-NET-024) | Script reads env var for the secret | Injection mode keeps the secret out of the script env; placeholder mode exposes only a random placeholder replaced on the wire | MITIGATED |
+| Credential exfiltrated to unapproved host (TM-NET-025) | Send credential to attacker host | Injection scoped to allowlist patterns; substitution only for matching destinations | MITIGATED |
+| `Authorization` spoofing (TM-NET-026) | Script sets competing same-name header | Overwrite semantics — injected headers replace script-set headers | MITIGATED |
+| Credential leak in errors/traces (TM-NET-027) | Value surfaces in error or trace log | Redacted on all error paths; traces show `[CREDENTIAL]`; `Credential` `Debug` redacts values | MITIGATED |
+
+**Availability — Fail-Open Auth (TM-AVAIL-001):**
+
+Bot-auth signing and credential injection fail **open**: a transient signing or
+injection failure sends the request unsigned / without the credential rather
+than aborting it. Security enforcement (allowlist, SSRF precheck) still runs;
+only the optional auth augmentation is skipped. Accepted trade-off — the
+destination enforces its own authentication.
+
 **Network Allowlist:**
 
 ```rust,ignore
@@ -819,12 +839,12 @@ Normal Unicode (accented, CJK, emoji) is allowed in filenames and script content
 
 Bashkit includes comprehensive security tests:
 
-- **Threat Model Tests**: [`tests/threat_model_tests.rs`][threat_tests] - 117 tests
+- **Threat Model Tests**: [`tests/threat_model_tests.rs`][threat_tests] - 232 tests
 - **Unicode Security Tests**: `tests/unicode_security_tests.rs` - TM-UNI-* tests
 - **Nesting Depth Tests**: 18 tests covering positive, negative, misconfiguration,
   and regression scenarios for parser depth attacks
 - **Fail-Point Tests**: [`tests/security_failpoint_tests.rs`][failpoint_tests] - 14 tests
-- **Network Security**: [`tests/network_security_tests.rs`][network_tests] - 53 tests
+- **Network Security**: [`tests/network_security_tests.rs`][network_tests] - 68 tests
 - **Builtin Error Security**: `tests/builtin_error_security_tests.rs` - 39 tests
 - **Logging Security**: `tests/logging_security_tests.rs` - 26 tests
 - **Git Security**: `tests/git_security_tests.rs` + `tests/git_remote_security_tests.rs`

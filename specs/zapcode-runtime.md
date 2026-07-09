@@ -4,6 +4,9 @@
 > limits are enforced by ZapCode's VM. Do not rely on it for untrusted-input
 > safety without additional hardening.
 
+## Status
+Experimental
+
 ## Decision
 
 Sandboxed TypeScript/JavaScript execution via `typescript`, `ts`, `node`,
