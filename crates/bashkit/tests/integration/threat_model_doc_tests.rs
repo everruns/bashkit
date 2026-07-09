@@ -103,3 +103,46 @@ fn threat_ids_cited_in_code_exist_in_threat_model_doc() {
         missing.join("\n")
     );
 }
+
+/// The public/user-facing threat-model doc (`crates/bashkit/docs/threat-model.md`)
+/// must document every TM-ID that exists in the canonical spec
+/// (`specs/threat-model.md`). Nothing else enforced spec↔public-doc parity, so
+/// the public doc silently drifted ~51 IDs behind the spec (issue #2155). This
+/// guard fails CI whenever a new spec threat is added without a matching public
+/// entry, so the drift cannot recur.
+#[test]
+fn public_threat_model_doc_covers_every_spec_tm_id() {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+
+    let spec_path = manifest.join("../../specs/threat-model.md");
+    let spec = std::fs::read_to_string(&spec_path)
+        .unwrap_or_else(|e| panic!("read {}: {e}", spec_path.display()));
+    let mut spec_ids = HashSet::new();
+    extract_tm_ids(&spec, &mut spec_ids);
+    assert!(
+        spec_ids.len() > 100,
+        "suspiciously few TM IDs in specs/threat-model.md ({}) — parsing broken?",
+        spec_ids.len()
+    );
+
+    let public_path = manifest.join("docs/threat-model.md");
+    let public = std::fs::read_to_string(&public_path)
+        .unwrap_or_else(|e| panic!("read {}: {e}", public_path.display()));
+    let mut public_ids = HashSet::new();
+    extract_tm_ids(&public, &mut public_ids);
+
+    let mut missing: Vec<&String> = spec_ids.difference(&public_ids).collect();
+    missing.sort();
+    assert!(
+        missing.is_empty(),
+        "{} TM-ID(s) in specs/threat-model.md are missing from the public doc \
+         crates/bashkit/docs/threat-model.md — port them (condensed prose-table style) \
+         so the user-facing doc stays in sync:\n{}",
+        missing.len(),
+        missing
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+}
