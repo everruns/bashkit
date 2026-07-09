@@ -1,5 +1,8 @@
 # Documentation Approach
 
+## Status
+Implemented
+
 ## Decision
 
 Embed external markdown files into rustdoc via `#[doc = include_str!(...)]`

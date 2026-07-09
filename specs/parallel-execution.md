@@ -1,5 +1,8 @@
 # Parallel Execution
 
+## Status
+Implemented
+
 ## Threading Model
 
 - Single `Bash` instance: sequential (`&mut self`)

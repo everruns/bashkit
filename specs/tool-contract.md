@@ -1,5 +1,8 @@
 # Tool Contract
 
+## Status
+Implemented
+
 ## Summary
 
 `bashkit` follows the Everruns toolkit library contract from

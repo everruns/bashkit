@@ -1,5 +1,8 @@
 # Parser Design
 
+## Status
+Implemented
+
 ## Decision
 
 Recursive descent parser with a context-aware lexer.

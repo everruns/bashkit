@@ -1,5 +1,8 @@
 # Testing Strategy
 
+## Status
+Implemented
+
 ## Decision
 
 Multi-layer testing strategy:

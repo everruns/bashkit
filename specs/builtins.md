@@ -1,5 +1,8 @@
 # Builtin Commands
 
+## Status
+Implemented
+
 ## Decision
 
 Bashkit provides built-in commands for script execution in a virtual environment.

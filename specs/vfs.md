@@ -1,5 +1,8 @@
 # Virtual Filesystem Design
 
+## Status
+Implemented
+
 ## Decision
 
 Two-layer filesystem abstraction:
