@@ -6,6 +6,12 @@
 //! same enforcement direction as `limitations_doc_tests`: code may not cite
 //! a ledger entry that does not exist, so restructuring the ledger can never
 //! silently orphan a mitigation anchor.
+//!
+//! A second test keeps the user-facing threat model
+//! (`crates/bashkit/docs/threat-model.md`) in one-to-one sync with the
+//! canonical ledger (`specs/threat-model.md`): every spec threat must be
+//! documented publicly, and the public doc may not invent IDs the ledger
+//! lacks. This closes the drift tracked in #2155.
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -101,5 +107,55 @@ fn threat_ids_cited_in_code_exist_in_threat_model_doc() {
         missing.is_empty(),
         "TM IDs cited in code but missing from specs/threat-model.md:\n{}",
         missing.join("\n")
+    );
+}
+
+#[test]
+fn public_threat_model_doc_covers_every_spec_threat_id() {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let spec_path = manifest.join("../../specs/threat-model.md");
+    let public_path = manifest.join("docs/threat-model.md");
+    let spec = std::fs::read_to_string(&spec_path)
+        .unwrap_or_else(|e| panic!("read {}: {e}", spec_path.display()));
+    let public = std::fs::read_to_string(&public_path)
+        .unwrap_or_else(|e| panic!("read {}: {e}", public_path.display()));
+
+    let mut spec_ids = HashSet::new();
+    extract_tm_ids(&spec, &mut spec_ids);
+    let mut public_ids = HashSet::new();
+    extract_tm_ids(&public, &mut public_ids);
+
+    assert!(
+        spec_ids.len() > 100,
+        "suspiciously few TM IDs in specs/threat-model.md ({}) — parsing broken?",
+        spec_ids.len()
+    );
+
+    // Every threat in the canonical ledger must appear in the user-facing doc.
+    let mut missing: Vec<&str> = spec_ids
+        .difference(&public_ids)
+        .map(String::as_str)
+        .collect();
+    missing.sort_unstable();
+    assert!(
+        missing.is_empty(),
+        "{} TM ID(s) in specs/threat-model.md but missing from \
+         crates/bashkit/docs/threat-model.md — port them (see #2155):\n{}",
+        missing.len(),
+        missing.join("\n")
+    );
+
+    // ...and the public doc must not invent IDs the ledger lacks (typo guard).
+    let mut stray: Vec<&str> = public_ids
+        .difference(&spec_ids)
+        .map(String::as_str)
+        .collect();
+    stray.sort_unstable();
+    assert!(
+        stray.is_empty(),
+        "{} TM ID(s) in crates/bashkit/docs/threat-model.md but absent from \
+         specs/threat-model.md — fix the ID or add the ledger entry:\n{}",
+        stray.len(),
+        stray.join("\n")
     );
 }
