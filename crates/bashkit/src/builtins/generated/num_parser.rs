@@ -6,6 +6,7 @@
 // Original uutils licensed MIT; see THIRD_PARTY_LICENSES.
 
 //! Utilities for parsing numbers in various formats
+use crate::builtins::generated::extendedbigdecimal::ExtendedBigDecimal;
 use bigdecimal::BigDecimal;
 use bigdecimal::num_bigint::BigInt;
 use bigdecimal::num_bigint::BigUint;
@@ -13,7 +14,6 @@ use bigdecimal::num_bigint::Sign;
 use num_traits::Signed;
 use num_traits::ToPrimitive;
 use num_traits::Zero;
-use crate::builtins::generated::extendedbigdecimal::ExtendedBigDecimal;
 #[derive(Clone, Copy, PartialEq)]
 enum Base {
     /// Binary base
@@ -35,13 +35,11 @@ impl Base {
             Self::Binary => ('0'..='1').contains(&c).then(|| from_decimal(c)),
             Self::Octal => ('0'..='7').contains(&c).then(|| from_decimal(c)),
             Self::Decimal => c.is_ascii_digit().then(|| from_decimal(c)),
-            Self::Hexadecimal => {
-                match c.to_ascii_lowercase() {
-                    '0'..='9' => Some(from_decimal(c)),
-                    c @ 'a'..='f' => Some(u64::from(c) - u64::from('a') + 10),
-                    _ => None,
-                }
-            }
+            Self::Hexadecimal => match c.to_ascii_lowercase() {
+                '0'..='9' => Some(from_decimal(c)),
+                c @ 'a'..='f' => Some(u64::from(c) - u64::from('a') + 10),
+                _ => None,
+            },
         }
     }
     /// Greedily parse as many digits as possible from the string
@@ -132,9 +130,7 @@ where
         }
         match self {
             Self::NotNumeric => ExtendedParserError::NotNumeric,
-            Self::PartialMatch(v, rest) => {
-                ExtendedParserError::PartialMatch(extract(f(v)), rest)
-            }
+            Self::PartialMatch(v, rest) => ExtendedParserError::PartialMatch(extract(f(v)), rest),
             Self::Overflow(v) => ExtendedParserError::Overflow(extract(f(v))),
             Self::Underflow(v) => ExtendedParserError::Underflow(extract(f(v))),
         }
@@ -156,13 +152,11 @@ impl ExtendedParser for i64 {
                         let negative = digits.sign() == Sign::Minus;
                         match i64::try_from(digits) {
                             Ok(i) => Ok(i),
-                            _ => {
-                                Err(
-                                    ExtendedParserError::Overflow(
-                                        if negative { i64::MIN } else { i64::MAX },
-                                    ),
-                                )
-                            }
+                            _ => Err(ExtendedParserError::Overflow(if negative {
+                                i64::MIN
+                            } else {
+                                i64::MAX
+                            })),
                         }
                     } else {
                         Err(ExtendedParserError::NotNumeric)
@@ -188,7 +182,13 @@ impl ExtendedParser for u64 {
                     if scale == 0 {
                         let (sign, digits) = digits.into_parts();
                         match u64::try_from(digits) {
-                            Ok(i) => if sign == Sign::Minus { Ok(!i + 1) } else { Ok(i) }
+                            Ok(i) => {
+                                if sign == Sign::Minus {
+                                    Ok(!i + 1)
+                                } else {
+                                    Ok(i)
+                                }
+                            }
                             _ => Err(ExtendedParserError::Overflow(u64::MAX)),
                         }
                     } else {
@@ -240,11 +240,7 @@ impl ExtendedParser for ExtendedBigDecimal {
         parse(input, ParseTarget::Decimal, &[])
     }
 }
-fn parse_digits(
-    base: Base,
-    str: &str,
-    fractional: bool,
-) -> (Option<BigUint>, i64, &str) {
+fn parse_digits(base: Base, str: &str, fractional: bool) -> (Option<BigUint>, i64, &str) {
     let (digits, rest) = base.parse_digits(str);
     if fractional {
         if let Some(rest) = rest.strip_prefix('.') {
@@ -274,10 +270,7 @@ fn parse_exponent(base: Base, str: &str) -> (Option<BigInt>, &str) {
     }
     (None, str)
 }
-fn parse_suffix_multiplier<'a>(
-    str: &'a str,
-    allowed_suffixes: &[(char, u32)],
-) -> (u32, &'a str) {
+fn parse_suffix_multiplier<'a>(str: &'a str, allowed_suffixes: &[(char, u32)]) -> (u32, &'a str) {
     if let Some(ch) = str.chars().next() {
         if let Some(mul) = allowed_suffixes
             .iter()
@@ -305,10 +298,7 @@ fn parse_special_value(
             if negative {
                 special = -special;
             }
-            let (_, rest) = parse_suffix_multiplier(
-                &input[str.len()..],
-                allowed_suffixes,
-            );
+            let (_, rest) = parse_suffix_multiplier(&input[str.len()..], allowed_suffixes);
             return if rest.is_empty() {
                 Ok(special)
             } else {
@@ -318,10 +308,7 @@ fn parse_special_value(
     }
     Err(ExtendedParserError::NotNumeric)
 }
-fn make_error(
-    overflow: bool,
-    negative: bool,
-) -> ExtendedParserError<ExtendedBigDecimal> {
+fn make_error(overflow: bool, negative: bool) -> ExtendedParserError<ExtendedBigDecimal> {
     let mut v = if overflow {
         ExtendedBigDecimal::Infinity
     } else {
@@ -344,13 +331,11 @@ fn construct_extended_big_decimal(
     exponent: BigInt,
 ) -> Result<ExtendedBigDecimal, ExtendedParserError<ExtendedBigDecimal>> {
     if digits == BigUint::zero() {
-        return Ok(
-            if negative {
-                ExtendedBigDecimal::MinusZero
-            } else {
-                ExtendedBigDecimal::zero()
-            },
-        );
+        return Ok(if negative {
+            ExtendedBigDecimal::MinusZero
+        } else {
+            ExtendedBigDecimal::zero()
+        });
     }
     let sign = if negative { Sign::Minus } else { Sign::Plus };
     let signed_digits = BigInt::from_biguint(sign, digits);
@@ -396,9 +381,7 @@ pub(crate) fn parse(
     allowed_suffixes: &[(char, u32)],
 ) -> Result<ExtendedBigDecimal, ExtendedParserError<ExtendedBigDecimal>> {
     let trimmed_input = input.trim_ascii_start();
-    let (negative, unsigned) = if let Some(trimmed_input) = trimmed_input
-        .strip_prefix('-')
-    {
+    let (negative, unsigned) = if let Some(trimmed_input) = trimmed_input.strip_prefix('-') {
         (true, trimmed_input)
     } else if let Some(trimmed_input) = trimmed_input.strip_prefix('+') {
         (false, trimmed_input)
@@ -420,8 +403,8 @@ pub(crate) fn parse(
     } else {
         (Base::Decimal, unsigned)
     };
-    let parse_frac_exp = matches!(base, Base::Decimal | Base::Hexadecimal)
-        && target != ParseTarget::Integral;
+    let parse_frac_exp =
+        matches!(base, Base::Decimal | Base::Hexadecimal) && target != ParseTarget::Integral;
     let (digits, scale, rest) = parse_digits(base, rest, parse_frac_exp);
     let (exponent, rest) = if parse_frac_exp {
         parse_exponent(base, rest)
@@ -445,21 +428,14 @@ pub(crate) fn parse(
     }
     let (mul, rest) = parse_suffix_multiplier(rest, allowed_suffixes);
     let digits = digits.unwrap() * mul;
-    let ebd_result = construct_extended_big_decimal(
-        digits,
-        negative,
-        base,
-        scale,
-        exponent.unwrap_or_default(),
-    );
+    let ebd_result =
+        construct_extended_big_decimal(digits, negative, base, scale, exponent.unwrap_or_default());
     if rest.is_empty() {
         ebd_result
     } else {
-        Err(
-            ExtendedParserError::PartialMatch(
-                ebd_result.unwrap_or_else(ExtendedParserError::extract),
-                rest.to_string(),
-            ),
-        )
+        Err(ExtendedParserError::PartialMatch(
+            ebd_result.unwrap_or_else(ExtendedParserError::extract),
+            rest.to_string(),
+        ))
     }
 }

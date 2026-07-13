@@ -268,3 +268,12 @@ tokio = { version = "1", features = ["rt-multi-thread", "fs"] }
 # re-exports std::time directly with zero overhead.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-time = { workspace = true }
+
+# Vendored uucore modules (e.g. generated/format/human.rs) carry upstream
+# `#[cfg(feature = "i18n-decimal")]` gates. bashkit has no i18n surface —
+# the port tool hard-errors on Fluent/translate imports — so this feature
+# is never defined here and the gated branch is always compiled out. Declare
+# it as a known cfg so `unexpected_cfgs` (denied via -D warnings in CI) does
+# not flag the vendored code. See specs/coreutils-args-port.md.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("i18n-decimal"))'] }

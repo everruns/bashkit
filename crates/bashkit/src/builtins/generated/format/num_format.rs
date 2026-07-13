@@ -6,17 +6,17 @@
 // Original uutils licensed MIT; see THIRD_PARTY_LICENSES.
 
 //! Utilities for formatting numbers in various formats
+use super::ExtendedBigDecimal;
+use super::FormatError;
+use super::check_precision;
+use super::spec::CanAsterisk;
+use super::spec::Spec;
 use bigdecimal::BigDecimal;
 use bigdecimal::num_bigint::ToBigInt;
 use num_traits::Signed;
 use num_traits::Zero;
 use std::cmp::min;
 use std::io::Write;
-use super::ExtendedBigDecimal;
-use super::FormatError;
-use super::check_precision;
-use super::spec::CanAsterisk;
-use super::spec::Spec;
 pub trait Formatter<T> {
     fn fmt(&self, writer: impl Write, x: T) -> std::io::Result<()>;
     fn try_from_spec(s: Spec) -> Result<Self, FormatError>
@@ -87,7 +87,8 @@ impl Formatter<i64> for SignedInt {
             positive_sign,
             alignment,
             position: _position,
-        } = s else {
+        } = s
+        else {
             return Err(FormatError::WrongSpecType);
         };
         let width = match width {
@@ -119,23 +120,18 @@ impl Formatter<u64> for UnsignedInt {
         let mut s = match self.variant {
             UnsignedIntVariant::Decimal => format!("{x}"),
             UnsignedIntVariant::Octal(_) => format!("{x:o}"),
-            UnsignedIntVariant::Hexadecimal(case, _) => {
-                match case {
-                    Case::Lowercase => format!("{x:x}"),
-                    Case::Uppercase => format!("{x:X}"),
-                }
-            }
+            UnsignedIntVariant::Hexadecimal(case, _) => match case {
+                Case::Lowercase => format!("{x:x}"),
+                Case::Uppercase => format!("{x:X}"),
+            },
         };
         let prefix = match (x, self.variant) {
             (1.., UnsignedIntVariant::Hexadecimal(Case::Lowercase, Prefix::Yes)) => "0x",
             (1.., UnsignedIntVariant::Hexadecimal(Case::Uppercase, Prefix::Yes)) => "0X",
-            (
-                1..,
-                UnsignedIntVariant::Octal(Prefix::Yes),
-            ) if s.len() >= self.precision => "0",
+            (1.., UnsignedIntVariant::Octal(Prefix::Yes)) if s.len() >= self.precision => "0",
             _ => "",
         };
-        s = format!("{prefix}{}", zero_pad_to(& s, self.precision));
+        s = format!("{prefix}{}", zero_pad_to(&s, self.precision));
         write_output(writer, String::new(), s, self.width, self.alignment)
     }
     fn try_from_spec(s: Spec) -> Result<Self, FormatError> {
@@ -145,7 +141,8 @@ impl Formatter<u64> for UnsignedInt {
             positive_sign: PositiveSign::None,
             alignment,
             position,
-        } = s {
+        } = s
+        {
             Spec::UnsignedInt {
                 variant: UnsignedIntVariant::Decimal,
                 width,
@@ -162,7 +159,8 @@ impl Formatter<u64> for UnsignedInt {
             precision,
             alignment,
             position: _position,
-        } = s else {
+        } = s
+        else {
             return Err(FormatError::WrongSpecType);
         };
         let width = match width {
@@ -240,28 +238,13 @@ impl Formatter<&ExtendedBigDecimal> for Float {
                     format_float_decimal(&bd, self.precision, self.force_decimal)
                 }
                 FloatVariant::Scientific => {
-                    format_float_scientific(
-                        &bd,
-                        self.precision,
-                        self.case,
-                        self.force_decimal,
-                    )
+                    format_float_scientific(&bd, self.precision, self.case, self.force_decimal)
                 }
                 FloatVariant::Shortest => {
-                    format_float_shortest(
-                        &bd,
-                        self.precision,
-                        self.case,
-                        self.force_decimal,
-                    )
+                    format_float_shortest(&bd, self.precision, self.case, self.force_decimal)
                 }
                 FloatVariant::Hexadecimal => {
-                    format_float_hexadecimal(
-                        &bd,
-                        self.precision,
-                        self.case,
-                        self.force_decimal,
-                    )
+                    format_float_hexadecimal(&bd, self.precision, self.case, self.force_decimal)
                 }
             }
         } else {
@@ -286,7 +269,8 @@ impl Formatter<&ExtendedBigDecimal> for Float {
             alignment,
             precision,
             position: _position,
-        } = s else {
+        } = s
+        else {
             return Err(FormatError::WrongSpecType);
         };
         let width = match width {
@@ -353,7 +337,7 @@ fn format_float_decimal(
     precision: Option<usize>,
     force_decimal: ForceDecimal,
 ) -> String {
-    debug_assert!(! bd.is_negative());
+    debug_assert!(!bd.is_negative());
     let precision = precision.unwrap_or(6);
     if precision == 0 {
         let (bi, scale) = bd.as_bigint_and_scale();
@@ -370,7 +354,7 @@ fn bd_to_string_exp_with_prec(bd: &BigDecimal, precision: usize) -> (String, i64
     let (frac, mut p) = bd_round.as_bigint_and_exponent();
     let mut digits = frac.to_str_radix(10);
     if digits.len() == precision + 1 {
-        debug_assert_eq!(& digits[precision..], "0");
+        debug_assert_eq!(&digits[precision..], "0");
         digits.truncate(precision);
         p -= 1;
     }
@@ -383,7 +367,7 @@ fn format_float_scientific(
     case: Case,
     force_decimal: ForceDecimal,
 ) -> String {
-    debug_assert!(! bd.is_negative());
+    debug_assert!(!bd.is_negative());
     let precision = precision.unwrap_or(6);
     let exp_char = match case {
         Case::Lowercase => 'e',
@@ -398,13 +382,12 @@ fn format_float_scientific(
     }
     let (digits, exponent) = bd_to_string_exp_with_prec(bd, precision + 1);
     let (first_digit, remaining_digits) = digits.split_at(1);
-    let dot = if !remaining_digits.is_empty()
-        || (precision == 0 && ForceDecimal::Yes == force_decimal)
-    {
-        "."
-    } else {
-        ""
-    };
+    let dot =
+        if !remaining_digits.is_empty() || (precision == 0 && ForceDecimal::Yes == force_decimal) {
+            "."
+        } else {
+            ""
+        };
     format!("{first_digit}{dot}{remaining_digits}{exp_char}{exponent:+03}")
 }
 fn format_float_shortest(
@@ -413,7 +396,7 @@ fn format_float_shortest(
     case: Case,
     force_decimal: ForceDecimal,
 ) -> String {
-    debug_assert!(! bd.is_negative());
+    debug_assert!(!bd.is_negative());
     let precision = precision.unwrap_or(6);
     let precision = precision.max(1);
     if BigDecimal::zero().eq(bd) {
@@ -433,13 +416,10 @@ fn format_float_shortest(
         if force_decimal == ForceDecimal::No {
             strip_fractional_zeroes_and_dot(&mut output);
         }
-        output
-            .push(
-                match case {
-                    Case::Lowercase => 'e',
-                    Case::Uppercase => 'E',
-                },
-            );
+        output.push(match case {
+            Case::Lowercase => 'e',
+            Case::Uppercase => 'E',
+        });
         let exponent_abs = exponent.abs();
         output.push(if exponent < 0 { '-' } else { '+' });
         if exponent_abs < 10 {
@@ -452,8 +432,7 @@ fn format_float_shortest(
             output.extend(std::iter::repeat_n('0', -exponent as usize - 1));
             output.push_str(&digits);
         } else {
-            let (first_digits, remaining_digits) = digits
-                .split_at(exponent as usize + 1);
+            let (first_digits, remaining_digits) = digits.split_at(exponent as usize + 1);
             output.push_str(first_digits);
             output.push('.');
             output.push_str(remaining_digits);
@@ -471,7 +450,7 @@ fn format_float_hexadecimal(
     force_decimal: ForceDecimal,
 ) -> String {
     const BEFORE_BITS: usize = 4;
-    debug_assert!(! bd.is_negative());
+    debug_assert!(!bd.is_negative());
     let max_precision = precision.unwrap_or(15);
     let (prefix, exp_char) = match case {
         Case::Lowercase => ("0x", 'p'),
@@ -489,9 +468,12 @@ fn format_float_hexadecimal(
     let (mut frac2, mut exp2) = if exp10 >= 0 {
         (frac10 * 5.to_bigint().unwrap().pow(exp10 as u32), exp10)
     } else {
-        let margin = ((max_precision as i64 + 1) * 4 - frac10.bits() as i64).max(0)
-            + -exp10 * 3 + 1;
-        ((frac10 << margin) / 5.to_bigint().unwrap().pow(-exp10 as u32), exp10 - margin)
+        let margin =
+            ((max_precision as i64 + 1) * 4 - frac10.bits() as i64).max(0) + -exp10 * 3 + 1;
+        (
+            (frac10 << margin) / 5.to_bigint().unwrap().pow(-exp10 as u32),
+            exp10 - margin,
+        )
     };
     let wanted_bits = BEFORE_BITS as u64 + max_precision as u64 * 4;
     let bits = frac2.bits();
@@ -571,8 +553,7 @@ fn write_output(
     match alignment {
         NumberAlignment::Left => write!(writer, "{sign_indicator}{s:<remaining_width$}"),
         NumberAlignment::RightSpace => {
-            let is_sign = sign_indicator.starts_with('-')
-                || sign_indicator.starts_with('+');
+            let is_sign = sign_indicator.starts_with('-') || sign_indicator.starts_with('+');
             if is_sign && remaining_width > 0 {
                 let s = sign_indicator + s.as_str();
                 write!(writer, "{s:>width$}", width = remaining_width + 1)

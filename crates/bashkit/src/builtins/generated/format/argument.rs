@@ -7,14 +7,14 @@
 
 use super::ExtendedBigDecimal;
 use crate::builtins::generated::format::spec::ArgumentLocation;
-use crate::builtins::generated::format_support::set_exit_code;
-use crate::builtins::generated::format_support::os_str_as_bytes;
-use crate::builtins::generated::num_parser::ExtendedParser;
-use crate::builtins::generated::num_parser::ExtendedParserError;
 use crate::builtins::generated::format_support::QuotingStyle;
 use crate::builtins::generated::format_support::locale_aware_escape_name;
+use crate::builtins::generated::format_support::os_str_as_bytes;
+use crate::builtins::generated::format_support::set_exit_code;
 use crate::builtins::generated::format_support::show_error;
 use crate::builtins::generated::format_support::show_warning;
+use crate::builtins::generated::num_parser::ExtendedParser;
+use crate::builtins::generated::num_parser::ExtendedParserError;
 use os_display::Quotable;
 use std::ffi::OsStr;
 use std::ffi::OsString;
@@ -63,12 +63,10 @@ impl<'a> FormatArguments<'a> {
     pub fn next_char(&mut self, position: ArgumentLocation) -> u8 {
         match self.next_arg(position) {
             Some(FormatArgument::Char(c)) => *c as u8,
-            Some(FormatArgument::Unparsed(os)) => {
-                match os_str_as_bytes(os) {
-                    Ok(bytes) => bytes.first().copied().unwrap_or(b'\0'),
-                    Err(_) => b'\0',
-                }
-            }
+            Some(FormatArgument::Unparsed(os)) => match os_str_as_bytes(os) {
+                Ok(bytes) => bytes.first().copied().unwrap_or(b'\0'),
+                Err(_) => b'\0',
+            },
             _ => b'\0',
         }
     }
@@ -92,10 +90,7 @@ impl<'a> FormatArguments<'a> {
             _ => 0,
         }
     }
-    pub fn next_extended_big_decimal(
-        &mut self,
-        position: ArgumentLocation,
-    ) -> ExtendedBigDecimal {
+    pub fn next_extended_big_decimal(&mut self, position: ArgumentLocation) -> ExtendedBigDecimal {
         match self.next_arg(position) {
             Some(FormatArgument::Float(n)) => n.clone(),
             Some(FormatArgument::Unparsed(os)) => Self::get_num::<ExtendedBigDecimal>(os),
@@ -129,12 +124,10 @@ impl<'a> FormatArguments<'a> {
             (bytes[0].into(), 1)
         };
         if bytes.len() > len {
-            return Err(
-                ExtendedParserError::PartialMatch(
-                    val,
-                    String::from_utf8_lossy(&bytes[len..]).into_owned(),
-                ),
-            );
+            return Err(ExtendedParserError::PartialMatch(
+                val,
+                String::from_utf8_lossy(&bytes[len..]).into_owned(),
+            ));
         }
         Ok(val)
     }
@@ -152,15 +145,10 @@ impl<'a> FormatArguments<'a> {
         };
         extract_value(parsed, &s, quote_start)
     }
-    fn get_at_relative_position(
-        &mut self,
-        pos: NonZero<usize>,
-    ) -> Option<&'a FormatArgument> {
+    fn get_at_relative_position(&mut self, pos: NonZero<usize>) -> Option<&'a FormatArgument> {
         let pos: usize = pos.into();
         let pos = (pos - 1).saturating_add(self.current_offset);
-        self.highest_arg_position = Some(
-            self.highest_arg_position.map_or(pos, |x| x.max(pos)),
-        );
+        self.highest_arg_position = Some(self.highest_arg_position.map_or(pos, |x| x.max(pos)));
         self.args.get(pos)
     }
     fn next_arg(&mut self, position: ArgumentLocation) -> Option<&'a FormatArgument> {
@@ -183,10 +171,7 @@ fn extract_value<T: Default>(
         Ok(v) => v,
         Err(e) => {
             set_exit_code(1);
-            let input = locale_aware_escape_name(
-                OsStr::new(input),
-                QuotingStyle::C_NO_QUOTES,
-            );
+            let input = locale_aware_escape_name(OsStr::new(input), QuotingStyle::C_NO_QUOTES);
             match e {
                 ExtendedParserError::Overflow(v) => {
                     show_error!("{}: Numerical result out of range", input.quote());

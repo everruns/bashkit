@@ -170,6 +170,19 @@ jobs:
 
           echo "modules=${modules[*]}" >> "$GITHUB_OUTPUT"
 
+      # Format the module-mode output. The args step's `cargo fmt --
+      # "$out"/*.rs` only globs the top-level generated/*.rs; module-vendor
+      # output (format/, num_parser.rs, extendedbigdecimal.rs) plus any
+      # generated/ subdirectory needs formatting too, or the drift PR fails
+      # the rustfmt check. Scoped to generated/ to keep the open-pr
+      # guardrail (generated-only diff) satisfied.
+      - name: Format regenerated module sources
+        working-directory: bashkit
+        run: |
+          set -euo pipefail
+          out="crates/bashkit/src/builtins/generated"
+          cargo fmt -- $(find "$out" -name '*.rs')
+
       - name: Verify build still passes
         working-directory: bashkit
         run: cargo build -p bashkit

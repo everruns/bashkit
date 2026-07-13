@@ -33,9 +33,16 @@ fn localize_decimal(s: String) -> String {
     #[cfg(feature = "i18n-decimal")]
     {
         let sep = crate::i18n::decimal::locale_decimal_separator();
-        if sep == "." { s } else { s.replacen('.', sep, 1) }
+        if sep == "." {
+            s
+        } else {
+            s.replacen('.', sep, 1)
+        }
     }
-    #[cfg(not(feature = "i18n-decimal"))] { s }
+    #[cfg(not(feature = "i18n-decimal"))]
+    {
+        s
+    }
 }
 pub fn human_readable(size: u64, sfmt: SizeFormat) -> String {
     match sfmt {

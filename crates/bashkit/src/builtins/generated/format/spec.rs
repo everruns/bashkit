@@ -21,9 +21,9 @@ use super::num_format::Prefix;
 use super::num_format::UnsignedIntVariant;
 use super::parse_escape_only;
 use crate::builtins::generated::format::FormatArguments;
-use crate::builtins::generated::format_support::os_str_as_bytes;
 use crate::builtins::generated::format_support::QuotingStyle;
 use crate::builtins::generated::format_support::locale_aware_escape_name;
+use crate::builtins::generated::format_support::os_str_as_bytes;
 use std::io::Write;
 use std::num::NonZero;
 use std::ops::ControlFlow;
@@ -40,8 +40,12 @@ pub enum Spec {
         width: Option<CanAsterisk<usize>>,
         align_left: bool,
     },
-    EscapedString { position: ArgumentLocation },
-    QuotedString { position: ArgumentLocation },
+    EscapedString {
+        position: ArgumentLocation,
+    },
+    QuotedString {
+        position: ArgumentLocation,
+    },
     SignedInt {
         position: ArgumentLocation,
         width: Option<CanAsterisk<usize>>,
@@ -142,9 +146,7 @@ impl Spec {
         let width = eat_asterisk_or_number(rest, &mut index);
         let precision = if let Some(b'.') = rest.get(index) {
             index += 1;
-            Some(
-                eat_asterisk_or_number(rest, &mut index).unwrap_or(CanAsterisk::Fixed(0)),
-            )
+            Some(eat_asterisk_or_number(rest, &mut index).unwrap_or(CanAsterisk::Fixed(0)))
         } else {
             None
         };
@@ -159,139 +161,131 @@ impl Spec {
         let type_spec = rest.get(index).ok_or(&start[..index])?;
         index += 1;
         *rest = &start[index..];
-        Ok(
-            match type_spec {
-                b'c' => {
-                    if flags.zero || flags.hash || precision.is_some() {
-                        return Err(&start[..index]);
-                    }
-                    Self::Char {
-                        position,
-                        width,
-                        align_left: flags.minus,
-                    }
+        Ok(match type_spec {
+            b'c' => {
+                if flags.zero || flags.hash || precision.is_some() {
+                    return Err(&start[..index]);
                 }
-                b's' => {
-                    if flags.zero || flags.hash || flags.quote {
-                        return Err(&start[..index]);
-                    }
-                    Self::String {
-                        position,
-                        precision,
-                        width,
-                        align_left: flags.minus,
-                    }
+                Self::Char {
+                    position,
+                    width,
+                    align_left: flags.minus,
                 }
-                b'b' => {
-                    if flags.any() || width.is_some() || precision.is_some() {
-                        return Err(&start[..index]);
-                    }
-                    Self::EscapedString { position }
+            }
+            b's' => {
+                if flags.zero || flags.hash || flags.quote {
+                    return Err(&start[..index]);
                 }
-                b'q' => {
-                    if flags.any() || width.is_some() || precision.is_some() {
-                        return Err(&start[..index]);
-                    }
-                    Self::QuotedString { position }
+                Self::String {
+                    position,
+                    precision,
+                    width,
+                    align_left: flags.minus,
                 }
-                b'd' | b'i' => {
-                    if flags.hash {
-                        return Err(&start[..index]);
-                    }
-                    Self::SignedInt {
-                        position,
-                        width,
-                        precision,
-                        alignment,
-                        positive_sign,
-                    }
+            }
+            b'b' => {
+                if flags.any() || width.is_some() || precision.is_some() {
+                    return Err(&start[..index]);
                 }
-                c @ (b'u' | b'o' | b'x' | b'X') => {
-                    if *c == b'u' && flags.hash {
-                        return Err(&start[..index]);
-                    }
-                    let prefix = if flags.hash { Prefix::Yes } else { Prefix::No };
-                    let variant = match c {
-                        b'u' => UnsignedIntVariant::Decimal,
-                        b'o' => UnsignedIntVariant::Octal(prefix),
-                        b'x' => UnsignedIntVariant::Hexadecimal(Case::Lowercase, prefix),
-                        b'X' => UnsignedIntVariant::Hexadecimal(Case::Uppercase, prefix),
-                        _ => unreachable!(),
-                    };
-                    Self::UnsignedInt {
-                        position,
-                        variant,
-                        precision,
-                        width,
-                        alignment,
-                    }
+                Self::EscapedString { position }
+            }
+            b'q' => {
+                if flags.any() || width.is_some() || precision.is_some() {
+                    return Err(&start[..index]);
                 }
-                c @ (b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A') => {
-                    Self::Float {
-                        position,
-                        width,
-                        precision,
-                        variant: match c {
-                            b'f' | b'F' => FloatVariant::Decimal,
-                            b'e' | b'E' => FloatVariant::Scientific,
-                            b'g' | b'G' => FloatVariant::Shortest,
-                            b'a' | b'A' => FloatVariant::Hexadecimal,
-                            _ => unreachable!(),
-                        },
-                        force_decimal: if flags.hash {
-                            ForceDecimal::Yes
-                        } else {
-                            ForceDecimal::No
-                        },
-                        case: if c.is_ascii_uppercase() {
-                            Case::Uppercase
-                        } else {
-                            Case::Lowercase
-                        },
-                        alignment: if flags.zero && !flags.minus {
-                            NumberAlignment::RightZero
-                        } else {
-                            alignment
-                        },
-                        positive_sign,
-                    }
+                Self::QuotedString { position }
+            }
+            b'd' | b'i' => {
+                if flags.hash {
+                    return Err(&start[..index]);
                 }
-                _ => return Err(&start[..index]),
+                Self::SignedInt {
+                    position,
+                    width,
+                    precision,
+                    alignment,
+                    positive_sign,
+                }
+            }
+            c @ (b'u' | b'o' | b'x' | b'X') => {
+                if *c == b'u' && flags.hash {
+                    return Err(&start[..index]);
+                }
+                let prefix = if flags.hash { Prefix::Yes } else { Prefix::No };
+                let variant = match c {
+                    b'u' => UnsignedIntVariant::Decimal,
+                    b'o' => UnsignedIntVariant::Octal(prefix),
+                    b'x' => UnsignedIntVariant::Hexadecimal(Case::Lowercase, prefix),
+                    b'X' => UnsignedIntVariant::Hexadecimal(Case::Uppercase, prefix),
+                    _ => unreachable!(),
+                };
+                Self::UnsignedInt {
+                    position,
+                    variant,
+                    precision,
+                    width,
+                    alignment,
+                }
+            }
+            c @ (b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A') => Self::Float {
+                position,
+                width,
+                precision,
+                variant: match c {
+                    b'f' | b'F' => FloatVariant::Decimal,
+                    b'e' | b'E' => FloatVariant::Scientific,
+                    b'g' | b'G' => FloatVariant::Shortest,
+                    b'a' | b'A' => FloatVariant::Hexadecimal,
+                    _ => unreachable!(),
+                },
+                force_decimal: if flags.hash {
+                    ForceDecimal::Yes
+                } else {
+                    ForceDecimal::No
+                },
+                case: if c.is_ascii_uppercase() {
+                    Case::Uppercase
+                } else {
+                    Case::Lowercase
+                },
+                alignment: if flags.zero && !flags.minus {
+                    NumberAlignment::RightZero
+                } else {
+                    alignment
+                },
+                positive_sign,
             },
-        )
+            _ => return Err(&start[..index]),
+        })
     }
     fn parse_length(rest: &mut &[u8], index: &mut usize) -> Option<Length> {
         let mut length = None;
         loop {
-            let new_length = rest
-                .get(*index)
-                .and_then(|c| {
-                    Some(
-                        match c {
-                            b'h' => {
-                                if let Some(b'h') = rest.get(*index + 1) {
-                                    *index += 1;
-                                    Length::Char
-                                } else {
-                                    Length::Short
-                                }
-                            }
-                            b'l' => {
-                                if let Some(b'l') = rest.get(*index + 1) {
-                                    *index += 1;
-                                    Length::Long
-                                } else {
-                                    Length::LongLong
-                                }
-                            }
-                            b'j' => Length::IntMaxT,
-                            b'z' => Length::SizeT,
-                            b't' => Length::PtfDiffT,
-                            b'L' => Length::LongDouble,
-                            _ => return None,
-                        },
-                    )
-                });
+            let new_length = rest.get(*index).and_then(|c| {
+                Some(match c {
+                    b'h' => {
+                        if let Some(b'h') = rest.get(*index + 1) {
+                            *index += 1;
+                            Length::Char
+                        } else {
+                            Length::Short
+                        }
+                    }
+                    b'l' => {
+                        if let Some(b'l') = rest.get(*index + 1) {
+                            *index += 1;
+                            Length::Long
+                        } else {
+                            Length::LongLong
+                        }
+                    }
+                    b'j' => Length::IntMaxT,
+                    b'z' => Length::SizeT,
+                    b't' => Length::PtfDiffT,
+                    b'L' => Length::LongDouble,
+                    _ => return None,
+                })
+            });
             if new_length.is_some() {
                 *index += 1;
                 length = new_length;
@@ -307,9 +301,12 @@ impl Spec {
         args: &mut FormatArguments,
     ) -> Result<(), FormatError> {
         match self {
-            Self::Char { width, align_left, position } => {
-                let (width, neg_width) = resolve_asterisk_width(*width, args)
-                    .unwrap_or_default();
+            Self::Char {
+                width,
+                align_left,
+                position,
+            } => {
+                let (width, neg_width) = resolve_asterisk_width(*width, args).unwrap_or_default();
                 write_padded(
                     writer,
                     &[args.next_char(*position)],
@@ -317,9 +314,13 @@ impl Spec {
                     *align_left || neg_width,
                 )
             }
-            Self::String { width, align_left, precision, position } => {
-                let (width, neg_width) = resolve_asterisk_width(*width, args)
-                    .unwrap_or_default();
+            Self::String {
+                width,
+                align_left,
+                precision,
+                position,
+            } => {
+                let (width, neg_width) = resolve_asterisk_width(*width, args).unwrap_or_default();
                 let precision = resolve_asterisk_precision(*precision, args);
                 let os_str = args.next_string(*position);
                 let bytes = os_str_as_bytes(os_str)?;
@@ -351,37 +352,53 @@ impl Spec {
                 let bytes = os_str_as_bytes(&s)?;
                 writer.write_all(bytes).map_err(FormatError::IoError)
             }
-            Self::SignedInt { width, precision, positive_sign, alignment, position } => {
-                let (width, neg_width) = resolve_asterisk_width(*width, args)
-                    .unwrap_or((0, false));
-                let precision = resolve_asterisk_precision(*precision, args)
-                    .unwrap_or_default();
+            Self::SignedInt {
+                width,
+                precision,
+                positive_sign,
+                alignment,
+                position,
+            } => {
+                let (width, neg_width) = resolve_asterisk_width(*width, args).unwrap_or((0, false));
+                let precision = resolve_asterisk_precision(*precision, args).unwrap_or_default();
                 let i = args.next_i64(*position);
                 check_precision(precision)?;
                 num_format::SignedInt {
                     width,
                     precision,
                     positive_sign: *positive_sign,
-                    alignment: if neg_width { NumberAlignment::Left } else { *alignment },
+                    alignment: if neg_width {
+                        NumberAlignment::Left
+                    } else {
+                        *alignment
+                    },
                 }
-                    .fmt(writer, i)
-                    .map_err(FormatError::IoError)
+                .fmt(writer, i)
+                .map_err(FormatError::IoError)
             }
-            Self::UnsignedInt { variant, width, precision, alignment, position } => {
-                let (width, neg_width) = resolve_asterisk_width(*width, args)
-                    .unwrap_or((0, false));
-                let precision = resolve_asterisk_precision(*precision, args)
-                    .unwrap_or_default();
+            Self::UnsignedInt {
+                variant,
+                width,
+                precision,
+                alignment,
+                position,
+            } => {
+                let (width, neg_width) = resolve_asterisk_width(*width, args).unwrap_or((0, false));
+                let precision = resolve_asterisk_precision(*precision, args).unwrap_or_default();
                 let i = args.next_u64(*position);
                 check_precision(precision)?;
                 num_format::UnsignedInt {
                     variant: *variant,
                     precision,
                     width,
-                    alignment: if neg_width { NumberAlignment::Left } else { *alignment },
+                    alignment: if neg_width {
+                        NumberAlignment::Left
+                    } else {
+                        *alignment
+                    },
                 }
-                    .fmt(writer, i)
-                    .map_err(FormatError::IoError)
+                .fmt(writer, i)
+                .map_err(FormatError::IoError)
             }
             Self::Float {
                 variant,
@@ -393,8 +410,7 @@ impl Spec {
                 precision,
                 position,
             } => {
-                let (width, neg_width) = resolve_asterisk_width(*width, args)
-                    .unwrap_or((0, false));
+                let (width, neg_width) = resolve_asterisk_width(*width, args).unwrap_or((0, false));
                 let precision = resolve_asterisk_precision(*precision, args);
                 let f: ExtendedBigDecimal = args.next_extended_big_decimal(*position);
                 if let Some(precision) = precision {
@@ -407,10 +423,14 @@ impl Spec {
                     case: *case,
                     force_decimal: *force_decimal,
                     positive_sign: *positive_sign,
-                    alignment: if neg_width { NumberAlignment::Left } else { *alignment },
+                    alignment: if neg_width {
+                        NumberAlignment::Left
+                    } else {
+                        *alignment
+                    },
                 }
-                    .fmt(writer, &f)
-                    .map_err(FormatError::IoError)
+                .fmt(writer, &f)
+                .map_err(FormatError::IoError)
             }
         }
     }
@@ -438,13 +458,11 @@ fn resolve_asterisk_precision(
 ) -> Option<usize> {
     match option {
         None => None,
-        Some(CanAsterisk::Asterisk(loc)) => {
-            match args.next_i64(loc) {
-                v if v >= 0 => usize::try_from(v).ok(),
-                v if v < 0 => Some(0usize),
-                _ => None,
-            }
-        }
+        Some(CanAsterisk::Asterisk(loc)) => match args.next_i64(loc) {
+            v if v >= 0 => usize::try_from(v).ok(),
+            v if v < 0 => Some(0usize),
+            _ => None,
+        },
         Some(CanAsterisk::Fixed(w)) => Some(w),
     }
 }
@@ -463,12 +481,9 @@ fn write_padded(
         write!(writer, "{: >padlen$}", "")?;
         writer.write_all(text)
     }
-        .map_err(FormatError::IoError)
+    .map_err(FormatError::IoError)
 }
-fn eat_argument_position(
-    rest: &mut &[u8],
-    index: &mut usize,
-) -> Option<ArgumentLocation> {
+fn eat_argument_position(rest: &mut &[u8], index: &mut usize) -> Option<ArgumentLocation> {
     let original_index = *index;
     if let Some(pos) = eat_number(rest, index) {
         if let Some(&b'$') = rest.get(*index) {
@@ -483,10 +498,7 @@ fn eat_argument_position(
         Some(ArgumentLocation::NextArgument)
     }
 }
-fn eat_asterisk_or_number(
-    rest: &mut &[u8],
-    index: &mut usize,
-) -> Option<CanAsterisk<usize>> {
+fn eat_asterisk_or_number(rest: &mut &[u8], index: &mut usize) -> Option<CanAsterisk<usize>> {
     if let Some(b'*') = rest.get(*index) {
         *index += 1;
         Some(CanAsterisk::Asterisk(eat_argument_position(rest, index)?))
