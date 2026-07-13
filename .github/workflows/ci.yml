@@ -84,12 +84,12 @@ jobs:
           ignore: RUSTSEC-2023-0071
 
       - name: License check (cargo-deny)
-        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2
+        uses: EmbarkStudios/cargo-deny-action@6f99e342a8f0f8f8d1bdc9dc43e9a6f2dd611259 # v2
         with:
           command: check licenses sources
 
       - name: Install cargo-vet
-        uses: taiki-e/install-action@4684b8405694ae9dd42c9f39ba901a70ae83f4a3 # v2
+        uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
         with:
           tool: cargo-vet
 
@@ -126,7 +126,7 @@ jobs:
       - name: Install uutils coreutils multicall for differential tests
         id: install_uutils
         continue-on-error: true
-        uses: taiki-e/install-action@4684b8405694ae9dd42c9f39ba901a70ae83f4a3 # v2
+        uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
         with:
           tool: coreutils
       - name: Verify uutils on PATH
