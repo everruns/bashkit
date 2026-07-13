@@ -100,8 +100,16 @@ jobs:
         run: pnpm install --frozen-lockfile
         working-directory: crates/bashkit-js
 
-      - name: Build napi addon (generates index.d.ts)
-        run: pnpm exec napi build --platform
+      - name: Build napi addon (generates index.cjs + type declarations)
+        # wrapper.ts imports from ./index.cjs, but napi emits index.js /
+        # index.d.ts. The build:cjs script renames them to index.cjs /
+        # index.d.cts (same as the published `build`). Without it typedoc
+        # cannot resolve ./index.cjs (TS2307) and every type that flows from
+        # the native module collapses to `any`, producing spurious implicit-
+        # any errors so the drift check never runs.
+        run: |
+          pnpm exec napi build --platform
+          pnpm run build:cjs
         working-directory: crates/bashkit-js
 
       - name: Regenerate TypeScript API reference
