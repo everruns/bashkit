@@ -27,7 +27,7 @@ serde_json = { workspace = true }
 # hands them to `MontyObject::BigInt`, and monty (git tag v0.0.18) depends on
 # num-bigint 0.4. Bumping to 0.5 makes the two BigInt types mismatch and fails
 # to compile, so this must track whatever major version bashkit core / monty use.
-num-bigint = "^0.4.6"
+num-bigint = "^0.5.1"
 
 # Native (non-wasm) targets: full feature set.
 # realfs: always-on so Python callers can use mount_real_* APIs.
