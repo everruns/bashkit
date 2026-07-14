@@ -20,6 +20,7 @@
 //! - `max_total_bytes`: Maximum total size of all files (default: 100MB)
 //! - `max_file_size`: Maximum size of a single file (default: 10MB)
 //! - `max_file_count`: Maximum number of files (default: 10,000)
+//! - `max_dir_count`: Maximum number of directories (default: 10,000)
 //!
 //! See [`FsLimits`](crate::FsLimits) for configuration.
 //!
@@ -939,9 +940,23 @@ impl InMemoryFs {
         let mut current = PathBuf::from("/");
         for component in path.components().skip(1) {
             current.push(component);
-            entries
-                .entry(current.clone())
-                .or_insert_with(|| FsEntry::Directory {
+            if entries.contains_key(&current) {
+                continue;
+            }
+
+            // THREAT[TM-DOS-012]: Setup helpers are public API; enforce the
+            // same directory-count quota as runtime mkdir before inserting.
+            let dir_count = entries
+                .values()
+                .filter(|e| matches!(e, FsEntry::Directory { .. }))
+                .count() as u64;
+            if self.limits.check_dir_count(dir_count).is_err() {
+                return;
+            }
+
+            entries.insert(
+                current.clone(),
+                FsEntry::Directory {
                     metadata: Metadata {
                         file_type: FileType::Directory,
                         size: 0,
@@ -949,7 +964,8 @@ impl InMemoryFs {
                         modified: SystemTime::now(),
                         created: SystemTime::now(),
                     },
-                });
+                },
+            );
         }
     }
 
@@ -2664,6 +2680,24 @@ mod tests {
         let result = fs2.mkdir(Path::new("/tmp/a/b"), true).await;
         // /tmp/a is the 7th dir (ok), /tmp/a/b would be the 8th (fail)
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_add_dir_respects_dir_count_limit() {
+        // InMemoryFs starts with 6 dirs: /, /tmp, /home, /home/user, /dev, /dev/fd.
+        let limits = FsLimits::new().max_dir_count(7);
+        let fs = InMemoryFs::with_limits(limits);
+
+        fs.add_dir("/tmp/a", 0o755);
+        assert!(fs.exists(Path::new("/tmp/a")).await.unwrap());
+
+        fs.add_dir("/tmp/b", 0o755);
+        assert!(!fs.exists(Path::new("/tmp/b")).await.unwrap());
+
+        let fs = InMemoryFs::with_limits(FsLimits::new().max_dir_count(7));
+        fs.add_dir("/tmp/a/b", 0o755);
+        assert!(fs.exists(Path::new("/tmp/a")).await.unwrap());
+        assert!(!fs.exists(Path::new("/tmp/a/b")).await.unwrap());
     }
 
     #[tokio::test]
