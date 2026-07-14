@@ -21,6 +21,17 @@ updates:
     # extra scrutiny. The `groups` section above already excludes them
     # from the aggregated PR; no additional config needed here for
     # standalone delivery.
+    ignore:
+      # num-bigint is hard-pinned to 0.4.x in crates/bashkit-python: monty
+      # (git v0.0.18) depends on num-bigint 0.4, and py_to_monty hands a
+      # `num_bigint::BigInt` to `MontyObject::BigInt`. A 0.5 bump makes the two
+      # BigInt types mismatch and fails to compile. Block major/minor jumps
+      # (0.4 -> 0.5) while still allowing 0.4.x patch updates, until monty
+      # upgrades upstream. See the pin comment in bashkit-python/Cargo.toml.
+      - dependency-name: "num-bigint"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
 
   # GitHub Actions
   - package-ecosystem: "github-actions"
