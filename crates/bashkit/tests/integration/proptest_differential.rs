@@ -643,11 +643,14 @@ fn host_dependent_vars_are_excluded() {
             "{name} must be treated as host-dependent and excluded from the fuzzer"
         );
     }
-    // Ordinary user variable names, not present in the environment, are allowed.
-    for name in ["XZQV", "MYVAR", "FOOBAR", "ABCDEFGH"] {
-        assert!(
-            !is_host_dependent_var(name),
-            "{name} is a safe user variable and must remain generatable"
-        );
-    }
+    // Ordinary user variable names are allowed only when absent from the host
+    // environment; the helper intentionally rejects any inherited variable.
+    let ordinary_name = (0..1000)
+        .map(|i| format!("BASHKIT_FUZZ_SAFE_{}_{}", std::process::id(), i))
+        .find(|name| std::env::var_os(name).is_none())
+        .expect("fresh process-scoped variable name should be absent");
+    assert!(
+        !is_host_dependent_var(&ordinary_name),
+        "{ordinary_name} is absent from the host environment and must remain generatable"
+    );
 }
