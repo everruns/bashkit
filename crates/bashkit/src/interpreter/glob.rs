@@ -197,6 +197,7 @@ impl Interpreter {
         // never needed again), keeping the worst case O(value.len * pattern.len).
         let mut star_pat: Option<std::iter::Peekable<std::str::Chars>> = None;
         let mut star_val: Option<std::iter::Peekable<std::str::Chars>> = None;
+        let mut star_no_more_bracket_closes = false;
 
         // On a content mismatch, resume from the most recent `*`, letting it
         // consume one more value char. With no active `*`, the match fails.
@@ -207,6 +208,7 @@ impl Interpreter {
                         sv.next();
                         pattern_chars = sp.clone();
                         value_chars = sv.clone();
+                        no_more_bracket_closes = star_no_more_bracket_closes;
                         continue;
                     }
                 }
@@ -262,6 +264,7 @@ impl Interpreter {
                     // value char and retries. Overwrites any earlier `*`.
                     star_pat = Some(pattern_chars.clone());
                     star_val = Some(value_chars.clone());
+                    star_no_more_bracket_closes = no_more_bracket_closes;
                 }
                 (Some('?'), _) => {
                     // Check for extglob ?(...)
@@ -980,6 +983,13 @@ mod tests {
         assert!(interp.pattern_matches("[]", "[]"));
         assert!(interp.pattern_matches("[", "["));
         assert!(interp.pattern_matches("a", "[a]"));
+    }
+
+    #[test]
+    fn star_backtracking_restores_bracket_cache_state() {
+        let interp = interp();
+
+        assert!(!interp.pattern_matches("azX[a]z[", "*[a]z["));
     }
 
     // THREAT[TM-DOS-031]: a run of `*` must not cause exponential backtracking.
