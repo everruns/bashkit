@@ -1064,11 +1064,11 @@ version = "1.2.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.mira-eval]]
-version = "0.3.0"
+version = "0.4.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.mira-macros]]
-version = "0.3.0"
+version = "0.4.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.ml-kem]]
@@ -1080,7 +1080,7 @@ version = "0.2.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.napi]]
-version = "3.10.3"
+version = "3.10.5"
 criteria = "safe-to-deploy"
 
 [[exemptions.napi-build]]
@@ -1088,15 +1088,15 @@ version = "2.3.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.napi-derive]]
-version = "3.5.9"
+version = "3.5.10"
 criteria = "safe-to-deploy"
 
 [[exemptions.napi-derive-backend]]
-version = "5.1.1"
+version = "5.1.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.napi-sys]]
-version = "3.2.2"
+version = "3.2.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.nibble_vec]]
@@ -1528,7 +1528,7 @@ version = "0.5.18"
 criteria = "safe-to-deploy"
 
 [[exemptions.regex]]
-version = "1.12.4"
+version = "1.13.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.regex-automata]]
