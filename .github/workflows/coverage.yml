@@ -37,7 +37,9 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Install cargo-tarpaulin
-        uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # cargo-tarpaulin
+        uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
+        with:
+          tool: cargo-tarpaulin
 
       # `rg` differential tests compare against real ripgrep. Pin the
       # binary so coverage does not depend on the runner image package set.
