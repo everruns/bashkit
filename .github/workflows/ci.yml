@@ -87,7 +87,7 @@ jobs:
         # Held at v2.0.20: v2.1.0 (6f99e34) bundles cargo-deny 0.20.2, whose
         # CLI no longer accepts the `--log-level warn` the action still injects,
         # breaking `check licenses sources`. Re-bump once upstream reconciles.
-        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           command: check licenses sources
 
