@@ -77,11 +77,19 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
 
-      - name: Security audit (cargo-audit)
-        uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
+      # Install the prebuilt cargo-audit binary rather than letting
+      # rustsec/audit-check compile it from source. The source build resolves
+      # cargo-audit's own dependencies unlocked, and a newer `kstring` bumped
+      # its MSRV past our pinned toolchain (rust-toolchain.toml forces the
+      # override even for `cargo install`), which broke this job. A prebuilt
+      # binary is immune to future tool-dependency MSRV bumps.
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          ignore: RUSTSEC-2023-0071
+          tool: cargo-audit
+
+      - name: Security audit (cargo-audit)
+        run: cargo audit --ignore RUSTSEC-2023-0071
 
       - name: License check (cargo-deny)
         # Held at v2.0.20: v2.1.0 (6f99e34) bundles cargo-deny 0.20.2, whose
