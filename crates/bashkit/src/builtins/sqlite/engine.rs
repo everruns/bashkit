@@ -221,7 +221,13 @@ impl SqliteEngine {
                     }
                 }
                 StepResult::Done => break,
-                StepResult::IO => {
+                // `IO` means the VDBE is blocked on outstanding completions;
+                // `Yield` (added in turso 0.7) means it voluntarily paused to let
+                // the program state machines advance. In both cases the caller
+                // drives pending completions and re-steps. Our backends are
+                // synchronous, so `io_step` returns immediately when nothing is
+                // pending, and the deadline check above bounds the loop.
+                StepResult::IO | StepResult::Yield => {
                     self.io_step()?;
                 }
                 StepResult::Busy | StepResult::Interrupt => {

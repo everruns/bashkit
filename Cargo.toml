@@ -111,7 +111,7 @@ tower = { version = "0.5", features = ["util"] }
 russh = "0.62"
 # Embedded SQLite engine (Turso, pure Rust). Upstream is BETA — gated behind
 # the `sqlite` feature and disabled by default; see specs/sqlite-builtin.md.
-turso_core = "0.6"
+turso_core = "0.7"
 
 # Serial test execution
 serial_test = "3"
