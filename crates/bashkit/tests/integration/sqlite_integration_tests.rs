@@ -360,6 +360,14 @@ async fn snapshot_restore_into_existing_bash_clears_sqlite_cache_vfs_backend() {
 
 #[tokio::test]
 async fn cached_engine_respects_deleted_db_between_exec_calls() {
+    // Security invariant: once the backing file is deleted between calls, the
+    // cached engine must not keep serving the deleted database's rows. On
+    // deletion the builtin re-opens from the current VFS bytes; with the file
+    // gone that yields a fresh, empty database — matching real `sqlite3`, which
+    // creates a new database when the path does not exist. The property under
+    // test is therefore "the old schema/data is no longer visible", NOT "the
+    // query errors": turso 0.7 opens a missing file as an empty DB rather than
+    // failing (0.6 errored), and either way no stale rows leak through.
     let mut bash = make_bash();
     let setup = bash
         .exec(r#"sqlite /tmp/deleted.sqlite 'CREATE TABLE t(v); INSERT INTO t VALUES ("secret")'"#)
@@ -370,11 +378,35 @@ async fn cached_engine_respects_deleted_db_between_exec_calls() {
     let rm = bash.exec(r#"rm -f /tmp/deleted.sqlite"#).await.unwrap();
     assert_eq!(rm.exit_code, 0, "stderr: {}", rm.stderr);
 
-    let query = bash
+    // A stale cached engine would still report the `t` table (count == 1); the
+    // re-opened empty database reports an empty schema (count == 0).
+    let schema = bash
         .exec(r#"sqlite /tmp/deleted.sqlite 'SELECT count(*) FROM sqlite_master'"#)
         .await
         .unwrap();
-    assert_ne!(query.exit_code, 0, "stdout: {}", query.stdout);
+    assert_eq!(schema.exit_code, 0, "stderr: {}", schema.stderr);
+    assert_eq!(
+        schema.stdout.trim(),
+        "0",
+        "deleted db must re-open empty, not serve stale schema"
+    );
+
+    // The deleted table's rows must not be served: querying it fails with
+    // "no such table" and the secret value never appears.
+    let rows = bash
+        .exec(r#"sqlite /tmp/deleted.sqlite 'SELECT v FROM t'"#)
+        .await
+        .unwrap();
+    assert_ne!(
+        rows.exit_code, 0,
+        "querying the deleted table must fail; stdout: {}",
+        rows.stdout
+    );
+    assert!(
+        !rows.stdout.contains("secret"),
+        "deleted row leaked: {}",
+        rows.stdout
+    );
 }
 
 #[tokio::test]
