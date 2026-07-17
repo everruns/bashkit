@@ -23,6 +23,10 @@ criteria = "safe-to-deploy"
 audit-as-crates-io = false
 criteria = "safe-to-deploy"
 
+[policy.bashkit-wasm]
+audit-as-crates-io = false
+criteria = "safe-to-deploy"
+
 [policy.monty]
 audit-as-crates-io = false
 criteria = "safe-to-deploy"
@@ -362,6 +366,10 @@ criteria = "safe-to-deploy"
 [[exemptions.console]]
 version = "0.16.4"
 criteria = "safe-to-run"
+
+[[exemptions.console_error_panic_hook]]
+version = "0.1.7"
+criteria = "safe-to-deploy"
 
 [[exemptions.const-oid]]
 version = "0.9.6"
@@ -1703,12 +1711,20 @@ criteria = "safe-to-deploy"
 version = "1.0.28"
 criteria = "safe-to-deploy"
 
+[[exemptions.send_wrapper]]
+version = "0.6.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.seq-macro]]
 version = "0.3.6"
 criteria = "safe-to-deploy"
 
 [[exemptions.serde]]
 version = "1.0.228"
+criteria = "safe-to-deploy"
+
+[[exemptions.serde-wasm-bindgen]]
+version = "0.6.5"
 criteria = "safe-to-deploy"
 
 [[exemptions.serde_core]]
