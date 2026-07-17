@@ -9,7 +9,7 @@
 //!
 //! - **POSIX compliant** - Substantial IEEE 1003.1-2024 Shell Command Language compliance
 //! - **Sandboxed, in-process execution** - No real filesystem access by default
-//! - **Virtual filesystem** - [`InMemoryFs`], [`OverlayFs`], [`MountableFs`]
+//! - **Virtual filesystem** - [`InMemoryFs`], [`OverlayFs`], [`MountableFs`], [`NamespaceFs`]
 //! - **Resource limits** - Command count, loop iterations, function depth
 //! - **Network allowlist** - Control HTTP access per-domain
 //! - **Custom builtins** - Extend with domain-specific commands
@@ -237,11 +237,12 @@
 //!
 //! # Virtual Filesystem
 //!
-//! Bashkit provides three filesystem implementations:
+//! Bashkit provides several filesystem implementations:
 //!
 //! - [`InMemoryFs`]: Simple in-memory filesystem (default)
 //! - [`OverlayFs`]: Copy-on-write overlay for layered storage
 //! - [`MountableFs`]: Mount multiple filesystems at different paths
+//! - [`NamespaceFs`]: Compose a static tree from rebased filesystem mounts
 //!
 //! See the `fs` module documentation for details and examples.
 //!
@@ -391,12 +392,15 @@
 //! - `git_workflow.rs` - Git operations on the virtual filesystem
 //! - `python_scripts.rs` - Embedded Python with VFS bridging
 //! - `python_external_functions.rs` - Python callbacks into host functions
+//! - `namespace_sandbox.rs` - Static read-only/read-write build namespace
+//! - `namespace_rebase.rs` - Source-root rebasing with a nested writable override
 //!
 //! # Guides
 //!
 //! - [`custom_builtins_guide`] - Creating custom builtins
 //! - [`compatibility_scorecard`] - Feature parity tracking
 //! - [`live_mounts_guide`] - Live mount/unmount on running instances
+//! - [`namespace_filesystems_guide`] - Static namespaces with rebasing and per-mount access
 //! - `python_guide` - Embedded Python (Monty) guide (requires `python` feature)
 //! - `logging_guide` - Structured logging with security (requires `logging` feature)
 //!
@@ -463,9 +467,10 @@ pub use credential::Credential;
 pub use error::{Error, Result};
 pub use fs::{
     DirEntry, FileSystem, FileSystemExt, FileType, FsBackend, FsLimitExceeded, FsLimits, FsUsage,
-    InMemoryFs, LazyLoader, Metadata, MountableFs, OverlayFs, PosixFs, ReadOnlyFs,
-    SearchCapabilities, SearchCapable, SearchMatch, SearchProvider, SearchQuery, SearchResults,
-    VfsSnapshot, normalize_path, verify_filesystem_requirements,
+    InMemoryFs, LazyLoader, Metadata, MountableFs, NamespaceAccess, NamespaceFs,
+    NamespaceFsBuilder, OverlayFs, PosixFs, ReadOnlyFs, SearchCapabilities, SearchCapable,
+    SearchMatch, SearchProvider, SearchQuery, SearchResults, VfsSnapshot, normalize_path,
+    verify_filesystem_requirements,
 };
 #[cfg(feature = "realfs")]
 pub use fs::{RealFs, RealFsMode};
@@ -3290,6 +3295,10 @@ pub mod ssh_guide {}
 /// **Related:** [`Bash::mount`], [`Bash::unmount`], [`MountableFs`], [`BashBuilder::mount_text`]
 #[doc = include_str!("../docs/live_mounts.md")]
 pub mod live_mounts_guide {}
+
+/// Guide to composing static filesystem namespaces.
+#[doc = include_str!("../docs/namespace_filesystems.md")]
+pub mod namespace_filesystems_guide {}
 
 /// Logging guide for Bashkit.
 ///

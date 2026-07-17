@@ -300,6 +300,7 @@ panicked. Resolved with `wrapping_*` ops, masked shift amounts, clamped exponent
 | TM-ESC-003 | Real FS access | Direct syscalls | No real FS by default; `RealFs` canonicalizes existing paths and nearest existing ancestors before attaching missing suffixes | **MITIGATED** |
 | TM-ESC-004 | Mount escape | Mount real paths | MountableFs controlled | **MITIGATED** |
 | TM-ESC-016 | Symlink escape via overlay rename | `ln -s /etc/passwd x; mv x y` | Overlay rename/copy preserve symlinks as symlinks | **FIXED** |
+| TM-ESC-031 | Namespace source-root or policy escape | `..` selects a shorter mount, escapes a rebased source root, or bypasses a nested read-only mount | Normalize before longest-prefix selection; join only the stripped suffix; independently enforce both mutation endpoints | **MITIGATED** |
 | TM-FS-013 | Permissive RealFs mount default | `mount_real_readonly_at("/", …)` exposes whole host without `allowed_mount_paths` | Allowlist-first: `/`, `/etc`, `/root`, `/Users`, `/home`, `/dev`, `/proc`, `/sys`, `/run`, `/var/run`, `/boot`, `/private`, and any path component matching `.ssh`, `.aws`, `.kube`, `.docker`, `.gnupg`, `.gcloud` are refused unless explicitly allowlisted | **MITIGATED** |
 
 **Current Risk**: MEDIUM - Two open escape vectors (TM-ESC-012, TM-ESC-013) need remediation
@@ -325,6 +326,14 @@ TM-ESC-002). A symlink could not be renamed at all, but the underlying design ga
 relaxation of symlink-following policy could expose the target. Fix: `rename`/`copy` now detect
 symlinks via `stat()` and use `read_link()` + `symlink()` to preserve them. Same fix applied to
 `MountableFs` cross-mount operations. See `fs/overlay.rs` and `fs/mountable.rs`.
+
+**TM-ESC-031**: `NamespaceFs` validates and normalizes each visible path before
+mount selection. Rebasing joins only a component-stripped suffix beneath the
+normalized source root. Nested mounts are selected after normalization, and
+each mutating endpoint is checked independently. Regression tests:
+`tm_esc_031_namespace_normalizes_without_source_or_nested_mount_escape`,
+`tm_esc_031_namespace_readonly_mount_denies_every_mutation_without_bypass`, and
+`tm_esc_031_namespace_rejects_invalid_paths_and_protects_namespace_nodes`.
 
 #### 2.2 Process Escape
 

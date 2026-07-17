@@ -228,11 +228,12 @@ pub trait FileSystemExt: Send + Sync {
 ///
 /// # Built-in Implementations
 ///
-/// Bashkit provides three implementations:
+/// Bashkit provides several implementations:
 ///
 /// - [`InMemoryFs`](crate::InMemoryFs) - HashMap-based in-memory storage
 /// - [`OverlayFs`](crate::OverlayFs) - Copy-on-write layered filesystem
 /// - [`MountableFs`](crate::MountableFs) - Multiple mount points
+/// - [`NamespaceFs`](crate::NamespaceFs) - Static tree of rebased mounts
 #[async_trait]
 pub trait FileSystem: FileSystemExt {
     /// Read a file's contents as bytes.

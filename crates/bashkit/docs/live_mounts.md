@@ -195,6 +195,7 @@ assert_eq!(result.stdout, "2.0");
 ## See Also
 
 - [`MountableFs`] — the underlying mount infrastructure
+- [`NamespaceFs`] — static bounded namespaces with source-root rebasing and per-mount access
 - [`BashBuilder::mount_text`] — pre-build text file mounts
 - [`BashBuilder::readonly_filesystem`] — deny all VFS mutations after setup
 - [`BashBuilder::fs`] — custom filesystem injection

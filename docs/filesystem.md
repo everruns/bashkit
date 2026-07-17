@@ -66,6 +66,7 @@ semantics.
 | **InMemoryFs** | Default (`Bash::new()`). `HashMap`-backed, thread-safe, no persistence. Seeds `/`, `/tmp`, `/home`, `/home/user`, `/dev`. |
 | **OverlayFs** | Copy-on-write over another filesystem, with whiteout tracking for deletes. |
 | **MountableFs** | Mount multiple filesystems at different paths (longest-prefix match). Always the outermost layer, enabling [live mounts](live-mounts.md). |
+| **NamespaceFs** | Compose a static visible tree from rebased filesystem subtrees, with per-mount access and synthetic ancestors. |
 | **ReadOnlyFs** | Delegates reads, denies every mutation with `PermissionDenied` — even writes to `/tmp`, `cp`, `mv`, `rm`, `chmod`. For inspection-only sessions. |
 | **RealFs** (`realfs` feature) | Direct access to a host directory. Read-only (safe) or read-write (dangerous); path traversal blocked by canonicalisation + root-prefix checks. |
 
@@ -94,6 +95,39 @@ bashkit --mount-rw /host/out:/out  -c 'echo hi > /out/f'  # writable (dangerous)
 To freeze a session — including in-memory writes — wrap it with
 `readonly_filesystem()`.
 
+## Composing a static namespace
+
+`NamespaceFs` creates an intentionally bounded path tree instead of a fallback
+root plus live mounts. Each source may be rebased and independently read-only or
+read-write:
+
+```rust
+use bashkit::{Bash, FileSystem, InMemoryFs, NamespaceFs};
+use std::path::Path;
+use std::sync::Arc;
+
+# #[tokio::main]
+# async fn main() -> bashkit::Result<()> {
+let repository = Arc::new(InMemoryFs::new());
+repository.mkdir(Path::new("/repo/src"), true).await?;
+repository.write_file(Path::new("/repo/src/lib.rs"), b"source").await?;
+let output = Arc::new(InMemoryFs::new());
+
+let namespace = NamespaceFs::builder()
+    .mount_readonly_from("/src", repository, "/repo/src")?
+    .mount_readwrite("/build", output)?
+    .build();
+let mut bash = Bash::builder().fs(Arc::new(namespace)).build();
+assert_eq!(bash.exec("cat /src/lib.rs").await?.stdout, "source");
+# Ok(())
+# }
+```
+
+Nested targets use longest-prefix precedence. Missing ancestors and mount points
+are visible as directories. Files and symlinks can be copied across mounts;
+cross-mount rename reports a typed cross-device error because copy-delete is not
+atomic.
+
 ## Special files and symlinks
 
 - **`/dev/null`** is handled at the interpreter level (not the filesystem), so a
@@ -117,5 +151,6 @@ readonly_filesystem: bool                       # deny all VFS mutations after s
 
 - [Security](security.md) — the boundaries built on top of the VFS.
 - [Live mounts](live-mounts.md) — attach and detach filesystems at runtime.
+- [Filesystem namespaces](https://docs.rs/bashkit/latest/bashkit/namespace_filesystems_guide/) — compose and rebase static mount trees.
 - [Snapshotting](snapshotting.md) — serialise and restore VFS + shell state.
 - Spec: [`specs/vfs.md`](https://github.com/everruns/bashkit/blob/main/specs/vfs.md).
