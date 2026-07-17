@@ -41,7 +41,7 @@ execution model. Evidence is a threat-model ID, a test, or `stance`
 | L-NET-002 | No DNS resolution; hosts must appear in the allowlist | Resolution would bypass allowlist intent | `l_net_002_default_deny_no_resolution` |
 | L-SIG-001 | `trap` stores INT/TERM handlers but no signal delivery in virtual mode (EXIT, ERR fire) | No host signals exist inside the sandbox | `l_sig_001_signal_traps_not_delivered` |
 | L-WASM-001 | Browser build (`@everruns/bashkit-web`, `wasm32-unknown-unknown`) does not enforce `timeoutMs` | No reliable timer driver on the target; parser fuel + `maxCommands`/`maxLoopIterations` still bound runaway scripts | `specs/browser-package.md`, stance |
-| L-WASM-002 | Browser build: `executeSync()` cannot run async custom builtins (fails with a clear message); use `execute()` | Single-threaded event loop can't settle a JS `Promise` without yielding | `crates/bashkit-wasm/scripts/smoke-test.mjs` |
+| L-WASM-002 | Browser build: `executeSync()` cannot run async custom builtins (fails with a clear message); use `execute()` | Single-threaded event loop can't settle a JS `Promise` without yielding | `crates/bashkit-wasm/__test__/bashkit-web.test.mjs` |
 
 ### Design Rationale
 

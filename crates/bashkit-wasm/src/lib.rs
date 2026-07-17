@@ -26,7 +26,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use bashkit::{
     Bash as CoreBash, Builtin, BuiltinContext, ExecResult as CoreExecResult, ExecutionLimits,
-    async_trait,
+    FileSystem as FileSystemTrait, async_trait,
 };
 use futures_util::future::FutureExt;
 use send_wrapper::SendWrapper;
@@ -74,11 +74,86 @@ impl From<CoreExecResult> for ExecResult {
 }
 
 // ---------------------------------------------------------------------------
+// FileSystem handle
+// ---------------------------------------------------------------------------
+
+/// Drive a `FileSystem` future to completion synchronously.
+///
+/// Sound because the browser VFS (`InMemoryFs`) is backed by synchronous
+/// interior mutability, so every op is `Ready` on the first poll. If a future
+/// ever suspends (it does not today) we surface an error instead of blocking.
+fn now<T>(fut: impl std::future::Future<Output = bashkit::Result<T>>) -> Result<T, JsError> {
+    fut.now_or_never()
+        .ok_or_else(|| JsError::new("filesystem operation did not complete synchronously"))?
+        .map_err(|e| JsError::new(&e.to_string()))
+}
+
+/// A live handle to a `Bash` instance's virtual filesystem.
+///
+/// Reads observe earlier script writes and writes are visible to subsequent
+/// commands — it is the same VFS the executing script sees. Exposed both as
+/// `bash.fs()` and as `ctx.fs` inside custom-builtin callbacks.
+#[wasm_bindgen]
+pub struct FileSystem {
+    inner: Arc<dyn FileSystemTrait>,
+}
+
+impl FileSystem {
+    fn new(inner: Arc<dyn FileSystemTrait>) -> Self {
+        Self { inner }
+    }
+}
+
+#[wasm_bindgen]
+impl FileSystem {
+    /// Read a file as UTF-8.
+    #[wasm_bindgen(js_name = readFile)]
+    pub fn read_file(&self, path: String) -> Result<String, JsError> {
+        let bytes = now(self.inner.read_file(Path::new(&path)))?;
+        String::from_utf8(bytes).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Write a UTF-8 file, replacing any existing content.
+    #[wasm_bindgen(js_name = writeFile)]
+    pub fn write_file(&self, path: String, content: String) -> Result<(), JsError> {
+        now(self.inner.write_file(Path::new(&path), content.as_bytes()))
+    }
+
+    /// Append to a file (creating it if absent).
+    #[wasm_bindgen(js_name = appendFile)]
+    pub fn append_file(&self, path: String, content: String) -> Result<(), JsError> {
+        now(self.inner.append_file(Path::new(&path), content.as_bytes()))
+    }
+
+    /// Whether a path exists.
+    pub fn exists(&self, path: String) -> Result<bool, JsError> {
+        now(self.inner.exists(Path::new(&path)))
+    }
+
+    /// Create a directory (and parents).
+    pub fn mkdir(&self, path: String) -> Result<(), JsError> {
+        now(self.inner.mkdir(Path::new(&path), true))
+    }
+
+    /// Remove a file or directory (recursively).
+    pub fn remove(&self, path: String) -> Result<(), JsError> {
+        now(self.inner.remove(Path::new(&path), true))
+    }
+
+    /// List entry names in a directory.
+    pub fn ls(&self, path: String) -> Result<Vec<String>, JsError> {
+        let entries = now(self.inner.read_dir(Path::new(&path)))?;
+        Ok(entries.into_iter().map(|e| e.name).collect())
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Custom builtin adapter (async JS callbacks)
 // ---------------------------------------------------------------------------
 
-/// Payload handed to a JS custom-builtin callback. Matches the `BuiltinContext`
-/// shape of the napi bindings (minus `fs`, which is a documented follow-up).
+/// Payload handed to a JS custom-builtin callback (minus the live `fs` handle,
+/// which is attached separately because it is not serializable). Matches the
+/// `BuiltinContext` shape of the napi bindings.
 #[derive(Serialize)]
 struct BuiltinRequest<'a> {
     name: &'a str,
@@ -112,10 +187,24 @@ impl Builtin for JsBuiltin {
             env: ctx.env,
             cwd: ctx.cwd.to_string_lossy().into_owned(),
         };
-        let arg = match serde_wasm_bindgen::to_value(&request) {
+        // `json_compatible` serializes `env` (a HashMap) as a plain JS object
+        // rather than a `Map`, matching the `Record<string, string>` TS type.
+        let serializer = serde_wasm_bindgen::Serializer::json_compatible();
+        let arg = match request.serialize(&serializer) {
             Ok(v) => v,
             Err(e) => return Ok(CoreExecResult::err(format!("{}: {}\n", self.name, e), 1)),
         };
+
+        // Attach the live VFS as `ctx.fs` (a `FileSystem` handle over the same
+        // Arc the interpreter uses). Not part of the serialized payload because
+        // it is a native object, not JSON.
+        let fs_handle = JsValue::from(FileSystem::new(ctx.fs.clone()));
+        if js_sys::Reflect::set(&arg, &JsValue::from_str("fs"), &fs_handle).is_err() {
+            return Ok(CoreExecResult::err(
+                format!("{}: failed to attach fs handle\n", self.name),
+                1,
+            ));
+        }
 
         // Call the JS function. Everything up to the first `.await` is `!Send`,
         // but stays on this thread; we only cross an await point through the
@@ -282,55 +371,49 @@ impl Bash {
 
     // --- VFS helpers ------------------------------------------------------
 
+    /// A live handle to the interpreter's virtual filesystem. The same VFS the
+    /// executing script sees, and the same object passed as `ctx.fs` to custom
+    /// builtins.
+    pub fn fs(&self) -> FileSystem {
+        FileSystem::new(self.inner.borrow().fs())
+    }
+
     /// Read a file from the virtual filesystem as UTF-8.
     #[wasm_bindgen(js_name = readFile)]
     pub fn read_file(&self, path: String) -> Result<String, JsError> {
-        let fs = self.inner.borrow().fs();
-        let bytes = fs
-            .read_file(Path::new(&path))
-            .now_or_never()
-            .ok_or_else(|| JsError::new("filesystem operation did not complete synchronously"))?
-            .map_err(|e| JsError::new(&e.to_string()))?;
-        String::from_utf8(bytes).map_err(|e| JsError::new(&e.to_string()))
+        self.fs().read_file(path)
     }
 
     /// Write a UTF-8 file to the virtual filesystem.
     #[wasm_bindgen(js_name = writeFile)]
     pub fn write_file(&self, path: String, content: String) -> Result<(), JsError> {
-        let fs = self.inner.borrow().fs();
-        fs.write_file(Path::new(&path), content.as_bytes())
-            .now_or_never()
-            .ok_or_else(|| JsError::new("filesystem operation did not complete synchronously"))?
-            .map_err(|e| JsError::new(&e.to_string()))
+        self.fs().write_file(path, content)
+    }
+
+    /// Append to a file in the virtual filesystem (creating it if absent).
+    #[wasm_bindgen(js_name = appendFile)]
+    pub fn append_file(&self, path: String, content: String) -> Result<(), JsError> {
+        self.fs().append_file(path, content)
     }
 
     /// Whether a path exists in the virtual filesystem.
     pub fn exists(&self, path: String) -> Result<bool, JsError> {
-        let fs = self.inner.borrow().fs();
-        fs.exists(Path::new(&path))
-            .now_or_never()
-            .ok_or_else(|| JsError::new("filesystem operation did not complete synchronously"))?
-            .map_err(|e| JsError::new(&e.to_string()))
+        self.fs().exists(path)
     }
 
     /// Create a directory (recursively) in the virtual filesystem.
     pub fn mkdir(&self, path: String) -> Result<(), JsError> {
-        let fs = self.inner.borrow().fs();
-        fs.mkdir(Path::new(&path), true)
-            .now_or_never()
-            .ok_or_else(|| JsError::new("filesystem operation did not complete synchronously"))?
-            .map_err(|e| JsError::new(&e.to_string()))
+        self.fs().mkdir(path)
+    }
+
+    /// Remove a file or directory (recursively) from the virtual filesystem.
+    pub fn remove(&self, path: String) -> Result<(), JsError> {
+        self.fs().remove(path)
     }
 
     /// List entry names in a directory.
     pub fn ls(&self, path: String) -> Result<Vec<String>, JsError> {
-        let fs = self.inner.borrow().fs();
-        let entries = fs
-            .read_dir(Path::new(&path))
-            .now_or_never()
-            .ok_or_else(|| JsError::new("filesystem operation did not complete synchronously"))?
-            .map_err(|e| JsError::new(&e.to_string()))?;
-        Ok(entries.into_iter().map(|e| e.name).collect())
+        self.fs().ls(path)
     }
 }
 

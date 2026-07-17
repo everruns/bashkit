@@ -79,16 +79,19 @@ core already gates off under `cfg(target_family = "wasm")` (see
   `pkg/` at build time).
 - `scripts/build.sh` — `cargo build` → `wasm-bindgen --target web` → optional
   `wasm-opt -Oz`, emitting `pkg/`.
-- `scripts/smoke-test.mjs` — headless Node test that feeds the `.wasm` bytes to
-  init (no fetch, no headers), proving the no-configuration contract.
+- `__test__/bashkit-web.test.mjs` — headless Node integration suite
+  (`node --test`) that feeds the `.wasm` bytes to init (no fetch, no headers),
+  proving the no-configuration contract and covering sync/async execution, the
+  VFS, custom builtins, and `ctx.fs`.
+- `example/` — self-contained browser demos served by any static file server.
 
 ## Build
 
 ```bash
 rustup target add wasm32-unknown-unknown
 cargo install wasm-bindgen-cli
-bash crates/bashkit-wasm/scripts/build.sh          # -> crates/bashkit-wasm/pkg/
-node crates/bashkit-wasm/scripts/smoke-test.mjs    # headless verification
+bash crates/bashkit-wasm/scripts/build.sh                          # -> pkg/
+node --test crates/bashkit-wasm/__test__/bashkit-web.test.mjs      # verify
 ```
 
 `--target web` output is a bundler-agnostic ES module; the consumer calls
@@ -108,5 +111,5 @@ pattern as `publish-js.yml`.
   so `timeoutMs` is not enforced. The parser fuel budget and `maxCommands` /
   `maxLoopIterations` still bound runaway scripts.
 - `executeSync` cannot await JS callbacks; use `execute()` for async builtins.
-- Custom-builtin `ctx` exposes `{ name, argv, stdin, env, cwd }`; a live `fs`
-  handle (as in the napi bindings) is a planned follow-up.
+- Custom-builtin `ctx` exposes `{ name, argv, stdin, env, cwd, fs }`, where `fs`
+  is a live handle to the same VFS the script sees (mirrors the napi bindings).

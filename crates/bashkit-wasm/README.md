@@ -63,8 +63,28 @@ const out = await bash.execute('echo "{ me { id } }" | graphql | jq .data');
 console.log(out.stdout);
 ```
 
-`ctx` is `{ name, argv, stdin, env, cwd }`. Return the builtin's stdout as a
+`ctx` is `{ name, argv, stdin, env, cwd, fs }`. Return the builtin's stdout as a
 string (or a `Promise<string>`); throwing becomes stderr with exit code 1.
+
+`ctx.fs` is a live handle to the **same** virtual filesystem the script sees, so
+a builtin can read inputs and write outputs that later commands pick up:
+
+```js
+const bash = new Bash({
+  customBuiltins: {
+    "uppercase-file": (ctx) => {
+      const text = ctx.fs.readFile(ctx.argv[0]);
+      ctx.fs.writeFile("/out.txt", text.toUpperCase());
+      return "done\n";
+    },
+  },
+});
+bash.writeFile("/in.txt", "hello\n");
+await bash.execute("uppercase-file /in.txt && cat /out.txt"); // -> HELLO
+```
+
+`ctx.fs` has `readFile`, `writeFile`, `appendFile`, `exists`, `mkdir`, `remove`,
+and `ls` — the same surface as the `Bash` VFS helpers below.
 
 ## Sync vs async
 
@@ -88,12 +108,20 @@ new Bash({
 
 ## Virtual filesystem
 
+Files created via the helpers are visible to scripts and vice versa:
+
 ```js
 bash.mkdir("/data");
 bash.writeFile("/data/x.txt", "hi\n");
-bash.readFile("/data/x.txt"); // "hi\n"
-bash.exists("/data/x.txt");    // true
-bash.ls("/data");              // ["x.txt"]
+bash.appendFile("/data/x.txt", "there\n");
+bash.readFile("/data/x.txt"); // "hi\nthere\n"
+bash.exists("/data/x.txt");   // true
+bash.ls("/data");             // ["x.txt"]
+bash.executeSync("cat /data/x.txt").stdout; // "hi\nthere\n"
+bash.remove("/data/x.txt");
+
+// bash.fs() returns the same live handle passed to builtins as ctx.fs
+const fs = bash.fs();
 ```
 
 ## What's included
@@ -103,6 +131,32 @@ Plain bash plus the built-in text tooling (`grep`, `sed`, `awk`, `jq`, `find`,
 `ssh`, `sqlite`, and embedded `python` — these need sockets, threads, or a host
 filesystem the browser sandbox doesn't provide. Bridge to the network through a
 custom builtin (see above) so requests go through your app's own `fetch`.
+
+## Limitations
+
+- **No wall-clock timeout.** `wasm32-unknown-unknown` has no reliable timer
+  driver, so `timeoutMs` is not enforced. Runaway scripts are instead bounded by
+  `maxCommands`, `maxLoopIterations`, and the parser fuel budget — a
+  `while true` loop throws a resource-limit error rather than hanging.
+- **`executeSync` can't run async builtins.** The single-threaded event loop
+  can't settle a `Promise` without yielding; an async builtin under
+  `executeSync` fails fast with a clear message. Use `execute()`.
+
+## Examples
+
+Runnable browser demos live in [`example/`](./example) — an interactive terminal
+and an async-builtin/`ctx.fs` demo, both served by any static file server with no
+special headers. See [`example/README.md`](./example/README.md).
+
+## Development
+
+```bash
+# Build the bundle and run the headless integration tests:
+bash scripts/build.sh
+node --test __test__/bashkit-web.test.mjs
+# or, from the repo root:
+just build-web
+```
 
 ## License
 

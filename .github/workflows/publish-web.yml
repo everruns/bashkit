@@ -64,8 +64,8 @@ jobs:
       - name: Build wasm bundle
         run: bash crates/bashkit-wasm/scripts/build.sh release
 
-      - name: Smoke test (headless Node)
-        run: node crates/bashkit-wasm/scripts/smoke-test.mjs
+      - name: Integration tests (headless Node)
+        run: node --test crates/bashkit-wasm/__test__/bashkit-web.test.mjs
 
       - name: Upload pkg
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

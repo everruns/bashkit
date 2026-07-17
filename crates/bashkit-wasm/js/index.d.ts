@@ -1,5 +1,16 @@
 // Public TypeScript surface for @everruns/bashkit-web.
 
+/** A live handle to a `Bash` instance's virtual filesystem. */
+export interface FileSystem {
+  readFile(path: string): string;
+  writeFile(path: string, content: string): void;
+  appendFile(path: string, content: string): void;
+  exists(path: string): boolean;
+  mkdir(path: string): void;
+  remove(path: string): void;
+  ls(path: string): string[];
+}
+
 /** Payload passed to a custom-builtin callback. */
 export interface BuiltinRequest {
   /** Command name as invoked. */
@@ -12,6 +23,8 @@ export interface BuiltinRequest {
   readonly env: Record<string, string>;
   /** Current working directory. */
   readonly cwd: string;
+  /** Live handle to the interpreter's virtual filesystem (shared with the script). */
+  readonly fs: FileSystem;
 }
 
 /**
@@ -66,10 +79,14 @@ export class Bash {
   execute(commands: string): Promise<ExecResult>;
   /** Reset to a fresh state, keeping options and registered custom builtins. */
   reset(): void;
+  /** Live handle to the virtual filesystem (same VFS the script sees). */
+  fs(): FileSystem;
   readFile(path: string): string;
   writeFile(path: string, content: string): void;
+  appendFile(path: string, content: string): void;
   exists(path: string): boolean;
   mkdir(path: string): void;
+  remove(path: string): void;
   ls(path: string): string[];
 }
 

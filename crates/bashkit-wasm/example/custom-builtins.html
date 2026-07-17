@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bashkit — Async custom builtins + ctx.fs</title>
+    <style>
+      :root { --bg:#1e1e2e; --fg:#cdd6f4; --ok:#a6e3a1; --err:#f38ba8; --muted:#6c7086; }
+      body { margin:0; padding:24px; max-width:820px; margin-inline:auto;
+             font:14px/1.6 ui-monospace,"JetBrains Mono",monospace; background:var(--bg); color:var(--fg); }
+      h1 { font-size:18px; } h2 { font-size:14px; color:var(--muted); margin-top:28px; }
+      pre { background:#181825; border:1px solid #313244; border-radius:8px; padding:12px 14px;
+            overflow-x:auto; white-space:pre-wrap; }
+      .script { color:var(--ok); } .out { color:var(--fg); }
+      code { color:#f9e2af; }
+    </style>
+  </head>
+  <body>
+    <h1>Async custom builtins + <code>ctx.fs</code></h1>
+    <p style="color:var(--muted)">
+      Single-threaded wasm — no <code>SharedArrayBuffer</code>, no COOP/COEP headers.
+      Serve with any static server: <code>python3 -m http.server -d .. 8000</code>
+      (after <code>bash ../scripts/build.sh</code>) then open
+      <code>/example/custom-builtins.html</code>.
+    </p>
+
+    <h2>1. An async builtin that issues a real request</h2>
+    <p>
+      This is the pattern from
+      <a href="https://github.com/everruns/bashkit/issues/2172" style="color:#89b4fa">issue #2172</a>:
+      a custom bash command (<code>gh-user</code>) whose callback <code>await</code>s a
+      <code>fetch()</code> and returns JSON, which the script pipes through <code>jq</code>.
+      Swap <code>fetch</code> for your own GraphQL/Relay client.
+    </p>
+    <pre id="demo1">running…</pre>
+
+    <h2>2. A builtin that reads and writes the shared VFS via ctx.fs</h2>
+    <p>
+      <code>ctx.fs</code> is a live handle to the same virtual filesystem the script
+      sees: the builtin reads an input file and writes a derived output file that the
+      next command in the script reads back.
+    </p>
+    <pre id="demo2">running…</pre>
+
+    <script type="module">
+      import { initBashkit, Bash } from "../pkg/index.js";
+      await initBashkit();
+
+      const show = (id, script, out) => {
+        document.getElementById(id).innerHTML =
+          `<span class="script">$ ${script.replace(/</g, "&lt;")}</span>\n` +
+          `<span class="out">${out.replace(/</g, "&lt;")}</span>`;
+      };
+
+      // --- Demo 1: async network builtin ---------------------------------
+      const net = new Bash({
+        customBuiltins: {
+          "gh-user": async (ctx) => {
+            const login = ctx.argv[0] ?? "everruns";
+            const res = await fetch(`https://api.github.com/users/${login}`);
+            return await res.text(); // JSON string -> stdout
+          },
+        },
+      });
+      try {
+        const script1 = 'gh-user everruns | jq -r "\\(.login): \\(.public_repos) public repos"';
+        const r1 = await net.execute(script1);
+        show("demo1", script1, r1.success ? r1.stdout : r1.stderr);
+      } catch (e) {
+        document.getElementById("demo1").textContent = String(e);
+      }
+
+      // --- Demo 2: ctx.fs read/write -------------------------------------
+      const fsBash = new Bash({
+        customBuiltins: {
+          "uppercase-file": (ctx) => {
+            const text = ctx.fs.readFile(ctx.argv[0]);
+            ctx.fs.writeFile("/out.txt", text.toUpperCase());
+            return `wrote /out.txt (${text.length} bytes)\n`;
+          },
+        },
+      });
+      fsBash.writeFile("/in.txt", "hello from the vfs\n");
+      const script2 = "uppercase-file /in.txt && echo '---' && cat /out.txt";
+      const r2 = await fsBash.execute(script2);
+      show("demo2", script2, r2.stdout);
+    </script>
+  </body>
+</html>
