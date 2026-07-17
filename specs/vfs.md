@@ -55,6 +55,20 @@ Do you need a custom filesystem?
 - Longest-prefix matching for nested mounts
 - Always used as outermost FS layer for live mount/unmount support
 
+#### NamespaceFs
+- Static visible tree composed from arbitrary `FileSystem` instances
+- Builder supports absolute targets, source-root rebasing, and read-only or
+  read-write access per mount
+- Longest target-prefix wins deterministically for nested mounts
+- Missing ancestors and mount points are visible as synthetic directories;
+  `stat()` and `read_dir()` metadata agree through rebasing
+- File and symlink copies may cross mounts when the destination is writable
+- Cross-mount rename returns `ErrorKind::CrossesDevices` instead of non-atomic
+  copy-delete; cross-mount directory and FIFO copy is unsupported
+- Visible paths are normalized before mount selection and source-root joining,
+  preventing traversal, source-root escape, nested-mount escape, and read-only bypass
+- Object ownership defines lifetime; there is no command/session lifetime mode
+
 #### ReadOnlyFs
 - Wraps another `FileSystem`, delegates read/stat/list, denies all mutations
   with `PermissionDenied`
@@ -91,6 +105,9 @@ the interpreter.
 │  Base filesystem                 │  ← InMemoryFs or custom
 └──────────────────────────────────┘
 ```
+
+`NamespaceFs` can be supplied as the base when callers need a bounded,
+pre-composed tree. The usual outer `MountableFs` still enables later live mounts.
 
 ### Special Device Files
 

@@ -66,6 +66,7 @@ pub mod limitations_doc_tests;
 pub mod limitations_evidence_tests;
 pub mod live_mount_tests;
 pub mod mkfifo_tests;
+pub mod namespace_fs_tests;
 pub mod nested_subscript_tests;
 pub mod network_security_tests;
 pub mod output_truncation_tests;

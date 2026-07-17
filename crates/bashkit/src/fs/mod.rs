@@ -89,6 +89,7 @@
 //! | [`InMemoryFs`] | HashMap-based storage with POSIX checks | Default, isolated execution |
 //! | [`OverlayFs`] | Copy-on-write layered filesystem | Templates, immutable bases |
 //! | [`MountableFs`] | Multiple filesystems at mount points | Complex multi-source setups |
+//! | [`NamespaceFs`] | Static tree of rebased filesystem mounts | Build sandboxes, CI, plugin hosts |
 //! | [`ReadOnlyFs`] | Mutation-denying wrapper around another filesystem | Inspection-only sessions |
 //! | [`RealFs`] | Host directory access (`realfs` feature) | Expose host files to scripts |
 //!
@@ -400,6 +401,7 @@ mod backend;
 mod limits;
 mod memory;
 mod mountable;
+mod namespace;
 mod overlay;
 mod posix;
 mod readonly;
@@ -412,6 +414,7 @@ pub use backend::FsBackend;
 pub use limits::{FsLimitExceeded, FsLimits, FsUsage};
 pub use memory::{InMemoryFs, LazyLoader, VfsSnapshot};
 pub use mountable::MountableFs;
+pub use namespace::{NamespaceAccess, NamespaceFs, NamespaceFsBuilder};
 pub use overlay::OverlayFs;
 pub use posix::PosixFs;
 pub use readonly::ReadOnlyFs;

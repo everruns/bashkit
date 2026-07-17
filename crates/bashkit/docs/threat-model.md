@@ -169,6 +169,7 @@ Scripts may attempt to break out of the sandbox to access the host system.
 | OverlayFs upper() exposed (TM-ESC-013) | `upper()` returns unlimited FS | Restrict visibility | **MITIGATED** |
 | Custom builtins lost (TM-ESC-014) | `std::mem::take` empties builtins | Arc-cloned builtins | **FIXED** |
 | Symlink overlay rename (TM-ESC-016) | `ln -s /etc/passwd x; mv x y` | Overlay rename/copy preserve symlinks | **FIXED** |
+| Namespace source-root or policy escape (TM-ESC-031) | `..` escapes a rebased or nested mount | Normalize before longest-prefix selection; join only the stripped suffix; enforce both mutation endpoints | MITIGATED |
 
 **Process Escape:**
 
@@ -192,7 +193,8 @@ Scripts may attempt to break out of the sandbox to access the host system.
 **Virtual Filesystem:**
 
 Bashkit uses an in-memory virtual filesystem by default. Scripts cannot access the
-real filesystem unless explicitly mounted via [`MountableFs`].
+real filesystem unless explicitly mounted via [`MountableFs`] or composed into a
+bounded [`NamespaceFs`].
 
 ```rust
 use bashkit::{Bash, InMemoryFs, MountableFs};
