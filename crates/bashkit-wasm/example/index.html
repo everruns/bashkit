@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bashkit — Browser Terminal (no COOP/COEP)</title>
+    <style>
+      :root { --bg:#1e1e2e; --fg:#cdd6f4; --prompt:#a6e3a1; --err:#f38ba8; --muted:#6c7086; }
+      * { box-sizing: border-box; }
+      body { margin:0; height:100vh; display:flex; flex-direction:column;
+             font:13px/1.5 "JetBrains Mono",ui-monospace,monospace; background:var(--bg); color:var(--fg); }
+      header { padding:10px 14px; border-bottom:1px solid #45475a; }
+      header b { font-weight:600; } header span { color:var(--muted); }
+      #out { flex:1; overflow-y:auto; padding:12px 14px; white-space:pre-wrap; word-break:break-all; }
+      .cmd { color:var(--prompt); } .err { color:var(--err); }
+      form { display:flex; border-top:1px solid #45475a; }
+      #in { flex:1; background:#313244; color:var(--fg); border:0; padding:10px 14px;
+            font:inherit; outline:none; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <b>bashkit</b> <span>· single-threaded wasm · no SharedArrayBuffer, no COOP/COEP headers</span>
+    </header>
+    <div id="out"></div>
+    <form id="form">
+      <input id="in" autofocus autocomplete="off" spellcheck="false"
+             placeholder="try:  echo hi | jq -R ascii_upcase   ·   time now" />
+    </form>
+
+    <!--
+      Served by ANY static file server — no special headers required:
+        (cd .. && bash scripts/build.sh) && python3 -m http.server -d .. 8000
+      then open http://localhost:8000/example/
+      (The ../pkg/ directory is produced by scripts/build.sh.)
+    -->
+    <script type="module">
+      import { initBashkit, Bash } from "../pkg/index.js";
+
+      const out = document.getElementById("out");
+      const form = document.getElementById("form");
+      const input = document.getElementById("in");
+      const print = (text, cls) => {
+        const div = document.createElement("div");
+        if (cls) div.className = cls;
+        div.textContent = text;
+        out.appendChild(div);
+        out.scrollTop = out.scrollHeight;
+      };
+
+      await initBashkit();
+
+      // An async custom builtin: `time now` fetches nothing — it just shows that
+      // async JS callbacks are awaited by execute(). Swap the body for a real
+      // fetch()/GraphQL call in your app.
+      const bash = new Bash({
+        customBuiltins: {
+          now: async () => {
+            await Promise.resolve();
+            return new Date().toISOString() + "\n";
+          },
+        },
+      });
+
+      print("bashkit ready. Type a command.", "");
+
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const cmd = input.value;
+        if (!cmd.trim()) return;
+        input.value = "";
+        print("$ " + cmd, "cmd");
+        try {
+          const r = await bash.execute(cmd); // async: supports the `now` builtin
+          if (r.stdout) print(r.stdout.replace(/\n$/, ""));
+          if (r.stderr) print(r.stderr.replace(/\n$/, ""), "err");
+        } catch (err) {
+          print(String(err), "err");
+        }
+      });
+    </script>
+  </body>
+</html>

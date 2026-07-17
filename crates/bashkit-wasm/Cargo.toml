@@ -1,0 +1,52 @@
+# Bashkit browser bindings via wasm-bindgen.
+#
+# Important decision: this is a deliberately *slim*, single-threaded browser
+# build, separate from the napi `bashkit-js` crate. It targets
+# `wasm32-unknown-unknown` (pure wasm-bindgen, no WASI, no threads), so it needs
+# NO `SharedArrayBuffer` and NO cross-origin isolation (COOP/COEP) headers —
+# unlike the wasm32-wasip1-threads example. That makes it drop-in for any web
+# app, including embedded/iframe contexts. See specs/browser-package.md.
+#
+# Feature surface mirrors the `wasm` CI job (scripted_tool + jq). http_client,
+# ssh, sqlite, python, realfs, and interop are intentionally excluded: they need
+# sockets, threads, or a host filesystem that the browser sandbox lacks.
+#
+# JS callbacks (js_sys::Function / JsFuture) are `!Send`, but bashkit's `Builtin`
+# trait is `Send + Sync` (async_trait). wasm32 is single-threaded, so we bridge
+# with `send_wrapper::SendWrapper`, which is sound here: it only ever touches the
+# wrapped value on its origin thread, and there is only one thread.
+
+[package]
+name = "bashkit-wasm"
+description = "Browser (WebAssembly) bindings for the Bashkit sandboxed bash interpreter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+bashkit = { path = "../bashkit", default-features = false, features = [
+    "scripted_tool",
+    "jq",
+] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde-wasm-bindgen = "0.6"
+futures-util = { workspace = true }
+send_wrapper = { version = "0.6", features = ["futures"] }
+console_error_panic_hook = "0.1"
+# getrandom's browser backend (matches the workspace pin). Enables `wasm_js`
+# so the credential-placeholder RNG links on wasm32-unknown-unknown.
+getrandom = { workspace = true }
+
+[package.metadata.wasm-pack.profile.release]
+# Keep the shipped .wasm small; the interpreter is large.
+wasm-opt = ["-Oz"]

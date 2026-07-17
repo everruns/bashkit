@@ -12,6 +12,12 @@ default:
 build:
     cargo build
 
+# Build the browser wasm package (@everruns/bashkit-web) and smoke test it.
+# Requires: rustup target add wasm32-unknown-unknown; cargo install wasm-bindgen-cli
+build-web:
+    bash crates/bashkit-wasm/scripts/build.sh release
+    node crates/bashkit-wasm/scripts/smoke-test.mjs
+
 # Run all tests (including fail-point tests)
 test:
     cargo test --features http_client

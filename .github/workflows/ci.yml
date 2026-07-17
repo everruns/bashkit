@@ -68,6 +68,33 @@ jobs:
           # getrandom needs an explicit JS backend opt-in on this target.
           RUSTFLAGS: --cfg getrandom_backend="wasm_js" -D warnings
 
+  wasm-web:
+    # Build the browser package (@everruns/bashkit-web) and run the headless
+    # smoke test, proving the single-threaded bundle loads with no COOP/COEP
+    # headers and that sync + async execution both work. See
+    # specs/browser-package.md. Keep wasm-bindgen-cli in lockstep with the
+    # wasm-bindgen version in Cargo.lock.
+    name: WASM web package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - name: Install wasm-bindgen-cli
+        run: cargo install wasm-bindgen-cli --version 0.2.126 --locked
+
+      - name: Build web bundle
+        run: bash crates/bashkit-wasm/scripts/build.sh release
+
+      - name: Smoke test (headless Node)
+        run: node crates/bashkit-wasm/scripts/smoke-test.mjs
+
   audit:
     name: Audit
     runs-on: ubuntu-latest

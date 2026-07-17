@@ -1,0 +1,139 @@
+# NPM publishing workflow for the browser package @everruns/bashkit-web.
+# Builds a single-threaded wasm32-unknown-unknown bundle via wasm-bindgen and
+# publishes to npm. Triggered alongside publish.yml on GitHub Release.
+#
+# Prerequisites:
+#   - NPM_TOKEN secret with publish access
+#   - id-token: write permission for npm provenance (OIDC attestation)
+#
+# Keep WASM_BINDGEN_VERSION in lockstep with the wasm-bindgen version in
+# Cargo.lock — a CLI/crate mismatch fails the bindgen step.
+
+name: Publish Web
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  WASM_BINDGEN_VERSION: "0.2.126"
+
+jobs:
+  verify-source:
+    name: Verify publish source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+      - name: Verify publish source is reachable from main
+        run: |
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          SOURCE_SHA=$(git rev-parse HEAD)
+          if ! git merge-base --is-ancestor "$SOURCE_SHA" origin/main; then
+            echo "Error: publish source $SOURCE_SHA is not reachable from origin/main"
+            exit 1
+          fi
+          echo "Publish source verified on origin/main: $SOURCE_SHA"
+
+  build-web:
+    name: Build web bundle
+    needs: verify-source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - name: Install wasm-bindgen-cli
+        run: cargo install wasm-bindgen-cli --version "$WASM_BINDGEN_VERSION" --locked
+
+      - name: Install binaryen (wasm-opt)
+        run: sudo apt-get update && sudo apt-get install -y binaryen
+
+      - name: Build wasm bundle
+        run: bash crates/bashkit-wasm/scripts/build.sh release
+
+      - name: Smoke test (headless Node)
+        run: node crates/bashkit-wasm/scripts/smoke-test.mjs
+
+      - name: Upload pkg
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: web-pkg
+          path: crates/bashkit-wasm/pkg
+          if-no-files-found: error
+
+  publish-web:
+    name: Publish to npm
+    needs: build-web
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm provenance
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Verify publish source is reachable from main
+        run: |
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          SOURCE_SHA=$(git rev-parse HEAD)
+          if ! git merge-base --is-ancestor "$SOURCE_SHA" origin/main; then
+            echo "Error: publish source $SOURCE_SHA is not reachable from origin/main"
+            exit 1
+          fi
+
+      - name: Setup node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: 24
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Download pkg
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: web-pkg
+          path: pkg
+
+      - name: Determine npm dist-tag
+        id: dist-tag
+        working-directory: pkg
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          echo "version=$PKG_VERSION"
+          # Only verified release tags publish as npm latest.
+          if [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+            if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+              echo "Error: Tag version ($TAG_VERSION) does not match package.json version ($PKG_VERSION)"
+              exit 1
+            fi
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=next" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish
+        working-directory: pkg
+        run: |
+          TAG="${{ steps.dist-tag.outputs.tag }}"
+          echo "Publishing @everruns/bashkit-web with dist-tag: $TAG"
+          if [ "$TAG" = "latest" ]; then
+            npm publish --provenance --access public
+          else
+            npm publish --provenance --tag "$TAG" --access public
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
