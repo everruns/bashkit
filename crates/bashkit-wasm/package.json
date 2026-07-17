@@ -1,0 +1,47 @@
+{
+  "name": "@everruns/bashkit-web",
+  "version": "0.13.0",
+  "description": "Sandboxed bash interpreter for the browser (WebAssembly). Single-threaded — no SharedArrayBuffer, no COOP/COEP headers.",
+  "type": "module",
+  "main": "index.js",
+  "module": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./bashkit_wasm_bg.wasm": "./bashkit_wasm_bg.wasm"
+  },
+  "sideEffects": [
+    "./index.js",
+    "./bashkit_wasm.js"
+  ],
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "bashkit_wasm.js",
+    "bashkit_wasm.d.ts",
+    "bashkit_wasm_bg.wasm",
+    "bashkit_wasm_bg.wasm.d.ts",
+    "README.md"
+  ],
+  "license": "MIT",
+  "author": "Mykhailo Chalyi <mike@chaliy.name>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/everruns/bashkit"
+  },
+  "homepage": "https://bashkit.sh",
+  "keywords": [
+    "bash",
+    "interpreter",
+    "sandbox",
+    "wasm",
+    "webassembly",
+    "browser",
+    "ai",
+    "agent",
+    "tool"
+  ]
+}
