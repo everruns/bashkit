@@ -4348,41 +4348,75 @@ impl Interpreter {
         }
 
         // THREAT[TM-DOS-021]: Propagate interpreter's parser limits to child shell
-        let script_owned = script_content.clone();
         let max_ast_depth = self.limits.max_ast_depth;
         let max_parser_operations = self.limits.max_parser_operations;
-        let parse_result = tokio::time::timeout(self.limits.parser_timeout, async move {
-            tokio::task::spawn_blocking(move || {
-                let parser =
-                    Parser::with_limits(&script_owned, max_ast_depth, max_parser_operations);
-                parser.parse()
+        let parser_timeout = self.limits.parser_timeout;
+
+        // On wasm32-unknown-unknown there is no blocking thread pool and no
+        // reliable timer driver, so tokio::time::timeout + spawn_blocking call
+        // std::time and panic ("time not implemented"), poisoning the whole
+        // module. Parse inline instead: the parser enforces the timeout itself
+        // through time_compat and still bounds runaway input via
+        // max_parser_operations. Mirrors the top-level parse path in lib.rs.
+        // A top-level command never reaches this branch — only a spawned
+        // bash/sh child does — which is why the panic hid until a subshell ran.
+        #[cfg(target_family = "wasm")]
+        let script = {
+            let parser = Parser::with_limits_and_timeout(
+                &script_content,
+                max_ast_depth,
+                max_parser_operations,
+                Some(parser_timeout),
+            );
+            match parser.parse() {
+                Ok(s) => s,
+                Err(e) => {
+                    return Ok(ExecResult::err(
+                        format!("{}: syntax error: {}\n", shell_name, e),
+                        2,
+                    ));
+                }
+            }
+        };
+
+        // On native targets keep the spawn_blocking + timeout path so the async
+        // runtime can pre-empt a runaway parser off the executor thread.
+        #[cfg(not(target_family = "wasm"))]
+        let script = {
+            let script_owned = script_content.clone();
+            let parse_result = tokio::time::timeout(parser_timeout, async move {
+                tokio::task::spawn_blocking(move || {
+                    let parser =
+                        Parser::with_limits(&script_owned, max_ast_depth, max_parser_operations);
+                    parser.parse()
+                })
+                .await
             })
-            .await
-        })
-        .await;
-        let script = match parse_result {
-            Ok(Ok(Ok(s))) => s,
-            Ok(Ok(Err(e))) => {
-                return Ok(ExecResult::err(
-                    format!("{}: syntax error: {}\n", shell_name, e),
-                    2,
-                ));
-            }
-            Ok(Err(e)) => {
-                return Ok(ExecResult::err(
-                    format!("{}: parser task failed: {}\n", shell_name, e),
-                    2,
-                ));
-            }
-            Err(_) => {
-                return Ok(ExecResult::err(
-                    format!(
-                        "{}: parser timeout after {}ms\n",
-                        shell_name,
-                        self.limits.parser_timeout.as_millis()
-                    ),
-                    2,
-                ));
+            .await;
+            match parse_result {
+                Ok(Ok(Ok(s))) => s,
+                Ok(Ok(Err(e))) => {
+                    return Ok(ExecResult::err(
+                        format!("{}: syntax error: {}\n", shell_name, e),
+                        2,
+                    ));
+                }
+                Ok(Err(e)) => {
+                    return Ok(ExecResult::err(
+                        format!("{}: parser task failed: {}\n", shell_name, e),
+                        2,
+                    ));
+                }
+                Err(_) => {
+                    return Ok(ExecResult::err(
+                        format!(
+                            "{}: parser timeout after {}ms\n",
+                            shell_name,
+                            parser_timeout.as_millis()
+                        ),
+                        2,
+                    ));
+                }
             }
         };
 

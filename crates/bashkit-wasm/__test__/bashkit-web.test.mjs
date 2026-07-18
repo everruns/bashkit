@@ -61,6 +61,44 @@ test("sync: stderr is captured", () => {
   assert.equal(r.stderr, "oops\n");
 });
 
+// --- Child shell (bash / sh builtin) ---------------------------------------
+// Regression: the bash/sh builtin re-parses its child script. On
+// wasm32-unknown-unknown that parse must run inline — the native path wraps it
+// in tokio::time::timeout + spawn_blocking, whose timer calls std::time, which
+// panics ("time not implemented") and poisons the entire wasm module. A single
+// `echo hi` at the top level takes a different path, so this only surfaces when
+// a subshell is spawned. See execute_shell in the interpreter.
+
+test("child shell: bash -c runs without panicking", async () => {
+  const bash = new Bash();
+  const r = await bash.execute("bash -c 'echo from-child'");
+  assert.equal(r.stdout, "from-child\n");
+  assert.equal(r.exitCode, 0);
+});
+
+test("child shell: sh -c with a pipe", async () => {
+  const bash = new Bash();
+  const r = await bash.execute("sh -c 'echo hi | tr a-z A-Z'");
+  assert.equal(r.stdout, "HI\n");
+  assert.equal(r.exitCode, 0);
+});
+
+test("child shell: running a script file", async () => {
+  const bash = new Bash({
+    files: { "/demo.sh": 'for i in 1 2 3; do echo "iter $i"; done\necho done' },
+  });
+  const r = await bash.execute("bash /demo.sh");
+  assert.equal(r.stdout, "iter 1\niter 2\niter 3\ndone\n");
+  assert.equal(r.exitCode, 0);
+});
+
+test("child shell: piping a script into bash", async () => {
+  const bash = new Bash();
+  const r = await bash.execute("echo 'echo piped' | bash");
+  assert.equal(r.stdout, "piped\n");
+  assert.equal(r.exitCode, 0);
+});
+
 // --- Options ---------------------------------------------------------------
 
 test("options: env and cwd", () => {
