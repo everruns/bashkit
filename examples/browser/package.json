@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@everruns/bashkit-web": "latest"
+    "@everruns/bashkit-wasm": "latest"
   },
   "devDependencies": {
     "vite": "^6.4.3"

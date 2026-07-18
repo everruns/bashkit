@@ -1,4 +1,4 @@
-// Hand-authored entry point for @everruns/bashkit-web.
+// Hand-authored entry point for @everruns/bashkit-wasm.
 //
 // Wraps the wasm-bindgen glue so consumers get a single, bundler-friendly
 // module. The .wasm URL is resolved relative to this file via import.meta.url,

@@ -98,7 +98,7 @@
   </div>
 
   <script type="module">
-    import { initBashkit, Bash } from "@everruns/bashkit-web";
+    import { initBashkit, Bash } from "@everruns/bashkit-wasm";
 
     const output = document.getElementById("output");
     const cmd = document.getElementById("cmd");
@@ -134,7 +134,7 @@
 
     // Startup message
     appendLine("Bashkit — sandboxed Bash interpreter in the browser", "info");
-    appendLine("Slim single-threaded wasm build (@everruns/bashkit-web) — no SharedArrayBuffer, no COOP/COEP.", "info");
+    appendLine("Slim single-threaded wasm build (@everruns/bashkit-wasm) — no SharedArrayBuffer, no COOP/COEP.", "info");
     appendLine("Type 'cat /home/user/welcome.txt' or 'bash /home/user/demo.sh' to get started.\n", "info");
 
     async function runCommand(command) {

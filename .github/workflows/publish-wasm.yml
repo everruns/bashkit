@@ -1,4 +1,4 @@
-# NPM publishing workflow for the browser package @everruns/bashkit-web.
+# NPM publishing workflow for the browser package @everruns/bashkit-wasm.
 # Builds a single-threaded wasm32-unknown-unknown bundle via wasm-bindgen and
 # publishes to npm. Triggered alongside publish.yml on GitHub Release.
 #
@@ -41,7 +41,7 @@ jobs:
           fi
           echo "Publish source verified on origin/main: $SOURCE_SHA"
 
-  build-web:
+  build-wasm:
     name: Build web bundle
     needs: verify-source
     runs-on: ubuntu-latest
@@ -65,7 +65,7 @@ jobs:
         run: bash crates/bashkit-wasm/scripts/build.sh release
 
       - name: Integration tests (headless Node)
-        run: node --test crates/bashkit-wasm/__test__/bashkit-web.test.mjs
+        run: node --test crates/bashkit-wasm/__test__/bashkit-wasm.test.mjs
 
       - name: Upload pkg
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -74,9 +74,9 @@ jobs:
           path: crates/bashkit-wasm/pkg
           if-no-files-found: error
 
-  publish-web:
+  publish-wasm:
     name: Publish to npm
-    needs: build-web
+    needs: build-wasm
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -129,7 +129,7 @@ jobs:
         working-directory: pkg
         run: |
           TAG="${{ steps.dist-tag.outputs.tag }}"
-          echo "Publishing @everruns/bashkit-web with dist-tag: $TAG"
+          echo "Publishing @everruns/bashkit-wasm with dist-tag: $TAG"
           if [ "$TAG" = "latest" ]; then
             npm publish --provenance --access public
           else

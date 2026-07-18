@@ -16,7 +16,7 @@ pulls the prebuilt wasm.
 
 ## How It Works
 
-The example depends on [`@everruns/bashkit-web`](https://www.npmjs.com/package/@everruns/bashkit-web),
+The example depends on [`@everruns/bashkit-wasm`](https://www.npmjs.com/package/@everruns/bashkit-wasm),
 a slim, **single-threaded** WebAssembly build (`wasm32-unknown-unknown` via
 `wasm-bindgen`). It ships the compiled `.wasm` in the npm package, so there is
 nothing to compile locally.

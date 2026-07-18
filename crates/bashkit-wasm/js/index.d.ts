@@ -1,4 +1,4 @@
-// Public TypeScript surface for @everruns/bashkit-web.
+// Public TypeScript surface for @everruns/bashkit-wasm.
 
 /** A live handle to a `Bash` instance's virtual filesystem. */
 export interface FileSystem {

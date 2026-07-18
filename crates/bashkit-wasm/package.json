@@ -1,5 +1,5 @@
 {
-  "name": "@everruns/bashkit-web",
+  "name": "@everruns/bashkit-wasm",
   "version": "0.14.2",
   "description": "Sandboxed bash interpreter for the browser (WebAssembly). Single-threaded — no SharedArrayBuffer, no COOP/COEP headers.",
   "type": "module",

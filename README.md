@@ -538,6 +538,26 @@ const content = await tool.readFile('/tmp/data.txt');
 Platform matrix: macOS (x86_64, aarch64), Linux (x86_64, aarch64), Windows (x86_64), WASM.
 See [crates/bashkit-js](crates/bashkit-js/) for details.
 
+### Browser / edge (WebAssembly)
+
+A slim, single-threaded WebAssembly build for the browser and any other
+JavaScript runtime — edge/serverless workers (Cloudflare Workers, Vercel Edge,
+Deno Deploy), Node, Deno, and Bun. Available as `@everruns/bashkit-wasm` on npm.
+It needs **no `SharedArrayBuffer` and no `COOP`/`COEP` headers**, so it drops
+into any web app (including iframes) and into thread-less edge runtimes.
+
+```js
+import { initBashkit, Bash } from "@everruns/bashkit-wasm";
+
+await initBashkit();
+const bash = new Bash();
+console.log(bash.executeSync('echo "Hello, browser!" | tr a-z A-Z').stdout); // HELLO, BROWSER!
+```
+
+Use this when a native addon can't load (browsers, edge); for a native
+Node.js / Bun / Deno addon use `@everruns/bashkit` above. See
+[crates/bashkit-wasm](crates/bashkit-wasm/README.md) for details.
+
 ## Security
 
 Bashkit is built for running untrusted scripts from AI agents and users. Security is a core design goal, not an afterthought.

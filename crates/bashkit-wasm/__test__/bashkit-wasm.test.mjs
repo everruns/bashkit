@@ -1,4 +1,4 @@
-// Integration tests for the browser wasm bundle (@everruns/bashkit-web).
+// Integration tests for the browser wasm bundle (@everruns/bashkit-wasm).
 //
 // Run against the real built package (crates/bashkit-wasm/pkg, produced by
 // scripts/build.sh) under Node's built-in test runner:

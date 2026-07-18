@@ -131,7 +131,7 @@ jobs:
           gh workflow run publish.yml --ref "$TAG"
           gh workflow run publish-python.yml --ref "$TAG"
           gh workflow run publish-js.yml --ref "$TAG"
-          gh workflow run publish-web.yml --ref "$TAG"
+          gh workflow run publish-wasm.yml --ref "$TAG"
 
       - name: Trigger CLI binary builds for release tag
         env:

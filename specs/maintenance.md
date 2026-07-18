@@ -78,14 +78,14 @@ dependency rot, or security gaps ship in a release.
 - Feature-gated examples work (python, git)
 - Python agent examples run end-to-end
 - Code examples in docs/rustdoc still accurate
-- `examples/browser` tracks the latest published `@everruns/bashkit-web`
+- `examples/browser` tracks the latest published `@everruns/bashkit-wasm`
   (relaxed dep, no committed lockfile): run `pnpm install && pnpm start`, load
   the page, and confirm it runs a plain command, a pipe through `jq`, **and a
   subshell** (`bash /home/user/demo.sh`). The subshell path exercises the wasm
   child-shell parse that a top-level command does not — the smoke suite in
   `crates/bashkit-wasm/__test__/` covers the same ground headlessly. If the
   published package lags a fix the example depends on, hold the example until
-  the next `bashkit-web` release rather than pinning to an old version.
+  the next `bashkit-wasm` release rather than pinning to an old version.
 
 ### Specs
 
