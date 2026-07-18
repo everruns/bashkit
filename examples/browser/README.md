@@ -7,30 +7,46 @@ A sandboxed Bash interpreter running entirely in the browser via WebAssembly.
 ## Quick Start
 
 ```bash
-# Requires: rustup target add wasm32-wasip1-threads
 pnpm install
 pnpm start
 ```
 
-`pnpm start` builds the WASM binary and starts the Vite dev server. Open http://localhost:5173.
+Open http://localhost:5173. No Rust toolchain, no build step — `pnpm install`
+pulls the prebuilt wasm.
 
 ## How It Works
 
-Bashkit compiles to `wasm32-wasip1-threads` via [napi-rs](https://napi.rs). The browser loads the WASM binary through `@napi-rs/wasm-runtime`, which provides WASI preview1 support and a thread pool using Web Workers + SharedArrayBuffer.
+The example depends on [`@everruns/bashkit-web`](https://www.npmjs.com/package/@everruns/bashkit-web),
+a slim, **single-threaded** WebAssembly build (`wasm32-unknown-unknown` via
+`wasm-bindgen`). It ships the compiled `.wasm` in the npm package, so there is
+nothing to compile locally.
 
-The terminal UI is a single `index.html` — no framework, no build step beyond WASM compilation.
+Because it is single-threaded, it needs **no `SharedArrayBuffer` and no
+cross-origin isolation** — there are no `COOP`/`COEP` headers in
+`vite.config.js`, and it drops into any static host or bundler (including
+embedded / third-party iframe contexts where those headers cannot be set).
+
+The terminal UI is a single `index.html` — no framework.
+
+## Feature Surface
+
+Present: full bash syntax, the text-tool builtins (`grep`, `sed`, `awk`, `find`,
+`jq`, …), a virtual filesystem, resource limits, and JS custom builtins.
+
+Absent (need sockets, threads, or a host FS the browser sandbox lacks):
+`http_client` (`curl`/`wget`), `ssh`, `sqlite`, embedded `python`, `realfs`
+mounts. Reach the network from a custom builtin that calls the app's own
+`fetch`. See `crates/bashkit-wasm/` and `specs/browser-package.md` for details.
 
 ## Scripts
 
 | Command | Description |
 |---------|-------------|
-| `pnpm start` | Build WASM + start dev server |
-| `pnpm run dev` | Start dev server (WASM must already be built) |
-| `pnpm run build` | Build WASM + production bundle |
-| `pnpm run build:wasm` | Build WASM only |
+| `pnpm start` / `pnpm dev` | Start the Vite dev server |
+| `pnpm run build` | Production bundle |
+| `pnpm run preview` | Preview the production bundle |
 
 ## Requirements
 
 - Node.js >= 18
-- Rust with `wasm32-wasip1-threads` target
-- Browser with SharedArrayBuffer support (requires COOP/COEP headers, configured in `vite.config.js`)
+- A modern browser (WebAssembly + ES modules)
