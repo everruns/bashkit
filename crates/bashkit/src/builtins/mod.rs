@@ -113,7 +113,7 @@ mod yes;
 mod zip_cmd;
 
 mod helpers;
-pub(crate) use helpers::{invalid_option, BuiltinHelper};
+pub(crate) use helpers::{BuiltinHelper, invalid_option};
 
 pub(crate) mod limits;
 pub(crate) use limits::MAX_FORMAT_WIDTH;

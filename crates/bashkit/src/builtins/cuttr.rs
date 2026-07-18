@@ -87,6 +87,16 @@ impl Builtin for Cut {
             } else if let Some(arg) = p.current().filter(|s| !s.starts_with('-')) {
                 files.push(arg.to_string());
                 p.advance();
+            } else if p.current() == Some("-") || p.current() == Some("--") {
+                // "-" stdin operand / "--" end-of-options: preserve handling.
+                p.advance();
+            } else if p.is_flag() {
+                // Reject unknown options instead of dropping them silently.
+                return Ok(super::invalid_option(
+                    "cut",
+                    p.current().unwrap_or_default(),
+                    1,
+                ));
             } else {
                 p.advance();
             }
@@ -316,6 +326,14 @@ impl Builtin for Tr {
                         _ => {}
                     }
                 }
+            } else if non_flag_args.is_empty() && p.is_flag() && p.current() != Some("--") {
+                // Reject unknown options only in the option phase (before any
+                // SET is read); once SETs are collected a leading `-` is an operand.
+                return Ok(super::invalid_option(
+                    "tr",
+                    p.current().unwrap_or_default(),
+                    1,
+                ));
             } else if let Some(arg) = p.positional() {
                 non_flag_args.push(arg.to_string());
             }
@@ -935,5 +953,19 @@ mod tests {
     fn test_expand_char_set_multibyte() {
         let chars = expanded("äöü");
         assert_eq!(chars, vec!['ä', 'ö', 'ü']);
+    }
+
+    #[tokio::test]
+    async fn test_cut_rejects_unknown_option() {
+        let result = run_cut(&["-Q", "-f1"], Some("a\n")).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid option -- 'Q'"));
+    }
+
+    #[tokio::test]
+    async fn test_tr_rejects_unknown_option() {
+        let result = run_tr(&["-Q", "a", "b"], Some("a\n")).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid option -- 'Q'"));
     }
 }

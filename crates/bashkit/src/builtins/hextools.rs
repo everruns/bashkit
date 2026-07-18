@@ -307,12 +307,29 @@ fn parse_xxd_args(args: &[String]) -> std::result::Result<(XxdOptions, Vec<Strin
             opts.plain = true;
         } else if p.flag("-r") {
             opts.reverse = true;
+        } else if p.is_flag() && p.current() != Some("--") {
+            // Reject unknown options instead of treating them as filenames.
+            return Err(invalid_option_msg("xxd", p.current().unwrap_or_default()));
         } else if let Some(arg) = p.positional() {
             files.push(arg.to_string());
         }
     }
 
     Ok((opts, files))
+}
+
+/// Build an unrecognized-option message (no trailing newline; callers append
+/// it via `format!("{}\n", e)`). Mirrors `super::invalid_option`.
+fn invalid_option_msg(cmd: &str, arg: &str) -> String {
+    if let Some(long) = arg.strip_prefix("--") {
+        format!("{cmd}: unrecognized option '--{long}'")
+    } else {
+        let ch = arg
+            .strip_prefix('-')
+            .and_then(|s| s.chars().next())
+            .unwrap_or('-');
+        format!("{cmd}: invalid option -- '{ch}'")
+    }
 }
 
 fn xxd_dump(data: &[u8], opts: &XxdOptions) -> String {
@@ -487,6 +504,12 @@ fn parse_hexdump_args(
             opts.offset = val
                 .parse()
                 .map_err(|_| format!("hexdump: invalid offset: '{}'", val))?;
+        } else if p.is_flag() && p.current() != Some("--") {
+            // Reject unknown options instead of treating them as filenames.
+            return Err(invalid_option_msg(
+                "hexdump",
+                p.current().unwrap_or_default(),
+            ));
         } else if let Some(arg) = p.positional() {
             files.push(arg.to_string());
         }
@@ -916,6 +939,13 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_xxd_unknown_option() {
+        let result = run_xxd(&["-Q"], Some("Hi")).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid option -- 'Q'"));
+    }
+
+    #[tokio::test]
     async fn test_xxd_reverse_normal() {
         // Normal xxd output format
         let result = run_xxd(
@@ -972,6 +1002,13 @@ mod tests {
         let result = run_hexdump(&[], Some("")).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "");
+    }
+
+    #[tokio::test]
+    async fn test_hexdump_unknown_option() {
+        let result = run_hexdump(&["-Q"], Some("Hi")).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid option -- 'Q'"));
     }
 
     #[tokio::test]

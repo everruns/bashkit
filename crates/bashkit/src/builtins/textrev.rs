@@ -19,6 +19,9 @@ async fn read_input(ctx: &Context<'_>) -> std::result::Result<String, ExecResult
     for arg in ctx.args {
         if !arg.starts_with('-') {
             files.push(arg);
+        } else if arg.len() > 1 && arg != "--" {
+            // rev takes no options → reject unknown option-shaped tokens (exits 1).
+            return Err(super::invalid_option("rev", arg, 1));
         }
     }
 
@@ -198,5 +201,55 @@ impl Builtin for Rev {
         output.push('\n');
 
         Ok(ExecResult::ok(output))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    use crate::fs::InMemoryFs;
+
+    async fn run_rev(args: &[&str], stdin: Option<&str>) -> ExecResult {
+        let fs = Arc::new(InMemoryFs::new());
+        let mut variables = HashMap::new();
+        let env = HashMap::new();
+        let mut cwd = PathBuf::from("/");
+
+        let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs,
+            stdin,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+
+        Rev.execute(ctx).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_rev_basic() {
+        let result = run_rev(&[], Some("hello\n")).await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "olleh\n");
+    }
+
+    #[tokio::test]
+    async fn test_rev_invalid_option() {
+        let result = run_rev(&["-Q"], Some("hello\n")).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid option -- 'Q'"));
     }
 }

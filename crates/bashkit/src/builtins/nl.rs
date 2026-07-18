@@ -95,12 +95,29 @@ fn parse_nl_args(args: &[String]) -> std::result::Result<(NlOptions, Vec<String>
                     opts.width, MAX_FORMAT_WIDTH
                 ));
             }
+        } else if p.is_flag() && p.current() != Some("--") {
+            // Reject unknown options instead of treating them as files.
+            return Err(invalid_option_msg("nl", p.current().unwrap_or_default()));
         } else if let Some(arg) = p.positional() {
             files.push(arg.to_string());
         }
     }
 
     Ok((opts, files))
+}
+
+/// Build an unrecognized-option message (no trailing newline; the caller
+/// appends it via `format!("{}\n", e)`). Mirrors `super::invalid_option`.
+fn invalid_option_msg(cmd: &str, arg: &str) -> String {
+    if let Some(long) = arg.strip_prefix("--") {
+        format!("{cmd}: unrecognized option '--{long}'")
+    } else {
+        let ch = arg
+            .strip_prefix('-')
+            .and_then(|s| s.chars().next())
+            .unwrap_or('-');
+        format!("{cmd}: invalid option -- '{ch}'")
+    }
 }
 
 fn format_number(num: usize, format: NumberFormat, width: usize) -> String {
@@ -428,5 +445,12 @@ mod tests {
         let result = run_nl(&["-ba", "-nrz", "-w4"], Some("x\ny\n")).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "0001\tx\n0002\ty\n");
+    }
+
+    #[tokio::test]
+    async fn test_nl_rejects_unknown_option() {
+        let result = run_nl(&["-Q"], Some("a\n")).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid option -- 'Q'"));
     }
 }

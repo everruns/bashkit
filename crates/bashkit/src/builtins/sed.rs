@@ -257,7 +257,7 @@ struct SedOptions {
 }
 
 impl SedOptions {
-    fn parse(args: &[String]) -> Result<Self> {
+    fn parse(args: &[String]) -> Result<std::result::Result<Self, ExecResult>> {
         let mut opts = SedOptions {
             commands: Vec::new(),
             files: Vec::new(),
@@ -288,8 +288,11 @@ impl SedOptions {
                     let (addr, negate, cmd) = parse_sed_command(&args[i], opts.extended_regex)?;
                     opts.commands.push((addr, negate, cmd));
                 }
-            } else if arg.starts_with('-') {
-                // Unknown option - ignore
+            } else if arg == "-" || arg == "--" {
+                // "-" is the stdin operand; "--" ends options. Neither is a flag.
+            } else if arg.starts_with('-') && arg.len() > 1 {
+                // Unknown option-shaped token → reject (sed exits 1).
+                return Ok(Err(super::invalid_option("sed", arg, 1)));
             } else if opts.commands.is_empty() {
                 // First non-option is the command (may contain multiple commands separated by ;)
                 for cmd_str in split_sed_commands(arg) {
@@ -310,7 +313,7 @@ impl SedOptions {
             return Err(Error::Execution("sed: no command given".to_string()));
         }
 
-        Ok(opts)
+        Ok(Ok(opts))
     }
 }
 
@@ -944,7 +947,10 @@ impl Builtin for Sed {
         ) {
             return Ok(r);
         }
-        let opts = SedOptions::parse(ctx.args)?;
+        let opts = match SedOptions::parse(ctx.args)? {
+            Ok(o) => o,
+            Err(e) => return Ok(e),
+        };
 
         // Determine input
         let inputs: Vec<(Option<String>, String)> = if opts.files.is_empty() {
@@ -1199,6 +1205,13 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.stdout, "goodbye world\ngoodbye again\n");
+    }
+
+    #[tokio::test]
+    async fn test_sed_invalid_option() {
+        let result = run_sed(&["-Q", "s/a/b/"], Some("a\n")).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid option -- 'Q'"));
     }
 
     #[tokio::test]

@@ -23,7 +23,8 @@ struct DiffOptions {
     brief: bool,
 }
 
-fn parse_diff_args(args: &[String]) -> (DiffOptions, Vec<String>) {
+#[allow(clippy::result_large_err)]
+fn parse_diff_args(args: &[String]) -> std::result::Result<(DiffOptions, Vec<String>), ExecResult> {
     let mut opts = DiffOptions {
         unified: false,
         brief: false,
@@ -34,12 +35,14 @@ fn parse_diff_args(args: &[String]) -> (DiffOptions, Vec<String>) {
         match arg.as_str() {
             "-u" => opts.unified = true,
             "-q" | "--brief" => opts.brief = true,
+            "--" => {} // end-of-options marker
             _ if !arg.starts_with('-') || arg == "-" => files.push(arg.clone()),
-            _ => {} // ignore unknown options
+            // Reject genuinely unknown option-shaped tokens (diff exits 2).
+            _ => return Err(super::invalid_option("diff", arg, 2)),
         }
     }
 
-    (opts, files)
+    Ok((opts, files))
 }
 
 /// Simple LCS-based diff algorithm
@@ -327,7 +330,10 @@ impl Builtin for Diff {
         ) {
             return Ok(r);
         }
-        let (opts, files) = parse_diff_args(ctx.args);
+        let (opts, files) = match parse_diff_args(ctx.args) {
+            Ok(v) => v,
+            Err(e) => return Ok(e),
+        };
 
         if files.len() < 2 {
             return Ok(ExecResult::err("diff: missing operand\n".to_string(), 1));
@@ -613,6 +619,18 @@ mod tests {
         assert!(!result.stdout.contains("---  "));
         assert!(!result.stdout.contains("+++"));
         assert!(!result.stdout.contains("@@"));
+    }
+
+    #[tokio::test]
+    async fn test_diff_invalid_option() {
+        let result = run_diff(
+            &["-Q", "/a.txt", "/b.txt"],
+            None,
+            &[("/a.txt", b"hello\n"), ("/b.txt", b"world\n")],
+        )
+        .await;
+        assert_eq!(result.exit_code, 2);
+        assert!(result.stderr.contains("invalid option -- 'Q'"));
     }
 
     #[tokio::test]

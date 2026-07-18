@@ -106,6 +106,8 @@ pass in CI); only divergences and boundaries are recorded here.
 | L-JQ-001 | jq | Alternative `//`: jaq errors on `.foo` applied to null instead of returning null (upstream jaq divergence) | 1 skipped spec test |
 | L-GREP-001 | grep | `--color`/`--colour`, `--line-buffered` accepted as no-ops | `l_grep_001_noop_flags` |
 | L-CURL-001 | curl | Spec-test coverage for methods/headers/payloads/auth/redirects not ported (needs `http_client` + allowlist in harness); behavior covered by integration tests | stance |
+| L-CURL-002 | curl/wget | Unknown options are ignored for compatibility, not rejected (real curl/wget error); deliberate leniency | `curl.rs` |
+| L-STR-001 | strings | Accepts dash-prefixed filenames (e.g. `-data.bin`), so only a lone unknown short option (`-Q`) is rejected as invalid; GNU rejects `-data.bin` too | `strings.rs` |
 
 Safety boundaries (enforced, not bugs): printf width/precision caps,
 output buffer caps, getline file-cache cap, shared regex size limit,

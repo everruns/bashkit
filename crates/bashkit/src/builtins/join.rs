@@ -61,6 +61,13 @@ impl Builtin for Join {
                 }
             } else if let Some(val) = p.flag_value_opt("-e") {
                 opts.empty = val.to_string();
+            } else if p.is_flag() && p.current() != Some("--") {
+                // Reject unknown options instead of treating them as files.
+                return Ok(super::invalid_option(
+                    "join",
+                    p.current().unwrap_or_default(),
+                    1,
+                ));
             } else if let Some(arg) = p.positional() {
                 files.push(arg);
             }
@@ -274,5 +281,13 @@ mod tests {
 
         assert_eq!(result.exit_code, 1);
         assert!(result.stderr.contains("invalid field number"));
+    }
+
+    #[tokio::test]
+    async fn test_join_rejects_unknown_option() {
+        let fs = Arc::new(InMemoryFs::new()) as Arc<dyn FileSystem>;
+        let result = run_join(&["-Q", "/f1", "/f2"], fs).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid option -- 'Q'"));
     }
 }

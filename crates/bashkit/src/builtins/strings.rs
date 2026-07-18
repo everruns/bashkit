@@ -75,6 +75,11 @@ fn parse_strings_args(
                     .parse()
                     .map_err(|_| format!("strings: invalid minimum string length: '{}'", rest))?;
                 p.advance();
+            } else if arg != "--" && arg.starts_with('-') && arg.chars().count() == 2 {
+                // Reject an unknown single short option (e.g. `-Q`) like GNU
+                // strings. Multi-char dash tokens stay filenames (`-data.bin`).
+                let ch = arg[1..].chars().next().unwrap_or('-');
+                return Err(format!("strings: invalid option -- '{ch}'"));
             } else if let Some(file) = p.positional() {
                 files.push(file.to_string());
             } else {
@@ -424,5 +429,12 @@ mod tests {
         let result = run_strings(&["-n", "abc"], Some("test")).await;
         assert_eq!(result.exit_code, 1);
         assert!(result.stderr.contains("invalid minimum string length"));
+    }
+
+    #[tokio::test]
+    async fn test_strings_rejects_unknown_option() {
+        let result = run_strings(&["-Q"], Some("test")).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid option -- 'Q'"));
     }
 }
