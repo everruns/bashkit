@@ -10,6 +10,15 @@ iframe contexts where those headers can't be set.
 For Node.js / Bun / Deno, use the native package
 [`@everruns/bashkit`](https://www.npmjs.com/package/@everruns/bashkit) instead.
 
+## Live demo
+
+A full interactive terminal built on this package —
+[**`examples/browser`**](https://github.com/everruns/bashkit/tree/main/examples/browser).
+It's a single `index.html` on Vite: `pnpm install && pnpm start`, no build step
+and no special headers.
+
+[![Bashkit browser terminal](https://github.com/everruns/bashkit/raw/main/examples/browser/demo.png)](https://github.com/everruns/bashkit/tree/main/examples/browser)
+
 ## Install
 
 ```bash
@@ -89,8 +98,8 @@ and `ls` — the same surface as the `Bash` VFS helpers below.
 ## Sync vs async
 
 - `executeSync(cmd)` — for plain bash and `jq`. Fast, returns an `ExecResult`
-  directly. Throws if the script suspends (async builtin, `sleep`, background
-  job).
+  directly. Throws only if the script suspends — an async custom builtin;
+  `sleep` and background jobs do not suspend on wasm (see Limitations).
 - `execute(cmd)` — returns `Promise<ExecResult>`. Required whenever an async
   custom builtin may run.
 
@@ -134,19 +143,22 @@ custom builtin (see above) so requests go through your app's own `fetch`.
 
 ## Limitations
 
-- **No wall-clock timeout.** `wasm32-unknown-unknown` has no reliable timer
-  driver, so `timeoutMs` is not enforced. Runaway scripts are instead bounded by
-  `maxCommands`, `maxLoopIterations`, and the parser fuel budget — a
-  `while true` loop throws a resource-limit error rather than hanging.
+- **No wall-clock time.** `wasm32-unknown-unknown` has no reliable timer driver,
+  so `sleep N` elapses instantly and neither the `timeout N` builtin nor
+  `timeoutMs` is enforced. Runaway scripts are instead bounded by `maxCommands`,
+  `maxLoopIterations`, and the parser fuel budget — a `while true` loop throws a
+  resource-limit error rather than hanging.
 - **`executeSync` can't run async builtins.** The single-threaded event loop
   can't settle a `Promise` without yielding; an async builtin under
   `executeSync` fails fast with a clear message. Use `execute()`.
 
 ## Examples
 
-Runnable browser demos live in [`example/`](./example) — an interactive terminal
-and an async-builtin/`ctx.fs` demo, both served by any static file server with no
-special headers. See [`example/README.md`](./example/README.md).
+- [**`examples/browser`**](https://github.com/everruns/bashkit/tree/main/examples/browser)
+  — the full interactive terminal shown above, on Vite (no build step, no headers).
+- Minimal, dependency-free demos in [`example/`](./example) — an interactive
+  terminal and an async-builtin/`ctx.fs` demo, served by any static file server.
+  See [`example/README.md`](./example/README.md).
 
 ## Development
 
