@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.14.2] - 2026-07-18
+
+### Fixed
+
+- **Browser wasm crashes on core shell features** — subshells (`bash -c`,
+  `sh -c`, `bash script.sh`, pipe-into-`bash`), `sleep`, `timeout`,
+  background jobs (`cmd &` / `wait`), and `awk` file redirects
+  (`print > "f"` / `getline < "f"`) hard-panicked on the single-threaded
+  `@everruns/bashkit-web` build, poisoning the whole module. These paths now
+  run inline on wasm instead of assuming a multi-threaded tokio runtime with a
+  timer driver; native behavior is unchanged
+  ([#2178](https://github.com/everruns/bashkit/pull/2178)).
+
+### What's Changed
+
+* fix(wasm): make bashkit run on single-threaded browser wasm ([#2178](https://github.com/everruns/bashkit/pull/2178)) by @chaliy
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.14.1...v0.14.2
+
 ## [0.14.1] - 2026-07-17
 
 ### Fixed
