@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the browser wasm bundle for @everruns/bashkit-web.
+# Build the browser wasm bundle for @everruns/bashkit-wasm.
 #
 # Produces an ES-module package under `pkg/` via `wasm-bindgen --target web`,
 # which needs NO bundler and NO cross-origin isolation headers to load.

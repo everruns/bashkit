@@ -1,14 +1,21 @@
-# @everruns/bashkit-web
+# @everruns/bashkit-wasm
 
-Sandboxed bash interpreter for the **browser**, compiled to WebAssembly.
+Sandboxed bash interpreter compiled to WebAssembly, for the **browser and any
+other JavaScript runtime** — edge/serverless workers (Cloudflare Workers, Vercel
+Edge, Deno Deploy), Node, Deno, and Bun.
 
 Unlike a WASI-threads build, this package is **single-threaded**: it needs no
 `SharedArrayBuffer` and **no cross-origin isolation** (`COOP`/`COEP`) headers.
 That makes it a drop-in for any web app — including embedded and third-party
-iframe contexts where those headers can't be set.
+iframe contexts where those headers can't be set — and for the constrained edge
+runtimes that can't use threads either.
 
-For Node.js / Bun / Deno, use the native package
-[`@everruns/bashkit`](https://www.npmjs.com/package/@everruns/bashkit) instead.
+It's a `wasm-bindgen` module, so it runs in any JS host but **not** a
+non-JS/WASI wasm runtime (`wasmtime`, `wasmer`). For a native Node.js / Bun /
+Deno addon (faster, no wasm), use
+[`@everruns/bashkit`](https://www.npmjs.com/package/@everruns/bashkit) instead;
+reach for this package when a native addon can't load — browsers and edge
+runtimes.
 
 ## Live demo
 
@@ -22,13 +29,13 @@ and no special headers.
 ## Install
 
 ```bash
-npm install @everruns/bashkit-web
+npm install @everruns/bashkit-wasm
 ```
 
 ## Quick start
 
 ```js
-import { initBashkit, Bash } from "@everruns/bashkit-web";
+import { initBashkit, Bash } from "@everruns/bashkit-wasm";
 
 // Load the .wasm once before constructing Bash.
 await initBashkit();
@@ -42,7 +49,7 @@ console.log(result.stdout); // HELLO, BROWSER!
 
 ```html
 <script type="module">
-  import { initBashkit, Bash } from "https://esm.sh/@everruns/bashkit-web";
+  import { initBashkit, Bash } from "https://esm.sh/@everruns/bashkit-wasm";
   await initBashkit();
   const bash = new Bash();
   document.body.textContent = bash.executeSync("seq 1 5 | paste -sd+ | bc").stdout;
@@ -165,9 +172,9 @@ custom builtin (see above) so requests go through your app's own `fetch`.
 ```bash
 # Build the bundle and run the headless integration tests:
 bash scripts/build.sh
-node --test __test__/bashkit-web.test.mjs
+node --test __test__/bashkit-wasm.test.mjs
 # or, from the repo root:
-just build-web
+just build-wasm
 ```
 
 ## License

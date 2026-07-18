@@ -1,5 +1,5 @@
 node_modules/
 dist/
 # Relaxed on purpose: no committed lockfile, so `pnpm install` always resolves
-# the latest published @everruns/bashkit-web (see specs/maintenance.md).
+# the latest published @everruns/bashkit-wasm (see specs/maintenance.md).
 pnpm-lock.yaml

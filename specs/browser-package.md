@@ -1,19 +1,31 @@
-# Browser Package (`@everruns/bashkit-web`)
+# WebAssembly Package (`@everruns/bashkit-wasm`)
+
+> Naming: the crate is `bashkit-wasm` and the npm package is
+> `@everruns/bashkit-wasm` — the `wasm` stem is deliberate. This is a
+> `wasm-bindgen` module that runs in **any JavaScript host**, not just the
+> browser (edge/serverless workers, Node, Deno, Bun), so the earlier `-web`
+> name under-described its reach. It does **not** run in a non-JS/WASI wasm
+> runtime (`wasmtime`, `wasmer`), which is why `-wasm` is scoped as "JS-host
+> wasm", not "any wasm runtime". The spec filename stays `browser-package.md`
+> for continuity; the browser is still the primary target.
 
 ## Status
 
 Implemented (reduced feature set). Local build + headless smoke test green.
-npm publish wired via `publish-web.yml`.
+npm publish wired via `publish-wasm.yml`.
 
 ## Abstract
 
-Bashkit ships a slim, **single-threaded** WebAssembly package for the browser,
-built with `wasm-bindgen` for `wasm32-unknown-unknown`. Unlike the WASI-threads
-example (`examples/browser`, napi + `wasm32-wasip1-threads`), it needs **no
+Bashkit ships a slim, **single-threaded** WebAssembly package built with
+`wasm-bindgen` for `wasm32-unknown-unknown`. The browser is the primary target,
+but because it's a plain wasm-bindgen module it also runs in other JavaScript
+runtimes — edge/serverless workers (Cloudflare Workers, Vercel Edge, Deno
+Deploy), Node, Deno, and Bun. Unlike the WASI-threads example
+(`examples/browser`, napi + `wasm32-wasip1-threads`), it needs **no
 `SharedArrayBuffer` and no cross-origin isolation** (`COOP`/`COEP`) headers, so
 it drops into any web app — including embedded and third-party iframe contexts
-where those headers cannot be set. This is the distribution answer to issue
-\#2172.
+where those headers cannot be set — and into the constrained edge runtimes that
+can't use threads either. This is the distribution answer to issue \#2172.
 
 ## Why a separate package (not the napi `bashkit-js`)
 
@@ -25,9 +37,10 @@ The napi `@everruns/bashkit` package is Node/Bun/Deno-first. Its browser story i
 - was never actually published (the wasm matrix entry in `publish-js.yml` is
   disabled because the native binding pulls tokio `full` features).
 
-`@everruns/bashkit-web` is a distinct, browser-only artifact with a distinct
-consumer contract. Keeping it separate avoids dragging the five native `.node`
-binaries and the threads/headers requirement into browser bundles.
+`@everruns/bashkit-wasm` is a distinct, pure-wasm artifact with a distinct
+consumer contract (browsers plus any other JS runtime). Keeping it separate
+avoids dragging the five native `.node` binaries and the threads/headers
+requirement into browser and edge bundles.
 
 ## Feature surface
 
@@ -76,11 +89,11 @@ core already gates off under `cfg(target_family = "wasm")` (see
 - `js/index.js`, `js/index.d.ts` — hand-authored ESM wrapper + TS types. The
   wrapper resolves the `.wasm` relative to itself (`import.meta.url`), so it
   loads from a CDN, a bundler, or a plain `<script type="module">`.
-- `package.json` — the published `@everruns/bashkit-web` manifest (copied into
+- `package.json` — the published `@everruns/bashkit-wasm` manifest (copied into
   `pkg/` at build time).
 - `scripts/build.sh` — `cargo build` → `wasm-bindgen --target web` → optional
   `wasm-opt -Oz`, emitting `pkg/`.
-- `__test__/bashkit-web.test.mjs` — headless Node integration suite
+- `__test__/bashkit-wasm.test.mjs` — headless Node integration suite
   (`node --test`) that feeds the `.wasm` bytes to init (no fetch, no headers),
   proving the no-configuration contract and covering sync/async execution, the
   VFS, custom builtins, and `ctx.fs`.
@@ -92,7 +105,7 @@ core already gates off under `cfg(target_family = "wasm")` (see
 rustup target add wasm32-unknown-unknown
 cargo install wasm-bindgen-cli
 bash crates/bashkit-wasm/scripts/build.sh                          # -> pkg/
-node --test crates/bashkit-wasm/__test__/bashkit-web.test.mjs      # verify
+node --test crates/bashkit-wasm/__test__/bashkit-wasm.test.mjs      # verify
 ```
 
 `--target web` output is a bundler-agnostic ES module; the consumer calls
@@ -101,9 +114,9 @@ node --test crates/bashkit-wasm/__test__/bashkit-web.test.mjs      # verify
 ## Versioning & publish
 
 Version tracks the workspace `Cargo.toml` (currently synced by the release
-prepare step, same as the other packages). `publish-web.yml` triggers on release
+prepare step, same as the other packages). `publish-wasm.yml` triggers on release
 published, builds `pkg/`, runs the smoke test, and `npm publish`es
-`@everruns/bashkit-web` with provenance (`NPM_TOKEN`, `id-token: write`) — same
+`@everruns/bashkit-wasm` with provenance (`NPM_TOKEN`, `id-token: write`) — same
 pattern as `publish-js.yml`.
 
 ## Limitations (see `specs/limitations.md`)

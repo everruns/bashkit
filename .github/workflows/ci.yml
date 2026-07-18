@@ -69,7 +69,7 @@ jobs:
           RUSTFLAGS: --cfg getrandom_backend="wasm_js" -D warnings
 
   wasm-web:
-    # Build the browser package (@everruns/bashkit-web) and run its headless
+    # Build the browser package (@everruns/bashkit-wasm) and run its headless
     # integration tests, proving the single-threaded bundle loads with no
     # COOP/COEP headers and that sync + async execution both work. See
     # specs/browser-package.md. Keep wasm-bindgen-cli in lockstep with the
@@ -96,7 +96,7 @@ jobs:
         run: bash crates/bashkit-wasm/scripts/build.sh release
 
       - name: Integration tests (headless Node)
-        run: node --test crates/bashkit-wasm/__test__/bashkit-web.test.mjs
+        run: node --test crates/bashkit-wasm/__test__/bashkit-wasm.test.mjs
 
   audit:
     name: Audit

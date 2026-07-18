@@ -12,11 +12,11 @@ default:
 build:
     cargo build
 
-# Build the browser wasm package (@everruns/bashkit-web) and run its tests.
+# Build the browser wasm package (@everruns/bashkit-wasm) and run its tests.
 # Requires: rustup target add wasm32-unknown-unknown; cargo install wasm-bindgen-cli
-build-web:
+build-wasm:
     bash crates/bashkit-wasm/scripts/build.sh release
-    node --test crates/bashkit-wasm/__test__/bashkit-web.test.mjs
+    node --test crates/bashkit-wasm/__test__/bashkit-wasm.test.mjs
 
 # Run all tests (including fail-point tests)
 test:

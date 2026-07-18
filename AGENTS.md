@@ -51,7 +51,7 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 | http-transport | Pluggable HTTP transport: route curl/wget via host egress boundary |
 | performance-results | Benchmark/eval result locations and `/benches` site aggregation contract |
 | emscripten-wheels | Reduced-feature Pyodide/Emscripten Python wheel |
-| browser-package | Slim single-threaded browser wasm package (`@everruns/bashkit-web`), no COOP/COEP |
+| browser-package | Slim single-threaded wasm package (`@everruns/bashkit-wasm`) for browsers + JS runtimes, no COOP/COEP |
 
 ### Documentation
 

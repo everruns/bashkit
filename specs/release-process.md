@@ -66,7 +66,7 @@ silently failed.
    - Version sync: all manifests read the same `X.Y.Z`, and it is greater
      than the latest published version on every registry (`cargo search
      bashkit`, `pip index versions bashkit`, `npm view @everruns/bashkit
-     version`, `npm view @everruns/bashkit-web version`). A missing registry
+     version`, `npm view @everruns/bashkit-wasm version`). A missing registry
      entry is valid only for a package's first release.
    - On any failure, fix root cause and re-run before opening the PR — do
      **not** merge a release PR with a known-broken publish path.
@@ -74,7 +74,7 @@ silently failed.
 7. **Create PR** — same title, changelog excerpt + publish-readiness report in description.
 8. **Monitor post-merge publishing** — watch `release.yml` create the
    Release + tag, watch `publish.yml`, `publish-python.yml`, `publish-js.yml`,
-   `publish-web.yml`, and `cli-binaries.yml` to completion, run the
+   `publish-wasm.yml`, and `cli-binaries.yml` to completion, run the
    post-release verification commands, and only declare "shipped" when all
    six published artifacts (`bashkit` + `bashkit-cli` on crates.io, `bashkit`
    on PyPI, both npm packages, and Homebrew) report the new version. If one
@@ -84,7 +84,7 @@ silently failed.
 
 - On merge to main, `release.yml` detects the `chore(release): prepare vX.Y.Z` commit, extracts notes from CHANGELOG.md, creates the GitHub Release + tag.
 - On Release published, `publish.yml` / `publish-js.yml` /
-  `publish-web.yml` / `publish-python.yml` publish to crates.io, npm, PyPI;
+  `publish-wasm.yml` / `publish-python.yml` publish to crates.io, npm, PyPI;
   each includes a published-version verification step.
 
 ## Pre-Release Checklist
@@ -103,8 +103,8 @@ Confirm each target (workflow → check):
 - PyPI (`publish-python.yml`): `pip index versions bashkit`
 - npm Node (`publish-js.yml`): `npm view @everruns/bashkit version`;
   `npm dist-tags ls @everruns/bashkit` ("latest" points at it)
-- npm browser (`publish-web.yml`): `npm view @everruns/bashkit-web version`;
-  `npm dist-tags ls @everruns/bashkit-web` ("latest" points at it)
+- npm browser (`publish-wasm.yml`): `npm view @everruns/bashkit-wasm version`;
+  `npm dist-tags ls @everruns/bashkit-wasm` ("latest" points at it)
 - Homebrew (`cli-binaries.yml`): `everruns/homebrew-tap` formula bumped
 
 If a workflow fails: `gh run view <run-id> --log-failed`, identify root
@@ -127,7 +127,7 @@ Use the latest entries in `CHANGELOG.md` as the template. Rules:
 - `bashkit-cli` on crates.io (CLI tool)
 - `bashkit` on PyPI (pre-built wheels)
 - `@everruns/bashkit` on npm (native NAPI-RS bindings)
-- `@everruns/bashkit-web` on npm (single-threaded browser WebAssembly)
+- `@everruns/bashkit-wasm` on npm (single-threaded browser WebAssembly)
 
 ## Publishing Order
 
@@ -179,11 +179,11 @@ wasm32-wasip1-threads), tests on Node 20/22/24, publishes to npm. Secret:
 `--provenance`, same pattern as everruns/sdk. JS package version is synced
 from the workspace `Cargo.toml` by `build.rs` updating `package.json`.
 
-### publish-web.yml
+### publish-wasm.yml
 
 Dispatched by `release.yml` from the verified release tag. Builds the
 single-threaded `wasm32-unknown-unknown` browser bundle, runs the headless Node
-integration suite, and publishes `@everruns/bashkit-web` to npm with
+integration suite, and publishes `@everruns/bashkit-wasm` to npm with
 provenance. Uses the same `NPM_TOKEN` as `publish-js.yml`; the package version
 is synced manually from the workspace version during release preparation.
 
@@ -198,7 +198,7 @@ is synced manually from the workspace version during release preparation.
 ```bash
 cargo search bashkit; cargo search bashkit-cli
 npm view @everruns/bashkit version; npm dist-tags ls @everruns/bashkit
-npm view @everruns/bashkit-web version; npm dist-tags ls @everruns/bashkit-web
+npm view @everruns/bashkit-wasm version; npm dist-tags ls @everruns/bashkit-wasm
 pip index versions bashkit
 gh release view --repo everruns/bashkit
 ```
