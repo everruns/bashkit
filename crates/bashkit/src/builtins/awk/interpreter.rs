@@ -16,6 +16,10 @@ use crate::builtins::limits::{
 use crate::builtins::search_common::build_regex;
 use crate::fs::{FileSystem, normalize_path};
 use crate::limits::ExecutionLimits;
+// On wasm32 there is no OS thread to bridge the sync AWK evaluator to the async
+// VFS, so redirected reads/writes drive the VFS future inline with now_or_never.
+#[cfg(target_family = "wasm")]
+use futures_util::FutureExt;
 
 /// Flow control signal from action execution
 #[derive(Debug, PartialEq)]
@@ -36,6 +40,7 @@ pub(super) enum AwkFlow {
 // - AWK_MAX_GETLINE_FILE_BYTES / AWK_MAX_GETLINE_CACHE_BYTES (retained input bytes).
 
 /// One redirected VFS write, dispatched to the [`VfsWriter`] thread.
+#[cfg(not(target_family = "wasm"))]
 struct WriteJob {
     path: PathBuf,
     bytes: Vec<u8>,
@@ -52,11 +57,13 @@ struct WriteJob {
 /// `print > file` loop create thousands of threads/runtimes (DoS). Reusing one
 /// writer for the whole run keeps writes incremental (so VFS quotas are still
 /// enforced as they happen) at O(1) threads.
+#[cfg(not(target_family = "wasm"))]
 struct VfsWriter {
     tx: Option<std::sync::mpsc::Sender<WriteJob>>,
     handle: Option<std::thread::JoinHandle<()>>,
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl VfsWriter {
     fn new(fs: Arc<dyn FileSystem>) -> Self {
         let (tx, rx) = std::sync::mpsc::channel::<WriteJob>();
@@ -102,6 +109,7 @@ impl VfsWriter {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl Drop for VfsWriter {
     fn drop(&mut self) {
         // Drop the sender first so the writer loop's `rx.recv()` returns Err and
@@ -110,6 +118,42 @@ impl Drop for VfsWriter {
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
+    }
+}
+
+/// wasm32 has no OS threads (`std::thread::spawn` returns `Unsupported`), so the
+/// thread-hop writer above can't exist. The browser build only ever runs over
+/// the in-memory VFS, whose writes resolve in a single poll, so we drive the
+/// async VFS future to completion inline with `now_or_never` — same VFS, same
+/// quota accounting, no thread.
+#[cfg(target_family = "wasm")]
+struct VfsWriter {
+    fs: Arc<dyn FileSystem>,
+}
+
+#[cfg(target_family = "wasm")]
+impl VfsWriter {
+    fn new(fs: Arc<dyn FileSystem>) -> Self {
+        Self { fs }
+    }
+
+    /// Perform one write by polling the VFS future once. Returns the VFS result,
+    /// or `Err(())` if the write would suspend (an async-backed mount, which the
+    /// browser build does not use).
+    fn write(
+        &self,
+        path: PathBuf,
+        bytes: Vec<u8>,
+        append: bool,
+    ) -> Result<crate::error::Result<()>, ()> {
+        let fut = async {
+            if append {
+                self.fs.append_file(&path, &bytes).await
+            } else {
+                self.fs.write_file(&path, &bytes).await
+            }
+        };
+        fut.now_or_never().ok_or(())
     }
 }
 
@@ -199,7 +243,10 @@ impl AwkInterpreter {
         };
         let fs = fs.clone();
         let p = PathBuf::from(resolved);
-        // Spawn a thread with its own runtime to avoid blocking the current async runtime.
+
+        // Native: spawn a thread with its own runtime to bridge the sync AWK
+        // evaluator to the async VFS without blocking the outer runtime.
+        #[cfg(not(target_family = "wasm"))]
         let result = std::thread::spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -212,6 +259,24 @@ impl AwkInterpreter {
             runtime.block_on(fs.read_file(&p))
         })
         .join();
+
+        // wasm32: no threads. Drive the in-memory VFS reads inline (they resolve
+        // in one poll). The outer Ok mirrors a thread that didn't panic.
+        #[cfg(target_family = "wasm")]
+        let result: std::result::Result<crate::error::Result<Vec<u8>>, ()> = Ok((|| {
+            let meta = match fs.stat(&p).now_or_never() {
+                Some(m) => m?,
+                None => return Err(std::io::Error::other("awk getline: vfs read suspended").into()),
+            };
+            if meta.size > MAX_GETLINE_FILE_BYTES as u64 {
+                return Err(std::io::Error::other("awk getline input too large").into());
+            }
+            match fs.read_file(&p).now_or_never() {
+                Some(bytes) => bytes,
+                None => Err(std::io::Error::other("awk getline: vfs read suspended").into()),
+            }
+        })());
+
         match result {
             Ok(Ok(bytes)) => {
                 if bytes.len() > MAX_GETLINE_FILE_BYTES {

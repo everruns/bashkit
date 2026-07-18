@@ -47,11 +47,12 @@ the app's own `fetch` instead.
 browser's one event loop. Two entry points:
 
 - **`executeSync(cmd)`** drives `Bash::exec` with `now_or_never` — a single
-  poll. Correct for scripts that never suspend (plain bash + `jq`). If a script
-  suspends (async builtin, `sleep`, background job) it throws, directing the
-  caller to `execute()`. While a sync call is in flight an `AtomicBool` is set so
-  async custom builtins fail fast with a clear message instead of returning
-  `Pending` forever.
+  poll. Correct for scripts that never suspend (plain bash + `jq`; `sleep` and
+  background jobs do not suspend on wasm — see Limitations). If a script does
+  suspend (e.g. an async JS custom builtin) it throws, directing the caller to
+  `execute()`. While a sync call is in flight an `AtomicBool` is set so async
+  custom builtins fail fast with a clear message instead of returning `Pending`
+  forever.
 - **`execute(cmd)`** returns a `Promise<ExecResult>` via
   `wasm-bindgen-futures::future_to_promise`. This is the path that can `await`
   async JS custom builtins (e.g. a GraphQL binary issuing a `fetch`/Relay
@@ -107,9 +108,21 @@ pattern as `publish-js.yml`.
 
 ## Limitations (see `specs/limitations.md`)
 
-- No preemptive timeout: `wasm32-unknown-unknown` has no reliable timer driver,
-  so `timeoutMs` is not enforced. The parser fuel budget and `maxCommands` /
-  `maxLoopIterations` still bound runaway scripts.
+- No wall-clock time on `wasm32-unknown-unknown` (no timer driver). This is a
+  hard platform constraint, so time-based behaviour degrades rather than
+  enforces, and never blocks:
+  - `sleep N` elapses **instantly** (it cannot suspend for real time).
+  - the `timeout N cmd` builtin and the tool-level `timeoutMs` run the command
+    **without** wall-clock enforcement.
+  - Runaway work is still bounded by the parser fuel budget and `maxCommands` /
+    `maxLoopIterations`, which do not depend on a clock.
+- Single-threaded: no OS threads (`std::thread::spawn` is unsupported) and no
+  `tokio::spawn` reactor. Paths that hop to a thread or a background task on
+  native run **inline** on wasm instead — background jobs (`cmd &`) execute
+  synchronously (they already did for output ordering), and `awk` file
+  redirects (`print > f`, `getline < f`) drive the VFS future to completion with
+  `now_or_never` rather than a writer thread. Correct because the browser build
+  only ever runs over the in-memory VFS, which never suspends.
 - `executeSync` cannot await JS callbacks; use `execute()` for async builtins.
 - Custom-builtin `ctx` exposes `{ name, argv, stdin, env, cwd, fs }`, where `fs`
   is a live handle to the same VFS the script sees (mirrors the napi bindings).

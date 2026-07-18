@@ -4,13 +4,19 @@ use super::{ScriptedExecutionTrace, ScriptedTool, ToolDefExtension, extension::I
 use crate::Bash;
 use crate::tool::{
     Tool, ToolError, ToolExecution, ToolOutputChunk, ToolRequest, ToolResponse, ToolStatus,
-    VERSION, localized, timeout_response, tool_output_from_response, tool_request_from_value,
-    tool_request_schema, tool_response_schema,
+    VERSION, localized, tool_output_from_response, tool_request_from_value, tool_request_schema,
+    tool_response_schema,
 };
+// timeout_response + Duration are only used on the native timeout path; wasm32
+// runs without wall-clock enforcement (no timer driver), so they are gated out
+// there to keep the wasm build warning-clean (CI checks wasm with `-D warnings`).
+#[cfg(not(target_family = "wasm"))]
+use crate::tool::timeout_response;
 use crate::tool_def::usage_from_schema;
 use async_trait::async_trait;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
+#[cfg(not(target_family = "wasm"))]
 use std::time::Duration;
 
 // ============================================================================
@@ -155,6 +161,10 @@ impl ScriptedTool {
 
         // Keep ScriptedTool on the shared ToolRequest contract: per-call
         // timeouts must abort the whole orchestration, including callbacks.
+        // wasm32 has no timer driver (tokio::time::timeout panics), so there the
+        // orchestration runs without wall-clock enforcement; the timer path
+        // stays on native.
+        #[cfg(not(target_family = "wasm"))]
         let response = if let Some(ms) = timeout_ms {
             let duration = Duration::from_millis(ms);
             match tokio::time::timeout(duration, fut).await {
@@ -162,6 +172,11 @@ impl ScriptedTool {
                 Err(_) => timeout_response(duration),
             }
         } else {
+            fut.await
+        };
+        #[cfg(target_family = "wasm")]
+        let response = {
+            let _ = timeout_ms;
             fut.await
         };
 

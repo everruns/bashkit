@@ -960,7 +960,11 @@ impl BashTool {
             }
         };
 
-        if let Some(ms) = req.timeout_ms {
+        // wasm32-unknown-unknown has no timer driver, so tokio::time::timeout
+        // panics. Run without wall-clock enforcement there (fuel / maxCommands
+        // still bound the work); the timer path stays on native.
+        #[cfg(not(target_family = "wasm"))]
+        let out = if let Some(ms) = req.timeout_ms {
             let duration = Duration::from_millis(ms);
             match tokio::time::timeout(duration, fut).await {
                 Ok(response) => response,
@@ -968,7 +972,13 @@ impl BashTool {
             }
         } else {
             fut.await
-        }
+        };
+        #[cfg(target_family = "wasm")]
+        let out = {
+            let _ = req.timeout_ms;
+            fut.await
+        };
+        out
     }
 }
 
@@ -1057,7 +1067,9 @@ impl Tool for BashTool {
             }
         };
 
-        if let Some(ms) = req.timeout_ms {
+        // wasm32 has no timer driver; run without wall-clock enforcement there.
+        #[cfg(not(target_family = "wasm"))]
+        let out = if let Some(ms) = req.timeout_ms {
             let dur = Duration::from_millis(ms);
             match tokio::time::timeout(dur, fut).await {
                 Ok(resp) => resp,
@@ -1065,7 +1077,13 @@ impl Tool for BashTool {
             }
         } else {
             fut.await
-        }
+        };
+        #[cfg(target_family = "wasm")]
+        let out = {
+            let _ = req.timeout_ms;
+            fut.await
+        };
+        out
     }
 
     async fn execute_with_status(
@@ -1127,7 +1145,9 @@ impl Tool for BashTool {
             response
         };
 
-        if let Some(ms) = timeout_ms {
+        // wasm32 has no timer driver; run without wall-clock enforcement there.
+        #[cfg(not(target_family = "wasm"))]
+        let out = if let Some(ms) = timeout_ms {
             let dur = Duration::from_millis(ms);
             match tokio::time::timeout(dur, fut).await {
                 Ok(resp) => resp,
@@ -1135,7 +1155,13 @@ impl Tool for BashTool {
             }
         } else {
             fut.await
-        }
+        };
+        #[cfg(target_family = "wasm")]
+        let out = {
+            let _ = timeout_ms;
+            fut.await
+        };
+        out
     }
 }
 
@@ -1155,6 +1181,11 @@ fn error_kind(e: &Error) -> String {
 }
 
 /// Build a ToolResponse for a timed-out execution (exit code 124, like bash `timeout`).
+///
+/// Only the native timeout paths use this; wasm32 has no timer driver and runs
+/// without wall-clock enforcement, so it is gated out there to keep the wasm
+/// build warning-clean (CI checks wasm with `-D warnings`).
+#[cfg(not(target_family = "wasm"))]
 pub(crate) fn timeout_response(dur: Duration) -> ToolResponse {
     ToolResponse {
         stdout: String::new(),
