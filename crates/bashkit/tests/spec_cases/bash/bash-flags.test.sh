@@ -99,6 +99,29 @@ echo "exit:$?"
 exit:2
 ### end
 
+### bash_unknown_long_option
+# an unknown/typo'd long option errors like real bash (exit 2)
+bash --verison 2>/dev/null
+echo "exit:$?"
+### expect
+exit:2
+### end
+
+### bash_unknown_short_option
+# an unknown short option errors (exit 2)
+bash -q 2>/dev/null
+echo "exit:$?"
+### expect
+exit:2
+### end
+
+### bash_accepted_long_option_runs
+# a long option real bash accepts still runs the command
+bash --norc -c 'echo ran'
+### expect
+ran
+### end
+
 ### bash_o_noglob
 # bash -o noglob disables glob expansion in subshell
 mkdir -p /tmp/bng_test
