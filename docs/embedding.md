@@ -13,6 +13,9 @@ Bashkit ships three bindings with the same core semantics:
 - **TypeScript / JavaScript** — a NAPI runtime for Node, Bun, and Deno
   (`npm i @everruns/bashkit`)
 
+For browser, edge, and Pyodide targets — and a side-by-side comparison of every
+package — see [Targets & bindings](targets.md).
+
 ## Rust
 
 ```bash
@@ -145,6 +148,7 @@ console.log(bash.executeSync("echo $X").stdout);
 
 ## Next steps
 
+- [Targets & bindings](targets.md) — pick a package for browser, edge, or Pyodide targets.
 - [Custom builtins](custom_builtins.md) — add your own Rust commands to the shell.
 - [Snapshotting](snapshotting.md) — serialize and restore interpreter state for
   checkpoint/resume flows.
