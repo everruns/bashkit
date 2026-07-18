@@ -37,12 +37,13 @@ wasm-bindgen "$WASM_IN" \
   --omit-default-module-path
 
 if command -v wasm-opt >/dev/null 2>&1; then
-  # Rust emits memory.copy and saturating float conversions; explicitly enable
-  # those stable WebAssembly features without accepting unrelated proposals.
+  # Rust emits memory.copy, saturating float conversions, and sign extension;
+  # enable those stable features without accepting unrelated proposals.
   echo "==> wasm-opt -Oz (Rust WebAssembly features enabled)"
   wasm-opt -Oz \
     --enable-bulk-memory \
     --enable-nontrapping-float-to-int \
+    --enable-sign-ext \
     "$OUT_DIR/bashkit_wasm_bg.wasm" -o "$OUT_DIR/bashkit_wasm_bg.wasm"
 else
   echo "==> wasm-opt not found; skipping size optimization"

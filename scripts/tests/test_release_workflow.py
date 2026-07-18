@@ -43,7 +43,13 @@ class ReleaseWorkflowTests(unittest.TestCase):
         build_script = (ROOT / "crates/bashkit-wasm/scripts/build.sh").read_text()
         ci_workflow = (ROOT / ".github/workflows/ci.yml").read_text()
 
-        self.assertIn("--enable-bulk-memory", build_script)
+        for stable_feature in (
+            "--enable-bulk-memory",
+            "--enable-nontrapping-float-to-int",
+            "--enable-sign-ext",
+        ):
+            self.assertIn(stable_feature, build_script)
+        self.assertNotIn("--all-features", build_script)
         self.assertIn("apt-get install -y binaryen", ci_workflow)
 
 
