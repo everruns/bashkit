@@ -241,7 +241,9 @@ test("openai: handler respects pre-aborted signal", async (t) => {
 test("openai: aborted handler leaves adapter bash reusable", async (t) => {
   const adapter = openAiBashTool();
   const controller = new AbortController();
-  setTimeout(() => controller.abort(), 10);
+  // Abort after handler setup yields to its execution promise. A timer races
+  // the finite script on fast release runners and can fire after completion.
+  queueMicrotask(() => controller.abort());
 
   const cancelled = await adapter.handler(
     {

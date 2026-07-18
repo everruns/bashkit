@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.14.1] - 2026-07-17
+
+### Fixed
+
+- **Browser package publishing** — enable the stable WebAssembly bulk-memory
+  and nontrapping float-to-int features during Binaryen optimization, and run
+  that optimized path in pull-request CI. This fixes publication of the new
+  `@everruns/bashkit-web` package after the v0.14.0 release build failed.
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.14.0...v0.14.1
+
 ## [0.14.0] - 2026-07-17
 
 ### Highlights
