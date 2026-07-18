@@ -39,6 +39,13 @@ class ReleaseWorkflowTests(unittest.TestCase):
             with self.subTest(package_manifest=package_manifest):
                 self.assertIn(f'"version": "{workspace_version}"', manifest)
 
+    def test_web_ci_exercises_release_wasm_optimization(self) -> None:
+        build_script = (ROOT / "crates/bashkit-wasm/scripts/build.sh").read_text()
+        ci_workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+
+        self.assertIn("--enable-bulk-memory", build_script)
+        self.assertIn("apt-get install -y binaryen", ci_workflow)
+
 
 if __name__ == "__main__":
     unittest.main()
