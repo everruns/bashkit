@@ -433,6 +433,12 @@ impl Builtin for Date {
             } else if let Some(arg) = p.current().filter(|s| s.starts_with('+')) {
                 format_arg = Some(arg.to_string());
                 p.advance();
+            } else if let Some(arg) = p
+                .current()
+                .filter(|s| s.starts_with('-') && s.len() > 1 && *s != "--")
+            {
+                // Unknown option-shaped token → reject (date exits 1).
+                return Ok(super::invalid_option("date", arg, 1));
             } else {
                 p.advance();
             }
@@ -575,6 +581,13 @@ mod tests {
         // Just check it outputs something with a newline
         assert!(result.stdout.ends_with('\n'));
         assert!(result.stdout.len() > 10);
+    }
+
+    #[tokio::test]
+    async fn test_date_invalid_option() {
+        let result = run_date(&["-Q"]).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid option -- 'Q'"));
     }
 
     /// TM-INF-018: fixed_epoch wins over real clock.

@@ -70,23 +70,35 @@ struct UnzipOptions {
     overwrite: bool,
 }
 
-fn parse_zip_args(args: &[String]) -> std::result::Result<ZipOptions, String> {
+#[allow(clippy::result_large_err)]
+fn parse_zip_args(args: &[String]) -> std::result::Result<ZipOptions, ExecResult> {
     let mut recursive = false;
     let mut positional = Vec::new();
 
     for arg in args {
         match arg.as_str() {
             "-r" => recursive = true,
-            _ if !arg.starts_with('-') => positional.push(arg.clone()),
-            _ => {} // ignore unknown
+            // Preserve prior behavior for `-`/`--` (no-op), reject other
+            // option-shaped tokens like real Info-ZIP (bad command line -> 16).
+            "-" | "--" => {}
+            s if s.starts_with('-') && s.len() > 1 => {
+                return Err(super::invalid_option("zip", s, 16));
+            }
+            _ => positional.push(arg.clone()),
         }
     }
 
     if positional.is_empty() {
-        return Err("zip: missing archive name".to_string());
+        return Err(ExecResult::err(
+            "zip: missing archive name\n".to_string(),
+            1,
+        ));
     }
     if positional.len() < 2 {
-        return Err("zip: missing files to add".to_string());
+        return Err(ExecResult::err(
+            "zip: missing files to add\n".to_string(),
+            1,
+        ));
     }
 
     let archive = positional.remove(0);
@@ -97,7 +109,8 @@ fn parse_zip_args(args: &[String]) -> std::result::Result<ZipOptions, String> {
     })
 }
 
-fn parse_unzip_args(args: &[String]) -> std::result::Result<UnzipOptions, String> {
+#[allow(clippy::result_large_err)]
+fn parse_unzip_args(args: &[String]) -> std::result::Result<UnzipOptions, ExecResult> {
     let mut list_only = false;
     let mut extract_dir = None;
     let mut overwrite = false;
@@ -109,17 +122,30 @@ fn parse_unzip_args(args: &[String]) -> std::result::Result<UnzipOptions, String
             list_only = true;
         } else if p.flag("-o") {
             overwrite = true;
-        } else if let Some(val) = p.flag_value("-d", "unzip")? {
+        } else if let Some(val) = p
+            .flag_value("-d", "unzip")
+            .map_err(|e| ExecResult::err(format!("{e}\n"), 1))?
+        {
             extract_dir = Some(val.to_string());
+        } else if p.is_flag() && p.current() != Some("--") {
+            // Reject unknown options like real unzip (bad command line -> 10).
+            return Err(super::invalid_option(
+                "unzip",
+                p.current().unwrap_or_default(),
+                10,
+            ));
         } else if let Some(arg) = p.positional() {
             positional.push(arg.to_string());
         } else {
-            p.advance(); // ignore unknown
+            p.advance();
         }
     }
 
     if positional.is_empty() {
-        return Err("unzip: missing archive name".to_string());
+        return Err(ExecResult::err(
+            "unzip: missing archive name\n".to_string(),
+            1,
+        ));
     }
 
     Ok(UnzipOptions {
@@ -257,7 +283,7 @@ impl Builtin for Zip {
         }
         let opts = match parse_zip_args(ctx.args) {
             Ok(o) => o,
-            Err(e) => return Ok(ExecResult::err(format!("{}\n", e), 1)),
+            Err(e) => return Ok(e),
         };
 
         let mut entries = Vec::new();
@@ -322,7 +348,7 @@ impl Builtin for Unzip {
         }
         let opts = match parse_unzip_args(ctx.args) {
             Ok(o) => o,
-            Err(e) => return Ok(ExecResult::err(format!("{}\n", e), 1)),
+            Err(e) => return Ok(e),
         };
 
         let archive_path = resolve_path(ctx.cwd, &opts.archive);
@@ -551,6 +577,13 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_zip_unknown_option() {
+        let (result, _fs) = run_zip(&["-Q", "/archive.zip", "/a.txt"], &[]).await;
+        assert_eq!(result.exit_code, 16);
+        assert!(result.stderr.contains("invalid option -- 'Q'"));
+    }
+
+    #[tokio::test]
     async fn test_zip_file_not_found() {
         let (result, _fs) = run_zip(&["/archive.zip", "/nonexistent.txt"], &[]).await;
         assert_eq!(result.exit_code, 1);
@@ -721,6 +754,14 @@ mod tests {
         let result = Unzip.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 1);
         assert!(result.stderr.contains("missing archive"));
+    }
+
+    #[tokio::test]
+    async fn test_unzip_unknown_option() {
+        let fs = Arc::new(InMemoryFs::new());
+        let result = run_unzip(&["-Q", "/archive.zip"], fs).await;
+        assert_eq!(result.exit_code, 10);
+        assert!(result.stderr.contains("invalid option -- 'Q'"));
     }
 
     #[tokio::test]

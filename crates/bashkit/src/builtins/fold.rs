@@ -49,6 +49,10 @@ impl Builtin for Fold {
                 s if s.starts_with("-w") && s.len() > 2 => {
                     width = s[2..].parse().unwrap_or(80);
                 }
+                // Reject unknown options; `-`/`--` and operands fall through.
+                s if s.starts_with('-') && s.len() > 1 && s != "--" => {
+                    return Ok(super::invalid_option("fold", s, 1));
+                }
                 _ => files.push(&ctx.args[i]),
             }
             i += 1;
@@ -207,6 +211,13 @@ mod tests {
         let result = run_fold(&["-w", "80"], Some("short line\n")).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "short line\n");
+    }
+
+    #[tokio::test]
+    async fn test_fold_unknown_option() {
+        let result = run_fold(&["-Q"], Some("hello")).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid option -- 'Q'"));
     }
 
     #[tokio::test]

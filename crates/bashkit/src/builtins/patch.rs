@@ -24,7 +24,8 @@ struct PatchOptions {
     target_file: Option<String>,
 }
 
-fn parse_patch_args(args: &[String]) -> PatchOptions {
+#[allow(clippy::result_large_err)]
+fn parse_patch_args(args: &[String]) -> std::result::Result<PatchOptions, ExecResult> {
     let mut opts = PatchOptions {
         strip: 0,
         dry_run: false,
@@ -40,6 +41,12 @@ fn parse_patch_args(args: &[String]) -> PatchOptions {
             opts.dry_run = true;
         } else if p.flag_any(&["-R", "--reverse"]) {
             opts.reverse = true;
+        } else if let Some(arg) = p
+            .current()
+            .filter(|a| a.starts_with('-') && a.len() > 1 && *a != "--")
+        {
+            // Unknown option-shaped token → reject (patch exits 2).
+            return Err(super::invalid_option("patch", arg, 2));
         } else if let Some(arg) = p.positional() {
             opts.target_file = Some(arg.to_string());
         } else {
@@ -47,7 +54,7 @@ fn parse_patch_args(args: &[String]) -> PatchOptions {
         }
     }
 
-    opts
+    Ok(opts)
 }
 
 /// A single hunk from a unified diff
@@ -296,7 +303,10 @@ impl Builtin for Patch {
         ) {
             return Ok(r);
         }
-        let opts = parse_patch_args(ctx.args);
+        let opts = match parse_patch_args(ctx.args) {
+            Ok(o) => o,
+            Err(e) => return Ok(e),
+        };
 
         let input = match ctx.stdin {
             Some(s) if !s.is_empty() => s.to_string(),
@@ -546,6 +556,14 @@ mod tests {
         assert_eq!(strip_path("a/b/c.txt", 1), "b/c.txt");
         assert_eq!(strip_path("a/b/c.txt", 2), "c.txt");
         assert_eq!(strip_path("a/b/c.txt", 5), "c.txt");
+    }
+
+    #[tokio::test]
+    async fn test_patch_invalid_option() {
+        let diff = "--- a/test.txt\n+++ b/test.txt\n@@ -1,1 +1,1 @@\n-old\n+new\n";
+        let (result, _fs) = run_patch(&["-Q"], diff, &[("/test.txt", b"old\n")]).await;
+        assert_eq!(result.exit_code, 2);
+        assert!(result.stderr.contains("invalid option -- 'Q'"));
     }
 
     #[tokio::test]

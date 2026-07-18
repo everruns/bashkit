@@ -130,15 +130,37 @@ impl Builtin for Uname {
         let mut show_machine = false;
         let mut show_os = false;
 
+        // Reject unknown options like GNU uname; short flags bundle per-char.
         for arg in ctx.args {
             match arg.as_str() {
                 "-a" | "--all" => show_all = true,
-                "-s" | "--kernel-name" => show_kernel = true,
-                "-n" | "--nodename" => show_nodename = true,
-                "-r" | "--kernel-release" => show_release = true,
-                "-v" | "--kernel-version" => show_version = true,
-                "-m" | "--machine" => show_machine = true,
-                "-o" | "--operating-system" => show_os = true,
+                "--kernel-name" => show_kernel = true,
+                "--nodename" => show_nodename = true,
+                "--kernel-release" => show_release = true,
+                "--kernel-version" => show_version = true,
+                "--machine" => show_machine = true,
+                "--operating-system" => show_os = true,
+                "--processor" | "--hardware-platform" => {}
+                _ if arg.starts_with("--") => {
+                    return Ok(super::invalid_option("uname", arg, 1));
+                }
+                _ if arg.starts_with('-') && arg.len() > 1 => {
+                    for c in arg[1..].chars() {
+                        match c {
+                            'a' => show_all = true,
+                            's' => show_kernel = true,
+                            'n' => show_nodename = true,
+                            'r' => show_release = true,
+                            'v' => show_version = true,
+                            'm' => show_machine = true,
+                            'o' => show_os = true,
+                            'p' | 'i' => {}
+                            _ => {
+                                return Ok(super::invalid_option("uname", &format!("-{c}"), 1));
+                            }
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -257,6 +279,24 @@ impl Builtin for Id {
             Some("id (bashkit) 0.1"),
         ) {
             return Ok(r);
+        }
+
+        // Reject unknown options like GNU id; -u/-g/-n (and -un/-gn combos)
+        // are honored below, other real-id flags are accepted and ignored.
+        for arg in ctx.args {
+            if let Some(long) = arg.strip_prefix("--") {
+                match long.split('=').next().unwrap_or("") {
+                    "user" | "group" | "groups" | "name" | "real" | "zero" => {}
+                    _ => return Ok(super::invalid_option("id", arg, 1)),
+                }
+            } else if arg.starts_with('-') && arg.len() > 1 {
+                for c in arg[1..].chars() {
+                    match c {
+                        'u' | 'g' | 'G' | 'n' | 'r' | 'a' | 'z' => {}
+                        _ => return Ok(super::invalid_option("id", &format!("-{c}"), 1)),
+                    }
+                }
+            }
         }
 
         // Check for specific flags
@@ -411,5 +451,19 @@ mod tests {
     async fn test_id_group() {
         let result = run_builtin(&Id::new(), &["-g"]).await;
         assert_eq!(result.stdout, "1000\n");
+    }
+
+    #[tokio::test]
+    async fn test_uname_rejects_unknown_option() {
+        let result = run_builtin(&Uname::new(), &["-Q"]).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid option -- 'Q'"));
+    }
+
+    #[tokio::test]
+    async fn test_id_rejects_unknown_option() {
+        let result = run_builtin(&Id::new(), &["-Q"]).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid option -- 'Q'"));
     }
 }

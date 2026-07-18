@@ -30,7 +30,8 @@ struct WcFlags {
 }
 
 impl WcFlags {
-    fn parse(args: &[String]) -> Self {
+    #[allow(clippy::result_large_err)]
+    fn parse(args: &[String]) -> std::result::Result<Self, ExecResult> {
         let mut lines = false;
         let mut words = false;
         let mut bytes = false;
@@ -42,12 +43,18 @@ impl WcFlags {
                 continue;
             }
             match arg.as_str() {
+                // Operand-shaped: "-" is stdin, "--" ends options; neither is a flag.
+                "-" | "--" => {}
                 "--lines" => lines = true,
                 "--words" => words = true,
                 "--bytes" => bytes = true,
                 "--chars" => chars = true,
                 "--max-line-length" => max_line_length = true,
-                _ if arg.starts_with('-') && !arg.starts_with("--") => {
+                // Unknown long option → reject (wc exits 1).
+                _ if arg.starts_with("--") => {
+                    return Err(super::invalid_option("wc", arg, 1));
+                }
+                _ => {
                     for ch in arg[1..].chars() {
                         match ch {
                             'l' => lines = true,
@@ -55,11 +62,10 @@ impl WcFlags {
                             'c' => bytes = true,
                             'm' => chars = true,
                             'L' => max_line_length = true,
-                            _ => {}
+                            _ => return Err(super::invalid_option("wc", &format!("-{ch}"), 1)),
                         }
                     }
                 }
-                _ => {}
             }
         }
 
@@ -70,13 +76,13 @@ impl WcFlags {
             bytes = true;
         }
 
-        Self {
+        Ok(Self {
             lines,
             words,
             bytes,
             chars,
             max_line_length,
-        }
+        })
     }
 
     /// Number of active count fields
@@ -104,7 +110,10 @@ impl Builtin for Wc {
         ) {
             return Ok(r);
         }
-        let flags = WcFlags::parse(ctx.args);
+        let flags = match WcFlags::parse(ctx.args) {
+            Ok(f) => f,
+            Err(e) => return Ok(e),
+        };
 
         let files: Vec<_> = ctx
             .args
@@ -339,6 +348,13 @@ mod tests {
         let result = run_wc(&["-L"], Some("short\nlongerline\n")).await;
         assert_eq!(result.exit_code, 0);
         assert!(result.stdout.trim().contains("10"));
+    }
+
+    #[tokio::test]
+    async fn test_wc_invalid_option() {
+        let result = run_wc(&["-Q"], Some("hello")).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid option -- 'Q'"));
     }
 
     #[tokio::test]

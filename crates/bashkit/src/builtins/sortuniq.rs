@@ -378,6 +378,13 @@ impl Builtin for Sort {
                             _ => {}
                         }
                     }
+                } else if p.is_flag() && p.current() != Some("--") {
+                    // Reject unknown options instead of treating them as files.
+                    return Ok(super::invalid_option(
+                        "sort",
+                        p.current().unwrap_or_default(),
+                        2,
+                    ));
                 } else if let Some(arg) = p.positional() {
                     files.push(arg.to_string());
                 }
@@ -674,6 +681,13 @@ impl Builtin for Uniq {
                             _ => {}
                         }
                     }
+                } else if p.is_flag() && p.current() != Some("--") {
+                    // Reject unknown options instead of treating them as files.
+                    return Ok(super::invalid_option(
+                        "uniq",
+                        p.current().unwrap_or_default(),
+                        1,
+                    ));
                 } else if let Some(arg) = p.positional() {
                     files.push(arg.to_string());
                 }
@@ -1005,5 +1019,19 @@ mod tests {
         assert_eq!(month_ordinal("feb"), 2);
         assert_eq!(month_ordinal("Dec"), 12);
         assert_eq!(month_ordinal("xyz"), 0);
+    }
+
+    #[tokio::test]
+    async fn test_sort_rejects_unknown_option() {
+        let result = run_sort(&["-Q"], Some("a\n")).await;
+        assert_eq!(result.exit_code, 2);
+        assert!(result.stderr.contains("invalid option -- 'Q'"));
+    }
+
+    #[tokio::test]
+    async fn test_uniq_rejects_unknown_option() {
+        let result = run_uniq(&["-Q"], Some("a\n")).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid option -- 'Q'"));
     }
 }

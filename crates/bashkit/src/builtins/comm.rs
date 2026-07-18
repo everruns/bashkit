@@ -26,7 +26,8 @@ struct CommOptions {
     suppress_3: bool,
 }
 
-fn parse_comm_args(args: &[String]) -> (CommOptions, Vec<String>) {
+#[allow(clippy::result_large_err)]
+fn parse_comm_args(args: &[String]) -> std::result::Result<(CommOptions, Vec<String>), ExecResult> {
     let mut opts = CommOptions {
         suppress_1: false,
         suppress_2: false,
@@ -44,12 +45,15 @@ fn parse_comm_args(args: &[String]) -> (CommOptions, Vec<String>) {
                     _ => {}
                 }
             }
+        } else if arg.starts_with('-') && arg.len() > 1 && arg != "--" {
+            // Option-shaped token that isn't a -1/-2/-3 combination → reject.
+            return Err(super::invalid_option("comm", arg, 1));
         } else {
             files.push(arg.clone());
         }
     }
 
-    (opts, files)
+    Ok((opts, files))
 }
 
 #[async_trait]
@@ -62,7 +66,10 @@ impl Builtin for Comm {
         ) {
             return Ok(r);
         }
-        let (opts, files) = parse_comm_args(ctx.args);
+        let (opts, files) = match parse_comm_args(ctx.args) {
+            Ok(v) => v,
+            Err(e) => return Ok(e),
+        };
 
         if files.len() < 2 {
             return Ok(Self::err("missing operand", 1));
@@ -342,6 +349,18 @@ mod tests {
         let result = run_comm(&["/a.txt"], None, &[("/a.txt", b"a\n")]).await;
         assert_eq!(result.exit_code, 1);
         assert!(result.stderr.contains("missing operand"));
+    }
+
+    #[tokio::test]
+    async fn test_comm_invalid_option() {
+        let result = run_comm(
+            &["-Q", "/a.txt", "/b.txt"],
+            None,
+            &[("/a.txt", b"a\n"), ("/b.txt", b"b\n")],
+        )
+        .await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid option -- 'Q'"));
     }
 
     #[tokio::test]

@@ -39,6 +39,11 @@ impl Builtin for Envsubst {
                         .collect();
                     restrict_vars = Some(vars);
                 }
+                "--help" | "--version" => {}
+                s if s.starts_with('-') && s.len() > 1 && s != "--" => {
+                    // Reject unknown options like GNU envsubst.
+                    return Ok(super::invalid_option("envsubst", s, 1));
+                }
                 _ => {}
             }
         }
@@ -256,5 +261,13 @@ mod tests {
         let result = run_envsubst(&[], Some("no variables here"), env).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "no variables here");
+    }
+
+    #[tokio::test]
+    async fn test_rejects_unknown_option() {
+        let env = HashMap::new();
+        let result = run_envsubst(&["-Q"], Some("x"), env).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid option -- 'Q'"));
     }
 }

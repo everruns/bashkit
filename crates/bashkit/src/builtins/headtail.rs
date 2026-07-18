@@ -29,7 +29,10 @@ impl Builtin for Head {
         ) {
             return Ok(r);
         }
-        let (count, byte_mode, files) = parse_head_args(ctx.args, DEFAULT_LINES)?;
+        let (count, byte_mode, files) = match parse_head_args(ctx.args, DEFAULT_LINES) {
+            Ok(v) => v,
+            Err(e) => return Ok(e),
+        };
 
         let mut output = String::new();
 
@@ -105,7 +108,10 @@ impl Builtin for Tail {
         ) {
             return Ok(r);
         }
-        let (num_lines, from_start, files) = parse_tail_args(ctx.args, DEFAULT_LINES)?;
+        let (num_lines, from_start, files) = match parse_tail_args(ctx.args, DEFAULT_LINES) {
+            Ok(v) => v,
+            Err(e) => return Ok(e),
+        };
 
         let mut output = String::new();
 
@@ -154,7 +160,11 @@ impl Builtin for Tail {
 
 /// Parse arguments for head command, including -c (byte count) mode.
 /// Returns (count, byte_mode, file_list)
-fn parse_head_args(args: &[String], default: usize) -> Result<(usize, bool, Vec<String>)> {
+#[allow(clippy::result_large_err)]
+fn parse_head_args(
+    args: &[String],
+    default: usize,
+) -> std::result::Result<(usize, bool, Vec<String>), ExecResult> {
     let mut count = default;
     let mut byte_mode = false;
     let mut files = Vec::new();
@@ -171,9 +181,16 @@ fn parse_head_args(args: &[String], default: usize) -> Result<(usize, bool, Vec<
             if let Some(num_str) = arg.strip_prefix('-')
                 && let Ok(n) = num_str.parse::<usize>()
             {
+                // Obsolete `-NUM` line-count form.
                 count = n;
+                p.advance();
+            } else if arg == "-" || arg == "--" {
+                // "-" is the stdin operand; "--" ends options.
+                p.advance();
+            } else {
+                // Unknown option-shaped token (e.g. -Q) → reject like GNU head.
+                return Err(super::invalid_option("head", arg, 1));
             }
-            p.advance();
         } else if let Some(arg) = p.positional() {
             files.push(arg.to_string());
         }
@@ -239,7 +256,11 @@ fn looks_like_latin1_binary(text: &str) -> bool {
 
 /// Parse arguments for tail command, including +N "from start" syntax.
 /// Returns (num_lines, from_start, file_list)
-fn parse_tail_args(args: &[String], default: usize) -> Result<(usize, bool, Vec<String>)> {
+#[allow(clippy::result_large_err)]
+fn parse_tail_args(
+    args: &[String],
+    default: usize,
+) -> std::result::Result<(usize, bool, Vec<String>), ExecResult> {
     let mut num_lines = default;
     let mut from_start = false;
     let mut files = Vec::new();
@@ -258,9 +279,16 @@ fn parse_tail_args(args: &[String], default: usize) -> Result<(usize, bool, Vec<
             if let Some(num_str) = arg.strip_prefix('-')
                 && let Ok(n) = num_str.parse::<usize>()
             {
+                // Obsolete `-NUM` line-count form.
                 num_lines = n;
+                p.advance();
+            } else if arg == "-" || arg == "--" {
+                // "-" is the stdin operand; "--" ends options.
+                p.advance();
+            } else {
+                // Unknown option-shaped token (e.g. -Q) → reject like GNU tail.
+                return Err(super::invalid_option("tail", arg, 1));
             }
-            p.advance();
         } else if let Some(arg) = p.positional() {
             files.push(arg.to_string());
         }
@@ -405,6 +433,13 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_head_invalid_option() {
+        let result = run_head(&["-Q"], Some("a\nb\n")).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid option -- 'Q'"));
+    }
+
+    #[tokio::test]
     async fn test_head_c_multibyte_stdin_respects_byte_limit() {
         let result = run_head(&["-c", "1"], Some("éX")).await;
         assert_eq!(result.exit_code, 0);
@@ -449,6 +484,13 @@ mod tests {
         let result = run_tail(&["-2"], Some(input)).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "d\ne\n");
+    }
+
+    #[tokio::test]
+    async fn test_tail_invalid_option() {
+        let result = run_tail(&["-Q"], Some("a\nb\n")).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid option -- 'Q'"));
     }
 
     #[tokio::test]

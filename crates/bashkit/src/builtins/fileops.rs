@@ -35,8 +35,35 @@ impl Builtin for Mkdir {
             return Ok(ExecResult::err("mkdir: missing operand\n".to_string(), 1));
         }
 
-        let recursive = ctx.args.iter().any(|a| a == "-p");
-        let dirs: Vec<_> = ctx.args.iter().filter(|a| !a.starts_with('-')).collect();
+        // Reject unknown options like GNU mkdir. Only -p/--parents has an
+        // effect in the VFS; other real-mkdir flags are accepted and ignored.
+        // '--' ends option parsing.
+        let mut recursive = false;
+        let mut dirs: Vec<&String> = Vec::new();
+        let mut opts_done = false;
+        for arg in ctx.args {
+            if opts_done {
+                dirs.push(arg);
+            } else if arg == "--" {
+                opts_done = true;
+            } else if let Some(long) = arg.strip_prefix("--") {
+                match long.split('=').next().unwrap_or("") {
+                    "parents" => recursive = true,
+                    "mode" | "verbose" | "context" => {}
+                    _ => return Ok(super::invalid_option("mkdir", arg, 1)),
+                }
+            } else if arg.starts_with('-') && arg.len() > 1 {
+                for c in arg[1..].chars() {
+                    match c {
+                        'p' => recursive = true,
+                        'm' | 'v' | 'Z' => {}
+                        _ => return Ok(super::invalid_option("mkdir", &format!("-{c}"), 1)),
+                    }
+                }
+            } else {
+                dirs.push(arg);
+            }
+        }
 
         if dirs.is_empty() {
             return Ok(ExecResult::err("mkdir: missing operand\n".to_string(), 1));
@@ -103,18 +130,38 @@ impl Builtin for Rm {
             return Ok(ExecResult::err("rm: missing operand\n".to_string(), 1));
         }
 
-        let recursive = ctx.args.iter().any(|a| {
-            a == "-r"
-                || a == "-R"
-                || a == "-rf"
-                || a == "-fr"
-                || a.contains('r') && a.starts_with('-')
-        });
-        let force = ctx.args.iter().any(|a| {
-            a == "-f" || a == "-rf" || a == "-fr" || a.contains('f') && a.starts_with('-')
-        });
-
-        let files: Vec<_> = ctx.args.iter().filter(|a| !a.starts_with('-')).collect();
+        // Reject unknown options like GNU rm; parse short bundles per-char.
+        // '--' ends option parsing; a lone '-' is a file operand.
+        let mut recursive = false;
+        let mut force = false;
+        let mut files: Vec<&String> = Vec::new();
+        let mut opts_done = false;
+        for arg in ctx.args {
+            if opts_done {
+                files.push(arg);
+            } else if arg == "--" {
+                opts_done = true;
+            } else if let Some(long) = arg.strip_prefix("--") {
+                match long.split('=').next().unwrap_or("") {
+                    "recursive" => recursive = true,
+                    "force" => force = true,
+                    "dir" | "interactive" | "verbose" | "one-file-system" | "no-preserve-root"
+                    | "preserve-root" => {}
+                    _ => return Ok(super::invalid_option("rm", arg, 1)),
+                }
+            } else if arg.starts_with('-') && arg.len() > 1 {
+                for c in arg[1..].chars() {
+                    match c {
+                        'r' | 'R' => recursive = true,
+                        'f' => force = true,
+                        'i' | 'I' | 'd' | 'v' => {}
+                        _ => return Ok(super::invalid_option("rm", &format!("-{c}"), 1)),
+                    }
+                }
+            } else {
+                files.push(arg);
+            }
+        }
 
         if files.is_empty() {
             return Ok(ExecResult::err("rm: missing operand\n".to_string(), 1));
@@ -180,13 +227,60 @@ impl Builtin for Cp {
             return Ok(r);
         }
 
-        if ctx.args.len() < 2 {
-            return Ok(ExecResult::err("cp: missing file operand\n".to_string(), 1));
+        // Reject unknown options like GNU cp; accept-and-ignore the rest (cp
+        // copies non-recursively in the VFS regardless). '--' ends options.
+        let mut files: Vec<&String> = Vec::new();
+        let mut opts_done = false;
+        for arg in ctx.args {
+            if opts_done {
+                files.push(arg);
+            } else if arg == "--" {
+                opts_done = true;
+            } else if let Some(long) = arg.strip_prefix("--") {
+                match long.split('=').next().unwrap_or("") {
+                    "archive"
+                    | "attributes-only"
+                    | "backup"
+                    | "copy-contents"
+                    | "dereference"
+                    | "no-dereference"
+                    | "force"
+                    | "interactive"
+                    | "link"
+                    | "no-clobber"
+                    | "one-file-system"
+                    | "parents"
+                    | "preserve"
+                    | "no-preserve"
+                    | "recursive"
+                    | "reflink"
+                    | "remove-destination"
+                    | "sparse"
+                    | "strip-trailing-slashes"
+                    | "symbolic-link"
+                    | "target-directory"
+                    | "no-target-directory"
+                    | "update"
+                    | "verbose"
+                    | "context" => {}
+                    _ => return Ok(super::invalid_option("cp", arg, 1)),
+                }
+            } else if arg.starts_with('-') && arg.len() > 1 {
+                for c in arg[1..].chars() {
+                    match c {
+                        'a' | 'd' | 'f' | 'H' | 'i' | 'l' | 'L' | 'n' | 'P' | 'p' | 'r' | 'R'
+                        | 's' | 't' | 'T' | 'u' | 'v' | 'x' | 'Z' => {}
+                        _ => return Ok(super::invalid_option("cp", &format!("-{c}"), 1)),
+                    }
+                }
+            } else {
+                files.push(arg);
+            }
         }
 
-        let _recursive = ctx.args.iter().any(|a| a == "-r" || a == "-R");
-        let files: Vec<_> = ctx.args.iter().filter(|a| !a.starts_with('-')).collect();
-
+        if files.is_empty() {
+            return Ok(ExecResult::err("cp: missing file operand\n".to_string(), 1));
+        }
         if files.len() < 2 {
             return Ok(ExecResult::err(
                 "cp: missing destination file operand\n".to_string(),
@@ -256,12 +350,45 @@ impl Builtin for Mv {
             return Ok(r);
         }
 
-        if ctx.args.len() < 2 {
-            return Ok(ExecResult::err("mv: missing file operand\n".to_string(), 1));
+        // Reject unknown options like GNU mv; accept-and-ignore the rest.
+        // '--' ends option parsing.
+        let mut files: Vec<&String> = Vec::new();
+        let mut opts_done = false;
+        for arg in ctx.args {
+            if opts_done {
+                files.push(arg);
+            } else if arg == "--" {
+                opts_done = true;
+            } else if let Some(long) = arg.strip_prefix("--") {
+                match long.split('=').next().unwrap_or("") {
+                    "backup"
+                    | "force"
+                    | "interactive"
+                    | "no-clobber"
+                    | "no-target-directory"
+                    | "strip-trailing-slashes"
+                    | "suffix"
+                    | "target-directory"
+                    | "update"
+                    | "verbose"
+                    | "context" => {}
+                    _ => return Ok(super::invalid_option("mv", arg, 1)),
+                }
+            } else if arg.starts_with('-') && arg.len() > 1 {
+                for c in arg[1..].chars() {
+                    match c {
+                        'b' | 'f' | 'i' | 'n' | 'T' | 't' | 'u' | 'v' | 'Z' => {}
+                        _ => return Ok(super::invalid_option("mv", &format!("-{c}"), 1)),
+                    }
+                }
+            } else {
+                files.push(arg);
+            }
         }
 
-        let files: Vec<_> = ctx.args.iter().filter(|a| !a.starts_with('-')).collect();
-
+        if files.is_empty() {
+            return Ok(ExecResult::err("mv: missing file operand\n".to_string(), 1));
+        }
         if files.len() < 2 {
             return Ok(ExecResult::err(
                 "mv: missing destination file operand\n".to_string(),
@@ -752,14 +879,33 @@ impl Builtin for Chown {
             return Ok(r);
         }
 
+        // Reject unknown options like GNU chown; accept-and-ignore the rest
+        // (ownership is a no-op in the VFS). '--' ends option parsing.
         let mut recursive = false;
         let mut positional: Vec<&str> = Vec::new();
-
+        let mut opts_done = false;
         for arg in ctx.args {
-            match arg.as_str() {
-                "-R" | "--recursive" => recursive = true,
-                _ if arg.starts_with('-') => {} // ignore other flags
-                _ => positional.push(arg),
+            if opts_done {
+                positional.push(arg);
+            } else if arg == "--" {
+                opts_done = true;
+            } else if let Some(long) = arg.strip_prefix("--") {
+                match long.split('=').next().unwrap_or("") {
+                    "recursive" => recursive = true,
+                    "changes" | "dereference" | "no-dereference" | "from" | "silent" | "quiet"
+                    | "reference" | "verbose" => {}
+                    _ => return Ok(super::invalid_option("chown", arg, 1)),
+                }
+            } else if arg.starts_with('-') && arg.len() > 1 {
+                for c in arg[1..].chars() {
+                    match c {
+                        'R' => recursive = true,
+                        'c' | 'f' | 'h' | 'v' | 'H' | 'L' | 'P' => {}
+                        _ => return Ok(super::invalid_option("chown", &format!("-{c}"), 1)),
+                    }
+                }
+            } else {
+                positional.push(arg);
             }
         }
         let _ = recursive; // accepted but irrelevant in VFS
@@ -1387,5 +1533,62 @@ mod tests {
     fn test_mktemp_name_template_without_xxxxxx_appends_suffix() {
         let name = mktemp_name(Some("/tmp/myapp"), "abcdef1234");
         assert_eq!(name, "/tmp/myapp.abcdef");
+    }
+
+    async fn run_fileop<B: Builtin>(builtin: &B, args: &[&str]) -> ExecResult {
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+        let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs: fs.clone(),
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+        builtin.execute(ctx).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_mkdir_rejects_unknown_option() {
+        let result = run_fileop(&Mkdir, &["-Q", "dir"]).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid option -- 'Q'"));
+    }
+
+    #[tokio::test]
+    async fn test_rm_rejects_unknown_option() {
+        let result = run_fileop(&Rm, &["-Q", "file"]).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid option -- 'Q'"));
+    }
+
+    #[tokio::test]
+    async fn test_cp_rejects_unknown_option() {
+        let result = run_fileop(&Cp, &["-Q", "a", "b"]).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid option -- 'Q'"));
+    }
+
+    #[tokio::test]
+    async fn test_mv_rejects_unknown_option() {
+        let result = run_fileop(&Mv, &["-Q", "a", "b"]).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid option -- 'Q'"));
+    }
+
+    #[tokio::test]
+    async fn test_chown_rejects_unknown_option() {
+        let result = run_fileop(&Chown, &["-Q", "user", "file"]).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid option -- 'Q'"));
     }
 }

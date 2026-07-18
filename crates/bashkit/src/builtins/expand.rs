@@ -52,6 +52,16 @@ impl Builtin for Expand {
                         Err(e) => return Ok(Self::err(e, 1)),
                     };
                 }
+                // Reject unknown options. `-N` (all-digit) is the obsolete
+                // tab-size form expand still accepts, so leave it to fall
+                // through; `--`/`-` and operands also fall through.
+                s if s.starts_with('-')
+                    && s.len() > 1
+                    && s != "--"
+                    && !s[1..].chars().all(|c| c.is_ascii_digit()) =>
+                {
+                    return Ok(super::invalid_option("expand", s, 1));
+                }
                 _ => files.push(&ctx.args[i]),
             }
             i += 1;
@@ -166,6 +176,21 @@ impl Builtin for Unexpand {
                     };
                     tab_stops = parsed_tab_stops;
                     all = true; // -t implies -a
+                }
+                s if s.starts_with("-t") && s.len() > 2 => {
+                    // Attached form `-tN`; known option, not an unknown token.
+                    tab_stops = match parse_tab_stops(&s[2..]) {
+                        Ok(stops) => stops,
+                        Err(_) => {
+                            return Ok(Self::err(format!("invalid tab size: '{}'", &s[2..]), 1));
+                        }
+                    };
+                    all = true; // -t implies -a
+                }
+                // Reject unknown options. unexpand takes no numeric operand,
+                // so `-N` is also unknown; `--`/`-` and operands fall through.
+                s if s.starts_with('-') && s.len() > 1 && s != "--" => {
+                    return Ok(super::invalid_option("unexpand", s, 1));
                 }
                 _ => files.push(&ctx.args[i]),
             }
@@ -388,6 +413,20 @@ mod tests {
         let result = run_unexpand(&["-t", "1000000000"], Some("        hello")).await;
         assert_eq!(result.exit_code, 1);
         assert_eq!(result.stderr, "unexpand: invalid tab size: '1000000000'\n");
+    }
+
+    #[tokio::test]
+    async fn test_expand_unknown_option() {
+        let result = run_expand(&["-Q"], Some("hi")).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid option -- 'Q'"));
+    }
+
+    #[tokio::test]
+    async fn test_unexpand_unknown_option() {
+        let result = run_unexpand(&["-Q"], Some("hi")).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid option -- 'Q'"));
     }
 
     #[tokio::test]

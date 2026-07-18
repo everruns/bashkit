@@ -91,7 +91,7 @@ struct GrepOptions {
 }
 
 impl GrepOptions {
-    fn parse(args: &[String]) -> Result<Self> {
+    fn parse(args: &[String]) -> Result<std::result::Result<Self, ExecResult>> {
         let mut opts = GrepOptions {
             patterns: Vec::new(),
             files: Vec::new(),
@@ -215,7 +215,8 @@ impl GrepOptions {
                             opts.pattern_file = Some(file_path);
                             break;
                         }
-                        _ => {} // Ignore unknown flags
+                        // Unknown short flag → reject (grep exits 2).
+                        _ => return Ok(Err(super::invalid_option("grep", &format!("-{c}"), 2))),
                     }
                     j += 1;
                 }
@@ -312,8 +313,8 @@ impl GrepOptions {
                         &mut i,
                         args,
                     )?)),
-                    // Ignore other unknown long options.
-                    _ => {}
+                    // Unknown long option → reject (grep exits 2).
+                    _ => return Ok(Err(super::invalid_option("grep", arg, 2))),
                 }
             } else {
                 positional.push(arg.clone());
@@ -332,7 +333,7 @@ impl GrepOptions {
         // Rest are files
         opts.files = positional;
 
-        Ok(opts)
+        Ok(Ok(opts))
     }
 
     /// Select the pattern syntax, clearing any previously-selected type so the
@@ -549,7 +550,10 @@ impl Builtin for Grep {
         ) {
             return Ok(r);
         }
-        let mut opts = GrepOptions::parse(ctx.args)?;
+        let mut opts = match GrepOptions::parse(ctx.args)? {
+            Ok(o) => o,
+            Err(e) => return Ok(e),
+        };
 
         // Load patterns from file if -f was specified
         if let Some(ref pattern_file) = opts.pattern_file {
@@ -1255,6 +1259,15 @@ mod tests {
             .unwrap();
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "hello world\n");
+    }
+
+    #[tokio::test]
+    async fn test_grep_invalid_option() {
+        let result = run_grep(&["-Q", "hello"], Some("hello world"))
+            .await
+            .unwrap();
+        assert_eq!(result.exit_code, 2);
+        assert!(result.stderr.contains("invalid option -- 'Q'"));
     }
 
     #[tokio::test]

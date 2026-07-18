@@ -26,7 +26,10 @@ struct ColumnOptions {
     output_sep: String,
 }
 
-fn parse_column_args(args: &[String]) -> (ColumnOptions, Vec<String>) {
+#[allow(clippy::result_large_err)]
+fn parse_column_args(
+    args: &[String],
+) -> std::result::Result<(ColumnOptions, Vec<String>), ExecResult> {
     let mut opts = ColumnOptions {
         table: false,
         input_sep: None,
@@ -46,12 +49,17 @@ fn parse_column_args(args: &[String]) -> (ColumnOptions, Vec<String>) {
             if let Some(arg) = p.positional() {
                 files.push(arg.to_string());
             }
+        } else if p.current() == Some("--") {
+            p.advance(); // end-of-options marker; ignore (preserve behavior)
+        } else if let Some(flag) = p.current() {
+            // Reject unknown options instead of silently swallowing them.
+            return Err(super::invalid_option("column", flag, 1));
         } else {
             p.advance();
         }
     }
 
-    (opts, files)
+    Ok((opts, files))
 }
 
 fn format_table(text: &str, opts: &ColumnOptions) -> String {
@@ -152,7 +160,10 @@ impl Builtin for Column {
         ) {
             return Ok(r);
         }
-        let (opts, files) = parse_column_args(ctx.args);
+        let (opts, files) = match parse_column_args(ctx.args) {
+            Ok(v) => v,
+            Err(e) => return Ok(e),
+        };
 
         // Collect all input
         let mut input = String::new();
@@ -297,6 +308,13 @@ mod tests {
         let result = run_column(&["-t"], None).await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "");
+    }
+
+    #[tokio::test]
+    async fn test_column_unknown_option() {
+        let result = run_column(&["-Q"], Some("a b\n")).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid option -- 'Q'"));
     }
 
     #[tokio::test]

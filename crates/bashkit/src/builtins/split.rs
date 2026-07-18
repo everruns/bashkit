@@ -63,6 +63,10 @@ impl Builtin for Split {
                     num_chunks = ctx.args.get(i).and_then(|s| s.parse().ok());
                 }
                 "-d" | "--numeric-suffixes" => numeric_suffix = true,
+                // Reject unknown options; `-` (stdin) and `--` fall through.
+                s if s.starts_with('-') && s.len() > 1 && s != "--" => {
+                    return Ok(super::invalid_option("split", s, 1));
+                }
                 _ => positional.push(&ctx.args[i]),
             }
             i += 1;
@@ -259,6 +263,14 @@ mod tests {
         let result = run_split(&["/nonexistent"], None, fs).await;
         assert_eq!(result.exit_code, 1);
         assert!(result.stderr.contains("cannot open"));
+    }
+
+    #[tokio::test]
+    async fn test_split_unknown_option() {
+        let fs = Arc::new(InMemoryFs::new()) as Arc<dyn FileSystem>;
+        let result = run_split(&["-Q"], Some("data"), fs).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid option -- 'Q'"));
     }
 
     #[tokio::test]

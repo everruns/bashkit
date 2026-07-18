@@ -35,6 +35,9 @@ fn parse_paste_args(args: &[String]) -> std::result::Result<(PasteOptions, Vec<S
             opts.serial = true;
         } else if try_parse_combined_flags(&mut p, &mut opts)? {
             // handled combined flags like -sd, or -sd ,
+        } else if p.is_flag() && p.current() != Some("--") {
+            // Reject unknown options instead of treating them as files.
+            return Err(invalid_option_msg("paste", p.current().unwrap_or_default()));
         } else if let Some(arg) = p.positional() {
             files.push(arg.to_string());
         }
@@ -96,6 +99,20 @@ fn try_parse_combined_flags(
     }
     p.advance();
     Ok(true)
+}
+
+/// Build an unrecognized-option message (no trailing newline; the caller
+/// appends it via `format!("{msg}\n")`). Mirrors `super::invalid_option`.
+fn invalid_option_msg(cmd: &str, arg: &str) -> String {
+    if let Some(long) = arg.strip_prefix("--") {
+        format!("{cmd}: unrecognized option '--{long}'")
+    } else {
+        let ch = arg
+            .strip_prefix('-')
+            .and_then(|s| s.chars().next())
+            .unwrap_or('-');
+        format!("{cmd}: invalid option -- '{ch}'")
+    }
 }
 
 fn parse_delim_spec(spec: &str) -> Vec<char> {
@@ -422,6 +439,13 @@ mod tests {
         .await;
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "x\ny\nz\n");
+    }
+
+    #[tokio::test]
+    async fn test_paste_rejects_unknown_option() {
+        let result = run_paste(&["-Q"], Some("a\n")).await;
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("invalid option -- 'Q'"));
     }
 
     #[tokio::test]
