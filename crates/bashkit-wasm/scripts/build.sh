@@ -42,7 +42,6 @@ if command -v wasm-opt >/dev/null 2>&1; then
   echo "==> wasm-opt -Oz (Rust WebAssembly features enabled)"
   wasm-opt -Oz \
     --enable-bulk-memory \
-    --enable-bulk-memory-opt \
     --enable-nontrapping-float-to-int \
     "$OUT_DIR/bashkit_wasm_bg.wasm" -o "$OUT_DIR/bashkit_wasm_bg.wasm"
 else
