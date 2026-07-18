@@ -1,5 +1,47 @@
 # Changelog
 
+## [0.14.0] - 2026-07-17
+
+### Highlights
+
+- **Browser-native `@everruns/bashkit-web` package** — a slim,
+  single-threaded WebAssembly build runs Bashkit directly in browsers without
+  `SharedArrayBuffer` or COOP/COEP headers, with async custom builtins and live
+  VFS access ([#2175](https://github.com/everruns/bashkit/pull/2175)).
+- **Generic filesystem namespaces** — mount independent filesystems under
+  virtual path prefixes, with longest-prefix routing, rebasing, and sandboxed
+  namespace examples ([#2174](https://github.com/everruns/bashkit/pull/2174)).
+- **VFS and glob hardening** — directory limits now apply to `add_dir`, and
+  glob backtracking correctly restores bracket-match cache state
+  ([#2168](https://github.com/everruns/bashkit/pull/2168),
+  [#2167](https://github.com/everruns/bashkit/pull/2167)).
+
+### What's Changed
+
+* feat(wasm): slim single-threaded browser package (@everruns/bashkit-web) ([#2175](https://github.com/everruns/bashkit/pull/2175)) by @chaliy
+* feat(fs): add generic filesystem namespaces ([#2174](https://github.com/everruns/bashkit/pull/2174)) by @chaliy
+* feat(site): add Google Analytics tag ([#2173](https://github.com/everruns/bashkit/pull/2173)) by @chaliy
+* fix(ci): install prebuilt cargo-audit to unblock Audit job ([#2171](https://github.com/everruns/bashkit/pull/2171)) by @chaliy
+* test(fuzzer): avoid host env dependent assertion ([#2170](https://github.com/everruns/bashkit/pull/2170)) by @chaliy
+* fix(ci): add cargo-tarpaulin tool input to coverage workflow ([#2169](https://github.com/everruns/bashkit/pull/2169)) by @chaliy
+* fix(vfs): enforce add_dir directory limits ([#2168](https://github.com/everruns/bashkit/pull/2168)) by @chaliy
+* fix(glob): restore bracket cache on '*' backtrack ([#2167](https://github.com/everruns/bashkit/pull/2167)) by @chaliy
+* chore(deps): bump turso_core from 0.6.1 to 0.7.0 ([#2166](https://github.com/everruns/bashkit/pull/2166)) by @dependabot
+* chore(ci): bump the github-actions group with 3 updates ([#2165](https://github.com/everruns/bashkit/pull/2165)) by @dependabot
+* chore(deps): bump rustls from 0.23.41 to 0.23.42 ([#2164](https://github.com/everruns/bashkit/pull/2164)) by @dependabot
+* ci(apidocs-drift): build index.cjs so typedoc can resolve wrapper imports ([#2163](https://github.com/everruns/bashkit/pull/2163)) by @chaliy
+* chore(deps): bump the rust-dependencies group with 5 updates ([#2162](https://github.com/everruns/bashkit/pull/2162)) by @dependabot
+* chore: sync uutils/coreutils argument surfaces and integrate new i18n-decimal gate ([#2161](https://github.com/everruns/bashkit/pull/2161)) by @chaliy
+* chore(ci): bump the github-actions group with 3 updates ([#2160](https://github.com/everruns/bashkit/pull/2160)) by @dependabot
+* ci: repair scheduled drift guards ([#2159](https://github.com/everruns/bashkit/pull/2159)) by @chaliy
+* docs(threat-model): sync public doc with spec ledger and drift guard ([#2158](https://github.com/everruns/bashkit/pull/2158)) by @chaliy
+* chore: pre-release maintenance pass ([#2156](https://github.com/everruns/bashkit/pull/2156)) by @chaliy
+* chore(js): upgrade bashkit-js to TypeScript 7 ([#2154](https://github.com/everruns/bashkit/pull/2154)) by @chaliy
+* chore: standardize PR descriptions on functional change and before/after proof ([#2153](https://github.com/everruns/bashkit/pull/2153)) by @chaliy
+* fix(site): lengthen crawler meta descriptions ([#2152](https://github.com/everruns/bashkit/pull/2152)) by @chaliy
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.13.0...v0.14.0
+
 ## [0.13.0] - 2026-07-07
 
 ### Highlights

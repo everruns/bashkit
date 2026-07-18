@@ -1,6 +1,6 @@
 {
   "name": "@everruns/bashkit-web",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "description": "Sandboxed bash interpreter for the browser (WebAssembly). Single-threaded — no SharedArrayBuffer, no COOP/COEP headers.",
   "type": "module",
   "main": "index.js",

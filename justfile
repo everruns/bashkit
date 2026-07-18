@@ -37,6 +37,7 @@ check:
     cargo fmt --check
     cargo clippy --all-targets -- -D warnings
     cargo test
+    python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 
 # Lint and format-check Python bindings
 python-lint:
@@ -87,6 +88,7 @@ apidocs-python:
 # Needs network for `npx typedoc`. See specs/documentation.md.
 apidocs-ts:
     cd crates/bashkit-js && pnpm exec napi build --platform
+    cd crates/bashkit-js && pnpm run build:cjs
     node scripts/gen_ts_apidocs.mjs
 
 # Regenerate all self-hosted package API references.
