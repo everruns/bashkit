@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.14.3] - 2026-07-18
+
+### Highlights
+
+- **Unknown options are now rejected like real Bash + coreutils.** Invoking the
+  shell with an unrecognized option (`bash --verison`) and passing an unknown
+  option to 26 builtins (`wc -Q`, `sort -Z`, …) previously ignored the option
+  silently and continued as if it were absent. Both now print the real
+  Bash/GNU-coreutils diagnostic and exit non-zero (coreutils exit codes
+  preserved), so a mistyped flag in an agent-generated script surfaces instead
+  of hiding ([#2182](https://github.com/everruns/bashkit/pull/2182),
+  [#2184](https://github.com/everruns/bashkit/pull/2184)).
+- **Browser/WebAssembly npm package renamed** `@everruns/bashkit-web` →
+  **`@everruns/bashkit-wasm`**, matching the Rust crate and reflecting that the
+  build runs in any JavaScript runtime (browsers, edge/serverless workers,
+  Node/Deno/Bun), not just browsers
+  ([#2183](https://github.com/everruns/bashkit/pull/2183)).
+
+### What's Changed
+
+* fix(builtins): reject unknown options like real coreutils ([#2184](https://github.com/everruns/bashkit/pull/2184)) by @chaliy
+* chore(wasm): rename npm package to @everruns/bashkit-wasm ([#2183](https://github.com/everruns/bashkit/pull/2183)) by @chaliy
+* fix(interpreter): reject unknown bash/sh invocation options like real Bash ([#2182](https://github.com/everruns/bashkit/pull/2182)) by @chaliy
+* docs: polish the browser example showcase ([#2181](https://github.com/everruns/bashkit/pull/2181)) by @chaliy
+* chore(examples): rebuild browser example on @everruns/bashkit-web ([#2180](https://github.com/everruns/bashkit/pull/2180)) by @chaliy
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.14.2...v0.14.3
+
 ## [0.14.2] - 2026-07-18
 
 ### Fixed
