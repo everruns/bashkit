@@ -99,6 +99,51 @@ test("child shell: piping a script into bash", async () => {
   assert.equal(r.exitCode, 0);
 });
 
+// --- Timers, jobs, awk file I/O --------------------------------------------
+// Each of these used to panic and poison the whole module on wasm32: they
+// reached for a tokio timer (sleep/timeout), tokio::spawn (background jobs), or
+// std::thread::spawn (awk file redirects). On single-threaded wasm they must
+// run inline instead. See specs/browser-package.md.
+
+test("sleep returns immediately (no timer driver on wasm)", async () => {
+  const bash = new Bash();
+  const r = await bash.execute("sleep 2; echo slept");
+  assert.equal(r.stdout, "slept\n");
+  assert.equal(r.exitCode, 0);
+});
+
+test("timeout runs the command (no wall-clock enforcement on wasm)", async () => {
+  const bash = new Bash();
+  const r = await bash.execute("timeout 5 echo hi");
+  assert.equal(r.stdout, "hi\n");
+  assert.equal(r.exitCode, 0);
+});
+
+test("background job runs and wait collects it", async () => {
+  const bash = new Bash();
+  const r = await bash.execute("echo bg & wait");
+  assert.equal(r.stdout, "bg\n");
+  assert.equal(r.exitCode, 0);
+});
+
+test("awk redirects a write into the VFS", async () => {
+  const bash = new Bash();
+  const r = await bash.execute(
+    'awk \'BEGIN{print "line" > "/out.txt"}\'; cat /out.txt',
+  );
+  assert.equal(r.stdout, "line\n");
+  assert.equal(r.exitCode, 0);
+});
+
+test("awk getline reads from the VFS", async () => {
+  const bash = new Bash({ files: { "/in.txt": "alpha\nbeta\n" } });
+  const r = await bash.execute(
+    'awk \'BEGIN{while((getline l < "/in.txt") > 0) print "got:" l}\'',
+  );
+  assert.equal(r.stdout, "got:alpha\ngot:beta\n");
+  assert.equal(r.exitCode, 0);
+});
+
 // --- Options ---------------------------------------------------------------
 
 test("options: env and cwd", () => {
