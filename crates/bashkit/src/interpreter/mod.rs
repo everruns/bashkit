@@ -4143,6 +4143,20 @@ impl Interpreter {
         }
     }
 
+    /// Build the "invalid option" error real Bash prints when the shell is
+    /// invoked with an unknown option (e.g. `bash --verison` or `bash -q`).
+    /// Bash exits 2 and prints the offending option plus a usage line. We keep
+    /// the usage text aligned with the virtual interpreter (no GNU wording).
+    fn shell_invalid_option(shell_name: &str, opt: &str) -> ExecResult {
+        ExecResult::err(
+            format!(
+                "{shell_name}: {opt}: invalid option\n\
+                 Usage:\t{shell_name} [option] ... [file [argument] ...]\n"
+            ),
+            2,
+        )
+    }
+
     /// Parse `bash`/`sh` command-line arguments into structured form.
     /// Returns `Err(ExecResult)` for --version/--help (already produced output).
     #[allow(clippy::type_complexity, clippy::result_large_err)]
@@ -4261,11 +4275,46 @@ impl Interpreter {
                     break;
                 }
                 s if s.starts_with("--") => {
-                    idx += 1;
+                    // Long options. Recognize the set real Bash accepts at
+                    // invocation (applying the ones we implement, ignoring the
+                    // rest) so valid options like `--norc` keep working, and
+                    // reject typos like `--verison` the way Bash does.
+                    let name = s.split('=').next().unwrap_or(s);
+                    match name {
+                        "--verbose" => {
+                            shell_opts.push(("SHOPT_v", "1"));
+                            idx += 1;
+                        }
+                        // Accepted by Bash but not modelled here (no-op).
+                        "--login" | "--noprofile" | "--norc" | "--noediting" | "--posix"
+                        | "--restricted" | "--protected" | "--debugger" | "--debug"
+                        | "--dump-strings" | "--dump-po-strings" => {
+                            idx += 1;
+                        }
+                        // These take an argument, as `--opt=VAL` or `--opt VAL`.
+                        "--rcfile" | "--init-file" | "--wordexp" => {
+                            if s.contains('=') {
+                                idx += 1;
+                            } else {
+                                idx += 1;
+                                if idx >= args.len() {
+                                    return Err(ExecResult::err(
+                                        format!(
+                                            "{shell_name}: {name}: option requires an argument\n"
+                                        ),
+                                        2,
+                                    ));
+                                }
+                                idx += 1;
+                            }
+                        }
+                        _ => return Err(Self::shell_invalid_option(shell_name, s)),
+                    }
                 }
                 s if s.starts_with('-') && s.len() > 1 => {
                     let chars: Vec<char> = s.chars().skip(1).collect();
                     let mut ci = 0;
+                    let mut consumed_c = false;
                     while ci < chars.len() {
                         match chars[ci] {
                             'n' => noexec = true,
@@ -4274,17 +4323,56 @@ impl Interpreter {
                             'u' => shell_opts.push(("SHOPT_u", "1")),
                             'v' => shell_opts.push(("SHOPT_v", "1")),
                             'f' => shell_opts.push(("SHOPT_f", "1")),
+                            // Accepted by Bash at invocation but not acted on here.
+                            'a' | 'b' | 'h' | 'k' | 'm' | 'p' | 't' | 'B' | 'C' | 'E' | 'H'
+                            | 'P' | 'T' | 'i' | 'l' | 'r' | 's' | 'D' => {}
+                            'c' => {
+                                // -c consumes the next arg as the command string.
+                                idx += 1;
+                                if idx >= args.len() {
+                                    return Err(ExecResult::err(
+                                        format!("{shell_name}: -c: option requires an argument\n"),
+                                        2,
+                                    ));
+                                }
+                                command_string = Some(args[idx].clone());
+                                idx += 1;
+                                script_args = args[idx..].to_vec();
+                                consumed_c = true;
+                                break;
+                            }
                             'o' => {
                                 idx += 1;
-                                if idx < args.len()
-                                    && let Some(pair) = Self::resolve_shell_option_name(&args[idx])
-                                {
-                                    shell_opts.push(pair);
+                                if idx >= args.len() {
+                                    return Err(ExecResult::err(
+                                        format!("{shell_name}: -o: option requires an argument\n"),
+                                        2,
+                                    ));
+                                }
+                                match Self::resolve_shell_option_name(&args[idx]) {
+                                    Some(pair) => shell_opts.push(pair),
+                                    None => {
+                                        return Err(ExecResult::err(
+                                            format!(
+                                                "{shell_name}: set: {}: invalid option name\n",
+                                                args[idx]
+                                            ),
+                                            2,
+                                        ));
+                                    }
                                 }
                             }
-                            _ => {}
+                            other => {
+                                return Err(Self::shell_invalid_option(
+                                    shell_name,
+                                    &format!("-{other}"),
+                                ));
+                            }
                         }
                         ci += 1;
+                    }
+                    if consumed_c {
+                        break;
                     }
                     idx += 1;
                 }
@@ -10027,6 +10115,58 @@ mod tests {
         let result = run_script("bash -- --help").await;
         // Should try to run file named "--help", which doesn't exist
         assert_eq!(result.exit_code, 127);
+    }
+
+    #[tokio::test]
+    async fn test_bash_unknown_long_option_errors() {
+        // A typo'd long option errors like real Bash (invalid option, exit 2),
+        // instead of being silently ignored.
+        let result = run_script("bash --verison").await;
+        assert_eq!(result.exit_code, 2);
+        assert!(result.stderr.contains("--verison: invalid option"));
+        assert!(result.stderr.contains("Usage:"));
+        assert!(result.stdout.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_bash_unknown_short_option_errors() {
+        // Unknown short option reports the offending flag and exits 2.
+        let result = run_script("bash -q").await;
+        assert_eq!(result.exit_code, 2);
+        assert!(result.stderr.contains("-q: invalid option"));
+        assert!(result.stderr.contains("Usage:"));
+    }
+
+    #[tokio::test]
+    async fn test_sh_unknown_option_uses_shell_name() {
+        // Error is prefixed with the invoked shell name (sh, not bash).
+        let result = run_script("sh --nope").await;
+        assert_eq!(result.exit_code, 2);
+        assert!(result.stderr.contains("sh: --nope: invalid option"));
+    }
+
+    #[tokio::test]
+    async fn test_bash_unknown_option_in_combined_short_flags() {
+        // A bad char inside combined short flags is reported individually.
+        let result = run_script("bash -eq -c 'echo hi'").await;
+        assert_eq!(result.exit_code, 2);
+        assert!(result.stderr.contains("-q: invalid option"));
+    }
+
+    #[tokio::test]
+    async fn test_bash_accepted_long_option_norc() {
+        // Options real Bash accepts (e.g. --norc) still run the command.
+        let result = run_script("bash --norc -c 'echo hi'").await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "hi\n");
+    }
+
+    #[tokio::test]
+    async fn test_bash_combined_ec_runs_command() {
+        // -c combined with another short flag consumes the command string.
+        let result = run_script("bash -ec 'echo combined'").await;
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.stdout, "combined\n");
     }
 
     // Negative test cases
