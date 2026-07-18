@@ -8,14 +8,20 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tokio::task::JoinHandle;
 
 use crate::interpreter::ExecResult;
 
-/// Job table for tracking background jobs
+/// Job table for tracking background jobs.
+///
+/// Background commands run synchronously (for deterministic output ordering),
+/// so by the time a job is registered its result is already fully computed. We
+/// therefore store the finished [`ExecResult`] directly rather than a
+/// `tokio::task::JoinHandle` — there is nothing left to await. This also keeps
+/// the interpreter usable on `wasm32-unknown-unknown`, where `tokio::spawn`
+/// panics (no reactor running).
 pub struct JobTable {
     /// Active jobs indexed by ID
-    jobs: BTreeMap<usize, JoinHandle<ExecResult>>,
+    jobs: BTreeMap<usize, ExecResult>,
     /// Next job ID to assign
     next_id: usize,
     /// Last spawned job ID (for $!)
@@ -38,13 +44,13 @@ impl JobTable {
         }
     }
 
-    /// Spawn a new background job
+    /// Register a finished background job.
     ///
-    /// Returns the job ID that can be used with wait
-    pub fn spawn(&mut self, handle: JoinHandle<ExecResult>) -> usize {
+    /// Returns the job ID that can be used with wait.
+    pub fn spawn(&mut self, result: ExecResult) -> usize {
         let id = self.next_id;
         self.next_id += 1;
-        self.jobs.insert(id, handle);
+        self.jobs.insert(id, result);
         self.last_job_id = Some(id);
         id
     }
@@ -56,14 +62,7 @@ impl JobTable {
 
     /// Wait for a specific job to complete
     pub async fn wait_for(&mut self, job_id: usize) -> Option<ExecResult> {
-        if let Some(handle) = self.jobs.remove(&job_id) {
-            match handle.await {
-                Ok(result) => Some(result),
-                Err(_) => Some(ExecResult::err("job panicked".to_string(), 1)),
-            }
-        } else {
-            None
-        }
+        self.jobs.remove(&job_id)
     }
 
     /// Wait for all jobs to complete
@@ -80,15 +79,7 @@ impl JobTable {
 
     /// Wait for all jobs and return their results (preserving output).
     pub async fn wait_all_results(&mut self) -> Vec<ExecResult> {
-        let jobs: Vec<_> = std::mem::take(&mut self.jobs).into_iter().collect();
-        let mut results = Vec::new();
-        for (_, handle) in jobs {
-            match handle.await {
-                Ok(result) => results.push(result),
-                Err(_) => results.push(ExecResult::err("job panicked".to_string(), 1)),
-            }
-        }
-        results
+        std::mem::take(&mut self.jobs).into_values().collect()
     }
 
     /// Check if there are any active jobs
@@ -120,10 +111,8 @@ mod tests {
     async fn test_spawn_and_wait() {
         let mut table = JobTable::new();
 
-        // Spawn a simple job
-        let handle = tokio::spawn(async { ExecResult::ok("hello".to_string()) });
-
-        let job_id = table.spawn(handle);
+        // Register a finished job
+        let job_id = table.spawn(ExecResult::ok("hello".to_string()));
         assert_eq!(job_id, 1);
         assert_eq!(table.last_job_id(), Some(1));
 
@@ -137,10 +126,9 @@ mod tests {
     async fn test_wait_all() {
         let mut table = JobTable::new();
 
-        // Spawn multiple jobs
+        // Register multiple finished jobs
         for i in 0..3 {
-            let handle = tokio::spawn(async move { ExecResult::ok(format!("job {}", i)) });
-            table.spawn(handle);
+            table.spawn(ExecResult::ok(format!("job {}", i)));
         }
 
         assert_eq!(table.job_count(), 3);

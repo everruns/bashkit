@@ -4849,11 +4849,13 @@ impl Interpreter {
         parent_stdout.push_str(&result.stdout);
         parent_stderr.push_str(&result.stderr);
 
-        // Store only the exit code in the job table (output already emitted)
+        // Store only the exit code in the job table (output already emitted).
+        // The command already ran to completion synchronously, so the result is
+        // final — register it directly rather than round-tripping through
+        // tokio::spawn (which also panics on wasm, where no reactor runs).
         let exit_code = result.exit_code;
         let job_result = ExecResult::with_code(String::new(), exit_code);
-        let handle = tokio::spawn(async move { job_result });
-        let job_id = self.jobs.lock().await.spawn(handle);
+        let job_id = self.jobs.lock().await.spawn(job_result);
         self.last_bg_pid = Some(job_id.to_string());
 
         // Background commands always return exit code 0 to the parent.
@@ -8035,35 +8037,51 @@ impl Interpreter {
                 preserve_status,
                 command,
             } => {
-                use tokio::time::timeout;
-
                 // Build inner command with optional stdin via here-string
                 let inner_cmd = subcommand_to_command(&command);
 
-                let baseline_call_stack_len = self.call_stack.len();
-                let baseline_bash_source_len = self.bash_source_stack.len();
-                let baseline_function_depth = self.counters.function_depth;
-                let baseline_pipeline_stdin = self.pipeline_stdin.clone();
-                let exec_future = self.execute_command(&inner_cmd);
-                match timeout(duration, exec_future).await {
-                    Ok(Ok(result)) => result,
-                    Ok(Err(e)) => return Err(e),
-                    Err(_) => {
-                        self.reconcile_cancelled_execution_state(
-                            baseline_call_stack_len,
-                            baseline_bash_source_len,
-                            baseline_function_depth,
-                            baseline_pipeline_stdin,
-                        );
-                        // Timeout expired.
-                        // --preserve-status: in real bash, returns the signal+128 status
-                        // of the killed child.  We can't capture that from tokio::timeout,
-                        // so we always use 124 (the standard timeout exit code).
-                        // TODO: propagate child exit status when preserve_status is true
-                        let exit_code = if preserve_status { 137 } else { 124 };
-                        ExecResult::err(String::new(), exit_code)
+                // wasm32-unknown-unknown has no timer driver, so tokio::time::timeout
+                // panics ("time not implemented"). Run the command without wall-clock
+                // enforcement — the parser fuel budget, maxCommands and
+                // maxLoopIterations still bound runaway work. This matches the
+                // "no preemptive timeout" stance in specs/browser-package.md.
+                #[cfg(target_family = "wasm")]
+                let outcome = {
+                    let _ = (duration, preserve_status);
+                    self.execute_command(&inner_cmd).await?
+                };
+
+                #[cfg(not(target_family = "wasm"))]
+                let outcome = {
+                    use tokio::time::timeout;
+
+                    let baseline_call_stack_len = self.call_stack.len();
+                    let baseline_bash_source_len = self.bash_source_stack.len();
+                    let baseline_function_depth = self.counters.function_depth;
+                    let baseline_pipeline_stdin = self.pipeline_stdin.clone();
+                    let exec_future = self.execute_command(&inner_cmd);
+                    match timeout(duration, exec_future).await {
+                        Ok(Ok(result)) => result,
+                        Ok(Err(e)) => return Err(e),
+                        Err(_) => {
+                            self.reconcile_cancelled_execution_state(
+                                baseline_call_stack_len,
+                                baseline_bash_source_len,
+                                baseline_function_depth,
+                                baseline_pipeline_stdin,
+                            );
+                            // Timeout expired.
+                            // --preserve-status: in real bash, returns the signal+128 status
+                            // of the killed child.  We can't capture that from tokio::timeout,
+                            // so we always use 124 (the standard timeout exit code).
+                            // TODO: propagate child exit status when preserve_status is true
+                            let exit_code = if preserve_status { 137 } else { 124 };
+                            ExecResult::err(String::new(), exit_code)
+                        }
                     }
-                }
+                };
+
+                outcome
             }
             builtins::ExecutionPlan::Batch { commands } => {
                 let mut combined_stdout = String::new();
@@ -8125,6 +8143,11 @@ impl Interpreter {
     }
 
     /// Restore interpreter stacks/counters after an in-flight command future is cancelled.
+    ///
+    /// Only the native timeout/cancellation paths can cancel a command mid-flight;
+    /// wasm32 has no timer driver, so it is gated out there to keep the wasm build
+    /// warning-clean (CI checks wasm with `-D warnings`).
+    #[cfg(not(target_family = "wasm"))]
     fn reconcile_cancelled_execution_state(
         &mut self,
         baseline_call_stack_len: usize,
