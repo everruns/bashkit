@@ -59,19 +59,32 @@ jobs:
           pip install mypy
           mypy crates/bashkit-python/bashkit/ --ignore-missing-imports
 
+  # Run the full pytest suite on every targeted Python version. The bashkit
+  # extension is abi3 (one cp39-abi3 wheel for all versions), so it is built
+  # ONCE by build-wheel and downloaded here instead of rebuilt per leg. Only
+  # the random-fs fixture — a separate, non-abi3 extension — is still built per
+  # version. Covers 3.9–3.14 (the full abi3 support range).
   test:
     name: Test (Python ${{ matrix.python-version }})
+    needs: [build-wheel]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9", "3.12", "3.13", "3.14"]
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: ${{ matrix.python-version }}
+
+      # The single abi3 wheel produced once by build-wheel; install it on each
+      # version to prove one wheel runs across the whole 3.9–3.14 range.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: python-wheel
+          path: crates/bashkit-python/dist
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
@@ -81,15 +94,13 @@ jobs:
       - name: Install maturin
         run: python -m pip install "maturin${MATURIN_VERSION}"
 
-      - name: Build wheel
-        working-directory: crates/bashkit-python
-        run: python -m maturin build --release --out dist -i python${{ matrix.python-version }}
-
       - name: Install wheel and test dependencies
         run: |
           pip install bashkit --no-index --find-links crates/bashkit-python/dist --force-reinstall
           pip install pytest pytest-asyncio langchain-core langgraph fastapi httpx maturin
 
+      # random-fs is a separate, non-abi3 pyo3 extension (own workspace, no
+      # abi3-py39), so it must be built against each interpreter.
       - name: Build random filesystem fixture
         run: |
           python -m maturin build --release --out /tmp/bashkit-random-fs \

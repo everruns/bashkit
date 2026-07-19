@@ -204,10 +204,12 @@ invocation regardless of mechanism.
 ## CI
 
 `.github/workflows/python.yml` — on push to main and PRs (path-filtered).
-Jobs: lint (ruff check + format), test (maturin develop + pytest on
-3.9/3.12/3.13/3.14), examples (wheel + `crates/bashkit-python/examples/` +
+Jobs: lint (ruff check + format), test (installs the single abi3 wheel from
+build-wheel + pytest on 3.9–3.14; only the non-abi3 random-fs fixture is built
+per version), examples (wheel + `crates/bashkit-python/examples/` +
 `examples/*.ipynb` via `jupyter nbconvert --execute`, cell error fails CI),
-build-wheel (maturin + twine check), python-check (branch-protection gate).
+build-wheel (maturin + twine check, produces the shared abi3 wheel artifact),
+python-check (branch-protection gate).
 
 ## Linting
 
