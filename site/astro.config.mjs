@@ -1,5 +1,7 @@
 import { defineConfig } from "astro/config";
 import { unified } from "@astrojs/markdown-remark";
+import rehypeSlug from "rehype-slug";
+import rehypeAutolinkHeadings from "rehype-autolink-headings";
 import sitemap from "@astrojs/sitemap";
 import sitemapEnhance from "./integrations/sitemap-enhance.mjs";
 
@@ -11,9 +13,13 @@ const DOC_LINKS = new Map([
   ["clap-builtins.md", "/docs/clap-builtins/"],
   ["cli.md", "/docs/cli/"],
   ["compatibility.md", "/docs/compatibility/"],
+  ["configuration.md", "/docs/configuration/"],
   ["credential-injection.md", "/docs/credential-injection/"],
   ["custom_builtins.md", "/docs/custom-builtins/"],
-  ["embedding.md", "/docs/embedding/"],
+  ["custom_builtins_js.md", "/docs/custom-builtins-js/"],
+  // embedding.md + targets.md were split into per-target quickstarts; keep the
+  // old filenames mapped so any lingering markdown links still resolve.
+  ["embedding.md", "/docs/start-rust/"],
   ["filesystem.md", "/docs/filesystem/"],
   ["git.md", "/docs/git/"],
   ["hooks.md", "/docs/hooks/"],
@@ -30,8 +36,14 @@ const DOC_LINKS = new Map([
   ["snapshotting.md", "/docs/snapshotting/"],
   ["sqlite.md", "/docs/sqlite/"],
   ["ssh.md", "/docs/ssh/"],
+  ["start.md", "/docs/start/"],
+  ["start-rust.md", "/docs/start-rust/"],
+  ["start-python.md", "/docs/start-python/"],
+  ["start-node.md", "/docs/start-node/"],
+  ["start-browser.md", "/docs/start-browser/"],
+  ["start-pyodide.md", "/docs/start-pyodide/"],
   ["structured-data.md", "/docs/structured-data/"],
-  ["targets.md", "/docs/targets/"],
+  ["targets.md", "/docs/start/"],
   ["threat-model.md", "/docs/security/"],
   ["typescript.md", "/docs/builtin_typescript/"],
 ]);
@@ -166,7 +178,26 @@ export default defineConfig({
     // `shikiConfig` stays top-level (cross-cutting, processor-agnostic).
     processor: unified({
       remarkPlugins: [normalizeGuideMarkdown],
-      rehypePlugins: [rewriteRenderedLinks],
+      // rehypeSlug assigns heading ids (github-slugger — same algorithm Astro
+      // uses, so fragment links stay consistent); rehypeAutolinkHeadings then
+      // appends a hover-revealed "#" link so any subsection is directly
+      // linkable. Both run before rewriteRenderedLinks (whose "#id" hrefs it
+      // leaves untouched).
+      rehypePlugins: [
+        rehypeSlug,
+        [
+          rehypeAutolinkHeadings,
+          {
+            behavior: "append",
+            properties: {
+              className: ["heading-anchor"],
+              ariaLabel: "Link to this section",
+            },
+            content: { type: "text", value: "#" },
+          },
+        ],
+        rewriteRenderedLinks,
+      ],
     }),
   },
   integrations: [sitemap(), sitemapEnhance()],

@@ -30,6 +30,66 @@ export const SECTION_ORDER = [
 
 export const DOC_META: DocMeta[] = [
   {
+    slug: "start",
+    title: "Get started",
+    summary: "Choose your target — Rust, Python, Node, browser, or Pyodide — and run a first script.",
+    seoTitle: "Get started with Bashkit: choose your target",
+    seoDescription:
+      "Pick the Bashkit package for your runtime — Rust, Python, Node, browser/edge WASM, or Pyodide — then follow its quickstart to a first sandboxed script.",
+    section: "Getting started",
+    editPath: "docs/start.md",
+  },
+  {
+    slug: "start-rust",
+    title: "Rust",
+    summary: "Embed the sandbox in a Rust app: install, first script, examples.",
+    seoTitle: "Get started with Bashkit in Rust",
+    seoDescription:
+      "Embed the Bashkit sandbox in Rust: cargo add, run a first script, persist shell state across calls, configure limits and the filesystem, and runnable examples.",
+    section: "Getting started",
+    editPath: "docs/start-rust.md",
+  },
+  {
+    slug: "start-python",
+    title: "Python",
+    summary: "Embed the sandbox in Python: pip install, first script, examples.",
+    seoTitle: "Get started with Bashkit in Python",
+    seoDescription:
+      "Embed the Bashkit sandbox in Python: pip install the PyPI wheel, run a first script, persist shell state, sync vs async execution, and runnable examples.",
+    section: "Getting started",
+    editPath: "docs/start-python.md",
+  },
+  {
+    slug: "start-node",
+    title: "Node, Bun & Deno",
+    summary: "Embed the sandbox in server-side JavaScript: npm i, first script, examples.",
+    seoTitle: "Get started with Bashkit in Node, Bun & Deno",
+    seoDescription:
+      "Embed the Bashkit sandbox in Node, Bun, or Deno with the @everruns/bashkit NAPI addon: install, run a first script, persist state, and set sandbox options.",
+    section: "Getting started",
+    editPath: "docs/start-node.md",
+  },
+  {
+    slug: "start-browser",
+    title: "Browser (WASM)",
+    summary: "Run the sandbox in the browser or at the edge — with a live terminal to try.",
+    seoTitle: "Get started with Bashkit in the browser (WebAssembly)",
+    seoDescription:
+      "Run the Bashkit sandbox in the browser or edge runtimes with @everruns/bashkit-wasm: single-threaded, no COOP/COEP headers, plus a live in-page terminal.",
+    section: "Getting started",
+    editPath: "docs/start-browser.md",
+  },
+  {
+    slug: "start-pyodide",
+    title: "Pyodide & JupyterLite",
+    summary: "Run the sandbox in Python-in-the-browser via the Emscripten wheel.",
+    seoTitle: "Get started with Bashkit in Pyodide & JupyterLite",
+    seoDescription:
+      "Run the Bashkit sandbox in Pyodide and JupyterLite via the Emscripten wheel: micropip install, a first script, and the reduced WASM feature surface.",
+    section: "Getting started",
+    editPath: "docs/start-pyodide.md",
+  },
+  {
     slug: "cli",
     title: "CLI",
     summary: "Run scripts with bashkit-cli: flags, exit codes, opt-in runtimes.",
@@ -37,26 +97,6 @@ export const DOC_META: DocMeta[] = [
     seoDescription:
       "Learn bashkit-cli modes, install options, limits, host filesystem mounts, interactive shell usage, and sandboxed script examples.",
     section: "Getting started",
-  },
-  {
-    slug: "embedding",
-    title: "Embedding",
-    summary: "Run Bashkit as a library in Rust, Python, or TypeScript.",
-    seoTitle: "Embed Bashkit as a library in Rust, Python, TypeScript",
-    seoDescription:
-      "Embed the Bashkit sandbox as a library in Rust, Python, or TypeScript: run scripts in-process, persist shell state, set resource limits, and allowlist HTTP.",
-    section: "Getting started",
-    editPath: "docs/embedding.md",
-  },
-  {
-    slug: "targets",
-    title: "Targets & bindings",
-    summary: "Pick a package: Rust, Python, Node/Bun/Deno, WebAssembly, or Pyodide.",
-    seoTitle: "Bashkit distribution targets: Rust, Python, npm, WASM, Pyodide",
-    seoDescription:
-      "Choose a Bashkit package by runtime: the Rust crate, PyPI wheel, npm NAPI addon, the @everruns/bashkit-wasm browser/edge package, or the Pyodide wheel.",
-    section: "Getting started",
-    editPath: "docs/targets.md",
   },
   {
     slug: "llm-tools",
@@ -77,6 +117,16 @@ export const DOC_META: DocMeta[] = [
       "Compose ToolDef and callback pairs into one ScriptedTool so an LLM orchestrates many tools in a single bash script with pipes, loops, and jq.",
     section: "LLM tools",
     editPath: "docs/scripted-tools.md",
+  },
+  {
+    slug: "configuration",
+    title: "Sandbox configuration & limits",
+    summary: "Resource limits, filesystem backends, identity, and the network allowlist.",
+    seoTitle: "Bashkit sandbox configuration and resource limits",
+    seoDescription:
+      "Configure the Bashkit sandbox: resource limits, filesystem backends, identity and working directory, and the network allowlist — shared across every binding.",
+    section: "Concepts",
+    editPath: "docs/configuration.md",
   },
   {
     slug: "filesystem",
