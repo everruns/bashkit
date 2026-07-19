@@ -206,25 +206,31 @@ fn _mark_interpreter_at_exit() {
     INTERPRETER_AT_EXIT.store(true, Ordering::Release);
 }
 
-/// Whether the current thread is attached to the Python interpreter (holds
-/// the GIL). Used by teardown paths to decide whether a blocking join must
-/// be wrapped in a detach.
-fn thread_attached_to_python() -> bool {
-    // SAFETY: PyGILState_Check only reads thread-local interpreter state and
-    // is documented as callable from any thread at any time.
-    unsafe { pyo3::ffi::PyGILState_Check() == 1 }
-}
-
 /// Run `f` (a blocking join) without holding the GIL, so threads that must
 /// attach to finish can make progress. Detaches first when the calling
 /// thread is attached (the pyclass-dealloc case); runs `f` directly when it
 /// is not. Callers must check `interpreter_at_exit()` first: once the
 /// interpreter is exiting, joining threads that may touch Python is unsafe.
+///
+/// abi3: `PyGILState_Check` is not in the limited API, and pyo3 documents it as
+/// unreliable for this purpose (spurious `1` once sub-interpreter APIs have been
+/// used). Probe with the public `Python::try_attach` instead: it attaches only
+/// when the interpreter is live and attachable (not finalizing, not mid
+/// `__traverse__`) — reattaching reentrantly when the caller already holds the
+/// GIL (the pyclass-dealloc path) — and `py.detach` then releases the GIL for
+/// the join regardless. When it can't attach, the closure never runs and we
+/// join directly (a plain thread join touches no Python state).
 fn join_without_gil<F: FnOnce() + Send>(f: F) {
-    if thread_attached_to_python() {
-        Python::attach(|py| py.detach(f));
-    } else {
-        f();
+    let mut f = Some(f);
+    let attached = Python::try_attach(|py| {
+        let f = f.take().expect("try_attach runs the closure at most once");
+        py.detach(f);
+    });
+    if attached.is_none() {
+        // Interpreter not attachable; run the join without touching Python.
+        if let Some(f) = f.take() {
+            f();
+        }
     }
 }
 
@@ -814,7 +820,10 @@ impl PythonLazyFilesFs {
                     normalized.display()
                 )
             })?;
-            let text = text.to_str().map_err(|e| e.to_string())?;
+            // `to_cow` (not `to_str`) for abi3: `PyString::to_str` needs the
+            // non-limited API on <3.10; `to_cow` is in the stable ABI and keeps
+            // the same UnicodeEncodeError on unpaired surrogates.
+            let text = text.to_cow().map_err(|e| e.to_string())?;
             let content_size = text.len();
             let max_file_size = FsLimits::default().max_file_size as usize;
             if content_size > max_file_size {

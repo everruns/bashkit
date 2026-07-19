@@ -19,7 +19,10 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  PYTHON_VERSIONS: "3.9 3.10 3.11 3.12 3.13 3.14"
+  # abi3 (stable ABI): one interpreter builds a single cp39-abi3 wheel per
+  # platform that runs on Python 3.9+. No per-minor-version matrix. See
+  # specs/python-package.md § abi3.
+  BUILD_PYTHON: "3.12"
 
 jobs:
   # Source distribution (platform-independent)
@@ -101,7 +104,9 @@ jobs:
         with:
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux || 'auto' }}
-          args: --release --out dist -i ${{ env.PYTHON_VERSIONS }}
+          # abi3: maturin reads pyo3's abi3-py39 feature and emits a single
+          # cp39-abi3 wheel per platform from one build interpreter. No -i list.
+          args: --release --out dist -i ${{ env.BUILD_PYTHON }}
           rust-toolchain: stable
           docker-options: -e CI
           working-directory: crates/bashkit-python
@@ -215,32 +220,26 @@ jobs:
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
       - run: uvx twine check dist/*
 
-  # Smoke-test wheels on each OS, including the new cp314 artifacts
+  # Smoke-test the single cp39-abi3 wheel on every targeted Python version.
+  # With abi3 there is one wheel per platform, so this is the check that it
+  # actually installs and runs across the full 3.9–3.14 range it claims — not
+  # just the build interpreter. os × python-version cross-product (18 jobs);
+  # the include entries only map each os to its runner.
   test-builds:
     name: Test wheel on ${{ matrix.os }} (Python ${{ matrix.python-version }})
     needs: [build]
     strategy:
       fail-fast: false
       matrix:
+        os: [linux, macos, windows]
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
         include:
           - os: linux
             runs-on: ubuntu-latest
-            python-version: "3.12"
-          - os: linux
-            runs-on: ubuntu-latest
-            python-version: "3.14"
           - os: macos
             runs-on: macos-latest
-            python-version: "3.12"
-          - os: macos
-            runs-on: macos-latest
-            python-version: "3.14"
           - os: windows
             runs-on: windows-latest
-            python-version: "3.12"
-          - os: windows
-            runs-on: windows-latest
-            python-version: "3.14"
     runs-on: ${{ matrix.runs-on }}
     steps:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
