@@ -81,12 +81,9 @@ jobs:
       - name: Install maturin
         run: python -m pip install "maturin${MATURIN_VERSION}"
 
-      # Build the abi3 wheel (the actual release artifact) and run pytest against
-      # it on each version, so the single cp39-abi3 wheel is runtime-validated on
-      # 3.9-3.14, not just the version it was compiled with.
       - name: Build wheel
         working-directory: crates/bashkit-python
-        run: python -m maturin build --release --out dist -i python${{ matrix.python-version }} --features abi3
+        run: python -m maturin build --release --out dist -i python${{ matrix.python-version }}
 
       - name: Install wheel and test dependencies
         run: |
@@ -171,7 +168,7 @@ jobs:
 
       - name: Build wheel
         working-directory: crates/bashkit-python
-        run: python -m maturin build --release --out dist --features abi3
+        run: python -m maturin build --release --out dist
 
       - name: Verify wheel metadata
         run: |
