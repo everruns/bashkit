@@ -1,9 +1,22 @@
 // Decision: keep the Astro site static and do content negotiation at the
 // Cloudflare Worker edge. HTML stays the default; Markdown is served only when
 // the client explicitly prefers `text/markdown`.
+// Old doc URLs that were split/merged into the per-target quickstarts. Keep
+// them as permanent redirects so external links and bookmarks don't 404.
+const REDIRECTS = new Map([
+  ["/docs/embedding", "/docs/start-rust"],
+  ["/docs/targets", "/docs/start"],
+]);
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+
+    const redirectTarget = REDIRECTS.get(url.pathname.replace(/\/$/, ""));
+    if (redirectTarget) {
+      return Response.redirect(new URL(redirectTarget, url).toString(), 301);
+    }
+
     const assetPath = markdownAssetPath(url.pathname);
 
     if (
