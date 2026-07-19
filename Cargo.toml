@@ -117,7 +117,13 @@ turso_core = "0.7"
 serial_test = "3"
 
 # Python bindings
-pyo3 = { version = "0.29", features = ["extension-module", "generate-import-lib"] }
+# Important decision (PyPI storage): `abi3-py39` builds against CPython's stable
+# ABI (limited API), so ONE wheel per platform runs on Python 3.9+ instead of a
+# separate binary per minor version. Collapses the 6-version × 7-platform matrix
+# (42 native wheels/release, ~12 MB each) to 7, and future Python releases need
+# no rebuild. `generate-import-lib` kept for the Windows abi3 import lib.
+# See specs/python-package.md § abi3.
+pyo3 = { version = "0.29", features = ["extension-module", "generate-import-lib", "abi3-py39"] }
 pyo3-async-runtimes = { version = "0.29", features = ["tokio-runtime"] }
 
 # JavaScript/Node.js bindings (NAPI-RS)

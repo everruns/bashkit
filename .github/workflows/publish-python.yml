@@ -19,7 +19,10 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  PYTHON_VERSIONS: "3.9 3.10 3.11 3.12 3.13 3.14"
+  # abi3 (stable ABI): one interpreter builds a single cp39-abi3 wheel per
+  # platform that runs on Python 3.9+. No per-minor-version matrix. See
+  # specs/python-package.md § abi3.
+  BUILD_PYTHON: "3.12"
 
 jobs:
   # Source distribution (platform-independent)
@@ -101,7 +104,9 @@ jobs:
         with:
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux || 'auto' }}
-          args: --release --out dist -i ${{ env.PYTHON_VERSIONS }}
+          # abi3: maturin reads pyo3's abi3-py39 feature and emits a single
+          # cp39-abi3 wheel per platform from one build interpreter. No -i list.
+          args: --release --out dist -i ${{ env.BUILD_PYTHON }}
           rust-toolchain: stable
           docker-options: -e CI
           working-directory: crates/bashkit-python

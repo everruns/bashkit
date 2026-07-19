@@ -31,9 +31,13 @@ workspace `Cargo.toml` → `bashkit-python` `Cargo.toml` (inherits) → maturin 
 
 ## Supported Platforms
 
-Python 3.9–3.14 × 7 platforms ≈ 42 wheels: Linux x86_64/aarch64 (manylinux
-glibc + musllinux_1_1), macOS x86_64/aarch64, Windows x86_64 MSVC. Exact
-matrix and runners: `.github/workflows/publish-python.yml`.
+7 platforms: Linux x86_64/aarch64 (manylinux glibc + musllinux_1_1), macOS
+x86_64/aarch64, Windows x86_64 MSVC. Exact matrix and runners:
+`.github/workflows/publish-python.yml`.
+
+Thanks to abi3 (below) this is **7 native wheels per release** (one
+`cp39-abi3` wheel per platform, each running on Python 3.9+), not one wheel per
+`{Python minor × platform}` combination.
 
 In addition, a **reduced-feature Pyodide/Emscripten wheel**
 (`wasm32-unknown-emscripten`) ships for browser / JupyterLite use — built and
@@ -217,6 +221,33 @@ cd crates/bashkit-python
 pip install maturin && maturin develop      # --release for optimized
 pip install pytest pytest-asyncio && pytest tests/ -v
 ```
+
+## abi3 (stable ABI)
+
+The extension is built against CPython's [limited API / stable
+ABI](https://docs.python.org/3/c-api/stable.html) via PyO3's `abi3-py39`
+feature (in the workspace `pyo3` dependency). One `cp39-abi3` wheel per
+platform runs on **every Python ≥ 3.9**, including versions released after the
+wheel was built — no per-minor-version rebuild.
+
+Why: PyPI keeps every historical release forever, and each native wheel is a
+~12 MB static binary (embedded jq / Monty / SQLite / SSH / TLS). Building one
+wheel per `{Python minor × platform}` was 6 × 7 = 42 native wheels (~500 MB)
+*per release*, growing unbounded across releases. abi3 collapses the Python
+axis to one, cutting per-release native wheels 6× (42 → 7, ~500 MB → ~85 MB)
+and shrinking the build matrix by the same factor. The perf cost of the limited
+API is negligible here because hot paths are in Rust, not Python dispatch.
+
+Limited-API constraints observed in `crates/bashkit-python/src/lib.rs`:
+
+- **No `PyGILState_Check`** (not in the stable ABI, and pyo3 documents it as
+  unreliable). Teardown's `join_without_gil` probes attachment via the public
+  `Python::try_attach` + `py.detach` instead.
+- **No `PyString::to_str`** on the `&self`-only path (needs the non-limited API
+  below 3.10). Lazy file providers use `to_cow()`, which is in the stable ABI.
+
+The emscripten/Pyodide wheel is unaffected — it already ships a single Python
+version on a separate toolchain (see `specs/emscripten-wheels.md`).
 
 ## Design Decisions
 
