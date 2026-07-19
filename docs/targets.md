@@ -94,6 +94,13 @@ const result = bash.executeSync('echo "Hello, browser!" | tr a-z A-Z');
 console.log(result.stdout); // HELLO, BROWSER!
 ```
 
+### Try it live
+
+This is the exact package above, running in your browser — no server, nothing
+you type leaves this page. Launch it and run some bash:
+
+<div data-bashkit-terminal></div>
+
 No bundler, straight from a CDN:
 
 ```html

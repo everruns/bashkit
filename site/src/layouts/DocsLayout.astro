@@ -1,5 +1,6 @@
 ---
 import BaseLayout from "./BaseLayout.astro";
+import BashkitTerminal from "../components/BashkitTerminal.astro";
 import { DOC_META, DOC_META_BY_SLUG } from "../pages/docs/_meta";
 
 type NavLink = { href: string; title: string };
@@ -123,6 +124,7 @@ const editUrl =
       </footer>
     </div>
   </article>
+  <BashkitTerminal />
 </BaseLayout>
 
 <style>

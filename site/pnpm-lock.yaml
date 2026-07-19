@@ -20,6 +20,9 @@ importers:
       '@astrojs/sitemap':
         specifier: ^3.7.3
         version: 3.7.3
+      '@everruns/bashkit-wasm':
+        specifier: 0.14.3
+        version: 0.14.3
       astro:
         specifier: ^7.0.0
         version: 7.0.0(@astrojs/markdown-remark@7.2.0)(@emnapi/core@1.9.1)(@emnapi/runtime@1.9.1)(@types/node@25.9.1)(rollup@4.60.4)(yaml@2.9.0)
@@ -438,6 +441,9 @@ packages:
     engines: {node: '>=18'}
     cpu: [x64]
     os: [win32]
+
+  '@everruns/bashkit-wasm@0.14.3':
+    resolution: {integrity: sha512-EboN/dXeA9YBBceM+MXPdyl+ptqpw9HZbaxxYkow/l2G6eEECEFF5NQVaRtMgcUQ9X4ajHIUjSRV2ZcLOg/DWA==}
 
   '@img/colour@1.1.0':
     resolution: {integrity: sha512-Td76q7j57o/tLVdgS746cYARfSyxk8iEfRxewL9h4OMzYhbW4TAcppl0mT4eyqXddh6L/jwoM75mo7ixa/pCeQ==}
@@ -2572,6 +2578,8 @@ snapshots:
 
   '@esbuild/win32-x64@0.28.1':
     optional: true
+
+  '@everruns/bashkit-wasm@0.14.3': {}
 
   '@img/colour@1.1.0': {}
 
