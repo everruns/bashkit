@@ -117,7 +117,9 @@ Version tracks the workspace `Cargo.toml` (currently synced by the release
 prepare step, same as the other packages). `publish-wasm.yml` triggers on release
 published, builds `pkg/`, runs the smoke test, and `npm publish`es
 `@everruns/bashkit-wasm` with provenance (`NPM_TOKEN`, `id-token: write`) — same
-pattern as `publish-js.yml`.
+pattern as `publish-js.yml`. Browser example smoke testing writes a file under
+`/home/user`, reloads the page, and verifies `browserLocal` restores it from
+`localStorage`.
 
 ## Limitations (see `specs/limitations.md`)
 

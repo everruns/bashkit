@@ -99,6 +99,7 @@
 
   <script type="module">
     import { initBashkit, Bash } from "@everruns/bashkit-wasm";
+    import { browserLocal } from "./browser-local.js";
 
     const output = document.getElementById("output");
     const cmd = document.getElementById("cmd");
@@ -112,14 +113,16 @@
     // this resolves from any static host or bundler.
     await initBashkit();
 
-    // Initialize interpreter
+    // Persist the writable home directory between browser sessions.
+    const storage = browserLocal();
+    const defaultFiles = {
+      "/home/user/welcome.txt": "Welcome to Bashkit running in your browser!\nThis is a sandboxed Bash interpreter compiled to WebAssembly.\n",
+      "/home/user/demo.sh": '#!/bin/bash\nfor i in 1 2 3; do\n  echo "iteration $i"\ndone\necho "done!"',
+    };
     const bash = new Bash({
       username: "user",
       hostname: "browser",
-      files: {
-        "/home/user/welcome.txt": "Welcome to Bashkit running in your browser!\nThis is a sandboxed Bash interpreter compiled to WebAssembly.\n",
-        "/home/user/demo.sh": '#!/bin/bash\nfor i in 1 2 3; do\n  echo "iteration $i"\ndone\necho "done!"',
-      },
+      files: storage.load(defaultFiles),
     });
 
     versionEl.textContent = "single-threaded wasm · no COOP/COEP";
@@ -141,6 +144,7 @@
       appendLine(`$ ${command}`, "prompt-line");
 
       const result = await bash.execute(command);
+      storage.save(bash.fs());
 
       if (result.stdout) {
         appendLine(result.stdout.replace(/\n$/, ""), "stdout");
