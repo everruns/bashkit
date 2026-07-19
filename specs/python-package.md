@@ -31,21 +31,9 @@ workspace `Cargo.toml` → `bashkit-python` `Cargo.toml` (inherits) → maturin 
 
 ## Supported Platforms
 
-7 platforms: Linux x86_64/aarch64 (manylinux glibc + musllinux_1_1), macOS
-x86_64/aarch64, Windows x86_64 MSVC. Exact matrix and runners:
-`.github/workflows/publish-python.yml`.
-
-**Stable ABI (abi3).** Native wheels are built once per platform against the
-CPython limited API with a 3.9 floor (`pyo3/abi3-py39`, enabled by the crate's
-`abi3` feature), producing a single forward-compatible `cp39-abi3` wheel per
-platform that installs on every Python ≥ 3.9. This replaces the former
-per-minor matrix (3.9–3.14 × 7 ≈ 42 wheels → 7 wheels), cutting per-release
-PyPI storage ~6×. The `abi3` feature is off by default (local `maturin develop`
-stays a fast version-specific build); the release and PR-CI wheel builds pass
-`--features abi3`. PR CI (`python.yml`) still runs the test suite on
-3.9/3.12/3.13/3.14, each against the abi3 wheel, so the shipped artifact is
-runtime-validated across the range. abi3 is sound here because the extension's
-only raw FFI symbol is `PyGILState_Check` (limited API since 3.2).
+Python 3.9–3.14 × 7 platforms ≈ 42 wheels: Linux x86_64/aarch64 (manylinux
+glibc + musllinux_1_1), macOS x86_64/aarch64, Windows x86_64 MSVC. Exact
+matrix and runners: `.github/workflows/publish-python.yml`.
 
 In addition, a **reduced-feature Pyodide/Emscripten wheel**
 (`wasm32-unknown-emscripten`) ships for browser / JupyterLite use — built and
