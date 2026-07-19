@@ -26,7 +26,9 @@ cross-origin isolation** — there are no `COOP`/`COEP` headers in
 `vite.config.js`, and it drops into any static host or bundler (including
 embedded / third-party iframe contexts where those headers cannot be set).
 
-The terminal UI is a single `index.html` — no framework.
+The terminal UI is a single `index.html` — no framework. The `browserLocal`
+storage backend snapshots files under `/home/user` to `localStorage` after each
+command and restores them on the next page load.
 
 ## Feature Surface
 
@@ -45,6 +47,7 @@ mounts. Reach the network from a custom builtin that calls the app's own
 | `pnpm start` / `pnpm dev` | Start the Vite dev server |
 | `pnpm run build` | Production bundle |
 | `pnpm run preview` | Preview the production bundle |
+| `pnpm test` | Test the `browserLocal` storage backend |
 
 ## Requirements
 

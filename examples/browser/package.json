@@ -5,6 +5,7 @@
   "scripts": {
     "start": "vite",
     "dev": "vite",
+    "test": "node --test browser-local.test.js",
     "build": "vite build",
     "preview": "vite preview"
   },
