@@ -238,6 +238,12 @@ axis to one, cutting per-release native wheels 6× (42 → 7, ~500 MB → ~85 MB
 and shrinking the build matrix by the same factor. The perf cost of the limited
 API is negligible here because hot paths are in Rust, not Python dispatch.
 
+Because the build now emits one wheel instead of one-per-version, the
+`test-builds` job in `publish-python.yml` installs and smoke-tests that single
+wheel across the full 3.9–3.14 range on every OS (3 × 6 = 18 jobs) — the check
+that the abi3 wheel really runs everywhere it claims, not just on the build
+interpreter.
+
 Limited-API constraints observed in `crates/bashkit-python/src/lib.rs`:
 
 - **No `PyGILState_Check`** (not in the stable ABI, and pyo3 documents it as
