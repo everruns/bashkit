@@ -1,5 +1,7 @@
 import { defineConfig } from "astro/config";
 import { unified } from "@astrojs/markdown-remark";
+import rehypeSlug from "rehype-slug";
+import rehypeAutolinkHeadings from "rehype-autolink-headings";
 import sitemap from "@astrojs/sitemap";
 import sitemapEnhance from "./integrations/sitemap-enhance.mjs";
 
@@ -166,7 +168,26 @@ export default defineConfig({
     // `shikiConfig` stays top-level (cross-cutting, processor-agnostic).
     processor: unified({
       remarkPlugins: [normalizeGuideMarkdown],
-      rehypePlugins: [rewriteRenderedLinks],
+      // rehypeSlug assigns heading ids (github-slugger — same algorithm Astro
+      // uses, so fragment links stay consistent); rehypeAutolinkHeadings then
+      // appends a hover-revealed "#" link so any subsection is directly
+      // linkable. Both run before rewriteRenderedLinks (whose "#id" hrefs it
+      // leaves untouched).
+      rehypePlugins: [
+        rehypeSlug,
+        [
+          rehypeAutolinkHeadings,
+          {
+            behavior: "append",
+            properties: {
+              className: ["heading-anchor"],
+              ariaLabel: "Link to this section",
+            },
+            content: { type: "text", value: "#" },
+          },
+        ],
+        rewriteRenderedLinks,
+      ],
     }),
   },
   integrations: [sitemap(), sitemapEnhance()],

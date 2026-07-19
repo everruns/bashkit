@@ -227,6 +227,37 @@ const editUrl =
     color: var(--color-obsidian);
     scroll-margin-top: calc(var(--header-height) + 1rem);
   }
+  /* Hover-revealed heading anchors (rehype-autolink-headings). Let readers grab
+     a direct link to any subsection without cluttering the default view. */
+  .doc__body :global(h2),
+  .doc__body :global(h3),
+  .doc__body :global(h4) {
+    position: relative;
+  }
+  .doc__body :global(.heading-anchor) {
+    position: absolute;
+    left: -1.1em;
+    padding-right: 0.35em;
+    color: var(--color-gold);
+    text-decoration: none;
+    opacity: 0;
+    transition: opacity 0.12s ease-in-out;
+    font-weight: 400;
+  }
+  .doc__body :global(h2:hover) :global(.heading-anchor),
+  .doc__body :global(h3:hover) :global(.heading-anchor),
+  .doc__body :global(h4:hover) :global(.heading-anchor),
+  .doc__body :global(.heading-anchor:focus) {
+    opacity: 1;
+  }
+  @media (max-width: 640px) {
+    /* No hover on touch — keep anchors always visible but subtle. */
+    .doc__body :global(.heading-anchor) {
+      position: static;
+      opacity: 0.5;
+      margin-left: 0.4em;
+    }
+  }
   .doc__body :global(h3) {
     font-size: 1.15rem;
     margin-top: var(--space-lg);
