@@ -1,0 +1,275 @@
+---
+// Live, in-browser bash terminal powered by @everruns/bashkit-wasm.
+//
+// Decision: docs are plain Markdown (no MDX), so pages opt in by dropping a
+// `<div data-bashkit-terminal></div>` marker where the terminal should appear.
+// This component ships only a small hydrator script (included site-wide via
+// DocsLayout); it no-ops when no marker is present. The WebAssembly module is
+// pulled in via dynamic import ONLY on click, so it never touches initial page
+// load — other docs pages pay nothing for it.
+---
+
+<script>
+  const mounts = document.querySelectorAll<HTMLElement>("[data-bashkit-terminal]");
+  if (mounts.length > 0) {
+    mounts.forEach(setupLauncher);
+  }
+
+  function setupLauncher(mount: HTMLElement) {
+    mount.classList.add("bk-term");
+    mount.innerHTML = `
+      <div class="bk-term__chrome" aria-hidden="true">
+        <span class="bk-term__dot"></span>
+        <span class="bk-term__dot"></span>
+        <span class="bk-term__dot"></span>
+        <span class="bk-term__label">bash — WebAssembly</span>
+      </div>
+      <div class="bk-term__stage">
+        <p class="bk-term__pitch">Real bash, running entirely in your browser. No server — nothing you type leaves this page.</p>
+        <button type="button" class="bk-term__launch">▶ Launch terminal</button>
+      </div>`;
+
+    const stage = mount.querySelector<HTMLElement>(".bk-term__stage")!;
+    const launch = mount.querySelector<HTMLButtonElement>(".bk-term__launch")!;
+
+    launch.addEventListener("click", async () => {
+      launch.disabled = true;
+      launch.textContent = "Loading WebAssembly…";
+      try {
+        const { initBashkit, Bash } = await import("@everruns/bashkit-wasm");
+        await initBashkit();
+        const bash = new Bash();
+        renderRepl(stage, bash);
+      } catch (err) {
+        stage.innerHTML = `<p class="bk-term__pitch">Couldn't load the WebAssembly module: ${escapeHtml(
+          String(err),
+        )}</p>`;
+      }
+    });
+  }
+
+  const EXAMPLES = [
+    'echo "Hello, browser!" | tr a-z A-Z',
+    "seq 1 5 | paste -sd+ | bc",
+    "echo '{\"tool\":\"bashkit\"}' | jq .tool",
+    "mkdir -p demo && echo hi > demo/a.txt && cat demo/a.txt",
+    "ls -la /",
+  ];
+
+  function renderRepl(stage: HTMLElement, bash: any) {
+    stage.classList.add("bk-term__stage--live");
+    stage.innerHTML = `
+      <div class="bk-term__out" role="log" aria-live="polite" aria-label="Terminal output"></div>
+      <div class="bk-term__chips">
+        ${EXAMPLES.map(
+          (ex) => `<button type="button" class="bk-term__chip">${escapeHtml(ex)}</button>`,
+        ).join("")}
+      </div>
+      <form class="bk-term__form">
+        <span class="bk-term__ps1" aria-hidden="true">$</span>
+        <input class="bk-term__input" type="text" autocomplete="off" autocapitalize="off"
+               spellcheck="false" aria-label="bash command" placeholder="type a command and press Enter" />
+        <button type="submit" class="bk-term__run">Run</button>
+      </form>`;
+
+    const out = stage.querySelector<HTMLElement>(".bk-term__out")!;
+    const form = stage.querySelector<HTMLFormElement>(".bk-term__form")!;
+    const input = stage.querySelector<HTMLInputElement>(".bk-term__input")!;
+
+    function append(text: string, cls: string) {
+      if (text === "") return;
+      const line = document.createElement("div");
+      line.className = cls;
+      line.textContent = text.replace(/\n+$/, "");
+      out.appendChild(line);
+      out.scrollTop = out.scrollHeight;
+    }
+
+    function show(res: any) {
+      append(res.stdout, "bk-term__stdout");
+      append(res.stderr, "bk-term__stderr");
+      if (res.stdoutTruncated || res.stderrTruncated) {
+        append("[output truncated by resource limit]", "bk-term__meta");
+      }
+    }
+
+    function run(cmd: string) {
+      const echo = document.createElement("div");
+      echo.className = "bk-term__echo";
+      echo.innerHTML = `<span class="bk-term__ps1">$</span> ${escapeHtml(cmd)}`;
+      out.appendChild(echo);
+      try {
+        show(bash.executeSync(cmd));
+      } catch {
+        // Script yielded (e.g. an async builtin) — retry on the async path.
+        bash
+          .execute(cmd)
+          .then(show)
+          .catch((err: unknown) => append(String(err), "bk-term__stderr"));
+      }
+      out.scrollTop = out.scrollHeight;
+    }
+
+    form.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const cmd = input.value.trim();
+      if (!cmd) return;
+      run(cmd);
+      input.value = "";
+      input.focus();
+    });
+
+    stage.querySelectorAll<HTMLButtonElement>(".bk-term__chip").forEach((chip) => {
+      chip.addEventListener("click", () => {
+        const cmd = chip.textContent ?? "";
+        input.value = cmd;
+        run(cmd);
+        input.value = "";
+        input.focus();
+      });
+    });
+
+    append("bashkit — sandboxed bash in WebAssembly. Try a command below.", "bk-term__meta");
+    input.focus();
+  }
+
+  function escapeHtml(s: string): string {
+    return s
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+</script>
+
+<style is:global>
+  .bk-term {
+    margin: var(--space-md) 0 var(--space-lg);
+    border: 1px solid rgb(10 22 54 / 0.15);
+    border-radius: 8px;
+    overflow: hidden;
+    background: #0d1117;
+    box-shadow: 0 12px 30px rgb(10 22 54 / 0.12);
+    font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  }
+  .bk-term__chrome {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.55rem 0.85rem;
+    background: #161b22;
+    border-bottom: 1px solid rgb(255 255 255 / 0.06);
+  }
+  .bk-term__dot {
+    width: 0.7rem;
+    height: 0.7rem;
+    border-radius: 50%;
+    background: #3a4150;
+  }
+  .bk-term__dot:nth-child(1) { background: #ff5f57; }
+  .bk-term__dot:nth-child(2) { background: #febc2e; }
+  .bk-term__dot:nth-child(3) { background: #28c840; }
+  .bk-term__label {
+    margin-left: 0.5rem;
+    font-size: 0.72rem;
+    letter-spacing: 0.04em;
+    color: #8b949e;
+  }
+  .bk-term__stage {
+    padding: 1.3rem;
+  }
+  .bk-term__pitch {
+    margin: 0 0 1rem;
+    color: #adbac7;
+    font-size: 0.9rem;
+    line-height: 1.6;
+    font-family: var(--font-sans, system-ui, sans-serif);
+  }
+  .bk-term__launch {
+    appearance: none;
+    border: 1px solid #2f81f7;
+    background: #1f6feb;
+    color: #fff;
+    font-size: 0.9rem;
+    font-weight: 600;
+    padding: 0.55rem 1.1rem;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .bk-term__launch:hover { background: #388bfd; }
+  .bk-term__launch:disabled { opacity: 0.6; cursor: progress; }
+
+  .bk-term__stage--live { padding: 0; }
+  .bk-term__out {
+    padding: 0.9rem 1rem;
+    min-height: 8rem;
+    max-height: 20rem;
+    overflow-y: auto;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    color: #d1d5db;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .bk-term__meta { color: #6e7681; font-style: italic; margin-bottom: 0.4rem; }
+  .bk-term__echo { color: #e6edf3; margin-top: 0.35rem; }
+  .bk-term__stdout { color: #adbac7; }
+  .bk-term__stderr { color: #ff7b72; }
+  .bk-term__ps1 { color: #3fb950; font-weight: 700; margin-right: 0.4rem; }
+
+  .bk-term__chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    padding: 0.5rem 1rem;
+    border-top: 1px solid rgb(255 255 255 / 0.06);
+    background: #11161d;
+  }
+  .bk-term__chip {
+    appearance: none;
+    border: 1px solid rgb(255 255 255 / 0.12);
+    background: #1c2530;
+    color: #9db3c9;
+    font-family: inherit;
+    font-size: 0.72rem;
+    padding: 0.28rem 0.55rem;
+    border-radius: 999px;
+    cursor: pointer;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .bk-term__chip:hover { border-color: #2f81f7; color: #cfe0f2; }
+
+  .bk-term__form {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.6rem 1rem;
+    border-top: 1px solid rgb(255 255 255 / 0.08);
+    background: #0d1117;
+  }
+  .bk-term__input {
+    flex: 1;
+    min-width: 0;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: #e6edf3;
+    font-family: inherit;
+    font-size: 0.85rem;
+  }
+  .bk-term__input::placeholder { color: #4d5765; }
+  .bk-term__run {
+    appearance: none;
+    border: 1px solid rgb(255 255 255 / 0.14);
+    background: #21262d;
+    color: #c9d1d9;
+    font-size: 0.78rem;
+    font-weight: 600;
+    padding: 0.35rem 0.8rem;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .bk-term__run:hover { background: #2d333b; }
+</style>

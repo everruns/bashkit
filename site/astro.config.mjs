@@ -13,6 +13,7 @@ const DOC_LINKS = new Map([
   ["compatibility.md", "/docs/compatibility/"],
   ["credential-injection.md", "/docs/credential-injection/"],
   ["custom_builtins.md", "/docs/custom-builtins/"],
+  ["embedding.md", "/docs/embedding/"],
   ["filesystem.md", "/docs/filesystem/"],
   ["git.md", "/docs/git/"],
   ["hooks.md", "/docs/hooks/"],
@@ -30,6 +31,7 @@ const DOC_LINKS = new Map([
   ["sqlite.md", "/docs/sqlite/"],
   ["ssh.md", "/docs/ssh/"],
   ["structured-data.md", "/docs/structured-data/"],
+  ["targets.md", "/docs/targets/"],
   ["threat-model.md", "/docs/security/"],
   ["typescript.md", "/docs/builtin_typescript/"],
 ]);
@@ -42,9 +44,12 @@ function normalizeGuideMarkdown() {
       }
 
       if (node.type === "link" && typeof node.url === "string") {
-        const target = DOC_LINKS.get(node.url.split("/").pop());
+        const hashIndex = node.url.indexOf("#");
+        const urlPath = hashIndex >= 0 ? node.url.slice(0, hashIndex) : node.url;
+        const hash = hashIndex >= 0 ? node.url.slice(hashIndex) : "";
+        const target = DOC_LINKS.get(urlPath.split("/").pop());
         if (target) {
-          node.url = target;
+          node.url = `${target}${hash}`;
           return;
         }
 

@@ -49,6 +49,16 @@ export const DOC_META: DocMeta[] = [
     editPath: "docs/embedding.md",
   },
   {
+    slug: "targets",
+    title: "Targets & bindings",
+    summary: "Pick a package: Rust, Python, Node/Bun/Deno, WebAssembly, or Pyodide.",
+    seoTitle: "Bashkit distribution targets: Rust, Python, npm, WASM, Pyodide",
+    seoDescription:
+      "Choose a Bashkit package by runtime: the Rust crate, PyPI wheel, npm NAPI addon, the @everruns/bashkit-wasm browser/edge package, or the Pyodide wheel.",
+    section: "Getting started",
+    editPath: "docs/targets.md",
+  },
+  {
     slug: "llm-tools",
     title: "LLM tools",
     summary: "Expose Bashkit as a sandboxed tool for agent frameworks.",
