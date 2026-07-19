@@ -15,6 +15,17 @@ crate-type = ["cdylib"]
 name = "bashkit"
 doc = false  # Python extension, no Rust docs needed
 
+[features]
+# Stable-ABI (abi3) build. Enabling `abi3-py39` makes pyo3 target the CPython
+# limited API with a 3.9 floor, so a single forward-compatible `cp39-abi3` wheel
+# per platform serves every Python >= 3.9 — instead of one wheel per minor
+# (7 platforms x 6 versions = 42 wheels dropped to 7). Cuts per-release PyPI
+# storage ~6x. Off by default so local `maturin develop` keeps a fast,
+# version-specific build; the release/CI wheel builds pass `--features abi3`.
+# Safe here: the crate's only raw FFI symbol is `PyGILState_Check` (in the
+# limited API since 3.2); everything else goes through pyo3's abi3-safe bindings.
+abi3 = ["pyo3/abi3-py39"]
+
 [dependencies]
 # PyO3 native extension
 pyo3 = { workspace = true }

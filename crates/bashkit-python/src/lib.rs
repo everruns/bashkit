@@ -206,26 +206,17 @@ fn _mark_interpreter_at_exit() {
     INTERPRETER_AT_EXIT.store(true, Ordering::Release);
 }
 
-/// Whether the current thread is attached to the Python interpreter (holds
-/// the GIL). Used by teardown paths to decide whether a blocking join must
-/// be wrapped in a detach.
-fn thread_attached_to_python() -> bool {
-    // SAFETY: PyGILState_Check only reads thread-local interpreter state and
-    // is documented as callable from any thread at any time.
-    unsafe { pyo3::ffi::PyGILState_Check() == 1 }
-}
-
 /// Run `f` (a blocking join) without holding the GIL, so threads that must
-/// attach to finish can make progress. Detaches first when the calling
-/// thread is attached (the pyclass-dealloc case); runs `f` directly when it
-/// is not. Callers must check `interpreter_at_exit()` first: once the
-/// interpreter is exiting, joining threads that may touch Python is unsafe.
+/// attach to finish can make progress. `Python::attach` is a no-op when the
+/// calling thread already holds the GIL (the pyclass-dealloc case) and
+/// otherwise briefly acquires it; either way `detach` releases the GIL for the
+/// duration of `f`. Callers must check `interpreter_at_exit()` first: once the
+/// interpreter is exiting, joining threads that may touch Python is unsafe and
+/// acquiring the GIL could abort during finalization. With that guard the
+/// interpreter is always alive here, so the unconditional attach is safe — and
+/// it avoids `PyGILState_Check`, which the CPython limited API (abi3) omits.
 fn join_without_gil<F: FnOnce() + Send>(f: F) {
-    if thread_attached_to_python() {
-        Python::attach(|py| py.detach(f));
-    } else {
-        f();
-    }
+    Python::attach(|py| py.detach(f));
 }
 
 /// Pyclass-held handle to the shared per-instance tokio runtime.
@@ -814,7 +805,9 @@ impl PythonLazyFilesFs {
                     normalized.display()
                 )
             })?;
-            let text = text.to_str().map_err(|e| e.to_string())?;
+            // `to_cow` (not `to_str`) so this compiles under the CPython
+            // limited API (abi3): `to_str` needs a non-limited symbol.
+            let text = text.to_cow().map_err(|e| e.to_string())?;
             let content_size = text.len();
             let max_file_size = FsLimits::default().max_file_size as usize;
             if content_size > max_file_size {

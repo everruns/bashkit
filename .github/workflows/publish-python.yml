@@ -92,16 +92,20 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
+      # abi3 wheels target a fixed interpreter floor (py39), so a single build
+      # produces one `cp39-abi3` wheel per platform for all Python >= 3.9. Build
+      # with 3.9 (present in every manylinux image and installed here for the
+      # macOS/Windows host builds) to anchor the abi3 floor.
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          python-version: "3.12"
+          python-version: "3.9"
 
       - name: Build wheels
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
         with:
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux || 'auto' }}
-          args: --release --out dist -i ${{ env.PYTHON_VERSIONS }}
+          args: --release --out dist -i 3.9 --features abi3
           rust-toolchain: stable
           docker-options: -e CI
           working-directory: crates/bashkit-python
