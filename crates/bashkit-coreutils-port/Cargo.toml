@@ -21,10 +21,10 @@ description = "Port uutils/coreutils argument interfaces and platform-clean modu
 publish = false
 
 [dependencies]
-syn = { version = "2", features = ["full", "visit", "visit-mut", "extra-traits"] }
+syn = { version = "3", features = ["full", "visit", "visit-mut", "extra-traits"] }
 quote = "1"
 proc-macro2 = "1"
-prettyplease = "0.2"
+prettyplease = "0.3"
 anyhow = { workspace = true }
 serde = { workspace = true }
 toml = "1.1"
