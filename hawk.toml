@@ -1,0 +1,18 @@
+# Hawk configuration — https://github.com/astral-sh/hawk
+# Declares the shipped binary products so Hawk can perform its closed-world
+# analysis of unnecessary public surface across the workspace.
+
+[[production]]
+package = "bashkit-cli"
+bin = "bashkit"
+reason = "shipped CLI binary (crates.io + release artifacts)"
+
+[[production]]
+package = "bashkit-eval"
+bin = "bashkit-eval"
+reason = "LLM eval harness binary"
+
+[[production]]
+package = "bashkit-bench"
+bin = "bashkit-bench"
+reason = "bashkit-vs-bash benchmark harness binary"
