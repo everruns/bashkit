@@ -337,6 +337,21 @@ async fn tm_esc_031_namespace_rejects_invalid_paths_and_protects_namespace_nodes
         };
         assert_eq!(error.kind(), ErrorKind::PermissionDenied, "{path}");
     }
+
+    source
+        .write_file(Path::new("/payload.txt"), b"attacker")
+        .await
+        .unwrap();
+    for path in ["/parent", "/parent/nested", "/parent/nested/mount"] {
+        let Error::Io(error) = namespace
+            .copy(Path::new("/parent/payload.txt"), Path::new(path))
+            .await
+            .unwrap_err()
+        else {
+            panic!("expected namespace-node copy destination protection");
+        };
+        assert_eq!(error.kind(), ErrorKind::PermissionDenied, "{path}");
+    }
     assert!(source.exists(Path::new("/nested/file.txt")).await.unwrap());
 }
 
