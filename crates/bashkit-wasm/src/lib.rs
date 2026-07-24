@@ -171,6 +171,7 @@ struct BuiltinRequest<'a> {
 struct JsBuiltin {
     name: String,
     callback: SendWrapper<js_sys::Function>,
+    is_async_function: bool,
     /// Set while an `executeSync` call is in flight. A JS `Promise` can never
     /// settle without yielding to the event loop, which `executeSync` does not
     /// do, so we fail fast instead of returning `Pending` forever.
@@ -206,6 +207,13 @@ impl Builtin for JsBuiltin {
             ));
         }
 
+        // Reject declared async functions before invocation in executeSync.
+        // Calling them first would start their body and side effects before the
+        // returned Promise can be detected.
+        if self.in_sync.load(Ordering::SeqCst) && self.is_async_function {
+            return Ok(async_builtin_in_sync_error(&self.name));
+        }
+
         // Call the JS function. Everything up to the first `.await` is `!Send`,
         // but stays on this thread; we only cross an await point through the
         // `SendWrapper<JsFuture>` below.
@@ -226,14 +234,7 @@ impl Builtin for JsBuiltin {
         let resolved = match ret.dyn_into::<js_sys::Promise>() {
             Ok(promise) => {
                 if self.in_sync.load(Ordering::SeqCst) {
-                    return Ok(CoreExecResult::err(
-                        format!(
-                            "{}: async custom builtins require execute() (async) in the browser \
-                             build; executeSync() cannot await a JS Promise\n",
-                            self.name
-                        ),
-                        1,
-                    ));
+                    return Ok(async_builtin_in_sync_error(&self.name));
                 }
                 match SendWrapper::new(JsFuture::from(promise)).await {
                     Ok(v) => v,
@@ -250,6 +251,17 @@ impl Builtin for JsBuiltin {
 
         Ok(CoreExecResult::ok(resolved.as_string().unwrap_or_default()))
     }
+}
+
+fn async_builtin_in_sync_error(name: &str) -> CoreExecResult {
+    CoreExecResult::err(
+        format!(
+            "{}: async custom builtins require execute() (async) in the browser \
+             build; executeSync() cannot await a JS Promise\n",
+            name
+        ),
+        1,
+    )
 }
 
 /// Best-effort string for a `JsValue` error without leaking Rust `Debug` shapes.
@@ -285,7 +297,13 @@ struct Config {
     max_loop_iterations: Option<usize>,
     max_memory: Option<usize>,
     files: Vec<(String, String)>,
-    builtins: Vec<(String, SendWrapper<js_sys::Function>)>,
+    builtins: Vec<CustomBuiltinConfig>,
+}
+
+struct CustomBuiltinConfig {
+    name: String,
+    callback: SendWrapper<js_sys::Function>,
+    is_async_function: bool,
 }
 
 /// Sandboxed bash interpreter running entirely in the browser.
@@ -445,12 +463,13 @@ fn build_core(config: &Config, sync_flag: &Arc<AtomicBool>) -> Result<CoreBash, 
     if let Some(bytes) = config.max_memory {
         builder = builder.max_memory(bytes);
     }
-    for (name, callback) in &config.builtins {
+    for builtin in &config.builtins {
         builder = builder.builtin(
-            name.clone(),
+            builtin.name.clone(),
             Box::new(JsBuiltin {
-                name: name.clone(),
-                callback: callback.clone(),
+                name: builtin.name.clone(),
+                callback: builtin.callback.clone(),
+                is_async_function: builtin.is_async_function,
                 in_sync: sync_flag.clone(),
             }),
         );
@@ -519,7 +538,12 @@ fn parse_options(options: &JsValue) -> Result<Config, JsError> {
             let func = value.dyn_into::<js_sys::Function>().map_err(|_| {
                 JsError::new(&format!("customBuiltins['{name}'] must be a function"))
             })?;
-            builtins.push((name, SendWrapper::new(func)));
+            let is_async_function = is_async_function(&func);
+            builtins.push(CustomBuiltinConfig {
+                name,
+                callback: SendWrapper::new(func),
+                is_async_function,
+            });
         }
     }
 
@@ -534,6 +558,14 @@ fn parse_options(options: &JsValue) -> Result<Config, JsError> {
         files,
         builtins,
     })
+}
+
+fn is_async_function(func: &js_sys::Function) -> bool {
+    js_sys::Reflect::get(func, &JsValue::from_str("constructor"))
+        .ok()
+        .and_then(|ctor| js_sys::Reflect::get(&ctor, &JsValue::from_str("name")).ok())
+        .and_then(|name| name.as_string())
+        .is_some_and(|name| name == "AsyncFunction")
 }
 
 /// Read a `{ [k: string]: string }` object field into a `Vec<(String, String)>`.

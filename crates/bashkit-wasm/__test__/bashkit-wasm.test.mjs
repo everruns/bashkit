@@ -252,11 +252,20 @@ test("builtin ctx.fs: reads and writes the same VFS as the script", async () => 
   assert.equal(bash.readFile("/out.txt"), "HELLO\n");
 });
 
-test("async builtin under executeSync fails fast (no hang)", () => {
-  const bash = new Bash({ customBuiltins: { slowly: async () => "nope" } });
+test("async builtin under executeSync fails fast without invoking callback", () => {
+  let invoked = false;
+  const bash = new Bash({
+    customBuiltins: {
+      slowly: async () => {
+        invoked = true;
+        return "nope";
+      },
+    },
+  });
   const r = bash.executeSync("slowly");
   assert.equal(r.exitCode, 1);
   assert.match(r.stderr, /execute\(\)/);
+  assert.equal(invoked, false);
 });
 
 test("sync builtin works under executeSync", () => {
