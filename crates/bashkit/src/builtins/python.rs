@@ -21,10 +21,11 @@
 use crate::time_compat::Instant;
 use async_trait::async_trait;
 use chrono::{Datelike, Timelike};
-use monty::{
-    ExcType, ExtFunctionResult, FileMode, LimitedTracker, MontyDate, MontyDateTime, MontyException,
-    MontyFileHandle, MontyObject, MontyRun, NameLookupResult, OsFunctionCall, PrintWriter,
-    ResourceLimits, RunProgress, dir_stat, file_stat, symlink_stat,
+use monty::{MontyRun, RunProgress};
+use monty_types::{
+    CompileOptions, ExcType, ExtFunctionResult, FileMode, LimitedTracker, MontyDate, MontyDateTime,
+    MontyException, MontyFileHandle, MontyObject, NameLookupResult, OsFunctionCall, PrintWriter,
+    ResourceLimits, dir_stat, file_stat, symlink_stat,
 };
 use std::collections::HashMap;
 use std::future::Future;
@@ -486,7 +487,7 @@ async fn run_python(
         code
     };
 
-    let runner = match MontyRun::new(code.to_owned(), filename, vec![]) {
+    let runner = match MontyRun::new(code.to_owned(), filename, vec![], CompileOptions::default()) {
         Ok(r) => r,
         Err(e) => return Ok(format_exception(e)),
     };
@@ -516,8 +517,9 @@ async fn run_python(
 
     loop {
         match progress {
-            RunProgress::OsCall(mut os_call) => {
-                let result = handle_os_call(os_call.take_function_call(), &fs, cwd, env).await;
+            RunProgress::OsCall(os_call) => {
+                let function_call = os_call.function_call.clone();
+                let result = handle_os_call(function_call, &fs, cwd, env).await;
                 match os_call.resume(result, PrintWriter::CollectString(&mut buf)) {
                     Ok(next) => {
                         progress = next;
@@ -677,7 +679,7 @@ async fn handle_os_call(
     };
 
     match name {
-        "Open" => {
+        "open" => {
             let mode = match parse_open_mode(args) {
                 Ok(mode) => mode,
                 Err(err) => return err,

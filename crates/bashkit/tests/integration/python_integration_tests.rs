@@ -796,7 +796,7 @@ mod vfs_bridging {
             .exec("python3 -c \"with open('/tmp/open-read.txt', 'r') as f:\n    print(f.read())\"")
             .await
             .unwrap();
-        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.exit_code, 0, "stderr: {}", r.stderr);
         assert_eq!(r.stdout, "from vfs\n");
     }
 

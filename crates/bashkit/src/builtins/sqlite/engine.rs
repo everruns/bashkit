@@ -19,7 +19,9 @@ use crate::time_compat::Instant;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use turso_core::{Connection, Database, IO, MemoryIO, Numeric, OpenFlags, StepResult, Value};
+use turso_core::{
+    Connection, Database, IO, MemoryIO, Numeric, OpenFlags, SqliteDialect, StepResult, Value,
+};
 
 use super::vfs_io::BashkitVfsIO;
 
@@ -122,7 +124,7 @@ impl SqliteEngine {
             seed_memory_io(&io, &path, bytes).map_err(turso_msg)?;
         }
         let io_dyn: Arc<dyn IO> = io.clone();
-        let db = Database::open_file(io_dyn, &path).map_err(turso_msg)?;
+        let db = Database::open_file(io_dyn, &path, Arc::new(SqliteDialect)).map_err(turso_msg)?;
         let conn = db.connect().map_err(turso_msg)?;
         Ok(Self {
             backend: Backend::Memory(io),
@@ -137,7 +139,8 @@ impl SqliteEngine {
     pub(super) fn open_pure_memory() -> EngineResult<Self> {
         let io: Arc<MemoryIO> = Arc::new(MemoryIO::new());
         let io_dyn: Arc<dyn IO> = io.clone();
-        let db = Database::open_file(io_dyn, ":memory:").map_err(turso_msg)?;
+        let db =
+            Database::open_file(io_dyn, ":memory:", Arc::new(SqliteDialect)).map_err(turso_msg)?;
         let conn = db.connect().map_err(turso_msg)?;
         Ok(Self {
             backend: Backend::Memory(io),
@@ -152,7 +155,8 @@ impl SqliteEngine {
     /// a key in the VFS).
     pub(super) fn open_vfs(io: Arc<BashkitVfsIO>, path_in_io: &str) -> EngineResult<Self> {
         let io_dyn: Arc<dyn IO> = io.clone();
-        let db = Database::open_file(io_dyn, path_in_io).map_err(turso_msg)?;
+        let db =
+            Database::open_file(io_dyn, path_in_io, Arc::new(SqliteDialect)).map_err(turso_msg)?;
         let conn = db.connect().map_err(turso_msg)?;
         Ok(Self {
             backend: Backend::Vfs(io),

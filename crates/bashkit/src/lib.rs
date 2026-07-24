@@ -540,7 +540,7 @@ pub use builtins::{Sqlite, SqliteBackend, SqliteLimits};
 // **Unstable:** These types come from monty (git-pinned, not on crates.io).
 // They may change in breaking ways between bashkit releases.
 #[cfg(feature = "python")]
-pub use monty::{ExcType, ExtFunctionResult, MontyException, MontyObject};
+pub use monty_types::{ExcType, ExtFunctionResult, MontyException, MontyObject};
 
 #[cfg(feature = "typescript")]
 pub use builtins::{
