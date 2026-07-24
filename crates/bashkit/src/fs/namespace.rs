@@ -426,6 +426,9 @@ impl FileSystem for NamespaceFs {
     async fn copy(&self, from: &Path, to: &Path) -> Result<()> {
         let from = self.normalized(from)?;
         let to = self.normalized(to)?;
+        if self.is_namespace_node(&to) {
+            return Err(Self::outside_write_error());
+        }
         if self.is_synthetic(&from) {
             return Err(super::fs_errors::is_a_directory());
         }
