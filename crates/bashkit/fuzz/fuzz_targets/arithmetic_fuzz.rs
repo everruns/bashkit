@@ -9,6 +9,7 @@
 
 #![no_main]
 
+use bashkit_fuzz::is_arithmetic_expression;
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
@@ -20,37 +21,11 @@ fuzz_target!(|data: &[u8]| {
             return;
         }
 
-        // Reject inputs with deep nesting that can blow up parser memory
-        let depth: i32 = input
-            .bytes()
-            .map(|b| match b {
-                b'(' => 1,
-                b')' => -1,
-                _ => 0,
-            })
-            .scan(0i32, |acc, d| {
-                *acc += d;
-                Some(*acc)
-            })
-            .max()
-            .unwrap_or(0);
-        if depth > 20 {
+        // Keep this target inside arithmetic expansion. Shell syntax or
+        // unbalanced grouping could close `$((...))` and execute the remainder
+        // as a command, which belongs in the parser and interpreter fuzzers.
+        if !is_arithmetic_expression(input) {
             return;
-        }
-
-        // Reject inputs that themselves contain banned substrings — this
-        // target inlines `input` into `echo $((input))`. With unbalanced
-        // parens the arithmetic expansion can close early and the
-        // remainder is parsed as commands; bash then echoes the unknown
-        // command verbatim ("bash: /.rustup/toolchains/gww: No such file
-        // or directory"). That is real-shell stderr, not a TM-INF-022
-        // leak. Filtering at the fuzz-input layer keeps the harness's
-        // leak detector strict for real internals while avoiding false
-        // positives. (Mirrors glob_fuzz.)
-        for pat in bashkit::testing::UNIVERSAL_BANNED {
-            if input.contains(pat) {
-                return;
-            }
         }
 
         // Wrap input in arithmetic expansion context
