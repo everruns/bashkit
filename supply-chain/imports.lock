@@ -9,15 +9,15 @@ user-login = "epage"
 user-name = "Ed Page"
 
 [[publisher.tokio]]
-version = "1.52.3"
-when = "2026-05-08"
+version = "1.53.0"
+when = "2026-07-17"
 user-id = 6741
 user-login = "Darksonn"
 user-name = "Alice Ryhl"
 
 [[publisher.toml]]
-version = "1.1.2+spec-1.1.0"
-when = "2026-04-01"
+version = "1.1.3+spec-1.1.0"
+when = "2026-07-14"
 user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
@@ -37,8 +37,8 @@ user-login = "epage"
 user-name = "Ed Page"
 
 [[publisher.toml_writer]]
-version = "1.1.1+spec-1.1.0"
-when = "2026-03-31"
+version = "1.1.2+spec-1.1.0"
+when = "2026-07-14"
 user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
@@ -440,3 +440,17 @@ who = "Jan-Erik Rediger <jrediger@mozilla.com>"
 criteria = "safe-to-deploy"
 version = "0.1.5"
 aggregated-from = "https://raw.githubusercontent.com/mozilla/glean/main/supply-chain/audits.toml"
+
+[[audits.mozilla.audits.utf16_iter]]
+who = "Henri Sivonen <hsivonen@hsivonen.fi>"
+criteria = "safe-to-deploy"
+version = "1.0.5"
+notes = "I, Henri Sivonen, wrote this crate."
+aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
+
+[[audits.mozilla.audits.write16]]
+who = "Henri Sivonen <hsivonen@hsivonen.fi>"
+criteria = "safe-to-deploy"
+version = "1.0.0"
+notes = "I, Henri Sivonen, wrote this (safe-code-only) crate."
+aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
