@@ -91,11 +91,13 @@ from bashkit import Bash
 
 bash = Bash()
 
+
 def on_output(stdout: str, stderr: str) -> None:
     if stdout:
         print(stdout, end="", flush=True)
     if stderr:
         print(stderr, end="", flush=True)
+
 
 result = bash.execute_sync(
     "for i in 1 2 3; do echo out-$i; echo err-$i >&2; done",
@@ -171,10 +173,12 @@ and use `bashkit::interop::fs`.
 ```python
 from bashkit import Bash
 
-bash = Bash(files={
-    "/config/static.txt": "ready\n",
-    "/config/report.json": lambda: '{"ok": true}\n',
-})
+bash = Bash(
+    files={
+        "/config/static.txt": "ready\n",
+        "/config/report.json": lambda: '{"ok": true}\n',
+    }
+)
 
 print(bash.execute_sync("cat /config/static.txt").stdout)
 print(bash.execute_sync("cat /config/report.json").stdout)
@@ -185,10 +189,12 @@ print(bash.execute_sync("cat /config/report.json").stdout)
 ```python
 from bashkit import Bash
 
-bash = Bash(mounts=[
-    {"host_path": "/path/to/data", "vfs_path": "/data"},
-    {"host_path": "/path/to/workspace", "vfs_path": "/workspace", "writable": True},
-])
+bash = Bash(
+    mounts=[
+        {"host_path": "/path/to/data", "vfs_path": "/data"},
+        {"host_path": "/path/to/workspace", "vfs_path": "/workspace", "writable": True},
+    ]
+)
 
 print(bash.execute_sync("ls /workspace").stdout)
 ```
@@ -297,7 +303,7 @@ from bashkit import Bash
 
 bash = Bash()
 
-bash.cancel()        # abort in-flight execution (no-op if idle)
+bash.cancel()  # abort in-flight execution (no-op if idle)
 bash.clear_cancel()  # clear the sticky flag so subsequent executions work
 ```
 
@@ -376,9 +382,7 @@ def get_order(ctx):
     if not ctx.argv or ctx.argv[0] in {"help", "--help"}:
         return "usage: get-order <get|help> [args]\n"
     if ctx.argv[0] == "get" and len(ctx.argv) >= 2:
-        return json.dumps(
-            {"id": ctx.argv[1], "status": "shipped", "items": ["widget"]}
-        ) + "\n"
+        return json.dumps({"id": ctx.argv[1], "status": "shipped", "items": ["widget"]}) + "\n"
     return "usage: get-order <get|help> [args]\n"
 
 
@@ -449,9 +453,7 @@ from bashkit import Bash
 
 bash = Bash(username="agent", max_commands=100)
 bash.execute_sync(
-    "export BUILD_ID=42; "
-    "greet() { echo \"hi $1\"; }; "
-    "mkdir -p /workspace && cd /workspace && echo ready > state.txt"
+    'export BUILD_ID=42; greet() { echo "hi $1"; }; mkdir -p /workspace && cd /workspace && echo ready > state.txt'
 )
 
 snapshot = bash.snapshot()
