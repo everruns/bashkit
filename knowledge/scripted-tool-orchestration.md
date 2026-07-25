@@ -1,6 +1,11 @@
 ---
+type: Subsystem Design
 title: Scripted Tool Orchestration
-summary: Composition of tool definitions and callbacks into Bash-scripted orchestrators.
+description: Composition of tool definitions and callbacks into Bash-scripted orchestrators.
+tags:
+  - bashkit
+  - tools
+  - orchestration
 ---
 
 # Scripted Tool Orchestration

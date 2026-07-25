@@ -1,6 +1,12 @@
 ---
+type: Subsystem Design
 title: Credential Injection
-summary: Per-host HTTP credential injection without exposing secret values to sandboxed scripts.
+description: Per-host HTTP credential injection without exposing secret values to sandboxed scripts.
+tags:
+  - bashkit
+  - security
+  - http
+  - secrets
 ---
 
 # Generic Credential Injection

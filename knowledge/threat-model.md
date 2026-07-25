@@ -1,6 +1,11 @@
 ---
+type: Threat Model
 title: Threat Model
-summary: Bashkit assets, trust boundaries, threats, mitigations, and stable threat identifiers.
+description: Bashkit assets, trust boundaries, threats, mitigations, and stable threat identifiers.
+tags:
+  - bashkit
+  - security
+  - threats
 ---
 
 # Bashkit Threat Model

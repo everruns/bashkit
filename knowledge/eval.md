@@ -1,6 +1,11 @@
 ---
+type: Subsystem Design
 title: Evaluation Framework
-summary: LLM evaluation study design, dataset format, execution, and scoring.
+description: LLM evaluation study design, dataset format, execution, and scoring.
+tags:
+  - bashkit
+  - eval
+  - llm
 ---
 
 # bashkit-eval: mira Eval Study

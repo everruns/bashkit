@@ -1,6 +1,12 @@
 ---
+type: Subsystem Design
 title: Request Signing
-summary: Transparent Ed25519 HTTP message signing according to RFC 9421.
+description: Transparent Ed25519 HTTP message signing according to RFC 9421.
+tags:
+  - bashkit
+  - security
+  - http
+  - signing
 ---
 
 # Transparent Request Signing (bot-auth)

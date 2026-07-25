@@ -1,6 +1,11 @@
 ---
+type: Subsystem Design
 title: Interactive Shell
-summary: Interactive REPL design with rustyline-based line editing.
+description: Interactive REPL design with rustyline-based line editing.
+tags:
+  - bashkit
+  - cli
+  - repl
 ---
 
 # Interactive Shell Mode

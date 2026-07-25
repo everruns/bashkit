@@ -1,6 +1,11 @@
 ---
+type: Subsystem Design
 title: Parallel Execution
-summary: Threading model, shared ownership, and concurrency safety requirements.
+description: Threading model, shared ownership, and concurrency safety requirements.
+tags:
+  - bashkit
+  - concurrency
+  - performance
 ---
 
 # Parallel Execution

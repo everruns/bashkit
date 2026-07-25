@@ -1,6 +1,11 @@
 ---
+type: Subsystem Design
 title: Parser
-summary: Bash syntax parser and lexer architecture and compatibility decisions.
+description: Bash syntax parser and lexer architecture and compatibility decisions.
+tags:
+  - bashkit
+  - parser
+  - bash
 ---
 
 # Parser Design

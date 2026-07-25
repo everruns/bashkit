@@ -1,6 +1,12 @@
 ---
+type: Interface Contract
 title: Tool Contract
-summary: Public LLM tool trait behavior, schemas, callbacks, and error semantics.
+description: Public LLM tool trait behavior, schemas, callbacks, and error semantics.
+tags:
+  - bashkit
+  - tools
+  - llm
+  - api
 ---
 
 # Tool Contract

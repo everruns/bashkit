@@ -38,6 +38,11 @@ check:
     cargo clippy --all-targets -- -D warnings
     cargo test
     python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+    just check-okf
+
+# Validate the knowledge/ OKF v0.2 bundle (see knowledge/knowledge-contract.md)
+check-okf:
+    python3 scripts/check_okf.py knowledge
 
 # Lint and format-check Python bindings
 python-lint:

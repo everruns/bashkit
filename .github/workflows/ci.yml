@@ -44,6 +44,11 @@ jobs:
         env:
           RUSTDOCFLAGS: "-D warnings"
 
+      # OKF v0.2 conformance of the knowledge bundle. See
+      # knowledge/knowledge-contract.md.
+      - name: Check knowledge bundle (OKF)
+        run: python3 scripts/check_okf.py knowledge
+
   wasm:
     # std::time panics on wasm32-unknown-unknown, so bashkit routes clock reads
     # through src/time_compat.rs (web-time on wasm32). This job keeps the crate

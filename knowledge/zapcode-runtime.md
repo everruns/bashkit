@@ -1,6 +1,12 @@
 ---
+type: Subsystem Design
 title: ZapCode Runtime
-summary: Embedded TypeScript runtime, external functions, VFS bridging, and resource limits.
+description: Embedded TypeScript runtime, external functions, VFS bridging, and resource limits.
+tags:
+  - bashkit
+  - typescript
+  - runtime
+  - sandbox
 ---
 
 # ZapCode TypeScript Runtime

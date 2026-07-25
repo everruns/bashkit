@@ -1,6 +1,11 @@
 ---
+type: Architecture
 title: Bashkit Architecture
-summary: Core interpreter architecture, module boundaries, execution flow, and design principles.
+description: Core interpreter architecture, module boundaries, execution flow, and design principles.
+tags:
+  - bashkit
+  - architecture
+  - interpreter
 ---
 
 # Architecture

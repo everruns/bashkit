@@ -1,6 +1,11 @@
 ---
+type: Test Strategy
 title: Testing Strategy
-summary: Test organization, patterns, fixtures, differential testing, and CI expectations.
+description: Test organization, patterns, fixtures, differential testing, and CI expectations.
+tags:
+  - bashkit
+  - testing
+  - ci
 ---
 
 # Testing Strategy
