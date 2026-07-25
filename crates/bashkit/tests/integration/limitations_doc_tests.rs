@@ -1,4 +1,4 @@
-//! Lint for `specs/limitations.md` — the negative spec.
+//! Lint for `knowledge/limitations.md` — the negative spec.
 //!
 //! Limitations record absences, which no code-level test can witness
 //! directly; the next-best enforcement is keeping the document machine
@@ -10,7 +10,7 @@ use std::collections::HashSet;
 use std::path::Path;
 
 fn limitations_doc() -> String {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../specs/limitations.md");
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../knowledge/limitations.md");
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
 }
 
@@ -129,7 +129,7 @@ fn limitation_ids_referenced_from_code_exist_in_doc() {
     for id in &cited {
         assert!(
             ids.contains(id),
-            "{id} cited in source but missing from specs/limitations.md"
+            "{id} cited in source but missing from knowledge/limitations.md"
         );
     }
 }

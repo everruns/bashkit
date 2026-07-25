@@ -12,7 +12,7 @@ Homepage: [bashkit.sh](https://bashkit.sh)
 
 ## Features
 
-- **Secure by default** - No process spawning, no filesystem access, no network access unless explicitly enabled. [280+ threats](specs/threat-model.md) analyzed and mitigated
+- **Secure by default** - No process spawning, no filesystem access, no network access unless explicitly enabled. [280+ threats](knowledge/threat-model.md) analyzed and mitigated
 - **POSIX compliant** - Substantial IEEE 1003.1-2024 Shell Command Language compliance
 - **Sandboxed, in-process execution** - All 164 commands reimplemented in Rust, no `fork`/`exec`
 - **Virtual filesystem** - InMemoryFs, OverlayFs, MountableFs with optional RealFs backend (`realfs` feature)
@@ -318,7 +318,7 @@ let mut bash = Bash::builder()
 // Remote operations: remote add/remove, clone/push/pull/fetch (virtual mode)
 ```
 
-See [specs/git-support.md](specs/git-support.md) for the full specification.
+See [knowledge/git-support.md](knowledge/git-support.md) for the full specification.
 
 ## Experimental: Python Support
 
@@ -581,7 +581,7 @@ Bashkit is built for running untrusted scripts from AI agents and users. Securit
 
 280+ identified threats across 17 categories (DoS, sandbox escape, info disclosure, injection, network, isolation, internal errors, git, SSH, logging, crypto, Python, TypeScript, SQLite, Unicode, filesystem, snapshots) — each with a stable ID, mitigation status, and test coverage.
 
-See the [threat model](specs/threat-model.md) for the full analysis and [security policy](SECURITY.md) for reporting vulnerabilities.
+See the [threat model](knowledge/threat-model.md) for the full analysis and [security policy](SECURITY.md) for reporting vulnerabilities.
 
 ## Other Virtual Bash Implementations
 

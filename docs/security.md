@@ -20,7 +20,7 @@ individual threat IDs and mitigation status, see the
 
 ## Threat model
 
-Bashkit maintains a living threat model in [`specs/threat-model.md`](../specs/threat-model.md)
+Bashkit maintains a living threat model in [`knowledge/threat-model.md`](../knowledge/threat-model.md)
 with stable threat IDs across these categories:
 
 | Category | ID prefix | Examples |
@@ -50,7 +50,7 @@ the sandbox. Key exclusions:
 - **`trap`** — conflicts with the stateless execution model
 - **Real process spawning** — all subprocess commands stay within the virtual interpreter (`TM-ESC-015`)
 
-These decisions are documented in [`specs/limitations.md`](../specs/limitations.md).
+These decisions are documented in [`knowledge/limitations.md`](../knowledge/limitations.md).
 
 ## Security testing
 
@@ -60,7 +60,7 @@ Bashkit uses multiple layers of security testing:
 validate mitigations against documented threat IDs. Each test maps to a specific
 `TM-*` threat.
 
-**Fail-point injection** — A framework defined in [`specs/security-testing.md`](../specs/security-testing.md)
+**Fail-point injection** — A framework defined in [`knowledge/security-testing.md`](../knowledge/security-testing.md)
 that injects failures at specific points to verify the interpreter handles them
 safely. 14+ tests in `security_failpoint_tests.rs`.
 

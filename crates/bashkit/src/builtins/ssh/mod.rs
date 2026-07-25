@@ -26,7 +26,7 @@
 //!
 //! # Security Threats
 //!
-//! See `specs/ssh-support.md` and `specs/threat-model.md` (TM-SSH-*)
+//! See `knowledge/ssh-support.md` and `knowledge/threat-model.md` (TM-SSH-*)
 
 mod allowlist;
 mod config;

@@ -20,7 +20,7 @@ pnpm run preview   # serve dist/ via wrangler
 
 `pnpm run build` regenerates `src/data/performance-timeline.json` from saved
 benchmark and eval artifacts before Astro builds. The `/benches` page contract is
-specified in `../specs/performance-results.md`.
+specified in `../knowledge/performance-results.md`.
 
 ## Deploy
 

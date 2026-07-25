@@ -21,7 +21,7 @@ env:
   CARGO_TERM_COLOR: always
   # abi3 (stable ABI): one interpreter builds a single cp39-abi3 wheel per
   # platform that runs on Python 3.9+. No per-minor-version matrix. See
-  # specs/python-package.md § abi3.
+  # knowledge/python-package.md § abi3.
   BUILD_PYTHON: "3.12"
 
 jobs:
@@ -119,14 +119,14 @@ jobs:
   # Reduced-feature Pyodide/Emscripten wheel (browser / JupyterLite).
   # Separate job: distinct toolchain (nightly Rust + emsdk + pyodide-build) and a
   # single Python version dictated by the pyodide-build ABI lockstep.
-  # See specs/emscripten-wheels.md.
+  # See knowledge/emscripten-wheels.md.
   build-emscripten:
     name: Build wheel - emscripten (Pyodide)
     runs-on: ubuntu-latest
     env:
       # Keep in lockstep with the `wasm` job in python.yml: the nightly's LLVM,
       # pyodide-build's Emscripten/binaryen, and Pyodide's EH ABI must agree.
-      # See specs/emscripten-wheels.md "version triangle". Bump together.
+      # See knowledge/emscripten-wheels.md "version triangle". Bump together.
       RUST_NIGHTLY: "nightly-2026-05-29"
       PYODIDE_BUILD_VERSION: "0.34.4"
     steps:
@@ -134,7 +134,7 @@ jobs:
 
       # Python 3.13 -> pyodide-build's modern config (Pyodide 0.29.x, Emscripten
       # 4.0.9), whose binaryen understands modern LLVM's wasm target-features and
-      # whose runtime supports wasm exception handling. See specs/emscripten-wheels.md.
+      # whose runtime supports wasm exception handling. See knowledge/emscripten-wheels.md.
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.13"

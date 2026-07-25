@@ -193,14 +193,14 @@ jobs:
           retention-days: 5
 
   # Build the reduced-feature Pyodide/Emscripten wheel and smoke-test it in a
-  # Pyodide venv. See specs/emscripten-wheels.md for the feature matrix and the
+  # Pyodide venv. See knowledge/emscripten-wheels.md for the feature matrix and the
   # pyodide-build <-> Emscripten <-> Python <-> Rust version lockstep.
   wasm:
     name: Build wheel (Pyodide/Emscripten)
     runs-on: ubuntu-latest
     env:
       # Pinned for reproducibility: this trio must stay aligned on the wasm
-      # feature set + exception-handling ABI (see specs/emscripten-wheels.md
+      # feature set + exception-handling ABI (see knowledge/emscripten-wheels.md
       # "version triangle"). pyodide-build 0.34.x (under Python 3.13) selects
       # Pyodide 0.29.x / Emscripten 4.0.9; the nightly's LLVM must match that
       # binaryen. Bump all three together and re-verify the wheel imports.
@@ -220,7 +220,7 @@ jobs:
       # must satisfy our deps' MSRV (monty needs rustc 1.95) and edition 2024,
       # so it has to be recent; its LLVM (19+) matches Emscripten 4.0.9's
       # binaryen, which is what avoids the wasm-opt target-feature skew that
-      # older Emscripten (3.1.x) hit. See specs/emscripten-wheels.md.
+      # older Emscripten (3.1.x) hit. See knowledge/emscripten-wheels.md.
       - name: Install nightly Rust with the Emscripten target
         # @nightly matches the repo's other nightly jobs (fuzz.yml, nightly.yml,
         # ci.yml); the exact nightly is pinned via the toolchain: input below.

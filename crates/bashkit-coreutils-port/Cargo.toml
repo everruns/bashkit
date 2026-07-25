@@ -8,7 +8,7 @@
 #   manifest (`vendored.toml`) declaring per-import substitution policy.
 #
 # Run manually when bumping the pinned uutils revision; output is committed.
-# See specs/coreutils-args-port.md for both modes.
+# See knowledge/coreutils-args-port.md for both modes.
 
 [package]
 name = "bashkit-coreutils-port"

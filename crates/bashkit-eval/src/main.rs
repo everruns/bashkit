@@ -9,7 +9,7 @@
 //
 // The `#[eval]` wrappers live here (in the bin crate) so their inventory
 // registrations are guaranteed to link into this binary; the heavy lifting is
-// in `bashkit_eval::mira_study`. See specs/eval.md.
+// in `bashkit_eval::mira_study`. See knowledge/eval.md.
 
 use bashkit_eval::mira_study;
 use mira::{Eval, eval};

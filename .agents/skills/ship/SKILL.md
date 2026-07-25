@@ -33,7 +33,7 @@ Review the changes on this branch (use `git diff origin/main...HEAD` and `git lo
 3. **Write missing tests** for any uncovered code paths:
    - **Positive tests**: happy path, valid inputs, expected state transitions
    - **Negative tests**: invalid inputs, error conditions, boundary cases, permission failures, missing resources
-   - **Security tests**: if change touches parser, interpreter, VFS, network, git, or user input — add tests per `specs/security-testing.md`
+   - **Security tests**: if change touches parser, interpreter, VFS, network, git, or user input — add tests per `knowledge/security-testing.md`
    - **Compatibility tests**: if change affects Bash behavior parity — add differential tests comparing against real Bash
 4. **Run all tests** to confirm green: `just test`
 5. If any test fails, fix the code or test until green
@@ -42,10 +42,10 @@ Review the changes on this branch (use `git diff origin/main...HEAD` and `git lo
 
 Review the changes and update project artifacts where applicable. Skip items that aren't affected.
 
-1. **Specs** (`specs/`): if the change adds/modifies behavior covered by a spec, update the relevant spec file to stay in sync
-2. **Threat model** (`specs/threat-model.md`): if the change introduces new attack surfaces, external inputs, authentication/authorization changes, or data handling — add or update threat entries using the `TM-<CATEGORY>-<NNN>` format and add `// THREAT[TM-XXX-NNN]` code comments at mitigation points
-3. **AGENTS.md**: if the change adds new specs, commands, or modifies development workflows — update the relevant section
-4. **Limitations** (`specs/limitations.md`): if a limitation was added or lifted, update the table; if builtins changed, run `just regen-builtins` and commit the JSON
+1. **Knowledge** (`knowledge/`): if the change affects durable behavior, decisions, constraints, threats, tests, or operations, update the relevant OKF knowledge in the same change
+2. **Threat model** (`knowledge/threat-model.md`): if the change introduces new attack surfaces, external inputs, authentication/authorization changes, or data handling — add or update threat entries using the `TM-<CATEGORY>-<NNN>` format and add `// THREAT[TM-XXX-NNN]` code comments at mitigation points
+3. **AGENTS.md**: if the change adds new knowledge, commands, or modifies development workflows — update the relevant section
+4. **Limitations** (`knowledge/limitations.md`): if a limitation was added or lifted, update the table; if builtins changed, run `just regen-builtins` and commit the JSON
 5. **Documentation** (`crates/bashkit/docs/`): if the change affects public APIs, tools, or features — update the relevant guide markdown files
 
 ### Phase 3b: Code Simplification
@@ -66,12 +66,12 @@ Analyze all changed code for security vulnerabilities:
 
 1. **Input validation** — check that user-supplied data (script input, file paths, environment variables, command arguments) is validated before use
 2. **Injection risks** — look for command injection, path traversal, environment variable injection, or shell metacharacter issues
-3. **Sandbox escapes** — if changes touch VFS, builtins, or process execution, verify they cannot escape the sandbox (see `specs/threat-model.md`)
+3. **Sandbox escapes** — if changes touch VFS, builtins, or process execution, verify they cannot escape the sandbox (see `knowledge/threat-model.md`)
 4. **Resource exhaustion** — check for unbounded loops, unbounded allocations, or missing limits on user-controlled sizes
 5. **Error handling** — ensure errors don't leak internal state, file paths, or sensitive information
 6. **Unsafe code** — review any `unsafe` blocks for soundness; prefer safe alternatives
 
-If security issues are found, fix them, add regression tests, and update `specs/threat-model.md` if a new threat category is identified.
+If security issues are found, fix them, add regression tests, and update `knowledge/threat-model.md` if a new threat category is identified.
 
 ### Phase 3d: Design Quality Review
 

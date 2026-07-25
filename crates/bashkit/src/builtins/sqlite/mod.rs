@@ -1,6 +1,6 @@
 //! `sqlite` / `sqlite3` builtin — embedded SQLite via [`turso_core`].
 //!
-//! See `specs/sqlite-builtin.md` for the design rationale, threat model, and
+//! See `knowledge/sqlite-builtin.md` for the design rationale, threat model, and
 //! test plan. At a glance:
 //!
 //! - A single invocation opens a fresh database connection, runs every SQL

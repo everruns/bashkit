@@ -439,7 +439,7 @@ pub mod scripted_tool;
 mod snapshot;
 /// Test-only helpers shared between internal `#[cfg(test)]` modules,
 /// integration tests in `tests/*.rs`, and cargo-fuzz targets in
-/// `fuzz/fuzz_targets/*.rs`. See `specs/threat-model.md` for the
+/// `fuzz/fuzz_targets/*.rs`. See `knowledge/threat-model.md` for the
 /// invariants enforced (TM-INF-013, TM-INF-016, TM-INF-022).
 #[doc(hidden)]
 pub mod testing;
@@ -1353,7 +1353,7 @@ impl Bash {
     /// `git`, `ssh`), interpreter-special builtins like `exec`, custom
     /// builtins registered at construction, and host-registry builtins.
     /// Canonical source for the generated builtins
-    /// status (`just regen-builtins`, `specs/status/builtins.json`).
+    /// status (`just regen-builtins`, `knowledge/status/builtins.json`).
     pub fn builtin_names(&self) -> Vec<String> {
         self.interpreter.builtin_names()
     }
@@ -3152,7 +3152,7 @@ impl BashBuilder {
 // =============================================================================
 // These modules embed external markdown guides into rustdoc.
 // Source files live in crates/bashkit/docs/ - edit there, not here.
-// See specs/documentation.md for the documentation approach.
+// See knowledge/documentation.md for the documentation approach.
 
 /// Guide for transparent credential injection in outbound HTTP requests.
 ///

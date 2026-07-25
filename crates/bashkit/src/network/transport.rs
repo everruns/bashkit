@@ -1,6 +1,6 @@
 //! Pluggable HTTP transport for the curl/wget/http builtins.
 //!
-//! Design decision (see `specs/http-transport.md`): bashkit owns HTTP
+//! Design decision (see `knowledge/http-transport.md`): bashkit owns HTTP
 //! *policy* — URL allowlist, DNS/private-IP SSRF precheck, `before_http` /
 //! `after_http` hooks, credential injection, bot-auth signing, and response
 //! size caps — while an injected [`HttpTransport`] owns *connectivity*.

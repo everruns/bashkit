@@ -5,7 +5,7 @@ name: API Reference Drift
 # site/src/content/apidocs/*.md and feeds the /api/{python,typescript} pages;
 # the node-only site build just renders it, so it must be regenerated and
 # committed on release — fix drift by running `just apidocs` and committing.
-# See specs/documentation.md ("API reference hosting").
+# See knowledge/documentation.md ("API reference hosting").
 #
 # Per AGENTS.md commit-attribution rules this workflow never auto-commits; it
 # only fails so a human regenerates and commits under a real identity.

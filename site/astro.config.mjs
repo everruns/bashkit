@@ -95,9 +95,9 @@ function repoUrl(url) {
     return `https://github.com/everruns/bashkit/blob/main/${cleanUrl}`;
   }
 
-  const specsIndex = cleanUrl.indexOf("specs/");
-  if (specsIndex >= 0) {
-    return `https://github.com/everruns/bashkit/blob/main/${cleanUrl.slice(specsIndex)}`;
+  const knowledgeIndex = cleanUrl.indexOf("knowledge/");
+  if (knowledgeIndex >= 0) {
+    return `https://github.com/everruns/bashkit/blob/main/${cleanUrl.slice(knowledgeIndex)}`;
   }
 
   const examplesIndex = cleanUrl.indexOf("examples/");
@@ -119,9 +119,9 @@ function renderedDocsRepoUrl(url) {
     return `https://github.com/everruns/bashkit/blob/main/${docsPath}`;
   }
 
-  const specsIndex = docsPath.indexOf("specs/");
-  if (specsIndex >= 0) {
-    return `https://github.com/everruns/bashkit/blob/main/${docsPath.slice(specsIndex)}`;
+  const knowledgeIndex = docsPath.indexOf("knowledge/");
+  if (knowledgeIndex >= 0) {
+    return `https://github.com/everruns/bashkit/blob/main/${docsPath.slice(knowledgeIndex)}`;
   }
 
   const cratesDocsIndex = docsPath.indexOf("crates/bashkit/docs/");

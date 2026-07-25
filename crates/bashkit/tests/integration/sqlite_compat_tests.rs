@@ -15,7 +15,7 @@
 //! - `ORDER BY` / `LIMIT` / `OFFSET` syntax accepted.
 //!
 //! These are NOT exhaustive sqlite parity tests — they pin the shapes that
-//! drive day-to-day usage. Add a row to `specs/sqlite-builtin.md` if you
+//! drive day-to-day usage. Add a row to `knowledge/sqlite-builtin.md` if you
 //! intentionally diverge from sqlite3 here.
 
 #![cfg(feature = "sqlite")]

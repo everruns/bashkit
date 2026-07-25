@@ -11,7 +11,7 @@ Source of truth: the PEP 561 type stubs in `crates/bashkit-python/bashkit`
 statically parse them (no compiled extension or third-party deps required,
 `allow_inspection=False`), then render markdown. Latest-only: regenerated on
 release, output committed to the repo so the node-only site build just renders
-it. See specs/documentation.md ("API reference hosting").
+it. See knowledge/documentation.md ("API reference hosting").
 
 Usage: python3 scripts/gen_python_apidocs.py
 """

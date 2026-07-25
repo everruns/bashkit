@@ -135,4 +135,4 @@ stack traces never reach script-visible stderr.
 
 - [Bashkit as an LLM tool](llm-tools.md) — the filesystem-backed `BashTool`.
 - [Virtual filesystem](filesystem.md) — why logic mode disables file access.
-- Spec: [`specs/scripted-tool-orchestration.md`](https://github.com/everruns/bashkit/blob/main/specs/scripted-tool-orchestration.md).
+- Spec: [`knowledge/scripted-tool-orchestration.md`](https://github.com/everruns/bashkit/blob/main/knowledge/scripted-tool-orchestration.md).

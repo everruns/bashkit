@@ -7,7 +7,7 @@ real credentials, preventing exfiltration.
 **See also:**
 - [Threat Model](./threat-model.md) - Security properties
 - [Custom Builtins](./custom_builtins.md) - Extending the shell
-- [Credential Injection Spec](https://github.com/everruns/bashkit/blob/main/specs/credential-injection.md) - Design decisions
+- [Credential Injection Spec](https://github.com/everruns/bashkit/blob/main/knowledge/credential-injection.md) - Design decisions
 
 ## Two Modes
 

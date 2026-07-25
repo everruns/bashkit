@@ -4,14 +4,14 @@ import { resolve } from "node:path";
 import BaseLayout from "../layouts/BaseLayout.astro";
 
 // Decision: build the public builtins index from the generated inventory
-// specs/status/builtins.json (`just regen-builtins`), so the page reflects
+// knowledge/status/builtins.json (`just regen-builtins`), so the page reflects
 // what the code actually registers. The builtins-drift workflow keeps the
 // committed JSON in sync with the source.
 
 type BuiltinEntry = { name: string; feature: string | null };
 
 const inventory = JSON.parse(
-  readFileSync(resolve(process.cwd(), "../specs/status/builtins.json"), "utf8"),
+  readFileSync(resolve(process.cwd(), "../knowledge/status/builtins.json"), "utf8"),
 ) as { builtins: BuiltinEntry[] };
 
 const builtins = [...new Set(inventory.builtins.map((entry) => entry.name))].sort(
@@ -59,9 +59,9 @@ const groupedBuiltins = Object.entries(
 ).sort(([left], [right]) => left.localeCompare(right));
 
 const builtinsSpecHref =
-  "https://github.com/everruns/bashkit/blob/main/specs/builtins.md";
+  "https://github.com/everruns/bashkit/blob/main/knowledge/builtins.md";
 const builtinsJsonHref =
-  "https://github.com/everruns/bashkit/blob/main/specs/status/builtins.json";
+  "https://github.com/everruns/bashkit/blob/main/knowledge/status/builtins.json";
 ---
 
 <BaseLayout
@@ -88,7 +88,7 @@ const builtinsJsonHref =
         </div>
         <p>
           The count and command names come from
-          <a href={builtinsJsonHref} target="_blank" rel="noopener noreferrer"><code>specs/status/builtins.json</code></a>,
+          <a href={builtinsJsonHref} target="_blank" rel="noopener noreferrer"><code>knowledge/status/builtins.json</code></a>,
           regenerated from the builtin registry via <code>just regen-builtins</code>.
         </p>
         <div class="builtins-legend">

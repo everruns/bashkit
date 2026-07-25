@@ -7,7 +7,7 @@
 //! the args workflow only sees flag-signature changes; semantic
 //! divergence inside `cat.rs` / `textrev.rs` is invisible to it.
 //!
-//! See `specs/coreutils-args-port.md` § Verification — Differential tests.
+//! See `knowledge/coreutils-args-port.md` § Verification — Differential tests.
 //!
 //! Currently ported utils covered:
 //! - cat: flags `-n`, `-b`, `-E`, `-A`, `-T`, `-v`, `-s`, `-ns`, `-bs`,

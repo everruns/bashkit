@@ -1,6 +1,6 @@
 //! Dump the canonical builtin inventory as JSON.
 //!
-//! Source generator for `specs/status/builtins.json` (the data behind the
+//! Source generator for `knowledge/status/builtins.json` (the data behind the
 //! site's builtins page). Run via `just regen-builtins`, which enables every
 //! builtin-affecting feature so the inventory is complete; the
 //! `builtins-drift` workflow regenerates and fails on diff.

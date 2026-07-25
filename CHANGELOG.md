@@ -113,7 +113,7 @@
   addresses, and the response size cap, and returns typed errors
   (`Denied`/`Timeout`/`TooLarge`/`Transport`) that map onto curl exit codes
   (7/28/63/1). Mirrors fetchkit's transport injection so one host egress
-  implementation can back both libraries. See `specs/http-transport.md`
+  implementation can back both libraries. See `knowledge/http-transport.md`
   ([#2147](https://github.com/everruns/bashkit/pull/2147)).
 - **`xargs -P` parallel execution** — `-P/--max-procs` runs command batches
   concurrently, with `--process-slot-var` exposing the slot index to each child

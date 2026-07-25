@@ -86,4 +86,4 @@ access.
 - [`MountableFs`] — dynamic live mounts with a fallback root filesystem.
 - [`ReadOnlyFs`] — deny mutations for an entire filesystem.
 - [Live mounts](live-mounts.md) — attach and detach filesystems after build.
-- [VFS specification](https://github.com/everruns/bashkit/blob/main/specs/vfs.md).
+- [VFS specification](https://github.com/everruns/bashkit/blob/main/knowledge/vfs.md).

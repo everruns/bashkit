@@ -54,7 +54,7 @@ shown directly to LLMs or users.
 - Tests and fuzz targets intentionally contain hostile scripts, fake secrets,
   host canaries, traversal strings, malformed archives, and allowlist bypass
   attempts.
-- `specs/` and `crates/bashkit/docs/` describe vulnerabilities and mitigations;
+- `knowledge/` and `crates/bashkit/docs/` describe vulnerabilities and mitigations;
   treat them as design docs unless the same pattern appears in executable code.
 - Optional features named `realfs`, `http_client`, `ssh`, `git`, `python`,
   `typescript`, `sqlite`, and `bot-auth` are intended capability gates, not

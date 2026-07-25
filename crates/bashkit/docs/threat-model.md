@@ -348,7 +348,7 @@ Network access is disabled by default. When enabled, strict controls apply.
 **Credential Injection (TM-NET-024–027):**
 
 Per-host HTTP credentials injected by the embedding host without exposing the
-secret to the script (see `specs/credential-injection.md`).
+secret to the script (see `knowledge/credential-injection.md`).
 
 | Threat | Attack Example | Mitigation | Status |
 |--------|---------------|------------|--------|
@@ -945,7 +945,7 @@ All threats use stable IDs in the format `TM-<CATEGORY>-<NUMBER>`:
 | TM-FS | RealFs Mount Security |
 | TM-UNI | Unicode Security |
 
-Full threat analysis: [`specs/threat-model.md`][spec]
+Full threat analysis: [`knowledge/threat-model.md`][spec]
 
 [limits]: https://docs.rs/bashkit/latest/bashkit/struct.ExecutionLimits.html
 [fslimits]: https://docs.rs/bashkit/latest/bashkit/struct.FsLimits.html
@@ -957,7 +957,7 @@ Full threat analysis: [`specs/threat-model.md`][spec]
 [failpoint_tests]: https://github.com/everruns/bashkit/blob/main/crates/bashkit/tests/security_failpoint_tests.rs
 [network_tests]: https://github.com/everruns/bashkit/blob/main/crates/bashkit/tests/network_security_tests.rs
 [fuzz]: https://github.com/everruns/bashkit/tree/main/crates/bashkit/fuzz
-[spec]: https://github.com/everruns/bashkit/blob/main/specs/threat-model.md
+[spec]: https://github.com/everruns/bashkit/blob/main/knowledge/threat-model.md
 [parser]: https://github.com/everruns/bashkit/blob/main/crates/bashkit/src/parser/mod.rs
 [interp]: https://github.com/everruns/bashkit/blob/main/crates/bashkit/src/interpreter/mod.rs
 [date]: https://github.com/everruns/bashkit/blob/main/crates/bashkit/src/builtins/date.rs
