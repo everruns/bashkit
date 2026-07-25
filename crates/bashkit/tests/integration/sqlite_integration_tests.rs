@@ -16,7 +16,7 @@
 //! - JSON/CSV/markdown formatting
 //! - `:memory:` round-trip in a single invocation
 //!
-//! See `specs/sqlite-builtin.md` for the test plan.
+//! See `knowledge/sqlite-builtin.md` for the test plan.
 
 #![cfg(feature = "sqlite")]
 

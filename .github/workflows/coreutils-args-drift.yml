@@ -2,7 +2,7 @@ name: Coreutils Args Drift
 
 # Detects upstream uutils/coreutils argument-surface AND vendored-module
 # drift, and proposes both as a single PR. See
-# specs/coreutils-args-port.md for the design (args mode + module mode).
+# knowledge/coreutils-args-port.md for the design (args mode + module mode).
 #
 # Module set is read from `crates/bashkit-coreutils-port/vendored.toml`;
 # adding a vendored module is one TOML stanza there and the drift run
@@ -324,7 +324,7 @@ jobs:
           correctly per \`AGENTS.md\`. Intermediate bot commits in this PR
           are discarded by squash.
 
-          Design: [\`specs/coreutils-args-port.md\`](../tree/main/specs/coreutils-args-port.md).
+          Design: [\`knowledge/coreutils-args-port.md\`](../tree/main/knowledge/coreutils-args-port.md).
           EOF
 
           if gh pr view "$branch" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then

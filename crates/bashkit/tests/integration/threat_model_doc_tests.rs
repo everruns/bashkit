@@ -2,14 +2,14 @@
 //!
 //! Every `TM-<CATEGORY>-<NNN>` ID cited anywhere in this crate's source or
 //! tests (typically `// THREAT[TM-...]` mitigation anchors and threat-test
-//! doc comments) must have an entry in `specs/threat-model.md`. This is the
+//! doc comments) must have an entry in `knowledge/threat-model.md`. This is the
 //! same enforcement direction as `limitations_doc_tests`: code may not cite
 //! a ledger entry that does not exist, so restructuring the ledger can never
 //! silently orphan a mitigation anchor.
 //!
 //! A second test keeps the user-facing threat model
 //! (`crates/bashkit/docs/threat-model.md`) in one-to-one sync with the
-//! canonical ledger (`specs/threat-model.md`): every spec threat must be
+//! canonical ledger (`knowledge/threat-model.md`): every spec threat must be
 //! documented publicly, and the public doc may not invent IDs the ledger
 //! lacks. This closes the drift tracked in #2155.
 
@@ -71,7 +71,7 @@ fn walk_rs_files(root: &Path, out: &mut Vec<PathBuf>) {
 #[test]
 fn threat_ids_cited_in_code_exist_in_threat_model_doc() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let doc_path = manifest.join("../../specs/threat-model.md");
+    let doc_path = manifest.join("../../knowledge/threat-model.md");
     let doc = std::fs::read_to_string(&doc_path)
         .unwrap_or_else(|e| panic!("read {}: {e}", doc_path.display()));
 
@@ -105,7 +105,7 @@ fn threat_ids_cited_in_code_exist_in_threat_model_doc() {
         .collect();
     assert!(
         missing.is_empty(),
-        "TM IDs cited in code but missing from specs/threat-model.md:\n{}",
+        "TM IDs cited in code but missing from knowledge/threat-model.md:\n{}",
         missing.join("\n")
     );
 }
@@ -113,7 +113,7 @@ fn threat_ids_cited_in_code_exist_in_threat_model_doc() {
 #[test]
 fn public_threat_model_doc_covers_every_spec_threat_id() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let spec_path = manifest.join("../../specs/threat-model.md");
+    let spec_path = manifest.join("../../knowledge/threat-model.md");
     let public_path = manifest.join("docs/threat-model.md");
     let spec = std::fs::read_to_string(&spec_path)
         .unwrap_or_else(|e| panic!("read {}: {e}", spec_path.display()));
@@ -127,7 +127,7 @@ fn public_threat_model_doc_covers_every_spec_threat_id() {
 
     assert!(
         spec_ids.len() > 100,
-        "suspiciously few TM IDs in specs/threat-model.md ({}) — parsing broken?",
+        "suspiciously few TM IDs in knowledge/threat-model.md ({}) — parsing broken?",
         spec_ids.len()
     );
 
@@ -139,7 +139,7 @@ fn public_threat_model_doc_covers_every_spec_threat_id() {
     missing.sort_unstable();
     assert!(
         missing.is_empty(),
-        "{} TM ID(s) in specs/threat-model.md but missing from \
+        "{} TM ID(s) in knowledge/threat-model.md but missing from \
          crates/bashkit/docs/threat-model.md — port them (see #2155):\n{}",
         missing.len(),
         missing.join("\n")
@@ -154,7 +154,7 @@ fn public_threat_model_doc_covers_every_spec_threat_id() {
     assert!(
         stray.is_empty(),
         "{} TM ID(s) in crates/bashkit/docs/threat-model.md but absent from \
-         specs/threat-model.md — fix the ID or add the ledger entry:\n{}",
+         knowledge/threat-model.md — fix the ID or add the ledger entry:\n{}",
         stray.len(),
         stray.join("\n")
     );

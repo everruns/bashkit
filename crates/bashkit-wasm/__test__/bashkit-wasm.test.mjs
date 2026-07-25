@@ -103,7 +103,7 @@ test("child shell: piping a script into bash", async () => {
 // Each of these used to panic and poison the whole module on wasm32: they
 // reached for a tokio timer (sleep/timeout), tokio::spawn (background jobs), or
 // std::thread::spawn (awk file redirects). On single-threaded wasm they must
-// run inline instead. See specs/browser-package.md.
+// run inline instead. See knowledge/browser-package.md.
 
 test("sleep returns immediately (no timer driver on wasm)", async () => {
   const bash = new Bash();

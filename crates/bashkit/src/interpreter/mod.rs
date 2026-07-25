@@ -8132,7 +8132,7 @@ impl Interpreter {
                 // panics ("time not implemented"). Run the command without wall-clock
                 // enforcement — the parser fuel budget, maxCommands and
                 // maxLoopIterations still bound runaway work. This matches the
-                // "no preemptive timeout" stance in specs/browser-package.md.
+                // "no preemptive timeout" stance in knowledge/browser-package.md.
                 #[cfg(target_family = "wasm")]
                 let outcome = {
                     let _ = (duration, preserve_status);

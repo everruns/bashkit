@@ -8,7 +8,7 @@
 // by flags to avoid unbounded hangs for wrapper/automation usage.
 // Decision: interactive mode uses rustyline for line editing — lightweight, MIT,
 // no heavy deps (no SQLite, no crossterm). Multiline via parse error detection.
-// See specs/interactive-shell.md
+// See knowledge/interactive-shell.md
 // Decision: CLI enables embedded Python by default when compiled in. This is an
 // explicit CLI builder opt-in, not ambient process environment inheritance.
 

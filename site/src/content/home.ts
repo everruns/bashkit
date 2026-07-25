@@ -1,12 +1,12 @@
 // Decision: homepage HTML and Markdown are generated from the same content
 // tables so agent-facing navigation and product claims stay in sync.
 // Decision: the builtin count comes from the generated inventory
-// (specs/status/builtins.json) so marketing copy can't drift from the code.
+// (knowledge/status/builtins.json) so marketing copy can't drift from the code.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const inventory = JSON.parse(
-  readFileSync(resolve(process.cwd(), "../specs/status/builtins.json"), "utf8"),
+  readFileSync(resolve(process.cwd(), "../knowledge/status/builtins.json"), "utf8"),
 ) as { builtins: { name: string }[] };
 
 export const builtinCount = inventory.builtins.length;
@@ -70,7 +70,7 @@ export const heroStats = [
   {
     label: "Threats mitigated",
     value: "250+",
-    href: "https://github.com/everruns/bashkit/blob/main/specs/threat-model.md",
+    href: "https://github.com/everruns/bashkit/blob/main/knowledge/threat-model.md",
     external: true,
   },
   {
@@ -305,7 +305,7 @@ export const resources = [
   {
     title: "Threat model",
     detail: "268 documented threat cases across parser, VFS, network, and runtimes.",
-    href: "https://github.com/everruns/bashkit/blob/main/specs/threat-model.md",
+    href: "https://github.com/everruns/bashkit/blob/main/knowledge/threat-model.md",
     cta: "Security spec",
   },
   {

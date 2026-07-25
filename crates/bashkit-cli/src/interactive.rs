@@ -6,7 +6,7 @@
 // Decision: PS1 prompt with bash-compatible escapes (\u, \h, \w, \$).
 // Decision: exit via ExitSignal event fired by the interpreter — REPL polls
 //   the signal after each exec() call.
-// See specs/interactive-shell.md
+// See knowledge/interactive-shell.md
 
 use anyhow::Result;
 use rustyline::completion::Completer;

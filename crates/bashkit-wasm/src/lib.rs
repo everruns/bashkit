@@ -1,7 +1,7 @@
 //! Browser (WebAssembly) bindings for the Bashkit sandboxed bash interpreter.
 //!
 //! Important decisions (see also the crate-level notes in `Cargo.toml` and
-//! `specs/browser-package.md`):
+//! `knowledge/browser-package.md`):
 //!
 //! - **Single-threaded, no cross-origin isolation.** Target is
 //!   `wasm32-unknown-unknown`. There is no `SharedArrayBuffer`, no thread pool,

@@ -54,7 +54,7 @@ impl Builtin for Sleep {
         if seconds > 0.0 {
             // wasm32-unknown-unknown has no timer driver, so tokio::time::sleep
             // panics ("time not implemented"). The single-threaded sandbox has
-            // no wall-clock semantics anyway (see specs/browser-package.md), so
+            // no wall-clock semantics anyway (see knowledge/browser-package.md), so
             // on wasm the sleep elapses instantly.
             #[cfg(not(target_family = "wasm"))]
             tokio::time::sleep(Duration::from_secs_f64(seconds)).await;

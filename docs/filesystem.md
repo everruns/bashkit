@@ -153,4 +153,4 @@ readonly_filesystem: bool                       # deny all VFS mutations after s
 - [Live mounts](live-mounts.md) — attach and detach filesystems at runtime.
 - [Filesystem namespaces](https://docs.rs/bashkit/latest/bashkit/namespace_filesystems_guide/) — compose and rebase static mount trees.
 - [Snapshotting](snapshotting.md) — serialise and restore VFS + shell state.
-- Spec: [`specs/vfs.md`](https://github.com/everruns/bashkit/blob/main/specs/vfs.md).
+- Spec: [`knowledge/vfs.md`](https://github.com/everruns/bashkit/blob/main/knowledge/vfs.md).

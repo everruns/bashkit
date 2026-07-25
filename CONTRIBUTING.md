@@ -63,11 +63,11 @@ test: add array edge case tests
 
 ## Adding Features
 
-1. Check if the feature is documented in `specs/`
+1. Check if the feature is documented in `knowledge/`
 2. Add spec tests in `crates/bashkit/tests/spec_cases/`
 3. Implement the feature
 4. Update `crates/bashkit/docs/compatibility.md` if applicable
-5. Update `specs/limitations.md` if removing a limitation
+5. Update `knowledge/limitations.md` if removing a limitation
 
 ## Spec Test Format
 
@@ -93,12 +93,12 @@ expected
 
 - [ ] `just pre-pr` passes
 - [ ] Rebased on main
-- [ ] Specs updated if behavior changes
+- [ ] Knowledge updated if behavior changes
 - [ ] CI green
 
 ## Architecture
 
-See `specs/` for design documents:
+See `knowledge/` for persistent design and engineering knowledge:
 
 - `architecture.md` - Overall design
 - `parser.md` - Parser/lexer details

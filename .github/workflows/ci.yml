@@ -72,7 +72,7 @@ jobs:
     # Build the browser package (@everruns/bashkit-wasm) and run its headless
     # integration tests, proving the single-threaded bundle loads with no
     # COOP/COEP headers and that sync + async execution both work. See
-    # specs/browser-package.md. Keep wasm-bindgen-cli in lockstep with the
+    # knowledge/browser-package.md. Keep wasm-bindgen-cli in lockstep with the
     # wasm-bindgen version in Cargo.lock.
     name: WASM web package
     runs-on: ubuntu-latest

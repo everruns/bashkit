@@ -17,11 +17,11 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 - No backward compat needed (internal code)
 - Write failing test before fixing bug
 
-### Specs
+### Knowledge
 
-`specs/` contains feature specifications. New code should comply with these or propose changes.
+`knowledge/` is the canonical OKF bundle and persistent project memory. Read relevant knowledge before changing behavior, and update it in the same change when decisions, behavior, constraints, threats, tests, or operations change. New durable engineering knowledge belongs there; see `knowledge/index.md` for the maintenance contract.
 
-| Spec | Description |
+| Knowledge | Description |
 |------|-------------|
 | architecture | Core interpreter architecture, module structure |
 | parser | Bash syntax parser design |
@@ -57,14 +57,14 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 
 - **Public docs** live in `docs/` — user-facing articles (security, guides, etc.)
 - **Rustdoc guides** live in `crates/bashkit/docs/` as markdown files
-- Rustdoc guides embedded via `include_str!` (see `specs/documentation.md`)
+- Rustdoc guides embedded via `include_str!` (see `knowledge/documentation.md`)
 - Edit `crates/bashkit/docs/*.md`, not the doc modules in `lib.rs`
 - Add "See also" cross-links when creating new guides
 - Run `cargo doc --open` to preview rustdoc changes
 
 ### Bashkit Principles
 
-- All design decisions in `specs/` - no undocumented choices
+- All design decisions in `knowledge/` - no undocumented choices
 - Everything runnable and testable - no theoretical code
 - Don't stop until e2e works - verify before declaring done
 - Examples tested in CI - must pass
@@ -130,7 +130,7 @@ and are aggregated by `crates/bashkit/tests/integration/main.rs` into a single b
 New behavioral tests go there. A small number of files stay as top-level
 `tests/*.rs` because they need their own binary (process-global env
 mutation, `--test-threads=1`, ssh-only feature isolation) — the list and
-criteria live in `specs/testing.md`.
+criteria live in `knowledge/testing.md`.
 
 ### Rust
 
@@ -142,7 +142,7 @@ criteria live in `specs/testing.md`.
 
 ### Stderr from builtins must not leak internal Debug shapes
 
-**TM-INF-022** in `specs/threat-model.md`. No `{:?}`/`{:#?}` in
+**TM-INF-022** in `knowledge/threat-model.md`. No `{:?}`/`{:#?}` in
 `crates/bashkit/src/builtins/`; use `Display` or a domain formatter
 (reference: `format_compile_errors` in `builtins/jq/errors.rs`); cap
 diagnostics ≤ 1 KB; test-only Debug needs `// debug-ok: <reason>`.
@@ -184,14 +184,14 @@ Do not mix criterion `.md` files into `crates/bashkit-bench/results/`.
 3. `cargo clippy --all-targets --all-features -- -D warnings`
 4. `just test` (feature-sliced; never `cargo test --all-features` in one invocation — see Local Dev)
 5. Unit tests cover both positive (expected behavior) and negative (error handling, edge cases) scenarios
-6. Security tests if change touches user input, parsing, sandboxing, or permissions (see `specs/security-testing.md`)
+6. Security tests if change touches user input, parsing, sandboxing, or permissions (see `knowledge/security-testing.md`)
 7. Compatibility/differential tests if change affects Bash behavior parity (compare against real Bash)
 8. Rebase on main: `git fetch origin main && git rebase origin/main` (for worktrees: verify the worktree `HEAD` is on latest `origin/main` before editing)
-9. Update specs if behavior changes
+9. Update knowledge if behavior or durable project facts change
 10. CI green before merge
 11. Resolve all PR comments
-12. `cargo bench --bench parallel_execution` if touching Arc/async/Interpreter/builtins (see `specs/parallel-execution.md`)
-13. `just bench-sqlite` if touching the sqlite builtin or its VFS/IO bridge (see `specs/sqlite-builtin.md`)
+12. `cargo bench --bench parallel_execution` if touching Arc/async/Interpreter/builtins (see `knowledge/parallel-execution.md`)
+13. `just bench-sqlite` if touching the sqlite builtin or its VFS/IO bridge (see `knowledge/sqlite-builtin.md`)
 14. `just bench` if changes might impact performance (interpreter, builtins, tools)
 15. `ruff check crates/bashkit-python && ruff format --check crates/bashkit-python` if touching Python code
 
@@ -206,7 +206,7 @@ Do not mix criterion `.md` files into `crates/bashkit-bench/results/`.
 
 Types: feat, fix, docs, refactor, test, chore
 
-- Updates to `specs/` and `AGENTS.md`: use `chore` type
+- Updates to `knowledge/` and `AGENTS.md`: use `chore` type
 - NEVER add links to Claude sessions in PR body or commits
 
 ### Commit Attribution

@@ -6,7 +6,7 @@
 //! cross-tool invariants as the inline `#[cfg(test)]` modules without us
 //! duplicating the banned-substring list and the canary plumbing.
 //!
-//! The invariants enforced here are documented in `specs/threat-model.md`:
+//! The invariants enforced here are documented in `knowledge/threat-model.md`:
 //!  - **TM-INF-022** — no Rust Debug shapes in stderr
 //!  - **TM-INF-016** — no host paths (`/rustc/`, `~/.cargo/registry/`,
 //!    `target/debug/deps/`) in stderr

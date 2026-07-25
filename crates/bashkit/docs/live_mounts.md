@@ -200,4 +200,4 @@ assert_eq!(result.stdout, "2.0");
 - [`BashBuilder::readonly_filesystem`] — deny all VFS mutations after setup
 - [`BashBuilder::fs`] — custom filesystem injection
 - [`Bash::fs`] — direct filesystem access
-- [VFS specification](https://github.com/everruns/bashkit/blob/main/specs/vfs.md)
+- [VFS specification](https://github.com/everruns/bashkit/blob/main/knowledge/vfs.md)
