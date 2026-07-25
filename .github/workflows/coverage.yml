@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
@@ -37,7 +37,7 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Install cargo-tarpaulin
-        uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b # v2
+        uses: taiki-e/install-action@7572810d7dd469b651bb7793945692cf78da5dd7 # v2
         with:
           tool: cargo-tarpaulin
 
@@ -75,7 +75,7 @@ jobs:
     # GitHub's 6 h default (a GIL deadlock once did exactly that).
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
@@ -85,7 +85,7 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b # v2
+        uses: taiki-e/install-action@7572810d7dd469b651bb7793945692cf78da5dd7 # v2
         with:
           tool: cargo-llvm-cov
 
@@ -93,7 +93,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
 
       - name: Generate Python-driven Rust coverage
         run: |
@@ -124,7 +124,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
@@ -134,7 +134,7 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b # v2
+        uses: taiki-e/install-action@7572810d7dd469b651bb7793945692cf78da5dd7 # v2
         with:
           tool: cargo-llvm-cov
 

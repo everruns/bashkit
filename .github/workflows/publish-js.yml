@@ -33,7 +33,7 @@ jobs:
     name: Verify publish source
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -81,7 +81,7 @@ jobs:
           #   build: pnpm exec napi build --platform --release --target wasm32-wasip1-threads && pnpm run build:cjs && pnpm run build:ts
 
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup pnpm
         uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
@@ -171,7 +171,7 @@ jobs:
         node: ["20", "22", "24"]
     runs-on: ${{ matrix.settings.host }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup pnpm
         uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
@@ -275,7 +275,7 @@ jobs:
         node: ["20", "22", "24"]
     runs-on: ${{ contains(matrix.target, 'aarch64') && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup pnpm
         uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
@@ -383,7 +383,7 @@ jobs:
   #   needs: [build-js]
   #   runs-on: ubuntu-latest
   #   steps:
-  #     - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+  #     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
   #     - name: Setup pnpm
   #       uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
   #       with:
@@ -430,7 +430,7 @@ jobs:
       id-token: write
 
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Verify publish source is on main
         run: |
