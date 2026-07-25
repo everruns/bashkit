@@ -219,7 +219,7 @@
 //! use bashkit::fs::{RealFs, RealFsMode};
 //! use std::sync::Arc;
 //!
-//! let backend = RealFs::new("/path/to/dir", RealFsMode::ReadOnly).unwrap();
+//! let backend = RealFs::open("/path/to/dir", RealFsMode::ReadOnly).await.unwrap();
 //! let fs = Arc::new(PosixFs::new(backend));
 //! let mut bash = Bash::builder().fs(fs).build();
 //! ```

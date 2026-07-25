@@ -2889,6 +2889,7 @@ impl BashBuilder {
     }
 
     #[cfg(feature = "realfs")]
+    #[allow(deprecated)] // BashBuilder::build is intentionally synchronous.
     fn apply_real_mounts(
         real_mounts: &[MountedRealDir],
         mount_allowlist: Option<&[PathBuf]>,

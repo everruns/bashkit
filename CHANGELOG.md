@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- RealFs path resolution and metadata updates no longer perform synchronous
+  host filesystem I/O inside async backend methods, preventing stalls and
+  deadlocks on current-thread Tokio runtimes. Async embedders should use the
+  new `RealFs::open`; the blocking `RealFs::new` constructor is deprecated.
+
 ## [0.14.3] - 2026-07-18
 
 ### Highlights
