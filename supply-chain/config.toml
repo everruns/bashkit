@@ -27,10 +27,6 @@ criteria = "safe-to-deploy"
 audit-as-crates-io = false
 criteria = "safe-to-deploy"
 
-[policy.monty]
-audit-as-crates-io = false
-criteria = "safe-to-deploy"
-
 [[exemptions.adler2]]
 version = "2.0.1"
 criteria = "safe-to-deploy"
@@ -1117,6 +1113,18 @@ criteria = "safe-to-deploy"
 
 [[exemptions.module-lattice]]
 version = "0.2.3"
+criteria = "safe-to-deploy"
+
+[[exemptions.monty]]
+version = "0.0.19"
+criteria = "safe-to-deploy"
+
+[[exemptions.monty-macros]]
+version = "0.0.19"
+criteria = "safe-to-deploy"
+
+[[exemptions.monty-types]]
+version = "0.0.19"
 criteria = "safe-to-deploy"
 
 [[exemptions.napi]]
