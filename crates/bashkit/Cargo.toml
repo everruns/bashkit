@@ -99,9 +99,12 @@ num-traits = "0.2"
 unit-prefix = "0.5"
 os_display = "0.1.3"
 
-# Embedded Python interpreter (optional)
-monty = { git = "https://github.com/pydantic/monty", tag = "v0.0.19-beta.6", optional = true }
-monty-types = { git = "https://github.com/pydantic/monty", tag = "v0.0.19-beta.6", optional = true }
+# Embedded Python interpreter (optional).
+# Registry dep since monty 0.0.19 — the first version published to crates.io.
+# Keeps `python` usable for downstream crates and lets the publish workflow
+# ship the feature instead of stripping it.
+monty = { version = "0.0.19", optional = true }
+monty-types = { version = "0.0.19", optional = true }
 
 # Embedded TypeScript interpreter (optional)
 zapcode-core = { version = "1.5.1", optional = true }
@@ -143,7 +146,7 @@ ssh = ["russh"]
 # Usage: cargo build --features scripted_tool
 scripted_tool = ["bash_tool"]
 # Enable python/python3 builtins via embedded Monty interpreter
-# Monty is a git dep (not yet on crates.io) — feature unavailable from registry
+# Usage: cargo build --features python
 python = ["dep:monty", "dep:monty-types"]
 # Enable ts/node/deno/bun builtins via embedded ZapCode TypeScript interpreter
 # Usage: cargo build --features typescript

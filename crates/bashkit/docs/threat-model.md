@@ -616,8 +616,8 @@ Python `pathlib.Path` and `open()` operations are bridged to Bashkit's virtual f
 
 | Threat | Attack Example | Mitigation | Status |
 |--------|---------------|------------|--------|
-| Infinite loop (TM-PY-001) | `while True: pass` | Monty time limit (30s) + allocation cap | MITIGATED |
-| Memory exhaustion (TM-PY-002) | Large allocation | Monty max_memory (64MB) + max_allocations (1M) | MITIGATED |
+| Infinite loop (TM-PY-001) | `while True: pass` | Monty time limit (30s) | MITIGATED |
+| Memory exhaustion (TM-PY-002) | Large allocation | Monty max_memory (64MB), also caps collected `print` output | MITIGATED |
 | Stack overflow (TM-PY-003) | Deep recursion | Monty max_recursion (200) | MITIGATED |
 | Shell escape (TM-PY-004) | `os.system()` | Monty has no os.system/subprocess | MITIGATED |
 | Real FS access (TM-PY-005) | `open()` | VFS bridge opens only Bashkit VFS files | MITIGATED |
@@ -654,8 +654,8 @@ Python `pathlib.Path` and `open()` operations are bridged to Bashkit's virtual f
 Python code → Monty VM → OsCall pause → Bashkit VFS bridge → resume
 ```
 
-Monty runs directly in the host process. Resource limits (memory, allocations,
-time, recursion) are enforced by Monty's own runtime. All VFS operations are
+Monty runs directly in the host process. Resource limits (memory, time,
+recursion) are enforced by Monty's own runtime. All VFS operations are
 bridged through the host process — Python code never touches the real filesystem.
 
 ### SQLite Security (TM-SQL-*)

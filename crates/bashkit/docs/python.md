@@ -140,7 +140,6 @@ let bash = Bash::builder()
         PythonLimits::default()
             .max_duration(Duration::from_secs(5))
             .max_memory(16 * 1024 * 1024)   // 16 MB
-            .max_allocations(100_000)
             .max_recursion(50)
     )
     .build();
@@ -149,9 +148,8 @@ let bash = Bash::builder()
 
 | Limit | Default | Purpose |
 |-------|---------|---------|
-| Allocations | 1,000,000 | Heap allocation cap |
 | Duration | 30 seconds | Execution timeout |
-| Memory | 64 MB | Heap memory cap |
+| Memory | 64 MB | Heap memory cap, also caps collected `print` output |
 | Recursion | 200 | Call stack depth |
 
 ## LLM Tool Integration
@@ -208,7 +206,7 @@ All Python execution runs in a virtual environment:
 - **No host filesystem access** — all paths resolve through the VFS
 - **No network access** — no sockets, HTTP, or DNS
 - **No process spawning** — no `os.system()`, `subprocess`, or `__import__('os')`
-- **Resource limited** — allocation, time, memory, and recursion caps
+- **Resource limited** — time, memory (including collected output), and recursion caps
 - **Path traversal safe** — `../..` is resolved by VFS path normalization
 
 See threat IDs TM-PY-001 through TM-PY-029 in the [threat model](./threat-model.md).

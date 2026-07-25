@@ -38,7 +38,7 @@ For security, execution is runtime-gated on `BASHKIT_ALLOW_INPROCESS_PYTHON=1`
 
 - Pure Rust, no CPython dependency
 - Sub-microsecond startup
-- Built-in resource limits (memory, allocations, time, recursion depth)
+- Built-in resource limits (memory, time, recursion depth)
 - No filesystem/network access by design (sandbox-safe)
 - Snapshotable execution state
 
@@ -55,10 +55,14 @@ configurable via `PythonLimits`:
 
 | Limit | Default | Builder Method |
 |-------|---------|----------------|
-| Max allocations | 1,000,000 | `.max_allocations(n)` |
 | Max duration | 30 s | `.max_duration(d)` |
 | Max memory | 64 MB | `.max_memory(bytes)` |
 | Max recursion | 200 | `.max_recursion(depth)` |
+
+`max_memory` does double duty: Monty caps the host-side buffer that collects
+`print` output at the same value, so a print loop cannot outgrow the declared
+budget even though it allocates nothing on the VM heap. There is no
+allocation-count knob — Monty removed `max_allocations` in 0.0.19.
 
 Since Monty 0.0.4 the parser also enforces a nesting-depth limit (200
 release / 35 debug) against stack overflow from deeply nested expressions.
@@ -122,7 +126,7 @@ let bash = Bash::builder()
 - **Dispatch:** one handler receives all registered names; dispatch on `function_name` inside it.
 - **Timeouts:** Each awaited handler call is wrapped in the remaining `PythonLimits::max_duration` wall-clock budget for the current Python invocation. If the budget expires while a handler is pending, Bashkit resumes Python with a `RuntimeError` instead of waiting for the handler indefinitely.
 - **Trust model:** same as `BashBuilder::builtin()` and `ScriptedTool` callbacks — host registers trusted Rust code, untrusted scripts invoke by name. Handlers are trusted host code and should still enforce independent limits for outbound I/O, remote services, and other resources they consume.
-- **Unstable re-exports:** `MontyObject`, `ExtFunctionResult`, `MontyException`, `ExcType` re-exported from the `monty` crate (git-pinned, not on crates.io); may break between bashkit releases.
+- **Unstable re-exports:** `MontyObject`, `ExtFunctionResult`, `MontyException`, `ExcType` re-exported from the `monty` crate (pre-1.0, tracked at `0.0.x`); may break between bashkit releases.
 
 ### Security
 
@@ -130,7 +134,7 @@ See `knowledge/threat-model.md` § "Python / Monty Security (TM-PY)" for the ful
 analysis. Summary:
 
 - **Code injection via bash expansion**: variables expand before reaching the builtin (by-design, consistent with all builtins); use single quotes to prevent.
-- **Resource exhaustion**: Monty's allocation/time/memory caps apply even when shell limits are generous; print output is captured in memory and bounded by the memory cap.
+- **Resource exhaustion**: Monty's time/memory caps apply even when shell limits are generous; print output is captured in memory and bounded by the same memory cap.
 - **Sandbox escape via filesystem**: all path ops go through the VFS; `/etc/passwd` reads VFS, not host. Relative paths resolve against the shell cwd; `../..` traversal constrained by VFS path normalization.
 - **Sandbox escape via os/subprocess/socket**: not implemented in Monty; raise errors.
 

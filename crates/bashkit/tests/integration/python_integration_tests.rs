@@ -1209,9 +1209,7 @@ mod resource_limits {
 
     #[tokio::test]
     async fn generous_limits_succeed() {
-        let limits = PythonLimits::default()
-            .max_allocations(10_000_000)
-            .max_memory(128 * 1024 * 1024);
+        let limits = PythonLimits::default().max_memory(128 * 1024 * 1024);
         let mut bash = bash_python_limits(limits);
         let r = bash
             .exec("python3 -c \"print(sum(range(1000)))\"")
