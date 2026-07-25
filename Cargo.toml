@@ -57,7 +57,7 @@ chrono = "0.4"
 flate2 = "1"
 
 # Base64 encoding
-base64 = "0.22"
+base64 = "0.23"
 
 # Checksums (md5sum, sha256sum, etc.)
 md-5 = "0.11"
