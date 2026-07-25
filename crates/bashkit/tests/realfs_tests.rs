@@ -22,6 +22,122 @@ fn setup_host_dir() -> tempfile::TempDir {
     dir
 }
 
+#[cfg(unix)]
+mod async_runtime_regression {
+    use super::*;
+    use bashkit::{
+        Builtin, BuiltinContext, ExecResult, FileSystem, PosixFs, RealFs, RealFsMode, async_trait,
+    };
+    use std::path::PathBuf;
+    use std::process::Command;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    struct DelayedFifoWriter {
+        host_path: PathBuf,
+        rescued: Arc<AtomicBool>,
+    }
+
+    #[async_trait]
+    impl Builtin for DelayedFifoWriter {
+        async fn execute(&self, _ctx: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {
+            let host_path = self.host_path.clone();
+            let rescued = Arc::clone(&self.rescued);
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                if !rescued.load(Ordering::SeqCst) {
+                    let _writer = tokio::fs::OpenOptions::new()
+                        .write(true)
+                        .open(host_path)
+                        .await
+                        .unwrap();
+                }
+            });
+            Ok(ExecResult::ok("captured output\n".to_string()))
+        }
+    }
+
+    enum RuntimeKind {
+        CurrentThread,
+        MultiThread,
+    }
+
+    fn run_fifo_pipeline(kind: RuntimeKind) {
+        let dir = tempfile::tempdir().unwrap();
+        let fifo = dir.path().join("wake.fifo");
+        let status = Command::new("mkfifo").arg(&fifo).status().unwrap();
+        assert!(status.success());
+
+        let rescued = Arc::new(AtomicBool::new(false));
+        let (done_tx, done_rx) = mpsc::channel();
+        let runtime_dir = dir.path().to_path_buf();
+        let runtime_fifo = fifo.clone();
+        let runtime_rescued = Arc::clone(&rescued);
+
+        let runtime_thread = std::thread::spawn(move || {
+            let mut builder = tokio::runtime::Builder::new_current_thread();
+            if matches!(kind, RuntimeKind::MultiThread) {
+                builder = tokio::runtime::Builder::new_multi_thread();
+                builder.worker_threads(2);
+            }
+            let runtime = builder.enable_all().build().unwrap();
+            let result = runtime.block_on(async move {
+                let backend = RealFs::open(&runtime_dir, RealFsMode::ReadWrite)
+                    .await
+                    .unwrap();
+                let fs: Arc<dyn FileSystem> = Arc::new(PosixFs::new(backend));
+                let mut bash = Bash::builder()
+                    .builtin(
+                        "wake-fifo",
+                        Box::new(DelayedFifoWriter {
+                            host_path: runtime_fifo,
+                            rescued: runtime_rescued,
+                        }),
+                    )
+                    .build();
+                bash.mount("/workspace", fs).unwrap();
+                bash.exec("wake-fifo | touch /workspace/wake.fifo; echo done")
+                    .await
+                    .map(|output| output.stdout)
+            });
+            done_tx.send(result).unwrap();
+        });
+
+        let result = match done_rx.recv_timeout(Duration::from_millis(500)) {
+            Ok(result) => result,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                rescued.store(true, Ordering::SeqCst);
+                let rescue_fifo = fifo.clone();
+                let rescue = std::thread::spawn(move || {
+                    std::fs::OpenOptions::new()
+                        .write(true)
+                        .open(rescue_fifo)
+                        .unwrap()
+                });
+                runtime_thread.join().unwrap();
+                drop(rescue.join().unwrap());
+                panic!("RealFs blocked the Tokio runtime during async pipeline execution");
+            }
+            Err(error) => panic!("runtime thread disconnected: {error}"),
+        };
+
+        runtime_thread.join().unwrap();
+        assert_eq!(result.unwrap(), "done\n");
+    }
+
+    #[test]
+    fn realfs_pipeline_does_not_block_current_thread_runtime() {
+        run_fifo_pipeline(RuntimeKind::CurrentThread);
+    }
+
+    #[test]
+    fn realfs_pipeline_completes_on_multi_thread_runtime() {
+        run_fifo_pipeline(RuntimeKind::MultiThread);
+    }
+}
+
 // --- Use case 1: readonly overlay at root ---
 
 #[tokio::test]
@@ -625,7 +741,9 @@ async fn runtime_mount_readonly() {
     let dir = setup_host_dir();
     let mut bash = Bash::new();
 
-    let backend = RealFs::new(dir.path(), RealFsMode::ReadOnly).unwrap();
+    let backend = RealFs::open(dir.path(), RealFsMode::ReadOnly)
+        .await
+        .unwrap();
     let fs: Arc<dyn bashkit::FileSystem> = Arc::new(PosixFs::new(backend));
     bash.mount("/mnt/host", fs).unwrap();
 
@@ -641,7 +759,9 @@ async fn runtime_unmount() {
     let dir = setup_host_dir();
     let mut bash = Bash::new();
 
-    let backend = RealFs::new(dir.path(), RealFsMode::ReadOnly).unwrap();
+    let backend = RealFs::open(dir.path(), RealFsMode::ReadOnly)
+        .await
+        .unwrap();
     let fs: Arc<dyn bashkit::FileSystem> = Arc::new(PosixFs::new(backend));
     bash.mount("/mnt/host", fs).unwrap();
 
@@ -665,7 +785,9 @@ async fn runtime_mount_readwrite() {
     let dir = setup_host_dir();
     let mut bash = Bash::new();
 
-    let backend = RealFs::new(dir.path(), RealFsMode::ReadWrite).unwrap();
+    let backend = RealFs::open(dir.path(), RealFsMode::ReadWrite)
+        .await
+        .unwrap();
     let fs: Arc<dyn bashkit::FileSystem> = Arc::new(PosixFs::new(backend));
     bash.mount("/workspace", fs).unwrap();
 

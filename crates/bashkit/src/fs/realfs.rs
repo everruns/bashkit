@@ -1,5 +1,7 @@
 // Decision: RealFs is a FsBackend that delegates to the real host filesystem,
-// scoped to a root directory. It supports readonly and readwrite modes.
+// scoped to a root directory. Async operations route all host filesystem work
+// through Tokio so current-thread runtimes cannot be blocked by host I/O.
+// `open` is the safe default; deprecated `new` remains only as a migration shim.
 // Security: path traversal is prevented by canonicalizing the resolved path or
 // the nearest existing ancestor, then checking the root prefix before I/O.
 // This module is only available with the `realfs` feature flag.
@@ -53,9 +55,11 @@
 //! use bashkit::{RealFs, RealFsMode};
 //! use std::sync::Arc;
 //!
-//! let backend = RealFs::new("/tmp", RealFsMode::ReadOnly).unwrap();
+//! # tokio_test::block_on(async {
+//! let backend = RealFs::open("/tmp", RealFsMode::ReadOnly).await.unwrap();
 //! let fs = Arc::new(PosixFs::new(backend));
 //! let bash = bashkit::Bash::builder().fs(fs).build();
+//! # });
 //! ```
 //!
 //! # CLI
@@ -101,9 +105,11 @@ pub enum RealFsMode {
 /// use bashkit::PosixFs;
 /// use std::sync::Arc;
 ///
-/// let backend = RealFs::new("/tmp", RealFsMode::ReadOnly).unwrap();
+/// # tokio_test::block_on(async {
+/// let backend = RealFs::open("/tmp", RealFsMode::ReadOnly).await.unwrap();
 /// let fs = Arc::new(PosixFs::new(backend));
 /// let bash = bashkit::Bash::builder().fs(fs).build();
+/// # });
 /// ```
 pub struct RealFs {
     /// Canonicalized root directory on the host.
@@ -116,9 +122,33 @@ impl RealFs {
     ///
     /// The root path is canonicalized on creation. Returns an error if the
     /// path does not exist or is not a directory.
+    #[deprecated(
+        since = "0.15.0",
+        note = "blocks on host filesystem I/O; use RealFs::open(...).await"
+    )]
     pub fn new(root: impl AsRef<Path>, mode: RealFsMode) -> std::io::Result<Self> {
         let root = std::fs::canonicalize(root.as_ref())?;
         if !root.is_dir() {
+            return Err(IoError::new(
+                ErrorKind::NotADirectory,
+                format!("realfs root is not a directory: {}", root.display()),
+            ));
+        }
+        Ok(Self { root, mode })
+    }
+
+    /// Open a RealFs backend without blocking the async runtime.
+    ///
+    /// The root is canonicalized and validated as a directory before use.
+    pub async fn open(root: impl AsRef<Path>, mode: RealFsMode) -> std::io::Result<Self> {
+        let root = tokio::fs::canonicalize(root.as_ref()).await?;
+        // Match Path::is_dir(): metadata lookup failures become
+        // NotADirectory after canonicalization for both constructors.
+        let is_dir = tokio::fs::metadata(&root)
+            .await
+            .map(|metadata| metadata.is_dir())
+            .unwrap_or(false);
+        if !is_dir {
             return Err(IoError::new(
                 ErrorKind::NotADirectory,
                 format!("realfs root is not a directory: {}", root.display()),
@@ -134,7 +164,7 @@ impl RealFs {
     /// existing paths) or the nearest existing ancestor (for new paths) to
     /// prevent traversal and symlink escapes before attaching the missing
     /// suffix.
-    fn resolve(&self, vpath: &Path) -> std::io::Result<PathBuf> {
+    async fn resolve(&self, vpath: &Path) -> std::io::Result<PathBuf> {
         let normalized = normalize_vpath(vpath);
         // Strip leading "/" to make it relative
         let relative = normalized.strip_prefix("/").unwrap_or(&normalized);
@@ -147,8 +177,8 @@ impl RealFs {
         let joined = self.root.join(relative);
 
         // If the path exists, canonicalize and check
-        if joined.exists() {
-            let canon = std::fs::canonicalize(&joined)?;
+        if tokio::fs::try_exists(&joined).await.unwrap_or(false) {
+            let canon = tokio::fs::canonicalize(&joined).await?;
             if !canon.starts_with(&self.root) {
                 return Err(IoError::new(
                     ErrorKind::PermissionDenied,
@@ -162,13 +192,16 @@ impl RealFs {
         // Canonicalize the nearest existing ancestor first so symlink hops in
         // any existing prefix cannot redirect creation outside the mount root.
         let mut nearest_existing = joined.as_path();
-        while !nearest_existing.exists() {
+        while !tokio::fs::try_exists(nearest_existing)
+            .await
+            .unwrap_or(false)
+        {
             nearest_existing = nearest_existing.parent().ok_or_else(|| {
                 IoError::new(ErrorKind::PermissionDenied, "path escapes realfs root")
             })?;
         }
 
-        let canon_existing = std::fs::canonicalize(nearest_existing)?;
+        let canon_existing = tokio::fs::canonicalize(nearest_existing).await?;
         if !canon_existing.starts_with(&self.root) {
             return Err(IoError::new(
                 ErrorKind::PermissionDenied,
@@ -202,7 +235,7 @@ impl RealFs {
     /// tree. Here we canonicalize only the parent, verify it stays under
     /// root, then append the basename verbatim. The caller must then use
     /// `symlink_metadata`/`read_link`/`remove_file` on the result.
-    fn resolve_no_follow(&self, vpath: &Path) -> std::io::Result<PathBuf> {
+    async fn resolve_no_follow(&self, vpath: &Path) -> std::io::Result<PathBuf> {
         let normalized = normalize_vpath(vpath);
         let relative = normalized.strip_prefix("/").unwrap_or(&normalized);
 
@@ -218,7 +251,7 @@ impl RealFs {
             .file_name()
             .ok_or_else(|| IoError::new(ErrorKind::InvalidInput, "path has no final component"))?;
 
-        let canon_parent = std::fs::canonicalize(parent)?;
+        let canon_parent = tokio::fs::canonicalize(parent).await?;
         if !canon_parent.starts_with(&self.root) {
             return Err(IoError::new(
                 ErrorKind::PermissionDenied,
@@ -238,14 +271,14 @@ impl RealFs {
     /// missing, so the standard `resolve()` fallback would happily produce
     /// a host path whose leaf is still a symlink to outside the root.
     /// `symlink_metadata` describes the link itself, catching that case.
-    fn resolve_for_create(&self, vpath: &Path) -> std::io::Result<PathBuf> {
+    async fn resolve_for_create(&self, vpath: &Path) -> std::io::Result<PathBuf> {
         let normalized = normalize_vpath(vpath);
         let relative = normalized.strip_prefix("/").unwrap_or(&normalized);
 
         if relative != Path::new("") {
             let joined = self.root.join(relative);
             if matches!(
-                std::fs::symlink_metadata(&joined),
+                tokio::fs::symlink_metadata(&joined).await,
                 Ok(m) if m.file_type().is_symlink()
             ) {
                 return Err(IoError::new(
@@ -255,7 +288,7 @@ impl RealFs {
             }
         }
 
-        self.resolve(vpath)
+        self.resolve(vpath).await
     }
 
     /// Check that the mode allows writes. Returns PermissionDenied if readonly.
@@ -376,7 +409,7 @@ fn normalize_vpath(path: &Path) -> PathBuf {
 #[async_trait]
 impl FsBackend for RealFs {
     async fn read(&self, path: &Path) -> Result<Vec<u8>> {
-        let real = self.resolve(path)?;
+        let real = self.resolve(path).await?;
         let data = tokio::fs::read(&real).await?;
         Ok(data)
     }
@@ -386,7 +419,7 @@ impl FsBackend for RealFs {
         // Issue #1575: refuse to follow a leaf symlink (dangling or
         // otherwise) so the kernel can't be tricked into creating a file
         // outside the mount root.
-        let real = self.resolve_for_create(path)?;
+        let real = self.resolve_for_create(path).await?;
         if let Some(parent) = real.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
@@ -397,7 +430,7 @@ impl FsBackend for RealFs {
     async fn append(&self, path: &Path, content: &[u8]) -> Result<()> {
         self.check_writable()?;
         // Issue #1575: same leaf-symlink rejection as write().
-        let real = self.resolve_for_create(path)?;
+        let real = self.resolve_for_create(path).await?;
         use tokio::io::AsyncWriteExt;
         let mut file = tokio::fs::OpenOptions::new()
             .create(true)
@@ -411,7 +444,7 @@ impl FsBackend for RealFs {
 
     async fn mkdir(&self, path: &Path, recursive: bool) -> Result<()> {
         self.check_writable()?;
-        let real = self.resolve(path)?;
+        let real = self.resolve(path).await?;
         if recursive {
             tokio::fs::create_dir_all(&real).await?;
         } else {
@@ -425,7 +458,7 @@ impl FsBackend for RealFs {
         // Issue #1578: use no-follow resolution + symlink_metadata so
         // `remove('/link', recursive=true)` unlinks the symlink instead of
         // recursively wiping its target.
-        let real = self.resolve_no_follow(path)?;
+        let real = self.resolve_no_follow(path).await?;
         let meta = tokio::fs::symlink_metadata(&real).await?;
         let ft = meta.file_type();
         if ft.is_symlink() {
@@ -445,13 +478,13 @@ impl FsBackend for RealFs {
     async fn stat(&self, path: &Path) -> Result<Metadata> {
         // Issue #1578: don't dereference a final symlink — stat must
         // describe the link itself.
-        let real = self.resolve_no_follow(path)?;
+        let real = self.resolve_no_follow(path).await?;
         let meta = tokio::fs::symlink_metadata(&real).await?;
         Ok(metadata_from_std(&meta))
     }
 
     async fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>> {
-        let real = self.resolve(path)?;
+        let real = self.resolve(path).await?;
         let mut entries = Vec::new();
         let mut dir = tokio::fs::read_dir(&real).await?;
         while let Some(entry) = dir.next_entry().await? {
@@ -468,24 +501,24 @@ impl FsBackend for RealFs {
     }
 
     async fn exists(&self, path: &Path) -> Result<bool> {
-        let real = self.resolve(path)?;
+        let real = self.resolve(path).await?;
         Ok(tokio::fs::try_exists(&real).await.unwrap_or(false))
     }
 
     async fn rename(&self, from: &Path, to: &Path) -> Result<()> {
         self.check_writable()?;
-        let real_from = self.resolve(from)?;
-        let real_to = self.resolve(to)?;
+        let real_from = self.resolve(from).await?;
+        let real_to = self.resolve(to).await?;
         tokio::fs::rename(&real_from, &real_to).await?;
         Ok(())
     }
 
     async fn copy(&self, from: &Path, to: &Path) -> Result<()> {
         self.check_writable()?;
-        let real_from = self.resolve(from)?;
+        let real_from = self.resolve(from).await?;
         // Issue #1575: refuse to copy through a leaf symlink at the
         // destination — that would let an attacker write outside root.
-        let real_to = self.resolve_for_create(to)?;
+        let real_to = self.resolve_for_create(to).await?;
         tokio::fs::copy(&real_from, &real_to).await?;
         Ok(())
     }
@@ -498,7 +531,7 @@ impl FsBackend for RealFs {
     /// components cannot redirect outside root.
     async fn symlink(&self, target: &Path, link: &Path) -> Result<()> {
         self.check_writable()?;
-        let real_link = self.resolve(link)?;
+        let real_link = self.resolve(link).await?;
 
         // Absolute targets always escape the mount root on disk
         if target.is_absolute() {
@@ -529,7 +562,10 @@ impl FsBackend for RealFs {
         let link_parent = real_link.parent().unwrap_or(&self.root);
         let joined = normalize_host_path(&link_parent.join(target));
         let mut nearest_existing = joined.as_path();
-        while !nearest_existing.exists() {
+        while !tokio::fs::try_exists(nearest_existing)
+            .await
+            .unwrap_or(false)
+        {
             nearest_existing = nearest_existing.parent().ok_or_else(|| {
                 IoError::new(
                     ErrorKind::PermissionDenied,
@@ -538,7 +574,7 @@ impl FsBackend for RealFs {
             })?;
         }
 
-        let canon_existing = std::fs::canonicalize(nearest_existing)?;
+        let canon_existing = tokio::fs::canonicalize(nearest_existing).await?;
         if !canon_existing.starts_with(&self.root) {
             return Err(IoError::new(
                 ErrorKind::PermissionDenied,
@@ -577,14 +613,14 @@ impl FsBackend for RealFs {
         // Issue #1578: keep the link's basename intact so read_link
         // reports the symlink's own target rather than failing on a
         // canonicalized non-symlink path.
-        let real = self.resolve_no_follow(path)?;
+        let real = self.resolve_no_follow(path).await?;
         let target = tokio::fs::read_link(&real).await?;
         Ok(target)
     }
 
     async fn chmod(&self, path: &Path, mode: u32) -> Result<()> {
         self.check_writable()?;
-        let real = self.resolve(path)?;
+        let real = self.resolve(path).await?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -600,9 +636,11 @@ impl FsBackend for RealFs {
 
     async fn set_modified_time(&self, path: &Path, time: SystemTime) -> Result<()> {
         self.check_writable()?;
-        let real = self.resolve(path)?;
-        let file = std::fs::File::open(&real)?;
-        file.set_modified(time)?;
+        let real = self.resolve(path).await?;
+        let file = tokio::fs::File::open(&real).await?.into_std().await;
+        tokio::task::spawn_blocking(move || file.set_modified(time))
+            .await
+            .map_err(|error| IoError::other(format!("mtime worker failed: {error}")))??;
         Ok(())
     }
 
@@ -617,6 +655,7 @@ impl FsBackend for RealFs {
 }
 
 #[cfg(test)]
+#[allow(deprecated)] // The suite also verifies the blocking migration shim.
 mod tests {
     use super::*;
     use tempfile::TempDir;
@@ -813,6 +852,26 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[tokio::test]
+    #[allow(deprecated)]
+    async fn open_matches_deprecated_constructor() {
+        let dir = setup();
+        let sync = RealFs::new(dir.path(), RealFsMode::ReadWrite).unwrap();
+        let asynchronous = RealFs::open(dir.path(), RealFsMode::ReadWrite)
+            .await
+            .unwrap();
+
+        assert_eq!(asynchronous.root(), sync.root());
+        assert_eq!(asynchronous.mode(), sync.mode());
+
+        let file_path = dir.path().join("hello.txt");
+        let sync_error = RealFs::new(&file_path, RealFsMode::ReadOnly).unwrap_err();
+        let async_error = RealFs::open(&file_path, RealFsMode::ReadOnly)
+            .await
+            .unwrap_err();
+        assert_eq!(async_error.kind(), sync_error.kind());
+    }
+
     // --- Security tests for issue #980: TOCTOU fallback sandbox escape ---
 
     #[test]
@@ -834,15 +893,15 @@ mod tests {
         assert_eq!(p, PathBuf::from("/tmp/sandbox/bar"));
     }
 
-    #[test]
-    fn resolve_fallback_validates_containment() {
+    #[tokio::test]
+    async fn resolve_fallback_validates_containment() {
         // When the parent doesn't exist, resolve must still validate
         // that the path stays under root (defense-in-depth).
         let dir = setup();
         let fs = RealFs::new(dir.path(), RealFsMode::ReadOnly).unwrap();
 
         // Valid non-existent path under root — should succeed
-        let result = fs.resolve(Path::new("/newdir/newfile.txt"));
+        let result = fs.resolve(Path::new("/newdir/newfile.txt")).await;
         assert!(
             result.is_ok(),
             "valid non-existent path under root should succeed"
@@ -854,14 +913,14 @@ mod tests {
         );
     }
 
-    #[test]
-    fn resolve_fallback_returns_normalized_path() {
+    #[tokio::test]
+    async fn resolve_fallback_returns_normalized_path() {
         // The fallback must return a normalized path, not the raw joined path.
         // This ensures no stale `..` or `.` components leak through.
         let dir = setup();
         let fs = RealFs::new(dir.path(), RealFsMode::ReadOnly).unwrap();
 
-        let result = fs.resolve(Path::new("/a/b/../c/file.txt"));
+        let result = fs.resolve(Path::new("/a/b/../c/file.txt")).await;
         assert!(result.is_ok());
         let resolved = result.unwrap();
         // The resolved path should not contain ".."

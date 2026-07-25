@@ -83,6 +83,12 @@ Do you need a custom filesystem?
 #### RealFs (Optional, `realfs` feature)
 - Direct access to a host directory as an `FsBackend`
 - Two modes: `ReadOnly` (safe) and `ReadWrite` (dangerous)
+- Async backend operations use Tokio filesystem APIs and never perform
+  synchronous host filesystem I/O on the runtime worker
+- `RealFs::open` is the async-safe constructor and preserves root validation
+  and canonicalization semantics without blocking a current-thread runtime
+- The synchronous `RealFs::new` constructor is deprecated and retained only as
+  a migration shim
 - Path traversal prevented via canonicalization + root prefix check
 - New-path writes canonicalize the nearest existing ancestor before attaching a
   missing suffix, blocking symlink escapes through non-existent subpaths

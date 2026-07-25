@@ -1753,6 +1753,7 @@ impl PyFileSystem {
     #[cfg(not(target_arch = "wasm32"))]
     #[staticmethod]
     #[pyo3(signature = (host_path, writable=false))]
+    #[allow(deprecated)] // Python constructors cannot await RealFs::open.
     fn real(host_path: String, writable: bool) -> PyResult<Self> {
         let rt = make_runtime()?;
         let mode = if writable {

@@ -403,6 +403,7 @@ fn import_external_file_system(external: Unknown<'_>) -> napi::Result<Arc<dyn Ba
 }
 
 impl NativeFileSystemState {
+    #[allow(deprecated)] // FileSystem.real is an intentionally synchronous JS factory.
     fn real(
         host_path: String,
         writable: Option<bool>,
@@ -2057,7 +2058,8 @@ impl Bash {
             } else {
                 RealFsMode::ReadOnly
             };
-            let real_backend = RealFs::new(&host_path, mode)
+            let real_backend = RealFs::open(&host_path, mode)
+                .await
                 .map_err(|e| napi::Error::from_reason(e.to_string()))?;
             let fs: Arc<dyn BashFileSystem> = Arc::new(PosixFs::new(real_backend));
             bash.mount(Path::new(&vfs_path), fs)
@@ -2682,7 +2684,8 @@ impl BashTool {
             } else {
                 RealFsMode::ReadOnly
             };
-            let real_backend = RealFs::new(&host_path, mode)
+            let real_backend = RealFs::open(&host_path, mode)
+                .await
                 .map_err(|e| napi::Error::from_reason(e.to_string()))?;
             let fs: Arc<dyn BashFileSystem> = Arc::new(PosixFs::new(real_backend));
             bash.mount(Path::new(&vfs_path), fs)
