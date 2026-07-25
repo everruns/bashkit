@@ -28,9 +28,13 @@ use crate::error::Result;
 use crate::fs::FileSystem;
 use crate::interpreter::ExecResult;
 
-/// TypeScript's default call-stack-depth cap. The other VM limits (duration,
-/// memory, allocations) default via [`RuntimeLimits::default`].
+/// TypeScript's default call-stack-depth cap. The other shared VM limits
+/// (duration, memory) default via [`RuntimeLimits::default`].
 const DEFAULT_MAX_STACK_DEPTH: usize = 512;
+
+/// Default heap-allocation cap. TypeScript-only: ZapCode counts allocations,
+/// Monty stopped exposing that axis in 0.0.19, so it is not a shared limit.
+const DEFAULT_MAX_ALLOCATIONS: usize = 1_000_000;
 
 /// Resource limits for the embedded TypeScript (ZapCode) interpreter.
 ///
@@ -58,8 +62,11 @@ const DEFAULT_MAX_STACK_DEPTH: usize = 512;
 /// setters below configure them directly.
 #[derive(Debug, Clone)]
 pub struct TypeScriptLimits {
-    /// Shared VM resource limits (duration, memory, allocations, call depth).
+    /// Shared VM resource limits (duration, memory, call depth).
     pub common: RuntimeLimits,
+    /// Maximum heap allocations (default: 1,000,000). ZapCode-specific — the
+    /// Python runtime has no equivalent cap.
+    pub max_allocations: usize,
 }
 
 impl Default for TypeScriptLimits {
@@ -70,6 +77,7 @@ impl Default for TypeScriptLimits {
                 max_call_depth: DEFAULT_MAX_STACK_DEPTH,
                 ..RuntimeLimits::default()
             },
+            max_allocations: DEFAULT_MAX_ALLOCATIONS,
         }
     }
 }
@@ -99,7 +107,7 @@ impl TypeScriptLimits {
     /// Set max heap allocations.
     #[must_use]
     pub fn max_allocations(mut self, n: usize) -> Self {
-        self.common.max_allocations = n;
+        self.max_allocations = n;
         self
     }
 
@@ -109,7 +117,7 @@ impl TypeScriptLimits {
             memory_limit_bytes: self.common.max_memory,
             time_limit_ms: self.common.max_duration.as_millis() as u64,
             max_stack_depth: self.common.max_call_depth,
-            max_allocations: self.common.max_allocations,
+            max_allocations: self.max_allocations,
         }
     }
 }
@@ -1237,7 +1245,7 @@ mod tests {
         assert_eq!(limits.common.max_duration, Duration::from_secs(30));
         assert_eq!(limits.common.max_memory, 64 * 1024 * 1024);
         assert_eq!(limits.common.max_call_depth, 512);
-        assert_eq!(limits.common.max_allocations, 1_000_000);
+        assert_eq!(limits.max_allocations, 1_000_000);
     }
 
     #[test]
@@ -1250,7 +1258,7 @@ mod tests {
         assert_eq!(limits.common.max_duration, Duration::from_secs(5));
         assert_eq!(limits.common.max_memory, 1024);
         assert_eq!(limits.common.max_call_depth, 100);
-        assert_eq!(limits.common.max_allocations, 500);
+        assert_eq!(limits.max_allocations, 500);
     }
 
     #[test]

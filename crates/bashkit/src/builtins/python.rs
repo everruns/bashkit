@@ -3,8 +3,8 @@
 //! # Direct Integration
 //!
 //! Monty runs directly in the host process. No subprocess, no IPC.
-//! Resource limits (memory, allocations, time, recursion) are enforced
-//! by Monty's own runtime, not by process isolation.
+//! Resource limits (memory, time, recursion) are enforced by Monty's own
+//! runtime, not by process isolation.
 //!
 //! # Overview
 //!
@@ -40,7 +40,7 @@ use crate::fs::{FileSystem, FileType};
 use crate::interpreter::ExecResult;
 
 /// Python's default recursion-depth cap. The other VM limits (duration,
-/// memory, allocations) default via [`RuntimeLimits::default`].
+/// memory) default via [`RuntimeLimits::default`].
 const DEFAULT_MAX_RECURSION: usize = 200;
 // Security hard-stop: catastrophic regex backtracking can bypass cooperative
 // interpreter budget checks, so disable regex stdlib module in untrusted code.
@@ -78,10 +78,13 @@ fn python_inprocess_enabled(ctx: &Context<'_>) -> bool {
 /// Resource limits for the embedded Python (Monty) interpreter.
 ///
 /// Use the builder pattern to customize, or `Default` for the standard virtual execution limits:
-/// - 1,000,000 allocations
 /// - 30 second timeout
-/// - 64 MB memory
+/// - 64 MB memory (also caps collected `print` output)
 /// - 200 recursion depth
+///
+/// There is no allocation-count knob: Monty removed `max_allocations` from its
+/// resource limits in 0.0.19, so allocation bombs are contained by `max_memory`
+/// and `max_duration` instead.
 ///
 /// # Example
 ///
@@ -99,7 +102,7 @@ fn python_inprocess_enabled(ctx: &Context<'_>) -> bool {
 /// setters below configure them directly.
 #[derive(Debug, Clone)]
 pub struct PythonLimits {
-    /// Shared VM resource limits (duration, memory, allocations, call depth).
+    /// Shared VM resource limits (duration, memory, call depth).
     pub common: RuntimeLimits,
 }
 
@@ -116,13 +119,6 @@ impl Default for PythonLimits {
 }
 
 impl PythonLimits {
-    /// Set max heap allocations.
-    #[must_use]
-    pub fn max_allocations(mut self, n: usize) -> Self {
-        self.common.max_allocations = n;
-        self
-    }
-
     /// Set max execution duration.
     #[must_use]
     pub fn max_duration(mut self, d: Duration) -> Self {
@@ -493,12 +489,19 @@ async fn run_python(
     };
 
     let limits = ResourceLimits::new()
-        .max_allocations(py_limits.common.max_allocations)
         .max_duration(py_limits.common.max_duration)
         .max_memory(py_limits.common.max_memory)
         .max_recursion_depth(Some(py_limits.common.max_call_depth));
 
     let tracker = LimitedTracker::new(limits);
+    // Important security decision: cap collected print output at the same
+    // memory budget as the VM heap. Monty 0.0.19 added a byte cap on
+    // `PrintWriter::CollectString` because a `while True: print(...)` loop
+    // grows the *host* buffer without touching the VM heap, so an uncapped
+    // collector OOMs the host while `max_memory` stays happy. Reusing
+    // `max_memory` keeps one number to reason about: tightening the memory
+    // limit tightens the output cap with it.
+    let print_cap = Some(py_limits.common.max_memory);
     // Important security decision: cap awaited host callbacks with the same wall-clock
     // budget as Monty so external functions cannot pin execution between VM steps.
     let python_deadline = Instant::now().checked_add(py_limits.common.max_duration);
@@ -507,7 +510,11 @@ async fn run_python(
     // PrintWriter::CollectString is not Send, so we scope it to avoid holding across .await.
     let (mut progress, mut buf) = {
         let mut buf = String::new();
-        match runner.start(vec![], tracker, PrintWriter::CollectString(&mut buf)) {
+        match runner.start(
+            vec![],
+            tracker,
+            PrintWriter::CollectString(&mut buf, print_cap),
+        ) {
             Ok(p) => (p, buf),
             Err(e) => {
                 return Ok(format_exception_with_output(e, &buf));
@@ -520,7 +527,7 @@ async fn run_python(
             RunProgress::OsCall(os_call) => {
                 let function_call = os_call.function_call.clone();
                 let result = handle_os_call(function_call, &fs, cwd, env).await;
-                match os_call.resume(result, PrintWriter::CollectString(&mut buf)) {
+                match os_call.resume(result, PrintWriter::CollectString(&mut buf, print_cap)) {
                     Ok(next) => {
                         progress = next;
                     }
@@ -549,7 +556,7 @@ async fn run_python(
                     ))
                 };
 
-                match call.resume(result, PrintWriter::CollectString(&mut buf)) {
+                match call.resume(result, PrintWriter::CollectString(&mut buf, print_cap)) {
                     Ok(next) => {
                         progress = next;
                     }
@@ -576,7 +583,7 @@ async fn run_python(
                     NameLookupResult::Undefined
                 };
 
-                match lookup.resume(result, PrintWriter::CollectString(&mut buf)) {
+                match lookup.resume(result, PrintWriter::CollectString(&mut buf, print_cap)) {
                     Ok(next) => {
                         progress = next;
                     }
@@ -1491,9 +1498,7 @@ mod tests {
     #[tokio::test]
     async fn test_custom_limits_generous() {
         // Generous limits should succeed
-        let limits = PythonLimits::default()
-            .max_allocations(10_000_000)
-            .max_memory(128 * 1024 * 1024);
+        let limits = PythonLimits::default().max_memory(128 * 1024 * 1024);
         let py = Python::with_limits(limits);
         let args = vec!["-c".to_string(), "print(sum(range(100)))".to_string()];
         let env = opt_in_env();
@@ -1509,11 +1514,9 @@ mod tests {
     #[test]
     fn test_python_limits_builder() {
         let limits = PythonLimits::default()
-            .max_allocations(500)
             .max_duration(Duration::from_secs(10))
             .max_memory(1024)
             .max_recursion(50);
-        assert_eq!(limits.common.max_allocations, 500);
         assert_eq!(limits.common.max_duration, Duration::from_secs(10));
         assert_eq!(limits.common.max_memory, 1024);
         assert_eq!(limits.common.max_call_depth, 50);
@@ -1522,7 +1525,6 @@ mod tests {
     #[test]
     fn test_python_limits_default() {
         let limits = PythonLimits::default();
-        assert_eq!(limits.common.max_allocations, 1_000_000);
         assert_eq!(limits.common.max_duration, Duration::from_secs(30));
         assert_eq!(limits.common.max_memory, 64 * 1024 * 1024);
         assert_eq!(limits.common.max_call_depth, 200);

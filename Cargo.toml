@@ -166,7 +166,9 @@ codegen-units = 1
 # in PyList/PyTuple iterators) and GHSA-chgr-c6px-7xpp (missing `Sync` bound)
 # in the bashkit-python extension.
 #
-# Blocker: `monty` -> `jiter 0.15.0` declares an optional `pyo3 = "^0.28.2"`.
+# Blocker: `monty 0.0.19` -> `jiter ^0.15.0` and jiter 0.15.0 declares an
+# optional `pyo3 = "^0.28.2"` (jiter 0.16.0 moved to pyo3 0.29 but is outside
+# monty's range).
 # Although jiter's `python` feature is never activated here (monty only enables
 # `num-bigint`), the weak `pyo3?/num-bigint` reference plus pyo3-ffi's
 # `links = "python"` global uniqueness force the resolver to honour jiter's

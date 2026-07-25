@@ -17,13 +17,19 @@ updates:
           # rather than landing inside an aggregated `chore(deps)` PR.
           - "turso_core"
           - "turso_*"
+          # monty is pre-1.0 and breaks its embedding API on most 0.0.x bumps
+          # (0.0.19 dropped `max_allocations` and added a print-collect cap).
+          # Keep it standalone so the builtin rewrite each bump needs is
+          # reviewed on its own, not buried in an aggregated `chore(deps)` PR.
+          - "monty"
+          - "monty-*"
     # Surface turso bumps individually with a label that flags them for
     # extra scrutiny. The `groups` section above already excludes them
     # from the aggregated PR; no additional config needed here for
     # standalone delivery.
     ignore:
       # num-bigint is hard-pinned to 0.4.x in crates/bashkit-python: monty
-      # (git v0.0.18) depends on num-bigint 0.4, and py_to_monty hands a
+      # (0.0.19) depends on num-bigint 0.4, and py_to_monty hands a
       # `num_bigint::BigInt` to `MontyObject::BigInt`. A 0.5 bump makes the two
       # BigInt types mismatch and fails to compile. Block major/minor jumps
       # (0.4 -> 0.5) while still allowing 0.4.x patch updates, until monty

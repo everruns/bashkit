@@ -58,36 +58,8 @@ jobs:
           fi
           echo "Version verified: $TAG_VERSION"
 
-      - name: Strip git-only dependencies for publishing
-        # monty is a git dep (not yet on crates.io) — remove before publish.
-        # Must strip from ALL workspace crates because cargo resolves the
-        # whole workspace when publishing a single crate.
-        run: |
-          # --- bashkit core: remove monty dep and python feature ---
-          TOML=crates/bashkit/Cargo.toml
-          sed -i '/^monty = .*/d' "$TOML"
-          sed -i '/^python = \["dep:monty"\]/d' "$TOML"
-          sed -i '/^\[\[example\]\]/{N;N;/python_scripts/d}' "$TOML"
-          sed -i '/^\[\[example\]\]/{N;N;/python_external_functions/d}' "$TOML"
-
-          # --- bashkit-cli: remove python feature ---
-          CLI_TOML=crates/bashkit-cli/Cargo.toml
-          sed -i '/^python = \["bashkit\/python"\]/d' "$CLI_TOML"
-          sed -i 's/, "python"//; s/"python", //; s/\["python"\]/[]/' "$CLI_TOML"
-
-          # --- bashkit-js: remove python from features list ---
-          JS_TOML=crates/bashkit-js/Cargo.toml
-          sed -i 's/, "python"//; s/"python", //' "$JS_TOML"
-
-          # --- bashkit-python: remove python from features list ---
-          PY_TOML=crates/bashkit-python/Cargo.toml
-          sed -i 's/, "python"//; s/"python", //' "$PY_TOML"
-
-          echo "=== Verify no python feature references remain ==="
-          grep -rn '"python"' crates/*/Cargo.toml || echo "Clean — no python feature refs"
-
       - name: Publish bashkit to crates.io
-        run: cargo publish -p bashkit --allow-dirty
+        run: cargo publish -p bashkit
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -108,18 +80,8 @@ jobs:
       - name: Wait for crates.io index update
         run: sleep 30
 
-      - name: Strip python feature from bashkit-cli
-        # python feature is stripped from bashkit during publish (monty is git-only)
-        run: |
-          TOML=crates/bashkit-cli/Cargo.toml
-          # Remove python feature and default that references it
-          sed -i '/^python = \["bashkit\/python"\]/d' "$TOML"
-          sed -i 's/, "python"//; s/"python", //; s/\["python"\]/[]/' "$TOML"
-          echo "--- bashkit-cli Cargo.toml after stripping ---"
-          cat "$TOML"
-
       - name: Publish bashkit-cli to crates.io
-        run: cargo publish -p bashkit-cli --allow-dirty
+        run: cargo publish -p bashkit-cli
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
