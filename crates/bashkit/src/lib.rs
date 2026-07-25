@@ -537,7 +537,7 @@ pub use builtins::RuntimeLimits;
 #[cfg(feature = "sqlite")]
 pub use builtins::{Sqlite, SqliteBackend, SqliteLimits};
 // Re-export monty types needed by external handler consumers.
-// **Unstable:** These types come from monty (git-pinned, not on crates.io).
+// **Unstable:** These types come from monty, which is pre-1.0 (`0.0.x`).
 // They may change in breaking ways between bashkit releases.
 #[cfg(feature = "python")]
 pub use monty_types::{ExcType, ExtFunctionResult, MontyException, MontyObject};
@@ -1925,7 +1925,7 @@ impl BashBuilder {
     /// with default resource limits.
     ///
     /// Monty runs directly in the host process with resource limits enforced
-    /// by Monty's runtime (memory, allocations, time, recursion).
+    /// by Monty's runtime (memory, time, recursion).
     ///
     /// For security, execution is runtime-gated: set
     /// `BASHKIT_ALLOW_INPROCESS_PYTHON=1` via builder `.env(...)` before

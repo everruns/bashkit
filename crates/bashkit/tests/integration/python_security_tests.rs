@@ -34,7 +34,6 @@ fn bash_python_tight() -> Bash {
         PythonLimits::default()
             .max_duration(Duration::from_secs(5))
             .max_memory(4 * 1024 * 1024) // 4 MB
-            .max_allocations(100_000)
             .max_recursion(50),
     )
 }
@@ -298,16 +297,55 @@ mod whitebox_resource_limits {
     }
 
     #[tokio::test]
-    async fn tight_allocation_blocks_many_objects() {
-        let limits = PythonLimits::default().max_allocations(10);
+    async fn tight_memory_blocks_many_small_objects() {
+        // Monty dropped its allocation-count cap in 0.0.19, so an
+        // allocation bomb of many small objects is contained by the memory
+        // budget instead.
+        let limits = PythonLimits::default().max_memory(512 * 1024);
         let mut bash = bash_python_limits(limits);
         let r = bash
             .exec("python3 -c \"x = [i for i in range(100000)]\"")
             .await
             .unwrap();
-        // Very tight allocation limit should eventually block; if not,
-        // at minimum verify no crash/panic occurred
+        assert_ne!(
+            r.exit_code, 0,
+            "100k-element list should exceed a 512 KB memory budget"
+        );
         assert!(!r.stderr.contains("panic"), "Should not panic");
+    }
+
+    #[tokio::test]
+    async fn print_output_capped_by_memory_limit() {
+        // Collected print output lives in a host-side buffer, not on the VM
+        // heap, so Monty 0.0.19 caps it separately. Bashkit wires that cap to
+        // max_memory: a print loop cannot outgrow the declared budget even
+        // though the script itself allocates almost nothing.
+        let limits = PythonLimits::default()
+            .max_memory(256 * 1024)
+            .max_duration(Duration::from_secs(30));
+        let mut bash = bash_python_limits(limits);
+        let r = bash
+            .exec("python3 -c \"for i in range(10000000):\n    print('x' * 100)\"")
+            .await
+            .unwrap();
+        assert_ne!(r.exit_code, 0, "Print flood should hit the output cap");
+        assert!(
+            r.stdout.len() <= 256 * 1024,
+            "stdout should stay within the 256 KB budget, got {} bytes",
+            r.stdout.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn print_output_under_cap_succeeds() {
+        let limits = PythonLimits::default().max_memory(256 * 1024);
+        let mut bash = bash_python_limits(limits);
+        let r = bash
+            .exec("python3 -c \"for i in range(100):\n    print('x' * 100)\"")
+            .await
+            .unwrap();
+        assert_eq!(r.exit_code, 0, "stderr={:?}", r.stderr);
+        assert_eq!(r.stdout.len(), 100 * 101);
     }
 
     #[tokio::test]
@@ -379,7 +417,6 @@ mod whitebox_resource_limits {
     async fn dict_comprehension_bomb() {
         let limits = PythonLimits::default()
             .max_memory(2 * 1024 * 1024) // 2 MB
-            .max_allocations(50_000)
             .max_duration(Duration::from_secs(3));
         let mut bash = bash_python_limits(limits);
         let r = bash
@@ -395,7 +432,6 @@ mod whitebox_resource_limits {
         // genuinely new large lists at each level to force allocations.
         let limits = PythonLimits::default()
             .max_memory(2 * 1024 * 1024)
-            .max_allocations(50_000)
             .max_duration(Duration::from_secs(3));
         let mut bash = bash_python_limits(limits);
         let r = bash
@@ -408,8 +444,8 @@ mod whitebox_resource_limits {
     #[tokio::test]
     async fn generator_exhaustion() {
         let limits = PythonLimits::default()
-            .max_duration(Duration::from_secs(2))
-            .max_allocations(50_000);
+            .max_memory(2 * 1024 * 1024)
+            .max_duration(Duration::from_secs(2));
         let mut bash = bash_python_limits(limits);
         let r = bash
             .exec("python3 -c \"list(range(10000000))\"")
@@ -420,15 +456,18 @@ mod whitebox_resource_limits {
 
     #[tokio::test]
     async fn successive_allocations_accumulate() {
-        // Verify allocations aren't reset between statements
-        let limits = PythonLimits::default().max_allocations(500);
+        // Verify the memory budget isn't reset between statements: one 10k
+        // list fits in 256 KB, three do not.
+        let limits = PythonLimits::default().max_memory(256 * 1024);
         let mut bash = bash_python_limits(limits);
         let r = bash
             .exec("python3 -c \"a = list(range(10000))\nb = list(range(10000))\nc = list(range(10000))\"")
             .await
             .unwrap();
-        // With only 500 allocations allowed and 30k objects requested,
-        // should fail. If Monty counts allocations differently, at least no crash.
+        assert_ne!(
+            r.exit_code, 0,
+            "Three 10k lists should exhaust a 256 KB budget that one does not"
+        );
         assert!(!r.stderr.contains("panic"), "Should not panic");
     }
 }
@@ -796,15 +835,15 @@ mod whitebox_state_isolation {
 
     #[tokio::test]
     async fn resource_limits_enforced_each_execution() {
-        let limits = PythonLimits::default().max_allocations(50_000);
+        let limits = PythonLimits::default().max_memory(4 * 1024 * 1024);
         let mut bash = bash_python_limits(limits);
-        // First execution uses some allocations
+        // First execution uses some of the budget
         let r1 = bash
             .exec("python3 -c \"x = list(range(100))\nprint('ok')\"")
             .await
             .unwrap();
         assert_eq!(r1.exit_code, 0);
-        // Second execution should have fresh allocation budget
+        // Second execution should have a fresh memory budget
         let r2 = bash
             .exec("python3 -c \"x = list(range(100))\nprint('ok')\"")
             .await
@@ -896,15 +935,14 @@ mod blackbox_dos {
             .exec("python3 -c \"for i in range(10000000):\n    print(i)\"")
             .await
             .unwrap();
-        // Should hit allocation or time limits, not produce gigabytes of output
+        // Should hit the print-collect cap or the time limit, not produce
+        // gigabytes of output
         assert_ne!(r.exit_code, 0, "Print flood should be stopped by limits");
     }
 
     #[tokio::test]
     async fn exception_chain_bomb() {
-        let limits = PythonLimits::default()
-            .max_duration(Duration::from_secs(5))
-            .max_allocations(100_000);
+        let limits = PythonLimits::default().max_duration(Duration::from_secs(5));
         let mut bash = bash_python_limits(limits);
         let r = bash
             .exec("python3 -c \"def bomb(n):\n    try:\n        bomb(n+1)\n    except RecursionError:\n        raise ValueError('boom') from None\nbomb(0)\"")

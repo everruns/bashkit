@@ -50,9 +50,8 @@ silently failed.
    --all-targets --all-features -- -D warnings`, `cargo test`.
 5. **Verify publish-readiness** (catches what local tests don't — the
    `cargo publish` packaging step, missing files, version drift):
-   - `cargo publish --dry-run -p bashkit` must succeed in a disposable copy
-     after applying the same git-only Monty/Python manifest transform as
-     `publish.yml`. Package `bashkit-cli` there against the latest published
+   - `cargo publish --dry-run -p bashkit` must succeed. Package
+     `bashkit-cli` in a disposable copy against the latest published
      core version as a structural proxy; Cargo cannot resolve the CLI's new
      registry dependency until the core crate is live. Normal workspace checks
      still compile the CLI against the new local core, and `publish.yml` waits

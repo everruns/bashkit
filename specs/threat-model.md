@@ -1437,8 +1437,8 @@ yield `OsCall` events that Bashkit intercepts and dispatches to the VFS.
 
 | ID | Threat | Severity | Mitigation | Test |
 |----|--------|----------|------------|------|
-| TM-PY-001 | Infinite loop via `while True` | High | Monty time limit (30s) + allocation cap | `threat_python_infinite_loop` |
-| TM-PY-002 | Memory exhaustion via large allocation | High | Monty max_memory (64MB) + max_allocations (1M) | `threat_python_memory_exhaustion` |
+| TM-PY-001 | Infinite loop via `while True` | High | Monty time limit (30s) | `threat_python_infinite_loop` |
+| TM-PY-002 | Memory exhaustion via large allocation | High | Monty max_memory (64MB), which also caps collected `print` output | `threat_python_memory_exhaustion` |
 | TM-PY-003 | Stack overflow via deep recursion | High | Monty max_recursion (200) + parser depth limit (200, since 0.0.4) | `threat_python_recursion_bomb` |
 | TM-PY-004 | Shell escape via os.system/subprocess | Critical | Monty has no os.system/subprocess implementation | `threat_python_no_os_operations` |
 | TM-PY-005 | Real filesystem access via open() | Critical | VFS bridge opens only Bashkit VFS files, not host files | `threat_python_no_filesystem` |

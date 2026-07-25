@@ -1,12 +1,16 @@
 //! Shared resource limits for embedded language runtimes.
 //!
 //! The embedded VM builtins (Python via Monty, TypeScript via ZapCode) each
-//! need the same core sandbox knobs: a wall-clock budget, a memory cap, an
-//! allocation cap, and a call-depth cap. Rather than each runtime re-declaring
-//! those four axes, their defaults, and their fluent setters, they share this
-//! [`RuntimeLimits`] core and add only runtime-specific naming/defaults on top
-//! (e.g. Python calls the depth knob `max_recursion`, TypeScript calls it
-//! `max_stack_depth`).
+//! need the same core sandbox knobs: a wall-clock budget, a memory cap, and a
+//! call-depth cap. Rather than each runtime re-declaring those three axes,
+//! their defaults, and their fluent setters, they share this [`RuntimeLimits`]
+//! core and add only runtime-specific naming/defaults on top (e.g. Python calls
+//! the depth knob `max_recursion`, TypeScript calls it `max_stack_depth`).
+//!
+//! Important decision: the allocation-count cap is *not* shared. Monty dropped
+//! `max_allocations` from its resource limits in 0.0.19, so only ZapCode still
+//! enforces one; it lives on `TypeScriptLimits` directly. Keeping it here would
+//! hand Python callers a security knob that silently does nothing.
 //!
 //! This is intentionally scoped to *general-purpose VM* runtimes. SQLite is a
 //! query engine, not a VM — its limits (rows, statements, PRAGMAs, db size)
@@ -19,8 +23,6 @@ use std::time::Duration;
 pub(crate) const DEFAULT_MAX_DURATION: Duration = Duration::from_secs(30);
 /// Default memory cap (64 MB).
 pub(crate) const DEFAULT_MAX_MEMORY: usize = 64 * 1024 * 1024;
-/// Default heap-allocation cap.
-pub(crate) const DEFAULT_MAX_ALLOCATIONS: usize = 1_000_000;
 /// Neutral default call-depth cap; each runtime overrides with its own default.
 pub(crate) const DEFAULT_MAX_CALL_DEPTH: usize = 256;
 
@@ -35,8 +37,6 @@ pub struct RuntimeLimits {
     pub max_duration: Duration,
     /// Maximum memory in bytes (default: 64 MB).
     pub max_memory: usize,
-    /// Maximum heap allocations (default: 1,000,000).
-    pub max_allocations: usize,
     /// Maximum call/recursion depth. Defaults vary per runtime.
     pub max_call_depth: usize,
 }
@@ -46,7 +46,6 @@ impl Default for RuntimeLimits {
         Self {
             max_duration: DEFAULT_MAX_DURATION,
             max_memory: DEFAULT_MAX_MEMORY,
-            max_allocations: DEFAULT_MAX_ALLOCATIONS,
             max_call_depth: DEFAULT_MAX_CALL_DEPTH,
         }
     }
@@ -67,13 +66,6 @@ impl RuntimeLimits {
         self
     }
 
-    /// Set the heap-allocation cap.
-    #[must_use]
-    pub fn max_allocations(mut self, n: usize) -> Self {
-        self.max_allocations = n;
-        self
-    }
-
     /// Set the call/recursion-depth cap.
     #[must_use]
     pub fn max_call_depth(mut self, depth: usize) -> Self {
@@ -91,7 +83,6 @@ mod tests {
         let limits = RuntimeLimits::default();
         assert_eq!(limits.max_duration, DEFAULT_MAX_DURATION);
         assert_eq!(limits.max_memory, DEFAULT_MAX_MEMORY);
-        assert_eq!(limits.max_allocations, DEFAULT_MAX_ALLOCATIONS);
         assert_eq!(limits.max_call_depth, DEFAULT_MAX_CALL_DEPTH);
     }
 
@@ -100,11 +91,9 @@ mod tests {
         let limits = RuntimeLimits::default()
             .max_duration(Duration::from_secs(7))
             .max_memory(2048)
-            .max_allocations(99)
             .max_call_depth(33);
         assert_eq!(limits.max_duration, Duration::from_secs(7));
         assert_eq!(limits.max_memory, 2048);
-        assert_eq!(limits.max_allocations, 99);
         assert_eq!(limits.max_call_depth, 33);
     }
 }
