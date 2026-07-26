@@ -46,10 +46,10 @@ check:
     python3 -m unittest discover -s scripts/tests -p 'test_*.py'
     just check-okf
 
-# Validate the knowledge/ OKF v0.2 bundle (see knowledge/knowledge-contract.md).
-# okf-lint covers the spec rules; check_okf.py covers bundle-local conventions
-# it does not enforce. Install the upstream linter with `just install-okf-lint`;
-# it is skipped locally when absent, and pinned in CI.
+# okf-lint covers the spec rules; check_okf.py covers the bundle-local
+# conventions it does not enforce (see knowledge/knowledge-contract.md).
+# okf-lint is pinned in CI and skipped here when absent: just install-okf-lint
+# Validate the knowledge/ OKF v0.2 bundle
 check-okf:
     #!/usr/bin/env bash
     set -euo pipefail
