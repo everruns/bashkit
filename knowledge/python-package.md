@@ -203,6 +203,14 @@ handle is dropped *inside* a tokio context (a `Bash` dropped while
 blocking runtime join there would panic, so the drop falls back to
 `shutdown_background()` instead of the deterministic join.
 
+The regression test asserts **no thread growth**, not an exact process-wide
+thread count. tokio reaps idle blocking-pool threads on a 10 s timer, so a test
+session that ran async work earlier sheds an unrelated thread mid-loop
+(measured: 6 threads holding, dropping to 5 at exactly t=10.0 s). Exact
+equality read that shrink as a failure though nothing had leaked. Do not
+re-tighten it — the process-wide count is not a single tool's to own, and a
+genuine leak compounds across the churn iterations and still trips the check.
+
 **ContextVar propagation**: ContextVars set before `execute()` /
 `execute_sync()` are captured at call time and replayed inside each callback
 invocation regardless of mechanism.

@@ -42,6 +42,36 @@ def _make_tool() -> ScriptedTool:
     return t
 
 
+def _assert_no_thread_growth(baseline: int) -> None:
+    """Assert teardown left nothing behind, relative to `baseline`.
+
+    One-directional by design. TM-PY-030 is about what a drop *leaves behind*,
+    and the process-wide count is not this tool's to own: tokio reaps idle
+    blocking-pool threads on a 10 s timer, so a pytest session that ran async
+    work before this module sheds an unrelated thread part-way through the
+    churn loop. Measured directly — after an async workload the count holds at
+    6 and drops to 5 at exactly t=10.0 s. Asserting exact equality read that
+    as a failure (`assert 13 == 14`) though nothing leaked; the count moved
+    *down*. A real leak still fails: it compounds across iterations and pushes
+    the count above the baseline.
+    """
+    count = _native_thread_count()
+    assert count <= baseline, f"thread count grew: {baseline} -> {count}"
+
+
+@pytest.mark.skipif(not PROC_AVAILABLE, reason="requires /proc")
+def test_thread_check_tolerates_shrink_from_unrelated_pools():
+    """An inflated baseline (a thread reaped after sampling) is not a defect."""
+    _assert_no_thread_growth(_native_thread_count() + 1)
+
+
+@pytest.mark.skipif(not PROC_AVAILABLE, reason="requires /proc")
+def test_thread_check_rejects_growth():
+    """The check still catches a leak — the direction that means a defect."""
+    with pytest.raises(AssertionError, match="thread count grew"):
+        _assert_no_thread_growth(_native_thread_count() - 1)
+
+
 @pytest.mark.skipif(not PROC_AVAILABLE, reason="requires /proc")
 def test_threads_joined_deterministically_after_drop():
     """del tool returns only after worker + runtime threads are joined."""
@@ -57,8 +87,9 @@ def test_threads_joined_deterministically_after_drop():
         assert t.execute_sync("hit").exit_code == 0
         del t
         gc.collect()
-        # Exact equality, immediately: joins are synchronous in drop.
-        assert _native_thread_count() == baseline
+        # Immediately: joins are synchronous in drop, so a tool's threads are
+        # gone before `del` returns and repeated churn cannot accumulate.
+        _assert_no_thread_growth(baseline)
 
 
 @pytest.mark.skipif(not PROC_AVAILABLE, reason="requires /proc")
