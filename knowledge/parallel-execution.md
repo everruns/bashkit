@@ -44,7 +44,6 @@ fan-out (each its own `Bash`, sharing one `Arc<dyn FileSystem>`) actually
 produces correct per-session output, and that concurrent sessions sharing a
 filesystem don't cross-contaminate. Run via `just test` (no extra features).
 
-
 ### Expected Results
 
 - Light workload: ~2x parallel speedup

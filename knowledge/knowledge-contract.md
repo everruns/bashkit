@@ -49,31 +49,46 @@ $ python3 scripts/check_okf.py knowledge
 knowledge: OKF v0.2 conformant (31 concepts, 2 index files, 1 log file)
 ```
 
-## Third-party OKF linters (evaluated 2026-07-26, not adopted)
+## Third-party OKF linters (evaluated 2026-07-26)
 
-Two off-the-shelf linters exist. Both were run against this bundle; neither
-replaces `check_okf.py` as the gate.
+Four off-the-shelf implementations were built and run against this bundle and
+against a fixture per regression class. All four agree the bundle is conformant;
+they differ in how much they enforce.
 
-[`okftool`](https://github.com/ryansann/okftool) (Rust, Apache-2.0) independently
-confirms this bundle: `validate` reports `31 concepts · 0 diagnostics ·
-CONFORMANT`, `lint` reports 0 errors. But it only enforces the spec's hard rule
-(`type` present) and treats the rest as advisory, so it accepts both defects the
-original migration shipped:
+| Tool | Language / license | Distribution | Spec | Verdict |
+|---|---|---|---|---|
+| [`okf-lint`](https://github.com/rpmoore/okf-lint) | Rust, Apache-2.0 | crates.io `0.1.1` | v0.2 | **adopted** |
+| [`okftool`](https://github.com/ryansann/okftool) | Rust, Apache-2.0 | source / release binaries | v0.2 | not adopted |
+| [`okf`](https://crates.io/crates/okf) | Rust, Apache-2.0 | crates.io `0.1.0-alpha.1` | **v0.1** | not adopted |
+| [`okflint`](https://github.com/mattdav/okflint) | Python 3.12+, MIT | PyPI `0.3.1` | manifest-driven | not adopted |
 
-| Regression | `okftool validate` | `okftool lint` | `check_okf.py` |
-|---|---|---|---|
-| Concept missing `type` | fail | fail | fail |
-| `summary` instead of `description` | **pass** | **pass** | fail |
-| Frontmatter on `index.md` | **pass** | **pass** | fail |
-| Concept absent from `index.md` | **pass** | **pass** | fail |
-| `log.md` heading not `YYYY-MM-DD` | **pass** | **pass** | fail |
+Regression coverage (fail = caught, pass = slipped through):
 
-[`okflint`](https://github.com/mattdav/okflint) (Python, MIT) is manifest-driven:
-it validates against a hand-authored `okf-base.yaml` rather than the spec, so
-adopting it means writing and maintaining the rule set anyway. It also requires
-Python 3.12+, above this repository's 3.9 floor.
+| Regression | `okf` | `okftool` | `okf-lint` | `check_okf.py` |
+|---|---|---|---|---|
+| Concept missing `type` | fail | fail | fail | fail |
+| `summary` instead of `description` | pass | pass | pass | fail |
+| Frontmatter on `index.md` | pass | pass | fail | fail |
+| Concept absent from `index.md` | pass | pass | pass | fail |
+| `log.md` heading not `YYYY-MM-DD` | pass | pass | fail | fail |
 
-Revisit when either publishes a 1.0 to crates.io/PyPI and enforces the reserved
-`index.md`/`log.md` structures. Until then `check_okf.py` stays the gate, and
-`okftool lint` is useful ad hoc for its advisory graph checks (it flags that most
-concepts here have no cross-links to each other).
+`okf-lint` is the strongest of the four: it is the only one that enforces the
+reserved `index.md`/`log.md` structures, it cites the spec section in every
+diagnostic, and it installs from crates.io with a pinned version. It runs in CI
+and in `just check-okf`, with `--max-line-length 10000` because knowledge docs
+wrap prose at author discretion.
+
+It does not subsume `check_okf.py`. The two rows it lets through — `summary`
+instead of `description`, and a concept missing from its `index.md` — are
+bundle-local conventions, and the first is exactly the defect the original
+migration shipped. Both checks therefore run together.
+
+The others were rejected on substance, not maturity: `okftool` treats everything
+but `type` as advisory (0 errors on all five regressions); `okf` implements OKF
+**v0.1**, so it validates this v0.2 bundle against the wrong revision; `okflint`
+validates against a hand-authored `okf-base.yaml` rather than the spec, so
+adopting it means maintaining the rule set anyway, and it requires Python 3.12+
+against this repository's 3.9 floor.
+
+`okftool lint` and `okf graph` remain useful ad hoc for advisory graph checks —
+both report that most concepts here have no cross-links to each other.

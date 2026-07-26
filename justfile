@@ -2,6 +2,12 @@
 # Install just: ./init-cloud-env.sh (pre-built) or cargo install just
 # Usage: just <recipe>   (or: just --list)
 
+# Upstream OKF spec linter, pinned. Keep in lockstep with .github/workflows/ci.yml.
+okf_lint_version := "0.1.1"
+
+# Knowledge docs wrap prose at author discretion, so the line-length rule is off.
+okf_lint_max_line_length := "10000"
+
 # Default: show available commands
 default:
     @just --list
@@ -40,9 +46,24 @@ check:
     python3 -m unittest discover -s scripts/tests -p 'test_*.py'
     just check-okf
 
-# Validate the knowledge/ OKF v0.2 bundle (see knowledge/knowledge-contract.md)
+# Validate the knowledge/ OKF v0.2 bundle (see knowledge/knowledge-contract.md).
+# okf-lint covers the spec rules; check_okf.py covers bundle-local conventions
+# it does not enforce. Install the upstream linter with `just install-okf-lint`;
+# it is skipped locally when absent, and pinned in CI.
 check-okf:
+    #!/usr/bin/env bash
+    set -euo pipefail
     python3 scripts/check_okf.py knowledge
+    if command -v okf-lint >/dev/null; then
+        okf-lint knowledge --max-line-length {{ okf_lint_max_line_length }}
+        echo "okf-lint {{ okf_lint_version }}: knowledge conforms to OKF v0.2"
+    else
+        echo "okf-lint not installed — skipping (just install-okf-lint)"
+    fi
+
+# Install the pinned upstream OKF spec linter
+install-okf-lint:
+    cargo install okf-lint --version {{ okf_lint_version }} --locked
 
 # Lint and format-check Python bindings
 python-lint:
