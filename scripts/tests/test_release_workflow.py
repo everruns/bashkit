@@ -18,11 +18,20 @@ class ReleaseWorkflowTests(unittest.TestCase):
             "publish.yml",
             "publish-python.yml",
             "publish-js.yml",
-            "publish-web.yml",
+            "publish-wasm.yml",
         ):
             with self.subTest(publish_workflow=publish_workflow):
                 self.assertIn(
                     f'gh workflow run {publish_workflow} --ref "$TAG"', workflow
+                )
+
+    def test_release_dispatch_targets_exist(self) -> None:
+        workflow = (ROOT / ".github/workflows/release.yml").read_text()
+
+        for dispatch_target in re.findall(r"gh workflow run ([^ ]+)", workflow):
+            with self.subTest(dispatch_target=dispatch_target):
+                self.assertTrue(
+                    (ROOT / ".github/workflows" / dispatch_target).is_file()
                 )
 
     def test_public_package_versions_match_workspace(self) -> None:
