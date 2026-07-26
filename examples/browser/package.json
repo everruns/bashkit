@@ -5,14 +5,14 @@
   "scripts": {
     "start": "vite",
     "dev": "vite",
-    "test": "node --test browser-local.test.js",
+    "test": "node --test *.test.js",
     "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
-    "@everruns/bashkit-wasm": "latest"
+    "@everruns/bashkit-wasm": "0.14.3"
   },
   "devDependencies": {
-    "vite": "^6.4.3"
+    "vite": "6.4.3"
   }
 }

@@ -7,12 +7,12 @@ A sandboxed Bash interpreter running entirely in the browser via WebAssembly.
 ## Quick Start
 
 ```bash
-pnpm install
+pnpm install --frozen-lockfile
 pnpm start
 ```
 
-Open http://localhost:5173. No Rust toolchain, no build step — `pnpm install`
-pulls the prebuilt wasm.
+Open http://localhost:5173. No Rust toolchain, no build step — pnpm verifies and
+installs the lockfile-pinned prebuilt wasm package.
 
 ## How It Works
 
