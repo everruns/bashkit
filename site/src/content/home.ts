@@ -70,7 +70,7 @@ export const heroStats = [
   {
     label: "Threats mitigated",
     value: "250+",
-    href: "https://github.com/everruns/bashkit/blob/main/knowledge/threat-model.md",
+    href: "https://github.com/everruns/bashkit/blob/main/knowledge/security/threat-model.md",
     external: true,
   },
   {
@@ -305,7 +305,7 @@ export const resources = [
   {
     title: "Threat model",
     detail: "268 documented threat cases across parser, VFS, network, and runtimes.",
-    href: "https://github.com/everruns/bashkit/blob/main/knowledge/threat-model.md",
+    href: "https://github.com/everruns/bashkit/blob/main/knowledge/security/threat-model.md",
     cta: "Security spec",
   },
   {

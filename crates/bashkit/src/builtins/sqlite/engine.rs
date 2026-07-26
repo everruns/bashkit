@@ -1,7 +1,7 @@
 //! Thin wrapper around `turso_core` that hides the choice of `IO` backend.
 //!
 //! The two backends correspond to the two phases described in
-//! `knowledge/sqlite-builtin.md`:
+//! `knowledge/runtimes/sqlite-builtin.md`:
 //!
 //! - **Phase 1** ([`Backend::Memory`]): use turso's `MemoryIO` and snapshot the
 //!   raw database bytes for caller-driven persistence. This is what the

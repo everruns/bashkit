@@ -132,7 +132,7 @@ Tune per workload via `SqliteLimits::default().max_*(...)`.
 
 ## Security
 
-See `knowledge/sqlite-builtin.md` § "Trust Model & Threats" for the full
+See `knowledge/runtimes/sqlite-builtin.md` § "Trust Model & Threats" for the full
 threat table. Highlights:
 
 - **No host filesystem access.** All paths resolve through the bashkit

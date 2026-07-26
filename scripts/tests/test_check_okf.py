@@ -107,6 +107,29 @@ class CheckOkfTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("is not '## YYYY-MM-DD'", result.stderr)
 
+    def test_dangling_link_rejected(self) -> None:
+        (self.bundle / "widget.md").write_text(CONCEPT + "\nSee [gone](gone.md).\n")
+        result = run(self.bundle)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("link target does not exist: gone.md", result.stderr)
+
+    def test_links_inside_code_are_not_links(self) -> None:
+        """Prose about markdown, and shell examples containing `](`, are not links."""
+        (self.bundle / "widget.md").write_text(
+            CONCEPT
+            + "\nFormat entries as `* [Title](path) - description`.\n"
+            + '\n```console\n$ grep "a](*b)*c" file\n```\n'
+        )
+        result = run(self.bundle)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_external_links_not_checked(self) -> None:
+        (self.bundle / "widget.md").write_text(
+            CONCEPT + "\n[spec](https://example.com/a.md) and [anchor](#widget).\n"
+        )
+        result = run(self.bundle)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_unlisted_concept_rejected(self) -> None:
         (self.bundle / "orphan.md").write_text(CONCEPT)
         result = run(self.bundle)

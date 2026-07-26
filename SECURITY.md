@@ -40,7 +40,7 @@ Bashkit is designed as a virtual interpreter. Key security boundaries:
 
 ### Known Limitations
 
-See [knowledge/limitations.md](knowledge/limitations.md) for documented gaps and limitations.
+See [knowledge/operations/limitations.md](knowledge/operations/limitations.md) for documented gaps and limitations.
 
 ## Supported Versions
 

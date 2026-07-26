@@ -66,7 +66,7 @@ supported within an exec call.)
 `bash -n` re-enter the Bashkit interpreter — same virtual environment,
 shared state and limits, never an external process. `bash --version`
 reports Bashkit. Security analysis: TM-ESC-015 in
-[threat-model.md](threat-model.md).
+[threat-model.md](../security/threat-model.md).
 
 ## POSIX Compliance Stance
 
@@ -101,8 +101,8 @@ Target: IEEE 1003.1-2024 Shell Command Language.
 
 ## Builtins
 
-Inventory is generated — see [status/builtins.json](status/builtins.json)
-and the [builtins spec](builtins.md). No unimplemented builtins currently
+Inventory is generated — see [status/builtins.json](../status/builtins.json)
+and the [builtins spec](../foundations/builtins.md). No unimplemented builtins currently
 tracked.
 
 ## Text Processing

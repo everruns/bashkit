@@ -8,7 +8,7 @@
 //     `transcript.metadata["bashkit"]` as this `Snapshot` (kept out of `files`
 //     so the file map stays a clean view of the workspace).
 //
-// See knowledge/eval.md ("Scoring") for why the snapshot, not a live filesystem
+// See knowledge/operations/eval.md ("Scoring") for why the snapshot, not a live filesystem
 // handle, is the scoring substrate.
 
 use std::collections::{BTreeMap, BTreeSet};

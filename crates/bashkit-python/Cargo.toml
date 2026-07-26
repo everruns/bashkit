@@ -33,7 +33,7 @@ num-bigint = "^0.4.6"
 # realfs: always-on so Python callers can use mount_real_* APIs.
 # http_client/sqlite/interop pull mio/tokio-net/rt-multi-thread/tokio::fs,
 # none of which compile on wasm32-unknown-emscripten — see the wasm block
-# below and knowledge/emscripten-wheels.md.
+# below and knowledge/runtimes/emscripten-wheels.md.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 bashkit = { path = "../bashkit", features = ["scripted_tool", "python", "realfs", "jq", "interop", "http_client", "sqlite"] }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
@@ -47,7 +47,7 @@ pyo3-async-runtimes = { workspace = true }
 # or host filesystem access that Pyodide does not provide. Keeps the in-VFS
 # shell plus the embedded jq and Monty Python interpreters. tokio stays on its
 # wasm-safe base features (sync, macros, io-util, rt, time) — current-thread
-# runtime only. See knowledge/emscripten-wheels.md.
+# runtime only. See knowledge/runtimes/emscripten-wheels.md.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 bashkit = { path = "../bashkit", features = ["scripted_tool", "python", "jq"] }
 tokio = { workspace = true }

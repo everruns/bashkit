@@ -21,7 +21,7 @@ use crate::interpreter::ExecResult;
 ///
 /// Important decision (parallelism): bashkit runs a single `Bash` interpreter
 /// sequentially — even background `&` jobs execute synchronously for
-/// deterministic output (see `knowledge/parallel-execution.md` and
+/// deterministic output (see `knowledge/foundations/parallel-execution.md` and
 /// `interpreter/jobs.rs`). So `-P N` does NOT spawn N OS processes for
 /// wall-clock speedup; instead it allocates N round-robin *slots*, and the
 /// commands still run in order. The slot index is exposed via

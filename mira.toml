@@ -1,6 +1,6 @@
 # mira host config for the bashkit-eval study.
 # Saved run folders (<run_id>/ with per-case results) land here so they live
-# with the repo and can be resumed / re-reported. See knowledge/eval.md.
+# with the repo and can be resumed / re-reported. See knowledge/operations/eval.md.
 [results]
 dir = "crates/bashkit-eval/results/mira"
 

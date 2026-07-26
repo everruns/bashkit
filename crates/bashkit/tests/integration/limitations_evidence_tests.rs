@@ -1,4 +1,4 @@
-//! Evidence tests for `knowledge/limitations.md`.
+//! Evidence tests for `knowledge/operations/limitations.md`.
 //!
 //! Each test demonstrates one intentional limitation (L-* row) so the
 //! negative spec stays executable: if a limitation is ever lifted, the

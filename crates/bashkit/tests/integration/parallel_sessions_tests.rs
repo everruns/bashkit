@@ -1,7 +1,7 @@
 //! Large parallel fan-out tests.
 //!
 //! A bashkit session is a plain heap object + tokio task — no per-session OS
-//! process or thread (see `knowledge/parallel-execution.md`, L-PROC-003). These
+//! process or thread (see `knowledge/foundations/parallel-execution.md`, L-PROC-003). These
 //! tests confirm a large fan-out (1000 sessions) actually does real work and
 //! produces correct output, rather than spawning and returning instantly
 //! because every session errored out (e.g. hit a limit). The timing of this

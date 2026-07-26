@@ -1,5 +1,5 @@
 // bashkit-eval: a mira eval study for bashkit tool usage.
-// See knowledge/eval.md for design decisions.
+// See knowledge/operations/eval.md for design decisions.
 //
 // The transport + execution layer (providers, agent loops, dataset types) is
 // reused as-is; the mira integration (samples, subjects, scorer, eval builders)

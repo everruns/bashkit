@@ -1,6 +1,6 @@
 //! Threat Model Security Tests
 //!
-//! Tests for threats identified in knowledge/threat-model.md
+//! Tests for threats identified in knowledge/security/threat-model.md
 //! Each test category maps to a threat category in the threat model.
 //!
 //! Run with: `cargo test threat_`

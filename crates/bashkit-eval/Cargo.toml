@@ -4,7 +4,7 @@
 # bashkit drives the agent loop as a mira `Subject`; tasks are mira `Sample`s;
 # the bashkit expectation checks run as a mira `Scorer`. The `mira` CLI hosts
 # this binary over stdio and owns the model matrix, scheduling, and reporting.
-# See knowledge/eval.md for design decisions.
+# See knowledge/operations/eval.md for design decisions.
 
 [package]
 name = "bashkit-eval"

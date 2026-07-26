@@ -38,7 +38,7 @@ Present: full bash syntax, the text-tool builtins (`grep`, `sed`, `awk`, `find`,
 Absent (need sockets, threads, or a host FS the browser sandbox lacks):
 `http_client` (`curl`/`wget`), `ssh`, `sqlite`, embedded `python`, `realfs`
 mounts. Reach the network from a custom builtin that calls the app's own
-`fetch`. See `crates/bashkit-wasm/` and `knowledge/browser-package.md` for details.
+`fetch`. See `crates/bashkit-wasm/` and `knowledge/runtimes/browser-package.md` for details.
 
 ## Scripts
 

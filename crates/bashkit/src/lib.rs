@@ -439,7 +439,7 @@ pub mod scripted_tool;
 mod snapshot;
 /// Test-only helpers shared between internal `#[cfg(test)]` modules,
 /// integration tests in `tests/*.rs`, and cargo-fuzz targets in
-/// `fuzz/fuzz_targets/*.rs`. See `knowledge/threat-model.md` for the
+/// `fuzz/fuzz_targets/*.rs`. See `knowledge/security/threat-model.md` for the
 /// invariants enforced (TM-INF-013, TM-INF-016, TM-INF-022).
 #[doc(hidden)]
 pub mod testing;
@@ -3153,7 +3153,7 @@ impl BashBuilder {
 // =============================================================================
 // These modules embed external markdown guides into rustdoc.
 // Source files live in crates/bashkit/docs/ - edit there, not here.
-// See knowledge/documentation.md for the documentation approach.
+// See knowledge/operations/documentation.md for the documentation approach.
 
 /// Guide for transparent credential injection in outbound HTTP requests.
 ///

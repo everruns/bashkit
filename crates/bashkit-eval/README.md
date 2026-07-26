@@ -6,7 +6,7 @@ Measures how well models use bashkit's bash tool in agentic workloads.
 bashkit-eval is a **study binary** the `mira` host CLI spawns over stdio; mira
 owns the model matrix, scheduling, retries, resume, and reporting. bashkit
 supplies the subject (its agent loop over a persistent VFS) and the scorer (the
-deterministic expectation checks). See [`knowledge/eval.md`](../../knowledge/eval.md).
+deterministic expectation checks). See [`knowledge/operations/eval.md`](../../knowledge/operations/eval.md).
 
 ## Usage
 

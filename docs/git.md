@@ -94,4 +94,4 @@ every builtin.
 
 - [Virtual filesystem](filesystem.md) — where the repository lives.
 - [Security](security.md) — sandbox boundaries and the `TM-GIT-*` threats.
-- Spec: [`knowledge/git-support.md`](https://github.com/everruns/bashkit/blob/main/knowledge/git-support.md).
+- Spec: [`knowledge/integrations/git-support.md`](https://github.com/everruns/bashkit/blob/main/knowledge/integrations/git-support.md).

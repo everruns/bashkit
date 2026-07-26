@@ -5,7 +5,7 @@
  * error sanitization) and black-box tests (adversarial inputs an attacker
  * would try without source knowledge).
  *
- * Threat-model IDs reference knowledge/threat-model.md.
+ * Threat-model IDs reference knowledge/security/threat-model.md.
  *
  * Run: pnpm exec ava __test__/security.spec.ts
  */
