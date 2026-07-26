@@ -115,6 +115,26 @@ test("reports localStorage write failures without throwing", () => {
   })), false);
 });
 
+test("tolerates blocked access to the global localStorage", () => {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    get() { throw new DOMException("blocked", "SecurityError"); },
+  });
+
+  try {
+    const backend = browserLocal();
+    assert.deepEqual(backend.load({ "/home/user/welcome.txt": "hello\n" }), {
+      "/home/user/welcome.txt": "hello\n",
+    });
+    assert.equal(backend.save(fakeFs({})), false);
+    assert.doesNotThrow(() => backend.clear());
+  } finally {
+    if (descriptor) Object.defineProperty(globalThis, "localStorage", descriptor);
+    else delete globalThis.localStorage;
+  }
+});
+
 test("clear removes the persisted filesystem", () => {
   const storage = new MemoryStorage();
   storage.setItem("bashkit:fs", "saved");
