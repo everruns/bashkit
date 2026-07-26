@@ -135,11 +135,10 @@ pattern as `publish-js.yml`. Browser example smoke testing writes a file under
 ## Limitations (see `knowledge/limitations.md`)
 
 - No wall-clock time on `wasm32-unknown-unknown` (no timer driver). This is a
-  hard platform constraint, so time-based behaviour degrades rather than
-  enforces, and never blocks:
+  hard platform constraint, so unsupported time-based controls fail closed:
   - `sleep N` elapses **instantly** (it cannot suspend for real time).
-  - the `timeout N cmd` builtin and the tool-level `timeoutMs` run the command
-    **without** wall-clock enforcement.
+  - the `timeout N cmd` builtin and requests with tool-level `timeoutMs` are
+    rejected with an unsupported-timeout error (exit status 125).
   - Runaway work is still bounded by the parser fuel budget and `maxCommands` /
     `maxLoopIterations`, which do not depend on a clock.
 - Single-threaded: no OS threads (`std::thread::spawn` is unsupported) and no

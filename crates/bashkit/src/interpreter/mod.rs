@@ -8125,18 +8125,31 @@ impl Interpreter {
                 preserve_status,
                 command,
             } => {
-                // Build inner command with optional stdin via here-string
+                // Build inner command with optional stdin via here-string.
                 let inner_cmd = subcommand_to_command(&command);
 
-                // wasm32-unknown-unknown has no timer driver, so tokio::time::timeout
-                // panics ("time not implemented"). Run the command without wall-clock
-                // enforcement — the parser fuel budget, maxCommands and
-                // maxLoopIterations still bound runaway work. This matches the
-                // "no preemptive timeout" stance in knowledge/runtimes/browser-package.md.
+                // wasm32-unknown-unknown has no timer driver. Fail closed rather
+                // than accepting a deadline that cannot be enforced while an
+                // async custom builtin is pending.
                 #[cfg(target_family = "wasm")]
                 let outcome = {
-                    let _ = (duration, preserve_status);
-                    self.execute_command(&inner_cmd).await?
+                    // The parsed command is intentionally never dispatched.
+                    drop(inner_cmd);
+                    // Keep the phrasing aligned with `unsupported_timeout_response`
+                    // ("timeout is unsupported on this wasm target") so callers and
+                    // tests can match a single message across builtin and tool paths.
+                    ExecResult::err(
+                        format!(
+                            "bashkit: timeout is unsupported on this wasm target (requested {:.3}s{})\n",
+                            duration.as_secs_f64(),
+                            if preserve_status {
+                                " --preserve-status"
+                            } else {
+                                ""
+                            }
+                        ),
+                        125,
+                    )
                 };
 
                 #[cfg(not(target_family = "wasm"))]
