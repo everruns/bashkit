@@ -117,7 +117,7 @@ The nonce defends against replay; the expiry window bounds signature validity.
 - [Networking & HTTP](networking.md) — the allowlist that gates every request.
 - [Credential injection](credential-injection.md) — attach bearer tokens without
   exposing them to scripts.
-- Spec: [`knowledge/request-signing.md`](https://github.com/everruns/bashkit/blob/main/knowledge/request-signing.md).
+- Spec: [`knowledge/security/request-signing.md`](https://github.com/everruns/bashkit/blob/main/knowledge/security/request-signing.md).
 - [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421) ·
   [RFC 7638](https://www.rfc-editor.org/rfc/rfc7638) ·
   [web-bot-auth architecture](https://datatracker.ietf.org/doc/html/draft-meunier-web-bot-auth-architecture).

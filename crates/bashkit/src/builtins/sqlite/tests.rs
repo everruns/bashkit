@@ -1,6 +1,6 @@
 //! Unit tests for the `sqlite` builtin.
 //!
-//! Coverage matrix (mirrors `knowledge/sqlite-builtin.md` § Test plan):
+//! Coverage matrix (mirrors `knowledge/runtimes/sqlite-builtin.md` § Test plan):
 //!
 //! - **Positive** — basic CRUD, transactions, dot-commands, output modes,
 //!   `:memory:`, persistence to VFS, `--version`/`--help`.

@@ -8,7 +8,7 @@
 // The WebAssembly (Pyodide/Emscripten) build is a reduced-feature variant: the
 // async `execute()` family, network/credential config, host-FS mounts, the capsule
 // interop bridge, sqlite, and external_handler are all native-only (they need
-// threads, sockets, or host FS that Pyodide lacks — see knowledge/emscripten-wheels.md).
+// threads, sockets, or host FS that Pyodide lacks — see knowledge/runtimes/emscripten-wheels.md).
 // That leaves a handful of imports and helper functions referenced only from the
 // native-gated code paths; silence the resulting dead-code/unused-import lints on
 // wasm rather than scattering per-item cfgs through shared conversion helpers.
@@ -16,7 +16,7 @@
 
 // interop (capsule FS handoff), realfs (host mounts) and the credential-injection
 // network config require threads / host FS / sockets that wasm32-unknown-emscripten
-// (Pyodide) does not provide — see knowledge/emscripten-wheels.md. They are native-only.
+// (Pyodide) does not provide — see knowledge/runtimes/emscripten-wheels.md. They are native-only.
 #[cfg(not(target_arch = "wasm32"))]
 use bashkit::interop::fs::{BashkitFsAbiOwnedHandleV1, export_filesystem, import_owned_filesystem};
 use bashkit::tool::VERSION;
@@ -41,7 +41,7 @@ use pyo3::types::{
 // pyo3-async-runtimes bridges Rust futures to a Python asyncio loop; it hard-pulls
 // multi-threaded tokio + mio sockets, which do not build on wasm. The async
 // `execute()` family and caller-loop callback scheduling are therefore native-only;
-// wasm exposes the blocking `execute_sync()` API. See knowledge/emscripten-wheels.md.
+// wasm exposes the blocking `execute_sync()` API. See knowledge/runtimes/emscripten-wheels.md.
 #[cfg(not(target_arch = "wasm32"))]
 use pyo3_async_runtimes::TaskLocals;
 #[cfg(not(target_arch = "wasm32"))]
@@ -390,7 +390,7 @@ impl PyNetworkConfig {
 /// default. Unknown keys raise `ValueError` so typos surface immediately.
 // The Pyodide/Emscripten build has no outbound HTTP client (no sockets in the
 // browser sandbox), so accepting a network allowlist would silently do nothing.
-// Fail loudly instead. See knowledge/emscripten-wheels.md.
+// Fail loudly instead. See knowledge/runtimes/emscripten-wheels.md.
 #[cfg(target_arch = "wasm32")]
 fn parse_network_config(network: Option<&Bound<'_, PyDict>>) -> PyResult<Option<PyNetworkConfig>> {
     if network.is_some() {
@@ -985,7 +985,7 @@ fn apply_fs_config(
 
     // Host-directory mounts require the `realfs` backend (tokio::fs), unavailable
     // on wasm. `parse_mounts` already rejects a non-empty `mounts` list on wasm,
-    // so this loop is native-only. See knowledge/emscripten-wheels.md.
+    // so this loop is native-only. See knowledge/runtimes/emscripten-wheels.md.
     #[cfg(not(target_arch = "wasm32"))]
     for mount in real_mounts {
         builder = match (mount.writable, &mount.vfs_mount) {
@@ -1749,7 +1749,7 @@ impl PyFileSystem {
     // `FileSystem.real()` needs the realfs backend (host FS), and the capsule
     // bridge (`from_capsule`/`to_capsule`) needs the `interop` ABI — both pull
     // threads/host-FS deps absent on wasm, so these constructors are native-only.
-    // See knowledge/emscripten-wheels.md.
+    // See knowledge/runtimes/emscripten-wheels.md.
     #[cfg(not(target_arch = "wasm32"))]
     #[staticmethod]
     #[pyo3(signature = (host_path, writable=false))]
@@ -3650,7 +3650,7 @@ fn apply_sqlite_config(
 ) -> PyResult<bashkit::BashBuilder> {
     // The embedded SQLite (Turso) backend needs the multi-threaded tokio runtime to
     // bridge its sync IO trait back to the async VFS, so the core `sqlite` feature is
-    // off on wasm. Reject `sqlite=True` loudly there. See knowledge/emscripten-wheels.md.
+    // off on wasm. Reject `sqlite=True` loudly there. See knowledge/runtimes/emscripten-wheels.md.
     #[cfg(target_arch = "wasm32")]
     {
         let _ = (timeout_seconds, max_memory);
@@ -3802,7 +3802,7 @@ impl PyBash {
         );
         builder = apply_sqlite_config(builder, self.sqlite, self.timeout_seconds, self.max_memory)?;
         // network (http_client) and allowed_mount_paths (realfs) are native-only;
-        // both kwargs are rejected at construction on wasm. See knowledge/emscripten-wheels.md.
+        // both kwargs are rejected at construction on wasm. See knowledge/runtimes/emscripten-wheels.md.
         #[cfg(not(target_arch = "wasm32"))]
         {
             if let Some(ref net) = self.network {
@@ -3948,7 +3948,7 @@ impl PyBash {
         );
         builder = apply_sqlite_config(builder, sqlite, timeout_seconds, max_memory)?;
         // network (http_client) and allowed_mount_paths (realfs) are native-only;
-        // both kwargs are rejected at construction on wasm. See knowledge/emscripten-wheels.md.
+        // both kwargs are rejected at construction on wasm. See knowledge/runtimes/emscripten-wheels.md.
         #[cfg(not(target_arch = "wasm32"))]
         {
             if let Some(ref net) = network {
@@ -4029,7 +4029,7 @@ impl PyBash {
     ///
     /// Native-only: the async API bridges to a Python asyncio loop via
     /// pyo3-async-runtimes, which the WebAssembly (Pyodide) build omits. On wasm,
-    /// use `execute_sync()`. See knowledge/emscripten-wheels.md.
+    /// use `execute_sync()`. See knowledge/runtimes/emscripten-wheels.md.
     #[cfg(not(target_arch = "wasm32"))]
     #[pyo3(signature = (commands, on_output=None))]
     fn execute<'py>(
@@ -4682,7 +4682,7 @@ impl BashTool {
         }
 
         // network (http_client) and allowed_mount_paths (realfs) are native-only;
-        // both kwargs are rejected at construction on wasm. See knowledge/emscripten-wheels.md.
+        // both kwargs are rejected at construction on wasm. See knowledge/runtimes/emscripten-wheels.md.
         #[cfg(not(target_arch = "wasm32"))]
         {
             if let Some(ref net) = self.network {
@@ -4823,7 +4823,7 @@ impl BashTool {
         let custom_builtins = parse_custom_builtins(py, custom_builtins)?;
         let network = parse_network_config(network)?;
         // network (http_client) and allowed_mount_paths (realfs) are native-only;
-        // both kwargs are rejected at construction on wasm. See knowledge/emscripten-wheels.md.
+        // both kwargs are rejected at construction on wasm. See knowledge/runtimes/emscripten-wheels.md.
         #[cfg(not(target_arch = "wasm32"))]
         {
             if let Some(ref net) = network {

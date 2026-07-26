@@ -104,14 +104,14 @@ clean:
 
 # Regenerate the self-hosted Python API reference (docs.rs analog for PyPI).
 # Output committed at site/src/content/apidocs/python.md; refresh on release.
-# Needs griffe: pip install griffe. See knowledge/documentation.md.
+# Needs griffe: pip install griffe. See knowledge/operations/documentation.md.
 apidocs-python:
     python3 scripts/gen_python_apidocs.py
 
 # Regenerate the self-hosted TypeScript API reference (docs.rs analog for npm).
 # Output committed at site/src/content/apidocs/typescript.md; refresh on release.
 # Requires `napi build` first (generates index.d.ts the .ts wrappers import).
-# Needs network for `npx typedoc`. See knowledge/documentation.md.
+# Needs network for `npx typedoc`. See knowledge/operations/documentation.md.
 apidocs-ts:
     cd crates/bashkit-js && pnpm exec napi build --platform
     cd crates/bashkit-js && pnpm run build:cjs
@@ -231,7 +231,7 @@ bench-sqlite:
 # matrix, scheduling, and reporting. Install the host once:
 #   cargo install mira-cli      # provides the `mira` binary
 # Targets are gated on ANTHROPIC_API_KEY / OPENAI_API_KEY — set the keys for
-# the models you want to run; unkeyed targets are skipped. See knowledge/eval.md.
+# the models you want to run; unkeyed targets are skipped. See knowledge/operations/eval.md.
 
 # List advertised evals, samples, scorers, and targets
 eval-list:

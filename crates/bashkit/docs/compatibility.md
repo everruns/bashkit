@@ -12,7 +12,7 @@
 ## POSIX Shell Compliance
 
 Bashkit provides substantial compliance with IEEE Std 1003.1-2024 (POSIX.1-2024)
-Shell Command Language. See [knowledge/limitations.md](../../../knowledge/limitations.md)
+Shell Command Language. See [knowledge/operations/limitations.md](../../../knowledge/operations/limitations.md)
 for detailed compliance status.
 
 | POSIX Category | Status |
@@ -396,7 +396,7 @@ let bash = Bash::builder()
     .build();
 ```
 
-See [knowledge/threat-model.md](../../../knowledge/threat-model.md) for HTTP security details.
+See [knowledge/security/threat-model.md](../../../knowledge/security/threat-model.md) for HTTP security details.
 
 ---
 
@@ -479,5 +479,5 @@ Identified from eval analysis — all items now implemented:
 
 ## See Also
 
-- [knowledge/limitations.md](../../../knowledge/limitations.md) - Intentional gaps and partial features
+- [knowledge/operations/limitations.md](../../../knowledge/operations/limitations.md) - Intentional gaps and partial features
 - [Bashkit knowledge](../../../knowledge/) - Persistent design and engineering knowledge

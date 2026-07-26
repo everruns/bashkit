@@ -33,7 +33,7 @@
 //! command + MIT attribution).
 //!
 //! Run manually when bumping the pinned uutils revision; output is
-//! committed. See `knowledge/coreutils-args-port.md`.
+//! committed. See `knowledge/runtimes/coreutils-args-port.md`.
 
 use std::path::PathBuf;
 use std::process::ExitCode;

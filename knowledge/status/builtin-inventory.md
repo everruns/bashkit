@@ -25,4 +25,4 @@ $ just regen-builtins
 
 `builtins-drift.yml` fails CI when the committed file no longer matches what the
 code registers. Design for the builtins themselves lives in
-[builtins](../builtins.md); known gaps in [limitations](../limitations.md).
+[builtins](../foundations/builtins.md); known gaps in [limitations](../operations/limitations.md).

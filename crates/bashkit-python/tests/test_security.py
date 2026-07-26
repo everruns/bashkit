@@ -4,7 +4,7 @@
 # file layout matches the JS parity target while keeping the original white-box
 # and black-box implementations readable in hidden source modules.
 # Naming: `test_tm_<category>_<id>_<scenario>` maps directly to
-# `knowledge/threat-model.md` so grepable Python test names line up with the
+# `knowledge/security/threat-model.md` so grepable Python test names line up with the
 # documented threat model.
 
 import sys

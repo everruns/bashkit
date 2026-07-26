@@ -30,6 +30,16 @@ import sys
 RESERVED = ("index.md", "log.md")
 DATE_HEADING = re.compile(r"^## \d{4}-\d{2}-\d{2}\s*$")
 LINK = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
+EXTERNAL = re.compile(r"\A(?:[a-z][a-z0-9+.-]*:|//|#)")
+# Fenced blocks first, then inline spans: prose about markdown (and shell
+# examples containing `](`) must not be read as links. Missing this is how a
+# bulk path rewrite silently corrupted a threat-model regex payload.
+CODE = re.compile(r"^```.*?^```|``.*?``|`[^`\n]*`", re.DOTALL | re.MULTILINE)
+
+
+def strip_code(text: str) -> str:
+    """Blank out fenced and inline code so link scanning ignores it."""
+    return CODE.sub(lambda m: "\n" * m.group(0).count("\n"), text)
 
 
 def split_frontmatter(text: str) -> tuple[str | None, str]:
@@ -81,7 +91,20 @@ def index_targets(path: pathlib.Path) -> set[str]:
     if not path.exists():
         return set()
     _, body = split_frontmatter(path.read_text())
-    return {t.split("#", 1)[0].rstrip("/") for t in LINK.findall(body)}
+    return {t.split("#", 1)[0].rstrip("/") for t in LINK.findall(strip_code(body))}
+
+
+def check_links(path: pathlib.Path, rel: str, errors: list[str]) -> None:
+    """Every bundle-relative link must resolve to a file that exists."""
+    _, body = split_frontmatter(path.read_text())
+    for target in LINK.findall(strip_code(body)):
+        if EXTERNAL.match(target):
+            continue
+        resolved = target.split("#", 1)[0]
+        if not resolved:
+            continue
+        if not (path.parent / resolved).exists():
+            errors.append(f"{rel}: link target does not exist: {target}")
 
 
 def check_concept(path: pathlib.Path, rel: str, errors: list[str]) -> None:
@@ -164,6 +187,7 @@ def check_bundle(root: pathlib.Path) -> tuple[list[str], dict[str, int]]:
             else:
                 counts["concepts"] += 1
                 check_concept(path, rel, errors)
+            check_links(path, rel, errors)
         except ValueError as exc:
             errors.append(f"{rel}: {exc}")
 

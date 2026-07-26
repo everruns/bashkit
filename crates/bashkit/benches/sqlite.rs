@@ -161,7 +161,7 @@ async fn bench_in_memory_only(n: usize) {
 async fn bench_parallel_sessions(sessions: usize, rows: usize, backend: SqliteBackend) {
     // Shared VFS, distinct DB file per session — tests the cooperative-IO
     // path without contending on a single sqlite file (which the builtin
-    // doesn't try to coordinate; see `knowledge/sqlite-builtin.md`).
+    // doesn't try to coordinate; see `knowledge/runtimes/sqlite-builtin.md`).
     let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
     let handles: Vec<_> = (0..sessions)
         .map(|i| {

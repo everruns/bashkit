@@ -14,7 +14,7 @@ const rustdocs = defineCollection({
 
 // API references for the PyPI/npm packages — the self-hosted analog to docs.rs
 // for Rust. Generated markdown (committed, regenerated on release) so the site
-// build stays node-only. See knowledge/documentation.md ("API reference hosting").
+// build stays node-only. See knowledge/operations/documentation.md ("API reference hosting").
 const apidocs = defineCollection({
   loader: glob({ pattern: "*.md", base: "./src/content/apidocs" }),
 });

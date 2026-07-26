@@ -1,7 +1,7 @@
 //! Threat-model tests for the `sqlite` builtin.
 //!
 //! Each `#[test]` here covers a distinct adversarial scenario from
-//! `knowledge/threat-model.md` (or the new entries in `knowledge/sqlite-builtin.md`).
+//! `knowledge/security/threat-model.md` (or the new entries in `knowledge/runtimes/sqlite-builtin.md`).
 //! Aside from confirming current mitigations, these tests act as
 //! regression guards: a future change that re-introduces an attack must
 //! flip a test red.

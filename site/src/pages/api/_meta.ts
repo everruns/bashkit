@@ -1,7 +1,7 @@
 // Registry for the self-hosted package API references — the docs.rs analog for
 // the PyPI and npm packages. Rust keeps using docs.rs (external); Python and
 // TypeScript render generated markdown from the `apidocs` content collection
-// through the same branded DocsLayout. See knowledge/documentation.md.
+// through the same branded DocsLayout. See knowledge/operations/documentation.md.
 
 export type ApiRef = {
   // Matches the `apidocs` collection entry id and the /api/<slug> route.

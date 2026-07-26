@@ -20,7 +20,7 @@ Compose tool definitions (`ToolDef`) + execution callbacks into a single `Script
 
 `ScriptedTool` always runs in code/logic mode: bash is the control-flow and data-transformation language, not a VFS shell — filesystem primitives, path script execution, file redirection, and process substitution are unavailable.
 
-`ScriptedToolBuilder` and `ScriptingToolSetBuilder` also implement the shared toolkit-library contract from [the tool contract](./tool-contract.md): locale-aware metadata, `build_service()`, `build_tool_definition()`, `build_input_schema()`, `build_output_schema()`, single-use `ToolExecution`.
+`ScriptedToolBuilder` and `ScriptingToolSetBuilder` also implement the shared toolkit-library contract from [the tool contract](tool-contract.md): locale-aware metadata, `build_service()`, `build_tool_definition()`, `build_input_schema()`, `build_output_schema()`, single-use `ToolExecution`.
 
 ## Feature flag
 

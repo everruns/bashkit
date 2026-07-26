@@ -6,7 +6,7 @@
 // `AgentTrace` + `&dyn FileSystem`. This keeps scoring synchronous and lets it
 // run inside a mira `Scorer`, which only sees `&Sample` + `&Transcript`.
 //
-// Check reference (see knowledge/eval.md):
+// Check reference (see knowledge/operations/eval.md):
 //   exit_code:N           stdout_contains:text    stdout_regex:pattern
 //   stderr_empty          file_exists:/path       dir_exists:/path
 //   file_contains:/path:text   file_line_regex:/path:pattern   llm_judge:prompt

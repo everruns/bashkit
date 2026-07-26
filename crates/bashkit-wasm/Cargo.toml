@@ -5,7 +5,7 @@
 # `wasm32-unknown-unknown` (pure wasm-bindgen, no WASI, no threads), so it needs
 # NO `SharedArrayBuffer` and NO cross-origin isolation (COOP/COEP) headers —
 # unlike the wasm32-wasip1-threads example. That makes it drop-in for any web
-# app, including embedded/iframe contexts. See knowledge/browser-package.md.
+# app, including embedded/iframe contexts. See knowledge/runtimes/browser-package.md.
 #
 # Feature surface mirrors the `wasm` CI job (scripted_tool + jq). http_client,
 # ssh, sqlite, python, realfs, and interop are intentionally excluded: they need

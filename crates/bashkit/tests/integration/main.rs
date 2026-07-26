@@ -6,7 +6,7 @@
 //! step alone blew out CI disk on the hosted runner (`rustc-LLVM ERROR: IO
 //! failure on output stream: No space left on device`).
 //!
-//! Per `knowledge/testing.md`, default integration tests live as `mod`s under
+//! Per `knowledge/operations/testing.md`, default integration tests live as `mod`s under
 //! `tests/integration/`, declared here. Tests that genuinely need their own
 //! binary (process-global env mutation, `--test-threads=1`, feature-isolation
 //! sweeps) stay as siblings at `tests/<name>.rs`.

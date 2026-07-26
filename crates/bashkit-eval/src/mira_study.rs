@@ -14,7 +14,7 @@
 //      old `TaskScore::all_passed`); the score value is the weighted pass rate.
 //
 // The model matrix, scheduling, retries, and reporting are owned by the `mira`
-// host CLI. See knowledge/eval.md.
+// host CLI. See knowledge/operations/eval.md.
 
 use mira::subject::{Subject, subject_fn};
 use mira::{Eval, Sample, Score, Target, Transcript};

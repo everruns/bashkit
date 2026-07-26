@@ -24,41 +24,41 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 | Knowledge | Description |
 |------|-------------|
 | knowledge-contract | Knowledge maintenance rules + OKF v0.2 conformance rules |
-| architecture | Core interpreter architecture, module structure |
-| parser | Bash syntax parser design |
-| vfs | Virtual filesystem abstraction |
-| testing | Testing strategy and patterns |
-| builtins | Builtin command design (trait, ShellRef, ExecutionPlan) |
-| security-testing | Fail-point injection for security testing |
-| threat-model | Security threats and mitigations |
-| parallel-execution | Threading model, Arc usage |
-| documentation | Rustdoc guides, embedded markdown |
-| release-process | Version tagging, crates.io + PyPI + npm publishing |
-| limitations | Negative spec: intentional gaps (L-* IDs), partial features, POSIX stance |
-| tool-contract | Public LLM Tool trait contract |
-| git-support | Sandboxed git operations on VFS |
-| python-builtin | Embedded Python via Monty, security, resource limits |
-| eval | LLM eval study on the mira framework, dataset format, scoring |
-| maintenance | Pre-release maintenance requirements |
-| python-package | Python package, PyPI wheels, platform matrix |
-| scripted-tool-orchestration | Compose ToolDef+callback pairs into OrchestratorTool via bash scripts |
-| ssh-support | Sandboxed SSH/SCP/SFTP operations |
-| zapcode-runtime | Embedded TypeScript via ZapCode, VFS bridging, resource limits |
-| request-signing | Transparent Ed25519 request signing (bot-auth) per RFC 9421 |
-| interactive-shell | Interactive REPL mode with rustyline line editing |
-| sqlite-builtin | Embedded SQLite via Turso (MemoryIO + VfsIO backends, dot-commands) |
-| coreutils-args-port | Codegen port of uutils clap definitions + uucore modules |
-| credential-injection | Per-host HTTP credential injection without exposing secrets |
-| http-transport | Pluggable HTTP transport: route curl/wget via host egress boundary |
-| performance-results | Benchmark/eval result locations and `/benches` site aggregation contract |
-| emscripten-wheels | Reduced-feature Pyodide/Emscripten Python wheel |
-| browser-package | Slim single-threaded wasm package (`@everruns/bashkit-wasm`) for browsers + JS runtimes, no COOP/COEP |
+| foundations/architecture | Core interpreter architecture, module structure |
+| foundations/parser | Bash syntax parser design |
+| foundations/vfs | Virtual filesystem abstraction |
+| operations/testing | Testing strategy and patterns |
+| foundations/builtins | Builtin command design (trait, ShellRef, ExecutionPlan) |
+| security/security-testing | Fail-point injection for security testing |
+| security/threat-model | Security threats and mitigations |
+| foundations/parallel-execution | Threading model, Arc usage |
+| operations/documentation | Rustdoc guides, embedded markdown |
+| operations/release-process | Version tagging, crates.io + PyPI + npm publishing |
+| operations/limitations | Negative spec: intentional gaps (L-* IDs), partial features, POSIX stance |
+| integrations/tool-contract | Public LLM Tool trait contract |
+| integrations/git-support | Sandboxed git operations on VFS |
+| runtimes/python-builtin | Embedded Python via Monty, security, resource limits |
+| operations/eval | LLM eval study on the mira framework, dataset format, scoring |
+| operations/maintenance | Pre-release maintenance requirements |
+| runtimes/python-package | Python package, PyPI wheels, platform matrix |
+| integrations/scripted-tool-orchestration | Compose ToolDef+callback pairs into OrchestratorTool via bash scripts |
+| integrations/ssh-support | Sandboxed SSH/SCP/SFTP operations |
+| runtimes/zapcode-runtime | Embedded TypeScript via ZapCode, VFS bridging, resource limits |
+| security/request-signing | Transparent Ed25519 request signing (bot-auth) per RFC 9421 |
+| integrations/interactive-shell | Interactive REPL mode with rustyline line editing |
+| runtimes/sqlite-builtin | Embedded SQLite via Turso (MemoryIO + VfsIO backends, dot-commands) |
+| runtimes/coreutils-args-port | Codegen port of uutils clap definitions + uucore modules |
+| security/credential-injection | Per-host HTTP credential injection without exposing secrets |
+| security/http-transport | Pluggable HTTP transport: route curl/wget via host egress boundary |
+| operations/performance-results | Benchmark/eval result locations and `/benches` site aggregation contract |
+| runtimes/emscripten-wheels | Reduced-feature Pyodide/Emscripten Python wheel |
+| runtimes/browser-package | Slim single-threaded wasm package (`@everruns/bashkit-wasm`) for browsers + JS runtimes, no COOP/COEP |
 
 ### Documentation
 
 - **Public docs** live in `docs/` — user-facing articles (security, guides, etc.)
 - **Rustdoc guides** live in `crates/bashkit/docs/` as markdown files
-- Rustdoc guides embedded via `include_str!` (see `knowledge/documentation.md`)
+- Rustdoc guides embedded via `include_str!` (see `knowledge/operations/documentation.md`)
 - Edit `crates/bashkit/docs/*.md`, not the doc modules in `lib.rs`
 - Add "See also" cross-links when creating new guides
 - Run `cargo doc --open` to preview rustdoc changes
@@ -131,7 +131,7 @@ and are aggregated by `crates/bashkit/tests/integration/main.rs` into a single b
 New behavioral tests go there. A small number of files stay as top-level
 `tests/*.rs` because they need their own binary (process-global env
 mutation, `--test-threads=1`, ssh-only feature isolation) — the list and
-criteria live in `knowledge/testing.md`.
+criteria live in `knowledge/operations/testing.md`.
 
 ### Rust
 
@@ -143,7 +143,7 @@ criteria live in `knowledge/testing.md`.
 
 ### Stderr from builtins must not leak internal Debug shapes
 
-**TM-INF-022** in `knowledge/threat-model.md`. No `{:?}`/`{:#?}` in
+**TM-INF-022** in `knowledge/security/threat-model.md`. No `{:?}`/`{:#?}` in
 `crates/bashkit/src/builtins/`; use `Display` or a domain formatter
 (reference: `format_compile_errors` in `builtins/jq/errors.rs`); cap
 diagnostics ≤ 1 KB; test-only Debug needs `// debug-ok: <reason>`.
@@ -185,14 +185,14 @@ Do not mix criterion `.md` files into `crates/bashkit-bench/results/`.
 3. `cargo clippy --all-targets --all-features -- -D warnings`
 4. `just test` (feature-sliced; never `cargo test --all-features` in one invocation — see Local Dev)
 5. Unit tests cover both positive (expected behavior) and negative (error handling, edge cases) scenarios
-6. Security tests if change touches user input, parsing, sandboxing, or permissions (see `knowledge/security-testing.md`)
+6. Security tests if change touches user input, parsing, sandboxing, or permissions (see `knowledge/security/security-testing.md`)
 7. Compatibility/differential tests if change affects Bash behavior parity (compare against real Bash)
 8. Rebase on main: `git fetch origin main && git rebase origin/main` (for worktrees: verify the worktree `HEAD` is on latest `origin/main` before editing)
 9. Update knowledge if behavior or durable project facts change
 10. CI green before merge
 11. Resolve all PR comments
-12. `cargo bench --bench parallel_execution` if touching Arc/async/Interpreter/builtins (see `knowledge/parallel-execution.md`)
-13. `just bench-sqlite` if touching the sqlite builtin or its VFS/IO bridge (see `knowledge/sqlite-builtin.md`)
+12. `cargo bench --bench parallel_execution` if touching Arc/async/Interpreter/builtins (see `knowledge/foundations/parallel-execution.md`)
+13. `just bench-sqlite` if touching the sqlite builtin or its VFS/IO bridge (see `knowledge/runtimes/sqlite-builtin.md`)
 14. `just bench` if changes might impact performance (interpreter, builtins, tools)
 15. `ruff check crates/bashkit-python && ruff format --check crates/bashkit-python` if touching Python code
 

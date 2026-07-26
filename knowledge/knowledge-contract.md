@@ -32,8 +32,29 @@ The bundle targets OKF v0.2, declared as `okf_version: "0.2"` in the bundle-root
 - `title`, `description`, and `tags` are recommended and used throughout this bundle; `description` is a single sentence that index entries reuse verbatim.
 - `index.md` files carry **no** frontmatter, except the bundle-root `index.md`, which may carry only `okf_version`.
 - `index.md` bodies are link lists grouped under headings: `* [Title](path) - description`.
+- Every `index.md` enumerates **its own directory**: the concepts beside it and the subdirectories under it, nothing deeper.
 - `log.md` bodies are date-grouped entries (`## YYYY-MM-DD`), newest first.
 - Prose that is not a directory listing belongs in a concept document, not in an `index.md`.
+- Links between concepts are relative and must resolve; links inside code spans and fenced blocks are text, not links.
+
+## Layout
+
+Concepts are grouped into domain subdirectories, each with its own `index.md`:
+
+| Directory | Holds |
+|---|---|
+| [`foundations/`](foundations/) | Interpreter architecture, parser, VFS, builtins, concurrency |
+| [`security/`](security/) | Threat model, security testing, credential/signing/HTTP boundaries |
+| [`runtimes/`](runtimes/) | Embedded language runtimes and the published language packages |
+| [`integrations/`](integrations/) | Tool contract, Git, SSH, interactive shell |
+| [`operations/`](operations/) | Testing, limitations, docs, maintenance, release, benchmarks, eval |
+| [`status/`](status/) | Machine-generated inventories |
+
+Only this contract and `log.md` sit at the bundle root. A doc's directory conveys
+its domain; its `type` conveys its kind — the two are independent, so a
+`Subsystem Design` in `security/` and one in `runtimes/` share a type and differ
+in placement. When adding a concept, put it in the matching domain, add it to that
+directory's `index.md`, and prefer moving over duplicating if the domain changes.
 
 Type values are producer-defined. This bundle uses: `Architecture`, `Subsystem Design`,
 `Interface Contract`, `Package Design`, `Threat Model`, `Test Strategy`, `Limitations`,
