@@ -19,10 +19,11 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 
 ### Knowledge
 
-`knowledge/` is the canonical OKF bundle and persistent project memory. Read relevant knowledge before changing behavior, and update it in the same change when decisions, behavior, constraints, threats, tests, or operations change. New durable engineering knowledge belongs there; see `knowledge/index.md` for the maintenance contract.
+`knowledge/` is the canonical OKF bundle and persistent project memory. Read relevant knowledge before changing behavior, and update it in the same change when decisions, behavior, constraints, threats, tests, or operations change. New durable engineering knowledge belongs there; see `knowledge/knowledge-contract.md` for the maintenance contract and the OKF v0.2 rules (`just check-okf` enforces them).
 
 | Knowledge | Description |
 |------|-------------|
+| knowledge-contract | Knowledge maintenance rules + OKF v0.2 conformance rules |
 | architecture | Core interpreter architecture, module structure |
 | parser | Bash syntax parser design |
 | vfs | Virtual filesystem abstraction |

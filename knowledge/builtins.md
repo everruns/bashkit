@@ -1,6 +1,10 @@
 ---
+type: Subsystem Design
 title: Builtin Commands
-summary: Builtin command trait, execution planning, registration, and implementation conventions.
+description: Builtin command trait, execution planning, registration, and implementation conventions.
+tags:
+  - bashkit
+  - builtins
 ---
 
 # Builtin Commands

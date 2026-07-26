@@ -1,6 +1,10 @@
 ---
+type: Playbook
 title: Documentation Architecture
-summary: User documentation and Rustdoc guide organization, embedding, and maintenance.
+description: User documentation and Rustdoc guide organization, embedding, and maintenance.
+tags:
+  - bashkit
+  - documentation
 ---
 
 # Documentation Approach

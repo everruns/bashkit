@@ -1,6 +1,11 @@
 ---
+type: Subsystem Design
 title: SQLite Builtin
-summary: Embedded SQLite through Turso with memory and virtual filesystem backends.
+description: Embedded SQLite through Turso with memory and virtual filesystem backends.
+tags:
+  - bashkit
+  - sqlite
+  - builtins
 ---
 
 # `sqlite` Builtin

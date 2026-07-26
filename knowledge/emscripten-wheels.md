@@ -1,6 +1,12 @@
 ---
+type: Package Design
 title: Emscripten Wheels
-summary: Reduced-feature Pyodide and Emscripten Python wheel design and build constraints.
+description: Reduced-feature Pyodide and Emscripten Python wheel design and build constraints.
+tags:
+  - bashkit
+  - python
+  - packaging
+  - wasm
 ---
 
 # Emscripten / Pyodide Wheels

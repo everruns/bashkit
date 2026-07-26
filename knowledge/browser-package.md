@@ -1,6 +1,12 @@
 ---
+type: Package Design
 title: Browser Package
-summary: Slim single-threaded WebAssembly package design for browsers and JavaScript runtimes.
+description: Slim single-threaded WebAssembly package design for browsers and JavaScript runtimes.
+tags:
+  - bashkit
+  - wasm
+  - packaging
+  - npm
 ---
 
 # WebAssembly Package (`@everruns/bashkit-wasm`)

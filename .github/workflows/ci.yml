@@ -44,6 +44,18 @@ jobs:
         env:
           RUSTDOCFLAGS: "-D warnings"
 
+      # OKF v0.2 conformance of the knowledge bundle. okf-lint enforces the
+      # spec; check_okf.py enforces the bundle-local conventions it does not
+      # cover. See knowledge/knowledge-contract.md for why both run.
+      # Keep the version and --max-line-length in lockstep with the justfile.
+      - name: Install okf-lint
+        run: cargo install okf-lint --version 0.1.1 --locked
+
+      - name: Check knowledge bundle (OKF)
+        run: |
+          python3 scripts/check_okf.py knowledge
+          okf-lint knowledge --max-line-length 10000
+
   wasm:
     # std::time panics on wasm32-unknown-unknown, so bashkit routes clock reads
     # through src/time_compat.rs (web-time on wasm32). This job keeps the crate

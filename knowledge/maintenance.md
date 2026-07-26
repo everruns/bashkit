@@ -1,6 +1,11 @@
 ---
+type: Playbook
 title: Maintenance
-summary: Pre-release dependency, security, compatibility, and artifact maintenance requirements.
+description: Pre-release dependency, security, compatibility, and artifact maintenance requirements.
+tags:
+  - bashkit
+  - maintenance
+  - operations
 ---
 
 # Pre-Release Maintenance

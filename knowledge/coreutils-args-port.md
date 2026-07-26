@@ -1,6 +1,11 @@
 ---
+type: Subsystem Design
 title: Coreutils Argument Port
-summary: Code generation design for porting uutils clap arguments and uucore modules.
+description: Code generation design for porting uutils clap arguments and uucore modules.
+tags:
+  - bashkit
+  - builtins
+  - codegen
 ---
 
 # Coreutils argument-surface port

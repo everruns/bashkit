@@ -1,6 +1,11 @@
 ---
+type: Subsystem Design
 title: Parallel Execution
-summary: Threading model, shared ownership, and concurrency safety requirements.
+description: Threading model, shared ownership, and concurrency safety requirements.
+tags:
+  - bashkit
+  - concurrency
+  - performance
 ---
 
 # Parallel Execution
@@ -38,7 +43,6 @@ Throughput numbers are meaningless if sessions silently error out. The
 fan-out (each its own `Bash`, sharing one `Arc<dyn FileSystem>`) actually
 produces correct per-session output, and that concurrent sessions sharing a
 filesystem don't cross-contaminate. Run via `just test` (no extra features).
-
 
 ### Expected Results
 

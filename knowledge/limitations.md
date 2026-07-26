@@ -1,6 +1,11 @@
 ---
+type: Limitations
 title: Known Limitations
-summary: Intentional gaps, partial features, and Bash and POSIX compatibility stance.
+description: Intentional gaps, partial features, and Bash and POSIX compatibility stance.
+tags:
+  - bashkit
+  - limitations
+  - compatibility
 ---
 
 # Limitations

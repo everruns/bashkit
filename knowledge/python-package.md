@@ -1,6 +1,12 @@
 ---
+type: Package Design
 title: Python Package
-summary: Python bindings, PyPI wheels, ABI strategy, and platform build matrix.
+description: Python bindings, PyPI wheels, ABI strategy, and platform build matrix.
+tags:
+  - bashkit
+  - python
+  - packaging
+  - pypi
 ---
 
 # Python Package

@@ -1,6 +1,11 @@
 ---
+type: Test Strategy
 title: Security Testing
-summary: Fail-point injection and layered security regression testing strategy.
+description: Fail-point injection and layered security regression testing strategy.
+tags:
+  - bashkit
+  - testing
+  - security
 ---
 
 # Security Testing with Fail Points

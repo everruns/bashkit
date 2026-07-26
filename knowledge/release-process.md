@@ -1,6 +1,11 @@
 ---
+type: Playbook
 title: Release Process
-summary: Versioning, validation, tagging, and publication to crates.io, PyPI, and npm.
+description: Versioning, validation, tagging, and publication to crates.io, PyPI, and npm.
+tags:
+  - bashkit
+  - release
+  - operations
 ---
 
 # Release Process

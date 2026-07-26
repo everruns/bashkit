@@ -1,6 +1,11 @@
 ---
+type: Playbook
 title: Performance Results
-summary: Benchmark harnesses, result locations, naming, and publication contract.
+description: Benchmark harnesses, result locations, naming, and publication contract.
+tags:
+  - bashkit
+  - benchmarks
+  - performance
 ---
 
 # Performance Results and Site Aggregation

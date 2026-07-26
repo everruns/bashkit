@@ -1,6 +1,11 @@
 ---
+type: Subsystem Design
 title: Git Support
-summary: Sandboxed Git operations over the virtual filesystem.
+description: Sandboxed Git operations over the virtual filesystem.
+tags:
+  - bashkit
+  - git
+  - sandbox
 ---
 
 # Git Support

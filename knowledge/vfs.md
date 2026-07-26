@@ -1,6 +1,11 @@
 ---
+type: Subsystem Design
 title: Virtual Filesystem
-summary: Filesystem abstraction, path safety, implementations, and sandbox invariants.
+description: Filesystem abstraction, path safety, implementations, and sandbox invariants.
+tags:
+  - bashkit
+  - filesystem
+  - sandbox
 ---
 
 # Virtual Filesystem Design

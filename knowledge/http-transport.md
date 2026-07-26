@@ -1,6 +1,12 @@
 ---
+type: Subsystem Design
 title: HTTP Transport
-summary: Pluggable host-controlled HTTP transport for curl and wget.
+description: Pluggable host-controlled HTTP transport for curl and wget.
+tags:
+  - bashkit
+  - http
+  - network
+  - embedding
 ---
 
 # Pluggable HTTP Transport

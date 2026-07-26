@@ -1,6 +1,12 @@
 ---
+type: Subsystem Design
 title: SSH Support
-summary: Sandboxed SSH, SCP, and SFTP operations and security boundaries.
+description: Sandboxed SSH, SCP, and SFTP operations and security boundaries.
+tags:
+  - bashkit
+  - ssh
+  - network
+  - security
 ---
 
 # SSH Support

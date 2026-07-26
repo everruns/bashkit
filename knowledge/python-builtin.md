@@ -1,6 +1,12 @@
 ---
+type: Subsystem Design
 title: Python Builtin
-summary: Embedded Python execution through Monty with security and resource controls.
+description: Embedded Python execution through Monty with security and resource controls.
+tags:
+  - bashkit
+  - python
+  - runtime
+  - sandbox
 ---
 
 # Python Builtin (Monty)
