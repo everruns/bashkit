@@ -65,7 +65,7 @@ sha1 = "0.11"
 sha2 = "0.11"
 
 # Ed25519 signing (bot-auth request signing)
-ed25519-dalek = { version = "2", features = ["rand_core"] }
+ed25519-dalek = { version = "3", features = ["rand_core"] }
 rand = "0.10"
 zeroize = "1"
 
@@ -114,7 +114,7 @@ russh = "0.62"
 turso_core = "0.8.0-pre.1"
 
 # Serial test execution
-serial_test = "3"
+serial_test = "4"
 
 # Python bindings
 # Important decision (PyPI storage): `abi3-py39` builds against CPython's stable
