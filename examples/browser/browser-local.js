@@ -40,12 +40,20 @@ function snapshotDirectory(fs, directory, files) {
 }
 
 /** Create a localStorage-backed persistence adapter for BashKit's browser VFS. */
-export function browserLocal({
-  storage = globalThis.localStorage,
-  key = DEFAULT_KEY,
-  root = DEFAULT_ROOT,
-} = {}) {
-  if (!storage) throw new Error("browserLocal requires a Storage implementation");
+export function browserLocal({ storage: configuredStorage, key = DEFAULT_KEY, root = DEFAULT_ROOT } = {}) {
+  let storage = configuredStorage;
+  let storageBlocked = false;
+  if (storage === undefined) {
+    try {
+      storage = globalThis.localStorage;
+    } catch {
+      // Access itself can throw in sandboxed or storage-blocked browser contexts.
+      storageBlocked = true;
+    }
+  }
+  if (!storage && !storageBlocked) {
+    throw new Error("browserLocal requires a Storage implementation");
+  }
 
   return {
     load(defaultFiles = {}) {
@@ -70,7 +78,11 @@ export function browserLocal({
     },
 
     clear() {
-      storage.removeItem(key);
+      try {
+        storage.removeItem(key);
+      } catch {
+        // Unavailable storage must not prevent the browser shell from running.
+      }
     },
   };
 }
