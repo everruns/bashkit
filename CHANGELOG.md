@@ -2,12 +2,59 @@
 
 ## Unreleased
 
-### Fixed
+## [0.14.4] - 2026-07-27
 
-- RealFs path resolution and metadata updates no longer perform synchronous
-  host filesystem I/O inside async backend methods, preventing stalls and
-  deadlocks on current-thread Tokio runtimes. Async embedders should use the
-  new `RealFs::open`; the blocking `RealFs::new` constructor is deprecated.
+### Highlights
+
+- **Python wheels now use CPython's stable ABI.** One `cp39-abi3` wheel per
+  platform supports every Python version from 3.9 onward, reducing native
+  release artifacts from 42 wheels (~500 MiB) to 7 (~85 MiB). This prevents
+  the partial PyPI publications that left 0.14.2 unavailable on Python
+  3.12–3.14 ([#2190](https://github.com/everruns/bashkit/pull/2190)).
+- **Browser files can persist across sessions.** The browser example stores
+  its virtual filesystem in browser storage, tolerates environments where
+  storage access is blocked, and rejects timeout guarantees that the
+  single-threaded WebAssembly runtime cannot enforce
+  ([#2192](https://github.com/everruns/bashkit/pull/2192),
+  [#2211](https://github.com/everruns/bashkit/pull/2211),
+  [#2213](https://github.com/everruns/bashkit/pull/2213)).
+- **Async filesystem operations no longer block current-thread runtimes.**
+  RealFs path resolution and metadata operations now use asynchronous host
+  filesystem I/O. Async embedders should use `RealFs::open`; the blocking
+  `RealFs::new` constructor is deprecated
+  ([#2205](https://github.com/everruns/bashkit/pull/2205)).
+
+### What's Changed
+
+* chore(deps): bump postcss to 8.5.23 to close path-traversal advisory ([#2215](https://github.com/everruns/bashkit/pull/2215)) by @chaliy
+* fix(examples): pin browser npm dependencies ([#2214](https://github.com/everruns/bashkit/pull/2214)) by @chaliy
+* fix(wasm): tolerate blocked browser storage ([#2213](https://github.com/everruns/bashkit/pull/2213)) by @chaliy
+* fix(release): remove invalid web workflow dispatch ([#2212](https://github.com/everruns/bashkit/pull/2212)) by @chaliy
+* fix(wasm): reject unenforceable timeouts ([#2211](https://github.com/everruns/bashkit/pull/2211)) by @chaliy
+* fix(python): stop teardown test flaking on unrelated thread reaps ([#2210](https://github.com/everruns/bashkit/pull/2210)) by @chaliy
+* chore(knowledge): group concepts into domain subfolders ([#2209](https://github.com/everruns/bashkit/pull/2209)) by @chaliy
+* chore(knowledge): make the knowledge bundle actually OKF v0.2 conformant ([#2206](https://github.com/everruns/bashkit/pull/2206)) by @chaliy
+* fix(realfs): avoid blocking async runtimes ([#2205](https://github.com/everruns/bashkit/pull/2205)) by @chaliy
+* chore(deps): bump the rust-dependencies group across 1 directory with 7 updates ([#2204](https://github.com/everruns/bashkit/pull/2204)) by @dependabot
+* chore(ci): bump the github-actions group across 1 directory with 3 updates ([#2203](https://github.com/everruns/bashkit/pull/2203)) by @dependabot
+* chore(knowledge): migrate specs to OKF ([#2202](https://github.com/everruns/bashkit/pull/2202)) by @chaliy
+* chore(deps): move monty to crates.io 0.0.19 ([#2201](https://github.com/everruns/bashkit/pull/2201)) by @chaliy
+* chore(deps): upgrade embedded runtimes ([#2200](https://github.com/everruns/bashkit/pull/2200)) by @chaliy
+* test(fuzz): constrain arithmetic expressions ([#2199](https://github.com/everruns/bashkit/pull/2199)) by @chaliy
+* fix(fs): block namespace node copy destinations ([#2198](https://github.com/everruns/bashkit/pull/2198)) by @chaliy
+* fix(wasm): reject async custom builtins before executeSync invocation ([#2197](https://github.com/everruns/bashkit/pull/2197)) by @chaliy
+* fix(deps): resolve npm security advisories ([#2195](https://github.com/everruns/bashkit/pull/2195)) by @chaliy
+* chore(deps): bump the rust-dependencies group with 14 updates ([#2194](https://github.com/everruns/bashkit/pull/2194)) by @dependabot
+* chore(ci): bump the github-actions group with 2 updates ([#2193](https://github.com/everruns/bashkit/pull/2193)) by @dependabot
+* feat(wasm): persist browser example files ([#2192](https://github.com/everruns/bashkit/pull/2192)) by @chaliy
+* docs: per-target Get started flow + linkable heading anchors ([#2191](https://github.com/everruns/bashkit/pull/2191)) by @chaliy
+* chore(python): build abi3 wheels to cut PyPI storage ~6x ([#2190](https://github.com/everruns/bashkit/pull/2190)) by @chaliy
+* Revert "build(python): ship abi3 stable-ABI wheels (#2187)" ([#2189](https://github.com/everruns/bashkit/pull/2189)) by @chaliy
+* docs: add Targets & bindings page with a live in-browser bash terminal ([#2188](https://github.com/everruns/bashkit/pull/2188)) by @chaliy
+* build(python): ship abi3 stable-ABI wheels ([#2187](https://github.com/everruns/bashkit/pull/2187)) by @chaliy
+* docs(examples): refresh browser screenshot for the bashkit-wasm rename ([#2186](https://github.com/everruns/bashkit/pull/2186)) by @chaliy
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.14.3...v0.14.4
 
 ## [0.14.3] - 2026-07-18
 
