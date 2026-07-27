@@ -341,44 +341,8 @@ release-check:
     # Check nightly CI jobs (last 3 runs must be green)
     just check-nightly
 
-    # Match publish.yml locally: strip git-only publish blockers, dry-run, restore.
-    TMPDIR=$(mktemp -d)
-    LOCKFILE=Cargo.lock
-    BASHKIT_TOML=crates/bashkit/Cargo.toml
-    CLI_TOML=crates/bashkit-cli/Cargo.toml
-    JS_TOML=crates/bashkit-js/Cargo.toml
-    PY_TOML=crates/bashkit-python/Cargo.toml
-    cp "$LOCKFILE" "$TMPDIR/Cargo.lock"
-    cp "$BASHKIT_TOML" "$TMPDIR/bashkit.Cargo.toml"
-    cp "$CLI_TOML" "$TMPDIR/bashkit-cli.Cargo.toml"
-    cp "$JS_TOML" "$TMPDIR/bashkit-js.Cargo.toml"
-    cp "$PY_TOML" "$TMPDIR/bashkit-python.Cargo.toml"
-    trap 'cp "$TMPDIR/Cargo.lock" "$LOCKFILE"; \
-          cp "$TMPDIR/bashkit.Cargo.toml" "$BASHKIT_TOML"; \
-          cp "$TMPDIR/bashkit-cli.Cargo.toml" "$CLI_TOML"; \
-          cp "$TMPDIR/bashkit-js.Cargo.toml" "$JS_TOML"; \
-          cp "$TMPDIR/bashkit-python.Cargo.toml" "$PY_TOML"; \
-          rm -rf "$TMPDIR"' EXIT
-    perli() {
-        perl -0pi.bak -e "$1" "$2"
-        rm -f "$2.bak"
-    }
-
-    # --- bashkit core: remove monty dep and python feature ---
-    perli 's/^monty = .*?\n//m' "$BASHKIT_TOML"
-    perli 's/^python = \["dep:monty"\]\n//m' "$BASHKIT_TOML"
-    perli 's/\n\[\[example\]\]\nname = "python_scripts"\nrequired-features = \["python"\]\n//g' "$BASHKIT_TOML"
-    perli 's/\n\[\[example\]\]\nname = "python_external_functions"\nrequired-features = \["python"\]\n//g' "$BASHKIT_TOML"
-
-    # --- bashkit-cli: remove python feature ---
-    perli 's/^python = \["bashkit\/python"\]\n//m' "$CLI_TOML"
-    perli 's/, "python"//g; s/"python", //g; s/\["python"\]/[]/g' "$CLI_TOML"
-
-    # --- bashkit-js/bashkit-python: remove python from features list ---
-    perli 's/, "python"//g; s/"python", //g' "$JS_TOML"
-    perli 's/, "python"//g; s/"python", //g' "$PY_TOML"
-
-    # Dry-run publish
+    # Monty is a registry dependency, so verify the exact package that CI
+    # publishes. Rewriting manifests here can hide real packaging failures.
     echo ""
     echo "Dry-run publish bashkit..."
     cargo publish -p bashkit --dry-run --allow-dirty
@@ -387,9 +351,40 @@ release-check:
     echo "Dry-run publish bashkit-cli..."
     # bashkit-cli verifies against the registry package of bashkit.
     # Before the matching bashkit release is published, local dry-run cannot
-    # compile that packaged dependency graph. The real publish workflow keeps
-    # verification enabled after bashkit is live on crates.io.
-    cargo publish -p bashkit-cli --dry-run --allow-dirty --no-verify
+    # resolve that package. Package a disposable workspace against the latest
+    # published core as a structural proxy. The real workflow publishes and
+    # verifies the matching core before publishing the CLI.
+    CLI_VERIFY_ROOT=$(mktemp -d)
+    trap 'rm -rf "$CLI_VERIFY_ROOT"' EXIT
+    rsync -a \
+        --exclude .git \
+        --exclude node_modules \
+        --exclude target \
+        ./ "$CLI_VERIFY_ROOT/workspace/"
+    LATEST_CORE=$(cargo search bashkit --limit 1 | sed -n 's/^bashkit = "\([^"]*\)".*/\1/p')
+    if [ -z "$LATEST_CORE" ]; then
+        echo "Error: could not determine latest published bashkit version"
+        exit 1
+    fi
+    WORKSPACE_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+    CLI_TOML="$CLI_VERIFY_ROOT/workspace/crates/bashkit-cli/Cargo.toml"
+    sed -i.bak \
+        "s/version = \"$WORKSPACE_VERSION\"/version = \"$LATEST_CORE\"/" \
+        "$CLI_TOML"
+    rm "$CLI_TOML.bak"
+    # The latest published core predates Monty's crates.io publication and
+    # therefore lacks the Python feature. The exact new core package dry-run
+    # above validates that feature; omit it only from this CLI structure proxy.
+    perl -0pi.bak -e \
+        's/^python = \["bashkit\/python"\]\n//m; s/"python", //g; s/, "python"//g' \
+        "$CLI_TOML"
+    rm "$CLI_TOML.bak"
+    cargo publish \
+        --manifest-path "$CLI_VERIFY_ROOT/workspace/Cargo.toml" \
+        -p bashkit-cli \
+        --dry-run \
+        --allow-dirty \
+        --no-verify
 
     echo ""
     echo "All release checks passed!"
