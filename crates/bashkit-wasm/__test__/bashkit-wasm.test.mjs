@@ -112,11 +112,12 @@ test("sleep returns immediately (no timer driver on wasm)", async () => {
   assert.equal(r.exitCode, 0);
 });
 
-test("timeout runs the command (no wall-clock enforcement on wasm)", async () => {
+test("timeout rejects unsupported wall-clock enforcement on wasm", async () => {
   const bash = new Bash();
   const r = await bash.execute("timeout 5 echo hi");
-  assert.equal(r.stdout, "hi\n");
-  assert.equal(r.exitCode, 0);
+  assert.equal(r.stdout, "");
+  assert.match(r.stderr, /timeout is unsupported/);
+  assert.equal(r.exitCode, 125);
 });
 
 test("background job runs and wait collects it", async () => {

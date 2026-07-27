@@ -151,8 +151,9 @@ custom builtin (see above) so requests go through your app's own `fetch`.
 ## Limitations
 
 - **No wall-clock time.** `wasm32-unknown-unknown` has no reliable timer driver,
-  so `sleep N` elapses instantly and neither the `timeout N` builtin nor
-  `timeoutMs` is enforced. Runaway scripts are instead bounded by `maxCommands`,
+  so `sleep N` elapses instantly. The `timeout N` builtin and tool requests with
+  `timeoutMs` fail closed with status 125 rather than accepting an unenforceable
+  deadline. Scripts without deadlines remain bounded by `maxCommands`,
   `maxLoopIterations`, and the parser fuel budget — a `while true` loop throws a
   resource-limit error rather than hanging.
 - **`executeSync` can't run async builtins.** The single-threaded event loop
