@@ -24,7 +24,7 @@ cargo add bashkit --features scripted_tool
 
 `http_client` enables `curl`/`wget` and the network allowlist. `python`
 embeds the [Monty](https://github.com/pydantic/monty) interpreter — see the
-[Python builtin](python.md) guide to run Python inside the shell, and [Get
+[Python builtin](../crates/bashkit/docs/python.md) guide to run Python inside the shell, and [Get
 started in Python](start-python.md) to embed Bashkit *in* a Python app.
 
 ## First script
@@ -102,7 +102,7 @@ Runnable Rust examples in the repo:
 ## Next steps
 
 - [Sandbox configuration & limits](configuration.md) — resource limits, filesystem, allowlist.
-- [Custom builtins](custom_builtins.md) — add your own Rust commands to the shell.
+- [Custom builtins](../crates/bashkit/docs/custom_builtins.md) — add your own Rust commands to the shell.
 - [Snapshotting](snapshotting.md) — serialize and restore interpreter state.
 - [Security](security.md) — sandbox boundaries and what scripts cannot do.
 - Full API reference: [docs.rs/bashkit](https://docs.rs/bashkit/latest/bashkit/).

@@ -78,6 +78,17 @@ dependency rot, or security gaps ship in a release.
 - Python docstrings match behavior
 - `README.md` feature list matches implemented builtins
 - Public docs (`docs/`) match current code: CLI flags, security boundaries, feature descriptions, test counts, and examples all reflect reality
+- Relative markdown links resolve as source: `just check-doc-links` green. The
+  site rewrites link targets by *basename* (`DOC_LINKS` in
+  `site/astro.config.mjs`), so a cross-tree link written as a bare `jq.md`
+  renders correctly on bashkit.sh while 404-ing for anyone reading the markdown
+  on GitHub — `site/scripts/verify-doc-*.mjs` check the built routes and cannot
+  see it. Write cross-tree links source-relative
+  (`../crates/bashkit/docs/jq.md`); the site rewriter accepts that form too.
+  Do **not** add YAML frontmatter to `docs/` or `crates/bashkit/docs/` to carry
+  titles or descriptions: page metadata lives in `site/src/pages/docs/_meta.ts`,
+  and frontmatter in `crates/bashkit/docs/` would leak into rustdoc via
+  `include_str!`
 - Agent surfaces (`/llms.txt`, `/llms-full.txt`, Markdown routes) regenerate and pass `verify-llms` (auto-enforced in CI); refresh the agent-skills tarball/`index.json` digest if `skills/bashkit/` changed (see `knowledge/documentation.md` § Agent-facing site surfaces)
 - `CONTRIBUTING.md` instructions accurate
 - `CHANGELOG.md` has entries for all changes since last release
