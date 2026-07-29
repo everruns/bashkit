@@ -1324,6 +1324,107 @@ pub struct BashOptions {
     pub network: Option<NetworkOptions>,
 }
 
+/// One simple command found by `analyze()`.
+///
+/// `name` and each entry of `args` are `null` when the word is not fully
+/// literal — a computed name or argument is reported as unknown, never as safe.
+#[napi(object, js_name = "AnalyzedCommand")]
+pub struct JsAnalyzedCommand {
+    /// Command name, or `null` when it is not statically known.
+    ///
+    /// `Option<Option<_>>` so the field is always present and explicitly
+    /// `null` — an omitted property would read as "no such field".
+    #[napi(ts_type = "string | null")]
+    pub name: Option<Option<String>>,
+    /// One entry per argument; `null` when not fully literal.
+    #[napi(ts_type = "Array<string | null>")]
+    pub args: Vec<Option<String>>,
+    /// `"direct"`, `"substitution"`, or `"function_body"`.
+    pub context: String,
+    /// Names of prefix assignments (`FOO=1 cmd` → `["FOO"]`).
+    pub assignments: Vec<String>,
+    /// True for a bare assignment (`FOO=1`), which names no command and hides
+    /// nothing — distinguishes it from a genuinely unknown name.
+    pub is_assignment_only: bool,
+}
+
+/// One file redirect found by `analyze()`.
+#[napi(object, js_name = "AnalyzedRedirect")]
+pub struct JsAnalyzedRedirect {
+    /// Target path, or `null` when it is not fully literal.
+    #[napi(ts_type = "string | null")]
+    pub path: Option<Option<String>>,
+    /// `"read"`, `"write"`, or `"append"`.
+    pub mode: String,
+    /// True for modes that can create or modify a file.
+    pub is_write: bool,
+}
+
+/// Result of `analyze()` — what a script statically refers to.
+///
+/// **Advisory only.** Static analysis cannot see through dynamic dispatch,
+/// `eval`, functions, or aliases; those set `isOpaque`. Enforcement stays with
+/// the builtin registry, the network allowlist, and the mount policy.
+#[napi(object, js_name = "ScriptAnalysis")]
+pub struct JsScriptAnalysis {
+    /// Every simple command, in source order.
+    pub commands: Vec<JsAnalyzedCommand>,
+    /// Every file redirect target, in source order.
+    pub redirects: Vec<JsAnalyzedRedirect>,
+    /// Function names the script defines.
+    pub functions: Vec<String>,
+    /// Distinct statically known command names, in first-seen order.
+    pub command_names: Vec<String>,
+    /// Some command name is not statically known.
+    pub has_dynamic_commands: bool,
+    /// Script contains `$(…)`, backticks, or process substitution.
+    pub has_command_substitution: bool,
+    /// Script hands text back to the interpreter: `eval`, `source`, `.`, or
+    /// `bash`/`sh -c`.
+    pub has_eval: bool,
+    /// Node budget hit — `commands` and `redirects` are incomplete.
+    pub truncated: bool,
+    /// The script hides work: dynamic command, `eval`/`source`, or truncated.
+    /// Allowlist checks must treat this as "ask the user".
+    pub is_opaque: bool,
+}
+
+fn analysis_to_js(analysis: bashkit::ScriptAnalysis) -> JsScriptAnalysis {
+    JsScriptAnalysis {
+        command_names: analysis
+            .command_names()
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+        is_opaque: analysis.is_opaque(),
+        commands: analysis
+            .commands
+            .iter()
+            .map(|c| JsAnalyzedCommand {
+                name: Some(c.name.clone()),
+                args: c.args.clone(),
+                context: c.context.as_str().to_owned(),
+                assignments: c.assignments.clone(),
+                is_assignment_only: c.is_assignment_only(),
+            })
+            .collect(),
+        redirects: analysis
+            .redirects
+            .iter()
+            .map(|r| JsAnalyzedRedirect {
+                path: Some(r.path.clone()),
+                mode: r.mode.as_str().to_owned(),
+                is_write: r.mode.is_write(),
+            })
+            .collect(),
+        functions: analysis.functions,
+        has_dynamic_commands: analysis.has_dynamic_commands,
+        has_command_substitution: analysis.has_command_substitution,
+        has_eval: analysis.has_eval,
+        truncated: analysis.truncated,
+    }
+}
+
 #[napi(object)]
 pub struct SnapshotOptions {
     pub exclude_filesystem: Option<bool>,
@@ -1657,6 +1758,26 @@ impl Bash {
             },
         )?;
         Ok(napi::bindgen_prelude::PromiseRaw::new(raw_env, promise))
+    }
+
+    /// Analyze a script without running it.
+    ///
+    /// Parses `script` with this instance's parser limits and reports the
+    /// commands, redirect targets, and function definitions it statically
+    /// refers to. Nothing is executed and no instance state changes.
+    ///
+    /// Intended for permission prompts and audit logging. **Advisory only** —
+    /// check `isOpaque` before treating an allowlist match as safe. Throws if
+    /// the script does not parse; treat that as "deny or prompt", never as
+    /// "no commands".
+    #[napi]
+    pub fn analyze(&self, script: String) -> napi::Result<JsScriptAnalysis> {
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            bash.analyze(&script)
+                .map(analysis_to_js)
+                .map_err(|e| napi::Error::from_reason(e.to_string()))
+        })
     }
 
     /// Cancel the currently running execution.
@@ -2259,6 +2380,26 @@ impl BashTool {
             },
         )?;
         Ok(napi::bindgen_prelude::PromiseRaw::new(raw_env, promise))
+    }
+
+    /// Analyze a script without running it.
+    ///
+    /// Parses `script` with this instance's parser limits and reports the
+    /// commands, redirect targets, and function definitions it statically
+    /// refers to. Nothing is executed and no instance state changes.
+    ///
+    /// Intended for permission prompts and audit logging. **Advisory only** —
+    /// check `isOpaque` before treating an allowlist match as safe. Throws if
+    /// the script does not parse; treat that as "deny or prompt", never as
+    /// "no commands".
+    #[napi]
+    pub fn analyze(&self, script: String) -> napi::Result<JsScriptAnalysis> {
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            bash.analyze(&script)
+                .map(analysis_to_js)
+                .map_err(|e| napi::Error::from_reason(e.to_string()))
+        })
     }
 
     /// Cancel the currently running execution.

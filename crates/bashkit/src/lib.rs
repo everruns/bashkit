@@ -398,6 +398,7 @@
 //! # Guides
 //!
 //! - [`custom_builtins_guide`] - Creating custom builtins
+//! - [`script_analysis_guide`] - Pre-execution introspection for permission gating
 //! - [`compatibility_scorecard`] - Feature parity tracking
 //! - [`live_mounts_guide`] - Live mount/unmount on running instances
 //! - [`namespace_filesystems_guide`] - Static namespaces with rebasing and per-mount access
@@ -416,6 +417,8 @@
 #![warn(clippy::unwrap_used)]
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
+/// Static, pre-execution introspection of a script.
+pub mod analysis;
 mod builtins;
 #[cfg(feature = "http_client")]
 mod credential;
@@ -454,6 +457,9 @@ pub(crate) mod tool_def;
 /// Structured execution trace events.
 pub mod trace;
 
+pub use analysis::{
+    AnalyzedCommand, AnalyzedRedirect, CommandContext, RedirectMode, ScriptAnalysis,
+};
 pub use async_trait::async_trait;
 pub use builtins::git::GitConfig;
 pub use builtins::ssh::{SshAllowlist, SshConfig, TrustedHostKey};
@@ -1356,6 +1362,44 @@ impl Bash {
     /// status (`just regen-builtins`, `knowledge/status/builtins.json`).
     pub fn builtin_names(&self) -> Vec<String> {
         self.interpreter.builtin_names()
+    }
+
+    /// Analyze a script without running it.
+    ///
+    /// Parses `script` with this instance's parser limits and reports the
+    /// commands, redirect targets, and function definitions it statically
+    /// refers to. Nothing is executed and no instance state changes.
+    ///
+    /// Intended for host permission prompts and audit logging. **Advisory
+    /// only** — see [`script_analysis_guide`] and
+    /// [`ScriptAnalysis::is_opaque`]. Enforcement stays with the builtin
+    /// registry, [`NetworkAllowlist`], the mount policy, and the
+    /// [`before_tool`](BashBuilder::before_tool) hook.
+    ///
+    /// # Errors
+    ///
+    /// Returns a parse error if the script is not valid bash. Treat that as
+    /// "deny or prompt", never as "no commands".
+    ///
+    /// ```
+    /// # fn main() -> bashkit::Result<()> {
+    /// let bash = bashkit::Bash::new();
+    /// let analysis = bash.analyze("cat notes.txt | grep -i todo")?;
+    /// assert_eq!(analysis.command_names(), ["cat", "grep"]);
+    /// assert!(!analysis.is_opaque());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn analyze(&self, script: &str) -> Result<analysis::ScriptAnalysis> {
+        // Same input gate as `exec`: a host must not be able to spend more
+        // parse work deciding whether to run a script than running it would.
+        if script.len() > self.max_input_bytes {
+            return Err(Error::ResourceLimit(LimitExceeded::InputTooLarge(
+                script.len(),
+                self.max_input_bytes,
+            )));
+        }
+        analysis::analyze_with_limits(script, self.max_ast_depth, self.max_parser_operations)
     }
 
     /// Get the current session-level counters (cumulative across exec() calls).
@@ -3166,6 +3210,18 @@ impl BashBuilder {
 #[cfg(feature = "http_client")]
 #[doc = include_str!("../docs/credential-injection.md")]
 pub mod credential_injection_guide {}
+
+/// Guide for analyzing a script before running it.
+///
+/// This guide covers:
+/// - Approve-before-run permission prompts
+/// - Deriving fine-grained permission keys for custom builtins
+/// - Pre-execution audit logging
+/// - Why analysis is advisory and how to pair it with hooks
+///
+/// **Related:** [`Bash::analyze`], [`ScriptAnalysis`], [`hooks`], [`threat_model`]
+#[doc = include_str!("../docs/script-analysis.md")]
+pub mod script_analysis_guide {}
 
 /// Guide for creating custom builtins to extend Bashkit.
 ///

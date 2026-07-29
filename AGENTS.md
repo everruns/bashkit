@@ -36,6 +36,7 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 | operations/release-process | Version tagging, crates.io + PyPI + npm publishing |
 | operations/limitations | Negative spec: intentional gaps (L-* IDs), partial features, POSIX stance |
 | integrations/tool-contract | Public LLM Tool trait contract |
+| integrations/script-analysis | Static pre-execution script introspection for permission gating |
 | integrations/git-support | Sandboxed git operations on VFS |
 | runtimes/python-builtin | Embedded Python via Monty, security, resource limits |
 | operations/eval | LLM eval study on the mira framework, dataset format, scoring |

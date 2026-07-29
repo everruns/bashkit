@@ -189,6 +189,7 @@ Scripts may attempt to break out of the sandbox to access the host system.
 | setuid (TM-ESC-010) | Permission changes | Virtual FS, no real perms | MITIGATED |
 | Capability abuse (TM-ESC-011) | Linux capabilities | Runs in-process | MITIGATED |
 | Mount-rw exposure to untrusted automation (TM-ESC-030) | Running untrusted scripts with `--mount-rw /` | CLI docs mark `--mount-rw` sandbox-breaking; recommend `--mount-ro` when host access is needed | MITIGATED |
+| Permission gate built on static analysis (TM-ESC-032) | `c=rm; $c -rf /data` passes an allowlist check that only reads `analysis.commands` | `analyze()` reports unresolved names as `null` and sets `is_opaque()`; pair it with the `before_tool` hook, which sees the resolved name — see the [script analysis guide](./script-analysis.md) | MITIGATED (advisory API) |
 
 **Virtual Filesystem:**
 
