@@ -45,6 +45,14 @@ check:
     cargo test
     python3 -m unittest discover -s scripts/tests -p 'test_*.py'
     just check-okf
+    just check-doc-links
+
+# The site rewrites doc links by basename, so a cross-tree link written as a
+# bare `jq.md` renders fine on bashkit.sh while 404-ing on GitHub. This checks
+# the source-relative form the site rewriter also accepts.
+# Validate relative markdown links in docs/ and crates/bashkit/docs/
+check-doc-links:
+    python3 scripts/check_doc_links.py
 
 # okf-lint covers the spec rules; check_okf.py covers the bundle-local
 # conventions it does not enforce (see knowledge/knowledge-contract.md).

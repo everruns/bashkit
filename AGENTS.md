@@ -61,6 +61,10 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 - Rustdoc guides embedded via `include_str!` (see `knowledge/operations/documentation.md`)
 - Edit `crates/bashkit/docs/*.md`, not the doc modules in `lib.rs`
 - Add "See also" cross-links when creating new guides
+- Cross-tree links must be source-relative (`../crates/bashkit/docs/jq.md`, not
+  a bare `jq.md`) — the site rewrites by basename and hides the breakage, GitHub
+  does not. Titles/descriptions go in `site/src/pages/docs/_meta.ts`, never in
+  markdown frontmatter. Enforced by `just check-doc-links`
 - Run `cargo doc --open` to preview rustdoc changes
 
 ### Bashkit Principles

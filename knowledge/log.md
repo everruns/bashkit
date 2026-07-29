@@ -1,5 +1,10 @@
 # Bashkit Knowledge Update Log
 
+## 2026-07-29
+
+* **Enforcement**: Added `scripts/check_doc_links.py` (`just check-doc-links`, wired into `just check` and CI) to reject dangling relative markdown links in `docs/`, `crates/bashkit/docs/`, and root markdown — the site's basename-matching link rewriter hid 14 of them from every existing verifier. Rule and rationale recorded in [Documentation](operations/documentation.md) and [Maintenance](operations/maintenance.md).
+* **Decision**: Page titles/descriptions stay in `DOC_META`; markdown frontmatter is rejected for both doc trees so rustdoc `include_str!` embedding stays clean.
+
 ## 2026-07-26
 
 * **Restructure**: Grouped the 29 domain concepts into `foundations/`, `security/`, `runtimes/`, `integrations/`, and `operations/`, each with its own `index.md`; the root index now enumerates root concepts and subdirectories only. Frontmatter `type` values are unchanged — directory conveys domain, `type` conveys kind.

@@ -32,6 +32,18 @@ Repo-root `docs/` is for user-facing site articles.
 - Each guide markdown starts with a "See also" section linking related guides/API docs
 - Doc module gets a `///` summary above the `#[doc = include_str!]` for rustdoc cross-links; reference types with `` [`TypeName`] `` syntax
 - New guides: add file in `crates/bashkit/docs/`, add doc module in `lib.rs`, link it from the crate docs `# Guides` section, preview with `cargo doc --open`
+- Cross-tree markdown links are written **source-relative**
+  (`../crates/bashkit/docs/jq.md`, not a bare `jq.md`). Both trees are browsed
+  as source on GitHub *and* flattened to `/docs/<slug>/` on the site; the site's
+  `DOC_LINKS` rewriter (`site/astro.config.mjs`) matches on basename, so it
+  accepts either form while only the source-relative one works on GitHub.
+  Enforced by `just check-doc-links` (`scripts/check_doc_links.py`, in
+  `just check` and CI) — the `site/scripts/verify-doc-*.mjs` verifiers check
+  built routes and cannot see this class of breakage.
+- Page titles and descriptions live in `DOC_META`
+  (`site/src/pages/docs/_meta.ts`), never in markdown frontmatter: the canonical
+  files must stay frontmatter-free so `crates/bashkit/docs/*.md` embed cleanly
+  via `include_str!` into rustdoc.
 
 ## Code Examples
 

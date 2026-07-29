@@ -56,6 +56,16 @@ jobs:
           python3 scripts/check_okf.py knowledge
           okf-lint knowledge --max-line-length 10000
 
+      # The site rewrites doc links by basename, so a cross-tree link written as
+      # a bare `jq.md` renders fine on bashkit.sh while 404-ing for anyone
+      # reading the markdown on GitHub. site/scripts/verify-doc-*.mjs check the
+      # built routes and cannot see this; these check the source-relative form.
+      - name: Check doc links
+        run: python3 scripts/check_doc_links.py
+
+      - name: Test repo scripts
+        run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+
   wasm:
     # std::time panics on wasm32-unknown-unknown, so bashkit routes clock reads
     # through src/time_compat.rs (web-time on wasm32). This job keeps the crate
