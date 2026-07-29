@@ -42,4 +42,4 @@ learn immediately that the WASM build can't do it.
 
 - [Get started in Python](start-python.md) — the full-featured native PyPI wheel.
 - [Get started in the browser](start-browser.md) — the JavaScript WASM package.
-- [Python builtin](python.md) — the embedded Monty runtime in depth.
+- [Python builtin](../crates/bashkit/docs/python.md) — the embedded Monty runtime in depth.

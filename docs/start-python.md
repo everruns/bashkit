@@ -45,7 +45,7 @@ result = await bash.execute("echo hi | my_async_tool")
 
 Bashkit can also run Python *inside* the shell via the embedded Monty runtime —
 enable it with `Bash(python=True)`. That is a different feature from embedding
-Bashkit in your Python app; see the [Python builtin](python.md) guide.
+Bashkit in your Python app; see the [Python builtin](../crates/bashkit/docs/python.md) guide.
 
 ## Examples
 

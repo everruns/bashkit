@@ -85,5 +85,5 @@ access.
 - [`FileSystem`] — filesystem operation contract.
 - [`MountableFs`] — dynamic live mounts with a fallback root filesystem.
 - [`ReadOnlyFs`] — deny mutations for an entire filesystem.
-- [Live mounts](live-mounts.md) — attach and detach filesystems after build.
+- [Live mounts](live_mounts.md) — attach and detach filesystems after build.
 - [VFS specification](https://github.com/everruns/bashkit/blob/main/knowledge/foundations/vfs.md).

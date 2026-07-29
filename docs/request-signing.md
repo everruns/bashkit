@@ -115,7 +115,7 @@ The nonce defends against replay; the expiry window bounds signature validity.
 ## See also
 
 - [Networking & HTTP](networking.md) — the allowlist that gates every request.
-- [Credential injection](credential-injection.md) — attach bearer tokens without
+- [Credential injection](../crates/bashkit/docs/credential-injection.md) — attach bearer tokens without
   exposing them to scripts.
 - Spec: [`knowledge/security/request-signing.md`](https://github.com/everruns/bashkit/blob/main/knowledge/security/request-signing.md).
 - [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421) ·

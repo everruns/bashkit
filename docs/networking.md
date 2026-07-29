@@ -107,13 +107,13 @@ exposes the coarse `--http-allow-all` switch for trusted use.
 
 ## Observing and rewriting requests
 
-HTTP requests flow through the same [hooks](hooks.md) pipeline as the rest of the
+HTTP requests flow through the same [hooks](../crates/bashkit/docs/hooks.md) pipeline as the rest of the
 interpreter, so a host can observe, rewrite, or cancel an outbound request before
 it leaves — useful for logging, header injection, or policy enforcement.
 
 ## See also
 
-- [Credential injection](credential-injection.md) — attach secrets to outbound
+- [Credential injection](../crates/bashkit/docs/credential-injection.md) — attach secrets to outbound
   requests without exposing them to the script.
 - [Request signing](request-signing.md) — cryptographic bot identity for signed
   outbound requests.
