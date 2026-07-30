@@ -354,11 +354,11 @@ from bashkit import Bash, BashError
 bash = Bash()
 analysis = bash.analyze("cat notes.txt | grep -i todo > out.txt")
 
-analysis.command_names          # ["cat", "grep"]
-analysis.commands[1].args       # ["-i", "todo"]
-analysis.redirects[0].path      # "out.txt"
+analysis.command_names  # ["cat", "grep"]
+analysis.commands[1].args  # ["-i", "todo"]
+analysis.redirects[0].path  # "out.txt"
 analysis.redirects[0].is_write  # True
-analysis.is_opaque              # False
+analysis.is_opaque  # False
 ```
 
 Words that are not fully literal report `None` — never a partial string:
@@ -374,17 +374,15 @@ consult it — `c=rm; $c -rf /data` contains no disallowed command name:
 ```python
 READ_ONLY = {"ls", "cat", "head", "grep", "wc", "echo"}
 
+
 def safe_to_run(bash, script):
     try:
-        analysis = bash.analyze(script)   # raises BashError if it does not parse
+        analysis = bash.analyze(script)  # raises BashError if it does not parse
     except BashError:
         return False
     if analysis.is_opaque:
         return False
-    return all(
-        c.is_assignment_only or (c.name is not None and c.name in READ_ONLY)
-        for c in analysis.commands
-    )
+    return all(c.is_assignment_only or (c.name is not None and c.name in READ_ONLY) for c in analysis.commands)
 ```
 
 Commands inside `$(…)`, loops, branches, and function bodies are reported too,

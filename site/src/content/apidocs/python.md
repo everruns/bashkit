@@ -265,6 +265,36 @@ Bash.snapshot_keyed(key: bytes, exclude_filesystem: bool = False, exclude_functi
 
 Serialize interpreter state to HMAC-protected bytes.
 
+### `analyze`
+
+```python
+Bash.analyze(script: str) -> ScriptAnalysis
+```
+
+Analyze a script without running it.
+
+Parses ``script`` with this instance's parser limits and reports the
+commands, redirect targets, and function definitions it statically
+refers to. Nothing is executed and no instance state changes.
+
+Intended for permission prompts and audit logging. **Advisory only** —
+check :attr:`ScriptAnalysis.is_opaque` before treating an allowlist
+match as safe.
+
+**Raises:**
+
+- **`BashError`** — if the script does not parse. Treat that as "deny or prompt", never as "no commands".
+
+Example:
+
+```python
+>>> analysis = Bash().analyze("cat notes.txt | grep -i todo")
+>>> analysis.command_names
+['cat', 'grep']
+>>> analysis.is_opaque
+False
+```
+
 ### `shell_state`
 
 ```python
@@ -783,6 +813,36 @@ BashTool.snapshot_keyed(key: bytes, exclude_filesystem: bool = False, exclude_fu
 ```
 
 Serialize interpreter state to HMAC-protected bytes.
+
+### `analyze`
+
+```python
+BashTool.analyze(script: str) -> ScriptAnalysis
+```
+
+Analyze a script without running it.
+
+Parses ``script`` with this instance's parser limits and reports the
+commands, redirect targets, and function definitions it statically
+refers to. Nothing is executed and no instance state changes.
+
+Intended for permission prompts and audit logging. **Advisory only** —
+check :attr:`ScriptAnalysis.is_opaque` before treating an allowlist
+match as safe.
+
+**Raises:**
+
+- **`BashError`** — if the script does not parse. Treat that as "deny or prompt", never as "no commands".
+
+Example:
+
+```python
+>>> analysis = Bash().analyze("cat notes.txt | grep -i todo")
+>>> analysis.command_names
+['cat', 'grep']
+>>> analysis.is_opaque
+False
+```
 
 ### `shell_state`
 

@@ -114,7 +114,7 @@ export const DOC_META: DocMeta[] = [
     summary: "Inspect a script before running it to drive permission prompts and audit logs.",
     seoTitle: "Analyze a bash script before running it with Bashkit",
     seoDescription:
-      "Use Bashkit analyze() to see which commands, arguments, and file writes a script refers to before executing it — permission prompts, fine-grained keys, and audit logging in Rust, Node, and Python.",
+      "See which commands, arguments, and file writes a script refers to before it runs — permission prompts and audit logs in Rust, Node, and Python.",
     section: "LLM tools",
     editPath: "docs/script-analysis.md",
   },
