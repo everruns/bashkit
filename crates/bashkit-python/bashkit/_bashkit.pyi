@@ -705,6 +705,31 @@ class Bash:
         """Serialize interpreter state to HMAC-protected bytes."""
         ...
 
+    def analyze(self, script: str) -> ScriptAnalysis:
+        """Analyze a script without running it.
+
+        Parses ``script`` with this instance's parser limits and reports the
+        commands, redirect targets, and function definitions it statically
+        refers to. Nothing is executed and no instance state changes.
+
+        Intended for permission prompts and audit logging. **Advisory only** —
+        check :attr:`ScriptAnalysis.is_opaque` before treating an allowlist
+        match as safe.
+
+        Raises:
+            BashError: if the script does not parse. Treat that as "deny or
+                prompt", never as "no commands".
+
+        Example::
+
+            >>> analysis = Bash().analyze("cat notes.txt | grep -i todo")
+            >>> analysis.command_names
+            ['cat', 'grep']
+            >>> analysis.is_opaque
+            False
+        """
+        ...
+
     def shell_state(self) -> ShellState:
         """Capture a read-only shell-state snapshot."""
         ...
@@ -865,6 +890,74 @@ class Bash:
             >>> bash.mount("/mnt/ext", overlay)
             >>> bash.unmount("/mnt/ext")
         """
+        ...
+
+class AnalyzedCommand:
+    """One simple command found by :meth:`Bash.analyze`.
+
+    ``name`` and each entry of ``args`` are ``None`` when the word is not fully
+    literal — a computed name or argument is reported as unknown, never as safe.
+    """
+
+    name: str | None
+    args: list[str | None]
+    context: str
+    """``"direct"``, ``"substitution"``, or ``"function_body"``."""
+    assignments: list[str]
+    is_assignment_only: bool
+    """True for a bare assignment (``FOO=1``), which names no command."""
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the command as a plain dictionary."""
+        ...
+
+class AnalyzedRedirect:
+    """One file redirect found by :meth:`Bash.analyze`."""
+
+    path: str | None
+    mode: str
+    """``"read"``, ``"write"``, or ``"append"``."""
+    is_write: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the redirect as a plain dictionary."""
+        ...
+
+class ScriptAnalysis:
+    """Result of :meth:`Bash.analyze` — what a script statically refers to.
+
+    **Advisory only.** Static analysis cannot see through dynamic dispatch,
+    ``eval``, functions, or aliases; those set :attr:`is_opaque`. Enforcement
+    stays with the builtin registry, the network allowlist, and the mount
+    policy.
+
+    Example::
+
+        >>> analysis = Bash().analyze("echo $(rm -rf /data)")
+        >>> analysis.command_names
+        ['rm', 'echo']
+        >>> analysis.commands[0].context
+        'substitution'
+    """
+
+    commands: list[AnalyzedCommand]
+    redirects: list[AnalyzedRedirect]
+    functions: list[str]
+    command_names: list[str]
+    has_dynamic_commands: bool
+    has_command_substitution: bool
+    has_interpreter_reentry: bool
+    truncated: bool
+    is_opaque: bool
+    """The script hides work: dynamic command, ``eval``/``source``, or
+    truncated. Allowlist checks must treat this as "ask the user"."""
+
+    def commands_named(self, name: str) -> list[AnalyzedCommand]:
+        """Commands invoking ``name``, in source order."""
+        ...
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the analysis as a plain dictionary."""
         ...
 
 class ExecResult:
@@ -1185,6 +1278,31 @@ class BashTool:
         exclude_functions: bool = False,
     ) -> bytes:
         """Serialize interpreter state to HMAC-protected bytes."""
+        ...
+
+    def analyze(self, script: str) -> ScriptAnalysis:
+        """Analyze a script without running it.
+
+        Parses ``script`` with this instance's parser limits and reports the
+        commands, redirect targets, and function definitions it statically
+        refers to. Nothing is executed and no instance state changes.
+
+        Intended for permission prompts and audit logging. **Advisory only** —
+        check :attr:`ScriptAnalysis.is_opaque` before treating an allowlist
+        match as safe.
+
+        Raises:
+            BashError: if the script does not parse. Treat that as "deny or
+                prompt", never as "no commands".
+
+        Example::
+
+            >>> analysis = Bash().analyze("cat notes.txt | grep -i todo")
+            >>> analysis.command_names
+            ['cat', 'grep']
+            >>> analysis.is_opaque
+            False
+        """
         ...
 
     def shell_state(self) -> ShellState:

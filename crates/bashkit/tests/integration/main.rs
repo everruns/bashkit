@@ -76,6 +76,7 @@ pub mod python_integration_tests;
 pub mod python_security_tests;
 pub mod regex_limit_tests;
 pub mod release_profile_tests;
+pub mod script_analysis;
 pub mod script_execution_tests;
 pub mod security_audit_pocs;
 pub mod set_e_and_or_tests;

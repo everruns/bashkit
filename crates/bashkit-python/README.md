@@ -342,6 +342,54 @@ but the next top-level `execute()` / `execute_sync()` clears them before running
 the new command.
 `BashTool` exposes the same `shell_state()` method.
 
+## Script Analysis
+
+`analyze()` reports what a script statically refers to — commands, arguments,
+redirect targets, function definitions — without running it. Use it to decide
+whether a model-produced command needs user approval.
+
+```python
+from bashkit import Bash, BashError
+
+bash = Bash()
+analysis = bash.analyze("cat notes.txt | grep -i todo > out.txt")
+
+analysis.command_names  # ["cat", "grep"]
+analysis.commands[1].args  # ["-i", "todo"]
+analysis.redirects[0].path  # "out.txt"
+analysis.redirects[0].is_write  # True
+analysis.is_opaque  # False
+```
+
+Words that are not fully literal report `None` — never a partial string:
+
+```python
+bash.analyze('rm "$target" /tmp/fixed').commands[0].args  # [None, "/tmp/fixed"]
+```
+
+**Advisory only.** Static analysis cannot see through dynamic dispatch, `eval`,
+functions, or aliases. Those set `is_opaque`, and an allowlist check must
+consult it — `c=rm; $c -rf /data` contains no disallowed command name:
+
+```python
+READ_ONLY = {"ls", "cat", "head", "grep", "wc", "echo"}
+
+
+def safe_to_run(bash, script):
+    try:
+        analysis = bash.analyze(script)  # raises BashError if it does not parse
+    except BashError:
+        return False
+    if analysis.is_opaque:
+        return False
+    return all(c.is_assignment_only or (c.name is not None and c.name in READ_ONLY) for c in analysis.commands)
+```
+
+Commands inside `$(…)`, loops, branches, and function bodies are reported too,
+each tagged with `context` (`"direct"`, `"substitution"`, `"function_body"`), so
+`echo $(rm -rf /)` never looks like a bare `echo`. Enforcement stays with the
+builtin registry, the network allowlist, and the mount policy.
+
 ## BashTool
 
 `BashTool` wraps `Bash` and adds tool-contract metadata for agent frameworks:
@@ -540,6 +588,7 @@ from bashkit.deepagents import BashkitBackend, BashkitMiddleware
 - `mount(vfs_path: str, fs: FileSystem)`
 - `unmount(vfs_path: str)`
 - Direct VFS helpers: `read_file`, `write_file`, `append_file`, `mkdir`, `remove`, `exists`, `stat`, `read_dir`, `ls`, `glob`, `copy`, `rename`, `symlink`, `chmod`, `read_link`
+- `analyze(script: str) -> ScriptAnalysis` — static, pre-execution introspection (see [Script Analysis](#script-analysis))
 
 ### BashTool
 
@@ -551,6 +600,20 @@ from bashkit.deepagents import BashkitBackend, BashkitMiddleware
 - `system_prompt() -> str`
 - `input_schema() -> str`
 - `output_schema() -> str`
+
+### ScriptAnalysis
+
+Returned by `analyze(script)`.
+
+- `commands: list[AnalyzedCommand]` — every simple command, in source order
+- `redirects: list[AnalyzedRedirect]` — `path: str | None`, `mode: "read" | "write" | "append"`, `is_write: bool`
+- `functions: list[str]` — function names the script defines
+- `command_names: list[str]` — distinct statically known names, first-seen order
+- `has_dynamic_commands` / `has_interpreter_reentry` / `has_command_substitution` / `truncated`
+- `is_opaque: bool` — the script hides work; allowlist checks must treat this as "ask"
+- `commands_named(name) -> list[AnalyzedCommand]`, `to_dict() -> dict`
+
+`AnalyzedCommand`: `name: str | None`, `args: list[str | None]`, `context: str`, `assignments: list[str]`, `is_assignment_only: bool`
 
 ### ScriptedTool
 

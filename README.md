@@ -21,6 +21,7 @@ Homepage: [bashkit.sh](https://bashkit.sh)
 - **Multi-tenant isolation** - Each interpreter instance is fully independent
 - **Custom builtins** - Extend with domain-specific commands
 - **LLM tool contract** - `BashTool` with discovery metadata, streaming output, and system prompts
+- **Script analysis** - Inspect commands, arguments, and file writes *before* running, to drive permission prompts ([guide](docs/script-analysis.md))
 - **Snapshotting** - Serialize shell state and VFS contents for checkpoint/resume workflows
 - **Scripted tool orchestration** - Compose ToolDef+callback pairs into multi-tool bash scripts (`scripted_tool` feature)
 - **Async-first** - Built on tokio
@@ -112,6 +113,32 @@ assert_eq!(output.result["stdout"], "hello\nworld\n");
 # Ok(())
 # }
 ```
+
+## Script Analysis
+
+`analyze()` reports what a script statically refers to — commands, arguments,
+redirect targets, functions — without running it. Hosts use it to decide whether
+a model-produced command needs user approval.
+
+```rust
+use bashkit::Bash;
+
+# fn main() -> bashkit::Result<()> {
+let bash = Bash::new();
+let analysis = bash.analyze("cat notes.txt | grep -i todo > out.txt")?;
+
+assert_eq!(analysis.command_names(), ["cat", "grep"]);
+assert_eq!(analysis.redirects[0].path.as_deref(), Some("out.txt"));
+assert!(analysis.redirects[0].mode.is_write());
+assert!(!analysis.is_opaque());
+# Ok(())
+# }
+```
+
+Advisory only: names built at runtime (`$cmd`, `$(echo rm)`), `eval`/`source`,
+and truncated walks report as *unknown* and set `is_opaque()` — an allowlist
+check must consult it. Available in Rust, Node (`bash.analyze()`), and Python
+(`bash.analyze()`). See [docs/script-analysis.md](docs/script-analysis.md).
 
 ## Overview
 

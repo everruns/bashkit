@@ -2143,6 +2143,234 @@ impl ExecResult {
     }
 }
 
+/// One simple command found by `analyze()`.
+///
+/// `name` and each entry of `args` are `None` when the word is not fully
+/// literal — a computed name or argument is reported as unknown, never as safe.
+#[pyclass(from_py_object)]
+#[derive(Clone)]
+pub struct AnalyzedCommand {
+    /// Command name, or `None` when it is not statically known.
+    #[pyo3(get)]
+    pub name: Option<String>,
+    /// One entry per argument; `None` when not fully literal.
+    #[pyo3(get)]
+    pub args: Vec<Option<String>>,
+    /// `"direct"`, `"substitution"`, or `"function_body"`.
+    #[pyo3(get)]
+    pub context: String,
+    /// Names of prefix assignments (`FOO=1 cmd` → `["FOO"]`).
+    #[pyo3(get)]
+    pub assignments: Vec<String>,
+    /// True for a bare assignment (`FOO=1`), which names no command and hides
+    /// nothing — distinguishes it from a genuinely unknown name.
+    #[pyo3(get)]
+    pub is_assignment_only: bool,
+}
+
+#[pymethods]
+impl AnalyzedCommand {
+    fn __repr__(&self) -> String {
+        format!(
+            "AnalyzedCommand(name={:?}, args={:?}, context={:?}, assignments={:?})",
+            self.name, self.args, self.context, self.assignments
+        )
+    }
+
+    /// Return the command as a plain dictionary.
+    fn to_dict(&self) -> PyResult<Py<PyDict>> {
+        Python::attach(|py| {
+            let dict = PyDict::new(py);
+            dict.set_item("name", &self.name)?;
+            dict.set_item("args", &self.args)?;
+            dict.set_item("context", &self.context)?;
+            dict.set_item("assignments", &self.assignments)?;
+            dict.set_item("is_assignment_only", self.is_assignment_only)?;
+            Ok(dict.into())
+        })
+    }
+}
+
+/// One file redirect found by `analyze()`.
+#[pyclass(from_py_object)]
+#[derive(Clone)]
+pub struct AnalyzedRedirect {
+    /// Target path, or `None` when it is not fully literal.
+    #[pyo3(get)]
+    pub path: Option<String>,
+    /// `"read"`, `"write"`, or `"append"`.
+    #[pyo3(get)]
+    pub mode: String,
+    /// True for modes that can create or modify a file.
+    #[pyo3(get)]
+    pub is_write: bool,
+}
+
+#[pymethods]
+impl AnalyzedRedirect {
+    fn __repr__(&self) -> String {
+        format!(
+            "AnalyzedRedirect(path={:?}, mode={:?}, is_write={})",
+            self.path, self.mode, self.is_write
+        )
+    }
+
+    /// Return the redirect as a plain dictionary.
+    fn to_dict(&self) -> PyResult<Py<PyDict>> {
+        Python::attach(|py| {
+            let dict = PyDict::new(py);
+            dict.set_item("path", &self.path)?;
+            dict.set_item("mode", &self.mode)?;
+            dict.set_item("is_write", self.is_write)?;
+            Ok(dict.into())
+        })
+    }
+}
+
+/// Result of `analyze()` — what a script statically refers to.
+///
+/// **Advisory only.** Static analysis cannot see through dynamic dispatch,
+/// `eval`, functions, or aliases; those set `is_opaque`. Enforcement stays with
+/// the builtin registry, the network allowlist, and the mount policy.
+#[pyclass(from_py_object)]
+#[derive(Clone)]
+pub struct ScriptAnalysis {
+    /// Every simple command, in source order.
+    #[pyo3(get)]
+    pub commands: Vec<AnalyzedCommand>,
+    /// Every file redirect target, in source order.
+    #[pyo3(get)]
+    pub redirects: Vec<AnalyzedRedirect>,
+    /// Function names the script defines.
+    #[pyo3(get)]
+    pub functions: Vec<String>,
+    /// Distinct statically known command names, in first-seen order.
+    #[pyo3(get)]
+    pub command_names: Vec<String>,
+    /// Some command name is not statically known.
+    #[pyo3(get)]
+    pub has_dynamic_commands: bool,
+    /// Script contains `$(…)`, backticks, or process substitution.
+    #[pyo3(get)]
+    pub has_command_substitution: bool,
+    /// Script hands a script back to the interpreter: `eval`, `source`, `.`,
+    /// or a nested `bash`/`sh`.
+    #[pyo3(get)]
+    pub has_interpreter_reentry: bool,
+    /// Node budget hit — `commands` and `redirects` are incomplete.
+    #[pyo3(get)]
+    pub truncated: bool,
+    /// The script hides work: dynamic command, `eval`/`source`, or truncated.
+    /// Allowlist checks must treat this as "ask the user".
+    #[pyo3(get)]
+    pub is_opaque: bool,
+}
+
+#[pymethods]
+impl ScriptAnalysis {
+    fn __repr__(&self) -> String {
+        format!(
+            "ScriptAnalysis(command_names={:?}, functions={:?}, redirects={}, is_opaque={})",
+            self.command_names,
+            self.functions,
+            self.redirects.len(),
+            self.is_opaque
+        )
+    }
+
+    /// Commands invoking `name`, in source order.
+    fn commands_named(&self, name: &str) -> Vec<AnalyzedCommand> {
+        self.commands
+            .iter()
+            .filter(|c| c.name.as_deref() == Some(name))
+            .cloned()
+            .collect()
+    }
+
+    /// Return the analysis as a plain dictionary.
+    fn to_dict(&self) -> PyResult<Py<PyDict>> {
+        Python::attach(|py| {
+            let dict = PyDict::new(py);
+            let commands = pyo3::types::PyList::empty(py);
+            for command in &self.commands {
+                commands.append(command.to_dict()?)?;
+            }
+            dict.set_item("commands", commands)?;
+            let redirects = pyo3::types::PyList::empty(py);
+            for redirect in &self.redirects {
+                redirects.append(redirect.to_dict()?)?;
+            }
+            dict.set_item("redirects", redirects)?;
+            dict.set_item("functions", &self.functions)?;
+            dict.set_item("command_names", &self.command_names)?;
+            dict.set_item("has_dynamic_commands", self.has_dynamic_commands)?;
+            dict.set_item("has_command_substitution", self.has_command_substitution)?;
+            dict.set_item("has_interpreter_reentry", self.has_interpreter_reentry)?;
+            dict.set_item("truncated", self.truncated)?;
+            dict.set_item("is_opaque", self.is_opaque)?;
+            Ok(dict.into())
+        })
+    }
+}
+
+impl From<bashkit::ScriptAnalysis> for ScriptAnalysis {
+    fn from(analysis: bashkit::ScriptAnalysis) -> Self {
+        Self {
+            command_names: analysis
+                .command_names()
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+            is_opaque: analysis.is_opaque(),
+            commands: analysis
+                .commands
+                .iter()
+                .map(|c| AnalyzedCommand {
+                    name: c.name.clone(),
+                    args: c.args.clone(),
+                    context: c.context.as_str().to_owned(),
+                    assignments: c.assignments.clone(),
+                    is_assignment_only: c.is_assignment_only(),
+                })
+                .collect(),
+            redirects: analysis
+                .redirects
+                .iter()
+                .map(|r| AnalyzedRedirect {
+                    path: r.path.clone(),
+                    mode: r.mode.as_str().to_owned(),
+                    is_write: r.mode.is_write(),
+                })
+                .collect(),
+            functions: analysis.functions,
+            has_dynamic_commands: analysis.has_dynamic_commands,
+            has_command_substitution: analysis.has_command_substitution,
+            has_interpreter_reentry: analysis.has_interpreter_reentry,
+            truncated: analysis.truncated,
+        }
+    }
+}
+
+/// Analyze a script using an instance's parser limits.
+fn analyze_script(
+    py: Python<'_>,
+    rt: &Arc<Runtime>,
+    inner: &Arc<Mutex<Bash>>,
+    script: &str,
+) -> PyResult<ScriptAnalysis> {
+    let rt = rt.clone();
+    let inner = inner.clone();
+    let script = script.to_owned();
+    py.detach(|| {
+        rt.block_on(async move {
+            let bash = inner.lock().await;
+            bash.analyze(&script)
+                .map(ScriptAnalysis::from)
+                .map_err(|e| BashError::new_err(e.to_string()))
+        })
+    })
+}
+
 /// Shell-facing result returned by Python-backed custom builtins.
 #[pyclass(from_py_object)]
 #[derive(Clone)]
@@ -4254,6 +4482,21 @@ impl PyBash {
         Ok(PyBytes::new(py, &bytes))
     }
 
+    /// Analyze a script without running it.
+    ///
+    /// Parses `script` with this instance's parser limits and reports the
+    /// commands, redirect targets, and function definitions it statically
+    /// refers to. Nothing is executed and no instance state changes.
+    ///
+    /// Intended for permission prompts and audit logging. **Advisory only** —
+    /// check `is_opaque` before treating an allowlist match as safe. Raises
+    /// `BashError` if the script does not parse; treat that as "deny or
+    /// prompt", never as "no commands".
+    fn analyze(&self, py: Python<'_>, script: &str) -> PyResult<ScriptAnalysis> {
+        self.reject_external_handler_reentry()?;
+        analyze_script(py, &self.rt, &self.inner, script)
+    }
+
     /// Capture a read-only shell-state snapshot for prompt rendering and inspection.
     fn shell_state(&self, py: Python<'_>) -> PyResult<ShellState> {
         self.reject_external_handler_reentry()?;
@@ -5086,6 +5329,20 @@ impl BashTool {
         Ok(PyBytes::new(py, &bytes))
     }
 
+    /// Analyze a script without running it.
+    ///
+    /// Parses `script` with this instance's parser limits and reports the
+    /// commands, redirect targets, and function definitions it statically
+    /// refers to. Nothing is executed and no instance state changes.
+    ///
+    /// Intended for permission prompts and audit logging. **Advisory only** —
+    /// check `is_opaque` before treating an allowlist match as safe. Raises
+    /// `BashError` if the script does not parse; treat that as "deny or
+    /// prompt", never as "no commands".
+    fn analyze(&self, py: Python<'_>, script: &str) -> PyResult<ScriptAnalysis> {
+        analyze_script(py, &self.rt, &self.inner, script)
+    }
+
     /// Capture a read-only shell-state snapshot for prompt rendering and inspection.
     fn shell_state(&self, py: Python<'_>) -> PyResult<ShellState> {
         capture_shell_state(py, &self.rt, &self.inner)
@@ -5868,6 +6125,9 @@ fn _bashkit(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ShellState>()?;
     m.add_class::<BuiltinResult>()?;
     m.add_class::<ExecResult>()?;
+    m.add_class::<ScriptAnalysis>()?;
+    m.add_class::<AnalyzedCommand>()?;
+    m.add_class::<AnalyzedRedirect>()?;
     m.add_class::<PyBuiltinContext>()?;
     m.add_class::<PyFileSystem>()?;
     m.add("BashError", m.py().get_type::<BashError>())?;

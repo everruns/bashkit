@@ -109,6 +109,16 @@ export const DOC_META: DocMeta[] = [
     editPath: "docs/llm-tools.md",
   },
   {
+    slug: "script-analysis",
+    title: "Script analysis",
+    summary: "Inspect a script before running it to drive permission prompts and audit logs.",
+    seoTitle: "Analyze a bash script before running it with Bashkit",
+    seoDescription:
+      "See which commands, arguments, and file writes a script refers to before it runs — permission prompts and audit logs in Rust, Node, and Python.",
+    section: "LLM tools",
+    editPath: "docs/script-analysis.md",
+  },
+  {
     slug: "scripted-tools",
     title: "Scripted tool orchestration",
     summary: "Compose many tools into one bash-scriptable tool the LLM calls once.",

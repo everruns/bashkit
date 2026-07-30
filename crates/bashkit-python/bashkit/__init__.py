@@ -44,6 +44,8 @@ Framework integrations::
 """
 
 from bashkit._bashkit import (
+    AnalyzedCommand,
+    AnalyzedRedirect,
     Bash,
     BashError,
     BashTool,
@@ -51,6 +53,7 @@ from bashkit._bashkit import (
     BuiltinResult,
     ExecResult,
     FileSystem,
+    ScriptAnalysis,
     ScriptedTool,
     ShellState,
     create_langchain_tool_spec,
@@ -59,6 +62,8 @@ from bashkit._bashkit import (
 
 __version__ = "0.1.2"
 __all__ = [
+    "AnalyzedCommand",
+    "AnalyzedRedirect",
     "Bash",
     "BashError",
     "BuiltinContext",
@@ -67,6 +72,7 @@ __all__ = [
     "ExecResult",
     "FileSystem",
     "ShellState",
+    "ScriptAnalysis",
     "ScriptedTool",
     "create_langchain_tool_spec",
     "get_version",

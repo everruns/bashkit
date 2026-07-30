@@ -41,6 +41,29 @@ Safe to call at any time — the new builtin is visible to the next
 `execute*()` invocation with no interpreter rebuild or VFS disturbance.
 Survives `reset()`.
 
+### `analyze`
+
+```typescript
+bash.analyze(script: string): ScriptAnalysis
+```
+
+Analyze a script without running it.
+
+Parses `script` with this instance's parser limits and reports the
+commands, redirect targets, and function definitions it statically refers
+to. Nothing is executed and no instance state changes.
+
+Intended for permission prompts and audit logging. **Advisory only** —
+static analysis cannot see through dynamic dispatch, `eval`, functions, or
+aliases, so check `isOpaque` before treating an allowlist match as safe.
+
+```typescript
+const analysis = bash.analyze("cat notes.txt | grep -i todo");
+if (!analysis.isOpaque && analysis.commandNames.every(isReadOnly)) {
+  await bash.execute(script);
+}
+```
+
 ### `appendFile`
 
 ```typescript
@@ -406,6 +429,29 @@ bashTool.addBuiltin(name: string, callback: BuiltinCallback): void
 ```
 
 Register a JS callback as a custom builtin. See `Bash.addBuiltin`.
+
+### `analyze`
+
+```typescript
+bashTool.analyze(script: string): ScriptAnalysis
+```
+
+Analyze a script without running it.
+
+Parses `script` with this instance's parser limits and reports the
+commands, redirect targets, and function definitions it statically refers
+to. Nothing is executed and no instance state changes.
+
+Intended for permission prompts and audit logging. **Advisory only** —
+static analysis cannot see through dynamic dispatch, `eval`, functions, or
+aliases, so check `isOpaque` before treating an allowlist match as safe.
+
+```typescript
+const analysis = bash.analyze("cat notes.txt | grep -i todo");
+if (!analysis.isOpaque && analysis.commandNames.every(isReadOnly)) {
+  await bash.execute(script);
+}
+```
 
 ### `appendFile`
 
@@ -1021,6 +1067,51 @@ getVersion(): string
 
 Get the bashkit version string.
 
+## AnalyzedCommand
+
+One simple command found by `analyze()`.
+
+`name` and each entry of `args` are `null` when the word is not fully
+literal — a computed name or argument is reported as unknown, never as safe.
+
+### Fields
+
+- **`args`** — `(null | string)[]`
+
+  One entry per argument; `null` when not fully literal.
+- **`assignments`** — `string[]`
+
+  Names of prefix assignments (`FOO=1 cmd` → `["FOO"]`).
+- **`context`** — `string`
+
+  `"direct"`, `"substitution"`, or `"function_body"`.
+- **`isAssignmentOnly`** — `boolean`
+
+  True for a bare assignment (`FOO=1`), which names no command and hides
+  nothing — distinguishes it from a genuinely unknown name.
+- **`name?`** — `null | string`
+
+  Command name, or `null` when it is not statically known.
+
+  `Option<Option<_>>` so the field is always present and explicitly
+  `null` — an omitted property would read as "no such field".
+
+## AnalyzedRedirect
+
+One file redirect found by `analyze()`.
+
+### Fields
+
+- **`isWrite`** — `boolean`
+
+  True for modes that can create or modify a file.
+- **`mode`** — `string`
+
+  `"read"`, `"write"`, or `"append"`.
+- **`path?`** — `null | string`
+
+  Target path, or `null` when it is not fully literal.
+
 ## BashOptions
 
 Options for creating a Bash or BashTool instance.
@@ -1295,6 +1386,46 @@ not both. `blockPrivateIps` defaults to `true`.
 
 - **`stderr`** — `string`
 - **`stdout`** — `string`
+
+## ScriptAnalysis
+
+Result of `analyze()` — what a script statically refers to.
+
+**Advisory only.** Static analysis cannot see through dynamic dispatch,
+`eval`, functions, or aliases; those set `isOpaque`. Enforcement stays with
+the builtin registry, the network allowlist, and the mount policy.
+
+### Fields
+
+- **`commandNames`** — `string[]`
+
+  Distinct statically known command names, in first-seen order.
+- **`commands`** — `AnalyzedCommand[]`
+
+  Every simple command, in source order.
+- **`functions`** — `string[]`
+
+  Function names the script defines.
+- **`hasCommandSubstitution`** — `boolean`
+
+  Script contains `$(…)`, backticks, or process substitution.
+- **`hasDynamicCommands`** — `boolean`
+
+  Some command name is not statically known.
+- **`hasInterpreterReentry`** — `boolean`
+
+  Script hands a script back to the interpreter: `eval`, `source`, `.`,
+  or a nested `bash`/`sh`.
+- **`isOpaque`** — `boolean`
+
+  The script hides work: dynamic command, `eval`/`source`, or truncated.
+  Allowlist checks must treat this as "ask the user".
+- **`redirects`** — `AnalyzedRedirect[]`
+
+  Every file redirect target, in source order.
+- **`truncated`** — `boolean`
+
+  Node budget hit — `commands` and `redirects` are incomplete.
 
 ## ScriptedToolOptions
 

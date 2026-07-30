@@ -12,7 +12,12 @@ import type {
   NetworkCredentialPlaceholder,
   CredentialHeader,
   ShellState,
+  ScriptAnalysis,
+  AnalyzedCommand,
+  AnalyzedRedirect,
 } from "./index.cjs";
+
+export type { ScriptAnalysis, AnalyzedCommand, AnalyzedRedirect };
 
 const require = createRequire(import.meta.url);
 const native = require("./index.cjs");
@@ -888,7 +893,10 @@ export class Bash {
    * same instance from `onOutput` via `execute*`, `readFile`, `fs()`, etc.
    */
   executeSync(commands: string, options?: ExecuteOptions): ExecResult {
-    const inputLimitResult = inputTooLargeExecResult(commands, this.maxInputBytes);
+    const inputLimitResult = inputTooLargeExecResult(
+      commands,
+      this.maxInputBytes,
+    );
     if (inputLimitResult) {
       return inputLimitResult;
     }
@@ -999,6 +1007,32 @@ export class Bash {
       throw new BashError(result);
     }
     return result;
+  }
+
+  /**
+   * Analyze a script without running it.
+   *
+   * Parses `script` with this instance's parser limits and reports the
+   * commands, redirect targets, and function definitions it statically refers
+   * to. Nothing is executed and no instance state changes.
+   *
+   * Intended for permission prompts and audit logging. **Advisory only** —
+   * static analysis cannot see through dynamic dispatch, `eval`, functions, or
+   * aliases, so check `isOpaque` before treating an allowlist match as safe.
+   *
+   * @throws if the script does not parse — treat that as "deny or prompt",
+   * never as "no commands".
+   *
+   * @example
+   * ```typescript
+   * const analysis = bash.analyze("cat notes.txt | grep -i todo");
+   * if (!analysis.isOpaque && analysis.commandNames.every(isReadOnly)) {
+   *   await bash.execute(script);
+   * }
+   * ```
+   */
+  analyze(script: string): ScriptAnalysis {
+    return this.native.analyze(script);
   }
 
   /**
@@ -1307,7 +1341,10 @@ export class BashTool {
    * via `execute*`, `readFile`, `fs()`, etc.
    */
   executeSync(commands: string, options?: ExecuteOptions): ExecResult {
-    const inputLimitResult = inputTooLargeExecResult(commands, this.maxInputBytes);
+    const inputLimitResult = inputTooLargeExecResult(
+      commands,
+      this.maxInputBytes,
+    );
     if (inputLimitResult) {
       return inputLimitResult;
     }
@@ -1410,6 +1447,32 @@ export class BashTool {
       throw new BashError(result);
     }
     return result;
+  }
+
+  /**
+   * Analyze a script without running it.
+   *
+   * Parses `script` with this instance's parser limits and reports the
+   * commands, redirect targets, and function definitions it statically refers
+   * to. Nothing is executed and no instance state changes.
+   *
+   * Intended for permission prompts and audit logging. **Advisory only** —
+   * static analysis cannot see through dynamic dispatch, `eval`, functions, or
+   * aliases, so check `isOpaque` before treating an allowlist match as safe.
+   *
+   * @throws if the script does not parse — treat that as "deny or prompt",
+   * never as "no commands".
+   *
+   * @example
+   * ```typescript
+   * const analysis = bash.analyze("cat notes.txt | grep -i todo");
+   * if (!analysis.isOpaque && analysis.commandNames.every(isReadOnly)) {
+   *   await bash.execute(script);
+   * }
+   * ```
+   */
+  analyze(script: string): ScriptAnalysis {
+    return this.native.analyze(script);
   }
 
   /**

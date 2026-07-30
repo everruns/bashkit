@@ -378,6 +378,55 @@ Use `execute()` (async). If the script invokes a custom builtin under
 deadlocking — the JS event loop is blocked while the synchronous call is
 in flight, so the underlying `Promise<string>` callback could never run.
 
+## Script Analysis
+
+`analyze()` reports what a script statically refers to — commands, arguments,
+redirect targets, function definitions — without running it. Use it to decide
+whether a model-produced command needs user approval.
+
+```typescript
+const analysis = bash.analyze("cat notes.txt | grep -i todo > out.txt");
+
+analysis.commandNames;          // ["cat", "grep"]
+analysis.commands[1].args;      // ["-i", "todo"]
+analysis.redirects[0].path;     // "out.txt"
+analysis.redirects[0].isWrite;  // true
+analysis.isOpaque;              // false
+```
+
+Words that are not fully literal report `null` — never a partial string:
+
+```typescript
+const a = bash.analyze('rm "$target" /tmp/fixed');
+a.commands[0].args; // [null, "/tmp/fixed"]
+```
+
+**Advisory only.** Static analysis cannot see through dynamic dispatch, `eval`,
+functions, or aliases. Those set `isOpaque`, and an allowlist check must consult
+it — `c=rm; $c -rf /data` contains no disallowed command name:
+
+```typescript
+const READ_ONLY = new Set(["ls", "cat", "head", "grep", "wc", "echo"]);
+
+function safeToRun(script: string): boolean {
+  let analysis;
+  try {
+    analysis = bash.analyze(script);   // throws if the script does not parse
+  } catch {
+    return false;
+  }
+  if (analysis.isOpaque) return false;
+  return analysis.commands.every(
+    (c) => c.isAssignmentOnly || (c.name != null && READ_ONLY.has(c.name)),
+  );
+}
+```
+
+Commands inside `$(…)`, loops, branches, and function bodies are reported too,
+each tagged with `context` (`"direct"`, `"substitution"`, `"function_body"`), so
+`echo $(rm -rf /)` never looks like a bare `echo`. Enforcement stays with the
+builtin registry, the network allowlist, and the mount policy.
+
 ## Snapshot / Restore
 
 State snapshots are available on both `Bash` and `BashTool` instances.
@@ -541,6 +590,7 @@ import {
 - `Bash.fromSnapshot(data, options?)` / `Bash.fromSnapshotKeyed(data, key)`
 - Direct VFS helpers: `readFile`, `writeFile`, `appendFile`, `mkdir`, `remove`, `exists`, `stat`, `readDir`, `ls`, `glob`, `mount`, `unmount`, `fs`
 - `shellState()` — lightweight inspection snapshot (variables, env, cwd, arrays, aliases, traps)
+- `analyze(script)` — static, pre-execution introspection (see [Script Analysis](#script-analysis))
 
 ### BashTool
 
@@ -583,6 +633,19 @@ import {
 - `externalFunctions?: string[]`
 - `customBuiltins?: Record<string, (ctx: BuiltinContext) => string | Promise<string>>` — JS callbacks registered as bash builtins (see [Custom Builtins](#custom-builtins))
 - `network?: NetworkOptions` — outbound HTTP configuration (see [Network](#network))
+
+### ScriptAnalysis
+
+Returned by `analyze(script)`.
+
+- `commands: AnalyzedCommand[]` — every simple command, in source order
+- `redirects: AnalyzedRedirect[]` — `{ path: string | null, mode: "read" | "write" | "append", isWrite: boolean }`
+- `functions: string[]` — function names the script defines
+- `commandNames: string[]` — distinct statically known names, first-seen order
+- `hasDynamicCommands: boolean` / `hasInterpreterReentry: boolean` / `hasCommandSubstitution: boolean` / `truncated: boolean`
+- `isOpaque: boolean` — the script hides work; allowlist checks must treat this as "ask"
+
+`AnalyzedCommand`: `{ name: string | null, args: Array<string | null>, context: "direct" | "substitution" | "function_body", assignments: string[], isAssignmentOnly: boolean }`
 
 ### BuiltinContext
 

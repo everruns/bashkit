@@ -4,6 +4,9 @@
 
 * **Enforcement**: Added `scripts/check_doc_links.py` (`just check-doc-links`, wired into `just check` and CI) to reject dangling relative markdown links in `docs/`, `crates/bashkit/docs/`, and root markdown — the site's basename-matching link rewriter hid 14 of them from every existing verifier. Rule and rationale recorded in [Documentation](operations/documentation.md) and [Maintenance](operations/maintenance.md).
 * **Decision**: Page titles/descriptions stay in `DOC_META`; markdown frontmatter is rejected for both doc trees so rustdoc `include_str!` embedding stays clean.
+* **Creation**: [Script Analysis](integrations/script-analysis.md) — `analyze()` in Rust, Node, and Python reports the commands, arguments, redirect targets, and function definitions a script statically refers to, so hosts can gate execution on a permission prompt without depending on parser internals. Contract, decisions (literal-or-null, substitutions walked, flat source order, node budget), and verification pointers live in the concept.
+* **Threat**: Added TM-ESC-032 (host permission gate bypass via static analysis) to [Threat Model](security/threat-model.md) and the public `crates/bashkit/docs/threat-model.md`. `analyze()` is advisory; `is_opaque()` and the `before_tool` hook are the documented mitigations. Backed by proptest invariants in `tests/proptest_security.rs` and the `analyze_fuzz` libFuzzer target.
+* **Limitation**: Recorded `<>` (read-write redirect) as unimplemented in [Limitations](operations/limitations.md) — the parser rejects the operator, which is why `ScriptAnalysis` has no read-write redirect mode. Evidence: skipped spec test `readwrite_redirect_opens_file`.
 
 ## 2026-07-26
 

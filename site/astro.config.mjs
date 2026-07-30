@@ -31,6 +31,7 @@ const DOC_LINKS = new Map([
   ["networking.md", "/docs/networking/"],
   ["python.md", "/docs/python/"],
   ["request-signing.md", "/docs/request-signing/"],
+  ["script-analysis.md", "/docs/script-analysis/"],
   ["scripted-tools.md", "/docs/scripted-tools/"],
   ["security.md", "/docs/security/"],
   ["snapshotting.md", "/docs/snapshotting/"],

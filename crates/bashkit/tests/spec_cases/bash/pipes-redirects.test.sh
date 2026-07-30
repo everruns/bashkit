@@ -237,3 +237,13 @@ END
 ### expect
 value is expanded
 ### end
+
+### readwrite_redirect_opens_file
+### skip: `<>` (read-write fd) is not implemented — parser rejects the operator
+# Bash opens the file read-write on fd 0 without truncating it.
+echo start > /tmp/rw.txt
+exec 3<> /tmp/rw.txt
+cat <&3
+### expect
+start
+### end

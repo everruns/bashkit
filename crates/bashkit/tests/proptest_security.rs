@@ -471,3 +471,150 @@ proptest! {
         }));
     }
 }
+
+// ============================================================================
+// Static script analysis (TM-ESC-032)
+//
+// Hosts gate execution on `analyze()` output, so the invariants that matter
+// are: it never panics, it never invents a command name, and anything it
+// cannot resolve statically must surface as opaque rather than as safe.
+// ============================================================================
+
+/// Scripts built only from statically-named, side-effect-free commands.
+/// Every dispatched command name must appear in the analysis.
+fn static_script_strategy() -> impl Strategy<Value = String> {
+    let atom = prop_oneof![
+        Just("echo hello".to_string()),
+        Just("true".to_string()),
+        Just("printf '%s' x".to_string()),
+        Just("echo a | grep a".to_string()),
+        Just("basename /x/y".to_string()),
+        Just("echo one > /tmp/p_a".to_string()),
+        Just("cat /tmp/p_a".to_string()),
+        Just("if true; then echo t; fi".to_string()),
+        Just("for i in 1 2; do echo $i; done".to_string()),
+        Just("echo $(basename /x/y)".to_string()),
+        Just("V=1 echo $V".to_string()),
+    ];
+    proptest::collection::vec(atom, 1..6).prop_map(|parts| parts.join("; "))
+}
+
+/// Scripts whose effective command is only known at runtime.
+fn opaque_script_strategy() -> impl Strategy<Value = String> {
+    prop_oneof![
+        Just("c=echo; $c hi".to_string()),
+        Just("$(echo echo) hi".to_string()),
+        Just("eval \"echo hi\"".to_string()),
+        Just("bash -c 'echo hi'".to_string()),
+        Just("sh -c 'echo hi'".to_string()),
+        Just("bash /tmp/nope.sh".to_string()),
+        Just(". /tmp/nope.sh".to_string()),
+        Just("source /tmp/nope.sh".to_string()),
+        Just("${cmd} hi".to_string()),
+    ]
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(32))]
+
+    /// Analysis must never panic, whatever the input.
+    #[test]
+    fn analyze_never_panics(input in bash_input_strategy()) {
+        let _ = bashkit::analysis::analyze(&input);
+    }
+
+    /// Multi-byte input must not trip byte/char index handling.
+    #[test]
+    fn analyze_never_panics_on_multibyte(input in arithmetic_multibyte_strategy()) {
+        let _ = bashkit::analysis::analyze(&input);
+    }
+
+    /// Analysis is pure: same input, same result.
+    #[test]
+    fn analyze_is_deterministic(input in bash_input_strategy()) {
+        let first = bashkit::analysis::analyze(&input);
+        let second = bashkit::analysis::analyze(&input);
+        prop_assert_eq!(first.is_ok(), second.is_ok());
+        if let (Ok(a), Ok(b)) = (first, second) {
+            prop_assert_eq!(a, b);
+        }
+    }
+
+    /// A statically known name is quoted from the source, never invented.
+    #[test]
+    fn analyze_never_invents_a_command_name(input in bash_input_strategy()) {
+        if let Ok(analysis) = bashkit::analysis::analyze(&input) {
+            for command in &analysis.commands {
+                if let Some(name) = command.name.as_deref() {
+                    prop_assert!(input.contains(name));
+                }
+            }
+        }
+    }
+
+    /// Output stays inside the node budget, and hitting it sets `truncated`.
+    #[test]
+    fn analyze_respects_the_node_budget(n in 1..600usize) {
+        let script = "echo x > /tmp/f;".repeat(n);
+        let analysis = bashkit::analysis::analyze(&script).expect("parses");
+        let nodes = analysis.commands.len() + analysis.redirects.len();
+        prop_assert!(nodes <= bashkit::analysis::MAX_ANALYSIS_NODES);
+        prop_assert_eq!(
+            analysis.truncated,
+            nodes == bashkit::analysis::MAX_ANALYSIS_NODES
+        );
+        prop_assert!(!analysis.truncated || analysis.is_opaque());
+    }
+
+    /// The load-bearing invariant: for a transparent script, every command the
+    /// interpreter actually dispatches was reported by the analysis. A host
+    /// that allowlists `command_names()` must not be surprised at runtime.
+    #[test]
+    fn analysis_covers_every_dispatched_command(script in static_script_strategy()) {
+        thread_local! {
+            static RT: tokio::runtime::Runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+        }
+        let dispatched = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = dispatched.clone();
+        let mut bash = Bash::builder()
+            .limits(
+                ExecutionLimits::new()
+                    .max_commands(200)
+                    .timeout(Duration::from_millis(500)),
+            )
+            .before_tool(Box::new(move |event: bashkit::hooks::ToolEvent| {
+                sink.lock().expect("lock").push(event.name.clone());
+                bashkit::hooks::HookAction::Continue(event)
+            }))
+            .build();
+
+        let analysis = bash.analyze(&script).expect("generated script parses");
+        prop_assert!(!analysis.is_opaque(), "generator emits transparent scripts only");
+
+        RT.with(|rt| rt.block_on(async {
+            let _ = bash.exec(&script).await;
+        }));
+
+        let names = analysis.command_names();
+        for ran in dispatched.lock().expect("lock").iter() {
+            prop_assert!(
+                names.contains(&ran.as_str()),
+                "`{}` ran but analysis reported {:?} for `{}`",
+                ran,
+                names,
+                script
+            );
+        }
+    }
+
+    /// Scripts that resolve their command at runtime must never analyze as
+    /// transparent — that is the bypass TM-ESC-032 guards against.
+    #[test]
+    fn runtime_resolved_scripts_are_opaque(script in opaque_script_strategy()) {
+        let analysis = bashkit::analysis::analyze(&script).expect("parses");
+        prop_assert!(analysis.is_opaque(), "`{}` must not analyze as transparent", script);
+    }
+}
