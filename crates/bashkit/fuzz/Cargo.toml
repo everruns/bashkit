@@ -33,6 +33,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "analyze_fuzz"
+path = "fuzz_targets/analyze_fuzz.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "lexer_fuzz"
 path = "fuzz_targets/lexer_fuzz.rs"
 test = false

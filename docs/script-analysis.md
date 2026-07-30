@@ -48,7 +48,7 @@ A script's real behavior is only knowable at runtime. Static analysis cannot see
 through:
 
 - dynamic dispatch — `$cmd`, `${arr[0]}`, `$(echo rm) -rf /`
-- interpreter re-entry — `eval`, `source`, `.`, `bash -c '…'`
+- interpreter re-entry — `eval`, `source`, `.`, and any nested `bash`/`sh`
 - functions and aliases that rebind a name
 - arguments built from variables
 
@@ -181,7 +181,8 @@ mount-boundary check, means "ask".
 Commands that run *other* commands named in their arguments — `xargs`, `env`,
 `timeout`, `find -exec`, `awk 'system(…)'` — analyze as ordinary commands and
 are not flagged. If you allowlist one of them, treat its arguments as commands
-yourself. `bash -c` and `sh -c` *are* flagged, via `hasEval` / `has_eval`.
+yourself. Nested shells (`bash`/`sh`, with `-c` text or a script file) *are*
+flagged, via `hasInterpreterReentry` / `has_interpreter_reentry`.
 
 ## Audit logging
 

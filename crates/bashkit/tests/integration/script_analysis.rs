@@ -85,9 +85,10 @@ fn rejects_shell_re_entry() {
     // commands are invisible to this analysis even when it is a literal.
     assert!(!allowed("bash -c 'rm -rf /data'", READ_ONLY));
     assert!(!allowed("sh -c \"$payload\"", READ_ONLY));
-    assert!(analyze("bash -c 'cat x'").has_eval);
-    // Running a script file is an ordinary command — the file is not inline text.
-    assert!(!analyze("bash /tmp/setup.sh").has_eval);
+    assert!(analyze("bash -c 'cat x'").has_interpreter_reentry);
+    // A script file hides its commands just as well as inline `-c` text.
+    assert!(!allowed("bash /tmp/setup.sh", READ_ONLY));
+    assert!(analyze("bash /tmp/setup.sh").has_interpreter_reentry);
 }
 
 #[test]

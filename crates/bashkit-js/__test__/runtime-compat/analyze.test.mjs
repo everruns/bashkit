@@ -33,13 +33,13 @@ describe("analyze", () => {
 
   it("flags eval as opaque", () => {
     const analysis = new Bash().analyze('eval "$payload"');
-    assert.equal(analysis.hasEval, true);
+    assert.equal(analysis.hasInterpreterReentry, true);
     assert.equal(analysis.isOpaque, true);
   });
 
   it("flags shell -c as opaque", () => {
     const analysis = new Bash().analyze("bash -c 'rm -rf /data'");
-    assert.equal(analysis.hasEval, true);
+    assert.equal(analysis.hasInterpreterReentry, true);
     assert.equal(analysis.isOpaque, true);
   });
 

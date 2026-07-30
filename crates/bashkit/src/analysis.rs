@@ -135,9 +135,10 @@ pub struct ScriptAnalysis {
     pub has_dynamic_commands: bool,
     /// Script contains `$(…)`, backticks, or process substitution.
     pub has_command_substitution: bool,
-    /// Script hands text back to the interpreter: `eval`, `source`, `.`, or
-    /// `bash`/`sh -c`. The payload's commands are not visible in `commands`.
-    pub has_eval: bool,
+    /// Script hands a script back to the interpreter: `eval`, `source`, `.`,
+    /// or a nested `bash`/`sh`. The payload's commands are not visible in
+    /// `commands`.
+    pub has_interpreter_reentry: bool,
     /// Node budget hit — `commands` and `redirects` are incomplete.
     pub truncated: bool,
 }
@@ -165,13 +166,13 @@ impl ScriptAnalysis {
     }
 
     /// True when the script hides work from static analysis: a dynamic command
-    /// name, an interpreter re-entry (`eval`/`source`/`bash -c`), or a
+    /// name, an interpreter re-entry (`eval`/`source`/nested `bash`), or a
     /// truncated walk.
     ///
     /// Hosts gating on an allowlist should prompt (or deny) whenever this is
     /// true, regardless of what `commands` contains.
     pub fn is_opaque(&self) -> bool {
-        self.has_dynamic_commands || self.has_eval || self.truncated
+        self.has_dynamic_commands || self.has_interpreter_reentry || self.truncated
     }
 }
 
@@ -201,23 +202,23 @@ pub(crate) fn analyze_ast(script: &Script) -> ScriptAnalysis {
     walker.out
 }
 
-/// True when a command hands text back to the interpreter: `eval`, `source`,
-/// `.`, or `bash`/`sh -c`.
+/// True when a command hands a script back to the interpreter: `eval`,
+/// `source`, `.`, or a nested `bash`/`sh`.
 ///
-/// The payload is a script, so nothing about the commands it runs is visible in
-/// this analysis — even when the payload itself is a literal. Wrapper commands
-/// that run *other commands* named in their arguments (`xargs`, `env`,
-/// `timeout`, `find -exec`) are **not** covered; a host that allowlists those
-/// must treat their arguments as commands itself.
-fn is_interpreter_reentry(name: Option<&str>, args: &[Word]) -> bool {
-    match name {
-        Some("eval") | Some("source") | Some(".") => true,
-        Some("bash") | Some("sh") => args
-            .iter()
-            .filter_map(literal_word)
-            .any(|arg| arg == "-c" || (arg.starts_with('-') && arg.contains('c'))),
-        _ => false,
-    }
+/// The payload is a script — inline text (`bash -c '…'`), a file, or stdin — so
+/// the commands it runs are invisible here even when the payload itself is a
+/// literal. Every nested-shell invocation counts, rather than sniffing for
+/// `-c`: flag-sniffing misses `bash $flags` and `bash script.sh`, and erring
+/// toward "opaque" only ever costs a host one extra prompt.
+///
+/// Wrapper commands that run *other commands* named in their arguments
+/// (`xargs`, `env`, `timeout`, `find -exec`) are **not** covered; a host that
+/// allowlists those must treat their arguments as commands itself.
+fn is_interpreter_reentry(name: Option<&str>) -> bool {
+    matches!(
+        name,
+        Some("eval") | Some("source") | Some(".") | Some("bash") | Some("sh")
+    )
 }
 
 /// Best-effort literal text of a word: `Some` only when every part is literal.
@@ -363,8 +364,8 @@ impl Walker {
         if name.is_none() && !empty_name {
             self.out.has_dynamic_commands = true;
         }
-        if is_interpreter_reentry(name.as_deref(), &simple.args) {
-            self.out.has_eval = true;
+        if is_interpreter_reentry(name.as_deref()) {
+            self.out.has_interpreter_reentry = true;
         }
 
         self.out.commands.push(AnalyzedCommand {
@@ -580,28 +581,40 @@ mod tests {
     }
 
     #[test]
-    fn eval_family_is_flagged() {
+    fn eval_and_source_are_flagged() {
         for script in ["eval \"$x\"", "source /tmp/x.sh", ". /tmp/x.sh"] {
             let analysis = a(script);
-            assert!(analysis.has_eval, "{script} should set has_eval");
+            assert!(
+                analysis.has_interpreter_reentry,
+                "{script} should set has_interpreter_reentry"
+            );
             assert!(analysis.is_opaque());
         }
-        assert!(!a("echo eval").has_eval);
+        assert!(!a("echo eval").has_interpreter_reentry);
     }
 
     #[test]
-    fn interpreter_reentry_is_flagged() {
+    fn nested_shell_is_flagged() {
         for script in [
             "bash -c 'rm -rf /'",
             "sh -c \"$payload\"",
             "bash --noprofile -c 'x'",
+            // A script file or a computed flag hides commands just as well as
+            // inline `-c` text, so every nested shell counts.
+            "bash script.sh",
+            "sh /tmp/setup.sh",
+            "bash $flags",
         ] {
-            assert!(a(script).has_eval, "{script} should set has_eval");
+            assert!(
+                a(script).has_interpreter_reentry,
+                "{script} should set has_interpreter_reentry"
+            );
             assert!(a(script).is_opaque(), "{script} should be opaque");
         }
-        // A shell invoked without a command payload is an ordinary command.
-        assert!(!a("bash script.sh").has_eval);
-        assert!(!a("sh /tmp/setup.sh").has_eval);
+        // Only the shell itself — a command whose *argument* mentions one is
+        // an ordinary command.
+        assert!(!a("echo bash -c hi").has_interpreter_reentry);
+        assert!(!a("cat /usr/bin/bash").has_interpreter_reentry);
     }
 
     #[test]

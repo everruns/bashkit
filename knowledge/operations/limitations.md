@@ -87,6 +87,7 @@ Target: IEEE 1003.1-2024 Shell Command Language.
 | Feature | Priority | Notes |
 |---------|----------|-------|
 | History expansion | Out of scope | Interactive only |
+| `<>` read-write redirect | Low | Parser rejects the operator; `ScriptAnalysis` therefore has no read-write mode (`readwrite_redirect_opens_file`, skipped) |
 
 ### Partially Implemented
 

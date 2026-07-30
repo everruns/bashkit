@@ -49,7 +49,7 @@ A script's effective behavior is only knowable at runtime. Static analysis
 cannot see through:
 
 - dynamic dispatch — `$cmd foo`, `${arr[0]} foo`, `$(echo rm) -rf /`
-- interpreter re-entry — `eval`, `source`, `.`, `bash -c '…'`, `sh -c "$x"`
+- interpreter re-entry — `eval`, `source`, `.`, and any nested `bash`/`sh` (inline `-c` text, a script file, or stdin)
 - shell functions and aliases that rebind a name
 - wrapper commands that run other commands named in their arguments —
   `xargs`, `env`, `timeout`, `find -exec`, `awk 'system(…)'`. These are **not**
@@ -59,7 +59,7 @@ cannot see through:
 
 The API reports these as *unknown*, never as *safe*: a command whose name is
 not statically determined has `name == null`, and the script-level
-`has_dynamic_commands` / `has_eval` flags are set. A host that treats "no
+`has_dynamic_commands` / `has_interpreter_reentry` flags are set. A host that treats "no
 recognized dangerous command" as "safe" without checking those flags builds a
 bypassable gate.
 
@@ -95,7 +95,7 @@ anything.
 | `functions` | `string[]` | Function names defined by the script |
 | `has_dynamic_commands` | `bool` | Some command name is not statically known |
 | `has_command_substitution` | `bool` | Script contains `$(…)`, backticks, or process substitution |
-| `has_eval` | `bool` | Script hands text back to the interpreter: `eval`, `source`, `.`, or `bash`/`sh -c` |
+| `has_interpreter_reentry` | `bool` | Script hands a script back to the interpreter: `eval`, `source`, `.`, or a nested `bash`/`sh` |
 | `truncated` | `bool` | Node budget hit; lists are incomplete |
 
 ### `AnalyzedCommand`
@@ -154,8 +154,13 @@ are omitted. The parser does not support `<>`, so no read-write mode exists.
 - `crates/bashkit/src/analysis.rs` — unit tests for word extraction, each AST
   node kind, contexts, redirect modes, and budget truncation.
 - `crates/bashkit/tests/integration/script_analysis.rs` — end-to-end behavior,
-  evasion cases (dynamic dispatch, eval, nested substitution, function
-  rebinding), and the `before_tool` backstop pairing.
+  evasion cases (dynamic dispatch, eval, nested shells, nested substitution,
+  function rebinding), and the `before_tool` backstop pairing.
+- `crates/bashkit/tests/proptest_security.rs` — invariants: never panics, never
+  invents a command name, respects the node budget, every dispatched command is
+  reported for a transparent script, and runtime-resolved scripts are opaque.
+- `crates/bashkit/fuzz/fuzz_targets/analyze_fuzz.rs` — libFuzzer target (in the
+  `fuzz.yml` matrix) asserting the same no-invented-names and budget invariants.
 - `crates/bashkit-js/__test__/analyze.spec.ts` and
   `__test__/runtime-compat/analyze.mjs` — Node/Bun/Deno surface.
 - `crates/bashkit-python/tests/test_analyze.py` — Python surface.

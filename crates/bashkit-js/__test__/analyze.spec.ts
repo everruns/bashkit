@@ -33,7 +33,7 @@ test("analyze: reports commands, args, and redirects", (t) => {
   t.true(analysis.redirects[0].isWrite);
   t.false(analysis.isOpaque);
   t.false(analysis.hasDynamicCommands);
-  t.false(analysis.hasEval);
+  t.false(analysis.hasInterpreterReentry);
   t.false(analysis.hasCommandSubstitution);
   t.false(analysis.truncated);
   t.deepEqual(analysis.functions, []);
@@ -121,9 +121,10 @@ test("analyze: eval, source, and shell -c are opaque", (t) => {
     ". /tmp/x.sh",
     "bash -c 'rm -rf /data'",
     'sh -c "$payload"',
+    "bash /tmp/setup.sh",
   ]) {
     const analysis = bash.analyze(script);
-    t.true(analysis.hasEval, script);
+    t.true(analysis.hasInterpreterReentry, script);
     t.true(analysis.isOpaque, script);
   }
 });

@@ -1379,9 +1379,9 @@ pub struct JsScriptAnalysis {
     pub has_dynamic_commands: bool,
     /// Script contains `$(…)`, backticks, or process substitution.
     pub has_command_substitution: bool,
-    /// Script hands text back to the interpreter: `eval`, `source`, `.`, or
-    /// `bash`/`sh -c`.
-    pub has_eval: bool,
+    /// Script hands a script back to the interpreter: `eval`, `source`, `.`,
+    /// or a nested `bash`/`sh`.
+    pub has_interpreter_reentry: bool,
     /// Node budget hit — `commands` and `redirects` are incomplete.
     pub truncated: bool,
     /// The script hides work: dynamic command, `eval`/`source`, or truncated.
@@ -1420,7 +1420,7 @@ fn analysis_to_js(analysis: bashkit::ScriptAnalysis) -> JsScriptAnalysis {
         functions: analysis.functions,
         has_dynamic_commands: analysis.has_dynamic_commands,
         has_command_substitution: analysis.has_command_substitution,
-        has_eval: analysis.has_eval,
+        has_interpreter_reentry: analysis.has_interpreter_reentry,
         truncated: analysis.truncated,
     }
 }

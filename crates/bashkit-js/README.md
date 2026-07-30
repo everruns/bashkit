@@ -642,7 +642,7 @@ Returned by `analyze(script)`.
 - `redirects: AnalyzedRedirect[]` — `{ path: string | null, mode: "read" | "write" | "append", isWrite: boolean }`
 - `functions: string[]` — function names the script defines
 - `commandNames: string[]` — distinct statically known names, first-seen order
-- `hasDynamicCommands: boolean` / `hasEval: boolean` / `hasCommandSubstitution: boolean` / `truncated: boolean`
+- `hasDynamicCommands: boolean` / `hasInterpreterReentry: boolean` / `hasCommandSubstitution: boolean` / `truncated: boolean`
 - `isOpaque: boolean` — the script hides work; allowlist checks must treat this as "ask"
 
 `AnalyzedCommand`: `{ name: string | null, args: Array<string | null>, context: "direct" | "substitution" | "function_body", assignments: string[], isAssignmentOnly: boolean }`

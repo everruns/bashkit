@@ -33,7 +33,7 @@ class TestShape:
         assert analysis.redirects[0].is_write is True
         assert analysis.is_opaque is False
         assert analysis.has_dynamic_commands is False
-        assert analysis.has_eval is False
+        assert analysis.has_interpreter_reentry is False
         assert analysis.truncated is False
         assert analysis.functions == []
 
@@ -119,11 +119,12 @@ class TestEvasion:
             ". /tmp/x.sh",
             "bash -c 'rm -rf /data'",
             'sh -c "$payload"',
+            "bash /tmp/setup.sh",
         ],
     )
-    def test_eval_family_is_opaque(self, script):
+    def test_interpreter_reentry_is_opaque(self, script):
         analysis = Bash().analyze(script)
-        assert analysis.has_eval is True
+        assert analysis.has_interpreter_reentry is True
         assert analysis.is_opaque is True
 
     @pytest.mark.parametrize(

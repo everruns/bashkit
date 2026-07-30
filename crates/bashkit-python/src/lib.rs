@@ -2253,10 +2253,10 @@ pub struct ScriptAnalysis {
     /// Script contains `$(…)`, backticks, or process substitution.
     #[pyo3(get)]
     pub has_command_substitution: bool,
-    /// Script hands text back to the interpreter: `eval`, `source`, `.`, or
-    /// `bash`/`sh -c`.
+    /// Script hands a script back to the interpreter: `eval`, `source`, `.`,
+    /// or a nested `bash`/`sh`.
     #[pyo3(get)]
-    pub has_eval: bool,
+    pub has_interpreter_reentry: bool,
     /// Node budget hit — `commands` and `redirects` are incomplete.
     #[pyo3(get)]
     pub truncated: bool,
@@ -2305,7 +2305,7 @@ impl ScriptAnalysis {
             dict.set_item("command_names", &self.command_names)?;
             dict.set_item("has_dynamic_commands", self.has_dynamic_commands)?;
             dict.set_item("has_command_substitution", self.has_command_substitution)?;
-            dict.set_item("has_eval", self.has_eval)?;
+            dict.set_item("has_interpreter_reentry", self.has_interpreter_reentry)?;
             dict.set_item("truncated", self.truncated)?;
             dict.set_item("is_opaque", self.is_opaque)?;
             Ok(dict.into())
@@ -2345,7 +2345,7 @@ impl From<bashkit::ScriptAnalysis> for ScriptAnalysis {
             functions: analysis.functions,
             has_dynamic_commands: analysis.has_dynamic_commands,
             has_command_substitution: analysis.has_command_substitution,
-            has_eval: analysis.has_eval,
+            has_interpreter_reentry: analysis.has_interpreter_reentry,
             truncated: analysis.truncated,
         }
     }

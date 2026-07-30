@@ -946,7 +946,7 @@ class ScriptAnalysis:
     command_names: list[str]
     has_dynamic_commands: bool
     has_command_substitution: bool
-    has_eval: bool
+    has_interpreter_reentry: bool
     truncated: bool
     is_opaque: bool
     """The script hides work: dynamic command, ``eval``/``source``, or

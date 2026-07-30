@@ -611,7 +611,7 @@ Returned by `analyze(script)`.
 - `redirects: list[AnalyzedRedirect]` — `path: str | None`, `mode: "read" | "write" | "append"`, `is_write: bool`
 - `functions: list[str]` — function names the script defines
 - `command_names: list[str]` — distinct statically known names, first-seen order
-- `has_dynamic_commands` / `has_eval` / `has_command_substitution` / `truncated`
+- `has_dynamic_commands` / `has_interpreter_reentry` / `has_command_substitution` / `truncated`
 - `is_opaque: bool` — the script hides work; allowlist checks must treat this as "ask"
 - `commands_named(name) -> list[AnalyzedCommand]`, `to_dict() -> dict`
 

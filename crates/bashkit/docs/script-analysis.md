@@ -49,14 +49,14 @@ assert!(analysis.is_opaque());
 
 // eval hides its payload entirely.
 let analysis = bash.analyze(r#"eval "$payload""#)?;
-assert!(analysis.has_eval);
+assert!(analysis.has_interpreter_reentry);
 assert!(analysis.is_opaque());
 # Ok(())
 # }
 ```
 
 `is_opaque()` is true when the script hides work: a dynamic command name, an
-interpreter re-entry (`eval`, `source`, `.`, `bash -c`), or a walk that hit the
+interpreter re-entry (`eval`, `source`, `.`, a nested `bash`/`sh`), or a walk that hit the
 node budget. **A permission check built
 on an allowlist must consult it.** "No command outside my allowlist" plus "not
 opaque" is a decision; "no command outside my allowlist" alone is a bypass.
@@ -216,7 +216,7 @@ assert_ne!(result.exit_code, 0);
 | `functions` | Function names the script defines |
 | `has_dynamic_commands` | Some command name is not statically known |
 | `has_command_substitution` | Contains `$(…)`, backticks, or `<(…)` |
-| `has_eval` | Hands text to the interpreter: `eval`, `source`, `.`, `bash -c` |
+| `has_interpreter_reentry` | Hands a script to the interpreter: `eval`, `source`, `.`, nested `bash`/`sh` |
 | `truncated` | Node budget hit; lists are incomplete |
 
 [`AnalyzedCommand`](crate::AnalyzedCommand) carries `name`, `args`, `context`,
@@ -268,15 +268,15 @@ assert_eq!(analysis.commands[2].context, CommandContext::Direct);       // echo
 - `Substitution` — inside `$(…)`, backticks, or `<(…)`
 - `FunctionBody` — runs only if the function is called
 
-One gap to own: wrapper commands that run *other* commands named in their
-arguments — `xargs`, `env`, `timeout`, `find -exec` — are not flagged. They
-analyze as ordinary commands, so if you allowlist one, treat its arguments as
-commands yourself.
-
 A host that wants "what happens now" filters to `Direct`; one that wants
 "anything this script could do" uses all of them. Note that a function body can
 rebind a name you consider safe, which is one more reason `is_opaque()` and the
 `before_tool` backstop matter.
+
+One gap to own: wrapper commands that run *other* commands named in their
+arguments — `xargs`, `env`, `timeout`, `find -exec` — are not flagged. They
+analyze as ordinary commands, so if you allowlist one, treat its arguments as
+commands yourself.
 
 ## Redirects
 
