@@ -50,7 +50,7 @@ Request pipeline (unchanged from #1255; injection is step 3):
 2. Private IP / SSRF check      ← SSRF protection
 3. before_http hooks            ← credential injection lives here
 4. Bot-auth signing             ← Ed25519 headers
-5. Custom HttpTransport OR reqwest (see knowledge/http-transport.md)
+5. Custom HttpTransport OR reqwest   ← pluggable egress (see See also)
 6. after_http hooks             ← observational
 ```
 
@@ -145,3 +145,10 @@ Properties:
 | NVIDIA OpenShell | `openshell:resolve:env:*` placeholder | No (placeholder only) |
 | nono.sh | Phantom token + localhost proxy | No |
 | Bashkit (this spec) | `before_http` hook injection + placeholder | No |
+
+## See also
+
+- [HTTP Transport](http-transport.md) — transport that dispatches the injected request
+- [Request Signing](request-signing.md) — signing stage that follows injection in the pipeline
+- [Threat Model](threat-model.md) — credential-exposure threats this design answers
+- [Tool Contract](../integrations/tool-contract.md) — host surface that configures the policy

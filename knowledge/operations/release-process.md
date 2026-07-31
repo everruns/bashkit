@@ -55,7 +55,7 @@ silently failed.
    - Refresh the self-hosted API references: `just apidocs` and commit any
      changes. The `apidocs-drift` workflow only checks TypeScript weekly (its
      regen needs a Rust build), so a release is the reliable point to catch TS
-     drift. See `knowledge/documentation.md` ("API reference hosting").
+     drift. See [Documentation Architecture](documentation.md) ("API reference hosting").
 4. **Run local verification** — `cargo fmt --check`, `cargo clippy
    --all-targets --all-features -- -D warnings`, `cargo test`.
 5. **Verify publish-readiness** (catches what local tests don't — the
@@ -142,7 +142,7 @@ Use the latest entries in `CHANGELOG.md` as the template. Rules:
 
 Crates publish in dependency order: `bashkit` (no internal deps) then
 `bashkit-cli` (depends on bashkit). Python wheels (native matrix + the
-reduced-feature Pyodide/Emscripten wheel — see `knowledge/emscripten-wheels.md`)
+reduced-feature Pyodide/Emscripten wheel — see [Emscripten Wheels](../runtimes/emscripten-wheels.md))
 and both npm packages publish independently (no crates.io dependency). CI
 workflows handle ordering automatically on GitHub Release.
 
@@ -174,7 +174,7 @@ verifies published versions. Secret: `CARGO_REGISTRY_TOKEN`.
 ### publish-python.yml
 
 Trigger: Release published (parallel with publish.yml). Builds wheels for
-all platforms (matrix in `knowledge/python-package.md`), smoke-tests, publishes
+all platforms (matrix in [Python Package](../runtimes/python-package.md)), smoke-tests, publishes
 to PyPI via trusted publishing (OIDC, no secrets; environment
 `release-python` must exist in repo settings). Python version is read
 dynamically from `Cargo.toml` via maturin (`dynamic = ["version"]`).

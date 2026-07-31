@@ -136,7 +136,7 @@ let bash = Bash::builder()
 
 ### Security
 
-See `knowledge/threat-model.md` § "Python / Monty Security (TM-PY)" for the full
+See [Threat Model](../security/threat-model.md) § "Python / Monty Security (TM-PY)" for the full
 analysis. Summary:
 
 - **Code injection via bash expansion**: variables expand before reaching the builtin (by-design, consistent with all builtins); use single quotes to prevent.

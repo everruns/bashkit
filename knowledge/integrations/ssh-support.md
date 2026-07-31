@@ -79,3 +79,10 @@ ssh/scp/sftp builtins (parse args, validate host, delegate)
 - Wildcard subdomain: `*.supabase.co`
 - IP address: `192.168.1.100`
 - Patterns apply to the allowed-ports list; no scheme (always SSH)
+
+## See also
+
+- [Virtual Filesystem](../foundations/vfs.md) — filesystem the transfers read and write
+- [Git Support](git-support.md) — the other sandboxed network integration
+- [Threat Model](../security/threat-model.md) — network and credential threats for this surface
+- [Builtin Commands](../foundations/builtins.md) — builtin trait these commands implement

@@ -132,7 +132,7 @@ pattern as `publish-js.yml`. Browser example smoke testing writes a file under
 `/home/user`, reloads the page, and verifies `browserLocal` restores it from
 `localStorage`.
 
-## Limitations (see `knowledge/limitations.md`)
+## Limitations (see [Known Limitations](../operations/limitations.md))
 
 - No wall-clock time on `wasm32-unknown-unknown` (no timer driver). This is a
   hard platform constraint, so unsupported time-based controls fail closed:

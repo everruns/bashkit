@@ -58,3 +58,10 @@ Errors carry line/column, expected vs. found token, and parse context.
 
 - PEG (pest, pom): rejected — bash grammar is context-sensitive, here-docs awkward, manual parser gives better errors.
 - Tree-sitter: rejected — incremental parsing overkill, large dep, harder to customize.
+
+## See also
+
+- [Bashkit Architecture](architecture.md) — where the parser sits in the execution flow
+- [Known Limitations](../operations/limitations.md) — unsupported syntax, recorded as L-* entries
+- [Script Analysis](../integrations/script-analysis.md) — static introspection built on the AST
+- [Testing Strategy](../operations/testing.md) — differential testing against real Bash

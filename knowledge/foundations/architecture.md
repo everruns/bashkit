@@ -46,3 +46,12 @@ See `crates/bashkit/src/lib.rs` for the full public API surface.
 
 - Single crate: rejected — CLI bloats library; Python/JS packages need separate crates.
 - Sync filesystem: rejected — network ops need async; tokio already a dep.
+
+## See also
+
+- [Parser](parser.md) — script text to AST, ahead of the interpreter
+- [Virtual Filesystem](vfs.md) — filesystem abstraction the interpreter executes against
+- [Builtin Commands](builtins.md) — command layer the interpreter dispatches into
+- [Parallel Execution](parallel-execution.md) — threading model and shared-ownership rules
+- [Threat Model](../security/threat-model.md) — trust boundaries these module boundaries enforce
+- [Known Limitations](../operations/limitations.md) — what this architecture intentionally does not do

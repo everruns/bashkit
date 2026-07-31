@@ -106,4 +106,4 @@ pnpm test`). White-box and black-box scenarios across 18 categories:
 - `crates/bashkit/src/fs/memory.rs` - Filesystem fail points
 - `crates/bashkit/src/interpreter/mod.rs` - Interpreter fail points, panic catching
 - `crates/bashkit/src/builtins/system.rs` - Hardcoded system builtins
-- `knowledge/threat-model.md` - Threat model specification
+- [Threat Model](threat-model.md) - Threat model specification

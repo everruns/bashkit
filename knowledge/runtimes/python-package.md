@@ -53,7 +53,7 @@ Thanks to abi3 (below) this is **7 native wheels per release** (one
 In addition, a **reduced-feature Pyodide/Emscripten wheel**
 (`wasm32-unknown-emscripten`) ships for browser / JupyterLite use — built and
 published separately (different toolchain, single Python version, no
-async/network/sqlite/realfs). See `knowledge/emscripten-wheels.md`.
+async/network/sqlite/realfs). See [Emscripten Wheels](emscripten-wheels.md).
 
 ## PyPI Publishing
 
@@ -274,7 +274,7 @@ Limited-API constraints observed in `crates/bashkit-python/src/lib.rs`:
   below 3.10). Lazy file providers use `to_cow()`, which is in the stable ABI.
 
 The emscripten/Pyodide wheel is unaffected — it already ships a single Python
-version on a separate toolchain (see `knowledge/emscripten-wheels.md`).
+version on a separate toolchain (see [Emscripten Wheels](emscripten-wheels.md)).
 
 ## Design Decisions
 

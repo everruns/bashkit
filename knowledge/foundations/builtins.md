@@ -16,7 +16,7 @@ Implemented
 
 Bashkit provides built-in commands for script execution in a virtual environment.
 All builtins operate on the virtual filesystem. For the complete list, see
-the generated `knowledge/status/builtins.json`; for known gaps, `knowledge/limitations.md`.
+the generated [`builtins.json`](../status/builtins.json); for known gaps, [Known Limitations](../operations/limitations.md).
 
 ### Standard Flags
 
@@ -47,7 +47,7 @@ Custom Rust builtins can implement `ClapBuiltin` instead of `Builtin` when
 their arguments are better represented as a `#[derive(clap::Parser)]` struct
 (see `builtins/mod.rs` / rustdoc for the trait and an example). `clap` is an
 unconditional dependency of `bashkit` (also used by ported coreutils argument
-surfaces — see `knowledge/coreutils-args-port.md`), so this trait is always
+surfaces — see [Coreutils Argument Port](../runtimes/coreutils-args-port.md)), so this trait is always
 available. Bashkit parses `Context::args` through clap, passes parsed args
 plus a mutable `BashkitContext` to the handler, maps `--help`/`--version` to
 successful stdout results, and maps clap parse failures to stderr with clap's
@@ -185,7 +185,7 @@ per-invocation parallel-slot index.
 
 bashkit runs a single `Bash` interpreter sequentially — even background `&`
 jobs run synchronously for deterministic output (see
-`knowledge/parallel-execution.md`). So `xargs -P N` / `--max-procs=N` does **not**
+[Parallel Execution](parallel-execution.md)). So `xargs -P N` / `--max-procs=N` does **not**
 spawn N OS processes for wall-clock speedup. Instead it allocates N
 round-robin *slots* and the commands still run in order, with the slot index
 (0..N-1, `idx % N`) surfaced via `--process-slot-var`. This is the behaviour
@@ -205,10 +205,10 @@ macro in `interpreter/mod.rs`. To add a new one:
 2. Add `mod mycommand;` and `pub use mycommand::MyCommand;` in `builtins/mod.rs`
 3. Add one line to the `register_builtins!` table in `interpreter/mod.rs`
 4. Add spec tests in `tests/spec_cases/`
-5. Run `just regen-builtins`; record any gaps in `knowledge/limitations.md`
+5. Run `just regen-builtins`; record any gaps in [Known Limitations](../operations/limitations.md)
 
 ### Network Builtins
 
 `curl`, `wget`, `http` require the `http_client` feature + URL allowlist.
 When `bot-auth` feature is enabled, all outbound HTTP requests are transparently
-signed with Ed25519 per RFC 9421 (see `knowledge/request-signing.md`).
+signed with Ed25519 per RFC 9421 (see [Request Signing](../security/request-signing.md)).

@@ -172,5 +172,5 @@ the native wheels.
 
 ## See also
 
-- `knowledge/python-package.md` — native wheel matrix, PyPI publishing, public API.
-- `knowledge/architecture.md` — core interpreter, wasm-aware tokio gating.
+- [Python Package](python-package.md) — native wheel matrix, PyPI publishing, public API.
+- [Bashkit Architecture](../foundations/architecture.md) — core interpreter, wasm-aware tokio gating.

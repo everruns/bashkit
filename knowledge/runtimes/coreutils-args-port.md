@@ -261,7 +261,7 @@ one TOML stanza and the next run picks it up.
 The PR's intermediate commits are bot-authored (automated drift detection,
 not a code change). Maintainers must **squash-merge as a human** so the
 merge commit is attributed correctly per `AGENTS.md`. Reviewing the auto-PR
-is part of the maintenance checklist — see `knowledge/maintenance.md`
+is part of the maintenance checklist — see [Maintenance](../operations/maintenance.md)
 § Coreutils Argument-Surface Drift.
 
 ## Alternatives considered
@@ -272,7 +272,7 @@ is part of the maintenance checklist — see `knowledge/maintenance.md`
 
 ## See also
 
-- `knowledge/builtins.md` — `Builtin` trait, `ClapBuiltin`, command dispatch.
+- [Builtin Commands](../foundations/builtins.md) — `Builtin` trait, `ClapBuiltin`, command dispatch.
 - `crates/bashkit-coreutils-port/src/main.rs` — codegen entry point; `args.rs` / `module.rs` host the two modes, `manifest.rs` the `vendored.toml` schema.
 - `crates/bashkit-coreutils-port/vendored.toml` — vendored-module manifest.
 - `crates/bashkit/src/builtins/cat.rs`, `textrev.rs` — port consumers.

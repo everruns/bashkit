@@ -240,3 +240,10 @@ against the VFS; needs `FsBackend::pread`); encryption key management
 | `libsql` (Turso's SQLite fork)      | Still C-based; upstream is steering toward the Rust rewrite. |
 | Whole-file shim only (no Phase 2)   | Acceptable, but exercising the IO trait flushes out integration bugs. Both phases coexist with negligible extra surface. |
 | In-process REPL mode                | Out of scope for a non-interactive shell builtin.         |
+
+## See also
+
+- [Virtual Filesystem](../foundations/vfs.md) — VFS the VfsIO backend writes through
+- [Builtin Commands](../foundations/builtins.md) — builtin trait and dispatch
+- [Threat Model](../security/threat-model.md) — TM-SQL threats and their mitigations
+- [Performance Results](../operations/performance-results.md) — where `just bench-sqlite` results are kept

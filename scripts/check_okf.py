@@ -16,6 +16,19 @@ Bundle-local conventions also checked (see knowledge/knowledge-contract.md):
 `title` and `description` are required, `description` is a single line, and
 every concept and subdirectory is listed in its directory's `index.md`.
 
+Trust and lifecycle metadata (SPEC sections 6, 7) is optional in OKF, but
+where this bundle uses it the shape is enforced: a `Generated Inventory`
+declares both its producing actor (`generated.by`) and the artifact it
+describes (`resource`), actors follow the OKF actor convention, and
+`status`/`stale_after` carry legal values.
+
+Cross-linking (SPEC section 10): every concept must link to at least one
+other concept, so the bundle is a graph rather than 30 disconnected files,
+and bundle documents must be referenced as relative markdown links. A path
+like `knowledge/foo.md` inside a code span is invisible to every link
+checker — that is exactly how the 2026-07-26 restructure left ~30 dangling
+references behind.
+
 No third-party dependencies: the frontmatter subset used by this bundle is
 parsed directly, so the check runs anywhere `python3` does.
 """
@@ -31,6 +44,14 @@ RESERVED = ("index.md", "log.md")
 DATE_HEADING = re.compile(r"^## \d{4}-\d{2}-\d{2}\s*$")
 LINK = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
 EXTERNAL = re.compile(r"\A(?:[a-z][a-z0-9+.-]*:|//|#)")
+DATE = re.compile(r"\A\d{4}-\d{2}-\d{2}\Z")
+# OKF actor convention: `<producer>/<version>`, `human:<id>`, `process:<id>`.
+ACTOR = re.compile(r"\A(?:human:\S+|process:\S+|[^/\s]+/[^/\s]+)\Z")
+STATUSES = ("draft", "stable", "deprecated")
+# A bundle document addressed by its repository path instead of a relative
+# link. Matched against the raw text, code spans included — the code-span form
+# is the one that silently rots.
+BUNDLE_PATH = re.compile(r"knowledge/[A-Za-z0-9_./-]+\.(?:md|json)")
 # Fenced blocks first, then inline spans: prose about markdown (and shell
 # examples containing `](`) must not be read as links. Missing this is how a
 # bulk path rewrite silently corrupted a threat-model regex payload.
@@ -108,7 +129,8 @@ def check_links(path: pathlib.Path, rel: str, errors: list[str]) -> None:
 
 
 def check_concept(path: pathlib.Path, rel: str, errors: list[str]) -> None:
-    fm_text, _ = split_frontmatter(path.read_text())
+    text = path.read_text()
+    fm_text, body = split_frontmatter(text)
     if fm_text is None:
         errors.append(f"{rel}: missing YAML frontmatter block")
         return
@@ -120,6 +142,78 @@ def check_concept(path: pathlib.Path, rel: str, errors: list[str]) -> None:
             errors.append(f"{rel}: frontmatter must contain a non-empty '{field}'")
     if "summary" in fm:
         errors.append(f"{rel}: 'summary' is not an OKF field — use 'description'")
+    check_trust(path, rel, fm, errors)
+    check_cross_links(path, rel, body, errors)
+
+
+def check_trust(
+    path: pathlib.Path, rel: str, fm: dict[str, object], errors: list[str]
+) -> None:
+    """Trust and lifecycle metadata is optional; where present it must be sound.
+
+    A generated concept that does not say who produced it, or what artifact it
+    describes, is indistinguishable from a hand-written one — which is the one
+    distinction a reader needs before trusting it over the source.
+    """
+    generated = fm.get("generated")
+    resource = fm.get("resource")
+    if fm.get("type") == "Generated Inventory":
+        if not isinstance(generated, dict) or not generated.get("by"):
+            errors.append(
+                f"{rel}: a 'Generated Inventory' must declare 'generated.by' "
+                f"(the producing actor)"
+            )
+        if not resource:
+            errors.append(
+                f"{rel}: a 'Generated Inventory' must declare 'resource' "
+                f"(the artifact it describes)"
+            )
+    if isinstance(generated, dict):
+        actor = generated.get("by")
+        if actor and not ACTOR.match(str(actor)):
+            errors.append(
+                f"{rel}: 'generated.by' is not an OKF actor "
+                f"('<producer>/<version>', 'human:<id>', 'process:<id>'): {actor!r}"
+            )
+    if isinstance(resource, str) and resource and not EXTERNAL.match(resource):
+        if not (path.parent / resource).exists():
+            errors.append(f"{rel}: 'resource' does not exist: {resource}")
+    status = fm.get("status")
+    if status and status not in STATUSES:
+        errors.append(f"{rel}: 'status' must be one of {STATUSES}, got {status!r}")
+    stale_after = fm.get("stale_after")
+    if stale_after and not DATE.match(str(stale_after)):
+        errors.append(f"{rel}: 'stale_after' must be YYYY-MM-DD, got {stale_after!r}")
+
+
+def check_bundle_paths(rel: str, text: str, errors: list[str]) -> None:
+    """Bundle documents are addressed as relative links, never as repo paths."""
+    for match in sorted(set(BUNDLE_PATH.findall(text))):
+        errors.append(
+            f"{rel}: reference bundle documents as relative markdown links, "
+            f"not as repository paths: {match}"
+        )
+
+
+def check_cross_links(
+    path: pathlib.Path, rel: str, body: str, errors: list[str]
+) -> None:
+    """Every concept links to at least one other concept."""
+    for target in LINK.findall(strip_code(body)):
+        if EXTERNAL.match(target):
+            continue
+        resolved = (path.parent / target.split("#", 1)[0]).resolve()
+        if (
+            resolved.suffix == ".md"
+            and resolved.name not in RESERVED
+            and resolved != path.resolve()
+            and resolved.exists()
+        ):
+            return
+    errors.append(
+        f"{rel}: links to no other concept — add a 'See also' section so the "
+        f"bundle stays traversable"
+    )
 
 
 def check_index(path: pathlib.Path, rel: str, is_root: bool, errors: list[str]) -> None:
@@ -188,6 +282,7 @@ def check_bundle(root: pathlib.Path) -> tuple[list[str], dict[str, int]]:
                 counts["concepts"] += 1
                 check_concept(path, rel, errors)
             check_links(path, rel, errors)
+            check_bundle_paths(rel, path.read_text(), errors)
         except ValueError as exc:
             errors.append(f"{rel}: {exc}")
 

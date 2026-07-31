@@ -146,8 +146,8 @@ exec/state (streaming, persistence, TTY, rc file), error propagation. Compile
 only with the `interactive` feature: `cargo test -p bashkit-cli`
 (`--no-default-features` to test without).
 
-## See Also
+## See also
 
-- `knowledge/architecture.md` - Core interpreter architecture
-- `knowledge/builtins.md` - Builtin command reference
-- `knowledge/limitations.md` - Intentional gaps and partial features
+- [Bashkit Architecture](../foundations/architecture.md) - Core interpreter architecture
+- [Builtin Commands](../foundations/builtins.md) - Builtin command reference
+- [Known Limitations](../operations/limitations.md) - Intentional gaps and partial features
