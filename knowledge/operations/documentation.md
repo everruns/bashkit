@@ -148,7 +148,7 @@ bot commit would violate the AGENTS.md commit-attribution rule) — a human runs
 `just apidocs` and commits. The Python check is cheap (static `griffe` parse,
 pinned) so it runs on every PR touching the Python surface; the TypeScript
 check needs a Rust `napi build`, so it runs only on the weekly schedule and on
-demand. Regenerate-and-commit is a release step (see `knowledge/release-process.md`).
+demand. Regenerate-and-commit is a release step (see [Release Process](release-process.md)).
 
 ### Constraints
 

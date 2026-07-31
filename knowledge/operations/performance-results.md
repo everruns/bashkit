@@ -32,7 +32,7 @@ Markdown files are the user-facing reports linked from `/benches`; JSON files
 are the aggregation input for benchmark and eval summaries.
 
 > `bashkit-eval` was reimplemented as a [mira](https://github.com/everruns/mira)
-> study (see `knowledge/eval.md`); mira now owns eval run output (written under
+> study (see [Evaluation Framework](eval.md)); mira now owns eval run output (written under
 > `./results/<run_id>/` in mira's own format). The `crates/bashkit-eval/results/`
 > directory is retained as an **archive** of pre-mira runs and remains the
 > `/benches` eval input until the site is re-wired to mira's output format

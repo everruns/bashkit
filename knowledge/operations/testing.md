@@ -99,7 +99,7 @@ tests via `cargo llvm-cov`.
 2. Run `just check-bash-compat` to verify expected output matches real bash
 3. Unimplemented feature → `### skip: reason`; intentional difference →
    `### bash_diff: reason`
-4. Record the limitation in `knowledge/limitations.md` (skip reason = evidence)
+4. Record the limitation in [Known Limitations](limitations.md) (skip reason = evidence)
 
 ## Comparison Testing
 

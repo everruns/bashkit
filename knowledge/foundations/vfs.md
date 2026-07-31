@@ -197,3 +197,11 @@ Safety: real mounts are **read-only by default**. Text files are writable
 
 - Real filesystem with chroot: rejected — requires root, not portable, no WASM.
 - tokio::fs wrapper: rejected — always hits real FS, can't isolate or virtualize.
+
+## See also
+
+- [Bashkit Architecture](architecture.md) — how the VFS is owned and shared
+- [Threat Model](../security/threat-model.md) — path-escape threats the sandbox invariants answer
+- [Git Support](../integrations/git-support.md) — Git operations layered on the VFS
+- [SQLite Builtin](../runtimes/sqlite-builtin.md) — VfsIO backend bridging SQLite onto the VFS
+- [Python Package](../runtimes/python-package.md) — binding-side mount API parity

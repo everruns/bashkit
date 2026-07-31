@@ -105,7 +105,7 @@ where `handler: TypeScriptExternalFnHandler` is an
 
 ### Security
 
-See `knowledge/threat-model.md` section "TypeScript / ZapCode Security (TM-TS)"
+See [Threat Model](../security/threat-model.md) section "TypeScript / ZapCode Security (TM-TS)"
 for the full threat analysis.
 
 - **Code injection via bash variable expansion**: variables expand before

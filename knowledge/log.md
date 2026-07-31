@@ -1,5 +1,12 @@
 # Bashkit Knowledge Update Log
 
+## 2026-07-31
+
+* **Repair**: Converted 56 in-bundle references from the code-span repository-path form (`` `knowledge/<doc>.md` ``) into resolving relative links. All but three carried pre-restructure flat paths that had been dangling since 2026-07-26 — invisible to both linters because a code span is text, not a link.
+* **Cross-links**: Added `## See also` sections to the nine concepts that linked to no other concept, and normalised the heading to `## See also` bundle-wide. Every concept is now reachable from another concept, not just from its `index.md`.
+* **Enforcement**: `scripts/check_okf.py` now rejects a concept that links to no other concept, a bundle document referenced as a repository path, and a `Generated Inventory` missing `generated.by` or `resource`; it also validates OKF actor syntax and `status`/`stale_after` values where present. `okf-lint 0.1.1` passes all three regressions — coverage table updated in [Knowledge Maintenance Contract](knowledge-contract.md).
+* **Decision**: Of OKF's optional families, only the trust family is adopted, and only for generated concepts (`generated.by` + `resource`). `generated.at`, `status`, `stale_after`, `verified`, `sources`, and `usage_window` stay unused — the same-PR update rule and the drift workflows defend staleness better than a metadata date. Rationale in [Knowledge Maintenance Contract](knowledge-contract.md).
+
 ## 2026-07-29
 
 * **Enforcement**: Added `scripts/check_doc_links.py` (`just check-doc-links`, wired into `just check` and CI) to reject dangling relative markdown links in `docs/`, `crates/bashkit/docs/`, and root markdown — the site's basename-matching link rewriter hid 14 of them from every existing verifier. Rule and rationale recorded in [Documentation](operations/documentation.md) and [Maintenance](operations/maintenance.md).

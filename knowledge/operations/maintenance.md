@@ -47,7 +47,7 @@ dependency rot, or security gaps ship in a release.
 
 ### Security
 
-- Threat model (`knowledge/threat-model.md`) covers all current features
+- Threat model ([Threat Model](../security/threat-model.md)) covers all current features
 - Public threat model doc (`crates/bashkit/docs/threat-model.md`) in sync with spec
 - Every new builtin/feature has a corresponding TM-XXX entry
 - DeepSec is updated to the latest published version before scanning:
@@ -65,7 +65,7 @@ dependency rot, or security gaps ship in a release.
 
 - All tests pass
 - No test gaps for recently added features
-- `builtins-drift` workflow green (generated `knowledge/status/builtins.json` in sync)
+- `builtins-drift` workflow green (generated [`builtins.json`](../status/builtins.json) in sync)
 - Bash compatibility — no new regressions against real bash
 - Coverage reviewed — no major uncovered paths
 
@@ -89,7 +89,7 @@ dependency rot, or security gaps ship in a release.
   titles or descriptions: page metadata lives in `site/src/pages/docs/_meta.ts`,
   and frontmatter in `crates/bashkit/docs/` would leak into rustdoc via
   `include_str!`
-- Agent surfaces (`/llms.txt`, `/llms-full.txt`, Markdown routes) regenerate and pass `verify-llms` (auto-enforced in CI); refresh the agent-skills tarball/`index.json` digest if `skills/bashkit/` changed (see `knowledge/documentation.md` § Agent-facing site surfaces)
+- Agent surfaces (`/llms.txt`, `/llms-full.txt`, Markdown routes) regenerate and pass `verify-llms` (auto-enforced in CI); refresh the agent-skills tarball/`index.json` digest if `skills/bashkit/` changed (see [Documentation Architecture](documentation.md) § Agent-facing site surfaces)
 - `CONTRIBUTING.md` instructions accurate
 - `CHANGELOG.md` has entries for all changes since last release
 
@@ -118,7 +118,7 @@ dependency rot, or security gaps ship in a release.
 
 ### Coreutils Argument-Surface and Module-Vendor Drift
 
-See `knowledge/coreutils-args-port.md`.
+See [Coreutils Argument Port](../runtimes/coreutils-args-port.md).
 
 - Review any open `chore: sync uutils/coreutils argument surfaces and
   vendored modules` PR produced by the `coreutils-args-drift` workflow
@@ -171,7 +171,7 @@ See `knowledge/coreutils-args-port.md`.
   - Core classes: `Bash`, `BashTool`, `ExecResult`, `ScriptedTool`, `BashError`
   - Execution methods: `execute`, `execute_sync`, `executeOrThrow`/`execute_or_throw`
   - Configuration: `username`, `hostname`, `max_commands`, `max_loop_iterations`, `python`, `external_functions`/`external_handler`
-  - Mount API: `files` dict, `mounts` list (read-only default), runtime `mount`/`unmount` (see `knowledge/vfs.md` § Binding API Parity)
+  - Mount API: `files` dict, `mounts` list (read-only default), runtime `mount`/`unmount` (see [Virtual Filesystem](../foundations/vfs.md) § Binding API Parity)
   - Tool metadata: `name`, `description`, `help`, `system_prompt`, `input_schema`, `output_schema`, `version`
   - Module functions: `getVersion`/`get_version`
   - Framework integrations: LangChain available in both bindings
@@ -248,6 +248,6 @@ Use `/maintain` skill to execute this checklist interactively.
 
 ## References
 
-- `knowledge/release-process.md` — release workflow
-- `knowledge/limitations.md` — negative spec (intentional gaps, partial features)
-- `knowledge/threat-model.md` — threat model
+- [Release Process](release-process.md) — release workflow
+- [Known Limitations](limitations.md) — negative spec (intentional gaps, partial features)
+- [Threat Model](../security/threat-model.md) — threat model

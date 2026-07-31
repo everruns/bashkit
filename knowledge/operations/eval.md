@@ -172,7 +172,7 @@ and environment handling — each with task-appropriate pre-populated seed files
 ## Scripting-Tool Eval
 
 A second eval (`bashkit_scripting`) tests `ScriptedTool` orchestration (see
-`knowledge/scripted-tool-orchestration.md`), measuring how well LLMs orchestrate
+[Scripted Tool Orchestration](../integrations/scripted-tool-orchestration.md)), measuring how well LLMs orchestrate
 multiple mock tools via bash scripts vs. calling each tool individually.
 
 ### Modes (the `mode` axis)

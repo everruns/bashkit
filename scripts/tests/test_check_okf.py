@@ -28,6 +28,39 @@ tags:
 ---
 
 # Widget
+
+## See also
+
+- [Gadget](gadget.md) — the thing the widget drives
+"""
+
+# Two concepts, because a conformant bundle is a graph: the cross-link rule
+# rejects a concept that links to nothing else.
+GADGET = """\
+---
+type: Subsystem Design
+title: Gadget
+description: One sentence about the gadget.
+---
+
+# Gadget
+
+See [Widget](widget.md).
+"""
+
+INVENTORY = """\
+---
+type: Generated Inventory
+title: Parts
+description: Generated list of parts.
+resource: parts.json
+generated:
+  by: process:just-regen-parts
+---
+
+# Parts
+
+Generated from [Widget](widget.md).
 """
 
 ROOT_INDEX = """\
@@ -38,6 +71,7 @@ okf_version: "0.2"
 # Bundle
 
 * [Widget](widget.md) - One sentence about the widget.
+* [Gadget](gadget.md) - One sentence about the gadget.
 """
 
 LOG = """\
@@ -64,7 +98,16 @@ class CheckOkfTest(unittest.TestCase):
         (self.bundle / "index.md").write_text(ROOT_INDEX)
         (self.bundle / "log.md").write_text(LOG)
         (self.bundle / "widget.md").write_text(CONCEPT)
+        (self.bundle / "gadget.md").write_text(GADGET)
         self.addCleanup(self._tmp.cleanup)
+
+    def add_inventory(self, text: str = INVENTORY) -> None:
+        """A Generated Inventory plus the artifact it describes, both listed."""
+        (self.bundle / "parts.md").write_text(text)
+        (self.bundle / "parts.json").write_text("{}\n")
+        (self.bundle / "index.md").write_text(
+            ROOT_INDEX + "* [Parts](parts.md) - Generated list of parts.\n"
+        )
 
     def test_conformant_bundle_accepted(self) -> None:
         result = run(self.bundle)
@@ -135,6 +178,69 @@ class CheckOkfTest(unittest.TestCase):
         result = run(self.bundle)
         self.assertEqual(result.returncode, 1)
         self.assertIn("orphan.md: not listed in index.md", result.stderr)
+
+    def test_concept_without_cross_links_rejected(self) -> None:
+        (self.bundle / "widget.md").write_text(CONCEPT.split("## See also")[0])
+        result = run(self.bundle)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("links to no other concept", result.stderr)
+
+    def test_self_link_is_not_a_cross_link(self) -> None:
+        (self.bundle / "widget.md").write_text(
+            CONCEPT.replace("[Gadget](gadget.md)", "[Widget](widget.md)")
+        )
+        result = run(self.bundle)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("links to no other concept", result.stderr)
+
+    def test_repository_path_reference_rejected(self) -> None:
+        """The code-span form the 2026-07-26 restructure left dangling."""
+        (self.bundle / "widget.md").write_text(
+            CONCEPT + "\nSee `knowledge/gadget.md` for details.\n"
+        )
+        result = run(self.bundle)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("not as repository paths: knowledge/gadget.md", result.stderr)
+
+    def test_generated_inventory_accepted(self) -> None:
+        self.add_inventory()
+        result = run(self.bundle)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_generated_inventory_without_producer_rejected(self) -> None:
+        self.add_inventory(
+            INVENTORY.replace("generated:\n  by: process:just-regen-parts\n", "")
+        )
+        result = run(self.bundle)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("must declare 'generated.by'", result.stderr)
+
+    def test_generated_inventory_without_resource_rejected(self) -> None:
+        self.add_inventory(INVENTORY.replace("resource: parts.json\n", ""))
+        result = run(self.bundle)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("must declare 'resource'", result.stderr)
+
+    def test_missing_resource_artifact_rejected(self) -> None:
+        self.add_inventory(INVENTORY.replace("parts.json", "gone.json"))
+        result = run(self.bundle)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("'resource' does not exist: gone.json", result.stderr)
+
+    def test_non_actor_producer_rejected(self) -> None:
+        self.add_inventory(INVENTORY.replace("process:just-regen-parts", "a script"))
+        result = run(self.bundle)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("is not an OKF actor", result.stderr)
+
+    def test_illegal_lifecycle_values_rejected(self) -> None:
+        (self.bundle / "widget.md").write_text(
+            CONCEPT.replace("tags:", "status: retired\nstale_after: someday\ntags:")
+        )
+        result = run(self.bundle)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("'status' must be one of", result.stderr)
+        self.assertIn("'stale_after' must be YYYY-MM-DD", result.stderr)
 
 
 if __name__ == "__main__":

@@ -36,6 +36,17 @@ The bundle targets OKF v0.2, declared as `okf_version: "0.2"` in the bundle-root
 - `log.md` bodies are date-grouped entries (`## YYYY-MM-DD`), newest first.
 - Prose that is not a directory listing belongs in a concept document, not in an `index.md`.
 - Links between concepts are relative and must resolve; links inside code spans and fenced blocks are text, not links.
+- Every concept links to at least one other concept — a `## See also` section at the end is the conventional place. The bundle is a graph an agent traverses, not a pile of files.
+- Bundle documents are referenced as relative markdown links, never as repository paths. A `knowledge/<doc>.md` inside a code span is not a link, so no checker sees it rot; the 2026-07-26 restructure left ~30 of those dangling for five days.
+
+## Trust and lifecycle metadata
+
+OKF's provenance, trust, and lifecycle families are optional, and this bundle
+uses one of them deliberately.
+
+- A concept whose content is produced by a tool carries `type: Generated Inventory`, `resource` (the artifact it describes, bundle-relative), and `generated.by` (the producing actor, OKF actor syntax: `<producer>/<version>`, `human:<id>`, or `process:<id>`). That triple is what lets a reader decide whether to trust the document or go read the source — the distinction hand-written concepts do not need to make.
+- `generated.at` is deliberately unused: it would go stale on the first regeneration that forgets to bump it, and the drift workflows already prove freshness against the source of truth.
+- `status`, `stale_after`, `verified`, `sources`, and `usage_window` are unused. Staleness here is defended by the rule that a behavior change updates its knowledge in the same pull request, plus the drift workflows — a calendar date would train people to bump the date rather than re-read the doc. If any of these are adopted later, `check_okf.py` already rejects malformed `status` and `stale_after` values.
 
 ## Layout
 
@@ -67,7 +78,7 @@ via `just check-okf`, and from `scripts/tests/test_check_okf.py` (covered by `ju
 
 ```console
 $ python3 scripts/check_okf.py knowledge
-knowledge: OKF v0.2 conformant (31 concepts, 2 index files, 1 log file)
+knowledge: OKF v0.2 conformant (32 concepts, 7 index files, 1 log file)
 ```
 
 ## Third-party OKF linters (evaluated 2026-07-26)
@@ -92,6 +103,12 @@ Regression coverage (fail = caught, pass = slipped through):
 | Frontmatter on `index.md` | pass | pass | fail | fail |
 | Concept absent from `index.md` | pass | pass | pass | fail |
 | `log.md` heading not `YYYY-MM-DD` | pass | pass | fail | fail |
+| Bundle doc referenced as `knowledge/<doc>.md` | — | — | pass | fail |
+| Concept links to no other concept | — | — | pass | fail |
+| `Generated Inventory` without `generated.by` / `resource` | — | — | pass | fail |
+
+The last three rows were added 2026-07-31 and measured against `okf-lint` only;
+`okf` and `okftool` were not re-run, hence `—`.
 
 `okf-lint` is the strongest of the four: it is the only one that enforces the
 reserved `index.md`/`log.md` structures, it cites the spec section in every
@@ -99,10 +116,12 @@ diagnostic, and it installs from crates.io with a pinned version. It runs in CI
 and in `just check-okf`, with `--max-line-length 10000` because knowledge docs
 wrap prose at author discretion.
 
-It does not subsume `check_okf.py`. The two rows it lets through — `summary`
-instead of `description`, and a concept missing from its `index.md` — are
-bundle-local conventions, and the first is exactly the defect the original
-migration shipped. Both checks therefore run together.
+It does not subsume `check_okf.py`. The rows it lets through are bundle-local
+conventions: `summary` instead of `description` (exactly the defect the original
+migration shipped), a concept missing from its `index.md`, a bundle document
+referenced by repository path, a concept that links to nothing, and a
+`Generated Inventory` that does not say who produced it. Both checks therefore
+run together.
 
 The others were rejected on substance, not maturity: `okftool` treats everything
 but `type` as advisory (0 errors on all five regressions); `okf` implements OKF
@@ -111,5 +130,13 @@ validates against a hand-authored `okf-base.yaml` rather than the spec, so
 adopting it means maintaining the rule set anyway, and it requires Python 3.12+
 against this repository's 3.9 floor.
 
-`okftool lint` and `okf graph` remain useful ad hoc for advisory graph checks —
-both report that most concepts here have no cross-links to each other.
+`okftool lint` and `okf graph` remain useful ad hoc for advisory graph checks.
+Their 2026-07-26 finding — that most concepts had no cross-links to each other —
+was acted on 2026-07-31: every concept now links to at least one other, and
+`check_okf.py` keeps it that way.
+
+## See also
+
+- [Builtin Inventory](status/builtin-inventory.md) — the bundle's Generated Inventory concept
+- [Maintenance](operations/maintenance.md) — release-time checks that keep knowledge in sync
+- [Documentation Architecture](operations/documentation.md) — the doc trees this bundle is not

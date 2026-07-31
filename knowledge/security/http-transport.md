@@ -56,7 +56,7 @@ Embedding hosts (reference consumer: [everruns](https://github.com/everruns/ever
 
 ## See also
 
-- `knowledge/request-signing.md` — signing pipeline the transport inherits
-- `knowledge/credential-injection.md` — header injection ahead of dispatch
-- `knowledge/threat-model.md` — TM-NET-023 (SSRF responsibility of custom transports), TM-NET-015 (host proxy isolation on the built-in path)
-- `knowledge/tool-contract.md` — LLM tool surface this feeds
+- [Request Signing](request-signing.md) — signing pipeline the transport inherits
+- [Credential Injection](credential-injection.md) — header injection ahead of dispatch
+- [Threat Model](threat-model.md) — TM-NET-023 (SSRF responsibility of custom transports), TM-NET-015 (host proxy isolation on the built-in path)
+- [Tool Contract](../integrations/tool-contract.md) — LLM tool surface this feeds

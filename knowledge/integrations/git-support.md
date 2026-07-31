@@ -31,7 +31,7 @@ on the virtual filesystem only. Configure via
 
 ### Security
 
-See `knowledge/threat-model.md` Section 8: Git Security (TM-GIT-*)
+See [Threat Model](../security/threat-model.md) Section 8: Git Security (TM-GIT-*)
 
 #### Key Mitigations
 
@@ -78,8 +78,8 @@ Tests live under `crates/bashkit/tests/integration/`:
 `git_remote_security_tests.rs` (Phase 2), `git_advanced_tests.rs` (Phase 3),
 `git_inspection_tests.rs`.
 
-## See Also
+## See also
 
-- `knowledge/threat-model.md` - Security threats and mitigations
-- `knowledge/builtins.md` - Builtin command reference
+- [Threat Model](../security/threat-model.md) - Security threats and mitigations
+- [Builtin Commands](../foundations/builtins.md) - Builtin command reference
 - `crates/bashkit/src/builtins/git/` - Implementation

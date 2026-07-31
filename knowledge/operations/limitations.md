@@ -19,7 +19,7 @@ The negative spec: what Bashkit deliberately does NOT do (and why), plus
 known partial implementations. Absences can't be recovered from code, so
 they're recorded here; everything positive is generated or tested instead:
 
-- **Builtin inventory**: generated `knowledge/status/builtins.json`
+- **Builtin inventory**: generated [`builtins.json`](../status/builtins.json)
   (`just regen-builtins`, drift-checked by `builtins-drift.yml`)
 - **Test counts / pass rates**: CI (`spec_tests::bash_spec_tests` suite);
   spec cases in `crates/bashkit/tests/spec_cases/`
@@ -50,7 +50,7 @@ execution model. Evidence is a threat-model ID, a test, or `stance`
 | L-NET-001 | No raw network sockets; HTTP only via `curl`/`wget`/`http` builtins | Allowlist-mediated egress is the only network surface | `l_net_001_no_raw_sockets` |
 | L-NET-002 | No DNS resolution; hosts must appear in the allowlist | Resolution would bypass allowlist intent | `l_net_002_default_deny_no_resolution` |
 | L-SIG-001 | `trap` stores INT/TERM handlers but no signal delivery in virtual mode (EXIT, ERR fire) | No host signals exist inside the sandbox | `l_sig_001_signal_traps_not_delivered` |
-| L-WASM-001 | Browser build (`@everruns/bashkit-wasm`, `wasm32-unknown-unknown`) has no wall-clock time: `sleep N` elapses instantly; `timeout N` and tool requests with `timeoutMs` fail closed with status 125 | No reliable timer driver on the target; silently accepting an unenforceable deadline could let an async callback suspend forever | `knowledge/runtimes/browser-package.md`, stance |
+| L-WASM-001 | Browser build (`@everruns/bashkit-wasm`, `wasm32-unknown-unknown`) has no wall-clock time: `sleep N` elapses instantly; `timeout N` and tool requests with `timeoutMs` fail closed with status 125 | No reliable timer driver on the target; silently accepting an unenforceable deadline could let an async callback suspend forever | [Browser Package](../runtimes/browser-package.md), stance |
 | L-WASM-002 | Browser build: `executeSync()` cannot run async custom builtins (fails with a clear message); use `execute()` | Single-threaded event loop can't settle a JS `Promise` without yielding | `crates/bashkit-wasm/__test__/bashkit-wasm.test.mjs` |
 | L-WASM-003 | Browser build: background jobs (`cmd &`) run synchronously and `awk` file redirects drive the VFS inline; no work runs on a separate thread | `wasm32-unknown-unknown` is single-threaded — `std::thread::spawn`/`tokio::spawn` are unavailable; safe because the in-memory VFS never suspends | `crates/bashkit-wasm/__test__/bashkit-wasm.test.mjs` |
 
