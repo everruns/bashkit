@@ -48,7 +48,7 @@ async def main():
     bash_tool = create_bash_tool(username="agent", hostname="sandbox")
 
     agent = Agent(
-        "anthropic:claude-sonnet-4-20250514",
+        "anthropic:claude-sonnet-5",
         system_prompt=SYSTEM_PROMPT,
         tools=[bash_tool],
     )

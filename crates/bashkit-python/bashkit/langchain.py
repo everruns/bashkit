@@ -19,7 +19,7 @@ Use with a LangChain agent::
     >>> from langgraph.prebuilt import create_react_agent
     >>>
     >>> tool = create_bash_tool()
-    >>> agent = create_react_agent(ChatAnthropic(model="claude-sonnet-4-20250514"), [tool])
+    >>> agent = create_react_agent(ChatAnthropic(model="claude-sonnet-5"), [tool])
 
 Wrap a ScriptedTool for multi-tool orchestration::
 

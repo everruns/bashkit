@@ -48,7 +48,7 @@ async def main():
     bashkit_middleware = backend.create_middleware()
 
     agent = create_deep_agent(
-        model="anthropic:claude-sonnet-4-20250514",
+        model="anthropic:claude-sonnet-5",
         backend=backend,
         middleware=[bashkit_middleware],
         system_prompt=SYSTEM_PROMPT,
