@@ -35,7 +35,7 @@ pi --provider openai --model gpt-5.4 \
   --api-key "$OPENAI_API_KEY"
 
 # With Anthropic
-pi --provider anthropic --model claude-sonnet-4-20250514 \
+pi --provider anthropic --model claude-sonnet-5 \
   -e examples/bashkit-pi/bashkit-extension.ts \
   --api-key "$ANTHROPIC_API_KEY"
 

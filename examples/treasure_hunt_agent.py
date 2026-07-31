@@ -197,7 +197,7 @@ async def run_agent():
 
     # Create the agent
     agent = create_agent(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-5",
         tools=[bash_tool],
         system_prompt=SYSTEM_PROMPT,
     )

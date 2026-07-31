@@ -142,7 +142,7 @@ impl Agent {
 
     async fn call_claude(&self, messages: &[Message]) -> anyhow::Result<MessagesResponse> {
         let request = MessagesRequest {
-            model: "claude-sonnet-4-20250514",
+            model: "claude-sonnet-5",
             max_tokens: 1024,
             system: "You are an agent with access to a virtual bash environment. \
                     Your task is to create a few text files with short poems about different topics. \

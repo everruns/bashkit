@@ -490,7 +490,9 @@ def run_langchain_demo(tool: ScriptedTool) -> None:
     print(f"\nLangChain tool: name={lc_tool.name!r}, tools={tool.tool_count()}")
 
     # Create agent with Claude
-    model = ChatAnthropic(model="claude-sonnet-4-20250514", temperature=0)
+    # Claude Sonnet 5 rejects non-default sampling params (temperature/top_p/top_k)
+    # with a 400.
+    model = ChatAnthropic(model="claude-sonnet-5")
     agent = create_react_agent(model, [lc_tool])
 
     # Ask the agent to investigate the cluster

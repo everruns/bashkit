@@ -315,8 +315,12 @@ jobs:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
         run: doppler run --only-secrets ANTHROPIC_API_KEY -- cargo run --example agent_tool --features http_client
 
+      # External API dependency — same rationale as the LLM agent example
+      # above: an OpenAI outage, quota exhaustion, or billing lapse is not a
+      # bashkit regression and must not turn main red.
       - name: Run harness OpenAI joke example
         if: github.event_name == 'push' && env.DOPPLER_AVAILABLE == 'true'
+        continue-on-error: true
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
         run: |

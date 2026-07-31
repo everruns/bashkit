@@ -9,7 +9,7 @@ Create a tool and attach it to a PydanticAI agent::
     >>> from pydantic_ai import Agent
     >>>
     >>> tool = create_bash_tool(timeout_seconds=30)
-    >>> agent = Agent('anthropic:claude-sonnet-4-20250514', tools=[tool])
+    >>> agent = Agent('anthropic:claude-sonnet-5', tools=[tool])
 
 The agent can then run bash commands in a sandboxed VFS::
 
@@ -56,7 +56,7 @@ def create_bash_tool(
         >>> from bashkit.pydantic_ai import create_bash_tool
         >>> tool = create_bash_tool(timeout_seconds=30)
         >>> from pydantic_ai import Agent
-        >>> agent = Agent('anthropic:claude-sonnet-4-20250514', tools=[tool])
+        >>> agent = Agent('anthropic:claude-sonnet-5', tools=[tool])
     """
     if not PYDANTIC_AI_AVAILABLE:
         raise ImportError(
