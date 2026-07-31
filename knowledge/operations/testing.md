@@ -93,6 +93,22 @@ Uploaded to Codecov from three sources: Rust unit/integration coverage via
 `cargo tarpaulin`; Rust coverage exercised through Python and Node binding
 tests via `cargo llvm-cov`.
 
+## Third-Party API Steps in CI
+
+The `Examples` job runs a few steps that call third-party LLM APIs (Anthropic
+via `cargo run --example agent_tool`, OpenAI via `examples/harness-openai-joke.sh`).
+Their credentials come from Doppler, so they only run on pushes to `main`.
+
+Every such step must set `continue-on-error: true`. An upstream outage, quota
+exhaustion, or billing lapse is not a bashkit regression, and letting it fail
+the `Check` gate makes main red for a cause no commit can fix. The steps stay
+in CI as smoke signals — read their logs when they fail rather than trusting
+the job conclusion.
+
+Corollary: these steps do not protect against a broken model id. Pin only model
+ids that are current, and re-check them when a model is retired — a retired id
+surfaces as a 404 in an already-green job.
+
 ## Adding New Tests
 
 1. Create or edit `.test.sh` file in appropriate category, standard format
