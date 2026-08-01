@@ -618,3 +618,70 @@ proptest! {
         prop_assert!(analysis.is_opaque(), "`{}` must not analyze as transparent", script);
     }
 }
+
+// ============================================================================
+// Snapshot decoding (TM-SNAP-*)
+// ============================================================================
+//
+// Snapshot bytes are the one input hosts routinely load from storage they do
+// not fully control, and the unkeyed integrity digest is explicitly not a
+// security boundary (TM-SNAP-001). This release reads the v2 container without
+// writing it, so the bytes it must survive are precisely the ones it cannot
+// have produced. The `snapshot_fuzz` target explores this space far more
+// deeply, but it only gets compile-checked on a PR — these run on every pass.
+
+/// Byte strings shaped like the things a damaged store actually returns.
+fn snapshot_bytes_strategy() -> impl Strategy<Value = Vec<u8>> {
+    prop_oneof![
+        // Free-form noise of every interesting length around the header.
+        proptest::collection::vec(any::<u8>(), 0..200),
+        // A plausible digest followed by arbitrary body.
+        proptest::collection::vec(any::<u8>(), 32..160),
+        // The v2 magic followed by noise, so the container decoder is reached
+        // rather than bailing at the prefix check.
+        proptest::collection::vec(any::<u8>(), 0..128).prop_map(|tail| [
+            vec![0u8; 32],
+            b"BKSNAP".to_vec(),
+            tail
+        ]
+        .concat()),
+        // A JSON-ish prefix, which routes to the legacy v1 decoder.
+        proptest::collection::vec(any::<u8>(), 0..128).prop_map(|tail| [
+            vec![0u8; 32],
+            b"{".to_vec(),
+            tail
+        ]
+        .concat()),
+    ]
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(200))]
+
+    /// Arbitrary bytes must be an error, never a panic, and must never leave a
+    /// live instance damaged.
+    #[test]
+    fn snapshot_decode_never_panics(data in snapshot_bytes_strategy()) {
+        fuzz_init();
+
+        // Both formats, both integrity modes.
+        let _ = bashkit::Snapshot::from_bytes(&data);
+        let _ = bashkit::Snapshot::from_bytes_keyed(&data, b"proptest-key");
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        let mut bash = Bash::new();
+        rt.block_on(async {
+            bash.exec("echo intact > /intact.txt").await.unwrap();
+        });
+
+        // Whatever the bytes are, the instance survives and stays usable.
+        let _ = bash.restore_snapshot(&data);
+        let result = rt.block_on(async { bash.exec("echo alive").await });
+        prop_assert!(result.is_ok(), "instance unusable after a rejected restore");
+        prop_assert_eq!(result.unwrap().stdout, "alive\n");
+    }
+}

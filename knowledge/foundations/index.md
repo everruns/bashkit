@@ -5,3 +5,4 @@
 * [Virtual Filesystem](vfs.md) - Filesystem abstraction, path safety, implementations, and sandbox invariants.
 * [Builtin Commands](builtins.md) - Builtin command trait, execution planning, registration, and implementation conventions.
 * [Parallel Execution](parallel-execution.md) - Threading model, shared ownership, and concurrency safety requirements.
+* [Snapshot History and Deltas](snapshot-history.md) - Content-addressed snapshot objects, commit DAG with forks, chunked binary content, and the version and capability compatibility rules for restore.

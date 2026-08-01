@@ -804,6 +804,10 @@ serialization API both handle key material and integrity tags.
 |--------|---------------|------------|--------|
 | Private key recovery (TM-CRY-001) | Heap/core-dump inspection of the Ed25519 seed | `BotAuthConfig` zeroizes the seed in `Drop`; debug output redacts key material | MITIGATED |
 | Snapshot forgery (TM-SNAP-001) | Forge a valid digest using the public `BKSNAP01` tag | Keyed HMAC API (`to_bytes_keyed`/`from_bytes_keyed`) for tamper-evident snapshots | MITIGATED |
+| Object store poisoning (TM-SNAP-002) | Substitute a different blob under a referenced object ID in the host's store | Every object is verified against its content hash on load; the graph is a Merkle tree, so a keyed commit authenticates everything it reaches | MITIGATED |
+| Hash agility (TM-SNAP-003) | A snapshot claims a hash algorithm the reader does not implement | Algorithm ID in the container header, rejected when unknown | MITIGATED |
+| Chunk or decompression bomb (TM-SNAP-004) | A small snapshot expands into an unbounded allocation during checkout | Per-object decompression capped; filesystem limits validated before any mutation | MITIGATED |
+| Malformed object graph (TM-SNAP-005) | Cyclic parents, absurd declared entry counts, or a chunk served where a tree is expected | Kind tags checked against context, declared counts bounded before allocation, ancestry walks track visited commits | MITIGATED |
 
 `from_bytes` uses `SHA-256(BKSNAP01 || payload)` (the tag is a public constant,
 so it detects accidental corruption, not forgery); `from_bytes_keyed` uses

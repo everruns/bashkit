@@ -94,6 +94,10 @@ impl FileSystem for ReadOnlyFs {
 
 #[async_trait]
 impl FileSystemExt for ReadOnlyFs {
+    fn backend_kind(&self) -> &'static str {
+        "readonly"
+    }
+
     fn usage(&self) -> FsUsage {
         self.inner.usage()
     }

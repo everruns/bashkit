@@ -143,3 +143,10 @@ path = "fuzz_targets/tomlq_fuzz.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "snapshot_fuzz"
+path = "fuzz_targets/snapshot_fuzz.rs"
+test = false
+doc = false
+bench = false

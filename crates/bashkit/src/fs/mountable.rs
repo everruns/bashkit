@@ -522,6 +522,12 @@ impl FileSystem for MountableFs {
 
 #[async_trait]
 impl FileSystemExt for MountableFs {
+    // Delegates: a MountableFs wrapping an in-memory root restores exactly
+    // like that root, so it must not read as a different backend.
+    fn backend_kind(&self) -> &'static str {
+        self.root.backend_kind()
+    }
+
     fn usage(&self) -> FsUsage {
         // Aggregate usage from root and all mounts
         let mut total = self.root.usage();

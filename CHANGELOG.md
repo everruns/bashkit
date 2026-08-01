@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Highlights
+
+- **Snapshots can now be read in a format bashkit does not yet write.** The
+  next release stores sessions as a content-addressed object graph, which is a
+  new on-disk format. This release teaches the reader that format and changes
+  nothing else, so a deployment can take it first and still be able to read
+  what the next release writes
+  ([#2223](https://github.com/everruns/bashkit/pull/2223)).
+
+### Upgrading
+
+- **Release this as a patch.** It adds no public API and changes no behavior:
+  `snapshot()` still writes the same bytes, and every existing snapshot restores
+  exactly as before. The new object-graph types are deliberately `pub(crate)`
+  and the new error cases reuse `Error::Internal` so that stays true.
+- **Take this release before the one that writes the new format.** Versions
+  older than this one fail on the new format with `expected value at line 1
+  column 1` — a JSON parse error naming neither the version nor the format —
+  so they are not usable rollback targets. This release is.
+- From the new format onward this cannot recur: the container header records a
+  `min_reader` version, so a reader too old for a snapshot says so and points at
+  the upgrade instead of reporting corruption.
+
 ## [0.14.4] - 2026-07-27
 
 ### Highlights

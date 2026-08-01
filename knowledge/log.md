@@ -1,5 +1,15 @@
 # Bashkit Knowledge Update Log
 
+## 2026-08-01
+
+* **Creation**: Added [Snapshot History and Deltas](foundations/snapshot-history.md) in response to [#2221](https://github.com/everruns/bashkit/issues/2221) — a content-addressed object graph with a commit DAG for forks, content-defined chunking for binary-safe per-file differentials, a two-phase pull API instead of a host store trait, three-number version rules backed by a golden fixture corpus, and a capability fingerprint gating restore.
+* **Decision**: Split the rollout across two releases — reader first as a patch, writer and public API next as a minor. `min_reader` makes every *future* format change safe, but cannot make the first one safe: readers that predate it fail on a v2 container with a JSON parse error naming neither version nor format. A release that reads v2 without writing it gives deployments a rollback target before anything can produce v2. Recorded in the concept's Status.
+* **Decision**: The reader release adds no public API, so it can ship as a patch — new types are `pub(crate)`, and the version refusal reuses `Error::Internal` because `Error` is not `#[non_exhaustive]` and a new variant would be breaking. The v2 encoder ships alongside it reachable only from tests: a decoder cannot be tested without something that produces valid input for it.
+* **Decision**: Content-defined chunking is in-tree (gear hash, pinned constants) rather than the `fastcdc` crate — the proposal's fallback, taken up front since the parameters are format constants regardless.
+* **Decision**: Recorded the rejected alternative — byte-delta patch chains (bsdiff/xdelta/`zstd --patch-from`) — and why the graph model wins for the branch-and-truncate read pattern.
+* **Enforcement**: Object identity covers decoded content, not compressed framing, so hosts may recompress freely; bytes appended after a deflate stream are rejected rather than silently ignored.
+* **Threats**: Registered TM-SNAP-002 through TM-SNAP-005 in [Threat Model](security/threat-model.md). TM-SNAP-006 (capability mismatch) lands with the policy it describes.
+
 ## 2026-07-31
 
 * **Repair**: Converted 56 in-bundle references from the code-span repository-path form (`` `knowledge/<doc>.md` ``) into resolving relative links. All but three carried pre-restructure flat paths that had been dangling since 2026-07-26 — invisible to both linters because a code span is text, not a link.

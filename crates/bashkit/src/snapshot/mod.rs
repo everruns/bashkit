@@ -1,13 +1,25 @@
-// Decision: Snapshot format uses serde_json for Phase 1 (debuggable, human-readable).
-// Phase 2 can add bincode/postcard for compactness.
-// VFS contents are included by default; SnapshotOptions can opt out for shell-only restores.
-// Session counters are serialized and restored monotonically so snapshot/resume cannot reset budgets.
+// Decision: v2 snapshots are a content-addressed object graph (see `objects`),
+// packed into a versioned binary container (see `container`). v1 was a single
+// serde_json blob; it re-encoded the whole VFS on every call, inflated binary
+// content ~3.5x by writing `Vec<u8>` as JSON integer arrays, and serialized
+// `HashMap`s in iteration order so identical state produced different bytes.
+//
+// Decision: v1 payloads stay readable forever. `from_bytes` dispatches on the
+// body prefix, so stored v1 snapshots survive the upgrade — the whole point of
+// the version policy in knowledge/foundations/snapshot-history.md.
+//
+// Decision: v2 restore funnels into the same `restore_snapshot_inner` as v1, by
+// reconstructing a `Snapshot` from the object graph. Limit validation, atomic
+// VFS replacement, builtin cache invalidation, and monotonic counter merging
+// are therefore identical across both formats by construction, not by parallel
+// implementations that could drift.
 
 //! Snapshot/resume — serialize interpreter state between `exec()` calls.
 //!
-//! Captures shell state (variables, env, cwd, arrays, aliases, traps) and
-//! VFS contents into a serializable [`Snapshot`] that can be persisted to disk,
-//! sent over a network, or used to restore a Bash instance later.
+//! [`Bash::snapshot`] and [`Bash::from_snapshot`] exchange one self-contained
+//! blob. This release writes the v1 payload and reads both v1 and the v2
+//! content-addressed container, so it can act as a rollback target for the
+//! release that starts writing v2.
 //!
 //! # Example
 //!
@@ -50,12 +62,40 @@
 //! - File descriptors, pipes, background jobs (ephemeral)
 //! - Execution limits configuration (caller should configure on restore)
 
+// Decision: the v2 *writer* ships here too, unreachable from any non-test
+// build, rather than being held back until the release that turns it on.
+// A decoder cannot be tested without something that produces valid input for
+// it, and hand-rolling byte fixtures for every case in `container`, `objects`,
+// and `graph` would test the fixtures instead of the code. So the encoder is
+// live under `cfg(test)` and dead otherwise, and `allow(dead_code)` says so
+// once here instead of forty times at each item.
+//
+// Remove this allow in the release that flips the writer to v2 — at that point
+// every item below is reachable, and the allow would start hiding real rot.
+#[allow(dead_code)]
+mod capabilities;
+#[allow(dead_code)]
+mod chunker;
+#[allow(dead_code)]
+mod container;
+#[allow(dead_code)]
+mod graph;
+#[allow(dead_code)]
+mod objects;
+
+// This release reads the v2 container but does not yet write it or expose the
+// object graph. The types below are crate-internal on purpose: shipping them
+// as public API would make this a minor release, and the whole point of
+// landing the reader on its own is that it can go out as a patch. `pub` in the
+// release that starts writing v2. See CHANGELOG.
+pub(crate) use capabilities::{CapabilityFingerprint, CheckoutPolicy};
+
 use sha2::{Digest, Sha256};
 
 use crate::fs::VfsSnapshot;
 use crate::interpreter::{ShellState, ShellStateOptions};
 
-/// Schema version for snapshot format compatibility.
+/// Schema version for the legacy v1 JSON payload.
 const SNAPSHOT_VERSION: u32 = 1;
 
 /// Domain-separation tag for the snapshot integrity digest.
@@ -120,29 +160,10 @@ impl Snapshot {
 
     /// Deserialize a snapshot from integrity-protected bytes.
     ///
-    /// Verifies the SHA-256 digest before deserializing. Rejects tampered snapshots.
+    /// Accepts both the current object-graph format and legacy v1 JSON
+    /// payloads. Verifies integrity before decoding, and rejects tampering.
     pub fn from_bytes(data: &[u8]) -> crate::Result<Self> {
-        if data.len() < DIGEST_LEN {
-            return Err(crate::Error::Internal(
-                "snapshot too short: missing integrity digest".to_string(),
-            ));
-        }
-        let (stored_digest, json) = data.split_at(DIGEST_LEN);
-        let expected = Self::compute_digest(json);
-        if stored_digest != expected.as_slice() {
-            return Err(crate::Error::Internal(
-                "snapshot integrity check failed: data may have been tampered with".to_string(),
-            ));
-        }
-        let snap: Self =
-            serde_json::from_slice(json).map_err(|e| crate::Error::Internal(e.to_string()))?;
-        if snap.version != SNAPSHOT_VERSION {
-            return Err(crate::Error::Internal(format!(
-                "unsupported snapshot version {} (expected {})",
-                snap.version, SNAPSHOT_VERSION
-            )));
-        }
-        Ok(snap)
+        Ok(decode_sealed(data, None)?.0)
     }
 
     /// Serialize with a caller-provided secret key for tamper-proof integrity.
@@ -162,32 +183,7 @@ impl Snapshot {
     ///
     /// Rejects snapshots where the HMAC does not match, preventing forgery.
     pub fn from_bytes_keyed(data: &[u8], key: &[u8]) -> crate::Result<Self> {
-        use hmac::{Hmac, KeyInit, Mac};
-        type HmacSha256 = Hmac<Sha256>;
-
-        if data.len() < DIGEST_LEN {
-            return Err(crate::Error::Internal(
-                "snapshot too short: missing integrity digest".to_string(),
-            ));
-        }
-        let (stored_digest, json) = data.split_at(DIGEST_LEN);
-        let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts any key length");
-        mac.update(json);
-        if mac.verify_slice(stored_digest).is_err() {
-            return Err(crate::Error::Internal(
-                "snapshot integrity check failed: HMAC mismatch (wrong key or tampered data)"
-                    .to_string(),
-            ));
-        }
-        let snap: Self =
-            serde_json::from_slice(json).map_err(|e| crate::Error::Internal(e.to_string()))?;
-        if snap.version != SNAPSHOT_VERSION {
-            return Err(crate::Error::Internal(format!(
-                "unsupported snapshot version {} (expected {})",
-                snap.version, SNAPSHOT_VERSION
-            )));
-        }
-        Ok(snap)
+        Ok(decode_sealed(data, Some(key))?.0)
     }
 
     /// Compute SHA-256 digest over `INTEGRITY_TAG || payload`.
@@ -214,8 +210,86 @@ impl Snapshot {
     }
 }
 
+/// Prepend the integrity digest to a payload.
+///
+/// With `key`, the digest is an HMAC and forgery requires the key. Without one
+/// it is the public-tag SHA-256 from v1, which detects corruption but not
+/// deliberate tampering (TM-SNAP-001) — that limitation is unchanged.
+pub(crate) fn seal(body: &[u8], key: Option<&[u8]>) -> Vec<u8> {
+    let digest = match key {
+        Some(key) => Snapshot::compute_hmac(key, body),
+        None => Snapshot::compute_digest(body),
+    };
+    let mut out = Vec::with_capacity(DIGEST_LEN + body.len());
+    out.extend_from_slice(&digest);
+    out.extend_from_slice(body);
+    out
+}
+
+/// Verify the integrity digest and return the body it covers.
+fn unseal<'a>(data: &'a [u8], key: Option<&[u8]>) -> crate::Result<&'a [u8]> {
+    if data.len() < DIGEST_LEN {
+        return Err(crate::Error::Internal(
+            "snapshot too short: missing integrity digest".to_string(),
+        ));
+    }
+    let (stored, body) = data.split_at(DIGEST_LEN);
+    let ok = match key {
+        Some(key) => {
+            use hmac::{Hmac, KeyInit, Mac};
+            type HmacSha256 = Hmac<Sha256>;
+            let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts any key length");
+            mac.update(body);
+            mac.verify_slice(stored).is_ok()
+        }
+        None => stored == Snapshot::compute_digest(body).as_slice(),
+    };
+    if !ok {
+        return Err(crate::Error::Internal(match key {
+            Some(_) => {
+                "snapshot integrity check failed: HMAC mismatch (wrong key or tampered data)"
+                    .to_string()
+            }
+            None => "snapshot integrity check failed: data may have been tampered with".to_string(),
+        }));
+    }
+    Ok(body)
+}
+
+/// Verify, then decode either format.
+///
+/// The capability fingerprint is `None` for v1 payloads, which predate it —
+/// there is nothing to compare against, so v1 restores skip the policy gate.
+/// That is a deliberate consequence of keeping old snapshots readable.
+fn decode_sealed(
+    data: &[u8],
+    key: Option<&[u8]>,
+) -> crate::Result<(Snapshot, Option<CapabilityFingerprint>)> {
+    let body = unseal(data, key)?;
+
+    if container::is_v2(body) {
+        let parsed = container::decode(body)?;
+        let (snapshot, caps) = graph::SnapshotGraph::materialize(parsed.root, &parsed.objects)?;
+        return Ok((snapshot, Some(caps)));
+    }
+
+    let snap: Snapshot =
+        serde_json::from_slice(body).map_err(|e| crate::Error::Internal(e.to_string()))?;
+    if snap.version != SNAPSHOT_VERSION {
+        return Err(crate::Error::Internal(format!(
+            "unsupported snapshot version {} (expected {})",
+            snap.version, SNAPSHOT_VERSION
+        )));
+    }
+    Ok((snap, None))
+}
+
 impl crate::Bash {
-    fn build_snapshot(&self, options: SnapshotOptions) -> Snapshot {
+    /// Capture state as a [`Snapshot`] value, without serializing it.
+    ///
+    /// Useful for inspection and for tests that need to construct legacy v1
+    /// bytes via [`Snapshot::to_bytes`].
+    pub fn snapshot_state(&self, options: SnapshotOptions) -> Snapshot {
         let shell = self
             .interpreter
             .shell_state_with_options(ShellStateOptions {
@@ -270,8 +344,12 @@ impl crate::Bash {
     }
 
     /// Capture the current interpreter state using caller-provided snapshot options.
+    ///
+    /// Still emits the v1 payload. This release teaches the *reader* v2 so that
+    /// it becomes a safe rollback target before anything starts writing it;
+    /// flipping the writer is the next release's job. See CHANGELOG.
     pub fn snapshot_with_options(&self, options: SnapshotOptions) -> crate::Result<Vec<u8>> {
-        self.build_snapshot(options).to_bytes()
+        self.snapshot_state(options).to_bytes()
     }
 
     /// Create a new Bash instance restored from a snapshot.
@@ -304,9 +382,8 @@ impl crate::Bash {
     /// # }
     /// ```
     pub fn from_snapshot(data: &[u8]) -> crate::Result<Self> {
-        let snap = Snapshot::from_bytes(data)?;
         let mut bash = Self::new();
-        bash.restore_snapshot_inner(&snap)?;
+        bash.restore_snapshot(data)?;
         Ok(bash)
     }
 
@@ -315,12 +392,41 @@ impl crate::Bash {
     /// Preserves the current instance's configuration (limits, builtins,
     /// filesystem type) while restoring shell state and VFS contents.
     ///
+    /// Accepts both the v1 payload and the v2 container.
+    ///
+    /// v2 containers carry a capability fingerprint describing the environment
+    /// that wrote them, but this release does not act on it: a rollback target
+    /// that refuses snapshots is not a rollback target. Enforcement arrives
+    /// with the release that starts writing v2. See CHANGELOG.
+    ///
     /// # Errors
     ///
-    /// Returns an error if deserialization fails.
+    /// Returns an error if deserialization or integrity verification fails.
+    /// The instance is untouched on failure.
     pub fn restore_snapshot(&mut self, data: &[u8]) -> crate::Result<()> {
-        let snap = Snapshot::from_bytes(data)?;
-        self.restore_snapshot_inner(&snap)
+        self.restore_snapshot_with_policy(data, CheckoutPolicy::Force)
+    }
+
+    /// Restore from a snapshot under an explicit capability policy.
+    pub(crate) fn restore_snapshot_with_policy(
+        &mut self,
+        data: &[u8],
+        policy: CheckoutPolicy,
+    ) -> crate::Result<()> {
+        let (snap, caps) = decode_sealed(data, None)?;
+        self.apply_restore(&snap, caps.as_ref(), policy)
+    }
+
+    fn apply_restore(
+        &mut self,
+        snap: &Snapshot,
+        caps: Option<&CapabilityFingerprint>,
+        policy: CheckoutPolicy,
+    ) -> crate::Result<()> {
+        match caps {
+            Some(caps) => self.apply_checked(snap, caps, policy),
+            None => self.restore_snapshot_inner(snap),
+        }
     }
 
     fn restore_snapshot_inner(&mut self, snap: &Snapshot) -> crate::Result<()> {
@@ -361,22 +467,31 @@ impl crate::Bash {
         key: &[u8],
         options: SnapshotOptions,
     ) -> crate::Result<Vec<u8>> {
-        self.build_snapshot(options).to_bytes_keyed(key)
+        self.snapshot_state(options).to_bytes_keyed(key)
     }
 
     /// Create a new Bash instance from a keyed (HMAC-protected) snapshot.
     ///
     /// Rejects snapshots where the HMAC doesn't match the provided key.
     pub fn from_snapshot_keyed(data: &[u8], key: &[u8]) -> crate::Result<Self> {
-        let snap = Snapshot::from_bytes_keyed(data, key)?;
         let mut bash = Self::new();
-        bash.restore_snapshot_inner(&snap)?;
+        bash.restore_snapshot_keyed(data, key)?;
         Ok(bash)
     }
 
     /// Restore state from a keyed snapshot into this Bash instance.
     pub fn restore_snapshot_keyed(&mut self, data: &[u8], key: &[u8]) -> crate::Result<()> {
-        let snap = Snapshot::from_bytes_keyed(data, key)?;
-        self.restore_snapshot_inner(&snap)
+        self.restore_snapshot_keyed_with_policy(data, key, CheckoutPolicy::Force)
+    }
+
+    /// Restore from a keyed snapshot under an explicit capability policy.
+    pub(crate) fn restore_snapshot_keyed_with_policy(
+        &mut self,
+        data: &[u8],
+        key: &[u8],
+        policy: CheckoutPolicy,
+    ) -> crate::Result<()> {
+        let (snap, caps) = decode_sealed(data, Some(key))?;
+        self.apply_restore(&snap, caps.as_ref(), policy)
     }
 }
