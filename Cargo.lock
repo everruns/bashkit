@@ -387,6 +387,49 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 [[package]]
 name = "bashkit"
 version = "0.14.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "17175a514a671777aabb125293aca393bfdf71223fa1289e23735ae523845ddc"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.23.0",
+ "bigdecimal",
+ "bitflags 2.13.1",
+ "chrono",
+ "clap",
+ "fancy-regex 0.18.0",
+ "flate2",
+ "futures-core",
+ "futures-util",
+ "getrandom 0.4.3",
+ "hmac",
+ "jaq-core",
+ "jaq-json",
+ "jaq-std",
+ "md-5",
+ "monty",
+ "monty-types",
+ "num-traits",
+ "os_display",
+ "regex",
+ "reqwest",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha1",
+ "sha2",
+ "thiserror",
+ "tokio",
+ "tower",
+ "turso_core",
+ "unit-prefix",
+ "url",
+ "web-time",
+]
+
+[[package]]
+name = "bashkit"
+version = "0.14.5"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -441,10 +484,10 @@ dependencies = [
 
 [[package]]
 name = "bashkit-bench"
-version = "0.14.4"
+version = "0.14.5"
 dependencies = [
  "anyhow",
- "bashkit",
+ "bashkit 0.14.5",
  "clap",
  "colored",
  "serde",
@@ -456,10 +499,10 @@ dependencies = [
 
 [[package]]
 name = "bashkit-cli"
-version = "0.14.4"
+version = "0.14.5"
 dependencies = [
  "anyhow",
- "bashkit",
+ "bashkit 0.14.4",
  "clap",
  "rustyline",
  "signal-hook",
@@ -470,7 +513,7 @@ dependencies = [
 
 [[package]]
 name = "bashkit-coreutils-port"
-version = "0.14.4"
+version = "0.14.5"
 dependencies = [
  "anyhow",
  "prettyplease",
@@ -484,11 +527,11 @@ dependencies = [
 
 [[package]]
 name = "bashkit-eval"
-version = "0.14.4"
+version = "0.14.5"
 dependencies = [
  "anyhow",
  "async-trait",
- "bashkit",
+ "bashkit 0.14.5",
  "chrono",
  "mira-eval",
  "regex",
@@ -501,9 +544,9 @@ dependencies = [
 
 [[package]]
 name = "bashkit-js"
-version = "0.14.4"
+version = "0.14.5"
 dependencies = [
- "bashkit",
+ "bashkit 0.14.5",
  "napi",
  "napi-build",
  "napi-derive",
@@ -513,9 +556,9 @@ dependencies = [
 
 [[package]]
 name = "bashkit-python"
-version = "0.14.4"
+version = "0.14.5"
 dependencies = [
- "bashkit",
+ "bashkit 0.14.5",
  "num-bigint",
  "pyo3",
  "pyo3-async-runtimes",
@@ -525,9 +568,9 @@ dependencies = [
 
 [[package]]
 name = "bashkit-wasm"
-version = "0.14.4"
+version = "0.14.5"
 dependencies = [
- "bashkit",
+ "bashkit 0.14.5",
  "console_error_panic_hook",
  "futures-util",
  "getrandom 0.4.3",
