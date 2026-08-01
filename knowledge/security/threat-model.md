@@ -963,6 +963,10 @@ patterns via `.redact_env("MY_CUSTOM_SECRET")`.
 | ID | Threat | Attack | Mitigation | Status |
 |----|--------|--------|------------|--------|
 | TM-SNAP-001 | Snapshot forgery via public tag | Attacker computes valid SHA-256 digest using public `BKSNAP01` tag | Document limitation; add keyed HMAC API (`to_bytes_keyed`/`from_bytes_keyed`) | **MITIGATED** |
+| TM-SNAP-002 | Object store poisoning | Attacker controlling the host's object store substitutes a different blob under a referenced object ID | Every object is verified against its content hash on load (`Encoded::from_storage`); the graph is a Merkle tree, so a keyed commit authenticates everything it reaches | **MITIGATED** |
+| TM-SNAP-003 | Hash algorithm agility | SHA-256 weakens, or a snapshot claims an algorithm the reader does not implement | Algorithm ID recorded in the container header and rejected when unknown; ID changes do not require a framing break | **MITIGATED** |
+| TM-SNAP-004 | Chunk or decompression bomb | A small snapshot expands into an unbounded allocation during checkout | Per-object decompression capped before materialization; filesystem limits validated before any mutation, leaving the instance untouched on refusal | **MITIGATED** |
+| TM-SNAP-005 | Malformed object graph | Cyclic or self-referencing parents, absurd declared entry counts, or a chunk served where a tree is expected | Kind tags checked against the kind expected from context; declared counts bounded before allocation; ancestry walks track visited commits and cap iterations | **MITIGATED** |
 
 **`from_bytes`** uses `SHA-256(BKSNAP01 || payload)` where the tag is a public constant.
 This detects accidental corruption but **does NOT prevent intentional forgery**. Any caller

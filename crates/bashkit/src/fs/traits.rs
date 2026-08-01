@@ -174,6 +174,25 @@ pub trait FileSystemExt: Send + Sync {
     fn vfs_restore(&self, _snapshot: &super::VfsSnapshot) -> Result<()> {
         Err(IoError::new(ErrorKind::Unsupported, "vfs_restore not supported").into())
     }
+
+    /// Short, stable identifier for this backend kind.
+    ///
+    /// Recorded in snapshot capability fingerprints so a checkout can tell
+    /// that state captured against, say, an overlay is being restored into a
+    /// plain in-memory filesystem. Wrappers delegate to what they wrap when
+    /// the wrapper does not change restore semantics.
+    ///
+    /// These strings are part of the snapshot format: changing one invalidates
+    /// `Strict` checkouts of existing snapshots.
+    ///
+    /// Hidden in this release. It has a default body, so adding it breaks no
+    /// implementor, but a documented trait method is public API and this
+    /// release ships as a patch. Documented in the release that exposes the
+    /// capability fingerprint it feeds.
+    #[doc(hidden)]
+    fn backend_kind(&self) -> &'static str {
+        "unknown"
+    }
 }
 
 /// Async virtual filesystem trait.

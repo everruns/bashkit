@@ -981,6 +981,10 @@ impl FileSystem for OverlayFs {
 
 #[async_trait]
 impl FileSystemExt for OverlayFs {
+    fn backend_kind(&self) -> &'static str {
+        "overlay"
+    }
+
     fn usage(&self) -> FsUsage {
         self.compute_usage()
     }

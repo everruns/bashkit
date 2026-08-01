@@ -296,18 +296,50 @@ pub struct VfsSnapshot {
     entries: Vec<VfsEntry>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct VfsEntry {
-    path: PathBuf,
-    kind: VfsEntryKind,
-    mode: u32,
+impl VfsSnapshot {
+    /// Entries in this snapshot, in unspecified order.
+    ///
+    /// Order follows `HashMap` iteration and is **not** stable across
+    /// processes. Sort by [`VfsEntry::path`] when a deterministic sequence
+    /// matters — the snapshot object encoder does exactly that.
+    pub(crate) fn entries(&self) -> &[VfsEntry] {
+        &self.entries
+    }
+
+    /// Build a snapshot from entries, for callers that construct VFS state
+    /// out of band (the content-addressed object graph does this on checkout).
+    pub(crate) fn from_entries(entries: Vec<VfsEntry>) -> Self {
+        Self { entries }
+    }
 }
 
+/// One filesystem entry inside a [`VfsSnapshot`].
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-enum VfsEntryKind {
-    File { content: Vec<u8> },
+pub struct VfsEntry {
+    /// Absolute path of the entry.
+    pub path: PathBuf,
+    /// Entry type and type-specific payload.
+    pub kind: VfsEntryKind,
+    /// POSIX mode bits.
+    pub mode: u32,
+}
+
+/// Type and payload of a [`VfsEntry`].
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum VfsEntryKind {
+    /// Regular file with its full contents.
+    File {
+        /// Raw file bytes. Arbitrary binary, not necessarily UTF-8.
+        content: Vec<u8>,
+    },
+    /// Directory.
     Directory,
-    Symlink { target: PathBuf },
+    /// Symbolic link.
+    Symlink {
+        /// Link target, stored verbatim (may be relative or dangling).
+        target: PathBuf,
+    },
+    /// Named pipe.
     Fifo,
 }
 
@@ -1727,6 +1759,10 @@ impl FileSystem for InMemoryFs {
 
 #[async_trait]
 impl FileSystemExt for InMemoryFs {
+    fn backend_kind(&self) -> &'static str {
+        "in-memory"
+    }
+
     async fn mkfifo(&self, path: &Path, mode: u32) -> Result<()> {
         self.limits
             .validate_path(path)
