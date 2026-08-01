@@ -7,6 +7,18 @@ use bashkit::{
 use std::path::Path;
 use std::sync::Arc;
 
+/// Encode state in the legacy v1 JSON format.
+///
+/// `Bash::snapshot()` now emits the v2 object graph, whose payload is binary.
+/// Tests that tamper with snapshot internals reach in through JSON, so they
+/// build v1 bytes explicitly — which also keeps them asserting that stored v1
+/// snapshots stay readable after the format change.
+fn legacy_v1_bytes(bash: &Bash) -> Vec<u8> {
+    bash.snapshot_state(SnapshotOptions::default())
+        .to_bytes()
+        .unwrap()
+}
+
 // ==================== VFS snapshot/restore ====================
 
 #[tokio::test]
@@ -340,7 +352,7 @@ async fn snapshot_restores_functions_from_source_when_ast_missing() {
     let mut bash = Bash::new();
     bash.exec("greet() { echo \"hi $1\"; }").await.unwrap();
 
-    let bytes = bash.snapshot().unwrap();
+    let bytes = legacy_v1_bytes(&bash);
     let mut json: serde_json::Value = serde_json::from_slice(&bytes[32..]).unwrap();
     json["shell"]["functions"]["greet"] = serde_json::json!({
         "source": "greet() { echo \"hi $1\"; }"
@@ -362,7 +374,7 @@ async fn snapshot_restores_legacy_function_shape_without_wrapper() {
     let mut bash = Bash::new();
     bash.exec("greet() { echo \"hi $1\"; }").await.unwrap();
 
-    let bytes = bash.snapshot().unwrap();
+    let bytes = legacy_v1_bytes(&bash);
     let parsed = Snapshot::from_bytes(&bytes).unwrap();
     let legacy_func = serde_json::to_value(parsed.shell.functions.get("greet").unwrap()).unwrap();
     let mut json: serde_json::Value = serde_json::from_slice(&bytes[32..]).unwrap();
@@ -411,7 +423,7 @@ async fn snapshot_function_source_excludes_trailing_eof_comment() {
         .await
         .unwrap();
 
-    let bytes = bash.snapshot().unwrap();
+    let bytes = legacy_v1_bytes(&bash);
     let json: serde_json::Value = serde_json::from_slice(&bytes[32..]).unwrap();
     let source = json["shell"]["functions"]["trimmed"]["source"]
         .as_str()
@@ -424,7 +436,7 @@ async fn snapshot_function_source_excludes_trailing_eof_comment() {
 async fn snapshot_restore_counts_source_bytes_against_function_limit() {
     let mut src = Bash::new();
     src.exec("large_source() { :; }").await.unwrap();
-    let bytes = src.snapshot().unwrap();
+    let bytes = legacy_v1_bytes(&src);
     let mut json: serde_json::Value = serde_json::from_slice(&bytes[32..]).unwrap();
     json["shell"]["functions"]["large_source"] = serde_json::json!({
         "source": format!("large_source() {{ :; }} #{}", "x".repeat(2048))
@@ -591,7 +603,7 @@ async fn snapshot_restore_does_not_reset_session_exec_limit_with_tampered_counte
     let session_limits = SessionLimits::new().max_exec_calls(2);
     let mut bash = Bash::builder().session_limits(session_limits).build();
     bash.exec("echo first").await.unwrap();
-    let bytes = bash.snapshot().unwrap();
+    let bytes = legacy_v1_bytes(&bash);
 
     let mut tampered_json: serde_json::Value = serde_json::from_slice(&bytes[32..]).unwrap();
     tampered_json["session_exec_calls"] = serde_json::json!(0);
@@ -612,7 +624,7 @@ async fn snapshot_restore_extreme_exec_counter_errors_without_overflow() {
     let session_limits = SessionLimits::new().max_exec_calls(2);
     let mut bash = Bash::builder().session_limits(session_limits).build();
     bash.exec("echo first").await.unwrap();
-    let bytes = bash.snapshot().unwrap();
+    let bytes = legacy_v1_bytes(&bash);
 
     let mut tampered_json: serde_json::Value = serde_json::from_slice(&bytes[32..]).unwrap();
     tampered_json["session_exec_calls"] = serde_json::json!(u64::MAX);
@@ -670,7 +682,7 @@ async fn from_snapshot_keyed_restores_session_counters() {
 async fn snapshot_restore_rejects_tampered_shell_state_that_exceeds_memory_limits() {
     let mut src = Bash::new();
     src.exec("x=ok").await.unwrap();
-    let bytes = src.snapshot().unwrap();
+    let bytes = legacy_v1_bytes(&src);
 
     let mut tampered_json: serde_json::Value = serde_json::from_slice(&bytes[32..]).unwrap();
     let oversized_vars = serde_json::json!({
@@ -695,7 +707,7 @@ async fn snapshot_restore_rejects_tampered_shell_state_that_exceeds_memory_limit
 #[tokio::test]
 async fn snapshot_restore_rejects_tampered_dir_stack_above_pushd_limit() {
     let src = Bash::new();
-    let bytes = src.snapshot().unwrap();
+    let bytes = legacy_v1_bytes(&src);
 
     let mut tampered_json: serde_json::Value = serde_json::from_slice(&bytes[32..]).unwrap();
     tampered_json["shell"]["dir_stack"] = serde_json::Value::Array(
@@ -719,7 +731,7 @@ async fn snapshot_restore_rejects_tampered_dir_stack_above_pushd_limit() {
 async fn snapshot_restore_rejects_invalid_last_bg_pid() {
     let mut src = Bash::new();
     src.exec("true &").await.unwrap();
-    let bytes = src.snapshot().unwrap();
+    let bytes = legacy_v1_bytes(&src);
 
     for invalid_pid in ["9".repeat(64), "not-a-pid".to_string()] {
         let mut tampered_json: serde_json::Value = serde_json::from_slice(&bytes[32..]).unwrap();
@@ -758,7 +770,7 @@ async fn snapshot_restore_fails_closed_on_malformed_vfs() {
         .write_file(Path::new("/tmp/secret-a.txt"), b"alpha-secret")
         .await
         .unwrap();
-    let bytes = tenant_a.snapshot().unwrap();
+    let bytes = legacy_v1_bytes(&tenant_a);
 
     // Patch the snapshot JSON so the VFS section contains a poisoned
     // path (rejected by limits::validate_path) and the shell variable

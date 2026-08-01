@@ -967,6 +967,7 @@ patterns via `.redact_env("MY_CUSTOM_SECRET")`.
 | TM-SNAP-003 | Hash algorithm agility | SHA-256 weakens, or a snapshot claims an algorithm the reader does not implement | Algorithm ID recorded in the container header and rejected when unknown; ID changes do not require a framing break | **MITIGATED** |
 | TM-SNAP-004 | Chunk or decompression bomb | A small snapshot expands into an unbounded allocation during checkout | Per-object decompression capped before materialization; filesystem limits validated before any mutation, leaving the instance untouched on refusal | **MITIGATED** |
 | TM-SNAP-005 | Malformed object graph | Cyclic or self-referencing parents, absurd declared entry counts, or a chunk served where a tree is expected | Kind tags checked against the kind expected from context; declared counts bounded before allocation; ancestry walks track visited commits and cap iterations | **MITIGATED** |
+| TM-SNAP-006 | Capability mismatch on restore | State captured with tools, features, or a filesystem backend the restoring instance lacks is restored into it silently | Capability fingerprint recorded per commit; `CheckoutPolicy::Superset` by default, so a restore into an environment missing any recorded capability fails; state-evidence checks fire regardless of policy | **MITIGATED** |
 
 **`from_bytes`** uses `SHA-256(BKSNAP01 || payload)` where the tag is a public constant.
 This detects accidental corruption but **does NOT prevent intentional forgery**. Any caller
@@ -975,6 +976,23 @@ with source code access can forge valid snapshots.
 **`from_bytes_keyed`** uses `HMAC-SHA256(secret_key, payload)` with a caller-provided key.
 Use this when snapshots cross trust boundaries (network transfer, shared storage, untrusted
 input). The keyed API was added in response to issue #1167.
+
+**Content addressing changes what the digest has to carry.** In the v2 object graph every
+object is named by `SHA-256(kind || payload)` and re-verified on load, so a commit ID
+transitively authenticates the shell state, the tree, and every file chunk beneath it.
+Sealing the container therefore only needs to protect the root. The unkeyed digest remains
+forgeable exactly as TM-SNAP-001 describes — a caller who needs a real trust boundary still
+has to use the keyed API, which now covers the whole graph rather than one flat payload.
+
+**Capability gating is a safety check, not an authorization boundary.** The fingerprint
+proves the producing environment matches the restoring one; it cannot prove a restored
+session will behave. `CheckoutPolicy::Force` deliberately bypasses it, and a snapshot taken
+before a tool existed carries no record of that tool. Where captured state provably requires
+a feature, the state itself is checked instead — a VFS holding SQLite databases is refused on
+a build without the `sqlite` feature under every policy.
+
+See [Snapshot History and Deltas](../foundations/snapshot-history.md) for the object model
+and version rules these threats apply to.
 
 ### 10. Builtin-Specific Threat Coverage
 

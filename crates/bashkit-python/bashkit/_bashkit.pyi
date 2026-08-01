@@ -688,6 +688,38 @@ class Bash:
         """
         ...
 
+    def commit(
+        self,
+        parents: list[str] | None = None,
+        meta: dict[str, str] | None = None,
+        have: list[str] | None = None,
+        exclude_filesystem: bool = False,
+        exclude_functions: bool = False,
+    ) -> PackedCommit:
+        """Capture state as a content-addressed commit for session history.
+
+        Pass ``have`` (ids your store already holds) to keep commits
+        incremental. A fork is a commit whose parent is not the branch tip.
+        """
+        ...
+
+    def checkout(
+        self,
+        commit_id: str,
+        objects: dict[str, bytes],
+        policy: str = "superset",
+    ) -> None:
+        """Restore the state a commit describes, pulling objects from a store.
+
+        ``policy`` is ``"superset"`` (default), ``"strict"``, or ``"force"``.
+        Nothing is mutated if the checkout fails.
+        """
+        ...
+
+    def capabilities(self) -> CapabilityFingerprint:
+        """Fingerprint this instance's environment."""
+        ...
+
     def snapshot(
         self,
         exclude_filesystem: bool = False,
@@ -1696,3 +1728,110 @@ def get_version() -> str:
         True
     """
     ...
+
+class PackedCommit:
+    """A commit plus the objects a host needs to persist."""
+
+    @property
+    def id(self) -> str:
+        """Content address of this commit — store it per message."""
+        ...
+
+    @property
+    def objects(self) -> dict[str, bytes]:
+        """Objects to persist, keyed by hex object id."""
+        ...
+
+    @property
+    def object_count(self) -> int:
+        """Number of new objects this commit emitted."""
+        ...
+
+    @property
+    def stored_bytes(self) -> int:
+        """Total encoded size of the new objects."""
+        ...
+
+    @property
+    def is_self_contained(self) -> bool:
+        """Whether this commit carries every object needed to restore it."""
+        ...
+
+    def to_bytes(self) -> bytes:
+        """Serialize into one self-contained blob, like ``snapshot()``.
+
+        Raises ``BashError`` for an incremental commit, which omits objects.
+        """
+        ...
+
+class SnapshotDiff:
+    """What changed between two commits."""
+
+    @property
+    def files_added(self) -> list[str]: ...
+    @property
+    def files_modified(self) -> list[str]: ...
+    @property
+    def files_removed(self) -> list[str]: ...
+    @property
+    def shell_changed(self) -> bool: ...
+    def is_empty(self) -> bool:
+        """True when nothing changed."""
+        ...
+
+class CapabilityFingerprint:
+    """The environment that produced a commit."""
+
+    @property
+    def bashkit_version(self) -> str: ...
+    @property
+    def builtins(self) -> list[str]: ...
+    @property
+    def features(self) -> list[str]: ...
+    @property
+    def fs_backend(self) -> str: ...
+
+class SnapshotGraph:
+    """Read-only operations over a snapshot object graph.
+
+    Every method takes the objects it needs — bashkit never reaches into host
+    storage — and walks only as far as the supplied store reaches.
+    """
+
+    @staticmethod
+    def parents(commit_id: str, objects: dict[str, bytes]) -> list[str]:
+        """Commits this one descends from."""
+        ...
+
+    @staticmethod
+    def meta(commit_id: str, objects: dict[str, bytes]) -> dict[str, str]:
+        """Host metadata attached when the commit was made."""
+        ...
+
+    @staticmethod
+    def capabilities(commit_id: str, objects: dict[str, bytes]) -> CapabilityFingerprint:
+        """Capability fingerprint of the producing instance."""
+        ...
+
+    @staticmethod
+    def ancestry(commit_id: str, objects: dict[str, bytes], limit: int = 100) -> list[str]:
+        """Walk ancestry newest-first, stopping at ``limit`` or a missing commit."""
+        ...
+
+    @staticmethod
+    def plan_checkout(commit_id: str, objects: dict[str, bytes]) -> list[str]:
+        """Object ids needed to check out this commit that ``objects`` lacks.
+
+        Call repeatedly — each wave reveals the next — until it returns ``[]``.
+        """
+        ...
+
+    @staticmethod
+    def reachable(commit_id: str, objects: dict[str, bytes]) -> list[str]:
+        """Every object this commit reaches, for host-side garbage collection."""
+        ...
+
+    @staticmethod
+    def diff(commit_a: str, commit_b: str, objects: dict[str, bytes]) -> SnapshotDiff:
+        """Compare two commits."""
+        ...

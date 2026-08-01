@@ -225,11 +225,7 @@ impl CheckoutPolicy {
         if ok {
             return Ok(());
         }
-        // Typed variant lands with the release that exposes `CheckoutPolicy`;
-        // `Error` is not `#[non_exhaustive]` so it cannot ride in a patch.
-        Err(crate::Error::Internal(format!(
-            "snapshot capability mismatch: {delta}"
-        )))
+        Err(crate::Error::SnapshotCapabilityMismatch(delta.to_string()))
     }
 }
 

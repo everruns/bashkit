@@ -184,12 +184,6 @@ pub trait FileSystemExt: Send + Sync {
     ///
     /// These strings are part of the snapshot format: changing one invalidates
     /// `Strict` checkouts of existing snapshots.
-    ///
-    /// Hidden in this release. It has a default body, so adding it breaks no
-    /// implementor, but a documented trait method is public API and this
-    /// release ships as a patch. Documented in the release that exposes the
-    /// capability fingerprint it feeds.
-    #[doc(hidden)]
     fn backend_kind(&self) -> &'static str {
         "unknown"
     }

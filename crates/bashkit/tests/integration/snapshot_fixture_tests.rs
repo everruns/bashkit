@@ -6,7 +6,7 @@
 //! regenerated; a new format version adds a file
 //! (`cargo run -p bashkit --example generate_snapshot_fixtures`).
 
-use bashkit::Bash;
+use bashkit::{Bash, CheckoutPolicy};
 use std::path::PathBuf;
 
 fn fixture(name: &str) -> Vec<u8> {
@@ -68,9 +68,15 @@ async fn assert_golden_state(bash: &mut Bash) {
     );
 }
 
+/// Restored with `Force` on purpose.
+///
+/// A fixture's capability fingerprint names the builtin set of the build that
+/// wrote it, so any later release that adds or removes a builtin would fail the
+/// capability gate. These tests are about *format* compatibility; capability
+/// policy has its own tests in `snapshot_history_tests`.
 async fn restore_fixture(name: &str) -> Bash {
     let mut bash = Bash::new();
-    bash.restore_snapshot(&fixture(name))
+    bash.restore_snapshot_with_policy(&fixture(name), CheckoutPolicy::Force)
         .unwrap_or_else(|e| panic!("fixture {name} failed to restore: {e}"));
     bash
 }
@@ -105,7 +111,8 @@ async fn fixtures_are_rejected_when_corrupted() {
         damaged[at] ^= 0xff;
         let mut bash = Bash::new();
         assert!(
-            bash.restore_snapshot(&damaged).is_err(),
+            bash.restore_snapshot_with_policy(&damaged, CheckoutPolicy::Force)
+                .is_err(),
             "corrupted {name} restored anyway"
         );
     }

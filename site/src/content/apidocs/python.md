@@ -249,6 +249,36 @@ Example:
 1
 ```
 
+### `commit`
+
+```python
+Bash.commit(parents: list[str] | None = None, meta: dict[str, str] | None = None, have: list[str] | None = None, exclude_filesystem: bool = False, exclude_functions: bool = False) -> PackedCommit
+```
+
+Capture state as a content-addressed commit for session history.
+
+Pass ``have`` (ids your store already holds) to keep commits
+incremental. A fork is a commit whose parent is not the branch tip.
+
+### `checkout`
+
+```python
+Bash.checkout(commit_id: str, objects: dict[str, bytes], policy: str = 'superset') -> None
+```
+
+Restore the state a commit describes, pulling objects from a store.
+
+``policy`` is ``"superset"`` (default), ``"strict"``, or ``"force"``.
+Nothing is mutated if the checkout fails.
+
+### `capabilities`
+
+```python
+Bash.capabilities() -> CapabilityFingerprint
+```
+
+Fingerprint this instance's environment.
+
 ### `snapshot`
 
 ```python

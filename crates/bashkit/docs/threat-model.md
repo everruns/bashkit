@@ -809,10 +809,18 @@ serialization API both handle key material and integrity tags.
 | Hash agility (TM-SNAP-003) | A snapshot claims a hash algorithm the reader does not implement | Algorithm ID in the container header, rejected when unknown | MITIGATED |
 | Chunk or decompression bomb (TM-SNAP-004) | A small snapshot expands into an unbounded allocation during checkout | Per-object decompression capped; filesystem limits validated before any mutation | MITIGATED |
 | Malformed object graph (TM-SNAP-005) | Cyclic parents, absurd declared entry counts, or a chunk served where a tree is expected | Kind tags checked against context, declared counts bounded before allocation, ancestry walks track visited commits | MITIGATED |
+| Capability mismatch on restore (TM-SNAP-006) | State captured with tools or features the restoring instance lacks is restored into it silently | Per-commit capability fingerprint with a `Superset` default policy, plus state-evidence checks that fire under every policy | MITIGATED |
 
 `from_bytes` uses `SHA-256(BKSNAP01 || payload)` (the tag is a public constant,
 so it detects accidental corruption, not forgery); `from_bytes_keyed` uses
 `HMAC-SHA256(secret_key, payload)` with a caller-provided key for authenticity.
+
+Within a commit graph every object is named by `SHA-256(kind || payload)` and
+re-verified when loaded, so authenticating the root commit transitively
+authenticates the shell state, tree, and file chunks beneath it. Note that
+object identity covers *decoded* content, not its compressed framing: a host
+may recompress its store freely, while bytes appended after a compressed stream
+are rejected.
 
 ### RealFs Mount Security (TM-FS-*)
 

@@ -84,6 +84,7 @@ pub mod set_e_and_or_tests;
 pub mod shuf_resource_tests;
 pub mod skills_tests;
 pub mod snapshot_fixture_tests;
+pub mod snapshot_history_tests;
 pub mod snapshot_tests;
 pub mod source_function_tests;
 pub mod spec_runner;

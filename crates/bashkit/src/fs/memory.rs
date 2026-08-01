@@ -302,13 +302,13 @@ impl VfsSnapshot {
     /// Order follows `HashMap` iteration and is **not** stable across
     /// processes. Sort by [`VfsEntry::path`] when a deterministic sequence
     /// matters — the snapshot object encoder does exactly that.
-    pub(crate) fn entries(&self) -> &[VfsEntry] {
+    pub fn entries(&self) -> &[VfsEntry] {
         &self.entries
     }
 
     /// Build a snapshot from entries, for callers that construct VFS state
     /// out of band (the content-addressed object graph does this on checkout).
-    pub(crate) fn from_entries(entries: Vec<VfsEntry>) -> Self {
+    pub fn from_entries(entries: Vec<VfsEntry>) -> Self {
         Self { entries }
     }
 }

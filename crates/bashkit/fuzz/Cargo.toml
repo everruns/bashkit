@@ -33,6 +33,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "snapshot_fuzz"
+path = "fuzz_targets/snapshot_fuzz.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "analyze_fuzz"
 path = "fuzz_targets/analyze_fuzz.rs"
 test = false
@@ -140,13 +147,6 @@ bench = false
 [[bin]]
 name = "tomlq_fuzz"
 path = "fuzz_targets/tomlq_fuzz.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "snapshot_fuzz"
-path = "fuzz_targets/snapshot_fuzz.rs"
 test = false
 doc = false
 bench = false

@@ -29,6 +29,11 @@ use bashkit::{
     PythonLimits, ScriptedTool as RustScriptedTool, ShellStateView as RustShellStateView,
     SnapshotOptions as RustSnapshotOptions, Tool, ToolArgs, ToolDef, ToolRequest, async_trait,
 };
+use bashkit::{
+    CapabilityFingerprint as RustCapabilityFingerprint, CheckoutPolicy as RustCheckoutPolicy,
+    CommitOptions as RustCommitOptions, ObjectId as RustObjectId,
+    SnapshotGraph as RustSnapshotGraph,
+};
 #[cfg(not(target_arch = "wasm32"))]
 use bashkit::{Credential, RealFs, RealFsMode};
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
@@ -1506,6 +1511,389 @@ fn restore_live_bash_keyed_with_env_overrides(
             let mut state = bash.shell_state();
             for (env_key, env_value) in env_overrides {
                 state.env.insert(env_key, env_value);
+            }
+            bash.restore_shell_state(&state);
+            Ok(())
+        })
+    })
+}
+
+// ============================================================================
+// Snapshot history: commits, forks, and the object graph
+// ============================================================================
+
+// Decision: the Python store is a plain `dict[str, bytes]` keyed by hex object
+// ID, not a custom class. Hosts persist these objects in their own database, so
+// the binding hands back exactly what a DB driver, JSON column, or blob store
+// already accepts. Conversion copies, which is the cost of not owning storage.
+
+/// Parse a hex object ID coming from Python.
+fn parse_object_id(value: &str) -> PyResult<RustObjectId> {
+    RustObjectId::from_hex(value)
+        .map_err(|e| PyValueError::new_err(format!("invalid snapshot object id: {e}")))
+}
+
+/// Convert a `dict[str, bytes]` object store into its Rust form.
+fn store_from_py(store: HashMap<String, Vec<u8>>) -> PyResult<HashMap<RustObjectId, Vec<u8>>> {
+    store
+        .into_iter()
+        .map(|(id, blob)| Ok((parse_object_id(&id)?, blob)))
+        .collect()
+}
+
+fn policy_from_py(policy: &str) -> PyResult<RustCheckoutPolicy> {
+    match policy.to_ascii_lowercase().as_str() {
+        "strict" => Ok(RustCheckoutPolicy::Strict),
+        "superset" => Ok(RustCheckoutPolicy::Superset),
+        "force" => Ok(RustCheckoutPolicy::Force),
+        other => Err(PyValueError::new_err(format!(
+            "unknown checkout policy {other:?}; expected 'strict', 'superset', or 'force'"
+        ))),
+    }
+}
+
+/// A commit plus the objects a host needs to persist.
+#[pyclass(name = "PackedCommit", module = "bashkit", skip_from_py_object)]
+#[derive(Clone)]
+pub struct PyPackedCommit {
+    id: String,
+    objects: HashMap<String, Vec<u8>>,
+    object_count: usize,
+    stored_bytes: usize,
+    self_contained: bool,
+    packed: Option<Vec<u8>>,
+}
+
+#[pymethods]
+impl PyPackedCommit {
+    /// Content address of this commit — the value to store per message.
+    #[getter]
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// Objects to persist, as `{hex_id: bytes}`.
+    #[getter]
+    fn objects(&self) -> HashMap<String, Vec<u8>> {
+        self.objects.clone()
+    }
+
+    /// Number of new objects this commit emitted.
+    #[getter]
+    fn object_count(&self) -> usize {
+        self.object_count
+    }
+
+    /// Total encoded size of the new objects — what this commit costs the store.
+    #[getter]
+    fn stored_bytes(&self) -> usize {
+        self.stored_bytes
+    }
+
+    /// Whether this commit carries every object needed to restore it.
+    ///
+    /// False once `have=` has excluded anything.
+    #[getter]
+    fn is_self_contained(&self) -> bool {
+        self.self_contained
+    }
+
+    /// Serialize into one self-contained blob, like `snapshot()`.
+    ///
+    /// Raises if the commit is incremental — packing one would produce bytes
+    /// that cannot be restored.
+    fn to_bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        match &self.packed {
+            Some(bytes) => Ok(PyBytes::new(py, bytes)),
+            None => Err(BashError::new_err(
+                "cannot pack an incremental commit: it omits objects the store already holds",
+            )),
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "PackedCommit(id='{}', object_count={}, stored_bytes={})",
+            self.id, self.object_count, self.stored_bytes
+        )
+    }
+}
+
+/// What changed between two commits.
+#[pyclass(name = "SnapshotDiff", module = "bashkit", skip_from_py_object)]
+#[derive(Clone)]
+pub struct PySnapshotDiff {
+    #[pyo3(get)]
+    files_added: Vec<String>,
+    #[pyo3(get)]
+    files_modified: Vec<String>,
+    #[pyo3(get)]
+    files_removed: Vec<String>,
+    #[pyo3(get)]
+    shell_changed: bool,
+}
+
+#[pymethods]
+impl PySnapshotDiff {
+    /// True when nothing changed.
+    fn is_empty(&self) -> bool {
+        self.files_added.is_empty()
+            && self.files_modified.is_empty()
+            && self.files_removed.is_empty()
+            && !self.shell_changed
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "SnapshotDiff(added={}, modified={}, removed={}, shell_changed={})",
+            self.files_added.len(),
+            self.files_modified.len(),
+            self.files_removed.len(),
+            self.shell_changed
+        )
+    }
+}
+
+/// The environment that produced a commit.
+#[pyclass(
+    name = "CapabilityFingerprint",
+    module = "bashkit",
+    skip_from_py_object
+)]
+#[derive(Clone)]
+pub struct PyCapabilityFingerprint {
+    #[pyo3(get)]
+    bashkit_version: String,
+    #[pyo3(get)]
+    builtins: Vec<String>,
+    #[pyo3(get)]
+    features: Vec<String>,
+    #[pyo3(get)]
+    fs_backend: String,
+}
+
+#[pymethods]
+impl PyCapabilityFingerprint {
+    fn __repr__(&self) -> String {
+        format!(
+            "CapabilityFingerprint(bashkit_version='{}', builtins={}, features={:?}, fs_backend='{}')",
+            self.bashkit_version,
+            self.builtins.len(),
+            self.features,
+            self.fs_backend
+        )
+    }
+}
+
+impl From<RustCapabilityFingerprint> for PyCapabilityFingerprint {
+    fn from(caps: RustCapabilityFingerprint) -> Self {
+        Self {
+            bashkit_version: caps.bashkit_version,
+            builtins: caps.builtins,
+            features: caps.features,
+            fs_backend: caps.fs_backend,
+        }
+    }
+}
+
+/// Read-only operations over a snapshot object graph.
+///
+/// Every method takes the objects it needs, because bashkit never reaches into
+/// host storage. Methods walk only as far as the supplied store reaches.
+#[pyclass(name = "SnapshotGraph", module = "bashkit")]
+pub struct PySnapshotGraph;
+
+#[pymethods]
+impl PySnapshotGraph {
+    #[new]
+    fn new() -> PyResult<Self> {
+        Err(PyTypeError::new_err(
+            "SnapshotGraph is a namespace of static methods and cannot be instantiated",
+        ))
+    }
+
+    /// Commits `commit_id` descends from.
+    #[staticmethod]
+    fn parents(commit_id: &str, objects: HashMap<String, Vec<u8>>) -> PyResult<Vec<String>> {
+        let store = store_from_py(objects)?;
+        let parents = RustSnapshotGraph::parents(parse_object_id(commit_id)?, &store)
+            .map_err(raise_snapshot_error)?;
+        Ok(parents.iter().copied().map(RustObjectId::to_hex).collect())
+    }
+
+    /// Host metadata attached when the commit was made.
+    #[staticmethod]
+    fn meta(
+        commit_id: &str,
+        objects: HashMap<String, Vec<u8>>,
+    ) -> PyResult<HashMap<String, String>> {
+        let store = store_from_py(objects)?;
+        let meta = RustSnapshotGraph::meta(parse_object_id(commit_id)?, &store)
+            .map_err(raise_snapshot_error)?;
+        Ok(meta.into_iter().collect())
+    }
+
+    /// Capability fingerprint of the instance that produced this commit.
+    #[staticmethod]
+    fn capabilities(
+        commit_id: &str,
+        objects: HashMap<String, Vec<u8>>,
+    ) -> PyResult<PyCapabilityFingerprint> {
+        let store = store_from_py(objects)?;
+        let caps = RustSnapshotGraph::capabilities(parse_object_id(commit_id)?, &store)
+            .map_err(raise_snapshot_error)?;
+        Ok(caps.into())
+    }
+
+    /// Walk ancestry newest-first, stopping at `limit` or at the first commit
+    /// the store does not contain.
+    #[staticmethod]
+    #[pyo3(signature = (commit_id, objects, limit=100))]
+    fn ancestry(
+        commit_id: &str,
+        objects: HashMap<String, Vec<u8>>,
+        limit: usize,
+    ) -> PyResult<Vec<String>> {
+        let store = store_from_py(objects)?;
+        let walked = RustSnapshotGraph::ancestry(parse_object_id(commit_id)?, &store, limit)
+            .map_err(raise_snapshot_error)?;
+        Ok(walked.iter().copied().map(RustObjectId::to_hex).collect())
+    }
+
+    /// Object IDs needed to check out `commit_id` that `objects` lacks.
+    ///
+    /// Call repeatedly — fetching one wave reveals the next — until it returns
+    /// an empty list.
+    #[staticmethod]
+    fn plan_checkout(commit_id: &str, objects: HashMap<String, Vec<u8>>) -> PyResult<Vec<String>> {
+        let store = store_from_py(objects)?;
+        let need = RustSnapshotGraph::plan_checkout(parse_object_id(commit_id)?, &store)
+            .map_err(raise_snapshot_error)?;
+        Ok(need.iter().copied().map(RustObjectId::to_hex).collect())
+    }
+
+    /// Every object this commit reaches, for host-side garbage collection.
+    #[staticmethod]
+    fn reachable(commit_id: &str, objects: HashMap<String, Vec<u8>>) -> PyResult<Vec<String>> {
+        let store = store_from_py(objects)?;
+        let live = RustSnapshotGraph::reachable(parse_object_id(commit_id)?, &store)
+            .map_err(raise_snapshot_error)?;
+        Ok(live.iter().copied().map(RustObjectId::to_hex).collect())
+    }
+
+    /// Compare two commits.
+    #[staticmethod]
+    fn diff(
+        commit_a: &str,
+        commit_b: &str,
+        objects: HashMap<String, Vec<u8>>,
+    ) -> PyResult<PySnapshotDiff> {
+        let store = store_from_py(objects)?;
+        let diff = RustSnapshotGraph::diff(
+            parse_object_id(commit_a)?,
+            parse_object_id(commit_b)?,
+            &store,
+        )
+        .map_err(raise_snapshot_error)?;
+        Ok(PySnapshotDiff {
+            files_added: diff.files_added,
+            files_modified: diff.files_modified,
+            files_removed: diff.files_removed,
+            shell_changed: diff.shell_changed,
+        })
+    }
+}
+
+/// Build a commit from a live interpreter, off the GIL.
+#[allow(clippy::too_many_arguments)]
+fn commit_live_bash(
+    py: Python<'_>,
+    rt: &PyRuntime,
+    inner: &Arc<Mutex<Bash>>,
+    parents: Vec<String>,
+    meta: HashMap<String, String>,
+    have: Vec<String>,
+    exclude_filesystem: bool,
+    exclude_functions: bool,
+) -> PyResult<PyPackedCommit> {
+    let parent_ids: Vec<RustObjectId> = parents
+        .iter()
+        .map(|p| parse_object_id(p))
+        .collect::<PyResult<_>>()?;
+    let have_ids: Vec<RustObjectId> = have
+        .iter()
+        .map(|h| parse_object_id(h))
+        .collect::<PyResult<_>>()?;
+
+    let rt = rt.clone();
+    let inner = inner.clone();
+    py.detach(|| {
+        rt.block_on(async move {
+            let bash = inner.lock().await;
+            let mut options = RustCommitOptions::new()
+                .have(have_ids.iter())
+                .exclude_filesystem(exclude_filesystem)
+                .exclude_functions(exclude_functions);
+            for parent in parent_ids {
+                options = options.parent(parent);
+            }
+            for (key, value) in meta {
+                options = options.meta(key, value);
+            }
+
+            let packed = bash.commit(options).map_err(raise_snapshot_error)?;
+            let id = packed.id().to_hex();
+            let object_count = packed.object_count();
+            let stored_bytes = packed.stored_bytes();
+            let self_contained = packed.is_self_contained();
+            // Pack eagerly only when it can succeed, so `to_bytes()` stays
+            // infallible for the self-contained case.
+            let bytes = self_contained.then(|| packed.to_bytes()).transpose();
+            let bytes = bytes.map_err(raise_snapshot_error)?;
+            let objects = packed
+                .objects()
+                .map(|(oid, blob)| (oid.to_hex(), blob.to_vec()))
+                .collect();
+
+            Ok(PyPackedCommit {
+                id,
+                objects,
+                object_count,
+                stored_bytes,
+                self_contained,
+                packed: bytes,
+            })
+        })
+    })
+}
+
+/// Restore a commit into a live interpreter, off the GIL.
+fn checkout_live_bash(
+    py: Python<'_>,
+    rt: &PyRuntime,
+    inner: &Arc<Mutex<Bash>>,
+    commit_id: &str,
+    objects: HashMap<String, Vec<u8>>,
+    policy: &str,
+    env_overrides: &[(String, String)],
+) -> PyResult<()> {
+    let root = parse_object_id(commit_id)?;
+    let store = store_from_py(objects)?;
+    let policy = policy_from_py(policy)?;
+    let rt = rt.clone();
+    let inner = inner.clone();
+    let env_overrides = env_overrides.to_vec();
+    py.detach(|| {
+        rt.block_on(async move {
+            let mut bash = inner.lock().await;
+            bash.checkout(root, &store, policy)
+                .map_err(raise_snapshot_error)?;
+            if env_overrides.is_empty() {
+                return Ok(());
+            }
+            let mut state = bash.shell_state();
+            for (key, value) in env_overrides {
+                state.env.insert(key, value);
             }
             bash.restore_shell_state(&state);
             Ok(())
@@ -4442,6 +4830,82 @@ impl PyBash {
         )
     }
 
+    /// Capture state as a content-addressed commit for session history.
+    ///
+    /// Returns a `PackedCommit` holding the objects to persist and the commit
+    /// id to remember. Pass the ids your store already holds via `have=` to
+    /// keep consecutive commits incremental — unchanged files then cost a hash
+    /// reference instead of a copy.
+    ///
+    /// A fork is a commit whose parent is not the branch tip: pass any earlier
+    /// commit id as `parents`.
+    #[pyo3(signature = (parents=None, meta=None, have=None, exclude_filesystem=false, exclude_functions=false))]
+    fn commit(
+        &self,
+        py: Python<'_>,
+        parents: Option<Vec<String>>,
+        meta: Option<HashMap<String, String>>,
+        have: Option<Vec<String>>,
+        exclude_filesystem: bool,
+        exclude_functions: bool,
+    ) -> PyResult<PyPackedCommit> {
+        self.reject_external_handler_reentry()?;
+        commit_live_bash(
+            py,
+            &self.rt,
+            &self.inner,
+            parents.unwrap_or_default(),
+            meta.unwrap_or_default(),
+            have.unwrap_or_default(),
+            exclude_filesystem,
+            exclude_functions,
+        )
+    }
+
+    /// Restore the state a commit describes, pulling objects from `objects`.
+    ///
+    /// This is how rewinds and forks work: check out any commit, tip or not.
+    /// `policy` is one of `"superset"` (default), `"strict"`, or `"force"` —
+    /// see the snapshotting guide. Nothing is mutated if the checkout fails.
+    #[pyo3(signature = (commit_id, objects, policy="superset"))]
+    fn checkout(
+        &self,
+        py: Python<'_>,
+        commit_id: &str,
+        objects: HashMap<String, Vec<u8>>,
+        policy: &str,
+    ) -> PyResult<()> {
+        self.reject_external_handler_reentry()?;
+        let state = capture_shell_state(py, &self.rt, &self.inner)?;
+        let env_overrides = placeholder_env_overrides(&state, &self.network);
+        checkout_live_bash(
+            py,
+            &self.rt,
+            &self.inner,
+            commit_id,
+            objects,
+            policy,
+            &env_overrides,
+        )
+    }
+
+    /// Fingerprint this instance's environment.
+    ///
+    /// Compare against `SnapshotGraph.capabilities(...)` to tell whether a
+    /// stored commit will pass a given checkout policy before attempting it.
+    fn capabilities(&self, py: Python<'_>) -> PyResult<PyCapabilityFingerprint> {
+        self.reject_external_handler_reentry()?;
+        let rt = self.rt.clone();
+        let inner = self.inner.clone();
+        let caps = py.detach(|| {
+            rt.block_on(async move {
+                let bash = inner.lock().await;
+                RustCapabilityFingerprint::capture(&bash)
+            })
+        });
+        Ok(caps.into())
+    }
+
     /// Serialize interpreter state to bytes for checkpoint/restore flows.
     #[pyo3(signature = (exclude_filesystem=false, exclude_functions=false))]
     fn snapshot<'py>(
@@ -6130,6 +6594,10 @@ fn _bashkit(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<AnalyzedRedirect>()?;
     m.add_class::<PyBuiltinContext>()?;
     m.add_class::<PyFileSystem>()?;
+    m.add_class::<PyPackedCommit>()?;
+    m.add_class::<PySnapshotDiff>()?;
+    m.add_class::<PyCapabilityFingerprint>()?;
+    m.add_class::<PySnapshotGraph>()?;
     m.add("BashError", m.py().get_type::<BashError>())?;
     m.add_function(wrap_pyfunction!(create_langchain_tool_spec, m)?)?;
     m.add_function(wrap_pyfunction!(get_version, m)?)?;

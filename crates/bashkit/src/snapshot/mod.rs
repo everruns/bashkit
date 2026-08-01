@@ -16,10 +16,14 @@
 
 //! Snapshot/resume — serialize interpreter state between `exec()` calls.
 //!
-//! [`Bash::snapshot`] and [`Bash::from_snapshot`] exchange one self-contained
-//! blob. This release writes the v1 payload and reads both v1 and the v2
-//! content-addressed container, so it can act as a rollback target for the
-//! release that starts writing v2.
+//! Two APIs over one format:
+//!
+//! - **Packed snapshots** ([`Bash::snapshot`], [`Bash::from_snapshot`]) return
+//!   one self-contained blob. Use these for checkpoint/resume.
+//! - **Commit/checkout** ([`Bash::commit`], [`Bash::checkout`]) exchange
+//!   individual content-addressed objects with a store you own. Use these for
+//!   session history, where consecutive snapshots share almost all their
+//!   content and forks share it with their ancestors.
 //!
 //! # Example
 //!
@@ -38,6 +42,39 @@
 //! let mut bash2 = Bash::from_snapshot(&snapshot)?;
 //! let result = bash2.exec("echo $x").await?;
 //! assert_eq!(result.stdout.trim(), "42");
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # History and forks
+//!
+//! ```rust
+//! use bashkit::{Bash, CheckoutPolicy, CommitOptions, ObjectId, SnapshotGraph};
+//! use std::collections::HashMap;
+//!
+//! # #[tokio::main]
+//! # async fn main() -> bashkit::Result<()> {
+//! let mut store: HashMap<ObjectId, Vec<u8>> = HashMap::new();
+//! let mut bash = Bash::new();
+//!
+//! bash.exec("echo one > /log.txt").await?;
+//! let first = bash.commit(CommitOptions::new())?;
+//! let first_id = first.id();
+//! store.extend(first.into_objects());
+//!
+//! bash.exec("echo two >> /log.txt").await?;
+//! // `have` keeps the commit incremental: unchanged content is not re-emitted.
+//! let second = bash.commit(CommitOptions::new().parent(first_id).have(store.keys()))?;
+//! let second_id = second.id();
+//! store.extend(second.into_objects());
+//!
+//! // Fork from the first commit — no copy, no replay.
+//! let mut branch = Bash::new();
+//! branch.checkout(first_id, &store, CheckoutPolicy::default())?;
+//! assert_eq!(branch.exec("cat /log.txt").await?.stdout, "one\n");
+//!
+//! let diff = SnapshotGraph::diff(first_id, second_id, &store)?;
+//! assert_eq!(diff.files_modified, vec!["/log.txt".to_string()]);
 //! # Ok(())
 //! # }
 //! ```
@@ -62,33 +99,15 @@
 //! - File descriptors, pipes, background jobs (ephemeral)
 //! - Execution limits configuration (caller should configure on restore)
 
-// Decision: the v2 *writer* ships here too, unreachable from any non-test
-// build, rather than being held back until the release that turns it on.
-// A decoder cannot be tested without something that produces valid input for
-// it, and hand-rolling byte fixtures for every case in `container`, `objects`,
-// and `graph` would test the fixtures instead of the code. So the encoder is
-// live under `cfg(test)` and dead otherwise, and `allow(dead_code)` says so
-// once here instead of forty times at each item.
-//
-// Remove this allow in the release that flips the writer to v2 — at that point
-// every item below is reachable, and the allow would start hiding real rot.
-#[allow(dead_code)]
 mod capabilities;
-#[allow(dead_code)]
 mod chunker;
-#[allow(dead_code)]
 mod container;
-#[allow(dead_code)]
 mod graph;
-#[allow(dead_code)]
 mod objects;
 
-// This release reads the v2 container but does not yet write it or expose the
-// object graph. The types below are crate-internal on purpose: shipping them
-// as public API would make this a minor release, and the whole point of
-// landing the reader on its own is that it can go out as a patch. `pub` in the
-// release that starts writing v2. See CHANGELOG.
-pub(crate) use capabilities::{CapabilityFingerprint, CheckoutPolicy};
+pub use capabilities::{CapabilityDelta, CapabilityFingerprint, CheckoutPolicy};
+pub use graph::{CommitOptions, ObjectSource, PackedCommit, SnapshotDiff, SnapshotGraph};
+pub use objects::{CommitId, CommitObject, ObjectId};
 
 use sha2::{Digest, Sha256};
 
@@ -269,7 +288,7 @@ fn decode_sealed(
 
     if container::is_v2(body) {
         let parsed = container::decode(body)?;
-        let (snapshot, caps) = graph::SnapshotGraph::materialize(parsed.root, &parsed.objects)?;
+        let (snapshot, caps) = SnapshotGraph::materialize(parsed.root, &parsed.objects)?;
         return Ok((snapshot, Some(caps)));
     }
 
@@ -344,12 +363,17 @@ impl crate::Bash {
     }
 
     /// Capture the current interpreter state using caller-provided snapshot options.
-    ///
-    /// Still emits the v1 payload. This release teaches the *reader* v2 so that
-    /// it becomes a safe rollback target before anything starts writing it;
-    /// flipping the writer is the next release's job. See CHANGELOG.
     pub fn snapshot_with_options(&self, options: SnapshotOptions) -> crate::Result<Vec<u8>> {
-        self.snapshot_state(options).to_bytes()
+        self.packed_commit(options)?.to_bytes()
+    }
+
+    /// Build a self-contained commit carrying the whole state.
+    fn packed_commit(&self, options: SnapshotOptions) -> crate::Result<PackedCommit> {
+        self.commit(
+            CommitOptions::new()
+                .exclude_filesystem(options.exclude_filesystem)
+                .exclude_functions(options.exclude_functions),
+        )
     }
 
     /// Create a new Bash instance restored from a snapshot.
@@ -392,23 +416,25 @@ impl crate::Bash {
     /// Preserves the current instance's configuration (limits, builtins,
     /// filesystem type) while restoring shell state and VFS contents.
     ///
-    /// Accepts both the v1 payload and the v2 container.
-    ///
-    /// v2 containers carry a capability fingerprint describing the environment
-    /// that wrote them, but this release does not act on it: a rollback target
-    /// that refuses snapshots is not a rollback target. Enforcement arrives
-    /// with the release that starts writing v2. See CHANGELOG.
+    /// Enforces the default [`CheckoutPolicy::Superset`]: a snapshot taken by
+    /// an instance with builtins, features, or a filesystem backend this one
+    /// lacks is rejected rather than restored into an environment that may not
+    /// be able to run it. Extra local capabilities are fine, so snapshots keep
+    /// restoring across bashkit upgrades. Use
+    /// [`restore_snapshot_with_policy`](Self::restore_snapshot_with_policy) for
+    /// exact pinning or to override. Legacy v1 snapshots carry no fingerprint
+    /// and skip the check.
     ///
     /// # Errors
     ///
-    /// Returns an error if deserialization or integrity verification fails.
-    /// The instance is untouched on failure.
+    /// Returns an error if deserialization, integrity verification, or the
+    /// capability check fails. The instance is untouched on failure.
     pub fn restore_snapshot(&mut self, data: &[u8]) -> crate::Result<()> {
-        self.restore_snapshot_with_policy(data, CheckoutPolicy::Force)
+        self.restore_snapshot_with_policy(data, CheckoutPolicy::default())
     }
 
     /// Restore from a snapshot under an explicit capability policy.
-    pub(crate) fn restore_snapshot_with_policy(
+    pub fn restore_snapshot_with_policy(
         &mut self,
         data: &[u8],
         policy: CheckoutPolicy,
@@ -467,7 +493,7 @@ impl crate::Bash {
         key: &[u8],
         options: SnapshotOptions,
     ) -> crate::Result<Vec<u8>> {
-        self.snapshot_state(options).to_bytes_keyed(key)
+        self.packed_commit(options)?.to_bytes_keyed(key)
     }
 
     /// Create a new Bash instance from a keyed (HMAC-protected) snapshot.
@@ -481,11 +507,11 @@ impl crate::Bash {
 
     /// Restore state from a keyed snapshot into this Bash instance.
     pub fn restore_snapshot_keyed(&mut self, data: &[u8], key: &[u8]) -> crate::Result<()> {
-        self.restore_snapshot_keyed_with_policy(data, key, CheckoutPolicy::Force)
+        self.restore_snapshot_keyed_with_policy(data, key, CheckoutPolicy::default())
     }
 
     /// Restore from a keyed snapshot under an explicit capability policy.
-    pub(crate) fn restore_snapshot_keyed_with_policy(
+    pub fn restore_snapshot_keyed_with_policy(
         &mut self,
         data: &[u8],
         key: &[u8],

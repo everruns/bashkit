@@ -1083,6 +1083,65 @@ export class Bash {
   }
 
   /**
+   * Capture state as a content-addressed commit for session history.
+   *
+   * Returns the objects to persist and the commit id to remember. Pass the ids
+   * your store already holds via `options.have` to keep consecutive commits
+   * incremental — unchanged files then cost a hash reference instead of a copy.
+   *
+   * A fork is a commit whose parent is not the branch tip: pass any earlier
+   * commit id in `options.parents`.
+   *
+   * @example
+   * ```ts
+   * const store: Record<string, Buffer> = {};
+   * const first = bash.commit();
+   * Object.assign(store, first.objects);
+   *
+   * await bash.execute("echo more >> /log.txt");
+   * const second = bash.commit({ parents: [first.id], have: Object.keys(store) });
+   * ```
+   */
+  commit(options?: CommitOptions): PackedCommit {
+    const packed = this.native.commit(options);
+    // napi maps a Rust `None` to `undefined`; normalize so the documented
+    // `Buffer | null` contract holds and `=== null` works as written.
+    return { ...packed, packed: packed.packed ?? null };
+  }
+
+  /**
+   * Restore the state a commit describes, pulling objects from a store.
+   *
+   * This is how rewinds and forks work: check out any commit, tip or not.
+   * Nothing is mutated if the checkout fails.
+   *
+   * @param policy `"superset"` (default) requires this instance to have every
+   *   capability the snapshot's did; `"strict"` demands an exact match;
+   *   `"force"` skips the check.
+   */
+  checkout(
+    commitId: string,
+    objects: Record<string, Uint8Array>,
+    policy?: CheckoutPolicy,
+  ): void {
+    const buffers: Record<string, Buffer> = {};
+    for (const [id, blob] of Object.entries(objects)) {
+      buffers[id] = Buffer.from(blob);
+    }
+    this.native.checkout(commitId, buffers, policy);
+  }
+
+  /**
+   * Fingerprint this instance's environment.
+   *
+   * Compare against `snapshotCapabilities(...)` to tell whether a stored commit
+   * will pass a given checkout policy before attempting the restore.
+   */
+  capabilities(): CapabilityFingerprint {
+    return this.native.capabilities();
+  }
+
+  /**
    * Restore interpreter state from a previously captured snapshot.
    * Preserves current configuration (limits, builtins) but replaces
    * shell state and VFS contents.
@@ -1980,6 +2039,128 @@ export class ScriptedTool {
   get version(): string {
     return this.native.version;
   }
+}
+
+/**
+ * How strictly a checkout enforces the capability fingerprint recorded in a
+ * commit.
+ *
+ * `"superset"` (default) is the safe everyday choice: the restoring instance
+ * must have everything the snapshot's environment had, but extra builtins are
+ * fine, so snapshots keep restoring after a bashkit upgrade adds one.
+ */
+export type CheckoutPolicy = "strict" | "superset" | "force";
+
+/** Options for {@link Bash.commit}. */
+export interface CommitOptions {
+  /** Commits this one descends from. Pass a non-tip id to fork. */
+  parents?: string[];
+  /** Opaque host metadata. Bashkit stores it verbatim. */
+  meta?: Record<string, string>;
+  /** Object ids the store already holds, so they are not emitted again. */
+  have?: string[];
+  excludeFilesystem?: boolean;
+  excludeFunctions?: boolean;
+}
+
+/** A commit plus the objects a host needs to persist. */
+export interface PackedCommit {
+  /** Content address of this commit — store it per message. */
+  id: string;
+  /** Objects to persist, keyed by hex object id. */
+  objects: Record<string, Buffer>;
+  objectCount: number;
+  storedBytes: number;
+  /** Whether this commit carries every object needed to restore it. */
+  selfContained: boolean;
+  /**
+   * Self-contained bytes equivalent to `snapshot()`, or `null` when `have`
+   * made the commit incremental — packing one would produce bytes that cannot
+   * be restored.
+   */
+  packed: Buffer | null;
+}
+
+/** What changed between two commits. */
+export interface SnapshotDiff {
+  filesAdded: string[];
+  filesModified: string[];
+  filesRemoved: string[];
+  shellChanged: boolean;
+}
+
+/** The environment that produced a commit. */
+export interface CapabilityFingerprint {
+  bashkitVersion: string;
+  builtins: string[];
+  features: string[];
+  fsBackend: string;
+}
+
+/** Commits the given commit descends from. */
+export function snapshotParents(
+  commitId: string,
+  objects: Record<string, Buffer>,
+): string[] {
+  return native.snapshotParents(commitId, objects);
+}
+
+/** Host metadata attached when the commit was made. */
+export function snapshotMeta(
+  commitId: string,
+  objects: Record<string, Buffer>,
+): Record<string, string> {
+  return native.snapshotMeta(commitId, objects);
+}
+
+/** Capability fingerprint of the instance that produced this commit. */
+export function snapshotCapabilities(
+  commitId: string,
+  objects: Record<string, Buffer>,
+): CapabilityFingerprint {
+  return native.snapshotCapabilities(commitId, objects);
+}
+
+/**
+ * Walk ancestry newest-first, stopping at `limit` or at the first commit the
+ * store does not contain.
+ */
+export function snapshotAncestry(
+  commitId: string,
+  objects: Record<string, Buffer>,
+  limit?: number,
+): string[] {
+  return native.snapshotAncestry(commitId, objects, limit);
+}
+
+/**
+ * Object ids needed to check out this commit that `objects` lacks.
+ *
+ * Call repeatedly — each wave reveals the next — until it returns an empty
+ * array. Use this to fetch a large session's objects lazily.
+ */
+export function snapshotPlanCheckout(
+  commitId: string,
+  objects: Record<string, Buffer>,
+): string[] {
+  return native.snapshotPlanCheckout(commitId, objects);
+}
+
+/** Every object this commit reaches, for host-side garbage collection. */
+export function snapshotReachable(
+  commitId: string,
+  objects: Record<string, Buffer>,
+): string[] {
+  return native.snapshotReachable(commitId, objects);
+}
+
+/** Compare two commits. */
+export function snapshotDiff(
+  commitA: string,
+  commitB: string,
+  objects: Record<string, Buffer>,
+): SnapshotDiff {
+  return native.snapshotDiff(commitA, commitB, objects);
 }
 
 /**

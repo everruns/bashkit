@@ -475,8 +475,8 @@ pub use fs::{
     DirEntry, FileSystem, FileSystemExt, FileType, FsBackend, FsLimitExceeded, FsLimits, FsUsage,
     InMemoryFs, LazyLoader, Metadata, MountableFs, NamespaceAccess, NamespaceFs,
     NamespaceFsBuilder, OverlayFs, PosixFs, ReadOnlyFs, SearchCapabilities, SearchCapable,
-    SearchMatch, SearchProvider, SearchQuery, SearchResults, VfsSnapshot, normalize_path,
-    verify_filesystem_requirements,
+    SearchMatch, SearchProvider, SearchQuery, SearchResults, VfsEntry, VfsEntryKind, VfsSnapshot,
+    normalize_path, verify_filesystem_requirements,
 };
 #[cfg(feature = "realfs")]
 pub use fs::{RealFs, RealFsMode};
@@ -487,7 +487,10 @@ pub use limits::{
     ExecutionCounters, ExecutionLimits, LimitExceeded, MemoryBudget, MemoryLimits, SessionLimits,
 };
 pub use network::NetworkAllowlist;
-pub use snapshot::{Snapshot, SnapshotOptions};
+pub use snapshot::{
+    CapabilityDelta, CapabilityFingerprint, CheckoutPolicy, CommitId, CommitObject, CommitOptions,
+    ObjectId, ObjectSource, PackedCommit, Snapshot, SnapshotDiff, SnapshotGraph, SnapshotOptions,
+};
 #[cfg(feature = "bash_tool")]
 pub use tool::BashToolBuilder as ToolBuilder;
 #[cfg(feature = "bash_tool")]

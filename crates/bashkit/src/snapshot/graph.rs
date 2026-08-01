@@ -550,11 +550,7 @@ impl crate::Bash {
     ///
     /// # Example
     ///
-    /// Not compiled in this release: `commit` is crate-internal until the
-    /// release that exposes the object graph, so the example cannot name the
-    /// types it needs. Restore the `rust` fence when it becomes public.
-    ///
-    /// ```ignore
+    /// ```rust
     /// use bashkit::{Bash, CommitOptions};
     ///
     /// # #[tokio::main]
@@ -567,7 +563,7 @@ impl crate::Bash {
     /// # Ok(())
     /// # }
     /// ```
-    pub(crate) fn commit(&self, options: CommitOptions) -> crate::Result<PackedCommit> {
+    pub fn commit(&self, options: CommitOptions) -> crate::Result<PackedCommit> {
         let shell = self
             .interpreter
             .shell_state_with_options(ShellStateOptions {
@@ -647,9 +643,7 @@ impl crate::Bash {
     ///
     /// # Example
     ///
-    /// Not compiled in this release — see [`Bash::commit`].
-    ///
-    /// ```ignore
+    /// ```rust
     /// use bashkit::{Bash, CheckoutPolicy, CommitOptions, ObjectId};
     /// use std::collections::HashMap;
     ///
@@ -669,7 +663,7 @@ impl crate::Bash {
     /// # Ok(())
     /// # }
     /// ```
-    pub(crate) fn checkout(
+    pub fn checkout(
         &mut self,
         root: CommitId,
         source: &impl ObjectSource,
