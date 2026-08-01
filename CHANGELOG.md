@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## [0.14.5] - 2026-08-01
 
 ### Highlights
 
@@ -9,14 +9,20 @@
   new on-disk format. This release teaches the reader that format and changes
   nothing else, so a deployment can take it first and still be able to read
   what the next release writes
-  ([#2223](https://github.com/everruns/bashkit/pull/2223)).
+  ([#2226](https://github.com/everruns/bashkit/pull/2226)).
+- **Scripts can be inspected before they run.** `analyze()` — in Rust, Node,
+  and Python — returns a static report of the commands, arguments, redirect
+  targets, and function definitions a script refers to, for host permission
+  prompts and audit logging. It is advisory by design: dynamic dispatch,
+  `eval`/`source`, nested shells, and truncated walks surface as unknown via
+  `is_opaque`, with the `before_tool` hook remaining the enforcement backstop
+  ([#2222](https://github.com/everruns/bashkit/pull/2222)).
 
 ### Upgrading
 
-- **Release this as a patch.** It adds no public API and changes no behavior:
-  `snapshot()` still writes the same bytes, and every existing snapshot restores
-  exactly as before. The new object-graph types are deliberately `pub(crate)`
-  and the new error cases reuse `Error::Internal` so that stays true.
+- Both additions are backward compatible. `snapshot()` still writes the same
+  bytes, every existing snapshot restores exactly as before, and `analyze()` is
+  purely additive.
 - **Take this release before the one that writes the new format.** Versions
   older than this one fail on the new format with `expected value at line 1
   column 1` — a JSON parse error naming neither the version nor the format —
@@ -24,6 +30,19 @@
 - From the new format onward this cannot recur: the container header records a
   `min_reader` version, so a reader too old for a snapshot says so and points at
   the upgrade instead of reporting corruption.
+
+### What's Changed
+
+* feat(snapshot): read the v2 container without writing it ([#2226](https://github.com/everruns/bashkit/pull/2226)) by @chaliy
+* fix(ci): unblock main — guard third-party LLM steps and refresh retired model id ([#2225](https://github.com/everruns/bashkit/pull/2225)) by @chaliy
+* chore(knowledge): repair dangling cross-links and enforce OKF trust metadata ([#2224](https://github.com/everruns/bashkit/pull/2224)) by @chaliy
+* feat(analysis): add analyze() for pre-execution script introspection ([#2222](https://github.com/everruns/bashkit/pull/2222)) by @chaliy
+* fix(docs): repoint broken cross-tree markdown links and guard them in CI ([#2220](https://github.com/everruns/bashkit/pull/2220)) by @chaliy
+* chore(deps): bump turso_core from 0.8.0-pre.1 to 0.8.0-pre.2 ([#2218](https://github.com/everruns/bashkit/pull/2218)) by @dependabot
+* chore(deps): bump the rust-dependencies group with 3 updates ([#2217](https://github.com/everruns/bashkit/pull/2217)) by @dependabot
+* chore(ci): bump taiki-e/install-action from 2.85.0 to 2.85.2 in the github-actions group ([#2216](https://github.com/everruns/bashkit/pull/2216)) by @dependabot
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.14.4...v0.14.5
 
 ## [0.14.4] - 2026-07-27
 
