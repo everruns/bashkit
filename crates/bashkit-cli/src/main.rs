@@ -338,6 +338,12 @@ fn run_interactive(args: Args, mode: CliMode) -> Result<i32> {
 /// lazily, when a command asks for it; the interpreter takes its stdin up
 /// front, so this reads to EOF before execution starts (L-CLI-002).
 /// `--no-stdin` opts out for callers that inherit a pipe nobody will close.
+///
+/// Non-UTF-8 input is replaced, not rejected — the interpreter's stdin is a
+/// `String`, and failing the run would be worse than lossy bytes for the
+/// text-processing pipelines this feeds.
+// THREAT[TM-DOS-095]: bounded read; an unbounded producer cannot grow the
+// buffer past MAX_STDIN_BYTES.
 fn read_host_stdin() -> Result<String> {
     use std::io::Read;
 
