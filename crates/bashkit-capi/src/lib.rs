@@ -232,14 +232,15 @@ fn truncate_error(message: String) -> Vec<u8> {
     message.as_bytes()[..end].to_vec()
 }
 
-unsafe fn initialize_output<T>(out: *mut *mut T, name: &str) -> Result<(), ApiFailure> {
+unsafe fn output_slot<'a, T>(out: *mut *mut T, name: &str) -> Result<&'a mut *mut T, ApiFailure> {
     if out.is_null() {
         return Err(ApiFailure::invalid_argument(format!(
             "{name} must not be NULL"
         )));
     }
-    unsafe { out.write(ptr::null_mut()) };
-    Ok(())
+    let out = unsafe { &mut *out };
+    *out = ptr::null_mut();
+    Ok(out)
 }
 
 unsafe fn input_bytes<'a>(value: BashkitBytes, name: &str) -> Result<&'a [u8], ApiFailure> {
@@ -343,14 +344,14 @@ pub unsafe extern "C" fn bashkit_create_default(
 ) -> BashkitStatus {
     unsafe {
         ffi_boundary(out_error, || {
-            initialize_output(out_bash, "out_bash")?;
+            let out_bash = output_slot(out_bash, "out_bash")?;
             let bash = Bashkit {
                 state: Mutex::new(State {
                     runtime: make_runtime()?,
                     bash: Bash::new(),
                 }),
             };
-            out_bash.write(Box::into_raw(Box::new(bash)));
+            *out_bash = Box::into_raw(Box::new(bash));
             Ok(())
         })
     }
@@ -367,7 +368,7 @@ pub unsafe extern "C" fn bashkit_create_json(
 ) -> BashkitStatus {
     unsafe {
         ffi_boundary(out_error, || {
-            initialize_output(out_bash, "out_bash")?;
+            let out_bash = output_slot(out_bash, "out_bash")?;
             if config_json.len > BASHKIT_MAX_CONFIG_BYTES {
                 return Err(ApiFailure::new(
                     BashkitStatus::InvalidConfig,
@@ -387,7 +388,7 @@ pub unsafe extern "C" fn bashkit_create_json(
                     bash: build_from_config(config)?,
                 }),
             };
-            out_bash.write(Box::into_raw(Box::new(bash)));
+            *out_bash = Box::into_raw(Box::new(bash));
             Ok(())
         })
     }
@@ -418,7 +419,7 @@ pub unsafe extern "C" fn bashkit_execute(
 ) -> BashkitStatus {
     unsafe {
         ffi_boundary(out_error, || {
-            initialize_output(out_result, "out_result")?;
+            let out_result = output_slot(out_result, "out_result")?;
             let bash = handle(bash)?;
             let script = input_str(script, "script")?;
             let mut state = bash.state.lock().map_err(|_| {
@@ -445,7 +446,7 @@ pub unsafe extern "C" fn bashkit_execute(
                 flags,
                 final_env_json: final_env_json(result.final_env)?,
             };
-            out_result.write(Box::into_raw(Box::new(result)));
+            *out_result = Box::into_raw(Box::new(result));
             Ok(())
         })
     }
@@ -556,7 +557,7 @@ pub unsafe extern "C" fn bashkit_read_file(
 ) -> BashkitStatus {
     unsafe {
         ffi_boundary(out_error, || {
-            initialize_output(out_buffer, "out_buffer")?;
+            let out_buffer = output_slot(out_buffer, "out_buffer")?;
             let path = input_str(path, "path")?;
             let bash = handle(bash)?;
             let state = bash.state.lock().map_err(|_| {
@@ -566,7 +567,7 @@ pub unsafe extern "C" fn bashkit_read_file(
                 .runtime
                 .block_on(state.bash.fs().read_file(Path::new(path)))
                 .map_err(ApiFailure::from_bash)?;
-            out_buffer.write(Box::into_raw(Box::new(BashkitBuffer { bytes })));
+            *out_buffer = Box::into_raw(Box::new(BashkitBuffer { bytes }));
             Ok(())
         })
     }
