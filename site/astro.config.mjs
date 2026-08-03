@@ -11,6 +11,7 @@ import sitemapEnhance from "./integrations/sitemap-enhance.mjs";
 const DOC_LINKS = new Map([
   ["builtin_typescript.md", "/docs/builtin_typescript/"],
   ["clap-builtins.md", "/docs/clap-builtins/"],
+  ["c-api.md", "/docs/c-api/"],
   ["cli.md", "/docs/cli/"],
   ["compatibility.md", "/docs/compatibility/"],
   ["configuration.md", "/docs/configuration/"],
@@ -94,6 +95,11 @@ function repoUrl(url) {
 
   if (cleanUrl === "README.md" || cleanUrl === "SECURITY.md") {
     return `https://github.com/everruns/bashkit/blob/main/${cleanUrl}`;
+  }
+
+  const cratesIndex = cleanUrl.indexOf("crates/");
+  if (cratesIndex >= 0) {
+    return `https://github.com/everruns/bashkit/blob/main/${cleanUrl.slice(cratesIndex)}`;
   }
 
   const knowledgeIndex = cleanUrl.indexOf("knowledge/");
