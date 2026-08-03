@@ -820,6 +820,7 @@ session's isolated VFS.
 | TM-INT-002 | Panic info leak | Panic message reveals sensitive data | Sanitized error messages (no panic details) | **MITIGATED** |
 | TM-INT-003 | Date format panic | Invalid strftime format causes chrono panic | Pre-validation with `StrftimeItems` | **MITIGATED** |
 | TM-INT-007 | `/dev/urandom` empty with `head -c` | `head -c 16 /dev/urandom` returns empty output; pipe from virtual device to builtin loses data | `read_file_for_builtin` (`builtins/mod.rs`) reads `/dev/urandom`/`/dev/random` as Latin-1 chars (each byte 0x00-0xFF maps 1:1 to a char) so `head -c N` returns N bytes of randomness in both the path-argument form and the `cat /dev/urandom \| head -c N` pipe form | **MITIGATED** |
+| TM-INT-008 | Panic crosses the C ABI boundary | Rust unwind enters a foreign runtime or exposes panic details | Every exported C operation uses `catch_unwind`; fallible calls return a generic, capped `BASHKIT_INTERNAL_ERROR` | **MITIGATED** |
 
 **Current Risk**: LOW. Implementation: `interpreter/mod.rs` wraps every builtin call in
 `AssertUnwindSafe(..).catch_unwind()` (TM-INT-001) and converts panics to the sanitized

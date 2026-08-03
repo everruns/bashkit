@@ -455,6 +455,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bashkit-capi"
+version = "0.14.5"
+dependencies = [
+ "bashkit",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "bashkit-cli"
 version = "0.14.5"
 dependencies = [

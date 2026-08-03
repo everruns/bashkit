@@ -53,6 +53,7 @@ execution model. Evidence is a threat-model ID, a test, or `stance`
 | L-WASM-001 | Browser build (`@everruns/bashkit-wasm`, `wasm32-unknown-unknown`) has no wall-clock time: `sleep N` elapses instantly; `timeout N` and tool requests with `timeoutMs` fail closed with status 125 | No reliable timer driver on the target; silently accepting an unenforceable deadline could let an async callback suspend forever | [Browser Package](../runtimes/browser-package.md), stance |
 | L-WASM-002 | Browser build: `executeSync()` cannot run async custom builtins (fails with a clear message); use `execute()` | Single-threaded event loop can't settle a JS `Promise` without yielding | `crates/bashkit-wasm/__test__/bashkit-wasm.test.mjs` |
 | L-WASM-003 | Browser build: background jobs (`cmd &`) run synchronously and `awk` file redirects drive the VFS inline; no work runs on a separate thread | `wasm32-unknown-unknown` is single-threaded — `std::thread::spawn`/`tokio::spawn` are unavailable; safe because the in-memory VFS never suspends | `crates/bashkit-wasm/__test__/bashkit-wasm.test.mjs` |
+| L-CAPI-001 | C ABI v1 excludes callbacks, custom builtins, streaming, async cancellation, host mounts, transport hooks, snapshots, scripted tools, and external filesystem providers | These require explicit reentrancy, callback lifetime, and dynamic-library unload contracts | [C API](../runtimes/c-api.md), stance |
 
 ### Design Rationale
 

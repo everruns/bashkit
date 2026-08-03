@@ -1,0 +1,24 @@
+LIBRARY bashkit.dll
+EXPORTS
+    bashkit_abi_version
+    bashkit_buffer_bytes
+    bashkit_buffer_free
+    bashkit_capabilities_json
+    bashkit_create_default
+    bashkit_create_json
+    bashkit_error_code
+    bashkit_error_free
+    bashkit_error_message
+    bashkit_execute
+    bashkit_free
+    bashkit_mkdir
+    bashkit_read_file
+    bashkit_remove
+    bashkit_result_exit_code
+    bashkit_result_final_env_json
+    bashkit_result_flags
+    bashkit_result_free
+    bashkit_result_stderr
+    bashkit_result_stdout
+    bashkit_version
+    bashkit_write_file
