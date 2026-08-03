@@ -762,90 +762,132 @@ impl Interpreter {
         result
     }
 
-    /// Expand a glob pattern against the filesystem
+    /// Join an output path component onto the accumulated output prefix.
+    ///
+    /// Output strings are built independently of the VFS lookup path so that
+    /// caller-supplied prefixes (`./`, `../`) survive expansion verbatim while
+    /// lookups use the normalized absolute path.
+    fn glob_join_output(prefix: &str, name: &str, is_absolute: bool) -> String {
+        if prefix.is_empty() {
+            if is_absolute {
+                format!("/{name}")
+            } else {
+                name.to_string()
+            }
+        } else {
+            format!("{prefix}/{name}")
+        }
+    }
+
+    /// Expand a glob pattern against the filesystem.
+    ///
+    /// Every path component is expanded, not just the trailing one: bash matches
+    /// `/skills/*/SKILL.md` by globbing each component in turn against the VFS.
+    /// Non-final components only match directories (a plain file can't be
+    /// descended into), which is what makes read-only tree mounts globbable.
     pub(crate) async fn expand_glob(&self, pattern: &str) -> Result<Vec<String>> {
         // Check for ** (recursive glob) — only when globstar is enabled
         if pattern.contains("**") && self.is_globstar() {
             return self.expand_glob_recursive(pattern).await;
         }
 
-        let mut matches = Vec::new();
         let dotglob = self.is_dotglob();
         let nocase = self.is_nocaseglob();
+        let is_absolute = pattern.starts_with('/');
 
-        // Split pattern into directory and filename parts.
-        // For absolute paths, `lookup_dir` is the unescaped directory PathBuf used for
-        // both VFS lookup and (via Path::join) output path construction.
-        // For relative paths, we keep the original parent string for output fidelity
-        // (to preserve `./` or `../` prefixes) but resolve against cwd for lookup.
-        let path = Path::new(pattern);
-        let (lookup_dir, rel_output_prefix, file_pattern) = if path.is_absolute() {
-            let parent = path.parent().unwrap_or(Path::new("/"));
-            // Unescape: \{ \[ \* are glob escapes that prevent brace/glob expansion
-            // but must not appear in filesystem paths.
-            let unescaped = Self::glob_path_unescape(&parent.to_string_lossy());
-            let name = path.file_name().map(|s| s.to_string_lossy().to_string());
-            (PathBuf::from(&unescaped), None::<String>, name)
-        } else {
-            // Relative path — use the original parent string for output to preserve the
-            // `./` or relative prefix supplied by the caller; use the resolved absolute
-            // path for VFS lookup.
-            let parent = path.parent();
-            let name = path.file_name().map(|s| s.to_string_lossy().to_string());
-            if let Some(p) = parent {
-                if p.as_os_str().is_empty() {
-                    (self.cwd.clone(), Some(String::new()), name)
-                } else {
-                    let unescaped = Self::glob_path_unescape(&p.to_string_lossy());
-                    let joined = crate::fs::normalize_path(&self.cwd.join(&unescaped));
-                    let original_prefix = p.to_string_lossy().to_string();
-                    (joined, Some(original_prefix), name)
-                }
-            } else {
-                (self.cwd.clone(), Some(String::new()), name)
-            }
-        };
-
-        let file_pattern = match file_pattern {
-            Some(p) => p,
-            None => return Ok(matches),
-        };
-
-        // Check if the directory exists
-        if !self.fs.exists(&lookup_dir).await.unwrap_or(false) {
-            return Ok(matches);
+        // Empty components collapse `//` and drop a trailing `/`, matching the
+        // previous `Path::file_name()` behaviour for patterns like `/dir/*/`.
+        let components: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
+        if components.is_empty() {
+            return Ok(Vec::new());
         }
 
-        // Read directory entries
-        let entries = match self.fs.read_dir(&lookup_dir).await {
-            Ok(e) => e,
-            Err(_) => return Ok(matches),
-        };
+        // THREAT[TM-DOS-012]: a pattern deeper than the filesystem allows can
+        // never match; refuse it instead of walking every component.
+        let limits = self.fs.limits();
+        if components.len() > limits.max_path_depth {
+            return Ok(Vec::new());
+        }
+        // THREAT[TM-DOS-095]: each glob component multiplies the working set
+        // (`/*/*/*/*` is a cross-product), so cap live candidates.
+        let max_candidates = limits.max_file_count as usize;
 
-        // Check if pattern explicitly starts with dot
-        let pattern_starts_with_dot = file_pattern.starts_with('.');
+        // (VFS lookup path, output path built from the caller's spelling)
+        let mut candidates: Vec<(PathBuf, String)> = vec![(
+            if is_absolute {
+                PathBuf::from("/")
+            } else {
+                self.cwd.clone()
+            },
+            String::new(),
+        )];
 
-        // Match each entry against the pattern
-        for entry in entries {
-            // Skip dotfiles unless dotglob is set or pattern explicitly starts with '.'
-            if entry.name.starts_with('.') && !dotglob && !pattern_starts_with_dot {
-                continue;
-            }
+        for (idx, component) in components.iter().enumerate() {
+            let is_last = idx + 1 == components.len();
+            let mut next: Vec<(PathBuf, String)> = Vec::new();
 
-            if self.glob_match_impl(&entry.name, &file_pattern, nocase, 0) {
-                let full_path = match &rel_output_prefix {
-                    None => {
-                        // Absolute path: use PathBuf::join so root "/" is handled correctly.
-                        lookup_dir.join(&entry.name).to_string_lossy().to_string()
+            if self.contains_glob_chars(component) {
+                // Dotfiles are hidden per component unless dotglob is set or this
+                // component explicitly starts with '.'.
+                let component_starts_with_dot = component.starts_with('.');
+
+                for (dir, out) in &candidates {
+                    let entries = match self.fs.read_dir(dir).await {
+                        Ok(entries) => entries,
+                        Err(_) => continue,
+                    };
+
+                    let mut matched: Vec<String> = Vec::new();
+                    for entry in entries {
+                        if entry.name.starts_with('.') && !dotglob && !component_starts_with_dot {
+                            continue;
+                        }
+                        // Only a directory can carry the rest of the pattern.
+                        if !is_last && !entry.metadata.file_type.is_dir() {
+                            continue;
+                        }
+                        if self.glob_match_impl(&entry.name, component, nocase, 0) {
+                            matched.push(entry.name);
+                        }
                     }
-                    Some(prefix) if prefix.is_empty() => entry.name.clone(),
-                    Some(prefix) => format!("{}/{}", prefix, entry.name),
-                };
-                matches.push(full_path);
+
+                    // Looks redundant next to the final sort, but is not: `read_dir`
+                    // order is unspecified (`InMemoryFs` iterates a `HashMap`), and
+                    // sorting each level keeps the candidate set ordered so the
+                    // TM-DOS-095 truncation below drops a deterministic tail.
+                    matched.sort();
+                    for name in matched {
+                        let output = Self::glob_join_output(out, &name, is_absolute);
+                        next.push((dir.join(&name), output));
+                    }
+                }
+            } else {
+                // Literal component: `\*` and friends are parser-inserted escapes
+                // that must not reach the filesystem or the expanded word.
+                let literal = Self::glob_path_unescape(component);
+                for (dir, out) in &candidates {
+                    let path = crate::fs::normalize_path(&dir.join(&literal));
+                    // Intermediate literals are validated implicitly by the next
+                    // `read_dir`; only the final component needs an existence check.
+                    if is_last && !self.fs.exists(&path).await.unwrap_or(false) {
+                        continue;
+                    }
+                    let output = Self::glob_join_output(out, &literal, is_absolute);
+                    next.push((path, output));
+                }
             }
+
+            if next.len() > max_candidates {
+                next.truncate(max_candidates);
+            }
+            if next.is_empty() {
+                return Ok(Vec::new());
+            }
+            candidates = next;
         }
 
         // Sort matches alphabetically (bash behavior)
+        let mut matches: Vec<String> = candidates.into_iter().map(|(_, out)| out).collect();
         matches.sort();
         Ok(matches)
     }

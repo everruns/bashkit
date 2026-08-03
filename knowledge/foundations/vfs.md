@@ -151,6 +151,31 @@ All `FileSystem` implementations MUST enforce:
 2. Type-safe operations (`write_file` on dir → error)
 3. Parent directory requirement (exception: `mkdir -p`)
 
+### Pathname Expansion Against the VFS
+
+`Interpreter::expand_glob` (`interpreter/glob.rs`) globs **every** path
+component, not just the trailing one, so mounted trees are fully addressable:
+`cat /skills/*/SKILL.md` works against a read-only skills mount the same way it
+does in bash.
+
+Rules that fall out of the per-component walk:
+- Non-final components only match directories — a regular file sharing the
+  prefix is never descended into.
+- The dotfile rule is applied per component: a component matches names starting
+  with `.` only when `dotglob` is set or that component literally starts with `.`.
+- Lookup uses the normalized absolute path while the emitted word is rebuilt
+  from the caller's spelling, so `./` and `../` prefixes survive expansion.
+- No match anywhere in the walk falls back to the literal pattern, or to nothing
+  under `nullglob` — same as a trailing-component miss.
+- `**` with `globstar` is handled separately by `expand_glob_recursive`.
+- THREAT[TM-DOS-095]: the candidate set multiplies per component, so patterns
+  deeper than `FsLimits::max_path_depth` are rejected and the live candidate set
+  is capped at `FsLimits::max_file_count`.
+
+Known gap: backslash-escaped metacharacters (`echo /skills/\*`) still expand
+instead of staying literal — the backslash is dropped before pathname expansion
+runs. Pre-dates per-component expansion and affects trailing components too.
+
 ### Symlink Handling
 
 Symlinks are stored but intentionally not followed for security:

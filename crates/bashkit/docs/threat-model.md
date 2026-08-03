@@ -152,6 +152,7 @@ let bash = Bash::builder()
 | Subshell snapshot amplification (TM-DOS-092) | Deeply nested `( … )` | `max_subshell_depth` counter (default 32) | MITIGATED |
 | jq unbounded generator (TM-DOS-093) | `jq -n 'repeat(1)'` / `range(0;1e18)` | Cap output at `max_stdout_bytes`; poll deadline every 4096 values | FIXED |
 | Persistent history memory DoS (TM-DOS-094) | Unbounded command history in long-lived instances | `ExecutionLimits` caps history entries/bytes/output | FIXED |
+| Multi-component glob amplification (TM-DOS-095) | `/*/*/*/*` multiplies the candidate set at each component | Reject patterns deeper than `max_path_depth`; cap live candidates at `max_file_count` | FIXED |
 
 ### Sandbox Escape (TM-ESC-*)
 

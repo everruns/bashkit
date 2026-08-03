@@ -72,3 +72,32 @@ for f in /nonexistent_dir/*.xyz; do echo $f; done
 ### expect
 /nonexistent_dir/*.xyz
 ### end
+
+### glob_intermediate_component
+### bash_diff: Bashkit VFS has files, real bash CI filesystem does not
+# Non-final path components expand too (read-only skill mounts rely on this)
+mkdir -p /skills/pdf /skills/xlsx
+echo a > /skills/pdf/SKILL.md
+echo b > /skills/xlsx/SKILL.md
+echo /skills/*/SKILL.md
+### expect
+/skills/pdf/SKILL.md /skills/xlsx/SKILL.md
+### end
+
+### glob_intermediate_component_dirs_only
+### bash_diff: Bashkit VFS has files, real bash CI filesystem does not
+# A plain file sharing the prefix is not descended into
+mkdir -p /sk2/pdf
+echo a > /sk2/pdf/SKILL.md
+echo notadir > /sk2/notes
+echo /sk2/*/SKILL.md
+### expect
+/sk2/pdf/SKILL.md
+### end
+
+### glob_intermediate_component_no_match
+# Unmatched intermediate glob stays literal without nullglob
+echo /nope/*/SKILL.md
+### expect
+/nope/*/SKILL.md
+### end
