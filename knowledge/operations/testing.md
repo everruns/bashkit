@@ -87,6 +87,22 @@ the reason in the file's module docstring.
 Filtering still works as usual: `cargo test --test integration -- foo`
 matches `integration::*::foo*` test paths.
 
+The consolidation rule above covers the `bashkit` crate. `bashkit-cli`
+has its own, much smaller test surface:
+
+- `crates/bashkit-cli/src/main.rs` unit tests cover argument parsing and
+  builder wiring in-process (`build_bash(&args, mode)` + `bash.exec(...)`).
+- `crates/bashkit-cli/tests/cli_oneshot.rs` spawns the real binary via
+  `env!("CARGO_BIN_EXE_bashkit")` and covers the parts of the CLI
+  contract that only exist as a process: exit status propagation,
+  stdout/stderr separation, the anyhow error path out of `main`,
+  resource-limit flags, and argv shapes. Children run with
+  `RUST_BACKTRACE` cleared so the anyhow output is deterministic.
+
+Anything observable only through a subprocess belongs in
+`cli_oneshot.rs`; anything about how flags configure the builder stays in
+the `main.rs` unit tests, which are far cheaper.
+
 ## Coverage
 
 Uploaded to Codecov from three sources: Rust unit/integration coverage via

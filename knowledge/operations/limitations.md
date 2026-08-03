@@ -125,6 +125,16 @@ output buffer caps, getline file-cache cap, shared regex size limit,
 curl/wget timeouts clamped to [1, 600] s, multipart field-name
 sanitization, redirect handling hardened against credential leaks.
 
+## CLI
+
+Divergences in the `bashkit` binary's one-shot (`-c` / script) mode.
+Positional parameters, stdin forwarding, and streaming output all work;
+what remains is how stdin is obtained.
+
+| ID | Limitation | Why | Evidence |
+|----|------------|-----|----------|
+| L-CLI-002 | Host stdin is read to EOF *before* execution, not lazily when a command asks for it, and only when stdin is not a terminal. `cmd \| bashkit -c 'echo hi'` waits for the writer to finish even though the script never reads; `--no-stdin` opts out | The interpreter takes its stdin as a value up front (`ExecOptions::stdin`); lazy reads would need a reader-backed fd 0 in the sandbox. Capped at 10 MiB so an unbounded stream can't exhaust memory | `crates/bashkit-cli/tests/cli_oneshot.rs` |
+
 ## Parser
 
 - Single-quoted strings are completely literal (correct behavior)

@@ -14,6 +14,32 @@ filesystem. One binary, three modes.
 Mode is detected from arguments — `-c` wins, then positional script,
 otherwise REPL.
 
+## Script arguments and stdin
+
+Trailing arguments become positional parameters, following bash: after
+`-c '…'` the first one is `$0` and the rest are `$1`…; for a script file
+`$0` is the script path and every trailing argument is positional.
+
+```bash
+bashkit -c 'echo "$0 got $# args: $1"' myname alpha beta
+# myname got 2 args: alpha
+bashkit deploy.sh staging --dry-run
+```
+
+Piped stdin is forwarded to the script, so filters work as usual:
+
+```bash
+echo 'one line' | bashkit -c 'grep -c line'
+```
+
+One-shot mode reads stdin to EOF *before* execution (capped at 10 MiB),
+rather than lazily when a command asks for it, and only when stdin is not
+a terminal. Pass `--no-stdin` when stdin is an inherited pipe that nobody
+will close.
+
+Output streams as it is produced, so a long script is observable while it
+runs and a run stopped by a resource limit keeps what it already printed.
+
 ## Install
 
 From crates.io:
@@ -65,6 +91,7 @@ Disable per-run:
 | `--no-git` | Disable git builtin |
 | `--no-python` | Disable python/python3 builtins |
 | `--no-sqlite` | Disable sqlite/sqlite3 builtins |
+| `--no-stdin` | Do not forward the host's stdin to the script |
 
 ## Execution limits
 

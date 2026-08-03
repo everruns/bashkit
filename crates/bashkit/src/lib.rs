@@ -653,6 +653,9 @@ impl Drop for OutputCallbackGuard {
 pub struct ExecOptions {
     extensions: ExecutionExtensions,
     output_callback: Option<OutputCallback>,
+    arg0: Option<String>,
+    positional: Option<Vec<String>>,
+    stdin: Option<String>,
 }
 
 impl ExecOptions {
@@ -673,6 +676,84 @@ impl ExecOptions {
     pub fn extensions(mut self, extensions: ExecutionExtensions) -> Self {
         self.extensions = extensions;
         self
+    }
+
+    /// Set `$0` for this execution. Without it, `$0` expands to `bash`.
+    ///
+    /// ```no_run
+    /// # use bashkit::{Bash, ExecOptions};
+    /// # async fn run() -> bashkit::Result<()> {
+    /// let mut bash = Bash::new();
+    /// let result = bash
+    ///     .exec_with_options(
+    ///         r#"echo "$0: $1 ($#)""#,
+    ///         ExecOptions::new()
+    ///             .arg0("deploy.sh")
+    ///             .positional(["staging"]),
+    ///     )
+    ///     .await?;
+    /// assert_eq!(result.stdout, "deploy.sh: staging (1)\n");
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn arg0(mut self, arg0: impl Into<String>) -> Self {
+        self.arg0 = Some(arg0.into());
+        self
+    }
+
+    /// Set the positional parameters (`$1`, `$2`, … `$@`, `$#`) for this
+    /// execution. They exist only for the duration of the call — the next
+    /// `exec` starts with none again unless it sets its own.
+    pub fn positional<I, S>(mut self, positional: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.positional = Some(positional.into_iter().map(Into::into).collect());
+        self
+    }
+
+    /// Provide the stdin a top-level command reads when nothing inside the
+    /// script pipes or redirects into it, so `cat` and `read` see `data`.
+    ///
+    /// The data is supplied up front, not lazily: the whole string is held for
+    /// the execution, and a pipe or redirect inside the script still wins for
+    /// the command it applies to.
+    ///
+    /// ```no_run
+    /// # use bashkit::{Bash, ExecOptions};
+    /// # async fn run() -> bashkit::Result<()> {
+    /// let mut bash = Bash::new();
+    /// let result = bash
+    ///     .exec_with_options("read -r name; echo \"hello $name\"", ExecOptions::new().stdin("world\n"))
+    ///     .await?;
+    /// assert_eq!(result.stdout, "hello world\n");
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn stdin(mut self, stdin: impl Into<String>) -> Self {
+        self.stdin = Some(stdin.into());
+        self
+    }
+}
+
+/// Per-invocation interpreter state carried from [`ExecOptions`] to the point
+/// just before execution.
+///
+/// Decision: installed immediately before `Interpreter::execute` rather than at
+/// the top of `exec_impl`. `reset_transient_state` clears `pipeline_stdin`, and
+/// the size/hook/parse checks in between can return early — installing late
+/// means no early return can leave a synthetic call frame behind.
+#[derive(Default)]
+struct Invocation {
+    arg0: Option<String>,
+    positional: Option<Vec<String>>,
+    stdin: Option<String>,
+}
+
+impl Invocation {
+    fn is_empty(&self) -> bool {
+        self.arg0.is_none() && self.positional.is_none() && self.stdin.is_none()
     }
 }
 
@@ -792,7 +873,15 @@ impl Bash {
         let ExecOptions {
             mut extensions,
             output_callback,
+            arg0,
+            positional,
+            stdin,
         } = options;
+        let invocation = Invocation {
+            arg0,
+            positional,
+            stdin,
+        };
         // Expose active execution limits and deadline to builtins that need to
         // honor per-execution sandbox settings inside synchronous VM sections.
         let active_limits = self.interpreter.limits().clone();
@@ -809,10 +898,10 @@ impl Bash {
         let _stream_guard =
             output_callback.map(|cb| OutputCallbackGuard::install(&mut self.interpreter, cb));
         let _extensions_guard = self.interpreter.scoped_execution_extensions(extensions);
-        self.exec_impl(script).await
+        self.exec_impl(script, invocation).await
     }
 
-    async fn exec_impl(&mut self, script: &str) -> Result<ExecResult> {
+    async fn exec_impl(&mut self, script: &str, invocation: Invocation) -> Result<ExecResult> {
         // THREAT[TM-ISO-005/006/007]: Reset transient state between exec() calls
         self.interpreter.reset_transient_state();
 
@@ -992,6 +1081,23 @@ impl Bash {
         // Load persisted history on first exec (no-op if already loaded)
         self.interpreter.load_history().await;
 
+        // Install per-invocation state (see `Invocation`): after
+        // `reset_transient_state` cleared `pipeline_stdin`, and after every
+        // early return above, so nothing outlives this call.
+        let call_stack_baseline = self.interpreter.call_stack_len();
+        let installed_invocation = !invocation.is_empty();
+        if installed_invocation {
+            if let Some(stdin) = invocation.stdin {
+                self.interpreter.set_pipeline_stdin(stdin);
+            }
+            if invocation.arg0.is_some() || invocation.positional.is_some() {
+                self.interpreter.push_toplevel_positional(
+                    invocation.arg0,
+                    invocation.positional.unwrap_or_default(),
+                );
+            }
+        }
+
         let exec_start = crate::time_compat::Instant::now();
         // THREAT[TM-DOS-057]: Wrap execution with timeout to prevent sleep/blocking bypass.
         // Only the native path arms the tokio timeout; wasm has no reliable timer driver.
@@ -1010,6 +1116,12 @@ impl Bash {
             };
         #[cfg(target_family = "wasm")]
         let result = self.interpreter.execute(&ast).await;
+        // Positional parameters are per-invocation: drop the synthetic frame
+        // (and anything the interpreter leaked above it on an error path) so
+        // the next exec starts with `$#` back at 0.
+        if installed_invocation {
+            self.interpreter.truncate_call_stack(call_stack_baseline);
+        }
         // Issue #1184: clean up process substitution temp files after execution.
         // Done here (outside Interpreter::execute) to avoid increasing the
         // recursive async state machine size which causes stack overflow.
