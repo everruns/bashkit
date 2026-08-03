@@ -60,6 +60,16 @@ export const DOC_META: DocMeta[] = [
     editPath: "docs/start-python.md",
   },
   {
+    slug: "c-api",
+    title: "C API",
+    summary: "Embed Bashkit through its versioned native ABI and opaque handles.",
+    seoTitle: "Bashkit native C API",
+    seoDescription:
+      "Embed the Bashkit sandbox through its versioned C ABI with explicit ownership, binary-safe output, virtual filesystem access, and runnable C examples.",
+    section: "Getting started",
+    editPath: "docs/c-api.md",
+  },
+  {
     slug: "start-node",
     title: "Node, Bun & Deno",
     summary: "Embed the sandbox in server-side JavaScript: npm i, first script, examples.",

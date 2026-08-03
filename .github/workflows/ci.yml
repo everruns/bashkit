@@ -243,6 +243,9 @@ jobs:
       - name: Build examples
         run: cargo build --examples --features "git,http_client,ssh,sqlite"
 
+      - name: Run C API examples
+        run: ./scripts/run-c-api-examples.sh
+
       - name: Run examples
         run: |
           cargo run --example basic

@@ -7,3 +7,4 @@
 * [Python Package](python-package.md) - Python bindings, PyPI wheels, ABI strategy, and platform build matrix.
 * [Emscripten Wheels](emscripten-wheels.md) - Reduced-feature Pyodide and Emscripten Python wheel design and build constraints.
 * [Browser Package](browser-package.md) - Slim single-threaded WebAssembly package design for browsers and JavaScript runtimes.
+* [C API](c-api.md) - Versioned native C ABI, ownership rules, packaging, and compatibility boundaries.

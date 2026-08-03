@@ -1,0 +1,183 @@
+# Native C ABI archives, dispatched from the verified release workflow.
+name: Publish C API Binaries
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (for example, v0.14.5)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate-tag:
+    name: Validate release tag
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.validate.outputs.tag }}
+    steps:
+      - name: Validate workflow input
+        id: validate
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          if [[ ! "$INPUT_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Error: tag must match vMAJOR.MINOR.PATCH." >&2
+            exit 1
+          fi
+          echo "tag=$INPUT_TAG" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.validate.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Verify tag source
+        env:
+          RELEASE_TAG: ${{ steps.validate.outputs.tag }}
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          if [ "$VERSION" != "$CARGO_VERSION" ]; then
+            echo "Error: tag $RELEASE_TAG does not match Cargo.toml $CARGO_VERSION" >&2
+            exit 1
+          fi
+          git fetch --force origin main:refs/remotes/origin/main \
+            "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+          TAG_SHA=$(git rev-list -n 1 "$RELEASE_TAG")
+          if [ "$TAG_SHA" != "$GITHUB_SHA" ]; then
+            echo "Error: workflow ref does not match $RELEASE_TAG" >&2
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$TAG_SHA" origin/main; then
+            echo "Error: $RELEASE_TAG is not reachable from origin/main" >&2
+            exit 1
+          fi
+
+  build:
+    name: Build C API (${{ matrix.target }})
+    needs: validate-tag
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            library: libbashkit.dylib
+            archive: bashkit-capi-aarch64-apple-darwin.tar.gz
+          - target: x86_64-apple-darwin
+            runner: macos-latest
+            library: libbashkit.dylib
+            archive: bashkit-capi-x86_64-apple-darwin.tar.gz
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            library: libbashkit.so
+            archive: bashkit-capi-x86_64-unknown-linux-gnu.tar.gz
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            library: libbashkit.so
+            archive: bashkit-capi-aarch64-unknown-linux-gnu.tar.gz
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            library: bashkit.dll
+            archive: bashkit-capi-x86_64-pc-windows-msvc.zip
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate-tag.outputs.tag }}
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: "c-api-${{ matrix.target }}"
+
+      - name: Build shared library
+        if: runner.os != 'Windows'
+        run: ./scripts/build-c-api.sh --release --target ${{ matrix.target }}
+
+      - name: Build Windows shared library
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          cargo build --release --target ${{ matrix.target }} -p bashkit-capi
+          copy target\${{ matrix.target }}\release\bashkit_capi.dll target\${{ matrix.target }}\release\bashkit.dll
+          lib /nologo /def:crates\bashkit-capi\include\bashkit.def /machine:x64 /out:target\${{ matrix.target }}\release\bashkit.lib
+
+      - name: Smoke test C consumer
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        shell: bash
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror \
+            -I crates/bashkit-capi/include \
+            crates/bashkit-capi/examples/hello.c \
+            -L target/c-api/release -lbashkit \
+            -o target/c-api-smoke
+          OUTPUT=$(LD_LIBRARY_PATH="target/c-api/release" target/c-api-smoke)
+          [[ "$OUTPUT" =~ ^Hello\ from\ Bashkit!\ User:\ sandbox\ Time:\ [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]
+
+      - name: Smoke test C consumer on Windows
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        shell: cmd
+        run: |
+          cl /nologo /W4 /WX /I crates\bashkit-capi\include crates\bashkit-capi\examples\hello.c target\${{ matrix.target }}\release\bashkit.lib /Fe:target\c-api-smoke.exe
+          copy target\${{ matrix.target }}\release\bashkit.dll target\bashkit.dll
+          for /f "delims=" %%i in ('target\c-api-smoke.exe') do set OUTPUT=%%i
+          echo %OUTPUT% | findstr /b /c:"Hello from Bashkit! User: sandbox Time:" >nul
+          if errorlevel 1 exit /b 1
+
+      - name: Package Unix library
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          PACKAGE="bashkit-capi-${{ matrix.target }}"
+          mkdir -p "$PACKAGE/include" "$PACKAGE/examples" "$PACKAGE/lib"
+          cp crates/bashkit-capi/include/bashkit.h "$PACKAGE/include/"
+          cp crates/bashkit-capi/examples/*.c "$PACKAGE/examples/"
+          cp crates/bashkit-capi/README.md "$PACKAGE/"
+          cp LICENSE NOTICE "$PACKAGE/"
+          cp -R THIRD_PARTY_LICENSES "$PACKAGE/"
+          cp "target/c-api/release/${{ matrix.library }}" "$PACKAGE/lib/"
+          tar czf "${{ matrix.archive }}" "$PACKAGE"
+          shasum -a 256 "${{ matrix.archive }}" > "${{ matrix.archive }}.sha256"
+
+      - name: Package Windows library
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $package = "bashkit-capi-${{ matrix.target }}"
+          New-Item -ItemType Directory -Force "$package/include", "$package/examples", "$package/lib"
+          Copy-Item crates/bashkit-capi/include/bashkit.h "$package/include/"
+          Copy-Item crates/bashkit-capi/include/bashkit.def "$package/include/"
+          Copy-Item crates/bashkit-capi/examples/*.c "$package/examples/"
+          Copy-Item crates/bashkit-capi/README.md "$package/"
+          Copy-Item LICENSE, NOTICE "$package/"
+          Copy-Item -Recurse THIRD_PARTY_LICENSES "$package/"
+          Copy-Item "target/${{ matrix.target }}/release/bashkit.dll" "$package/lib/"
+          Copy-Item "target/${{ matrix.target }}/release/bashkit.lib" "$package/lib/"
+          Compress-Archive -Path $package -DestinationPath "${{ matrix.archive }}"
+          $hash = (Get-FileHash "${{ matrix.archive }}" -Algorithm SHA256).Hash.ToLower()
+          "$hash  ${{ matrix.archive }}" | Out-File -Encoding ascii "${{ matrix.archive }}.sha256"
+
+      - name: Upload to release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.validate-tag.outputs.tag }}
+        run: |
+          gh release upload "$RELEASE_TAG" \
+            "${{ matrix.archive }}" \
+            "${{ matrix.archive }}.sha256" \
+            --clobber

@@ -1,0 +1,20 @@
+# Bashkit stable C ABI.
+
+[package]
+name = "bashkit-capi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "C ABI for the Bashkit sandboxed bash interpreter"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+bashkit = { path = "../bashkit", default-features = false, features = ["git", "jq"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }

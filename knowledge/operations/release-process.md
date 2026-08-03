@@ -83,11 +83,13 @@ silently failed.
 7. **Create PR** — same title, changelog excerpt + publish-readiness report in description.
 8. **Monitor post-merge publishing** — watch `release.yml` create the
    Release + tag, watch `publish.yml`, `publish-python.yml`, `publish-js.yml`,
-   `publish-wasm.yml`, and `cli-binaries.yml` to completion, run the
+   `publish-wasm.yml`, `cli-binaries.yml`, and `c-api-binaries.yml` to
+   completion, run the
    post-release verification commands, and only declare "shipped" when all
-   six published artifacts (`bashkit` + `bashkit-cli` on crates.io, `bashkit`
-   on PyPI, both npm packages, and Homebrew) report the new version. If one
-   fails, open a hotfix PR rather than leaving the release half-shipped.
+   published artifacts (`bashkit` + `bashkit-cli` on crates.io, `bashkit`
+   on PyPI, both npm packages, Homebrew, and the C ABI archives) report the new
+   version. If one fails, open a hotfix PR rather than leaving the release
+   half-shipped.
 
 ### CI Automation
 
@@ -115,6 +117,7 @@ Confirm each target (workflow → check):
 - npm browser (`publish-wasm.yml`): `npm view @everruns/bashkit-wasm version`;
   `npm dist-tags ls @everruns/bashkit-wasm` ("latest" points at it)
 - Homebrew (`cli-binaries.yml`): `everruns/homebrew-tap` formula bumped
+- C ABI (`c-api-binaries.yml`): five target archives and SHA-256 files attached
 
 If a workflow fails: `gh run view <run-id> --log-failed`, identify root
 cause, re-run (transient) or open a hotfix PR (code/packaging bug — see
@@ -137,6 +140,7 @@ Use the latest entries in `CHANGELOG.md` as the template. Rules:
 - `bashkit` on PyPI (pre-built wheels)
 - `@everruns/bashkit` on npm (native NAPI-RS bindings)
 - `@everruns/bashkit-wasm` on npm (single-threaded browser WebAssembly)
+- `bashkit-capi` native archives containing `libbashkit` on GitHub Releases
 
 ## Publishing Order
 
@@ -196,6 +200,13 @@ integration suite, and publishes `@everruns/bashkit-wasm` to npm with
 provenance. Uses the same `NPM_TOKEN` as `publish-js.yml`; the package version
 is synced manually from the workspace version during release preparation.
 
+### c-api-binaries.yml
+
+Dispatched by `release.yml` from the verified release tag. Builds and attaches
+the C header, examples, and shared library for macOS x86_64/Arm64, Linux
+x86_64/Arm64, and Windows x86_64. Each archive has a SHA-256 sidecar; Linux and
+Windows compile and run a C consumer before upload.
+
 ## Authentication
 
 - `CARGO_REGISTRY_TOKEN` (crates.io token, publish scopes) in GitHub Actions secrets.
@@ -226,5 +237,5 @@ selected for new projects.
 
 ## Release Artifacts
 
-GitHub Release (tag, notes, source archives, prebuilt CLI binaries),
+GitHub Release (tag, notes, source archives, prebuilt CLI and C ABI binaries),
 crates.io crates, PyPI wheels, Node and browser npm bindings, Homebrew formula.

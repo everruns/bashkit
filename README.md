@@ -532,6 +532,13 @@ See [crates/bashkit-bench/README.md](crates/bashkit-bench/README.md) for methodo
 
 ## Language Bindings
 
+### C API
+
+The experimental `libbashkit` native C ABI exposes opaque handles, synchronous
+execution, and binary-safe virtual filesystem access. See
+[`crates/bashkit-capi`](crates/bashkit-capi/README.md), including two runnable C
+examples.
+
 ### Python
 
 Python bindings with LangChain integration are available in [crates/bashkit-python](crates/bashkit-python/README.md).

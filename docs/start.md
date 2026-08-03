@@ -10,6 +10,7 @@ its quickstart to a first script in a couple of minutes.
 | Target | Install | Runs in | Quickstart |
 |--------|---------|---------|-----------|
 | **Rust** | `cargo add bashkit` | Any Rust app | [Get started in Rust](start-rust.md) |
+| **C ABI** | Native shared library | C-compatible native hosts | [C API](c-api.md) |
 | **Python** | `pip install bashkit` | CPython 3.9+ | [Get started in Python](start-python.md) |
 | **Node / Bun / Deno** | `npm i @everruns/bashkit` | Node ≥ 18, Bun, Deno | [Get started in Node](start-node.md) |
 | **Browser (WASM)** | `npm i @everruns/bashkit-wasm` | Browser, edge runtimes | [Get started in the browser](start-browser.md) |
@@ -18,7 +19,7 @@ its quickstart to a first script in a couple of minutes.
 
 **Which one?**
 
-- Embedding in a **Rust, Python, or Node/Bun/Deno** service → the native crate,
+- Embedding in a **Rust, C-compatible, Python, or Node/Bun/Deno** service → the native crate,
   wheel, or NAPI addon. These share the full feature set.
 - Running in a **browser or edge/serverless runtime** (Cloudflare Workers,
   Vercel Edge, Deno Deploy), or anywhere a native addon can't load → the

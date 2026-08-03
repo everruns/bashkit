@@ -55,6 +55,7 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 | operations/performance-results | Benchmark/eval result locations and `/benches` site aggregation contract |
 | runtimes/emscripten-wheels | Reduced-feature Pyodide/Emscripten Python wheel |
 | runtimes/browser-package | Slim single-threaded wasm package (`@everruns/bashkit-wasm`) for browsers + JS runtimes, no COOP/COEP |
+| runtimes/c-api | Versioned native C ABI, ownership rules, packaging, and compatibility boundaries |
 
 ### Documentation
 
