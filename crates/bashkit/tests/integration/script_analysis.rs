@@ -272,3 +272,27 @@ fn analysis_round_trips_through_json() {
     let back: ScriptAnalysis = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(back, analysis);
 }
+
+/// A command substitution whose body is a syntax error must not be dropped:
+/// dropping it splices the surrounding literals into a command name that
+/// appears nowhere in the source (`a$(|)b` -> `ab`), which would then be shown
+/// to a host permission gate. Real bash rejects the script outright, so
+/// `analyze` must fail rather than invent a name.
+#[test]
+fn a_malformed_substitution_never_invents_a_command_name() {
+    for script in ["a$(|)b", "a$(&&)b", "x$(;)y", "echo a$(|)b"] {
+        match Bash::new().analyze(script) {
+            Err(_) => {}
+            Ok(analysis) => {
+                for command in &analysis.commands {
+                    if let Some(name) = command.name.as_deref() {
+                        assert!(
+                            script.contains(name),
+                            "`{script}` produced command name `{name}`, absent from the source"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}

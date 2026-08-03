@@ -654,3 +654,32 @@ fn host_dependent_vars_are_excluded() {
         "{ordinary_name} is absent from the host environment and must remain generatable"
     );
 }
+
+/// A `$(...)` whose body is a syntax error aborts the whole script in bash:
+/// nothing runs, nothing reaches stdout. Bashkit must agree, because the
+/// alternative — dropping the substitution and splicing the literals around it
+/// — fabricates a command (`a$(|)b` -> `ab`) that the source never named, and
+/// `analyze()` would report that name to a host permission gate.
+///
+/// Parity is asserted on what is observable and stable: no stdout, non-zero
+/// exit. The exact code is deliberately not compared — bash returns 127 here,
+/// bashkit reports a parse error (2), and neither is load-bearing.
+#[tokio::test]
+async fn malformed_command_substitution_aborts_like_bash() {
+    for script in [
+        "a$(|)b",
+        "echo a$(|)b",
+        "echo a$(&&)b",
+        "echo x$(;)y",
+        r#"echo "pre-$(|)-post""#,
+        "echo $(for)",
+    ] {
+        let (bash_stdout, bash_exit) = run_real_bash(script);
+        assert_eq!(bash_stdout, "", "real bash printed output for `{script}`");
+        assert_ne!(bash_exit, 0, "real bash accepted `{script}`");
+
+        let (bk_stdout, bk_exit) = run_bashkit(script).await;
+        assert_eq!(bk_stdout, "", "bashkit printed output for `{script}`");
+        assert_ne!(bk_exit, 0, "bashkit accepted `{script}`");
+    }
+}
