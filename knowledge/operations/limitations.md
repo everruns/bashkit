@@ -125,6 +125,19 @@ output buffer caps, getline file-cache cap, shared regex size limit,
 curl/wget timeouts clamped to [1, 600] s, multipart field-name
 sanitization, redirect handling hardened against credential leaks.
 
+## CLI
+
+Gaps in the `bashkit` binary's one-shot (`-c` / script) mode. These are
+unimplemented, not design decisions — unlike the intentional table above,
+they can be lifted without weakening the sandbox. Evidence tests assert
+the current behavior so lifting one has to update this row too.
+
+| ID | Limitation | Why | Evidence |
+|----|------------|-----|----------|
+| L-CLI-001 | Trailing arguments after `-c 'cmd'` or a script path are parsed but never become positional parameters: `$1`/`$@` stay empty, `$#` is 0, `$0` is the interpreter default | Not wired from `Args::args` into the interpreter; no sandbox reason, just unimplemented | `crates/bashkit-cli/tests/cli_oneshot.rs` |
+| L-CLI-002 | The host process's stdin is not connected to the script; readers inside the sandbox see EOF immediately instead of piped bytes | One-shot mode builds the interpreter with an empty stdin; piping into `bashkit -c` silently reads nothing rather than blocking | `crates/bashkit-cli/tests/cli_oneshot.rs` |
+| L-CLI-003 | One-shot output is buffered and printed after the run completes, so stdout/stderr interleaving is lost and nothing streams during a long script | `run_oneshot` returns a `RunOutput` struct that `main` prints; streaming would need a writer-based exec path | `crates/bashkit-cli/tests/cli_oneshot.rs` |
+
 ## Parser
 
 - Single-quoted strings are completely literal (correct behavior)
