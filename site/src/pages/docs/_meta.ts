@@ -63,7 +63,7 @@ export const DOC_META: DocMeta[] = [
     slug: "c-api",
     title: "C API",
     summary: "Embed Bashkit through its versioned native ABI and opaque handles.",
-    seoTitle: "Bashkit native C API",
+    seoTitle: "Embed Bashkit with the native C API",
     seoDescription:
       "Embed the Bashkit sandbox through its versioned C ABI with explicit ownership, binary-safe output, virtual filesystem access, and runnable C examples.",
     section: "Getting started",
