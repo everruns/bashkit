@@ -27,6 +27,7 @@ pub use span::{Position, Span};
 use crate::error::{Error, Result};
 use crate::limits::LimitExceeded;
 use crate::time_compat::Instant;
+use std::cell::Cell;
 use std::time::Duration;
 
 /// Default maximum AST depth (matches ExecutionLimits default)
@@ -67,6 +68,11 @@ pub struct Parser<'a> {
     timeout: Option<Duration>,
     /// Parse start time used with `timeout`.
     started_at: Instant,
+    /// A syntax error raised inside `parse_word`, which is infallible because
+    /// it is also reachable from the interpreter's lazy expansion path. Set
+    /// when a `$(...)` body fails to parse; `parse_script` converts it into a
+    /// hard parse error so the script is rejected the way bash rejects it.
+    deferred_error: Cell<Option<Error>>,
 }
 
 impl<'a> Parser<'a> {
@@ -119,6 +125,7 @@ impl<'a> Parser<'a> {
             max_fuel,
             timeout,
             started_at: Instant::now(),
+            deferred_error: Cell::new(None),
         }
     }
 
@@ -257,6 +264,13 @@ impl<'a> Parser<'a> {
             {
                 return Err(self.error("unexpected token"));
             }
+        }
+
+        // A `$(...)` body that failed to parse is a syntax error in the whole
+        // script, exactly as in bash. Surfaced here because `parse_word` cannot
+        // return `Result`.
+        if let Some(err) = self.deferred_error.take() {
+            return Err(err);
         }
 
         let end_span = self.current_span;
@@ -3059,8 +3073,23 @@ impl<'a> Parser<'a> {
                         let remaining_depth = self.max_depth.saturating_sub(self.current_depth);
                         let inner_parser =
                             Parser::with_limits(&cmd_str, remaining_depth, self.fuel);
-                        if let Ok(script) = inner_parser.parse() {
-                            push_part!(WordPart::CommandSubstitution(script.commands));
+                        // A failed inner parse must never make the part vanish:
+                        // dropping it splices the literals on either side into a
+                        // word that appears nowhere in the source (`a$(|)b` ->
+                        // `ab`), which `analysis` would then report to a host
+                        // permission gate as a real command name. Keep the part
+                        // so the word stays non-literal, and remember the error so
+                        // `parse_script` can reject the script like bash does.
+                        match inner_parser.parse() {
+                            Ok(script) => {
+                                push_part!(WordPart::CommandSubstitution(script.commands));
+                            }
+                            Err(err) => {
+                                push_part!(WordPart::CommandSubstitution(Vec::new()));
+                                // Keep the first error; `take` would drop it.
+                                let first = self.deferred_error.take();
+                                self.deferred_error.set(first.or(Some(err)));
+                            }
                         }
                     }
                 } else if chars.peek() == Some(&'{') {

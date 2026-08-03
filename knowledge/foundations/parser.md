@@ -54,6 +54,17 @@ Handles bash's context-sensitivity:
 
 Errors carry line/column, expected vs. found token, and parse context.
 
+A nested parse must never silently vanish. `parse_word` is infallible (the
+interpreter also calls it for lazy parameter expansion), so a `$(...)` body that
+fails to parse still pushes its `CommandSubstitution` part — with empty commands
+— and stashes the inner error in `Parser::deferred_error`, which `parse_script`
+turns into a hard parse error. Both halves matter: the retained part keeps the
+word non-literal so surrounding literals cannot splice (`a$(|)b` must not become
+the command `ab`, which `analysis` would report to a host permission gate — see
+TM-ESC-032), and the deferred error rejects the script the way bash does.
+Process substitution keeps its part for the same reason, and hard-errors on
+budget failures (TM-DOS-021).
+
 ## Alternatives Considered
 
 - PEG (pest, pom): rejected — bash grammar is context-sensitive, here-docs awkward, manual parser gives better errors.
