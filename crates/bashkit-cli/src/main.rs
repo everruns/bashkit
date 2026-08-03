@@ -26,9 +26,14 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 use std::{
     ffi::OsStr,
+    io::{IsTerminal, Write},
     path::{Path, PathBuf},
 };
 use tokio::runtime::Builder;
+
+/// Cap on stdin slurped from the host before execution. Large inputs belong in
+/// a mounted file; holding an unbounded stream in memory is a DoS surface.
+const MAX_STDIN_BYTES: usize = 10 * 1024 * 1024;
 
 #[cfg(feature = "python")]
 const PYTHON_INPROCESS_OPT_IN_ENV: &str = "BASHKIT_ALLOW_INPROCESS_PYTHON";
@@ -112,6 +117,13 @@ struct Args {
     /// Execution timeout in seconds (unlimited for interactive mode)
     #[arg(long)]
     timeout: Option<u64>,
+
+    /// Do not forward the host's stdin to the script
+    ///
+    /// One-shot mode reads stdin to EOF before execution when it is not a
+    /// terminal. Use this when stdin is an inherited pipe that stays open.
+    #[arg(long)]
+    no_stdin: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,13 +131,6 @@ enum CliMode {
     Command,
     Script,
     Interactive,
-}
-
-#[derive(Debug)]
-struct RunOutput {
-    stdout: String,
-    stderr: String,
-    exit_code: i32,
 }
 
 fn build_bash(args: &Args, mode: CliMode) -> bashkit::Bash {
@@ -284,12 +289,8 @@ fn main() -> Result<()> {
     let mode = cli_mode(&args);
     match mode {
         CliMode::Command | CliMode::Script => {
-            let output = run_oneshot(args, mode)?;
-            print!("{}", output.stdout);
-            if !output.stderr.is_empty() {
-                eprint!("{}", output.stderr);
-            }
-            std::process::exit(output.exit_code);
+            let exit_code = run_oneshot(args, mode)?;
+            std::process::exit(exit_code);
         }
         CliMode::Interactive => {
             #[cfg(feature = "interactive")]
@@ -330,39 +331,107 @@ fn run_interactive(args: Args, mode: CliMode) -> Result<i32> {
         .block_on(interactive::run(bash, exit_state))
 }
 
-fn run_oneshot(args: Args, mode: CliMode) -> Result<RunOutput> {
+/// Read the host's stdin for the script to consume.
+///
+/// Only called when stdin is not a terminal, so an interactive
+/// `bashkit -c 'echo hi'` never blocks waiting for input. Bash reads stdin
+/// lazily, when a command asks for it; the interpreter takes its stdin up
+/// front, so this reads to EOF before execution starts (L-CLI-002).
+/// `--no-stdin` opts out for callers that inherit a pipe nobody will close.
+fn read_host_stdin() -> Result<String> {
+    use std::io::Read;
+
+    let mut buf = Vec::new();
+    std::io::stdin()
+        .lock()
+        .take(MAX_STDIN_BYTES as u64 + 1)
+        .read_to_end(&mut buf)
+        .context("Failed to read stdin")?;
+    if buf.len() > MAX_STDIN_BYTES {
+        bail!(
+            "stdin exceeds the {} MiB limit; redirect from a file inside a mount instead",
+            MAX_STDIN_BYTES / (1024 * 1024)
+        );
+    }
+    Ok(String::from_utf8_lossy(&buf).into_owned())
+}
+
+/// Split the parsed arguments into `$0` and the positional parameters.
+///
+/// Matches bash: after `-c 'script'` the first trailing argument becomes `$0`
+/// and the rest are `$1`…; for a script file, `$0` is the script path and every
+/// trailing argument is positional. Both cases read the same two clap slots,
+/// because the first non-flag token always lands in `script` — the script path
+/// in script mode, the `$0` override in command mode — and everything after it
+/// lands in `args`.
+fn split_invocation_args(args: &Args) -> (Option<String>, Vec<String>) {
+    (
+        args.script.as_ref().map(|p| p.display().to_string()),
+        args.args.clone(),
+    )
+}
+
+/// Build the per-execution options: positional parameters, `$0`, and stdin.
+fn exec_options(args: &Args) -> Result<bashkit::ExecOptions> {
+    let mut options = bashkit::ExecOptions::new().streaming(Box::new(|stdout, stderr| {
+        // Write through as chunks arrive so long scripts are observable and a
+        // run aborted by a resource limit keeps what it already produced.
+        if !stdout.is_empty() {
+            let mut out = std::io::stdout().lock();
+            let _ = out.write_all(stdout.as_bytes());
+            let _ = out.flush();
+        }
+        if !stderr.is_empty() {
+            let mut err = std::io::stderr().lock();
+            let _ = err.write_all(stderr.as_bytes());
+            let _ = err.flush();
+        }
+    }));
+
+    // Left unset when there is nothing to install, so `$0` keeps its default
+    // instead of being overwritten with an empty name.
+    let (arg0, positional) = split_invocation_args(args);
+    if let Some(arg0) = arg0 {
+        options = options.arg0(arg0);
+    }
+    if !positional.is_empty() {
+        options = options.positional(positional);
+    }
+
+    if !args.no_stdin && !std::io::stdin().is_terminal() {
+        options = options.stdin(read_host_stdin()?);
+    }
+
+    Ok(options)
+}
+
+fn run_oneshot(args: Args, mode: CliMode) -> Result<i32> {
     Builder::new_current_thread()
         .enable_all()
         .build()
         .context("Failed to build CLI runtime")?
         .block_on(async move {
             let mut bash = build_bash(&args, mode);
+            let options = exec_options(&args)?;
 
-            if let Some(cmd) = args.command {
-                let result = bash.exec(&cmd).await.context("Failed to execute command")?;
-                return Ok(RunOutput {
-                    stdout: result.stdout,
-                    stderr: result.stderr,
-                    exit_code: result.exit_code,
-                });
-            }
+            let (script, context) = match (&args.command, &args.script) {
+                (Some(cmd), _) => (cmd.clone(), "Failed to execute command"),
+                (None, Some(path)) => {
+                    let script = std::fs::read_to_string(path)
+                        .with_context(|| format!("Failed to read script: {}", path.display()))?;
+                    (script, "Failed to execute script")
+                }
+                (None, None) => unreachable!("run_oneshot called for non-executable mode"),
+            };
 
-            if let Some(script_path) = args.script {
-                let script = std::fs::read_to_string(&script_path)
-                    .with_context(|| format!("Failed to read script: {}", script_path.display()))?;
+            let result = bash
+                .exec_with_options(&script, options)
+                .await
+                .context(context)?;
 
-                let result = bash
-                    .exec(&script)
-                    .await
-                    .context("Failed to execute script")?;
-                return Ok(RunOutput {
-                    stdout: result.stdout,
-                    stderr: result.stderr,
-                    exit_code: result.exit_code,
-                });
-            }
-
-            unreachable!("run_oneshot called for non-executable mode");
+            // Output already reached the terminal through the streaming
+            // callback — printing `result.stdout` here would duplicate it.
+            Ok(result.exit_code)
         })
 }
 
@@ -545,11 +614,48 @@ mod tests {
 
     #[test]
     fn run_oneshot_executes_command_on_current_thread_runtime() {
-        let args = Args::parse_from(["bashkit", "--no-http", "--no-git", "-c", "echo works"]);
-        let output = run_oneshot(args, CliMode::Command).expect("run");
-        assert_eq!(output.stdout, "works\n");
-        assert_eq!(output.stderr, "");
-        assert_eq!(output.exit_code, 0);
+        // Output goes straight to the process streams now, so the assertion
+        // here is the exit code; `tests/cli_oneshot.rs` covers what is printed.
+        let args = Args::parse_from([
+            "bashkit",
+            "--no-http",
+            "--no-git",
+            "--no-stdin",
+            "-c",
+            "echo works",
+        ]);
+        assert_eq!(run_oneshot(args, CliMode::Command).expect("run"), 0);
+    }
+
+    #[test]
+    fn command_mode_takes_arg0_from_the_first_trailing_arg() {
+        let args = Args::parse_from(["bashkit", "-c", "echo hi", "myname", "a", "b"]);
+        let (arg0, positional) = split_invocation_args(&args);
+        assert_eq!(arg0.as_deref(), Some("myname"));
+        assert_eq!(positional, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn command_mode_without_trailing_args_leaves_arg0_unset() {
+        let args = Args::parse_from(["bashkit", "-c", "echo hi"]);
+        let (arg0, positional) = split_invocation_args(&args);
+        assert_eq!(arg0, None);
+        assert!(positional.is_empty());
+    }
+
+    #[test]
+    fn script_mode_uses_the_script_path_as_arg0() {
+        let args = Args::parse_from(["bashkit", "run.sh", "a", "b"]);
+        let (arg0, positional) = split_invocation_args(&args);
+        assert_eq!(arg0.as_deref(), Some("run.sh"));
+        assert_eq!(positional, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn parse_no_stdin_flag() {
+        let args = Args::parse_from(["bashkit", "--no-stdin", "-c", "cat"]);
+        assert!(args.no_stdin);
+        assert!(!Args::parse_from(["bashkit", "-c", "cat"]).no_stdin);
     }
 
     #[cfg(feature = "realfs")]

@@ -35,6 +35,27 @@ Core library modules: `parser/`, `interpreter/`, `fs/`, `builtins/`,
 Main entry points: `Bash` (library) and `BashTool` (LLM tool contract).
 See `crates/bashkit/src/lib.rs` for the full public API surface.
 
+### Per-invocation exec state
+
+`ExecOptions` carries everything scoped to a single `exec_with_options`
+call: streaming callback, builtin extensions, `arg0`, `positional`, and
+`stdin`. All of it is per-call by construction, not session state.
+
+- Positional parameters exist only inside a call frame, so the host
+  boundary pushes a synthetic top-level frame before
+  `Interpreter::execute` and truncates the call stack back to its
+  baseline afterwards — including on error paths, so `$#` is 0 again on
+  the next exec. `$0` defaults to `bash` when no `arg0` is supplied;
+  `set --` at top level uses the same synthetic frame and must not
+  change `$0`.
+- `stdin` seeds `pipeline_stdin`, which `reset_transient_state` clears at
+  the start of every exec — so it is installed *after* that reset and
+  immediately before execution. A pipe or redirect inside the script
+  still wins for the command it applies to.
+
+Both are installed late (just before `execute`) so the size, hook, and
+parse checks that can return early cannot leave state behind.
+
 ### Design Principles
 
 1. **Async-first**: All filesystem and execution is async (tokio)

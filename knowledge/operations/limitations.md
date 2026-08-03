@@ -127,16 +127,13 @@ sanitization, redirect handling hardened against credential leaks.
 
 ## CLI
 
-Gaps in the `bashkit` binary's one-shot (`-c` / script) mode. These are
-unimplemented, not design decisions — unlike the intentional table above,
-they can be lifted without weakening the sandbox. Evidence tests assert
-the current behavior so lifting one has to update this row too.
+Divergences in the `bashkit` binary's one-shot (`-c` / script) mode.
+Positional parameters, stdin forwarding, and streaming output all work;
+what remains is how stdin is obtained.
 
 | ID | Limitation | Why | Evidence |
 |----|------------|-----|----------|
-| L-CLI-001 | Trailing arguments after `-c 'cmd'` or a script path are parsed but never become positional parameters: `$1`/`$@` stay empty, `$#` is 0, `$0` is the interpreter default | Not wired from `Args::args` into the interpreter; no sandbox reason, just unimplemented | `crates/bashkit-cli/tests/cli_oneshot.rs` |
-| L-CLI-002 | The host process's stdin is not connected to the script; readers inside the sandbox see EOF immediately instead of piped bytes | One-shot mode builds the interpreter with an empty stdin; piping into `bashkit -c` silently reads nothing rather than blocking | `crates/bashkit-cli/tests/cli_oneshot.rs` |
-| L-CLI-003 | One-shot output is buffered and printed after the run completes, so stdout/stderr interleaving is lost and nothing streams during a long script | `run_oneshot` returns a `RunOutput` struct that `main` prints; streaming would need a writer-based exec path | `crates/bashkit-cli/tests/cli_oneshot.rs` |
+| L-CLI-002 | Host stdin is read to EOF *before* execution, not lazily when a command asks for it, and only when stdin is not a terminal. `cmd \| bashkit -c 'echo hi'` waits for the writer to finish even though the script never reads; `--no-stdin` opts out | The interpreter takes its stdin as a value up front (`ExecOptions::stdin`); lazy reads would need a reader-backed fd 0 in the sandbox. Capped at 10 MiB so an unbounded stream can't exhaust memory | `crates/bashkit-cli/tests/cli_oneshot.rs` |
 
 ## Parser
 

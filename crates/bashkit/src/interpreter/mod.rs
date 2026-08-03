@@ -1938,6 +1938,51 @@ impl Interpreter {
         entry.push_str(Self::utf8_prefix_at_most(data, remaining));
     }
 
+    /// Name `$0` expands to when no real script or function frame is active.
+    pub(crate) const DEFAULT_ARG0: &'static str = "bash";
+
+    /// Current call-stack depth, used by the host `exec` boundary to restore
+    /// the stack after installing per-invocation positional parameters.
+    pub(crate) fn call_stack_len(&self) -> usize {
+        self.call_stack.len()
+    }
+
+    /// Drop call frames above `len`. Used to remove the synthetic top-level
+    /// frame created for per-invocation positional parameters, including on
+    /// the error paths where the interpreter left frames behind.
+    pub(crate) fn truncate_call_stack(&mut self, len: usize) {
+        self.call_stack.truncate(len);
+    }
+
+    /// Install `$0` and positional parameters for a top-level execution.
+    ///
+    /// Mirrors what `execute_shell` does for `bash script.sh a b` and what the
+    /// `set --` side effect does when the call stack is empty: positional
+    /// parameters only exist in a call frame, so a synthetic one is pushed.
+    /// The host `exec` boundary pops it again after execution.
+    /// `name` is `$0`; `None` keeps the default shell name, matching bash where
+    /// positional parameters can be set without changing `$0`.
+    pub(crate) fn push_toplevel_positional(
+        &mut self,
+        name: Option<String>,
+        positional: Vec<String>,
+    ) {
+        self.call_stack.push(CallFrame {
+            name: name.unwrap_or_else(|| Self::DEFAULT_ARG0.to_string()),
+            locals: HashMap::new(),
+            local_arrays: HashMap::new(),
+            local_assoc_arrays: HashMap::new(),
+            positional,
+        });
+    }
+
+    /// Seed the stdin a top-level command reads when it is not fed by a pipe
+    /// or redirect. Must be called after `reset_transient_state`, which clears
+    /// it between executions.
+    pub(crate) fn set_pipeline_stdin(&mut self, stdin: String) {
+        self.pipeline_stdin = Some(stdin);
+    }
+
     /// Set an environment variable.
     pub fn set_env(&mut self, key: &str, value: &str) {
         self.env.insert(key.to_string(), value.to_string());
@@ -8336,8 +8381,10 @@ impl Interpreter {
                     if let Some(frame) = self.call_stack.last_mut() {
                         frame.positional = new_positional.clone();
                     } else {
+                        // `set --` at top level must not change `$0`; the
+                        // synthetic frame keeps the default shell name.
                         self.call_stack.push(CallFrame {
-                            name: String::new(),
+                            name: Self::DEFAULT_ARG0.to_string(),
                             locals: HashMap::new(),
                             local_arrays: HashMap::new(),
                             local_assoc_arrays: HashMap::new(),
@@ -9197,7 +9244,7 @@ impl Interpreter {
                 if let Some(frame) = self.call_stack.last() {
                     return frame.name.clone();
                 }
-                return "bash".to_string();
+                return Self::DEFAULT_ARG0.to_string();
             }
             // $1, $2, etc. (1-indexed)
             if let Some(frame) = self.call_stack.last()

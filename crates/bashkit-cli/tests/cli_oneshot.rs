@@ -10,10 +10,10 @@
 // `no_backtrace_without_rust_backtrace_env` pins the cleared-env behavior
 // deliberately (TM-INF-021).
 //
-// Decision: tests that document a gap rather than a guarantee say so in a
-// comment and reference the limitation ID in
-// `knowledge/operations/limitations.md`. They assert current behavior so a
-// future fix has to update the row and the test together.
+// Decision: tests that document a divergence from bash rather than a
+// guarantee say so in a comment and reference the limitation ID in
+// `knowledge/operations/limitations.md`, so lifting one has to update the row
+// and the test together.
 
 use std::io::Write;
 use std::process::{Command, Output, Stdio};
@@ -426,39 +426,143 @@ fn unknown_flag_is_rejected() {
 }
 
 // ---------------------------------------------------------------------------
-// Documented gaps (see knowledge/operations/limitations.md)
+// Positional parameters
 // ---------------------------------------------------------------------------
 
 #[test]
-fn l_cli_001_trailing_args_are_not_positional_params() {
-    // L-CLI-001: `Args::args` is parsed by clap but never wired into the
-    // interpreter, so `$1`/`$@`/`$#` stay empty and `$0` is the interpreter
-    // default. Asserting the gap so a future fix updates both places.
-    let out = run(&["-c", "echo \"0=$0 1=$1 count=$#\"", "foo", "bar"]);
+fn trailing_args_become_positional_params() {
+    // Bash semantics: after `-c 'script'` the first trailing argument is `$0`
+    // and the rest are `$1`...
+    let out = run(&[
+        "-c",
+        "echo \"0=$0 1=$1 2=$2 count=$#\"",
+        "myname",
+        "foo",
+        "bar",
+    ]);
     assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
-    assert_eq!(stdout(&out), "0=bash 1= count=0\n");
+    assert_eq!(stdout(&out), "0=myname 1=foo 2=bar count=2\n");
 }
 
 #[test]
-fn l_cli_001_script_mode_ignores_trailing_args_too() {
+fn dollar_zero_defaults_when_no_trailing_args() {
+    let out = run(&["-c", "echo \"0=$0 count=$#\""]);
+    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
+    assert_eq!(stdout(&out), "0=bash count=0\n");
+}
+
+#[test]
+fn positional_params_preserve_arguments_with_spaces() {
+    let out = run(&[
+        "-c",
+        "for a in \"$@\"; do echo \"[$a]\"; done",
+        "n0",
+        "sp ace",
+        "b",
+    ]);
+    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
+    assert_eq!(stdout(&out), "[sp ace]\n[b]\n");
+}
+
+#[test]
+fn script_mode_exposes_args_and_uses_the_path_as_dollar_zero() {
     let dir = tempfile::tempdir().unwrap();
     let script = dir.path().join("args.sh");
-    std::fs::write(&script, "echo \"count=$# first=$1\"\n").unwrap();
+    std::fs::write(
+        &script,
+        "echo \"count=$# first=$1 all=$@\"\nbasename \"$0\"\n",
+    )
+    .unwrap();
 
     let out = run(&[script.to_str().unwrap(), "alpha", "beta"]);
     assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
-    assert_eq!(stdout(&out), "count=0 first=\n");
+    assert_eq!(
+        stdout(&out),
+        "count=2 first=alpha all=alpha beta\nargs.sh\n"
+    );
 }
 
 #[test]
-fn l_cli_003_output_before_an_aborted_run_is_lost() {
-    // L-CLI-003: one-shot output is buffered into `RunOutput` and printed
-    // only after a successful run, so a script aborted by a resource limit
-    // loses everything it had already written. A streaming exec path would
-    // change this.
+fn script_can_shift_and_reset_positional_params() {
+    let out = run(&[
+        "-c",
+        "shift; echo \"$# $1\"; set -- z; echo \"$# $1 $0\"",
+        "n0",
+        "a",
+        "b",
+    ]);
+    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
+    assert_eq!(stdout(&out), "1 b\n1 z n0\n");
+}
+
+// ---------------------------------------------------------------------------
+// Stdin forwarding
+// ---------------------------------------------------------------------------
+
+#[test]
+fn piped_stdin_reaches_the_script() {
+    let out = run_with_stdin(&["-c", "cat"], "piped-in\nsecond\n");
+    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
+    assert_eq!(stdout(&out), "piped-in\nsecond\n");
+}
+
+#[test]
+fn read_consumes_piped_stdin() {
+    let out = run_with_stdin(
+        &["-c", "read -r line; echo \"got=[$line]\""],
+        "hello\nrest\n",
+    );
+    assert_eq!(stdout(&out), "got=[hello]\n", "stderr: {}", stderr(&out));
+}
+
+#[test]
+fn piped_stdin_feeds_a_filter() {
+    let out = run_with_stdin(&["-c", "grep -c line"], "one line\ntwo line\nnope\n");
+    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
+    assert_eq!(stdout(&out).trim(), "2");
+}
+
+#[test]
+fn no_stdin_flag_suppresses_forwarding() {
+    let out = run_with_stdin(&["--no-stdin", "-c", "cat"], "ignored\n");
+    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
+    assert_eq!(stdout(&out), "");
+}
+
+#[test]
+fn an_inline_pipe_still_wins_over_host_stdin() {
+    let out = run_with_stdin(&["-c", "echo inline | cat"], "outer\n");
+    assert_eq!(stdout(&out), "inline\n", "stderr: {}", stderr(&out));
+}
+
+#[test]
+fn stdin_is_consumed_even_when_the_script_ignores_it() {
+    // L-CLI-002: stdin is read to EOF before execution rather than lazily, so
+    // a script that never reads still drains the pipe. Harmless for a writer
+    // that finishes; a writer that never closes would block the run.
+    let out = run_with_stdin(&["-c", "echo hi"], "unread\n");
+    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
+    assert_eq!(stdout(&out), "hi\n");
+}
+
+#[test]
+fn empty_stdin_is_harmless() {
+    let out = run_with_stdin(&["-c", "cat; echo done"], "");
+    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
+    assert_eq!(stdout(&out), "done\n");
+}
+
+// ---------------------------------------------------------------------------
+// Streaming
+// ---------------------------------------------------------------------------
+
+#[test]
+fn output_produced_before_an_abort_is_kept() {
+    // Streaming writes each chunk through as it is produced, so a run killed
+    // by a resource limit keeps what it already printed.
     let out = run(&["--timeout", "1", "-c", "echo early-output; sleep 30"]);
     assert_ne!(code(&out), 0);
-    assert_eq!(stdout(&out), "", "stderr: {}", stderr(&out));
+    assert_eq!(stdout(&out), "early-output\n");
     assert!(
         stderr(&out).contains("execution timeout"),
         "stderr: {}",
@@ -467,17 +571,24 @@ fn l_cli_003_output_before_an_aborted_run_is_lost() {
 }
 
 #[test]
-fn l_cli_002_host_stdin_is_not_piped_into_the_script() {
-    // L-CLI-002: the CLI never connects the host's stdin to the interpreter,
-    // so a reader inside the sandbox sees EOF immediately instead of the piped
-    // bytes. It must not hang or fail — just read nothing.
-    let out = run_with_stdin(&["-c", "cat"], "piped-in\n");
-    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
-    assert_eq!(stdout(&out), "");
+fn output_before_a_limit_abort_is_kept() {
+    let out = run(&[
+        "--max-commands",
+        "2",
+        "-c",
+        "echo one; echo two; echo three; echo four",
+    ]);
+    assert_ne!(code(&out), 0);
+    assert!(
+        stdout(&out).starts_with("one\n"),
+        "stdout: {:?}",
+        stdout(&out)
+    );
 }
 
 #[test]
-fn l_cli_002_read_from_stdin_does_not_block() {
-    let out = run_with_stdin(&["-c", "read -r line; echo \"got=[$line]\""], "hello\n");
-    assert_eq!(stdout(&out), "got=[]\n", "stderr: {}", stderr(&out));
+fn streamed_output_is_not_printed_twice() {
+    let out = run(&["-c", "echo once; echo twice >&2"]);
+    assert_eq!(stdout(&out), "once\n");
+    assert_eq!(stderr(&out), "twice\n");
 }
