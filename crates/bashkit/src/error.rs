@@ -61,6 +61,26 @@ pub enum Error {
     #[error("{0}")]
     CommandFailure(String),
 
+    /// A snapshot declares a minimum reader version this build cannot satisfy.
+    ///
+    /// Distinct from [`Error::Internal`] so callers can tell "your bashkit is
+    /// too old for this snapshot" apart from corruption, and prompt an upgrade
+    /// instead of discarding stored state. See
+    /// `knowledge/foundations/snapshot-history.md` for the version policy.
+    #[error("snapshot requires reader version {required}, this build supports {supported}")]
+    SnapshotTooNew {
+        /// Minimum reader version the snapshot declares.
+        required: u16,
+        /// Highest reader version this build implements.
+        supported: u16,
+    },
+
+    /// The environment restoring a snapshot differs from the one that made it.
+    ///
+    /// Carries a rendered [`CapabilityDelta`](crate::CapabilityDelta) summary.
+    #[error("snapshot capability mismatch: {0}")]
+    SnapshotCapabilityMismatch(String),
+
     /// Internal error for unexpected failures.
     ///
     /// THREAT[TM-INT-002]: Unexpected internal failures should not crash the interpreter.

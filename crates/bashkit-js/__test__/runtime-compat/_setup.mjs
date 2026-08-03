@@ -8,4 +8,11 @@ export {
   BashError,
   ScriptedTool,
   getVersion,
+  snapshotAncestry,
+  snapshotCapabilities,
+  snapshotDiff,
+  snapshotMeta,
+  snapshotParents,
+  snapshotPlanCheckout,
+  snapshotReachable,
 } from "../../wrapper.js";

@@ -14,28 +14,30 @@ tags:
 
 ## Status
 
-Designed in full and implemented in `crates/bashkit/src/snapshot/`, but rolled
-out over two releases. The split is deliberate and the reason is in
+Implemented. `crates/bashkit/src/snapshot/` holds the object graph, container,
+chunker, capability fingerprint, and graph operations; Python and JS bindings
+expose `commit`/`checkout` and the graph queries.
+
+**Released over two versions, reader first.** The reason is in
 [Decision: version policy that survives upgrades](#decision-version-policy-that-survives-upgrades):
-`min_reader` protects every future format change, but it cannot protect the
-first one, because the readers that predate it reject v2 with a JSON parse
-error that names neither the version nor the format.
+`min_reader` makes every future format change safe but cannot make the first
+one safe, because the readers that predate it reject a v2 container with a JSON
+parse error naming neither the version nor the format.
 
 | Release | Reads v2 | Writes v2 | Public API |
 |---|---|---|---|
-| 0.14.5 (patch) | yes | no | unchanged — new types are `pub(crate)` |
+| 0.14.5 (patch) | yes | no | unchanged — object-graph types `pub(crate)` |
 | 0.15.0 (minor) | yes | yes | `commit`/`checkout`, `SnapshotGraph`, `CheckoutPolicy`, bindings |
 
-0.14.5 exists so that a deployment can become able to *read* v2 before anything
-starts *writing* it, which makes it a safe rollback target for 0.15.0. It ships
-as a patch specifically to propagate fast, and it can only be a patch because it
-adds no public API — hence the `pub(crate)`, and hence `Error::Internal` rather
-than the typed variants (`Error` is not `#[non_exhaustive]`, so new variants are
-a breaking change).
+0.14.5 exists so a deployment can become able to *read* v2 before anything
+writes it, making it a safe rollback target for 0.15.0. It could ship as a patch
+only because it added no public API — hence `pub(crate)` on the new types and
+`Error::Internal` in place of the typed variants, since `Error` is not
+`#[non_exhaustive]`. 0.15.0 lifts both, along with the `allow(dead_code)` that
+covered the then-unreachable encoder.
 
-The v2 encoder ships in 0.14.5 too, reachable only from tests: a decoder cannot
-be tested without something that produces valid input for it. `mod.rs` carries
-the `allow(dead_code)` and the note to remove it in 0.15.0.
+Rolling back past 0.14.5 strands any v2 snapshot, and no code change can
+retrofit that — the failing readers already shipped.
 
 Driver: [#2221](https://github.com/everruns/bashkit/issues/2221), which needs one
 snapshot per conversation message with session truncation and branching.
@@ -134,8 +136,7 @@ levels deep, so it converges in at most four rounds.
 
 `snapshot()` and `from_snapshot()` remain, redefined as a **packed commit**:
 the commit plus every object it reaches, sealed with the existing digest. The
-public byte API is unchanged. `snapshot()` starts *emitting* that packed commit
-in 0.15.0; in 0.14.5 it still writes v1 (see Status).
+public byte API is unchanged.
 
 ## Decision: chunked, binary-safe content
 
@@ -182,10 +183,8 @@ Three independent numbers in the container header.
   much newer the other two are.
 - Unknown metadata fields are ignored. Metadata structs use `#[serde(default)]`
   and must not use `deny_unknown_fields`.
-- `min_reader > READER_VERSION` is refused, never a panic and never a partial
-  restore. 0.15.0 raises `Error::SnapshotTooNew { required, supported }`; 0.14.5
-  raises `Error::Internal` carrying the same numbers and the remedy, because a
-  new variant on a non-`#[non_exhaustive]` enum cannot ship in a patch.
+- `min_reader > READER_VERSION` yields `Error::SnapshotTooNew { required,
+  supported }` — a typed error, never a panic, never a partial restore.
 - v1 JSON payloads stay readable. `decode_sealed` dispatches on the body
   prefix: `BKSNAP` magic means v2, anything else is parsed as v1 JSON.
 
@@ -193,22 +192,18 @@ Three independent numbers in the container header.
 per released format version, restored by every CI run
 (`snapshot_fixture_tests`). Fixtures are never regenerated — that would defeat
 their purpose. A new format version adds a file via
-`cargo run -p bashkit --example generate_snapshot_fixtures` (0.15.0 — the
-generator needs the public commit API), and a test asserts the corpus listing
-matches the tests, so a fixture cannot be added without one.
+`cargo run -p bashkit --example generate_snapshot_fixtures`, and a test asserts
+the corpus listing matches the tests, so a fixture cannot be added without one.
 
-From 0.15.0 corpus restores use `CheckoutPolicy::Force` on purpose: a fixture's
-fingerprint names the builtin set of the build that wrote it, so any later
-release would fail the capability gate. The corpus tests format compatibility;
-capability policy is tested separately.
+Corpus restores use `CheckoutPolicy::Force` on purpose: a fixture's fingerprint
+names the builtin set of the build that wrote it, so any later release would
+fail the capability gate. The corpus tests format compatibility; capability
+policy is tested separately.
 
 **The one break `min_reader` cannot prevent is its own introduction.** Readers
 older than 0.14.5 parse the sealed body as JSON and fail at column 1 on a v2
-container, naming neither the version nor the format. That is why the reader
-ships one release ahead of the writer: it gives deployments a rollback target
-that can read what 0.15.0 writes. Rolling back past 0.14.5 strands any v2
-snapshot, and no code change can retrofit that — the failing readers already
-shipped.
+container. That is why the reader shipped a release ahead of the writer — see
+Status.
 
 ## Decision: capability fingerprint
 
@@ -279,9 +274,6 @@ never needs its ancestors, so including them would make GC retain history a host
 had already decided to prune.
 
 ## Bindings
-
-*Lands with 0.15.0, alongside the public Rust API — 0.14.5 changes no binding
-surface at all.*
 
 Python and JS mirror the Rust API with one deliberate difference: the object
 store is a plain `dict[str, bytes]` / `Record<string, Buffer>` keyed by **hex**
@@ -371,42 +363,36 @@ data loss as ordinary pruned history.
 
 ## Tests
 
-Rows marked *(0.15.0)* exercise the writer and the public graph API, so they
-land with that release. Everything else ships with the reader in 0.14.5 —
-including the golden corpus, which is the only proof the v2 decoder works
-before any caller can produce v2 of their own.
-
 | Direction | Where |
 |---|---|
+| Round-trip: shell, files, symlinks, directories, modes | `snapshot_history_tests` |
+| Binary fidelity: NUL, 0x7f/0x80/0xff, multi-chunk files | `snapshot_history_tests` |
+| Forks: divergence, isolation, storage sharing | `snapshot_history_tests` |
+| Mid-history: every ancestor checks out to its own state | `snapshot_history_tests` |
+| Differential: checkout equals packed restore at every step | `snapshot_history_tests` |
+| Ancestry, diff, metadata, reachability | `snapshot_history_tests` |
+| Incremental storage and chunk reuse on a large-file edit | `snapshot_history_tests` |
+| Determinism: identical state, identical commit ID | `snapshot_history_tests` |
+| Capability policy: all three, plus untouched-on-failure | `snapshot_history_tests` |
+| Corruption: content tamper, truncation, appended bytes, missing object, unknown root, type confusion, cycles | `snapshot_history_tests` |
+| Keyed snapshots and wrong-key rejection | `snapshot_history_tests` |
+| Version: too-new rejected typed, newer non-breaking accepted | `snapshot_history_tests` |
 | Golden corpus per format version | `snapshot_fixture_tests` |
+| Limits: over-limit checkout refused atomically | `snapshot_history_tests` |
 | Encoding units: chunker, objects, container, capabilities, graph budgets | `src/snapshot/*` unit tests |
 | Materialization bounds: repeated chunks, absurd declared size, oversized chunk, cumulative tree budget | `src/snapshot/graph.rs` unit tests |
 | Object-id parsing: non-ASCII, wrong length, both hex cases | `src/snapshot/objects.rs` unit tests |
-| Version: too-new refused with an actionable message, newer non-breaking accepted | `src/snapshot/container.rs` unit tests |
-| Arbitrary/truncated bytes never panic; instance survives every rejection | `tests/proptest_security.rs` |
-| Decoder fuzzing: v1 and v2 container paths, keyed and unkeyed | `fuzz/fuzz_targets/snapshot_fuzz.rs` |
-| Round-trip: shell, files, symlinks, directories, modes *(0.15.0)* | `snapshot_history_tests` |
-| Binary fidelity: NUL, 0x7f/0x80/0xff, multi-chunk files *(0.15.0)* | `snapshot_history_tests` |
-| Forks: divergence, isolation, storage sharing *(0.15.0)* | `snapshot_history_tests` |
-| Mid-history: every ancestor checks out to its own state *(0.15.0)* | `snapshot_history_tests` |
-| Differential: checkout equals packed restore at every step *(0.15.0)* | `snapshot_history_tests` |
-| Ancestry, diff, metadata, reachability *(0.15.0)* | `snapshot_history_tests` |
-| Incremental storage and chunk reuse on a large-file edit *(0.15.0)* | `snapshot_history_tests` |
-| Determinism: identical state, identical commit ID *(0.15.0)* | `snapshot_history_tests` |
-| Capability policy: all three, plus untouched-on-failure *(0.15.0)* | `snapshot_history_tests` |
-| Corruption: content tamper, truncation, appended bytes, missing object, unknown root, type confusion, cycles *(0.15.0)* | `snapshot_history_tests` |
-| Keyed snapshots and wrong-key rejection *(0.15.0)* | `snapshot_history_tests` |
-| Limits: over-limit checkout refused atomically *(0.15.0)* | `snapshot_history_tests` |
-| Hostile VFS entries: traversal, non-normalized, relative, empty, NUL, duplicate paths, escaping and self-looping symlinks *(0.15.0)* | `snapshot_history_tests` |
-| Object-id and graph-walker property tests *(0.15.0)* | `tests/proptest_security.rs` |
-| JS runtime parity across Node, Bun, and Deno *(0.15.0)* | `crates/bashkit-js/__test__/runtime-compat/snapshot-history.test.mjs` |
+| JS runtime parity across Node, Bun, and Deno | `crates/bashkit-js/__test__/runtime-compat/snapshot-history.test.mjs` |
+| Hostile VFS entries: traversal, non-normalized, relative, empty, NUL, duplicate paths, escaping and self-looping symlinks | `snapshot_history_tests` |
+| Arbitrary/truncated bytes never panic; instance survives every rejection | `snapshot_history_tests`, `tests/proptest_security.rs` |
+| Decoder fuzzing: container, objects, ids, graph walkers | `fuzz/fuzz_targets/snapshot_fuzz.rs` |
 
 Note on the corruption tests: they assert that changes to *content* are always
 caught, not that every possible bit flip is. See the framing invariant above.
 
-Benchmarks: `cargo bench -p bashkit --bench snapshot_history` *(0.15.0 — needs
-the public graph API)*, which also prints a v1-vs-v2 size table and the marginal
-cost of an incremental commit. Results go in `crates/bashkit/benches/results/`.
+Benchmarks: `cargo bench -p bashkit --bench snapshot_history`, which also prints
+a v1-vs-v2 size table and the marginal cost of an incremental commit. Results go
+in `crates/bashkit/benches/results/`.
 
 ## Known gaps
 

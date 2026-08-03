@@ -80,6 +80,28 @@ bash.cancel(): void
 
 Cancel the currently running execution.
 
+### `capabilities`
+
+```typescript
+bash.capabilities(): CapabilityFingerprint
+```
+
+Fingerprint this instance's environment.
+
+Compare against `snapshotCapabilities(...)` to tell whether a stored commit
+will pass a given checkout policy before attempting the restore.
+
+### `checkout`
+
+```typescript
+bash.checkout(commitId: string, objects: Record<string, Uint8Array<ArrayBufferLike>>, policy?: CheckoutPolicy): void
+```
+
+Restore the state a commit describes, pulling objects from a store.
+
+This is how rewinds and forks work: check out any commit, tip or not.
+Nothing is mutated if the checkout fails.
+
 ### `chmod`
 
 ```typescript
@@ -98,6 +120,30 @@ Clear the cancellation flag so subsequent executions proceed normally.
 
 Call this after `cancel()` once the in-flight execution has finished and
 you want to reuse the same instance without discarding shell or VFS state.
+
+### `commit`
+
+```typescript
+bash.commit(options?: CommitOptions): PackedCommit
+```
+
+Capture state as a content-addressed commit for session history.
+
+Returns the objects to persist and the commit id to remember. Pass the ids
+your store already holds via `options.have` to keep consecutive commits
+incremental — unchanged files then cost a hash reference instead of a copy.
+
+A fork is a commit whose parent is not the branch tip: pass any earlier
+commit id in `options.parents`.
+
+```ts
+const store: Record<string, Buffer> = {};
+const first = bash.commit();
+Object.assign(store, first.objects);
+
+await bash.execute("echo more >> /log.txt");
+const second = bash.commit({ parents: [first.id], have: Object.keys(store) });
+```
 
 ### `execute`
 
@@ -1067,6 +1113,66 @@ getVersion(): string
 
 Get the bashkit version string.
 
+## snapshotAncestry()
+
+```typescript
+snapshotAncestry(commitId: string, objects: Record<string, Buffer<ArrayBufferLike>>, limit?: number): string[]
+```
+
+Walk ancestry newest-first, stopping at `limit` or at the first commit the
+store does not contain.
+
+## snapshotCapabilities()
+
+```typescript
+snapshotCapabilities(commitId: string, objects: Record<string, Buffer<ArrayBufferLike>>): CapabilityFingerprint
+```
+
+Capability fingerprint of the instance that produced this commit.
+
+## snapshotDiff()
+
+```typescript
+snapshotDiff(commitA: string, commitB: string, objects: Record<string, Buffer<ArrayBufferLike>>): SnapshotDiff
+```
+
+Compare two commits.
+
+## snapshotMeta()
+
+```typescript
+snapshotMeta(commitId: string, objects: Record<string, Buffer<ArrayBufferLike>>): Record<string, string>
+```
+
+Host metadata attached when the commit was made.
+
+## snapshotParents()
+
+```typescript
+snapshotParents(commitId: string, objects: Record<string, Buffer<ArrayBufferLike>>): string[]
+```
+
+Commits the given commit descends from.
+
+## snapshotPlanCheckout()
+
+```typescript
+snapshotPlanCheckout(commitId: string, objects: Record<string, Buffer<ArrayBufferLike>>): string[]
+```
+
+Object ids needed to check out this commit that `objects` lacks.
+
+Call repeatedly — each wave reveals the next — until it returns an empty
+array. Use this to fetch a large session's objects lazily.
+
+## snapshotReachable()
+
+```typescript
+snapshotReachable(commitId: string, objects: Record<string, Buffer<ArrayBufferLike>>): string[]
+```
+
+Every object this commit reaches, for host-side garbage collection.
+
 ## AnalyzedCommand
 
 One simple command found by `analyze()`.
@@ -1247,6 +1353,35 @@ virtual filesystem.
 
   Piped input, or `null` if there is no pipe.
 
+## CapabilityFingerprint
+
+The environment that produced a commit.
+
+### Fields
+
+- **`bashkitVersion`** — `string`
+- **`builtins`** — `string[]`
+- **`features`** — `string[]`
+- **`fsBackend`** — `string`
+
+## CommitOptions
+
+Options for `Bash.commit`.
+
+### Fields
+
+- **`excludeFilesystem?`** — `boolean`
+- **`excludeFunctions?`** — `boolean`
+- **`have?`** — `string[]`
+
+  Object ids the store already holds, so they are not emitted again.
+- **`meta?`** — `Record<string, string>`
+
+  Opaque host metadata. Bashkit stores it verbatim.
+- **`parents?`** — `string[]`
+
+  Commits this one descends from. Pass a non-tip id to fork.
+
 ## CredentialHeader
 
 A single HTTP header (name/value pair) for credential injection.
@@ -1387,6 +1522,29 @@ not both. `blockPrivateIps` defaults to `true`.
 - **`stderr`** — `string`
 - **`stdout`** — `string`
 
+## PackedCommit
+
+A commit plus the objects a host needs to persist.
+
+### Fields
+
+- **`id`** — `string`
+
+  Content address of this commit — store it per message.
+- **`objectCount`** — `number`
+- **`objects`** — `Record<string, Buffer<ArrayBufferLike>>`
+
+  Objects to persist, keyed by hex object id.
+- **`packed`** — `null | Buffer<ArrayBufferLike>`
+
+  Self-contained bytes equivalent to `snapshot()`, or `null` when `have`
+  made the commit incremental — packing one would produce bytes that cannot
+  be restored.
+- **`selfContained`** — `boolean`
+
+  Whether this commit carries every object needed to restore it.
+- **`storedBytes`** — `number`
+
 ## ScriptAnalysis
 
 Result of `analyze()` — what a script statically refers to.
@@ -1472,6 +1630,17 @@ definitions (use `snapshot()` for full state capture/restore).
 
   Shell variables (non-exported).
 
+## SnapshotDiff
+
+What changed between two commits.
+
+### Fields
+
+- **`filesAdded`** — `string[]`
+- **`filesModified`** — `string[]`
+- **`filesRemoved`** — `string[]`
+- **`shellChanged`** — `boolean`
+
 ## SnapshotOptions
 
 ### Fields
@@ -1493,6 +1662,19 @@ Exceptions / rejections surface as stderr with exit code 1.
 
 ```typescript
 type BuiltinCallback = (ctx: BuiltinContext) => string | Promise<string>
+```
+
+## CheckoutPolicy
+
+How strictly a checkout enforces the capability fingerprint recorded in a
+commit.
+
+`"superset"` (default) is the safe everyday choice: the restoring instance
+must have everything the snapshot's environment had, but extra builtins are
+fine, so snapshots keep restoring after a bashkit upgrade adds one.
+
+```typescript
+type CheckoutPolicy = "strict" | "superset" | "force"
 ```
 
 ## FileValue

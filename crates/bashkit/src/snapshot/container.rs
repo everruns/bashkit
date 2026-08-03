@@ -268,17 +268,12 @@ pub(crate) fn decode(body: &[u8]) -> crate::Result<Container> {
     let min_reader = cur.u16()?;
 
     // The whole point of the policy: only `min_reader` can reject us, and it
-    // does so with an actionable message rather than a panic or a misparse.
-    //
-    // A dedicated `Error` variant would say this better, but `Error` is not
-    // `#[non_exhaustive]`, so adding one is a breaking change and this release
-    // ships as a patch. No released version writes `min_reader > 2`, so nothing
-    // can reach this arm until the typed variant lands. See CHANGELOG.
+    // does so with a typed error rather than a panic or a misparse.
     if min_reader > READER_VERSION {
-        return Err(crate::Error::Internal(format!(
-            "snapshot requires reader version {min_reader}, this build supports \
-             {READER_VERSION}: upgrade bashkit to restore it"
-        )));
+        return Err(crate::Error::SnapshotTooNew {
+            required: min_reader,
+            supported: READER_VERSION,
+        });
     }
 
     let hash_algo = take!(1)[0];
@@ -375,22 +370,21 @@ mod tests {
     }
 
     #[test]
-    fn newer_min_reader_is_refused_with_an_actionable_message() {
+    fn newer_min_reader_gives_typed_error_not_panic() {
         let (root, objects) = sample();
         let mut body = encode(root, &objects);
         // min_reader sits at offset 6+1+1+2 = 10.
         body[10..12].copy_from_slice(&999u16.to_le_bytes());
         match decode(&body) {
-            Err(e) => {
-                // The message has to name the mismatch and the remedy: a bare
-                // "malformed" would send a caller looking for corruption that
-                // is not there, and discarding recoverable state is the
-                // expensive wrong move.
-                let msg = e.to_string();
-                assert!(msg.contains("999"), "no required version in {msg:?}");
-                assert!(msg.contains("upgrade bashkit"), "no remedy in {msg:?}");
+            Err(crate::Error::SnapshotTooNew {
+                required,
+                supported,
+            }) => {
+                assert_eq!(required, 999);
+                assert_eq!(supported, READER_VERSION);
             }
-            Ok(_) => panic!("expected a refusal, got a successful decode"),
+            Err(other) => panic!("expected SnapshotTooNew, got {other}"),
+            Ok(_) => panic!("expected SnapshotTooNew, got a successful decode"),
         }
     }
 

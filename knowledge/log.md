@@ -2,13 +2,10 @@
 
 ## 2026-08-01
 
-* **Creation**: Added [Snapshot History and Deltas](foundations/snapshot-history.md) in response to [#2221](https://github.com/everruns/bashkit/issues/2221) — a content-addressed object graph with a commit DAG for forks, content-defined chunking for binary-safe per-file differentials, a two-phase pull API instead of a host store trait, three-number version rules backed by a golden fixture corpus, and a capability fingerprint gating restore.
-* **Decision**: Split the rollout across two releases — reader first as a patch, writer and public API next as a minor. `min_reader` makes every *future* format change safe, but cannot make the first one safe: readers that predate it fail on a v2 container with a JSON parse error naming neither version nor format. A release that reads v2 without writing it gives deployments a rollback target before anything can produce v2. Recorded in the concept's Status.
-* **Decision**: The reader release adds no public API, so it can ship as a patch — new types are `pub(crate)`, and the version refusal reuses `Error::Internal` because `Error` is not `#[non_exhaustive]` and a new variant would be breaking. The v2 encoder ships alongside it reachable only from tests: a decoder cannot be tested without something that produces valid input for it.
-* **Decision**: Content-defined chunking is in-tree (gear hash, pinned constants) rather than the `fastcdc` crate — the proposal's fallback, taken up front since the parameters are format constants regardless.
-* **Decision**: Recorded the rejected alternative — byte-delta patch chains (bsdiff/xdelta/`zstd --patch-from`) — and why the graph model wins for the branch-and-truncate read pattern.
-* **Enforcement**: Object identity covers decoded content, not compressed framing, so hosts may recompress freely; bytes appended after a deflate stream are rejected rather than silently ignored.
-* **Threats**: Registered TM-SNAP-002 through TM-SNAP-005 in [Threat Model](security/threat-model.md). TM-SNAP-006 (capability mismatch) lands with the policy it describes.
+* **Decision**: Split the rollout across two releases — reader first as a patch (0.14.5), writer and public API next as a minor (0.15.0). `min_reader` makes every *future* format change safe but cannot make the first one safe: readers that predate it fail on a v2 container with a JSON parse error naming neither version nor format. A release that reads v2 without writing it gives deployments a rollback target before anything can produce v2. Recorded in [Snapshot History and Deltas](foundations/snapshot-history.md).
+* **Decision**: The reader release adds no public API, so it ships as a patch — new types `pub(crate)`, and the version refusal reuses `Error::Internal` because `Error` is not `#[non_exhaustive]` and a new variant would be breaking. Its v2 encoder is reachable only from tests: a decoder cannot be tested without something that produces valid input for it.
+* **Constraint**: `CheckoutPolicy::Superset` makes builtin *removal* the breaking direction — removing or renaming one breaks restores of every snapshot written before the removal. Additions are safe by construction; nothing in the release process flags a removal.
+* **Testing**: Added hostile-input coverage for the object graph — a libFuzzer target over both format paths, decode/id/graph-walk property tests, and integration tests establishing that forged VFS paths (traversal, non-normalized, relative, empty) are *unreachable* rather than rejected. That invariant depends on restore not normalizing paths; if it ever does, `/a/../b.txt` resolves and the containment is gone.
 
 ## 2026-07-31
 
@@ -16,6 +13,20 @@
 * **Cross-links**: Added `## See also` sections to the nine concepts that linked to no other concept, and normalised the heading to `## See also` bundle-wide. Every concept is now reachable from another concept, not just from its `index.md`.
 * **Enforcement**: `scripts/check_okf.py` now rejects a concept that links to no other concept, a bundle document referenced as a repository path, and a `Generated Inventory` missing `generated.by` or `resource`; it also validates OKF actor syntax and `status`/`stale_after` values where present. `okf-lint 0.1.1` passes all three regressions — coverage table updated in [Knowledge Maintenance Contract](knowledge-contract.md).
 * **Decision**: Of OKF's optional families, only the trust family is adopted, and only for generated concepts (`generated.by` + `resource`). `generated.at`, `status`, `stale_after`, `verified`, `sources`, and `usage_window` stay unused — the same-PR update rule and the drift workflows defend staleness better than a metadata date. Rationale in [Knowledge Maintenance Contract](knowledge-contract.md).
+
+## 2026-07-30
+
+* **Bindings**: Exposed `commit`/`checkout`/`capabilities` and the `SnapshotGraph` queries to Python and JS. Object stores cross as `dict[str, bytes]` / `Record<string, Buffer>` keyed by hex id, and `CheckoutPolicy` as a case-insensitive string, so hosts drop them straight into a database column. Runnable example in `crates/bashkit-python/examples/session_history.py`.
+* **Performance**: Added a compressibility probe before deflating an object. Deflating incompressible chunks (a large binary file's content) and discarding every result dominated commit time; a 64 MB file went from 2 439 ms to 1 003 ms with byte-identical output. Commit also encodes storage blobs without materializing `[kind][payload]` first, removing one full copy of each chunk.
+* **Measurement**: Recorded large-binary behavior in `crates/bashkit/benches/results/` — chunking holds up (a 16-byte edit in a 64 MB file costs 152 KB), but peak RSS is ~5x file size and the per-edit floor is the flat file manifest at ~2 KB per MB. Both recorded as known gaps.
+* **Implementation**: Shipped the snapshot object graph in `crates/bashkit/src/snapshot/` — content-addressed chunks/files/trees/shell/caps/commits, `Bash::commit`/`Bash::checkout`, `SnapshotGraph` (parents, ancestry, diff, plan_checkout, reachable), and a versioned binary container. `snapshot()` now emits a packed commit; v1 JSON payloads stay readable and are covered by a golden fixture corpus.
+* **Decision**: `CheckoutPolicy::Superset` is the default, not `Strict` as proposed. The fingerprint records the whole builtin set, so `Strict` by default would break every stored snapshot the moment bashkit adds a builtin, pushing callers to `Force` and losing the check. Recorded in [Snapshot History and Deltas](foundations/snapshot-history.md).
+* **Decision**: Content-defined chunking is in-tree (gear hash, pinned constants) rather than the `fastcdc` crate — the proposal's fallback, taken up front since the parameters are format constants regardless.
+* **Enforcement**: Object identity covers decoded content, not compressed framing, so hosts may recompress freely; bytes appended after a deflate stream are now rejected rather than silently ignored.
+* **Threats**: Registered TM-SNAP-002 through TM-SNAP-006 in [Threat Model](security/threat-model.md).
+
+* **Creation**: Added [Snapshot History and Deltas](foundations/snapshot-history.md) (`Status: Proposed`) in response to [#2221](https://github.com/everruns/bashkit/issues/2221) — a content-addressed object graph with a commit DAG for forks, content-defined chunking for binary-safe per-file differentials, a two-phase pull API instead of a host store trait, three-number version rules backed by a golden fixture corpus, and a capability fingerprint gating restore.
+* **Decision**: Recorded the rejected alternative — byte-delta patch chains (bsdiff/xdelta/`zstd --patch-from`) — and why the graph model wins for the branch-and-truncate read pattern.
 
 ## 2026-07-29
 

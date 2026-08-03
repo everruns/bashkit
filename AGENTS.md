@@ -32,6 +32,7 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 | security/security-testing | Fail-point injection for security testing |
 | security/threat-model | Security threats and mitigations |
 | foundations/parallel-execution | Threading model, Arc usage |
+| foundations/snapshot-history | Snapshot object graph: commits, forks, chunked binary deltas, version + capability rules |
 | operations/documentation | Rustdoc guides, embedded markdown |
 | operations/release-process | Version tagging, crates.io + PyPI + npm publishing |
 | operations/limitations | Negative spec: intentional gaps (L-* IDs), partial features, POSIX stance |
@@ -198,6 +199,7 @@ Do not mix criterion `.md` files into `crates/bashkit-bench/results/`.
 11. Resolve all PR comments
 12. `cargo bench --bench parallel_execution` if touching Arc/async/Interpreter/builtins (see `knowledge/foundations/parallel-execution.md`)
 13. `just bench-sqlite` if touching the sqlite builtin or its VFS/IO bridge (see `knowledge/runtimes/sqlite-builtin.md`)
+13a. `cargo bench -p bashkit --bench snapshot_history` if touching snapshot/commit/checkout code (see `knowledge/foundations/snapshot-history.md`); never regenerate existing files in `crates/bashkit/tests/fixtures/snapshots/`
 14. `just bench` if changes might impact performance (interpreter, builtins, tools)
 15. `ruff check crates/bashkit-python && ruff format --check crates/bashkit-python` if touching Python code
 

@@ -625,10 +625,9 @@ proptest! {
 //
 // Snapshot bytes are the one input hosts routinely load from storage they do
 // not fully control, and the unkeyed integrity digest is explicitly not a
-// security boundary (TM-SNAP-001). This release reads the v2 container without
-// writing it, so the bytes it must survive are precisely the ones it cannot
-// have produced. The `snapshot_fuzz` target explores this space far more
-// deeply, but it only gets compile-checked on a PR — these run on every pass.
+// security boundary (TM-SNAP-001). The `snapshot_fuzz` target explores this
+// space far more deeply, but it only gets compile-checked on a PR — these run
+// on every CI pass.
 
 /// Byte strings shaped like the things a damaged store actually returns.
 fn snapshot_bytes_strategy() -> impl Strategy<Value = Vec<u8>> {
@@ -679,9 +678,54 @@ proptest! {
         });
 
         // Whatever the bytes are, the instance survives and stays usable.
-        let _ = bash.restore_snapshot(&data);
+        let _ = bash.restore_snapshot_with_policy(&data, bashkit::CheckoutPolicy::Force);
         let result = rt.block_on(async { bash.exec("echo alive").await });
         prop_assert!(result.is_ok(), "instance unusable after a rejected restore");
         prop_assert_eq!(result.unwrap().stdout, "alive\n");
+    }
+
+    /// Object ids come from callers as strings in three languages, so any byte
+    /// sequence can reach the parser — including multi-byte characters at any
+    /// offset, which used to panic.
+    #[test]
+    fn object_id_parsing_never_panics(text in ".{0,80}") {
+        let _ = bashkit::ObjectId::from_hex(&text);
+
+        // Slice at character boundaries so lengths vary around the 64-byte
+        // check without constructing invalid UTF-8.
+        for (offset, _) in text.char_indices() {
+            let _ = bashkit::ObjectId::from_hex(&text[offset..]);
+        }
+    }
+
+    /// A store full of junk must not panic any graph walker, and a commit id
+    /// that happens to collide with a junk entry must still be refused.
+    #[test]
+    fn graph_walks_never_panic_on_a_junk_store(
+        seed in proptest::collection::vec(any::<u8>(), 32..128),
+    ) {
+        use std::collections::HashMap;
+
+        let mut root_bytes = [0u8; 32];
+        root_bytes.copy_from_slice(&seed[..32]);
+        let root = bashkit::ObjectId::from_bytes(root_bytes);
+
+        let mut store: HashMap<bashkit::ObjectId, Vec<u8>> = HashMap::new();
+        store.insert(root, seed[32..].to_vec());
+
+        let _ = bashkit::SnapshotGraph::read_commit(root, &store);
+        let _ = bashkit::SnapshotGraph::parents(root, &store);
+        let _ = bashkit::SnapshotGraph::meta(root, &store);
+        let _ = bashkit::SnapshotGraph::capabilities(root, &store);
+        let _ = bashkit::SnapshotGraph::ancestry(root, &store, 1000);
+        let _ = bashkit::SnapshotGraph::plan_checkout(root, &store);
+        let _ = bashkit::SnapshotGraph::reachable(root, &store);
+        let _ = bashkit::SnapshotGraph::diff(root, root, &store);
+
+        let mut bash = Bash::new();
+        prop_assert!(
+            bash.checkout(root, &store, bashkit::CheckoutPolicy::Force).is_err(),
+            "a junk store must never satisfy a checkout"
+        );
     }
 }

@@ -1179,6 +1179,9 @@ fn error_kind(e: &Error) -> String {
         Error::CommandFailure(_) => "execution_error".to_string(),
         Error::Internal(_) => "internal_error".to_string(),
         Error::Cancelled => "cancelled".to_string(),
+        Error::SnapshotTooNew { .. } | Error::SnapshotCapabilityMismatch(_) => {
+            "snapshot_error".to_string()
+        }
     }
 }
 

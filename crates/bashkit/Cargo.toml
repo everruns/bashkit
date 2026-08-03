@@ -207,6 +207,10 @@ name = "file_ops"
 harness = false
 
 [[bench]]
+name = "snapshot_history"
+harness = false
+
+[[bench]]
 name = "sqlite"
 harness = false
 required-features = ["sqlite"]

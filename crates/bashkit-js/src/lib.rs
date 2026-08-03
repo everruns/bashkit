@@ -25,6 +25,11 @@ use bashkit::{
     ScriptedTool as RustScriptedTool, SnapshotOptions as RustSnapshotOptions, Tool, ToolArgs,
     ToolDef, ToolRequest, async_trait,
 };
+use bashkit::{
+    CapabilityFingerprint as RustCapabilityFingerprint, CheckoutPolicy as RustCheckoutPolicy,
+    CommitOptions as RustCommitOptions, ObjectId as RustObjectId,
+    SnapshotGraph as RustSnapshotGraph,
+};
 use napi::bindgen_prelude::External;
 use napi::{Env, JsValue, Unknown, ValueType, sys};
 use napi_derive::napi;
@@ -1866,6 +1871,120 @@ impl Bash {
     // Snapshot / Resume
     // ========================================================================
 
+    /// Capture state as a content-addressed commit for session history.
+    ///
+    /// Returns the objects to persist and the commit id to remember. Pass the
+    /// ids your store already holds via `options.have` to keep consecutive
+    /// commits incremental — unchanged files then cost a hash reference
+    /// instead of a copy. A fork is a commit whose parent is not the branch
+    /// tip: pass any earlier id in `options.parents`.
+    #[napi]
+    pub fn commit(&self, options: Option<CommitOptions>) -> napi::Result<JsPackedCommit> {
+        let options = options.unwrap_or(CommitOptions {
+            parents: None,
+            meta: None,
+            have: None,
+            exclude_filesystem: None,
+            exclude_functions: None,
+        });
+        let parents: Vec<RustObjectId> = options
+            .parents
+            .unwrap_or_default()
+            .iter()
+            .map(|p| js_object_id(p))
+            .collect::<napi::Result<_>>()?;
+        let have: Vec<RustObjectId> = options
+            .have
+            .unwrap_or_default()
+            .iter()
+            .map(|h| js_object_id(h))
+            .collect::<napi::Result<_>>()?;
+        let meta = options.meta.unwrap_or_default();
+        let exclude_filesystem = options.exclude_filesystem.unwrap_or(false);
+        let exclude_functions = options.exclude_functions.unwrap_or(false);
+
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            let mut opts = RustCommitOptions::new()
+                .have(have.iter())
+                .exclude_filesystem(exclude_filesystem)
+                .exclude_functions(exclude_functions);
+            for parent in parents {
+                opts = opts.parent(parent);
+            }
+            for (key, value) in meta {
+                opts = opts.meta(key, value);
+            }
+
+            let packed = bash.commit(opts).map_err(js_snapshot_error)?;
+            let self_contained = packed.is_self_contained();
+            let packed_bytes = if self_contained {
+                Some(napi::bindgen_prelude::Buffer::from(
+                    packed.to_bytes().map_err(js_snapshot_error)?,
+                ))
+            } else {
+                None
+            };
+
+            Ok(JsPackedCommit {
+                id: packed.id().to_hex(),
+                object_count: packed.object_count() as u32,
+                stored_bytes: packed.stored_bytes() as f64,
+                self_contained,
+                packed: packed_bytes,
+                objects: packed
+                    .objects()
+                    .map(|(oid, blob)| {
+                        (
+                            oid.to_hex(),
+                            napi::bindgen_prelude::Buffer::from(blob.to_vec()),
+                        )
+                    })
+                    .collect(),
+            })
+        })
+    }
+
+    /// Restore the state a commit describes, pulling objects from a store.
+    ///
+    /// This is how rewinds and forks work: check out any commit, tip or not.
+    /// `policy` is `'superset'` (default), `'strict'`, or `'force'`. Nothing is
+    /// mutated if the checkout fails.
+    #[napi]
+    pub fn checkout(
+        &self,
+        commit_id: String,
+        objects: HashMap<String, napi::bindgen_prelude::Buffer>,
+        policy: Option<String>,
+    ) -> napi::Result<()> {
+        let root = js_object_id(&commit_id)?;
+        let store = js_store(objects)?;
+        let policy = js_policy(policy)?;
+        block_on_with(&self.state, |s| async move {
+            let mut bash = s.inner.lock().await;
+            bash.checkout(root, &store, policy)
+                .map_err(js_snapshot_error)
+        })
+    }
+
+    /// Fingerprint this instance's environment.
+    ///
+    /// Compare against `snapshotCapabilities(...)` to tell whether a stored
+    /// commit will pass a given checkout policy before attempting it.
+    #[napi]
+    pub fn capabilities(&self) -> napi::Result<JsCapabilityFingerprint> {
+        block_on_with(&self.state, |s| async move {
+            let bash = s.inner.lock().await;
+            let caps = RustCapabilityFingerprint::capture(&bash);
+            Ok(JsCapabilityFingerprint {
+                bashkit_version: caps.bashkit_version,
+                builtins: caps.builtins,
+                features: caps.features,
+                fs_backend: caps.fs_backend,
+            })
+        })
+    }
+
     /// Serialize interpreter state (shell variables, VFS contents, counters) to bytes.
     ///
     /// Returns a `Buffer` (Uint8Array) that can be persisted and used with
@@ -3523,6 +3642,210 @@ fn shared_state_from_opts(
         external_functions: ext_fns,
         external_handler,
         host_registry,
+    })
+}
+
+// ============================================================================
+// Snapshot history: commits, forks, and the object graph
+// ============================================================================
+
+// Decision: the JS object store is a plain `Record<string, Buffer>` keyed by hex
+// object id, matching the Python binding. Hosts persist these in their own
+// database, so the binding hands back what a driver or blob store already
+// accepts rather than a bespoke class.
+
+/// A commit plus the objects a host needs to persist.
+#[napi(object)]
+pub struct JsPackedCommit {
+    /// Content address of this commit — store it per message.
+    pub id: String,
+    /// Objects to persist, keyed by hex object id.
+    pub objects: HashMap<String, napi::bindgen_prelude::Buffer>,
+    /// Number of new objects this commit emitted.
+    pub object_count: u32,
+    /// Total encoded size of the new objects, in bytes.
+    pub stored_bytes: f64,
+    /// Whether this commit carries every object needed to restore it.
+    /// False once `have` has excluded anything.
+    pub self_contained: bool,
+    /// Self-contained bytes equivalent to `snapshot()`, or `null` for an
+    /// incremental commit — packing one would produce unrestorable bytes.
+    pub packed: Option<napi::bindgen_prelude::Buffer>,
+}
+
+/// What changed between two commits.
+#[napi(object)]
+pub struct JsSnapshotDiff {
+    pub files_added: Vec<String>,
+    pub files_modified: Vec<String>,
+    pub files_removed: Vec<String>,
+    pub shell_changed: bool,
+}
+
+/// The environment that produced a commit.
+#[napi(object)]
+pub struct JsCapabilityFingerprint {
+    pub bashkit_version: String,
+    pub builtins: Vec<String>,
+    pub features: Vec<String>,
+    pub fs_backend: String,
+}
+
+/// Options for [`Bash::commit`].
+#[napi(object)]
+pub struct CommitOptions {
+    /// Commits this one descends from. Pass an id that is not the branch tip
+    /// to fork.
+    pub parents: Option<Vec<String>>,
+    /// Opaque host metadata (message id, timestamp). Bashkit stores it
+    /// verbatim and never interprets it.
+    pub meta: Option<HashMap<String, String>>,
+    /// Object ids the store already holds, so they are not emitted again.
+    /// This is what makes a commit incremental.
+    pub have: Option<Vec<String>>,
+    pub exclude_filesystem: Option<bool>,
+    pub exclude_functions: Option<bool>,
+}
+
+fn js_object_id(value: &str) -> napi::Result<RustObjectId> {
+    RustObjectId::from_hex(value)
+        .map_err(|e| napi::Error::from_reason(format!("invalid snapshot object id: {e}")))
+}
+
+fn js_store(
+    objects: HashMap<String, napi::bindgen_prelude::Buffer>,
+) -> napi::Result<HashMap<RustObjectId, Vec<u8>>> {
+    objects
+        .into_iter()
+        .map(|(id, blob)| Ok((js_object_id(&id)?, blob.to_vec())))
+        .collect()
+}
+
+fn js_policy(policy: Option<String>) -> napi::Result<RustCheckoutPolicy> {
+    match policy
+        .as_deref()
+        .unwrap_or("superset")
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "strict" => Ok(RustCheckoutPolicy::Strict),
+        "superset" => Ok(RustCheckoutPolicy::Superset),
+        "force" => Ok(RustCheckoutPolicy::Force),
+        other => Err(napi::Error::from_reason(format!(
+            "unknown checkout policy '{other}'; expected 'strict', 'superset', or 'force'"
+        ))),
+    }
+}
+
+fn js_ids(ids: Vec<RustObjectId>) -> Vec<String> {
+    ids.iter().copied().map(RustObjectId::to_hex).collect()
+}
+
+fn js_snapshot_error(e: bashkit::Error) -> napi::Error {
+    napi::Error::from_reason(e.to_string())
+}
+
+/// Commits `commitId` descends from.
+#[napi]
+pub fn snapshot_parents(
+    commit_id: String,
+    objects: HashMap<String, napi::bindgen_prelude::Buffer>,
+) -> napi::Result<Vec<String>> {
+    let store = js_store(objects)?;
+    RustSnapshotGraph::parents(js_object_id(&commit_id)?, &store)
+        .map(js_ids)
+        .map_err(js_snapshot_error)
+}
+
+/// Host metadata attached when the commit was made.
+#[napi]
+pub fn snapshot_meta(
+    commit_id: String,
+    objects: HashMap<String, napi::bindgen_prelude::Buffer>,
+) -> napi::Result<HashMap<String, String>> {
+    let store = js_store(objects)?;
+    RustSnapshotGraph::meta(js_object_id(&commit_id)?, &store)
+        .map(|m| m.into_iter().collect())
+        .map_err(js_snapshot_error)
+}
+
+/// Capability fingerprint of the instance that produced this commit.
+#[napi]
+pub fn snapshot_capabilities(
+    commit_id: String,
+    objects: HashMap<String, napi::bindgen_prelude::Buffer>,
+) -> napi::Result<JsCapabilityFingerprint> {
+    let store = js_store(objects)?;
+    let caps = RustSnapshotGraph::capabilities(js_object_id(&commit_id)?, &store)
+        .map_err(js_snapshot_error)?;
+    Ok(JsCapabilityFingerprint {
+        bashkit_version: caps.bashkit_version,
+        builtins: caps.builtins,
+        features: caps.features,
+        fs_backend: caps.fs_backend,
+    })
+}
+
+/// Walk ancestry newest-first, stopping at `limit` or at the first commit the
+/// store does not contain.
+#[napi]
+pub fn snapshot_ancestry(
+    commit_id: String,
+    objects: HashMap<String, napi::bindgen_prelude::Buffer>,
+    limit: Option<u32>,
+) -> napi::Result<Vec<String>> {
+    let store = js_store(objects)?;
+    RustSnapshotGraph::ancestry(
+        js_object_id(&commit_id)?,
+        &store,
+        limit.unwrap_or(100) as usize,
+    )
+    .map(js_ids)
+    .map_err(js_snapshot_error)
+}
+
+/// Object ids needed to check out this commit that `objects` lacks.
+///
+/// Call repeatedly — each wave reveals the next — until it returns an empty
+/// array.
+#[napi]
+pub fn snapshot_plan_checkout(
+    commit_id: String,
+    objects: HashMap<String, napi::bindgen_prelude::Buffer>,
+) -> napi::Result<Vec<String>> {
+    let store = js_store(objects)?;
+    RustSnapshotGraph::plan_checkout(js_object_id(&commit_id)?, &store)
+        .map(js_ids)
+        .map_err(js_snapshot_error)
+}
+
+/// Every object this commit reaches, for host-side garbage collection.
+#[napi]
+pub fn snapshot_reachable(
+    commit_id: String,
+    objects: HashMap<String, napi::bindgen_prelude::Buffer>,
+) -> napi::Result<Vec<String>> {
+    let store = js_store(objects)?;
+    RustSnapshotGraph::reachable(js_object_id(&commit_id)?, &store)
+        .map(js_ids)
+        .map_err(js_snapshot_error)
+}
+
+/// Compare two commits.
+#[napi]
+pub fn snapshot_diff(
+    commit_a: String,
+    commit_b: String,
+    objects: HashMap<String, napi::bindgen_prelude::Buffer>,
+) -> napi::Result<JsSnapshotDiff> {
+    let store = js_store(objects)?;
+    let diff = RustSnapshotGraph::diff(js_object_id(&commit_a)?, js_object_id(&commit_b)?, &store)
+        .map_err(js_snapshot_error)?;
+    Ok(JsSnapshotDiff {
+        files_added: diff.files_added,
+        files_modified: diff.files_modified,
+        files_removed: diff.files_removed,
+        shell_changed: diff.shell_changed,
     })
 }
 

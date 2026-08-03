@@ -1,5 +1,37 @@
 # Changelog
 
+## [Unreleased]
+
+### 0.15.0 — minor: write the new snapshot format, and expose the history API
+
+0.14.5 taught the reader the content-addressed container. This turns the writer
+on. The two had to ship in that order: no release older than 0.14.5 can read
+what this one writes, so 0.14.5 has to reach deployments first to be a usable
+rollback target.
+
+- **Snapshots become a content-addressed history rather than a single blob.**
+  `commit`/`checkout` store a session as deduplicated objects, so a fork or an
+  incremental save costs only what changed. Adds `SnapshotGraph` for ancestry,
+  diffs, reachability, and lazy fetch planning, plus a `CheckoutPolicy`
+  capability gate that refuses to restore a session into an environment missing
+  builtins or features it needs. Available from Rust, Python, and JavaScript
+  ([#2223](https://github.com/everruns/bashkit/pull/2223)).
+- **Must be a MINOR bump.** It adds public API and changes the bytes
+  `Bash::snapshot()` writes.
+- Snapshots written by earlier versions still restore, under the default
+  policy, with no code change. Covered by a golden fixture corpus that is never
+  regenerated.
+- **Snapshots written by this version can only be read by 0.14.5 or newer.**
+  Rolling back past 0.14.5 strands them; re-snapshot first.
+- Beyond this point the problem cannot recur: the container records
+  `min_reader`, so a reader too old for a snapshot reports `SnapshotTooNew
+  { required, supported }` and additive format changes stay readable by older
+  builds.
+- `restore_snapshot` now enforces a capability check (`CheckoutPolicy::Superset`)
+  where it previously enforced none. Adding builtins is safe; **removing or
+  renaming one breaks restores of every snapshot written before the removal.**
+  Use `CheckoutPolicy::Force` to override.
+
 ## [0.14.5] - 2026-08-01
 
 ### Highlights
