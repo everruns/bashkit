@@ -155,7 +155,8 @@ are omitted. The parser does not support `<>`, so no read-write mode exists.
   node kind, contexts, redirect modes, and budget truncation.
 - `crates/bashkit/tests/integration/script_analysis.rs` — end-to-end behavior,
   evasion cases (dynamic dispatch, eval, nested shells, nested substitution,
-  function rebinding), malformed literal-boundary rejection, and the
+  function rebinding), reserved-control-byte and malformed literal-boundary
+  analysis rejection, and the
   `before_tool` backstop pairing.
 - `crates/bashkit/tests/proptest_security.rs` — invariants: never panics, plain
   command names come from a contiguous source span, respects the node budget,

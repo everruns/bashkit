@@ -181,6 +181,7 @@ impl ScriptAnalysis {
 /// Returns an error if the script does not parse. A parse error must not be
 /// read as "no commands" — deny or prompt instead.
 pub fn analyze(script: &str) -> Result<ScriptAnalysis> {
+    reject_reserved_control_bytes(script)?;
     let ast = Parser::new(script).parse()?;
     Ok(analyze_ast(&ast))
 }
@@ -191,8 +192,24 @@ pub fn analyze_with_limits(
     max_depth: usize,
     max_fuel: usize,
 ) -> Result<ScriptAnalysis> {
+    reject_reserved_control_bytes(script)?;
     let ast = Parser::with_limits(script, max_depth, max_fuel).parse()?;
     Ok(analyze_ast(&ast))
+}
+
+/// Decision: analysis rejects raw bytes used internally as lexer/expansion
+/// sentinels. Execution still accepts them for Bash compatibility, but a host
+/// permission gate must fail closed rather than observe a normalized name.
+fn reject_reserved_control_bytes(script: &str) -> Result<()> {
+    if script
+        .chars()
+        .any(|ch| matches!(ch, '\0' | '\x01' | '\x02' | '\u{1e}' | '\u{1f}'))
+    {
+        return Err(crate::Error::parse(
+            "reserved control byte cannot be analyzed",
+        ));
+    }
+    Ok(())
 }
 
 /// Analyze an already-parsed script.

@@ -299,7 +299,19 @@ fn a_malformed_substitution_never_invents_a_command_name() {
 
 #[test]
 fn malformed_literal_boundaries_are_rejected_by_analysis() {
-    for script in ["\u{3}\0J", "$\0$", "z'A", "z\"A", "z$'A", "z$\"A"] {
+    for script in [
+        "\u{3}\0J",
+        "$\0$",
+        "x\u{1}y",
+        "x\u{2}y",
+        "\r\u{1e}e",
+        "J\u{1f}J\u{1f}",
+        "0\u{1f}\u{8}",
+        "z'A",
+        "z\"A",
+        "z$'A",
+        "z$\"A",
+    ] {
         assert!(
             Bash::new().analyze(script).is_err(),
             "malformed input unexpectedly analyzed: {script:?}"
