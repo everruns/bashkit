@@ -1,5 +1,6 @@
 # Native C ABI archives, dispatched from the verified release workflow.
 # Windows must initialize the Visual Studio environment before using lib.exe/cl.exe.
+# Existing tags may be rebuilt only with the tagged or current main workflow definition.
 name: Publish C API Binaries
 
 on:
@@ -49,8 +50,9 @@ jobs:
           git fetch --force origin main:refs/remotes/origin/main \
             "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
           TAG_SHA=$(git rev-list -n 1 "$RELEASE_TAG")
-          if [ "$TAG_SHA" != "$GITHUB_SHA" ]; then
-            echo "Error: workflow ref does not match $RELEASE_TAG" >&2
+          MAIN_SHA=$(git rev-parse origin/main)
+          if [ "$GITHUB_SHA" != "$TAG_SHA" ] && [ "$GITHUB_SHA" != "$MAIN_SHA" ]; then
+            echo "Error: workflow ref must be $RELEASE_TAG or current main" >&2
             exit 1
           fi
           if ! git merge-base --is-ancestor "$TAG_SHA" origin/main; then

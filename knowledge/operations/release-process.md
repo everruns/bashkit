@@ -209,7 +209,10 @@ x86_64/Arm64, and Windows x86_64. Each archive has a SHA-256 sidecar; Linux and
 Windows compile and run a C consumer before upload. The Windows job must enter
 the Visual Studio developer environment before invoking `lib.exe` or `cl.exe`;
 installing the Rust MSVC target alone does not expose those tools to later
-shell steps.
+shell steps. To recover an existing release after a workflow-only fix, dispatch
+the current `main` workflow with the original tag input. Validation accepts only
+the tag revision or current `main`, and still requires the tag to be reachable
+from `main`; build checkout remains pinned to the tag.
 
 ## Authentication
 

@@ -31,6 +31,18 @@ fn c_api_windows_build_initializes_msvc_tools() {
     );
 }
 
+#[test]
+fn c_api_release_recovery_can_use_current_main_workflow() {
+    let wf = workflow("c-api-binaries.yml");
+
+    assert!(
+        wf.contains(
+            r#"if [ "$GITHUB_SHA" != "$TAG_SHA" ] && [ "$GITHUB_SHA" != "$MAIN_SHA" ]; then"#
+        ),
+        "C API recovery must allow the current main workflow to rebuild an existing release tag"
+    );
+}
+
 fn section_between<'a>(text: &'a str, start: &str, end: &str) -> &'a str {
     let start_idx = text.find(start).expect("section start");
     let rest = &text[start_idx..];
