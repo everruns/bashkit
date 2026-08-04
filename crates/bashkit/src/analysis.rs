@@ -183,7 +183,9 @@ impl ScriptAnalysis {
 pub fn analyze(script: &str) -> Result<ScriptAnalysis> {
     reject_reserved_control_bytes(script)?;
     let ast = Parser::new(script).parse()?;
-    Ok(analyze_ast(&ast))
+    let analysis = analyze_ast(&ast);
+    validate_command_names(script, &analysis)?;
+    Ok(analysis)
 }
 
 /// Analyze a script with explicit parser limits.
@@ -194,7 +196,9 @@ pub fn analyze_with_limits(
 ) -> Result<ScriptAnalysis> {
     reject_reserved_control_bytes(script)?;
     let ast = Parser::with_limits(script, max_depth, max_fuel).parse()?;
-    Ok(analyze_ast(&ast))
+    let analysis = analyze_ast(&ast);
+    validate_command_names(script, &analysis)?;
+    Ok(analysis)
 }
 
 /// Decision: analysis rejects raw bytes used internally as lexer/expansion
@@ -208,6 +212,29 @@ fn reject_reserved_control_bytes(script: &str) -> Result<()> {
         return Err(crate::Error::parse(
             "reserved control byte cannot be analyzed",
         ));
+    }
+    Ok(())
+}
+
+/// Fail closed if parser normalization inserts or reorders command-name
+/// characters. Quote and escape removal may join spans, so this is an ordered
+/// subsequence check rather than a substring check. ANSI-C quotes deliberately
+/// decode escapes into characters absent from the source and are exempt.
+fn validate_command_names(script: &str, analysis: &ScriptAnalysis) -> Result<()> {
+    if script.contains("$'") {
+        return Ok(());
+    }
+    for name in analysis
+        .commands
+        .iter()
+        .filter_map(|command| command.name.as_deref())
+    {
+        let mut source = script.chars();
+        if !name.chars().all(|wanted| source.any(|ch| ch == wanted)) {
+            return Err(crate::Error::parse(
+                "analysis produced a command name not derived from the script",
+            ));
+        }
     }
     Ok(())
 }

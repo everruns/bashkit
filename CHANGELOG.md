@@ -32,8 +32,9 @@
 - **Static analysis rejects malformed literal boundaries.** Source bytes
   reserved as internal lexer/expansion sentinels and unterminated quote segments
   now fail analysis instead of being normalized into a command name that was
-  not present in the script. Script execution retains its existing control-byte
-  behavior.
+  not present in the script. Analysis also rejects malformed heredoc
+  reinjection that inserts command-name characters. Script execution retains
+  its existing control-byte behavior.
 
 ### Breaking Changes
 

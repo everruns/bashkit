@@ -279,8 +279,14 @@ fn analysis_round_trips_through_json() {
 /// to a host permission gate. Real bash rejects the script outright, so
 /// `analyze` must fail rather than invent a name.
 #[test]
-fn a_malformed_substitution_never_invents_a_command_name() {
-    for script in ["a$(|)b", "a$(&&)b", "x$(;)y", "echo a$(|)b"] {
+fn malformed_syntax_never_invents_a_command_name() {
+    for script in [
+        "a$(|)b",
+        "a$(&&)b",
+        "x$(;)y",
+        "echo a$(|)b",
+        "<<\u{1c}<~ \u{1c}& \u{1c}{{",
+    ] {
         match Bash::new().analyze(script) {
             Err(_) => {}
             Ok(analysis) => {

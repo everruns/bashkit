@@ -27,19 +27,16 @@ fuzz_target!(|data: &[u8]| {
             return;
         };
 
-        // Quote removal and backslash escapes legitimately join source spans
-        // (`u"3"` executes `u3`). For plain text, however, a reported literal
-        // name must be a contiguous source substring. Malformed normalization
-        // syntax is covered by deterministic parser regressions.
-        let has_normalization_syntax = input
-            .bytes()
-            .any(|byte| matches!(byte, b'$' | b'\'' | b'"' | b'`' | b'\\'));
-        if !has_normalization_syntax {
+        // Quote/escape removal may join spans, but cannot insert or reorder
+        // characters. ANSI-C $'...' is the exception because it decodes
+        // escapes; deterministic tests cover malformed normalization syntax.
+        if !input.contains("$'") {
             for command in &analysis.commands {
                 if let Some(name) = command.name.as_deref() {
+                    let mut source = input.chars();
                     assert!(
-                        input.contains(name),
-                        "analysis reported a plain command name absent from the source"
+                        name.chars().all(|wanted| source.any(|ch| ch == wanted)),
+                        "analysis inserted or reordered command-name characters"
                     );
                 }
             }
