@@ -21,6 +21,28 @@ fn workflow(name: &str) -> String {
     fs::read_to_string(path).expect("read workflow")
 }
 
+#[test]
+fn c_api_windows_build_initializes_msvc_tools() {
+    let wf = workflow("c-api-binaries.yml");
+
+    assert!(
+        wf.contains("uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756"),
+        "Windows C API builds must initialize the MSVC environment before invoking lib.exe and cl.exe"
+    );
+}
+
+#[test]
+fn c_api_release_recovery_can_use_current_main_workflow() {
+    let wf = workflow("c-api-binaries.yml");
+
+    assert!(
+        wf.contains(
+            r#"if [ "$GITHUB_SHA" != "$TAG_SHA" ] && [ "$GITHUB_SHA" != "$MAIN_SHA" ]; then"#
+        ),
+        "C API recovery must allow the current main workflow to rebuild an existing release tag"
+    );
+}
+
 fn section_between<'a>(text: &'a str, start: &str, end: &str) -> &'a str {
     let start_idx = text.find(start).expect("section start");
     let rest = &text[start_idx..];
