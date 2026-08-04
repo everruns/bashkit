@@ -17,6 +17,8 @@ import unittest
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "check_doc_links.py"
+AGENTS_URL = "https://github.com/everruns/bashkit/blob/main/AGENTS.md"
+AGENT_BADGE = "https://img.shields.io/badge/Repo-Agent%20Friendly-blue"
 
 
 def run(root: pathlib.Path, *trees: str) -> subprocess.CompletedProcess:
@@ -103,6 +105,12 @@ class CheckDocLinksTest(unittest.TestCase):
     def test_missing_root_rejected(self) -> None:
         result = run(self.root / "nope", "docs")
         self.assertEqual(result.returncode, 2)
+
+
+class ReadmeLinksTest(unittest.TestCase):
+    def test_agent_friendly_badge_targets_root_agents_file(self) -> None:
+        readme = (REPO / "README.md").read_text()
+        self.assertIn(f"[![Repo: Agent Friendly]({AGENT_BADGE})]({AGENTS_URL})", readme)
 
 
 if __name__ == "__main__":
