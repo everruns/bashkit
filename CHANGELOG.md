@@ -29,6 +29,9 @@
 - **Arithmetic side effects no longer panic at 64-bit integer boundaries.**
   Compound assignment and prefix/postfix increment and decrement now wrap with
   Bash-compatible integer semantics in both evaluator paths.
+- **Static analysis rejects malformed literal boundaries.** Source NUL bytes
+  and unterminated quote segments now fail parsing instead of being normalized
+  into a command name that was not present in the script.
 
 ### Breaking Changes
 

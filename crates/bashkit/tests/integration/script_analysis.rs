@@ -296,3 +296,13 @@ fn a_malformed_substitution_never_invents_a_command_name() {
         }
     }
 }
+
+#[test]
+fn malformed_literal_boundaries_are_rejected_by_analysis() {
+    for script in ["\u{3}\0J", "$\0$", "z'A", "z\"A", "z$'A", "z$\"A"] {
+        assert!(
+            Bash::new().analyze(script).is_err(),
+            "malformed input unexpectedly analyzed: {script:?}"
+        );
+    }
+}

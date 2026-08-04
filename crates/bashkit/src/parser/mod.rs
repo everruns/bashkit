@@ -240,6 +240,12 @@ impl<'a> Parser<'a> {
 
     /// Parse the input and return the AST.
     pub fn parse(mut self) -> Result<Script> {
+        // Decision: reject source NULs before lexing. The lexer uses NUL as an
+        // internal escape sentinel, so accepting one from the source could
+        // silently join bytes into a command name that was never written.
+        if self.input.contains('\0') {
+            return Err(Error::parse("syntax error: NUL byte in script"));
+        }
         self.parse_script()
     }
 
