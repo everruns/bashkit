@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Crates.io](https://img.shields.io/crates/v/bashkit.svg)](https://crates.io/crates/bashkit)
 [![docs.rs](https://img.shields.io/docsrs/bashkit)](https://docs.rs/bashkit)
-[![Repo: Agent Friendly](https://img.shields.io/badge/Repo-Agent%20Friendly-blue)](AGENTS.md)
+[![Repo: Agent Friendly](https://img.shields.io/badge/Repo-Agent%20Friendly-blue)](https://github.com/everruns/bashkit/blob/main/AGENTS.md)
 
 Awesomely fast virtual sandbox with bash and file system. Written in Rust.
 
