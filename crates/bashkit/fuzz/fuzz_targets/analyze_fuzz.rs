@@ -33,7 +33,7 @@ fuzz_target!(|data: &[u8]| {
         // syntax is covered by deterministic parser regressions.
         let has_normalization_syntax = input
             .bytes()
-            .any(|byte| matches!(byte, b'$' | b'\'' | b'"' | b'\\'));
+            .any(|byte| matches!(byte, b'$' | b'\'' | b'"' | b'`' | b'\\'));
         if !has_normalization_syntax {
             for command in &analysis.commands {
                 if let Some(name) = command.name.as_deref() {

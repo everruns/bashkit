@@ -161,8 +161,9 @@ are omitted. The parser does not support `<>`, so no read-write mode exists.
 - `crates/bashkit/tests/proptest_security.rs` — invariants: never panics, plain
   command names come from a contiguous source span, respects the node budget,
   every dispatched command is reported for a transparent script, and
-  runtime-resolved scripts are opaque. Quote removal and escapes can
-  legitimately join multiple source spans into one literal command name.
+  runtime-resolved scripts are opaque. Quote removal, backtick syntax, and
+  escapes can legitimately join multiple source spans into one literal command
+  name.
 - `crates/bashkit/fuzz/fuzz_targets/analyze_fuzz.rs` — libFuzzer target (in the
   `fuzz.yml` matrix) asserting the same plain-name and budget invariants;
   malformed normalization syntax has deterministic parser regressions.
