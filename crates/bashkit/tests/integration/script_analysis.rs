@@ -279,8 +279,14 @@ fn analysis_round_trips_through_json() {
 /// to a host permission gate. Real bash rejects the script outright, so
 /// `analyze` must fail rather than invent a name.
 #[test]
-fn a_malformed_substitution_never_invents_a_command_name() {
-    for script in ["a$(|)b", "a$(&&)b", "x$(;)y", "echo a$(|)b"] {
+fn malformed_syntax_never_invents_a_command_name() {
+    for script in [
+        "a$(|)b",
+        "a$(&&)b",
+        "x$(;)y",
+        "echo a$(|)b",
+        "<<\u{1c}<~ \u{1c}& \u{1c}{{",
+    ] {
         match Bash::new().analyze(script) {
             Err(_) => {}
             Ok(analysis) => {
@@ -294,5 +300,36 @@ fn a_malformed_substitution_never_invents_a_command_name() {
                 }
             }
         }
+    }
+}
+
+#[test]
+fn malformed_literal_boundaries_are_rejected_by_analysis() {
+    for script in [
+        "\u{3}\0J",
+        "$\0$",
+        "x\u{1}y",
+        "x\u{2}y",
+        "\r\u{1e}e",
+        "J\u{1f}J\u{1f}",
+        "0\u{1f}\u{8}",
+        "z'A",
+        "z\"A",
+        "z$'A",
+        "z$\"A",
+    ] {
+        assert!(
+            Bash::new().analyze(script).is_err(),
+            "malformed input unexpectedly analyzed: {script:?}"
+        );
+    }
+}
+
+#[test]
+fn valid_quote_and_escape_removal_can_join_command_name_spans() {
+    for (script, expected) in [("u\"3\"", "u3"), ("'#'g", "#g"), (r"!\[[", "![[")] {
+        let analysis = Bash::new().analyze(script).expect("valid script");
+        assert_eq!(analysis.command_names(), [expected]);
+        assert!(!script.contains(expected));
     }
 }

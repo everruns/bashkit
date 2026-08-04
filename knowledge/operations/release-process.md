@@ -62,7 +62,8 @@ silently failed.
    `cargo publish` packaging step, missing files, version drift):
    - `cargo publish --dry-run -p bashkit` must succeed. Package
      `bashkit-cli` in a disposable copy against the latest published
-     core version as a structural proxy; Cargo cannot resolve the CLI's new
+     registry core version (remove the local path in the copy) as a structural
+     proxy; Cargo cannot resolve the CLI's new
      registry dependency until the core crate is live. Normal workspace checks
      still compile the CLI against the new local core, and `publish.yml` waits
      for the core registry version before publishing the CLI. Packaging caught

@@ -29,6 +29,7 @@ struct ContinuationFlags {
     has_unquoted_expansion: bool,
     has_unquoted_glob: bool,
     quoted_ranges: Vec<(usize, usize)>,
+    error: Option<String>,
 }
 
 /// Lexer for bash scripts.
@@ -427,12 +428,14 @@ impl<'a> Lexer<'a> {
                 // Word already has content (the prefix) — concatenate the quoted segment
                 let quote_char = ch;
                 self.advance();
+                let mut closed = false;
                 if quote_char == '"' {
                     word.push('\u{1e}');
                 }
                 while let Some(c) = self.peek_char() {
                     if c == quote_char {
                         self.advance();
+                        closed = true;
                         break;
                     }
                     if c == '\\' && quote_char == '"' {
@@ -483,6 +486,16 @@ impl<'a> Lexer<'a> {
                     }
                     word.push(c);
                     self.advance();
+                }
+                if !closed {
+                    return Some(Token::Error(format!(
+                        "unterminated {} quote",
+                        if quote_char == '\'' {
+                            "single"
+                        } else {
+                            "double"
+                        }
+                    )));
                 }
                 if quote_char == '"' {
                     word.push('\u{1f}');
@@ -568,12 +581,14 @@ impl<'a> Lexer<'a> {
                 // This handles: VAR="val", date +"%Y", echo foo"bar"
                 let quote_char = ch;
                 self.advance(); // consume opening quote
+                let mut closed = false;
                 if quote_char == '"' {
                     word.push('\u{1e}');
                 }
                 while let Some(c) = self.peek_char() {
                     if c == quote_char {
                         self.advance(); // consume closing quote
+                        closed = true;
                         break;
                     }
                     if c == '\\' && quote_char == '"' {
@@ -635,6 +650,16 @@ impl<'a> Lexer<'a> {
                     word.push(c);
                     self.advance();
                 }
+                if !closed {
+                    return Some(Token::Error(format!(
+                        "unterminated {} quote",
+                        if quote_char == '\'' {
+                            "single"
+                        } else {
+                            "double"
+                        }
+                    )));
+                }
                 if quote_char == '"' {
                     word.push('\u{1f}');
                 }
@@ -647,10 +672,11 @@ impl<'a> Lexer<'a> {
                 if self.peek_char() == Some('\'') {
                     self.advance(); // consume opening '
                     word.push('\u{1e}');
-                    Self::push_literal_with_escaped_dollar(
-                        &mut word,
-                        &self.read_dollar_single_quoted_content(),
-                    );
+                    let (content, closed) = self.read_dollar_single_quoted_content();
+                    if !closed {
+                        return Some(Token::Error("unterminated single quote".to_string()));
+                    }
+                    Self::push_literal_with_escaped_dollar(&mut word, &content);
                     word.push('\u{1f}');
                     // ANSI-C quotes are single-quote semantics: quoted context.
                     has_quoted_expansion = true;
@@ -663,9 +689,11 @@ impl<'a> Lexer<'a> {
                     // Locale quotes are double-quote semantics: quoted context.
                     has_quoted_expansion = true;
                     word.push('\u{1e}');
+                    let mut closed = false;
                     while let Some(c) = self.peek_char() {
                         if c == '"' {
                             self.advance();
+                            closed = true;
                             break;
                         }
                         if c == '\\' {
@@ -745,6 +773,9 @@ impl<'a> Lexer<'a> {
                         }
                         word.push(c);
                         self.advance();
+                    }
+                    if !closed {
+                        return Some(Token::Error("unterminated double quote".to_string()));
                     }
                     word.push('\u{1f}');
                     continue;
@@ -1054,7 +1085,10 @@ impl<'a> Lexer<'a> {
 
         // If next char is another quote or word char, concatenate (e.g., 'EOF'"2" -> EOF2).
         // Any quoting makes the whole token literal.
-        let _ = self.read_continuation_into(&mut content);
+        let flags = self.read_continuation_into(&mut content);
+        if let Some(error) = flags.error {
+            return Some(Token::Error(error));
+        }
 
         // Single-quoted strings are literal - no variable expansion. Quote-boundary
         // markers are only for parsed mixed words; LiteralWord keeps contents raw.
@@ -1076,22 +1110,30 @@ impl<'a> Lexer<'a> {
                 Some('\'') => {
                     self.advance(); // opening '
                     let start = content.len();
+                    let mut closed = false;
                     while let Some(ch) = self.peek_char() {
                         if ch == '\'' {
                             self.advance(); // closing '
+                            closed = true;
                             break;
                         }
                         content.push(ch);
                         self.advance();
+                    }
+                    if !closed {
+                        flags.error = Some("unterminated single quote".to_string());
+                        break;
                     }
                     flags.quoted_ranges.push((start, content.len()));
                 }
                 Some('"') => {
                     self.advance(); // opening "
                     let start = content.len();
+                    let mut closed = false;
                     while let Some(ch) = self.peek_char() {
                         if ch == '"' {
                             self.advance(); // closing "
+                            closed = true;
                             break;
                         }
                         if ch == '\\' {
@@ -1119,6 +1161,10 @@ impl<'a> Lexer<'a> {
                         content.push(ch);
                         self.advance();
                     }
+                    if !closed {
+                        flags.error = Some("unterminated double quote".to_string());
+                        break;
+                    }
                     flags.quoted_ranges.push((start, content.len()));
                 }
                 Some('$') => {
@@ -1129,10 +1175,12 @@ impl<'a> Lexer<'a> {
                         self.advance(); // consume $
                         self.advance(); // consume opening '
                         let start = content.len();
-                        Self::push_literal_with_escaped_dollar(
-                            content,
-                            &self.read_dollar_single_quoted_content(),
-                        );
+                        let (segment, closed) = self.read_dollar_single_quoted_content();
+                        if !closed {
+                            flags.error = Some("unterminated single quote".to_string());
+                            break;
+                        }
+                        Self::push_literal_with_escaped_dollar(content, &segment);
                         flags.quoted_ranges.push((start, content.len()));
                     } else {
                         flags.has_unquoted_expansion = true;
@@ -1188,11 +1236,13 @@ impl<'a> Lexer<'a> {
 
     /// Read ANSI-C quoted content ($'...').
     /// Opening $' already consumed. Returns the resolved string.
-    fn read_dollar_single_quoted_content(&mut self) -> String {
+    fn read_dollar_single_quoted_content(&mut self) -> (String, bool) {
         let mut out = String::new();
+        let mut closed = false;
         while let Some(ch) = self.peek_char() {
             if ch == '\'' {
                 self.advance();
+                closed = true;
                 break;
             }
             if ch == '\\' {
@@ -1294,7 +1344,7 @@ impl<'a> Lexer<'a> {
             out.push(ch);
             self.advance();
         }
-        out
+        (out, closed)
     }
 
     /// Append a literal segment while protecting sentinel-sensitive bytes from parse_word expansion.
@@ -1434,6 +1484,9 @@ impl<'a> Lexer<'a> {
         {
             let quoted_prefix_len = content.len();
             let flags = self.read_continuation_into(&mut content);
+            if let Some(error) = flags.error {
+                return Some(Token::Error(error));
+            }
             if flags.has_unquoted_expansion {
                 let mut ranges = flags.quoted_ranges;
                 ranges.push((0, quoted_prefix_len));

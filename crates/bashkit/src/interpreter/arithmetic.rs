@@ -38,7 +38,12 @@ impl Interpreter {
         if let Some(var_name) = expr.strip_prefix("++") {
             let var_name = var_name.trim();
             if is_valid_var_name(var_name) {
-                let val = self.expand_variable(var_name).parse::<i64>().unwrap_or(0) + 1;
+                // THREAT[TM-DOS-043]: Bash integer side effects wrap at i64 bounds.
+                let val = self
+                    .expand_variable(var_name)
+                    .parse::<i64>()
+                    .unwrap_or(0)
+                    .wrapping_add(1);
                 self.set_variable(var_name.to_string(), val.to_string());
                 return val;
             }
@@ -46,7 +51,11 @@ impl Interpreter {
         if let Some(var_name) = expr.strip_prefix("--") {
             let var_name = var_name.trim();
             if is_valid_var_name(var_name) {
-                let val = self.expand_variable(var_name).parse::<i64>().unwrap_or(0) - 1;
+                let val = self
+                    .expand_variable(var_name)
+                    .parse::<i64>()
+                    .unwrap_or(0)
+                    .wrapping_sub(1);
                 self.set_variable(var_name.to_string(), val.to_string());
                 return val;
             }
@@ -57,7 +66,7 @@ impl Interpreter {
             let var_name = var_name.trim();
             if is_valid_var_name(var_name) {
                 let old_val = self.expand_variable(var_name).parse::<i64>().unwrap_or(0);
-                self.set_variable(var_name.to_string(), (old_val + 1).to_string());
+                self.set_variable(var_name.to_string(), old_val.wrapping_add(1).to_string());
                 return old_val;
             }
         }
@@ -65,7 +74,7 @@ impl Interpreter {
             let var_name = var_name.trim();
             if is_valid_var_name(var_name) {
                 let old_val = self.expand_variable(var_name).parse::<i64>().unwrap_or(0);
-                self.set_variable(var_name.to_string(), (old_val - 1).to_string());
+                self.set_variable(var_name.to_string(), old_val.wrapping_sub(1).to_string());
                 return old_val;
             }
         }
@@ -552,6 +561,12 @@ impl Interpreter {
     /// THREAT[TM-DOS-026]: `arith_depth` prevents stack overflow from deeply nested expressions.
     /// Parse an arithmetic atom: unary operators, parenthesized expressions, and literals.
     pub(super) fn parse_arith_atom(&self, expr: &str, arith_depth: usize) -> i64 {
+        // THREAT[TM-DOS-029]: The positive magnitude of i64::MIN is not
+        // representable on its own, so unary parsing cannot construct it.
+        if expr.trim().parse::<i64>() == Ok(i64::MIN) {
+            return i64::MIN;
+        }
+
         // Unary negation and bitwise NOT
         if let Some(rest) = expr.strip_prefix('-') {
             let rest = rest.trim();

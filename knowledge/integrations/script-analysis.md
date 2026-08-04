@@ -155,12 +155,18 @@ are omitted. The parser does not support `<>`, so no read-write mode exists.
   node kind, contexts, redirect modes, and budget truncation.
 - `crates/bashkit/tests/integration/script_analysis.rs` — end-to-end behavior,
   evasion cases (dynamic dispatch, eval, nested shells, nested substitution,
-  function rebinding), and the `before_tool` backstop pairing.
-- `crates/bashkit/tests/proptest_security.rs` — invariants: never panics, never
-  invents a command name, respects the node budget, every dispatched command is
-  reported for a transparent script, and runtime-resolved scripts are opaque.
+  function rebinding), reserved-control-byte and malformed literal-boundary
+  analysis rejection, and the
+  `before_tool` backstop pairing.
+- `crates/bashkit/tests/proptest_security.rs` — invariants: never panics,
+  command-name characters come from the source in order, respects the node
+  budget, every dispatched command is reported for a transparent script, and
+  runtime-resolved scripts are opaque. Quote removal, backtick syntax, and
+  escapes can legitimately join multiple source spans; ANSI-C `$'...'` can
+  decode characters absent from the source and is explicitly exempt.
 - `crates/bashkit/fuzz/fuzz_targets/analyze_fuzz.rs` — libFuzzer target (in the
-  `fuzz.yml` matrix) asserting the same no-invented-names and budget invariants.
+  `fuzz.yml` matrix) asserting the same ordered-name and budget invariants;
+  malformed normalization syntax has deterministic parser regressions.
 - `crates/bashkit-js/__test__/analyze.spec.ts` and
   `__test__/runtime-compat/analyze.mjs` — Node/Bun/Deno surface.
 - `crates/bashkit-python/tests/test_analyze.py` — Python surface.

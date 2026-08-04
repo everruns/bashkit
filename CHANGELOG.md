@@ -2,12 +2,9 @@
 
 ## [Unreleased]
 
-### 0.15.0 — minor: write the new snapshot format, and expose the history API
+## [0.15.0] - 2026-08-03
 
-0.14.5 taught the reader the content-addressed container. This turns the writer
-on. The two had to ship in that order: no release older than 0.14.5 can read
-what this one writes, so 0.14.5 has to reach deployments first to be a usable
-rollback target.
+### Highlights
 
 - **Snapshots become a content-addressed history rather than a single blob.**
   `commit`/`checkout` store a session as deduplicated objects, so a fork or an
@@ -16,21 +13,57 @@ rollback target.
   capability gate that refuses to restore a session into an environment missing
   builtins or features it needs. Available from Rust, Python, and JavaScript
   ([#2223](https://github.com/everruns/bashkit/pull/2223)).
-- **Must be a MINOR bump.** It adds public API and changes the bytes
-  `Bash::snapshot()` writes.
-- Snapshots written by earlier versions still restore, under the default
-  policy, with no code change. Covered by a golden fixture corpus that is never
-  regenerated.
-- **Snapshots written by this version can only be read by 0.14.5 or newer.**
-  Rolling back past 0.14.5 strands them; re-snapshot first.
-- Beyond this point the problem cannot recur: the container records
-  `min_reader`, so a reader too old for a snapshot reports `SnapshotTooNew
-  { required, supported }` and additive format changes stay readable by older
-  builds.
-- `restore_snapshot` now enforces a capability check (`CheckoutPolicy::Superset`)
-  where it previously enforced none. Adding builtins is safe; **removing or
-  renaming one breaks restores of every snapshot written before the removal.**
-  Use `CheckoutPolicy::Force` to override.
+- **Bashkit now ships a native C API.** Five platform archives expose a
+  versioned `libbashkit` ABI with opaque handles, binary-safe VFS access,
+  explicit ownership, runnable C examples, and SHA-256 checksums
+  ([#2238](https://github.com/everruns/bashkit/pull/2238)).
+- **One-shot CLI execution now behaves like a real shell invocation.** Script
+  arguments populate `$0` and positional parameters, piped stdin reaches the
+  script, and stdout/stderr stream before completion or resource-limit failure
+  ([#2234](https://github.com/everruns/bashkit/pull/2234)).
+- **Path expansion and malformed substitutions are safer and more compatible.**
+  Globs expand every path component, while invalid `$(...)` syntax now fails
+  closed instead of inventing a command name for permission analysis
+  ([#2232](https://github.com/everruns/bashkit/pull/2232),
+  [#2231](https://github.com/everruns/bashkit/pull/2231)).
+- **Arithmetic side effects no longer panic at 64-bit integer boundaries.**
+  Compound assignment and prefix/postfix increment and decrement now wrap with
+  Bash-compatible integer semantics in both evaluator paths.
+- **Static analysis rejects malformed literal boundaries.** Source bytes
+  reserved as internal lexer/expansion sentinels and unterminated quote segments
+  now fail analysis instead of being normalized into a command name that was
+  not present in the script. Analysis also rejects malformed heredoc
+  reinjection that inserts command-name characters. Script execution retains
+  its existing control-byte behavior.
+
+### Breaking Changes
+
+- **`Bash::snapshot()` now writes the v2 content-addressed container.** Existing
+  snapshots still restore, but snapshots written by 0.15.0 require Bashkit
+  0.14.5 or newer. Upgrade rollback targets to 0.14.5 before producing v2
+  snapshots; re-snapshot before rolling back further. Future readers get the
+  typed `SnapshotTooNew { required, supported }` error when an upgrade is
+  required.
+- **Snapshot restore now checks runtime capabilities.** `restore_snapshot`
+  defaults to `CheckoutPolicy::Superset`; a runtime missing a builtin, feature,
+  or filesystem capability recorded by the snapshot rejects it. Use
+  `restore_snapshot_with_policy(..., CheckoutPolicy::Force)` only when the host
+  deliberately accepts that mismatch. Removing or renaming a builtin can make
+  older snapshots fail this check.
+- **Two typed snapshot errors were added to the exhaustive `bashkit::Error`
+  enum.** Rust callers that exhaustively match `Error` must handle
+  `SnapshotTooNew` and `SnapshotCapabilityMismatch`.
+
+### What's Changed
+
+* feat(c-api): add native C ABI ([#2238](https://github.com/everruns/bashkit/pull/2238)) by @chaliy
+* fix(deps): resolve Dependabot vulnerabilities ([#2235](https://github.com/everruns/bashkit/pull/2235)) by @chaliy
+* feat(cli): script arguments, stdin forwarding, and streaming output for one-shot mode ([#2234](https://github.com/everruns/bashkit/pull/2234)) by @chaliy
+* fix(glob): expand every path component, not just the trailing one ([#2232](https://github.com/everruns/bashkit/pull/2232)) by @chaliy
+* fix(parser): reject a malformed $(...) instead of splicing its literals ([#2231](https://github.com/everruns/bashkit/pull/2231)) by @chaliy
+* feat(snapshot): write v2 and expose the history API ([#2223](https://github.com/everruns/bashkit/pull/2223)) by @chaliy
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.14.5...v0.15.0
 
 ## [0.14.5] - 2026-08-01
 
