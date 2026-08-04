@@ -49,7 +49,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 self.assertIn(f'"version": "{workspace_version}"', manifest)
 
     def test_cli_publish_proxy_uses_the_published_core(self) -> None:
-        justfile = (ROOT / "Justfile").read_text()
+        justfile = (ROOT / "justfile").read_text()
 
         self.assertIn(r's/path = "\.\.\/bashkit", //', justfile)
 
