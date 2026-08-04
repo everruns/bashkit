@@ -48,7 +48,7 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 
 # Regex
 regex = "1"
-fancy-regex = "0.18"
+fancy-regex = "0.19"
 
 # Date/Time
 chrono = "0.4"
