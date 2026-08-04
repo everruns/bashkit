@@ -382,9 +382,10 @@ release-check:
     rm "$CLI_TOML.bak"
     # The latest published core predates Monty's crates.io publication and
     # therefore lacks the Python feature. The exact new core package dry-run
-    # above validates that feature; omit it only from this CLI structure proxy.
+    # above validates that feature. Resolve the proxy from crates.io rather
+    # than the copied path crate, and omit Python only in this disposable copy.
     perl -0pi.bak -e \
-        's/^python = \["bashkit\/python"\]\n//m; s/"python", //g; s/, "python"//g' \
+        's/path = "\.\.\/bashkit", //; s/^python = \["bashkit\/python"\]\n//m; s/"python", //g; s/, "python"//g' \
         "$CLI_TOML"
     rm "$CLI_TOML.bak"
     cargo publish \

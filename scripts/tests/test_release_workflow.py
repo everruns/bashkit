@@ -48,6 +48,11 @@ class ReleaseWorkflowTests(unittest.TestCase):
             with self.subTest(package_manifest=package_manifest):
                 self.assertIn(f'"version": "{workspace_version}"', manifest)
 
+    def test_cli_publish_proxy_uses_the_published_core(self) -> None:
+        justfile = (ROOT / "Justfile").read_text()
+
+        self.assertIn(r's/path = "\.\.\/bashkit", //', justfile)
+
     def test_web_ci_exercises_release_wasm_optimization(self) -> None:
         build_script = (ROOT / "crates/bashkit-wasm/scripts/build.sh").read_text()
         ci_workflow = (ROOT / ".github/workflows/ci.yml").read_text()
