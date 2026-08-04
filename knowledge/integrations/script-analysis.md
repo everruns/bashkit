@@ -157,11 +157,14 @@ are omitted. The parser does not support `<>`, so no read-write mode exists.
   evasion cases (dynamic dispatch, eval, nested shells, nested substitution,
   function rebinding), malformed literal-boundary rejection, and the
   `before_tool` backstop pairing.
-- `crates/bashkit/tests/proptest_security.rs` — invariants: never panics, never
-  invents a command name, respects the node budget, every dispatched command is
-  reported for a transparent script, and runtime-resolved scripts are opaque.
+- `crates/bashkit/tests/proptest_security.rs` — invariants: never panics, plain
+  command names come from a contiguous source span, respects the node budget,
+  every dispatched command is reported for a transparent script, and
+  runtime-resolved scripts are opaque. Quote removal and escapes can
+  legitimately join multiple source spans into one literal command name.
 - `crates/bashkit/fuzz/fuzz_targets/analyze_fuzz.rs` — libFuzzer target (in the
-  `fuzz.yml` matrix) asserting the same no-invented-names and budget invariants.
+  `fuzz.yml` matrix) asserting the same plain-name and budget invariants;
+  malformed normalization syntax has deterministic parser regressions.
 - `crates/bashkit-js/__test__/analyze.spec.ts` and
   `__test__/runtime-compat/analyze.mjs` — Node/Bun/Deno surface.
 - `crates/bashkit-python/tests/test_analyze.py` — Python surface.

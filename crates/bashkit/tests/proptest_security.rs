@@ -476,7 +476,7 @@ proptest! {
 // Static script analysis (TM-ESC-032)
 //
 // Hosts gate execution on `analyze()` output, so the invariants that matter
-// are: it never panics, it never invents a command name, and anything it
+// are: it never panics, it never invents a plain command name, and anything it
 // cannot resolve statically must surface as opaque rather than as safe.
 // ============================================================================
 
@@ -540,13 +540,18 @@ proptest! {
         }
     }
 
-    /// A statically known name is quoted from the source, never invented.
+    /// Without quote removal or escapes, a known name is a source substring.
     #[test]
-    fn analyze_never_invents_a_command_name(input in bash_input_strategy()) {
+    fn analyze_plain_command_names_come_from_source(input in bash_input_strategy()) {
         if let Ok(analysis) = bashkit::analysis::analyze(&input) {
-            for command in &analysis.commands {
-                if let Some(name) = command.name.as_deref() {
-                    prop_assert!(input.contains(name));
+            let has_normalization_syntax = input
+                .bytes()
+                .any(|byte| matches!(byte, b'$' | b'\'' | b'"' | b'\\'));
+            if !has_normalization_syntax {
+                for command in &analysis.commands {
+                    if let Some(name) = command.name.as_deref() {
+                        prop_assert!(input.contains(name));
+                    }
                 }
             }
         }

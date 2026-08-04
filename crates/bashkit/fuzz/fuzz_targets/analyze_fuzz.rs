@@ -1,11 +1,11 @@
 //! Fuzz target for `Bash::analyze` (static script analysis)
 //!
 //! Hosts call `analyze()` on untrusted, model-generated scripts *before*
-//! deciding whether to run them, so it must never panic and must never
-//! fabricate a command name that is not in the source. This target checks:
+//! deciding whether to run them, so it must never panic or fabricate a command
+//! name from plain source text. This target checks:
 //! - Analysis crashes/panics on arbitrary input
 //! - Stack overflows from deeply nested substitutions
-//! - Reported literal names that do not appear in the script
+//! - Reported plain names that do not appear in the script
 //!
 //! Run with: cargo +nightly fuzz run analyze_fuzz -- -max_total_time=300
 
@@ -27,15 +27,21 @@ fuzz_target!(|data: &[u8]| {
             return;
         };
 
-        // A statically known name is quoted verbatim from the script, so it
-        // must be present in the source text. A name conjured from nowhere
-        // would let a host allowlist something the script never mentioned.
-        for command in &analysis.commands {
-            if let Some(name) = command.name.as_deref() {
-                assert!(
-                    input.contains(name),
-                    "analysis reported a command name absent from the source"
-                );
+        // Quote removal and backslash escapes legitimately join source spans
+        // (`u"3"` executes `u3`). For plain text, however, a reported literal
+        // name must be a contiguous source substring. Malformed normalization
+        // syntax is covered by deterministic parser regressions.
+        let has_normalization_syntax = input
+            .bytes()
+            .any(|byte| matches!(byte, b'$' | b'\'' | b'"' | b'\\'));
+        if !has_normalization_syntax {
+            for command in &analysis.commands {
+                if let Some(name) = command.name.as_deref() {
+                    assert!(
+                        input.contains(name),
+                        "analysis reported a plain command name absent from the source"
+                    );
+                }
             }
         }
 

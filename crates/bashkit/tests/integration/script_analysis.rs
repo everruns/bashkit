@@ -306,3 +306,12 @@ fn malformed_literal_boundaries_are_rejected_by_analysis() {
         );
     }
 }
+
+#[test]
+fn valid_quote_and_escape_removal_can_join_command_name_spans() {
+    for (script, expected) in [("u\"3\"", "u3"), ("'#'g", "#g"), (r"!\[[", "![[")] {
+        let analysis = Bash::new().analyze(script).expect("valid script");
+        assert_eq!(analysis.command_names(), [expected]);
+        assert!(!script.contains(expected));
+    }
+}
