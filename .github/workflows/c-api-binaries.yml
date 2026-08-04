@@ -1,4 +1,5 @@
 # Native C ABI archives, dispatched from the verified release workflow.
+# Windows must initialize the Visual Studio environment before using lib.exe/cl.exe.
 name: Publish C API Binaries
 
 on:
@@ -98,6 +99,10 @@ jobs:
         uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
         with:
           targets: ${{ matrix.target }}
+
+      - name: Initialize MSVC tools
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
