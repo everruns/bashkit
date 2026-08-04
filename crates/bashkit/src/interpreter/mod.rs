@@ -3844,7 +3844,8 @@ impl Interpreter {
             let var_name = &trimmed[..var_end];
             if !var_name.is_empty() && is_valid_var_name(var_name) {
                 let current = self.evaluate_arithmetic(var_name);
-                let new_value = current + 1;
+                // THREAT[TM-DOS-043]: Bash integer side effects wrap at i64 bounds.
+                let new_value = current.wrapping_add(1);
                 self.set_variable(var_name.to_string(), new_value.to_string());
                 let rest = trimmed[var_end..].trim();
                 if rest.is_empty() {
@@ -3864,7 +3865,7 @@ impl Interpreter {
             let var_name = &trimmed[..var_end];
             if !var_name.is_empty() && is_valid_var_name(var_name) {
                 let current = self.evaluate_arithmetic(var_name);
-                let new_value = current - 1;
+                let new_value = current.wrapping_sub(1);
                 self.set_variable(var_name.to_string(), new_value.to_string());
                 let rest = trimmed[var_end..].trim();
                 if rest.is_empty() {
@@ -3880,7 +3881,7 @@ impl Interpreter {
             let var_name = stripped.trim();
             if is_valid_var_name(var_name) {
                 let current = self.evaluate_arithmetic(var_name);
-                let new_value = current + 1;
+                let new_value = current.wrapping_add(1);
                 self.set_variable(var_name.to_string(), new_value.to_string());
                 return current; // Return old value for post-increment
             }
@@ -3889,7 +3890,7 @@ impl Interpreter {
             let var_name = stripped.trim();
             if is_valid_var_name(var_name) {
                 let current = self.evaluate_arithmetic(var_name);
-                let new_value = current - 1;
+                let new_value = current.wrapping_sub(1);
                 self.set_variable(var_name.to_string(), new_value.to_string());
                 return current; // Return old value for post-decrement
             }

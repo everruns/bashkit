@@ -252,6 +252,7 @@ runaway scripts without permanently breaking the session.
 | TM-DOS-027 | Builtin parser recursion | Deeply nested awk/jq expressions | `MAX_AWK_PARSER_DEPTH` (100) + `MAX_JQ_JSON_DEPTH` (100) | **MITIGATED** |
 | TM-DOS-028 | Diff algorithm DoS | `diff` on two large unrelated files | LCS matrix capped at 10M cells; falls back to simple line-by-line output | **MITIGATED** |
 | TM-DOS-029 | Arithmetic overflow/panic | `$(( 2 ** -1 ))`, `$(( 1 << 64 ))`, `i64::MIN / -1` | `wrapping_*` / saturating ops; `wrapping_neg` for `i64::MIN / -1` and unary negate; `<<`/`>>` clamp shift amount | **MITIGATED** |
+| TM-DOS-043 | Arithmetic side-effect overflow/panic | `((x+=1))` or `$((x++))` at the `i64` boundaries | Compound assignment and prefix/postfix increment/decrement use wrapping arithmetic in both evaluator paths | **MITIGATED** |
 | TM-DOS-030 | Parser limit bypass via eval/source/trap | `eval`, `source`, trap handlers now use `Parser::with_limits()` | — | **FIXED** (2026-03 audit verified) |
 | TM-DOS-031 | Glob/ExtGlob exponential blowup | `+(a\|aa)` against long string causes O(n!) recursion in `glob_match_impl`; a run of plain `*` (consecutive `****…` or separated `*a*b*…`) previously recursed per value position and blew up (a 33-`*` pattern timed out `glob_fuzz`) | Plain `*` now matches via a single backtracking restore point (the classic linear wildcard algorithm) — worst case O(value·pattern), no per-position recursion; `glob_match_impl` still carries a recursion-depth cap for extglob nesting and bails on excessive depth; aliases that expand to huge brace ranges go through the same parser-budget check (`interpreter/mod.rs:4216`) | **MITIGATED** |
 | TM-DOS-035 | DEBUG trap recursive amplification | `trap 'a=1;b=2;...' DEBUG` amplifies N commands to N*M | Suppress DEBUG trap inside trap handlers (`in_trap` guard) | **FIXED** |
@@ -1080,7 +1081,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | ~~TM-ESC-012~~ | ~~VFS limit bypass via add_file()/restore()~~ | ~~Unlimited VFS writes~~ | `validate_path` + `check_write_limits` on both paths (**FIXED**) |
 | ~~TM-INJ-009~~ | ~~Internal variable namespace injection~~ | ~~Bypass readonly, manipulate interpreter~~ | `is_internal_variable()` check on every write path (**FIXED**) |
 | ~~TM-INJ-012–015~~ | ~~Builtin bypass of is_internal_variable()~~ | ~~Unauthorized nameref/case attr injection via declare/readonly/local/export~~ | ~~Add is_internal_variable() check to all builtin insert paths~~ (**FIXED**) |
-| ~~TM-DOS-043~~ | ~~Arithmetic panic in compound assignment~~ | ~~Process crash (DoS) in debug mode~~ | ~~wrapping_* ops in execute_arithmetic_with_side_effects~~ (**FIXED**) |
+| ~~TM-DOS-043~~ | ~~Arithmetic panic in side-effect operations~~ | ~~Process crash (DoS) in debug mode~~ | ~~Wrapping arithmetic in compound assignment and prefix/postfix increment/decrement~~ (**FIXED**) |
 | ~~TM-DOS-044~~ | ~~Lexer stack overflow on nested $()~~ | ~~Process crash (SIGABRT)~~ | Depth tracking in `read_command_subst_into`; nested-subst tests pass at depth 50 (**FIXED**) |
 
 ### Open (High Priority)
@@ -1148,7 +1149,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | TM-INF-018 | `date` builtin returns real host time | Timezone fingerprinting, timing correlation | `Bash::builder().fixed_epoch(N)` freezes the clock; `.epoch_offset(N)` shifts it (mutually exclusive, last call wins) via `Date::with_fixed_epoch` / `Date::with_offset_seconds` in `builtins/date.rs`. Default is real clock — callers opt in for sandboxing. Regression tests: `tm_inf_018_date::*` in `tests/threat_model_tests.rs`. | **MITIGATED** (opt-in) |
 | ~~TM-DOS-041~~ | ~~Brace expansion `{N..M}` unbounded range~~ | ~~OOM via `{1..999999999}`~~ | `MAX_STATIC_BRACE_RANGE = 100_000` parser-time check (`parser/budget.rs`, `BraceRangeTooLarge`); runtime fallback `MAX_BRACE_RANGE = 10_000` in `try_expand_range` treats oversized ranges as literals (**FIXED**) |
 | ~~TM-DOS-042~~ | ~~Brace expansion combinatorial explosion~~ | ~~OOM/stack overflow via `{1..100}{1..100}{1..100}` (1M strings) or `{a,b}{a,b}...` (deep recursion)~~ | `expand_braces` caps total emitted strings (`MAX_BRACE_EXPANSION_TOTAL = 100_000`). The count cap alone was insufficient for comma-lists: it is only charged on recursion *return*, so the first DFS path descended one frame per group with the count still zero and stack-overflowed. Now also bounds recursion depth and cumulative output bytes (`MAX_EXPANSION_RESULT_BYTES`) so it degrades to a bounded literal result (**FIXED**) |
-| ~~TM-DOS-043~~ | ~~Arithmetic overflow in `execute_arithmetic_with_side_effects`~~ | ~~Panic (DoS) in debug mode via `((x+=1))` with x=i64::MAX~~ | ~~Use `wrapping_add/sub/mul`~~ (**FIXED**) |
+| ~~TM-DOS-043~~ | ~~Arithmetic overflow in side-effect evaluation~~ | ~~Panic (DoS) in debug mode via `((x+=1))` or boundary `++`/`--`~~ | ~~Use wrapping arithmetic for every side-effect operation~~ (**FIXED**) |
 | ~~TM-DOS-044~~ | ~~Lexer `read_command_subst_into` stack overflow~~ | ~~Process crash (SIGABRT) via ~50 nested `$()` in double-quotes~~ | ~~Add depth parameter to `read_command_subst_into()`~~ (**FIXED**) |
 | ~~TM-DOS-045~~ | ~~OverlayFs `symlink()` bypasses all limits~~ | ~~Unlimited symlink creation despite `max_file_count`~~ | `check_write_limits()` + `validate_path()` in symlink path (**FIXED**) |
 | ~~TM-DOS-046~~ | ~~MountableFs has zero `validate_path()` calls~~ | ~~Path validation completely bypassed for mounted filesystems~~ | `MountableFs::validate_path` runs before every delegation (**FIXED**) |
@@ -1281,7 +1282,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Missing `_ARRAY_READ_` in prefix guard | TM-INJ-016 | Add prefix to `is_internal_variable()` | **NEEDED** |
 | Internal marker info leak | TM-INF-017 | Filter internal vars from `set` and `declare -p` output | **NEEDED** |
 | Brace expansion DoS | TM-DOS-041, TM-DOS-042 | Cap range size and total expansion count | **MITIGATED** |
-| Arithmetic overflow in compound assignment | TM-DOS-043 | Use `wrapping_*` ops in `execute_arithmetic_with_side_effects` | **NEEDED** |
+| Arithmetic overflow in side-effect operations | TM-DOS-043 | Use wrapping arithmetic for compound assignment and prefix/postfix increment/decrement | **MITIGATED** |
 | Lexer stack overflow | TM-DOS-044 | Depth tracking in `read_command_subst_into` (lexer) + interpreter call-depth counter | **MITIGATED** |
 | Cmd subst OOM via state cloning | TM-DOS-088 | `max_subst_depth` limit in `ExecutionLimits` | **DONE** |
 | OverlayFs symlink limit bypass | TM-DOS-045 | `check_write_limits()` + `validate_path()` in `symlink()` | **MITIGATED** |

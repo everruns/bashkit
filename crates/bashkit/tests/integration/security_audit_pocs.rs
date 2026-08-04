@@ -308,15 +308,61 @@ mod internal_variable_leak {
 }
 
 // =============================================================================
-// 3. ARITHMETIC COMPOUND ASSIGNMENT OVERFLOW (TM-DOS-043)
+// 3. ARITHMETIC SIDE-EFFECT OVERFLOW (TM-DOS-043)
 //
-// Root cause: execute_arithmetic_with_side_effects() at interpreter/mod.rs:1563
-// uses native + instead of wrapping_add. Panics in debug mode.
-// Files: interpreter/mod.rs:1563, :7022-7043
+// Root cause: the arithmetic-expansion and command evaluators used native
+// increment/decrement, and unary parsing could not construct i64::MIN.
+// Files: interpreter/arithmetic.rs, interpreter/mod.rs
 // =============================================================================
 
 mod arithmetic_overflow {
     use super::*;
+
+    /// TM-DOS-043: prefix/postfix increments and decrements must wrap at the
+    /// i64 boundaries in both arithmetic expansion and `((...))` commands.
+    #[tokio::test]
+    async fn security_audit_increment_decrement_no_panic() {
+        let cases = [
+            (
+                "x=9223372036854775807; echo $((++x))",
+                "-9223372036854775808\n",
+            ),
+            (
+                "x=-9223372036854775808; echo $((--x))",
+                "9223372036854775807\n",
+            ),
+            (
+                "x=9223372036854775807; echo $((x++)); echo $x",
+                "9223372036854775807\n-9223372036854775808\n",
+            ),
+            (
+                "x=-9223372036854775808; echo $((x--)); echo $x",
+                "-9223372036854775808\n9223372036854775807\n",
+            ),
+            (
+                "x=9223372036854775807; ((++x)); echo $x",
+                "-9223372036854775808\n",
+            ),
+            (
+                "x=-9223372036854775808; ((--x)); echo $x",
+                "9223372036854775807\n",
+            ),
+            (
+                "x=9223372036854775807; ((x++)); echo $x",
+                "-9223372036854775808\n",
+            ),
+            (
+                "x=-9223372036854775808; ((x--)); echo $x",
+                "9223372036854775807\n",
+            ),
+        ];
+
+        for (script, expected) in cases {
+            let mut bash = Bash::builder().build();
+            let result = bash.exec(script).await.unwrap();
+            assert_eq!(result.stdout, expected, "script: {script}");
+        }
+    }
 
     /// TM-DOS-043: i64::MAX + 1 in ((x+=1)) must not panic.
     /// Should use wrapping arithmetic like the non-compound path.
