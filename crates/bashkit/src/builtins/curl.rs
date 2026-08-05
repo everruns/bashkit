@@ -11,6 +11,7 @@
 //! - Multipart field names/filenames are sanitized to prevent header injection (issue #985)
 //! - Redirects are not followed automatically (to prevent allowlist bypass)
 //! - Compression decompression is size-limited to prevent zip bombs
+//! - Ordered data parts are size-checked before each append or file read
 
 use async_trait::async_trait;
 
@@ -27,6 +28,20 @@ use crate::interpreter::ExecResult;
 #[cfg(feature = "http_client")]
 const DEFAULT_CURL_USER_AGENT: &str = "curl/8.7.1";
 
+#[derive(Clone, Copy)]
+enum CurlDataKind {
+    Data,
+    Raw,
+    Binary,
+    UrlEncode,
+}
+
+#[cfg_attr(not(feature = "http_client"), allow(dead_code))]
+struct CurlDataPart {
+    kind: CurlDataKind,
+    value: String,
+}
+
 /// The curl builtin - transfer data from URLs.
 ///
 /// Usage: curl [OPTIONS] URL
@@ -36,6 +51,10 @@ const DEFAULT_CURL_USER_AGENT: &str = "curl/8.7.1";
 ///   -o FILE            Write output to FILE
 ///   -X METHOD          Specify request method (GET, POST, PUT, DELETE, HEAD)
 ///   -d DATA            Send data in request body (implies POST if no -X)
+///   --data-raw DATA    Send literal data without @file interpretation
+///   --data-binary DATA Send data verbatim; @file reads binary bytes
+///   --data-urlencode DATA URL-encode data or @file contents
+///   -G, --get          Append data options to the URL query
 ///   -H HEADER          Add header to request (format: "Name: Value")
 ///   -I, --head         Fetch headers only (HEAD request)
 ///   -f, --fail         Fail silently on HTTP errors (no output)
@@ -66,7 +85,7 @@ impl Builtin for Curl {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         if let Some(r) = super::check_help_version(
             ctx.args,
-            "Usage: curl [OPTIONS] URL\nTransfer data from or to a server.\n\n  -s, --silent\tsilent mode\n  -o FILE\twrite output to FILE\n  -X METHOD\trequest method (GET, POST, PUT, DELETE, HEAD)\n  -d, --data DATA\tsend data in request body\n  -H, --header HEADER\tadd header (\"Name: Value\")\n  -I, --head\tfetch headers only\n  -f, --fail\tfail silently on HTTP errors\n  -L, --location\tfollow redirects\n  -w, --write-out FORMAT\twrite output format after transfer\n  --compressed\trequest and decompress compressed response\n  -u, --user USER:PASS\tbasic authentication\n  -A, --user-agent STRING\tcustom user agent\n  -e, --referer URL\treferer URL\n  -m, --max-time SECONDS\tmaximum time for operation\n  --connect-timeout SECONDS\tconnection timeout\n  -F, --form FIELD\tmultipart form data\n  -v, --verbose\tverbose output\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            "Usage: curl [OPTIONS] URL\nTransfer data from or to a server.\n\n  -s, --silent\tsilent mode\n  -o FILE\twrite output to FILE\n  -X METHOD\trequest method (GET, POST, PUT, DELETE, HEAD)\n  -d, --data DATA\tsend data; @file strips CR/LF\n  --data-raw DATA\tsend literal data; @ has no special meaning\n  --data-binary DATA\tsend binary data; @file is verbatim\n  --data-urlencode DATA\tURL-encode data or @file contents\n  -G, --get\tappend data options to the URL query\n  -H, --header HEADER\tadd header (\"Name: Value\")\n  -I, --head\tfetch headers only\n  -f, --fail\tfail silently on HTTP errors\n  -L, --location\tfollow redirects\n  -w, --write-out FORMAT\twrite output format after transfer\n  --compressed\trequest and decompress compressed response\n  -u, --user USER:PASS\tbasic authentication\n  -A, --user-agent STRING\tcustom user agent\n  -e, --referer URL\treferer URL\n  -m, --max-time SECONDS\tmaximum time for operation\n  --connect-timeout SECONDS\tconnection timeout\n  -F, --form FIELD\tmultipart form data\n  -v, --verbose\tverbose output\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
             Some("curl 8.7.1 (bashkit)"),
         ) {
             return Ok(r);
@@ -76,7 +95,7 @@ impl Builtin for Curl {
         let mut verbose = false;
         let mut output_file: Option<String> = None;
         let mut method = "GET".to_string();
-        let mut data: Option<String> = None;
+        let mut data_parts: Vec<CurlDataPart> = Vec::new();
         let mut headers: Vec<String> = Vec::new();
         let mut head_only = false;
         let mut fail_on_error = false;
@@ -90,6 +109,9 @@ impl Builtin for Curl {
         let mut connect_timeout: Option<u64> = None;
         let mut url: Option<String> = None;
         let mut form_fields: Vec<String> = Vec::new();
+        let mut get_mode = false;
+        let mut explicit_method = false;
+        let mut data_implies_post = false;
 
         let mut i = 0;
         while i < ctx.args.len() {
@@ -103,6 +125,7 @@ impl Builtin for Curl {
                 "-I" | "--head" => {
                     head_only = true;
                     method = "HEAD".to_string();
+                    explicit_method = true;
                 }
                 "-o" => {
                     i += 1;
@@ -114,17 +137,50 @@ impl Builtin for Curl {
                     i += 1;
                     if i < ctx.args.len() {
                         method = ctx.args[i].clone().to_uppercase();
+                        explicit_method = true;
                     }
                 }
                 "-d" | "--data" => {
                     i += 1;
                     if i < ctx.args.len() {
-                        data = Some(ctx.args[i].clone());
-                        if method == "GET" {
-                            method = "POST".to_string();
-                        }
+                        data_parts.push(CurlDataPart {
+                            kind: CurlDataKind::Data,
+                            value: ctx.args[i].clone(),
+                        });
+                        data_implies_post = true;
                     }
                 }
+                "--data-raw" => {
+                    i += 1;
+                    if i < ctx.args.len() {
+                        data_parts.push(CurlDataPart {
+                            kind: CurlDataKind::Raw,
+                            value: ctx.args[i].clone(),
+                        });
+                        data_implies_post = true;
+                    }
+                }
+                "--data-binary" => {
+                    i += 1;
+                    if i < ctx.args.len() {
+                        data_parts.push(CurlDataPart {
+                            kind: CurlDataKind::Binary,
+                            value: ctx.args[i].clone(),
+                        });
+                        data_implies_post = true;
+                    }
+                }
+                "--data-urlencode" => {
+                    i += 1;
+                    if i < ctx.args.len() {
+                        data_parts.push(CurlDataPart {
+                            kind: CurlDataKind::UrlEncode,
+                            value: ctx.args[i].clone(),
+                        });
+                        data_implies_post = true;
+                    }
+                }
+                "-G" | "--get" => get_mode = true,
                 "-H" | "--header" => {
                     i += 1;
                     if i < ctx.args.len() {
@@ -171,10 +227,43 @@ impl Builtin for Curl {
                     i += 1;
                     if i < ctx.args.len() {
                         form_fields.push(ctx.args[i].clone());
-                        if method == "GET" {
-                            method = "POST".to_string();
-                        }
+                        data_implies_post = true;
                     }
+                }
+                _ if arg.starts_with("-d") && arg.len() > 2 => {
+                    data_parts.push(CurlDataPart {
+                        kind: CurlDataKind::Data,
+                        value: arg[2..].to_string(),
+                    });
+                    data_implies_post = true;
+                }
+                _ if arg.starts_with("--data=") => {
+                    data_parts.push(CurlDataPart {
+                        kind: CurlDataKind::Data,
+                        value: arg[7..].to_string(),
+                    });
+                    data_implies_post = true;
+                }
+                _ if arg.starts_with("--data-raw=") => {
+                    data_parts.push(CurlDataPart {
+                        kind: CurlDataKind::Raw,
+                        value: arg[11..].to_string(),
+                    });
+                    data_implies_post = true;
+                }
+                _ if arg.starts_with("--data-binary=") => {
+                    data_parts.push(CurlDataPart {
+                        kind: CurlDataKind::Binary,
+                        value: arg[14..].to_string(),
+                    });
+                    data_implies_post = true;
+                }
+                _ if arg.starts_with("--data-urlencode=") => {
+                    data_parts.push(CurlDataPart {
+                        kind: CurlDataKind::UrlEncode,
+                        value: arg[17..].to_string(),
+                    });
+                    data_implies_post = true;
                 }
                 _ if !arg.starts_with('-') => {
                     url = Some(arg.clone());
@@ -184,6 +273,10 @@ impl Builtin for Curl {
                 }
             }
             i += 1;
+        }
+
+        if data_implies_post && !get_mode && !explicit_method {
+            method = "POST".to_string();
         }
 
         // Validate URL before resolving @file bodies. This keeps failed/no-network
@@ -213,18 +306,31 @@ impl Builtin for Curl {
                 if let Err(e) = http_client.enforce_url_security(&url).await {
                     return Ok(curl_network_error_result(e));
                 }
-                let data_body =
-                    match resolve_data_body(data.as_deref(), ctx.stdin, ctx.cwd, ctx.fs.as_ref())
-                        .await
-                    {
-                        Ok(body) => body,
+                let data_body = match resolve_data_body(
+                    &data_parts,
+                    get_mode,
+                    ctx.stdin,
+                    ctx.cwd,
+                    ctx.fs.as_ref(),
+                )
+                .await
+                {
+                    Ok(body) => body,
+                    Err(result) => return Ok(*result),
+                };
+                let request_url = if get_mode {
+                    match append_data_to_url(&url, data_body.as_deref()) {
+                        Ok(url) => url,
                         Err(result) => return Ok(*result),
-                    };
+                    }
+                } else {
+                    url.clone()
+                };
                 return execute_curl_request(
                     http_client,
-                    &url,
+                    &request_url,
                     &method,
-                    data_body.as_deref(),
+                    (!get_mode).then_some(data_body.as_deref()).flatten(),
                     &headers,
                     head_only,
                     silent,
@@ -252,7 +358,7 @@ impl Builtin for Curl {
             verbose,
             output_file,
             method,
-            data,
+            data_parts,
             headers,
             head_only,
             fail_on_error,
@@ -265,6 +371,9 @@ impl Builtin for Curl {
             max_time,
             connect_timeout,
             form_fields,
+            get_mode,
+            explicit_method,
+            data_implies_post,
         );
 
         Ok(ExecResult::err(
@@ -320,57 +429,221 @@ fn curl_body_too_large_error() -> ExecResult {
 }
 
 #[cfg(feature = "http_client")]
-fn check_curl_body_size(len: usize) -> Option<ExecResult> {
-    if len > CURL_MAX_REQUEST_BODY_BYTES {
-        Some(curl_body_too_large_error())
+async fn resolve_data_body(
+    parts: &[CurlDataPart],
+    get_mode: bool,
+    stdin: Option<&str>,
+    cwd: &std::path::Path,
+    fs: &dyn crate::fs::FileSystem,
+) -> std::result::Result<Option<Vec<u8>>, Box<ExecResult>> {
+    if parts.is_empty() {
+        return Ok(None);
+    }
+
+    // THREAT[TM-NET-028]: Grow one capped aggregate and reject file metadata
+    // that cannot fit before asking the VFS to allocate/read its contents.
+    let mut body = Vec::new();
+    let mut stdin_available = true;
+    for (index, part) in parts.iter().enumerate() {
+        if index != 0 {
+            append_curl_data_bytes(&mut body, b"&")?;
+        }
+        let bytes = resolve_curl_data_part(
+            part,
+            get_mode,
+            stdin,
+            &mut stdin_available,
+            cwd,
+            fs,
+            body.len(),
+        )
+        .await?;
+        append_curl_data_bytes(&mut body, &bytes)?;
+    }
+    Ok(Some(body))
+}
+
+#[cfg(feature = "http_client")]
+async fn resolve_curl_data_part(
+    part: &CurlDataPart,
+    get_mode: bool,
+    stdin: Option<&str>,
+    stdin_available: &mut bool,
+    cwd: &std::path::Path,
+    fs: &dyn crate::fs::FileSystem,
+    aggregate_len: usize,
+) -> std::result::Result<Vec<u8>, Box<ExecResult>> {
+    let file = match part.kind {
+        CurlDataKind::Raw => None,
+        CurlDataKind::Data | CurlDataKind::Binary => {
+            part.value.strip_prefix('@').map(|p| (p, None))
+        }
+        CurlDataKind::UrlEncode => parse_urlencode_file(&part.value),
+    };
+
+    let bytes = if let Some((path, name)) = file {
+        let contents = if path == "-" {
+            let contents = if *stdin_available {
+                stdin.unwrap_or("").as_bytes().to_vec()
+            } else {
+                Vec::new()
+            };
+            *stdin_available = false;
+            contents
+        } else {
+            let resolved = resolve_path(cwd, path);
+            let meta = fs
+                .stat(&resolved)
+                .await
+                .map_err(|_| Box::new(curl_data_file_error(path)))?;
+            let prefix_len = name.map_or(0, |name| name.len() + 1);
+            let remaining = CURL_MAX_REQUEST_BODY_BYTES
+                .saturating_sub(aggregate_len)
+                .saturating_sub(prefix_len);
+            if meta.size > remaining as u64 {
+                return Err(Box::new(curl_body_too_large_error()));
+            }
+            fs.read_file(&resolved)
+                .await
+                .map_err(|_| Box::new(curl_data_file_error(path)))?
+        };
+
+        match part.kind {
+            CurlDataKind::Data => contents
+                .into_iter()
+                .filter(|byte| !matches!(byte, b'\r' | b'\n'))
+                .collect(),
+            CurlDataKind::Binary => contents,
+            CurlDataKind::UrlEncode => {
+                let mut encoded = Vec::new();
+                if let Some(name) = name {
+                    encoded.extend_from_slice(name.as_bytes());
+                    encoded.push(b'=');
+                }
+                encode_curl_data_into(&contents, &mut encoded, get_mode)?;
+                encoded
+            }
+            CurlDataKind::Raw => unreachable!("raw data never treats @ as a file"),
+        }
+    } else {
+        match part.kind {
+            CurlDataKind::UrlEncode => encode_inline_urlencode(&part.value, get_mode)?,
+            CurlDataKind::Data | CurlDataKind::Raw | CurlDataKind::Binary => {
+                part.value.as_bytes().to_vec()
+            }
+        }
+    };
+
+    if aggregate_len.saturating_add(bytes.len()) > CURL_MAX_REQUEST_BODY_BYTES {
+        return Err(Box::new(curl_body_too_large_error()));
+    }
+    Ok(bytes)
+}
+
+#[cfg(feature = "http_client")]
+fn parse_urlencode_file(value: &str) -> Option<(&str, Option<&str>)> {
+    if let Some(path) = value.strip_prefix('@') {
+        return Some((path, None));
+    }
+    let at = value.find('@')?;
+    if value.find('=').is_none_or(|equals| at < equals) {
+        Some((&value[at + 1..], Some(&value[..at])))
     } else {
         None
     }
 }
 
 #[cfg(feature = "http_client")]
-async fn resolve_data_body(
-    data: Option<&str>,
-    stdin: Option<&str>,
-    cwd: &std::path::Path,
-    fs: &dyn crate::fs::FileSystem,
-) -> std::result::Result<Option<Vec<u8>>, Box<ExecResult>> {
-    let Some(data) = data else {
-        return Ok(None);
+fn encode_inline_urlencode(
+    value: &str,
+    lowercase_escapes: bool,
+) -> std::result::Result<Vec<u8>, Box<ExecResult>> {
+    let (name, content) = match value.split_once('=') {
+        Some((name, content)) => (Some(name), content),
+        None => (None, value),
     };
+    let mut encoded = Vec::new();
+    if let Some(name) = name.filter(|name| !name.is_empty()) {
+        encoded.extend_from_slice(name.as_bytes());
+        encoded.push(b'=');
+    }
+    encode_curl_data_into(content.as_bytes(), &mut encoded, lowercase_escapes)?;
+    Ok(encoded)
+}
 
-    if let Some(path) = data.strip_prefix('@') {
-        if path == "-" {
-            let bytes = stdin.unwrap_or("").as_bytes().to_vec();
-            if let Some(result) = check_curl_body_size(bytes.len()) {
-                return Err(Box::new(result));
+#[cfg(feature = "http_client")]
+fn encode_curl_data_into(
+    input: &[u8],
+    output: &mut Vec<u8>,
+    lowercase_escapes: bool,
+) -> std::result::Result<(), Box<ExecResult>> {
+    for byte in input {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                append_curl_data_bytes(output, &[*byte])?;
             }
-            return Ok(Some(bytes));
+            b' ' => append_curl_data_bytes(output, b"+")?,
+            _ => {
+                let hex = if lowercase_escapes {
+                    b"0123456789abcdef"
+                } else {
+                    b"0123456789ABCDEF"
+                };
+                append_curl_data_bytes(
+                    output,
+                    &[b'%', hex[(byte >> 4) as usize], hex[(byte & 0x0f) as usize]],
+                )?;
+            }
         }
-
-        let resolved = resolve_path(cwd, path);
-        let meta = fs
-            .stat(&resolved)
-            .await
-            .map_err(|_| Box::new(curl_data_file_error(path)))?;
-        if meta.size > CURL_MAX_REQUEST_BODY_BYTES as u64 {
-            return Err(Box::new(curl_body_too_large_error()));
-        }
-        let bytes = fs
-            .read_file(&resolved)
-            .await
-            .map_err(|_| Box::new(curl_data_file_error(path)))?;
-        if let Some(result) = check_curl_body_size(bytes.len()) {
-            return Err(Box::new(result));
-        }
-        return Ok(Some(bytes));
     }
+    Ok(())
+}
 
-    let bytes = data.as_bytes().to_vec();
-    if let Some(result) = check_curl_body_size(bytes.len()) {
-        return Err(Box::new(result));
+#[cfg(feature = "http_client")]
+fn append_curl_data_bytes(
+    output: &mut Vec<u8>,
+    bytes: &[u8],
+) -> std::result::Result<(), Box<ExecResult>> {
+    if output.len().saturating_add(bytes.len()) > CURL_MAX_REQUEST_BODY_BYTES {
+        return Err(Box::new(curl_body_too_large_error()));
     }
-    Ok(Some(bytes))
+    output.extend_from_slice(bytes);
+    Ok(())
+}
+
+#[cfg(feature = "http_client")]
+fn append_data_to_url(
+    url: &str,
+    data: Option<&[u8]>,
+) -> std::result::Result<String, Box<ExecResult>> {
+    let Some(data) = data.filter(|data| !data.is_empty()) else {
+        return Ok(url.to_string());
+    };
+    let data = std::str::from_utf8(data).map_err(|_| {
+        Box::new(ExecResult::err(
+            "curl: data used with -G must form a valid URL query\n".to_string(),
+            3,
+        ))
+    })?;
+    let (base, fragment) = url
+        .split_once('#')
+        .map_or((url, None), |(base, fragment)| (base, Some(fragment)));
+    let separator = if base.ends_with('?') || base.ends_with('&') {
+        ""
+    } else if base.contains('?') {
+        "&"
+    } else {
+        "?"
+    };
+    let mut combined = String::with_capacity(url.len().saturating_add(data.len() + 1));
+    combined.push_str(base);
+    combined.push_str(separator);
+    combined.push_str(data);
+    if let Some(fragment) = fragment {
+        combined.push('#');
+        combined.push_str(fragment);
+    }
+    Ok(combined)
 }
 
 #[cfg(feature = "http_client")]
@@ -457,6 +730,13 @@ async fn execute_curl_request(
             let value = header[colon_pos + 1..].trim().to_string();
             header_pairs.push((name, value));
         }
+    }
+
+    if data.is_some() && form_fields.is_empty() && !has_header(&header_pairs, "content-type") {
+        header_pairs.push((
+            "Content-Type".to_string(),
+            "application/x-www-form-urlencoded".to_string(),
+        ));
     }
 
     // Add --compressed header (request gzip/deflate)
@@ -1487,8 +1767,13 @@ mod tests {
         async fn test_curl_data_at_stdin_body_too_large() {
             let fs = InMemoryFs::new();
             let large_body = "x".repeat(CURL_MAX_REQUEST_BODY_BYTES + 1);
+            let parts = [CurlDataPart {
+                kind: CurlDataKind::Data,
+                value: "@-".to_string(),
+            }];
             let result = resolve_data_body(
-                Some("@-"),
+                &parts,
+                false,
                 Some(&large_body),
                 std::path::Path::new("/"),
                 &fs,
@@ -1762,6 +2047,33 @@ mod tests {
             ) -> Result<()> {
                 self.inner.set_modified_time(path, time).await
             }
+        }
+
+        #[tokio::test]
+        async fn test_curl_oversized_data_file_rejected_before_read() {
+            let inner = InMemoryFs::new();
+            inner
+                .write_file(std::path::Path::new("/large.bin"), b"tiny sentinel")
+                .await
+                .unwrap();
+            let reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let fs = ReadCountingFs {
+                inner,
+                reads: reads.clone(),
+                reported_size: Some(CURL_MAX_REQUEST_BODY_BYTES as u64 + 1),
+            };
+            let parts = [CurlDataPart {
+                kind: CurlDataKind::Binary,
+                value: "@/large.bin".to_string(),
+            }];
+
+            let result =
+                resolve_data_body(&parts, false, None, std::path::Path::new("/"), &fs).await;
+
+            let error = result.expect_err("oversized file should be rejected");
+            assert_eq!(error.exit_code, 2);
+            assert!(error.stderr.contains("request body too large"));
+            assert_eq!(reads.load(std::sync::atomic::Ordering::SeqCst), 0);
         }
 
         #[tokio::test]

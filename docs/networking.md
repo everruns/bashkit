@@ -90,6 +90,24 @@ let allowlist = NetworkAllowlist::new()
 `NetworkAllowlist::allow_all()` disables host checks entirely. Use it only for
 fully trusted scripts.
 
+## curl data options
+
+Repeated `-d`/`--data`, `--data-raw`, `--data-binary`, and
+`--data-urlencode` values are joined with `&` in command-line order. `-d @file`
+removes CR/LF bytes, `--data-binary @file` preserves the file exactly,
+`--data-raw` treats a leading `@` literally, and `--data-urlencode` supports
+both `@file` and `name@file`. Data requests default to
+`application/x-www-form-urlencoded` unless a content type was supplied.
+
+```bash
+curl -d 'page=1' --data-urlencode 'query=hello world' https://api.example.com/search
+curl -G -d 'page=1' --data-urlencode 'query=hello world' https://api.example.com/search
+```
+
+The second form sends a GET and appends the ordered data to the existing query.
+The aggregate data is capped at 10 MB before dispatch; the URL allowlist still
+applies to the final request.
+
 ## CLI
 
 The CLI keeps network access off unless you ask for it:
