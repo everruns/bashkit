@@ -417,8 +417,9 @@ fn test_bash() -> bashkit::Bash {
         .tty(0, true)
         .tty(1, true)
         .tty(2, true)
-        .limits(bashkit::ExecutionLimits::cli())
-        .session_limits(bashkit::SessionLimits::unlimited())
+        .profile(bashkit::ExecutionProfile::named(
+            bashkit::ExecutionProfileName::Interactive,
+        ))
         .build()
 }
 
@@ -836,8 +837,9 @@ mod tests {
             .tty(0, true)
             .tty(1, true)
             .tty(2, true)
-            .limits(bashkit::ExecutionLimits::cli())
-            .session_limits(bashkit::SessionLimits::unlimited())
+            .profile(bashkit::ExecutionProfile::named(
+                bashkit::ExecutionProfileName::Interactive,
+            ))
             .on_exit(Box::new(move |event| {
                 c.store(event.code, Ordering::Relaxed);
                 bashkit::hooks::HookAction::Continue(event)

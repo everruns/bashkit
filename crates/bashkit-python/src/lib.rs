@@ -29,6 +29,27 @@ use bashkit::{
     PythonLimits, ScriptedTool as RustScriptedTool, ShellStateView as RustShellStateView,
     SnapshotOptions as RustSnapshotOptions, Tool, ToolArgs, ToolDef, ToolRequest, async_trait,
 };
+
+/// Typed named execution-policy selector for Python constructors.
+#[pyclass(name = "ExecutionProfile", eq, eq_int, from_py_object)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum PyExecutionProfile {
+    Hardened,
+    #[default]
+    Standard,
+    Interactive,
+}
+
+impl PyExecutionProfile {
+    fn core(self) -> bashkit::ExecutionProfile {
+        let name = match self {
+            Self::Hardened => bashkit::ExecutionProfileName::Hardened,
+            Self::Standard => bashkit::ExecutionProfileName::Standard,
+            Self::Interactive => bashkit::ExecutionProfileName::Interactive,
+        };
+        bashkit::ExecutionProfile::named(name)
+    }
+}
 use bashkit::{
     CapabilityFingerprint as RustCapabilityFingerprint, CheckoutPolicy as RustCheckoutPolicy,
     CommitOptions as RustCommitOptions, ObjectId as RustObjectId,
@@ -4235,6 +4256,7 @@ fn make_external_handler(
 fn apply_python_config(
     mut builder: bashkit::BashBuilder,
     python: bool,
+    limits: PythonLimits,
     fn_names: Vec<String>,
     handler: Option<Py<PyAny>>,
     external_handler_reentry_depth: Arc<AtomicUsize>,
@@ -4246,7 +4268,7 @@ fn apply_python_config(
         #[cfg(not(target_arch = "wasm32"))]
         (true, Some(h)) => {
             builder = builder.python_with_external_handler(
-                PythonLimits::default(),
+                limits,
                 fn_names,
                 make_external_handler(h, external_handler_reentry_depth),
             );
@@ -4258,7 +4280,7 @@ fn apply_python_config(
         (true, Some(_)) => unreachable!("external_handler rejected at construction on wasm"),
         (true, None) => {
             let _ = (&fn_names, &external_handler_reentry_depth);
-            builder = builder.python();
+            builder = builder.python_with_limits(limits);
             builder = builder.env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1");
         }
         (false, _) => {}
@@ -4272,9 +4294,28 @@ fn apply_python_config(
 /// explicit opt-in for in-process SQLite execution, so we register the
 /// builtin and inject the runtime gate env var. The deny-list defaults
 /// (resource/FS-shaped PRAGMAs) come from `SqliteLimits::default()`.
+#[cfg(not(target_arch = "wasm32"))]
+type ProfileSqliteLimits = bashkit::SqliteLimits;
+
+#[cfg(target_arch = "wasm32")]
+type ProfileSqliteLimits = ();
+
+fn profile_sqlite_limits(profile: &bashkit::ExecutionProfile) -> ProfileSqliteLimits {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        profile.sqlite_limits().clone()
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = profile;
+    }
+}
+
 fn apply_sqlite_config(
     builder: bashkit::BashBuilder,
     sqlite: bool,
+    profile_limits: ProfileSqliteLimits,
     timeout_seconds: Option<f64>,
     max_memory: Option<u64>,
 ) -> PyResult<bashkit::BashBuilder> {
@@ -4283,7 +4324,7 @@ fn apply_sqlite_config(
     // off on wasm. Reject `sqlite=True` loudly there. See knowledge/runtimes/emscripten-wheels.md.
     #[cfg(target_arch = "wasm32")]
     {
-        let _ = (timeout_seconds, max_memory);
+        let _ = (profile_limits, timeout_seconds, max_memory);
         if sqlite {
             return Err(PyRuntimeError::new_err(
                 "the sqlite builtin is not available in the WebAssembly (Pyodide) build",
@@ -4296,7 +4337,7 @@ fn apply_sqlite_config(
     {
         let mut builder = builder;
         if sqlite {
-            let mut limits = bashkit::SqliteLimits::default();
+            let mut limits = profile_limits;
             if let Some(ts) = timeout_seconds {
                 limits = limits.max_duration(parse_timeout_seconds(ts)?);
             }
@@ -4334,6 +4375,7 @@ pub struct PyBash {
     /// the new interpreter's token without requiring &mut self.
     cancelled: Arc<RwLock<Arc<AtomicBool>>>,
     username: Option<String>,
+    profile: PyExecutionProfile,
     hostname: Option<String>,
     /// Initial working directory for the shell (mirrors `Bash::builder().cwd()`).
     cwd: Option<String>,
@@ -4388,7 +4430,8 @@ impl PyBash {
     }
 
     fn build_live_builder(&self, py: Python<'_>) -> PyResult<bashkit::BashBuilder> {
-        let mut builder = Bash::builder();
+        let profile = self.profile.core();
+        let mut builder = Bash::builder().profile(profile.clone());
 
         if let Some(ref username) = self.username {
             builder = builder.username(username);
@@ -4405,7 +4448,7 @@ impl PyBash {
             }
         }
 
-        let mut limits = ExecutionLimits::new();
+        let mut limits = profile.execution_limits().clone();
         if let Some(max_commands) = self.max_commands {
             limits = limits.max_commands(usize::try_from(max_commands).unwrap_or(usize::MAX));
         }
@@ -4426,11 +4469,18 @@ impl PyBash {
         builder = apply_python_config(
             builder,
             self.python,
+            profile.python_limits().clone(),
             self.external_functions.clone(),
             handler_clone,
             self.external_handler_reentry_depth.clone(),
         );
-        builder = apply_sqlite_config(builder, self.sqlite, self.timeout_seconds, self.max_memory)?;
+        builder = apply_sqlite_config(
+            builder,
+            self.sqlite,
+            profile_sqlite_limits(&profile),
+            self.timeout_seconds,
+            self.max_memory,
+        )?;
         // network (http_client) and allowed_mount_paths (realfs) are native-only;
         // both kwargs are rejected at construction on wasm. See knowledge/runtimes/emscripten-wheels.md.
         #[cfg(not(target_arch = "wasm32"))]
@@ -4473,6 +4523,7 @@ impl PyBash {
         readonly_filesystem=false,
         custom_builtins=None,
         network=None,
+        profile=PyExecutionProfile::Standard,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -4495,8 +4546,10 @@ impl PyBash {
         readonly_filesystem: bool,
         custom_builtins: Option<&Bound<'_, PyDict>>,
         network: Option<&Bound<'_, PyDict>>,
+        profile: PyExecutionProfile,
     ) -> PyResult<Self> {
-        let mut builder = Bash::builder();
+        let core_profile = profile.core();
+        let mut builder = Bash::builder().profile(core_profile.clone());
 
         if let Some(ref u) = username {
             builder = builder.username(u);
@@ -4513,7 +4566,7 @@ impl PyBash {
             }
         }
 
-        let mut limits = ExecutionLimits::new();
+        let mut limits = core_profile.execution_limits().clone();
         if let Some(mc) = max_commands {
             limits = limits.max_commands(usize::try_from(mc).unwrap_or(usize::MAX));
         }
@@ -4572,11 +4625,18 @@ impl PyBash {
         builder = apply_python_config(
             builder,
             python,
+            core_profile.python_limits().clone(),
             fn_names,
             handler_for_build,
             external_handler_reentry_depth.clone(),
         );
-        builder = apply_sqlite_config(builder, sqlite, timeout_seconds, max_memory)?;
+        builder = apply_sqlite_config(
+            builder,
+            sqlite,
+            profile_sqlite_limits(&core_profile),
+            timeout_seconds,
+            max_memory,
+        )?;
         // network (http_client) and allowed_mount_paths (realfs) are native-only;
         // both kwargs are rejected at construction on wasm. See knowledge/runtimes/emscripten-wheels.md.
         #[cfg(not(target_arch = "wasm32"))]
@@ -4605,6 +4665,7 @@ impl PyBash {
             rt,
             cancelled,
             username,
+            profile,
             hostname,
             cwd,
             env,
@@ -5026,6 +5087,7 @@ impl PyBash {
         readonly_filesystem=false,
         custom_builtins=None,
         network=None,
+        profile=PyExecutionProfile::Standard,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn from_snapshot(
@@ -5049,6 +5111,7 @@ impl PyBash {
         readonly_filesystem: bool,
         custom_builtins: Option<&Bound<'_, PyDict>>,
         network: Option<&Bound<'_, PyDict>>,
+        profile: PyExecutionProfile,
     ) -> PyResult<Self> {
         let bash = Self::new(
             py,
@@ -5070,6 +5133,7 @@ impl PyBash {
             readonly_filesystem,
             custom_builtins,
             network,
+            profile,
         )?;
         bash.restore_snapshot(py, data)?;
         Ok(bash)
@@ -5098,6 +5162,7 @@ impl PyBash {
         readonly_filesystem=false,
         custom_builtins=None,
         network=None,
+        profile=PyExecutionProfile::Standard,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn from_snapshot_keyed(
@@ -5122,6 +5187,7 @@ impl PyBash {
         readonly_filesystem: bool,
         custom_builtins: Option<&Bound<'_, PyDict>>,
         network: Option<&Bound<'_, PyDict>>,
+        profile: PyExecutionProfile,
     ) -> PyResult<Self> {
         let bash = Self::new(
             py,
@@ -5143,6 +5209,7 @@ impl PyBash {
             readonly_filesystem,
             custom_builtins,
             network,
+            profile,
         )?;
         bash.restore_snapshot_keyed(py, data, key)?;
         Ok(bash)
@@ -5332,6 +5399,7 @@ pub struct BashTool {
     /// the new interpreter's token without requiring &mut self.
     cancelled: Arc<RwLock<Arc<AtomicBool>>>,
     username: Option<String>,
+    profile: PyExecutionProfile,
     hostname: Option<String>,
     /// Initial working directory for the shell (mirrors `Bash::builder().cwd()`).
     cwd: Option<String>,
@@ -5368,7 +5436,8 @@ impl Drop for BashTool {
 
 impl BashTool {
     fn build_live_builder(&self, py: Python<'_>) -> PyResult<bashkit::BashBuilder> {
-        let mut builder = Bash::builder();
+        let profile = self.profile.core();
+        let mut builder = Bash::builder().profile(profile.clone());
 
         if let Some(ref username) = self.username {
             builder = builder.username(username);
@@ -5385,7 +5454,7 @@ impl BashTool {
             }
         }
 
-        let mut limits = ExecutionLimits::new();
+        let mut limits = profile.execution_limits().clone();
         if let Some(max_commands) = self.max_commands {
             limits = limits.max_commands(usize::try_from(max_commands).unwrap_or(usize::MAX));
         }
@@ -5421,7 +5490,8 @@ impl BashTool {
     }
 
     fn build_rust_tool(&self) -> PyResult<RustBashTool> {
-        let mut builder = RustBashTool::builder();
+        let profile = self.profile.core();
+        let mut builder = RustBashTool::builder().profile(profile.clone());
 
         if let Some(ref username) = self.username {
             builder = builder.username(username);
@@ -5438,7 +5508,7 @@ impl BashTool {
             }
         }
 
-        let mut limits = ExecutionLimits::new();
+        let mut limits = profile.execution_limits().clone();
         if let Some(mc) = self.max_commands {
             limits = limits.max_commands(usize::try_from(mc).unwrap_or(usize::MAX));
         }
@@ -5488,6 +5558,7 @@ impl BashTool {
         readonly_filesystem=false,
         custom_builtins=None,
         network=None,
+        profile=PyExecutionProfile::Standard,
     ))]
     fn new(
         py: Python<'_>,
@@ -5505,8 +5576,10 @@ impl BashTool {
         readonly_filesystem: bool,
         custom_builtins: Option<&Bound<'_, PyDict>>,
         network: Option<&Bound<'_, PyDict>>,
+        profile: PyExecutionProfile,
     ) -> PyResult<Self> {
-        let mut builder = Bash::builder();
+        let core_profile = profile.core();
+        let mut builder = Bash::builder().profile(core_profile.clone());
 
         if let Some(ref u) = username {
             builder = builder.username(u);
@@ -5523,7 +5596,7 @@ impl BashTool {
             }
         }
 
-        let mut limits = ExecutionLimits::new();
+        let mut limits = core_profile.execution_limits().clone();
         if let Some(mc) = max_commands {
             limits = limits.max_commands(usize::try_from(mc).unwrap_or(usize::MAX));
         }
@@ -5571,6 +5644,7 @@ impl BashTool {
             rt,
             cancelled,
             username,
+            profile,
             hostname,
             cwd,
             env,
@@ -5865,6 +5939,7 @@ impl BashTool {
         readonly_filesystem=false,
         custom_builtins=None,
         network=None,
+        profile=PyExecutionProfile::Standard,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn from_snapshot(
@@ -5884,6 +5959,7 @@ impl BashTool {
         readonly_filesystem: bool,
         custom_builtins: Option<&Bound<'_, PyDict>>,
         network: Option<&Bound<'_, PyDict>>,
+        profile: PyExecutionProfile,
     ) -> PyResult<Self> {
         let tool = Self::new(
             py,
@@ -5901,6 +5977,7 @@ impl BashTool {
             readonly_filesystem,
             custom_builtins,
             network,
+            profile,
         )?;
         tool.restore_snapshot(py, data)?;
         Ok(tool)
@@ -5925,6 +6002,7 @@ impl BashTool {
         readonly_filesystem=false,
         custom_builtins=None,
         network=None,
+        profile=PyExecutionProfile::Standard,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn from_snapshot_keyed(
@@ -5945,6 +6023,7 @@ impl BashTool {
         readonly_filesystem: bool,
         custom_builtins: Option<&Bound<'_, PyDict>>,
         network: Option<&Bound<'_, PyDict>>,
+        profile: PyExecutionProfile,
     ) -> PyResult<Self> {
         let tool = Self::new(
             py,
@@ -5962,6 +6041,7 @@ impl BashTool {
             readonly_filesystem,
             custom_builtins,
             network,
+            profile,
         )?;
         tool.restore_snapshot_keyed(py, data, key)?;
         Ok(tool)
@@ -6605,6 +6685,7 @@ fn create_langchain_tool_spec() -> PyResult<pyo3::Py<PyDict>> {
 
 #[pymodule]
 fn _bashkit(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<PyExecutionProfile>()?;
     m.add_class::<PyBash>()?;
     m.add_class::<BashTool>()?;
     m.add_class::<ScriptedTool>()?;

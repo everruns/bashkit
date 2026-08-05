@@ -5,7 +5,7 @@
 // boundary and reports a generic error so unwinding cannot enter the foreign
 // caller and the returned error does not include panic details.
 
-use bashkit::{Bash, Error as BashError, ExecutionLimits, FileSystem};
+use bashkit::{Bash, Error as BashError, FileSystem};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -121,6 +121,8 @@ impl ApiFailure {
 struct ConfigV1 {
     schema_version: u32,
     #[serde(default)]
+    profile: ProfileConfigV1,
+    #[serde(default)]
     cwd: Option<String>,
     #[serde(default)]
     env: BTreeMap<String, String>,
@@ -136,6 +138,25 @@ struct ConfigV1 {
     readonly_filesystem: bool,
     #[serde(default)]
     capture_final_env: bool,
+}
+
+#[derive(Clone, Copy, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ProfileConfigV1 {
+    Hardened,
+    #[default]
+    Standard,
+    Interactive,
+}
+
+impl From<ProfileConfigV1> for bashkit::ExecutionProfileName {
+    fn from(value: ProfileConfigV1) -> Self {
+        match value {
+            ProfileConfigV1::Hardened => Self::Hardened,
+            ProfileConfigV1::Standard => Self::Standard,
+            ProfileConfigV1::Interactive => Self::Interactive,
+        }
+    }
 }
 
 #[derive(Default, Deserialize)]
@@ -180,7 +201,8 @@ fn build_from_config(config: ConfigV1) -> Result<Bash, ApiFailure> {
         ));
     }
 
-    let mut limits = ExecutionLimits::default();
+    let profile = bashkit::ExecutionProfile::named(config.profile.into());
+    let mut limits = profile.execution_limits().clone();
     if let Some(value) = config.limits.timeout_ms {
         limits.timeout = Duration::from_millis(value);
     }
@@ -201,6 +223,7 @@ fn build_from_config(config: ConfigV1) -> Result<Bash, ApiFailure> {
     limits.capture_final_env = config.capture_final_env;
 
     let mut builder = Bash::builder()
+        .profile(profile)
         .limits(limits)
         .readonly_filesystem(config.readonly_filesystem);
     if let Some(cwd) = config.cwd {

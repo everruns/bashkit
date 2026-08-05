@@ -117,6 +117,8 @@ All strings enter as a pointer plus length. Scripts, paths, configuration, and
 stderr are UTF-8; file contents and exact stdout may contain arbitrary bytes. A
 null pointer with zero length represents an empty byte sequence. Construction
 configuration is capped at `BASHKIT_MAX_CONFIG_BYTES` (10 MB).
+The versioned JSON accepts the closed profile names `hardened`, `standard`, and
+`interactive`; individual `limits` fields override the selected baseline.
 
 ## Errors and shell status
 

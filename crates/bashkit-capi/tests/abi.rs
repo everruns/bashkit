@@ -212,6 +212,10 @@ fn rejects_unknown_config_fields_and_versions() {
                 br#"{"schema_version":2}"#.as_slice(),
                 "unsupported configuration schema version 2",
             ),
+            (
+                br#"{"schema_version":1,"profile":"permissive"}"#.as_slice(),
+                "unknown variant",
+            ),
         ] {
             let mut bash = ptr::null_mut();
             let mut error = ptr::null_mut();

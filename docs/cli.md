@@ -95,17 +95,19 @@ Disable per-run:
 
 ## Execution limits
 
-Command and script modes start from sandboxed default execution limits:
+Command and script modes use the typed `Standard` profile and start from
+sandboxed default execution limits:
 10,000 commands, 10,000 iterations per loop, 1,000,000 total loop iterations,
-and a 30 second execution timeout. Interactive mode uses
-`ExecutionLimits::cli()` so counting limits and the execution timeout are
-effectively unlimited while memory guards (function depth, AST depth, parser
-fuel) stay on.
+and a 30 second execution timeout. Interactive mode uses the typed
+`Interactive` profile, so counting limits and the execution timeout are
+effectively unlimited while secure memory, managed-VFS, network, parser, and
+embedded-runtime defaults remain on.
 
 Override with:
 
 | Flag | Meaning |
 |------|---------|
+| `--profile hardened\|standard\|interactive` | Select the baseline explicitly (per-field flags below still override it) |
 | `--max-commands N` | Max commands per run |
 | `--max-loop-iterations N` | Max iterations in a single loop |
 | `--max-total-loop-iterations N` | Max iterations across all loops |

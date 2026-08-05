@@ -42,7 +42,7 @@ const DEFAULT_MAX_AST_DEPTH: usize = 100;
 /// stack in debug builds). Each parser recursion level uses ~4-8KB of stack in debug
 /// mode. 100 levels × ~8KB = ~800KB, well within 2MB.
 /// In release builds this could safely be higher, but we use one value for consistency.
-const HARD_MAX_AST_DEPTH: usize = 100;
+pub(crate) const HARD_MAX_AST_DEPTH: usize = 100;
 
 /// Default maximum parser operations (matches ExecutionLimits default)
 const DEFAULT_MAX_PARSER_OPERATIONS: usize = 100_000;
@@ -95,9 +95,9 @@ impl<'a> Parser<'a> {
 
     /// Create a new parser with custom depth and fuel limits.
     ///
-    /// THREAT[TM-DOS-022]: `max_depth` is clamped to `HARD_MAX_AST_DEPTH` (500)
+    /// THREAT[TM-DOS-022]: `max_depth` is clamped to `HARD_MAX_AST_DEPTH` (100)
     /// to prevent stack overflow from misconfiguration. Even if the caller passes
-    /// `max_depth = 1_000_000`, the parser will cap it at 500.
+    /// `max_depth = 1_000_000`, the parser will cap it at 100.
     pub fn with_limits(input: &'a str, max_depth: usize, max_fuel: usize) -> Self {
         Self::with_limits_and_timeout(input, max_depth, max_fuel, None)
     }

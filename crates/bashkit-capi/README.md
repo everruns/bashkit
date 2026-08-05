@@ -166,6 +166,7 @@ x86-64 application cannot load an ARM64 Bashkit library.
 ```json
 {
   "schema_version": 1,
+  "profile": "standard",
   "cwd": "/workspace",
   "env": {"CI": "true"},
   "files": {"/workspace/input.txt": "hello\n"},
@@ -186,6 +187,9 @@ x86-64 application cannot load an ARM64 Bashkit library.
 Unknown fields and schema versions are rejected. Text files may be initialized
 through `files`; use `bashkit_write_file()` for arbitrary bytes. Configuration
 input is capped at `BASHKIT_MAX_CONFIG_BYTES` (10 MB).
+
+`profile` is a closed enum: `"hardened"`, `"standard"`, or `"interactive"`.
+It defaults to `"standard"`; fields under `limits` are explicit overrides.
 
 ## Contract
 

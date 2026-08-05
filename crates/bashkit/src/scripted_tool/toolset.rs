@@ -8,10 +8,10 @@
 use super::{
     CallbackKind, RegisteredTool, ScriptedExecutionTrace, ScriptedTool, ToolArgs, ToolDef, ToolImpl,
 };
-use crate::ExecutionLimits;
 use crate::tool::{
     Tool, ToolError, ToolRequest, ToolResponse, ToolStatus, VERSION, tool_response_schema,
 };
+use crate::{ExecutionLimits, ExecutionProfile};
 use async_trait::async_trait;
 use std::sync::Arc;
 
@@ -268,6 +268,7 @@ pub struct ScriptingToolSetBuilder {
     short_desc: Option<String>,
     tools: Vec<RegisteredTool>,
     limits: Option<ExecutionLimits>,
+    profile: Option<ExecutionProfile>,
     env_vars: Vec<(String, String)>,
     mode: DiscoveryMode,
 }
@@ -280,6 +281,7 @@ impl ScriptingToolSetBuilder {
             short_desc: None,
             tools: Vec::new(),
             limits: None,
+            profile: None,
             env_vars: Vec::new(),
             mode: DiscoveryMode::Exclusive,
         }
@@ -342,6 +344,12 @@ impl ScriptingToolSetBuilder {
         self
     }
 
+    /// Apply a coherent execution profile to the inner scripted tool.
+    pub fn profile(mut self, profile: ExecutionProfile) -> Self {
+        self.profile = Some(profile);
+        self
+    }
+
     /// Add an environment variable visible inside scripts.
     pub fn env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.env_vars.push((key.into(), value.into()));
@@ -367,6 +375,10 @@ impl ScriptingToolSetBuilder {
         let mut builder = ScriptedTool::builder(&self.name).locale(&self.locale);
         builder = builder.short_description(&short_desc);
         builder = builder.compact_prompt(compact);
+
+        if let Some(profile) = &self.profile {
+            builder = builder.profile(profile.clone());
+        }
 
         if let Some(limits) = &self.limits {
             builder = builder.limits(limits.clone());

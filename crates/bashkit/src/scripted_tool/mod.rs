@@ -139,7 +139,7 @@ pub use crate::tool_def::{
     AsyncToolCallback, AsyncToolExec, SyncToolExec, ToolArgs, ToolCallback, ToolDef, ToolImpl,
 };
 
-use crate::{ExecutionLimits, Tool, ToolService};
+use crate::{ExecutionLimits, ExecutionProfile, Tool, ToolService};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 
@@ -241,6 +241,7 @@ pub struct ScriptedToolBuilder {
     short_desc: Option<String>,
     tools: Vec<RegisteredTool>,
     limits: Option<ExecutionLimits>,
+    profile: Option<ExecutionProfile>,
     env_vars: Vec<(String, String)>,
     compact_prompt: bool,
     /// When true, callback errors are replaced with a generic message to prevent
@@ -256,6 +257,7 @@ impl ScriptedToolBuilder {
             short_desc: None,
             tools: Vec::new(),
             limits: None,
+            profile: None,
             env_vars: Vec::new(),
             compact_prompt: false,
             sanitize_errors: true,
@@ -344,6 +346,15 @@ impl ScriptedToolBuilder {
         self
     }
 
+    /// Apply execution, session, and memory policy from a profile.
+    ///
+    /// Scripted tools always retain their disabled filesystem/network/runtime
+    /// surface; those capability policies are intentionally not widened.
+    pub fn profile(mut self, profile: ExecutionProfile) -> Self {
+        self.profile = Some(profile);
+        self
+    }
+
     /// Add an environment variable visible inside scripts.
     pub fn env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.env_vars.push((key.into(), value.into()));
@@ -399,6 +410,7 @@ impl ScriptedToolBuilder {
             ),
             tools: self.tools.clone(),
             limits: self.limits.clone(),
+            profile: self.profile.clone(),
             env_vars: self.env_vars.clone(),
             compact_prompt: self.compact_prompt,
             sanitize_errors: self.sanitize_errors,
@@ -469,6 +481,7 @@ pub struct ScriptedTool {
     pub(crate) description: String,
     pub(crate) tools: Vec<RegisteredTool>,
     pub(crate) limits: Option<ExecutionLimits>,
+    pub(crate) profile: Option<ExecutionProfile>,
     pub(crate) env_vars: Vec<(String, String)>,
     pub(crate) compact_prompt: bool,
     pub(crate) sanitize_errors: bool,

@@ -2,7 +2,7 @@
 // opt-in for trusted scripts only; --no-http remains for symmetry with other
 // feature toggles.
 // Decision: keep one-shot CLI on a current-thread runtime for lower cold-start.
-// Decision: interactive mode uses relaxed execution limits (ExecutionLimits::cli())
+// Decision: interactive mode uses the typed Interactive execution profile
 // because users have terminal control (Ctrl-C) and expect long-running sessions.
 // One-shot command/script mode uses sandboxed defaults unless explicitly overridden
 // by flags to avoid unbounded hangs for wrapper/automation usage.
@@ -23,7 +23,7 @@
 mod interactive;
 
 use anyhow::{Context, Result, bail};
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use std::{
     ffi::OsStr,
     io::{IsTerminal, Write},
@@ -48,6 +48,10 @@ const REMOVED_MCP_COMMAND: &str = "mcp";
 #[command(name = "bashkit")]
 #[command(author, version, about, long_about = None)]
 struct Args {
+    /// Resource-policy profile (defaults to standard, or interactive in REPL mode)
+    #[arg(long, value_enum)]
+    profile: Option<CliProfile>,
+
     /// Execute the given command string
     #[arg(short = 'c')]
     command: Option<String>,
@@ -126,6 +130,23 @@ struct Args {
     no_stdin: bool,
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum CliProfile {
+    Hardened,
+    Standard,
+    Interactive,
+}
+
+impl From<CliProfile> for bashkit::ExecutionProfileName {
+    fn from(value: CliProfile) -> Self {
+        match value {
+            CliProfile::Hardened => Self::Hardened,
+            CliProfile::Standard => Self::Standard,
+            CliProfile::Interactive => Self::Interactive,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CliMode {
     Command,
@@ -138,7 +159,16 @@ fn build_bash(args: &Args, mode: CliMode) -> bashkit::Bash {
 }
 
 fn configure_bash(args: &Args, mode: CliMode) -> bashkit::BashBuilder {
-    let mut builder = bashkit::Bash::builder();
+    let profile_name = args.profile.map(Into::into).unwrap_or_else(|| {
+        if mode == CliMode::Interactive {
+            bashkit::ExecutionProfileName::Interactive
+        } else {
+            bashkit::ExecutionProfileName::Standard
+        }
+    });
+    let profile = bashkit::ExecutionProfile::named(profile_name);
+    let mut limits = profile.execution_limits().clone();
+    let mut builder = bashkit::Bash::builder().profile(profile);
 
     if args.http_allow_all && !args.no_http {
         builder = builder.network(bashkit::NetworkAllowlist::allow_all());
@@ -165,12 +195,7 @@ fn configure_bash(args: &Args, mode: CliMode) -> bashkit::BashBuilder {
         builder = apply_real_mounts(builder, &args.mount_ro, &args.mount_rw);
     }
 
-    // Interactive mode uses relaxed limits; one-shot keeps sandboxed defaults.
-    let mut limits = if mode == CliMode::Interactive {
-        bashkit::ExecutionLimits::cli()
-    } else {
-        bashkit::ExecutionLimits::new()
-    };
+    // Flags are explicit per-field overrides on the selected profile.
     if let Some(v) = args.max_commands {
         limits = limits.max_commands(v);
     }
@@ -184,10 +209,6 @@ fn configure_bash(args: &Args, mode: CliMode) -> bashkit::BashBuilder {
         limits = limits.timeout(std::time::Duration::from_secs(v));
     }
     builder = builder.limits(limits);
-
-    if mode == CliMode::Interactive {
-        builder = builder.session_limits(bashkit::SessionLimits::unlimited());
-    }
 
     #[cfg(feature = "interactive")]
     if mode == CliMode::Interactive {

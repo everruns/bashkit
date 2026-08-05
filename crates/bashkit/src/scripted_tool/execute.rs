@@ -26,7 +26,11 @@ use std::time::Duration;
 impl ScriptedTool {
     /// Create a fresh Bash instance with all tool builtins registered.
     fn create_bash(&self, log: InvocationLog) -> Bash {
-        let mut builder = Bash::builder().logic_only();
+        let mut builder = Bash::builder();
+        if let Some(ref profile) = self.profile {
+            builder = builder.profile(profile.clone());
+        }
+        builder = builder.logic_only();
 
         if let Some(ref limits) = self.limits {
             builder = builder.limits(limits.clone());

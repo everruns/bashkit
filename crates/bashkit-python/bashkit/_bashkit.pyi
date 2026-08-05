@@ -1,7 +1,14 @@
 """Type stubs for bashkit native module."""
 
 from collections.abc import Awaitable, Callable, Mapping
-from typing import Any, Literal, Protocol, TypedDict
+from typing import Any, ClassVar, Literal, Protocol, TypedDict
+
+class ExecutionProfile:
+    """Closed set of named resource-policy baselines."""
+
+    Hardened: ClassVar[ExecutionProfile]
+    Standard: ClassVar[ExecutionProfile]
+    Interactive: ClassVar[ExecutionProfile]
 
 class BearerCredentialInjection(TypedDict):
     """Inject ``Authorization: Bearer <token>`` for matching URLs."""
@@ -481,6 +488,7 @@ class Bash:
         readonly_filesystem: bool = False,
         custom_builtins: Mapping[str, BuiltinCallback] | None = None,
         network: NetworkConfig | None = None,
+        profile: ExecutionProfile = ExecutionProfile.Standard,
     ) -> None:
         """Create a new Bash interpreter.
 
@@ -795,6 +803,7 @@ class Bash:
         readonly_filesystem: bool = False,
         custom_builtins: Mapping[str, BuiltinCallback] | None = None,
         network: NetworkConfig | None = None,
+        profile: ExecutionProfile = ExecutionProfile.Standard,
     ) -> Bash:
         """Create a new ``Bash`` from snapshot bytes and optional constructor kwargs."""
         ...
@@ -821,6 +830,7 @@ class Bash:
         readonly_filesystem: bool = False,
         custom_builtins: Mapping[str, BuiltinCallback] | None = None,
         network: NetworkConfig | None = None,
+        profile: ExecutionProfile = ExecutionProfile.Standard,
     ) -> Bash:
         """Create a new ``Bash`` from HMAC-protected snapshot bytes."""
         ...
@@ -1069,6 +1079,7 @@ class BashTool:
         readonly_filesystem: bool = False,
         custom_builtins: Mapping[str, BuiltinCallback] | None = None,
         network: NetworkConfig | None = None,
+        profile: ExecutionProfile = ExecutionProfile.Standard,
     ) -> None:
         """Create a new BashTool.
 
@@ -1366,6 +1377,7 @@ class BashTool:
         readonly_filesystem: bool = False,
         custom_builtins: Mapping[str, BuiltinCallback] | None = None,
         network: NetworkConfig | None = None,
+        profile: ExecutionProfile = ExecutionProfile.Standard,
     ) -> BashTool:
         """Create a new ``BashTool`` from snapshot bytes and optional constructor kwargs."""
         ...
@@ -1388,6 +1400,7 @@ class BashTool:
         readonly_filesystem: bool = False,
         custom_builtins: Mapping[str, BuiltinCallback] | None = None,
         network: NetworkConfig | None = None,
+        profile: ExecutionProfile = ExecutionProfile.Standard,
     ) -> BashTool:
         """Create a new ``BashTool`` from HMAC-protected snapshot bytes."""
         ...

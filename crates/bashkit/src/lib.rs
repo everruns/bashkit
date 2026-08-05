@@ -435,6 +435,7 @@ mod logging_impl;
 mod network;
 /// Parser module - exposed for fuzzing and testing
 pub mod parser;
+mod profile;
 /// Scripted tool: compose ToolDef+callback pairs into a single Tool via bash scripts.
 /// Requires the `scripted_tool` feature.
 #[cfg(feature = "scripted_tool")]
@@ -491,7 +492,13 @@ pub use limits::{
     ExecutionBudget, ExecutionBudgetExceeded, ExecutionBudgetLease, ExecutionCounters,
     ExecutionLimits, LimitExceeded, MemoryBudget, MemoryLimits, SessionLimits,
 };
+#[cfg(feature = "http_client")]
+pub use network::HttpLimits;
 pub use network::NetworkAllowlist;
+pub use profile::{
+    ExecutionProfile, ExecutionProfileBuilder, ExecutionProfileError, ExecutionProfileName,
+    ProfileNetworkPolicy,
+};
 pub use snapshot::{
     CapabilityDelta, CapabilityFingerprint, CheckoutPolicy, CommitId, CommitObject, CommitOptions,
     ObjectId, ObjectSource, PackedCommit, Snapshot, SnapshotDiff, SnapshotGraph, SnapshotOptions,
@@ -805,8 +812,8 @@ impl Default for Bash {
 /// `$HOME` / `~` is a real, writable directory. HOME defaults to
 /// `/home/<username>` (see Interpreter), which `InMemoryFs::new` does not create
 /// on its own. See issue #2128.
-fn inmem_fs_with_home(username: &str) -> InMemoryFs {
-    let fs = InMemoryFs::new();
+fn inmem_fs_with_home(username: &str, limits: FsLimits) -> InMemoryFs {
+    let fs = InMemoryFs::with_limits(limits);
     fs.add_dir(format!("/home/{username}"), 0o755);
     fs
 }
@@ -814,31 +821,7 @@ fn inmem_fs_with_home(username: &str) -> InMemoryFs {
 impl Bash {
     /// Create a new Bash instance with default settings.
     pub fn new() -> Self {
-        let base_inmem = inmem_fs_with_home(builtins::DEFAULT_USERNAME);
-        let base_fs: Arc<dyn FileSystem> = Arc::new(base_inmem);
-        let mountable = Arc::new(MountableFs::new(base_fs));
-        let fs: Arc<dyn FileSystem> = Arc::clone(&mountable) as Arc<dyn FileSystem>;
-        let interpreter = Interpreter::new(Arc::clone(&fs));
-        let parser_timeout = ExecutionLimits::default().parser_timeout;
-        let max_input_bytes = ExecutionLimits::default().max_input_bytes;
-        let max_ast_depth = ExecutionLimits::default().max_ast_depth;
-        let max_parser_operations = ExecutionLimits::default().max_parser_operations;
-        Self {
-            fs,
-            mountable,
-            readonly_filesystem: false,
-            interpreter,
-            parser_timeout,
-            max_input_bytes,
-            max_ast_depth,
-            max_parser_operations,
-            #[cfg(feature = "logging")]
-            log_config: logging::LogConfig::default(),
-            #[cfg(feature = "python")]
-            python_inprocess_opt_in: false,
-            #[cfg(feature = "sqlite")]
-            sqlite_inprocess_opt_in: false,
-        }
+        Self::builder().build()
     }
 
     /// Create a new BashBuilder for customized configuration.
@@ -1659,6 +1642,10 @@ pub struct BashBuilder {
     limits: ExecutionLimits,
     session_limits: SessionLimits,
     memory_limits: MemoryLimits,
+    /// Profile baseline retained for runtime-specific defaults.
+    profile: ExecutionProfile,
+    /// Quotas for the builder-managed in-memory filesystem.
+    filesystem_limits: FsLimits,
     trace_mode: TraceMode,
     trace_callback: Option<TraceCallback>,
     username: Option<String>,
@@ -1679,6 +1666,9 @@ pub struct BashBuilder {
     /// Network allowlist for curl/wget builtins
     #[cfg(feature = "http_client")]
     network_allowlist: Option<NetworkAllowlist>,
+    /// HTTP timeout/response limits, independent from destination policy.
+    #[cfg(feature = "http_client")]
+    http_limits: network::HttpLimits,
     /// Custom HTTP transport for curl/wget.
     #[cfg(feature = "http_client")]
     http_transport: Option<Arc<dyn network::HttpTransport>>,
@@ -1725,6 +1715,36 @@ pub struct BashBuilder {
 }
 
 impl BashBuilder {
+    /// Apply a validated policy baseline across all supported families.
+    ///
+    /// Call this before fine-grained setters and runtime registration. Later
+    /// builder calls are explicit overrides. A custom [`FileSystem`] supplied
+    /// through [`Self::fs`] owns its own quotas and replaces the managed-VFS
+    /// portion of the profile.
+    pub fn profile(mut self, profile: ExecutionProfile) -> Self {
+        self.limits = profile.execution_limits().clone();
+        self.session_limits = profile.session_limits().clone();
+        self.memory_limits = profile.memory_limits().clone();
+        self.filesystem_limits = profile.filesystem_limits().clone();
+        self.readonly_filesystem = profile.readonly_filesystem();
+        #[cfg(feature = "http_client")]
+        {
+            self.network_allowlist = match profile.network_policy() {
+                ProfileNetworkPolicy::Disabled => None,
+                ProfileNetworkPolicy::Allowlist(allowlist) => Some(allowlist.clone()),
+            };
+            self.http_limits = profile.http_limits().clone();
+        }
+        self.profile = profile;
+        self
+    }
+
+    /// Override quotas for the builder-managed in-memory filesystem.
+    pub fn filesystem_limits(mut self, limits: FsLimits) -> Self {
+        self.filesystem_limits = limits;
+        self
+    }
+
     /// Install one ToolDef-backed registry across shell, embedded Python, and
     /// embedded TypeScript. Runtime surfaces are included when their cargo
     /// features are enabled and share the registry's callback and policy Arcs.
@@ -1735,6 +1755,7 @@ impl BashBuilder {
         ));
         #[cfg(feature = "python")]
         {
+            let limits = self.profile.python_limits().clone();
             let names = vec!["__bashkit_tool_call".to_string()];
             let handler = registry.python_handler();
             let prelude = registry.python_prelude();
@@ -1742,7 +1763,7 @@ impl BashBuilder {
                 .builtin(
                     "python",
                     Box::new(
-                        builtins::Python::with_limits(builtins::PythonLimits::default())
+                        builtins::Python::with_limits(limits.clone())
                             .with_external_handler_and_prelude(
                                 names.clone(),
                                 handler.clone(),
@@ -1753,16 +1774,17 @@ impl BashBuilder {
                 .builtin(
                     "python3",
                     Box::new(
-                        builtins::Python::with_limits(builtins::PythonLimits::default())
+                        builtins::Python::with_limits(limits)
                             .with_external_handler_and_prelude(names, handler, prelude),
                     ),
                 );
         }
         #[cfg(feature = "typescript")]
         {
+            let limits = self.profile.typescript_limits().clone();
             self = self.extension(
                 builtins::TypeScriptExtension::with_external_handler_and_prelude(
-                    builtins::TypeScriptLimits::default(),
+                    limits,
                     registry.typescript_external_names(),
                     registry.typescript_handler(),
                     registry.typescript_prelude(),
@@ -1975,6 +1997,13 @@ impl BashBuilder {
     #[cfg(feature = "http_client")]
     pub fn network(mut self, allowlist: NetworkAllowlist) -> Self {
         self.network_allowlist = Some(allowlist);
+        self
+    }
+
+    /// Override HTTP request timeout and response-size limits.
+    #[cfg(feature = "http_client")]
+    pub fn http_limits(mut self, limits: network::HttpLimits) -> Self {
+        self.http_limits = limits;
         self
     }
 
@@ -2203,7 +2232,8 @@ impl BashBuilder {
     /// ```
     #[cfg(feature = "python")]
     pub fn python(self) -> Self {
-        self.python_with_limits(builtins::PythonLimits::default())
+        let limits = self.profile.python_limits().clone();
+        self.python_with_limits(limits)
     }
 
     /// Enable embedded SQLite (`sqlite`/`sqlite3` builtins) via Turso.
@@ -2226,7 +2256,8 @@ impl BashBuilder {
     /// ```
     #[cfg(feature = "sqlite")]
     pub fn sqlite(self) -> Self {
-        self.sqlite_with_limits(builtins::SqliteLimits::default())
+        let limits = self.profile.sqlite_limits().clone();
+        self.sqlite_with_limits(limits)
     }
 
     /// Enable embedded SQLite with custom limits and backend selection.
@@ -2318,7 +2349,8 @@ impl BashBuilder {
     /// ```
     #[cfg(feature = "typescript")]
     pub fn typescript(self) -> Self {
-        self.typescript_with_config(builtins::TypeScriptConfig::default())
+        let limits = self.profile.typescript_limits().clone();
+        self.typescript_with_limits(limits)
     }
 
     /// Enable embedded TypeScript with custom resource limits.
@@ -2988,7 +3020,7 @@ impl BashBuilder {
                 .username
                 .as_deref()
                 .unwrap_or(builtins::DEFAULT_USERNAME);
-            Arc::new(inmem_fs_with_home(username))
+            Arc::new(inmem_fs_with_home(username, self.filesystem_limits.clone()))
         };
 
         // Layer 1: Apply real filesystem mounts (if any)
@@ -3048,6 +3080,8 @@ impl BashBuilder {
             self.history_file,
             #[cfg(feature = "http_client")]
             self.network_allowlist,
+            #[cfg(feature = "http_client")]
+            self.http_limits,
             #[cfg(feature = "http_client")]
             self.http_transport,
             #[cfg(feature = "bot-auth")]
@@ -3291,6 +3325,7 @@ impl BashBuilder {
         host_builtins: Option<BuiltinRegistry>,
         history_file: Option<PathBuf>,
         #[cfg(feature = "http_client")] network_allowlist: Option<NetworkAllowlist>,
+        #[cfg(feature = "http_client")] http_limits: network::HttpLimits,
         #[cfg(feature = "http_client")] http_transport: Option<Arc<dyn network::HttpTransport>>,
         #[cfg(feature = "bot-auth")] bot_auth_config: Option<network::BotAuthConfig>,
         #[cfg(feature = "logging")] log_config: Option<logging::LogConfig>,
@@ -3346,7 +3381,7 @@ impl BashBuilder {
         // Configure HTTP client for network builtins
         #[cfg(feature = "http_client")]
         if let Some(allowlist) = network_allowlist {
-            let mut client = network::HttpClient::new(allowlist);
+            let mut client = network::HttpClient::with_limits(allowlist, http_limits);
             if let Some(transport) = http_transport {
                 client.set_transport(transport);
             }
