@@ -22,8 +22,8 @@ A dash means the feature is intentionally unsupported and has a recorded reason 
 | Capability | Rust BashBuilder | Rust BashTool | Rust ScriptedTool | CLI | Python | NAPI JavaScript | Browser WASM | C ABI |
 |---|---|---|---|---|---|---|---|---|
 | Host-configurable execution resource limits | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Host-triggered cancellation of in-flight execution | ✅ | — | — | — | ✅ | ✅ | — | — |
-| Execution deadlines or timeouts | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| Host-triggered cancellation of in-flight execution | ✅ | — | — | — | ✅ | ✅ | ✅ | — |
+| Execution deadlines or timeouts | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Bounded stdout and stderr with truncation reporting | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Initial virtual working directory | ✅ | ✅ | — | — | ✅ | ✅ | ✅ | ✅ |
 | Initial virtual environment | ✅ | ✅ | ✅ | — | ✅ | ✅ | ✅ | ✅ |
@@ -34,7 +34,7 @@ A dash means the feature is intentionally unsupported and has a recorded reason 
 | Host-provided HTTP transport or egress hook | ✅ | ✅ | — | — | — | — | — | — |
 | Host-visible virtual filesystem state | ✅ | ✅ | — | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Filesystem mounts beyond seeded virtual files | ✅ | ✅ | — | ✅ | ✅ | ✅ | — | — |
-| Snapshot and restore of interpreter state | ✅ | — | — | — | ✅ | ✅ | — | — |
+| Snapshot and restore of interpreter state | ✅ | — | — | — | ✅ | ✅ | ✅ | — |
 | Explicit embedded Python opt-in | ✅ | ✅ | — | ✅ | ✅ | ✅ | — | — |
 | Explicit embedded TypeScript opt-in | ✅ | ✅ | — | — | — | — | — | — |
 | Explicit embedded SQLite opt-in | ✅ | ✅ | — | ✅ | ✅ | ✅ | — | — |
@@ -91,14 +91,11 @@ A dash means the feature is intentionally unsupported and has a recorded reason 
 
 ### Browser WASM
 
-- `cancellation`: The single-threaded browser API exposes no cancellation handle.
-- `deadlines`: wasm32-unknown-unknown has no timer driver; deadlines are rejected rather than silently bypassed.
 - `stdin`: execute() accepts only a command string; pipelines still provide builtin stdin.
 - `tool_callbacks`: The slim browser package exposes custom builtins but no ScriptedTool class.
 - `network_policy`: The slim browser build has no network builtin or host socket access.
 - `transport_hooks`: The slim browser build has no HTTP transport.
 - `mounts`: Browser WASM exposes one in-memory VFS and no host filesystem mounts.
-- `snapshots`: The slim browser package does not expose snapshot serialization.
 - `runtime_python`: The slim browser build omits embedded language runtimes.
 - `runtime_typescript`: The slim browser build omits embedded language runtimes.
 - `runtime_sqlite`: The slim browser build omits embedded language runtimes.

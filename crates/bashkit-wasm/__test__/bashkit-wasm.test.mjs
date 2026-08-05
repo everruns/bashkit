@@ -111,19 +111,30 @@ test("child shell: piping a script into bash", async () => {
 // std::thread::spawn (awk file redirects). On single-threaded wasm they must
 // run inline instead. See knowledge/runtimes/browser-package.md.
 
-test("sleep returns immediately (no timer driver on wasm)", async () => {
+test("sleep yields to the host wall clock", async () => {
   const bash = new Bash();
-  const r = await bash.execute("sleep 2; echo slept");
+  const started = performance.now();
+  const r = await bash.execute("sleep 0.02; echo slept");
   assert.equal(r.stdout, "slept\n");
   assert.equal(r.exitCode, 0);
+  assert.ok(performance.now() - started >= 10);
 });
 
-test("timeout rejects unsupported wall-clock enforcement on wasm", async () => {
-  const bash = new Bash();
-  const r = await bash.execute("timeout 5 echo hi");
+test("timeout enforces a host wall-clock deadline", async () => {
+  const bash = new Bash({
+    customBuiltins: { pending: () => new Promise(() => {}) },
+  });
+  const r = await bash.execute("timeout 0.02 pending");
   assert.equal(r.stdout, "");
-  assert.match(r.stderr, /timeout is unsupported/);
-  assert.equal(r.exitCode, 125);
+  assert.equal(r.exitCode, 124);
+});
+
+test("options: timeoutMs bounds a pending async builtin", async () => {
+  const bash = new Bash({
+    timeoutMs: 20,
+    customBuiltins: { pending: () => new Promise(() => {}) },
+  });
+  await assert.rejects(bash.execute("pending"), /execution timeout/i);
 });
 
 test("background job runs and wait collects it", async () => {
@@ -232,6 +243,123 @@ test("vfs: bash.fs() returns a live handle", () => {
   const fs = bash.fs();
   fs.writeFile("/via-handle.txt", "handle\n");
   assert.equal(bash.executeSync("cat /via-handle.txt").stdout, "handle\n");
+});
+
+test("vfs: binary data round-trips without UTF-8 conversion", () => {
+  const bash = new Bash();
+  const bytes = Uint8Array.from([0, 255, 128, 10, 42]);
+  bash.writeFileBytes("/binary.dat", bytes);
+  assert.deepEqual(bash.readFileBytes("/binary.dat"), bytes);
+  bash.fs().appendFileBytes("/binary.dat", Uint8Array.from([1, 2]));
+  assert.deepEqual(
+    bash.fs().readFileBytes("/binary.dat"),
+    Uint8Array.from([0, 255, 128, 10, 42, 1, 2]),
+  );
+});
+
+// --- Gatekeeper analysis --------------------------------------------------
+
+test("analyze exposes the permission-gate projection without executing", () => {
+  const bash = new Bash();
+  const analysis = bash.analyze("cat notes.txt | grep todo > out.txt");
+  assert.deepEqual(analysis.commandNames, ["cat", "grep"]);
+  assert.deepEqual(analysis.commands.map((command) => command.name), ["cat", "grep"]);
+  assert.deepEqual(analysis.redirects, [
+    { path: "out.txt", mode: "write", isWrite: true },
+  ]);
+  assert.equal(analysis.isOpaque, false);
+  assert.equal(bash.exists("/out.txt"), false);
+});
+
+test("analyze marks dynamic dispatch opaque and rejects malformed scripts", () => {
+  const bash = new Bash();
+  assert.equal(bash.analyze("$cmd /tmp/file").isOpaque, true);
+  assert.throws(() => bash.analyze("if then"));
+});
+
+// --- Streaming and cancellation ------------------------------------------
+
+test("executeWithOutput streams stdout and stderr before the final result", async () => {
+  const bash = new Bash();
+  const chunks = [];
+  const result = await bash.executeWithOutput(
+    "echo one; echo bad >&2; echo two",
+    (stdout, stderr) => chunks.push([stdout, stderr]),
+  );
+  assert.deepEqual(chunks, [
+    ["one\n", ""],
+    ["", "bad\n"],
+    ["two\n", ""],
+  ]);
+  assert.equal(result.stdout, "one\ntwo\n");
+  assert.equal(result.stderr, "bad\n");
+});
+
+test("callback errors do not leak host paths or stacks", async () => {
+  const bash = new Bash({
+    customBuiltins: {
+      unsafeError: () => {
+        const error = new Error("builtin failed at file:///home/server/secret.ts:7");
+        error.stack = "at secret (file:///home/server/secret.ts:7)";
+        throw error;
+      },
+    },
+  });
+  const builtinResult = await bash.execute("unsafeError");
+  assert.doesNotMatch(builtinResult.stderr, /\/home\/|secret\.ts|at secret/);
+  assert.match(builtinResult.stderr, /<path>/);
+
+  await assert.rejects(
+    bash.executeWithOutput("echo chunk", () => {
+      const error = new Error("stream failed at(/home/server/output.ts:9)");
+      error.stack = "at callback (/home/server/output.ts:9)";
+      throw error;
+    }),
+    (error) => {
+      assert.doesNotMatch(error.message, /\/home\/|output\.ts|at callback/);
+      assert.match(error.message, /<path>/);
+      return true;
+    },
+  );
+});
+
+test("cancel aborts in-flight work and remains sticky until clearCancel", async () => {
+  let release;
+  let startedResolve;
+  const started = new Promise((resolve) => { startedResolve = resolve; });
+  const bash = new Bash({
+    customBuiltins: {
+      pause: () => {
+        startedResolve();
+        return new Promise((resolve) => { release = resolve; });
+      },
+    },
+  });
+  const running = bash.execute("pause; echo should-not-run");
+  await started;
+  bash.cancel();
+  release("");
+  await assert.rejects(running, /cancelled/);
+  await assert.rejects(bash.execute("echo still-cancelled"), /cancelled/);
+  bash.clearCancel();
+  assert.equal((await bash.execute("echo reusable")).stdout, "reusable\n");
+});
+
+// --- Content-addressed persistence ---------------------------------------
+
+test("commit and checkout restore persistent state", async () => {
+  const source = new Bash();
+  await source.execute("export TOKEN=kept");
+  source.writeFileBytes("/data.bin", Uint8Array.from([0, 255]));
+  const commit = source.commit({ meta: { turn: "one" } });
+  assert.match(commit.id, /^[0-9a-f]{64}$/);
+  assert.equal(commit.objectCount, Object.keys(commit.objects).length);
+  assert.ok(commit.selfContained);
+
+  const restored = new Bash();
+  restored.checkout(commit.id, commit.objects);
+  assert.equal((await restored.execute("echo $TOKEN")).stdout, "kept\n");
+  assert.deepEqual(restored.readFileBytes("/data.bin"), Uint8Array.from([0, 255]));
 });
 
 // --- Async custom builtins -------------------------------------------------

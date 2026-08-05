@@ -3,8 +3,11 @@
 /** A live handle to a `Bash` instance's virtual filesystem. */
 export interface FileSystem {
   readFile(path: string): string;
+  readFileBytes(path: string): Uint8Array;
   writeFile(path: string, content: string): void;
+  writeFileBytes(path: string, content: Uint8Array): void;
   appendFile(path: string, content: string): void;
+  appendFileBytes(path: string, content: Uint8Array): void;
   exists(path: string): boolean;
   mkdir(path: string): void;
   remove(path: string): void;
@@ -59,6 +62,8 @@ export interface BashOptions {
   maxCommands?: number;
   /** Max iterations per loop (resource limit). */
   maxLoopIterations?: number;
+  /** Wall-clock execution deadline in milliseconds. */
+  timeoutMs?: number;
   /** Max interpreter memory in bytes. */
   maxMemory?: number;
   /** Pre-created files seeded into the virtual filesystem (string contents). */
@@ -81,6 +86,51 @@ export interface ExecResult {
   readonly stderrTruncated: boolean;
 }
 
+export interface AnalyzedCommand {
+  readonly name: string | null;
+  readonly args: Array<string | null>;
+  readonly context: "direct" | "substitution" | "function_body";
+  readonly assignments: string[];
+  readonly isAssignmentOnly: boolean;
+}
+
+export interface AnalyzedRedirect {
+  readonly path: string | null;
+  readonly mode: "read" | "write" | "append";
+  readonly isWrite: boolean;
+}
+
+export interface ScriptAnalysis {
+  readonly commands: AnalyzedCommand[];
+  readonly redirects: AnalyzedRedirect[];
+  readonly functions: string[];
+  readonly commandNames: string[];
+  readonly hasDynamicCommands: boolean;
+  readonly hasCommandSubstitution: boolean;
+  readonly hasInterpreterReentry: boolean;
+  readonly truncated: boolean;
+  readonly isOpaque: boolean;
+}
+
+export interface CommitOptions {
+  parents?: string[];
+  meta?: Record<string, string>;
+  have?: string[];
+  excludeFilesystem?: boolean;
+  excludeFunctions?: boolean;
+}
+
+export interface PackedCommit {
+  readonly id: string;
+  readonly objectCount: number;
+  readonly storedBytes: number;
+  readonly selfContained: boolean;
+  readonly packed?: Uint8Array;
+  readonly objects: Record<string, Uint8Array>;
+}
+
+export type CheckoutPolicy = "strict" | "superset" | "force";
+
 /** Sandboxed bash interpreter running entirely in the browser. */
 export class Bash {
   constructor(options?: BashOptions);
@@ -92,13 +142,34 @@ export class Bash {
   executeSync(commands: string): ExecResult;
   /** Execute asynchronously; supports async custom builtins. */
   execute(commands: string): Promise<ExecResult>;
+  /** Execute asynchronously and receive incremental stdout/stderr chunks. */
+  executeWithOutput(
+    commands: string,
+    onOutput: (stdout: string, stderr: string) => void,
+  ): Promise<ExecResult>;
+  /** Static, advisory pre-execution analysis for permission gates. */
+  analyze(script: string): ScriptAnalysis;
+  /** Cancel at the next command boundary. Sticky until {@link clearCancel}. */
+  cancel(): void;
+  clearCancel(): void;
+  /** Capture content-addressed persistent state. */
+  commit(options?: CommitOptions): PackedCommit;
+  /** Restore a commit from its content-addressed objects. */
+  checkout(
+    commitId: string,
+    objects: Record<string, Uint8Array>,
+    policy?: CheckoutPolicy,
+  ): void;
   /** Reset to a fresh state, keeping options and registered custom builtins. */
   reset(): void;
   /** Live handle to the virtual filesystem (same VFS the script sees). */
   fs(): FileSystem;
   readFile(path: string): string;
+  readFileBytes(path: string): Uint8Array;
   writeFile(path: string, content: string): void;
+  writeFileBytes(path: string, content: Uint8Array): void;
   appendFile(path: string, content: string): void;
+  appendFileBytes(path: string, content: Uint8Array): void;
   exists(path: string): boolean;
   mkdir(path: string): void;
   remove(path: string): void;

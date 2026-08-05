@@ -172,24 +172,24 @@
     },
     "browser_wasm": {
       "label": "Browser WASM",
-      "supported": ["execution_limits", "output_caps", "cwd", "env", "custom_builtins", "virtual_filesystem"],
+      "supported": ["execution_limits", "cancellation", "deadlines", "output_caps", "cwd", "env", "custom_builtins", "virtual_filesystem", "snapshots"],
       "evidence": {
         "execution_limits": ["crates/bashkit-wasm/__test__/bashkit-wasm.test.mjs#options: maxLoopIterations bounds runaway loops"],
+        "cancellation": ["crates/bashkit-wasm/__test__/bashkit-wasm.test.mjs#cancel aborts in-flight work and remains sticky until clearCancel"],
+        "deadlines": ["crates/bashkit-wasm/__test__/bashkit-wasm.test.mjs#options: timeoutMs bounds a pending async builtin"],
         "output_caps": ["crates/bashkit-wasm/__test__/bashkit-wasm.test.mjs#output is capped and reports truncation"],
         "cwd": ["crates/bashkit-wasm/__test__/bashkit-wasm.test.mjs#options: env and cwd"],
         "env": ["crates/bashkit-wasm/__test__/bashkit-wasm.test.mjs#options: env and cwd"],
         "custom_builtins": ["crates/bashkit-wasm/__test__/bashkit-wasm.test.mjs#reset preserves registered custom builtins"],
-        "virtual_filesystem": ["crates/bashkit-wasm/__test__/bashkit-wasm.test.mjs#bash.fs() returns a live handle"]
+        "virtual_filesystem": ["crates/bashkit-wasm/__test__/bashkit-wasm.test.mjs#bash.fs() returns a live handle"],
+        "snapshots": ["crates/bashkit-wasm/__test__/bashkit-wasm.test.mjs#commit and checkout restore persistent state"]
       },
       "unsupported": {
-        "cancellation": "The single-threaded browser API exposes no cancellation handle.",
-        "deadlines": "wasm32-unknown-unknown has no timer driver; deadlines are rejected rather than silently bypassed.",
         "stdin": "execute() accepts only a command string; pipelines still provide builtin stdin.",
         "tool_callbacks": "The slim browser package exposes custom builtins but no ScriptedTool class.",
         "network_policy": "The slim browser build has no network builtin or host socket access.",
         "transport_hooks": "The slim browser build has no HTTP transport.",
         "mounts": "Browser WASM exposes one in-memory VFS and no host filesystem mounts.",
-        "snapshots": "The slim browser package does not expose snapshot serialization.",
         "runtime_python": "The slim browser build omits embedded language runtimes.",
         "runtime_typescript": "The slim browser build omits embedded language runtimes.",
         "runtime_sqlite": "The slim browser build omits embedded language runtimes."

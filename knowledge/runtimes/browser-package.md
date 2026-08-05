@@ -57,8 +57,9 @@ requirement into browser and edge bundles.
 
 Mirrors the `wasm` CI job: `scripted_tool` + `jq` on top of the default
 interpreter. Present: full bash syntax, the text-tool builtins (`grep`, `sed`,
-`awk`, `find`, `jq`, …), a virtual filesystem, resource limits, and JS custom
-builtins (sync + async).
+`awk`, `find`, `jq`, …), a binary-safe virtual filesystem, resource limits, JS
+custom builtins (sync + async), streaming output, cancellation, static script
+analysis, and content-addressed commit/checkout persistence.
 
 Absent (need sockets, threads, or a host FS the browser sandbox lacks):
 `http_client` (`curl`/`wget`), `ssh`, `sqlite`, embedded `python`, `realfs`
@@ -71,8 +72,8 @@ the app's own `fetch` instead.
 browser's one event loop. Two entry points:
 
 - **`executeSync(cmd)`** drives `Bash::exec` with `now_or_never` — a single
-  poll. Correct for scripts that never suspend (plain bash + `jq`; `sleep` and
-  background jobs do not suspend on wasm — see Limitations). If a script does
+  poll. Correct for scripts that never suspend (plain bash + `jq`; background
+  jobs still run inline). If a script does
   suspend (e.g. an async JS custom builtin) it throws, directing the caller to
   `execute()`. While a sync call is in flight an `AtomicBool` is set so async
   custom builtins fail fast with a clear message instead of returning `Pending`
@@ -81,6 +82,12 @@ browser's one event loop. Two entry points:
   `wasm-bindgen-futures::future_to_promise`. This is the path that can `await`
   async JS custom builtins (e.g. a GraphQL binary issuing a `fetch`/Relay
   request).
+- **`executeWithOutput(cmd, callback)`** uses core streaming execution and
+  invokes the callback with incremental stdout/stderr chunks.
+
+Wall-clock futures use the JavaScript host's `setTimeout` through
+`gloo-timers`. This supports `sleep`, builtin `timeout`, configured execution
+deadlines, and tool-level `timeoutMs` without a tokio reactor or wasm threads.
 
 ### `Send` bridging
 
@@ -134,13 +141,11 @@ pattern as `publish-js.yml`. Browser example smoke testing writes a file under
 
 ## Limitations (see [Known Limitations](../operations/limitations.md))
 
-- No wall-clock time on `wasm32-unknown-unknown` (no timer driver). This is a
-  hard platform constraint, so unsupported time-based controls fail closed:
-  - `sleep N` elapses **instantly** (it cannot suspend for real time).
-  - the `timeout N cmd` builtin and requests with tool-level `timeoutMs` are
-    rejected with an unsupported-timeout error (exit status 125).
-  - Runaway work is still bounded by the parser fuel budget and `maxCommands` /
-    `maxLoopIterations`, which do not depend on a clock.
+- Cancellation and host deadlines are cooperative. Pending async work and
+  wall-clock sleeps yield and can be timed out; synchronous CPU work cannot let
+  the event loop deliver `cancel()` or a timer until it yields. Parser fuel,
+  `maxCommands`, `maxLoopIterations`, and memory limits remain the hard bound
+  for that work.
 - Single-threaded: no OS threads (`std::thread::spawn` is unsupported) and no
   `tokio::spawn` reactor. Paths that hop to a thread or a background task on
   native run **inline** on wasm instead — background jobs (`cmd &`) execute

@@ -8,6 +8,9 @@
 * **Threat**: Registered TM-INF-032 for executing imported third-party behavior fixtures. Imports remain manually reviewed checked-in JSON, CI never fetches upstream content, and only explicitly marked portable cases reach the host-Bash oracle.
 * **Decision**: Made `StreamData` the authoritative byte transport for execution stdin, pipelines, redirects, results, callbacks, and native bindings. Text decoding is confined to shell/parser/text-builtin/JSON boundaries; command substitution removes NUL because Bash variables cannot contain it. Updated [Architecture](foundations/architecture.md), [Known Limitations](operations/limitations.md), and [Threat Model](security/threat-model.md).
 * **Testing**: Added byte-for-byte Bash differential and regressions for binary base64/head/cat pipelines, mixed UTF-8 and invalid bytes, redirects, output caps, callbacks, custom builtins, command substitution, and C/Python/Node binding results.
+* **Bindings**: Brought `@everruns/bashkit-wasm` to native-binding parity for the browser-critical surface: Gatekeeper `analyze()`, sticky cooperative cancellation, streaming stdout/stderr, content-addressed `commit()`/`checkout()`, and binary-safe VFS helpers. Contract and verification live in [Browser Package](runtimes/browser-package.md).
+* **Limitation removed**: L-WASM-001 is lifted. A JS host timer bridge now powers `sleep`, builtin and execution deadlines, and tool `timeoutMs` without threads or cross-origin isolation. Synchronous CPU work remains bounded by deterministic resource limits because the event loop cannot deliver timers or cancellation until execution yields.
+* **Threats**: TM-DOS-057 is fully mitigated now that JS-host wasm shares the portable execution deadline; TM-INF-028 now covers wasm output and custom-builtin callbacks, whose errors are message-only, path-stripped, and capped before crossing the sandbox boundary.
 
 ## 2026-08-01
 

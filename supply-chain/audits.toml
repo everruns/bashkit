@@ -65,6 +65,12 @@ criteria = "safe-to-deploy"
 delta = "0.7.4 -> 0.9.0"
 notes = "Reviewed delta: adds optional GetSize impls for dashmap, half, and parking_lot plus test refactors; no filesystem/process/network capabilities, and lock access is limited to normal Mutex/RwLock guards."
 
+[[audits.gloo-timers]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+version = "0.3.0"
+notes = "Reviewed complete crate: thin wasm-bindgen wrappers around host setTimeout/setInterval with RAII cancellation, plus futures channels. No Rust unsafe code, filesystem/network/process access, or attacker-controlled ambient capabilities; unchecked_ref casts wasm-bindgen Closure handles to the JavaScript Function type they represent."
+
 [[audits.hybrid-array]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"

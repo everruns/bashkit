@@ -99,16 +99,19 @@ bash.writeFile("/in.txt", "hello\n");
 await bash.execute("uppercase-file /in.txt && cat /out.txt"); // -> HELLO
 ```
 
-`ctx.fs` has `readFile`, `writeFile`, `appendFile`, `exists`, `mkdir`, `remove`,
-and `ls` — the same surface as the `Bash` VFS helpers below.
+`ctx.fs` has `readFile`, `writeFile`, `appendFile`, their binary-safe
+`*FileBytes` variants, `exists`, `mkdir`, `remove`, and `ls` — the same surface
+as the `Bash` VFS helpers below.
 
 ## Sync vs async
 
 - `executeSync(cmd)` — for plain bash and `jq`. Fast, returns an `ExecResult`
-  directly. Throws only if the script suspends — an async custom builtin;
-  `sleep` and background jobs do not suspend on wasm (see Limitations).
+  directly. Throws if the script suspends — for example `sleep` or an async
+  custom builtin.
 - `execute(cmd)` — returns `Promise<ExecResult>`. Required whenever an async
-  custom builtin may run.
+  custom builtin or wall-clock operation may run.
+- `executeWithOutput(cmd, callback)` — async execution plus incremental
+  `(stdout, stderr)` chunks. The returned `ExecResult` remains authoritative.
 
 ## Options
 
@@ -136,8 +139,32 @@ bash.ls("/data");             // ["x.txt"]
 bash.executeSync("cat /data/x.txt").stdout; // "hi\nthere\n"
 bash.remove("/data/x.txt");
 
+// Binary-safe I/O avoids UTF-8 conversion.
+bash.writeFileBytes("/data/blob", Uint8Array.from([0, 255]));
+bash.readFileBytes("/data/blob");
+
 // bash.fs() returns the same live handle passed to builtins as ctx.fs
 const fs = bash.fs();
+```
+
+## Analysis, cancellation, and persistence
+
+`analyze(script)` provides the same advisory Gatekeeper projection as the
+native bindings. Treat parse errors or `isOpaque` as deny/prompt, not safe:
+
+```js
+const analysis = bash.analyze("cat input.txt | jq . > output.json");
+if (analysis.isOpaque) throw new Error("permission prompt required");
+```
+
+`cancel()` sets a sticky cooperative flag checked at command boundaries;
+`clearCancel()` makes the instance reusable. `commit()` returns a
+content-addressed object set and `checkout(id, objects, policy?)` restores it:
+
+```js
+const saved = bash.commit();
+const resumed = new Bash();
+resumed.checkout(saved.id, saved.objects); // policy defaults to "superset"
 ```
 
 ## What's included
@@ -150,12 +177,10 @@ custom builtin (see above) so requests go through your app's own `fetch`.
 
 ## Limitations
 
-- **No wall-clock time.** `wasm32-unknown-unknown` has no reliable timer driver,
-  so `sleep N` elapses instantly. The `timeout N` builtin and tool requests with
-  `timeoutMs` fail closed with status 125 rather than accepting an unenforceable
-  deadline. Scripts without deadlines remain bounded by `maxCommands`,
-  `maxLoopIterations`, and the parser fuel budget — a `while true` loop throws a
-  resource-limit error rather than hanging.
+- **Cancellation is cooperative.** Host timers drive `sleep`, `timeout`, and
+  configured execution deadlines. A synchronous CPU loop cannot observe a JS
+  callback or `cancel()` until control returns to the event loop, so command,
+  loop, parser-fuel, and memory limits remain the hard bound for such work.
 - **`executeSync` can't run async builtins.** The single-threaded event loop
   can't settle a `Promise` without yielding; an async builtin under
   `executeSync` fails fast with a clear message. Use `execute()`.
