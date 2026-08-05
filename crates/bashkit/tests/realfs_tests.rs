@@ -32,6 +32,7 @@ mod windows_containment {
     #[tokio::test]
     async fn windows_containment_vfs_and_overlay_are_rooted_and_case_sensitive() {
         let lower = Arc::new(InMemoryFs::new());
+        lower.mkdir(Path::new("/Case"), false).await.unwrap();
         lower
             .write_file(Path::new("/Case/file.txt"), b"lower")
             .await
