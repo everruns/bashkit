@@ -784,6 +784,9 @@ pub struct Bash {
     /// Operator-approved in-process SQLite opt-in captured at build time.
     #[cfg(feature = "sqlite")]
     sqlite_inprocess_opt_in: bool,
+    /// Real host directories mounted into the VFS, for host-path resolution.
+    #[cfg(feature = "realfs")]
+    host_mounts: HostMounts,
 }
 
 impl Default for Bash {
@@ -829,6 +832,8 @@ impl Bash {
             python_inprocess_opt_in: false,
             #[cfg(feature = "sqlite")]
             sqlite_inprocess_opt_in: false,
+            #[cfg(feature = "realfs")]
+            host_mounts: HostMounts::default(),
         }
     }
 
@@ -1467,6 +1472,30 @@ impl Bash {
         self.interpreter.restore_shell_state(state);
     }
 
+    /// Real host directories mounted into this instance's VFS.
+    ///
+    /// Empty unless a `mount_real_*` builder method was used. Mounts that were
+    /// skipped at build time (allowlist rejection, canonicalize failure) are
+    /// absent, so what this reports is what is actually reachable.
+    #[cfg(feature = "realfs")]
+    pub fn host_mounts(&self) -> &HostMounts {
+        &self.host_mounts
+    }
+
+    /// Map a VFS path to the host path backing it.
+    ///
+    /// Shorthand for [`host_mounts().resolve()`](HostMounts::resolve). Returns
+    /// `None` for a relative path or one no mount covers — treat that as an
+    /// error, not a cue to fall back to a default directory.
+    ///
+    /// The typical use is an embedder bridging commands to host processes:
+    /// a builtin receives the VFS cwd in [`BuiltinContext::cwd`] and needs the
+    /// host directory to spawn in.
+    #[cfg(feature = "realfs")]
+    pub fn host_path_for(&self, vfs_path: impl AsRef<Path>) -> Option<PathBuf> {
+        self.host_mounts.resolve(vfs_path.as_ref())
+    }
+
     /// Names of all builtins dispatchable in this instance, sorted.
     ///
     /// Reflects what this build + configuration actually dispatches:
@@ -1583,6 +1612,89 @@ struct MountedLazyFile {
     size_hint: u64,
     mode: u32,
     loader: LazyLoader,
+}
+
+/// Where a real host directory ended up in the VFS.
+///
+/// Produced by the `mount_real_*` builder methods; `host_path` is the
+/// canonicalized host directory actually mounted, which may differ from the
+/// path passed in (symlinks, `/tmp` → `/private/tmp` on macOS).
+#[cfg(feature = "realfs")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostMount {
+    /// Canonicalized host directory.
+    pub host_path: PathBuf,
+    /// VFS path it is reachable at. `/` for a root overlay mount.
+    pub vfs_path: PathBuf,
+}
+
+/// The real host directories mounted into a [`Bash`] instance.
+///
+/// Decision: published because embedders bridging commands to host processes
+/// must map a VFS cwd back to a host directory, and hand-rolling that mapping
+/// is a trap — a naive string prefix match puts `/home/u/proj2` inside
+/// `/home/u/proj`. [`resolve`](Self::resolve) matches whole path components and
+/// prefers the longest match, so a specific mount always beats a root overlay.
+#[cfg(feature = "realfs")]
+#[derive(Debug, Clone, Default)]
+pub struct HostMounts {
+    mounts: Vec<HostMount>,
+}
+
+#[cfg(feature = "realfs")]
+impl HostMounts {
+    /// Build a table from mounts the caller already knows.
+    ///
+    /// Useful for the chicken-and-egg case: a [`CommandResolver`] is passed
+    /// *into* the builder, so the builtins it produces cannot call
+    /// [`Bash::host_mounts`] on an instance that does not exist yet. Construct
+    /// the table first, share one `Arc` between the resolver and the
+    /// `mount_real_*` calls, and both agree by construction.
+    ///
+    /// `host_path` should be canonicalized if the VFS mount was; compare
+    /// against [`Bash::host_mounts`] after building to confirm what actually
+    /// mounted.
+    pub fn new(mounts: impl IntoIterator<Item = HostMount>) -> Self {
+        Self {
+            mounts: mounts.into_iter().collect(),
+        }
+    }
+
+    /// Every mount, in the order the builder applied them.
+    pub fn all(&self) -> &[HostMount] {
+        &self.mounts
+    }
+
+    /// True when no real host directory is mounted.
+    pub fn is_empty(&self) -> bool {
+        self.mounts.is_empty()
+    }
+
+    /// Map a VFS path to the host path backing it.
+    ///
+    /// Returns `None` for a relative path, or when no mount covers it. Callers
+    /// must treat `None` as an error rather than falling back to a default
+    /// directory — running a host command in the wrong directory is worse than
+    /// refusing to run it.
+    ///
+    /// When mounts overlap (a workspace mounted inside a root overlay), the
+    /// longest matching VFS prefix wins.
+    pub fn resolve(&self, vfs_path: &Path) -> Option<PathBuf> {
+        if !vfs_path.is_absolute() {
+            return None;
+        }
+        self.mounts
+            .iter()
+            .filter_map(|mount| {
+                let rest = vfs_path.strip_prefix(&mount.vfs_path).ok()?;
+                Some((
+                    mount.vfs_path.components().count(),
+                    mount.host_path.join(rest),
+                ))
+            })
+            .max_by_key(|(depth, _)| *depth)
+            .map(|(_, host)| host)
+    }
 }
 
 /// A real host directory to mount in the VFS during builder construction.
@@ -2936,7 +3048,7 @@ impl BashBuilder {
 
         // Layer 1: Apply real filesystem mounts (if any)
         #[cfg(feature = "realfs")]
-        let base_fs = Self::apply_real_mounts(
+        let (base_fs, host_mounts) = Self::apply_real_mounts(
             &self.real_mounts,
             self.mount_path_allowlist.as_deref(),
             base_fs,
@@ -3005,6 +3117,12 @@ impl BashBuilder {
             #[cfg(feature = "ssh")]
             self.ssh_handler,
         );
+
+        // Set after build — avoids adding another arg to build_with_fs.
+        #[cfg(feature = "realfs")]
+        {
+            result.host_mounts = host_mounts;
+        }
 
         // Set hooks after build — avoids adding another arg to build_with_fs.
         let hooks = hooks::Hooks {
@@ -3100,13 +3218,16 @@ impl BashBuilder {
         real_mounts: &[MountedRealDir],
         mount_allowlist: Option<&[PathBuf]>,
         base_fs: Arc<dyn FileSystem>,
-    ) -> Arc<dyn FileSystem> {
+    ) -> (Arc<dyn FileSystem>, HostMounts) {
         if real_mounts.is_empty() {
-            return base_fs;
+            return (base_fs, HostMounts::default());
         }
 
         let mut current_fs = base_fs;
         let mut mount_points: Vec<(PathBuf, Arc<dyn FileSystem>)> = Vec::new();
+        // Only mounts that actually applied are recorded: a path skipped by the
+        // allowlist or a failed canonicalize must not look resolvable.
+        let mut host_mounts = HostMounts::default();
         let canonical_allowlist: Option<Vec<PathBuf>> = mount_allowlist.map(|allowlist| {
             allowlist
                 .iter()
@@ -3188,9 +3309,17 @@ impl BashBuilder {
                     // Overlay at root: real fs becomes the lower layer,
                     // existing VFS content overlaid on top
                     current_fs = Arc::new(OverlayFs::new(real_fs));
+                    host_mounts.mounts.push(HostMount {
+                        host_path: canonical_host,
+                        vfs_path: PathBuf::from("/"),
+                    });
                 }
                 Some(mount_point) => {
                     mount_points.push((mount_point.clone(), real_fs));
+                    host_mounts.mounts.push(HostMount {
+                        host_path: canonical_host,
+                        vfs_path: mount_point.clone(),
+                    });
                 }
             }
         }
@@ -3207,9 +3336,9 @@ impl BashBuilder {
                     );
                 }
             }
-            Arc::new(mountable)
+            (Arc::new(mountable), host_mounts)
         } else {
-            current_fs
+            (current_fs, host_mounts)
         }
     }
 
@@ -3355,6 +3484,8 @@ impl BashBuilder {
             python_inprocess_opt_in,
             #[cfg(feature = "sqlite")]
             sqlite_inprocess_opt_in,
+            #[cfg(feature = "realfs")]
+            host_mounts: HostMounts::default(),
         }
     }
 }

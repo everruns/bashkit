@@ -182,6 +182,39 @@ Symlinks are stored but intentionally not followed for security:
 - Prevents symlink escape attacks (TM-ESC-002)
 - Prevents symlink loop DoS (TM-DOS-011)
 
+## Host Mount Table (`HostMounts`)
+
+`realfs` mounts are recorded as a `HostMounts` table on the `Bash` instance:
+`Bash::host_mounts()` lists them, `Bash::host_path_for(vfs)` maps a VFS path
+back to the host path backing it.
+
+Decision: published because embedders that bridge commands to host processes
+must map a VFS cwd to a host directory to spawn in, and hand-rolling it is a
+trap — a naive string prefix match puts `/workspace2` inside `/workspace`.
+`HostMounts::resolve` matches whole path components and prefers the longest
+match, so a specific mount beats a root overlay.
+
+Rules:
+
+- Only mounts that actually applied are recorded. A path skipped by the
+  allowlist or a failed `canonicalize` is absent, so the table never reports a
+  host path for something that was never mounted.
+- `host_path` is the canonicalized host directory, which may differ from the
+  path passed to the builder (symlinks, `/tmp` → `/private/tmp` on macOS).
+- A root overlay mount (`mount_real_readonly` with no VFS path) is recorded at
+  `/`, so it acts as the catch-all. Without one, an uncovered path resolves to
+  `None`.
+- `None` means "no mount covers this". Callers must treat it as an error rather
+  than falling back to a default directory: spawning a host process in the
+  wrong directory is worse than refusing to spawn it.
+- `HostMounts::new` lets an embedder build the table up front. A
+  `CommandResolver` is passed *into* the builder, so builtins it produces
+  cannot call `Bash::host_mounts()` on an instance that does not exist yet;
+  sharing one `Arc` between the resolver and the `mount_real_*` calls makes
+  both agree by construction.
+
+Tests: `crates/bashkit/tests/integration/host_mounts_tests.rs`.
+
 ## Binding API Parity
 
 All language bindings must expose the same filesystem concepts:
