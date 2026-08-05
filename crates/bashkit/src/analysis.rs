@@ -676,7 +676,10 @@ mod tests {
         // The wrapped name is visible one argument to the right, so nothing is
         // hidden — flagging this opaque would make every `env FOO=1 cmd` prompt.
         assert!(!analysis.is_opaque());
-        assert_eq!(analysis.commands[0].args, [Some("cargo".into()), Some("--version".into())]);
+        assert_eq!(
+            analysis.commands[0].args,
+            [Some("cargo".into()), Some("--version".into())]
+        );
     }
 
     #[test]

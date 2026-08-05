@@ -464,8 +464,8 @@ pub use async_trait::async_trait;
 pub use builtins::git::GitConfig;
 pub use builtins::ssh::{SshAllowlist, SshConfig, TrustedHostKey};
 pub use builtins::{
-    BashkitContext, Builtin, BuiltinRegistry, ClapBuiltin, Context as BuiltinContext,
-    ExecutionExtensions, Extension,
+    BashkitContext, Builtin, BuiltinRegistry, ClapBuiltin, CommandResolver,
+    Context as BuiltinContext, ExecutionExtensions, Extension,
 };
 pub use clap;
 #[cfg(feature = "http_client")]
@@ -1617,6 +1617,8 @@ pub struct BashBuilder {
     /// Optional host-owned mutable registry. Entries here are consulted at
     /// dispatch time, so embedders can register/remove builtins after build.
     host_builtins: Option<BuiltinRegistry>,
+    /// Optional last-chance name resolver, consulted just before the 127 path.
+    command_resolver: Option<Arc<dyn CommandResolver>>,
     /// Files to mount in the virtual filesystem
     mounted_files: Vec<MountedFile>,
     /// Lazy files to mount (loaded on first read)
@@ -2337,6 +2339,50 @@ impl BashBuilder {
         self
     }
 
+    /// Install a last-chance [`CommandResolver`].
+    ///
+    /// [`BashBuilder::builtin`] and [`BashBuilder::builtin_registry`] both map
+    /// *known names* to builtins. A resolver is asked about a name the
+    /// interpreter could not otherwise resolve, so an embedder bridging an
+    /// open-ended command space (host executables, a remote tool catalog) does
+    /// not have to enumerate it before execution.
+    ///
+    /// Consulted last — after shell functions, special builtins, the host
+    /// registry, baked-in builtins, path-based scripts, and the `$PATH` search
+    /// — and only when all of those miss. It therefore cannot shadow an
+    /// existing command; use [`BashBuilder::builtin`] to override one.
+    ///
+    /// The resolved builtin runs through the normal builtin path, so
+    /// [`before_tool`](BashBuilder::before_tool) hooks fire with the resolved
+    /// name and can veto the call.
+    ///
+    /// Note that resolver-provided names are not enumerable, so they do not
+    /// appear in [`Bash::builtin_names`] or in `command not found` suggestions.
+    ///
+    /// ```
+    /// # use bashkit::{Bash, Builtin, BuiltinContext, CommandResolver, ExecResult, async_trait};
+    /// # use std::sync::Arc;
+    /// # struct Stub;
+    /// # #[async_trait]
+    /// # impl Builtin for Stub {
+    /// #     async fn execute(&self, _ctx: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {
+    /// #         Ok(ExecResult::ok("stub\n".to_string()))
+    /// #     }
+    /// # }
+    /// struct Resolver;
+    /// impl CommandResolver for Resolver {
+    ///     fn resolve(&self, name: &str) -> Option<Arc<dyn Builtin>> {
+    ///         (name == "deploy").then(|| Arc::new(Stub) as Arc<dyn Builtin>)
+    ///     }
+    /// }
+    ///
+    /// let bash = Bash::builder().command_resolver(Arc::new(Resolver)).build();
+    /// ```
+    pub fn command_resolver(mut self, resolver: Arc<dyn CommandResolver>) -> Self {
+        self.command_resolver = Some(resolver);
+        self
+    }
+
     /// Register a capability extension.
     ///
     /// Extensions contribute a related set of builtins as one unit. Commands
@@ -2942,6 +2988,7 @@ impl BashBuilder {
             self.trace_callback,
             self.custom_builtins,
             self.host_builtins,
+            self.command_resolver,
             self.history_file,
             #[cfg(feature = "http_client")]
             self.network_allowlist,
@@ -3186,6 +3233,7 @@ impl BashBuilder {
         trace_callback: Option<TraceCallback>,
         custom_builtins: HashMap<String, Box<dyn Builtin>>,
         host_builtins: Option<BuiltinRegistry>,
+        command_resolver: Option<Arc<dyn CommandResolver>>,
         history_file: Option<PathBuf>,
         #[cfg(feature = "http_client")] network_allowlist: Option<NetworkAllowlist>,
         #[cfg(feature = "http_client")] http_transport: Option<Arc<dyn network::HttpTransport>>,
@@ -3216,6 +3264,10 @@ impl BashBuilder {
             host_builtins,
             shell_profile,
         );
+
+        if let Some(resolver) = command_resolver {
+            interpreter.set_command_resolver(resolver);
+        }
 
         // Set environment variables (also override shell variable defaults)
         for (key, value) in &env {
