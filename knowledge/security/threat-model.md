@@ -413,6 +413,7 @@ execute permission (mode & 0o111); exit 127 missing / 126 non-executable; sheban
 | TM-INF-028 | JS `onOutput` callback errors expose host stack traces | When a caller-supplied `onOutput` callback throws, `toNativeOnOutput` in `wrapper.ts` propagated `error.stack` (host file paths, internal function names) across the sandbox boundary; script output is attacker-controlled and drives the callback, so an attacker could trigger a throw and read host deployment paths | Propagate `error.message` only; regex-strip absolute-path and `file://` segments (guards attacker-controlled message injection); cap at 256 chars. Regression test `onOutput error does not leak stack trace or host paths` in `__test__/streaming-output.spec.ts`; mitigation annotated `// THREAT[TM-INF-028]` in `wrapper.ts` | **FIXED** |
 | TM-INF-030 | Raw callback errors leak host internals through ScriptedTool/ToolImpl/ToolRegistry | Tool callbacks may throw errors containing API keys, connection strings, or stack traces; output is attacker-influenced and agent-visible | `sanitize_errors` defaults to true on `ScriptedTool`, `ToolImpl`, and the cross-runtime `ToolRegistry`; every shell/Python/TypeScript registry surface returns the same generic message (`scripted_tool/mod.rs`, `tool_def.rs`, `tool_registry.rs`) | **MITIGATED** |
 | TM-INF-031 | `final_env` capture bypasses output filtering and size caps | When `capture_final_env` is enabled, env contents are a user-visible output channel that could leak internal markers or exceed output limits | Visibility filtering + output-byte cap applied when building `final_env` (`interpreter/mod.rs`) | **MITIGATED** |
+| TM-INF-032 | Competitor fixture import executes untrusted upstream code in CI | Automatically downloading or mechanically copying third-party regression scripts into a host-shell oracle would let a compromised upstream run arbitrary commands with CI permissions; a source commit hash proves provenance, not trust | Competitor corpora are manually reviewed, data-only JSON checked into the repository with full commit provenance; CI performs no fetch; Bashkit cases run in the VFS with normal resource limits; only cases explicitly marked `real_bash` run under the host oracle, with a cleared environment and temporary cwd. The schema/classification gate is `competitor_corpus_has_complete_provenance_and_classification`; process contract is [Testing Strategy](../operations/testing.md) | **MITIGATED** |
 
 **TM-INF-022**: Generalizes TM-INF-016 to the whole builtin surface. Originating bug:
 `builtins/jq/` formatted jaq compile/parse errors with `{:?}`, leaking the jaq `File`
@@ -1251,6 +1252,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | SQLite opt-in and limits | TM-SQL-001 to TM-SQL-011 | `builtins/sqlite/` | Yes |
 | Path char validation (bidi) | TM-DOS-015, TM-UNI-003, TM-UNI-011 | `fs/limits.rs` | Partial (bidi yes, zero-width/tags no) |
 | Builtin panic catching | TM-INT-001, TM-UNI-001, TM-UNI-002, TM-UNI-015, TM-UNI-016, TM-UNI-017 | `interpreter/mod.rs` | Yes (catch_unwind) |
+| Reviewed competitor fixtures | TM-INF-032 | `tests/fixtures/competitor-regressions/`, `competitor_regression_tests.rs` | Yes |
 
 ### Open Controls (From 2026-03 Security Audit)
 
@@ -1375,6 +1377,7 @@ FsLimits::new()
 - `tests/builtin_error_security_tests.rs` - Custom builtin error handling tests (39 tests)
 - `tests/network_security_tests.rs` - HTTP security tests (53 tests: allowlist, size limits, timeouts)
 - `tests/logging_security_tests.rs` - Logging security tests (redaction, injection)
+- `tests/integration/competitor_regression_tests.rs` - third-party fixture provenance and execution boundary (TM-INF-032)
 
 **Recommendations**:
 - Add cargo-fuzz for parser and input handling

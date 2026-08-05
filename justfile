@@ -103,6 +103,11 @@ check-bash-compat:
 check-bash-compat-verbose:
     ./scripts/update-spec-expected.sh --verbose
 
+# Run the checked-in quarterly competitor regression corpus. Hermetic: the
+# HTTP case uses an injected transport and no fixture is fetched at test time.
+competitor-regressions:
+    cargo test -p bashkit --test integration --features http_client,jq competitor_regression_tests
+
 # Generate comprehensive compatibility report
 compat-report:
     cargo test --test integration -- spec_tests::bash_comparison_tests --ignored --nocapture

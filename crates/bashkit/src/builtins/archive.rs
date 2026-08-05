@@ -5,6 +5,10 @@
 //! All decompression operations check output size against filesystem limits
 //! to prevent zip bomb attacks. Decompression is aborted early if the
 //! output would exceed limits.
+//!
+//! Design decision: tar's first bare argv is the historical option bundle;
+//! normalize it to the regular short-option path instead of maintaining a
+//! second parser.
 
 // Uses expect() for verified safe unwraps (e.g., strip_suffix after ends_with check)
 #![allow(clippy::unwrap_used)]
@@ -94,8 +98,25 @@ impl Builtin for Tar {
         let mut change_dir: Option<String> = None;
         let mut files: Vec<String> = Vec::new();
 
+        // GNU/bsdtar treat a bare first word as the historical option bundle.
+        // Normalize only that argv position so the regular short-option parser
+        // remains the single source of truth for flags and option arguments.
+        let normalized_args;
+        let args = if ctx
+            .args
+            .first()
+            .is_some_and(|arg| !arg.starts_with('-') && !arg.starts_with('+'))
+        {
+            normalized_args = std::iter::once(format!("-{}", ctx.args[0]))
+                .chain(ctx.args[1..].iter().cloned())
+                .collect::<Vec<_>>();
+            normalized_args.as_slice()
+        } else {
+            ctx.args
+        };
+
         // Parse arguments
-        let mut p = super::arg_parser::ArgParser::new(ctx.args);
+        let mut p = super::arg_parser::ArgParser::new(args);
         while !p.is_done() {
             if let Some(val) = p.flag_value_opt("-f") {
                 archive_file = Some(val.to_string());
@@ -1106,6 +1127,32 @@ mod tests {
         let result = Tar.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
         assert!(result.stdout.contains("test.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_tar_rejects_unknown_old_style_option() {
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+        let args = vec!["qf".to_string(), "archive.tar".to_string()];
+        let ctx = Context {
+            args: &args,
+            env: &env,
+            variables: &mut variables,
+            cwd: &mut cwd,
+            fs,
+            stdin: None,
+            #[cfg(feature = "http_client")]
+            http_client: None,
+            #[cfg(feature = "git")]
+            git_client: None,
+            #[cfg(feature = "ssh")]
+            ssh_client: None,
+            shell: None,
+        };
+
+        let result = Tar.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 2);
+        assert_eq!(result.stderr, "tar: invalid option -- 'q'\n");
     }
 
     #[tokio::test]
