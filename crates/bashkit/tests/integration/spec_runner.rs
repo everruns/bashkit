@@ -189,7 +189,7 @@ pub async fn run_spec_test_with(
     let mut bash = make_bash();
 
     let (bashkit_stdout, bashkit_exit_code, error) = match bash.exec(&test.script).await {
-        Ok(result) => (result.stdout, result.exit_code, None),
+        Ok(result) => (result.stdout.to_string(), result.exit_code, None),
         Err(e) => (String::new(), 1, Some(e.to_string())),
     };
 
@@ -234,7 +234,7 @@ async fn run_spec_test_paused_time(test: &SpecTest) -> TestResult {
         rt.block_on(async {
             let mut bash = Bash::new();
             match bash.exec(&script).await {
-                Ok(result) => (result.stdout, result.exit_code, None),
+                Ok(result) => (result.stdout.to_string(), result.exit_code, None),
                 Err(e) => (String::new(), 1, Some(e.to_string())),
             }
         })

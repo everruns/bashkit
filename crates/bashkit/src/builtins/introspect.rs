@@ -115,7 +115,7 @@ impl Builtin for Type {
 
         let exit_code = if all_found { 0 } else { 1 };
         Ok(ExecResult {
-            stdout: output,
+            stdout: output.into(),
             exit_code,
             ..Default::default()
         })
@@ -152,7 +152,7 @@ impl Builtin for Which {
 
         let exit_code = if all_found { 0 } else { 1 };
         Ok(ExecResult {
-            stdout: output,
+            stdout: output.into(),
             exit_code,
             ..Default::default()
         })

@@ -2473,7 +2473,11 @@ pub struct ExecResult {
     #[pyo3(get)]
     pub stdout: String,
     #[pyo3(get)]
+    pub stdout_bytes: Vec<u8>,
+    #[pyo3(get)]
     pub stderr: String,
+    #[pyo3(get)]
+    pub stderr_bytes: Vec<u8>,
     #[pyo3(get)]
     pub exit_code: i32,
     #[pyo3(get)]
@@ -2796,9 +2800,13 @@ impl BuiltinResult {
 // ============================================================================
 
 fn py_exec_result_from_rust(result: RustExecResult) -> ExecResult {
+    let stdout_bytes = result.stdout.as_bytes().to_vec();
+    let stderr_bytes = result.stderr.as_bytes().to_vec();
     ExecResult {
-        stdout: result.stdout,
-        stderr: result.stderr,
+        stdout: result.stdout.to_string(),
+        stdout_bytes,
+        stderr: result.stderr.to_string(),
+        stderr_bytes,
         exit_code: result.exit_code,
         error: None,
         stdout_truncated: result.stdout_truncated,
@@ -2811,7 +2819,9 @@ fn py_exec_result_from_error(err: impl ToString) -> ExecResult {
     let msg = err.to_string();
     ExecResult {
         stdout: String::new(),
+        stdout_bytes: Vec::new(),
         stderr: msg.clone(),
+        stderr_bytes: msg.as_bytes().to_vec(),
         exit_code: 1,
         error: Some(msg),
         stdout_truncated: false,
@@ -2952,7 +2962,7 @@ fn make_py_builtin_context(
         PyBuiltinContext {
             name: name.to_string(),
             argv: ctx.args.to_vec(),
-            stdin: ctx.stdin.map(str::to_owned),
+            stdin: ctx.stdin.map(ToString::to_string),
             env: ctx.env.clone(),
             cwd: ctx.cwd.to_string_lossy().into_owned(),
             fs,
@@ -3873,8 +3883,8 @@ fn extract_custom_builtin_callback_result(
 
     if let Ok(shell_result) = result.extract::<PyRef<'_, BuiltinResult>>() {
         return Ok(RustExecResult {
-            stdout: shell_result.stdout.clone(),
-            stderr: shell_result.stderr.clone(),
+            stdout: shell_result.stdout.clone().into(),
+            stderr: shell_result.stderr.clone().into(),
             exit_code: shell_result.exit_code,
             ..Default::default()
         });
@@ -4088,7 +4098,11 @@ fn build_python_output_callback(
             // Re-enter the caller's copied ContextVar snapshot for each chunk.
             let result = on_output.context.bind(py).call_method1(
                 "run",
-                (on_output.callback.bind(py), stdout_chunk, stderr_chunk),
+                (
+                    on_output.callback.bind(py),
+                    stdout_chunk.to_string(),
+                    stderr_chunk.to_string(),
+                ),
             )?;
             let is_awaitable = on_output
                 .is_awaitable
@@ -6362,9 +6376,13 @@ impl ScriptedTool {
                     timeout_ms: None,
                 })
                 .await;
+            let stdout_bytes = resp.stdout.as_bytes().to_vec();
+            let stderr_bytes = resp.stderr.as_bytes().to_vec();
             Ok(ExecResult {
                 stdout: resp.stdout,
+                stdout_bytes,
                 stderr: resp.stderr,
+                stderr_bytes,
                 exit_code: resp.exit_code,
                 error: resp.error,
                 stdout_truncated: resp.stdout_truncated,
@@ -6397,9 +6415,13 @@ impl ScriptedTool {
                 .await
             })
         });
+        let stdout_bytes = resp.stdout.as_bytes().to_vec();
+        let stderr_bytes = resp.stderr.as_bytes().to_vec();
         Ok(ExecResult {
             stdout: resp.stdout,
+            stdout_bytes,
             stderr: resp.stderr,
+            stderr_bytes,
             exit_code: resp.exit_code,
             error: resp.error,
             stdout_truncated: resp.stdout_truncated,

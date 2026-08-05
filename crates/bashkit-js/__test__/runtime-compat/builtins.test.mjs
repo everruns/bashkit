@@ -77,6 +77,11 @@ describe("builtins", () => {
     assert.equal(bash.executeSync(`echo -n '${encoded}' | base64 -d`).stdout, "hello");
   });
 
+  it("returns exact binary stdout bytes", () => {
+    const result = new Bash().executeSync("printf 'AAH//g==' | base64 -d | cat");
+    assert.deepEqual(Array.from(result.stdoutBytes), [0x00, 0x01, 0xff, 0xfe]);
+  });
+
   it("jq JSON processing", () => {
     const bash = new Bash();
     assert.equal(

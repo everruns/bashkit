@@ -121,9 +121,9 @@ async fn checksum_execute<D: Digest>(ctx: &Context<'_>, cmd: &str) -> Result<Exe
     Ok(ExecResult::ok(output))
 }
 
-fn write_stdin_digest<D: Digest>(stdin: Option<&str>, output: &mut String) {
-    let input = stdin.unwrap_or("");
-    let hash = hex_digest::<D>(input.as_bytes());
+fn write_stdin_digest<D: Digest>(stdin: Option<&crate::StreamData>, output: &mut String) {
+    let input = stdin.map(crate::StreamData::as_bytes).unwrap_or_default();
+    let hash = hex_digest::<D>(input);
     output.push_str(&hash);
     output.push_str("  -\n");
 }
@@ -159,7 +159,7 @@ mod tests {
             variables: &mut variables,
             cwd: &mut cwd,
             fs,
-            stdin,
+            stdin: crate::builtins::test_stream_opt(stdin),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]

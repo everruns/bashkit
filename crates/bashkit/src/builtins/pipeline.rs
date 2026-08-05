@@ -217,7 +217,7 @@ impl Builtin for Xargs {
             Err(e) => return Ok(e),
         };
 
-        let input = ctx.stdin.unwrap_or("");
+        let input = ctx.stdin.map(|stdin| &**stdin).unwrap_or("");
         if input.is_empty() {
             return Ok(ExecResult::ok(String::new()));
         }
@@ -254,7 +254,7 @@ impl Builtin for Xargs {
             Err(_) => return Ok(None), // Let execute() handle the error
         };
 
-        let input = ctx.stdin.unwrap_or("");
+        let input = ctx.stdin.map(|stdin| &**stdin).unwrap_or("");
         if input.is_empty() {
             return Ok(None); // Let execute() handle empty input
         }
@@ -324,7 +324,7 @@ impl Builtin for Tee {
             .map(|vs| vs.map(|v| v.to_string_lossy().into_owned()).collect())
             .unwrap_or_default();
 
-        let input = ctx.stdin.unwrap_or("");
+        let input = ctx.stdin.map(|stdin| &**stdin).unwrap_or("");
 
         for file in &files {
             // tee(1): "If a FILE is -, it refers to a file named - ."
@@ -453,7 +453,7 @@ mod tests {
             variables: &mut variables,
             cwd: &mut cwd,
             fs: fs.clone(),
-            stdin: Some("foo bar baz"),
+            stdin: Some(crate::builtins::test_stream("foo bar baz")),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]
@@ -480,7 +480,7 @@ mod tests {
             variables: &mut variables,
             cwd: &mut cwd,
             fs: fs.clone(),
-            stdin: Some("file1 file2"),
+            stdin: Some(crate::builtins::test_stream("file1 file2")),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]
@@ -507,7 +507,7 @@ mod tests {
             variables: &mut variables,
             cwd: &mut cwd,
             fs: fs.clone(),
-            stdin: Some("a b c"),
+            stdin: Some(crate::builtins::test_stream("a b c")),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]
@@ -544,7 +544,7 @@ mod tests {
             variables: &mut variables,
             cwd: &mut cwd,
             fs: fs.clone(),
-            stdin: Some("file1\nfile2"),
+            stdin: Some(crate::builtins::test_stream("file1\nfile2")),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]
@@ -572,7 +572,7 @@ mod tests {
             variables: &mut variables,
             cwd: &mut cwd,
             fs: fs.clone(),
-            stdin: Some("a:b:c"),
+            stdin: Some(crate::builtins::test_stream("a:b:c")),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]
@@ -599,7 +599,7 @@ mod tests {
             variables: &mut variables,
             cwd: &mut cwd,
             fs: fs.clone(),
-            stdin: Some(""),
+            stdin: Some(crate::builtins::test_stream("")),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]
@@ -626,7 +626,7 @@ mod tests {
             variables: &mut variables,
             cwd: &mut cwd,
             fs: fs.clone(),
-            stdin: Some("test"),
+            stdin: Some(crate::builtins::test_stream("test")),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]
@@ -653,7 +653,7 @@ mod tests {
             variables: &mut variables,
             cwd: &mut cwd,
             fs: fs.clone(),
-            stdin: Some("file1 file2"),
+            stdin: Some(crate::builtins::test_stream("file1 file2")),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]
@@ -686,7 +686,7 @@ mod tests {
             variables: &mut variables,
             cwd: &mut cwd,
             fs: fs.clone(),
-            stdin: Some("a b c"),
+            stdin: Some(crate::builtins::test_stream("a b c")),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]
@@ -722,7 +722,7 @@ mod tests {
             variables: &mut variables,
             cwd: &mut cwd,
             fs: fs.clone(),
-            stdin: Some("a b c"),
+            stdin: Some(crate::builtins::test_stream("a b c")),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]
@@ -749,7 +749,7 @@ mod tests {
             variables: &mut variables,
             cwd: &mut cwd,
             fs: fs.clone(),
-            stdin: Some("a"),
+            stdin: Some(crate::builtins::test_stream("a")),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]
@@ -785,7 +785,7 @@ mod tests {
             variables: &mut variables,
             cwd: &mut cwd,
             fs: fs.clone(),
-            stdin: Some("a b c d"),
+            stdin: Some(crate::builtins::test_stream("a b c d")),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]
@@ -828,7 +828,7 @@ mod tests {
             variables: &mut variables,
             cwd: &mut cwd,
             fs: fs.clone(),
-            stdin: Some("a b"),
+            stdin: Some(crate::builtins::test_stream("a b")),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]
@@ -865,7 +865,7 @@ mod tests {
             variables: &mut variables,
             cwd: &mut cwd,
             fs: fs.clone(),
-            stdin: Some("a b c"),
+            stdin: Some(crate::builtins::test_stream("a b c")),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]
@@ -914,7 +914,7 @@ mod tests {
             variables: &mut variables,
             cwd: &mut cwd,
             fs: fs.clone(),
-            stdin: Some("a b c d"),
+            stdin: Some(crate::builtins::test_stream("a b c d")),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]
@@ -947,7 +947,7 @@ mod tests {
             variables: &mut variables,
             cwd: &mut cwd,
             fs: fs.clone(),
-            stdin: Some("Hello, world!"),
+            stdin: Some(crate::builtins::test_stream("Hello, world!")),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]
@@ -977,7 +977,7 @@ mod tests {
             variables: &mut variables,
             cwd: &mut cwd,
             fs: fs.clone(),
-            stdin: Some("content"),
+            stdin: Some(crate::builtins::test_stream("content")),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]
@@ -1013,7 +1013,7 @@ mod tests {
             variables: &mut variables,
             cwd: &mut cwd,
             fs: fs.clone(),
-            stdin: Some("appended"),
+            stdin: Some(crate::builtins::test_stream("appended")),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]
@@ -1042,7 +1042,7 @@ mod tests {
             variables: &mut variables,
             cwd: &mut cwd,
             fs: fs.clone(),
-            stdin: Some("pass through"),
+            stdin: Some(crate::builtins::test_stream("pass through")),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]
@@ -1069,7 +1069,7 @@ mod tests {
             variables: &mut variables,
             cwd: &mut cwd,
             fs: fs.clone(),
-            stdin: Some("test"),
+            stdin: Some(crate::builtins::test_stream("test")),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]

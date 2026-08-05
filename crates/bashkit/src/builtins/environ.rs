@@ -123,8 +123,8 @@ impl Builtin for Printenv {
         }
 
         Ok(ExecResult {
-            stdout: output,
-            stderr: String::new(),
+            stdout: output.into(),
+            stderr: crate::StreamData::new(),
             exit_code,
             control_flow: crate::interpreter::ControlFlow::None,
             ..Default::default()

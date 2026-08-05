@@ -954,7 +954,7 @@ impl Builtin for Sed {
 
         // Determine input
         let inputs: Vec<(Option<String>, String)> = if opts.files.is_empty() {
-            vec![(None, ctx.stdin.unwrap_or("").to_string())]
+            vec![(None, ctx.stdin.map(ToString::to_string).unwrap_or_default())]
         } else {
             let mut inputs = Vec::new();
             for file in &opts.files {
@@ -1144,8 +1144,8 @@ impl Builtin for Sed {
             Ok(ExecResult::ok(output))
         } else {
             Ok(ExecResult {
-                stdout: output,
-                stderr: warnings,
+                stdout: output.into(),
+                stderr: warnings.into(),
                 exit_code: 0,
                 ..Default::default()
             })
@@ -1186,7 +1186,7 @@ mod tests {
             variables: &mut vars,
             cwd: &mut cwd,
             fs,
-            stdin,
+            stdin: crate::builtins::test_stream_opt(stdin),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]

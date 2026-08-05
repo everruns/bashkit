@@ -11,9 +11,9 @@ impl Interpreter {
     /// Process input redirections (< file, <<< string)
     pub(super) async fn process_input_redirections(
         &mut self,
-        existing_stdin: Option<String>,
+        existing_stdin: Option<crate::StreamData>,
         redirects: &[Redirect],
-    ) -> Result<Option<String>> {
+    ) -> Result<Option<crate::StreamData>> {
         let mut stdin = existing_stdin;
 
         for redirect in redirects {
@@ -31,7 +31,7 @@ impl Interpreter {
                     let path = self.resolve_path(&target_path);
                     // Handle /dev/null at interpreter level - cannot be bypassed
                     if is_dev_null(&path) {
-                        stdin = Some(String::new()); // EOF
+                        stdin = Some(crate::StreamData::new()); // EOF
                     } else if self.shell_profile.is_logic_only() {
                         return Err(crate::error::Error::Execution(format!(
                             "bash: {}: filesystem redirection disabled",
@@ -40,7 +40,7 @@ impl Interpreter {
                     } else {
                         match self.fs.read_file(&path).await {
                             Ok(content) => {
-                                stdin = Some(decode_file_bytes_for_path(&path, &content));
+                                stdin = Some(content.into());
                             }
                             Err(e) => {
                                 return Err(crate::error::Error::CommandFailure(format!(
@@ -53,12 +53,12 @@ impl Interpreter {
                 RedirectKind::HereString => {
                     // <<< string - use the target as stdin content
                     let content = self.expand_word(&redirect.target).await?;
-                    stdin = Some(format!("{}\n", content));
+                    stdin = Some(format!("{}\n", content).into());
                 }
                 RedirectKind::HereDoc | RedirectKind::HereDocStrip => {
                     // << EOF / <<- EOF - use the heredoc content as stdin
                     let content = self.expand_word(&redirect.target).await?;
-                    stdin = Some(content);
+                    stdin = Some(content.into());
                 }
                 RedirectKind::DupInput => {
                     // <&FD - if FD is a coproc read FD, consume next line
@@ -67,9 +67,9 @@ impl Interpreter {
                         && let Some(buf) = self.coproc_buffers.get_mut(&fd)
                     {
                         if let Some(line) = buf.pop() {
-                            stdin = Some(format!("{}\n", line));
+                            stdin = Some(format!("{}\n", line).into());
                         } else {
-                            stdin = Some(String::new()); // EOF
+                            stdin = Some(crate::StreamData::new()); // EOF
                         }
                     }
                 }
@@ -89,8 +89,8 @@ impl Interpreter {
         redirects: &[Redirect],
     ) -> Result<ExecResult> {
         if let Some(stderr) = self.logic_only_redirect_error(redirects) {
-            result.stdout = String::new();
-            result.stderr = stderr;
+            result.stdout = crate::StreamData::new();
+            result.stderr = stderr.into();
             result.exit_code = 1;
             return Ok(result);
         }
@@ -121,20 +121,18 @@ impl Interpreter {
                     let path = self.resolve_path(&target_path);
                     if is_dev_null(&path) {
                         match redirect.fd {
-                            Some(2) => result.stderr = String::new(),
-                            _ => {
-                                result.stdout = String::new();
-                                result.stdout_bytes = None;
-                            }
+                            Some(2) => result.stderr = crate::StreamData::new(),
+                            _ => result.stdout = crate::StreamData::new(),
                         }
                     } else {
                         if redirect.kind == RedirectKind::Output
                             && self.scoped.variables.get("SHOPT_C").map(|v| v.as_str()) == Some("1")
                             && self.fs.stat(&path).await.is_ok()
                         {
-                            result.stdout = String::new();
+                            result.stdout = crate::StreamData::new();
                             result.stderr =
-                                format!("bash: {}: cannot overwrite existing file\n", target_path);
+                                format!("bash: {}: cannot overwrite existing file\n", target_path)
+                                    .into();
                             result.exit_code = 1;
                             return Ok(result);
                         }
@@ -143,26 +141,24 @@ impl Interpreter {
                                 if let Err(e) =
                                     self.fs.write_file(&path, result.stderr.as_bytes()).await
                                 {
-                                    result.stderr = format!("bash: {}: {}\n", target_path, e);
+                                    result.stderr =
+                                        format!("bash: {}: {}\n", target_path, e).into();
                                     result.exit_code = 1;
                                     return Ok(result);
                                 }
-                                result.stderr = String::new();
+                                result.stderr = crate::StreamData::new();
                             }
                             _ => {
-                                let stdout = result
-                                    .stdout_bytes
-                                    .as_deref()
-                                    .unwrap_or(result.stdout.as_bytes());
-                                if let Err(e) = self.fs.write_file(&path, stdout).await {
-                                    result.stdout = String::new();
-                                    result.stdout_bytes = None;
-                                    result.stderr = format!("bash: {}: {}\n", target_path, e);
+                                if let Err(e) =
+                                    self.fs.write_file(&path, result.stdout.as_bytes()).await
+                                {
+                                    result.stdout = crate::StreamData::new();
+                                    result.stderr =
+                                        format!("bash: {}: {}\n", target_path, e).into();
                                     result.exit_code = 1;
                                     return Ok(result);
                                 }
-                                result.stdout = String::new();
-                                result.stdout_bytes = None;
+                                result.stdout = crate::StreamData::new();
                             }
                         }
                     }
@@ -172,11 +168,8 @@ impl Interpreter {
                     let path = self.resolve_path(&target_path);
                     if is_dev_null(&path) {
                         match redirect.fd {
-                            Some(2) => result.stderr = String::new(),
-                            _ => {
-                                result.stdout = String::new();
-                                result.stdout_bytes = None;
-                            }
+                            Some(2) => result.stderr = crate::StreamData::new(),
+                            _ => result.stdout = crate::StreamData::new(),
                         }
                     } else {
                         match redirect.fd {
@@ -184,26 +177,24 @@ impl Interpreter {
                                 if let Err(e) =
                                     self.fs.append_file(&path, result.stderr.as_bytes()).await
                                 {
-                                    result.stderr = format!("bash: {}: {}\n", target_path, e);
+                                    result.stderr =
+                                        format!("bash: {}: {}\n", target_path, e).into();
                                     result.exit_code = 1;
                                     return Ok(result);
                                 }
-                                result.stderr = String::new();
+                                result.stderr = crate::StreamData::new();
                             }
                             _ => {
-                                let stdout = result
-                                    .stdout_bytes
-                                    .as_deref()
-                                    .unwrap_or(result.stdout.as_bytes());
-                                if let Err(e) = self.fs.append_file(&path, stdout).await {
-                                    result.stdout = String::new();
-                                    result.stdout_bytes = None;
-                                    result.stderr = format!("bash: {}: {}\n", target_path, e);
+                                if let Err(e) =
+                                    self.fs.append_file(&path, result.stdout.as_bytes()).await
+                                {
+                                    result.stdout = crate::StreamData::new();
+                                    result.stderr =
+                                        format!("bash: {}: {}\n", target_path, e).into();
                                     result.exit_code = 1;
                                     return Ok(result);
                                 }
-                                result.stdout = String::new();
-                                result.stdout_bytes = None;
+                                result.stdout = crate::StreamData::new();
                             }
                         }
                     }
@@ -212,23 +203,18 @@ impl Interpreter {
                     let target_path = self.expand_word(&redirect.target).await?;
                     let path = self.resolve_path(&target_path);
                     if is_dev_null(&path) {
-                        result.stdout = String::new();
-                        result.stdout_bytes = None;
-                        result.stderr = String::new();
+                        result.stdout = crate::StreamData::new();
+                        result.stderr = crate::StreamData::new();
                     } else {
-                        let mut combined = result
-                            .stdout_bytes
-                            .clone()
-                            .unwrap_or_else(|| result.stdout.as_bytes().to_vec());
+                        let mut combined = result.stdout.as_bytes().to_vec();
                         combined.extend_from_slice(result.stderr.as_bytes());
                         if let Err(e) = self.fs.write_file(&path, &combined).await {
-                            result.stderr = format!("bash: {}: {}\n", target_path, e);
+                            result.stderr = format!("bash: {}: {}\n", target_path, e).into();
                             result.exit_code = 1;
                             return Ok(result);
                         }
-                        result.stdout = String::new();
-                        result.stdout_bytes = None;
-                        result.stderr = String::new();
+                        result.stdout = crate::StreamData::new();
+                        result.stderr = crate::StreamData::new();
                     }
                 }
                 RedirectKind::DupOutput => {
@@ -244,8 +230,8 @@ impl Interpreter {
                             std::mem::take(&mut result.stdout)
                         };
                         match &fd_target {
-                            FdTarget::Stdout => result.stdout.push_str(&data),
-                            FdTarget::Stderr => result.stderr.push_str(&data),
+                            FdTarget::Stdout => result.stdout.append(&data),
+                            FdTarget::Stderr => result.stderr.append(&data),
                             FdTarget::DevNull => {}
                             FdTarget::WriteFile(path, _) | FdTarget::AppendFile(path, _) => {
                                 self.fs.append_file(path, data.as_bytes()).await?;
@@ -254,12 +240,12 @@ impl Interpreter {
                     } else {
                         match (src_fd, target_fd) {
                             (2, 1) => {
-                                result.stdout.push_str(&result.stderr);
-                                result.stderr = String::new();
+                                result.stdout.append(&result.stderr);
+                                result.stderr = crate::StreamData::new();
                             }
                             (1, 2) => {
-                                result.stderr.push_str(&result.stdout);
-                                result.stdout = String::new();
+                                result.stderr.append(&result.stdout);
+                                result.stdout = crate::StreamData::new();
                             }
                             (src, dst) if dst >= 3 => {
                                 let data = if src == 2 {
@@ -340,9 +326,10 @@ impl Interpreter {
                         && !is_dev_null(&path)
                         && self.fs.stat(&path).await.is_ok()
                     {
-                        result.stdout = String::new();
+                        result.stdout = crate::StreamData::new();
                         result.stderr =
-                            format!("bash: {}: cannot overwrite existing file\n", target_path);
+                            format!("bash: {}: cannot overwrite existing file\n", target_path)
+                                .into();
                         result.exit_code = 1;
                         self.clear_pending_fd_redirect_state();
                         return Ok(result);
@@ -442,7 +429,7 @@ impl Interpreter {
                 self.fs.write_file(path, content.as_bytes()).await
             };
             if let Err(e) = write_result {
-                new_stderr = format!("bash: {}: {}\n", display_path, e);
+                new_stderr = format!("bash: {}: {}\n", display_path, e).into();
                 result.exit_code = 1;
                 result.stdout = new_stdout;
                 result.stderr = new_stderr;

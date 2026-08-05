@@ -4827,7 +4827,7 @@ echo ${#arr[@]}
         let result = bash.exec(script).await;
         let err_msg = match &result {
             Err(e) => e.to_string(),
-            Ok(r) => r.stderr.clone(),
+            Ok(r) => r.stderr.to_string(),
         };
         assert!(
             result.is_err(),

@@ -52,11 +52,9 @@ pub enum BuiltinSideEffect {
 #[derive(Debug, Clone, Default)]
 pub struct ExecResult {
     /// Standard output
-    pub stdout: String,
-    /// Exact stdout bytes when a builtin produces binary data.
-    pub stdout_bytes: Option<Vec<u8>>,
+    pub stdout: crate::StreamData,
     /// Standard error
-    pub stderr: String,
+    pub stderr: crate::StreamData,
     /// Exit code
     pub exit_code: i32,
     /// Control flow signal (break, continue, return)
@@ -80,10 +78,10 @@ pub struct ExecResult {
 
 impl ExecResult {
     /// Create a successful result with the given stdout.
-    pub fn ok(stdout: impl Into<String>) -> Self {
+    pub fn ok(stdout: impl Into<crate::StreamData>) -> Self {
         Self {
             stdout: stdout.into(),
-            stderr: String::new(),
+            stderr: crate::StreamData::new(),
             exit_code: 0,
             ..Default::default()
         }
@@ -91,20 +89,18 @@ impl ExecResult {
 
     /// Create a successful result with exact stdout bytes.
     pub fn ok_bytes(bytes: Vec<u8>) -> Self {
-        let stdout = bytes.iter().map(|&byte| byte as char).collect();
         Self {
-            stdout,
-            stdout_bytes: Some(bytes),
-            stderr: String::new(),
+            stdout: bytes.into(),
+            stderr: crate::StreamData::new(),
             exit_code: 0,
             ..Default::default()
         }
     }
 
     /// Create a failed result with the given stderr.
-    pub fn err(stderr: impl Into<String>, exit_code: i32) -> Self {
+    pub fn err(stderr: impl Into<crate::StreamData>, exit_code: i32) -> Self {
         Self {
-            stdout: String::new(),
+            stdout: crate::StreamData::new(),
             stderr: stderr.into(),
             exit_code,
             ..Default::default()
@@ -112,10 +108,10 @@ impl ExecResult {
     }
 
     /// Create a result with stdout and custom exit code.
-    pub fn with_code(stdout: impl Into<String>, exit_code: i32) -> Self {
+    pub fn with_code(stdout: impl Into<crate::StreamData>, exit_code: i32) -> Self {
         Self {
             stdout: stdout.into(),
-            stderr: String::new(),
+            stderr: crate::StreamData::new(),
             exit_code,
             ..Default::default()
         }
@@ -145,7 +141,7 @@ pub(crate) enum LoopAction {
     Continue,
     /// Exit the loop immediately and return this result to the caller.
     /// Used for multi-level break/continue propagation and return.
-    Exit(ExecResult),
+    Exit(Box<ExecResult>),
 }
 
 /// Accumulates stdout/stderr/exit_code/errexit_suppressed across loop
@@ -153,8 +149,8 @@ pub(crate) enum LoopAction {
 ///
 /// Eliminates duplicated tracking in for, arithmetic-for, and while/until loops.
 pub(crate) struct LoopAccumulator {
-    pub stdout: String,
-    pub stderr: String,
+    pub stdout: crate::StreamData,
+    pub stderr: crate::StreamData,
     pub exit_code: i32,
     pub errexit_suppressed: bool,
 }
@@ -162,8 +158,8 @@ pub(crate) struct LoopAccumulator {
 impl LoopAccumulator {
     pub fn new() -> Self {
         Self {
-            stdout: String::new(),
-            stderr: String::new(),
+            stdout: crate::StreamData::new(),
+            stderr: crate::StreamData::new(),
             exit_code: 0,
             errexit_suppressed: false,
         }
@@ -175,22 +171,26 @@ impl LoopAccumulator {
     /// For multi-level break/continue or return, builds a propagation
     /// `ExecResult` and returns `LoopAction::Exit`.
     pub fn accumulate(&mut self, result: ExecResult) -> LoopAction {
-        self.stdout.push_str(&result.stdout);
-        self.stderr.push_str(&result.stderr);
+        self.stdout.append(&result.stdout);
+        self.stderr.append(&result.stderr);
         self.exit_code = result.exit_code;
         self.errexit_suppressed = result.errexit_suppressed;
 
         match result.control_flow {
             ControlFlow::Break(n) if n <= 1 => LoopAction::Break,
-            ControlFlow::Break(n) => LoopAction::Exit(self.build_exit(ControlFlow::Break(n - 1))),
+            ControlFlow::Break(n) => {
+                LoopAction::Exit(Box::new(self.build_exit(ControlFlow::Break(n - 1))))
+            }
             ControlFlow::Continue(n) if n <= 1 => LoopAction::Continue,
             ControlFlow::Continue(n) => {
-                LoopAction::Exit(self.build_exit(ControlFlow::Continue(n - 1)))
+                LoopAction::Exit(Box::new(self.build_exit(ControlFlow::Continue(n - 1))))
             }
             ControlFlow::Return(code) => {
-                LoopAction::Exit(self.build_exit(ControlFlow::Return(code)))
+                LoopAction::Exit(Box::new(self.build_exit(ControlFlow::Return(code))))
             }
-            ControlFlow::Exit(code) => LoopAction::Exit(self.build_exit(ControlFlow::Exit(code))),
+            ControlFlow::Exit(code) => {
+                LoopAction::Exit(Box::new(self.build_exit(ControlFlow::Exit(code))))
+            }
             ControlFlow::None => LoopAction::None,
         }
     }

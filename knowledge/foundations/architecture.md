@@ -54,6 +54,21 @@ call: streaming callback, builtin extensions, `arg0`, `positional`, and
   immediately before execution. A pipe or redirect inside the script
   still wins for the command it applies to.
 
+### Byte-native streams
+
+`StreamData` is the canonical stdin/stdout/stderr transport value. Its byte
+buffer is authoritative through `ExecOptions`, interpreter pipeline state,
+redirections, `BuiltinContext`, `ExecResult`, and streaming callbacks. Output
+limits truncate by bytes, including in live callbacks. Byte-oriented builtins
+and bindings use `as_bytes()`/`into_bytes()`; text-oriented consumers cross an
+explicit UTF-8 boundary with `text()` or `text_lossy()`.
+
+Shell words and variables remain text. Command substitution therefore removes
+NUL bytes, as Bash does because variables cannot contain NUL, then decodes the
+remaining bytes for expansion and strips trailing newlines. JSON tool results
+are also text-only; native Rust, C, Python, Node, and browser results expose raw
+stdout/stderr bytes alongside their display strings.
+
 Both are installed late (just before `execute`) so the size, hook, and
 parse checks that can return early cannot leave state behind.
 

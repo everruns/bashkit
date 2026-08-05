@@ -432,7 +432,7 @@ fn curl_body_too_large_error() -> ExecResult {
 async fn resolve_data_body(
     parts: &[CurlDataPart],
     get_mode: bool,
-    stdin: Option<&str>,
+    stdin: Option<&crate::StreamData>,
     cwd: &std::path::Path,
     fs: &dyn crate::fs::FileSystem,
 ) -> std::result::Result<Option<Vec<u8>>, Box<ExecResult>> {
@@ -467,7 +467,7 @@ async fn resolve_data_body(
 async fn resolve_curl_data_part(
     part: &CurlDataPart,
     get_mode: bool,
-    stdin: Option<&str>,
+    stdin: Option<&crate::StreamData>,
     stdin_available: &mut bool,
     cwd: &std::path::Path,
     fs: &dyn crate::fs::FileSystem,
@@ -484,7 +484,10 @@ async fn resolve_curl_data_part(
     let bytes = if let Some((path, name)) = file {
         let contents = if path == "-" {
             let contents = if *stdin_available {
-                stdin.unwrap_or("").as_bytes().to_vec()
+                stdin
+                    .map(crate::StreamData::as_bytes)
+                    .unwrap_or_default()
+                    .to_vec()
             } else {
                 Vec::new()
             };
@@ -1007,11 +1010,12 @@ async fn execute_curl_request(
                 // Check for HTTP errors if -f flag is set
                 if fail_on_error && response.status >= 400 {
                     return Ok(ExecResult {
-                        stdout: String::new(),
+                        stdout: crate::StreamData::new(),
                         stderr: format!(
                             "curl: (22) The requested URL returned error: {}\n",
                             response.status
-                        ),
+                        )
+                        .into(),
                         exit_code: 22,
                         control_flow: crate::interpreter::ControlFlow::None,
                         ..Default::default()
@@ -1528,8 +1532,8 @@ async fn execute_wget_request(
             }
 
             Ok(ExecResult {
-                stdout: String::new(),
-                stderr: stderr_msg,
+                stdout: crate::StreamData::new(),
+                stderr: stderr_msg.into(),
                 exit_code: 0,
                 control_flow: crate::interpreter::ControlFlow::None,
                 ..Default::default()
@@ -1688,7 +1692,7 @@ mod tests {
             variables: &mut variables,
             cwd: &mut cwd,
             fs,
-            stdin,
+            stdin: crate::builtins::test_stream_opt(stdin),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]
@@ -1766,7 +1770,7 @@ mod tests {
         #[tokio::test]
         async fn test_curl_data_at_stdin_body_too_large() {
             let fs = InMemoryFs::new();
-            let large_body = "x".repeat(CURL_MAX_REQUEST_BODY_BYTES + 1);
+            let large_body = crate::StreamData::from("x".repeat(CURL_MAX_REQUEST_BODY_BYTES + 1));
             let parts = [CurlDataPart {
                 kind: CurlDataKind::Data,
                 value: "@-".to_string(),

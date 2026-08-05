@@ -128,20 +128,22 @@ impl ScriptedTool {
 
         let fut = async {
             let result = if let Some(sender) = stream_sender {
-                let output_cb = Box::new(move |stdout_chunk: &str, stderr_chunk: &str| {
-                    if !stdout_chunk.is_empty() {
-                        let _ = sender.send(ToolOutputChunk {
-                            data: serde_json::json!(stdout_chunk),
-                            kind: "stdout".to_string(),
-                        });
-                    }
-                    if !stderr_chunk.is_empty() {
-                        let _ = sender.send(ToolOutputChunk {
-                            data: serde_json::json!(stderr_chunk),
-                            kind: "stderr".to_string(),
-                        });
-                    }
-                });
+                let output_cb = Box::new(
+                    move |stdout_chunk: &crate::StreamData, stderr_chunk: &crate::StreamData| {
+                        if !stdout_chunk.is_empty() {
+                            let _ = sender.send(ToolOutputChunk {
+                                data: serde_json::json!(stdout_chunk),
+                                kind: "stdout".to_string(),
+                            });
+                        }
+                        if !stderr_chunk.is_empty() {
+                            let _ = sender.send(ToolOutputChunk {
+                                data: serde_json::json!(stderr_chunk),
+                                kind: "stderr".to_string(),
+                            });
+                        }
+                    },
+                );
                 bash.exec_streaming(&commands, output_cb).await
             } else {
                 bash.exec(&commands).await

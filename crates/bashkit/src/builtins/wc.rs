@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 
-use super::{Builtin, Context, read_text_file};
+use super::{Builtin, Context, read_stream_file};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
@@ -131,7 +131,7 @@ impl Builtin for Wc {
         if files.is_empty() {
             // Read from stdin
             if let Some(stdin) = ctx.stdin {
-                let counts = count_text(stdin);
+                let counts = count_data(stdin.as_bytes());
                 // Real bash: no padding for single-value stdin, padded for multiple values
                 let padded = flags.active_count() > 1;
                 output.push_str(&format_counts(&counts, &flags, None, padded));
@@ -146,9 +146,9 @@ impl Builtin for Wc {
                     ctx.cwd.join(file)
                 };
 
-                match read_text_file(&*ctx.fs, &path, "wc").await {
-                    Ok(text) => {
-                        let counts = count_text(&text);
+                match read_stream_file(&*ctx.fs, &path, "wc").await {
+                    Ok(data) => {
+                        let counts = count_data(data.as_bytes());
 
                         total_lines += counts.lines;
                         total_words += counts.words;
@@ -196,18 +196,22 @@ struct TextCounts {
     max_line_length: usize,
 }
 
-/// Count lines, words, bytes, characters, and max line length in text
-fn count_text(text: &str) -> TextCounts {
+/// Count stream data. Invalid UTF-8 is one character per byte, matching the
+/// byte-oriented C locale instead of inventing Unicode replacement characters.
+fn count_data(bytes: &[u8]) -> TextCounts {
+    let text = String::from_utf8_lossy(bytes);
     // wc -l counts newline characters, not logical lines
-    let lines = text.chars().filter(|&c| c == '\n').count();
+    let lines = bytes.iter().filter(|&&byte| byte == b'\n').count();
     let words = text.split_whitespace().count();
-    let bytes = text.len();
-    let chars = text.chars().count();
+    let byte_count = bytes.len();
+    let chars = std::str::from_utf8(bytes)
+        .map(|valid| valid.chars().count())
+        .unwrap_or(byte_count);
     let max_line_length = text.lines().map(|l| l.chars().count()).max().unwrap_or(0);
     TextCounts {
         lines,
         words,
-        bytes,
+        bytes: byte_count,
         chars,
         max_line_length,
     }
@@ -278,7 +282,7 @@ mod tests {
             variables: &mut variables,
             cwd: &mut cwd,
             fs,
-            stdin,
+            stdin: crate::builtins::test_stream_opt(stdin),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]

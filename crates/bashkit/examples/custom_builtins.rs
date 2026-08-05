@@ -34,7 +34,10 @@ struct Upper;
 #[async_trait]
 impl Builtin for Upper {
     async fn execute(&self, ctx: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {
-        let input = ctx.stdin.unwrap_or("");
+        let input = ctx
+            .stdin
+            .map(|stdin| stdin.text_lossy())
+            .unwrap_or_default();
         Ok(ExecResult::ok(input.to_uppercase()))
     }
 }

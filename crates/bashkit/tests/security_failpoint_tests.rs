@@ -18,8 +18,8 @@ use std::time::Duration;
 async fn run_script(script: &str) -> ExecResult {
     let mut bash = Bash::new();
     bash.exec(script).await.unwrap_or_else(|e| ExecResult {
-        stdout: String::new(),
-        stderr: e.to_string(),
+        stdout: Default::default(),
+        stderr: e.to_string().into(),
         exit_code: 1,
         control_flow: ControlFlow::None,
         ..Default::default()
@@ -30,8 +30,8 @@ async fn run_script(script: &str) -> ExecResult {
 async fn run_script_with_limits(script: &str, limits: ExecutionLimits) -> ExecResult {
     let mut bash = Bash::builder().limits(limits).build();
     bash.exec(script).await.unwrap_or_else(|e| ExecResult {
-        stdout: String::new(),
-        stderr: e.to_string(),
+        stdout: Default::default(),
+        stderr: e.to_string().into(),
         exit_code: 1,
         control_flow: ControlFlow::None,
         ..Default::default()

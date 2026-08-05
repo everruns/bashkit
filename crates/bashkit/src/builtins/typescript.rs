@@ -1095,7 +1095,7 @@ async fn handle_stat(args: &[Value], fs: &Arc<dyn FileSystem>, cwd: &Path) -> Va
 /// Format a ZapCode error with any stdout already produced.
 fn format_error_with_output(e: zapcode_core::ZapcodeError, stdout: &str) -> ExecResult {
     let mut result = ExecResult::err(format!("{e}\n"), 1);
-    result.stdout = stdout.to_string();
+    result.stdout = stdout.to_string().into();
     result
 }
 

@@ -78,8 +78,8 @@ pub fn fuzz_init() {
 pub async fn run(script: &str) -> ExecResult {
     let mut bash = Bash::new();
     bash.exec(script).await.unwrap_or_else(|e| ExecResult {
-        stdout: String::new(),
-        stderr: e.to_string(),
+        stdout: crate::StreamData::new(),
+        stderr: e.to_string().into(),
         exit_code: 1,
         control_flow: ControlFlow::None,
         ..Default::default()
@@ -95,8 +95,8 @@ pub async fn run(script: &str) -> ExecResult {
 /// to inspect.
 pub async fn fuzz_exec(bash: &mut Bash, script: &str, ctx: &str, tool_banned: &[&str]) {
     let result = bash.exec(script).await.unwrap_or_else(|e| ExecResult {
-        stdout: String::new(),
-        stderr: e.to_string(),
+        stdout: crate::StreamData::new(),
+        stderr: e.to_string().into(),
         exit_code: 1,
         control_flow: ControlFlow::None,
         ..Default::default()

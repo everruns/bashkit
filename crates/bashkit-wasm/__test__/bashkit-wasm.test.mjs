@@ -61,6 +61,12 @@ test("sync: stderr is captured", () => {
   assert.equal(r.stderr, "oops\n");
 });
 
+test("sync: binary stdout bytes are exact", () => {
+  const bash = new Bash();
+  const r = bash.executeSync("printf 'AAH//g==' | base64 -d | cat");
+  assert.deepEqual(Array.from(r.stdoutBytes), [0x00, 0x01, 0xff, 0xfe]);
+});
+
 // --- Child shell (bash / sh builtin) ---------------------------------------
 // Regression: the bash/sh builtin re-parses its child script. On
 // wasm32-unknown-unknown that parse must run inline — the native path wraps it
@@ -178,7 +184,10 @@ test("output is capped and reports truncation", () => {
 
 test("options: seeded files", () => {
   const bash = new Bash({ files: { "/config.json": '{"debug":true}' } });
-  assert.equal(bash.executeSync("jq -c .debug /config.json").stdout.trim(), "true");
+  assert.equal(
+    bash.executeSync("jq -c .debug /config.json").stdout.trim(),
+    "true",
+  );
 });
 
 // --- Virtual filesystem (Bash helpers) -------------------------------------
@@ -278,7 +287,9 @@ test("async builtin under executeSync fails fast without invoking callback", () 
 
 test("sync builtin works under executeSync", () => {
   const bash = new Bash({
-    customBuiltins: { shout: (ctx) => (ctx.argv[0] ?? "").toUpperCase() + "\n" },
+    customBuiltins: {
+      shout: (ctx) => (ctx.argv[0] ?? "").toUpperCase() + "\n",
+    },
   });
   assert.equal(bash.executeSync("shout hello").stdout, "HELLO\n");
 });

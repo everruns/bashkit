@@ -184,7 +184,7 @@ impl Builtin for Timeout {
                     command: SubCommand {
                         name: cmd_name,
                         args: cmd_args,
-                        stdin: ctx.stdin.map(|s| s.to_string()),
+                        stdin: ctx.stdin.cloned(),
                         assignments: Vec::new(),
                     },
                 }))
@@ -241,7 +241,7 @@ mod tests {
             variables: &mut variables,
             cwd: &mut cwd,
             fs,
-            stdin,
+            stdin: crate::builtins::test_stream_opt(stdin),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]

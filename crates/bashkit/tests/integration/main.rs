@@ -27,6 +27,7 @@ pub mod blackbox_security_tests;
 pub mod builtin_error_security_tests;
 pub mod builtin_registry_tests;
 pub mod byte_range_panic_tests;
+pub mod byte_stream_tests;
 pub mod cancellation_tests;
 pub mod cmdsub_quote_test;
 pub mod competitor_regression_tests;

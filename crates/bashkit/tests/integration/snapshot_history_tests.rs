@@ -25,7 +25,11 @@ fn commit_into(bash: &Bash, store: &mut Store, parents: &[CommitId]) -> CommitId
 }
 
 async fn read_file(bash: &mut Bash, path: &str) -> String {
-    bash.exec(&format!("cat {path}")).await.unwrap().stdout
+    bash.exec(&format!("cat {path}"))
+        .await
+        .unwrap()
+        .stdout
+        .to_string()
 }
 
 // ==================== Round-trip fidelity ====================
@@ -108,6 +112,7 @@ async fn read_via_od(bash: &mut Bash, path: &str) -> String {
         .await
         .unwrap()
         .stdout
+        .to_string()
 }
 
 #[tokio::test]

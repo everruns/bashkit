@@ -77,7 +77,13 @@ impl Builtin for Join {
             return Ok(ExecResult::err("join: missing operand\n".to_string(), 1));
         }
 
-        let content1 = read_input(ctx.fs.as_ref(), ctx.cwd, files[0], ctx.stdin).await?;
+        let content1 = read_input(
+            ctx.fs.as_ref(),
+            ctx.cwd,
+            files[0],
+            ctx.stdin.map(|stdin| &**stdin),
+        )
+        .await?;
         let content2 = read_input(ctx.fs.as_ref(), ctx.cwd, files[1], None).await?;
 
         let lines1: Vec<&str> = content1.lines().collect();

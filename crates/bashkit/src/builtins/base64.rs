@@ -17,20 +17,6 @@ use crate::interpreter::ExecResult;
 ///   -w COLS         Wrap encoded lines after COLS characters (default: 76, 0 = no wrap)
 pub struct Base64;
 
-fn stdin_to_bytes(input: &str) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(input.len());
-    for ch in input.chars() {
-        let code = ch as u32;
-        if code <= u8::MAX as u32 {
-            bytes.push(code as u8);
-        } else {
-            let mut buf = [0; 4];
-            bytes.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
-        }
-    }
-    bytes
-}
-
 impl BuiltinHelper for Base64 {
     const NAME: &'static str = "base64";
 }
@@ -72,11 +58,10 @@ impl Builtin for Base64 {
             }
         }
 
-        // Get input bytes: file reads must be byte-exact; stdin may contain the
-        // interpreter's Latin-1 byte-preserving surrogate string.
+        // Byte streams and files share the same exact representation.
         let input = if let Some(ref path) = file {
             if path == "-" {
-                stdin_to_bytes(ctx.stdin.unwrap_or(""))
+                ctx.stdin_bytes().unwrap_or_default().to_vec()
             } else {
                 let resolved = super::resolve_path(ctx.cwd, path);
                 match ctx.fs.read_file(&resolved).await {
@@ -87,7 +72,7 @@ impl Builtin for Base64 {
                 }
             }
         } else {
-            stdin_to_bytes(ctx.stdin.unwrap_or(""))
+            ctx.stdin_bytes().unwrap_or_default().to_vec()
         };
 
         if decode {
@@ -197,8 +182,8 @@ mod tests {
     async fn test_decode_binary_preserves_stdout_bytes() {
         let result = run_base64(&["-d"], Some("AAH//kIAfw==")).await;
         assert_eq!(
-            result.stdout_bytes.as_deref(),
-            Some(&[0x00, 0x01, 0xff, 0xfe, b'B', 0x00, 0x7f][..])
+            result.stdout.as_bytes(),
+            &[0x00, 0x01, 0xff, 0xfe, b'B', 0x00, 0x7f]
         );
     }
 

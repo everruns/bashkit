@@ -347,6 +347,36 @@ impl Builtin for Tr {
             Ok(set) => set,
             Err(msg) => return Ok(Self::err(&msg, 1)),
         };
+        if !delete && !squeeze && non_flag_args.len() < 2 {
+            return Ok(Self::err("missing operand after SET1", 1));
+        }
+        let stdin = ctx.stdin.cloned().unwrap_or_default();
+        let byte_mode =
+            ctx.env.get("LC_ALL").is_some_and(|locale| locale == "C") || stdin.text().is_err();
+        if byte_mode && set1.iter().all(|c| (*c as u32) <= u8::MAX as u32) {
+            let set2 = if non_flag_args.len() >= 2 {
+                match expand_char_set(&non_flag_args[1]) {
+                    Ok(set) => Some(set),
+                    Err(msg) => return Ok(Self::err(&msg, 1)),
+                }
+            } else {
+                None
+            };
+            if set2
+                .as_ref()
+                .is_none_or(|set| set.iter().all(|c| (*c as u32) <= u8::MAX as u32))
+            {
+                let output = translate_bytes(
+                    stdin.as_bytes(),
+                    &set1,
+                    set2.as_deref(),
+                    delete,
+                    squeeze,
+                    complement,
+                );
+                return Ok(ExecResult::ok_bytes(output));
+            }
+        }
         if complement {
             // Complement: use all byte-range chars (0-255) NOT in set1.
             // Covers full Latin-1 range so binary data from /dev/urandom
@@ -358,7 +388,7 @@ impl Builtin for Tr {
                 .collect();
         }
 
-        let stdin = ctx.stdin.unwrap_or("");
+        let stdin = &*stdin;
 
         let result = if delete && squeeze {
             // -ds: delete SET1 chars, then squeeze SET2 chars
@@ -410,6 +440,56 @@ impl Builtin for Tr {
 
         Ok(ExecResult::ok(result))
     }
+}
+
+fn translate_bytes(
+    stdin: &[u8],
+    set1: &[char],
+    set2: Option<&[char]>,
+    delete: bool,
+    squeeze: bool,
+    complement: bool,
+) -> Vec<u8> {
+    let original: Vec<u8> = set1.iter().map(|c| *c as u8).collect();
+    let effective: Vec<u8> = if complement {
+        (u8::MIN..=u8::MAX)
+            .filter(|byte| !original.contains(byte))
+            .collect()
+    } else {
+        original
+    };
+    let translated: Vec<u8> = set2
+        .map(|set| set.iter().map(|c| *c as u8).collect())
+        .unwrap_or_default();
+
+    let mut output = Vec::with_capacity(stdin.len());
+    for &byte in stdin {
+        if delete && effective.contains(&byte) {
+            continue;
+        }
+        let mapped = if !delete {
+            effective
+                .iter()
+                .position(|candidate| *candidate == byte)
+                .and_then(|position| translated.get(position).or(translated.last()))
+                .copied()
+                .unwrap_or(byte)
+        } else {
+            byte
+        };
+        let squeeze_set = if delete {
+            &translated
+        } else if translated.is_empty() {
+            &effective
+        } else {
+            &translated
+        };
+        if squeeze && output.last() == Some(&mapped) && squeeze_set.contains(&mapped) {
+            continue;
+        }
+        output.push(mapped);
+    }
+    output
 }
 
 /// Squeeze repeated consecutive characters that are in the given set
@@ -606,7 +686,7 @@ mod tests {
             variables: &mut variables,
             cwd: &mut cwd,
             fs,
-            stdin,
+            stdin: crate::builtins::test_stream_opt(stdin),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]
@@ -632,7 +712,7 @@ mod tests {
             variables: &mut variables,
             cwd: &mut cwd,
             fs,
-            stdin,
+            stdin: crate::builtins::test_stream_opt(stdin),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]

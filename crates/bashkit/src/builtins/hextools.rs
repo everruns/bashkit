@@ -627,7 +627,7 @@ impl Builtin for Hexdump {
 // --- Shared helpers ---
 
 async fn collect_input(
-    stdin: Option<&str>,
+    stdin: Option<&crate::StreamData>,
     files: &[String],
     cwd: &std::path::Path,
     fs: &std::sync::Arc<dyn crate::fs::FileSystem>,
@@ -685,7 +685,7 @@ mod tests {
             variables: &mut variables,
             cwd: &mut cwd,
             fs,
-            stdin,
+            stdin: crate::builtins::test_stream_opt(stdin),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]
@@ -711,7 +711,7 @@ mod tests {
             variables: &mut variables,
             cwd: &mut cwd,
             fs,
-            stdin,
+            stdin: crate::builtins::test_stream_opt(stdin),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]
@@ -737,7 +737,7 @@ mod tests {
             variables: &mut variables,
             cwd: &mut cwd,
             fs,
-            stdin,
+            stdin: crate::builtins::test_stream_opt(stdin),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]

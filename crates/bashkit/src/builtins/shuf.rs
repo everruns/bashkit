@@ -84,8 +84,8 @@ impl Builtin for Shuf {
         } else {
             // Reading lines: positional file path, "-", or absent (stdin).
             let raw = match positionals.first() {
-                None => ctx.stdin.unwrap_or("").to_string(),
-                Some(s) if s == "-" => ctx.stdin.unwrap_or("").to_string(),
+                None => ctx.stdin.map(ToString::to_string).unwrap_or_default(),
+                Some(s) if s == "-" => ctx.stdin.map(ToString::to_string).unwrap_or_default(),
                 Some(file) => {
                     let path = if Path::new(file).is_absolute() {
                         file.clone()

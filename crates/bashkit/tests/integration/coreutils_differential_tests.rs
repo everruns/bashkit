@@ -213,7 +213,7 @@ async fn run_bashkit(fx: &DiffFixture) -> (String, String, i32) {
     };
 
     let r = bash.exec(&cmd).await.expect("bashkit exec");
-    (r.stdout, r.stderr, r.exit_code)
+    (r.stdout.to_string(), r.stderr.to_string(), r.exit_code)
 }
 
 fn shell_quote(s: &str) -> String {

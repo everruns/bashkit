@@ -728,7 +728,9 @@ pub fn file_system_copy(
 #[derive(Clone)]
 pub struct ExecResult {
     pub stdout: String,
+    pub stdout_bytes: Vec<u8>,
     pub stderr: String,
+    pub stderr_bytes: Vec<u8>,
     pub exit_code: i32,
     pub error: Option<String>,
     pub stdout_truncated: bool,
@@ -802,9 +804,13 @@ type OutputTsfn = napi::threadsafe_function::ThreadsafeFunction<
 >;
 
 fn js_exec_result_from_rust(result: RustExecResult) -> ExecResult {
+    let stdout_bytes = result.stdout.as_bytes().to_vec();
+    let stderr_bytes = result.stderr.as_bytes().to_vec();
     ExecResult {
-        stdout: result.stdout,
-        stderr: result.stderr,
+        stdout: result.stdout.to_string(),
+        stdout_bytes,
+        stderr: result.stderr.to_string(),
+        stderr_bytes,
         exit_code: result.exit_code,
         error: None,
         stdout_truncated: result.stdout_truncated,
@@ -818,7 +824,9 @@ fn js_exec_result_from_error(err: impl ToString) -> ExecResult {
     let msg = err.to_string();
     ExecResult {
         stdout: String::new(),
+        stdout_bytes: Vec::new(),
         stderr: msg.clone(),
+        stderr_bytes: msg.as_bytes().to_vec(),
         exit_code: 1,
         error: Some(msg),
         stdout_truncated: false,
@@ -3209,9 +3217,13 @@ impl ScriptedTool {
             })
             .await
         });
+        let stdout_bytes = resp.stdout.as_bytes().to_vec();
+        let stderr_bytes = resp.stderr.as_bytes().to_vec();
         Ok(ExecResult {
             stdout: resp.stdout,
+            stdout_bytes,
             stderr: resp.stderr,
+            stderr_bytes,
             exit_code: resp.exit_code,
             error: resp.error,
             stdout_truncated: resp.stdout_truncated,
@@ -3231,9 +3243,13 @@ impl ScriptedTool {
                 timeout_ms: None,
             })
             .await;
+        let stdout_bytes = resp.stdout.as_bytes().to_vec();
+        let stderr_bytes = resp.stderr.as_bytes().to_vec();
         Ok(ExecResult {
             stdout: resp.stdout,
+            stdout_bytes,
             stderr: resp.stderr,
+            stderr_bytes,
             exit_code: resp.exit_code,
             error: resp.error,
             stdout_truncated: resp.stdout_truncated,

@@ -63,7 +63,7 @@ impl Builtin for Fold {
         }
 
         let input = if files.is_empty() {
-            ctx.stdin.unwrap_or("").to_string()
+            ctx.stdin.map(ToString::to_string).unwrap_or_default()
         } else {
             let mut buf = String::new();
             for file in &files {
@@ -163,7 +163,7 @@ mod tests {
             variables: &mut variables,
             cwd: &mut cwd,
             fs,
-            stdin,
+            stdin: crate::builtins::test_stream_opt(stdin),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]

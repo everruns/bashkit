@@ -648,13 +648,13 @@ fn build_result(output: super::SshOutput, _quiet: bool) -> ExecResult {
     if output.exit_code == 0 {
         let mut result = ExecResult::ok(output.stdout);
         if !output.stderr.is_empty() {
-            result.stderr = output.stderr;
+            result.stderr = output.stderr.into();
         }
         result
     } else {
         let mut result = ExecResult::err(output.stdout, output.exit_code);
         if !output.stderr.is_empty() {
-            result.stderr = output.stderr;
+            result.stderr = output.stderr.into();
         }
         result
     }

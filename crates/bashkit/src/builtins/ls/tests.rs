@@ -2879,7 +2879,7 @@ async fn ls_long_date_for(mtime_secs: u64) -> String {
 
     let result = Ls.execute(ctx).await.unwrap();
     assert_eq!(result.exit_code, 0, "stderr: {}", result.stderr);
-    result.stdout
+    result.stdout.to_string()
 }
 
 #[tokio::test]

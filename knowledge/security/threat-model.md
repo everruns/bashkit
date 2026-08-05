@@ -825,8 +825,9 @@ session's isolated VFS.
 | TM-INT-001 | Builtin panic crash | Invalid input triggers panic in builtin | `catch_unwind` wrapper on all builtins | **MITIGATED** |
 | TM-INT-002 | Panic info leak | Panic message reveals sensitive data | Sanitized error messages (no panic details) | **MITIGATED** |
 | TM-INT-003 | Date format panic | Invalid strftime format causes chrono panic | Pre-validation with `StrftimeItems` | **MITIGATED** |
-| TM-INT-007 | `/dev/urandom` empty with `head -c` | `head -c 16 /dev/urandom` returns empty output; pipe from virtual device to builtin loses data | `read_file_for_builtin` (`builtins/mod.rs`) reads `/dev/urandom`/`/dev/random` as Latin-1 chars (each byte 0x00-0xFF maps 1:1 to a char) so `head -c N` returns N bytes of randomness in both the path-argument form and the `cat /dev/urandom \| head -c N` pipe form | **MITIGATED** |
+| TM-INT-007 | Binary stream corruption | String-first pipelines rewrote non-UTF-8 bytes through a Latin-1 surrogate and could lose NUL/high bytes across builtins, redirects, callbacks, or bindings | `StreamData` keeps bytes authoritative through stdin, pipelines, redirects, results, callbacks, and native bindings; binary differential/regression tests cover `base64 -d \| head -c \| cat`, mixed UTF-8/bytes, limits, and redirects | **MITIGATED** |
 | TM-INT-008 | Panic crosses the C ABI boundary | Rust unwind enters a foreign runtime or exposes panic details | Every exported C operation uses `catch_unwind`; fallible calls return a generic, capped `BASHKIT_INTERNAL_ERROR` | **MITIGATED** |
+| TM-INT-009 | Binary output bypasses resource limits | Byte-native output or callbacks count characters instead of bytes, allowing invalid UTF-8 to exceed configured caps | Accumulation and streaming callbacks truncate `StreamData` by exact byte length before delivery; regression tests assert binary output-limit behavior | **MITIGATED** |
 
 **Current Risk**: LOW. Implementation: `interpreter/mod.rs` wraps every builtin call in
 `AssertUnwindSafe(..).catch_unwind()` (TM-INT-001) and converts panics to the sanitized
@@ -1179,7 +1180,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | ~~TM-ISO-022~~ | ~~`$?` leaks across `exec()` calls~~ | ~~Exit code from previous exec visible to next~~ | `reset_transient_state()` zeroes `last_exit_code` (**FIXED**) |
 | TM-ISO-023 | `set -e` leaks across `exec()` calls | Unexpected abort — `set` options from previous exec affect next exec | `SET_OPTION_VARS` cleared in `reset_transient_state()` (**FIXED**) |
 | ~~TM-ISO-024~~ | ~~`$?` leaks into VFS subprocess~~ | ~~False `set -e` failures in VFS script subprocess~~ | `execute_script_content` resets `last_exit_code` / `nounset_error` (**FIXED**) |
-| ~~TM-INT-007~~ | ~~`/dev/urandom` empty with `head -c`~~ | ~~Weak randomness (empty output)~~ | `read_file_for_builtin` reads virtual devices as Latin-1 (**FIXED**) |
+| ~~TM-INT-007~~ | ~~Binary stream corruption~~ | ~~NUL/high bytes lost across pipelines and redirects~~ | Byte-native `StreamData` transport (**FIXED**) |
 | ~~TM-DOS-044~~ | ~~Nested `$()` stack overflow (regression)~~ | ~~SIGABRT at depth ~50 despite #492 fix~~ | Depth-50 nested-subst test (`finding_nested_cmd_subst_stack_overflow::depth_50_is_bounded`) passes (**FIXED**) |
 | TM-DOS-088 | Command substitution OOM via state cloning | OOM at depth N (memory ≈ N × state_size) | Dedicated `max_subst_depth` limit (default 32), separate from `max_function_depth` — **FIXED** via #1088 |
 | TM-DOS-089 | Command substitution stack overflow via inlined futures | SIGABRT at ~20-30 nested $() levels | Box::pin `expand_word` and `execute_cmd_subst` to cap per-level stack — **FIXED** via #1089 |

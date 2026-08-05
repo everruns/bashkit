@@ -253,8 +253,9 @@ previous command:
 
 ```rust,ignore
 // echo "hello" | mycommand
-let input = ctx.stdin.unwrap_or("");
-let processed = input.to_uppercase();
+let input = ctx.stdin.expect("pipeline input");
+let exact_bytes = input.as_bytes();
+let processed = input.text_lossy().to_uppercase(); // explicit text boundary
 ```
 
 ## Return Values
@@ -263,11 +264,16 @@ Builtins return `Result<ExecResult>`:
 
 ```rust,ignore
 pub struct ExecResult {
-    pub stdout: String,
-    pub stderr: String,
+    pub stdout: StreamData,
+    pub stderr: StreamData,
     pub exit_code: i32,
 }
 ```
+
+`StreamData` preserves exact bytes. Use `ExecResult::ok_bytes` for binary
+output, `as_bytes()`/`into_bytes()` for byte consumers, and `text()` or
+`text_lossy()` only for text-oriented consumers. Shell variables and command
+substitution are text-only; command substitution removes NUL bytes.
 
 Helper constructors:
 

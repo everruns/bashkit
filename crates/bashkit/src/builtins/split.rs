@@ -81,7 +81,7 @@ impl Builtin for Split {
         let prefix = positional.get(1).copied().unwrap_or("x");
 
         let input = if file == "-" {
-            ctx.stdin.unwrap_or("").to_string()
+            ctx.stdin.map(ToString::to_string).unwrap_or_default()
         } else {
             let path = resolve_path(ctx.cwd, file);
             match read_text_file(ctx.fs.as_ref(), &path, "split").await {
@@ -199,7 +199,7 @@ mod tests {
             variables: &mut variables,
             cwd: &mut cwd,
             fs,
-            stdin,
+            stdin: crate::builtins::test_stream_opt(stdin),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]

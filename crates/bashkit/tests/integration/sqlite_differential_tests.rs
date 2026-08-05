@@ -103,7 +103,7 @@ async fn run_bashkit_sqlite(flags: &[&str], sql: &str) -> String {
         "bashkit sqlite failed: stderr={:?}",
         r.stderr
     );
-    r.stdout
+    r.stdout.to_string()
 }
 
 /// Drive both engines with the same input and assert byte-equal output.

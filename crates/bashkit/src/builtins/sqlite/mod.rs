@@ -373,7 +373,7 @@ impl Builtin for Sqlite {
             ));
         }
 
-        let parsed = match parse_args(&invocation_args, ctx.stdin) {
+        let parsed = match parse_args(&invocation_args, ctx.stdin.map(|stdin| &**stdin)) {
             Ok(p) => p,
             Err(e) => {
                 return Ok(ExecResult::err(format!("sqlite: {e}\n"), 2));
@@ -540,8 +540,8 @@ impl Builtin for Sqlite {
             exit_code,
             ..Default::default()
         };
-        result.stdout = stdout;
-        result.stderr = stderr;
+        result.stdout = stdout.into();
+        result.stderr = stderr.into();
         Ok(result)
     }
 }

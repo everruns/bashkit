@@ -20,20 +20,21 @@ async fn urandom_no_replacement_chars() {
     );
 }
 
-/// Issue #811: head -c N /dev/urandom should return exactly N chars
-/// (each original byte maps to one char in the Latin-1 model)
+/// Issue #811: head -c N /dev/urandom should return exactly N bytes.
+/// Binary streams no longer use a Latin-1 text surrogate, so `wc -c` is the
+/// byte-native assertion; `wc -m` is intentionally a text boundary.
 #[tokio::test]
-async fn urandom_head_char_count() {
+async fn urandom_head_byte_count() {
     let mut bash = Bash::new();
     for n in [1, 4, 8, 16, 32] {
         let result = bash
-            .exec(&format!("head -c {n} /dev/urandom | wc -m"))
+            .exec(&format!("head -c {n} /dev/urandom | wc -c"))
             .await
             .unwrap();
         let count: usize = result.stdout.trim().parse().unwrap_or(0);
         assert_eq!(
             count, n,
-            "head -c {n} /dev/urandom | wc -m should produce exactly {n} chars"
+            "head -c {n} /dev/urandom | wc -c should produce exactly {n} bytes"
         );
     }
 }

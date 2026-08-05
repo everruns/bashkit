@@ -56,6 +56,34 @@ fn creates_executes_and_preserves_shell_exit_status() {
 }
 
 #[test]
+fn execute_returns_exact_binary_stdout() {
+    unsafe {
+        let mut bash = ptr::null_mut();
+        let mut error = ptr::null_mut();
+        assert_eq!(
+            bashkit_create_default(&mut bash, &mut error),
+            BashkitStatus::Ok
+        );
+        let mut result = ptr::null_mut();
+        assert_eq!(
+            bashkit_execute(
+                bash,
+                bytes(b"printf 'AAH//g==' | base64 -d | cat"),
+                &mut result,
+                &mut error,
+            ),
+            BashkitStatus::Ok
+        );
+        assert_eq!(
+            borrowed(bashkit_result_stdout(result)),
+            [0x00, 0x01, 0xff, 0xfe]
+        );
+        bashkit_result_free(result);
+        bashkit_free(bash);
+    }
+}
+
+#[test]
 fn configures_environment_files_limits_and_final_environment() {
     unsafe {
         let config = br#"{

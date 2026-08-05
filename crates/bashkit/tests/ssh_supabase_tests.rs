@@ -32,7 +32,7 @@ mod ssh_supabase {
                 return;
             }
 
-            last_stderr = result.stderr;
+            last_stderr = result.stderr.to_string();
             if attempt < 3 {
                 tokio::time::sleep(std::time::Duration::from_secs(10)).await;
             }

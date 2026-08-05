@@ -75,7 +75,11 @@ impl BashkitRunner {
 async fn run_bashkit(script: &str) -> Result<(String, String, i32)> {
     let mut bash = Bash::builder().build();
     let result = bash.exec(script).await?;
-    Ok((result.stdout, result.stderr, result.exit_code))
+    Ok((
+        result.stdout.to_string(),
+        result.stderr.to_string(),
+        result.exit_code,
+    ))
 }
 
 // === Out-of-process bashkit CLI ===

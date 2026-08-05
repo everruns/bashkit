@@ -50,7 +50,7 @@ impl Builtin for Unset {
             // are inherited and can't be unset by the shell
         }
         Ok(ExecResult {
-            stderr,
+            stderr: stderr.into(),
             exit_code,
             ..Default::default()
         })
@@ -540,8 +540,8 @@ impl Builtin for Shopt {
                     ctx.variables.get(&key).map(|v| v == "1").unwrap_or(false)
                 });
                 Ok(ExecResult {
-                    stdout: String::new(),
-                    stderr: String::new(),
+                    stdout: crate::StreamData::new(),
+                    stderr: crate::StreamData::new(),
                     exit_code: if all_on { 0 } else { 1 },
                     control_flow: crate::interpreter::ControlFlow::None,
                     ..Default::default()
@@ -594,8 +594,8 @@ impl Builtin for Shopt {
                 }
                 if any_invalid {
                     Ok(ExecResult {
-                        stdout: String::new(),
-                        stderr: output,
+                        stdout: crate::StreamData::new(),
+                        stderr: output.into(),
                         exit_code: 1,
                         control_flow: crate::interpreter::ControlFlow::None,
                         ..Default::default()

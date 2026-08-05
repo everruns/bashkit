@@ -1127,7 +1127,7 @@ fn format_exception_with_output(e: MontyException, printed: &str) -> ExecResult 
     let stderr = format!("{e}\n");
     let mut result = ExecResult::err(stderr, 1);
     if !printed.is_empty() {
-        result.stdout = printed.to_string();
+        result.stdout = printed.to_string().into();
     }
     result
 }

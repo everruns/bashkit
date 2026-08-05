@@ -12,7 +12,7 @@ use bashkit::Bash;
 async fn run(script: &str) -> String {
     let mut bash = Bash::builder().build();
     let result = bash.exec(script).await.expect("exec failed");
-    result.stdout
+    result.stdout.to_string()
 }
 
 /// Issue #275: Parser corrupts \( in single-quoted strings

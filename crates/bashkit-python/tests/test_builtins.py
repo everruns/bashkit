@@ -293,6 +293,11 @@ def test_builtin_base64_encodes_and_decodes():
     assert decoded.stdout == "hello"
 
 
+def test_binary_stdout_bytes_are_exact():
+    result = Bash().execute_sync("printf 'AAH//g==' | base64 -d | cat")
+    assert bytes(result.stdout_bytes) == b"\x00\x01\xff\xfe"
+
+
 def test_builtin_seq_generates_range():
     bash = Bash()
     result = bash.execute_sync("seq 3 5")
