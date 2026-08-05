@@ -984,25 +984,15 @@ impl BashTool {
             }
         };
 
-        // wasm32-unknown-unknown has no timer driver. Reject requested timeouts
-        // rather than silently running an async callback without a deadline.
-        #[cfg(not(target_family = "wasm"))]
-        let out = if let Some(ms) = req.timeout_ms {
+        if let Some(ms) = req.timeout_ms {
             let duration = Duration::from_millis(ms);
-            match tokio::time::timeout(duration, fut).await {
+            match crate::time_compat::timeout(duration, fut).await {
                 Ok(response) => response,
                 Err(_) => timeout_response(duration),
             }
         } else {
             fut.await
-        };
-        #[cfg(target_family = "wasm")]
-        let out = if req.timeout_ms.is_some() {
-            unsupported_timeout_response()
-        } else {
-            fut.await
-        };
-        out
+        }
     }
 }
 
@@ -1091,24 +1081,15 @@ impl Tool for BashTool {
             }
         };
 
-        // wasm32 has no timer driver; reject rather than bypass the deadline.
-        #[cfg(not(target_family = "wasm"))]
-        let out = if let Some(ms) = req.timeout_ms {
+        if let Some(ms) = req.timeout_ms {
             let dur = Duration::from_millis(ms);
-            match tokio::time::timeout(dur, fut).await {
+            match crate::time_compat::timeout(dur, fut).await {
                 Ok(resp) => resp,
                 Err(_elapsed) => timeout_response(dur),
             }
         } else {
             fut.await
-        };
-        #[cfg(target_family = "wasm")]
-        let out = if req.timeout_ms.is_some() {
-            unsupported_timeout_response()
-        } else {
-            fut.await
-        };
-        out
+        }
     }
 
     async fn execute_with_status(
@@ -1170,24 +1151,15 @@ impl Tool for BashTool {
             response
         };
 
-        // wasm32 has no timer driver; reject rather than bypass the deadline.
-        #[cfg(not(target_family = "wasm"))]
-        let out = if let Some(ms) = timeout_ms {
+        if let Some(ms) = timeout_ms {
             let dur = Duration::from_millis(ms);
-            match tokio::time::timeout(dur, fut).await {
+            match crate::time_compat::timeout(dur, fut).await {
                 Ok(resp) => resp,
                 Err(_elapsed) => timeout_response(dur),
             }
         } else {
             fut.await
-        };
-        #[cfg(target_family = "wasm")]
-        let out = if timeout_ms.is_some() {
-            unsupported_timeout_response()
-        } else {
-            fut.await
-        };
-        out
+        }
     }
 }
 
@@ -1211,8 +1183,6 @@ fn error_kind(e: &Error) -> String {
 
 /// Build a ToolResponse for a timed-out execution (exit code 124, like bash `timeout`).
 ///
-/// Only native timeout paths use this; wasm rejects requested timeouts.
-#[cfg(not(target_family = "wasm"))]
 pub(crate) fn timeout_response(dur: Duration) -> ToolResponse {
     ToolResponse {
         stdout: String::new(),
@@ -1222,17 +1192,6 @@ pub(crate) fn timeout_response(dur: Duration) -> ToolResponse {
         ),
         exit_code: 124,
         error: Some("timeout".to_string()),
-        ..Default::default()
-    }
-}
-
-/// Reject a timeout contract that wasm cannot enforce safely.
-#[cfg(target_family = "wasm")]
-pub(crate) fn unsupported_timeout_response() -> ToolResponse {
-    ToolResponse {
-        stderr: "bashkit: timeout is unsupported on this wasm target\n".to_string(),
-        exit_code: 125,
-        error: Some("unsupported_timeout".to_string()),
         ..Default::default()
     }
 }

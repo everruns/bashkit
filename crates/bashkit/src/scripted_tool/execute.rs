@@ -2,21 +2,16 @@
 
 use super::{ScriptedExecutionTrace, ScriptedTool, ToolDefExtension, extension::InvocationLog};
 use crate::Bash;
+use crate::tool::timeout_response;
 use crate::tool::{
     Tool, ToolError, ToolExecution, ToolOutputChunk, ToolRequest, ToolResponse, ToolStatus,
     VERSION, localized, tool_output_from_response, tool_request_from_value, tool_request_schema,
     tool_response_schema,
 };
-// Timeout helpers are target-specific because wasm32 has no timer driver.
-#[cfg(not(target_family = "wasm"))]
-use crate::tool::timeout_response;
-#[cfg(target_family = "wasm")]
-use crate::tool::unsupported_timeout_response;
 use crate::tool_def::usage_from_schema;
 use async_trait::async_trait;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
-#[cfg(not(target_family = "wasm"))]
 use std::time::Duration;
 
 // ============================================================================
@@ -167,21 +162,12 @@ impl ScriptedTool {
 
         // Keep ScriptedTool on the shared ToolRequest contract: per-call
         // timeouts must abort the whole orchestration, including callbacks.
-        // wasm32 has no timer driver. Reject requested timeouts instead of
-        // allowing an unresolved callback to suspend orchestration forever.
-        #[cfg(not(target_family = "wasm"))]
         let response = if let Some(ms) = timeout_ms {
             let duration = Duration::from_millis(ms);
-            match tokio::time::timeout(duration, fut).await {
+            match crate::time_compat::timeout(duration, fut).await {
                 Ok(response) => response,
                 Err(_) => timeout_response(duration),
             }
-        } else {
-            fut.await
-        };
-        #[cfg(target_family = "wasm")]
-        let response = if timeout_ms.is_some() {
-            unsupported_timeout_response()
         } else {
             fut.await
         };

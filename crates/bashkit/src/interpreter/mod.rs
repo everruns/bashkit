@@ -1879,10 +1879,7 @@ impl Interpreter {
         self.arrays_mut().remove("BASH_SOURCE");
     }
 
-    // Only called from the tokio-timeout recovery path in Bash::exec, which is
-    // native-only (wasm has no reliable timer driver, so no timeout to recover
-    // from — see TM-DOS-057 in lib.rs).
-    #[cfg(not(target_family = "wasm"))]
+    // Called after a host-backed deadline drops the in-flight execution future.
     pub(crate) fn clear_cancelled_execution_state(&mut self) {
         self.reconcile_cancelled_execution_state(0, 0, 0, None);
     }
@@ -8214,41 +8211,14 @@ impl Interpreter {
                 // Build inner command with optional stdin via here-string.
                 let inner_cmd = subcommand_to_command(&command);
 
-                // wasm32-unknown-unknown has no timer driver. Fail closed rather
-                // than accepting a deadline that cannot be enforced while an
-                // async custom builtin is pending.
-                #[cfg(target_family = "wasm")]
-                let outcome = {
-                    // The parsed command is intentionally never dispatched.
-                    drop(inner_cmd);
-                    // Keep the phrasing aligned with `unsupported_timeout_response`
-                    // ("timeout is unsupported on this wasm target") so callers and
-                    // tests can match a single message across builtin and tool paths.
-                    ExecResult::err(
-                        format!(
-                            "bashkit: timeout is unsupported on this wasm target (requested {:.3}s{})\n",
-                            duration.as_secs_f64(),
-                            if preserve_status {
-                                " --preserve-status"
-                            } else {
-                                ""
-                            }
-                        ),
-                        125,
-                    )
-                };
-
-                #[cfg(not(target_family = "wasm"))]
-                let outcome = {
-                    use tokio::time::timeout;
-
+                {
                     let baseline_call_stack_len = self.call_stack.len();
                     let baseline_bash_source_len = self.bash_source_stack.len();
                     let baseline_function_depth = self.counters.function_depth;
                     let baseline_pipeline_stdin = self.pipeline_stdin.clone();
                     self.pipeline_stdin = command.stdin.clone();
                     let exec_future = self.execute_command(&inner_cmd);
-                    match timeout(duration, exec_future).await {
+                    match crate::time_compat::timeout(duration, exec_future).await {
                         Ok(Ok(result)) => {
                             self.pipeline_stdin = baseline_pipeline_stdin;
                             result
@@ -8273,9 +8243,7 @@ impl Interpreter {
                             ExecResult::err(String::new(), exit_code)
                         }
                     }
-                };
-
-                outcome
+                }
             }
             builtins::ExecutionPlan::Batch { commands } => {
                 let mut combined_stdout = crate::StreamData::new();
@@ -8344,10 +8312,8 @@ impl Interpreter {
 
     /// Restore interpreter stacks/counters after an in-flight command future is cancelled.
     ///
-    /// Only the native timeout/cancellation paths can cancel a command mid-flight;
-    /// wasm32 has no timer driver, so it is gated out there to keep the wasm build
-    /// warning-clean (CI checks wasm with `-D warnings`).
-    #[cfg(not(target_family = "wasm"))]
+    /// Host-backed deadlines can cancel a command future mid-flight on native
+    /// and JS-host wasm targets, so both paths must restore transient stacks.
     fn reconcile_cancelled_execution_state(
         &mut self,
         baseline_call_stack_len: usize,

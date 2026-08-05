@@ -10,11 +10,61 @@
 //! clocks). Use this module's `Instant`/`SystemTime`/`UNIX_EPOCH` instead of
 //! `std::time`'s directly anywhere wall-clock time is read.
 
+use std::future::Future;
+use std::time::Duration;
+
 #[cfg(target_arch = "wasm32")]
 pub(crate) use web_time::{Instant, SystemTime, UNIX_EPOCH};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+/// Portable timer future. JS-host wasm uses `setTimeout`; native targets keep
+/// tokio's runtime timer. The wasm future is wrapped as `Send` because the
+/// target is deliberately single-threaded (the same invariant as JS builtins).
+pub(crate) async fn sleep(duration: Duration) {
+    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+    send_wrapper::SendWrapper::new(gloo_timers::future::TimeoutFuture::new(duration_millis(
+        duration,
+    )))
+    .await;
+
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+    tokio::time::sleep(duration).await;
+}
+
+pub(crate) struct TimeoutElapsed;
+
+/// Race a future against a host wall-clock deadline on every supported target.
+pub(crate) async fn timeout<F: Future>(
+    duration: Duration,
+    future: F,
+) -> Result<F::Output, TimeoutElapsed> {
+    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+    {
+        use futures_util::future::{Either, select};
+        let timer = send_wrapper::SendWrapper::new(gloo_timers::future::TimeoutFuture::new(
+            duration_millis(duration),
+        ));
+        futures_util::pin_mut!(future, timer);
+        match select(future, timer).await {
+            Either::Left((output, _)) => Ok(output),
+            Either::Right(_) => Err(TimeoutElapsed),
+        }
+    }
+
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+    tokio::time::timeout(duration, future)
+        .await
+        .map_err(|_| TimeoutElapsed)
+}
+
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+fn duration_millis(duration: Duration) -> u32 {
+    (duration.as_secs_f64() * 1000.0)
+        .ceil()
+        .clamp(0.0, u32::MAX as f64) as u32
+}
 
 /// Convert to a `chrono::DateTime<Utc>`.
 ///

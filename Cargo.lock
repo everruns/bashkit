@@ -403,6 +403,7 @@ dependencies = [
  "futures-core",
  "futures-util",
  "getrandom 0.4.3",
+ "gloo-timers",
  "hmac",
  "insta",
  "jaq-core",
@@ -420,6 +421,7 @@ dependencies = [
  "reqwest",
  "russh",
  "rustls",
+ "send_wrapper",
  "serde",
  "serde_json",
  "serial_test",
@@ -1848,6 +1850,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2eecf2d5dc9b66b732b97707a0210906b1d30523eb773193ab777c0c84b3e8d5"
 dependencies = [
  "polyval 0.7.1",
+]
+
+[[package]]
+name = "gloo-timers"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbb143cf96099802033e0d4f4963b19fd2e0b728bcf076cd9cf7f6634f092994"
+dependencies = [
+ "futures-channel",
+ "futures-core",
+ "js-sys",
+ "wasm-bindgen",
 ]
 
 [[package]]

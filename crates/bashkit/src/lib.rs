@@ -1106,13 +1106,13 @@ impl Bash {
         }
 
         let exec_start = crate::time_compat::Instant::now();
-        // THREAT[TM-DOS-057]: Wrap execution with timeout to prevent sleep/blocking bypass.
-        // Only the native path arms the tokio timeout; wasm has no reliable timer driver.
-        #[cfg(not(target_family = "wasm"))]
+        // THREAT[TM-DOS-057]: Wrap execution with a host-backed timeout to
+        // prevent sleep and pending async callbacks from bypassing the budget.
         let execution_timeout = self.interpreter.limits().timeout;
-        #[cfg(not(target_family = "wasm"))]
         let result =
-            match tokio::time::timeout(execution_timeout, self.interpreter.execute(&ast)).await {
+            match crate::time_compat::timeout(execution_timeout, self.interpreter.execute(&ast))
+                .await
+            {
                 Ok(r) => r,
                 Err(_elapsed) => {
                     self.interpreter.clear_cancelled_execution_state();
@@ -1121,8 +1121,6 @@ impl Bash {
                     )))
                 }
             };
-        #[cfg(target_family = "wasm")]
-        let result = self.interpreter.execute(&ast).await;
         // Positional parameters are per-invocation: drop the synthetic frame
         // (and anything the interpreter leaked above it on an error path) so
         // the next exec starts with `$#` back at 0.

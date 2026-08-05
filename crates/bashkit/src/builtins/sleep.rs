@@ -1,7 +1,6 @@
 //! Sleep builtin - pause execution for specified duration
 
 use async_trait::async_trait;
-#[cfg(not(target_family = "wasm"))]
 use std::time::Duration;
 
 use super::limits::SLEEP_MAX_SECONDS as MAX_SLEEP_SECONDS;
@@ -52,12 +51,7 @@ impl Builtin for Sleep {
         };
 
         if seconds > 0.0 {
-            // wasm32-unknown-unknown has no timer driver, so tokio::time::sleep
-            // panics ("time not implemented"). The single-threaded sandbox has
-            // no wall-clock semantics anyway (see knowledge/runtimes/browser-package.md), so
-            // on wasm the sleep elapses instantly.
-            #[cfg(not(target_family = "wasm"))]
-            tokio::time::sleep(Duration::from_secs_f64(seconds)).await;
+            crate::time_compat::sleep(Duration::from_secs_f64(seconds)).await;
         }
 
         Ok(ExecResult::ok(String::new()))

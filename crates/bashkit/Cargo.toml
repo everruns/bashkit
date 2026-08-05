@@ -281,6 +281,10 @@ tokio = { version = "1", features = ["rt-multi-thread", "fs"] }
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-time = { workspace = true }
 
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+gloo-timers = { version = "0.3", features = ["futures"] }
+send_wrapper = { version = "0.6", features = ["futures"] }
+
 # Vendored uucore modules (e.g. generated/format/human.rs) carry upstream
 # `#[cfg(feature = "i18n-decimal")]` gates. bashkit has no i18n surface —
 # the port tool hard-errors on Fluent/translate imports — so this feature

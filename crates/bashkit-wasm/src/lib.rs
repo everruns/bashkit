@@ -21,12 +21,13 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use bashkit::{
-    Bash as CoreBash, Builtin, BuiltinContext, ExecResult as CoreExecResult,
-    FileSystem as FileSystemTrait, async_trait,
+    Bash as CoreBash, Builtin, BuiltinContext, CheckoutPolicy, CommitOptions,
+    ExecResult as CoreExecResult, FileSystem as FileSystemTrait, ObjectId, OutputCallback,
+    async_trait,
 };
 use futures_util::future::FutureExt;
 use send_wrapper::SendWrapper;
@@ -119,16 +120,43 @@ impl FileSystem {
         String::from_utf8(bytes).map_err(|e| JsError::new(&e.to_string()))
     }
 
+    /// Read a file without interpreting its bytes as UTF-8.
+    #[wasm_bindgen(js_name = readFileBytes)]
+    pub fn read_file_bytes(&self, path: String) -> Result<js_sys::Uint8Array, JsError> {
+        let bytes = now(self.inner.read_file(Path::new(&path)))?;
+        Ok(js_sys::Uint8Array::from(bytes.as_slice()))
+    }
+
     /// Write a UTF-8 file, replacing any existing content.
     #[wasm_bindgen(js_name = writeFile)]
     pub fn write_file(&self, path: String, content: String) -> Result<(), JsError> {
         now(self.inner.write_file(Path::new(&path), content.as_bytes()))
     }
 
+    /// Write bytes verbatim, replacing any existing content.
+    #[wasm_bindgen(js_name = writeFileBytes)]
+    pub fn write_file_bytes(
+        &self,
+        path: String,
+        content: js_sys::Uint8Array,
+    ) -> Result<(), JsError> {
+        now(self.inner.write_file(Path::new(&path), &content.to_vec()))
+    }
+
     /// Append to a file (creating it if absent).
     #[wasm_bindgen(js_name = appendFile)]
     pub fn append_file(&self, path: String, content: String) -> Result<(), JsError> {
         now(self.inner.append_file(Path::new(&path), content.as_bytes()))
+    }
+
+    /// Append bytes verbatim (creating the file if absent).
+    #[wasm_bindgen(js_name = appendFileBytes)]
+    pub fn append_file_bytes(
+        &self,
+        path: String,
+        content: js_sys::Uint8Array,
+    ) -> Result<(), JsError> {
+        now(self.inner.append_file(Path::new(&path), &content.to_vec()))
     }
 
     /// Whether a path exists.
@@ -227,7 +255,7 @@ impl Builtin for JsBuiltin {
             Ok(v) => v,
             Err(e) => {
                 return Ok(CoreExecResult::err(
-                    format!("{}: {}\n", self.name, js_to_string(&e)),
+                    format!("{}: {}\n", self.name, sanitize_js_error(&e)),
                     1,
                 ));
             }
@@ -246,7 +274,7 @@ impl Builtin for JsBuiltin {
                     Ok(v) => v,
                     Err(e) => {
                         return Ok(CoreExecResult::err(
-                            format!("{}: {}\n", self.name, js_to_string(&e)),
+                            format!("{}: {}\n", self.name, sanitize_js_error(&e)),
                             1,
                         ));
                     }
@@ -288,6 +316,39 @@ fn js_to_string(v: &JsValue) -> String {
         .unwrap_or_else(|| "unknown error".to_string())
 }
 
+/// THREAT[TM-INF-028]: JS callback failures cross a sandbox boundary. Surface
+/// the Error message only, strip absolute/file URL paths, and cap diagnostics.
+fn sanitize_js_error(value: &JsValue) -> String {
+    let raw = js_to_string(value);
+    let mut sanitized = String::with_capacity(raw.len().min(256));
+    let mut offset = 0;
+    let mut previous = None;
+    while offset < raw.len() && sanitized.chars().count() < 256 {
+        let rest = &raw[offset..];
+        let is_file_url = rest.starts_with("file://");
+        let ch = rest.chars().next().expect("offset is a character boundary");
+        let is_absolute_path = ch == '/'
+            && previous
+                .map(|previous: char| !previous.is_alphanumeric() && previous != '_')
+                .unwrap_or(true);
+        if is_file_url || is_absolute_path {
+            sanitized.push_str("<path>");
+            offset += rest.find(char::is_whitespace).unwrap_or(rest.len());
+            previous = Some('>');
+            continue;
+        }
+        sanitized.push(ch);
+        previous = Some(ch);
+        offset += ch.len_utf8();
+    }
+    let sanitized = sanitized.chars().take(256).collect::<String>();
+    if sanitized.is_empty() {
+        "callback failed".to_string()
+    } else {
+        sanitized
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Config + Bash
 // ---------------------------------------------------------------------------
@@ -302,6 +363,7 @@ struct Config {
     env: Vec<(String, String)>,
     max_commands: Option<usize>,
     max_loop_iterations: Option<usize>,
+    timeout_ms: Option<u64>,
     max_memory: Option<usize>,
     files: Vec<(String, String)>,
     builtins: Vec<CustomBuiltinConfig>,
@@ -319,6 +381,7 @@ pub struct Bash {
     inner: Rc<RefCell<CoreBash>>,
     config: Rc<Config>,
     sync_flag: Arc<AtomicBool>,
+    cancellation: Rc<RefCell<Arc<AtomicBool>>>,
 }
 
 #[wasm_bindgen]
@@ -330,10 +393,12 @@ impl Bash {
         let config = Rc::new(parse_options(&options)?);
         let sync_flag = Arc::new(AtomicBool::new(false));
         let core = build_core(&config, &sync_flag)?;
+        let cancellation = Rc::new(RefCell::new(core.cancellation_token()));
         Ok(Bash {
             inner: Rc::new(RefCell::new(core)),
             config,
             sync_flag,
+            cancellation,
         })
     }
 
@@ -383,15 +448,190 @@ impl Bash {
         })
     }
 
+    /// Execute asynchronously while forwarding incremental output.
+    // Same serialization invariant as `execute`: the single-threaded RefCell
+    // borrow intentionally spans the future and rejects reentrant execution.
+    #[allow(clippy::await_holding_refcell_ref)]
+    #[wasm_bindgen(js_name = executeWithOutput)]
+    pub fn execute_with_output(
+        &self,
+        commands: String,
+        on_output: js_sys::Function,
+    ) -> js_sys::Promise {
+        let inner = self.inner.clone();
+        let callback = SendWrapper::new(on_output);
+        let callback_error = Arc::new(Mutex::new(None::<String>));
+        let callback_error_for_output = callback_error.clone();
+        future_to_promise(async move {
+            let mut guard = inner.try_borrow_mut().map_err(|_| {
+                JsError::new("bash instance is busy (reentrant execution is not supported)")
+            })?;
+            let output_callback: OutputCallback = Box::new(move |stdout, stderr| {
+                if callback_error_for_output
+                    .lock()
+                    .is_ok_and(|slot| slot.is_some())
+                {
+                    return;
+                }
+                if let Err(error) = callback.call2(
+                    &JsValue::NULL,
+                    &JsValue::from_str(stdout),
+                    &JsValue::from_str(stderr),
+                ) && let Ok(mut slot) = callback_error_for_output.lock()
+                {
+                    *slot = Some(sanitize_js_error(&error));
+                }
+            });
+            let result = guard.exec_streaming(&commands, output_callback).await;
+            if let Some(error) = callback_error.lock().ok().and_then(|mut slot| slot.take()) {
+                return Err(JsValue::from(JsError::new(&format!(
+                    "output callback failed: {error}"
+                ))));
+            }
+            match result {
+                Ok(r) => Ok(JsValue::from(ExecResult::from(r))),
+                Err(e) => Err(JsValue::from(JsError::new(&e.to_string()))),
+            }
+        })
+    }
+
+    /// Analyze a script without executing or mutating it.
+    pub fn analyze(&self, script: String) -> Result<JsValue, JsError> {
+        let analysis = self
+            .inner
+            .try_borrow()
+            .map_err(|_| JsError::new("bash instance is busy"))?
+            .analyze(&script)
+            .map_err(|error| JsError::new(&error.to_string()))?;
+        let commands = analysis
+            .commands
+            .iter()
+            .map(|command| {
+                serde_json::json!({
+                    "name": command.name,
+                    "args": command.args,
+                    "context": command.context.as_str(),
+                    "assignments": command.assignments,
+                    "isAssignmentOnly": command.is_assignment_only(),
+                })
+            })
+            .collect::<Vec<_>>();
+        let redirects = analysis
+            .redirects
+            .iter()
+            .map(|redirect| {
+                serde_json::json!({
+                    "path": redirect.path,
+                    "mode": redirect.mode.as_str(),
+                    "isWrite": redirect.mode.is_write(),
+                })
+            })
+            .collect::<Vec<_>>();
+        let value = serde_json::json!({
+            "commands": commands,
+            "redirects": redirects,
+            "functions": analysis.functions,
+            "commandNames": analysis.command_names(),
+            "hasDynamicCommands": analysis.has_dynamic_commands,
+            "hasCommandSubstitution": analysis.has_command_substitution,
+            "hasInterpreterReentry": analysis.has_interpreter_reentry,
+            "truncated": analysis.truncated,
+            "isOpaque": analysis.is_opaque(),
+        });
+        value
+            .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+            .map_err(|error| JsError::new(&error.to_string()))
+    }
+
+    /// Set the sticky cancellation token checked at command boundaries.
+    pub fn cancel(&self) {
+        self.cancellation.borrow().store(true, Ordering::SeqCst);
+    }
+
+    /// Clear the sticky cancellation token after an execution has stopped.
+    #[wasm_bindgen(js_name = clearCancel)]
+    pub fn clear_cancel(&self) {
+        self.cancellation.borrow().store(false, Ordering::SeqCst);
+    }
+
     /// Reset the interpreter to a fresh state, preserving construction options
     /// and registered custom builtins.
     pub fn reset(&self) -> Result<(), JsError> {
         let core = build_core(&self.config, &self.sync_flag)?;
+        *self.cancellation.borrow_mut() = core.cancellation_token();
         *self
             .inner
             .try_borrow_mut()
             .map_err(|_| JsError::new("bash instance is busy"))? = core;
         Ok(())
+    }
+
+    /// Capture content-addressed state for persistence and branching.
+    pub fn commit(&self, options: JsValue) -> Result<JsValue, JsError> {
+        let mut commit_options = CommitOptions::new();
+        if !options.is_undefined() && !options.is_null() {
+            if !options.is_object() {
+                return Err(JsError::new("commit options must be an object"));
+            }
+            for parent in read_object_ids(&options, "parents")? {
+                commit_options = commit_options.parent(parent);
+            }
+            if let Ok(meta) = js_sys::Reflect::get(&options, &JsValue::from_str("meta"))
+                && meta.is_object()
+            {
+                let meta = js_sys::Object::from(meta);
+                for key in js_sys::Object::keys(&meta).iter() {
+                    let name = key.as_string().unwrap_or_default();
+                    let value = js_sys::Reflect::get(&meta, &key)
+                        .ok()
+                        .and_then(|value| value.as_string())
+                        .ok_or_else(|| JsError::new("commit metadata values must be strings"))?;
+                    commit_options = commit_options.meta(name, value);
+                }
+            }
+            let have = read_object_ids(&options, "have")?;
+            commit_options = commit_options.have(have.iter());
+            if bool_property(&options, "excludeFilesystem") {
+                commit_options = commit_options.exclude_filesystem(true);
+            }
+            if bool_property(&options, "excludeFunctions") {
+                commit_options = commit_options.exclude_functions(true);
+            }
+        }
+
+        let packed = self
+            .inner
+            .try_borrow()
+            .map_err(|_| JsError::new("bash instance is busy"))?
+            .commit(commit_options)
+            .map_err(|error| JsError::new(&error.to_string()))?;
+        packed_commit_to_js(&packed)
+    }
+
+    /// Restore a content-addressed commit. Mutation is atomic on failure.
+    pub fn checkout(
+        &self,
+        commit_id: String,
+        objects: JsValue,
+        policy: Option<String>,
+    ) -> Result<(), JsError> {
+        let root = parse_object_id(&commit_id)?;
+        let store = object_store_from_js(&objects)?;
+        let policy = match policy.as_deref().unwrap_or("superset") {
+            "strict" => CheckoutPolicy::Strict,
+            "superset" => CheckoutPolicy::Superset,
+            "force" => CheckoutPolicy::Force,
+            _ => {
+                return Err(JsError::new(
+                    "checkout policy must be strict, superset, or force",
+                ));
+            }
+        };
+        self.inner
+            .try_borrow_mut()
+            .map_err(|_| JsError::new("bash instance is busy"))?
+            .checkout(root, &store, policy)
+            .map_err(|error| JsError::new(&error.to_string()))
     }
 
     // --- VFS helpers ------------------------------------------------------
@@ -409,16 +649,39 @@ impl Bash {
         self.fs().read_file(path)
     }
 
+    #[wasm_bindgen(js_name = readFileBytes)]
+    pub fn read_file_bytes(&self, path: String) -> Result<js_sys::Uint8Array, JsError> {
+        self.fs().read_file_bytes(path)
+    }
+
     /// Write a UTF-8 file to the virtual filesystem.
     #[wasm_bindgen(js_name = writeFile)]
     pub fn write_file(&self, path: String, content: String) -> Result<(), JsError> {
         self.fs().write_file(path, content)
     }
 
+    #[wasm_bindgen(js_name = writeFileBytes)]
+    pub fn write_file_bytes(
+        &self,
+        path: String,
+        content: js_sys::Uint8Array,
+    ) -> Result<(), JsError> {
+        self.fs().write_file_bytes(path, content)
+    }
+
     /// Append to a file in the virtual filesystem (creating it if absent).
     #[wasm_bindgen(js_name = appendFile)]
     pub fn append_file(&self, path: String, content: String) -> Result<(), JsError> {
         self.fs().append_file(path, content)
+    }
+
+    #[wasm_bindgen(js_name = appendFileBytes)]
+    pub fn append_file_bytes(
+        &self,
+        path: String,
+        content: js_sys::Uint8Array,
+    ) -> Result<(), JsError> {
+        self.fs().append_file_bytes(path, content)
     }
 
     /// Whether a path exists in the virtual filesystem.
@@ -442,6 +705,108 @@ impl Bash {
     }
 }
 
+fn parse_object_id(id: &str) -> Result<ObjectId, JsError> {
+    ObjectId::from_hex(id).map_err(|error| JsError::new(&error.to_string()))
+}
+
+fn bool_property(value: &JsValue, name: &str) -> bool {
+    js_sys::Reflect::get(value, &JsValue::from_str(name))
+        .ok()
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
+}
+
+fn read_object_ids(value: &JsValue, name: &str) -> Result<Vec<ObjectId>, JsError> {
+    let Ok(ids) = js_sys::Reflect::get(value, &JsValue::from_str(name)) else {
+        return Ok(Vec::new());
+    };
+    if ids.is_undefined() || ids.is_null() {
+        return Ok(Vec::new());
+    }
+    if !js_sys::Array::is_array(&ids) {
+        return Err(JsError::new(&format!(
+            "{name} must be an array of object ids"
+        )));
+    }
+    js_sys::Array::from(&ids)
+        .iter()
+        .map(|id| {
+            id.as_string()
+                .ok_or_else(|| JsError::new(&format!("{name} must contain strings")))
+                .and_then(|id| parse_object_id(&id))
+        })
+        .collect()
+}
+
+fn object_store_from_js(objects: &JsValue) -> Result<HashMap<ObjectId, Vec<u8>>, JsError> {
+    if !objects.is_object() {
+        return Err(JsError::new("checkout objects must be an object"));
+    }
+    let object = js_sys::Object::from(objects.clone());
+    let mut store = HashMap::new();
+    for key in js_sys::Object::keys(&object).iter() {
+        let id = key.as_string().unwrap_or_default();
+        let value = js_sys::Reflect::get(&object, &key)
+            .map_err(|_| JsError::new("failed to read checkout object"))?;
+        if !value.is_instance_of::<js_sys::Uint8Array>() {
+            return Err(JsError::new(&format!(
+                "checkout object {id} must be a Uint8Array"
+            )));
+        }
+        store.insert(
+            parse_object_id(&id)?,
+            js_sys::Uint8Array::new(&value).to_vec(),
+        );
+    }
+    Ok(store)
+}
+
+fn packed_commit_to_js(packed: &bashkit::PackedCommit) -> Result<JsValue, JsError> {
+    let output = js_sys::Object::new();
+    let objects = js_sys::Object::new();
+    for (id, bytes) in packed.objects() {
+        set_property(
+            &objects,
+            &id.to_hex(),
+            &JsValue::from(js_sys::Uint8Array::from(bytes)),
+        )?;
+    }
+    set_property(&output, "id", &JsValue::from_str(&packed.id().to_hex()))?;
+    set_property(
+        &output,
+        "objectCount",
+        &JsValue::from_f64(packed.object_count() as f64),
+    )?;
+    set_property(
+        &output,
+        "storedBytes",
+        &JsValue::from_f64(packed.stored_bytes() as f64),
+    )?;
+    set_property(
+        &output,
+        "selfContained",
+        &JsValue::from_bool(packed.is_self_contained()),
+    )?;
+    set_property(&output, "objects", &objects)?;
+    if packed.is_self_contained() {
+        let bytes = packed
+            .to_bytes()
+            .map_err(|error| JsError::new(&error.to_string()))?;
+        set_property(
+            &output,
+            "packed",
+            &JsValue::from(js_sys::Uint8Array::from(bytes.as_slice())),
+        )?;
+    }
+    Ok(output.into())
+}
+
+fn set_property(object: &js_sys::Object, name: &str, value: &JsValue) -> Result<(), JsError> {
+    js_sys::Reflect::set(object, &JsValue::from_str(name), value)
+        .map(|_| ())
+        .map_err(|_| JsError::new(&format!("failed to create {name} property")))
+}
+
 fn build_core(config: &Config, sync_flag: &Arc<AtomicBool>) -> Result<CoreBash, JsError> {
     let profile = bashkit::ExecutionProfile::named(config.profile);
     let mut builder = CoreBash::builder().profile(profile.clone());
@@ -458,13 +823,19 @@ fn build_core(config: &Config, sync_flag: &Arc<AtomicBool>) -> Result<CoreBash, 
     for (k, v) in &config.env {
         builder = builder.env(k.clone(), v.clone());
     }
-    if config.max_commands.is_some() || config.max_loop_iterations.is_some() {
+    if config.max_commands.is_some()
+        || config.max_loop_iterations.is_some()
+        || config.timeout_ms.is_some()
+    {
         let mut limits = profile.execution_limits().clone();
         if let Some(n) = config.max_commands {
             limits = limits.max_commands(n);
         }
         if let Some(n) = config.max_loop_iterations {
             limits = limits.max_loop_iterations(n);
+        }
+        if let Some(ms) = config.timeout_ms {
+            limits = limits.timeout(std::time::Duration::from_millis(ms));
         }
         builder = builder.limits(limits);
     }
@@ -510,6 +881,7 @@ fn parse_options(options: &JsValue) -> Result<Config, JsError> {
             env: Vec::new(),
             max_commands: None,
             max_loop_iterations: None,
+            timeout_ms: None,
             max_memory: None,
             files: Vec::new(),
             builtins: Vec::new(),
@@ -575,6 +947,7 @@ fn parse_options(options: &JsValue) -> Result<Config, JsError> {
         env,
         max_commands: get_usize("maxCommands"),
         max_loop_iterations: get_usize("maxLoopIterations"),
+        timeout_ms: get_usize("timeoutMs").map(|value| value as u64),
         max_memory: get_usize("maxMemory"),
         files,
         builtins,
