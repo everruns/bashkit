@@ -48,6 +48,73 @@ export declare const ExecutionProfile: Readonly<{
   Interactive: "interactive";
 }>;
 
+/** Entry kind reported by a {@link HostFileSystem}. */
+export type HostFileType = "file" | "dir" | "directory" | "symlink" | "fifo";
+
+/** Metadata a {@link HostFileSystem} reports for one entry. */
+export interface HostStat {
+  readonly type: HostFileType;
+  /** Size in bytes. Defaults to 0. */
+  readonly size?: number;
+  /** Unix permission bits. Defaults to 0o644 for files, 0o755 for directories. */
+  readonly mode?: number;
+  /** Last modification time, ms since the epoch. Defaults to now. */
+  readonly mtimeMs?: number;
+}
+
+/** One directory entry: a {@link HostStat} plus its name. */
+export interface HostDirent extends HostStat {
+  readonly name: string;
+}
+
+/**
+ * A filesystem the embedder owns, used in place of the built-in in-memory VFS.
+ *
+ * Every method may return its value directly or as a `Promise`. Because a host
+ * call can suspend the interpreter, a `Bash` constructed with `fs` must be
+ * driven with {@link Bash.execute}; {@link Bash.executeSync} and the
+ * synchronous `bash.readFile(...)` helpers report the suspension instead of
+ * blocking.
+ *
+ * The host implements raw storage only. POSIX semantics — parent-directory
+ * checks, "is a directory" errors, symlink resolution — are enforced above it,
+ * so hosts stay small.
+ *
+ * To surface a bash-accurate error, throw (or reject with) an `Error` carrying
+ * a `code` property: `ENOENT`, `EEXIST`, `EACCES`, `EPERM`, `EISDIR`,
+ * `ENOTDIR`, `ENOTEMPTY`, `EXDEV`, or `ENOSYS`. Anything else becomes a generic
+ * I/O error carrying the thrown message.
+ */
+export interface HostFileSystem {
+  /** Read raw bytes. Throw `ENOENT` when absent. */
+  read(path: string): Uint8Array | string | Promise<Uint8Array | string>;
+  /** Write raw bytes, replacing any existing content. */
+  write(path: string, content: Uint8Array): void | Promise<void>;
+  /** Create a directory, with parents when `recursive`. */
+  mkdir(path: string, recursive: boolean): void | Promise<void>;
+  /** Remove an entry, with contents when `recursive`. */
+  remove(path: string, recursive: boolean): void | Promise<void>;
+  /** Metadata for one entry. Throw `ENOENT` when absent. */
+  stat(path: string): HostStat | Promise<HostStat>;
+  /** Directory listing. Throw `ENOENT` when absent. */
+  readDir(path: string): HostDirent[] | Promise<HostDirent[]>;
+  /** Whether a path exists. Must not throw for a plain miss. */
+  exists(path: string): boolean | Promise<boolean>;
+
+  /** Optional. Synthesized as read-modify-write when omitted. */
+  append?(path: string, content: Uint8Array): void | Promise<void>;
+  /** Optional. Synthesized as read-then-write when omitted. */
+  copy?(from: string, to: string): void | Promise<void>;
+  /** Optional. Synthesized as copy-then-remove when omitted. */
+  rename?(from: string, to: string): void | Promise<void>;
+  /** Optional. Scripts that create symlinks fail with `ENOSYS` when omitted. */
+  symlink?(target: string, link: string): void | Promise<void>;
+  /** Optional. Reading a symlink fails with `ENOSYS` when omitted. */
+  readLink?(path: string): string | Promise<string>;
+  /** Optional. Accepted and ignored when omitted, so `chmod +x` still works. */
+  chmod?(path: string, mode: number): void | Promise<void>;
+}
+
 /** Options for constructing a {@link Bash} instance. */
 export interface BashOptions {
   /** Resource-policy baseline; individual limit options override it. */
@@ -68,6 +135,12 @@ export interface BashOptions {
   maxMemory?: number;
   /** Pre-created files seeded into the virtual filesystem (string contents). */
   files?: Record<string, string>;
+  /**
+   * Filesystem the embedder owns, used instead of the built-in in-memory VFS.
+   * Cannot be combined with {@link BashOptions.files} — seed through the host
+   * instead. Requires {@link Bash.execute} (not `executeSync`).
+   */
+  fs?: HostFileSystem;
   /** JS callbacks registered as bash builtins. */
   customBuiltins?: Record<string, CustomBuiltin>;
 }

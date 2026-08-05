@@ -122,6 +122,7 @@ new Bash({
   maxCommands, maxLoopIterations, maxMemory,
   files: { "/config.json": '{"debug":true}' },
   customBuiltins: { name: (ctx) => "..." },
+  fs: hostFileSystem, // host-backed filesystem; see below
 });
 ```
 
@@ -167,6 +168,53 @@ const resumed = new Bash();
 resumed.checkout(saved.id, saved.objects); // policy defaults to "superset"
 ```
 
+## Host-backed filesystem
+
+Pass `fs` to run scripts directly against storage you own — a Durable Object, an
+OPFS handle, IndexedDB — instead of the in-memory VFS. Nothing is copied in or
+diffed back out: every read and write during the run is a call into your object.
+
+```js
+const bash = new Bash({ cwd: "/workspace", fs: myHost });
+const r = await bash.execute("grep -rl TODO . | head -5");
+```
+
+Implement seven required methods; each may return its value directly or as a
+`Promise`:
+
+```ts
+read(path)                 // -> Uint8Array | string   (throw ENOENT when absent)
+write(path, bytes)         // -> void
+mkdir(path, recursive)     // -> void
+remove(path, recursive)    // -> void
+stat(path)                 // -> { type: "file" | "dir" | "symlink", size?, mode?, mtimeMs? }
+readDir(path)              // -> [{ name, type, size?, mode?, mtimeMs? }]
+exists(path)               // -> boolean
+```
+
+`append`, `copy`, `rename`, and `chmod` are optional: omit them and they are
+synthesized from the required primitives (`chmod` is accepted and ignored, so
+`chmod +x` still works). `symlink` and `readLink` are optional too, but scripts
+that reach for them fail with `ENOSYS` when the host omits them.
+
+Your host implements raw storage only — POSIX semantics (parent-directory
+checks, "is a directory", symlink resolution) are enforced above it. Throw an
+`Error` carrying a `code` (`ENOENT`, `EEXIST`, `EACCES`, `EPERM`, `EISDIR`,
+`ENOTDIR`, `ENOTEMPTY`, `EXDEV`, `ENOSYS`) so bash reports the failure the way a
+real shell does.
+
+Two contract notes:
+
+- **`execute()` only.** A host call can suspend the interpreter, and
+  `executeSync` cannot await — it reports the suspension instead of blocking.
+  The synchronous `bash.readFile(...)` helpers behave the same way.
+- **`files` is rejected alongside `fs`.** Seeding writes through the VFS
+  synchronously, which a promise-returning host can never satisfy. Write seed
+  data through the host directly.
+
+Provide `/dev/null` in the host if your scripts redirect to it; with a host
+filesystem there is no built-in VFS underneath to supply it.
+
 ## What's included
 
 Plain bash plus the built-in text tooling (`grep`, `sed`, `awk`, `jq`, `find`,
@@ -198,7 +246,7 @@ custom builtin (see above) so requests go through your app's own `fetch`.
 ```bash
 # Build the bundle and run the headless integration tests:
 bash scripts/build.sh
-node --test __test__/bashkit-wasm.test.mjs
+node --test "__test__/*.test.mjs"
 # or, from the repo root:
 just build-wasm
 ```
