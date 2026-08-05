@@ -37,7 +37,7 @@ Example (Python execution with external function handler):
 ### Constructor
 
 ```python
-Bash(username: str | None = None, hostname: str | None = None, cwd: str | None = None, env: Mapping[str, str] | None = None, max_commands: int | None = None, max_loop_iterations: int | None = None, max_memory: int | None = None, timeout_seconds: float | None = None, python: bool = False, sqlite: bool = False, external_functions: list[str] | None = None, external_handler: ExternalHandler | None = None, files: dict[str, str | Callable[[], str]] | None = None, mounts: list[dict[str, Any]] | None = None, allowed_mount_paths: list[str] | None = None, readonly_filesystem: bool = False, custom_builtins: Mapping[str, BuiltinCallback] | None = None, network: NetworkConfig | None = None) -> None
+Bash(username: str | None = None, hostname: str | None = None, cwd: str | None = None, env: Mapping[str, str] | None = None, max_commands: int | None = None, max_loop_iterations: int | None = None, max_memory: int | None = None, timeout_seconds: float | None = None, python: bool = False, sqlite: bool = False, external_functions: list[str] | None = None, external_handler: ExternalHandler | None = None, files: dict[str, str | Callable[[], str]] | None = None, mounts: list[dict[str, Any]] | None = None, allowed_mount_paths: list[str] | None = None, readonly_filesystem: bool = False, custom_builtins: Mapping[str, BuiltinCallback] | None = None, network: NetworkConfig | None = None, profile: ExecutionProfile = ExecutionProfile.Standard) -> None
 ```
 
 Create a new Bash interpreter.
@@ -352,7 +352,7 @@ Restore interpreter state from bytes produced by ``snapshot_keyed()``.
 ### `from_snapshot`
 
 ```python
-Bash.from_snapshot(data: bytes, username: str | None = None, hostname: str | None = None, cwd: str | None = None, env: Mapping[str, str] | None = None, max_commands: int | None = None, max_loop_iterations: int | None = None, max_memory: int | None = None, timeout_seconds: float | None = None, python: bool = False, sqlite: bool = False, external_functions: list[str] | None = None, external_handler: ExternalHandler | None = None, files: dict[str, str] | None = None, mounts: list[dict[str, Any]] | None = None, allowed_mount_paths: list[str] | None = None, readonly_filesystem: bool = False, custom_builtins: Mapping[str, BuiltinCallback] | None = None, network: NetworkConfig | None = None) -> Bash
+Bash.from_snapshot(data: bytes, username: str | None = None, hostname: str | None = None, cwd: str | None = None, env: Mapping[str, str] | None = None, max_commands: int | None = None, max_loop_iterations: int | None = None, max_memory: int | None = None, timeout_seconds: float | None = None, python: bool = False, sqlite: bool = False, external_functions: list[str] | None = None, external_handler: ExternalHandler | None = None, files: dict[str, str] | None = None, mounts: list[dict[str, Any]] | None = None, allowed_mount_paths: list[str] | None = None, readonly_filesystem: bool = False, custom_builtins: Mapping[str, BuiltinCallback] | None = None, network: NetworkConfig | None = None, profile: ExecutionProfile = ExecutionProfile.Standard) -> Bash
 ```
 
 Create a new ``Bash`` from snapshot bytes and optional constructor kwargs.
@@ -360,7 +360,7 @@ Create a new ``Bash`` from snapshot bytes and optional constructor kwargs.
 ### `from_snapshot_keyed`
 
 ```python
-Bash.from_snapshot_keyed(data: bytes, key: bytes, username: str | None = None, hostname: str | None = None, cwd: str | None = None, env: Mapping[str, str] | None = None, max_commands: int | None = None, max_loop_iterations: int | None = None, max_memory: int | None = None, timeout_seconds: float | None = None, python: bool = False, sqlite: bool = False, external_functions: list[str] | None = None, external_handler: ExternalHandler | None = None, files: dict[str, str] | None = None, mounts: list[dict[str, Any]] | None = None, allowed_mount_paths: list[str] | None = None, readonly_filesystem: bool = False, custom_builtins: Mapping[str, BuiltinCallback] | None = None, network: NetworkConfig | None = None) -> Bash
+Bash.from_snapshot_keyed(data: bytes, key: bytes, username: str | None = None, hostname: str | None = None, cwd: str | None = None, env: Mapping[str, str] | None = None, max_commands: int | None = None, max_loop_iterations: int | None = None, max_memory: int | None = None, timeout_seconds: float | None = None, python: bool = False, sqlite: bool = False, external_functions: list[str] | None = None, external_handler: ExternalHandler | None = None, files: dict[str, str] | None = None, mounts: list[dict[str, Any]] | None = None, allowed_mount_paths: list[str] | None = None, readonly_filesystem: bool = False, custom_builtins: Mapping[str, BuiltinCallback] | None = None, network: NetworkConfig | None = None, profile: ExecutionProfile = ExecutionProfile.Standard) -> Bash
 ```
 
 Create a new ``Bash`` from HMAC-protected snapshot bytes.
@@ -552,7 +552,7 @@ Adds LLM-facing contract metadata (``description``, ``system_prompt``,
 ### Constructor
 
 ```python
-BashTool(username: str | None = None, hostname: str | None = None, cwd: str | None = None, env: Mapping[str, str] | None = None, max_commands: int | None = None, max_loop_iterations: int | None = None, max_memory: int | None = None, timeout_seconds: float | None = None, files: dict[str, str | Callable[[], str]] | None = None, mounts: list[dict[str, Any]] | None = None, allowed_mount_paths: list[str] | None = None, readonly_filesystem: bool = False, custom_builtins: Mapping[str, BuiltinCallback] | None = None, network: NetworkConfig | None = None) -> None
+BashTool(username: str | None = None, hostname: str | None = None, cwd: str | None = None, env: Mapping[str, str] | None = None, max_commands: int | None = None, max_loop_iterations: int | None = None, max_memory: int | None = None, timeout_seconds: float | None = None, files: dict[str, str | Callable[[], str]] | None = None, mounts: list[dict[str, Any]] | None = None, allowed_mount_paths: list[str] | None = None, readonly_filesystem: bool = False, custom_builtins: Mapping[str, BuiltinCallback] | None = None, network: NetworkConfig | None = None, profile: ExecutionProfile = ExecutionProfile.Standard) -> None
 ```
 
 Create a new BashTool.
@@ -901,7 +901,7 @@ Restore interpreter state from bytes produced by ``snapshot_keyed()``.
 ### `from_snapshot`
 
 ```python
-BashTool.from_snapshot(data: bytes, username: str | None = None, hostname: str | None = None, cwd: str | None = None, env: Mapping[str, str] | None = None, max_commands: int | None = None, max_loop_iterations: int | None = None, max_memory: int | None = None, timeout_seconds: float | None = None, files: dict[str, str] | None = None, mounts: list[dict[str, Any]] | None = None, allowed_mount_paths: list[str] | None = None, readonly_filesystem: bool = False, custom_builtins: Mapping[str, BuiltinCallback] | None = None, network: NetworkConfig | None = None) -> BashTool
+BashTool.from_snapshot(data: bytes, username: str | None = None, hostname: str | None = None, cwd: str | None = None, env: Mapping[str, str] | None = None, max_commands: int | None = None, max_loop_iterations: int | None = None, max_memory: int | None = None, timeout_seconds: float | None = None, files: dict[str, str] | None = None, mounts: list[dict[str, Any]] | None = None, allowed_mount_paths: list[str] | None = None, readonly_filesystem: bool = False, custom_builtins: Mapping[str, BuiltinCallback] | None = None, network: NetworkConfig | None = None, profile: ExecutionProfile = ExecutionProfile.Standard) -> BashTool
 ```
 
 Create a new ``BashTool`` from snapshot bytes and optional constructor kwargs.
@@ -909,7 +909,7 @@ Create a new ``BashTool`` from snapshot bytes and optional constructor kwargs.
 ### `from_snapshot_keyed`
 
 ```python
-BashTool.from_snapshot_keyed(data: bytes, key: bytes, username: str | None = None, hostname: str | None = None, cwd: str | None = None, env: Mapping[str, str] | None = None, max_commands: int | None = None, max_loop_iterations: int | None = None, max_memory: int | None = None, timeout_seconds: float | None = None, files: dict[str, str] | None = None, mounts: list[dict[str, Any]] | None = None, allowed_mount_paths: list[str] | None = None, readonly_filesystem: bool = False, custom_builtins: Mapping[str, BuiltinCallback] | None = None, network: NetworkConfig | None = None) -> BashTool
+BashTool.from_snapshot_keyed(data: bytes, key: bytes, username: str | None = None, hostname: str | None = None, cwd: str | None = None, env: Mapping[str, str] | None = None, max_commands: int | None = None, max_loop_iterations: int | None = None, max_memory: int | None = None, timeout_seconds: float | None = None, files: dict[str, str] | None = None, mounts: list[dict[str, Any]] | None = None, allowed_mount_paths: list[str] | None = None, readonly_filesystem: bool = False, custom_builtins: Mapping[str, BuiltinCallback] | None = None, network: NetworkConfig | None = None, profile: ExecutionProfile = ExecutionProfile.Standard) -> BashTool
 ```
 
 Create a new ``BashTool`` from HMAC-protected snapshot bytes.
