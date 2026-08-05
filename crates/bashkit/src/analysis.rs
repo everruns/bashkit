@@ -28,6 +28,37 @@ use crate::parser::{
 /// limit while deciding whether to run it.
 pub const MAX_ANALYSIS_NODES: usize = 4096;
 
+/// Commands that run another command named in their own arguments.
+///
+/// Decision: published as data rather than folded into
+/// [`ScriptAnalysis::is_opaque`]. These are not opaque — the command they run
+/// *is* statically visible, just one argument to the right — so flagging them
+/// as opaque would make every `env FOO=1 cmd` prompt. A host that allowlists
+/// command names must instead walk the wrapper's arguments itself.
+///
+/// Published because the alternative is every embedder hardcoding its own copy
+/// and silently drifting from ours across releases. `is_command_wrapper` is the
+/// supported way to ask.
+///
+/// Not listed: `time`, which is a Bash *keyword* — the parser already reports
+/// the timed command as the command name, so there is no wrapper to see
+/// through.
+///
+/// Not covered: wrappers that take a command in a non-prefix position
+/// (`find -exec`), or inside a language payload (`awk 'system(…)'`,
+/// `make`, `xargs -I{}` templates). Those need per-tool argument knowledge.
+pub const COMMAND_WRAPPERS: &[&str] = &[
+    "command", "doas", "env", "exec", "nice", "nohup", "setsid", "stdbuf", "sudo", "timeout",
+    "xargs",
+];
+
+/// True when `name` runs another command named in its own arguments.
+///
+/// See [`COMMAND_WRAPPERS`] for the list and its limits.
+pub fn is_command_wrapper(name: &str) -> bool {
+    COMMAND_WRAPPERS.contains(&name)
+}
+
 /// Where a command sits in the script.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -173,6 +204,20 @@ impl ScriptAnalysis {
     /// true, regardless of what `commands` contains.
     pub fn is_opaque(&self) -> bool {
         self.has_dynamic_commands || self.has_interpreter_reentry || self.truncated
+    }
+
+    /// Distinct [command wrappers](COMMAND_WRAPPERS) the script invokes, in
+    /// first-seen order.
+    ///
+    /// Non-empty means some command name this script runs is one argument to
+    /// the right of a name in [`command_names`](Self::command_names). A host
+    /// gating on an allowlist must either walk those arguments or treat the
+    /// script as it would an opaque one.
+    pub fn command_wrappers(&self) -> Vec<&str> {
+        self.command_names()
+            .into_iter()
+            .filter(|name| is_command_wrapper(name))
+            .collect()
     }
 }
 
@@ -622,6 +667,50 @@ mod tests {
     fn partial_literals_are_not_reconstructed() {
         let analysis = a("cat /tmp/$name.txt");
         assert_eq!(analysis.commands[0].args, vec![None]);
+    }
+
+    #[test]
+    fn command_wrappers_are_reported_but_not_opaque() {
+        let analysis = a("command cargo --version");
+        assert_eq!(analysis.command_wrappers(), ["command"]);
+        // The wrapped name is visible one argument to the right, so nothing is
+        // hidden — flagging this opaque would make every `env FOO=1 cmd` prompt.
+        assert!(!analysis.is_opaque());
+        assert_eq!(analysis.commands[0].args, [Some("cargo".into()), Some("--version".into())]);
+    }
+
+    #[test]
+    fn every_published_wrapper_is_recognized() {
+        for name in COMMAND_WRAPPERS {
+            assert!(is_command_wrapper(name), "{name} should be a wrapper");
+            assert_eq!(
+                a(&format!("{name} cargo --version")).command_wrappers(),
+                [*name]
+            );
+        }
+    }
+
+    #[test]
+    fn non_wrappers_are_not_reported() {
+        assert!(!is_command_wrapper("echo"));
+        assert!(a("echo command").command_wrappers().is_empty());
+        // `find -exec` takes its command in a non-prefix position: documented
+        // as out of scope, so it must not be silently reported as handled.
+        assert!(!is_command_wrapper("find"));
+    }
+
+    #[test]
+    fn time_keyword_needs_no_wrapper_entry() {
+        // `time` is parsed as a keyword, so the timed command is already the
+        // reported command name — there is nothing for a host to see through.
+        assert_eq!(a("time cargo --version").command_names(), ["cargo"]);
+        assert!(!is_command_wrapper("time"));
+    }
+
+    #[test]
+    fn command_wrappers_are_deduplicated_in_first_seen_order() {
+        let analysis = a("env A=1 cargo build; xargs rm; env B=2 ls");
+        assert_eq!(analysis.command_wrappers(), ["env", "xargs"]);
     }
 
     #[test]
