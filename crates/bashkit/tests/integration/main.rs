@@ -33,6 +33,7 @@ pub mod compgen_tests;
 pub mod coproc_tests;
 pub mod coreutils_differential_tests;
 pub mod credential_injection_tests;
+pub mod curl_data_compat_tests;
 pub mod custom_builtins_tests;
 pub mod custom_fs_tests;
 pub mod dev_null_tests;

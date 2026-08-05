@@ -346,6 +346,7 @@ Network access is disabled by default. When enabled, strict controls apply.
 | Bot identity spoofing (TM-NET-021) | Forge requests as a trusted bot | Ed25519 request signing (bot-auth feature, opt-in) | MITIGATED |
 | IPv4-mapped IPv6 SSRF bypass (TM-NET-022) | AAAA returns `::ffff:127.0.0.1` / metadata IP | `is_private_ip` normalizes v4-mapped/compatible v6 to v4 and applies the v4 classifier | FIXED |
 | HTTP-transport SSRF via fail-open precheck (TM-NET-023) | Malformed/no-host URL or rebind window bypasses the IP filter | Precheck fails closed on bad URLs; transports receive pinned addresses + `is_private_ip` | MITIGATED |
+| Repeated curl data bypasses body cap (TM-NET-028) | Many data/file parts plus encoding expansion exceed 10 MB in aggregate | Checked aggregate appends; file metadata checked against remaining capacity before reads | MITIGATED |
 
 **Credential Injection (TM-NET-024–027):**
 

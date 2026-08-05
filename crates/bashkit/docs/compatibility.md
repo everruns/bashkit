@@ -93,7 +93,7 @@ for sandbox security reasons. See the compliance spec for details.
 | `tr` | `-d`, character ranges | Translate/delete chars |
 | `date` | `+FORMAT`, `-u`, `-d`/`--date` (relative, compound, epoch) | Display/format date |
 | `wait` | `[JOB_ID...]` | Wait for background jobs |
-| `curl` | `-s`, `-o`, `-X`, `-d`, `-H`, `-I`, `-f`, `-L`, `-w`, `--compressed`, `-u`, `-A`, `-e`, `-v`, `-m` | HTTP client (requires http_client feature) |
+| `curl` | `-s`, `-o`, `-X`, `-d`/`--data`, `--data-raw`, `--data-binary`, `--data-urlencode`, `-G`/`--get`, `-H`, `-I`, `-f`, `-L`, `-w`, `--compressed`, `-u`, `-A`, `-e`, `-v`, `-m` | HTTP client (requires http_client feature) |
 | `wget` | `-q`, `-O`, `--spider`, `--header`, `-U`, `--post-data`, `-t` | Download files (requires http_client feature) |
 | `timeout` | `DURATION COMMAND` | Run with time limit (stub) |
 | `ls` | `-l`, `-a`, `-h`, `-1`, `-R`, `-t`, `-F`, `-C`, `-d` | List directory contents |
@@ -377,7 +377,7 @@ Default limits (configurable):
 |---------|--------|-------|
 | HTTP client | ✅ | Full implementation with security mitigations |
 | URL allowlist | ✅ | Default-deny whitelist security model |
-| `curl` builtin | ✅ | Full HTTP client with `-s`, `-o`, `-X`, `-d`, `-H`, `-I`, `-f`, `-L`, `-w`, `--compressed`, `-u`, `-A`, `-e`, `-v`, `-m` |
+| `curl` builtin | ✅ | Full HTTP client; ordered data variants, `@file`, and `-G` query aggregation included |
 | `wget` builtin | ✅ | Full downloader with `-q`, `-O`, `--spider`, `--header`, `-U`, `--post-data`, `-t` |
 | Response limits | ✅ | 10MB max response size, 30s timeout |
 | Redirect security | ✅ | Redirects require explicit `-L` and allowlist check |
