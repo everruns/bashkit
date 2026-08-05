@@ -22,7 +22,7 @@ build:
 # Requires: rustup target add wasm32-unknown-unknown; cargo install wasm-bindgen-cli
 build-wasm:
     bash crates/bashkit-wasm/scripts/build.sh release
-    node --test crates/bashkit-wasm/__test__/bashkit-wasm.test.mjs
+    node --test "crates/bashkit-wasm/__test__/*.test.mjs"
 
 # Run all tests (including fail-point tests)
 test:

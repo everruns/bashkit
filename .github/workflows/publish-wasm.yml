@@ -65,7 +65,7 @@ jobs:
         run: bash crates/bashkit-wasm/scripts/build.sh release
 
       - name: Integration tests (headless Node)
-        run: node --test crates/bashkit-wasm/__test__/bashkit-wasm.test.mjs
+        run: node --test "crates/bashkit-wasm/__test__/*.test.mjs"
 
       - name: Upload pkg
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

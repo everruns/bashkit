@@ -26,7 +26,7 @@ use std::sync::{Arc, Mutex};
 
 use bashkit::{
     Bash as CoreBash, Builtin, BuiltinContext, CheckoutPolicy, CommitOptions,
-    ExecResult as CoreExecResult, FileSystem as FileSystemTrait, ObjectId, OutputCallback,
+    ExecResult as CoreExecResult, FileSystem as FileSystemTrait, ObjectId, OutputCallback, PosixFs,
     async_trait,
 };
 use futures_util::future::FutureExt;
@@ -34,6 +34,9 @@ use send_wrapper::SendWrapper;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::{JsFuture, future_to_promise};
+
+mod hostfs;
+use hostfs::HostFs;
 
 /// Install a panic hook that forwards Rust panics to `console.error` with a
 /// readable message and stack, instead of the default unhelpful
@@ -367,6 +370,11 @@ struct Config {
     max_memory: Option<usize>,
     files: Vec<(String, String)>,
     builtins: Vec<CustomBuiltinConfig>,
+    /// Host-backed filesystem from `options.fs`, already wrapped in `PosixFs`.
+    /// Built once and shared across `reset()` because the bytes live on the
+    /// host, not in the interpreter — resetting the interpreter must not
+    /// disturb the embedder's store.
+    host_fs: Option<Arc<dyn FileSystemTrait>>,
 }
 
 struct CustomBuiltinConfig {
@@ -811,6 +819,10 @@ fn build_core(config: &Config, sync_flag: &Arc<AtomicBool>) -> Result<CoreBash, 
     let profile = bashkit::ExecutionProfile::named(config.profile);
     let mut builder = CoreBash::builder().profile(profile.clone());
 
+    if let Some(fs) = &config.host_fs {
+        builder = builder.fs(fs.clone());
+    }
+
     if let Some(u) = &config.username {
         builder = builder.username(u.clone());
     }
@@ -885,6 +897,7 @@ fn parse_options(options: &JsValue) -> Result<Config, JsError> {
             max_memory: None,
             files: Vec::new(),
             builtins: Vec::new(),
+            host_fs: None,
         });
     }
     if !options.is_object() {
@@ -916,6 +929,24 @@ fn parse_options(options: &JsValue) -> Result<Config, JsError> {
 
     let env = read_string_map(options, "env")?;
     let files = read_string_map(options, "files")?;
+
+    // A host filesystem replaces the in-memory VFS wholesale. `files` seeds the
+    // VFS through a synchronous `now_or_never` write, which a host that answers
+    // with a Promise can never satisfy — so reject the combination instead of
+    // silently dropping the seed. Hosts write their own seed data directly.
+    let host_fs = match js_sys::Reflect::get(options, &JsValue::from_str("fs")) {
+        Ok(value) if !value.is_undefined() && !value.is_null() => {
+            if !files.is_empty() {
+                return Err(JsError::new(
+                    "options.files cannot be combined with options.fs — write seed \
+                     files through the host filesystem instead",
+                ));
+            }
+            let backend = HostFs::new(value)?;
+            Some(Arc::new(PosixFs::new(backend)) as Arc<dyn FileSystemTrait>)
+        }
+        _ => None,
+    };
 
     // customBuiltins: { [name]: (ctx) => string | Promise<string> }
     let mut builtins = Vec::new();
@@ -951,6 +982,7 @@ fn parse_options(options: &JsValue) -> Result<Config, JsError> {
         max_memory: get_usize("maxMemory"),
         files,
         builtins,
+        host_fs,
     })
 }
 

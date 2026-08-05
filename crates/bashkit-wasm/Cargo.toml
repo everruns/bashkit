@@ -42,6 +42,9 @@ serde_json = { workspace = true }
 serde-wasm-bindgen = "0.6"
 futures-util = { workspace = true }
 send_wrapper = { version = "0.6", features = ["futures"] }
+# Same clock shim bashkit uses internally, so `Metadata` timestamps built here
+# unify with `bashkit::time_compat::SystemTime` on wasm32.
+web-time = { workspace = true }
 console_error_panic_hook = "0.1"
 # getrandom's browser backend (matches the workspace pin). Enables `wasm_js`
 # so the credential-placeholder RNG links on wasm32-unknown-unknown.

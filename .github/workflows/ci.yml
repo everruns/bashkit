@@ -118,7 +118,7 @@ jobs:
         run: bash crates/bashkit-wasm/scripts/build.sh release
 
       - name: Integration tests (headless Node)
-        run: node --test crates/bashkit-wasm/__test__/bashkit-wasm.test.mjs
+        run: node --test "crates/bashkit-wasm/__test__/*.test.mjs"
 
   audit:
     name: Audit

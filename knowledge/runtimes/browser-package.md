@@ -66,6 +66,46 @@ Absent (need sockets, threads, or a host FS the browser sandbox lacks):
 mounts, and native `interop`. Reach the network from a custom builtin that calls
 the app's own `fetch` instead.
 
+## Host-backed filesystem (`new Bash({ fs })`)
+
+Embedders can replace the in-memory VFS with their own store by passing `fs`.
+The bridge (`crates/bashkit-wasm/src/hostfs.rs`) implements `FsBackend` over a JS
+object and wraps it in `PosixFs`, so hosts supply raw storage and inherit POSIX
+semantics (parent checks, type checks, symlink resolution) for free.
+
+Decisions:
+
+- **Live, not copied.** Every read/write during a run is a call into the host
+  object. No seeding pass and no write-back diff, so there is no workspace-size
+  ceiling beyond the host's own and no lost-update window between runs.
+- **`FsBackend`, not `FileSystem`.** Fourteen raw operations instead of the full
+  POSIX surface; seven are required (`read`, `write`, `mkdir`, `remove`, `stat`,
+  `readDir`, `exists`) and validated at construction so a missing method fails
+  loudly rather than mid-script. `append`, `copy`, `rename` are synthesized from
+  the required set when omitted; `chmod` is accepted and ignored (so `chmod +x`
+  works against hosts with no permission model); `symlink` / `readLink` report
+  `Unsupported` because they cannot be faked.
+- **Async only.** Host methods may return a `Promise`, so filesystem access
+  suspends the interpreter. `executeSync` and the synchronous `bash.readFile(...)`
+  helpers report the suspension instead of blocking — a host filesystem implies
+  `execute()`.
+- **`files` + `fs` is rejected.** Seeding writes through `now_or_never`, which a
+  promise-returning host can never satisfy. Rejecting at construction beats
+  silently dropping the seed.
+- **Errors map by `code`.** A thrown/rejected `Error` with `code` (`ENOENT`,
+  `EEXIST`, `EACCES`, `EPERM`, `EISDIR`, `ENOTDIR`, `ENOTEMPTY`, `EXDEV`,
+  `ENOSYS`) becomes the matching `io::ErrorKind`, so builtins that branch on kind
+  (`ls`, `test -f`) behave as they do over the built-in VFS. Uncoded errors carry
+  the host's message through as a generic I/O error.
+- **No implicit `/dev/null`.** With a host filesystem there is no in-memory VFS
+  underneath; hosts that expect redirects to `/dev/null` provide the entry.
+- **`Send` bridging.** Same `SendWrapper` treatment as `JsBuiltin`: `!Send`
+  `js_sys` values live only inside a synchronous scope, and the await crosses a
+  `SendWrapper<JsFuture>`.
+
+Covered by `__test__/host-fs.test.mjs`, whose fake host resolves every method on
+a later microtask so the suspend/resume path is the one under test.
+
 ## Execution model
 
 `wasm32-unknown-unknown` is single-threaded; the whole future chain runs on the
@@ -111,6 +151,8 @@ core already gates off under `cfg(target_family = "wasm")` (see
   `pkg/` at build time).
 - `scripts/build.sh` — `cargo build` → `wasm-bindgen --target web` → optional
   `wasm-opt -Oz`, emitting `pkg/`.
+- `src/hostfs.rs` — the `FsBackend` bridge behind the `fs` option.
+- `__test__/host-fs.test.mjs` — host-filesystem suite (async fake host).
 - `__test__/bashkit-wasm.test.mjs` — headless Node integration suite
   (`node --test`) that feeds the `.wasm` bytes to init (no fetch, no headers),
   proving the no-configuration contract and covering sync/async execution, the
@@ -123,7 +165,7 @@ core already gates off under `cfg(target_family = "wasm")` (see
 rustup target add wasm32-unknown-unknown
 cargo install wasm-bindgen-cli
 bash crates/bashkit-wasm/scripts/build.sh                          # -> pkg/
-node --test crates/bashkit-wasm/__test__/bashkit-wasm.test.mjs      # verify
+node --test "crates/bashkit-wasm/__test__/*.test.mjs"                # verify
 ```
 
 `--target web` output is a bundler-agnostic ES module; the consumer calls
@@ -153,6 +195,7 @@ pattern as `publish-js.yml`. Browser example smoke testing writes a file under
   redirects (`print > f`, `getline < f`) drive the VFS future to completion with
   `now_or_never` rather than a writer thread. Correct because the browser build
   only ever runs over the in-memory VFS, which never suspends.
-- `executeSync` cannot await JS callbacks; use `execute()` for async builtins.
+- `executeSync` cannot await JS callbacks; use `execute()` for async builtins or
+  any host filesystem.
 - Custom-builtin `ctx` exposes `{ name, argv, stdin, env, cwd, fs }`, where `fs`
   is a live handle to the same VFS the script sees (mirrors the napi bindings).
