@@ -1,5 +1,10 @@
 # Bashkit Knowledge Update Log
 
+## 2026-08-05
+
+* **Contract**: Added a canonical, generated [Public Capability Parity](status/capability-parity.md) matrix across Rust `BashBuilder`/`BashTool`/`ScriptedTool`, CLI, Python, NAPI JavaScript, browser WASM, and C ABI. Every supported cell names executable evidence; every intentional exclusion states why. The central drift check rejects missing cells and stale test selectors.
+* **Security**: Added TM-ISO-025 for wrapper rebuilds silently dropping host configuration. The first audit finding was NAPI `reset()` losing constructor-seeded VFS files; shared state now retains and restores them, with a regression test.
+
 ## 2026-08-01
 
 * **Decision**: Split the rollout across two releases — reader first as a patch (0.14.5), writer and public API next as a minor (0.15.0). `min_reader` makes every *future* format change safe but cannot make the first one safe: readers that predate it fail on a v2 container with a JSON parse error naming neither version nor format. A release that reads v2 without writing it gives deployments a rollback target before anything can produce v2. Recorded in [Snapshot History and Deltas](foundations/snapshot-history.md).

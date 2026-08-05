@@ -17,6 +17,7 @@ _NAMES = (
     "test_malformed_bash_syntax",
     "test_nonexistent_command",
     "test_large_output",
+    "test_output_is_capped_and_reports_truncation",
     "test_empty_input",
     "test_scripted_tool_callback_error",
     "test_scripted_tool_callback_runtime_error",

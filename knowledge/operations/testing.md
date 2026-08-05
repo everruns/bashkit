@@ -133,6 +133,20 @@ surfaces as a 404 in an already-green job.
    `### bash_diff: reason`
 4. Record the limitation in [Known Limitations](limitations.md) (skip reason = evidence)
 
+## Public capability parity contract
+
+[`contracts/capability-parity.json`](../../contracts/capability-parity.json) is the
+canonical matrix for Rust `BashBuilder`, `BashTool`, and `ScriptedTool`, plus the CLI,
+Python, NAPI JavaScript, browser WASM, and C ABI. Every capability/surface cell is
+either supported with a `path#test-selector` that the owning package test job executes,
+or unsupported with a concrete reason. This keeps intentionally narrow wrappers honest
+without implying that every core capability belongs on every surface.
+
+`just check-capability-parity` rejects incomplete cells, stale selectors, and generated
+inventory drift. `just regen-capability-parity` updates the generated
+[Public Capability Parity](../status/capability-parity.md) inventory. A wrapper option
+change must update the executable surface test and manifest in the same change.
+
 ## Comparison Testing
 
 The `bash_comparison_tests` test is ignored by default for local `cargo test`

@@ -252,6 +252,32 @@ fn reports_output_truncation_flags() {
 }
 
 #[test]
+fn configured_deadline_aborts_execution() {
+    unsafe {
+        let config = br#"{"schema_version":1,"limits":{"timeout_ms":10}}"#;
+        let mut bash = ptr::null_mut();
+        let mut error = ptr::null_mut();
+        assert_eq!(
+            bashkit_create_json(bytes(config), &mut bash, &mut error),
+            BashkitStatus::Ok
+        );
+
+        let mut result = ptr::null_mut();
+        assert_eq!(
+            bashkit_execute(bash, bytes(b"sleep 10"), &mut result, &mut error),
+            BashkitStatus::ExecutionError
+        );
+        assert!(result.is_null());
+        let message = error_message(error);
+        assert!(
+            message.contains("execution timeout"),
+            "unexpected error: {message}"
+        );
+        bashkit_free(bash);
+    }
+}
+
+#[test]
 fn null_destructors_and_accessors_are_safe() {
     unsafe {
         bashkit_free(ptr::null_mut());

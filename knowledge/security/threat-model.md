@@ -792,6 +792,7 @@ Only exact domain matches are allowed (TM-NET-017).
 | TM-ISO-022 | `$?` leaks across `exec()` calls | Exit code from one `exec()` visible as `$?` in next `exec()` instead of resetting to 0 | `reset_transient_state()` zeroes `last_exit_code` at the start of every `exec()` | **MITIGATED** |
 | TM-ISO-023 | `set -e` leaks across `exec()` calls | `set` options (`-e`, `-x`, etc.) persist across `exec()` calls, causing unexpected abort behavior | `reset_transient_state()` clears `SET_OPTION_VARS` | **FIXED** |
 | TM-ISO-024 | `$?` leaks into VFS subprocess | Parent `last_exit_code` visible inside VFS script subprocess, causing false `set -e` failures | `execute_script_content()` sets `last_exit_code = 0`, clears `nounset_error`, and clears `traps` for the child | **MITIGATED** |
+| TM-ISO-025 | Wrapper rebuild silently drops constructor capabilities | A binding's `reset()` or fresh-execution path rebuilds `Bash` without limits, policy files, callbacks, network policy, or other host configuration, changing the sandbox contract after the first call | The canonical capability manifest requires executable evidence for every supported surface cell. NAPI `SharedState` retains constructor `files`, and `build_bash_from_state` is the single rebuild path used by construction and reset. Regression: `Bash: reset restores configured files` | **MITIGATED** |
 
 **TM-ISO-004**: Fixed — see table; env wiring in `builtins/jq/compat.rs` and `builtins/jq/mod.rs`.
 

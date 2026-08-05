@@ -320,6 +320,13 @@ test("Bash: reset preserves username config", (t) => {
   t.is(bash.executeSync("whoami").stdout.trim(), "keeper");
 });
 
+test("Bash: reset restores configured files", (t) => {
+  const bash = new Bash({ files: { "/seed.txt": "configured\n" } });
+  bash.executeSync("printf changed > /seed.txt");
+  bash.reset();
+  t.is(bash.executeSync("cat /seed.txt").stdout, "configured\n");
+});
+
 test("Bash: cancel works after reset", async (t) => {
   const bash = new Bash({ maxCommands: 5000, maxLoopIterations: 5000 });
   bash.reset();

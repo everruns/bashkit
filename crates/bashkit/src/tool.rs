@@ -1615,6 +1615,154 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_execution_forwards_limits_and_output_caps() {
+        let tool = BashTool::builder()
+            .limits(ExecutionLimits::new().max_commands(10).max_stdout_bytes(3))
+            .build();
+        let output = tool
+            .execution(serde_json::json!({"commands": "printf 12345"}))
+            .unwrap_or_else(|err| panic!("execution should be created: {err}"))
+            .execute()
+            .await
+            .unwrap_or_else(|err| panic!("execution should succeed: {err}"));
+
+        assert_eq!(output.result["stdout"], "123");
+        assert_eq!(output.result["stdout_truncated"], true);
+    }
+
+    #[tokio::test]
+    async fn test_configure_forwards_virtual_filesystem_seed() {
+        let tool = BashTool::builder()
+            .configure(|builder| builder.mount_text("/policy.txt", "configured\n"))
+            .build();
+        let output = tool
+            .execution(serde_json::json!({"commands": "cat /policy.txt"}))
+            .unwrap_or_else(|err| panic!("execution should be created: {err}"))
+            .execute()
+            .await
+            .unwrap_or_else(|err| panic!("execution should succeed: {err}"));
+
+        assert_eq!(output.result["stdout"], "configured\n");
+    }
+
+    #[tokio::test]
+    async fn test_configure_forwards_lazy_mount() {
+        let tool = BashTool::builder()
+            .configure(|builder| {
+                builder.mount_lazy("/mounted/value.txt", 8, Arc::new(|| b"mounted\n".to_vec()))
+            })
+            .build();
+        let output = tool
+            .execution(serde_json::json!({"commands": "cat /mounted/value.txt"}))
+            .unwrap_or_else(|err| panic!("execution should be created: {err}"))
+            .execute()
+            .await
+            .unwrap_or_else(|err| panic!("execution should succeed: {err}"));
+
+        assert_eq!(output.result["stdout"], "mounted\n");
+    }
+
+    #[cfg(feature = "sqlite")]
+    #[tokio::test]
+    async fn test_configure_forwards_sqlite_runtime_opt_in() {
+        let tool = BashTool::builder()
+            .configure(|builder| builder.sqlite().env("BASHKIT_ALLOW_INPROCESS_SQLITE", "1"))
+            .build();
+        let output = tool
+            .execution(serde_json::json!({
+                "commands": "sqlite :memory: 'SELECT 4'"
+            }))
+            .unwrap_or_else(|err| panic!("execution should be created: {err}"))
+            .execute()
+            .await
+            .unwrap_or_else(|err| panic!("execution should succeed: {err}"));
+
+        assert_eq!(
+            output.result["exit_code"], 0,
+            "unexpected result: {}",
+            output.result
+        );
+        assert_eq!(output.result["stdout"], "4\n");
+    }
+
+    #[cfg(feature = "python")]
+    #[tokio::test]
+    async fn test_python_runtime_opt_in_executes_through_tool() {
+        let tool = BashTool::builder()
+            .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
+            .python()
+            .build();
+        let output = tool
+            .execution(serde_json::json!({
+                "commands": "python -c 'print(2 + 2)'"
+            }))
+            .unwrap_or_else(|err| panic!("execution should be created: {err}"))
+            .execute()
+            .await
+            .unwrap_or_else(|err| panic!("execution should succeed: {err}"));
+
+        assert_eq!(output.result["stdout"], "4\n");
+    }
+
+    #[cfg(feature = "typescript")]
+    #[tokio::test]
+    async fn test_typescript_runtime_opt_in_executes_through_tool() {
+        let tool = BashTool::builder().typescript().build();
+        let output = tool
+            .execution(serde_json::json!({
+                "commands": "ts -e \"console.log(2 + 2)\""
+            }))
+            .unwrap_or_else(|err| panic!("execution should be created: {err}"))
+            .execute()
+            .await
+            .unwrap_or_else(|err| panic!("execution should succeed: {err}"));
+
+        assert_eq!(output.result["stdout"], "4\n");
+    }
+
+    #[cfg(feature = "http_client")]
+    #[tokio::test]
+    async fn test_configure_forwards_network_policy_and_transport() {
+        use crate::{
+            HttpResponse, HttpTransport, HttpTransportError, HttpTransportRequest, NetworkAllowlist,
+        };
+
+        struct MockTransport;
+
+        #[async_trait]
+        impl HttpTransport for MockTransport {
+            async fn execute(
+                &self,
+                _request: HttpTransportRequest,
+            ) -> std::result::Result<HttpResponse, HttpTransportError> {
+                Ok(HttpResponse {
+                    status: 200,
+                    headers: vec![],
+                    body: b"forwarded".to_vec(),
+                })
+            }
+        }
+
+        let tool = BashTool::builder()
+            .configure(|builder| {
+                builder
+                    .network(NetworkAllowlist::allow_all())
+                    .http_transport(Arc::new(MockTransport))
+            })
+            .build();
+        let output = tool
+            .execution(serde_json::json!({
+                "commands": "curl -s http://93.184.216.34"
+            }))
+            .unwrap_or_else(|err| panic!("execution should be created: {err}"))
+            .execute()
+            .await
+            .unwrap_or_else(|err| panic!("execution should succeed: {err}"));
+
+        assert_eq!(output.result["stdout"], "forwarded");
+    }
+
+    #[tokio::test]
     async fn test_configure_applies_to_underlying_bash_builder() {
         // The configure escape hatch reaches BashBuilder directly, and runs
         // after the convenience setters so it can override them.

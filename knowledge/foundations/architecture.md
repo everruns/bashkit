@@ -77,3 +77,4 @@ parse checks that can return early cannot leave state behind.
 - [Parallel Execution](parallel-execution.md) — threading model and shared-ownership rules
 - [Threat Model](../security/threat-model.md) — trust boundaries these module boundaries enforce
 - [Known Limitations](../operations/limitations.md) — what this architecture intentionally does not do
+- [Public Capability Parity](../status/capability-parity.md) — generated wrapper support and explicit exclusions

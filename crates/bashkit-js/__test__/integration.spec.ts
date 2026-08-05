@@ -1,6 +1,11 @@
 import test from "ava";
 import { Bash, BashError, BashTool, ScriptedTool } from "../wrapper.js";
 
+test("integration: python opt-in executes embedded Python", (t) => {
+  const bash = new Bash({ python: true });
+  t.is(bash.executeSync("python -c 'print(2 + 2)'").stdout, "4\n");
+});
+
 function makeCrudTool(): ScriptedTool {
   const db = new Map<string, string>();
   const tool = new ScriptedTool({
@@ -395,7 +400,9 @@ test("integration: BashTool snapshots require and verify HMAC", (t) => {
 test("integration: Bash snapshot with hmacKey roundtrip preserves state", (t) => {
   const key = new TextEncoder().encode("bash-hmac-roundtrip-key");
   const bash = new Bash();
-  bash.executeSync("export HMAC_VAR=hello; mkdir -p /hmac && echo data > /hmac/f.txt");
+  bash.executeSync(
+    "export HMAC_VAR=hello; mkdir -p /hmac && echo data > /hmac/f.txt",
+  );
 
   const snapshot = bash.snapshot({ hmacKey: key });
   const restored = Bash.fromSnapshot(snapshot, { hmacKey: key });
