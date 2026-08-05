@@ -53,8 +53,14 @@ cannot see through:
 - shell functions and aliases that rebind a name
 - wrapper commands that run other commands named in their arguments —
   `xargs`, `env`, `timeout`, `find -exec`, `awk 'system(…)'`. These are **not**
-  flagged: they analyze as ordinary commands, so a host that allowlists one must
-  treat its arguments as commands itself
+  flagged opaque: they analyze as ordinary commands, so a host that allowlists
+  one must treat its arguments as commands itself. `ScriptAnalysis::command_wrappers()`
+  reports which prefix-style wrappers a script uses, and `analysis::COMMAND_WRAPPERS` /
+  `is_command_wrapper()` publish the list, so hosts do not hardcode a private
+  copy that drifts from ours. `find -exec` and language payloads
+  (`awk 'system(…)'`) are outside that list — they need per-tool argument
+  knowledge. `time` is absent by design: it is a keyword, so the timed command
+  is already the reported command name
 - arguments built from variables — `rm "$target"`
 
 The API reports these as *unknown*, never as *safe*: a command whose name is
