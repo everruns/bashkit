@@ -502,7 +502,7 @@ mod tests {
             variables: &mut variables,
             cwd: &mut cwd,
             fs: fs.clone(),
-            stdin: Some("stdin content"),
+            stdin: Some(crate::builtins::test_stream("stdin content")),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]

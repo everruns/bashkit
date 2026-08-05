@@ -406,8 +406,8 @@ impl Builtin for Find {
         }
 
         Ok(ExecResult {
-            stdout: output,
-            stderr: errors,
+            stdout: output.into(),
+            stderr: errors.into(),
             exit_code: if had_error { 1 } else { 0 },
             control_flow: ControlFlow::None,
             ..Default::default()

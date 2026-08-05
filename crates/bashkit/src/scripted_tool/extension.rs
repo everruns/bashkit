@@ -435,14 +435,14 @@ impl Builtin for ToolBuiltinAdapter {
                     .invoke_from_context(
                         &self.name,
                         params,
-                        ctx.stdin.map(String::from),
+                        ctx.stdin.map(|stdin| stdin.text_lossy().into_owned()),
                         ToolCallSurface::Shell,
                         &ctx,
                     )
                     .await;
                 ExecResult {
-                    stdout: output.stdout,
-                    stderr: output.stderr,
+                    stdout: output.stdout.into(),
+                    stderr: output.stderr.into(),
                     exit_code: output.exit_code,
                     ..Default::default()
                 }

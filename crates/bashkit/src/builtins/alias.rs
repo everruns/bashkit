@@ -56,8 +56,8 @@ impl Builtin for Alias {
         }
 
         Ok(ExecResult {
-            stdout: output,
-            stderr,
+            stdout: output.into(),
+            stderr: stderr.into(),
             exit_code,
             ..Default::default()
         })
@@ -101,7 +101,7 @@ impl Builtin for Unalias {
         }
 
         Ok(ExecResult {
-            stderr,
+            stderr: stderr.into(),
             exit_code,
             ..Default::default()
         })

@@ -10,7 +10,7 @@ use std::ffi::OsString;
 use std::path::Path;
 
 use super::generated::cat_args::cat_command;
-use super::{Builtin, Context, read_text_file};
+use super::{Builtin, Context};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
@@ -63,11 +63,11 @@ impl Builtin for Cat {
             .map(|vs| vs.map(|v| v.to_string_lossy().into_owned()).collect())
             .unwrap_or_default();
 
-        let mut raw = String::new();
+        let mut raw = Vec::new();
         for file in &files {
             if file == "-" {
                 if let Some(stdin) = ctx.stdin {
-                    raw.push_str(stdin);
+                    raw.extend_from_slice(stdin.as_bytes());
                 }
             } else {
                 let path = if Path::new(file).is_absolute() {
@@ -75,11 +75,16 @@ impl Builtin for Cat {
                 } else {
                     ctx.cwd.join(file).to_string_lossy().into_owned()
                 };
-                match read_text_file(&*ctx.fs, Path::new(&path), "cat").await {
-                    Ok(t) => raw.push_str(&t),
-                    Err(e) => return Ok(e),
+                match ctx.fs.read_file(Path::new(&path)).await {
+                    Ok(bytes) => raw.extend_from_slice(&bytes),
+                    Err(e) => return Ok(ExecResult::err(format!("cat: {file}: {e}\n"), 1)),
                 }
             }
+        }
+
+        if !(show_ends || show_tabs || show_nonprinting || number_all || number_nonblank || squeeze)
+        {
+            return Ok(ExecResult::ok_bytes(raw));
         }
 
         let output = render(
@@ -100,29 +105,27 @@ impl Builtin for Cat {
 /// One pass because numbering interacts with squeezing — squeezed blank
 /// lines must not be numbered. Two passes mis-number `cat -ns`.
 fn render(
-    raw: &str,
+    raw: &[u8],
     show_ends: bool,
     show_tabs: bool,
     show_nonprinting: bool,
     number_all: bool,
     number_nonblank: bool,
     squeeze: bool,
-) -> String {
-    use std::fmt::Write;
-
-    let mut out = String::with_capacity(raw.len());
+) -> Vec<u8> {
+    let mut out = Vec::with_capacity(raw.len());
     let mut counter: u64 = 0;
     let mut prev_blank = false;
 
-    let mut iter = raw.split_inclusive('\n').peekable();
+    let mut iter = raw.split_inclusive(|byte| *byte == b'\n').peekable();
     if iter.peek().is_none() {
         return out;
     }
 
     for chunk in iter {
-        let (body, sep): (&str, &str) = match chunk.strip_suffix('\n') {
-            Some(b) => (b, "\n"),
-            None => (chunk, ""),
+        let (body, has_newline): (&[u8], bool) = match chunk.strip_suffix(b"\n") {
+            Some(body) => (body, true),
+            None => (chunk, false),
         };
         let is_blank = body.is_empty();
 
@@ -133,21 +136,23 @@ fn render(
 
         if number_all || (number_nonblank && !is_blank) {
             counter += 1;
-            let _ = write!(out, "{counter:>6}\t");
+            out.extend_from_slice(format!("{counter:>6}\t").as_bytes());
         }
 
         if show_nonprinting || show_tabs {
-            for b in body.bytes() {
+            for &b in body {
                 emit_byte(&mut out, b, show_tabs, show_nonprinting);
             }
         } else {
-            out.push_str(body);
+            out.extend_from_slice(body);
         }
 
-        if show_ends && !sep.is_empty() {
-            out.push('$');
+        if show_ends && has_newline {
+            out.push(b'$');
         }
-        out.push_str(sep);
+        if has_newline {
+            out.push(b'\n');
+        }
     }
     out
 }
@@ -159,35 +164,32 @@ fn render(
 ///   show_nonprinting; passed through otherwise.
 /// - 0x7F (DEL): `^?`.
 /// - 0x80..=0xFF (high bit set): `M-` prefix + low-7-bit rendered same way.
-fn emit_byte(out: &mut String, b: u8, show_tabs: bool, show_nonprinting: bool) {
+fn emit_byte(out: &mut Vec<u8>, b: u8, show_tabs: bool, show_nonprinting: bool) {
     match b {
         b'\t' if show_tabs => {
-            out.push('^');
-            out.push('I');
+            out.extend_from_slice(b"^I");
         }
-        b'\t' => out.push('\t'),
-        b'\n' => out.push('\n'),
+        b'\t' => out.push(b'\t'),
+        b'\n' => out.push(b'\n'),
         0..=31 if show_nonprinting => {
-            out.push('^');
-            out.push((b + 64) as char);
+            out.push(b'^');
+            out.push(b + 64);
         }
         0x7f if show_nonprinting => {
-            out.push('^');
-            out.push('?');
+            out.extend_from_slice(b"^?");
         }
         128..=255 if show_nonprinting => {
-            out.push_str("M-");
+            out.extend_from_slice(b"M-");
             let low = b & 0x7f;
             if (0..32).contains(&low) {
-                out.push('^');
-                out.push((low + 64) as char);
+                out.push(b'^');
+                out.push(low + 64);
             } else if low == 0x7f {
-                out.push('^');
-                out.push('?');
+                out.extend_from_slice(b"^?");
             } else {
-                out.push(low as char);
+                out.push(low);
             }
         }
-        _ => out.push(b as char),
+        _ => out.push(b),
     }
 }

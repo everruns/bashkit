@@ -600,7 +600,7 @@ impl Builtin for Grep {
         };
         let inputs: Vec<(String, String)> = if opts.files.is_empty() {
             // Read from stdin
-            let mut stdin_content = ctx.stdin.unwrap_or("").to_string();
+            let mut stdin_content = ctx.stdin.map(ToString::to_string).unwrap_or_default();
             if opts.binary_as_text {
                 // Filter null bytes for -a flag
                 stdin_content = stdin_content.replace('\0', "");
@@ -1107,7 +1107,7 @@ mod tests {
             variables: &mut vars,
             cwd: &mut cwd,
             fs,
-            stdin,
+            stdin: crate::builtins::test_stream_opt(stdin),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]

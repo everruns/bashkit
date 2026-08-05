@@ -32,7 +32,7 @@ struct Transform {
 #[async_trait]
 impl Builtin for Transform {
     async fn execute(&self, ctx: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {
-        let input = ctx.stdin.unwrap_or("");
+        let input = ctx.stdin.map_or("", |stdin| &**stdin);
         Ok(ExecResult::ok((self.transform_fn)(input)))
     }
 }

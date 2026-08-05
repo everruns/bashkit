@@ -430,7 +430,7 @@ mod tests {
             variables: &mut variables,
             cwd: &mut cwd,
             fs: fs_dyn,
-            stdin: Some(stdin),
+            stdin: Some(crate::builtins::test_stream(stdin)),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]

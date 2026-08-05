@@ -59,7 +59,11 @@ export interface BashOptions {
 /** Result of a bash execution. */
 export interface ExecResult {
   readonly stdout: string;
+  /** Exact stdout bytes. Use this for binary output. */
+  readonly stdoutBytes: Uint8Array;
   readonly stderr: string;
+  /** Exact stderr bytes. Use this for binary output. */
+  readonly stderrBytes: Uint8Array;
   readonly exitCode: number;
   readonly success: boolean;
   readonly stdoutTruncated: boolean;

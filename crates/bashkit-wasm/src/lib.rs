@@ -50,7 +50,11 @@ pub fn __start() {
 #[wasm_bindgen(getter_with_clone)]
 pub struct ExecResult {
     pub stdout: String,
+    #[wasm_bindgen(js_name = stdoutBytes)]
+    pub stdout_bytes: Vec<u8>,
     pub stderr: String,
+    #[wasm_bindgen(js_name = stderrBytes)]
+    pub stderr_bytes: Vec<u8>,
     #[wasm_bindgen(js_name = exitCode)]
     pub exit_code: i32,
     pub success: bool,
@@ -64,8 +68,10 @@ impl From<CoreExecResult> for ExecResult {
     fn from(r: CoreExecResult) -> Self {
         ExecResult {
             success: r.exit_code == 0,
-            stdout: r.stdout,
-            stderr: r.stderr,
+            stdout: r.stdout.to_string(),
+            stdout_bytes: r.stdout.as_bytes().to_vec(),
+            stderr: r.stderr.to_string(),
+            stderr_bytes: r.stderr.as_bytes().to_vec(),
             exit_code: r.exit_code,
             stdout_truncated: r.stdout_truncated,
             stderr_truncated: r.stderr_truncated,
@@ -184,7 +190,7 @@ impl Builtin for JsBuiltin {
         let request = BuiltinRequest {
             name: &self.name,
             argv: ctx.args,
-            stdin: ctx.stdin,
+            stdin: ctx.stdin.map(|stdin| &**stdin),
             env: ctx.env,
             cwd: ctx.cwd.to_string_lossy().into_owned(),
         };

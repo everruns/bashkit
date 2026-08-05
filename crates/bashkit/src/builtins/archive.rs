@@ -291,10 +291,9 @@ async fn create_tar(
 
     // Write to file or stdout
     if archive_name == "-" {
-        // Convert to lossy string for stdout
         return Ok(ExecResult {
-            stdout: String::from_utf8_lossy(&final_data).to_string(),
-            stderr: verbose_output,
+            stdout: final_data.into(),
+            stderr: verbose_output.into(),
             exit_code: 0,
             control_flow: crate::interpreter::ControlFlow::None,
             ..Default::default()
@@ -305,8 +304,8 @@ async fn create_tar(
     ctx.fs.write_file(&archive_path, &final_data).await?;
 
     Ok(ExecResult {
-        stdout: String::new(),
-        stderr: verbose_output,
+        stdout: crate::StreamData::new(),
+        stderr: verbose_output.into(),
         exit_code: 0,
         control_flow: crate::interpreter::ControlFlow::None,
         ..Default::default()
@@ -683,8 +682,8 @@ async fn extract_tar(
     }
 
     Ok(ExecResult {
-        stdout: stdout_output,
-        stderr: verbose_output,
+        stdout: stdout_output.into(),
+        stderr: verbose_output.into(),
         exit_code: 0,
         control_flow: crate::interpreter::ControlFlow::None,
         ..Default::default()

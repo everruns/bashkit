@@ -6,6 +6,8 @@
 * **Security**: Added TM-ISO-025 for wrapper rebuilds silently dropping host configuration. The first audit finding was NAPI `reset()` losing constructor-seeded VFS files; shared state now retains and restores them, with a regression test.
 * **Testing**: Added a quarterly competitor-regression corpus contract: immutable upstream provenance, explicit pass/bug/intentional-divergence classification, real-Bash or locked oracles, and a feature-complete hermetic CI lane. The first import covers eleven behavior fixes from `vercel-labs/just-bash` between 2026-05-05 and 2026-08-05; it exposed and fixes tar old-style option bundles, while the ordered curl-data fix is supplied by its dedicated PR.
 * **Threat**: Registered TM-INF-032 for executing imported third-party behavior fixtures. Imports remain manually reviewed checked-in JSON, CI never fetches upstream content, and only explicitly marked portable cases reach the host-Bash oracle.
+* **Decision**: Made `StreamData` the authoritative byte transport for execution stdin, pipelines, redirects, results, callbacks, and native bindings. Text decoding is confined to shell/parser/text-builtin/JSON boundaries; command substitution removes NUL because Bash variables cannot contain it. Updated [Architecture](foundations/architecture.md), [Known Limitations](operations/limitations.md), and [Threat Model](security/threat-model.md).
+* **Testing**: Added byte-for-byte Bash differential and regressions for binary base64/head/cat pipelines, mixed UTF-8 and invalid bytes, redirects, output caps, callbacks, custom builtins, command substitution, and C/Python/Node binding results.
 
 ## 2026-08-01
 

@@ -35,7 +35,7 @@ impl Builtin for Mapfile {
             array_name = name.clone();
         }
 
-        let input = ctx.stdin.unwrap_or("");
+        let input = ctx.stdin.map(|stdin| &**stdin).unwrap_or("");
 
         let mut result = ExecResult::ok(String::new());
 

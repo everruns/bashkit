@@ -66,9 +66,9 @@ async fn stdout_one_byte_over_limit_truncated() {
 }
 
 #[tokio::test]
-async fn stdout_truncation_preserves_utf8_boundaries() {
+async fn stdout_truncation_applies_to_exact_bytes() {
     let result = run_with_limits("echo é", 1, 1_048_576).await;
-    assert_eq!(result.stdout, "");
+    assert_eq!(result.stdout.as_bytes(), &[0xc3]);
     assert!(result.stdout_truncated);
 }
 
@@ -88,9 +88,9 @@ async fn stderr_not_truncated_when_within_limit() {
 }
 
 #[tokio::test]
-async fn stderr_truncation_preserves_utf8_boundaries() {
+async fn stderr_truncation_applies_to_exact_bytes() {
     let result = run_with_limits("echo é >&2", 1_048_576, 1).await;
-    assert_eq!(result.stderr, "");
+    assert_eq!(result.stderr.as_bytes(), &[0xc3]);
     assert!(result.stderr_truncated);
 }
 

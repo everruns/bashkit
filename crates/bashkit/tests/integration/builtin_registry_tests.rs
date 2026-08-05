@@ -152,7 +152,9 @@ async fn registry_pipe_chain() {
     #[async_trait]
     impl Builtin for Upper {
         async fn execute(&self, ctx: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {
-            Ok(ExecResult::ok(ctx.stdin.unwrap_or("").to_uppercase()))
+            Ok(ExecResult::ok(
+                ctx.stdin.map_or("", |stdin| &**stdin).to_uppercase(),
+            ))
         }
     }
     registry.insert("upper", Arc::new(Upper));

@@ -28,7 +28,7 @@ fn run_real_bash(script: &str) -> (String, i32) {
 async fn run_bashkit(script: &str) -> (String, i32) {
     let mut bash = Bash::new();
     match bash.exec(script).await {
-        Ok(result) => (result.stdout, result.exit_code),
+        Ok(result) => (result.stdout.to_string(), result.exit_code),
         Err(e) => {
             // Parse errors should return exit code 2 (like bash)
             let exit_code = if matches!(e, bashkit::Error::Parse { .. }) {

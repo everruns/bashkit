@@ -141,7 +141,7 @@ pub async fn run_agent_loop(
                 .unwrap_or("");
 
             let (stdout, stderr, exit_code) = match bash.exec(commands).await {
-                Ok(r) => (r.stdout, r.stderr, r.exit_code),
+                Ok(r) => (r.stdout.to_string(), r.stderr.to_string(), r.exit_code),
                 Err(e) => (String::new(), e.to_string(), 1),
             };
 

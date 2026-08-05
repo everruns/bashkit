@@ -829,7 +829,7 @@ async fn builtin_error_panic_no_stack_trace() {
 
     let error_text = match &result {
         Ok(r) => r.stderr.clone(),
-        Err(e) => e.to_string(),
+        Err(e) => e.to_string().into(),
     };
 
     // Should not contain stack trace indicators

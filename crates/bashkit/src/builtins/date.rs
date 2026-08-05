@@ -512,8 +512,8 @@ impl Builtin for Date {
         // THREAT[TM-INT-003]: Invalid format strings could cause chrono to panic
         if let Err(e) = validate_format(&format) {
             return Ok(ExecResult {
-                stdout: String::new(),
-                stderr: format!("date: {}\n", e),
+                stdout: crate::StreamData::new(),
+                stderr: format!("date: {}\n", e).into(),
                 exit_code: 1,
                 control_flow: crate::interpreter::ControlFlow::None,
                 ..Default::default()

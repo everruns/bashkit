@@ -181,7 +181,7 @@ impl Builtin for Semver {
                 }
             }
             "sort" => {
-                let input = ctx.stdin.unwrap_or("");
+                let input = ctx.stdin.map(|stdin| &**stdin).unwrap_or("");
                 let mut versions: Vec<&str> =
                     input.lines().filter(|l| !l.trim().is_empty()).collect();
                 versions.sort_by(|a, b| {
@@ -229,7 +229,7 @@ mod tests {
             variables: &mut variables,
             cwd: &mut cwd,
             fs,
-            stdin,
+            stdin: crate::builtins::test_stream_opt(stdin),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]

@@ -5,7 +5,7 @@
 //! through `Jq::execute` — covering positive, negative, and security cases.
 
 use super::*;
-use crate::builtins::Context;
+use crate::builtins::{Context, test_stream};
 use crate::error::Error;
 use crate::fs::{FileSystem, InMemoryFs};
 use crate::interpreter::ExecResult;
@@ -19,7 +19,7 @@ async fn run_jq(filter: &str, input: &str) -> Result<String> {
 
 async fn run_jq_with_args(args: &[&str], input: &str) -> Result<String> {
     let result = run_jq_result_with_args(args, input).await?;
-    Ok(result.stdout)
+    Ok(result.stdout.to_string())
 }
 
 async fn run_jq_result(filter: &str, input: &str) -> Result<ExecResult> {
@@ -39,7 +39,7 @@ async fn run_jq_result_with_args(args: &[&str], input: &str) -> Result<ExecResul
         variables: &mut vars,
         cwd: &mut cwd,
         fs,
-        stdin: Some(input),
+        stdin: Some(test_stream(input)),
         #[cfg(feature = "http_client")]
         http_client: None,
         #[cfg(feature = "git")]
@@ -964,7 +964,7 @@ async fn dollar_env_returns_shell_env() {
         variables: &mut vars,
         cwd: &mut cwd,
         fs,
-        stdin: Some("null"),
+        stdin: Some(test_stream("null")),
         #[cfg(feature = "http_client")]
         http_client: None,
         #[cfg(feature = "git")]

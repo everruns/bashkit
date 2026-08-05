@@ -392,7 +392,9 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
 function errorExecResult(error: string): ExecResult {
   return {
     stdout: "",
+    stdoutBytes: [],
     stderr: error,
+    stderrBytes: Array.from(Buffer.from(error, "utf8")),
     exitCode: 1,
     error,
     stdoutTruncated: false,
@@ -406,7 +408,9 @@ function cancelledExecResult(): ExecResult {
   // Preserve prior behavior: cancellation does not populate stderr.
   return {
     stdout: "",
+    stdoutBytes: [],
     stderr: "",
+    stderrBytes: [],
     exitCode: 1,
     error: "execution cancelled",
     stdoutTruncated: false,

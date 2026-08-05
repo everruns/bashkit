@@ -4987,8 +4987,8 @@ fn rg_quiet_result(
         *any_match = true;
         if !opts.stats {
             return Some(ExecResult {
-                stdout: String::new(),
-                stderr: stderr.to_string(),
+                stdout: crate::StreamData::new(),
+                stderr: stderr.to_string().into(),
                 exit_code: 0,
                 ..Default::default()
             });
@@ -5284,12 +5284,19 @@ impl Builtin for Rg {
                 output
             };
             return Ok(ExecResult {
-                stdout: output,
+                stdout: output.into(),
                 exit_code: if found_files { 0 } else { 1 },
                 ..Default::default()
             });
         }
-        if let Err(result) = load_rg_pattern_files(&*ctx.fs, ctx.cwd, ctx.stdin, &mut opts).await {
+        if let Err(result) = load_rg_pattern_files(
+            &*ctx.fs,
+            ctx.cwd,
+            ctx.stdin.map(|stdin| &**stdin),
+            &mut opts,
+        )
+        .await
+        {
             return Ok(result);
         }
         if opts.patterns.is_empty() {
@@ -6879,8 +6886,8 @@ impl Builtin for Rg {
             1
         };
         Ok(ExecResult {
-            stdout: output,
-            stderr: collected_inputs.stderr,
+            stdout: output.into(),
+            stderr: collected_inputs.stderr.into(),
             exit_code,
             ..Default::default()
         })
@@ -7191,7 +7198,7 @@ mod tests {
             variables: &mut variables,
             cwd: &mut cwd,
             fs: fs_dyn,
-            stdin,
+            stdin: crate::builtins::test_stream_opt(stdin),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]

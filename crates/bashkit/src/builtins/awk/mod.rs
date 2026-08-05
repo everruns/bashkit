@@ -597,14 +597,14 @@ impl Builtin for Awk {
                 }
                 Self::flush_file_outputs(&interp, &ctx).await?;
                 let mut result = ExecResult::with_code(interp.output, exit_code.unwrap_or(0));
-                result.stderr = interp.stderr_output;
+                result.stderr = interp.stderr_output.into();
                 return Ok(result);
             }
         }
 
         // Process input
         let inputs: Vec<String> = if files.is_empty() {
-            vec![ctx.stdin.unwrap_or("").to_string()]
+            vec![ctx.stdin.map(ToString::to_string).unwrap_or_default()]
         } else {
             let mut inputs = Vec::new();
             for file in &files {
@@ -689,7 +689,7 @@ impl Builtin for Awk {
 
         Self::flush_file_outputs(&interp, &ctx).await?;
         let mut result = ExecResult::with_code(interp.output, exit_code.unwrap_or(0));
-        result.stderr = interp.stderr_output;
+        result.stderr = interp.stderr_output.into();
         Ok(result)
     }
 }

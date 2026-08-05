@@ -52,8 +52,8 @@ impl Builtin for Wait {
         }
 
         let mut result = ExecResult {
-            stdout,
-            stderr,
+            stdout: stdout.into(),
+            stderr: stderr.into(),
             exit_code: last_exit_code,
             ..Default::default()
         };

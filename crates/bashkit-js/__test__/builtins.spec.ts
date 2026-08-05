@@ -259,6 +259,11 @@ test("base64 encode and decode", (t) => {
   );
 });
 
+test("binary stdout bytes are exact", (t) => {
+  const result = new Bash().executeSync("printf 'AAH//g==' | base64 -d | cat");
+  t.deepEqual(Array.from(result.stdoutBytes), [0x00, 0x01, 0xff, 0xfe]);
+});
+
 // ============================================================================
 // seq
 // ============================================================================

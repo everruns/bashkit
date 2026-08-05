@@ -65,7 +65,7 @@ impl Builtin for Export {
         }
 
         Ok(ExecResult {
-            stderr,
+            stderr: stderr.into(),
             exit_code,
             ..Default::default()
         })

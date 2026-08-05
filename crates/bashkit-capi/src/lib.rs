@@ -429,9 +429,7 @@ pub unsafe extern "C" fn bashkit_execute(
             let result = runtime
                 .block_on(bash.exec(script))
                 .map_err(ApiFailure::from_bash)?;
-            let stdout = result
-                .stdout_bytes
-                .unwrap_or_else(|| result.stdout.into_bytes());
+            let stdout = result.stdout.into_bytes();
             let mut flags = 0;
             if result.stdout_truncated {
                 flags |= BASHKIT_RESULT_STDOUT_TRUNCATED;

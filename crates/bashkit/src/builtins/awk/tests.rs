@@ -33,7 +33,7 @@ async fn run_awk(args: &[&str], stdin: Option<&str>) -> Result<ExecResult> {
         variables: &mut vars,
         cwd: &mut cwd,
         fs,
-        stdin,
+        stdin: crate::builtins::test_stream_opt(stdin),
         #[cfg(feature = "http_client")]
         http_client: None,
         #[cfg(feature = "git")]
@@ -648,7 +648,7 @@ async fn run_awk_with_fs(
         variables: &mut vars,
         cwd: &mut cwd,
         fs: fs.clone(),
-        stdin,
+        stdin: crate::builtins::test_stream_opt(stdin),
         #[cfg(feature = "http_client")]
         http_client: None,
         #[cfg(feature = "git")]
@@ -877,7 +877,7 @@ async fn run_awk_with_file(
         variables: &mut vars,
         cwd: &mut cwd,
         fs,
-        stdin,
+        stdin: crate::builtins::test_stream_opt(stdin),
         #[cfg(feature = "http_client")]
         http_client: None,
         #[cfg(feature = "git")]
@@ -1119,7 +1119,7 @@ async fn run_awk_with_custom_fs(
         variables: &mut vars,
         cwd: &mut cwd,
         fs,
-        stdin,
+        stdin: crate::builtins::test_stream_opt(stdin),
         #[cfg(feature = "http_client")]
         http_client: None,
         #[cfg(feature = "git")]

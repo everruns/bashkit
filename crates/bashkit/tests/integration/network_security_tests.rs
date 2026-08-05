@@ -1069,7 +1069,7 @@ mod custom_transport {
             .exec("curl -s http://93.184.216.34 2>&1")
             .await
             .unwrap();
-        (result.stdout, result.exit_code)
+        (result.stdout.to_string(), result.exit_code)
     }
 
     // Host-boundary errors must surface as the curl exit codes scripts (and

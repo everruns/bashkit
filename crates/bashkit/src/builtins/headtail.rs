@@ -40,9 +40,11 @@ impl Builtin for Head {
             // Read from stdin
             if let Some(stdin) = ctx.stdin {
                 if byte_mode {
-                    output = take_first_bytes(stdin, count);
+                    return Ok(ExecResult::ok_bytes(
+                        stdin.as_bytes()[..stdin.len().min(count)].to_vec(),
+                    ));
                 } else {
-                    output = take_first_lines(stdin, count);
+                    output = take_first_lines(&stdin.text_lossy(), count);
                 }
             }
         } else {
@@ -65,14 +67,14 @@ impl Builtin for Head {
                 match ctx.fs.read_file(&path).await {
                     Ok(content) => {
                         if byte_mode {
-                            // String-backed stdout cannot carry arbitrary raw bytes. Decode
-                            // valid UTF-8 normally, and use the Latin-1 fallback only for
-                            // non-UTF-8 device/binary data such as /dev/urandom.
                             let bytes = &content[..content.len().min(count)];
-                            output.push_str(&decode_file_bytes_for_path(&path, bytes));
+                            if files.len() == 1 {
+                                return Ok(ExecResult::ok_bytes(bytes.to_vec()));
+                            }
+                            output.push_str(&String::from_utf8_lossy(bytes));
                         } else {
                             output.push_str(&take_first_lines(
-                                &decode_file_bytes_for_path(&path, &content),
+                                &String::from_utf8_lossy(&content),
                                 count,
                             ));
                         }
@@ -118,10 +120,11 @@ impl Builtin for Tail {
         if files.is_empty() {
             // Read from stdin
             if let Some(stdin) = ctx.stdin {
+                let stdin = stdin.text_lossy();
                 output = if from_start {
-                    take_from_line(stdin, num_lines)
+                    take_from_line(&stdin, num_lines)
                 } else {
-                    take_last_lines(stdin, num_lines)
+                    take_last_lines(&stdin, num_lines)
                 };
             }
         } else {
@@ -197,61 +200,6 @@ fn parse_head_args(
     }
 
     Ok((count, byte_mode, files))
-}
-
-fn normalize_vfs_path(path: &std::path::Path) -> std::path::PathBuf {
-    path.components()
-        .fold(std::path::PathBuf::new(), |mut acc, c| match c {
-            std::path::Component::ParentDir => {
-                acc.pop();
-                acc
-            }
-            std::path::Component::CurDir => acc,
-            c => {
-                acc.push(c);
-                acc
-            }
-        })
-}
-
-fn decode_file_bytes_for_path(path: &std::path::Path, bytes: &[u8]) -> String {
-    let normalized = normalize_vfs_path(path);
-    if normalized == std::path::Path::new("/dev/urandom")
-        || normalized == std::path::Path::new("/dev/random")
-    {
-        latin1_bytes_to_string(bytes)
-    } else {
-        std::str::from_utf8(bytes)
-            .map(str::to_owned)
-            .unwrap_or_else(|_| latin1_bytes_to_string(bytes))
-    }
-}
-
-fn latin1_bytes_to_string(bytes: &[u8]) -> String {
-    bytes.iter().map(|&b| b as char).collect()
-}
-
-/// Take the first N bytes from text.
-///
-/// Bashkit keeps ordinary command output as UTF-8 strings, but binary device
-/// input is represented as Latin-1 chars so `/dev/urandom` pipelines keep one
-/// char per original byte. Treat only binary-looking Latin-1 as char-counted;
-/// normal UTF-8 stdin must never emit more than `head -c N` bytes.
-fn take_first_bytes(text: &str, n: usize) -> String {
-    if looks_like_latin1_binary(text) {
-        return text.chars().take(n).collect();
-    }
-
-    let mut end = text.len().min(n);
-    while end > 0 && !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    text[..end].to_string()
-}
-
-fn looks_like_latin1_binary(text: &str) -> bool {
-    text.chars()
-        .any(|c| matches!(c, '\0'..='\x08' | '\x0b'..='\x0c' | '\x0e'..='\x1f' | '\x7f'..='\u{9f}'))
 }
 
 /// Parse arguments for tail command, including +N "from start" syntax.
@@ -369,7 +317,7 @@ mod tests {
             variables: &mut variables,
             cwd: &mut cwd,
             fs,
-            stdin,
+            stdin: crate::builtins::test_stream_opt(stdin),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]
@@ -395,7 +343,7 @@ mod tests {
             variables: &mut variables,
             cwd: &mut cwd,
             fs,
-            stdin,
+            stdin: crate::builtins::test_stream_opt(stdin),
             #[cfg(feature = "http_client")]
             http_client: None,
             #[cfg(feature = "git")]
@@ -452,14 +400,6 @@ mod tests {
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.stdout, "é");
         assert_eq!(result.stdout.len(), 2);
-    }
-
-    #[test]
-    fn test_head_c_preserves_latin1_binary_byte_model() {
-        let input = "A\0éZ";
-        let output = take_first_bytes(input, 3);
-        assert_eq!(output.chars().count(), 3);
-        assert_eq!(output, "A\0é");
     }
 
     #[tokio::test]

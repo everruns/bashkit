@@ -440,6 +440,7 @@ pub mod parser;
 #[cfg(feature = "scripted_tool")]
 pub mod scripted_tool;
 mod snapshot;
+mod stream;
 /// Test-only helpers shared between internal `#[cfg(test)]` modules,
 /// integration tests in `tests/*.rs`, and cargo-fuzz targets in
 /// `fuzz/fuzz_targets/*.rs`. See `knowledge/security/threat-model.md` for the
@@ -458,6 +459,7 @@ pub(crate) mod tool_def;
 mod tool_registry;
 /// Structured execution trace events.
 pub mod trace;
+pub use stream::StreamData;
 
 pub use analysis::{
     AnalyzedCommand, AnalyzedRedirect, CommandContext, RedirectMode, ScriptAnalysis,
@@ -661,7 +663,7 @@ pub struct ExecOptions {
     output_callback: Option<OutputCallback>,
     arg0: Option<String>,
     positional: Option<Vec<String>>,
-    stdin: Option<String>,
+    stdin: Option<StreamData>,
 }
 
 impl ExecOptions {
@@ -737,7 +739,7 @@ impl ExecOptions {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn stdin(mut self, stdin: impl Into<String>) -> Self {
+    pub fn stdin(mut self, stdin: impl Into<StreamData>) -> Self {
         self.stdin = Some(stdin.into());
         self
     }
@@ -754,7 +756,7 @@ impl ExecOptions {
 struct Invocation {
     arg0: Option<String>,
     positional: Option<Vec<String>>,
-    stdin: Option<String>,
+    stdin: Option<StreamData>,
 }
 
 impl Invocation {
@@ -1180,14 +1182,14 @@ impl Bash {
             if !self.interpreter.hooks().after_exec.is_empty() {
                 let output = hooks::ExecOutput {
                     script: script.to_string(),
-                    stdout: exec_result.stdout.clone(),
-                    stderr: exec_result.stderr.clone(),
+                    stdout: exec_result.stdout.text_lossy().into_owned(),
+                    stderr: exec_result.stderr.text_lossy().into_owned(),
                     exit_code: exec_result.exit_code,
                 };
                 match self.interpreter.hooks().fire_after_exec(output) {
                     Some(output) => Ok(ExecResult {
-                        stdout: output.stdout,
-                        stderr: output.stderr,
+                        stdout: output.stdout.into(),
+                        stderr: output.stderr.into(),
                         exit_code: output.exit_code,
                         ..exec_result
                     }),
@@ -5164,7 +5166,7 @@ fn
         #[async_trait]
         impl Builtin for Upper {
             async fn execute(&self, ctx: Context<'_>) -> crate::Result<ExecResult> {
-                let input = ctx.stdin.unwrap_or("");
+                let input = ctx.stdin.map(|stdin| &**stdin).unwrap_or("");
                 Ok(ExecResult::ok(input.to_uppercase()))
             }
         }

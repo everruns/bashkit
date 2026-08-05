@@ -329,8 +329,8 @@ pub struct ToolResponse {
 impl From<ExecResult> for ToolResponse {
     fn from(result: ExecResult) -> Self {
         Self {
-            stdout: result.stdout,
-            stderr: result.stderr,
+            stdout: result.stdout.text_lossy().into_owned(),
+            stderr: result.stderr.text_lossy().into_owned(),
             exit_code: result.exit_code,
             error: None,
             stdout_truncated: result.stdout_truncated,
@@ -1117,10 +1117,10 @@ impl Tool for BashTool {
         let output_cb: OutputCallback = Box::new(move |stdout_chunk, stderr_chunk| {
             if let Ok(mut cb) = status_cb_output.lock() {
                 if !stdout_chunk.is_empty() {
-                    cb(ToolStatus::stdout(stdout_chunk));
+                    cb(ToolStatus::stdout(stdout_chunk.text_lossy()));
                 }
                 if !stderr_chunk.is_empty() {
-                    cb(ToolStatus::stderr(stderr_chunk));
+                    cb(ToolStatus::stderr(stderr_chunk.text_lossy()));
                 }
             }
         });

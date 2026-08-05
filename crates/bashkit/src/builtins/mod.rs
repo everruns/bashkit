@@ -263,19 +263,20 @@ pub(crate) async fn read_text_file(
     path: &Path,
     cmd_name: &str,
 ) -> std::result::Result<String, ExecResult> {
-    let content = fs
-        .read_file(path)
+    let content = read_stream_file(fs, path, cmd_name).await?;
+
+    Ok(content.to_string())
+}
+
+pub(crate) async fn read_stream_file(
+    fs: &dyn FileSystem,
+    path: &Path,
+    cmd_name: &str,
+) -> std::result::Result<crate::StreamData, ExecResult> {
+    fs.read_file(path)
         .await
-        .map_err(|e| ExecResult::err(format!("{cmd_name}: {}: {e}\n", path.display()), 1))?;
-
-    // Binary device files (/dev/urandom, /dev/random): preserve raw bytes as
-    // Latin-1 (ISO 8859-1) so each byte 0x00-0xFF maps 1:1 to a char.
-    // This lets `tr -dc 'a-z0-9' < /dev/urandom | head -c N` work correctly.
-    if path == Path::new("/dev/urandom") || path == Path::new("/dev/random") {
-        return Ok(content.iter().map(|&b| b as char).collect());
-    }
-
-    Ok(String::from_utf8_lossy(&content).into_owned())
+        .map(crate::StreamData::from)
+        .map_err(|e| ExecResult::err(format!("{cmd_name}: {}: {e}\n", path.display()), 1))
 }
 
 /// Check args for `--help` and optionally `--version`.
@@ -485,7 +486,7 @@ pub struct SubCommand {
     /// Command arguments.
     pub args: Vec<String>,
     /// Optional stdin to pipe into the command.
-    pub stdin: Option<String>,
+    pub stdin: Option<crate::StreamData>,
     /// Command-scoped environment assignments (`VAR=value cmd ...`), applied
     /// only to this command's environment. Used by `xargs --process-slot-var`
     /// to expose a per-invocation parallel-slot index.
@@ -617,7 +618,7 @@ pub struct Context<'a> {
     ///
     /// Contains output from the previous command in a pipeline.
     /// For `echo hello | mycommand`, stdin will be `Some("hello\n")`.
-    pub stdin: Option<&'a str>,
+    pub stdin: Option<&'a crate::StreamData>,
 
     /// HTTP client for network operations (curl, wget).
     ///
@@ -659,6 +660,16 @@ pub struct Context<'a> {
 }
 
 impl<'a> Context<'a> {
+    /// Exact pipeline stdin bytes.
+    pub fn stdin_bytes(&self) -> Option<&[u8]> {
+        self.stdin.map(crate::StreamData::as_bytes)
+    }
+
+    /// Pipeline stdin decoded for a text-only builtin.
+    pub fn stdin_text_lossy(&self) -> Option<std::borrow::Cow<'_, str>> {
+        self.stdin.map(crate::StreamData::text_lossy)
+    }
+
     /// Look up a typed per-execution extension, if present.
     pub fn execution_extension<T>(&self) -> Option<&T>
     where
@@ -681,6 +692,11 @@ impl<'a> Context<'a> {
         fs: std::sync::Arc<dyn crate::fs::FileSystem>,
         stdin: Option<&'a str>,
     ) -> Self {
+        let stdin = stdin.map(|text| {
+            let stream: &'static crate::StreamData =
+                Box::leak(Box::new(crate::StreamData::from(text)));
+            stream as &'a crate::StreamData
+        });
         Self {
             args,
             env,
@@ -697,6 +713,16 @@ impl<'a> Context<'a> {
             shell: None,
         }
     }
+}
+
+#[cfg(test)]
+pub(crate) fn test_stream(text: &str) -> &'static crate::StreamData {
+    Box::leak(Box::new(crate::StreamData::from(text)))
+}
+
+#[cfg(test)]
+pub(crate) fn test_stream_opt(text: Option<&str>) -> Option<&'static crate::StreamData> {
+    text.map(test_stream)
 }
 
 /// Trait for implementing builtin commands.
@@ -887,9 +913,8 @@ impl<'a> BashkitContext<'a> {
 
     fn into_exec_result(self) -> ExecResult {
         ExecResult {
-            stdout: self.stdout,
-            stdout_bytes: None,
-            stderr: self.stderr,
+            stdout: self.stdout.into(),
+            stderr: self.stderr.into(),
             exit_code: self.exit_code,
             ..Default::default()
         }
@@ -927,7 +952,7 @@ impl<'a> BashkitContext<'a> {
 
     /// Pipeline stdin, if the builtin is invoked after a pipe.
     pub fn stdin(&self) -> Option<&str> {
-        self.inner.stdin
+        self.inner.stdin.and_then(|stdin| stdin.text().ok())
     }
 
     /// Look up a typed per-execution extension, if present.

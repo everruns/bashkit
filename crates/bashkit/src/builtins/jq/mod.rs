@@ -163,7 +163,7 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
         file_content = combined;
         file_content.as_str()
     } else {
-        ctx.stdin.unwrap_or("")
+        ctx.stdin.map(|stdin| &**stdin).unwrap_or("")
     };
 
     // Empty stdin without -n yields empty output (matches real jq for files

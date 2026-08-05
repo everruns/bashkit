@@ -199,7 +199,10 @@ async fn registry_deadline_cancels_callback_and_tenants_do_not_share_context_or_
         )
         .await
         .unwrap();
-    assert_eq!((first.stdout.as_str(), second.stdout.as_str()), ("a", "b"));
+    assert_eq!(
+        (first.stdout.text().unwrap(), second.stdout.text().unwrap()),
+        ("a", "b")
+    );
     assert_eq!(&*seen.lock().unwrap(), &["a", "b"]);
     assert_eq!(a_trace.take_invocations().len(), 1);
     assert_eq!(b_trace.take_invocations().len(), 1);
