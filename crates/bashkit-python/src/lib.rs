@@ -4294,10 +4294,28 @@ fn apply_python_config(
 /// explicit opt-in for in-process SQLite execution, so we register the
 /// builtin and inject the runtime gate env var. The deny-list defaults
 /// (resource/FS-shaped PRAGMAs) come from `SqliteLimits::default()`.
+#[cfg(not(target_arch = "wasm32"))]
+type ProfileSqliteLimits = bashkit::SqliteLimits;
+
+#[cfg(target_arch = "wasm32")]
+type ProfileSqliteLimits = ();
+
+fn profile_sqlite_limits(profile: &bashkit::ExecutionProfile) -> ProfileSqliteLimits {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        profile.sqlite_limits().clone()
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = profile;
+    }
+}
+
 fn apply_sqlite_config(
     builder: bashkit::BashBuilder,
     sqlite: bool,
-    profile_limits: bashkit::SqliteLimits,
+    profile_limits: ProfileSqliteLimits,
     timeout_seconds: Option<f64>,
     max_memory: Option<u64>,
 ) -> PyResult<bashkit::BashBuilder> {
@@ -4459,7 +4477,7 @@ impl PyBash {
         builder = apply_sqlite_config(
             builder,
             self.sqlite,
-            profile.sqlite_limits().clone(),
+            profile_sqlite_limits(&profile),
             self.timeout_seconds,
             self.max_memory,
         )?;
@@ -4615,7 +4633,7 @@ impl PyBash {
         builder = apply_sqlite_config(
             builder,
             sqlite,
-            core_profile.sqlite_limits().clone(),
+            profile_sqlite_limits(&core_profile),
             timeout_seconds,
             max_memory,
         )?;
