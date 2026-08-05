@@ -9,6 +9,13 @@ import init, { Bash, ExecResult } from "./bashkit_wasm.js";
 
 let initPromise;
 
+/** Typed named execution-policy selectors for BashOptions.profile. */
+export const ExecutionProfile = Object.freeze({
+  Hardened: "hardened",
+  Standard: "standard",
+  Interactive: "interactive",
+});
+
 /**
  * Initialize the WebAssembly module. Must resolve before constructing `Bash`.
  * Idempotent — repeated calls return the same promise.

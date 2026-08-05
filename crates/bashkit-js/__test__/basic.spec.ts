@@ -1,5 +1,11 @@
 import test from "ava";
-import { Bash, BashTool, getVersion, BashError } from "../wrapper.js";
+import {
+  Bash,
+  BashTool,
+  ExecutionProfile,
+  getVersion,
+  BashError,
+} from "../wrapper.js";
 
 // ============================================================================
 // Version
@@ -34,6 +40,15 @@ test("Bash: constructor with all options", (t) => {
   });
   const r = bash.executeSync("whoami");
   t.is(r.stdout.trim(), "u");
+});
+
+test("Bash: hardened profile preserves isolated filesystem writes", (t) => {
+  const bash = new Bash({ profile: ExecutionProfile.Hardened });
+  const result = bash.executeSync(
+    "printf profile > /tmp/profile; cat /tmp/profile",
+  );
+  t.is(result.exitCode, 0);
+  t.is(result.stdout, "profile");
 });
 
 // ============================================================================

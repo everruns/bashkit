@@ -25,7 +25,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use bashkit::{
-    Bash as CoreBash, Builtin, BuiltinContext, ExecResult as CoreExecResult, ExecutionLimits,
+    Bash as CoreBash, Builtin, BuiltinContext, ExecResult as CoreExecResult,
     FileSystem as FileSystemTrait, async_trait,
 };
 use futures_util::future::FutureExt;
@@ -295,6 +295,7 @@ fn js_to_string(v: &JsValue) -> String {
 /// Parsed, `Send`-free construction config. Kept so `reset()` can rebuild an
 /// equivalent interpreter.
 struct Config {
+    profile: bashkit::ExecutionProfileName,
     username: Option<String>,
     hostname: Option<String>,
     cwd: Option<String>,
@@ -442,7 +443,8 @@ impl Bash {
 }
 
 fn build_core(config: &Config, sync_flag: &Arc<AtomicBool>) -> Result<CoreBash, JsError> {
-    let mut builder = CoreBash::builder();
+    let profile = bashkit::ExecutionProfile::named(config.profile);
+    let mut builder = CoreBash::builder().profile(profile.clone());
 
     if let Some(u) = &config.username {
         builder = builder.username(u.clone());
@@ -457,7 +459,7 @@ fn build_core(config: &Config, sync_flag: &Arc<AtomicBool>) -> Result<CoreBash, 
         builder = builder.env(k.clone(), v.clone());
     }
     if config.max_commands.is_some() || config.max_loop_iterations.is_some() {
-        let mut limits = ExecutionLimits::default();
+        let mut limits = profile.execution_limits().clone();
         if let Some(n) = config.max_commands {
             limits = limits.max_commands(n);
         }
@@ -501,6 +503,7 @@ fn build_core(config: &Config, sync_flag: &Arc<AtomicBool>) -> Result<CoreBash, 
 fn parse_options(options: &JsValue) -> Result<Config, JsError> {
     if options.is_undefined() || options.is_null() {
         return Ok(Config {
+            profile: bashkit::ExecutionProfileName::Standard,
             username: None,
             hostname: None,
             cwd: None,
@@ -526,6 +529,17 @@ fn parse_options(options: &JsValue) -> Result<Config, JsError> {
             .ok()
             .and_then(|v| v.as_f64())
             .map(|n| n as usize)
+    };
+
+    let profile = match get_str("profile").as_deref() {
+        None | Some("standard") => bashkit::ExecutionProfileName::Standard,
+        Some("hardened") => bashkit::ExecutionProfileName::Hardened,
+        Some("interactive") => bashkit::ExecutionProfileName::Interactive,
+        Some(_) => {
+            return Err(JsError::new(
+                "profile must be 'hardened', 'standard', or 'interactive'",
+            ));
+        }
     };
 
     let env = read_string_map(options, "env")?;
@@ -554,6 +568,7 @@ fn parse_options(options: &JsValue) -> Result<Config, JsError> {
     }
 
     Ok(Config {
+        profile,
         username: get_str("username"),
         hostname: get_str("hostname"),
         cwd: get_str("cwd"),

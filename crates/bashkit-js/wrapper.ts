@@ -15,9 +15,19 @@ import type {
   ScriptAnalysis,
   AnalyzedCommand,
   AnalyzedRedirect,
+  ExecutionProfileName as NativeExecutionProfileName,
 } from "./index.cjs";
 
 export type { ScriptAnalysis, AnalyzedCommand, AnalyzedRedirect };
+
+/** Closed typed execution-policy selectors. */
+export const ExecutionProfile = Object.freeze({
+  Hardened: "Hardened",
+  Standard: "Standard",
+  Interactive: "Interactive",
+} as const);
+export type ExecutionProfileName =
+  (typeof ExecutionProfile)[keyof typeof ExecutionProfile];
 
 const require = createRequire(import.meta.url);
 const native = require("./index.cjs");
@@ -157,6 +167,8 @@ export type BuiltinCallback = (ctx: BuiltinContext) => string | Promise<string>;
  * Options for creating a Bash or BashTool instance.
  */
 export interface BashOptions {
+  /** Named resource-policy baseline. Individual limit options override it. */
+  profile?: ExecutionProfileName;
   username?: string;
   hostname?: string;
   /**
@@ -582,6 +594,7 @@ function toNativeOptions(
   if (!options && !resolvedFiles) return undefined;
   return {
     username: options?.username,
+    profile: options?.profile as NativeExecutionProfileName | undefined,
     hostname: options?.hostname,
     cwd: options?.cwd,
     env: options?.env,

@@ -62,7 +62,7 @@
 
 use crate::builtins::{Builtin, Extension};
 use crate::error::Error;
-use crate::{Bash, ExecResult, ExecutionLimits, OutputCallback};
+use crate::{Bash, ExecResult, ExecutionLimits, ExecutionProfile, OutputCallback};
 use async_trait::async_trait;
 use futures_core::Stream;
 use serde::{Deserialize, Serialize};
@@ -563,6 +563,8 @@ pub struct BashToolBuilder {
     hostname: Option<String>,
     /// Execution limits
     limits: Option<ExecutionLimits>,
+    /// Coherent policy baseline applied before explicit overrides.
+    profile: Option<ExecutionProfile>,
     /// Initial working directory for the shell
     cwd: Option<PathBuf>,
     /// Environment variables to set
@@ -630,6 +632,12 @@ impl BashToolBuilder {
         self
     }
 
+    /// Apply a coherent execution profile before fine-grained overrides.
+    pub fn profile(mut self, profile: ExecutionProfile) -> Self {
+        self.profile = Some(profile);
+        self
+    }
+
     /// Set the initial working directory for the shell
     pub fn cwd(mut self, cwd: impl Into<PathBuf>) -> Self {
         self.cwd = Some(cwd.into());
@@ -680,7 +688,12 @@ impl BashToolBuilder {
     /// `BASHKIT_ALLOW_INPROCESS_PYTHON=1` before invoking `python`/`python3`.
     #[cfg(feature = "python")]
     pub fn python(self) -> Self {
-        self.python_with_limits(crate::builtins::PythonLimits::default())
+        let limits = self
+            .profile
+            .as_ref()
+            .map(|profile| profile.python_limits().clone())
+            .unwrap_or_default();
+        self.python_with_limits(limits)
     }
 
     /// Enable embedded Python with custom resource limits.
@@ -696,7 +709,12 @@ impl BashToolBuilder {
     /// Requires the `typescript` feature flag.
     #[cfg(feature = "typescript")]
     pub fn typescript(self) -> Self {
-        self.typescript_with_config(crate::builtins::TypeScriptConfig::default())
+        let limits = self
+            .profile
+            .as_ref()
+            .map(|profile| profile.typescript_limits().clone())
+            .unwrap_or_default();
+        self.typescript_with_limits(limits)
     }
 
     /// Enable embedded TypeScript with custom resource limits.
@@ -766,6 +784,7 @@ impl BashToolBuilder {
             username: self.username.clone(),
             hostname: self.hostname.clone(),
             limits: self.limits.clone(),
+            profile: self.profile.clone(),
             cwd: self.cwd.clone(),
             env_vars: self.env_vars.clone(),
             builtins: self.builtins.clone(),
@@ -822,6 +841,7 @@ pub struct BashTool {
     username: Option<String>,
     hostname: Option<String>,
     limits: Option<ExecutionLimits>,
+    profile: Option<ExecutionProfile>,
     cwd: Option<PathBuf>,
     env_vars: Vec<(String, String)>,
     builtins: Vec<(String, Arc<dyn Builtin>)>,
@@ -845,6 +865,10 @@ impl BashTool {
     /// build an isolated shell per execution from cloneable configuration.
     fn create_bash(&self) -> Bash {
         let mut builder = Bash::builder();
+
+        if let Some(ref profile) = self.profile {
+            builder = builder.profile(profile.clone());
+        }
 
         if let Some(ref username) = self.username {
             builder = builder.username(username);

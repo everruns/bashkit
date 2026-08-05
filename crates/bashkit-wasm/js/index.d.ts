@@ -36,8 +36,19 @@ export type CustomBuiltin = (
   ctx: BuiltinRequest,
 ) => string | Promise<string>;
 
+/** Closed set of named execution-policy baselines. */
+export type ExecutionProfileName = "hardened" | "standard" | "interactive";
+
+export declare const ExecutionProfile: Readonly<{
+  Hardened: "hardened";
+  Standard: "standard";
+  Interactive: "interactive";
+}>;
+
 /** Options for constructing a {@link Bash} instance. */
 export interface BashOptions {
+  /** Resource-policy baseline; individual limit options override it. */
+  profile?: ExecutionProfileName;
   username?: string;
   hostname?: string;
   /** Initial working directory (avoids a leading `cd`). */

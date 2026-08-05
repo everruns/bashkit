@@ -1234,6 +1234,7 @@ impl Interpreter {
     const MAX_GLOB_DEPTH: usize = 50;
 
     /// Create a new interpreter with the given filesystem.
+    #[cfg(test)]
     pub fn new(fs: Arc<dyn FileSystem>) -> Self {
         Self::with_config(
             fs,

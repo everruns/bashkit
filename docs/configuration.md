@@ -9,6 +9,37 @@ arguments (see the notes at the end).
 
 ## Resource limits
 
+Use a named profile when you want one coherent baseline across execution,
+session memory, the managed VFS, network, and compiled embedded runtimes:
+
+```rust
+use bashkit::{Bash, ExecutionLimits, ExecutionProfile, ExecutionProfileName};
+
+let profile = ExecutionProfile::builder(ExecutionProfileName::Hardened)
+    .execution_limits(
+        ExecutionLimits::new()
+            .max_commands(5_000) // explicit per-field override
+            .max_stdout_bytes(512 * 1024),
+    )
+    .build()?;
+
+let mut bash = Bash::builder().profile(profile).build();
+# Ok::<(), bashkit::ExecutionProfileError>(())
+```
+
+The closed names are:
+
+- `Standard` — current secure library defaults; the default profile.
+- `Hardened` — tighter limits across every resource family. The isolated VFS
+  stays writable under tighter quotas.
+- `Interactive` — current REPL intent: relaxed execution/session counters,
+  with secure memory, VFS, network, and runtime defaults unchanged.
+
+Profiles never enable network access. Apply a network allowlist explicitly.
+Call `profile(...)` before fine-grained builder methods; later calls are
+intentional overrides. A custom `FileSystem` owns its own quota contract and
+replaces the profile's managed-VFS limits.
+
 Limits are enforced while the script runs — a script that exceeds one is
 terminated, not allowed to exhaust the host. Set them with `ExecutionLimits`:
 
@@ -75,9 +106,10 @@ The Python and JavaScript bindings take the same options as constructor
 arguments rather than a builder. For example, in JavaScript:
 
 ```typescript
-import { Bash } from "@everruns/bashkit";
+import { Bash, ExecutionProfile } from "@everruns/bashkit";
 
 const bash = new Bash({
+  profile: ExecutionProfile.Hardened,
   cwd: "/home/agent",
   env: { HOME: "/home/agent" },
   maxCommands: 1000,
@@ -85,6 +117,22 @@ const bash = new Bash({
   maxMemory: 64 * 1024 * 1024,
 });
 ```
+
+Python exposes the same selector as an enum:
+
+```python
+from bashkit import Bash, ExecutionProfile
+
+bash = Bash(profile=ExecutionProfile.Hardened, max_commands=5_000)
+```
+
+The native Node binding and browser-WASM package expose a closed
+`ExecutionProfileName` union. C ABI v1 accepts `"profile": "hardened" |
+"standard" | "interactive"` in its versioned JSON object and rejects unknown
+values. Browser WASM has no network or embedded-runtime surface; C ABI v1 has
+no network/runtime callbacks; profiles only cover capabilities each documented
+binding supports. Scripted tools always remain logic-only even when a profile
+is selected.
 
 The [Python](start-python.md) and [Node](start-node.md) quickstarts show the
 per-language constructor options.

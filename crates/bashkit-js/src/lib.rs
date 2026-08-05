@@ -21,7 +21,7 @@ use bashkit::{
     Bash as RustBash, BashTool as RustBashTool, Builtin, BuiltinContext, BuiltinRegistry,
     Credential, ExecResult as RustExecResult, ExecutionLimits, ExtFunctionResult,
     FileSystem as BashFileSystem, FileType, InMemoryFs, Metadata, MontyObject, NetworkAllowlist,
-    OutputCallback, PosixFs, PythonExternalFnHandler, PythonLimits, RealFs, RealFsMode,
+    OutputCallback, PosixFs, PythonExternalFnHandler, RealFs, RealFsMode,
     ScriptedTool as RustScriptedTool, SnapshotOptions as RustSnapshotOptions, Tool, ToolArgs,
     ToolDef, ToolRequest, async_trait,
 };
@@ -1283,6 +1283,8 @@ fn apply_network_options(
 /// Options for creating a Bash or BashTool instance.
 #[napi(object)]
 pub struct BashOptions {
+    /// Named resource-policy baseline. Individual options override its fields.
+    pub profile: Option<ExecutionProfileName>,
     pub username: Option<String>,
     pub hostname: Option<String>,
     /// Initial working directory for the shell (mirrors `Bash::builder().cwd()`).
@@ -1335,6 +1337,25 @@ pub struct BashOptions {
     /// restricted to the configured allowlist, with optional transparent
     /// credential injection. Omitted = network disabled.
     pub network: Option<NetworkOptions>,
+}
+
+/// Typed named execution-profile selector.
+#[napi(string_enum)]
+#[derive(Debug, Clone, Copy)]
+pub enum ExecutionProfileName {
+    Hardened,
+    Standard,
+    Interactive,
+}
+
+impl From<ExecutionProfileName> for bashkit::ExecutionProfileName {
+    fn from(value: ExecutionProfileName) -> Self {
+        match value {
+            ExecutionProfileName::Hardened => Self::Hardened,
+            ExecutionProfileName::Standard => Self::Standard,
+            ExecutionProfileName::Interactive => Self::Interactive,
+        }
+    }
 }
 
 /// One simple command found by `analyze()`.
@@ -1448,6 +1469,7 @@ pub struct SnapshotOptions {
 fn default_opts() -> BashOptions {
     BashOptions {
         username: None,
+        profile: None,
         hostname: None,
         cwd: None,
         env: None,
@@ -1519,6 +1541,7 @@ struct SharedState {
     in_sync_execute_depth: Arc<AtomicUsize>,
     async_execute_semaphore: Arc<Semaphore>,
     username: Option<String>,
+    profile: Option<ExecutionProfileName>,
     hostname: Option<String>,
     cwd: Option<String>,
     env: Option<HashMap<String, String>>,
@@ -3410,7 +3433,7 @@ impl ScriptedTool {
 
 /// Build `ExecutionLimits` from the limit fields stored in `SharedState`.
 fn build_limits(state: &SharedState) -> ExecutionLimits {
-    let mut limits = ExecutionLimits::new();
+    let mut limits = core_profile(state).execution_limits().clone();
     if let Some(v) = state.max_commands {
         limits = limits.max_commands(v as usize);
     }
@@ -3451,7 +3474,7 @@ fn build_limits(state: &SharedState) -> ExecutionLimits {
 }
 
 fn derive_sqlite_limits(state: &SharedState) -> bashkit::SqliteLimits {
-    let mut limits = bashkit::SqliteLimits::default();
+    let mut limits = core_profile(state).sqlite_limits().clone();
     if let Some(ms) = state.timeout_ms {
         limits = limits.max_duration(std::time::Duration::from_millis(u64::from(ms)));
     }
@@ -3464,8 +3487,18 @@ fn derive_sqlite_limits(state: &SharedState) -> bashkit::SqliteLimits {
     limits
 }
 
+fn core_profile(state: &SharedState) -> bashkit::ExecutionProfile {
+    bashkit::ExecutionProfile::named(
+        state
+            .profile
+            .map(Into::into)
+            .unwrap_or(bashkit::ExecutionProfileName::Standard),
+    )
+}
+
 fn build_bash_from_state(state: &SharedState) -> RustBash {
-    let mut builder = RustBash::builder();
+    let profile = core_profile(state);
+    let mut builder = RustBash::builder().profile(profile.clone());
 
     if let Some(ref u) = state.username {
         builder = builder.username(u);
@@ -3525,7 +3558,7 @@ fn build_bash_from_state(state: &SharedState) -> RustBash {
                 Box::pin(async move { h(name, args, kwargs).await })
             });
             builder = builder.python_with_external_handler(
-                PythonLimits::default(),
+                profile.python_limits().clone(),
                 fn_names,
                 python_handler,
             );
@@ -3587,6 +3620,7 @@ fn shared_state_from_opts(
         in_sync_execute_depth: Arc::new(AtomicUsize::new(0)),
         async_execute_semaphore: Arc::new(Semaphore::new(MAX_PENDING_ASYNC_EXECUTIONS)),
         username: opts.username.clone(),
+        profile: opts.profile,
         hostname: opts.hostname.clone(),
         cwd: opts.cwd.clone(),
         env: opts.env.clone(),
@@ -3640,6 +3674,7 @@ fn shared_state_from_opts(
         in_sync_execute_depth: tmp.in_sync_execute_depth,
         async_execute_semaphore: Arc::new(Semaphore::new(MAX_PENDING_ASYNC_EXECUTIONS)),
         username: opts.username,
+        profile: opts.profile,
         hostname: opts.hostname,
         cwd: opts.cwd,
         env: opts.env,

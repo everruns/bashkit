@@ -14,7 +14,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { initBashkit, Bash } from "../pkg/index.js";
+import { initBashkit, Bash, ExecutionProfile } from "../pkg/index.js";
 
 // Init once for the whole suite.
 const wasmBytes = readFileSync(
@@ -163,6 +163,20 @@ test("options: username and hostname", () => {
   const bash = new Bash({ username: "agent", hostname: "sandbox" });
   assert.equal(bash.executeSync("whoami").stdout.trim(), "agent");
   assert.equal(bash.executeSync("hostname").stdout.trim(), "sandbox");
+});
+
+test("options: hardened profile preserves isolated filesystem writes", () => {
+  const bash = new Bash({ profile: ExecutionProfile.Hardened });
+  const r = bash.executeSync("printf profile > /tmp/profile; cat /tmp/profile");
+  assert.equal(r.exitCode, 0);
+  assert.equal(r.stdout, "profile");
+});
+
+test("options: unknown profiles are rejected at construction", () => {
+  assert.throws(
+    () => new Bash({ profile: "permissive" }),
+    /profile must be 'hardened', 'standard', or 'interactive'/,
+  );
 });
 
 test("options: maxLoopIterations bounds runaway loops", () => {

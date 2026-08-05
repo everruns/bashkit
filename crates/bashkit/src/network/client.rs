@@ -87,6 +87,38 @@ pub const MAX_TIMEOUT_SECS: u64 = 600;
 /// Minimum allowed timeout (1 second) - prevents instant timeouts that waste resources
 pub const MIN_TIMEOUT_SECS: u64 = 1;
 
+/// Per-request HTTP resource limits selected independently from URL policy.
+#[derive(Debug, Clone)]
+pub struct HttpLimits {
+    /// Default wall-clock budget for a request.
+    pub timeout: Duration,
+    /// Maximum response body bytes retained in memory.
+    pub max_response_bytes: usize,
+}
+
+impl Default for HttpLimits {
+    fn default() -> Self {
+        Self {
+            timeout: Duration::from_secs(DEFAULT_TIMEOUT_SECS),
+            max_response_bytes: DEFAULT_MAX_RESPONSE_BYTES,
+        }
+    }
+}
+
+impl HttpLimits {
+    /// Set the default request timeout.
+    pub fn timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    /// Set the maximum response body size.
+    pub fn max_response_bytes(mut self, bytes: usize) -> Self {
+        self.max_response_bytes = bytes;
+        self
+    }
+}
+
 /// HTTP client with allowlist-based access control.
 ///
 /// # Security Features
@@ -179,11 +211,12 @@ impl HttpClient {
     /// - 10 MB max response size
     /// - No automatic redirects
     pub fn new(allowlist: NetworkAllowlist) -> Self {
-        Self::with_config(
-            allowlist,
-            Duration::from_secs(DEFAULT_TIMEOUT_SECS),
-            DEFAULT_MAX_RESPONSE_BYTES,
-        )
+        Self::with_limits(allowlist, HttpLimits::default())
+    }
+
+    /// Create a client from a typed HTTP limit bundle.
+    pub fn with_limits(allowlist: NetworkAllowlist, limits: HttpLimits) -> Self {
+        Self::with_config(allowlist, limits.timeout, limits.max_response_bytes)
     }
 
     /// Create a client with custom timeout.
