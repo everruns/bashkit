@@ -2,7 +2,9 @@
 // Surface adapters only translate arguments/results; policy, validation,
 // deadlines, sanitization, callback identity, and tracing stay here.
 
-use crate::builtins::{Context, ExecutionDeadline};
+use crate::builtins::Context;
+#[cfg(not(target_family = "wasm"))]
+use crate::builtins::ExecutionDeadline;
 use crate::scripted_tool::{
     CallbackKind, RegisteredTool, ScriptedCommandKind, ToolDefInvocationTrace,
 };
@@ -85,6 +87,7 @@ impl ToolCallRequest {
 #[derive(Clone)]
 pub(crate) struct ToolCallScope {
     request: Option<ToolCallRequest>,
+    #[cfg(not(target_family = "wasm"))]
     deadline: Option<crate::time_compat::Instant>,
 }
 
@@ -92,6 +95,7 @@ impl ToolCallScope {
     pub(crate) fn from_context(ctx: &Context<'_>) -> Self {
         Self {
             request: ctx.execution_extension::<ToolCallRequest>().cloned(),
+            #[cfg(not(target_family = "wasm"))]
             deadline: ctx
                 .execution_extension::<ExecutionDeadline>()
                 .and_then(|deadline| {
@@ -104,6 +108,7 @@ impl ToolCallScope {
         self.request.as_ref().map(ToolCallRequest::tenant_id)
     }
 
+    #[cfg(not(target_family = "wasm"))]
     fn remaining(&self) -> Option<std::time::Duration> {
         self.deadline.map(|deadline| {
             deadline
@@ -129,6 +134,7 @@ fn runtime_scope() -> ToolCallScope {
         .try_with(Clone::clone)
         .unwrap_or(ToolCallScope {
             request: None,
+            #[cfg(not(target_family = "wasm"))]
             deadline: None,
         })
 }
@@ -367,6 +373,7 @@ impl ToolRegistry {
                 stderr: String::new(),
                 exit_code: 0,
             },
+            #[cfg(not(target_family = "wasm"))]
             Err(InvokeError::Timeout) => {
                 RegistryOutput::error(format!("{name}: callback timed out\n"), 124)
             }
@@ -571,6 +578,7 @@ impl RegistryOutput {
 
 enum InvokeError {
     Callback(String),
+    #[cfg(not(target_family = "wasm"))]
     Timeout,
 }
 
