@@ -101,6 +101,8 @@ pub mod symlink_overlay_security_tests;
 pub mod threat_model_doc_tests;
 pub mod threat_model_tests;
 pub mod time_compat_scan_tests;
+#[cfg(all(feature = "scripted_tool", feature = "python", feature = "typescript"))]
+pub mod tool_registry_tests;
 pub mod tty_tests;
 pub mod typescript_integration_tests;
 pub mod typescript_security_tests;

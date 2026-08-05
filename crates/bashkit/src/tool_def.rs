@@ -81,9 +81,48 @@ pub struct ToolArgs {
     pub params: serde_json::Value,
     /// Pipeline input from a prior command (e.g. `echo data | tool`).
     pub stdin: Option<String>,
+    context: ToolArgsContext,
+}
+
+#[derive(Clone, Default)]
+struct ToolArgsContext {
+    tenant_id: Option<String>,
+    surface: Option<crate::tool_registry::ToolCallSurface>,
 }
 
 impl ToolArgs {
+    /// Construct arguments outside a registry request.
+    pub fn new(params: serde_json::Value, stdin: Option<String>) -> Self {
+        Self {
+            params,
+            stdin,
+            context: ToolArgsContext::default(),
+        }
+    }
+
+    pub(crate) fn with_context(
+        params: serde_json::Value,
+        stdin: Option<String>,
+        tenant_id: Option<&str>,
+        surface: crate::tool_registry::ToolCallSurface,
+    ) -> Self {
+        Self {
+            params,
+            stdin,
+            context: ToolArgsContext {
+                tenant_id: tenant_id.map(str::to_string),
+                surface: Some(surface),
+            },
+        }
+    }
+
+    pub fn tenant_id(&self) -> Option<&str> {
+        self.context.tenant_id.as_deref()
+    }
+
+    pub fn surface(&self) -> Option<crate::tool_registry::ToolCallSurface> {
+        self.context.surface
+    }
     /// Get a string parameter by name.
     pub fn param_str(&self, key: &str) -> Option<&str> {
         self.params.get(key).and_then(|v| v.as_str())
@@ -223,10 +262,12 @@ impl Builtin for ToolImpl {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         let params = parse_flags(ctx.args, &self.def.input_schema)
             .map_err(|e| crate::error::Error::Execution(format!("{}: {e}", self.def.name)))?;
-        let tool_args = ToolArgs {
+        let tool_args = ToolArgs::with_context(
             params,
-            stdin: ctx.stdin.map(String::from),
-        };
+            ctx.stdin.map(String::from),
+            None,
+            crate::tool_registry::ToolCallSurface::Shell,
+        );
 
         // Prefer async, fall back to sync.
         let result = if let Some(cb) = &self.exec {

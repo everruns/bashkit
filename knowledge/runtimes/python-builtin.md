@@ -166,6 +166,14 @@ catastrophic-backtracking DoS risk in untrusted code execution.
 provides *code*, not data — matches real python's no-arg behavior), command
 substitution, and conditionals.
 
+With the `scripted_tool` feature, `BashBuilder::tool_registry` generates an
+explicit `tools` namespace from dot-separated `ToolDef` names. Calls such as
+`tools.orders.list({"customer": "acme"})` use Monty's existing external-function
+suspend/resume bridge and dispatch through the registry's shared schema, policy,
+deadline, sanitizer, callback, and request-local trace. `tools.discover({...})`
+returns registry metadata. Tenant context comes only from the current
+`ToolCallRequest` execution extension.
+
 ## Verification
 
 ```bash

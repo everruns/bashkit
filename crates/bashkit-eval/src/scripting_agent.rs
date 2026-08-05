@@ -381,10 +381,7 @@ pub async fn run_baseline_agent(
 
         let mut result_blocks = Vec::new();
         for (id, name, input) in &tool_uses {
-            let args = ToolArgs {
-                params: (*input).clone(),
-                stdin: None,
-            };
+            let args = ToolArgs::new((*input).clone(), None);
 
             let (stdout, stderr, exit_code) = match callbacks.get(name.as_str()) {
                 Some(cb) => match cb(&args) {

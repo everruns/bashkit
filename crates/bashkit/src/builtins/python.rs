@@ -169,6 +169,7 @@ pub struct PythonExternalFns {
     names: Vec<String>,
     /// Async handler invoked when Python calls one of these functions.
     handler: PythonExternalFnHandler,
+    prelude: Option<String>,
 }
 
 impl std::fmt::Debug for PythonExternalFns {
@@ -230,7 +231,25 @@ impl Python {
         names: Vec<String>,
         handler: PythonExternalFnHandler,
     ) -> Self {
-        self.external_fns = Some(PythonExternalFns { names, handler });
+        self.external_fns = Some(PythonExternalFns {
+            names,
+            handler,
+            prelude: None,
+        });
+        self
+    }
+
+    pub(crate) fn with_external_handler_and_prelude(
+        mut self,
+        names: Vec<String>,
+        handler: PythonExternalFnHandler,
+        prelude: String,
+    ) -> Self {
+        self.external_fns = Some(PythonExternalFns {
+            names,
+            handler,
+            prelude: Some(prelude),
+        });
         self
     }
 }
@@ -447,7 +466,16 @@ impl Builtin for Python {
             limits.common.max_duration = limits.common.max_duration.min(remaining);
         }
 
-        run_python(
+        let code = if let Some(prelude) = self
+            .external_fns
+            .as_ref()
+            .and_then(|external| external.prelude.as_ref())
+        {
+            format!("{prelude}\n{code}")
+        } else {
+            code
+        };
+        let future = run_python(
             &code,
             &filename,
             ctx.fs.clone(),
@@ -455,8 +483,15 @@ impl Builtin for Python {
             ctx.env,
             &limits,
             self.external_fns.as_ref(),
+        );
+        #[cfg(feature = "scripted_tool")]
+        return crate::tool_registry::scope_runtime_call(
+            crate::tool_registry::ToolCallScope::from_context(&ctx),
+            future,
         )
-        .await
+        .await;
+        #[cfg(not(feature = "scripted_tool"))]
+        future.await
     }
 }
 

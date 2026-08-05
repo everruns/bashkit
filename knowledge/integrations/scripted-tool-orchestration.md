@@ -93,6 +93,39 @@ Implements the shared `Extension` trait; registers a group of `ToolDef`/callback
 
 Invocation tracing is isolated by default: every `ToolDefExtensionBuilder::build()` mints a fresh bounded trace log, and `Clone` copies command configuration into a new empty log rather than sharing trace state. Hosts that need traces after moving an extension into a `Bash` must call `ToolDefExtension::invocation_trace()` first and retain the returned `ToolDefInvocationTrace` handle. Do not share one trace handle across tenants.
 
+### ToolRegistry — one dispatcher across runtimes
+
+`ToolRegistry` owns each `ToolDef`, callback `Arc`, approval/policy hook, schema
+validation, callback-error sanitization, deadline enforcement, and trace dispatch.
+`BashBuilder::tool_registry(registry)` installs the same registry as shell commands
+and, when enabled, into the embedded Python and TypeScript external-function
+bridges. No executor framework or second callback adapter is involved.
+
+Dot-separated tool names become runtime namespaces. A definition named
+`orders.list` is invoked as `orders.list --customer acme` in shell,
+`tools.orders.list({"customer": "acme"})` in Python, and
+`await tools.orders.list({customer: "acme"})` in TypeScript. Runtime discovery is
+`tools.discover({"category": "orders"})`; shell retains `help` and `discover`.
+
+Inputs from every surface are normalized to JSON and checked against the same
+schema before policy or callback execution. The validator covers object/array
+shape, required and unknown properties, scalar types, enums, and recursive
+properties/items. Callback output containing JSON returns structured runtime
+values; other output remains a string.
+
+`ToolCallRequest`, carried through `ExecOptions::extensions`, supplies tenant
+identity and a request-local `ToolDefInvocationTrace`. The request scope crosses
+Monty/ZapCode suspension with a Tokio task-local, never mutable registry state.
+Policy sees name, parameters, tenant, and surface; callbacks read tenant/surface
+from `ToolArgs`. A shared registry therefore shares callbacks and policy while
+keeping request traces and tenant context isolated. Registry callback futures use
+the shell execution deadline; timeout drops the future and returns exit 1.
+
+ZapCode cannot snapshot function values nested in a `tools` object at an external
+call. The TypeScript adapter therefore token-rewrites only executable
+`tools.<namespace>.<method>(...)` access to validated hidden external names and
+JSON-encodes the argument before suspension. Strings and comments are skipped.
+
 ### ContextVar propagation (Python)
 
 Python callbacks (sync and async) automatically see `contextvars.ContextVar` values set by the caller at `execute()` / `execute_sync()` time:
@@ -179,7 +212,7 @@ Wraps `ScriptedTool`; `tools()` returns one or two tools by `DiscoveryMode`:
 
 ## Module location
 
-`crates/bashkit/src/tool_def.rs` (ToolDef, ToolArgs, ToolImpl, exec types, `parse_flags`) and `crates/bashkit/src/scripted_tool/` (builder, extension + builtins, `Tool` impl, toolset). Public exports gated by the `scripted_tool` feature in `lib.rs`.
+`crates/bashkit/src/tool_def.rs` (ToolDef, ToolArgs, ToolImpl, exec types, `parse_flags`), `crates/bashkit/src/tool_registry.rs` (cross-runtime registry), and `crates/bashkit/src/scripted_tool/` (builder, extension + builtins, `Tool` impl, toolset). Public exports are gated by the `scripted_tool` feature in `lib.rs`.
 
 ## Example
 
@@ -187,7 +220,7 @@ Wraps `ScriptedTool`; `tools()` returns one or two tools by `DiscoveryMode`:
 
 ## Test coverage
 
-Unit tests in the module cover builder configuration, help/discover introspection, flag parsing and coercion, pipelines, multi-step orchestration, error handling/fallback, stdin piping, loops, env vars, Arc reuse and fresh-interpreter isolation across `execute()` calls, and shared `Arc`/`Arc<Mutex<T>>` context.
+Unit tests in the module cover builder configuration, help/discover introspection, flag parsing and coercion, pipelines, multi-step orchestration, error handling/fallback, stdin piping, loops, env vars, Arc reuse and fresh-interpreter isolation across `execute()` calls, and shared `Arc`/`Arc<Mutex<T>>` context. Cross-runtime integration tests cover registry success, schema rejection, policy denial, sanitized callback failure, timeout cancellation, discovery, callback identity, and tenant/trace isolation.
 
 ## Security
 

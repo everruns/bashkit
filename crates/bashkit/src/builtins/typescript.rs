@@ -145,6 +145,8 @@ pub struct TypeScriptExternalFns {
     names: Vec<String>,
     /// Async handler invoked when TypeScript calls one of these functions.
     handler: TypeScriptExternalFnHandler,
+    prelude: Option<String>,
+    rewrites: Vec<(String, String)>,
 }
 
 impl std::fmt::Debug for TypeScriptExternalFns {
@@ -293,6 +295,26 @@ impl TypeScriptExtension {
             external_fns: Some(TypeScriptExternalFns {
                 names: external_fns,
                 handler,
+                prelude: None,
+                rewrites: Vec::new(),
+            }),
+        }
+    }
+
+    pub(crate) fn with_external_handler_and_prelude(
+        limits: TypeScriptLimits,
+        external_fns: Vec<String>,
+        handler: TypeScriptExternalFnHandler,
+        prelude: String,
+        rewrites: Vec<(String, String)>,
+    ) -> Self {
+        Self {
+            config: TypeScriptConfig::default().limits(limits),
+            external_fns: Some(TypeScriptExternalFns {
+                names: external_fns,
+                handler,
+                prelude: Some(prelude),
+                rewrites,
             }),
         }
     }
@@ -300,7 +322,17 @@ impl TypeScriptExtension {
     fn make_builtin(&self, cmd_name: &str) -> TypeScript {
         let builtin = TypeScript::from_config(&self.config, cmd_name);
         if let Some(external_fns) = &self.external_fns {
-            builtin.with_external_handler(external_fns.names.clone(), external_fns.handler.clone())
+            if let Some(prelude) = &external_fns.prelude {
+                builtin.with_external_handler_and_prelude(
+                    external_fns.names.clone(),
+                    external_fns.handler.clone(),
+                    prelude.clone(),
+                    external_fns.rewrites.clone(),
+                )
+            } else {
+                builtin
+                    .with_external_handler(external_fns.names.clone(), external_fns.handler.clone())
+            }
         } else {
             builtin
         }
@@ -399,7 +431,28 @@ impl TypeScript {
         names: Vec<String>,
         handler: TypeScriptExternalFnHandler,
     ) -> Self {
-        self.external_fns = Some(TypeScriptExternalFns { names, handler });
+        self.external_fns = Some(TypeScriptExternalFns {
+            names,
+            handler,
+            prelude: None,
+            rewrites: Vec::new(),
+        });
+        self
+    }
+
+    pub(crate) fn with_external_handler_and_prelude(
+        mut self,
+        names: Vec<String>,
+        handler: TypeScriptExternalFnHandler,
+        prelude: String,
+        rewrites: Vec<(String, String)>,
+    ) -> Self {
+        self.external_fns = Some(TypeScriptExternalFns {
+            names,
+            handler,
+            prelude: Some(prelude),
+            rewrites,
+        });
         self
     }
 
@@ -416,6 +469,115 @@ impl Default for TypeScript {
     fn default() -> Self {
         Self::new()
     }
+}
+
+// Registry accessors are rewritten to standalone functions because ZapCode
+// snapshots cannot serialize function values nested inside the `tools` object
+// while execution is suspended at an external call. Skip quoted/comment text
+// so source data is never changed into executable registry calls.
+fn rewrite_typescript_access(code: &str, rewrites: &[(String, String)]) -> String {
+    if rewrites.is_empty() {
+        return code.to_string();
+    }
+    let bytes = code.as_bytes();
+    let mut output = String::with_capacity(code.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if byte == b'\'' || byte == b'"' || byte == b'`' {
+            let quote = byte;
+            let start = index;
+            index += 1;
+            while index < bytes.len() {
+                if bytes[index] == b'\\' {
+                    index = (index + 2).min(bytes.len());
+                } else {
+                    let current = bytes[index];
+                    index += 1;
+                    if current == quote {
+                        break;
+                    }
+                }
+            }
+            output.push_str(&code[start..index]);
+            continue;
+        }
+        if byte == b'/' && bytes.get(index + 1) == Some(&b'/') {
+            let start = index;
+            index += 2;
+            while index < bytes.len() && bytes[index] != b'\n' {
+                index += 1;
+            }
+            output.push_str(&code[start..index]);
+            continue;
+        }
+        if byte == b'/' && bytes.get(index + 1) == Some(&b'*') {
+            let start = index;
+            index += 2;
+            while index + 1 < bytes.len() && !(bytes[index] == b'*' && bytes[index + 1] == b'/') {
+                index += 1;
+            }
+            index = (index + 2).min(bytes.len());
+            output.push_str(&code[start..index]);
+            continue;
+        }
+        if let Some((source, target)) = rewrites.iter().find(|(source, _)| {
+            code[index..].starts_with(source)
+                && code.as_bytes().get(index + source.len()) == Some(&b'(')
+        }) {
+            let open = index + source.len();
+            if let Some(close) = matching_call_paren(code, open) {
+                output.push_str(target);
+                output.push_str("(JSON.stringify(");
+                output.push_str(&rewrite_typescript_access(&code[open + 1..close], rewrites));
+                output.push_str("))");
+                index = close + 1;
+                continue;
+            }
+        }
+        let ch = code[index..].chars().next().expect("valid UTF-8");
+        output.push(ch);
+        index += ch.len_utf8();
+    }
+    output
+}
+
+fn matching_call_paren(code: &str, open: usize) -> Option<usize> {
+    let bytes = code.as_bytes();
+    let mut depth = 0usize;
+    let mut index = open;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\'' | b'"' | b'`' => {
+                let quote = bytes[index];
+                index += 1;
+                while index < bytes.len() {
+                    if bytes[index] == b'\\' {
+                        index = (index + 2).min(bytes.len());
+                    } else {
+                        let current = bytes[index];
+                        index += 1;
+                        if current == quote {
+                            break;
+                        }
+                    }
+                }
+            }
+            b'(' => {
+                depth += 1;
+                index += 1;
+            }
+            b')' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(index);
+                }
+                index += 1;
+            }
+            _ => index += code[index..].chars().next()?.len_utf8(),
+        }
+    }
+    None
 }
 
 /// Known flags/subcommands from Node.js, Deno, and Bun that are not supported.
@@ -642,14 +804,33 @@ impl Builtin for TypeScript {
 
         let limits = self.effective_limits(ctx.execution_extension::<ExecutionDeadline>());
 
-        run_typescript(
+        let code = self.external_fns.as_ref().map_or(code.clone(), |external| {
+            rewrite_typescript_access(&code, &external.rewrites)
+        });
+        let code = if let Some(prelude) = self
+            .external_fns
+            .as_ref()
+            .and_then(|external| external.prelude.as_ref())
+        {
+            format!("{prelude}\n{code}")
+        } else {
+            code
+        };
+        let future = run_typescript(
             &code,
             ctx.fs.clone(),
             ctx.cwd,
             &limits,
             self.external_fns.as_ref(),
+        );
+        #[cfg(feature = "scripted_tool")]
+        return crate::tool_registry::scope_runtime_call(
+            crate::tool_registry::ToolCallScope::from_context(&ctx),
+            future,
         )
-        .await
+        .await;
+        #[cfg(not(feature = "scripted_tool"))]
+        future.await
     }
 }
 
@@ -729,8 +910,18 @@ async fn process_vm_result(
                 args,
                 snapshot,
             } => {
-                let return_value =
-                    handle_external_call(&function_name, &args, fs, cwd, external_fns).await;
+                let return_value = match handle_external_call(
+                    &function_name,
+                    &args,
+                    fs,
+                    cwd,
+                    external_fns,
+                )
+                .await
+                {
+                    Ok(value) => value,
+                    Err(error) => return Ok(ExecResult::err(format!("{error}\n"), 1)),
+                };
 
                 state = match snapshot.resume(return_value) {
                     Ok(s) => s,
@@ -750,33 +941,26 @@ async fn handle_external_call(
     fs: &Arc<dyn FileSystem>,
     cwd: &Path,
     external_fns: Option<&TypeScriptExternalFns>,
-) -> Value {
+) -> std::result::Result<Value, String> {
     // Try VFS functions first
     match function_name {
-        "readFile" => handle_read_file(args, fs, cwd).await,
-        "writeFile" => handle_write_file(args, fs, cwd).await,
-        "exists" => handle_exists(args, fs, cwd).await,
-        "readDir" => handle_read_dir(args, fs, cwd).await,
-        "mkdir" => handle_mkdir(args, fs, cwd).await,
-        "remove" => handle_remove(args, fs, cwd).await,
-        "stat" => handle_stat(args, fs, cwd).await,
+        "readFile" => Ok(handle_read_file(args, fs, cwd).await),
+        "writeFile" => Ok(handle_write_file(args, fs, cwd).await),
+        "exists" => Ok(handle_exists(args, fs, cwd).await),
+        "readDir" => Ok(handle_read_dir(args, fs, cwd).await),
+        "mkdir" => Ok(handle_mkdir(args, fs, cwd).await),
+        "remove" => Ok(handle_remove(args, fs, cwd).await),
+        "stat" => Ok(handle_stat(args, fs, cwd).await),
         _ => {
             // Try user-registered external functions
             if let Some(ef) = external_fns {
                 if ef.names.contains(&function_name.to_string()) {
-                    match (ef.handler)(function_name.to_string(), args.to_vec()).await {
-                        Ok(v) => v,
-                        Err(e) => Value::String(Arc::from(format!("Error: {e}"))),
-                    }
+                    (ef.handler)(function_name.to_string(), args.to_vec()).await
                 } else {
-                    Value::String(Arc::from(format!(
-                        "Error: unknown external function '{function_name}'"
-                    )))
+                    Err(format!("unknown external function '{function_name}'"))
                 }
             } else {
-                Value::String(Arc::from(format!(
-                    "Error: unknown external function '{function_name}'"
-                )))
+                Err(format!("unknown external function '{function_name}'"))
             }
         }
     }
@@ -927,6 +1111,22 @@ mod tests {
     use std::collections::HashMap;
     use std::path::PathBuf;
     use std::sync::Arc;
+
+    #[test]
+    fn registry_rewrite_encodes_call_argument() {
+        let rewrites = vec![("tools.orders.list".into(), "__bashkit_orders_list".into())];
+        assert_eq!(
+            rewrite_typescript_access("await tools.orders.list({customer: nested(1)})", &rewrites,),
+            "await __bashkit_orders_list(JSON.stringify({customer: nested(1)}))"
+        );
+    }
+
+    #[test]
+    fn registry_rewrite_skips_strings_and_comments() {
+        let rewrites = vec![("tools.orders.list".into(), "__bashkit_orders_list".into())];
+        let code = "const s = 'tools.orders.list({})'; // tools.orders.list({})\n/* tools.orders.list({}) */";
+        assert_eq!(rewrite_typescript_access(code, &rewrites), code);
+    }
 
     async fn run(args: &[&str], stdin: Option<&str>) -> ExecResult {
         let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
