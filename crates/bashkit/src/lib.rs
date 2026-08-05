@@ -3165,9 +3165,9 @@ impl BashBuilder {
     /// directory component.
     #[cfg(feature = "realfs")]
     fn is_sensitive_mount_path(host_path: &Path) -> bool {
-        // Refuse mounting the host root outright. `starts_with("/")` matches
-        // everything so the prefix check below cannot express this.
-        if host_path == Path::new("/") {
+        // THREAT[TM-FS-013]: A canonical host root has no parent. This covers
+        // `/` plus Windows drive, UNC-share, and device-namespace roots.
+        if host_path.parent().is_none() {
             return true;
         }
         if Self::SENSITIVE_MOUNT_PATHS

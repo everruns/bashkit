@@ -47,6 +47,7 @@ execution model. Evidence is a threat-model ID, a test, or `stance`
 | L-PROC-003 | No process spawning; external commands run as builtins | Core sandbox model: no fork/exec escape surface | `l_proc_003_no_process_spawning` |
 | L-FS-001 | Symlinks stored but never followed in path resolution (`ln -s` works, `read_link()` returns targets, traversal blocked) | Prevents symlink loops and link-based sandbox escapes | TM-DOS-011 |
 | L-FS-002 | No file permission enforcement in the VFS | Single-tenant virtual FS; permissions would be theater | `l_fs_002_no_permission_enforcement` |
+| L-FS-003 | On Windows, `RealFs::symlink()` validates the target but creates an empty host file rather than a symlink/reparse point; pre-existing host symlinks and junctions remain readable subject to containment checks | Windows requires choosing file-vs-directory link semantics and may require link privileges; the portable VFS symlink contract does not carry that host metadata | TM-ESC-033 |
 | L-NET-001 | No raw network sockets; HTTP only via `curl`/`wget`/`http` builtins | Allowlist-mediated egress is the only network surface | `l_net_001_no_raw_sockets` |
 | L-NET-002 | No DNS resolution; hosts must appear in the allowlist | Resolution would bypass allowlist intent | `l_net_002_default_deny_no_resolution` |
 | L-SIG-001 | `trap` stores INT/TERM handlers but no signal delivery in virtual mode (EXIT, ERR fire) | No host signals exist inside the sandbox | `l_sig_001_signal_traps_not_delivered` |

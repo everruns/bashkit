@@ -7,6 +7,178 @@
 use bashkit::{Bash, BashBuilder};
 use std::path::Path;
 
+#[cfg(windows)]
+mod windows_containment {
+    use super::*;
+    use bashkit::{FileSystem, FsBackend, InMemoryFs, OverlayFs, RealFs, RealFsMode};
+    use std::path::PathBuf;
+    use std::process::Command;
+    use std::sync::Arc;
+
+    fn device_path(path: &Path) -> PathBuf {
+        PathBuf::from(format!(r"\\?\{}", path.display()))
+    }
+
+    fn create_junction(link: &Path, target: &Path) {
+        let status = Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .status()
+            .unwrap();
+        assert!(status.success(), "failed to create test junction");
+    }
+
+    #[tokio::test]
+    async fn windows_containment_vfs_and_overlay_are_rooted_and_case_sensitive() {
+        let lower = Arc::new(InMemoryFs::new());
+        lower
+            .write_file(Path::new("/Case/file.txt"), b"lower")
+            .await
+            .unwrap();
+        let overlay = OverlayFs::new(lower);
+
+        assert_eq!(
+            overlay
+                .read_file(Path::new(r"\Case\file.txt"))
+                .await
+                .unwrap(),
+            b"lower"
+        );
+        assert!(!overlay.exists(Path::new("/case/file.txt")).await.unwrap());
+
+        overlay
+            .write_file(Path::new(r"C:\Case\upper.txt"), b"upper")
+            .await
+            .unwrap();
+        assert_eq!(
+            overlay
+                .read_file(Path::new("/Case/upper.txt"))
+                .await
+                .unwrap(),
+            b"upper"
+        );
+    }
+
+    #[tokio::test]
+    async fn windows_containment_realfs_rejects_drive_and_device_absolute_escape() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let root = sandbox.path().join("root");
+        let outside = sandbox.path().join("outside");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let secret = outside.join("secret.txt");
+        std::fs::write(&secret, b"outside-secret").unwrap();
+
+        let fs = RealFs::open(&root, RealFsMode::ReadOnly).await.unwrap();
+        for hostile in [secret.clone(), device_path(&secret)] {
+            let result = fs.read(&hostile).await;
+            assert!(
+                !matches!(result, Ok(ref bytes) if bytes == b"outside-secret"),
+                "host path escaped RealFs root: {}",
+                hostile.display()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn windows_containment_realfs_keeps_missing_descendants_under_root() {
+        let root = tempfile::tempdir().unwrap();
+        let fs = RealFs::open(root.path(), RealFsMode::ReadWrite)
+            .await
+            .unwrap();
+
+        fs.write(Path::new(r"\missing\deep\file.txt"), b"inside")
+            .await
+            .unwrap();
+        assert_eq!(
+            std::fs::read(root.path().join("missing/deep/file.txt")).unwrap(),
+            b"inside"
+        );
+    }
+
+    #[tokio::test]
+    async fn windows_containment_realfs_rejects_drive_relative_symlink_target() {
+        let root = tempfile::tempdir().unwrap();
+        let fs = RealFs::open(root.path(), RealFsMode::ReadWrite)
+            .await
+            .unwrap();
+
+        assert!(
+            fs.symlink(Path::new(r"C:target.txt"), Path::new("/link"))
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn windows_containment_realfs_handles_case_and_alternate_separators_inside_root() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("MixedCase.TXT"), b"inside").unwrap();
+        let fs = RealFs::open(root.path(), RealFsMode::ReadOnly)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            fs.read(Path::new(r"\mixedcase.txt")).await.unwrap(),
+            b"inside"
+        );
+    }
+
+    #[tokio::test]
+    async fn windows_containment_builder_refuses_drive_root_without_allowlist() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let probe = sandbox.path().join("drive-root-probe.txt");
+        std::fs::write(&probe, b"host-secret").unwrap();
+        let drive_root = sandbox.path().ancestors().last().unwrap();
+        let relative_probe = probe
+            .strip_prefix(drive_root)
+            .unwrap()
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        let bash = Bash::builder()
+            .mount_real_readonly_at(drive_root, "/host")
+            .build();
+        let result = bash
+            .fs()
+            .read_file(Path::new(&format!("/host/{relative_probe}")))
+            .await;
+        assert!(!matches!(result, Ok(ref bytes) if bytes == b"host-secret"));
+    }
+
+    #[tokio::test]
+    async fn windows_containment_realfs_blocks_symlink_and_junction_targets() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let root = sandbox.path().join("root");
+        let root_prefix_sibling = sandbox.path().join("root-evil");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&root_prefix_sibling).unwrap();
+        std::fs::write(root_prefix_sibling.join("secret.txt"), b"outside-secret").unwrap();
+
+        std::os::windows::fs::symlink_file(
+            root_prefix_sibling.join("secret.txt"),
+            root.join("file-link"),
+        )
+        .unwrap();
+        create_junction(&root.join("junction"), &root_prefix_sibling);
+
+        let fs = RealFs::open(&root, RealFsMode::ReadOnly).await.unwrap();
+        for hostile in [
+            Path::new("/file-link"),
+            Path::new("/junction/secret.txt"),
+            Path::new("/junction/missing/descendant.txt"),
+        ] {
+            let result = fs.read(hostile).await;
+            assert!(
+                !matches!(result, Ok(ref bytes) if bytes == b"outside-secret"),
+                "reparse target escaped RealFs root: {}",
+                hostile.display()
+            );
+        }
+    }
+}
+
 // macOS temp dirs canonicalize under /private, which RealFs treats as
 // sensitive. Tests allowlist only the temp fixtures they mount.
 fn builder_allowing_host_paths(paths: &[&Path]) -> BashBuilder {
