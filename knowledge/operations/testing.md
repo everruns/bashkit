@@ -109,6 +109,49 @@ Uploaded to Codecov from three sources: Rust unit/integration coverage via
 `cargo tarpaulin`; Rust coverage exercised through Python and Node binding
 tests via `cargo llvm-cov`.
 
+## Third-Party Adoption Suite
+
+`crates/bashkit/tests/integration/thirdparty_adoption_tests.rs` covers the
+"agent bash tool" embedding shape end to end: a real workspace mounted
+read-write, a `CommandResolver` bridging unresolved names to host processes,
+and `HostMounts` mapping the VFS cwd back to a host directory.
+
+Decision: this shape was only ever validated downstream, and the first adopter
+(crabot) shipped two defects bashkit's own tests could not see — a harness that
+emptied `PATH`, and a stdin pipe to a host process that never reached EOF and
+hung the suite. Both are properties of the *composition*, not of any one API,
+so they need a test that composes.
+
+Rules for this file:
+
+- **The bridge in it is the reference.** If bridging a host command needs more
+  code than what is there, that is a gap in bashkit's API, not a reason to grow
+  the test.
+- **Use names bashkit does not implement** (`host-cat`, `host-echo`, …). The
+  resolver runs last, so a test using `cat` or `echo` silently asserts on
+  builtins and never reaches the bridge — verified by injecting a defect and
+  confirming the test fails.
+- **Never let a defect become a hang.** The bridge bounds its wait and drains
+  pipes only after a clean exit; after a timeout kill a grandchild can still
+  hold the write end, and reading would block forever. A hung job reports
+  nothing; a bounded one names the cause.
+
+`host_mounts_tests.rs` covers the mapping in isolation, including the
+sibling-prefix trap (`/workspace2` must not resolve inside `/workspace`).
+
+Both are `cfg(realfs)`, so the main `Run tests` step (which does not enable
+`realfs`) compiles them out. They run in the dedicated `Run realfs integration
+tests` step and in the `Test (Windows adoption shape)` job.
+
+## Windows CI
+
+`test-windows` is the only non-ubuntu job. It runs the adoption, host-mount,
+and command-resolver suites on `windows-latest` and gates `Check`.
+
+It is deliberately scoped rather than a full workspace port: the adoption shape
+exists to work on Windows without a real `bash`, and that claim needs a Windows
+runner to stay true. Everything else stays ubuntu-only.
+
 ## Third-Party API Steps in CI
 
 The `Examples` job runs a few steps that call third-party LLM APIs (Anthropic
