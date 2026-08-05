@@ -119,7 +119,7 @@ Monty/ZapCode suspension with a Tokio task-local, never mutable registry state.
 Policy sees name, parameters, tenant, and surface; callbacks read tenant/surface
 from `ToolArgs`. A shared registry therefore shares callbacks and policy while
 keeping request traces and tenant context isolated. Registry callback futures use
-the shell execution deadline; timeout drops the future and returns exit 124.
+the shell execution deadline; timeout drops the future and returns exit 1.
 
 ZapCode cannot snapshot function values nested in a `tools` object at an external
 call. The TypeScript adapter therefore token-rewrites only executable

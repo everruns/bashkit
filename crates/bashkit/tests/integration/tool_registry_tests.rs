@@ -168,7 +168,7 @@ async fn registry_deadline_cancels_callback_and_tenants_do_not_share_context_or_
         .exec_with_options("orders.list --customer x", request("slow", &registry))
         .await
         .unwrap();
-    assert_eq!(timeout.exit_code, 124);
+    assert_eq!(timeout.exit_code, 1);
     assert!(cancelled.load(Ordering::SeqCst));
 
     let seen = Arc::new(Mutex::new(Vec::new()));

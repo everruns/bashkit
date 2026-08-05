@@ -375,7 +375,7 @@ impl ToolRegistry {
             },
             #[cfg(not(target_family = "wasm"))]
             Err(InvokeError::Timeout) => {
-                RegistryOutput::error(format!("{name}: callback timed out\n"), 124)
+                RegistryOutput::error(format!("{name}: callback timeout\n"), 1)
             }
             Err(InvokeError::Callback(_error)) if self.inner.sanitize_errors => {
                 // THREAT[TM-INF-030]: callback diagnostics can contain secrets.
