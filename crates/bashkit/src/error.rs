@@ -37,7 +37,7 @@ pub enum Error {
 
     /// Resource limit exceeded.
     #[error("resource limit exceeded: {0}")]
-    ResourceLimit(#[from] LimitExceeded),
+    ResourceLimit(LimitExceeded),
 
     /// Network error.
     #[error("network error: {0}")]
@@ -96,6 +96,20 @@ pub enum Error {
     /// - Security-sensitive failures where details should not be exposed
     #[error("internal error: {0}")]
     Internal(String),
+}
+
+impl From<LimitExceeded> for Error {
+    fn from(limit: LimitExceeded) -> Self {
+        match limit {
+            LimitExceeded::ExecutionBudget(crate::limits::ExecutionBudgetExceeded::Cancelled) => {
+                Self::Cancelled
+            }
+            LimitExceeded::ExecutionBudget(crate::limits::ExecutionBudgetExceeded::Deadline {
+                limit,
+            }) => Self::ResourceLimit(LimitExceeded::Timeout(limit)),
+            limit => Self::ResourceLimit(limit),
+        }
+    }
 }
 
 impl Error {

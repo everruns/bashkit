@@ -50,6 +50,13 @@ comment/string-aware split of SQL & dot-commands) → `dot_commands` →
 `engine::SqliteEngine` (thin turso wrapper with `Backend::Memory(MemoryIO)` /
 `Backend::Vfs(BashkitVfsIO)`) → `formatter::render`.
 
+All layers retain the host request's `ExecutionBudget`. SQL and database file
+bytes consume aggregate input, statement splitting consumes shared work, and
+every Turso `Statement::step()` consumes another work unit. Recursive `.read`,
+cached file-backed engines, dot-commands, and query materialisation receive
+clones of the same budget rather than new counters. SQLite-specific size,
+statement, row, result, and duration ceilings remain independently enforced.
+
 ### Phase 1 — `Backend::Memory` (default)
 
 Read entire DB file from VFS into memory → fresh `MemoryIO`-backed turso

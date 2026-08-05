@@ -5256,6 +5256,7 @@ impl Builtin for Rg {
         }
         if opts.list_files {
             let files = collect_rg_file_list(&*ctx.fs, &opts, ctx.cwd).await;
+            ctx.consume_budget_work(u64::try_from(files.len()).unwrap_or(u64::MAX))?;
             let found_files = !files.is_empty();
             let files: Vec<String> = files
                 .into_iter()
@@ -5309,10 +5310,21 @@ impl Builtin for Rg {
             && (opts.paths.is_empty()
                 || has_directory_path(&*ctx.fs, ctx.cwd, &opts.paths, opts.follow_symlinks).await);
 
+        let execution_budget = ctx.execution_budget().cloned();
         let collected_inputs = match collect_rg_inputs(ctx, &opts).await {
             Ok(inputs) => inputs,
             Err(result) => return Ok(result),
         };
+        if let Some(budget) = execution_budget {
+            let input_bytes = collected_inputs.inputs.iter().fold(0usize, |total, input| {
+                total.saturating_add(input.content.len())
+            });
+            budget.consume_input(input_bytes)?;
+            budget.consume_work(
+                u64::try_from(input_bytes.div_ceil(64)).unwrap_or(u64::MAX)
+                    + u64::try_from(collected_inputs.inputs.len()).unwrap_or(u64::MAX),
+            )?;
+        }
         let inputs = collected_inputs.inputs;
 
         let show_filename = if opts.no_filename {

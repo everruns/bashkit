@@ -63,6 +63,14 @@ Configurable via `TypeScriptLimits`:
 | Max duration | 30 seconds | `.max_duration(d)` | Prevent infinite loops |
 | Max memory | 64 MB | `.max_memory(bytes)` | Prevent memory exhaustion |
 | Max stack depth | 512 | `.max_stack_depth(n)` | Prevent stack overflow |
+| Max allocations | 1,000,000 | `.max_allocations(n)` | Bound VM allocation count |
+
+Every VM entry additionally charges source bytes and a non-refundable
+allocation-fuel admission reservation to the request-scoped
+`ExecutionBudget`. Suspend/resume cycles and external/VFS callbacks retain the
+same shared clone. Separate `ts`/`node`/`deno`/`bun` commands inside one host
+execution therefore cannot refresh aggregate work, while ZapCode's own limits
+remain in force.
 
 ### Language Support
 

@@ -304,6 +304,10 @@ impl Builtin for Zip {
                 }
                 let dir_files = collect_files_recursive(&ctx.fs, &path, file_arg).await;
                 for (rel_path, data) in dir_files {
+                    ctx.consume_budget_input(data.len())?;
+                    ctx.consume_budget_work(
+                        u64::try_from(data.len().div_ceil(64)).unwrap_or(u64::MAX),
+                    )?;
                     output.push_str(&format!("  adding: {}\n", rel_path));
                     entries.push(ArchiveEntry {
                         path: rel_path,
@@ -316,6 +320,10 @@ impl Builtin for Zip {
             // It's a file
             match ctx.fs.read_file(&path).await {
                 Ok(data) => {
+                    ctx.consume_budget_input(data.len())?;
+                    ctx.consume_budget_work(
+                        u64::try_from(data.len().div_ceil(64)).unwrap_or(u64::MAX),
+                    )?;
                     output.push_str(&format!("  adding: {}\n", file_arg));
                     entries.push(ArchiveEntry {
                         path: file_arg.clone(),
@@ -328,7 +336,12 @@ impl Builtin for Zip {
             }
         }
 
+        let entry_bytes = entries.iter().fold(0usize, |total, entry| {
+            total.saturating_add(entry.data.len())
+        });
+        let _entries_lease = ctx.lease_budget_bytes(entry_bytes)?;
         let archive_data = encode_archive(&entries);
+        let _archive_lease = ctx.lease_budget_bytes(archive_data.len())?;
         let archive_path = resolve_path(ctx.cwd, &opts.archive);
         ctx.fs.write_file(&archive_path, &archive_data).await?;
 
@@ -361,6 +374,8 @@ impl Builtin for Unzip {
                 ));
             }
         };
+        ctx.consume_budget_input(archive_data.len())?;
+        let _archive_lease = ctx.lease_budget_bytes(archive_data.len())?;
 
         let entries = match decode_archive(&archive_data) {
             Ok(e) => e,
@@ -371,6 +386,12 @@ impl Builtin for Unzip {
                 ));
             }
         };
+        let decoded_bytes = entries.iter().fold(0usize, |total, entry| {
+            total.saturating_add(entry.data.len())
+        });
+        ctx.consume_budget_input(decoded_bytes)?;
+        ctx.consume_budget_work(u64::try_from(decoded_bytes.div_ceil(64)).unwrap_or(u64::MAX))?;
+        let _decoded_lease = ctx.lease_budget_bytes(decoded_bytes)?;
 
         let mut output = String::new();
 

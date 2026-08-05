@@ -541,6 +541,7 @@ impl Builtin for Awk {
                         Ok(t) => t,
                         Err(e) => return Ok(e),
                     };
+                    ctx.consume_budget_input(program_str.len())?;
                 }
             } else if arg.starts_with('-') {
                 // Unknown option - ignore
@@ -561,6 +562,7 @@ impl Builtin for Awk {
         let program = parser.parse()?;
 
         let mut interp = AwkInterpreter::new();
+        interp.execution_budget = ctx.execution_budget().cloned();
         interp.max_loop_iterations = ctx
             .execution_extension::<ExecutionLimits>()
             .map(|limits| limits.max_loop_iterations)
@@ -618,6 +620,7 @@ impl Builtin for Awk {
                     Ok(t) => t,
                     Err(e) => return Ok(e),
                 };
+                ctx.consume_budget_input(text.len())?;
                 inputs.push(text);
             }
             inputs
@@ -642,6 +645,7 @@ impl Builtin for Awk {
             interp.line_index = 0;
 
             while interp.line_index < interp.input_lines.len() {
+                ctx.consume_budget_work(1)?;
                 let line = interp.input_lines[interp.line_index].clone();
                 interp.state.set_line(&line);
 

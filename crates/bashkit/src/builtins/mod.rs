@@ -670,6 +670,38 @@ impl<'a> Context<'a> {
         self.stdin.map(crate::StreamData::text_lossy)
     }
 
+    /// Aggregate budget shared by this request's commands and runtimes.
+    pub fn execution_budget(&self) -> Option<&crate::limits::ExecutionBudget> {
+        self.execution_extension::<crate::limits::ExecutionBudget>()
+    }
+
+    /// Charge bytes materialized after dispatch, such as VFS file contents.
+    pub(crate) fn consume_budget_input(&self, bytes: usize) -> Result<()> {
+        if let Some(budget) = self.execution_budget() {
+            budget.consume_input(bytes)?;
+        }
+        Ok(())
+    }
+
+    /// Charge scalable internal work that is not a shell command boundary.
+    pub(crate) fn consume_budget_work(&self, units: u64) -> Result<()> {
+        if let Some(budget) = self.execution_budget() {
+            budget.consume_work(units)?;
+        }
+        Ok(())
+    }
+
+    /// Lease intermediate storage until the returned guard drops.
+    pub(crate) fn lease_budget_bytes(
+        &self,
+        bytes: usize,
+    ) -> Result<Option<crate::limits::ExecutionBudgetLease>> {
+        self.execution_budget()
+            .map(|budget| budget.lease_bytes(bytes))
+            .transpose()
+            .map_err(Into::into)
+    }
+
     /// Look up a typed per-execution extension, if present.
     pub fn execution_extension<T>(&self) -> Option<&T>
     where

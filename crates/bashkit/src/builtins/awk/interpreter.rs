@@ -198,6 +198,8 @@ pub(super) struct AwkInterpreter {
     /// Max iterations for a single loop, inherited from execution limits.
     pub(super) max_loop_iterations: usize,
     regex_cache: RuntimeRegexCache,
+    /// Shared request budget; poisoning is surfaced by the builtin dispatcher.
+    pub(super) execution_budget: Option<crate::limits::ExecutionBudget>,
 }
 
 impl AwkInterpreter {
@@ -220,6 +222,7 @@ impl AwkInterpreter {
             range_active: HashMap::new(),
             max_loop_iterations: ExecutionLimits::default().max_loop_iterations,
             regex_cache: RuntimeRegexCache::default(),
+            execution_budget: None,
         }
     }
 
@@ -1248,6 +1251,13 @@ impl AwkInterpreter {
 
     /// Execute action. Returns flow control signal.
     pub(super) fn exec_action(&mut self, action: &AwkAction) -> AwkFlow {
+        if self
+            .execution_budget
+            .as_ref()
+            .is_some_and(|budget| budget.consume_work(1).is_err())
+        {
+            return AwkFlow::Exit(Some(2));
+        }
         match action {
             AwkAction::Print(exprs, target) => {
                 let parts: Vec<String> = exprs

@@ -488,7 +488,8 @@ pub use interpreter::{
     ControlFlow, ExecResult, HistoryEntry, OutputCallback, ShellState, ShellStateView,
 };
 pub use limits::{
-    ExecutionCounters, ExecutionLimits, LimitExceeded, MemoryBudget, MemoryLimits, SessionLimits,
+    ExecutionBudget, ExecutionBudgetExceeded, ExecutionBudgetLease, ExecutionCounters,
+    ExecutionLimits, LimitExceeded, MemoryBudget, MemoryLimits, SessionLimits,
 };
 pub use network::NetworkAllowlist;
 pub use snapshot::{
@@ -890,10 +891,12 @@ impl Bash {
             positional,
             stdin,
         };
+        self.interpreter.begin_execution_budget();
         // Expose active execution limits and deadline to builtins that need to
         // honor per-execution sandbox settings inside synchronous VM sections.
         let active_limits = self.interpreter.limits().clone();
         let _ = extensions.insert(active_limits.clone());
+        let _ = extensions.insert(self.interpreter.execution_budget().clone());
         let _ = extensions.insert(builtins::ExecutionDeadline::new(active_limits.timeout));
         #[cfg(feature = "python")]
         let _ = extensions.insert(builtins::PythonInprocessOptIn(self.python_inprocess_opt_in));
@@ -933,6 +936,9 @@ impl Bash {
                 self.max_input_bytes,
             )));
         }
+        self.interpreter
+            .execution_budget()
+            .consume_input(input_len)?;
 
         // THREAT[TM-LOG-001]: Sensitive data in logs
         // Mitigation: Use LogConfig to redact sensitive script content
@@ -944,11 +950,17 @@ impl Bash {
 
         // Fire before_exec hooks — may modify or cancel the script
         let script = if !self.interpreter.hooks().before_exec.is_empty() {
+            self.interpreter.execution_budget().consume_work(100)?;
             let input = hooks::ExecInput {
                 script: script.to_string(),
             };
             match self.interpreter.hooks().fire_before_exec(input) {
-                Some(modified) => std::borrow::Cow::Owned(modified.script),
+                Some(modified) => {
+                    self.interpreter
+                        .execution_budget()
+                        .consume_input(modified.script.len())?;
+                    std::borrow::Cow::Owned(modified.script)
+                }
                 None => {
                     return Ok(ExecResult::err("cancelled by before_exec hook", 1));
                 }
@@ -1008,7 +1020,8 @@ impl Bash {
                 max_ast_depth,
                 max_parser_operations,
                 Some(parser_timeout),
-            );
+            )
+            .with_execution_budget(self.interpreter.execution_budget().clone());
             parser.parse()?
         };
 
@@ -1017,7 +1030,8 @@ impl Bash {
         // runtime can pre-empt a runaway parser.
         #[cfg(not(target_family = "wasm"))]
         let ast = if input_len <= SPAWN_BLOCKING_THRESHOLD {
-            let parser = Parser::with_limits(script, max_ast_depth, max_parser_operations);
+            let parser = Parser::with_limits(script, max_ast_depth, max_parser_operations)
+                .with_execution_budget(self.interpreter.execution_budget().clone());
             match parser.parse() {
                 Ok(ast) => {
                     #[cfg(feature = "logging")]
@@ -1032,10 +1046,12 @@ impl Bash {
             }
         } else {
             let script_owned = script.to_owned();
+            let execution_budget = self.interpreter.execution_budget().clone();
             let parse_result = tokio::time::timeout(parser_timeout, async {
                 tokio::task::spawn_blocking(move || {
                     let parser =
-                        Parser::with_limits(&script_owned, max_ast_depth, max_parser_operations);
+                        Parser::with_limits(&script_owned, max_ast_depth, max_parser_operations)
+                            .with_execution_budget(execution_budget);
                     parser.parse()
                 })
                 .await
@@ -1180,6 +1196,13 @@ impl Bash {
         // Fire after_exec hooks — interceptor decisions are part of the public policy API.
         let result = if let Ok(exec_result) = result {
             if !self.interpreter.hooks().after_exec.is_empty() {
+                self.interpreter.execution_budget().consume_work(100)?;
+                self.interpreter.execution_budget().consume_input(
+                    script
+                        .len()
+                        .saturating_add(exec_result.stdout.len())
+                        .saturating_add(exec_result.stderr.len()),
+                )?;
                 let output = hooks::ExecOutput {
                     script: script.to_string(),
                     stdout: exec_result.stdout.text_lossy().into_owned(),
@@ -1187,12 +1210,24 @@ impl Bash {
                     exit_code: exec_result.exit_code,
                 };
                 match self.interpreter.hooks().fire_after_exec(output) {
-                    Some(output) => Ok(ExecResult {
-                        stdout: output.stdout.into(),
-                        stderr: output.stderr.into(),
-                        exit_code: output.exit_code,
-                        ..exec_result
-                    }),
+                    Some(output) => {
+                        self.interpreter.execution_budget().consume_work(
+                            u64::try_from(
+                                output
+                                    .stdout
+                                    .len()
+                                    .saturating_add(output.stderr.len())
+                                    .div_ceil(1024),
+                            )
+                            .unwrap_or(u64::MAX),
+                        )?;
+                        Ok(ExecResult {
+                            stdout: output.stdout.into(),
+                            stderr: output.stderr.into(),
+                            exit_code: output.exit_code,
+                            ..exec_result
+                        })
+                    }
                     None => Ok(ExecResult::err("cancelled by after_exec hook", 1)),
                 }
             } else {
@@ -1205,10 +1240,22 @@ impl Bash {
         // Fire on_error hooks for execution errors
         if let Err(ref e) = result
             && !self.interpreter.hooks().on_error.is_empty()
+            && self
+                .interpreter
+                .execution_budget()
+                .consume_work(100)
+                .is_ok()
         {
-            let error_event = hooks::ErrorEvent {
-                message: e.to_string(),
-            };
+            let message = e.to_string();
+            if self
+                .interpreter
+                .execution_budget()
+                .consume_input(message.len())
+                .is_err()
+            {
+                return result;
+            }
+            let error_event = hooks::ErrorEvent { message };
             self.interpreter.hooks().fire_on_error(error_event);
         }
 

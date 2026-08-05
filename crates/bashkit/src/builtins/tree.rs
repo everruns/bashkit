@@ -41,6 +41,7 @@ struct TreeBudget {
 enum TreeLimitError {
     TooManyEntries,
     OutputTooLarge,
+    ExecutionBudget,
 }
 
 impl TreeLimitError {
@@ -48,6 +49,7 @@ impl TreeLimitError {
         match self {
             Self::TooManyEntries => "tree: resource limit exceeded: too many entries visited\n",
             Self::OutputTooLarge => "tree: resource limit exceeded: output too large\n",
+            Self::ExecutionBudget => "tree: shared execution budget exhausted\n",
         }
     }
 }
@@ -250,6 +252,8 @@ async fn build_tree(
     if filtered.len() > remaining {
         return Err(TreeLimitError::TooManyEntries);
     }
+    ctx.consume_budget_work(u64::try_from(filtered.len()).unwrap_or(u64::MAX))
+        .map_err(|_| TreeLimitError::ExecutionBudget)?;
     state.budget.visited_entries += filtered.len();
 
     filtered.sort_by(|a, b| a.name.cmp(&b.name));

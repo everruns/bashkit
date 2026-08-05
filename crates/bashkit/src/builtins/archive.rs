@@ -275,6 +275,7 @@ async fn create_tar(
 
     // Add two zero blocks at end
     output_data.extend_from_slice(&[0u8; TAR_BLOCK_SIZE * 2]);
+    let _tar_lease = ctx.lease_budget_bytes(output_data.len())?;
 
     // Compress if -z
     let final_data = if gzip {
@@ -287,6 +288,11 @@ async fn create_tar(
         })?
     } else {
         output_data
+    };
+    let _compressed_lease = if gzip {
+        ctx.lease_budget_bytes(final_data.len())?
+    } else {
+        None
     };
 
     // Write to file or stdout
@@ -323,6 +329,8 @@ async fn add_file_to_tar(
 ) -> Result<()> {
     let metadata = ctx.fs.stat(path).await?;
     let content = ctx.fs.read_file(path).await?;
+    ctx.consume_budget_input(content.len())?;
+    ctx.consume_budget_work(u64::try_from(content.len().div_ceil(64)).unwrap_or(u64::MAX))?;
 
     if verbose {
         verbose_output.push_str(name);
@@ -516,6 +524,8 @@ async fn extract_tar(
         }
         ctx.fs.read_file(&archive_path).await?
     };
+    ctx.consume_budget_input(data.len())?;
+    let _compressed_lease = ctx.lease_budget_bytes(data.len())?;
 
     // Get filesystem limits for zip bomb protection
     let limits = ctx.fs.limits();
@@ -530,6 +540,9 @@ async fn extract_tar(
     } else {
         data
     };
+    ctx.consume_budget_input(tar_data.len())?;
+    ctx.consume_budget_work(u64::try_from(tar_data.len().div_ceil(64)).unwrap_or(u64::MAX))?;
+    let _tar_lease = ctx.lease_budget_bytes(tar_data.len())?;
 
     let mut verbose_output = String::new();
     let mut stdout_output = String::new();
@@ -954,11 +967,18 @@ impl Builtin for Gzip {
                 }
 
                 let data = ctx.fs.read_file(&path).await?;
+                ctx.consume_budget_input(data.len())?;
+                let _input_lease = ctx.lease_budget_bytes(data.len())?;
                 let compressed_size = data.len();
                 let decoder = GzDecoder::new(data.as_slice());
                 let output = read_with_limit(decoder, compressed_size, max_size).map_err(|e| {
                     crate::error::Error::Execution(format!("gzip: {}: {}", file, e))
                 })?;
+                ctx.consume_budget_input(output.len())?;
+                ctx.consume_budget_work(
+                    u64::try_from(output.len().div_ceil(64)).unwrap_or(u64::MAX),
+                )?;
+                let _output_lease = ctx.lease_budget_bytes(output.len())?;
 
                 ctx.fs.write_file(&output_path, &output).await?;
 
@@ -985,6 +1005,8 @@ impl Builtin for Gzip {
                 }
 
                 let data = ctx.fs.read_file(&path).await?;
+                ctx.consume_budget_input(data.len())?;
+                let _input_lease = ctx.lease_budget_bytes(data.len())?;
                 let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
                 encoder.write_all(&data).map_err(|e| {
                     crate::error::Error::Execution(format!("gzip: {}: {}", file, e))
@@ -992,6 +1014,10 @@ impl Builtin for Gzip {
                 let compressed = encoder.finish().map_err(|e| {
                     crate::error::Error::Execution(format!("gzip: {}: {}", file, e))
                 })?;
+                ctx.consume_budget_work(
+                    u64::try_from(data.len().div_ceil(64)).unwrap_or(u64::MAX),
+                )?;
+                let _output_lease = ctx.lease_budget_bytes(compressed.len())?;
 
                 ctx.fs.write_file(&output_path, &compressed).await?;
 

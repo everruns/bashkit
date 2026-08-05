@@ -112,6 +112,7 @@ fn calculate_size_recursive<'a>(
     output: &'a mut String,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<u64>> + Send + 'a>> {
     Box::pin(async move {
+        ctx.consume_budget_work(1)?;
         let metadata = ctx.fs.stat(path).await?;
 
         if metadata.file_type.is_file() {
@@ -125,6 +126,7 @@ fn calculate_size_recursive<'a>(
         if metadata.file_type.is_dir() {
             let mut total = 0u64;
             let entries = ctx.fs.read_dir(path).await?;
+            ctx.consume_budget_work(u64::try_from(entries.len()).unwrap_or(u64::MAX))?;
 
             for entry in entries {
                 let child_path = path.join(&entry.name);

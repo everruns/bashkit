@@ -76,11 +76,12 @@ pub(super) enum Backend {
 }
 
 /// Query materialisation caps applied before values are cloned into Bashkit-owned memory.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(super) struct QueryLimits {
     pub max_rows: usize,
     pub max_value_bytes: usize,
     pub max_result_bytes: usize,
+    pub execution_budget: Option<crate::limits::ExecutionBudget>,
 }
 
 /// Outcome of executing a single SQL statement.
@@ -185,6 +186,9 @@ impl SqliteEngine {
         }
         let mut result_bytes = 0usize;
         loop {
+            if let Some(budget) = &limits.execution_budget {
+                budget.consume_work(1).map_err(|e| e.to_string())?;
+            }
             if deadline.expired() {
                 stmt.interrupt();
                 return Err("query timed out".to_string());
