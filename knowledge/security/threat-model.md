@@ -246,7 +246,7 @@ runaway scripts without permanently breaking the session.
 
 | ID | Threat | Attack Vector | Mitigation | Status |
 |----|--------|--------------|------------|--------|
-| TM-DOS-023 | Long computation | Complex awk/sed regex | Timeout (30s) | **MITIGATED** |
+| TM-DOS-023 | Long computation | Complex awk/sed regex, including repeated evaluation of dynamic awk and `[[ =~ ]]` operands | Linear-time regex engine; runtime regex compilation cached per evaluator (64 entries / 1 MB retained pattern text, including invalid patterns); timeout (30s) | **MITIGATED** |
 | TM-DOS-024 | Parser hang | Malformed input | `parser_timeout` (5s) + `max_parser_operations` | **MITIGATED** |
 | TM-DOS-025 | Regex backtrack | `grep "a](*b)*c" file`; `grep -P '(a+)+$' file` | Default `regex` engine is linear-time; `grep -P`/`sed` fancy-regex paths capped by `FANCY_BACKTRACK_LIMIT` (1M steps) — exceeding it yields "no match", not a hang | **MITIGATED** |
 | TM-DOS-027 | Builtin parser recursion | Deeply nested awk/jq expressions | `MAX_AWK_PARSER_DEPTH` (100) + `MAX_JQ_JSON_DEPTH` (100) | **MITIGATED** |

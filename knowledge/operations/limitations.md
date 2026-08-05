@@ -116,13 +116,15 @@ pass in CI); only divergences and boundaries are recorded here.
 |----|------|------------|----------|
 | L-AWK-001 | awk | Some complex regex patterns unsupported (engine shared with sed/grep, size-limited) | stance |
 | L-JQ-001 | jq | Alternative `//`: jaq errors on `.foo` applied to null instead of returning null (upstream jaq divergence) | 1 skipped spec test |
+| L-JQ-002 | jq | Regex natives compile the pattern per filter invocation; mapping `test`/`match`/`split` over many inputs can repeat compilation because jaq's native callback has no per-run cache state | `regex_compat.rs::re_native` |
 | L-GREP-001 | grep | `--color`/`--colour`, `--line-buffered` accepted as no-ops | `l_grep_001_noop_flags` |
 | L-CURL-001 | curl | Spec-test coverage for methods/headers/auth/redirects not ported (needs `http_client` + allowlist in harness); payload behavior has integration and real-curl differential coverage | stance |
 | L-CURL-002 | curl/wget | Unknown options are ignored for compatibility, not rejected (real curl/wget error); deliberate leniency | `curl.rs` |
 | L-STR-001 | strings | Accepts dash-prefixed filenames (e.g. `-data.bin`), so only a lone unknown short option (`-Q`) is rejected as invalid; GNU rejects `-data.bin` too | `strings.rs` |
 
 Safety boundaries (enforced, not bugs): printf width/precision caps,
-output buffer caps, getline file-cache cap, shared regex size limit,
+output buffer caps, getline file-cache cap, shared regex size limit, runtime regex
+cache cap (64 entries and 1 MB retained pattern text per evaluator),
 curl/wget timeouts clamped to [1, 600] s, multipart field-name
 sanitization, redirect handling hardened against credential leaks, and curl's
 aggregate data/multipart request body capped at 10 MB. Repeated mixed curl
