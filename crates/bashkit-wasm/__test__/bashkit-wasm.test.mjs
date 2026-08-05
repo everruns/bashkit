@@ -169,6 +169,13 @@ test("options: maxLoopIterations bounds runaway loops", () => {
   );
 });
 
+test("output is capped and reports truncation", () => {
+  const bash = new Bash();
+  const r = bash.executeSync(`printf '${"x".repeat(1_100_000)}'`);
+  assert.equal(r.stdout.length, 1_048_576);
+  assert.equal(r.stdoutTruncated, true);
+});
+
 test("options: seeded files", () => {
   const bash = new Bash({ files: { "/config.json": '{"debug":true}' } });
   assert.equal(bash.executeSync("jq -c .debug /config.json").stdout.trim(), "true");

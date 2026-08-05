@@ -1423,6 +1423,14 @@ def test_large_output():
     assert len(lines) == 1000
 
 
+def test_output_is_capped_and_reports_truncation():
+    """The Python result preserves Bashkit's default output boundary."""
+    tool = BashTool()
+    r = tool.execute_sync("printf '" + ("x" * 1_100_000) + "'")
+    assert len(r.stdout) == 1_048_576
+    assert r.stdout_truncated is True
+
+
 def test_empty_input():
     """Empty script returns success."""
     tool = BashTool()

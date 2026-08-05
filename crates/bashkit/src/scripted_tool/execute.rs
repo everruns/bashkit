@@ -281,6 +281,7 @@ impl Tool for ScriptedTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ExecutionLimits;
     use crate::ToolArgs;
     use crate::ToolDef;
     use crate::tool_def::parse_flags;
@@ -431,6 +432,20 @@ mod tests {
             start.elapsed() < Duration::from_secs(2),
             "timeout_ms should abort before sleep completes"
         );
+    }
+
+    #[tokio::test]
+    async fn test_scripted_tool_forwards_limits_and_output_caps() {
+        let tool = ScriptedTool::builder("bounded")
+            .limits(ExecutionLimits::new().max_commands(10).max_stdout_bytes(3))
+            .tool_fn(ToolDef::new("emit", "Emit output"), |_args| {
+                Ok("12345".to_string())
+            })
+            .build();
+
+        let response = tool.execute(ToolRequest::new("emit")).await;
+        assert_eq!(response.stdout, "123");
+        assert!(response.stdout_truncated);
     }
 
     #[tokio::test]

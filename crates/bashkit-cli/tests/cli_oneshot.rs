@@ -587,6 +587,15 @@ fn output_before_a_limit_abort_is_kept() {
 }
 
 #[test]
+fn stdout_is_capped_at_the_default_limit() {
+    let chunk = "x".repeat(1_000);
+    let script = format!("for i in $(seq 1 1100); do printf '{chunk}'; done");
+    let out = run(&["-c", &script]);
+    assert_eq!(code(&out), 0);
+    assert_eq!(out.stdout.len(), 1_048_576);
+}
+
+#[test]
 fn streamed_output_is_not_printed_twice() {
     let out = run(&["-c", "echo once; echo twice >&2"]);
     assert_eq!(stdout(&out), "once\n");

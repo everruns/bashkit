@@ -1527,6 +1527,9 @@ struct SharedState {
     max_stderr_bytes: Option<u32>,
     max_memory: Option<f64>,
     capture_final_env: Option<bool>,
+    /// Constructor-provided VFS seed restored by `reset()`; runtime-created
+    /// files remain transient.
+    files: Option<HashMap<String, String>>,
     mounts: Option<Vec<MountConfig>>,
     allowed_mount_paths: Option<Vec<String>>,
     python: bool,
@@ -1861,7 +1864,7 @@ impl Bash {
     pub fn reset(&self) -> napi::Result<()> {
         block_on_with(&self.state, |s| async move {
             let mut bash = s.inner.lock().await;
-            *bash = build_bash_from_state(&s, None);
+            *bash = build_bash_from_state(&s);
             *s.cancelled.lock().unwrap() = bash.cancellation_token();
             Ok(())
         })
@@ -2582,7 +2585,7 @@ impl BashTool {
     pub fn reset(&self) -> napi::Result<()> {
         block_on_with(&self.state, |s| async move {
             let mut bash = s.inner.lock().await;
-            *bash = build_bash_from_state(&s, None);
+            *bash = build_bash_from_state(&s);
             *s.cancelled.lock().unwrap() = bash.cancellation_token();
             Ok(())
         })
@@ -3445,7 +3448,7 @@ fn derive_sqlite_limits(state: &SharedState) -> bashkit::SqliteLimits {
     limits
 }
 
-fn build_bash_from_state(state: &SharedState, files: Option<&HashMap<String, String>>) -> RustBash {
+fn build_bash_from_state(state: &SharedState) -> RustBash {
     let mut builder = RustBash::builder();
 
     if let Some(ref u) = state.username {
@@ -3470,7 +3473,9 @@ fn build_bash_from_state(state: &SharedState, files: Option<&HashMap<String, Str
     }
 
     // Mount files into the virtual filesystem
-    if let Some(files) = files {
+    // THREAT[TM-ISO-025]: Reset must rebuild every constructor capability;
+    // dropping seed files can silently remove host-provided policy/config data.
+    if let Some(files) = &state.files {
         for (path, content) in files {
             builder = builder.mount_text(path, content);
         }
@@ -3582,6 +3587,7 @@ fn shared_state_from_opts(
         max_stderr_bytes: opts.max_stderr_bytes,
         max_memory: opts.max_memory,
         capture_final_env: opts.capture_final_env,
+        files: opts.files.clone(),
         mounts: mounts.clone(),
         allowed_mount_paths: allowed_mount_paths.clone(),
         python: py,
@@ -3602,7 +3608,7 @@ fn shared_state_from_opts(
         }
     }
 
-    let bash = build_bash_from_state(&tmp, opts.files.as_ref());
+    let bash = build_bash_from_state(&tmp);
     let cancelled = bash.cancellation_token();
 
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -3634,6 +3640,7 @@ fn shared_state_from_opts(
         max_stderr_bytes: opts.max_stderr_bytes,
         max_memory: opts.max_memory,
         capture_final_env: opts.capture_final_env,
+        files: opts.files,
         mounts,
         allowed_mount_paths,
         python: py,

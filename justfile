@@ -44,8 +44,17 @@ check:
     cargo clippy --all-targets -- -D warnings
     cargo test
     python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+    just check-capability-parity
     just check-okf
     just check-doc-links
+
+# Validate the canonical public-surface capability matrix and generated inventory.
+check-capability-parity:
+    python3 scripts/capability_parity.py --check
+
+# Regenerate the public-surface capability inventory from its canonical manifest.
+regen-capability-parity:
+    python3 scripts/capability_parity.py
 
 # The site rewrites doc links by basename, so a cross-tree link written as a
 # bare `jq.md` renders fine on bashkit.sh while 404-ing on GitHub. This checks
