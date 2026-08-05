@@ -1,0 +1,116 @@
+{
+  "schema_version": 1,
+  "expected_case_count": 11,
+  "source": {
+    "repository": "https://github.com/vercel-labs/just-bash",
+    "window_start": "2026-05-05",
+    "window_end": "2026-08-05"
+  },
+  "cases": [
+    {
+      "id": "heredoc-body-in-command-substitution",
+      "upstream_commit": "4ece2580d8cb707e6c6b7fa22897ea3fdd21739a",
+      "upstream_date": "2026-06-03",
+      "classification": "pass",
+      "oracle": "real_bash",
+      "minimum_bash_major": 4,
+      "script": "OUT=$(cat <<'SCRIPT'\nJune's moon\nSCRIPT\n)\nprintf %s \"$OUT\"",
+      "expected": { "stdout": "June's moon", "stderr": "", "exit_code": 0 }
+    },
+    {
+      "id": "executable-script-exit-status",
+      "upstream_commit": "8edf226a0794b3d6101458aeb478819c84298839",
+      "upstream_date": "2026-07-21",
+      "classification": "pass",
+      "oracle": "real_bash",
+      "script": "printf 'exit 2\\n' > fail.sh\nchmod +x fail.sh\n./fail.sh; printf '%s\\n' \"$?\"",
+      "expected": { "stdout": "2\n", "stderr": "", "exit_code": 0 }
+    },
+    {
+      "id": "nested-jq-interpolation",
+      "upstream_commit": "7a5a0b9ae3bf0524722653cbf4b45e6bc176cf22",
+      "upstream_date": "2026-07-08",
+      "classification": "pass",
+      "oracle": "locked",
+      "required_features": ["jq"],
+      "script": "printf '%s\\n' '{\"m\":\"2026-06-05T10:00:00Z\"}' > payload.json\njq -r '\"\\(.m | sub(\"T.*\"; \"\"))\"' payload.json",
+      "expected": { "stdout": "2026-06-05\n", "stderr": "", "exit_code": 0 }
+    },
+    {
+      "id": "grep-double-dash-terminator",
+      "upstream_commit": "6df692f236ca108c888552a67557998156ac845b",
+      "upstream_date": "2026-07-24",
+      "classification": "pass",
+      "oracle": "real_bash",
+      "script": "printf 'match\\n-x\\n--help\\n' > patterns.txt\ngrep -- -x patterns.txt",
+      "expected": { "stdout": "-x\n", "stderr": "", "exit_code": 0 }
+    },
+    {
+      "id": "multiline-quoted-indentation",
+      "upstream_commit": "1ec5eec0aefd099d23ac9f056df1e6612c81d49b",
+      "upstream_date": "2026-06-29",
+      "classification": "pass",
+      "oracle": "real_bash",
+      "script": "printf '%s' 'first\n    second\n        third\n'",
+      "expected": { "stdout": "first\n    second\n        third\n", "stderr": "", "exit_code": 0 }
+    },
+    {
+      "id": "mixed-byte-text-flow",
+      "upstream_commit": "150a915a1d45a2cc7f2b6aec3268f27116c34916",
+      "upstream_date": "2026-06-18",
+      "classification": "pass",
+      "oracle": "real_bash",
+      "script": "printf 'Köpenicker\\n' > doc.txt\nsed -n 1p doc.txt; grep Köpenicker doc.txt | head -1",
+      "expected": { "stdout": "Köpenicker\nKöpenicker\n", "stderr": "", "exit_code": 0 }
+    },
+    {
+      "id": "repeated-curl-data",
+      "upstream_commit": "3d39a714b3751cedc173dffae27933dfe7b8b3b5",
+      "upstream_date": "2026-07-19",
+      "classification": "bug",
+      "resolution": "fixed",
+      "oracle": "locked",
+      "required_features": ["http_client"],
+      "transport": "echo_request_body",
+      "script": "curl -sS -d a=1 --data b=2 http://93.184.216.34/echo",
+      "expected": { "stdout": "a=1&b=2", "stderr": "", "exit_code": 0 }
+    },
+    {
+      "id": "rg-stdin-without-paths",
+      "upstream_commit": "ca1cf25c695ffe754bcdf7ab4bde0476073fe41a",
+      "upstream_date": "2026-07-08",
+      "classification": "pass",
+      "oracle": "locked",
+      "script": "printf 'hello world\\ngoodbye\\n' | rg hello",
+      "expected": { "stdout": "hello world\n", "stderr": "", "exit_code": 0 }
+    },
+    {
+      "id": "tar-old-style-option-bundle",
+      "upstream_commit": "efabdb7bab9c789057073d1dcad9f9df87eca173",
+      "upstream_date": "2026-06-18",
+      "classification": "bug",
+      "resolution": "fixed",
+      "oracle": "real_bash",
+      "script": "printf old-style > payload.txt\ntar cf archive.tar payload.txt\nrm payload.txt\ntar xf archive.tar\ncat payload.txt",
+      "expected": { "stdout": "old-style", "stderr": "", "exit_code": 0 }
+    },
+    {
+      "id": "cat-display-flags",
+      "upstream_commit": "6130334f0ed013771bbe39f32a249bdaf762c488",
+      "upstream_date": "2026-07-12",
+      "classification": "pass",
+      "oracle": "locked",
+      "script": "printf 'tab\\there\\nctrl\\a\\n' > display.txt\ncat -A display.txt",
+      "expected": { "stdout": "tab^Ihere$\nctrl^G$\n", "stderr": "", "exit_code": 0 }
+    },
+    {
+      "id": "set-euo-pipefail",
+      "upstream_commit": "c9904dea24ad2aa847749ee6289239c2a2c651fc",
+      "upstream_date": "2026-06-03",
+      "classification": "pass",
+      "oracle": "real_bash",
+      "script": "set -euo pipefail\nprintf ok",
+      "expected": { "stdout": "ok", "stderr": "", "exit_code": 0 }
+    }
+  ]
+}

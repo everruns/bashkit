@@ -209,6 +209,9 @@ jobs:
       - name: Run strict bash parity tests
         run: cargo test -p bashkit --test integration --features http_client,ssh -- spec_tests::bash_comparison_tests --ignored
 
+      - name: Run competitor regression corpus
+        run: cargo test -p bashkit --test integration --features http_client,jq -- competitor_regression_tests
+
       - name: Run doc tests
         run: cargo test --workspace --doc --features http_client,ssh,sqlite
 

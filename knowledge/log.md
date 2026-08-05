@@ -4,6 +4,8 @@
 
 * **Contract**: Added a canonical, generated [Public Capability Parity](status/capability-parity.md) matrix across Rust `BashBuilder`/`BashTool`/`ScriptedTool`, CLI, Python, NAPI JavaScript, browser WASM, and C ABI. Every supported cell names executable evidence; every intentional exclusion states why. The central drift check rejects missing cells and stale test selectors.
 * **Security**: Added TM-ISO-025 for wrapper rebuilds silently dropping host configuration. The first audit finding was NAPI `reset()` losing constructor-seeded VFS files; shared state now retains and restores them, with a regression test.
+* **Testing**: Added a quarterly competitor-regression corpus contract: immutable upstream provenance, explicit pass/bug/intentional-divergence classification, real-Bash or locked oracles, and a feature-complete hermetic CI lane. The first import covers eleven behavior fixes from `vercel-labs/just-bash` between 2026-05-05 and 2026-08-05; it exposed and fixes tar old-style option bundles, while the ordered curl-data fix is supplied by its dedicated PR.
+* **Threat**: Registered TM-INF-032 for executing imported third-party behavior fixtures. Imports remain manually reviewed checked-in JSON, CI never fetches upstream content, and only explicitly marked portable cases reach the host-Bash oracle.
 
 ## 2026-08-01
 

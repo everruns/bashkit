@@ -275,6 +275,7 @@ Scripts may attempt to leak sensitive information.
 | JS `onOutput` errors expose host stack traces (TM-INF-028) | Callback throws, leaking `error.stack` | Propagate `error.message` only; strip absolute/`file://` paths | FIXED |
 | Raw callback errors leak host internals (TM-INF-030) | Tool callback throws API keys/connection strings/stack traces | `sanitize_errors` defaults on for `ScriptedTool`/`ToolImpl`/`ToolRegistry` across shell/Python/TypeScript | MITIGATED |
 | `final_env` capture bypasses filtering/caps (TM-INF-031) | `capture_final_env` leaks internal markers or exceeds caps | Visibility filter + output-byte cap applied when building `final_env` | MITIGATED |
+| Imported competitor fixture executes upstream code (TM-INF-032) | Automated import runs a compromised upstream script in CI | Fixtures are manually reviewed, checked-in JSON; CI never fetches upstream; host-Bash execution requires an explicit oracle | MITIGATED |
 | Stack backtrace disclosure (TM-INF-021) | Panics leak source paths, dep versions, function names via stderr | Custom panic hook suppresses backtraces in the CLI | MITIGATED |
 
 **Caller Responsibility (TM-INF-001):**

@@ -155,6 +155,40 @@ explicitly as a strict parity gate. Tests marked with `### bash_diff` are
 excluded from comparison. Tests marked with `### skip` are excluded from both
 spec tests and comparison.
 
+## Quarterly Competitor Regressions
+
+Behavior fixes imported from peer shell interpreters live as checked-in JSON
+under `crates/bashkit/tests/fixtures/competitor-regressions/`. Each quarterly
+corpus records its source repository, inclusive review window, and expected
+case count. Every case must include a stable kebab-case ID, full upstream
+commit hash, commit date, script, locked stdout/stderr/status, oracle, optional
+required Cargo features, and one classification:
+
+- `pass`: Bashkit already matched the behavior when imported.
+- `bug`: the import exposed a Bashkit defect; `resolution` must be `fixed` and
+  the same corpus remains the regression test.
+- `intentional_divergence`: `limitation_id` must resolve to a canonical `L-*`
+  row in [Known Limitations](limitations.md).
+
+Use `oracle: real_bash` only for portable shell behavior. The runner executes
+those cases with the first `bash` on `PATH`, a cleared environment, and a fresh
+temporary working directory. A case whose syntax requires a newer shell may
+set `minimum_bash_major`; older host oracles skip only that comparison. Use
+`locked` for platform-specific utilities, embedded runtimes, or HTTP; the
+expected value must be established during review. HTTP fixtures use an injected
+`HttpTransport`, never the network.
+
+Quarterly import process:
+
+1. Review upstream fixes since the prior corpus window; copy the smallest
+   behavior reproducer and pin the full commit hash.
+2. Add a new dated JSON corpus. Do not add a fetch step or generated executable
+   source: fixture review is the trust boundary (TM-INF-032).
+3. Run `just competitor-regressions`. Confirm every `real_bash` oracle and the
+   Bashkit lane; fix tight regressions or classify a canonical limitation.
+4. CI runs the same feature-complete, network-free lane. Schema, provenance,
+   unique IDs, classifications, and limitation references are test-enforced.
+
 ## Differential Fuzzing
 
 Grammar-based property testing using proptest generates random valid bash
