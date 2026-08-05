@@ -426,6 +426,7 @@ mod error;
 mod fs;
 /// Interceptor hooks for the execution pipeline.
 pub mod hooks;
+mod host_call;
 #[cfg(feature = "interop")]
 pub mod interop;
 mod interpreter;
@@ -485,6 +486,7 @@ pub use fs::{
 };
 #[cfg(feature = "realfs")]
 pub use fs::{RealFs, RealFsMode};
+pub use host_call::{ExecutionEvent, ExecutionHandle, HostCallId, HostCallRequest};
 pub use interpreter::{
     ControlFlow, ExecResult, HistoryEntry, OutputCallback, ShellState, ShellStateView,
 };
@@ -836,6 +838,26 @@ impl Bash {
     /// then executes the resulting AST.
     pub async fn exec(&mut self, script: &str) -> Result<ExecResult> {
         self.exec_with_options(script, ExecOptions::new()).await
+    }
+
+    /// Start a process-local execution that can yield host-call events.
+    ///
+    /// Use with commands registered by [`BashBuilder::host_call_builtin`]. The
+    /// returned handle owns this instance until completion.
+    pub fn start_execution(self, script: impl Into<String>) -> ExecutionHandle {
+        self.start_execution_with_options(script, ExecOptions::new())
+    }
+
+    /// Start a host-call execution with normal per-execution options.
+    ///
+    /// Host-call routing is installed alongside the supplied streaming
+    /// callback, extensions, positional parameters, and stdin.
+    pub fn start_execution_with_options(
+        self,
+        script: impl Into<String>,
+        options: ExecOptions,
+    ) -> ExecutionHandle {
+        ExecutionHandle::new(self, script.into(), options)
     }
 
     /// Execute a bash script with per-execution builtin extensions.
@@ -2448,6 +2470,20 @@ impl BashBuilder {
     /// ```
     pub fn builtin(mut self, name: impl Into<String>, builtin: Box<dyn Builtin>) -> Self {
         self.custom_builtins.insert(name.into(), builtin);
+        self
+    }
+
+    /// Register a builtin whose invocation is fulfilled by an [`ExecutionHandle`].
+    ///
+    /// Calling this command through ordinary [`Bash::exec`] returns a shell
+    /// error. Drive it through [`Bash::start_execution`] to receive and resume
+    /// [`ExecutionEvent::HostCall`] requests.
+    pub fn host_call_builtin(mut self, name: impl Into<String>) -> Self {
+        let name = name.into();
+        self.custom_builtins.insert(
+            name.clone(),
+            Box::new(host_call::HostCallBuiltin::new(name)),
+        );
         self
     }
 

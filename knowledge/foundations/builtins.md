@@ -196,6 +196,27 @@ sharding logic depends on (`worker $SLOT of $N`) and matches GNU's
 **Adding new execution plans:** Add a variant to `ExecutionPlan` and handle it
 in the interpreter's plan fulfillment code (`interpreter/mod.rs`).
 
+### Process-Local Host-Call Suspension
+
+`BashBuilder::host_call_builtin(name)` registers a command fulfilled by the
+host through `Bash::start_execution`. `ExecutionHandle::next_event()` polls the
+ordinary interpreter future until it completes or the builtin sends a
+`HostCallRequest`; `resume(id, ExecResult)` resolves the one-shot response and
+lets the same future continue. The bounded request channel applies
+backpressure, request IDs prevent mismatched responses, ordinary `exec()`
+fails the builtin promptly, and the normal execution timeout remains armed
+while a request is pending.
+
+This mechanism intentionally does not change interpreter control flow into a
+serializable state machine. The handle owns both a pinned Rust future and the
+`Bash` instance; completion makes the session recoverable through `into_bash`,
+while dropping a suspended handle drops the session so partially unwound state
+cannot be reused. Pending calls cannot be included in snapshots or resumed in
+another process. Portable mid-execution resume would require explicit
+continuation frames for shell control flow, pipelines, substitutions,
+redirects, accumulated output, and budgets; see
+[Snapshot History](snapshot-history.md).
+
 ### Adding Internal Builtins
 
 Simple builtins (zero-arg unit structs) are registered via the `register_builtins!`

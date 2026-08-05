@@ -29,6 +29,7 @@ A dash means the feature is intentionally unsupported and has a recorded reason 
 | Initial virtual environment | ✅ | ✅ | ✅ | — | ✅ | ✅ | ✅ | ✅ |
 | Host-provided stdin for an execution | ✅ | — | ✅ | ✅ | — | — | — | — |
 | Host callbacks registered as shell builtins | ✅ | ✅ | — | — | ✅ | ✅ | ✅ | — |
+| Host-visible process-local builtin suspension and resume | ✅ | — | — | — | — | — | — | — |
 | Named host tool callbacks composed through shell scripts | — | — | ✅ | — | ✅ | ✅ | — | — |
 | Explicit outbound-network policy | ✅ | ✅ | — | ✅ | ✅ | ✅ | — | — |
 | Host-provided HTTP transport or egress hook | ✅ | ✅ | — | — | — | — | — | — |
@@ -49,6 +50,7 @@ A dash means the feature is intentionally unsupported and has a recorded reason 
 
 - `cancellation`: ToolExecution has no host cancellation handle; callers can drop the future or set a deadline.
 - `stdin`: ToolRequest accepts commands and timeout_ms only; scripts can still create internal pipelines.
+- `host_call_suspension`: BashTool drives each fresh Bash execution to completion and exposes no event handle.
 - `tool_callbacks`: BashTool accepts shell builtins, not the named tool-callback contract.
 - `snapshots`: Each BashTool execution creates an isolated fresh Bash instance and exposes no persistent snapshot state.
 
@@ -57,6 +59,7 @@ A dash means the feature is intentionally unsupported and has a recorded reason 
 - `cancellation`: No cancellation handle is exposed; per-call timeout_ms is the abort boundary.
 - `cwd`: ScriptedTool intentionally uses a logic-only shell without filesystem-backed cwd configuration.
 - `custom_builtins`: Only registered ToolDef callbacks become commands; arbitrary Bash builtins are not accepted.
+- `host_call_suspension`: ScriptedTool invokes registered callbacks directly and exposes no suspended execution handle.
 - `network_policy`: The logic-only orchestration shell has no network builtins.
 - `transport_hooks`: The logic-only orchestration shell has no HTTP transport.
 - `virtual_filesystem`: Filesystem commands and redirections are intentionally rejected.
@@ -72,6 +75,7 @@ A dash means the feature is intentionally unsupported and has a recorded reason 
 - `cwd`: The CLI exposes no initial virtual-cwd flag.
 - `env`: The CLI deliberately does not inherit or expose host environment injection flags.
 - `custom_builtins`: A standalone process cannot receive in-process host callbacks.
+- `host_call_suspension`: A standalone process has no in-process event and resume boundary.
 - `tool_callbacks`: A standalone process cannot receive in-process host callbacks.
 - `transport_hooks`: The CLI exposes allow-all/default-deny policy, not a host transport callback.
 - `snapshots`: The CLI exposes no snapshot commands.
@@ -80,12 +84,14 @@ A dash means the feature is intentionally unsupported and has a recorded reason 
 ### Python
 
 - `stdin`: execute() accepts a command string and optional output callback, not top-level host stdin.
+- `host_call_suspension`: Python custom builtins await callbacks directly; no request and resume handle is exposed.
 - `transport_hooks`: Python exposes network policy and credentials but no custom HttpTransport implementation hook.
 - `runtime_typescript`: The Python package does not compile or expose the TypeScript runtime.
 
 ### NAPI JavaScript
 
 - `stdin`: execute() accepts a command string and output callback, not top-level host stdin.
+- `host_call_suspension`: NAPI custom builtins await callbacks directly; no request and resume handle is exposed.
 - `transport_hooks`: NAPI exposes network policy and credentials but no JavaScript HttpTransport hook.
 - `runtime_typescript`: The NAPI package does not compile or expose the TypeScript runtime.
 
@@ -94,6 +100,7 @@ A dash means the feature is intentionally unsupported and has a recorded reason 
 - `cancellation`: The single-threaded browser API exposes no cancellation handle.
 - `deadlines`: wasm32-unknown-unknown has no timer driver; deadlines are rejected rather than silently bypassed.
 - `stdin`: execute() accepts only a command string; pipelines still provide builtin stdin.
+- `host_call_suspension`: Browser custom builtins await JavaScript callbacks directly; no request and resume handle is exposed.
 - `tool_callbacks`: The slim browser package exposes custom builtins but no ScriptedTool class.
 - `network_policy`: The slim browser build has no network builtin or host socket access.
 - `transport_hooks`: The slim browser build has no HTTP transport.
@@ -108,6 +115,7 @@ A dash means the feature is intentionally unsupported and has a recorded reason 
 - `cancellation`: ABI v1 exposes synchronous execute with no cancellation handle.
 - `stdin`: ABI v1 execute accepts script bytes only.
 - `custom_builtins`: ABI v1 has no callback registration table.
+- `host_call_suspension`: ABI v1 has no asynchronous event and resume API.
 - `tool_callbacks`: ABI v1 has no tool-callback registration table.
 - `network_policy`: ABI v1 deliberately ships only git, jq, and VFS capabilities.
 - `transport_hooks`: ABI v1 has no host HTTP transport vtable.

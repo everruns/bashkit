@@ -101,7 +101,7 @@ impl Builtin for RequestId {
     }
 }
 
-let mut bash = Bash::builder()
+let bash = Bash::builder()
     .builtin("request-id", Box::new(RequestId))
     .build();
 
@@ -146,6 +146,53 @@ assert_eq!(result.stdout, "hello\n");
 The same extension can be added to `BashTool::builder().extension(...)`.
 `TypeScriptExtension` uses this model to register the embedded
 TypeScript/JavaScript builtins.
+
+## Process-Local Host Calls
+
+Use an event-backed builtin when the host—not a `Builtin::execute`
+implementation—must receive a request and later supply its shell result. The
+execution remains parked in memory while the host performs the work.
+
+```rust
+use bashkit::{Bash, ExecResult, ExecutionEvent};
+
+# #[tokio::main]
+# async fn main() -> bashkit::Result<()> {
+let mut bash = Bash::builder()
+    .host_call_builtin("lookup")
+    .build();
+let mut execution = bash.start_execution("lookup alice; echo done");
+
+loop {
+    match execution.next_event().await? {
+        ExecutionEvent::HostCall(request) => {
+            assert_eq!(request.command(), "lookup");
+            assert_eq!(request.args(), &["alice"]);
+            execution.resume(request.id(), ExecResult::ok("Alice Example\n"))?;
+        }
+        ExecutionEvent::Complete(result) => {
+            assert_eq!(result.stdout, "Alice Example\ndone\n");
+            break;
+        }
+    }
+}
+let _bash = execution.into_bash().expect("execution completed");
+# Ok(())
+# }
+```
+
+`HostCallRequest` owns the command arguments, exported environment, virtual
+working directory, and exact pipeline stdin. Resume with `ExecResult` to supply
+stdout, stderr, and exit status. `start_execution_with_options` preserves the
+normal streaming callback, extensions, positional parameters, and stdin.
+
+This is live-future suspension only. `ExecutionHandle` owns its `Bash` while
+the execution is active; after completion, call `into_bash()` to recover the
+session. Dropping a suspended handle drops the session so partially unwound
+interpreter state cannot be reused. Neither the handle nor a pending request is
+serializable. Execution limits, including wall-clock timeout, remain active
+while the host call is parked. Calling an event-backed command through ordinary
+`exec()` fails immediately because no execution driver is present.
 
 ## BuiltinRegistry — Runtime-Mutable Builtins
 
