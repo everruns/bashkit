@@ -64,10 +64,32 @@ recognized dangerous command" as "safe" without checking those flags builds a
 bypassable gate.
 
 Enforcement primitives remain: the builtin registry (a command that does not
-exist cannot run), `NetworkAllowlist`, the filesystem mount policy, and the
-`before_tool` hook, which fires with the **resolved** command name at
-execution time. Recommended pattern: `analyze()` for the pre-execution UX
-decision, `before_tool` for the enforcement backstop.
+exist cannot run — unless a `CommandResolver` is installed, see below),
+`NetworkAllowlist`, the filesystem mount policy, and the `before_tool` hook,
+which fires with the **resolved** command name at execution time. Recommended
+pattern: `analyze()` for the pre-execution UX decision, `before_tool` for the
+enforcement backstop.
+
+### `CommandResolver` and the enumerable-name assumption
+
+`BashBuilder::command_resolver` installs a last-chance resolver, consulted only
+after every other dispatch route misses and immediately before the 127 path. It
+grants no new capability — a resolver is embedder-supplied host code exactly
+like a builtin passed to `BashBuilder::builtin`, which could already spawn
+processes. What it changes is narrower and worth stating plainly:
+
+- **The registry stops bounding the reachable name set.** "A command that does
+  not exist cannot run" holds only while every name that reaches host code is
+  registered. `Bash::builtin_names()` does not enumerate resolver-provided
+  names, so a gate built on that list is incomplete once a resolver exists.
+- **`before_tool` is unaffected.** Resolved commands dispatch through the same
+  builtin path as every other builtin, so the hook fires with the resolved name
+  and can cancel the call. The recommended pattern above holds unchanged.
+  `command_resolver_tests::before_tool_veto_blocks_a_resolved_command` pins this.
+
+A resolver that gates internally (returning `None` for names it will not run)
+restores a closed set; that is the recommended shape when the embedder has a
+policy to enforce.
 
 Recorded as TM-ESC-032 in [Threat Model](../security/threat-model.md).
 
