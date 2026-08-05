@@ -9,6 +9,7 @@ use crate::builtins::{Builtin, Context, Extension};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 use crate::tool_def::{parse_flags, usage_from_schema};
+use crate::{ToolCallSurface, ToolRegistry};
 use async_trait::async_trait;
 use std::collections::VecDeque;
 use std::future::Future;
@@ -135,10 +136,14 @@ impl ToolDefExtensionBuilder {
     /// [`ToolDefExtension::invocation_trace`] before registration when a caller
     /// intentionally wants a handle for this extension's trace.
     pub fn build(&self) -> ToolDefExtension {
+        let trace = ToolDefInvocationTrace::new();
         ToolDefExtension {
-            tools: self.tools.clone(),
-            sanitize_errors: self.sanitize_errors,
-            invocation_log: Arc::new(Mutex::new(VecDeque::new())),
+            registry: ToolRegistry::from_registered(
+                self.tools.clone(),
+                self.sanitize_errors,
+                trace.clone(),
+            ),
+            invocation_log: trace.invocation_log,
         }
     }
 }
@@ -152,8 +157,7 @@ impl ToolDefExtensionBuilder {
 /// [`ToolDefExtension::invocation_trace`] to intentionally retain a trace
 /// handle before registering an extension.
 pub struct ToolDefExtension {
-    tools: Vec<RegisteredTool>,
-    sanitize_errors: bool,
+    registry: ToolRegistry,
     invocation_log: InvocationLog,
 }
 
@@ -168,6 +172,22 @@ pub struct ToolDefInvocationTrace {
 }
 
 impl ToolDefInvocationTrace {
+    pub(crate) fn new() -> Self {
+        Self {
+            invocation_log: Arc::new(Mutex::new(VecDeque::new())),
+        }
+    }
+
+    pub(crate) fn push(
+        &self,
+        name: &str,
+        kind: ScriptedCommandKind,
+        args: Vec<String>,
+        exit_code: i32,
+    ) {
+        push_invocation(&self.invocation_log, name, kind, &args, exit_code);
+    }
+
     /// Return and clear accumulated command invocation trace entries.
     pub fn take_invocations(&self) -> Vec<ScriptedCommandInvocation> {
         let mut invocations = self
@@ -180,10 +200,11 @@ impl ToolDefInvocationTrace {
 
 impl Clone for ToolDefExtension {
     fn clone(&self) -> Self {
+        let registry = self.registry.with_fresh_default_trace();
+        let invocation_log = registry.default_trace().invocation_log;
         Self {
-            tools: self.tools.clone(),
-            sanitize_errors: self.sanitize_errors,
-            invocation_log: Arc::new(Mutex::new(VecDeque::new())),
+            registry,
+            invocation_log,
         }
     }
 }
@@ -195,21 +216,42 @@ impl ToolDefExtension {
     }
 
     pub(crate) fn from_registered_tools(tools: Vec<RegisteredTool>) -> Self {
+        let trace = ToolDefInvocationTrace::new();
         Self {
-            tools,
-            sanitize_errors: true,
-            invocation_log: Arc::new(Mutex::new(VecDeque::new())),
+            registry: ToolRegistry::from_registered(tools, true, trace.clone()),
+            invocation_log: trace.invocation_log,
+        }
+    }
+
+    pub(crate) fn from_registry(registry: ToolRegistry) -> Self {
+        let invocation_log = registry.default_trace().invocation_log;
+        Self {
+            registry,
+            invocation_log,
         }
     }
 
     pub(crate) fn with_invocation_log(mut self, log: InvocationLog) -> Self {
         self.invocation_log = log;
+        self.registry = ToolRegistry::from_registered(
+            self.registry.tools().to_vec(),
+            self.registry.sanitize_errors(),
+            ToolDefInvocationTrace {
+                invocation_log: Arc::clone(&self.invocation_log),
+            },
+        );
         self
     }
 
     /// Control whether callback errors are sanitized.
     pub fn sanitize_errors(mut self, sanitize: bool) -> Self {
-        self.sanitize_errors = sanitize;
+        self.registry = ToolRegistry::from_registered(
+            self.registry.tools().to_vec(),
+            sanitize,
+            ToolDefInvocationTrace {
+                invocation_log: Arc::clone(&self.invocation_log),
+            },
+        );
         self
     }
 
@@ -230,7 +272,8 @@ impl ToolDefExtension {
     }
 
     fn snapshots(&self) -> Vec<ToolDefSnapshot> {
-        self.tools
+        self.registry
+            .tools()
             .iter()
             .map(|t| ToolDefSnapshot {
                 name: t.def.name.clone(),
@@ -246,17 +289,17 @@ impl ToolDefExtension {
 impl Extension for ToolDefExtension {
     fn builtins(&self) -> Vec<(String, Box<dyn Builtin>)> {
         let mut builtins: Vec<(String, Box<dyn Builtin>)> = Vec::new();
-        for tool in &self.tools {
+        for tool in self.registry.tools() {
             let name = tool.def.name.clone();
             builtins.push((
                 name.clone(),
                 Box::new(ToolBuiltinAdapter {
                     name,
                     description: tool.def.description.clone(),
-                    callback: tool.callback.clone(),
+                    registry: self.registry.clone(),
                     schema: tool.def.input_schema.clone(),
                     log: Arc::clone(&self.invocation_log),
-                    sanitize_errors: self.sanitize_errors,
+                    sanitize_errors: self.registry.sanitize_errors(),
                     dry_run: tool.dry_run.clone(),
                 }),
             ));
@@ -285,7 +328,7 @@ impl Extension for ToolDefExtension {
 struct ToolBuiltinAdapter {
     name: String,
     description: String,
-    callback: CallbackKind,
+    registry: ToolRegistry,
     schema: serde_json::Value,
     log: InvocationLog,
     sanitize_errors: bool,
@@ -327,10 +370,13 @@ impl Builtin for ToolBuiltinAdapter {
             let exit_result = match parse_flags(&stripped, &self.schema) {
                 Ok(params) => {
                     if let Some(ref dr) = self.dry_run {
-                        let tool_args = ToolArgs {
+                        let tool_args = ToolArgs::with_context(
                             params,
-                            stdin: ctx.stdin.map(String::from),
-                        };
+                            ctx.stdin.map(String::from),
+                            ctx.execution_extension::<crate::ToolCallRequest>()
+                                .map(crate::ToolCallRequest::tenant_id),
+                            ToolCallSurface::Shell,
+                        );
                         let cb_result = match dr {
                             CallbackKind::Sync(cb) => (cb)(&tool_args),
                             CallbackKind::Async(cb) => (cb)(tool_args).await,
@@ -384,38 +430,25 @@ impl Builtin for ToolBuiltinAdapter {
 
         let exit_result = match parse_flags(ctx.args, &self.schema) {
             Ok(params) => {
-                let tool_args = ToolArgs {
-                    params,
-                    stdin: ctx.stdin.map(String::from),
-                };
-                let cb_result = match &self.callback {
-                    CallbackKind::Sync(cb) => (cb)(&tool_args),
-                    CallbackKind::Async(cb) => (cb)(tool_args).await,
-                };
-                match cb_result {
-                    Ok(stdout) => ExecResult::ok(stdout),
-                    Err(_msg) if self.sanitize_errors => {
-                        #[cfg(feature = "tracing")]
-                        tracing::debug!(
-                            tool = %self.name,
-                            error = %_msg,
-                            "tool callback error (sanitized)"
-                        );
-                        ExecResult::err(format!("{}: callback failed\n", self.name), 1)
-                    }
-                    Err(msg) => ExecResult::err(msg, 1),
+                let output = self
+                    .registry
+                    .invoke_from_context(
+                        &self.name,
+                        params,
+                        ctx.stdin.map(String::from),
+                        ToolCallSurface::Shell,
+                        &ctx,
+                    )
+                    .await;
+                ExecResult {
+                    stdout: output.stdout,
+                    stderr: output.stderr,
+                    exit_code: output.exit_code,
+                    ..Default::default()
                 }
             }
             Err(msg) => ExecResult::err(msg, 2),
         };
-
-        push_invocation(
-            &self.log,
-            &self.name,
-            ScriptedCommandKind::Tool,
-            ctx.args,
-            exit_result.exit_code,
-        );
         Ok(exit_result)
     }
 }

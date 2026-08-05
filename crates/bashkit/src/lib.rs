@@ -454,6 +454,8 @@ pub mod tool;
 /// Reusable tool primitives: ToolDef, ToolArgs, ToolImpl, exec types.
 #[cfg(feature = "scripted_tool")]
 pub(crate) mod tool_def;
+#[cfg(feature = "scripted_tool")]
+mod tool_registry;
 /// Structured execution trace events.
 pub mod trace;
 
@@ -512,6 +514,10 @@ pub use scripted_tool::{
 };
 #[cfg(feature = "scripted_tool")]
 pub use tool_def::{AsyncToolExec, SyncToolExec, ToolImpl};
+#[cfg(feature = "scripted_tool")]
+pub use tool_registry::{
+    ToolCall, ToolCallDecision, ToolCallRequest, ToolCallSurface, ToolRegistry, ToolRegistryBuilder,
+};
 
 #[cfg(feature = "http_client")]
 pub use network::HttpClient;
@@ -1670,6 +1676,54 @@ pub struct BashBuilder {
 }
 
 impl BashBuilder {
+    /// Install one ToolDef-backed registry across shell, embedded Python, and
+    /// embedded TypeScript. Runtime surfaces are included when their cargo
+    /// features are enabled and share the registry's callback and policy Arcs.
+    #[cfg(feature = "scripted_tool")]
+    pub fn tool_registry(mut self, registry: ToolRegistry) -> Self {
+        self = self.extension(scripted_tool::ToolDefExtension::from_registry(
+            registry.clone(),
+        ));
+        #[cfg(feature = "python")]
+        {
+            let names = vec!["__bashkit_tool_call".to_string()];
+            let handler = registry.python_handler();
+            let prelude = registry.python_prelude();
+            self = self
+                .builtin(
+                    "python",
+                    Box::new(
+                        builtins::Python::with_limits(builtins::PythonLimits::default())
+                            .with_external_handler_and_prelude(
+                                names.clone(),
+                                handler.clone(),
+                                prelude.clone(),
+                            ),
+                    ),
+                )
+                .builtin(
+                    "python3",
+                    Box::new(
+                        builtins::Python::with_limits(builtins::PythonLimits::default())
+                            .with_external_handler_and_prelude(names, handler, prelude),
+                    ),
+                );
+        }
+        #[cfg(feature = "typescript")]
+        {
+            self = self.extension(
+                builtins::TypeScriptExtension::with_external_handler_and_prelude(
+                    builtins::TypeScriptLimits::default(),
+                    registry.typescript_external_names(),
+                    registry.typescript_handler(),
+                    registry.typescript_prelude(),
+                    registry.typescript_rewrites(),
+                ),
+            );
+        }
+        self
+    }
+
     /// Set a custom filesystem.
     pub fn fs(mut self, fs: Arc<dyn FileSystem>) -> Self {
         self.fs = Some(fs);

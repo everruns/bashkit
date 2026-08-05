@@ -128,6 +128,20 @@ for the full threat analysis.
 - Missing `-c`/`-e` argument: Exit code 2, error on stderr
 - Unknown option: Exit code 2, error on stderr
 
+### Tool registry access
+
+With `scripted_tool`, `BashBuilder::tool_registry` exposes dot-separated
+`ToolDef` names as `await tools.orders.list({customer: "acme"})` and provides
+`tools.discover({...})`. Calls reuse the existing external-function
+suspend/resume bridge and the registry's one schema, policy, deadline, sanitizer,
+callback instance, and request-local trace.
+
+ZapCode snapshots cannot serialize a function nested inside a `tools` object.
+The adapter token-rewrites executable registry access to validated hidden
+external names and JSON-encodes the argument before suspension; quoted strings
+and comments are not rewritten. Use the existing return-value pattern after an
+external call because post-resume `console.log` output is not retained upstream.
+
 ### LLM Hints
 
 When registered via `BashToolBuilder::typescript()`, the builtin contributes

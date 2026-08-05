@@ -273,7 +273,7 @@ Scripts may attempt to leak sensitive information.
 | Untrusted generated Rust in drift CI (TM-INF-025) | Malicious upstream `uu_app()` runs with a write token | Generator validates the emitted shape; drift workflow splits read/write privilege | FIXED |
 | Publish from unverified release refs (TM-INF-027) | Dispatch publish from a branch or unprotected tag | Dispatch requires `refs/heads/main`; publish gated on real `vX.Y.Z` tags | FIXED |
 | JS `onOutput` errors expose host stack traces (TM-INF-028) | Callback throws, leaking `error.stack` | Propagate `error.message` only; strip absolute/`file://` paths | FIXED |
-| Raw callback errors leak host internals (TM-INF-030) | Tool callback throws API keys/connection strings/stack traces | `sanitize_errors` defaults on for `ScriptedTool`/`ToolImpl` | MITIGATED |
+| Raw callback errors leak host internals (TM-INF-030) | Tool callback throws API keys/connection strings/stack traces | `sanitize_errors` defaults on for `ScriptedTool`/`ToolImpl`/`ToolRegistry` across shell/Python/TypeScript | MITIGATED |
 | `final_env` capture bypasses filtering/caps (TM-INF-031) | `capture_final_env` leaks internal markers or exceeds caps | Visibility filter + output-byte cap applied when building `final_env` | MITIGATED |
 | Stack backtrace disclosure (TM-INF-021) | Panics leak source paths, dep versions, function names via stderr | Custom panic hook suppresses backtraces in the CLI | MITIGATED |
 
@@ -499,6 +499,7 @@ echo $user_input
 | `set -e` cross-exec leak (TM-ISO-023) | Shell options persist across `exec()` | Reset shell options | **MITIGATED** |
 | `$?` leaks into VFS subprocess (TM-ISO-024) | Parent `last_exit_code` visible in child, causing false `set -e` failures | Child resets `last_exit_code`, `nounset_error`, and traps | **MITIGATED** |
 | Wrapper rebuild drops constructor capabilities (TM-ISO-025) | A binding reset loses limits, policy files, callbacks, or network policy | Canonical capability matrix with executable evidence; rebuilds retain constructor config | **MITIGATED** |
+| Shared ToolRegistry request context (TM-ISO-026) | Concurrent shell/Python/TypeScript calls leak tenant identity or traces | Per-request `ExecutionExtensions`, task-local runtime routing, and callback-owned context | **MITIGATED** |
 
 Each [`Bash`] instance is fully isolated. For multi-tenant environments, create
 separate instances per tenant:

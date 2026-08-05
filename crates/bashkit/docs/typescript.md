@@ -44,6 +44,21 @@ let bash = Bash::builder()
 
 ## Usage Patterns
 
+### Shared Tool Registry
+
+With `scripted_tool`, one `ToolRegistry` exposes dot-separated definitions as
+shell commands and ergonomic TypeScript namespaces:
+
+```typescript
+const orders = await tools.orders.list({customer: "acme"});
+const matches = await tools.discover({category: "orders"});
+```
+
+These calls use the same schema validation, approval/policy hook, deadline,
+sanitized errors, callback instance, and request-local trace as shell and
+Python calls. After any external call, prefer the last-expression return pattern
+because ZapCode does not retain later `console.log()` output.
+
 ### Inline Code
 
 ```bash

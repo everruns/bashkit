@@ -36,6 +36,31 @@ assert_eq!(result.stdout, "hello from Monty\n");
 
 ## Usage Patterns
 
+### Shared Tool Registry
+
+With `scripted_tool`, one `ToolRegistry` can expose the same definitions and
+callbacks as shell commands and Python functions:
+
+```rust,no_run
+use bashkit::{Bash, ToolArgs, ToolDef, ToolRegistry};
+
+let registry = ToolRegistry::builder()
+    .tool_fn(ToolDef::new("orders.list", "List orders"), |_args: &ToolArgs| {
+        Ok(r#"[{"id": 1}]"#.to_string())
+    })
+    .build();
+let bash = Bash::builder().tool_registry(registry).build();
+```
+
+```python
+orders = tools.orders.list({"customer": "acme"})
+matches = tools.discover({"category": "orders"})
+```
+
+Schema validation, policy, deadlines, sanitized errors, callbacks, and tracing
+are shared with shell and TypeScript calls. Python execution still requires the
+normal `BASHKIT_ALLOW_INPROCESS_PYTHON=1` operator opt-in.
+
 ### Inline Code
 
 ```bash
