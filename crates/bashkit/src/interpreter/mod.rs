@@ -53,6 +53,7 @@ const OPERAND_QUOTE_MARK_CANDIDATES: &[char] = &[
 
 use futures_util::FutureExt;
 
+use crate::builtins::search_common::RuntimeRegexCache;
 use crate::builtins::{self, Builtin};
 #[cfg(feature = "failpoints")]
 use crate::error::Error;
@@ -1167,6 +1168,8 @@ pub struct Interpreter {
     /// Aliases currently being expanded (prevents infinite recursion).
     /// When alias `foo` expands to `foo bar`, the inner `foo` is not re-expanded.
     expanding_aliases: HashSet<String>,
+    /// THREAT[TM-DOS-023]: Bounded cache for repeated `[[ value =~ pattern ]]` evaluations.
+    regex_cache: RuntimeRegexCache,
     /// Command history entries for the current session.
     history: Vec<HistoryEntry>,
     /// Retained command/cwd bytes for bounded history accounting.
@@ -1614,6 +1617,7 @@ impl Interpreter {
             nounset_error: None,
             pipestatus: Vec::new(),
             expanding_aliases: HashSet::new(),
+            regex_cache: RuntimeRegexCache::default(),
             history: Vec::new(),
             history_bytes: 0,
             history_saved_entries: 0,
@@ -1907,6 +1911,7 @@ impl Interpreter {
         }
         self.getopts_char_idx = 0;
         self.pipeline_stdin = None;
+        self.regex_cache = RuntimeRegexCache::default();
         self.bash_source_stack.clear();
         self.arrays_mut().remove("BASH_SOURCE");
     }
@@ -3724,8 +3729,8 @@ impl Interpreter {
 
     /// Perform regex match and set BASH_REMATCH array.
     fn regex_match(&mut self, string: &str, pattern: &str) -> bool {
-        match regex::Regex::new(pattern) {
-            Ok(re) => {
+        match self.regex_cache.get_or_compile(pattern) {
+            Some(re) => {
                 if let Some(captures) = re.captures(string) {
                     // Set BASH_REMATCH array
                     let mut rematch = HashMap::new();
@@ -3740,7 +3745,7 @@ impl Interpreter {
                     false
                 }
             }
-            Err(_) => {
+            None => {
                 self.arrays_mut().remove("BASH_REMATCH");
                 false
             }
@@ -11380,6 +11385,18 @@ echo "count=$COUNT"
             .await
             .unwrap();
         assert_eq!(result.stdout.trim(), "match");
+    }
+
+    #[test]
+    fn repeated_conditional_regex_compiles_once() {
+        let fs: Arc<dyn FileSystem> = Arc::new(InMemoryFs::new());
+        let mut interp = Interpreter::new(fs);
+
+        for _ in 0..300_000 {
+            assert!(interp.regex_match("bytes=123", "^bytes="));
+        }
+
+        assert_eq!(interp.regex_cache.compile_count(), 1);
     }
 
     #[tokio::test]

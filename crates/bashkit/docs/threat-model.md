@@ -69,7 +69,7 @@ through configurable limits.
 | For loop (TM-DOS-017) | `for i in $(seq 1 inf)` | Loop limit | MITIGATED |
 | Nested loops (TM-DOS-018) | Double for loop | `max_total_loop_iterations` (1M) | MITIGATED |
 | Command flood (TM-DOS-019) | 100K sequential commands | Command limit (10K) | MITIGATED |
-| Long computation (TM-DOS-023) | Complex awk/sed regex | Timeout (30s) | MITIGATED |
+| Long computation (TM-DOS-023) | Complex awk/sed regex, including repeated awk and `[[ =~ ]]` operands | Linear-time engine; bounded runtime regex caches; timeout (30s) | MITIGATED |
 | Regex backtrack (TM-DOS-025) | `grep "a](*b)*c" file` | Regex crate limits | PARTIAL |
 | AWK unbounded loops (TM-DOS-033) | `BEGIN { while(1){} }` | Timeout (30s) backstop | PARTIAL |
 

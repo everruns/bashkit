@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-06-22T22:43:59.000Z",
+  "generatedAt": "2026-08-05T18:01:47.000Z",
   "sources": {
     "bench": "crates/bashkit-bench/results/*.json",
     "criterion": "crates/bashkit/benches/results/*.md",
@@ -7,7 +7,7 @@
   },
   "summary": {
     "benchRuns": 6,
-    "criterionRuns": 7,
+    "criterionRuns": 9,
     "evalRuns": 38,
     "latestBench": {
       "id": "bench-vm-linux-x86_64-1779764460",
@@ -1206,6 +1206,48 @@
       "fastestCase": {
         "name": "single_bash_new",
         "us": 39.9
+      },
+      "bestImprovement": null
+    },
+    {
+      "id": "criterion-snapshot-history-baseline-linux-x86_64-1785444523",
+      "kind": "criterion",
+      "family": "snapshot",
+      "label": "criterion — snapshot_history — baseline",
+      "date": "2026-07-30",
+      "timestamp": "2026-07-30T20:48:43.000Z",
+      "source": "crates/bashkit/benches/results/criterion-snapshot-history-baseline-linux-x86_64-1785444523.md",
+      "reportSource": "crates/bashkit/benches/results/criterion-snapshot-history-baseline-linux-x86_64-1785444523.md",
+      "cases": 3,
+      "medianUs": 1260,
+      "p95Us": 1269,
+      "medianChangePct": null,
+      "meanChangePct": null,
+      "bestChangePct": null,
+      "fastestCase": {
+        "name": "case",
+        "us": 149
+      },
+      "bestImprovement": null
+    },
+    {
+      "id": "criterion-awk-regex-mykhailos-mini-darwin-arm64-1785952907",
+      "kind": "criterion",
+      "family": "awk",
+      "label": "Criterion AWK Runtime Regex Benchmark",
+      "date": "2026-08-05",
+      "timestamp": "2026-08-05T18:01:47.000Z",
+      "source": "crates/bashkit/benches/results/criterion-awk-regex-mykhailos-mini-darwin-arm64-1785952907.md",
+      "reportSource": "crates/bashkit/benches/results/criterion-awk-regex-mykhailos-mini-darwin-arm64-1785952907.md",
+      "cases": 4,
+      "medianUs": 135730,
+      "p95Us": 356601,
+      "medianChangePct": null,
+      "meanChangePct": null,
+      "bestChangePct": null,
+      "fastestCase": {
+        "name": "`top_level_pattern` (`/bytes=1/`)",
+        "us": 39010
       },
       "bestImprovement": null
     }
@@ -4909,6 +4951,24 @@
       "detail": "single_bash_new at 39.9 us median",
       "metric": 5296.8,
       "source": "crates/bashkit/benches/results/criterion-parallel-vm-linux-x86_64-1782168239.md"
+    },
+    {
+      "date": "2026-07-30",
+      "timestamp": "2026-07-30T20:48:43.000Z",
+      "kind": "Criterion",
+      "title": "snapshot",
+      "detail": "case at 149 us median",
+      "metric": 1260,
+      "source": "crates/bashkit/benches/results/criterion-snapshot-history-baseline-linux-x86_64-1785444523.md"
+    },
+    {
+      "date": "2026-08-05",
+      "timestamp": "2026-08-05T18:01:47.000Z",
+      "kind": "Criterion",
+      "title": "awk",
+      "detail": "`top_level_pattern` (`/bytes=1/`) at 39010 us median",
+      "metric": 135730,
+      "source": "crates/bashkit/benches/results/criterion-awk-regex-mykhailos-mini-darwin-arm64-1785952907.md"
     }
   ]
 }

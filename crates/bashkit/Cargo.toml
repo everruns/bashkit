@@ -207,6 +207,10 @@ name = "file_ops"
 harness = false
 
 [[bench]]
+name = "awk_regex"
+harness = false
+
+[[bench]]
 name = "snapshot_history"
 harness = false
 

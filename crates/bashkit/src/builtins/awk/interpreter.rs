@@ -13,7 +13,7 @@ use crate::builtins::limits::{
     AWK_MAX_GETLINE_FILE_BYTES as MAX_GETLINE_FILE_BYTES,
     AWK_MAX_OUTPUT_BYTES as MAX_AWK_OUTPUT_BYTES, AWK_MAX_OUTPUT_TARGETS as MAX_AWK_OUTPUT_TARGETS,
 };
-use crate::builtins::search_common::build_regex;
+use crate::builtins::search_common::RuntimeRegexCache;
 use crate::fs::{FileSystem, normalize_path};
 use crate::limits::ExecutionLimits;
 // On wasm32 there is no OS thread to bridge the sync AWK evaluator to the async
@@ -38,6 +38,9 @@ pub(super) enum AwkFlow {
 // - AWK_MAX_OUTPUT_TARGETS (distinct redirected output files).
 // - AWK_MAX_GETLINE_CACHED_FILES (distinct files held open by `getline`).
 // - AWK_MAX_GETLINE_FILE_BYTES / AWK_MAX_GETLINE_CACHE_BYTES (retained input bytes).
+// THREAT[TM-DOS-023]: Runtime regex operands share one bounded cache. Invalid
+// patterns are cached too, preventing repeated compilation failures from
+// becoming a CPU sink.
 
 /// One redirected VFS write, dispatched to the [`VfsWriter`] thread.
 #[cfg(not(target_family = "wasm"))]
@@ -194,6 +197,7 @@ pub(super) struct AwkInterpreter {
     range_active: HashMap<usize, bool>,
     /// Max iterations for a single loop, inherited from execution limits.
     pub(super) max_loop_iterations: usize,
+    regex_cache: RuntimeRegexCache,
 }
 
 impl AwkInterpreter {
@@ -215,7 +219,12 @@ impl AwkInterpreter {
             cwd: PathBuf::from("/"),
             range_active: HashMap::new(),
             max_loop_iterations: ExecutionLimits::default().max_loop_iterations,
+            regex_cache: RuntimeRegexCache::default(),
         }
+    }
+
+    fn runtime_regex(&mut self, pattern: &str) -> Option<regex::Regex> {
+        self.regex_cache.get_or_compile(pattern)
     }
 
     fn resolve_getline_path(&self, path_str: &str) -> String {
@@ -303,7 +312,7 @@ impl AwkInterpreter {
     fn eval_expr_as_bool(&mut self, expr: &AwkExpr) -> bool {
         if let AwkExpr::Regex(pattern) = expr {
             let line = self.state.get_field(0).as_string();
-            if let Ok(re) = build_regex(pattern) {
+            if let Some(re) = self.runtime_regex(pattern) {
                 return re.is_match(&line);
             }
             return false;
@@ -384,7 +393,7 @@ impl AwkInterpreter {
                         0.0
                     }),
                     "~" => {
-                        if let Ok(re) = build_regex(&r.as_string()) {
+                        if let Some(re) = self.runtime_regex(&r.as_string()) {
                             AwkValue::Number(if re.is_match(&l.as_string()) {
                                 1.0
                             } else {
@@ -395,7 +404,7 @@ impl AwkInterpreter {
                         }
                     }
                     "!~" => {
-                        if let Ok(re) = build_regex(&r.as_string()) {
+                        if let Some(re) = self.runtime_regex(&r.as_string()) {
                             AwkValue::Number(if !re.is_match(&l.as_string()) {
                                 1.0
                             } else {
@@ -511,7 +520,7 @@ impl AwkInterpreter {
             }
             AwkExpr::Match(expr, pattern) => {
                 let s = self.eval_expr(expr).as_string();
-                if let Ok(re) = build_regex(pattern) {
+                if let Some(re) = self.runtime_regex(pattern) {
                     AwkValue::Number(if re.is_match(&s) { 1.0 } else { 0.0 })
                 } else {
                     AwkValue::Number(0.0)
@@ -665,7 +674,7 @@ impl AwkInterpreter {
 
                 let target = self.eval_expr(&target_expr).as_string();
 
-                if let Ok(re) = build_regex(&pattern) {
+                if let Some(re) = self.runtime_regex(&pattern) {
                     let (result, count) = if name == "gsub" {
                         let count = re.find_iter(&target).count();
                         (
@@ -751,7 +760,7 @@ impl AwkInterpreter {
                 } else {
                     None
                 };
-                if let Ok(re) = build_regex(&pattern) {
+                if let Some(re) = self.runtime_regex(&pattern) {
                     if let Some(caps) = re.captures(&s) {
                         let m = caps.get(0).unwrap();
                         let rstart = m.start() + 1; // awk is 1-indexed
@@ -799,7 +808,7 @@ impl AwkInterpreter {
                 } else {
                     self.state.get_field(0).as_string()
                 };
-                if let Ok(re) = build_regex(&pattern) {
+                if let Some(re) = self.runtime_regex(&pattern) {
                     if how == "g" || how == "G" {
                         AwkValue::String(re.replace_all(&target, replacement.as_str()).to_string())
                     } else {
@@ -1534,5 +1543,38 @@ impl AwkInterpreter {
             }
             other => self.matches_pattern(other),
         }
+    }
+}
+
+#[cfg(test)]
+mod regex_cache_tests {
+    use super::*;
+
+    #[test]
+    fn repeated_match_expression_compiles_regex_once() {
+        let mut interp = AwkInterpreter::new();
+        interp.state.set_line("bytes=123");
+        let expr = AwkExpr::BinOp(
+            Box::new(AwkExpr::Field(Box::new(AwkExpr::Number(0.0)))),
+            "~".to_string(),
+            Box::new(AwkExpr::Regex("^bytes=".to_string())),
+        );
+
+        for _ in 0..300_000 {
+            assert!(interp.eval_expr(&expr).as_bool());
+        }
+
+        assert_eq!(interp.regex_cache.compile_count(), 1);
+    }
+
+    #[test]
+    fn repeated_invalid_regex_compiles_once() {
+        let mut interp = AwkInterpreter::new();
+
+        for _ in 0..100 {
+            assert!(interp.runtime_regex("[").is_none());
+        }
+
+        assert_eq!(interp.regex_cache.compile_count(), 1);
     }
 }
