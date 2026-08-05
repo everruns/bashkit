@@ -1078,6 +1078,8 @@ pub struct Interpreter {
     trace: crate::trace::TraceCollector,
     /// Execution counters for resource tracking
     counters: ExecutionCounters,
+    /// Aggregate non-resettable budget shared by all descendants of one exec.
+    execution_budget: crate::limits::ExecutionBudget,
     /// Job table for background execution (shared for wait builtin access)
     jobs: SharedJobTable,
     /// Current line number for $LINENO
@@ -1542,6 +1544,10 @@ impl Interpreter {
             memory_budget: crate::limits::MemoryBudget::default(),
             trace: crate::trace::TraceCollector::default(),
             counters: ExecutionCounters::new(),
+            execution_budget: crate::limits::ExecutionBudget::new(
+                &ExecutionLimits::cli(),
+                Arc::new(AtomicBool::new(false)),
+            ),
             jobs: jobs::new_shared_job_table(),
             current_line: 1,
             #[cfg(feature = "http_client")]
@@ -1592,6 +1598,16 @@ impl Interpreter {
     /// to abort execution at the next command boundary.
     pub fn cancellation_token(&self) -> Arc<AtomicBool> {
         Arc::clone(&self.cancelled)
+    }
+
+    /// Start a fresh host-request budget. Internal descendants only clone it.
+    pub(crate) fn begin_execution_budget(&mut self) {
+        self.execution_budget =
+            crate::limits::ExecutionBudget::new(&self.limits, Arc::clone(&self.cancelled));
+    }
+
+    pub(crate) fn execution_budget(&self) -> &crate::limits::ExecutionBudget {
+        &self.execution_budget
     }
 
     /// Return a reference to the hooks registry.
@@ -2597,6 +2613,9 @@ impl Interpreter {
             if result.control_flow != ControlFlow::None {
                 if let ControlFlow::Exit(code) = result.control_flow {
                     if fire_exit_hook {
+                        if !self.hooks.on_exit.is_empty() {
+                            self.execution_budget.consume_work(100)?;
+                        }
                         match self.hooks.fire_on_exit(crate::hooks::ExitEvent { code }) {
                             Some(event) => {
                                 exit_code = event.code;
@@ -2649,6 +2668,7 @@ impl Interpreter {
                     self.limits.max_ast_depth,
                     self.limits.max_parser_operations,
                 )
+                .with_execution_budget(self.execution_budget.clone())
                 .parse()
                 {
                     let emit_before = self.output_emit_count;
@@ -2771,6 +2791,7 @@ impl Interpreter {
             });
 
             // Check command count limit (per-exec)
+            self.execution_budget.consume_work(1)?;
             self.counters.tick_command(&self.limits)?;
             // THREAT[TM-DOS-059]: Check session-level command limit
             self.counters
@@ -2931,6 +2952,7 @@ impl Interpreter {
                             self.limits.max_ast_depth,
                             self.limits.max_parser_operations,
                         )
+                        .with_execution_budget(self.execution_budget.clone())
                         .parse()
                         {
                             let emit_before = self.output_emit_count;
@@ -4461,7 +4483,8 @@ impl Interpreter {
                 max_ast_depth,
                 max_parser_operations,
                 Some(parser_timeout),
-            );
+            )
+            .with_execution_budget(self.execution_budget.clone());
             match parser.parse() {
                 Ok(s) => s,
                 Err(e) => {
@@ -4478,10 +4501,12 @@ impl Interpreter {
         #[cfg(not(target_family = "wasm"))]
         let script = {
             let script_owned = script_content.clone();
+            let execution_budget = self.execution_budget.clone();
             let parse_result = tokio::time::timeout(parser_timeout, async move {
                 tokio::task::spawn_blocking(move || {
                     let parser =
-                        Parser::with_limits(&script_owned, max_ast_depth, max_parser_operations);
+                        Parser::with_limits(&script_owned, max_ast_depth, max_parser_operations)
+                            .with_execution_budget(execution_budget);
                     parser.parse()
                 })
                 .await
@@ -4862,6 +4887,7 @@ impl Interpreter {
 
             let result = match command {
                 Command::Simple(simple) => {
+                    self.execution_budget.consume_work(1)?;
                     self.counters.tick_command(&self.limits)?;
                     self.execute_simple_command(simple, stdin_data.take())
                         .await?
@@ -5360,7 +5386,8 @@ impl Interpreter {
             &expanded_cmd,
             self.limits.max_ast_depth,
             self.limits.max_parser_operations,
-        );
+        )
+        .with_execution_budget(self.execution_budget.clone());
         let result = match parser.parse() {
             Ok(s) => {
                 // THREAT[TM-DOS-031]: Validate budget on expanded alias AST
@@ -6000,6 +6027,21 @@ impl Interpreter {
                 std::borrow::Cow::Borrowed(args)
             };
             let args: &[String] = &args;
+            // THREAT[TM-DOS-096]: Every builtin and host callback consumes the
+            // same request budget. Pipeline/substitution descendants therefore
+            // cannot refresh byte or work ceilings by changing subsystems.
+            let consumer_bytes = args
+                .iter()
+                .fold(stdin.map_or(0, crate::StreamData::len), |total, arg| {
+                    total.saturating_add(arg.len())
+                });
+            self.execution_budget.consume_input(consumer_bytes)?;
+            self.execution_budget
+                .consume_work(1 + u64::try_from(consumer_bytes / 1024).unwrap_or(u64::MAX))?;
+            let _input_lease = self.execution_budget.lease_bytes(consumer_bytes)?;
+            if !self.hooks.before_tool.is_empty() {
+                self.execution_budget.consume_work(100)?;
+            }
 
             // Check for execution plan first
             {
@@ -6042,7 +6084,7 @@ impl Interpreter {
                 match plan_result {
                     Ok(Ok(Some(plan))) => {
                         let result = self.execute_builtin_plan(plan, redirects).await?;
-                        return Ok(self.apply_after_tool(name, result));
+                        return self.apply_after_tool(name, result);
                     }
                     Ok(Ok(None)) => { /* fall through to normal execute() */ }
                     Ok(Err(e)) => return Err(e),
@@ -6052,7 +6094,7 @@ impl Interpreter {
                             1,
                         );
                         let result = self.apply_redirections(result, redirects).await?;
-                        return Ok(self.apply_after_tool(name, result));
+                        return self.apply_after_tool(name, result);
                     }
                 }
             }
@@ -6099,6 +6141,16 @@ impl Interpreter {
                     ExecResult::err(format!("bash: {}: builtin failed unexpectedly\n", name), 1)
                 }
             };
+            self.execution_budget.consume_work(
+                u64::try_from(
+                    result
+                        .stdout
+                        .len()
+                        .saturating_add(result.stderr.len())
+                        .div_ceil(1024),
+                )
+                .unwrap_or(u64::MAX),
+            )?;
 
             self.apply_builtin_side_effects(&result).await;
 
@@ -6122,27 +6174,37 @@ impl Interpreter {
             }
 
             let result = self.apply_redirections(result, redirects).await?;
-            Ok(self.apply_after_tool(name, result))
+            self.apply_after_tool(name, result)
         })
     }
 
     /// Apply `after_tool` interceptor decisions to the result returned to callers.
-    fn apply_after_tool(&self, name: &str, result: ExecResult) -> ExecResult {
+    fn apply_after_tool(&self, name: &str, result: ExecResult) -> Result<ExecResult> {
         if self.hooks.after_tool.is_empty() {
-            return result;
+            return Ok(result);
         }
+        self.execution_budget.consume_work(100)?;
+        self.execution_budget.consume_input(result.stdout.len())?;
         let event = crate::hooks::ToolResult {
             name: name.to_string(),
             stdout: result.stdout.text_lossy().into_owned(),
             exit_code: result.exit_code,
         };
         match self.hooks.fire_after_tool(event) {
-            Some(event) => ExecResult {
-                stdout: event.stdout.into(),
-                exit_code: event.exit_code,
-                ..result
-            },
-            None => ExecResult::err(format!("bash: {name}: cancelled by after_tool hook\n"), 1),
+            Some(event) => {
+                self.execution_budget.consume_work(
+                    u64::try_from(event.stdout.len().div_ceil(1024)).unwrap_or(u64::MAX),
+                )?;
+                Ok(ExecResult {
+                    stdout: event.stdout.into(),
+                    exit_code: event.exit_code,
+                    ..result
+                })
+            }
+            None => Ok(ExecResult::err(
+                format!("bash: {name}: cancelled by after_tool hook\n"),
+                1,
+            )),
         }
     }
 
@@ -6175,12 +6237,23 @@ impl Interpreter {
         } else {
             std::borrow::Cow::Borrowed(args)
         };
+        let consumer_bytes = args.iter().fold(
+            stdin.as_ref().map_or(0, crate::StreamData::len),
+            |total, arg| total.saturating_add(arg.len()),
+        );
+        let execution_budget = self.execution_budget.clone();
+        execution_budget.consume_input(consumer_bytes)?;
+        execution_budget.consume_work(1)?;
+        if !self.hooks.before_tool.is_empty() {
+            execution_budget.consume_work(100)?;
+        }
+        let _input_lease = execution_budget.lease_bytes(consumer_bytes)?;
 
         let result = self
             .dispatch_special_builtin(name, &args, stdin, redirects)
             .await
             .expect("special builtin name checked before dispatch")?;
-        Ok(self.apply_after_tool(name, result))
+        self.apply_after_tool(name, result)
     }
 
     /// Dispatch an interpreter-level (special) builtin by name.
@@ -6472,11 +6545,13 @@ impl Interpreter {
             content
         };
 
+        self.execution_budget.consume_input(script_text.len())?;
         let parser = Parser::with_limits(
             script_text,
             self.limits.max_ast_depth,
             self.limits.max_parser_operations,
-        );
+        )
+        .with_execution_budget(self.execution_budget.clone());
         let script = match parser.parse() {
             Ok(s) => s,
             Err(e) => {
@@ -6776,6 +6851,7 @@ impl Interpreter {
                 ),
             ));
         }
+        self.execution_budget.consume_input(input.len())?;
 
         #[cfg(target_family = "wasm")]
         {
@@ -6784,6 +6860,7 @@ impl Interpreter {
                 self.limits.max_ast_depth,
                 self.limits.max_parser_operations,
             )
+            .with_execution_budget(self.execution_budget.clone())
             .parse()
         }
 
@@ -6793,10 +6870,12 @@ impl Interpreter {
             let max_depth = self.limits.max_ast_depth;
             let max_ops = self.limits.max_parser_operations;
             let timeout = self.limits.parser_timeout;
+            let execution_budget = self.execution_budget.clone();
 
             let parse_result = tokio::time::timeout(timeout, async move {
                 tokio::task::spawn_blocking(move || {
-                    let parser = Parser::with_limits(&input_owned, max_depth, max_ops);
+                    let parser = Parser::with_limits(&input_owned, max_depth, max_ops)
+                        .with_execution_budget(execution_budget);
                     parser.parse()
                 })
                 .await
@@ -8490,6 +8569,7 @@ impl Interpreter {
                     self.limits.max_ast_depth,
                     self.limits.max_parser_operations,
                 )
+                .with_execution_budget(self.execution_budget.clone())
                 .parse()
                 && let Ok(trap_result) = self
                     .execute_capture_only_sequence(&trap_script.commands)
@@ -9036,7 +9116,8 @@ impl Interpreter {
                     &cmd,
                     self.limits.max_ast_depth,
                     self.limits.max_parser_operations,
-                );
+                )
+                .with_execution_budget(self.execution_budget.clone());
                 match parser.parse() {
                     Ok(script) => {
                         if self.counters.push_subst(&self.limits).is_err() {
@@ -9311,6 +9392,7 @@ impl Interpreter {
                 self.limits.max_ast_depth,
                 self.limits.max_parser_operations,
             )
+            .with_execution_budget(self.execution_budget.clone())
             .parse()
             {
                 self.in_trap = true;
@@ -9343,6 +9425,7 @@ impl Interpreter {
                 self.limits.max_ast_depth,
                 self.limits.max_parser_operations,
             )
+            .with_execution_budget(self.execution_budget.clone())
             .parse()
             {
                 self.in_trap = true;

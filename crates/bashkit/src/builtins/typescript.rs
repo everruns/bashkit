@@ -803,6 +803,9 @@ impl Builtin for TypeScript {
         };
 
         let limits = self.effective_limits(ctx.execution_extension::<ExecutionDeadline>());
+        ctx.consume_budget_input(code.len())?;
+        ctx.consume_budget_work(u64::try_from(code.len().div_ceil(64)).unwrap_or(u64::MAX))?;
+        ctx.consume_budget_work(u64::try_from(limits.max_allocations).unwrap_or(u64::MAX))?;
 
         let code = self.external_fns.as_ref().map_or(code.clone(), |external| {
             rewrite_typescript_access(&code, &external.rewrites)
@@ -822,6 +825,7 @@ impl Builtin for TypeScript {
             ctx.cwd,
             &limits,
             self.external_fns.as_ref(),
+            ctx.execution_budget().cloned(),
         );
         #[cfg(feature = "scripted_tool")]
         return crate::tool_registry::scope_runtime_call(
@@ -844,6 +848,7 @@ async fn run_typescript(
     cwd: &Path,
     ts_limits: &TypeScriptLimits,
     external_fns: Option<&TypeScriptExternalFns>,
+    execution_budget: Option<crate::limits::ExecutionBudget>,
 ) -> Result<ExecResult> {
     // Strip shebang if present
     let code = if code.starts_with("#!") {
@@ -881,7 +886,7 @@ async fn run_typescript(
     };
 
     // Process the result through the suspend/resume loop for VFS bridging
-    process_vm_result(result, &fs, cwd, external_fns).await
+    process_vm_result(result, &fs, cwd, external_fns, execution_budget.as_ref()).await
 }
 
 /// Process a VmState, handling suspension for external function calls.
@@ -890,11 +895,15 @@ async fn process_vm_result(
     fs: &Arc<dyn FileSystem>,
     cwd: &Path,
     external_fns: Option<&TypeScriptExternalFns>,
+    execution_budget: Option<&crate::limits::ExecutionBudget>,
 ) -> Result<ExecResult> {
     let stdout = result.stdout;
     let mut state = result.state;
 
     loop {
+        if let Some(budget) = execution_budget {
+            budget.consume_work(1)?;
+        }
         match state {
             VmState::Complete(value) => {
                 let mut out = stdout;
@@ -910,6 +919,9 @@ async fn process_vm_result(
                 args,
                 snapshot,
             } => {
+                if let Some(budget) = execution_budget {
+                    budget.consume_work(100)?;
+                }
                 let return_value = match handle_external_call(
                     &function_name,
                     &args,

@@ -324,7 +324,7 @@ fn dump(
         .execute(
             "SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY rowid",
             deadline,
-            limits,
+            limits.clone(),
         )
         .map_err(DotError::Engine)?;
     for row in &schema_outcome.rows {
@@ -339,7 +339,7 @@ fn dump(
         .execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
             deadline,
-            limits,
+            limits.clone(),
         )
         .map_err(DotError::Engine)?;
     for row in &tables_outcome.rows {
@@ -350,7 +350,7 @@ fn dump(
         let quoted = name.replace('"', "\"\"");
         let sql = format!("SELECT * FROM \"{quoted}\"");
         let data = engine
-            .execute(&sql, deadline, limits)
+            .execute(&sql, deadline, limits.clone())
             .map_err(DotError::Engine)?;
         for data_row in &data.rows {
             let values: Vec<String> = data_row.iter().map(format_sql_literal).collect();
@@ -407,6 +407,7 @@ mod tests {
             max_rows: usize::MAX,
             max_value_bytes: usize::MAX,
             max_result_bytes: usize::MAX,
+            execution_budget: None,
         }
     }
 

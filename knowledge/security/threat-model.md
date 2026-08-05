@@ -124,7 +124,9 @@ embedded in rustdoc. It contains:
 **Scope**: Limits are enforced **per `exec()` call**. Counters reset at the start of
 each invocation via `ExecutionCounters::reset_for_execution()`, so a prior script
 hitting the limit does not permanently poison the session. The timeout (30s) provides
-the session-level backstop.
+the wall-clock backstop. Within one invocation, `ExecutionBudget` counters do not reset
+at subsystem or descendant boundaries; exhaustion poisons that request. Separate
+`SessionLimits` remain the cross-`exec()` backstop.
 
 #### 1.5 Filesystem Exhaustion
 
@@ -1191,6 +1193,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | TM-DOS-095 | CLI host-stdin ingestion unbounded | One-shot `bashkit -c` reads the host's stdin into memory before execution; an unbounded producer (`yes \| bashkit -c …`) would grow the buffer without limit, and a producer that never closes would stall the run | Read through `Take` at `MAX_STDIN_BYTES` + 1 and reject over-cap input with a clear error; skipped entirely when stdin is a terminal; `--no-stdin` opts out (`crates/bashkit-cli/src/main.rs`) — **FIXED** |
 | TM-DOS-094 | Persistent command history memory DoS | Long-lived Bash instances can retain, serialize, and list unbounded command history across many `exec()` calls | `ExecutionLimits` caps history entries, retained history bytes, and history output bytes; persisted saves append deltas unless compaction is required — **FIXED** |
 | TM-DOS-095 | Multi-component glob cross-product amplification | Per-component pathname expansion walks a candidate set that multiplies at every glob component, so a wide tree plus a pattern like `/*/*/*/*` can materialize far more candidates than the tree has leaves | `expand_glob` rejects patterns deeper than `FsLimits::max_path_depth` and truncates the live candidate set to `FsLimits::max_file_count` after each component (`interpreter/glob.rs`) — **FIXED** |
+| TM-DOS-096 | Aggregate execution-budget refresh | Nested substitutions, pipelines, traversal, builtin/runtime interpreters, archive expansion, and host callbacks each relied on independent ceilings, letting mixed workloads repeatedly restart resource accounting inside one request | `ExecutionBudget` is created once per host `exec_with_options`, cloned into parser/interpreter descendants and execution extensions, and monotonically meters aggregate work, aggregate input, and live intermediate leases. Any ceiling, deadline, or cancellation poisons the shared request while existing subsystem limits remain enforced — **MITIGATED** |
 
 ### Accepted (Low Priority)
 
@@ -1223,6 +1226,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Builtin parser depth limit (100) | TM-DOS-027 | `builtins/awk.rs`, `builtins/jq/` | Yes |
 | Execution timeout (30s) | TM-DOS-023 | `limits.rs` | Yes |
 | Builtin output pre-allocation caps | TM-DOS-058, TM-DOS-090 | `limits.rs`, `builtins/shuf.rs` | Yes |
+| Shared request execution budget | TM-DOS-096 | `limits.rs`, `parser/mod.rs`, `interpreter/mod.rs`, high-risk builtins/runtimes | Yes |
 | Persistent custom fd cap | TM-DOS-063 | `limits.rs`, `interpreter/mod.rs` | Yes |
 | Command history caps | TM-DOS-094 | `limits.rs`, `interpreter/mod.rs`, `builtins/environ.rs` | Yes |
 | Virtual filesystem | TM-ESC-001, TM-ESC-003 | `fs/memory.rs` | Yes |

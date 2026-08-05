@@ -72,6 +72,29 @@ stdout/stderr bytes alongside their display strings.
 Both are installed late (just before `execute`) so the size, hook, and
 parse checks that can return early cannot leave state behind.
 
+### Shared execution budget
+
+Each `exec_with_options` creates exactly one `ExecutionBudget` before hooks or
+parsing. Its `Arc`-backed counters are cloned—not recreated—by nested parsers,
+command/process substitutions, pipelines, builtin execution plans, embedded
+Python/TypeScript/SQLite, traversal/search, archive/compression work, and host
+callbacks. It meters three distinct resources: monotonic work units, monotonic
+aggregate consumer input bytes, and RAII live/intermediate byte leases.
+
+Exhaustion, the request deadline, or cancellation poisons the shared budget;
+later descendants see the first failure and cannot resume with fresh counters.
+This aggregate layer complements rather than replaces parser fuel, command and
+loop counters, output caps, VFS quotas, and runtime-specific ceilings. The
+budget is request-scoped: the next host exec receives a fresh budget, while
+session limits continue to protect repeated host calls.
+
+Runtime admission is deliberately conservative where a VM does not expose a
+portable completed-instruction count: Python reserves work from its configured
+memory allowance and TypeScript from its allocation allowance before entry.
+Python additionally meters Monty allocation/statement checkpoints. The
+reservation is not refunded, because refunding would recreate the reset path
+this layer exists to remove.
+
 ### Design Principles
 
 1. **Async-first**: All filesystem and execution is async (tokio)

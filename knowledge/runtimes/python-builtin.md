@@ -70,6 +70,14 @@ configurable via `PythonLimits`:
 budget even though it allocates nothing on the VM heap. There is no
 allocation-count knob — Monty removed `max_allocations` in 0.0.19.
 
+Each Python entry also consumes the request-scoped `ExecutionBudget`: source
+bytes are charged as aggregate input, configured memory contributes a
+conservative non-refundable admission reservation, and Monty's time/allocation
+checkpoints consume shared work units. VFS pauses and external host calls keep
+the same budget clone. Re-entering Python from a later command, substitution,
+or pipeline stage therefore cannot obtain fresh aggregate fuel; Monty's limits
+remain independently enforced.
+
 Since Monty 0.0.4 the parser also enforces a nesting-depth limit (200
 release / 35 debug) against stack overflow from deeply nested expressions.
 

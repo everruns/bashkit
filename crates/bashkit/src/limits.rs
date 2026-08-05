@@ -16,6 +16,7 @@
 //! - **TM-DOS-024**: Parser hang → `parser_timeout`, `max_parser_operations`
 //! - **TM-DOS-027**: Builtin parser recursion → `MAX_AWK_PARSER_DEPTH`, `MAX_JQ_JSON_DEPTH` (in builtins)
 //! - **TM-DOS-063**: Persistent file descriptor exhaustion → `max_file_descriptors`
+//! - **TM-DOS-096**: Mixed/nested aggregate budget refresh → `ExecutionBudget`
 //!
 //! # Fail Points (enabled with `failpoints` feature)
 //!
@@ -23,7 +24,11 @@
 //! - `limits::tick_loop` - Inject failures in loop iteration counting
 //! - `limits::push_function` - Inject failures in function depth tracking
 
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+use crate::time_compat::Instant;
 
 #[cfg(feature = "failpoints")]
 use fail::fail_point;
@@ -31,6 +36,20 @@ use fail::fail_point;
 /// Resource limits for script execution
 #[derive(Debug, Clone)]
 pub struct ExecutionLimits {
+    /// Aggregate work units shared by the parser, interpreter, builtins, and
+    /// embedded runtimes for one host execution request.
+    /// Default: 100,000,000
+    pub max_work_units: u64,
+
+    /// Aggregate bytes accepted by request-scoped consumers. Unlike
+    /// `max_input_bytes`, repeated pipeline/runtime inputs accumulate.
+    /// Default: 100MB
+    pub max_aggregate_input_bytes: u64,
+
+    /// Maximum bytes held by explicitly leased intermediate buffers at once.
+    /// Default: 32MB
+    pub max_live_intermediate_bytes: u64,
+
     /// Maximum number of commands that can be executed (fuel model)
     /// Default: 10,000
     pub max_commands: usize,
@@ -134,6 +153,9 @@ pub struct ExecutionLimits {
 impl Default for ExecutionLimits {
     fn default() -> Self {
         Self {
+            max_work_units: 100_000_000,
+            max_aggregate_input_bytes: 100_000_000,
+            max_live_intermediate_bytes: 32_000_000,
             max_commands: 10_000,
             max_loop_iterations: 10_000,
             max_total_loop_iterations: 1_000_000,
@@ -162,6 +184,24 @@ impl ExecutionLimits {
     /// Create new limits with defaults
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Set aggregate request work units.
+    pub fn max_work_units(mut self, units: u64) -> Self {
+        self.max_work_units = units;
+        self
+    }
+
+    /// Set aggregate request input bytes.
+    pub fn max_aggregate_input_bytes(mut self, bytes: u64) -> Self {
+        self.max_aggregate_input_bytes = bytes;
+        self
+    }
+
+    /// Set maximum simultaneously leased intermediate bytes.
+    pub fn max_live_intermediate_bytes(mut self, bytes: u64) -> Self {
+        self.max_live_intermediate_bytes = bytes;
+        self
     }
 
     /// Relaxed limits for CLI / interactive use.
@@ -628,6 +668,9 @@ impl ExecutionCounters {
 /// Error returned when a resource limit is exceeded
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum LimitExceeded {
+    #[error("execution budget exhausted: {0}")]
+    ExecutionBudget(ExecutionBudgetExceeded),
+
     #[error("maximum command count exceeded ({0})")]
     MaxCommands(usize),
 
@@ -672,6 +715,177 @@ pub enum LimitExceeded {
 
     #[error("memory limit exceeded: {0}")]
     Memory(String),
+}
+
+/// The aggregate request resource that exhausted the shared budget.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ExecutionBudgetExceeded {
+    #[error("work units ({used} used, max {limit})")]
+    WorkUnits { used: u64, limit: u64 },
+    #[error("aggregate input bytes ({used} used, max {limit})")]
+    InputBytes { used: u64, limit: u64 },
+    #[error("live intermediate bytes ({used} requested, max {limit})")]
+    LiveBytes { used: u64, limit: u64 },
+    #[error("deadline exceeded ({limit:?})")]
+    Deadline { limit: Duration },
+    #[error("cancelled")]
+    Cancelled,
+}
+
+#[derive(Debug)]
+struct ExecutionBudgetInner {
+    max_work_units: u64,
+    max_input_bytes: u64,
+    max_live_bytes: u64,
+    timeout: Duration,
+    work_units: AtomicU64,
+    input_bytes: AtomicU64,
+    live_bytes: AtomicU64,
+    deadline: Option<Instant>,
+    cancelled: Arc<AtomicBool>,
+    poisoned: Mutex<Option<ExecutionBudgetExceeded>>,
+}
+
+// THREAT[TM-DOS-096]: Nested and mixed subsystems must not receive fresh fuel.
+// Mitigation: clones share monotonic counters and the first failure poisons all.
+/// Non-resettable aggregate budget shared by every descendant of one request.
+///
+/// Cloning this value shares counters. Exceeding any ceiling poisons the whole
+/// request so later pipeline stages, substitutions, and callbacks fail closed.
+#[derive(Debug, Clone)]
+pub struct ExecutionBudget {
+    inner: Arc<ExecutionBudgetInner>,
+}
+
+impl ExecutionBudget {
+    // Let established subsystem/top-level timers report their public error
+    // first; this shared deadline is the fail-closed fallback for synchronous
+    // work that cannot be pre-empted by Tokio.
+    const DEADLINE_GRACE: Duration = Duration::from_millis(100);
+
+    /// Create a request budget from configured limits and the interpreter's
+    /// shared cancellation token.
+    pub fn new(limits: &ExecutionLimits, cancelled: Arc<AtomicBool>) -> Self {
+        Self {
+            inner: Arc::new(ExecutionBudgetInner {
+                max_work_units: limits.max_work_units,
+                max_input_bytes: limits.max_aggregate_input_bytes,
+                max_live_bytes: limits.max_live_intermediate_bytes,
+                timeout: limits.timeout,
+                work_units: AtomicU64::new(0),
+                input_bytes: AtomicU64::new(0),
+                live_bytes: AtomicU64::new(0),
+                deadline: Instant::now()
+                    .checked_add(limits.timeout)
+                    .and_then(|deadline| deadline.checked_add(Self::DEADLINE_GRACE)),
+                cancelled,
+                poisoned: Mutex::new(None),
+            }),
+        }
+    }
+
+    fn failure(&self) -> Option<LimitExceeded> {
+        self.inner
+            .poisoned
+            .lock()
+            .expect("execution budget poison lock")
+            .clone()
+            .map(LimitExceeded::ExecutionBudget)
+    }
+
+    fn poison(&self, reason: ExecutionBudgetExceeded) -> LimitExceeded {
+        let mut poisoned = self
+            .inner
+            .poisoned
+            .lock()
+            .expect("execution budget poison lock");
+        let reason = poisoned.get_or_insert(reason).clone();
+        LimitExceeded::ExecutionBudget(reason)
+    }
+
+    /// Fail if cancellation, deadline, or an earlier ceiling exhausted the request.
+    pub fn check(&self) -> Result<(), LimitExceeded> {
+        if let Some(err) = self.failure() {
+            return Err(err);
+        }
+        if self.inner.cancelled.load(Ordering::Relaxed) {
+            return Err(self.poison(ExecutionBudgetExceeded::Cancelled));
+        }
+        if self
+            .inner
+            .deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            return Err(self.poison(ExecutionBudgetExceeded::Deadline {
+                limit: self.inner.timeout,
+            }));
+        }
+        Ok(())
+    }
+
+    /// Consume aggregate work without wrapping or resetting.
+    pub fn consume_work(&self, units: u64) -> Result<(), LimitExceeded> {
+        self.check()?;
+        let previous = self.inner.work_units.fetch_add(units, Ordering::Relaxed);
+        let used = previous.saturating_add(units);
+        if used > self.inner.max_work_units || previous.checked_add(units).is_none() {
+            return Err(self.poison(ExecutionBudgetExceeded::WorkUnits {
+                used,
+                limit: self.inner.max_work_units,
+            }));
+        }
+        Ok(())
+    }
+
+    /// Consume bytes read or materialized by a request consumer.
+    pub fn consume_input(&self, bytes: usize) -> Result<(), LimitExceeded> {
+        self.check()?;
+        let bytes = u64::try_from(bytes).unwrap_or(u64::MAX);
+        let previous = self.inner.input_bytes.fetch_add(bytes, Ordering::Relaxed);
+        let used = previous.saturating_add(bytes);
+        if used > self.inner.max_input_bytes || previous.checked_add(bytes).is_none() {
+            return Err(self.poison(ExecutionBudgetExceeded::InputBytes {
+                used,
+                limit: self.inner.max_input_bytes,
+            }));
+        }
+        Ok(())
+    }
+
+    /// Reserve live intermediate storage until the returned lease drops.
+    pub fn lease_bytes(&self, bytes: usize) -> Result<ExecutionBudgetLease, LimitExceeded> {
+        self.check()?;
+        let bytes = u64::try_from(bytes).unwrap_or(u64::MAX);
+        let previous = self.inner.live_bytes.fetch_add(bytes, Ordering::Relaxed);
+        let used = previous.saturating_add(bytes);
+        if used > self.inner.max_live_bytes || previous.checked_add(bytes).is_none() {
+            self.inner.live_bytes.fetch_sub(bytes, Ordering::Relaxed);
+            return Err(self.poison(ExecutionBudgetExceeded::LiveBytes {
+                used,
+                limit: self.inner.max_live_bytes,
+            }));
+        }
+        Ok(ExecutionBudgetLease {
+            budget: self.clone(),
+            bytes,
+        })
+    }
+}
+
+/// RAII lease for bytes held in a live/intermediate request buffer.
+#[derive(Debug)]
+pub struct ExecutionBudgetLease {
+    budget: ExecutionBudget,
+    bytes: u64,
+}
+
+impl Drop for ExecutionBudgetLease {
+    fn drop(&mut self) {
+        self.budget
+            .inner
+            .live_bytes
+            .fetch_sub(self.bytes, Ordering::Relaxed);
+    }
 }
 
 // THREAT[TM-DOS-060]: Per-instance memory budget.
@@ -952,6 +1166,9 @@ mod tests {
     #[test]
     fn test_default_limits() {
         let limits = ExecutionLimits::default();
+        assert_eq!(limits.max_work_units, 100_000_000);
+        assert_eq!(limits.max_aggregate_input_bytes, 100_000_000);
+        assert_eq!(limits.max_live_intermediate_bytes, 32_000_000);
         assert_eq!(limits.max_commands, 10_000);
         assert_eq!(limits.max_loop_iterations, 10_000);
         assert_eq!(limits.max_total_loop_iterations, 1_000_000);
@@ -1170,6 +1387,9 @@ mod tests {
     #[test]
     fn test_zero_limit_is_strict_policy() {
         let limits = ExecutionLimits::cli()
+            .max_work_units(0)
+            .max_aggregate_input_bytes(0)
+            .max_live_intermediate_bytes(0)
             .max_commands(0)
             .max_loop_iterations(0)
             .max_total_loop_iterations(0)
@@ -1186,6 +1406,9 @@ mod tests {
             .max_word_split_bytes(0);
 
         let defaults = ExecutionLimits::default();
+        assert_eq!(limits.max_work_units, 0);
+        assert_eq!(limits.max_aggregate_input_bytes, 0);
+        assert_eq!(limits.max_live_intermediate_bytes, 0);
         assert_eq!(limits.max_commands, 0);
         assert_eq!(limits.max_loop_iterations, 0);
         assert_eq!(limits.max_total_loop_iterations, 0);
@@ -1205,6 +1428,9 @@ mod tests {
     #[test]
     fn test_nonzero_limit_works() {
         let limits = ExecutionLimits::default()
+            .max_work_units(11)
+            .max_aggregate_input_bytes(12)
+            .max_live_intermediate_bytes(13)
             .max_commands(5)
             .max_loop_iterations(7)
             .max_total_loop_iterations(42)
@@ -1220,6 +1446,9 @@ mod tests {
             .max_word_split_fields(17)
             .max_word_split_bytes(18);
 
+        assert_eq!(limits.max_work_units, 11);
+        assert_eq!(limits.max_aggregate_input_bytes, 12);
+        assert_eq!(limits.max_live_intermediate_bytes, 13);
         assert_eq!(limits.max_commands, 5);
         assert_eq!(limits.max_loop_iterations, 7);
         assert_eq!(limits.max_total_loop_iterations, 42);
@@ -1260,5 +1489,57 @@ mod tests {
         assert_eq!(limits.max_array_entries, 0);
         assert_eq!(limits.max_function_count, 0);
         assert_eq!(limits.max_function_body_bytes, 0);
+    }
+
+    #[test]
+    fn execution_budget_poison_is_shared_and_non_resettable() {
+        let limits = ExecutionLimits::new()
+            .max_work_units(2)
+            .max_aggregate_input_bytes(4);
+        let budget = ExecutionBudget::new(&limits, Arc::new(AtomicBool::new(false)));
+        let descendant = budget.clone();
+
+        budget.consume_work(2).unwrap();
+        let first = descendant.consume_work(1).unwrap_err();
+        assert!(matches!(
+            first,
+            LimitExceeded::ExecutionBudget(ExecutionBudgetExceeded::WorkUnits { .. })
+        ));
+        assert_eq!(
+            budget.consume_input(1).unwrap_err().to_string(),
+            first.to_string()
+        );
+    }
+
+    #[test]
+    fn execution_budget_live_leases_release_but_exhaustion_poisons() {
+        let limits = ExecutionLimits::new().max_live_intermediate_bytes(4);
+        let budget = ExecutionBudget::new(&limits, Arc::new(AtomicBool::new(false)));
+
+        let lease = budget.lease_bytes(4).unwrap();
+        let err = budget.lease_bytes(1).unwrap_err();
+        assert!(matches!(
+            err,
+            LimitExceeded::ExecutionBudget(ExecutionBudgetExceeded::LiveBytes { .. })
+        ));
+        drop(lease);
+        assert!(
+            budget.lease_bytes(1).is_err(),
+            "poison must survive lease release"
+        );
+    }
+
+    #[test]
+    fn execution_budget_observes_shared_cancellation() {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let budget = ExecutionBudget::new(&ExecutionLimits::new(), cancelled.clone());
+        cancelled.store(true, Ordering::Relaxed);
+
+        assert!(matches!(
+            budget.check(),
+            Err(LimitExceeded::ExecutionBudget(
+                ExecutionBudgetExceeded::Cancelled
+            ))
+        ));
     }
 }

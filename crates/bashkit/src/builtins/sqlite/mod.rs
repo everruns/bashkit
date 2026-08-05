@@ -394,6 +394,8 @@ impl Builtin for Sqlite {
                 1,
             ));
         }
+        ctx.consume_budget_input(script_len)?;
+        ctx.consume_budget_work(u64::try_from(script_len.div_ceil(64)).unwrap_or(u64::MAX))?;
 
         // Resolve effective backend (CLI flag overrides builder default).
         let backend = parsed.backend.unwrap_or(self.limits.backend);
@@ -406,6 +408,7 @@ impl Builtin for Sqlite {
         let mut stderr = String::new();
         let mut exit_code = 0i32;
         let stmts = parser::split(&parsed.script);
+        ctx.consume_budget_work(u64::try_from(stmts.len()).unwrap_or(u64::MAX))?;
         if stmts.len() > self.limits.max_statements {
             return Ok(ExecResult::err(
                 format!(
@@ -417,6 +420,7 @@ impl Builtin for Sqlite {
             ));
         }
         let deadline = engine::Deadline::new(self.limits.max_duration);
+        let execution_budget = ctx.execution_budget().cloned();
 
         // For `:memory:`, don't cache — every invocation gets a fresh
         // ephemeral engine. For file-backed targets we lock a per-key
@@ -439,6 +443,7 @@ impl Builtin for Sqlite {
                     &mut stdout,
                     &self.limits,
                     deadline,
+                    execution_budget.clone(),
                     0,
                 )
                 .await;
@@ -461,6 +466,9 @@ impl Builtin for Sqlite {
                 {
                     match ctx.fs.read_file(path).await {
                         Ok(current) => {
+                            if let Some(budget) = &execution_budget {
+                                budget.consume_input(current.len())?;
+                            }
                             if current != snapshot {
                                 reopen = true;
                             }
@@ -471,7 +479,15 @@ impl Builtin for Sqlite {
                     }
                 }
                 if reopen {
-                    match open_file_engine(backend, path, &ctx.fs, &self.limits).await {
+                    match open_file_engine(
+                        backend,
+                        path,
+                        &ctx.fs,
+                        &self.limits,
+                        execution_budget.clone(),
+                    )
+                    .await
+                    {
                         Ok(e) => *guard = Some(e),
                         Err(msg) => {
                             return Ok(ExecResult::err(format!("sqlite: {}\n", sanitize(&msg)), 1));
@@ -489,6 +505,7 @@ impl Builtin for Sqlite {
                     &mut stdout,
                     &self.limits,
                     deadline,
+                    execution_budget,
                     0,
                 )
                 .await;
@@ -715,11 +732,17 @@ async fn open_file_engine(
     path: &Path,
     fs: &Arc<dyn FileSystem>,
     limits: &SqliteLimits,
+    execution_budget: Option<crate::limits::ExecutionBudget>,
 ) -> std::result::Result<SqliteEngine, String> {
     match backend {
         SqliteBackend::Memory => {
             let initial = match fs.read_file(path).await {
                 Ok(bytes) => {
+                    if let Some(budget) = &execution_budget {
+                        budget
+                            .consume_input(bytes.len())
+                            .map_err(|e| e.to_string())?;
+                    }
                     if bytes.len() > limits.max_db_bytes {
                         return Err(format!(
                             "database file too large ({} bytes; limit {})",
@@ -770,6 +793,7 @@ async fn run_statements(
     stdout: &mut String,
     limits: &SqliteLimits,
     deadline: engine::Deadline,
+    execution_budget: Option<crate::limits::ExecutionBudget>,
     depth: usize,
 ) -> std::result::Result<(), String> {
     if depth > MAX_DOT_READ_DEPTH {
@@ -785,7 +809,11 @@ async fn run_statements(
             Stmt::Sql(sql) => {
                 check_sql_policy(&sql, limits)?;
                 let outcome = engine
-                    .execute(&sql, deadline, query_limits(limits))
+                    .execute(
+                        &sql,
+                        deadline,
+                        query_limits(limits, execution_budget.clone()),
+                    )
                     .map_err(|e| sanitize(&e))?;
                 let rendered = render(&outcome.columns, &outcome.rows, opts);
                 push_stdout_bounded(stdout, &rendered, limits.max_output_bytes)?;
@@ -799,7 +827,7 @@ async fn run_statements(
                     engine,
                     opts,
                     deadline,
-                    query_limits(limits),
+                    query_limits(limits, execution_budget.clone()),
                     remaining,
                 );
                 match result {
@@ -814,6 +842,11 @@ async fn run_statements(
                             .read_file(&abs)
                             .await
                             .map_err(|e| format!("cannot read {}: {e}", abs.display()))?;
+                        if let Some(budget) = &execution_budget {
+                            budget
+                                .consume_input(bytes.len())
+                                .map_err(|e| e.to_string())?;
+                        }
                         let nested = String::from_utf8(bytes)
                             .map_err(|_| format!("{} is not valid UTF-8", abs.display()))?;
                         let nested_stmts = parser::split(&nested);
@@ -827,6 +860,7 @@ async fn run_statements(
                             stdout,
                             limits,
                             deadline,
+                            execution_budget.clone(),
                             depth + 1,
                         ))
                         .await?;
@@ -861,11 +895,15 @@ async fn run_statements(
 ///   sandbox-safe way to express it today.
 /// * `PRAGMA <name>` is rejected when `<name>` (case-insensitive) is in
 ///   `limits.pragma_deny`. Defaults are listed in [`DEFAULT_PRAGMA_DENY`].
-fn query_limits(limits: &SqliteLimits) -> QueryLimits {
+fn query_limits(
+    limits: &SqliteLimits,
+    execution_budget: Option<crate::limits::ExecutionBudget>,
+) -> QueryLimits {
     QueryLimits {
         max_rows: limits.max_rows_per_query,
         max_value_bytes: limits.max_value_bytes,
         max_result_bytes: limits.max_result_bytes,
+        execution_budget,
     }
 }
 

@@ -116,6 +116,7 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
             Ok(t) => t,
             Err(e) => return Ok(e),
         };
+        ctx.consume_budget_input(text.len())?;
         match file_binding_bytes.checked_add(text.len()) {
             Some(total) if total <= MAX_FILE_VAR_BYTES => file_binding_bytes = total,
             _ => {
@@ -155,6 +156,7 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
                 Ok(t) => t,
                 Err(e) => return Ok(e),
             };
+            ctx.consume_budget_input(text.len())?;
             if !combined.is_empty() && !combined.ends_with('\n') {
                 combined.push('\n');
             }
@@ -393,6 +395,7 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
         let cv_ctx = Ctx::<InputData<Val>>::new(data, Vars::new(var_vals));
 
         for result in filter.id.run((cv_ctx, jaq_input)) {
+            ctx.consume_budget_work(1)?;
             match jaq_core::unwrap_valr(result) {
                 Ok(val) => {
                     has_output = true;

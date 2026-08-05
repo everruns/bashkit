@@ -73,6 +73,8 @@ pub struct Parser<'a> {
     /// when a `$(...)` body fails to parse; `parse_script` converts it into a
     /// hard parse error so the script is rejected the way bash rejects it.
     deferred_error: Cell<Option<Error>>,
+    /// Aggregate request budget shared by every child parser.
+    execution_budget: Option<crate::limits::ExecutionBudget>,
 }
 
 impl<'a> Parser<'a> {
@@ -126,7 +128,14 @@ impl<'a> Parser<'a> {
             timeout,
             started_at: Instant::now(),
             deferred_error: Cell::new(None),
+            execution_budget: None,
         }
+    }
+
+    /// Attach the non-resettable aggregate budget for this request.
+    pub fn with_execution_budget(mut self, budget: crate::limits::ExecutionBudget) -> Self {
+        self.execution_budget = Some(budget);
+        self
     }
 
     /// Get the current token's span.
@@ -174,6 +183,9 @@ impl<'a> Parser<'a> {
 
     /// Consume one unit of fuel, returning an error if exhausted
     fn tick(&mut self) -> Result<()> {
+        if let Some(budget) = &self.execution_budget {
+            budget.consume_work(1)?;
+        }
         if let Some(timeout) = self.timeout
             && self.started_at.elapsed() > timeout
         {
@@ -195,6 +207,9 @@ impl<'a> Parser<'a> {
     /// charge each copied character so repeated heredocs cannot hide quadratic work
     /// outside parser fuel accounting.
     fn tick_units(&mut self, units: usize) -> Result<()> {
+        if let Some(budget) = &self.execution_budget {
+            budget.consume_work(u64::try_from(units).unwrap_or(u64::MAX))?;
+        }
         if let Some(timeout) = self.timeout
             && self.started_at.elapsed() > timeout
         {
@@ -2885,6 +2900,7 @@ impl<'a> Parser<'a> {
                         self.fuel,
                         self.timeout,
                     );
+                    inner_parser.execution_budget = self.execution_budget.clone();
                     inner_parser.current_depth = self.current_depth + 1;
                     inner_parser.started_at = self.started_at;
                     let result = inner_parser.parse_script();
@@ -3071,8 +3087,9 @@ impl<'a> Parser<'a> {
                         // THREAT[TM-DOS-021]: Propagate parent parser limits to child parser
                         // to prevent depth limit bypass via nested command substitution.
                         let remaining_depth = self.max_depth.saturating_sub(self.current_depth);
-                        let inner_parser =
+                        let mut inner_parser =
                             Parser::with_limits(&cmd_str, remaining_depth, self.fuel);
+                        inner_parser.execution_budget = self.execution_budget.clone();
                         // A failed inner parse must never make the part vanish:
                         // dropping it splices the literals on either side into a
                         // word that appears nowhere in the source (`a$(|)b` ->
