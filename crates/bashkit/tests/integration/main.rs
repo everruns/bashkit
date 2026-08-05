@@ -55,6 +55,7 @@ pub mod glob_intermediate_component_tests;
 pub mod harness_example_tests;
 pub mod history_tests;
 pub mod host_call_execution_tests;
+pub mod host_mounts_tests;
 pub mod issue_1175_test;
 pub mod issue_1776_test;
 pub mod issue_1777_test;
