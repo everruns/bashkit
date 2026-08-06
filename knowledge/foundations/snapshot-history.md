@@ -42,6 +42,13 @@ retrofit that — the failing readers already shipped.
 Driver: [#2221](https://github.com/everruns/bashkit/issues/2221), which needs one
 snapshot per conversation message with session truncation and branching.
 
+Snapshots remain a between-executions boundary. Process-local host calls may
+park a live execution through `ExecutionHandle`, but that handle contains a
+pinned Rust future plus its owned `Bash` session and is deliberately excluded
+from packed snapshots and commits. Dropping it drops the session; migration of
+a pending call would require a separate explicit-continuation interpreter
+design. See [Builtin Commands](builtins.md).
+
 ## Problem
 
 The v1 format was a single `serde_json` blob: `[32-byte digest][JSON]`. Four
