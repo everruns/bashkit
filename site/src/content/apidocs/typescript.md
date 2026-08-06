@@ -1297,6 +1297,9 @@ Options for creating a Bash or BashTool instance.
 
   Must specify either `allow` (list of URL patterns) or `allowAll: true`,
   not both. `blockPrivateIps` defaults to `true`.
+- **`profile?`** — `ExecutionProfileName`
+
+  Named resource-policy baseline. Individual limit options override it.
 - **`python?`** — `boolean`
 
   Enable embedded Python execution (`python`/`python3` builtins).
@@ -1401,8 +1404,10 @@ Result from executing bash commands.
 - **`exitCode`** — `number`
 - **`finalEnv?`** — `Record<string, string>`
 - **`stderr`** — `string`
+- **`stderrBytes`** — `number[]`
 - **`stderrTruncated`** — `boolean`
 - **`stdout`** — `string`
+- **`stdoutBytes`** — `number[]`
 - **`stdoutTruncated`** — `boolean`
 - **`success`** — `boolean`
 
@@ -1677,6 +1682,12 @@ fine, so snapshots keep restoring after a bashkit upgrade adds one.
 type CheckoutPolicy = "strict" | "superset" | "force"
 ```
 
+## ExecutionProfileName
+
+```typescript
+type ExecutionProfileName = typeof ExecutionProfile[keyof typeof ExecutionProfile]
+```
+
 ## FileValue
 
 A file value: either a string, a sync function returning a string,
@@ -1933,6 +1944,9 @@ Options for configuring the bash tool adapter.
 
   Must specify either `allow` (list of URL patterns) or `allowAll: true`,
   not both. `blockPrivateIps` defaults to `true`.
+- **`profile?`** — `ExecutionProfileName`
+
+  Named resource-policy baseline. Individual limit options override it.
 - **`python?`** — `boolean`
 
   Enable embedded Python execution (`python`/`python3` builtins).
@@ -2155,6 +2169,9 @@ Options for configuring the bash tool adapter.
 
   Must specify either `allow` (list of URL patterns) or `allowAll: true`,
   not both. `blockPrivateIps` defaults to `true`.
+- **`profile?`** — `ExecutionProfileName`
+
+  Named resource-policy baseline. Individual limit options override it.
 - **`python?`** — `boolean`
 
   Enable embedded Python execution (`python`/`python3` builtins).
@@ -2352,6 +2369,9 @@ Options for configuring the bash tool adapter.
 
   Must specify either `allow` (list of URL patterns) or `allowAll: true`,
   not both. `blockPrivateIps` defaults to `true`.
+- **`profile?`** — `ExecutionProfileName`
+
+  Named resource-policy baseline. Individual limit options override it.
 - **`python?`** — `boolean`
 
   Enable embedded Python execution (`python`/`python3` builtins).
