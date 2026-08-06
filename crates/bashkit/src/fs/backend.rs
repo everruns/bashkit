@@ -7,7 +7,8 @@
 //!
 //! Use `FsBackend` when you want to implement a **simple storage backend**
 //! and let [`PosixFs`](super::PosixFs) handle all the POSIX semantics (type
-//! checking, parent directory validation, etc.).
+//! checking, parent directory validation, etc.). Mutation atomicity remains
+//! the backend's responsibility.
 //!
 //! | You want to... | Use |
 //! |----------------|-----|
@@ -112,6 +113,8 @@ use crate::error::Result;
 /// - Store and retrieve bytes at paths
 /// - Track file metadata (type, size, mode, timestamps)
 /// - Handle path normalization consistently
+/// - Leave source data, destination data, entry types, and reported usage
+///   unchanged when `write`, `copy`, or `rename` returns an error
 ///
 /// Backends do NOT need to:
 /// - Check if writing to a directory (PosixFs handles this)
@@ -135,6 +138,7 @@ pub trait FsBackend: Send + Sync {
     ///
     /// Creates file if it doesn't exist, overwrites if it does.
     /// The backend may overwrite any entry type (file, dir, symlink).
+    /// A failed replacement must leave the prior entry and usage unchanged.
     ///
     /// # Errors
     /// - Storage-specific errors
@@ -179,10 +183,14 @@ pub trait FsBackend: Send + Sync {
     /// Check if path exists.
     async fn exists(&self, path: &Path) -> Result<bool>;
 
-    /// Rename/move a path.
+    /// Rename/move a path atomically.
+    ///
+    /// An error must leave both paths and reported usage unchanged.
     async fn rename(&self, from: &Path, to: &Path) -> Result<()>;
 
-    /// Copy a file.
+    /// Copy a file with failure-atomic destination replacement.
+    ///
+    /// An error must leave the destination and reported usage unchanged.
     async fn copy(&self, from: &Path, to: &Path) -> Result<()>;
 
     /// Create a symbolic link.

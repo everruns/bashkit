@@ -380,10 +380,13 @@
 //! 1. **Root directory exists**: `exists("/")` must return `true`
 //! 2. **Path normalization**: Paths like `/.`, `/tmp/..`, etc. must resolve correctly
 //! 3. **Root is listable**: `read_dir("/")` must return the root's contents
+//! 4. **Failed mutations are atomic**: `write_file`, `copy`, and `rename` errors
+//!    must preserve entry contents, types, and reported usage
 //!
 //! Without these, commands like `cd /` and `ls /` will fail with "No such file or directory".
 //!
-//! Use [`verify_filesystem_requirements`] to test your implementation:
+//! Use [`verify_filesystem_requirements`] for the structural requirements in
+//! items 1–3. Test mutation atomicity and other security invariants separately:
 //!
 //! ```rust
 //! use bashkit::{verify_filesystem_requirements, InMemoryFs};
@@ -575,6 +578,13 @@ mod windows_containment_tests {
 /// - Can stat the root directory
 /// - Can list the root directory contents
 /// - Handles path normalization (e.g., `/.` resolves to `/`)
+///
+/// # Scope
+///
+/// This is a non-mutating structural smoke check, not a filesystem security
+/// certification. It does not validate failure atomicity, symlink behavior,
+/// quota accounting, or normalized error kinds. Custom implementations must
+/// test those parts of the [`FileSystem`] contract separately.
 ///
 /// # Errors
 ///
