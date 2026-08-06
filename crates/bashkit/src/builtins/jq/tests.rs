@@ -126,6 +126,106 @@ async fn keys_pretty_prints_array() {
     assert_eq!(result.trim(), "[\n  \"a\",\n  \"b\"\n]");
 }
 
+// jq deliberately accepts literal U+0000..U+001F bytes inside input strings.
+// This compatibility exception belongs only to jq's input boundary; output is
+// always valid JSON with the controls escaped.
+#[tokio::test]
+async fn literal_controls_inside_strings_are_escaped() {
+    let controls: String = (0u8..=0x1f).map(char::from).collect();
+    let input = format!("\"before{controls}after\"");
+    let result = run_jq_with_args(&["-c", "."], &input).await.unwrap();
+    assert_eq!(
+        result,
+        format!(
+            "{}\n",
+            serde_json::to_string(&format!("before{controls}after")).unwrap()
+        )
+    );
+}
+
+#[tokio::test]
+async fn literal_controls_preserve_adjacent_existing_escapes() {
+    let input = "\"left\\n\t\\t\rright\"";
+    let result = run_jq_with_args(&["-c", "explode"], input).await.unwrap();
+    assert_eq!(result, "[108,101,102,116,10,9,9,13,114,105,103,104,116]\n");
+}
+
+#[tokio::test]
+async fn literal_controls_work_across_concatenated_values() {
+    let result = run_jq_with_args(&["-c", "."], "\"a\nb\"{\"c\":\"d\te\"}")
+        .await
+        .unwrap();
+    assert_eq!(result, "\"a\\nb\"\n{\"c\":\"d\\te\"}\n");
+}
+
+#[tokio::test]
+async fn literal_controls_work_in_ndjson_after_escaped_quote() {
+    let result = run_jq_with_args(&["-c", "."], "\"a\\\"\tb\"\n\"c\rd\"\n")
+        .await
+        .unwrap();
+    assert_eq!(result, "\"a\\\"\\tb\"\n\"c\\rd\"\n");
+}
+
+#[tokio::test]
+async fn structural_whitespace_remains_structural() {
+    let result = run_jq_with_args(&["-c", "."], "\t1\r\n 2\n").await.unwrap();
+    assert_eq!(result, "1\n2\n");
+}
+
+#[tokio::test]
+async fn non_whitespace_control_outside_string_is_rejected() {
+    let result = run_jq_result(".", "1\u{0000}2").await.unwrap();
+    assert_eq!(result.exit_code, 5);
+    assert!(
+        result.stderr.contains("invalid JSON"),
+        "stderr={}",
+        result.stderr
+    );
+}
+
+#[tokio::test]
+async fn unterminated_string_with_control_is_rejected_deterministically() {
+    let first = run_jq_result(".", "\"unterminated\n").await.unwrap();
+    let second = run_jq_result(".", "\"unterminated\n").await.unwrap();
+    assert_eq!(first.exit_code, 5);
+    assert_eq!(first.stderr, second.stderr);
+    assert!(first.stderr.contains("unterminated string"));
+    crate::builtins::debug_leak_check::assert_no_leak(
+        &first,
+        "unterminated jq input string",
+        JQ_BANNED,
+    );
+}
+
+#[tokio::test]
+async fn literal_controls_work_for_file_and_slurpfile_inputs() {
+    let direct = run_jq_with_files(&["-c", ".", "/input.json"], &[("/input.json", "\"a\nb\"")])
+        .await
+        .unwrap();
+    assert_eq!(direct.stdout, "\"a\\nb\"\n");
+
+    let slurped = run_jq_with_files(
+        &["-nc", "--slurpfile", "data", "/input.json", "$data"],
+        &[("/input.json", "\"a\nb\"\"c\td\"")],
+    )
+    .await
+    .unwrap();
+    assert_eq!(slurped.stdout, "[\"a\\nb\",\"c\\td\"]\n");
+}
+
+#[tokio::test]
+async fn jq_argument_json_boundaries_remain_strict() {
+    let argjson = run_jq_result_with_args(&["--argjson", "x", "\"a\nb\"", "-n", "$x"], "")
+        .await
+        .unwrap();
+    assert_eq!(argjson.exit_code, 2);
+
+    let jsonargs = run_jq_result_with_args(&["-n", ".", "--jsonargs", "\"a\nb\""], "")
+        .await
+        .unwrap();
+    assert_eq!(jsonargs.exit_code, 2);
+}
+
 /// TM-DOS-093: an unbounded generator must not grow output without limit or
 /// hang the host. jaq's iterator is synchronous so the execution timeout
 /// cannot preempt it; the output-byte cap (here the 1 MB default, since the
@@ -1409,6 +1509,68 @@ mod differential {
             "exit-code mismatch for {args_label}: bashkit={}, real={}",
             bashkit.exit_code, real_code
         );
+    }
+
+    /// Prefer a direct raw-input comparison. Older jq builds reject controls
+    /// at the lexer, so fall back to equivalent escaped JSON on those versions
+    /// while retaining real jq as the filter/output oracle.
+    async fn assert_control_matches(args: &[&str], raw_input: &str, escaped_input: &str) {
+        if !real_jq_available() {
+            eprintln!("real jq not present; skipping differential test");
+            return;
+        }
+        let direct = run_real_jq(args, raw_input).unwrap();
+        let (real_out, real_code) = if direct.1 == 0 {
+            direct
+        } else {
+            run_real_jq(args, escaped_input).unwrap()
+        };
+        let bashkit = run_jq_result_with_args(args, raw_input).await.unwrap();
+        assert_eq!(bashkit.stdout, real_out);
+        assert_eq!(bashkit.exit_code, real_code);
+    }
+
+    #[tokio::test]
+    async fn diff_literal_newline_tab_and_cr() {
+        for (raw, escaped) in [
+            ("\"a\nb\"", "\"a\\nb\""),
+            ("\"a\tb\"", "\"a\\tb\""),
+            ("\"a\rb\"", "\"a\\rb\""),
+        ] {
+            assert_control_matches(&["-c", "."], raw, escaped).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn diff_all_literal_controls() {
+        let controls: String = (0u8..=0x1f).map(char::from).collect();
+        let raw = format!("\"{controls}\"");
+        let escaped = serde_json::to_string(&controls).unwrap();
+        assert_control_matches(&["-c", "."], &raw, &escaped).await;
+    }
+
+    #[tokio::test]
+    async fn diff_controls_adjacent_to_escapes_and_concatenated_values() {
+        assert_control_matches(
+            &["-c", "."],
+            "\"a\\n\tb\"\"c\r\\td\"",
+            "\"a\\n\\tb\"\"c\\r\\td\"",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn diff_control_normalization_boundary_size() {
+        let content = "x".repeat(16 * 1024);
+        let raw = format!("\"{content}\n\"");
+        let escaped = format!("\"{content}\\n\"");
+        assert_control_matches(&["-c", "length"], &raw, &escaped).await;
+    }
+
+    #[tokio::test]
+    async fn diff_malformed_quote_and_control_outside_string() {
+        assert_matches(&["-c", "."], "\"unterminated\n").await;
+        assert_matches(&["-c", "."], "1\u{0001}2").await;
     }
 
     #[tokio::test]

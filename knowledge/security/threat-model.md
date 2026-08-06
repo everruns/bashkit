@@ -1209,6 +1209,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | TM-DOS-097 | Contradictory execution-profile limits | A host supplies a profile whose single-file quota exceeds its total VFS quota, requests an AST depth above the parser hard cap, or configures a zero runtime budget and assumes the ineffective value is enforced | `ExecutionProfileBuilder::build()` validates cross-field invariants and compiled-feature support before a profile can reach `BashBuilder`; typed named profiles are valid by construction — **MITIGATED** |
 | TM-DOS-098 | Suspended host-call retention or request accumulation | An untrusted script repeatedly invokes an event-backed builtin, or the host never resumes a yielded request, retaining interpreter and request data indefinitely | The sequential interpreter can reach only one call at a time; a capacity-one channel adds backpressure; the existing command, aggregate-budget, output, and wall-clock limits remain in force; `ExecutionHandle` exclusively owns the session so dropping it releases all retained state rather than exposing a partially unwound interpreter — **MITIGATED** |
 | TM-DOS-099 | `time -f/-o` report amplification bypasses output limits | A large attacker-controlled format repeats expanding fields and writes the result to the VFS instead of stderr | Report rendering is capped by `ExecutionLimits::max_stderr_bytes` before either stderr emission or VFS write; invalid/over-limit reports do not replace an existing `-o` target — **MITIGATED** |
+| TM-DOS-100 | jq control-character normalization amplification | A jq JSON string consisting of literal controls expands sixfold when each byte becomes `\u00XX`; an unmetered compatibility copy can exhaust memory or CPU before strict parsing | The jq-only normalizer charges input-length work before its single pass, borrows unchanged input, and acquires/grows a shared live-intermediate lease before every allocation growth (`builtins/jq/input.rs`) — **MITIGATED** |
 
 ### Accepted (Low Priority)
 
@@ -1323,6 +1324,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Session-level cumulative counters | TM-ISO-005 | `SessionLimits` caps cumulative commands and `exec()` calls across the lifetime of a `Bash` instance | **MITIGATED** |
 | Per-instance memory budget | TM-ISO-006 | `MemoryLimits` capping variable count, total bytes, array entries, function count, function body bytes | **MITIGATED** |
 | jq file binding amplification | TM-DOS-062 | `MAX_FILE_VAR_REQUESTS` and `MAX_FILE_VAR_BYTES` bound `--rawfile` / `--slurpfile` globals | **MITIGATED** |
+| jq control normalization amplification | TM-DOS-100 | Single-pass work charge plus live-intermediate lease grown before allocation | **MITIGATED** |
 | Heredoc suffix re-injection CPU amplification | TM-DOS-064 | Charge re-injected heredoc rest-of-line suffix length to parser fuel | **MITIGATED** |
 
 ---

@@ -456,6 +456,13 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn literal_control_in_string_remains_invalid_json() {
+        let r = run(&["type"], Some("\"line\nbreak\""), None).await;
+        assert_eq!(r.exit_code, 1);
+        assert!(r.stderr.contains("invalid JSON"));
+    }
+
+    #[tokio::test]
     async fn test_unknown_subcommand() {
         let r = run(&["nope"], Some("{}"), None).await;
         assert_eq!(r.exit_code, 1);

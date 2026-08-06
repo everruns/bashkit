@@ -132,6 +132,10 @@ sanitization, redirect handling hardened against credential leaks, and curl's
 aggregate data/multipart request body capped at 10 MB. Repeated mixed curl
 `-d`/`--data`, `--data-raw`, `--data-binary`, and `--data-urlencode` parts retain
 command-line order; `-G`/`--get` moves their joined payload to the query string.
+The jq input boundary alone accepts literal U+0000..U+001F controls inside JSON
+strings; controls outside strings and malformed quoting remain invalid. The
+`json` builtin, serde defaults, tool JSON contracts, `--argjson`, and
+`--jsonargs` stay strict. See [jq Input Compatibility](../foundations/jq.md).
 
 ## CLI
 
