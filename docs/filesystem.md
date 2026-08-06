@@ -142,6 +142,40 @@ are visible as directories. Files and symlinks can be copied across mounts;
 cross-mount rename reports a typed cross-device error because copy-delete is not
 atomic.
 
+## Host-backed filesystem (JS)
+
+The wasm bindings accept an `fs` object, so scripts run directly against storage
+you own — a Durable Object, an OPFS handle, IndexedDB — instead of the in-memory
+VFS. Nothing is copied in or diffed back out: every read and write during the run
+is a call into your object.
+
+```js
+const bash = new Bash({ cwd: "/workspace", fs: myHost });
+const r = await bash.execute("grep -rl TODO . | head -5");
+```
+
+Seven methods are required — `read`, `write`, `mkdir`, `remove`, `stat`,
+`readDir`, `exists` — and each may return its value directly or as a `Promise`.
+`append`, `copy`, `rename`, and `chmod` are optional and synthesized from the
+required primitives when omitted. Your host implements raw storage only; POSIX
+semantics (parent-directory checks, "is a directory", symlink resolution) are
+enforced above it. Throw an `Error` carrying a `code` (`ENOENT`, `EEXIST`,
+`EACCES`, …) so bash reports the failure the way a real shell does.
+
+Two contract notes:
+
+- **`execute()` only.** A host call can suspend the interpreter, and
+  `executeSync` cannot await — it reports the suspension instead of blocking.
+- **`files` is rejected alongside `fs`.** Seeding writes through the VFS
+  synchronously, which a promise-returning host can never satisfy.
+
+The host object is the security boundary and is yours to scope (mount root,
+allowlist, read-only): paths are normalized before any host call, so traversal
+cannot select a path you did not expose, but the sandbox reaches whatever the
+object exposes. Reads and writes bypass the in-memory quotas. See
+[`@everruns/bashkit-wasm`](https://github.com/everruns/bashkit/blob/main/crates/bashkit-wasm/README.md#host-backed-filesystem)
+for the full method table and error-code list.
+
 ## Special files and symlinks
 
 - **`/dev/null`** is handled at the interpreter level (not the filesystem), so a
@@ -160,6 +194,10 @@ files:  { "/path": "content" }                 # writable in-memory text files
 mounts: [{ host_path, vfs_path?, writable? }]  # real FS (read-only by default)
 readonly_filesystem: bool                       # deny all VFS mutations after setup
 ```
+
+The wasm bindings additionally accept `fs` — an embedder-supplied filesystem
+that replaces the in-memory VFS entirely. See
+[Host-backed filesystem (JS)](#host-backed-filesystem-js) above.
 
 ## See also
 
