@@ -423,6 +423,7 @@ mod builtins;
 #[cfg(feature = "http_client")]
 mod credential;
 mod error;
+mod execution_capability;
 mod fs;
 /// Interceptor hooks for the execution pipeline.
 pub mod hooks;
@@ -471,12 +472,15 @@ pub use builtins::git::GitConfig;
 pub use builtins::ssh::{SshAllowlist, SshConfig, TrustedHostKey};
 pub use builtins::{
     BashkitContext, Builtin, BuiltinRegistry, ClapBuiltin, CommandResolver,
-    Context as BuiltinContext, ExecutionExtensions, Extension,
+    Context as BuiltinContext, Extension,
 };
 pub use clap;
 #[cfg(feature = "http_client")]
 pub use credential::Credential;
 pub use error::{Error, Result};
+pub use execution_capability::{
+    CapabilityCleanupReport, ExecutionCapability, ExecutionCapabilityError, ExecutionExtensions,
+};
 pub use fs::{
     DirEntry, FileSystem, FileSystemExt, FileType, FsBackend, FsLimitExceeded, FsLimits, FsUsage,
     InMemoryFs, LazyLoader, Metadata, MountableFs, NamespaceAccess, NamespaceFs,
@@ -690,7 +694,7 @@ impl ExecOptions {
     }
 
     /// Attach per-execution builtin extensions (request-scoped typed data read
-    /// by builtins via `ctx.execution_extension::<T>()`).
+    /// through the revocable handle returned by `ctx.execution_extension::<T>()`).
     pub fn extensions(mut self, extensions: ExecutionExtensions) -> Self {
         self.extensions = extensions;
         self
@@ -913,14 +917,21 @@ impl Bash {
         let _ = extensions.insert(builtins::PythonInprocessOptIn(self.python_inprocess_opt_in));
         #[cfg(feature = "sqlite")]
         let _ = extensions.insert(builtins::SqliteInprocessOptIn(self.sqlite_inprocess_opt_in));
+        let execution_scope = execution_capability::ExecutionScope::new();
+        extensions.bind(execution_scope);
         // Install the streaming callback for the duration of this execution, if
         // any. The guard holds a raw pointer (not a borrow), so the mutable
         // interpreter borrow is released before `exec_impl` runs and the
         // callback is cleared on drop after the await completes.
         let _stream_guard =
             output_callback.map(|cb| OutputCallbackGuard::install(&mut self.interpreter, cb));
-        let _extensions_guard = self.interpreter.scoped_execution_extensions(extensions);
-        self.exec_impl(script, invocation).await
+        let extensions_guard = self.interpreter.scoped_execution_extensions(extensions);
+        let mut result = self.exec_impl(script, invocation).await;
+        let cleanup = extensions_guard.finish();
+        if let Ok(exec_result) = &mut result {
+            exec_result.capability_cleanup = cleanup;
+        }
+        result
     }
 
     async fn exec_impl(&mut self, script: &str, invocation: Invocation) -> Result<ExecResult> {
@@ -2552,8 +2563,8 @@ impl BashBuilder {
     /// Register a custom builtin command.
     ///
     /// Custom builtins extend bashkit with domain-specific commands that can be
-    /// invoked from bash scripts. They have full access to the execution context
-    /// including arguments, environment, shell variables, and the virtual filesystem.
+    /// invoked from bash scripts. They receive the execution context including
+    /// arguments, environment, shell variables, and a request-scoped VFS view.
     ///
     /// Custom builtins can override default builtins if registered with the same name.
     ///
@@ -5423,7 +5434,7 @@ fn
             async fn execute(&self, ctx: Context<'_>) -> crate::Result<ExecResult> {
                 let value = ctx
                     .execution_extension::<String>()
-                    .cloned()
+                    .and_then(|value| value.try_with(Clone::clone).ok())
                     .unwrap_or_else(|| "missing".to_string());
                 Ok(ExecResult::ok(format!("{value}\n")))
             }

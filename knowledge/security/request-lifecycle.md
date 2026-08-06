@@ -11,10 +11,12 @@ tags:
 
 # Request Execution Lifecycle
 
-Every `Bash::exec*` call owns one `ExecutionBudget`. It is the lifecycle authority
-for the parser, interpreter descendants, embedded runtimes, network transport, and
-host callbacks. A subsystem must not create a fresh budget or retain usable request
-authority after the call returns.
+Every `Bash::exec*` call owns one `ExecutionBudget` and one revocable capability
+lease. The budget is the lifecycle authority for parser/interpreter work, embedded
+runtimes, network transport, and host callbacks. The lease gates host facilities
+that can be retained as handles, including extension values, custom-builtin VFS
+views, host-call brokers, and callback context. A subsystem must not create a fresh
+budget/lease or retain usable request authority after the call returns.
 
 ## State machine
 
@@ -24,10 +26,11 @@ authority after the call returns.
 2. **Closed** — all checks and charges fail with the fixed `request closed` reason.
 
 While active, cancellation, deadline, or quota exhaustion poisons the request. The
-first poison remains authoritative for active descendants. An infallible RAII guard
-transitions the budget to closed on success, error, timeout, cancellation, unwind, or
-teardown failure. A new `exec*` call creates a new budget; reset/reuse never reopens an
-old one. Concurrent `Bash` requests have distinct budget identities.
+first poison remains authoritative for active descendants. Infallible RAII guards
+transitions the budget to closed and the capability lease to revoked on success,
+error, timeout, cancellation, unwind, or teardown failure. A new `exec*` call creates
+a new pair; reset/reuse never reopens either member. Concurrent `Bash` requests have
+distinct identities.
 
 ## Boundary rules
 
@@ -39,6 +42,14 @@ old one. Concurrent `Bash` requests have distinct budget identities.
   resources release. Budget byte leases release on `Drop`.
 - Ignore late messages/results: a result produced after closure cannot pass the
   post-await check, and streaming callbacks are separately scoped by their drop guard.
+- Expose request facilities only through `ExecutionCapability<T>` or a scoped facade.
+  Retained handles return the fixed `execution capability revoked` error after lease
+  revocation. `BuiltinRegistry::insert_trusted` is the explicit session-lived host
+  VFS escape hatch; ordinary custom builtins remain request-scoped.
+- Revoke before restoring the interpreter's extension slot. Cleanup drains only
+  request-created capability cells (bounded by extension types and execution command
+  limits), is idempotent, and reports sanitized status/counts rather than lock or
+  callback diagnostics.
 - Normalize cancellation to `Error::Cancelled` (`execution cancelled`) and deadlines
   to `LimitExceeded::Timeout`; callback diagnostics remain sanitized at the registry.
 
@@ -63,8 +74,13 @@ synchronous host callback or VM instruction; such code must return to a checkpoi
 against Python, TypeScript, HTTP transport, and runtime tool callbacks; SQLite uses its
 VM loop because it has no host callback suspension point. `execution_budget_tests`
 covers late retained clones, repeated reuse, independent concurrent requests, and
-monotonic request identity. Existing runtime deadline tests remain the surface-specific
-evidence for VM-native timeout wording and interrupt behavior.
+monotonic request identity. `execution_capability_tests` covers positive access,
+cancellation, retained and cross-request handles, scoped VFS, trusted-host access,
+resource release, and cleanup failure/idempotence. Python's
+`test_retained_ctx_fs_is_revoked_before_the_next_request` verifies the binding exposes
+the same cross-request contract while preserving same-request lazy-provider re-entry.
+Existing runtime deadline tests remain the surface-specific evidence for VM-native
+timeout wording and interrupt behavior.
 
 ## See also
 

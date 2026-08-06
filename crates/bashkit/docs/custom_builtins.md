@@ -1,9 +1,10 @@
 # Custom Builtins
 
 Bashkit supports registering custom builtin commands to extend the shell with
-domain-specific functionality. Custom builtins have full access to the execution
-context including arguments, environment variables, shell variables, and the
-virtual filesystem.
+domain-specific functionality. Custom builtins receive an execution-scoped
+context including arguments, environment variables, shell variables, and a
+revocable virtual-filesystem view. Retaining the VFS or extension handles is
+safe: access fails deterministically after that `exec*()` completes or is cancelled.
 
 **See also:**
 - [API Documentation](https://docs.rs/bashkit) - Full API reference
@@ -95,7 +96,7 @@ impl Builtin for RequestId {
     async fn execute(&self, ctx: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {
         let req = ctx
             .execution_extension::<String>()
-            .cloned()
+            .and_then(|req| req.try_with(Clone::clone).ok())
             .unwrap_or_else(|| "missing".to_string());
         Ok(ExecResult::ok(format!("{req}\n")))
     }
@@ -246,6 +247,10 @@ still win — matching standard bash precedence.
 The registry is host-owned: not part of interpreter state, so it survives
 `exec()` calls automatically and is not serialized by `Bash::snapshot()`.
 Re-attach the handle after restoring from a snapshot.
+
+`BuiltinRegistry::insert` uses the same execution-scoped facilities as builder
+builtins. A trusted embedder that deliberately needs a retained, session-lived
+VFS handle must opt in with `insert_trusted`; do not use it for tenant/plugin code.
 
 ### Arguments
 

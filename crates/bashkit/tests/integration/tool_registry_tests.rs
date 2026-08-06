@@ -1,6 +1,6 @@
 use bashkit::{
-    Bash, ExecOptions, ExecutionExtensions, ExecutionLimits, ToolArgs, ToolCallDecision,
-    ToolCallRequest, ToolDef, ToolRegistry,
+    Bash, ExecOptions, ExecutionCapabilityError, ExecutionExtensions, ExecutionLimits, ToolArgs,
+    ToolCallDecision, ToolCallRequest, ToolDef, ToolRegistry,
 };
 use serde_json::json;
 use std::sync::{
@@ -21,6 +21,33 @@ fn orders_def() -> ToolDef {
         }))
 }
 
+#[tokio::test]
+async fn tool_callback_context_is_revoked_when_the_request_completes() {
+    let retained: Arc<Mutex<Option<ToolArgs>>> = Arc::new(Mutex::new(None));
+    let callback_retained = retained.clone();
+    let registry = ToolRegistry::builder()
+        .async_tool_fn(orders_def(), move |args| {
+            let callback_retained = callback_retained.clone();
+            async move {
+                assert_eq!(args.tenant_id().unwrap().as_deref(), Some("tenant-a"));
+                *callback_retained.lock().unwrap() = Some(args);
+                Ok("ok".to_string())
+            }
+        })
+        .build();
+    let mut bash = Bash::builder().tool_registry(registry.clone()).build();
+
+    let result = bash
+        .exec_with_options("orders.list --customer x", request("tenant-a", &registry))
+        .await
+        .unwrap();
+    assert_eq!(result.stdout, "ok");
+
+    let args = retained.lock().unwrap().take().unwrap();
+    assert_eq!(args.tenant_id(), Err(ExecutionCapabilityError::Revoked));
+    assert_eq!(args.surface(), Err(ExecutionCapabilityError::Revoked));
+}
+
 fn request(tenant: &str, registry: &ToolRegistry) -> ExecOptions {
     ExecOptions::new()
         .extensions(ExecutionExtensions::new().with(ToolCallRequest::new(tenant, registry.trace())))
@@ -35,7 +62,7 @@ async fn one_registry_dispatches_shell_python_and_typescript_with_shared_policy_
     let registry = ToolRegistry::builder()
         .tool_fn(orders_def(), move |args: &ToolArgs| {
             callback_calls.lock().unwrap().push((
-                args.tenant_id().unwrap_or_default().to_string(),
+                args.tenant_id().unwrap().unwrap_or_default(),
                 args.param_str("customer").unwrap_or_default().to_string(),
             ));
             Ok(json!({"customer": args.param_str("customer"), "orders": [1, 2]}).to_string())
@@ -154,7 +181,7 @@ async fn registry_deadline_cancels_callback_and_tenants_do_not_share_context_or_
             async move {
                 let _guard = CancelOnDrop(callback_cancelled);
                 tokio::time::sleep(Duration::from_secs(1)).await;
-                Ok(args.tenant_id().unwrap_or_default().to_string())
+                Ok(args.tenant_id().unwrap().unwrap_or_default())
             }
         })
         .build();
@@ -175,7 +202,7 @@ async fn registry_deadline_cancels_callback_and_tenants_do_not_share_context_or_
     let callback_seen = seen.clone();
     let registry = ToolRegistry::builder()
         .tool_fn(orders_def(), move |args| {
-            let tenant = args.tenant_id().unwrap_or_default().to_string();
+            let tenant = args.tenant_id().unwrap().unwrap_or_default();
             callback_seen.lock().unwrap().push(tenant.clone());
             Ok(tenant)
         })

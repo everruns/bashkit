@@ -42,6 +42,7 @@ pub mod custom_fs_tests;
 pub mod dev_null_tests;
 pub mod exec_options_tests;
 pub mod execution_budget_tests;
+pub mod execution_capability_tests;
 pub mod execution_profile_tests;
 pub mod filesystem_security_conformance_tests;
 pub mod final_env_tests;

@@ -66,6 +66,10 @@ The entire tool layer (`tool` module: `Tool` trait, `BashTool*`,
 - `output_stream()` must be called before `execute()`.
 - Final truth is `ToolOutput`, not concatenated streamed chunks.
 - `images` is empty for bashkit today.
+- Callback-owned `ToolArgs` keeps tenant/surface context behind the originating
+  execution lease. `tenant_id()` / `surface()` return
+  `ExecutionCapabilityError::Revoked` after completion or cancellation; params
+  and stdin remain ordinary caller-supplied data.
 
 ### Error rules
 

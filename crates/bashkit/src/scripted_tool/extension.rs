@@ -370,13 +370,22 @@ impl Builtin for ToolBuiltinAdapter {
             let exit_result = match parse_flags(&stripped, &self.schema) {
                 Ok(params) => {
                     if let Some(ref dr) = self.dry_run {
-                        let tool_args = ToolArgs::with_context(
-                            params,
-                            ctx.stdin.map(String::from),
-                            ctx.execution_extension::<crate::ToolCallRequest>()
-                                .map(crate::ToolCallRequest::tenant_id),
+                        let tenant_id = ctx
+                            .execution_extension::<crate::ToolCallRequest>()
+                            .and_then(|request| {
+                                request
+                                    .try_with(|request| request.tenant_id().to_string())
+                                    .ok()
+                            });
+                        let context = crate::tool_def::ToolArgsContextData::new(
+                            tenant_id,
                             ToolCallSurface::Shell,
                         );
+                        let capability = ctx
+                            .execution_capability(context)
+                            .expect("tool callback executes inside an execution scope");
+                        let tool_args =
+                            ToolArgs::with_context(params, ctx.stdin.map(String::from), capability);
                         let cb_result = match dr {
                             CallbackKind::Sync(cb) => (cb)(&tool_args),
                             CallbackKind::Async(cb) => (cb)(tool_args).await,
@@ -443,7 +452,9 @@ impl Builtin for ToolBuiltinAdapter {
                 // A cancelled/closed request must not turn into a normal tool
                 // exit merely because the registry uses a script-level result.
                 if let Some(budget) = ctx.execution_budget() {
-                    budget.check()?;
+                    budget
+                        .try_with(|budget| budget.check())
+                        .map_err(|_| crate::Error::Cancelled)??;
                 }
                 ExecResult {
                     stdout: output.stdout.into(),

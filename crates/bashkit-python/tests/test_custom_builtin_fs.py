@@ -265,20 +265,41 @@ def test_ctx_fs_nested_reentry_via_lazy_provider(factory):
         # plain file (no further Python callback), so the nested read completes.
         return "nested:" + holder["fs"].read_file("/inner.txt").decode()
 
-    def setup(ctx):
-        holder["fs"] = ctx.fs
-        return "ready\n"
-
     def trigger(ctx):
+        # Capture this invocation's handle so the lazy provider re-enters while
+        # the same execution capability remains active.
+        holder["fs"] = ctx.fs
         return ctx.fs.read_file("/lazy.txt").decode()
 
     shell = factory(
-        custom_builtins={"setup": setup, "trigger": trigger},
+        custom_builtins={"trigger": trigger},
         files={"/lazy.txt": provider, "/inner.txt": "inner-data\n"},
     )
 
-    assert shell.execute_sync("setup").exit_code == 0
     result = shell.execute_sync("trigger")
 
     assert result.exit_code == 0
     assert result.stdout == "nested:inner-data\n"
+
+
+@pytest.mark.parametrize("factory", [Bash, BashTool], ids=["bash", "bash_tool"])
+def test_retained_ctx_fs_is_revoked_before_the_next_request(factory):
+    holder = {}
+
+    def retain(ctx):
+        holder["fs"] = ctx.fs
+        return "retained\n"
+
+    def late_read(_ctx):
+        return holder["fs"].read_file("/secret.txt").decode()
+
+    shell = factory(
+        custom_builtins={"retain": retain, "late-read": late_read},
+        files={"/secret.txt": "secret\n"},
+    )
+
+    assert shell.execute_sync("retain").exit_code == 0
+    result = shell.execute_sync("late-read")
+
+    assert result.exit_code == 1
+    assert "execution capability revoked" in result.stderr

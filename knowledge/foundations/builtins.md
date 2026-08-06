@@ -38,8 +38,8 @@ as bash. Exit 127: not found; Exit 126: not executable or is a directory.
 
 `Builtin` trait (`execute(ctx)` + optional `execution_plan(ctx)`, default
 `Ok(None)`) and `Context` (args, env, variables, cwd, fs, stdin,
-feature-gated http/git clients, `pub(crate) shell: Option<ShellRef>` — None
-for custom builtins, public `execution_extension::<T>()` accessor): see
+feature-gated borrowed http/git clients, `pub(crate) shell: Option<ShellRef>` — None
+for custom builtins, and public lease-backed `execution_extension::<T>()`): see
 `crates/bashkit/src/builtins/mod.rs` / rustdoc.
 
 ### Clap-Backed Custom Builtins
@@ -81,7 +81,7 @@ enabled by `TypeScriptConfig`, `node`/`deno`/`bun`.
 instance is built. For embedders that need to register or remove builtins
 *after* construction (FFI bindings, REPLs, plugin systems),
 `BuiltinRegistry` provides a host-owned mutable registry consulted at
-command-dispatch time. API (`insert`/`remove`/`lookup`/`names`/`is_empty`):
+command-dispatch time. API (`insert`/`insert_trusted`/`remove`/`lookup`/`names`/`is_empty`):
 see `builtins/mod.rs` / rustdoc.
 
 Wired in via `BashBuilder::builtin_registry(registry)`. The handle is
@@ -104,9 +104,10 @@ the registry too.
 
 Implementation notes:
 
-- Storage is `Arc<RwLock<HashMap<String, Arc<dyn Builtin>>>>` (std only,
-  no extra deps). Lookup clones the `Arc` out of the lock, releasing it
-  before execution.
+- Storage is an `Arc<RwLock<HashMap<...>>>` of builtin plus access mode (std
+  only, no extra deps). Lookup clones the entry out of the lock before execution.
+- `insert` is execution-scoped. `insert_trusted` is the explicit escape hatch
+  for trusted host integrations that intentionally retain the raw VFS across calls.
 - `Interpreter::builtins` was migrated from `HashMap<String, Box<dyn Builtin>>`
   to `HashMap<String, Arc<dyn Builtin>>` so registered and host-registry
   paths share one execution helper (`execute_builtin_arc`).
@@ -144,6 +145,8 @@ Consequences to keep in mind:
   script. Use `BashBuilder::builtin` to override one.
 - `resolve` is called for every unresolved command, so it must be cheap;
   cache rather than probing the filesystem per call.
+- Resolver-provided builtins receive the same execution-scoped VFS lease as
+  builder and ordinary registry builtins.
 - The `$PATH` search consumes the pipeline stdin, so the interpreter clones it
   for the resolver **only when a resolver is installed** — the common path does
   not pay for the clone.
@@ -151,8 +154,9 @@ Consequences to keep in mind:
 ### Execution Extensions
 
 `Bash::exec_with_extensions()` and `Bash::exec_streaming_with_extensions()`
-accept a typed, per-call extension bag. Builtins read values from it via
-`ctx.execution_extension::<T>()`.
+accept a typed, per-call extension bag. Builtins receive an
+`ExecutionCapability<T>` via `ctx.execution_extension::<T>()` and access it
+through `try_with`; retained handles fail with `ExecutionCapabilityError::Revoked`.
 
 Use this for request-scoped data that is not shell state: tracing/request IDs,
 auth or tenant context, host-language runtime sessions (Python/JS callback
@@ -160,9 +164,15 @@ bridges), metrics/audit sinks for one execution.
 
 Rules:
 
-- Extensions live for exactly one `exec*()` call
-- Builtins may read them but must not retain references beyond execution
-- Long-lived builtin registrations must not store request-scoped data themselves
+- One lease covers extension values, scoped VFS handles, host-call brokers, and
+  tool-callback context.
+- Completion, timeout, or dropped execution futures revoke the lease before the
+  interpreter restores its prior request state.
+- Cleanup is idempotent and bounded; `ExecResult::capability_cleanup` and retained
+  handles expose only a failure count, never poisoned-lock or host diagnostics.
+- Borrowed HTTP/Git/SSH clients were already lifetime-scoped and remain borrowed;
+  no parallel wrapper is added for facilities safe Rust cannot retain.
+- Long-lived registrations may retain capability handles, but late access fails.
 
 ### Shell State Access (ShellRef)
 

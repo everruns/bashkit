@@ -138,10 +138,12 @@ impl Builtin for Yq {
         }
         jq_args.push(args.filter.clone());
 
-        let max_output = ctx
-            .execution_extension::<ExecutionLimits>()
-            .map(|limits| limits.max_stdout_bytes)
-            .unwrap_or_else(|| ExecutionLimits::default().max_stdout_bytes);
+        let max_output = match ctx.execution_extension::<ExecutionLimits>() {
+            Some(limits) => limits
+                .try_with(|limits| limits.max_stdout_bytes)
+                .map_err(|_| crate::Error::Cancelled)?,
+            None => ExecutionLimits::default().max_stdout_bytes,
+        };
         let fs = ctx.fs.clone();
         let cwd = ctx.cwd.clone();
         let inplace_path = if args.inplace {

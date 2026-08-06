@@ -4006,7 +4006,11 @@ const RG_COLOR_MATCH_EXTRA_BYTES_LIMIT: usize = 64 * 1024;
 
 fn rg_output_limit(ctx: &Context<'_>) -> usize {
     ctx.execution_extension::<ExecutionLimits>()
-        .map(|limits| limits.max_stdout_bytes.saturating_add(1))
+        .and_then(|limits| {
+            limits
+                .try_with(|limits| limits.max_stdout_bytes.saturating_add(1))
+                .ok()
+        })
         .unwrap_or_else(|| {
             ExecutionLimits::default()
                 .max_stdout_bytes
@@ -5310,7 +5314,9 @@ impl Builtin for Rg {
             && (opts.paths.is_empty()
                 || has_directory_path(&*ctx.fs, ctx.cwd, &opts.paths, opts.follow_symlinks).await);
 
-        let execution_budget = ctx.execution_budget().cloned();
+        let execution_budget = ctx
+            .execution_budget()
+            .and_then(|budget| budget.try_with(Clone::clone).ok());
         let collected_inputs = match collect_rg_inputs(ctx, &opts).await {
             Ok(inputs) => inputs,
             Err(result) => return Ok(result),

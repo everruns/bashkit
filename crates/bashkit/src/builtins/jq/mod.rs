@@ -350,7 +350,7 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
     // periodically so a runaway filter aborts instead of wedging the host.
     let max_output_bytes = ctx
         .execution_extension::<ExecutionLimits>()
-        .map(|l| l.max_stdout_bytes)
+        .and_then(|limits| limits.try_with(|limits| limits.max_stdout_bytes).ok())
         .unwrap_or_else(|| ExecutionLimits::default().max_stdout_bytes);
     let deadline = ctx.execution_extension::<ExecutionDeadline>();
     let mut values_emitted: usize = 0;
@@ -432,7 +432,11 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
                     }
                     values_emitted += 1;
                     if values_emitted.is_multiple_of(4096)
-                        && deadline.is_some_and(ExecutionDeadline::is_expired)
+                        && deadline.as_ref().is_some_and(|deadline| {
+                            deadline
+                                .try_with(ExecutionDeadline::is_expired)
+                                .unwrap_or(true)
+                        })
                     {
                         return Ok(ExecResult::err("jq: execution timed out\n".to_string(), 5));
                     }
@@ -464,7 +468,15 @@ fn parse_jq_json_stream(
     ctx: &Context<'_>,
     input: &str,
 ) -> Result<std::result::Result<Vec<JqJson>, String>> {
-    let normalized = match input::normalize(ctx.execution_budget(), input) {
+    let execution_budget = ctx
+        .execution_budget()
+        .map(|budget| {
+            budget
+                .try_with(Clone::clone)
+                .map_err(|_| crate::Error::Cancelled)
+        })
+        .transpose()?;
+    let normalized = match input::normalize(execution_budget.as_ref(), input) {
         Ok(normalized) => normalized,
         Err(input::NormalizeError::InvalidJson(message)) => return Ok(Err(message)),
         Err(input::NormalizeError::Resource(error)) => return Err(error),

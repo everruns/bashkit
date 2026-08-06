@@ -562,10 +562,12 @@ impl Builtin for Awk {
         let program = parser.parse()?;
 
         let mut interp = AwkInterpreter::new();
-        interp.execution_budget = ctx.execution_budget().cloned();
+        interp.execution_budget = ctx
+            .execution_budget()
+            .and_then(|budget| budget.try_with(Clone::clone).ok());
         interp.max_loop_iterations = ctx
             .execution_extension::<ExecutionLimits>()
-            .map(|limits| limits.max_loop_iterations)
+            .and_then(|limits| limits.try_with(|limits| limits.max_loop_iterations).ok())
             .unwrap_or_else(|| ExecutionLimits::default().max_loop_iterations);
         interp.functions = program.functions.clone();
         interp.state.fs = Self::process_escape_sequences(&field_sep);

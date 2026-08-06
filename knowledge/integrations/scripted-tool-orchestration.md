@@ -133,7 +133,7 @@ Python callbacks (sync and async) automatically see `contextvars.ContextVar` val
 1. Each Python surface owns one long-lived callback engine holding reusable machinery only: `ctx.run(...)` callback entry and one cached private asyncio loop for sync fallback.
 2. Each `execute()` / `execute_sync()` call creates a fresh callback session snapshotting the caller's `contextvars` state.
 3. `execute()` also captures the caller's active asyncio loop via `TaskLocals`, so async callbacks schedule back onto that loop.
-4. `Bash` / `BashTool` pass the callback session through bashkit's generic execution extensions, so persistent builtin adapters resolve request-scoped callback state without mutating shared runtime state.
+4. `Bash` / `BashTool` pass callback context through lease-backed execution extensions, so persistent builtin adapters resolve request state without mutating shared runtime state and retained callback arguments fail after request revocation.
 5. Sync callbacks invoke via `ctx.run(fn, params, stdin)`.
 6. Async callbacks are created under `ctx.run(...)`; when run on the caller loop, the session owns the spawned Python tasks so cancellation only affects that execution's callbacks.
 7. `execute_sync()` has no caller-owned loop, so async callbacks fall back to the engine's private loop on the worker thread. Sync support preserved, but loop-bound caller resources only work with `await execute()`.

@@ -3963,7 +3963,7 @@ impl PyCustomBuiltinAdapter {
 #[async_trait]
 impl Builtin for PyCustomBuiltinAdapter {
     async fn execute(&self, ctx: BuiltinContext<'_>) -> bashkit::Result<RustExecResult> {
-        let session = ctx.execution_extension::<Arc<PyCallbackSession>>().cloned();
+        let session = ctx.execution_extension::<Arc<PyCallbackSession>>();
         let builtin_arg = Python::attach(|py| -> Result<Py<PyAny>, String> {
             let builtin_arg = make_py_builtin_context(py, &self.name, &ctx, &self.rt)
                 .map_err(|e| format!("{}: {}", self.name, e))?
@@ -3974,27 +3974,34 @@ impl Builtin for PyCustomBuiltinAdapter {
         });
         let callback_result = match builtin_arg {
             Ok(builtin_arg) if self.is_async => match session {
-                Some(session) => {
-                    call_python_callback_async(
-                        session,
-                        &self.name,
-                        &self.callback,
-                        vec![builtin_arg],
-                    )
-                    .await
-                }
+                Some(session) => match session.try_with(Clone::clone) {
+                    Ok(callback_session) => session
+                        .run(call_python_callback_async(
+                            callback_session,
+                            &self.name,
+                            &self.callback,
+                            vec![builtin_arg],
+                        ))
+                        .await
+                        .unwrap_or_else(|error| Err(format!("{}: {error}", self.name))),
+                    Err(error) => Err(format!("{}: {error}", self.name)),
+                },
                 None => Err(format!("{}: missing Python callback session", self.name)),
             },
             Ok(builtin_arg) => match session {
-                Some(session) => Python::attach(|py| {
-                    call_python_callback_sync(
-                        py,
-                        session.as_ref(),
-                        &self.name,
-                        &self.callback,
-                        vec![builtin_arg],
-                    )
-                }),
+                Some(session) => session
+                    .try_with(|session| {
+                        Python::attach(|py| {
+                            call_python_callback_sync(
+                                py,
+                                session.as_ref(),
+                                &self.name,
+                                &self.callback,
+                                vec![builtin_arg],
+                            )
+                        })
+                    })
+                    .unwrap_or_else(|error| Err(format!("{}: {error}", self.name))),
                 None => Err(format!("{}: missing Python callback session", self.name)),
             },
             Err(err) => Err(err),
