@@ -74,6 +74,23 @@ mod resource_exhaustion {
         assert_eq!(result.stdout.trim(), "ok");
     }
 
+    /// TM-DOS-100: archive growth must consume live bytes before allocation.
+    #[tokio::test]
+    async fn archive_growth_is_admitted_by_shared_live_budget() {
+        let fs = Arc::new(InMemoryFs::new());
+        fs.write_file(Path::new("/input"), &vec![b'x'; 1024])
+            .await
+            .unwrap();
+        let limits = ExecutionLimits::new().max_live_intermediate_bytes(2_500);
+        let mut bash = Bash::builder().fs(fs.clone()).limits(limits).build();
+
+        let result = bash.exec("tar -cf /out.tar /input").await;
+
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("live intermediate bytes"), "{error}");
+        assert!(!fs.exists(Path::new("/out.tar")).await.unwrap());
+    }
+
     /// TM-DOS-063: Negative fd vars must be rejected and must not bypass fd limits.
     #[tokio::test]
     async fn fd_limit_rejects_negative_fd_var_output() {
