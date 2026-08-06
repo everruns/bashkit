@@ -204,6 +204,20 @@ explicitly as a strict parity gate. Tests marked with `### bash_diff` are
 excluded from comparison. Tests marked with `### skip` are excluded from both
 spec tests and comparison.
 
+### yq compatibility and fuzzing
+
+The yq suite keeps a portable locked corpus for the jq-compatible mikefarah/yq
+surface and replays the same cases against a real mikefarah/yq binary when one
+is available. Set `MIKEFARAH_YQ=/path/to/yq` to make the live oracle explicit;
+the locked cases always run, so CI does not silently lose all compatibility
+coverage when the external tool is absent.
+
+`yq_fuzz` varies YAML/JSON input, output format, jq expressions, and stdin versus
+in-place execution. It must invoke `yq` directly—the removed legacy `yaml`
+helper is not a valid fuzz oracle. The proptest layer pairs arbitrary YAML and
+arbitrary filter text to enforce panic, diagnostic, host-path, and Debug-shape
+invariants at the parser/evaluator boundary.
+
 ## Quarterly Competitor Regressions
 
 Behavior fixes imported from peer shell interpreters live as checked-in JSON

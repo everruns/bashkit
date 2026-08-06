@@ -375,10 +375,14 @@ proptest! {
         }));
     }
 
-    /// yq with arbitrary YAML input must not panic or leak parser internals.
+    /// yq with arbitrary YAML and filter input must not panic or leak parser
+    /// or evaluator internals at the format/evaluator composition boundary.
     #[cfg(feature = "jq")]
     #[test]
-    fn yq_arbitrary_yaml_no_leak(input in arbitrary_tool_arg()) {
+    fn yq_arbitrary_yaml_and_filter_no_leak(
+        input in arbitrary_tool_arg(),
+        filter in arbitrary_tool_arg(),
+    ) {
         thread_local! {
             static RT: tokio::runtime::Runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -393,12 +397,13 @@ proptest! {
                 .max_stderr_bytes(4096)
                 .timeout(Duration::from_millis(200));
             let mut bash = Bash::builder().limits(limits).build();
-            let escaped = input.replace('\'', "'\\''");
-            let script = format!("printf '%s' '{escaped}' | yq '.'");
+            let escaped_input = input.replace('\'', "'\\''");
+            let escaped_filter = filter.replace('\'', "'\\''");
+            let script = format!("printf '%s' '{escaped_input}' | yq '{escaped_filter}'");
             let result = bash.exec(&script).await.unwrap_or_default();
             assert_fuzz_invariants(
                 &result,
-                "yq_arbitrary_yaml",
+                "yq_arbitrary_yaml_and_filter",
                 &["serde_yaml_ng::", "Mapping {", "TaggedValue {"],
             );
         }));

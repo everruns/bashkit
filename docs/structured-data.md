@@ -43,7 +43,8 @@ echo '{"a":1}'     | json format        # pretty-print
 
 Use jq-style expressions over YAML or JSON. The `jq` Cargo feature enables it.
 YAML mapping keys are emitted in deterministic sorted order; source order,
-comments, styles, and anchors are not preserved.
+comments, styles, and anchors are not preserved. Custom tags, non-string keys,
+and non-finite numbers fail closed at the JSON-value boundary.
 
 ```bash
 yq '.server.port' config.yml
