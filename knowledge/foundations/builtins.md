@@ -27,7 +27,8 @@ genuinely mean help/version handle them directly in `execute()`.
 
 ### Command Dispatch Order
 
-functions → special commands → builtins → path execution → $PATH search → "command not found"
+functions → special commands → builtins → path execution → $PATH search →
+`CommandResolver` → "command not found"
 
 Scripts containing `/` are resolved against VFS. Commands without `/` are
 searched in `$PATH` directories. Shebang lines are stripped; content executed
@@ -94,6 +95,7 @@ Command-resolution order (see `Interpreter::dispatch_command`):
 3. **Host registry** (`BuiltinRegistry::lookup`)
 4. Baked-in + builder-registered builtins
 5. Script execution by path / `$PATH` search
+6. `CommandResolver::resolve` (last chance, see below)
 
 So registry entries can override baked-in commands (e.g. wrap `cat` with
 tracing) but shell functions still win — matching standard bash
@@ -112,6 +114,39 @@ Implementation notes:
   `reset_transient_state` leaves it untouched and snapshots do not
   serialize it. Restoring from a snapshot requires re-attaching the
   registry handle.
+
+### CommandResolver — Last-Chance Name Resolution
+
+`BuiltinRegistry` answers "which names are registered" from a map fixed before
+the name is known. `CommandResolver` is asked *about a specific name*, after
+every other route has missed and immediately before the 127 path, so an
+embedder bridging an open-ended command space (host executables, a remote tool
+catalog) does not have to enumerate it up front.
+
+```rust
+pub trait CommandResolver: Send + Sync {
+    fn resolve(&self, name: &str) -> Option<Arc<dyn Builtin>>;
+}
+```
+
+Decision: resolvers return a `Builtin` rather than executing directly. The
+resolved builtin runs through `execute_builtin_arc` — the same path as every
+other builtin — so `before_tool` fires with the resolved name and can veto it,
+`catch_unwind` still contains panics, and stdin/redirects behave identically. A
+bespoke execution path would have to re-earn all of that.
+
+Consequences to keep in mind:
+
+- Resolver-provided names are **not enumerable**: they do not appear in
+  `Bash::builtin_names()` or in `command not found` suggestions. Security
+  implications are in `../integrations/script-analysis.md`.
+- Being last, a resolver can never shadow a function, builtin, or `$PATH`
+  script. Use `BashBuilder::builtin` to override one.
+- `resolve` is called for every unresolved command, so it must be cheap;
+  cache rather than probing the filesystem per call.
+- The `$PATH` search consumes the pipeline stdin, so the interpreter clones it
+  for the resolver **only when a resolver is installed** — the common path does
+  not pay for the clone.
 
 ### Execution Extensions
 

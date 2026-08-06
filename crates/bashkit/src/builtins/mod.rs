@@ -387,6 +387,63 @@ impl BuiltinRegistry {
     }
 }
 
+/// Resolve a command name to a builtin at dispatch time.
+///
+/// [`BuiltinRegistry`] answers "which names are registered" from a map fixed
+/// before the name is known. A resolver is asked *about a specific name*, after
+/// every other dispatch route has missed and immediately before the 127
+/// "command not found" path — so an embedder can decide at runtime, per name,
+/// without enumerating the set in advance.
+///
+/// Decision: resolvers return a [`Builtin`] rather than executing directly.
+/// The resolved builtin runs through the same dispatch path as every other
+/// builtin, so `before_tool` hooks fire with the resolved name and can veto it,
+/// `catch_unwind` still contains panics, and redirects and stdin behave
+/// identically. A bespoke execution path would have to re-earn all of that.
+///
+/// Returning `None` falls through to the normal `command not found` error.
+///
+/// # Security
+///
+/// A resolver is embedder-supplied host code, exactly like a builtin passed to
+/// [`BashBuilder::builtin`](crate::BashBuilder::builtin) — it grants no
+/// capability the embedder did not already have. What it *does* change is that
+/// the set of names reaching host code stops being enumerable in advance, so
+/// `Bash::builtin_names()` no longer bounds it. `before_tool` remains the
+/// enforcement backstop; see `knowledge/integrations/script-analysis.md`.
+///
+/// # Example
+///
+/// ```
+/// use bashkit::{Builtin, BuiltinContext, CommandResolver, ExecResult, async_trait};
+/// use std::sync::Arc;
+///
+/// struct Echoer(String);
+///
+/// #[async_trait]
+/// impl Builtin for Echoer {
+///     async fn execute(&self, _ctx: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {
+///         Ok(ExecResult::ok(format!("ran {}\n", self.0)))
+///     }
+/// }
+///
+/// struct AnyToolResolver;
+///
+/// impl CommandResolver for AnyToolResolver {
+///     fn resolve(&self, name: &str) -> Option<Arc<dyn Builtin>> {
+///         name.starts_with("tool-").then(|| Arc::new(Echoer(name.into())) as Arc<dyn Builtin>)
+///     }
+/// }
+/// ```
+pub trait CommandResolver: Send + Sync {
+    /// Return a builtin to run for `name`, or `None` to fall through to
+    /// `command not found`.
+    ///
+    /// Called on every unresolved command, so keep it cheap — cache rather
+    /// than probing the filesystem on each call.
+    fn resolve(&self, name: &str) -> Option<Arc<dyn Builtin>>;
+}
+
 /// Typed, per-execution data exposed to builtin implementations.
 ///
 /// This is intentionally separate from shell state: extensions live for one

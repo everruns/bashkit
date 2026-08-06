@@ -1062,6 +1062,10 @@ pub struct Interpreter {
     /// override baked-in commands. Survives `reset_transient_state` because
     /// it lives behind an `Arc<RwLock>` shared with the embedder.
     host_builtins: Option<crate::builtins::BuiltinRegistry>,
+    /// Optional last-chance name resolver. Consulted only after every other
+    /// dispatch route has missed, immediately before `command not found`, so
+    /// it can never shadow a function, builtin, or `$PATH` script.
+    command_resolver: Option<Arc<dyn crate::builtins::CommandResolver>>,
     /// Call stack for local variable scoping
     call_stack: Vec<CallFrame>,
     /// Source file stack for BASH_SOURCE array
@@ -1537,6 +1541,7 @@ impl Interpreter {
             last_exit_code: 0,
             builtins,
             host_builtins,
+            command_resolver: None,
             call_stack: Vec::new(),
             bash_source_stack: Vec::new(),
             limits: ExecutionLimits::default(),
@@ -1955,6 +1960,14 @@ impl Interpreter {
     /// Set an environment variable.
     pub fn set_env(&mut self, key: &str, value: &str) {
         self.env.insert(key.to_string(), value.to_string());
+    }
+
+    /// Install the last-chance command resolver (public API for builder).
+    pub(crate) fn set_command_resolver(
+        &mut self,
+        resolver: Arc<dyn crate::builtins::CommandResolver>,
+    ) {
+        self.command_resolver = Some(resolver);
     }
 
     /// Set a shell variable (public API for builder).
@@ -6357,6 +6370,15 @@ impl Interpreter {
                     .await;
             }
 
+            // The `$PATH` search consumes `stdin`, so keep a copy for the
+            // resolver — but only when one is installed, so the common path
+            // does not pay to clone piped input.
+            let resolver_stdin = self
+                .command_resolver
+                .is_some()
+                .then(|| stdin.clone())
+                .flatten();
+
             // $PATH search
             if !self.shell_profile.is_logic_only()
                 && let Some(result) = self
@@ -6364,6 +6386,25 @@ impl Interpreter {
                     .await?
             {
                 return Ok(result);
+            }
+
+            // Last-chance resolver. Dispatches through `execute_builtin_arc`
+            // like every other builtin, so `before_tool` fires with the
+            // resolved name and can veto it.
+            if let Some(builtin) = self
+                .command_resolver
+                .as_ref()
+                .and_then(|resolver| resolver.resolve(name))
+            {
+                return self
+                    .execute_builtin_arc(
+                        name,
+                        builtin,
+                        &args,
+                        resolver_stdin.as_ref(),
+                        &command.redirects,
+                    )
+                    .await;
             }
 
             // Command not found
