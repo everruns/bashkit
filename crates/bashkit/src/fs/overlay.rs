@@ -477,7 +477,7 @@ impl FileSystem for OverlayFs {
         // THREAT[TM-DOS-039]: Validate path before use
         self.limits
             .validate_path(path)
-            .map_err(|e| IoError::other(e.to_string()))?;
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
         let path = Self::normalize_path(path);
 
         // Check for whiteout (deleted file)
@@ -498,7 +498,7 @@ impl FileSystem for OverlayFs {
         // THREAT[TM-DOS-012, TM-DOS-013, TM-DOS-015]: Validate path before use
         self.limits
             .validate_path(path)
-            .map_err(|e| IoError::other(e.to_string()))?;
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
 
         let path = Self::normalize_path(path);
 
@@ -551,7 +551,7 @@ impl FileSystem for OverlayFs {
         // THREAT[TM-DOS-012, TM-DOS-013, TM-DOS-015]: Validate path before use
         self.limits
             .validate_path(path)
-            .map_err(|e| IoError::other(e.to_string()))?;
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
 
         let path = Self::normalize_path(path);
 
@@ -604,7 +604,7 @@ impl FileSystem for OverlayFs {
         // THREAT[TM-DOS-012, TM-DOS-013, TM-DOS-015]: Validate path before use
         self.limits
             .validate_path(path)
-            .map_err(|e| IoError::other(e.to_string()))?;
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
 
         let path = Self::normalize_path(path);
 
@@ -623,7 +623,7 @@ impl FileSystem for OverlayFs {
         // THREAT[TM-DOS-039]: Validate path before use
         self.limits
             .validate_path(path)
-            .map_err(|e| IoError::other(e.to_string()))?;
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
         let path = Self::normalize_path(path);
 
         // Check if exists in either layer
@@ -672,7 +672,7 @@ impl FileSystem for OverlayFs {
         // THREAT[TM-DOS-039]: Validate path before use
         self.limits
             .validate_path(path)
-            .map_err(|e| IoError::other(e.to_string()))?;
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
         let path = Self::normalize_path(path);
 
         // Check for whiteout
@@ -693,7 +693,7 @@ impl FileSystem for OverlayFs {
         // THREAT[TM-DOS-039]: Validate path before use
         self.limits
             .validate_path(path)
-            .map_err(|e| IoError::other(e.to_string()))?;
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
         let path = Self::normalize_path(path);
 
         // Check for whiteout
@@ -755,7 +755,7 @@ impl FileSystem for OverlayFs {
         // THREAT[TM-DOS-039]: Validate path before use
         self.limits
             .validate_path(path)
-            .map_err(|e| IoError::other(e.to_string()))?;
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
         let path = Self::normalize_path(path);
 
         // Check for whiteout
@@ -776,17 +776,134 @@ impl FileSystem for OverlayFs {
         // THREAT[TM-DOS-039]: Validate both paths before use
         self.limits
             .validate_path(from)
-            .map_err(|e| IoError::other(e.to_string()))?;
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
         self.limits
             .validate_path(to)
-            .map_err(|e| IoError::other(e.to_string()))?;
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
         let from = Self::normalize_path(from);
         let to = Self::normalize_path(to);
+
+        let meta = self.stat(&from).await?;
+        if meta.file_type == FileType::Directory {
+            if to.starts_with(&from) {
+                return Err(IoError::new(
+                    ErrorKind::InvalidInput,
+                    "cannot move a directory into itself",
+                )
+                .into());
+            }
+            if let Some(parent) = to.parent() {
+                let parent_meta = self
+                    .stat(parent)
+                    .await
+                    .map_err(|_| IoError::new(ErrorKind::NotFound, "parent directory not found"))?;
+                if !parent_meta.file_type.is_dir() {
+                    return Err(
+                        IoError::new(ErrorKind::NotFound, "parent directory not found").into(),
+                    );
+                }
+            }
+            if let Ok(destination) = self.stat(&to).await
+                && (!destination.file_type.is_dir() || !self.read_dir(&to).await?.is_empty())
+            {
+                return Err(IoError::other("directory not empty").into());
+            }
+
+            enum CapturedEntry {
+                Directory(PathBuf, u32),
+                File(PathBuf, Vec<u8>, u32),
+                Symlink(PathBuf, PathBuf, u32),
+                Fifo(PathBuf, Vec<u8>, u32),
+            }
+
+            // THREAT[TM-FS-014]: Read the complete source before mutation,
+            // then retain snapshots of every overlay state component so an
+            // unexpected apply failure can restore the exact prior view.
+            let mut captured = Vec::new();
+            let mut pending = vec![(from.clone(), PathBuf::new())];
+            while let Some((path, relative)) = pending.pop() {
+                let metadata = self.stat(&path).await?;
+                match metadata.file_type {
+                    FileType::Directory => {
+                        captured.push(CapturedEntry::Directory(relative.clone(), metadata.mode));
+                        for entry in self.read_dir(&path).await? {
+                            pending.push((path.join(&entry.name), relative.join(&entry.name)));
+                        }
+                    }
+                    FileType::File => captured.push(CapturedEntry::File(
+                        relative,
+                        self.read_file(&path).await?,
+                        metadata.mode,
+                    )),
+                    FileType::Symlink => captured.push(CapturedEntry::Symlink(
+                        relative,
+                        self.read_link(&path).await?,
+                        metadata.mode,
+                    )),
+                    FileType::Fifo => captured.push(CapturedEntry::Fifo(
+                        relative,
+                        self.read_file(&path).await?,
+                        metadata.mode,
+                    )),
+                }
+            }
+            captured.sort_by_key(|entry| match entry {
+                CapturedEntry::Directory(path, _)
+                | CapturedEntry::File(path, _, _)
+                | CapturedEntry::Symlink(path, _, _)
+                | CapturedEntry::Fifo(path, _, _) => path.components().count(),
+            });
+
+            let upper_before = self.upper.snapshot();
+            let whiteouts_before = self.whiteouts.read().unwrap().clone();
+            let hidden_before = self.lower_hidden.read().unwrap().clone();
+            let hidden_paths_before = self.lower_hidden_paths.read().unwrap().clone();
+            let destination_exists = self.exists(&to).await?;
+            let result: Result<()> = async {
+                self.remove(&from, true).await?;
+                if destination_exists {
+                    self.remove(&to, true).await?;
+                }
+                for entry in captured {
+                    match entry {
+                        CapturedEntry::Directory(path, mode) => {
+                            let path = to.join(path);
+                            self.mkdir(&path, true).await?;
+                            self.chmod(&path, mode).await?;
+                        }
+                        CapturedEntry::File(path, content, mode) => {
+                            let path = to.join(path);
+                            self.write_file(&path, &content).await?;
+                            self.chmod(&path, mode).await?;
+                        }
+                        CapturedEntry::Symlink(path, target, mode) => {
+                            let path = to.join(path);
+                            self.symlink(&target, &path).await?;
+                            self.chmod(&path, mode).await?;
+                        }
+                        CapturedEntry::Fifo(path, content, mode) => {
+                            let path = to.join(path);
+                            self.mkfifo(&path, mode).await?;
+                            self.append_file(&path, &content).await?;
+                        }
+                    }
+                }
+                Ok(())
+            }
+            .await;
+            if let Err(error) = result {
+                self.upper.restore(&upper_before)?;
+                *self.whiteouts.write().unwrap() = whiteouts_before;
+                *self.lower_hidden.write().unwrap() = hidden_before;
+                *self.lower_hidden_paths.write().unwrap() = hidden_paths_before;
+                return Err(error);
+            }
+            return Ok(());
+        }
 
         // THREAT[TM-ESC-002]: Check if source is a symlink first.
         // Symlinks must be moved as symlinks, not dereferenced via read_file
         // (which would fail since InMemoryFs intentionally doesn't follow them).
-        let meta = self.stat(&from).await?;
         if meta.file_type == FileType::Symlink {
             let target = self.read_link(&from).await?;
             self.check_write_limits(0)?;
@@ -808,10 +925,10 @@ impl FileSystem for OverlayFs {
         // THREAT[TM-DOS-039]: Validate both paths before use
         self.limits
             .validate_path(from)
-            .map_err(|e| IoError::other(e.to_string()))?;
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
         self.limits
             .validate_path(to)
-            .map_err(|e| IoError::other(e.to_string()))?;
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
         let from = Self::normalize_path(from);
         let to = Self::normalize_path(to);
 
@@ -833,7 +950,7 @@ impl FileSystem for OverlayFs {
         // THREAT[TM-DOS-045]: Validate path and enforce limits like other write methods
         self.limits
             .validate_path(link)
-            .map_err(|e| IoError::other(e.to_string()))?;
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
 
         let link = Self::normalize_path(link);
 
@@ -851,7 +968,7 @@ impl FileSystem for OverlayFs {
         // THREAT[TM-DOS-039]: Validate path before use
         self.limits
             .validate_path(path)
-            .map_err(|e| IoError::other(e.to_string()))?;
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
         let path = Self::normalize_path(path);
 
         // Check for whiteout
@@ -872,7 +989,7 @@ impl FileSystem for OverlayFs {
         // THREAT[TM-DOS-039]: Validate path before use
         self.limits
             .validate_path(path)
-            .map_err(|e| IoError::other(e.to_string()))?;
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
         let path = Self::normalize_path(path);
 
         // Check for whiteout
@@ -922,7 +1039,7 @@ impl FileSystem for OverlayFs {
     async fn set_modified_time(&self, path: &Path, time: SystemTime) -> Result<()> {
         self.limits
             .validate_path(path)
-            .map_err(|e| IoError::other(e.to_string()))?;
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
         let path = Self::normalize_path(path);
 
         if self.is_whiteout(&path) {

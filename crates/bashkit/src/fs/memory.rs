@@ -558,7 +558,7 @@ impl InMemoryFs {
         // Check single file size limit
         self.limits
             .check_file_size(new_size as u64)
-            .map_err(|e| IoError::other(e.to_string()))?;
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
 
         // Calculate current total and what the new total would be
         let mut current_total = 0u64;
@@ -591,7 +591,7 @@ impl InMemoryFs {
         if is_new_file {
             self.limits
                 .check_file_count(current_file_count)
-                .map_err(|e| IoError::other(e.to_string()))?;
+                .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
         }
 
         // Check total bytes limit
@@ -759,11 +759,11 @@ impl InMemoryFs {
         for entry in &snapshot.entries {
             self.limits
                 .validate_path(&entry.path)
-                .map_err(|e| IoError::other(e.to_string()))?;
+                .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
             if let VfsEntryKind::File { content } = &entry.kind {
                 self.limits
                     .check_file_size(content.len() as u64)
-                    .map_err(|e| IoError::other(e.to_string()))?;
+                    .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
                 total_bytes += content.len() as u64;
             }
             if Self::snapshot_entry_counts_toward_file_count(&entry.kind) {
@@ -776,7 +776,7 @@ impl InMemoryFs {
         }
         self.limits
             .check_final_file_count(file_count)
-            .map_err(|e| IoError::other(e.to_string()))?;
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
 
         let mut entries = self.entries.write().unwrap();
         entries.clear();
@@ -1089,7 +1089,7 @@ impl FileSystem for InMemoryFs {
         // THREAT[TM-DOS-012, TM-DOS-013, TM-DOS-015]: Validate path before use
         self.limits
             .validate_path(path)
-            .map_err(|e| IoError::other(e.to_string()))?;
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
 
         // Fail point: simulate read failures
         #[cfg(feature = "failpoints")]
@@ -1179,7 +1179,7 @@ impl FileSystem for InMemoryFs {
         // THREAT[TM-DOS-012, TM-DOS-013, TM-DOS-015]: Validate path before use
         self.limits
             .validate_path(path)
-            .map_err(|e| IoError::other(e.to_string()))?;
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
 
         // Fail point: simulate write failures
         #[cfg(feature = "failpoints")]
@@ -1270,7 +1270,7 @@ impl FileSystem for InMemoryFs {
         // THREAT[TM-DOS-012, TM-DOS-013, TM-DOS-015]: Validate path before use
         self.limits
             .validate_path(path)
-            .map_err(|e| IoError::other(e.to_string()))?;
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
 
         let path = Self::normalize_path(path);
 
@@ -1357,7 +1357,7 @@ impl FileSystem for InMemoryFs {
         // Check per-file size limit
         self.limits
             .check_file_size(new_file_size as u64)
-            .map_err(|e| IoError::other(e.to_string()))?;
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
 
         // Check total bytes limit
         let mut current_total = 0u64;
@@ -1412,7 +1412,7 @@ impl FileSystem for InMemoryFs {
         // THREAT[TM-DOS-012, TM-DOS-013, TM-DOS-015]: Validate path before use
         self.limits
             .validate_path(path)
-            .map_err(|e| IoError::other(e.to_string()))?;
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
 
         let path = Self::normalize_path(path);
         let mut entries = self.entries.write().unwrap();
@@ -1442,7 +1442,7 @@ impl FileSystem for InMemoryFs {
                             .count() as u64;
                         self.limits
                             .check_dir_count(dir_count)
-                            .map_err(|e| IoError::other(e.to_string()))?;
+                            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
 
                         // Create the directory
                         entries.insert(
@@ -1480,7 +1480,7 @@ impl FileSystem for InMemoryFs {
                 .count() as u64;
             self.limits
                 .check_dir_count(dir_count)
-                .map_err(|e| IoError::other(e.to_string()))?;
+                .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
 
             entries.insert(
                 path,
@@ -1502,7 +1502,7 @@ impl FileSystem for InMemoryFs {
     async fn remove(&self, path: &Path, recursive: bool) -> Result<()> {
         self.limits
             .validate_path(path)
-            .map_err(|e| IoError::other(e.to_string()))?;
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
         let path = Self::normalize_path(path);
         let mut entries = self.entries.write().unwrap();
 
@@ -1551,7 +1551,7 @@ impl FileSystem for InMemoryFs {
     async fn stat(&self, path: &Path) -> Result<Metadata> {
         self.limits
             .validate_path(path)
-            .map_err(|e| IoError::other(e.to_string()))?;
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
         let path = Self::normalize_path(path);
         let entries = self.entries.read().unwrap();
 
@@ -1568,7 +1568,7 @@ impl FileSystem for InMemoryFs {
     async fn read_dir(&self, path: &Path) -> Result<Vec<DirEntry>> {
         self.limits
             .validate_path(path)
-            .map_err(|e| IoError::other(e.to_string()))?;
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
         let path = Self::normalize_path(path);
         let entries = self.entries.read().unwrap();
 
@@ -1605,7 +1605,7 @@ impl FileSystem for InMemoryFs {
     async fn exists(&self, path: &Path) -> Result<bool> {
         self.limits
             .validate_path(path)
-            .map_err(|e| IoError::other(e.to_string()))?;
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
         let path = Self::normalize_path(path);
         let entries = self.entries.read().unwrap();
         Ok(entries.contains_key(&path))
@@ -1614,17 +1614,56 @@ impl FileSystem for InMemoryFs {
     async fn rename(&self, from: &Path, to: &Path) -> Result<()> {
         self.limits
             .validate_path(from)
-            .map_err(|e| IoError::other(e.to_string()))?;
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
         self.limits
             .validate_path(to)
-            .map_err(|e| IoError::other(e.to_string()))?;
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
         let from = Self::normalize_path(from);
         let to = Self::normalize_path(to);
+        // THREAT[TM-FS-014]: Validate every condition under one lock before
+        // changing the object graph; directory descendants move as one batch.
         let mut entries = self.entries.write().unwrap();
 
+        if from == to {
+            return entries
+                .contains_key(&from)
+                .then_some(())
+                .ok_or_else(|| IoError::new(ErrorKind::NotFound, "not found").into());
+        }
+        if let Some(parent) = to.parent()
+            && !matches!(entries.get(parent), Some(FsEntry::Directory { .. }))
+        {
+            return Err(IoError::new(ErrorKind::NotFound, "parent directory not found").into());
+        }
+
         let entry = entries
-            .remove(&from)
+            .get(&from)
+            .cloned()
             .ok_or_else(|| IoError::new(ErrorKind::NotFound, "not found"))?;
+
+        if matches!(entry, FsEntry::Directory { .. }) && to.starts_with(&from) {
+            return Err(IoError::new(
+                ErrorKind::InvalidInput,
+                "cannot move a directory into itself",
+            )
+            .into());
+        }
+
+        if matches!(entry, FsEntry::Directory { .. }) {
+            match entries.get(&to) {
+                Some(FsEntry::Directory { .. })
+                    if entries
+                        .keys()
+                        .any(|path| path != &to && path.parent() == Some(&to)) =>
+                {
+                    return Err(IoError::other("directory not empty").into());
+                }
+                Some(FsEntry::Directory { .. }) | None => {}
+                Some(_) => {
+                    return Err(IoError::other("cannot rename directory over file").into());
+                }
+            }
+        }
 
         // THREAT[TM-DOS-048]: Reject renaming a file over a directory (POSIX requirement)
         if matches!(
@@ -1632,22 +1671,38 @@ impl FileSystem for InMemoryFs {
             FsEntry::File { .. } | FsEntry::Symlink { .. } | FsEntry::Fifo { .. }
         ) && matches!(entries.get(&to), Some(FsEntry::Directory { .. }))
         {
-            // Put back the source entry
-            entries.insert(from, entry);
             return Err(IoError::other("cannot rename file over directory").into());
         }
 
-        entries.insert(to, entry);
+        if matches!(entry, FsEntry::Directory { .. }) {
+            let moved = entries
+                .iter()
+                .filter(|(path, _)| path.starts_with(&from))
+                .map(|(path, entry)| {
+                    let suffix = path.strip_prefix(&from).expect("prefix checked");
+                    (to.join(suffix), path.clone(), entry.clone())
+                })
+                .collect::<Vec<_>>();
+            for (_, old_path, _) in &moved {
+                entries.remove(old_path);
+            }
+            for (new_path, _, entry) in moved {
+                entries.insert(new_path, entry);
+            }
+        } else {
+            entries.remove(&from);
+            entries.insert(to, entry);
+        }
         Ok(())
     }
 
     async fn copy(&self, from: &Path, to: &Path) -> Result<()> {
         self.limits
             .validate_path(from)
-            .map_err(|e| IoError::other(e.to_string()))?;
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
         self.limits
             .validate_path(to)
-            .map_err(|e| IoError::other(e.to_string()))?;
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
         let from = Self::normalize_path(from);
         let to = Self::normalize_path(to);
         let mut entries = self.entries.write().unwrap();
@@ -1656,6 +1711,21 @@ impl FileSystem for InMemoryFs {
             .get(&from)
             .cloned()
             .ok_or_else(|| IoError::new(ErrorKind::NotFound, "not found"))?;
+
+        if !matches!(
+            entry,
+            FsEntry::File { .. } | FsEntry::Symlink { .. } | FsEntry::Fifo { .. }
+        ) {
+            return Err(IoError::other("cannot copy directory").into());
+        }
+        if matches!(entries.get(&to), Some(FsEntry::Directory { .. })) {
+            return Err(IoError::other("cannot copy file over directory").into());
+        }
+        if let Some(parent) = to.parent()
+            && !matches!(entries.get(parent), Some(FsEntry::Directory { .. }))
+        {
+            return Err(IoError::new(ErrorKind::NotFound, "parent directory not found").into());
+        }
 
         // THREAT[TM-DOS-047]: Always check write limits, even on overwrite.
         // check_write_limits handles the delta calculation for existing files.
@@ -1672,10 +1742,10 @@ impl FileSystem for InMemoryFs {
     async fn symlink(&self, target: &Path, link: &Path) -> Result<()> {
         self.limits
             .validate_path(link)
-            .map_err(|e| IoError::other(e.to_string()))?;
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
         self.limits
             .validate_path(target)
-            .map_err(|e| IoError::other(e.to_string()))?;
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
         let link = Self::normalize_path(link);
         let target_size = target.as_os_str().as_encoded_bytes().len();
         let mut entries = self.entries.write().unwrap();
@@ -1705,7 +1775,7 @@ impl FileSystem for InMemoryFs {
     async fn read_link(&self, path: &Path) -> Result<PathBuf> {
         self.limits
             .validate_path(path)
-            .map_err(|e| IoError::other(e.to_string()))?;
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
         let path = Self::normalize_path(path);
         let entries = self.entries.read().unwrap();
 
@@ -1719,7 +1789,7 @@ impl FileSystem for InMemoryFs {
     async fn chmod(&self, path: &Path, mode: u32) -> Result<()> {
         self.limits
             .validate_path(path)
-            .map_err(|e| IoError::other(e.to_string()))?;
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
         let path = Self::normalize_path(path);
         let mut entries = self.entries.write().unwrap();
 
@@ -1739,7 +1809,7 @@ impl FileSystem for InMemoryFs {
     async fn set_modified_time(&self, path: &Path, time: SystemTime) -> Result<()> {
         self.limits
             .validate_path(path)
-            .map_err(|e| IoError::other(e.to_string()))?;
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
         let path = Self::normalize_path(path);
         let mut entries = self.entries.write().unwrap();
 
@@ -1766,7 +1836,7 @@ impl FileSystemExt for InMemoryFs {
     async fn mkfifo(&self, path: &Path, mode: u32) -> Result<()> {
         self.limits
             .validate_path(path)
-            .map_err(|e| IoError::other(e.to_string()))?;
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
         let path = Self::normalize_path(path);
         let mut entries = self.entries.write().unwrap();
 
@@ -1798,7 +1868,7 @@ impl FileSystemExt for InMemoryFs {
             .count() as u64;
         self.limits
             .check_file_count(file_count)
-            .map_err(|e| IoError::other(e.to_string()))?;
+            .map_err(|e| IoError::new(ErrorKind::InvalidInput, e.to_string()))?;
 
         entries.insert(
             path,

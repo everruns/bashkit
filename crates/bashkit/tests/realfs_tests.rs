@@ -180,6 +180,9 @@ mod windows_containment {
     }
 }
 
+#[path = "support/filesystem_security_conformance.rs"]
+mod filesystem_security_conformance;
+
 // macOS temp dirs canonicalize under /private, which RealFs treats as
 // sensitive. Tests allowlist only the temp fixtures they mount.
 fn builder_allowing_host_paths(paths: &[&Path]) -> BashBuilder {
@@ -193,6 +196,136 @@ fn setup_host_dir() -> tempfile::TempDir {
     std::fs::write(dir.path().join("subdir/nested.txt"), "nested\n").unwrap();
     std::fs::write(dir.path().join("data.csv"), "a,1\nb,2\nc,3\n").unwrap();
     dir
+}
+
+#[tokio::test]
+async fn realfs_passes_shared_filesystem_security_conformance() {
+    use bashkit::{PosixFs, RealFs, RealFsMode};
+
+    let dir = tempfile::tempdir().unwrap();
+    let backend = RealFs::open(dir.path(), RealFsMode::ReadWrite)
+        .await
+        .unwrap();
+    let fs = PosixFs::new(backend);
+    filesystem_security_conformance::certify_path_and_data_contract("realfs", &fs).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn realfs_copy_and_rename_preserve_symlink_identity() {
+    use bashkit::{FileSystem, PosixFs, RealFs, RealFsMode};
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("target"), b"target").unwrap();
+    std::os::unix::fs::symlink("target", dir.path().join("link")).unwrap();
+    let fs = PosixFs::new(
+        RealFs::open(dir.path(), RealFsMode::ReadWrite)
+            .await
+            .unwrap(),
+    );
+
+    fs.copy(Path::new("/link"), Path::new("/copied"))
+        .await
+        .unwrap();
+    fs.rename(Path::new("/link"), Path::new("/moved"))
+        .await
+        .unwrap();
+
+    assert!(
+        fs.stat(Path::new("/copied"))
+            .await
+            .unwrap()
+            .file_type
+            .is_symlink()
+    );
+    assert!(
+        fs.stat(Path::new("/moved"))
+            .await
+            .unwrap()
+            .file_type
+            .is_symlink()
+    );
+    assert_eq!(
+        fs.read_link(Path::new("/copied")).await.unwrap(),
+        Path::new("target")
+    );
+    assert_eq!(
+        fs.read_link(Path::new("/moved")).await.unwrap(),
+        Path::new("target")
+    );
+}
+
+#[tokio::test]
+async fn realfs_failed_copy_retains_destination_and_removes_staging_file() {
+    use bashkit::{FsBackend, PosixFs, RealFs, RealFsMode};
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("source-dir")).unwrap();
+    std::fs::write(dir.path().join("destination"), b"original").unwrap();
+    let fs = PosixFs::new(
+        RealFs::open(dir.path(), RealFsMode::ReadWrite)
+            .await
+            .unwrap(),
+    );
+
+    assert!(
+        fs.backend()
+            .copy(Path::new("/source-dir"), Path::new("/destination"))
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("destination")).unwrap(),
+        b"original"
+    );
+    assert!(std::fs::read_dir(dir.path()).unwrap().all(|entry| {
+        !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".bashkit-tmp-")
+    }));
+}
+
+#[tokio::test]
+async fn realfs_replacement_race_never_exposes_partial_content() {
+    use bashkit::{FileSystem, PosixFs, RealFs, RealFsMode};
+    use std::sync::Arc;
+
+    let dir = tempfile::tempdir().unwrap();
+    let fs = Arc::new(PosixFs::new(
+        RealFs::open(dir.path(), RealFsMode::ReadWrite)
+            .await
+            .unwrap(),
+    ));
+    let first = vec![b'a'; 64 * 1024];
+    let second = vec![b'b'; 64 * 1024];
+    fs.write_file(Path::new("/raced"), &first).await.unwrap();
+
+    let writer_fs = Arc::clone(&fs);
+    let writer_first = first.clone();
+    let writer_second = second.clone();
+    let writer = async move {
+        for iteration in 0..64 {
+            let content = if iteration % 2 == 0 {
+                &writer_second
+            } else {
+                &writer_first
+            };
+            writer_fs
+                .write_file(Path::new("/raced"), content)
+                .await
+                .unwrap();
+        }
+    };
+    let reader = async {
+        for _ in 0..256 {
+            let content = fs.read_file(Path::new("/raced")).await.unwrap();
+            assert!(content == first || content == second);
+        }
+    };
+
+    tokio::join!(writer, reader);
 }
 
 #[cfg(unix)]

@@ -24,6 +24,11 @@
 //! 4. **Parent directory requirement**: Write operations require parent directory
 //!    to exist (except with `recursive=true` for mkdir).
 //!
+//! 5. **Failure atomicity**: A failed `write_file`, `copy`, or `rename` MUST
+//!    leave source bytes, destination bytes, entry types, and reported usage
+//!    unchanged. A cross-backend wrapper MUST restore the destination when the
+//!    source deletion fails, or reject the operation before either mutation.
+//!
 //! # Implementing Custom Filesystems
 //!
 //! **Recommended**: Implement [`FsBackend`](super::FsBackend) and wrap with
@@ -263,6 +268,7 @@ pub trait FileSystem: FileSystemExt {
     ///
     /// If the file exists, its contents are replaced. If it doesn't exist,
     /// a new file is created (parent directory must exist).
+    /// Replacement is atomic: an error leaves prior contents and usage intact.
     ///
     /// # Errors
     ///
@@ -337,6 +343,8 @@ pub trait FileSystem: FileSystemExt {
     async fn exists(&self, path: &Path) -> Result<bool>;
 
     /// Rename or move a file or directory.
+    /// The operation is atomic; cross-backend wrappers must reject the rename
+    /// before mutation when they cannot provide that guarantee.
     ///
     /// # Errors
     ///
@@ -346,6 +354,7 @@ pub trait FileSystem: FileSystemExt {
     async fn rename(&self, from: &Path, to: &Path) -> Result<()>;
 
     /// Copy a file.
+    /// Destination replacement is atomic: an error leaves it unchanged.
     ///
     /// # Errors
     ///

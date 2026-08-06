@@ -10,8 +10,11 @@
 
 #![cfg(feature = "failpoints")]
 
-use bashkit::{Bash, ControlFlow, ExecResult, ExecutionLimits};
+use bashkit::{
+    Bash, ControlFlow, ExecResult, ExecutionLimits, FileSystem, FileSystemExt, InMemoryFs,
+};
 use serial_test::serial;
+use std::path::Path;
 use std::time::Duration;
 
 /// Helper to run a script and capture the result
@@ -221,6 +224,43 @@ async fn security_fs_write_failure() {
 
     // Write should fail
     assert!(result.exit_code != 0 || result.stderr.contains("error"));
+}
+
+/// THREAT[TM-FS-014]: Every injected write failure, including the simulated
+/// partial-write class, retains both the prior bytes and quota accounting.
+#[tokio::test]
+#[serial]
+async fn security_fs_failed_writes_are_atomic() {
+    let fs = InMemoryFs::new();
+    fs.write_file(Path::new("/tmp/output.txt"), b"original")
+        .await
+        .unwrap();
+    let usage = fs.usage();
+
+    for action in [
+        "io_error",
+        "disk_full",
+        "permission_denied",
+        "partial_write",
+    ] {
+        fail::cfg("fs::write_file", &format!("return({action})")).unwrap();
+        assert!(
+            fs.write_file(Path::new("/tmp/output.txt"), b"replacement")
+                .await
+                .is_err(),
+            "{action}"
+        );
+        fail::cfg("fs::write_file", "off").unwrap();
+
+        assert_eq!(
+            fs.read_file(Path::new("/tmp/output.txt")).await.unwrap(),
+            b"original",
+            "{action}"
+        );
+        let after = fs.usage();
+        assert_eq!(after.total_bytes, usage.total_bytes, "{action}");
+        assert_eq!(after.file_count, usage.file_count, "{action}");
+    }
 }
 
 /// Test: Disk full is handled

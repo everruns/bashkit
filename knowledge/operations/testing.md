@@ -87,6 +87,12 @@ the reason in the file's module docstring.
 Filtering still works as usual: `cargo test --test integration -- foo`
 matches `integration::*::foo*` test paths.
 
+Filesystem implementations share a private conformance helper under
+`tests/support/filesystem_security_conformance.rs`. The default adapters invoke
+it from the consolidated integration binary; `realfs_tests.rs` invokes the same
+contract under `--features realfs`. Keep backend-neutral invariants in the
+helper and adapter-specific fault/atomicity cases in their owning test module.
+
 The consolidation rule above covers the `bashkit` crate. `bashkit-cli`
 has its own, much smaller test surface:
 

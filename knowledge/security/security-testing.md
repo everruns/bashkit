@@ -71,6 +71,17 @@ spec, and add tests in `tests/security_failpoint_tests.rs`.
 3. **Document actions**: List all supported actions in code comments and this spec.
 4. **Test both paths**: Test that fail points affect behavior AND that normal operation works without them.
 
+## Filesystem Certification
+
+The backend-neutral helper in
+`crates/bashkit/tests/support/filesystem_security_conformance.rs` certifies
+binary/null content, unsafe pathname rejection, root-clamped canonical identity,
+and normalized public error kinds. The integration and RealFs feature suites run
+the same helper against every production storage adapter. Wrapper cases cover
+symlink identity, read-only policy, mount boundaries, transactional failures,
+quota retention, and tar preflight. `security_fs_failed_writes_are_atomic` runs
+all `fs::write_file` failpoint actions and proves prior bytes and usage survive.
+
 ## JavaScript Security Tests
 
 The JavaScript/TypeScript bindings have a dedicated security test suite at

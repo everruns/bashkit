@@ -67,6 +67,8 @@ Do you need a custom filesystem?
 - Mount multiple filesystems at different paths
 - Longest-prefix matching for nested mounts
 - Always used as outermost FS layer for live mount/unmount support
+- File and symlink copies and moves may cross mounts; failed moves restore the
+  previous destination before returning the source-side error
 
 #### NamespaceFs
 - Static visible tree composed from arbitrary `FileSystem` instances
@@ -108,6 +110,9 @@ Do you need a custom filesystem?
 - Windows `RealFs::symlink()` does not create a host reparse point; it creates an
   empty file after applying target-containment validation. Pre-existing host
   symlinks and junctions are supported and containment-checked.
+- Replacement write, append, and copy stage a sibling file and rename it only
+  after a complete flush, so partial host I/O retains the prior destination
+- Copy and rename act on a symlink entry itself instead of dereferencing it
 - Builder: `mount_real_readonly[_at]()`, `mount_real_readwrite()`; CLI:
   `--mount-ro` / `--mount-rw` (`host:vfs` syntax for mount point)
 
@@ -161,6 +166,21 @@ All `FileSystem` implementations MUST enforce:
 1. No duplicate names (file and dir can't share path)
 2. Type-safe operations (`write_file` on dir → error)
 3. Parent directory requirement (exception: `mkdir -p`)
+4. Failed write/copy/rename leaves contents, entry types, and usage unchanged
+5. Cross-backend rename restores the destination on failure, or is rejected
+   before mutation when that rollback contract cannot be supported
+
+### Security Conformance Certification
+
+`tests/support/filesystem_security_conformance.rs` is the shared, private
+certification helper. The consolidated integration suite runs it against
+`InMemoryFs`, `OverlayFs`, `MountableFs`, and read-write `NamespaceFs`; the
+feature-isolated RealFs job runs the same helper through `PosixFs<RealFs>`.
+Wrapper-specific cases additionally certify `ReadOnlyFs`, mount boundaries,
+symlink identity, quota rollback, normalized errors, type-conflict rollback,
+archive preflight, and injected partial-write failures. This remains test-only
+instead of expanding the public API; external `FileSystem` authors follow the
+trait's atomicity contract.
 
 ### Pathname Expansion Against the VFS
 
