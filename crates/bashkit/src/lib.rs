@@ -279,7 +279,8 @@
 //!
 //! Enable the `http_client` feature and configure an allowlist for network access:
 //!
-//! ```rust,ignore
+//! ```rust,no_run
+//! # async fn example() -> bashkit::Result<()> {
 //! use bashkit::{Bash, NetworkAllowlist};
 //!
 //! let mut bash = Bash::builder()
@@ -290,6 +291,8 @@
 //! // curl and wget now work for allowed URLs
 //! let result = bash.exec("curl -s https://httpbin.org/get").await?;
 //! assert!(result.stdout.contains("httpbin.org"));
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! Security features:
@@ -319,7 +322,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! bashkit = { version = "0.1", features = ["git"] }
+//! bashkit = { version = "0.15.0", features = ["git"] }
 //! ```
 //!
 //! ```rust,ignore
@@ -350,7 +353,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! bashkit = { version = "0.1", features = ["python"] }
+//! bashkit = { version = "0.15.0", features = ["python"] }
 //! ```
 //!
 //! ```rust,ignore

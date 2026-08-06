@@ -37,6 +37,12 @@ EXTERNAL = re.compile(r"\A(?:[a-z][a-z0-9+.-]*:|//|/|#)")
 # Fenced blocks first, then inline spans: prose about markdown (and shell
 # examples containing `](`) must not be read as links.
 CODE = re.compile(r"^```.*?^```|``.*?``|`[^`\n]*`", re.DOTALL | re.MULTILINE)
+BASHKIT_DEPENDENCY = re.compile(
+    r'^\s*(?://!\s*)?bashkit\s*=\s*\{[^}\n]*\bversion\s*=\s*"([^"]+)"',
+    re.MULTILINE,
+)
+WORKSPACE_PACKAGE = re.compile(r"(?ms)^\[workspace\.package]\s*$.*?(?=^\[|\Z)")
+PACKAGE_VERSION = re.compile(r'^version\s*=\s*"([^"]+)"', re.MULTILINE)
 
 
 def strip_code(text: str) -> str:
@@ -44,11 +50,31 @@ def strip_code(text: str) -> str:
     return CODE.sub(lambda m: "\n" * m.group(0).count("\n"), text)
 
 
-def check_file(path: pathlib.Path, rel: str, errors: list[str]) -> int:
-    """Append an error for every relative link target that does not exist."""
-    text = strip_code(path.read_text())
+def workspace_version(root: pathlib.Path) -> str:
+    """Read the canonical package version used by published dependency snippets."""
+    manifest = root / "Cargo.toml"
+    if not manifest.is_file():
+        raise ValueError(f"workspace manifest not found: {manifest}")
+    package = WORKSPACE_PACKAGE.search(manifest.read_text())
+    version = PACKAGE_VERSION.search(package.group(0)) if package else None
+    if not version:
+        raise ValueError(f"workspace package version not found in {manifest}")
+    return version.group(1)
+
+
+def check_file(
+    path: pathlib.Path,
+    rel: str,
+    expected_version: str,
+    errors: list[str],
+    *,
+    check_links: bool = True,
+) -> tuple[int, int]:
+    """Append errors for dangling links and stale Bashkit dependency snippets."""
+    source = path.read_text()
+    text = strip_code(source)
     checked = 0
-    for match in LINK.finditer(text):
+    for match in LINK.finditer(text) if check_links else ():
         target = match.group(1).strip()
         if not target or EXTERNAL.match(target):
             continue
@@ -59,7 +85,19 @@ def check_file(path: pathlib.Path, rel: str, errors: list[str]) -> int:
         if not (path.parent / resolved).exists():
             line = text[: match.start()].count("\n") + 1
             errors.append(f"{rel}:{line}: link target does not exist: {target}")
-    return checked
+
+    versions_checked = 0
+    for match in BASHKIT_DEPENDENCY.finditer(source):
+        versions_checked += 1
+        documented_version = match.group(1)
+        if documented_version == expected_version:
+            continue
+        line = source[: match.start()].count("\n") + 1
+        errors.append(
+            f"{rel}:{line}: stale bashkit dependency version {documented_version}; "
+            f"expected {expected_version}"
+        )
+    return checked, versions_checked
 
 
 def markdown_files(root: pathlib.Path, tree: str) -> list[pathlib.Path]:
@@ -73,11 +111,28 @@ def markdown_files(root: pathlib.Path, tree: str) -> list[pathlib.Path]:
 
 def check_trees(root: pathlib.Path, trees: tuple[str, ...]) -> tuple[list[str], dict[str, int]]:
     errors: list[str] = []
-    stats = {"files": 0, "links": 0}
+    stats = {"files": 0, "links": 0, "versions": 0}
+    expected_version = workspace_version(root)
     for tree in trees:
         for path in markdown_files(root, tree):
             stats["files"] += 1
-            stats["links"] += check_file(path, str(path.relative_to(root)), errors)
+            links, versions = check_file(
+                path, str(path.relative_to(root)), expected_version, errors
+            )
+            stats["links"] += links
+            stats["versions"] += versions
+
+    crate_rustdoc = root / "crates" / "bashkit" / "src" / "lib.rs"
+    if crate_rustdoc.is_file():
+        stats["files"] += 1
+        _, versions = check_file(
+            crate_rustdoc,
+            str(crate_rustdoc.relative_to(root)),
+            expected_version,
+            errors,
+            check_links=False,
+        )
+        stats["versions"] += versions
     return errors, stats
 
 
@@ -97,13 +152,20 @@ def main(argv: list[str] | None = None) -> int:
         print(f"not a directory: {root}", file=sys.stderr)
         return 2
 
-    errors, stats = check_trees(root, tuple(args.trees or DEFAULT_ROOTS))
+    try:
+        errors, stats = check_trees(root, tuple(args.trees or DEFAULT_ROOTS))
+    except ValueError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
     for error in errors:
         print(error, file=sys.stderr)
     if errors:
-        print(f"\n{len(errors)} broken relative link(s)", file=sys.stderr)
+        print(f"\n{len(errors)} documentation error(s)", file=sys.stderr)
         return 1
-    print(f"doc links OK: {stats['links']} relative links across {stats['files']} files")
+    print(
+        f"docs OK: {stats['links']} relative links and {stats['versions']} dependency "
+        f"versions across {stats['files']} files"
+    )
     return 0
 
 

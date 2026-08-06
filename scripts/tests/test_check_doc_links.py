@@ -32,6 +32,9 @@ class CheckDocLinksTest(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.root = pathlib.Path(self._tmp.name)
+        (self.root / "Cargo.toml").write_text(
+            '[workspace.package]\nversion = "1.2.3"\n'
+        )
         (self.root / "docs").mkdir()
         (self.root / "guides").mkdir()
         (self.root / "guides" / "jq.md").write_text("# jq\n")
@@ -47,7 +50,7 @@ class CheckDocLinksTest(unittest.TestCase):
         self.write("See [jq](../guides/jq.md).\n")
         result = self.check()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("doc links OK", result.stdout)
+        self.assertIn("docs OK", result.stdout)
 
     def test_dangling_link_rejected(self) -> None:
         self.write("See [jq](jq.md).\n")
@@ -105,6 +108,40 @@ class CheckDocLinksTest(unittest.TestCase):
     def test_missing_root_rejected(self) -> None:
         result = run(self.root / "nope", "docs")
         self.assertEqual(result.returncode, 2)
+
+    def test_stale_bashkit_dependency_version_rejected(self) -> None:
+        self.write('```toml\nbashkit = { version = "1.2.2" }\n```\n')
+        result = self.check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            'docs/page.md:2: stale bashkit dependency version 1.2.2; expected 1.2.3',
+            result.stderr,
+        )
+
+    def test_current_bashkit_dependency_version_accepted(self) -> None:
+        self.write('```toml\nbashkit = { version = "1.2.3", features = ["sqlite"] }\n```\n')
+        self.assertEqual(self.check().returncode, 0)
+
+    def test_non_dependency_code_is_ignored(self) -> None:
+        self.write('```toml\nother = { version = "0.1" }\n```\n')
+        self.assertEqual(self.check().returncode, 0)
+
+    def test_stale_crate_level_rustdoc_dependency_version_rejected(self) -> None:
+        rustdoc = self.root / "crates" / "bashkit" / "src" / "lib.rs"
+        rustdoc.parent.mkdir(parents=True)
+        rustdoc.write_text('//! bashkit = { version = "1.0.0", features = ["git"] }\n')
+        result = self.check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            'crates/bashkit/src/lib.rs:1: stale bashkit dependency version 1.0.0; expected 1.2.3',
+            result.stderr,
+        )
+
+    def test_missing_workspace_version_rejected(self) -> None:
+        (self.root / "Cargo.toml").write_text('[workspace]\nmembers = []\n')
+        result = self.check()
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("workspace package version not found", result.stderr)
 
 
 class ReadmeLinksTest(unittest.TestCase):
