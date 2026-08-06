@@ -186,7 +186,13 @@ impl FsBackend for HostFs {
 
     async fn exists(&self, path: &Path) -> BashkitResult<bool> {
         let value = self.call("exists", &[Arg::path(path)]).await?;
-        Ok(value.as_bool().unwrap_or(false))
+        // Not `unwrap_or(false)`: a host that answers with `undefined`
+        // is broken, and reading that as "missing" turns every probe
+        // into a silent miss — `test -f`, PATH lookups, and `mkdir -p`
+        // would all quietly do the wrong thing.
+        value
+            .as_bool()
+            .ok_or_else(|| invalid("fs.exists must resolve to a boolean"))
     }
 
     async fn rename(&self, from: &Path, to: &Path) -> BashkitResult<()> {

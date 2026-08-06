@@ -153,7 +153,9 @@ at subsystem or descendant boundaries; exhaustion poisons that request. Separate
 > writes go straight to the host with no byte/count quota. This is by design
 > (`--mount-rw` is sandbox-breaking, see TM-ESC-030), but it means a script
 > with a writable real-FS mount can exhaust host disk/inodes. Use
-> `--mount-ro` for untrusted scripts.
+> `--mount-ro` for untrusted scripts. The same applies to a JS host
+> filesystem in the wasm bindings (`new Bash({ fs })`, TM-FS-017): bytes live
+> in the embedder's store, so the embedder owns the quota.
 
 **TM-DOS-034**: Fixed. `InMemoryFs::append_file()` now uses a single write lock for the entire
 read-check-write operation, preventing TOCTOU races. See `fs/memory.rs:940-942`.
@@ -319,6 +321,7 @@ panicked. Resolved with `wrapping_*` ops, masked shift amounts, clamped exponent
 | TM-FS-014 | Partial filesystem mutation | Failed write/copy or copy-delete move corrupts/replaces a destination, duplicates a source, or consumes retained quota | `FileSystem` failure-atomicity contract; locked in-memory rename; MountableFs restores cross-mount destinations while NamespaceFs rejects cross-mount rename; RealFs stages and flushes sibling files before rename; failpoint and conformance regressions | **MITIGATED** |
 | TM-FS-015 | Partial archive extraction | A late traversal, malformed header, or size failure leaves earlier attacker-controlled files behind | Tar validates the complete archive and per-file limits before its first VFS mutation; conformance regression uses a valid entry followed by traversal | **MITIGATED** |
 | TM-FS-016 | yq in-place partial or destructive update | Parse, evaluation, serialization, or write failure truncates the source; predictable temporary names permit collisions | Complete evaluation and bounded serialization first; write a random sibling temporary file, preserve mode, and rename only after success; failpoint regressions cover allocation, all backend-write classes, chmod, rename, original-byte retention, and temporary cleanup | **MITIGATED** |
+| TM-FS-017 | JS host filesystem widens the sandbox to embedder storage | `new Bash({ fs })` in the wasm bindings routes every VFS operation into embedder-supplied JS, so a script reaches whatever that object exposes | Paths are normalized by `PosixFs` before any host call, so traversal cannot select a path the embedder did not scope; the host object is the security boundary and is the embedder's to scope (mount root, allowlist, read-only). Reads and writes bypass the in-memory quotas — see the FS-quota scope note in §1 | **ACCEPTED** (embedder-scoped, opt-in) |
 
 **Current Risk**: MEDIUM - Two open escape vectors (TM-ESC-012, TM-ESC-013) need remediation
 
