@@ -31,7 +31,9 @@ runtime registration when mixing the surfaces.
   default limits for compiled embedded runtimes. It is the default.
 - `Hardened` tightens every resource family and runtime budget. It keeps the
   isolated VFS writable: VFS mutation is a safe and useful capability under
-  byte/count quotas, so a resource profile must not silently remove it.
+  byte/count quotas, so a resource profile must not silently remove it. The
+  `time` reserved word floors elapsed reports into 100 ms lower-bound buckets
+  to avoid introducing a high-resolution timing oracle (TM-INF-033).
 - `Interactive` exactly preserves CLI/REPL intent: relaxed execution counters
   and unlimited session counters, while memory, VFS, network, and runtime
   defaults remain secure. One-shot CLI mode uses `Standard`.

@@ -156,6 +156,7 @@ let bash = Bash::builder()
 | Aggregate budget refresh (TM-DOS-096) | Nest/mix parsers, pipelines, traversal, runtimes, archives, and callbacks to restart local ceilings | One poisoned request-scoped `ExecutionBudget` meters aggregate work/input/live bytes without replacing subsystem caps | MITIGATED |
 | Contradictory execution-profile limits (TM-DOS-097) | Host config silently requests ineffective or impossible limits | Validate profile cross-field invariants before `BashBuilder` accepts it | MITIGATED |
 | Suspended host-call retention (TM-DOS-098) | Script repeats event-backed calls or host never resumes one | Capacity-one channel, normal execution limits, and handle-owned session released on drop | MITIGATED |
+| `time` report amplification (TM-DOS-099) | Attacker-controlled `-f` format expands repeatedly or targets the VFS with `-o` | Incremental rendering is capped by the stderr limit before emission or file replacement | MITIGATED |
 
 ### Sandbox Escape (TM-ESC-*)
 
@@ -240,6 +241,7 @@ Scripts may attempt to leak sensitive information.
 | System info (TM-INF-008) | `uname -a` | Returns configurable virtual values | MITIGATED |
 | User ID (TM-INF-009) | `id` | Returns hardcoded uid=1000 | MITIGATED |
 | Date/time (TM-INF-018) | `date` | Returns real host time (fingerprinting risk) | **MITIGATED** (opt-in: `Bash::builder().fixed_epoch` / `.epoch_offset`) |
+| Command timing (TM-INF-033) | `time` as a high-resolution oracle or source of host CPU/RSS data | Portable monotonic/virtual clock; Hardened profile floors to 100 ms; host-process fields are explicitly `unavailable` | **MITIGATED** |
 
 **Network Exfiltration:**
 

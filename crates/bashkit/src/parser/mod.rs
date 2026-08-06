@@ -1339,37 +1339,82 @@ impl<'a> Parser<'a> {
         }))
     }
 
-    /// Parse a time command: time [-p] [command]
-    ///
-    /// The time keyword measures execution time of the following command.
-    /// Note: Bashkit only tracks wall-clock time, not CPU user/sys time.
+    /// Parse the reserved-word pipeline form, plus the useful GNU report flags.
     fn parse_time(&mut self) -> Result<CompoundCommand> {
         let start_span = self.current_span;
         self.advance(); // consume 'time'
         self.skip_newlines()?;
 
-        // Check for -p flag (POSIX format)
-        let posix_format = if let Some(tokens::Token::Word(w)) = &self.current_token {
-            if w == "-p" {
+        let mut posix_format = false;
+        let mut format = None;
+        let mut output = None;
+        let mut append = false;
+        let mut verbose = false;
+        let mut option_error = None;
+
+        while let Some(option) = self.current_word_str() {
+            if option == "--" {
                 self.advance();
                 self.skip_newlines()?;
-                true
-            } else {
-                false
+                break;
             }
-        } else {
-            false
-        };
+            if !option.starts_with('-') || option == "-" {
+                break;
+            }
 
-        // Parse the command to time (if any)
-        // time with no command is valid in bash (just outputs timing header)
+            self.advance();
+            match option.as_str() {
+                "-p" => posix_format = true,
+                "-a" | "--append" => append = true,
+                "-v" | "--verbose" => verbose = true,
+                "-f" | "--format" => {
+                    format = self.current_word_to_word();
+                    if format.is_some() {
+                        self.advance();
+                    } else {
+                        option_error = Some(format!("option '{option}' requires an argument"));
+                    }
+                }
+                "-o" | "--output" => {
+                    output = self.current_word_to_word();
+                    if output.is_some() {
+                        self.advance();
+                    } else {
+                        option_error = Some(format!("option '{option}' requires an argument"));
+                    }
+                }
+                _ if option.starts_with("--format=") => {
+                    format = Some(Word::literal(option[9..].to_string()));
+                }
+                _ if option.starts_with("--output=") => {
+                    output = Some(Word::literal(option[9..].to_string()));
+                }
+                _ if option.starts_with("-f") && option.len() > 2 => {
+                    format = Some(Word::literal(option[2..].to_string()));
+                }
+                _ if option.starts_with("-o") && option.len() > 2 => {
+                    output = Some(Word::literal(option[2..].to_string()));
+                }
+                _ => option_error = Some(format!("unrecognized option '{option}'")),
+            }
+            self.skip_newlines()?;
+            if option_error.is_some() {
+                break;
+            }
+        }
+
         let command = self.parse_pipeline()?;
 
-        Ok(CompoundCommand::Time(TimeCommand {
+        Ok(CompoundCommand::Time(Box::new(TimeCommand {
             posix_format,
+            format,
+            output,
+            append,
+            verbose,
+            option_error,
             command: command.map(Box::new),
             span: start_span.merge(self.current_span),
-        }))
+        })))
     }
 
     /// Parse a coproc command: `coproc [NAME] command`

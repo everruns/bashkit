@@ -45,6 +45,8 @@ fn rejects_commands_hidden_in_a_substitution() {
     assert!(!allowed("echo $(rm -rf /data)", READ_ONLY));
     assert!(!allowed("echo `rm -rf /data`", READ_ONLY));
     assert!(!allowed("cat <(rm -rf /data)", READ_ONLY));
+    assert!(!allowed("time -f \"$(rm -rf /data)\" echo safe", READ_ONLY));
+    assert!(!allowed("time -o \"$(rm -rf /data)\" echo safe", READ_ONLY));
 }
 
 #[test]

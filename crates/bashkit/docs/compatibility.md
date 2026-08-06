@@ -95,6 +95,7 @@ for sandbox security reasons. See the compliance spec for details.
 | `wait` | `[JOB_ID...]` | Wait for background jobs |
 | `curl` | `-s`, `-o`, `-X`, `-d`/`--data`, `--data-raw`, `--data-binary`, `--data-urlencode`, `-G`/`--get`, `-H`, `-I`, `-f`, `-L`, `-w`, `--compressed`, `-u`, `-A`, `-e`, `-v`, `-m` | HTTP client (requires http_client feature) |
 | `wget` | `-q`, `-O`, `--spider`, `--header`, `-U`, `--post-data`, `-t` | Download files (requires http_client feature) |
+| `time` | `[-p] [-f FORMAT] [-o FILE] [-a] [-v] [--] PIPELINE` | Reserved-word timing; elapsed/status/Bashkit counters are truthful, host CPU/RSS fields say `unavailable` |
 | `timeout` | `DURATION COMMAND` | Run with time limit (stub) |
 | `ls` | `-l`, `-a`, `-h`, `-1`, `-R`, `-t`, `-F`, `-C`, `-d` | List directory contents |
 | `find` | `-name`, `-type`, `-maxdepth`, `-print` | Search for files |
@@ -124,6 +125,20 @@ for sandbox security reasons. See the compliance spec for details.
 | `od` | `-A`, `-t`, `-N`, `-j` | Octal/hex dump |
 | `xxd` | `-l`, `-s`, `-c`, `-g`, `-p` | Hex dump |
 | `hexdump` | `-C`, `-n`, `-s` | Display file in hex+ASCII |
+
+#### `time` reports
+
+`time` wraps a shell pipeline, so groups, functions, redirects, nested shells,
+and pipeline status behave as shell syntax rather than utility arguments. `-p`
+uses the POSIX layout. `-f` supports elapsed seconds (`%e`), elapsed
+hours/minutes/seconds (`%E`), exit status (`%x`), literal percent (`%%`), and
+Bashkit counters (`%{commands}`, `%{loops}`, `%{work_units}`). GNU host-process
+fields such as `%U`, `%S`, `%P`, and `%M` return `unavailable`; Bashkit never
+attributes the embedding process's CPU or memory to a wrapped command.
+
+`-v` reports the same available data with labels. `-o FILE` atomically replaces
+the report file in the VFS; `-a -o FILE` appends. Wrapped stdout and stderr are
+unchanged. Hardened profiles expose elapsed time in 100 ms lower-bound buckets.
 
 ### Recently Added
 

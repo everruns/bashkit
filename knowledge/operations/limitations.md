@@ -99,7 +99,7 @@ Target: IEEE 1003.1-2024 Shell Command Language.
 | Prefix env assignments | `VAR=val cmd` temporarily sets env for cmd | Array prefix assignments not in env |
 | `local` | Declaration | Proper scoping in nested functions |
 | `return` | Basic usage | Return value propagation |
-| `time` | Wall-clock timing | User/sys CPU time (always 0) |
+| `time` | Reserved-word pipelines; `-p`, `--`, GNU `-f/-o/-a/-v`; elapsed time, exit status, and Bashkit counters | Host user/system CPU, RSS, and other process metrics are reported as `unavailable`, never fabricated |
 | `timeout` | Basic usage | `-k` kill timeout |
 | `bash`/`sh` | `-c`, `-n`, `-e`, `-x`, `-u`, `-f`, `-o option`, script files, stdin, `--version`, `--help` | Login shell |
 

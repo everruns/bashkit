@@ -908,6 +908,12 @@ impl ExecutionBudget {
         Ok(())
     }
 
+    /// Monotonic work charged to this request so execution wrappers can report
+    /// deltas without exposing host process metrics.
+    pub(crate) fn work_units(&self) -> u64 {
+        self.inner.work_units.load(Ordering::Relaxed)
+    }
+
     /// Consume bytes read or materialized by a request consumer.
     pub fn consume_input(&self, bytes: usize) -> Result<(), LimitExceeded> {
         self.check()?;

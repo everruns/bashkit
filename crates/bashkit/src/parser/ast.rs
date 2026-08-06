@@ -109,7 +109,9 @@ pub enum CompoundCommand {
     /// Arithmetic command ((expression))
     Arithmetic(String),
     /// Time command - measure execution time
-    Time(TimeCommand),
+    // Keep the recursive command enum small: time's GNU option payload is
+    // substantially larger than the pipeline wrapper itself.
+    Time(Box<TimeCommand>),
     /// Conditional expression [[ ... ]]
     Conditional(Vec<Word>),
     /// Coprocess: `coproc [NAME] command`
@@ -131,15 +133,21 @@ pub struct CoprocCommand {
     pub span: Span,
 }
 
-/// Time command - wraps a command and measures its execution time.
-///
-/// Note: Bashkit only supports wall-clock time measurement.
-/// User/system CPU time is not tracked (always reported as 0).
-/// This is a known incompatibility with bash.
+/// Time command - wraps a pipeline and measures its execution.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TimeCommand {
     /// Use POSIX output format (-p flag)
     pub posix_format: bool,
+    /// GNU-compatible custom report format.
+    pub format: Option<Word>,
+    /// Write the report to this VFS path instead of stderr.
+    pub output: Option<Word>,
+    /// Append rather than atomically replacing the output file.
+    pub append: bool,
+    /// Emit Bashkit's truthful verbose report.
+    pub verbose: bool,
+    /// Option diagnostic deferred to execution so syntax remains shell-valid.
+    pub option_error: Option<String>,
     /// The command to time (optional - timing with no command is valid)
     pub command: Option<Box<Command>>,
     /// Source span of this command
@@ -1343,6 +1351,11 @@ mod tests {
     fn time_command_construction() {
         let cmd = TimeCommand {
             posix_format: true,
+            format: None,
+            output: None,
+            append: false,
+            verbose: false,
+            option_error: None,
             command: None,
             span: Span::new(),
         };

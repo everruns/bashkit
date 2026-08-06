@@ -17,7 +17,12 @@ use std::time::Duration;
 pub(crate) use web_time::{Instant, SystemTime, UNIX_EPOCH};
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) use std::time::{Instant, SystemTime, UNIX_EPOCH};
+pub(crate) use std::time::{SystemTime, UNIX_EPOCH};
+
+// Tokio's instant follows the runtime's paused/advanced monotonic clock. This
+// makes shell deadlines and `time` deterministic under virtual-time runtimes.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use tokio::time::Instant;
 
 /// Portable timer future. JS-host wasm uses `setTimeout`; native targets keep
 /// tokio's runtime timer. The wasm future is wrapped as `Send` because the

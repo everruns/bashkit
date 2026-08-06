@@ -17,10 +17,14 @@ mod glob;
 mod jobs;
 mod redirection;
 mod state;
+mod time_command;
 
 #[allow(unused_imports)]
 pub use jobs::{JobTable, SharedJobTable};
 pub use state::{BuiltinSideEffect, ControlFlow, ExecResult};
+use time_command::{
+    TimeUsage, render_time_format, sanitize_time_path, validate_time_format, verbose_time_report,
+};
 // Re-export snapshot type for public API
 
 use std::collections::{HashMap, HashSet};
@@ -31,6 +35,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 
 /// Monotonic counter for unique process substitution file paths
 static PROC_SUB_COUNTER: AtomicU64 = AtomicU64::new(0);
+static TIME_REPORT_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 // Important decision: report a bash-compatible version surface instead of the
 // bashkit crate semver so scripts that gate on Bash features keep working.
@@ -1196,6 +1201,8 @@ pub struct Interpreter {
     /// Runtime command surface. ScriptedTool uses LogicOnly to prevent scripts
     /// from reaching VFS-backed commands while preserving shell logic.
     shell_profile: ShellProfile,
+    /// Hardened profiles intentionally reduce elapsed-time precision.
+    hardened_timing: bool,
 }
 
 struct ArithmeticExpansionState {
@@ -1249,6 +1256,7 @@ impl Interpreter {
             HashMap::new(),
             None,
             ShellProfile::Full,
+            false,
         )
     }
 
@@ -1270,6 +1278,7 @@ impl Interpreter {
         custom_builtins: HashMap<String, Box<dyn Builtin>>,
         host_builtins: Option<crate::builtins::BuiltinRegistry>,
         shell_profile: ShellProfile,
+        hardened_timing: bool,
     ) -> Self {
         // Macro to reduce boilerplate for simple zero-arg builtin registration.
         // Custom-construction builtins (date, source, hostname, etc.) are registered below.
@@ -1597,6 +1606,7 @@ impl Interpreter {
             proc_sub_paths: HashSet::new(),
             random_state: AtomicU32::new(random_seed),
             shell_profile,
+            hardened_timing,
         }
     }
 
@@ -4036,47 +4046,162 @@ impl Interpreter {
         })
     }
 
-    /// Execute a time command - measure wall-clock execution time
-    ///
-    /// Note: Bashkit only measures wall-clock (real) time.
-    /// User and system CPU time are always reported as 0.
-    /// This is a documented incompatibility with bash.
+    /// Execute the reserved-word pipeline wrapper. Host CPU and memory metrics
+    /// are deliberately never inferred from the containing process.
     async fn execute_time(&mut self, time_cmd: &TimeCommand) -> Result<ExecResult> {
         use crate::time_compat::Instant;
 
-        let start = Instant::now();
+        if let Some(message) = &time_cmd.option_error {
+            return Ok(ExecResult::err(format!("time: {message}\n"), 2));
+        }
+        if time_cmd.append && time_cmd.output.is_none() {
+            return Ok(ExecResult::err(
+                "time: option '-a/--append' requires '-o/--output'\n",
+                2,
+            ));
+        }
 
-        // Execute the wrapped command if present
+        let format = if let Some(word) = &time_cmd.format {
+            let expanded = self.expand_word(word).await?;
+            if let Err(field) = validate_time_format(&expanded) {
+                return Ok(ExecResult::err(
+                    format!("time: unsupported format field '{field}'\n"),
+                    2,
+                ));
+            }
+            Some(expanded)
+        } else {
+            None
+        };
+        let output = if let Some(word) = &time_cmd.output {
+            if self.shell_profile.is_logic_only() {
+                return Ok(ExecResult::err(
+                    "time: output files disabled in logic-only shell\n",
+                    1,
+                ));
+            }
+            Some(self.expand_word(word).await?)
+        } else {
+            None
+        };
+
+        let command_start = self.counters.commands;
+        let loop_start = self.counters.total_loop_iterations;
+        let work_start = self.execution_budget.work_units();
+        let start = Instant::now();
         let mut result = if let Some(cmd) = &time_cmd.command {
             self.execute_command(cmd).await?
         } else {
-            // time with no command - just output timing for nothing
             ExecResult::ok(String::new())
         };
+        let mut elapsed = start.elapsed();
+        // THREAT[TM-INF-033]: Hardened mode exposes only a 100ms lower-bound
+        // bucket, preventing `time` from becoming a high-resolution oracle.
+        if self.hardened_timing {
+            elapsed = std::time::Duration::from_millis(
+                u64::try_from((elapsed.as_millis() / 100) * 100).unwrap_or(u64::MAX),
+            );
+        }
 
-        let elapsed = start.elapsed();
-
-        // Calculate time components
-        let total_secs = elapsed.as_secs_f64();
-        let minutes = (total_secs / 60.0).floor() as u64;
-        let seconds = total_secs % 60.0;
-
-        // Format timing output (goes to stderr, per bash behavior)
-        let timing = if time_cmd.posix_format {
-            // POSIX format: simple, machine-readable
-            format!("real {:.2}\nuser 0.00\nsys 0.00\n", total_secs)
-        } else {
-            // Default bash format
+        let usage = TimeUsage {
+            elapsed,
+            exit_status: result.exit_code,
+            commands: self.counters.commands.saturating_sub(command_start),
+            loops: self
+                .counters
+                .total_loop_iterations
+                .saturating_sub(loop_start),
+            work_units: self
+                .execution_budget
+                .work_units()
+                .saturating_sub(work_start),
+        };
+        let report = if let Some(format) = format {
+            match render_time_format(&format, &usage, self.limits.max_stderr_bytes) {
+                Ok(report) => report,
+                Err(()) => {
+                    self.append_time_stderr(
+                        &mut result,
+                        "time: formatted report exceeds output limit\n",
+                    );
+                    result.exit_code = 1;
+                    return Ok(result);
+                }
+            }
+        } else if time_cmd.verbose {
+            verbose_time_report(&usage)
+        } else if time_cmd.posix_format {
             format!(
-                "\nreal\t{}m{:.3}s\nuser\t0m0.000s\nsys\t0m0.000s\n",
+                "real {:.2}\nuser unavailable\nsys unavailable\n",
+                elapsed.as_secs_f64()
+            )
+        } else {
+            let total_secs = elapsed.as_secs_f64();
+            let minutes = (total_secs / 60.0).floor() as u64;
+            let seconds = total_secs % 60.0;
+            format!(
+                "\nreal\t{}m{:.3}s\nuser\tunavailable\nsys\tunavailable\n",
                 minutes, seconds
             )
         };
 
-        // Append timing to stderr (preserve command's stderr)
-        result.stderr.push_str(&timing);
+        // THREAT[TM-DOS-099]: `-o` must not bypass the diagnostic output cap.
+        if report.len() > self.limits.max_stderr_bytes {
+            self.append_time_stderr(&mut result, "time: formatted report exceeds output limit\n");
+            result.exit_code = 1;
+            return Ok(result);
+        }
+
+        if let Some(path) = output {
+            if self
+                .write_time_report(&path, report.as_bytes(), time_cmd.append)
+                .await
+                .is_err()
+            {
+                self.append_time_stderr(
+                    &mut result,
+                    &format!(
+                        "time: cannot write output file '{}'\n",
+                        sanitize_time_path(&path)
+                    ),
+                );
+                result.exit_code = 1;
+            }
+        } else {
+            self.append_time_stderr(&mut result, &report);
+        }
 
         Ok(result)
+    }
+
+    fn append_time_stderr(&mut self, result: &mut ExecResult, message: &str) {
+        result.stderr.push_str(message);
+        let emit_before = self.output_emit_count;
+        self.maybe_emit_output(
+            &crate::StreamData::new(),
+            &crate::StreamData::from(message),
+            emit_before,
+        );
+    }
+
+    async fn write_time_report(&self, path: &str, report: &[u8], append: bool) -> Result<()> {
+        let path = self.resolve_path(path);
+        if append {
+            return self.fs.append_file(&path, report).await;
+        }
+
+        let parent = path.parent().unwrap_or_else(|| Path::new("/"));
+        let id = TIME_REPORT_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let temp = parent.join(format!(".bashkit-time-{id}.tmp"));
+        if let Err(error) = self.fs.write_file(&temp, report).await {
+            let _ = self.fs.remove(&temp, false).await;
+            return Err(error);
+        }
+        if let Err(error) = self.fs.rename(&temp, &path).await {
+            let _ = self.fs.remove(&temp, false).await;
+            return Err(error);
+        }
+        Ok(())
     }
 
     /// Execute a coprocess command.
@@ -4891,6 +5016,7 @@ impl Interpreter {
     async fn execute_pipeline(&mut self, pipeline: &Pipeline) -> Result<ExecResult> {
         let mut stdin_data: Option<crate::StreamData> = None;
         let mut last_result = ExecResult::ok(String::new());
+        let mut pipeline_stderr = crate::StreamData::new();
         let mut pipe_statuses = Vec::new();
 
         for (i, command) in pipeline.commands.iter().enumerate() {
@@ -4915,6 +5041,7 @@ impl Interpreter {
             };
 
             pipe_statuses.push(result.exit_code);
+            pipeline_stderr.append(&result.stderr);
 
             if is_last {
                 last_result = result;
@@ -4922,6 +5049,7 @@ impl Interpreter {
                 stdin_data = Some(result.stdout);
             }
         }
+        last_result.stderr = pipeline_stderr;
 
         // Store PIPESTATUS array
         self.pipestatus = pipe_statuses.clone();
