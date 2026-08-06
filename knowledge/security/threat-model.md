@@ -314,6 +314,7 @@ panicked. Resolved with `wrapping_*` ops, masked shift amounts, clamped exponent
 | TM-ESC-004 | Mount escape | Mount real paths | MountableFs controlled | **MITIGATED** |
 | TM-ESC-016 | Symlink escape via overlay rename | `ln -s /etc/passwd x; mv x y` | Overlay rename/copy preserve symlinks as symlinks | **FIXED** |
 | TM-ESC-031 | Namespace source-root or policy escape | `..` selects a shorter mount, escapes a rebased source root, or bypasses a nested read-only mount | Normalize before longest-prefix selection; join only the stripped suffix; independently enforce both mutation endpoints | **MITIGATED** |
+| TM-ESC-033 | Windows host-path namespace escape | A direct VFS/RealFs path preserves a drive-relative, drive-absolute, UNC, or device prefix; `root.join(path)` discards the configured root, or a symlink/junction redirects an existing prefix | Shared POSIX VFS normalization discards host prefixes before backend joins; RealFs canonicalizes existing paths or the nearest existing ancestor and performs component-aware root checks; drive-relative symlink targets are rejected; Windows CI exercises alternate separators, case behavior, root-prefix siblings, reparse points, and missing descendants | **MITIGATED** |
 | TM-FS-013 | Permissive RealFs mount default | `mount_real_readonly_at("/", …)` exposes whole host without `allowed_mount_paths` | Allowlist-first: `/`, `/etc`, `/root`, `/Users`, `/home`, `/dev`, `/proc`, `/sys`, `/run`, `/var/run`, `/boot`, `/private`, and any path component matching `.ssh`, `.aws`, `.kube`, `.docker`, `.gnupg`, `.gcloud` are refused unless explicitly allowlisted | **MITIGATED** |
 
 **Current Risk**: MEDIUM - Two open escape vectors (TM-ESC-012, TM-ESC-013) need remediation
@@ -347,6 +348,13 @@ each mutating endpoint is checked independently. Regression tests:
 `tm_esc_031_namespace_normalizes_without_source_or_nested_mount_escape`,
 `tm_esc_031_namespace_readonly_mount_denies_every_mutation_without_bypass`, and
 `tm_esc_031_namespace_rejects_invalid_paths_and_protects_namespace_nodes`.
+
+**TM-ESC-033**: The VFS is POSIX-rooted even on Windows. The shared normalizer
+removes Windows host namespace prefixes before `RealFs` joins a virtual path to
+its canonical root. Existing entries and nearest existing ancestors are then
+canonicalized, so symlink/junction targets, root-prefix siblings, and missing
+suffixes cannot escape. `windows_containment_*` tests run continuously on a
+Windows runner; drive roots are also sensitive mounts under TM-FS-013.
 
 #### 2.2 Process Escape
 
@@ -1231,14 +1239,14 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Shared request execution budget | TM-DOS-096 | `limits.rs`, `parser/mod.rs`, `interpreter/mod.rs`, high-risk builtins/runtimes | Yes |
 | Persistent custom fd cap | TM-DOS-063 | `limits.rs`, `interpreter/mod.rs` | Yes |
 | Command history caps | TM-DOS-094 | `limits.rs`, `interpreter/mod.rs`, `builtins/environ.rs` | Yes |
-| Virtual filesystem | TM-ESC-001, TM-ESC-003 | `fs/memory.rs` | Yes |
+| Virtual filesystem | TM-ESC-001, TM-ESC-003, TM-ESC-033 | `fs/memory.rs`, `fs/overlay.rs`, `fs/realfs.rs` | Yes |
 | Filesystem limits | TM-DOS-005 to TM-DOS-010, TM-DOS-014 | `fs/limits.rs` | Yes |
 | Path depth limit (100) | TM-DOS-012 | `fs/limits.rs` | Yes |
 | Filename length limit (255) | TM-DOS-013 | `fs/limits.rs` | Yes |
 | Path length limit (4096) | TM-DOS-013 | `fs/limits.rs` | Yes |
 | Path char validation | TM-DOS-015 | `fs/limits.rs` | Yes |
 | Zip bomb protection | TM-DOS-007, TM-NET-013 | `builtins/archive.rs` | Yes |
-| Path normalization | TM-ESC-001, TM-INJ-005 | `fs/memory.rs` | Yes |
+| Path normalization | TM-ESC-001, TM-ESC-033, TM-INJ-005 | `fs/mod.rs`, `fs/realfs.rs` | Yes |
 | No symlink following | TM-ESC-002, TM-DOS-011 | `fs/memory.rs` | Yes |
 | Network allowlist | TM-INF-010, TM-NET-001 to TM-NET-007 | `network/allowlist.rs` | Yes |
 | Domain allowlist | TM-NET-015, TM-NET-016, TM-NET-017 | `network/allowlist.rs` | Planned |

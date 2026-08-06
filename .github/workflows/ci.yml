@@ -226,6 +226,27 @@ jobs:
         env:
           PROPTEST_CASES: 50
 
+  windows-containment:
+    # THREAT[TM-ESC-033]: Windows path parsing has drive, UNC, device, and
+    # reparse-point semantics that cannot be exercised on a Unix runner.
+    name: Windows filesystem containment
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: windows-containment
+
+      - name: Test VFS path normalization
+        run: cargo test -p bashkit --lib --features realfs windows_containment
+
+      - name: Test RealFS and overlay containment
+        run: cargo test -p bashkit --test realfs_tests --features realfs windows_containment
+
   examples:
     name: Examples
     runs-on: ubuntu-latest

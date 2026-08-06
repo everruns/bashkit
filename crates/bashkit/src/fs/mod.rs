@@ -510,6 +510,9 @@ impl FileSystem for DisabledFs {
 /// `/../..`), returns `/`.
 pub fn normalize_path(path: &Path) -> PathBuf {
     use std::path::Component;
+    // THREAT[TM-ESC-033]: Discard host namespace prefixes before any backend
+    // join. On Windows this contains drive-relative, drive-absolute, UNC, and
+    // device paths inside the POSIX VFS root instead of preserving host syntax.
     // Build path as String with forward slashes to ensure Unix-style paths
     // on all platforms (the VFS is always Unix-style, even on Windows).
     let mut segments: Vec<&str> = Vec::new();
@@ -533,6 +536,35 @@ pub fn normalize_path(path: &Path) -> PathBuf {
         PathBuf::from("/")
     } else {
         PathBuf::from(format!("/{}", segments.join("/")))
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_containment_tests {
+    use super::*;
+
+    #[test]
+    fn windows_containment_normalizes_host_path_syntax_into_vfs_root() {
+        assert_eq!(
+            normalize_path(Path::new(r"\tmp\..\safe")),
+            Path::new("/safe")
+        );
+        assert_eq!(
+            normalize_path(Path::new(r"C:relative\file.txt")),
+            Path::new("/relative/file.txt")
+        );
+        assert_eq!(
+            normalize_path(Path::new(r"C:\absolute\file.txt")),
+            Path::new("/absolute/file.txt")
+        );
+        assert_eq!(
+            normalize_path(Path::new(r"\\server\share\file.txt")),
+            Path::new("/file.txt")
+        );
+        assert_eq!(
+            normalize_path(Path::new(r"\\?\C:\device\file.txt")),
+            Path::new("/device/file.txt")
+        );
     }
 }
 

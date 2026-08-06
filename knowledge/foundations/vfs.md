@@ -59,6 +59,9 @@ Do you need a custom filesystem?
 #### OverlayFs
 - Copy-on-write layer over another FileSystem, whiteout tracking for deletes
 - Useful for: temp modifications, testing, isolation
+- Uses the same POSIX-rooted path normalization as `InMemoryFs` on every host.
+  On Windows, `\` is accepted as an alternate separator, host drive/UNC/device
+  prefixes are discarded, and VFS lookup remains case-sensitive.
 
 #### MountableFs
 - Mount multiple filesystems at different paths
@@ -97,6 +100,14 @@ Do you need a custom filesystem?
 - Path traversal prevented via canonicalization + root prefix check
 - New-path writes canonicalize the nearest existing ancestor before attaching a
   missing suffix, blocking symlink escapes through non-existent subpaths
+- Windows drive-relative, drive-absolute, UNC, and device-style virtual paths
+  are normalized into the POSIX VFS root before host joining. Existing-path and
+  missing-descendant checks follow symlinks, junctions, and other reparse points
+  before applying component-aware root containment; host lookup itself retains
+  Windows case-insensitive behavior.
+- Windows `RealFs::symlink()` does not create a host reparse point; it creates an
+  empty file after applying target-containment validation. Pre-existing host
+  symlinks and junctions are supported and containment-checked.
 - Builder: `mount_real_readonly[_at]()`, `mount_real_readwrite()`; CLI:
   `--mount-ro` / `--mount-rw` (`host:vfs` syntax for mount point)
 

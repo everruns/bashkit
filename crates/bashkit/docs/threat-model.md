@@ -174,6 +174,7 @@ Scripts may attempt to break out of the sandbox to access the host system.
 | Custom builtins lost (TM-ESC-014) | `std::mem::take` empties builtins | Arc-cloned builtins | **FIXED** |
 | Symlink overlay rename (TM-ESC-016) | `ln -s /etc/passwd x; mv x y` | Overlay rename/copy preserve symlinks | **FIXED** |
 | Namespace source-root or policy escape (TM-ESC-031) | `..` escapes a rebased or nested mount | Normalize before longest-prefix selection; join only the stripped suffix; enforce both mutation endpoints | MITIGATED |
+| Windows host-path namespace escape (TM-ESC-033) | Drive/UNC/device path or reparse point discards the RealFS root | Normalize into the POSIX VFS root; canonicalize existing ancestors; component-aware root check; Windows CI | MITIGATED |
 
 **Process Escape:**
 

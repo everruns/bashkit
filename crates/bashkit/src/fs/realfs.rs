@@ -165,7 +165,10 @@ impl RealFs {
     /// prevent traversal and symlink escapes before attaching the missing
     /// suffix.
     async fn resolve(&self, vpath: &Path) -> std::io::Result<PathBuf> {
-        let normalized = normalize_vpath(vpath);
+        // THREAT[TM-ESC-033]: Use the shared POSIX VFS normalizer. A
+        // platform-aware normalization here would preserve Windows prefixes,
+        // and joining a drive/UNC/device absolute path would discard `root`.
+        let normalized = super::normalize_path(vpath);
         // Strip leading "/" to make it relative
         let relative = normalized.strip_prefix("/").unwrap_or(&normalized);
 
@@ -236,7 +239,7 @@ impl RealFs {
     /// root, then append the basename verbatim. The caller must then use
     /// `symlink_metadata`/`read_link`/`remove_file` on the result.
     async fn resolve_no_follow(&self, vpath: &Path) -> std::io::Result<PathBuf> {
-        let normalized = normalize_vpath(vpath);
+        let normalized = super::normalize_path(vpath);
         let relative = normalized.strip_prefix("/").unwrap_or(&normalized);
 
         if relative == Path::new("") {
@@ -272,7 +275,7 @@ impl RealFs {
     /// a host path whose leaf is still a symlink to outside the root.
     /// `symlink_metadata` describes the link itself, catching that case.
     async fn resolve_for_create(&self, vpath: &Path) -> std::io::Result<PathBuf> {
-        let normalized = normalize_vpath(vpath);
+        let normalized = super::normalize_path(vpath);
         let relative = normalized.strip_prefix("/").unwrap_or(&normalized);
 
         if relative != Path::new("") {
@@ -371,31 +374,6 @@ fn normalize_host_path(path: &Path) -> PathBuf {
                 }
             }
             std::path::Component::CurDir => {}
-            c => components.push(c),
-        }
-    }
-    if components.is_empty() {
-        PathBuf::from("/")
-    } else {
-        components.iter().collect()
-    }
-}
-
-/// Normalize a virtual path: collapse `.` and `..`, ensure absolute.
-fn normalize_vpath(path: &Path) -> PathBuf {
-    let mut components = Vec::new();
-    for component in path.components() {
-        match component {
-            std::path::Component::RootDir => {
-                components.clear();
-                components.push(std::path::Component::RootDir);
-            }
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
-                if components.len() > 1 {
-                    components.pop();
-                }
-            }
             c => components.push(c),
         }
     }
@@ -534,10 +512,16 @@ impl FsBackend for RealFs {
         let real_link = self.resolve(link).await?;
 
         // Absolute targets always escape the mount root on disk
-        if target.is_absolute() {
+        // THREAT[TM-ESC-033]: `C:target` is drive-relative, not absolute, but
+        // still carries host namespace semantics and cannot be a VFS target.
+        if target.is_absolute()
+            || target
+                .components()
+                .any(|component| matches!(component, std::path::Component::Prefix(_)))
+        {
             return Err(IoError::new(
                 ErrorKind::PermissionDenied,
-                "symlink with absolute target not allowed in RealFs (sandbox security)",
+                "symlink with absolute or drive-relative target not allowed in RealFs (sandbox security)",
             )
             .into());
         }
