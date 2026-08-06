@@ -47,6 +47,10 @@ const bash = new Bash({
 
 See [Sandbox configuration & limits](configuration.md) for the full set.
 
+To run against storage you own rather than the in-memory filesystem, pass an
+`fs` object — see
+[Host-backed filesystem](filesystem.md#host-backed-filesystem-js).
+
 ## Examples
 
 Runnable Node examples in the repo:
