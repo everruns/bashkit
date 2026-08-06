@@ -414,6 +414,12 @@ impl Walker {
             }
             CompoundCommand::Arithmetic(_) => {}
             CompoundCommand::Time(cmd) => {
+                if let Some(format) = &cmd.format {
+                    self.walk_word_parts(format, ctx);
+                }
+                if let Some(output) = &cmd.output {
+                    self.walk_word_parts(output, ctx);
+                }
                 if let Some(command) = &cmd.command {
                     self.walk_command(command, ctx);
                 }

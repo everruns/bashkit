@@ -106,6 +106,7 @@ pub mod subst_depth_limit_tests;
 pub mod symlink_overlay_security_tests;
 pub mod threat_model_doc_tests;
 pub mod threat_model_tests;
+pub mod time_command_tests;
 pub mod time_compat_scan_tests;
 #[cfg(all(feature = "scripted_tool", feature = "python", feature = "typescript"))]
 pub mod tool_registry_tests;

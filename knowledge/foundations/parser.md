@@ -31,10 +31,17 @@ script        → command_list EOF
 command_list  → pipeline (('&&' | '||' | ';' | '&') pipeline)*
 pipeline      → command ('|' command)*
 command       → simple_command | compound_command | function_def
+time_command  → 'time' time_option* pipeline
 simple_command → (assignment)* word (word | redirect)*
 redirect      → ('>' | '>>' | '<' | '<<' | '<<<') word
                | NUMBER ('>' | '<') word
 ```
+
+`time` is a reserved-word compound command, not a normal builtin. Its body is
+therefore a pipeline AST and can contain groups, functions, nested `time`, and
+redirections without converting shell syntax back into strings. Bashkit accepts
+Bash/POSIX `-p` plus `--` and the practical GNU report flags `-f/--format`,
+`-o/--output`, `-a/--append`, and `-v/--verbose` on this grammar node.
 
 ### Context-Aware Lexing
 

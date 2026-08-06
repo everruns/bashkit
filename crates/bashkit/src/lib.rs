@@ -3150,6 +3150,7 @@ impl BashBuilder {
             self.epoch_offset,
             self.cwd,
             self.shell_profile,
+            self.profile.name() == ExecutionProfileName::Hardened,
             self.limits,
             self.session_limits,
             self.memory_limits,
@@ -3397,6 +3398,7 @@ impl BashBuilder {
         epoch_offset: Option<i64>,
         cwd: Option<PathBuf>,
         shell_profile: interpreter::ShellProfile,
+        hardened_timing: bool,
         limits: ExecutionLimits,
         session_limits: SessionLimits,
         memory_limits: MemoryLimits,
@@ -3435,6 +3437,7 @@ impl BashBuilder {
             custom_builtins,
             host_builtins,
             shell_profile,
+            hardened_timing,
         );
 
         if let Some(resolver) = command_resolver {

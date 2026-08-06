@@ -198,6 +198,11 @@ Internal builtins that need interpreter state receive it via `Context.shell`:
 - `let` — arithmetic evaluation with assignment
 - `getopts` — complex variable + call stack interaction
 
+`time` is deliberately absent from the builtin registry. Bash grammar makes it
+a reserved-word wrapper around a complete pipeline, so the interpreter measures
+the AST directly. This preserves groups, functions, pipeline status, redirects,
+errexit, cancellation, and the shared request budget.
+
 ### Execution Plans (Sub-Command Delegation)
 
 Builtins cannot access the interpreter directly. When a builtin needs to run
