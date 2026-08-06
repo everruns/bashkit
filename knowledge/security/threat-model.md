@@ -1213,6 +1213,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | TM-DOS-100 | jq control-character normalization amplification | A jq JSON string consisting of literal controls expands sixfold when each byte becomes `\u00XX`; an unmetered compatibility copy can exhaust memory or CPU before strict parsing | The jq-only normalizer charges input-length work before its single pass, borrows unchanged input, and acquires/grows a shared live-intermediate lease before every allocation growth (`builtins/jq/input.rs`) — **MITIGATED** |
 | TM-DOS-101 | yq structured-data amplification | YAML/JSON nesting, multi-document floods, filters, and output format expansion are all attacker-controlled | Real parsers with recursion/depth caps, aggregate budgets, shared jaq work/deadline/output controls, and a final rendered-output cap; `yq_integration_tests` covers deep input and output growth — **MITIGATED** |
 | TM-DOS-102 | Archive decoder allocation-before-check | A small gzip/bzip2 stream makes the decoder output buffer allocate beyond live-memory or filesystem quotas before the post-growth size check runs | Decoder chunks validate absolute/ratio bounds and acquire a shared execution-budget lease before `try_reserve_exact` and copy; corrupt, truncated, CRC-invalid, ratio-bomb, and live-budget tests fail closed — **MITIGATED** |
+| TM-DOS-103 | Post-allocation resource charging | Archive/compression and other growing buffers could call `reserve`/`extend` before taking a live-byte lease; concurrent `fetch_add` accounting could also wrap or transiently overcommit the ceiling | `BudgetedVec`/`BudgetedBytes` and `BudgetedString` own their `ExecutionBudgetLease`, charge planned capacity before `try_reserve_exact`, roll back on allocation/error, and release on drop. CAS admission rejects overflow and concurrent overcommit. Archive creation, extraction/list output, gzip/bzip2 encoders, and decompression use the builders — **MITIGATED** |
 
 ### Accepted (Low Priority)
 
@@ -1246,6 +1247,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Execution timeout (30s) | TM-DOS-023 | `limits.rs` | Yes |
 | Builtin output pre-allocation caps | TM-DOS-058, TM-DOS-090 | `limits.rs`, `builtins/shuf.rs` | Yes |
 | Shared request execution budget | TM-DOS-096 | `limits.rs`, `parser/mod.rs`, `interpreter/mod.rs`, high-risk builtins/runtimes | Yes |
+| Pre-allocation buffer admission | TM-DOS-103 | `limits.rs`, `builtins/archive.rs` | Yes |
 | Persistent custom fd cap | TM-DOS-063 | `limits.rs`, `interpreter/mod.rs` | Yes |
 | Command history caps | TM-DOS-094 | `limits.rs`, `interpreter/mod.rs`, `builtins/environ.rs` | Yes |
 | Virtual filesystem | TM-ESC-001, TM-ESC-003, TM-ESC-033 | `fs/memory.rs`, `fs/overlay.rs`, `fs/realfs.rs` | Yes |
