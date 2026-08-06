@@ -275,6 +275,17 @@ test("host fs: a host error without a code still surfaces its message", async ()
   assert.match(r.stderr, /host store unreachable/);
 });
 
+test("host fs: a malformed host answer is an error, not a silent miss", async () => {
+  const host = new FakeHost({ "/workspace/there.txt": "x\n" });
+  host.exists = async () => undefined;
+  // A redirect probes the parent directory through `exists`. Reading
+  // `undefined` as "missing" would report the workspace as gone;
+  // the host is what's broken, and the message has to say so.
+  const r = await hostBash(host).execute("echo x > /workspace/new.txt");
+  assert.notEqual(r.exitCode, 0);
+  assert.match(r.stderr, /must resolve to a boolean/);
+});
+
 test("host fs: a rejected write fails the command, not the run", async () => {
   const host = new FakeHost();
   host.write = async () => {

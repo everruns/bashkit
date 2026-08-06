@@ -840,10 +840,12 @@ object identity covers *decoded* content, not its compressed framing: a host
 may recompress its store freely, while bytes appended after a compressed stream
 are rejected.
 
-### RealFs Mount Security (TM-FS-*)
+### Host Filesystem Security (TM-FS-*)
 
-The `realfs` feature can mount real host directories into the VFS. Mounts are
-read-only by default and gated by an allowlist.
+Two features let a script reach storage outside the in-memory VFS: the `realfs`
+feature, which mounts real host directories (read-only by default, gated by an
+allowlist), and the wasm bindings' `new Bash({ fs })`, which routes the VFS into
+an embedder-supplied JavaScript object.
 
 | Threat | Attack Example | Mitigation | Status |
 |--------|---------------|------------|--------|
@@ -851,6 +853,7 @@ read-only by default and gated by an allowlist.
 | Partial filesystem mutation (TM-FS-014) | Failed write/copy or cross-mount move leaves corruption, duplication, or retained quota | Failure-atomic `FileSystem` contract; RealFs sibling staging; MountableFs destination rollback; NamespaceFs cross-device rejection; shared conformance + failpoint tests | MITIGATED |
 | Partial tar extraction (TM-FS-015) | A late unsafe or malformed entry leaves earlier files behind | Validate the complete archive and file limits before the first VFS mutation | MITIGATED |
 | yq in-place partial update (TM-FS-016) | A failed transform or write truncates the source file | Evaluate and serialize before writing; random sibling temporary file, mode preservation, and rename-on-success | MITIGATED |
+| JS host filesystem widens the sandbox (TM-FS-017) | `new Bash({ fs })` gives a script whatever the embedder's object exposes | Paths are normalized by `PosixFs` before any host call, so traversal cannot select a path the embedder did not scope. The host object *is* the boundary and is the embedder's to scope; its bytes also live outside the VFS quotas, so the embedder owns the storage limit | ACCEPTED (opt-in, embedder-scoped) |
 
 ### Unicode Security (TM-UNI-*)
 
