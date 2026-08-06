@@ -15,6 +15,8 @@
 //! - tac: pipe + file inputs, trailing-newline edge cases. Currently
 //!   unimplemented flags (`-b`, `-r`, `-s`) carry a `diff_reason` row so
 //!   the table flips to a real assertion when they land.
+//! - printf: integer zero with an explicit zero precision, including the
+//!   alternate-form octal exception.
 //!
 //! ## Skip policy
 //!
@@ -517,6 +519,22 @@ async fn tac_no_trailing_newline() {
         util: "tac",
         args: &[],
         stdin: Some(b"one\ntwo\nthree"),
+        files: &[],
+        diff_reason: None,
+    })
+    .await;
+}
+
+// ---------------------------------------------------------------------------
+// printf fixtures
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn printf_integer_zero_with_explicit_zero_precision() {
+    assert_matches(&DiffFixture {
+        util: "printf",
+        args: &["<%.0d>|<%.0u>|<%#.0x>|<%#.0o>\\n", "0", "0", "0", "0"],
+        stdin: None,
         files: &[],
         diff_reason: None,
     })

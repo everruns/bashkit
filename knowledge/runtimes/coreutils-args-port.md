@@ -117,7 +117,9 @@ The args workflow only catches **flag-signature drift**; it cannot see
 GNU/uutils). `crates/bashkit/tests/integration/coreutils_differential_tests.rs`
 closes that gap: per fixture row it runs the same `<util> <args>` (same
 stdin, same input files) through bashkit and the matching uutils binary,
-asserting byte-equal stdout + exit-code parity. Key properties:
+asserting byte-equal stdout + exit-code parity. The corpus also covers consumers
+of vendored uucore modules, such as `printf`'s integer-formatting edge cases.
+Key properties:
 
 - **Opt-in**: skips unless `BASHKIT_RUN_COREUTILS_DIFF=1` — body divergences
   are *expected*; the harness surfaces them, it does not gate the regular
