@@ -5,3 +5,4 @@
 * [Credential Injection](credential-injection.md) - Per-host HTTP credential injection without exposing secret values to sandboxed scripts.
 * [Request Signing](request-signing.md) - Transparent Ed25519 HTTP message signing according to RFC 9421.
 * [HTTP Transport](http-transport.md) - Pluggable host-controlled HTTP transport for curl and wget.
+* [Request Execution Lifecycle](request-lifecycle.md) - Shared lifecycle and adversarial test contract for request-owned execution boundaries.

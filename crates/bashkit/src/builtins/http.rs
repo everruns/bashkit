@@ -418,9 +418,9 @@ async fn execute_http_request(
         Some(body_str.as_bytes())
     };
 
-    let result = http_client
-        .request_with_headers(method, &url, body_bytes, &header_pairs)
-        .await;
+    let result = ctx
+        .run_budgeted(http_client.request_with_headers(method, &url, body_bytes, &header_pairs))
+        .await?;
 
     match result {
         Ok(response) => {

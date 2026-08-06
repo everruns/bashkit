@@ -271,9 +271,16 @@ impl Builtin for ToolImpl {
 
         // Prefer async, fall back to sync.
         let result = if let Some(cb) = &self.exec {
-            (cb)(tool_args).await
+            ctx.run_budgeted((cb)(tool_args)).await?
         } else if let Some(cb) = &self.exec_sync {
-            (cb)(&tool_args)
+            if let Some(budget) = ctx.execution_budget() {
+                budget.check()?;
+            }
+            let result = (cb)(&tool_args);
+            if let Some(budget) = ctx.execution_budget() {
+                budget.check()?;
+            }
+            result
         } else {
             return Err(crate::error::Error::Execution(format!(
                 "{}: no exec defined",

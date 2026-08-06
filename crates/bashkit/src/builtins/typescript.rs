@@ -819,6 +819,7 @@ impl Builtin for TypeScript {
         } else {
             code
         };
+        let execution_budget = ctx.execution_budget().cloned();
         let future = run_typescript(
             &code,
             ctx.fs.clone(),
@@ -828,13 +829,14 @@ impl Builtin for TypeScript {
             ctx.execution_budget().cloned(),
         );
         #[cfg(feature = "scripted_tool")]
-        return crate::tool_registry::scope_runtime_call(
+        let future = crate::tool_registry::scope_runtime_call(
             crate::tool_registry::ToolCallScope::from_context(&ctx),
             future,
-        )
-        .await;
-        #[cfg(not(feature = "scripted_tool"))]
-        future.await
+        );
+        match execution_budget {
+            Some(budget) => budget.run(future).await?,
+            None => future.await,
+        }
     }
 }
 

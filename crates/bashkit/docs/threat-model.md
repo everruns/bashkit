@@ -505,6 +505,7 @@ echo $user_input
 | `$?` leaks into VFS subprocess (TM-ISO-024) | Parent `last_exit_code` visible in child, causing false `set -e` failures | Child resets `last_exit_code`, `nounset_error`, and traps | **MITIGATED** |
 | Wrapper rebuild drops constructor capabilities (TM-ISO-025) | A binding reset loses limits, policy files, callbacks, or network policy | Canonical capability matrix with executable evidence; rebuilds retain constructor config | **MITIGATED** |
 | Shared ToolRegistry request context (TM-ISO-026) | Concurrent shell/Python/TypeScript calls leak tenant identity or traces | Per-request `ExecutionExtensions`, task-local runtime routing, and callback-owned context | **MITIGATED** |
+| Stale request execution authority (TM-ISO-027) | A late runtime/transport/callback result crosses completion, cancellation, timeout, or reuse | Shared request budget, cancellation-aware awaits, post-await checks, and RAII closure/release | **MITIGATED** |
 
 Each [`Bash`] instance is fully isolated. For multi-tenant environments, create
 separate instances per tenant:

@@ -1,4 +1,8 @@
-use bashkit::{Bash, Error, ExecutionLimits, LimitExceeded};
+use bashkit::{
+    Bash, Builtin, BuiltinContext, Error, ExecResult, ExecutionBudget, ExecutionLimits,
+    LimitExceeded, async_trait,
+};
+use std::sync::{Arc, Mutex};
 
 fn assert_budget_exhausted(result: bashkit::Result<bashkit::ExecResult>) {
     assert!(
@@ -61,6 +65,73 @@ async fn separate_host_requests_receive_fresh_budgets() {
 
     assert_eq!(bash.exec("true").await.unwrap().exit_code, 0);
     assert_eq!(bash.exec("true").await.unwrap().exit_code, 0);
+}
+
+#[derive(Clone)]
+struct CaptureBoundary(Arc<Mutex<Option<ExecutionBudget>>>);
+
+#[async_trait]
+impl Builtin for CaptureBoundary {
+    async fn execute(&self, ctx: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {
+        *self.0.lock().unwrap() = ctx.execution_budget().cloned();
+        Ok(ExecResult::ok("captured\n"))
+    }
+}
+
+#[tokio::test]
+/// TM-ISO-027: a request boundary closes even when a host retains a clone.
+async fn completed_request_rejects_late_work() {
+    let captured = Arc::new(Mutex::new(None));
+    let mut bash = Bash::builder()
+        .builtin("capture", Box::new(CaptureBoundary(captured.clone())))
+        .build();
+
+    assert_eq!(bash.exec("capture").await.unwrap().stdout, "captured\n");
+    let old = captured.lock().unwrap().take().unwrap();
+    assert_eq!(
+        old.check().unwrap_err().to_string(),
+        "execution budget exhausted: request closed"
+    );
+    assert_eq!(
+        old.consume_work(1).unwrap_err().to_string(),
+        "execution budget exhausted: request closed"
+    );
+
+    assert_eq!(bash.exec("echo reused").await.unwrap().stdout, "reused\n");
+    assert_eq!(
+        old.check().unwrap_err().to_string(),
+        "execution budget exhausted: request closed"
+    );
+}
+
+#[tokio::test]
+/// TM-ISO-027: independently executing shells never share lifecycle state.
+async fn concurrent_requests_have_independent_boundaries() {
+    let left = Arc::new(Mutex::new(None));
+    let right = Arc::new(Mutex::new(None));
+    let mut left_bash = Bash::builder()
+        .builtin("capture", Box::new(CaptureBoundary(left.clone())))
+        .build();
+    let mut right_bash = Bash::builder()
+        .builtin("capture", Box::new(CaptureBoundary(right.clone())))
+        .build();
+
+    let (left_result, right_result) = tokio::join!(
+        left_bash.exec("capture; echo left"),
+        right_bash.exec("capture; echo right")
+    );
+    assert_eq!(left_result.unwrap().stdout, "captured\nleft\n");
+    assert_eq!(right_result.unwrap().stdout, "captured\nright\n");
+    let left = left.lock().unwrap().take().unwrap();
+    let right = right.lock().unwrap().take().unwrap();
+    assert_eq!(
+        left.check().unwrap_err().to_string(),
+        "execution budget exhausted: request closed"
+    );
+    assert_eq!(
+        right.check().unwrap_err().to_string(),
+        "execution budget exhausted: request closed"
+    );
 }
 
 #[cfg(feature = "jq")]

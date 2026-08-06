@@ -759,6 +759,18 @@ impl<'a> Context<'a> {
             .map_err(Into::into)
     }
 
+    /// Run async boundary work under this request's cancellation/lifecycle gate.
+    #[cfg(any(feature = "http_client", feature = "scripted_tool"))]
+    pub(crate) async fn run_budgeted<F>(&self, future: F) -> Result<F::Output>
+    where
+        F: std::future::Future,
+    {
+        match self.execution_budget() {
+            Some(budget) => budget.run(future).await.map_err(Into::into),
+            None => Ok(future.await),
+        }
+    }
+
     /// Look up a typed per-execution extension, if present.
     pub fn execution_extension<T>(&self) -> Option<&T>
     where
