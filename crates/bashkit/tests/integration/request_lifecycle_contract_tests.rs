@@ -1,6 +1,20 @@
 //! Adversarial contract for request-owned async execution boundaries.
 
+#[cfg(any(
+    feature = "scripted_tool",
+    feature = "http_client",
+    feature = "python",
+    feature = "typescript",
+    feature = "sqlite"
+))]
 use bashkit::{Bash, Error};
+#[cfg(any(
+    feature = "scripted_tool",
+    feature = "http_client",
+    feature = "python",
+    feature = "typescript",
+    feature = "sqlite"
+))]
 use std::sync::atomic::Ordering;
 #[cfg(any(
     feature = "scripted_tool",
