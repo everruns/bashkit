@@ -119,6 +119,9 @@ pass in CI); only divergences and boundaries are recorded here.
 | L-AWK-001 | awk | Some complex regex patterns unsupported (engine shared with sed/grep, size-limited) | stance |
 | L-JQ-001 | jq | Alternative `//`: jaq errors on `.foo` applied to null instead of returning null (upstream jaq divergence) | 1 skipped spec test |
 | L-JQ-002 | jq | Regex natives compile the pattern per filter invocation; mapping `test`/`match`/`split` over many inputs can repeat compilation because jaq's native callback has no per-run cache state | `regex_compat.rs::re_native` |
+| L-YQ-001 | yq | Expressions are Bashkit jq expressions; mikefarah/yq-only node, comment, style, anchor, tag, filename, and eval-all operators are not implemented | stance |
+| L-YQ-002 | yq | YAML conversion follows YAML 1.1, deterministically sorts mapping keys at the JSON-value boundary, drops comments/style/anchors, and rejects custom tags plus non-string mapping keys rather than silently corrupting them | `yaml_tags_and_non_string_keys_fail_closed`, `inplace_update_is_atomic_and_suppresses_stdout` |
+| L-YQ-003 | yq | Input/output conversion supports YAML and JSON only; mikefarah/yq's XML, CSV, TOML, properties, HCL, Lua, and INI formats are not exposed through yq | stance |
 | L-GREP-001 | grep | `--color`/`--colour`, `--line-buffered` accepted as no-ops | `l_grep_001_noop_flags` |
 | L-CURL-001 | curl | Spec-test coverage for methods/headers/auth/redirects not ported (needs `http_client` + allowlist in harness); payload behavior has integration and real-curl differential coverage | stance |
 | L-CURL-002 | curl/wget | Unknown options are ignored for compatibility, not rejected (real curl/wget error); deliberate leniency | `curl.rs` |

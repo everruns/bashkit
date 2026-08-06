@@ -273,12 +273,23 @@ export const DOC_META: DocMeta[] = [
     editPath: "crates/bashkit/docs/jq.md",
   },
   {
+    slug: "yq",
+    title: "yq builtin",
+    summary: "jq-style YAML and JSON processing, conversion, and safe in-place updates.",
+    seoTitle: "Bashkit yq builtin compatibility guide",
+    seoDescription:
+      "Process YAML and JSON with Bashkit's shared jq expression engine, multi-document support, format conversion, and atomic in-place updates.",
+    section: "Reference",
+    collection: "rustdocs",
+    editPath: "crates/bashkit/docs/yq.md",
+  },
+  {
     slug: "structured-data",
     title: "Structured data",
-    summary: "CSV, JSON, YAML, and TOML builtins for everyday data wrangling.",
-    seoTitle: "Bashkit CSV, JSON, YAML, and TOML builtins",
+    summary: "jq/yq transforms and narrower CSV, JSON, and TOML helpers.",
+    seoTitle: "Bashkit jq, yq, CSV, JSON, and TOML builtins",
     seoDescription:
-      "Query and transform structured data in Bashkit with the csv, json, yaml, and tomlq builtins: column selection, filtering, and dotted-path lookups.",
+      "Query and transform structured data in Bashkit with jq, yq, csv, json, and tomlq.",
     section: "Reference",
     editPath: "docs/structured-data.md",
   },

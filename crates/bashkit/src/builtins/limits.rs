@@ -83,9 +83,6 @@ pub(crate) const TEMPLATE_MAX_DEPTH: usize = 100;
 /// timeout: max timeout duration in seconds (5 minutes).
 pub(crate) const TIMEOUT_MAX_SECONDS: u64 = 300;
 
-/// yaml: max nesting depth.
-pub(crate) const YAML_MAX_DEPTH: usize = 100;
-
 /// yes: max lines and total output bytes per invocation.
 pub(crate) const YES_MAX_LINES: usize = 10_000;
 pub(crate) const YES_MAX_OUTPUT_BYTES: usize = 1_048_576;

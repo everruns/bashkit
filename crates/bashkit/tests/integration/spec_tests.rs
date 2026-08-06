@@ -188,6 +188,20 @@ async fn jq_spec_tests() {
     run_category_tests("jq", all_tests).await;
 }
 
+/// Run yq compatibility tests (requires the shared jaq evaluator).
+#[tokio::test]
+#[cfg(feature = "jq")]
+async fn yq_spec_tests() {
+    let dir = spec_cases_dir().join("yq");
+    let all_tests = load_spec_tests(&dir);
+
+    if all_tests.is_empty() {
+        return;
+    }
+
+    run_category_tests("yq", all_tests).await;
+}
+
 /// Run all python spec tests (requires python feature)
 #[cfg(feature = "python")]
 #[tokio::test]

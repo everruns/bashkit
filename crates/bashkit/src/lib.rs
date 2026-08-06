@@ -27,7 +27,7 @@
 //! | Flow control | `true`, `false`, `exit`, `return`, `break`, `continue`, `test`, `[`, `assert` |
 //! | Variables | `export`, `set`, `unset`, `local`, `shift`, `source`, `.`, `eval`, `readonly`, `times`, `declare`, `typeset`, `let`, `dotenv`, `envsubst` |
 //! | Shell | `bash`, `sh` (virtual re-invocation), `exec`, `:`, `trap`, `caller`, `getopts`, `shopt`, `command`, `type`, `which`, `hash`, `alias`, `unalias`, `compgen`, `fc`, `help` |
-//! | Text processing | `grep`, `rg`, `sed`, `awk`, `jq` (with `jq` feature), `head`, `tail`, `sort`, `uniq`, `cut`, `tr`, `wc`, `paste`, `column`, `diff`, `comm`, `strings`, `tac`, `rev`, `seq`, `expr`, `fold`, `expand`, `unexpand`, `join`, `split`, `iconv`, `shuf`, `template` |
+//! | Text processing | `grep`, `rg`, `sed`, `awk`, `jq` and `yq` (with `jq` feature), `head`, `tail`, `sort`, `uniq`, `cut`, `tr`, `wc`, `paste`, `column`, `diff`, `comm`, `strings`, `tac`, `rev`, `seq`, `expr`, `fold`, `expand`, `unexpand`, `join`, `split`, `iconv`, `shuf`, `template` |
 //! | File operations | `mkdir`, `mktemp`, `mkfifo`, `rm`, `cp`, `mv`, `touch`, `chmod`, `chown`, `ln`, `rmdir`, `realpath`, `readlink`, `truncate`, `glob`, `patch` |
 //! | File inspection | `file`, `stat`, `less` |
 //! | Archives | `tar`, `gzip`, `gunzip`, `zip`, `unzip` |
@@ -37,7 +37,7 @@
 //! | Disk | `df`, `du` |
 //! | Pipeline | `xargs`, `tee` |
 //! | System info | `whoami`, `hostname`, `uname`, `id`, `env`, `printenv`, `history` |
-//! | Structured data | `json`, `csv`, `yaml`, `tomlq`, `semver` |
+//! | Structured data | `json`, `csv`, `tomlq`, `semver` |
 //! | Network | `curl`, `wget`, `http` (requires [`NetworkAllowlist`])
 //! | Arithmetic | `bc` |
 //! | Experimental | `python`, `python3` (requires `python` feature), `git` (requires `git` feature), `ts`, `typescript`, `node`, `deno`, `bun` (requires `typescript` feature), `ssh`, `scp`, `sftp` (requires `ssh` feature), `sqlite`, `sqlite3` (requires `sqlite` feature)
@@ -3748,6 +3748,12 @@ pub mod compatibility_scorecard {}
 /// **Related:** [`compatibility_scorecard`], [`threat_model`]
 #[doc = include_str!("../docs/jq.md")]
 pub mod jq_guide {}
+
+/// yq builtin: YAML/JSON conversion around the shared jq evaluator.
+///
+/// **Related:** [`jq_guide`], [`threat_model`]
+#[doc = include_str!("../docs/yq.md")]
+pub mod yq_guide {}
 
 /// Security threat model guide.
 ///

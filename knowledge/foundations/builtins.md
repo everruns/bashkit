@@ -268,6 +268,22 @@ macro in `interpreter/mod.rs`. To add a new one:
 4. Add spec tests in `tests/spec_cases/`
 5. Run `just regen-builtins`; record any gaps in [Known Limitations](../operations/limitations.md)
 
+### Structured Query Builtins
+
+`jq` and `yq` are registered together by the `jq` Cargo feature. `jq` owns the
+jaq evaluator, compatibility definitions, execution-budget accounting, deadline,
+depth, and output controls. `yq` is a format boundary around that implementation:
+it parses YAML/JSON into a JSON stream, calls `Jq::execute`, then serializes the
+results. It must not add YAML-specific expression parsing or duplicate evaluator
+logic.
+
+The old `yaml get/keys/length/type` helper was replaced rather than retained as
+a nonstandard compatibility surface. `yq -i` evaluates and serializes fully,
+writes a sibling temporary VFS file, and renames it over the source only after
+all earlier stages succeed. See [Known Limitations](../operations/limitations.md)
+for deliberate mikefarah/yq gaps and [Threat Model](../security/threat-model.md)
+for input/output bounds.
+
 ### Network Builtins
 
 `curl`, `wget`, `http` require the `http_client` feature + URL allowlist.

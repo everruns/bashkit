@@ -30,6 +30,7 @@ anyhow = { workspace = true }
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
+serde_yaml_ng = { workspace = true, optional = true }
 
 # Regex
 regex = { workspace = true }
@@ -123,7 +124,7 @@ default = ["bash_tool"]
 bash_tool = ["dep:tower", "dep:futures-core"]
 # Enable jq builtin via embedded jaq interpreter
 # Usage: cargo build --features jq
-jq = ["dep:jaq-core", "dep:jaq-std", "dep:jaq-json"]
+jq = ["dep:jaq-core", "dep:jaq-std", "dep:jaq-json", "dep:serde_yaml_ng"]
 http_client = ["reqwest", "rustls"]
 # Enable Ed25519 request signing per RFC 9421 / web-bot-auth profile
 bot-auth = ["http_client", "dep:ed25519-dalek", "dep:rand", "dep:zeroize"]
