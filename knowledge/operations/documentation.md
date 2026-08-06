@@ -39,7 +39,9 @@ Repo-root `docs/` is for user-facing site articles.
   accepts either form while only the source-relative one works on GitHub.
   Enforced by `just check-doc-links` (`scripts/check_doc_links.py`, in
   `just check` and CI) — the `site/scripts/verify-doc-*.mjs` verifiers check
-  built routes and cannot see this class of breakage.
+  built routes and cannot see this class of breakage. The same check also
+  validates `bashkit = { version = "..." }` dependency snippets in the
+  prose trees and crate-level Rustdoc against `[workspace.package].version`.
 - Page titles and descriptions live in `DOC_META`
   (`site/src/pages/docs/_meta.ts`), never in markdown frontmatter: the canonical
   files must stay frontmatter-free so `crates/bashkit/docs/*.md` embed cleanly
