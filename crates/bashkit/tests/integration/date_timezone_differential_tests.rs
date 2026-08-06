@@ -68,7 +68,7 @@ async fn matches_gnu_date_for_timezone_sensitive_inputs() {
         ),
         (
             "America/Chicago",
-            &["-u", "-d", "2024-01-15 10:40:00", "+%s %T %Z %z"],
+            &["-u", "-d", "2024-01-15T10:40:00-06:00", "+%s %T %Z %z"],
         ),
         ("Etc/GMT+6", &["-d", "@0", "+%F %T %Z %z"]),
         ("UTC", &["-d", "@0", "+%C %G %g %u %V %3N %6N %N"]),
