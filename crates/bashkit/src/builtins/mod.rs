@@ -114,6 +114,7 @@ mod yq;
 mod zip_cmd;
 
 mod helpers;
+pub(crate) use crate::execution_capability::ExecutionExtensions;
 pub(crate) use helpers::{BuiltinHelper, invalid_option};
 
 pub(crate) mod limits;
@@ -251,7 +252,6 @@ pub use sqlite::{Sqlite, SqliteBackend, SqliteLimits};
 
 use async_trait::async_trait;
 use clap::{CommandFactory, FromArgMatches};
-use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -348,7 +348,19 @@ pub trait Extension: Send + Sync {
 /// builtins — so embedders can override baked-in commands.
 #[derive(Clone, Default)]
 pub struct BuiltinRegistry {
-    inner: Arc<std::sync::RwLock<HashMap<String, Arc<dyn Builtin>>>>,
+    inner: Arc<std::sync::RwLock<HashMap<String, RegisteredBuiltin>>>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BuiltinAccess {
+    Scoped,
+    TrustedHost,
+}
+
+#[derive(Clone)]
+pub(crate) struct RegisteredBuiltin {
+    pub(crate) builtin: Arc<dyn Builtin>,
+    pub(crate) access: BuiltinAccess,
 }
 
 impl BuiltinRegistry {
@@ -360,18 +372,49 @@ impl BuiltinRegistry {
     /// Register or replace a builtin under `name`.
     pub fn insert(&self, name: impl Into<String>, builtin: Arc<dyn Builtin>) {
         if let Ok(mut guard) = self.inner.write() {
-            guard.insert(name.into(), builtin);
+            guard.insert(
+                name.into(),
+                RegisteredBuiltin {
+                    builtin,
+                    access: BuiltinAccess::Scoped,
+                },
+            );
+        }
+    }
+
+    /// Register a builtin with intentionally unscoped host-facility access.
+    ///
+    /// This is for trusted host integrations whose retained VFS handle is
+    /// deliberately session-scoped. Prefer [`insert`](Self::insert), whose
+    /// handles are revoked at the end of every execution.
+    pub fn insert_trusted(&self, name: impl Into<String>, builtin: Arc<dyn Builtin>) {
+        if let Ok(mut guard) = self.inner.write() {
+            guard.insert(
+                name.into(),
+                RegisteredBuiltin {
+                    builtin,
+                    access: BuiltinAccess::TrustedHost,
+                },
+            );
         }
     }
 
     /// Remove the entry for `name`, returning the previously registered
     /// builtin if any.
     pub fn remove(&self, name: &str) -> Option<Arc<dyn Builtin>> {
-        self.inner.write().ok().and_then(|mut g| g.remove(name))
+        self.inner
+            .write()
+            .ok()
+            .and_then(|mut g| g.remove(name))
+            .map(|entry| entry.builtin)
     }
 
     /// Look up the builtin registered under `name`, returning a cloned handle.
     pub fn lookup(&self, name: &str) -> Option<Arc<dyn Builtin>> {
+        self.lookup_entry(name).map(|entry| entry.builtin)
+    }
+
+    pub(crate) fn lookup_entry(&self, name: &str) -> Option<RegisteredBuiltin> {
         self.inner.read().ok().and_then(|g| g.get(name).cloned())
     }
 
@@ -445,17 +488,6 @@ pub trait CommandResolver: Send + Sync {
     /// than probing the filesystem on each call.
     fn resolve(&self, name: &str) -> Option<Arc<dyn Builtin>>;
 }
-
-/// Typed, per-execution data exposed to builtin implementations.
-///
-/// This is intentionally separate from shell state: extensions live for one
-/// `Bash::exec*()` call, while the shell/interpreter may persist across many
-/// executions.
-#[derive(Default)]
-pub struct ExecutionExtensions {
-    values: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
-}
-
 /// Per-exec wall-clock deadline for builtins with synchronous VM sections.
 #[derive(Debug, Clone)]
 pub(crate) struct ExecutionDeadline {
@@ -489,47 +521,6 @@ impl ExecutionDeadline {
     #[allow(dead_code)]
     pub(crate) fn is_expired(&self) -> bool {
         self.started_at.elapsed() >= self.timeout
-    }
-}
-
-impl ExecutionExtensions {
-    /// Create an empty execution extension bag.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Insert a typed value, replacing any previous value of the same type.
-    pub fn insert<T>(&mut self, value: T) -> Option<T>
-    where
-        T: Send + Sync + 'static,
-    {
-        self.values
-            .insert(TypeId::of::<T>(), Box::new(value))
-            .and_then(|prev| prev.downcast::<T>().ok().map(|prev| *prev))
-    }
-
-    /// Builder-style insert.
-    pub fn with<T>(mut self, value: T) -> Self
-    where
-        T: Send + Sync + 'static,
-    {
-        let _ = self.insert(value);
-        self
-    }
-
-    /// Look up a typed value by exact type.
-    pub fn get<T>(&self) -> Option<&T>
-    where
-        T: Send + Sync + 'static,
-    {
-        self.values
-            .get(&TypeId::of::<T>())
-            .and_then(|value| value.downcast_ref::<T>())
-    }
-
-    /// Return whether the bag is empty.
-    pub fn is_empty(&self) -> bool {
-        self.values.is_empty()
     }
 }
 
@@ -670,7 +661,9 @@ pub struct Context<'a> {
 
     /// Virtual filesystem.
     ///
-    /// Provides async file operations (read, write, mkdir, etc.).
+    /// Provides async file operations (read, write, mkdir, etc.). Custom and
+    /// extension builtins receive a revocable view: cloned handles fail after
+    /// the current execution completes or is cancelled.
     pub fs: Arc<dyn FileSystem>,
 
     /// Standard input from pipeline.
@@ -730,14 +723,18 @@ impl<'a> Context<'a> {
     }
 
     /// Aggregate budget shared by this request's commands and runtimes.
-    pub fn execution_budget(&self) -> Option<&crate::limits::ExecutionBudget> {
+    pub fn execution_budget(
+        &self,
+    ) -> Option<crate::ExecutionCapability<crate::limits::ExecutionBudget>> {
         self.execution_extension::<crate::limits::ExecutionBudget>()
     }
 
     /// Charge bytes materialized after dispatch, such as VFS file contents.
     pub(crate) fn consume_budget_input(&self, bytes: usize) -> Result<()> {
         if let Some(budget) = self.execution_budget() {
-            budget.consume_input(bytes)?;
+            budget
+                .try_with(|budget| budget.consume_input(bytes))
+                .map_err(|_| crate::Error::Cancelled)??;
         }
         Ok(())
     }
@@ -745,7 +742,9 @@ impl<'a> Context<'a> {
     /// Charge scalable internal work that is not a shell command boundary.
     pub(crate) fn consume_budget_work(&self, units: u64) -> Result<()> {
         if let Some(budget) = self.execution_budget() {
-            budget.consume_work(units)?;
+            budget
+                .try_with(|budget| budget.consume_work(units))
+                .map_err(|_| crate::Error::Cancelled)??;
         }
         Ok(())
     }
@@ -756,9 +755,13 @@ impl<'a> Context<'a> {
         bytes: usize,
     ) -> Result<Option<crate::limits::ExecutionBudgetLease>> {
         self.execution_budget()
-            .map(|budget| budget.lease_bytes(bytes))
+            .map(|budget| {
+                budget
+                    .try_with(|budget| budget.lease_bytes(bytes))
+                    .map_err(|_| crate::Error::Cancelled)?
+                    .map_err(Into::into)
+            })
             .transpose()
-            .map_err(Into::into)
     }
 
     /// Run async boundary work under this request's cancellation/lifecycle gate.
@@ -768,19 +771,34 @@ impl<'a> Context<'a> {
         F: std::future::Future,
     {
         match self.execution_budget() {
-            Some(budget) => budget.run(future).await.map_err(Into::into),
+            Some(budget) => {
+                let budget = budget
+                    .try_with(Clone::clone)
+                    .map_err(|_| crate::Error::Cancelled)?;
+                budget.run(future).await.map_err(Into::into)
+            }
             None => Ok(future.await),
         }
     }
 
-    /// Look up a typed per-execution extension, if present.
-    pub fn execution_extension<T>(&self) -> Option<&T>
+    /// Look up a typed, revocable per-execution extension, if present.
+    pub fn execution_extension<T>(&self) -> Option<crate::ExecutionCapability<T>>
     where
         T: Send + Sync + 'static,
     {
         self.shell
             .as_ref()
             .and_then(|shell| shell.execution_extensions.get::<T>())
+    }
+
+    /// Bind a host value to the current execution lease.
+    pub fn execution_capability<T>(&self, value: T) -> Option<crate::ExecutionCapability<T>>
+    where
+        T: Send + Sync + 'static,
+    {
+        self.shell
+            .as_ref()
+            .and_then(|shell| shell.execution_extensions.capability(value))
     }
 
     /// Create a new Context for testing purposes.
@@ -1059,7 +1077,7 @@ impl<'a> BashkitContext<'a> {
     }
 
     /// Look up a typed per-execution extension, if present.
-    pub fn execution_extension<T>(&self) -> Option<&T>
+    pub fn execution_extension<T>(&self) -> Option<crate::ExecutionCapability<T>>
     where
         T: Send + Sync + 'static,
     {

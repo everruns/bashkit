@@ -456,10 +456,10 @@ impl TypeScript {
         self
     }
 
-    fn effective_limits(&self, deadline: Option<&ExecutionDeadline>) -> TypeScriptLimits {
+    fn effective_limits(&self, remaining: Option<std::time::Duration>) -> TypeScriptLimits {
         let mut limits = self.limits.clone();
-        if let Some(deadline) = deadline {
-            limits.common.max_duration = limits.common.max_duration.min(deadline.remaining());
+        if let Some(remaining) = remaining {
+            limits.common.max_duration = limits.common.max_duration.min(remaining);
         }
         limits
     }
@@ -802,7 +802,10 @@ impl Builtin for TypeScript {
             ));
         };
 
-        let limits = self.effective_limits(ctx.execution_extension::<ExecutionDeadline>());
+        let remaining = ctx
+            .execution_extension::<ExecutionDeadline>()
+            .and_then(|deadline| deadline.try_with(ExecutionDeadline::remaining).ok());
+        let limits = self.effective_limits(remaining);
         ctx.consume_budget_input(code.len())?;
         ctx.consume_budget_work(u64::try_from(code.len().div_ceil(64)).unwrap_or(u64::MAX))?;
         ctx.consume_budget_work(u64::try_from(limits.max_allocations).unwrap_or(u64::MAX))?;
@@ -819,14 +822,17 @@ impl Builtin for TypeScript {
         } else {
             code
         };
-        let execution_budget = ctx.execution_budget().cloned();
+        let execution_budget = ctx
+            .execution_budget()
+            .and_then(|budget| budget.try_with(Clone::clone).ok());
         let future = run_typescript(
             &code,
             ctx.fs.clone(),
             ctx.cwd,
             &limits,
             self.external_fns.as_ref(),
-            ctx.execution_budget().cloned(),
+            ctx.execution_budget()
+                .and_then(|budget| budget.try_with(Clone::clone).ok()),
         );
         #[cfg(feature = "scripted_tool")]
         let future = crate::tool_registry::scope_runtime_call(

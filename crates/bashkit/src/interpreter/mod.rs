@@ -477,16 +477,70 @@ impl ShellRef<'_> {
 pub(crate) struct ExecutionExtensionsGuard {
     slot: Arc<StdMutex<Arc<builtins::ExecutionExtensions>>>,
     previous: Option<Arc<builtins::ExecutionExtensions>>,
+    scope: Arc<crate::execution_capability::ExecutionScope>,
+}
+
+impl ExecutionExtensionsGuard {
+    fn cleanup(&mut self) -> crate::CapabilityCleanupReport {
+        // Deny all new capability access before restoring the interpreter's
+        // previous request slot; this closes the cross-request handoff window.
+        let _ = self.scope.begin_revoke();
+        let mut failures = 0;
+        if let Some(previous) = self.previous.take() {
+            match self.slot.lock() {
+                Ok(mut slot) => *slot = previous,
+                Err(poisoned) => {
+                    failures = 1;
+                    *poisoned.into_inner() = previous;
+                }
+            }
+        }
+        self.scope.finish_revoke(failures)
+    }
+
+    pub(crate) fn finish(mut self) -> crate::CapabilityCleanupReport {
+        self.cleanup()
+    }
 }
 
 impl Drop for ExecutionExtensionsGuard {
     fn drop(&mut self) {
-        if let Some(previous) = self.previous.take() {
-            *self
-                .slot
-                .lock()
-                .expect("interpreter execution extensions lock") = previous;
-        }
+        let _ = self.cleanup();
+    }
+}
+
+#[cfg(test)]
+mod execution_extensions_guard_tests {
+    use super::*;
+
+    #[test]
+    fn poisoned_cleanup_is_recovered_bounded_and_idempotent() {
+        let scope = crate::execution_capability::ExecutionScope::new();
+        let mut active = builtins::ExecutionExtensions::new().with("secret".to_string());
+        active.bind(scope.clone());
+        let capability = active.get::<String>().unwrap();
+        let previous = Arc::new(builtins::ExecutionExtensions::new());
+        let slot = Arc::new(StdMutex::new(Arc::new(active)));
+
+        let poison_slot = slot.clone();
+        let _ = std::panic::catch_unwind(move || {
+            let _guard = poison_slot.lock().unwrap();
+            panic!("poison execution extension cleanup lock");
+        });
+
+        let guard = ExecutionExtensionsGuard {
+            slot,
+            previous: Some(previous),
+            scope: scope.clone(),
+        };
+        let report = guard.finish();
+        assert_eq!(report.failures, 1);
+        assert!(report.revoked);
+        assert_eq!(
+            capability.try_with(Clone::clone),
+            Err(crate::ExecutionCapabilityError::Revoked)
+        );
+        assert_eq!(scope.revoke(0), report, "second cleanup is idempotent");
     }
 }
 
@@ -1654,6 +1708,9 @@ impl Interpreter {
         &self,
         extensions: builtins::ExecutionExtensions,
     ) -> ExecutionExtensionsGuard {
+        let scope = extensions
+            .scope()
+            .expect("execution extensions must be bound before installation");
         let previous = {
             let mut slot = self
                 .execution_extensions
@@ -1664,6 +1721,7 @@ impl Interpreter {
         ExecutionExtensionsGuard {
             slot: self.execution_extensions.clone(),
             previous: Some(previous),
+            scope,
         }
     }
 
@@ -6121,19 +6179,50 @@ impl Interpreter {
         // Clone the Arc out of the map so the call doesn't hold a borrow on
         // self.builtins while we take &mut self for the execution body.
         let builtin = self.builtins.get(name).unwrap().clone();
-        self.execute_builtin_arc(name, builtin, args, stdin, redirects)
+        self.execute_builtin_arc(
+            name,
+            builtin,
+            crate::builtins::BuiltinAccess::Scoped,
+            args,
+            stdin,
+            redirects,
+        )
     }
 
     /// Execute a builtin resolved via the host-owned [`BuiltinRegistry`].
     fn execute_host_builtin<'a>(
         &'a mut self,
         name: &'a str,
-        builtin: Arc<dyn Builtin>,
+        builtin: crate::builtins::RegisteredBuiltin,
         args: &'a [String],
         stdin: Option<&'a crate::StreamData>,
         redirects: &'a [Redirect],
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecResult>> + Send + 'a>> {
-        self.execute_builtin_arc(name, builtin, args, stdin, redirects)
+        self.execute_builtin_arc(
+            name,
+            builtin.builtin,
+            builtin.access,
+            args,
+            stdin,
+            redirects,
+        )
+    }
+
+    fn builtin_file_system(
+        &self,
+        access: crate::builtins::BuiltinAccess,
+        extensions: &builtins::ExecutionExtensions,
+    ) -> Arc<dyn FileSystem> {
+        if access == crate::builtins::BuiltinAccess::TrustedHost {
+            Arc::clone(&self.fs)
+        } else if let Some(scope) = extensions.scope() {
+            crate::execution_capability::ExecutionFileSystem::wrap(Arc::clone(&self.fs), scope)
+        } else {
+            // Unit-level interpreter dispatch has no public request boundary
+            // at which to install or revoke a lease. Production entry points
+            // always bind a scope in `Bash::exec_with_options`.
+            Arc::clone(&self.fs)
+        }
     }
 
     /// Shared execution path for builtins regardless of source
@@ -6142,6 +6231,7 @@ impl Interpreter {
         &'a mut self,
         name: &'a str,
         builtin: Arc<dyn Builtin>,
+        access: crate::builtins::BuiltinAccess,
         args: &'a [String],
         stdin: Option<&'a crate::StreamData>,
         redirects: &'a [Redirect],
@@ -6186,6 +6276,7 @@ impl Interpreter {
             // Check for execution plan first
             {
                 let execution_extensions = self.current_execution_extensions();
+                let fs = self.builtin_file_system(access, &execution_extensions);
                 let shell_ref = ShellRef {
                     builtins: &self.builtins,
                     host_builtins: self.host_builtins.as_ref(),
@@ -6206,7 +6297,7 @@ impl Interpreter {
                     env: &self.env,
                     variables: Arc::make_mut(&mut self.scoped.variables),
                     cwd: &mut self.cwd,
-                    fs: Arc::clone(&self.fs),
+                    fs,
                     stdin,
                     #[cfg(feature = "http_client")]
                     http_client: self.http_client.as_ref(),
@@ -6240,6 +6331,7 @@ impl Interpreter {
             }
 
             let execution_extensions = self.current_execution_extensions();
+            let fs = self.builtin_file_system(access, &execution_extensions);
             let shell_ref = ShellRef {
                 builtins: &self.builtins,
                 host_builtins: self.host_builtins.as_ref(),
@@ -6260,7 +6352,7 @@ impl Interpreter {
                 env: &self.env,
                 variables: Arc::make_mut(&mut self.scoped.variables),
                 cwd: &mut self.cwd,
-                fs: Arc::clone(&self.fs),
+                fs,
                 stdin,
                 #[cfg(feature = "http_client")]
                 http_client: self.http_client.as_ref(),
@@ -6473,7 +6565,11 @@ impl Interpreter {
             }
 
             // Host-registered builtins (mutable, may override baked-in builtins).
-            if let Some(builtin) = self.host_builtins.as_ref().and_then(|reg| reg.lookup(name)) {
+            if let Some(builtin) = self
+                .host_builtins
+                .as_ref()
+                .and_then(|reg| reg.lookup_entry(name))
+            {
                 return self
                     .execute_host_builtin(name, builtin, &args, stdin.as_ref(), &command.redirects)
                     .await;
@@ -6529,6 +6625,7 @@ impl Interpreter {
                     .execute_builtin_arc(
                         name,
                         builtin,
+                        crate::builtins::BuiltinAccess::Scoped,
                         &args,
                         resolver_stdin.as_ref(),
                         &command.redirects,
@@ -8007,7 +8104,7 @@ impl Interpreter {
                 if let Some(builtin) = self
                     .host_builtins
                     .as_ref()
-                    .and_then(|reg| reg.lookup(target))
+                    .and_then(|reg| reg.lookup_entry(target))
                 {
                     return self
                         .execute_host_builtin(
@@ -8024,6 +8121,7 @@ impl Interpreter {
                         .execute_builtin_arc(
                             target,
                             builtin,
+                            crate::builtins::BuiltinAccess::Scoped,
                             builtin_args,
                             _stdin.as_ref(),
                             redirects,

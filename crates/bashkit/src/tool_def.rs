@@ -84,10 +84,27 @@ pub struct ToolArgs {
     context: ToolArgsContext,
 }
 
-#[derive(Clone, Default)]
+#[derive(Default)]
 struct ToolArgsContext {
+    capability: Option<crate::ExecutionCapability<ToolArgsContextData>>,
+}
+
+#[derive(Clone)]
+pub(crate) struct ToolArgsContextData {
     tenant_id: Option<String>,
     surface: Option<crate::tool_registry::ToolCallSurface>,
+}
+
+impl ToolArgsContextData {
+    pub(crate) fn new(
+        tenant_id: Option<String>,
+        surface: crate::tool_registry::ToolCallSurface,
+    ) -> Self {
+        Self {
+            tenant_id,
+            surface: Some(surface),
+        }
+    }
 }
 
 impl ToolArgs {
@@ -103,25 +120,42 @@ impl ToolArgs {
     pub(crate) fn with_context(
         params: serde_json::Value,
         stdin: Option<String>,
-        tenant_id: Option<&str>,
-        surface: crate::tool_registry::ToolCallSurface,
+        capability: crate::ExecutionCapability<ToolArgsContextData>,
     ) -> Self {
         Self {
             params,
             stdin,
             context: ToolArgsContext {
-                tenant_id: tenant_id.map(str::to_string),
-                surface: Some(surface),
+                capability: Some(capability),
             },
         }
     }
 
-    pub fn tenant_id(&self) -> Option<&str> {
-        self.context.tenant_id.as_deref()
+    /// Request tenant while the originating execution remains active.
+    pub fn tenant_id(
+        &self,
+    ) -> std::result::Result<Option<String>, crate::ExecutionCapabilityError> {
+        self.context
+            .capability
+            .as_ref()
+            .map(|capability| capability.try_with(|context| context.tenant_id.clone()))
+            .transpose()
+            .map(Option::flatten)
     }
 
-    pub fn surface(&self) -> Option<crate::tool_registry::ToolCallSurface> {
-        self.context.surface
+    /// Runtime surface while the originating execution remains active.
+    pub fn surface(
+        &self,
+    ) -> std::result::Result<
+        Option<crate::tool_registry::ToolCallSurface>,
+        crate::ExecutionCapabilityError,
+    > {
+        self.context
+            .capability
+            .as_ref()
+            .map(|capability| capability.try_with(|context| context.surface))
+            .transpose()
+            .map(Option::flatten)
     }
     /// Get a string parameter by name.
     pub fn param_str(&self, key: &str) -> Option<&str> {
@@ -262,23 +296,29 @@ impl Builtin for ToolImpl {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         let params = parse_flags(ctx.args, &self.def.input_schema)
             .map_err(|e| crate::error::Error::Execution(format!("{}: {e}", self.def.name)))?;
-        let tool_args = ToolArgs::with_context(
-            params,
-            ctx.stdin.map(String::from),
-            None,
-            crate::tool_registry::ToolCallSurface::Shell,
-        );
+        let context = ToolArgsContextData::new(None, crate::tool_registry::ToolCallSurface::Shell);
+        let stdin = ctx.stdin.map(String::from);
+        let tool_args = match ctx.execution_capability(context) {
+            Some(capability) => ToolArgs::with_context(params, stdin, capability),
+            // Direct Builtin unit tests have no request lifecycle. Production
+            // shell dispatch always supplies an execution scope.
+            None => ToolArgs::new(params, stdin),
+        };
 
         // Prefer async, fall back to sync.
         let result = if let Some(cb) = &self.exec {
             ctx.run_budgeted((cb)(tool_args)).await?
         } else if let Some(cb) = &self.exec_sync {
             if let Some(budget) = ctx.execution_budget() {
-                budget.check()?;
+                budget
+                    .try_with(|budget| budget.check())
+                    .map_err(|_| crate::Error::Cancelled)??;
             }
             let result = (cb)(&tool_args);
             if let Some(budget) = ctx.execution_budget() {
-                budget.check()?;
+                budget
+                    .try_with(|budget| budget.check())
+                    .map_err(|_| crate::Error::Cancelled)??;
             }
             result
         } else {

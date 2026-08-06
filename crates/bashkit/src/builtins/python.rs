@@ -138,7 +138,7 @@ pub(crate) struct PythonInprocessOptIn(pub bool);
 
 fn python_inprocess_enabled(ctx: &Context<'_>) -> bool {
     ctx.execution_extension::<PythonInprocessOptIn>()
-        .is_some_and(|opt_in| opt_in.0)
+        .is_some_and(|opt_in| opt_in.try_with(|opt_in| opt_in.0).unwrap_or(false))
         // Unit tests in this module build Context::new_for_test without
         // execution extensions. Keep local test ergonomics only under cfg(test).
         || {
@@ -544,7 +544,7 @@ impl Builtin for Python {
         let mut limits = self.limits.clone();
         if let Some(remaining) = ctx
             .execution_extension::<ExecutionDeadline>()
-            .map(ExecutionDeadline::remaining)
+            .and_then(|deadline| deadline.try_with(ExecutionDeadline::remaining).ok())
         {
             limits.common.max_duration = limits.common.max_duration.min(remaining);
         }
@@ -567,9 +567,13 @@ impl Builtin for Python {
         let policy = PythonExecutionPolicy {
             limits: &limits,
             external_fns: self.external_fns.as_ref(),
-            execution_budget: ctx.execution_budget().cloned(),
+            execution_budget: ctx
+                .execution_budget()
+                .and_then(|budget| budget.try_with(Clone::clone).ok()),
         };
-        let execution_budget = ctx.execution_budget().cloned();
+        let execution_budget = ctx
+            .execution_budget()
+            .and_then(|budget| budget.try_with(Clone::clone).ok());
         let future = run_python(&code, &filename, ctx.fs.clone(), ctx.cwd, ctx.env, policy);
         #[cfg(feature = "scripted_tool")]
         let future = crate::tool_registry::scope_runtime_call(

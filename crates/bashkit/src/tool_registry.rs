@@ -86,8 +86,9 @@ impl ToolCallRequest {
 
 #[derive(Clone)]
 pub(crate) struct ToolCallScope {
-    request: Option<ToolCallRequest>,
+    request: Option<crate::ExecutionCapability<ToolCallRequest>>,
     budget: Option<crate::limits::ExecutionBudget>,
+    lease: Option<crate::ExecutionCapability<()>>,
     #[cfg(not(target_family = "wasm"))]
     deadline: Option<crate::time_compat::Instant>,
 }
@@ -95,19 +96,37 @@ pub(crate) struct ToolCallScope {
 impl ToolCallScope {
     pub(crate) fn from_context(ctx: &Context<'_>) -> Self {
         Self {
-            request: ctx.execution_extension::<ToolCallRequest>().cloned(),
-            budget: ctx.execution_budget().cloned(),
+            request: ctx.execution_extension::<ToolCallRequest>(),
+            budget: ctx
+                .execution_budget()
+                .and_then(|budget| budget.try_with(Clone::clone).ok()),
+            lease: ctx.execution_capability(()),
             #[cfg(not(target_family = "wasm"))]
             deadline: ctx
                 .execution_extension::<ExecutionDeadline>()
                 .and_then(|deadline| {
-                    crate::time_compat::Instant::now().checked_add(deadline.remaining())
+                    deadline
+                        .try_with(ExecutionDeadline::remaining)
+                        .ok()
+                        .and_then(|remaining| {
+                            crate::time_compat::Instant::now().checked_add(remaining)
+                        })
                 }),
         }
     }
 
-    fn tenant_id(&self) -> Option<&str> {
-        self.request.as_ref().map(ToolCallRequest::tenant_id)
+    fn tenant_id(&self) -> Result<Option<String>, crate::ExecutionCapabilityError> {
+        self.request
+            .as_ref()
+            .map(|request| request.try_with(|request| request.tenant_id().to_string()))
+            .transpose()
+    }
+
+    fn trace(&self) -> Result<Option<ToolDefInvocationTrace>, crate::ExecutionCapabilityError> {
+        self.request
+            .as_ref()
+            .map(|request| request.try_with(ToolCallRequest::trace))
+            .transpose()
     }
 
     #[cfg(not(target_family = "wasm"))]
@@ -137,6 +156,7 @@ fn runtime_scope() -> ToolCallScope {
         .unwrap_or(ToolCallScope {
             request: None,
             budget: None,
+            lease: None,
             #[cfg(not(target_family = "wasm"))]
             deadline: None,
         })
@@ -329,11 +349,31 @@ impl ToolRegistry {
         let Some(tool) = self.inner.tools.iter().find(|tool| tool.def.name == name) else {
             return RegistryOutput::error(format!("{name}: unknown tool\n"), 127);
         };
-        let trace = scope
-            .request
-            .as_ref()
-            .map(ToolCallRequest::trace)
-            .unwrap_or_else(|| self.default_trace());
+        let Some(lease) = scope.lease.as_ref() else {
+            return RegistryOutput::error(
+                "tool callback: execution capability revoked\n".into(),
+                1,
+            );
+        };
+        let trace = match scope.trace() {
+            Ok(Some(trace)) => trace,
+            Ok(None) => self.default_trace(),
+            Err(_) => {
+                return RegistryOutput::error(
+                    "tool callback: execution capability revoked\n".into(),
+                    1,
+                );
+            }
+        };
+        let tenant_id = match scope.tenant_id() {
+            Ok(tenant_id) => tenant_id,
+            Err(_) => {
+                return RegistryOutput::error(
+                    "tool callback: execution capability revoked\n".into(),
+                    1,
+                );
+            }
+        };
 
         if let Err(error) = validate_schema(&params, &tool.def.input_schema, "input") {
             trace.push(name, ScriptedCommandKind::Tool, trace_args, 2);
@@ -343,7 +383,7 @@ impl ToolRegistry {
         let call = ToolCall {
             name,
             params: &params,
-            tenant_id: scope.tenant_id(),
+            tenant_id: tenant_id.as_deref(),
             surface,
         };
         if (self.inner.policy)(&call) == ToolCallDecision::Deny {
@@ -351,7 +391,14 @@ impl ToolRegistry {
             return RegistryOutput::error(format!("{name}: denied by policy\n"), 1);
         }
 
-        let args = ToolArgs::with_context(params, stdin, scope.tenant_id(), surface);
+        let context = crate::tool_def::ToolArgsContextData::new(tenant_id, surface);
+        let Some(context) = lease.derive(context) else {
+            return RegistryOutput::error(
+                "tool callback: execution capability revoked\n".into(),
+                1,
+            );
+        };
+        let args = ToolArgs::with_context(params, stdin, context);
         let callback = async {
             match &tool.callback {
                 CallbackKind::Sync(callback) => callback(&args),
@@ -446,11 +493,11 @@ impl ToolRegistry {
     #[cfg(any(feature = "python", feature = "typescript"))]
     fn discover_runtime(&self, params: &Value) -> Value {
         let scope = runtime_scope();
-        let trace = scope
-            .request
-            .as_ref()
-            .map(ToolCallRequest::trace)
-            .unwrap_or_else(|| self.default_trace());
+        let trace = match scope.trace() {
+            Ok(Some(trace)) => trace,
+            Ok(None) => self.default_trace(),
+            Err(_) => return Value::Array(Vec::new()),
+        };
         trace.push("discover", ScriptedCommandKind::Discover, Vec::new(), 0);
         self.discover(params)
     }

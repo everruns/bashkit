@@ -129,16 +129,20 @@ impl Builtin for HostCallBuiltin {
                 1,
             ));
         };
+        let broker_value = broker
+            .try_with(Clone::clone)
+            .map_err(|_| Error::Cancelled)?;
         broker
-            .call(HostCallRequest {
+            .run(broker_value.call(HostCallRequest {
                 id: HostCallId(0),
                 command: self.command.clone(),
                 args: ctx.args.to_vec(),
                 env: ctx.env.clone(),
                 cwd: ctx.cwd.clone(),
                 stdin: ctx.stdin.cloned(),
-            })
+            }))
             .await
+            .map_err(|_| Error::Cancelled)?
     }
 }
 

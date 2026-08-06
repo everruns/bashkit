@@ -63,6 +63,8 @@ pub struct ExecResult {
     pub stdout_truncated: bool,
     /// Whether stderr was truncated due to output size limits
     pub stderr_truncated: bool,
+    /// Sanitized outcome of revoking request-scoped host capabilities.
+    pub capability_cleanup: crate::CapabilityCleanupReport,
     /// Final environment state after execution (opt-in via `capture_final_env`)
     pub final_env: Option<std::collections::HashMap<String, String>>,
     /// Structured trace events (empty when `TraceMode::Off`).

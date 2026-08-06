@@ -154,7 +154,7 @@ enum ShufInput {
 fn shuf_output_limit(ctx: &Context<'_>, output_to_file: bool) -> usize {
     let exec_limit = ctx
         .execution_extension::<ExecutionLimits>()
-        .map(|limits| limits.max_stdout_bytes)
+        .and_then(|limits| limits.try_with(|limits| limits.max_stdout_bytes).ok())
         .unwrap_or_else(|| ExecutionLimits::default().max_stdout_bytes);
 
     if !output_to_file {

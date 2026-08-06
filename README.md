@@ -292,6 +292,10 @@ assert_eq!(bash.exec("greet Alice").await?.stdout, "hello Alice\n");
 # }
 ```
 
+Registry builtins get execution-scoped VFS/request handles by default. Only
+trusted host code that intentionally needs a session-lived VFS handle should
+use `registry.insert_trusted(...)`.
+
 Node (`@everruns/bashkit`):
 
 ```typescript

@@ -260,7 +260,7 @@ pub(crate) struct SqliteInprocessOptIn(pub bool);
 
 fn sqlite_inprocess_enabled(ctx: &Context<'_>) -> bool {
     ctx.execution_extension::<SqliteInprocessOptIn>()
-        .is_some_and(|opt_in| opt_in.0)
+        .is_some_and(|opt_in| opt_in.try_with(|opt_in| opt_in.0).unwrap_or(false))
         || {
             #[cfg(test)]
             {
@@ -420,7 +420,9 @@ impl Builtin for Sqlite {
             ));
         }
         let deadline = engine::Deadline::new(self.limits.max_duration);
-        let execution_budget = ctx.execution_budget().cloned();
+        let execution_budget = ctx
+            .execution_budget()
+            .and_then(|budget| budget.try_with(Clone::clone).ok());
 
         // For `:memory:`, don't cache — every invocation gets a fresh
         // ephemeral engine. For file-backed targets we lock a per-key

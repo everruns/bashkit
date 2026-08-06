@@ -147,7 +147,7 @@ impl Builtin for Tree {
 
         let limits = ctx
             .execution_extension::<ExecutionLimits>()
-            .cloned()
+            .and_then(|limits| limits.try_with(Clone::clone).ok())
             .unwrap_or_default();
         let budget = TreeBudget {
             max_visited_entries: limits.max_commands.min(DEFAULT_TREE_MAX_VISITED_ENTRIES),

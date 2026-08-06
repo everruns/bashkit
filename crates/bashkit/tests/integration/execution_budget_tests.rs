@@ -75,7 +75,9 @@ struct CaptureBoundary(Arc<Mutex<Option<ExecutionBudget>>>);
 #[async_trait]
 impl Builtin for CaptureBoundary {
     async fn execute(&self, ctx: BuiltinContext<'_>) -> bashkit::Result<ExecResult> {
-        *self.0.lock().unwrap() = ctx.execution_budget().cloned();
+        *self.0.lock().unwrap() = ctx
+            .execution_budget()
+            .and_then(|budget| budget.try_with(Clone::clone).ok());
         Ok(ExecResult::ok("captured\n"))
     }
 }
