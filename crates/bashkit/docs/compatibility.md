@@ -91,7 +91,7 @@ for sandbox security reasons. See the compliance spec for details.
 | `uniq` | `-c`, `-d`, `-u` | Filter duplicate lines |
 | `cut` | `-d DELIM`, `-f FIELDS` | Extract fields |
 | `tr` | `-d`, character ranges | Translate/delete chars |
-| `date` | `+FORMAT`, `-u`, `-d`/`--date` (relative, compound, epoch) | Display/format date |
+| `date` | `+FORMAT`, `-u`, `-R`, `-I`, `-r`, `-d`/`--date` (relative, compound, epoch) | Display/format date with sandboxed IANA timezone support |
 | `wait` | `[JOB_ID...]` | Wait for background jobs |
 | `curl` | `-s`, `-o`, `-X`, `-d`/`--data`, `--data-raw`, `--data-binary`, `--data-urlencode`, `-G`/`--get`, `-H`, `-I`, `-f`, `-L`, `-w`, `--compressed`, `-u`, `-A`, `-e`, `-v`, `-m` | HTTP client (requires http_client feature) |
 | `wget` | `-q`, `-O`, `--spider`, `--header`, `-U`, `--post-data`, `-t` | Download files (requires http_client feature) |
@@ -142,6 +142,21 @@ attributes the embedding process's CPU or memory to a wrapped command.
 `-v` reports the same available data with labels. `-o FILE` atomically replaces
 the report file in the VFS; `-a -o FILE` appends. Wrapped stdout and stderr are
 unchanged. Hardened profiles expose elapsed time in 100 ms lower-bound buckets.
+
+#### `date` timezone contract
+
+`date` defaults to UTC when the shell environment has no `TZ`; it never reads
+the host process timezone. A valid IANA identifier or alias in `TZ` (for example
+`America/Chicago`, `Etc/GMT+6`, or `UTC`) controls display and the interpretation
+of timezone-naive `-d` values. Explicit input offsets and `Z` identify an instant
+independently of `TZ`; the output is then rendered in the selected zone. `-u`
+always renders UTC while naive input still uses the selected sandbox zone.
+
+IANA transition rules apply at DST boundaries. Nonexistent local wall times
+fail; repeated wall times choose the earlier instant deterministically. Empty,
+invalid, POSIX-rule, and path-style `TZ` values fail closed to UTC. Formats use
+Chrono's validated strftime implementation, plus GNU `%N`, `%3N`, `%6N`, and
+`%9N` fractional-second forms.
 
 ### Recently Added
 

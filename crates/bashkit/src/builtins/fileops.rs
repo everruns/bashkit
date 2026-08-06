@@ -1,10 +1,12 @@
 //! File operation builtins - mkdir, rm, cp, mv, touch, chmod
 // Decision: touch delegates mtime changes to the filesystem layer so `touch`
 // and `touch -t` stay consistent across in-memory, overlay, and realfs backends.
+// THREAT[TM-INF-018]: timezone-naive `touch -t` stamps are UTC; host-local
+// conversion would leak process timezone through a later `date -r`.
 
 use crate::time_compat::SystemTime;
 use async_trait::async_trait;
-use chrono::{Datelike, Local, LocalResult, NaiveDate, TimeZone};
+use chrono::{DateTime, Datelike, NaiveDate, Utc};
 use std::path::Path;
 
 use super::limits::MKTEMP_MAX_ATTEMPTS;
@@ -466,7 +468,7 @@ fn parse_touch_timestamp(raw: &str) -> std::result::Result<SystemTime, String> {
     }
 
     let year = match main.len() {
-        8 => Local::now().year(),
+        8 => Utc::now().year(),
         10 => {
             let yy = main[0..2]
                 .parse::<i32>()
@@ -497,13 +499,8 @@ fn parse_touch_timestamp(raw: &str) -> std::result::Result<SystemTime, String> {
         .and_then(|date| date.and_hms_opt(hour, minute, seconds))
         .ok_or_else(|| format!("touch: invalid date format '{}'\n", raw))?;
 
-    let local = match Local.from_local_datetime(&naive) {
-        LocalResult::Single(dt) => dt,
-        LocalResult::Ambiguous(dt, _) => dt,
-        LocalResult::None => return Err(format!("touch: invalid date format '{}'\n", raw)),
-    };
-
-    Ok(crate::time_compat::from_chrono(local))
+    let utc = DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc);
+    Ok(crate::time_compat::from_chrono(utc))
 }
 
 #[async_trait]
@@ -1141,7 +1138,7 @@ impl Builtin for Mktemp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{DateTime, Datelike, Local, Timelike};
+    use chrono::{Datelike, Timelike};
     use std::collections::HashMap;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -1272,7 +1269,7 @@ mod tests {
         assert_eq!(result.exit_code, 0);
 
         let metadata = fs.stat(&file).await.unwrap();
-        let modified: DateTime<Local> = metadata.modified.into();
+        let modified = crate::time_compat::to_chrono_utc(metadata.modified);
         assert_eq!(modified.year(), 2026);
         assert_eq!(modified.month(), 4);
         assert_eq!(modified.day(), 6);
