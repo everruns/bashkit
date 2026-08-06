@@ -51,13 +51,27 @@ Internally the VFS splits raw storage from POSIX semantics:
 
 | Layer | Trait | Responsibility |
 |-------|-------|----------------|
-| Backend | `FsBackend` | Raw storage operations (minimal contract) |
-| POSIX | `FileSystem` / `PosixFs` | POSIX-like semantics (no duplicate names, type-safe ops, parent-dir rules) |
+| Backend | `FsBackend` | Raw storage operations and failure-atomic mutations |
+| POSIX | `FileSystem` / `PosixFs` | POSIX-like validation (no duplicate names, type-safe ops, parent-dir rules) |
 
 If you want a custom backend (a database, object store, key-value store),
 implement the small `FsBackend` and wrap it in `PosixFs` — the POSIX checks come
 for free. Implement `FileSystem` directly only when you need full control over
 semantics.
+
+`PosixFs` validates operations before delegating them, but it cannot make a raw
+backend mutation atomic. A custom `FsBackend` must make failed `write`, `copy`,
+and `rename` operations failure-atomic; a direct `FileSystem` has the same
+obligation for `write_file`, `copy`, and `rename`. Errors must leave source and
+destination entries, bytes, types, and reported usage unchanged. A wrapper
+moving entries between independent backends must restore the previous
+destination on failure or reject the move before mutation, usually with
+`ErrorKind::CrossesDevices`.
+
+`verify_filesystem_requirements()` is a structural smoke check for root access
+and path normalization. It does not mutate the filesystem or certify failure
+atomicity, symlink behavior, quota accounting, or error normalization; custom
+adapter tests remain responsible for those invariants.
 
 ## Built-in implementations
 
