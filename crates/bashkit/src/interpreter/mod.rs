@@ -1378,6 +1378,9 @@ impl Interpreter {
             "tar" => Tar,
             "gzip" => Gzip,
             "gunzip" => Gunzip,
+            "bzip2" => Bzip2,
+            "bunzip2" => Bunzip2,
+            "bzcat" => Bzcat,
             "zip" => Zip,
             "unzip" => Unzip,
             // Numeric / math

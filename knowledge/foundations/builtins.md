@@ -289,3 +289,26 @@ for input/output bounds.
 `curl`, `wget`, `http` require the `http_client` feature + URL allowlist.
 When `bot-auth` feature is enabled, all outbound HTTP requests are transparently
 signed with Ed25519 per RFC 9421 (see [Request Signing](../security/request-signing.md)).
+
+### Archive Compression
+
+`tar` supports plain, gzip, and bzip2 archives. It accepts GNU short/old-style
+bundles (`-cjf`, `cjf`) and `--bzip2`, and detects gzip/bzip2 magic while listing
+or extracting so `.tar.bz2`/`.tbz2` inputs work without an explicit codec flag.
+`bzip2`, `bunzip2`, and `bzcat` share the same byte-native codec path.
+
+The implementation uses `bzip2` 0.6 with its default pure-Rust
+`libbz2-rs-sys` backend. The crate is maintained by the Trifecta Tech
+Foundation, dual MIT/Apache-2.0; its backend retains the permissive
+`bzip2-1.0.6` license. Both are admitted by `deny.toml`. The release supports
+the repository's Rust floor and WASM targets and is newer than the 0.4.4 fix
+for RUSTSEC-2023-0004. Cargo-vet exemptions are limited to these versions after
+reviewing the wrapper's FFI slice bounds and stream lifecycle plus the enabled
+backend's no-stdio Rust-allocator path, pointer bounds, allocation lifecycle,
+and CRC failure path. Decoder output is checked and request-memory charged
+before buffer growth; bzip2 stream/CRC errors fail closed. Filesystem quotas,
+expansion ratio, aggregate input/work, live-memory leases, and extraction path
+validation remain layered controls.
+
+See [Threat Model](../security/threat-model.md) for TM-DOS-007/008/096/102 and
+TM-INJ-010.

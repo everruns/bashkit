@@ -30,7 +30,7 @@
 //! | Text processing | `grep`, `rg`, `sed`, `awk`, `jq` and `yq` (with `jq` feature), `head`, `tail`, `sort`, `uniq`, `cut`, `tr`, `wc`, `paste`, `column`, `diff`, `comm`, `strings`, `tac`, `rev`, `seq`, `expr`, `fold`, `expand`, `unexpand`, `join`, `split`, `iconv`, `shuf`, `template` |
 //! | File operations | `mkdir`, `mktemp`, `mkfifo`, `rm`, `cp`, `mv`, `touch`, `chmod`, `chown`, `ln`, `rmdir`, `realpath`, `readlink`, `truncate`, `glob`, `patch` |
 //! | File inspection | `file`, `stat`, `less` |
-//! | Archives | `tar`, `gzip`, `gunzip`, `zip`, `unzip` |
+//! | Archives | `tar`, `gzip`, `gunzip`, `bzip2`, `bunzip2`, `bzcat`, `zip`, `unzip` |
 //! | Byte tools | `od`, `xxd`, `hexdump`, `base64` |
 //! | Checksums | `md5sum`, `sha1sum`, `sha256sum`, `verify` |
 //! | Utilities | `sleep`, `date`, `basename`, `dirname`, `timeout`, `wait`, `watch`, `yes`, `kill`, `clear`, `numfmt`, `retry`, `parallel` |

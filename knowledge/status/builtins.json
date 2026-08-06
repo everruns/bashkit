@@ -51,6 +51,18 @@
     },
     {
       "feature": null,
+      "name": "bunzip2"
+    },
+    {
+      "feature": null,
+      "name": "bzcat"
+    },
+    {
+      "feature": null,
+      "name": "bzip2"
+    },
+    {
+      "feature": null,
       "name": "caller"
     },
     {
@@ -658,5 +670,5 @@
       "name": "zip"
     }
   ],
-  "count": 164
+  "count": 167
 }

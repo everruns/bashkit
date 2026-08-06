@@ -15,6 +15,7 @@
 
 pub mod agent_skills_publication_tests;
 pub mod allexport_tests;
+pub mod archive_bzip2_tests;
 pub mod awk_fuzz_scaffold_tests;
 pub mod awk_newline_tests;
 pub mod awk_pattern_tests;
