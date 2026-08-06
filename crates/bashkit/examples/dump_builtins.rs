@@ -17,7 +17,7 @@ use std::collections::BTreeMap;
 /// Families registered by compile feature alone (present in a default-built
 /// `Bash` whenever the feature is on).
 const CFG_REGISTERED: &[(&str, &[&str])] = &[
-    ("jq", &["jq"]),
+    ("jq", &["jq", "yq"]),
     ("git", &["git"]),
     ("ssh", &["ssh", "scp", "sftp"]),
 ];
@@ -63,16 +63,16 @@ fn main() {
         .iter()
         .map(|name| {
             serde_json::json!({
-                "name": name,
                 "feature": feature_of.get(name),
+                "name": name,
             })
         })
         .collect();
 
     let doc = serde_json::json!({
         "_generated": "just regen-builtins — do not edit by hand",
-        "count": builtins.len(),
         "builtins": builtins,
+        "count": builtins.len(),
     });
     println!("{}", serde_json::to_string_pretty(&doc).expect("serialize"));
 }

@@ -260,7 +260,7 @@ runaway scripts without permanently breaking the session.
 | TM-DOS-035 | DEBUG trap recursive amplification | `trap 'a=1;b=2;...' DEBUG` amplifies N commands to N*M | Suppress DEBUG trap inside trap handlers (`in_trap` guard) | **FIXED** |
 | TM-DOS-032 | Tokio runtime exhaustion (Python) | Rapid `execute_sync()` calls each create new tokio runtime, exhausting OS threads | `PyBash` and `BashTool` create one `Arc<Runtime>` per instance in `__new__` via `make_runtime()` and reuse it for every `execute_sync` call; no per-call runtime construction | **MITIGATED** |
 | TM-DOS-033 | AWK unbounded loops | `BEGIN { while(1){} }` has no iteration limit in AWK interpreter | Timeout (30s) backstop | **PARTIAL** |
-| TM-DOS-051 | YAML parser unbounded recursion | `yaml get key` on deeply nested YAML input causes stack overflow in `parse_yaml_block`/`parse_yaml_map`/`parse_yaml_list` | `parse_yaml_block` carries a `depth: usize` parameter; depth > `MAX_YAML_DEPTH = 100` returns an `ERROR: maximum nesting depth exceeded` value instead of recursing | **MITIGATED** |
+| TM-DOS-051 | Removed custom YAML parser recursion | The former `yaml` helper recursively parsed attacker-controlled indentation | The helper and parser were removed when `yq` replaced them; TM-DOS-101 covers the production parser boundary | **REMOVED** |
 | TM-DOS-052 | Template engine unbounded recursion | `{{#if}}` and `{{#each}}` blocks call `render_template` recursively with no depth limit | `render_template_inner` checks `depth > MAX_TEMPLATE_DEPTH = 100` and returns a `template: maximum nesting depth exceeded` error | **MITIGATED** |
 | TM-DOS-053 | Template `{{#each}}` output explosion | `{{#each arr}}` on large JSON array produces O(n * body) output | Bounded by JSON data file size (max_file_size) | **MITIGATED** |
 | TM-DOS-054 | `glob --files` inherits ExtGlob blowup | `glob --files "+(a|aa)" /dir` dispatches to `glob_match` with same exponential cost as TM-DOS-031 | Same as TM-DOS-031 — `glob_match_impl` recursion-depth cap covers `glob --files` callers | **MITIGATED** |
@@ -273,10 +273,10 @@ runaway scripts without permanently breaking the session.
 | TM-DOS-061 | Snapshot function restore bypasses parser/function limits | Crafted snapshot restores functions exceeding the tenant's parser depth or function memory budget | Restored function source re-parsed with current `ExecutionLimits`; function memory budget re-applied before insertion | **MITIGATED** |
 | TM-DOS-062 | jq file binding amplification | Repeated `--rawfile` / `--slurpfile` bindings to one max-sized VFS file multiply retained jq globals and `$ARGS.named` values without consuming more VFS quota | `MAX_FILE_VAR_REQUESTS` caps binding count; `MAX_FILE_VAR_BYTES` counts cumulative file bytes per binding before retaining globals | **MITIGATED** |
 | TM-DOS-063 | Persistent fd exhaustion | `exec N>/tmp/f` across many `N` values grows `exec_fd_table`/coproc fd buffers for the session | `ExecutionLimits::max_file_descriptors` (default 1024) caps persistent custom descriptors; reused fds and standard 0/1/2 don't count | **MITIGATED** |
+| TM-DOS-101 | yq structured-data amplification | Deep YAML/JSON, document floods, jaq generators, and YAML re-serialization can consume stack, CPU, or memory beyond the source size | VFS/stdin and aggregate input budgets; serde_yaml_ng recursion cap 128 plus Bashkit depth 100; 4096-document cap; shared jaq work/deadline/output limits; post-serialization stdout cap; atomic in-place temp/rename | **MITIGATED** |
 
-**TM-DOS-051** (mitigated): see table; `catch_unwind` (TM-INT-001) remains a backstop, no longer
-the primary defence. Regression tests:
-`tests/threat_model_tests.rs::yaml_template_depth::tm_dos_051_*`.
+**TM-DOS-051** is historical. The custom parser was deleted with the `yaml`
+helper; the replacement `yq` parser/evaluator boundary is tracked by TM-DOS-101.
 
 **TM-DOS-052** (mitigated): see table. Regression test:
 `tests/threat_model_tests.rs::yaml_template_depth::tm_dos_052_template_if_depth_bomb`.
@@ -318,6 +318,7 @@ panicked. Resolved with `wrapping_*` ops, masked shift amounts, clamped exponent
 | TM-FS-013 | Permissive RealFs mount default | `mount_real_readonly_at("/", …)` exposes whole host without `allowed_mount_paths` | Allowlist-first: `/`, `/etc`, `/root`, `/Users`, `/home`, `/dev`, `/proc`, `/sys`, `/run`, `/var/run`, `/boot`, `/private`, and any path component matching `.ssh`, `.aws`, `.kube`, `.docker`, `.gnupg`, `.gcloud` are refused unless explicitly allowlisted | **MITIGATED** |
 | TM-FS-014 | Partial filesystem mutation | Failed write/copy or copy-delete move corrupts/replaces a destination, duplicates a source, or consumes retained quota | `FileSystem` failure-atomicity contract; locked in-memory rename; MountableFs restores cross-mount destinations while NamespaceFs rejects cross-mount rename; RealFs stages and flushes sibling files before rename; failpoint and conformance regressions | **MITIGATED** |
 | TM-FS-015 | Partial archive extraction | A late traversal, malformed header, or size failure leaves earlier attacker-controlled files behind | Tar validates the complete archive and per-file limits before its first VFS mutation; conformance regression uses a valid entry followed by traversal | **MITIGATED** |
+| TM-FS-016 | yq in-place partial or destructive update | Parse, evaluation, serialization, or write failure truncates the source; predictable temporary names permit collisions | Complete evaluation and bounded serialization first; write a random sibling temporary file, preserve mode, and rename only after success; clean up failed temporaries | **MITIGATED** |
 
 **Current Risk**: MEDIUM - Two open escape vectors (TM-ESC-012, TM-ESC-013) need remediation
 
@@ -1067,7 +1068,7 @@ filesystem limits (`max_file_size`, `max_file_count`, `max_total_bytes`).
 
 | Builtin | Threat IDs | Summary |
 |---------|------------|---------|
-| `yaml` | TM-DOS-051 | Unbounded recursion in custom YAML parser |
+| `yq` | TM-DOS-101 | Structured-input depth/work/output amplification; atomic in-place replacement |
 | `template` | TM-DOS-052, TM-DOS-053, TM-INF-020 | Recursive rendering; env var exposure |
 | `json` | (covered by serde_json) | Uses serde_json with 128-level recursion limit; no custom parser recursion risk |
 | `unzip` | TM-INJ-017 | Path traversal in archive entry names |
@@ -1121,7 +1122,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 
 | Threat ID | Vulnerability | Impact | Recommendation |
 |-----------|---------------|--------|----------------|
-| ~~TM-DOS-051~~ | ~~YAML parser unbounded recursion~~ | ~~Stack overflow on deeply nested YAML~~ | `depth` arg + `MAX_YAML_DEPTH = 100` cap (**FIXED**) |
+| ~~TM-DOS-051~~ | ~~Custom YAML parser recursion~~ | ~~Stack overflow on deeply nested YAML~~ | Parser removed with the legacy `yaml` helper; `yq` is covered by TM-DOS-101 (**REMOVED**) |
 | ~~TM-DOS-052~~ | ~~Template engine unbounded recursion~~ | ~~Stack overflow on deeply nested templates~~ | `depth` arg + `MAX_TEMPLATE_DEPTH = 100` cap (**FIXED**) |
 | ~~TM-DOS-054~~ | ~~`glob --files` ExtGlob blowup~~ | ~~CPU exhaustion (same as TM-DOS-031)~~ | ~~Fix TM-DOS-031 covers this~~ (**FIXED**) |
 | ~~TM-INJ-017~~ | ~~Unzip path traversal within VFS~~ | ~~Arbitrary VFS file overwrite~~ | `validate_extract_entry_path` rejects non-`Normal` components (**FIXED**) |
@@ -1210,6 +1211,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | TM-DOS-098 | Suspended host-call retention or request accumulation | An untrusted script repeatedly invokes an event-backed builtin, or the host never resumes a yielded request, retaining interpreter and request data indefinitely | The sequential interpreter can reach only one call at a time; a capacity-one channel adds backpressure; the existing command, aggregate-budget, output, and wall-clock limits remain in force; `ExecutionHandle` exclusively owns the session so dropping it releases all retained state rather than exposing a partially unwound interpreter — **MITIGATED** |
 | TM-DOS-099 | `time -f/-o` report amplification bypasses output limits | A large attacker-controlled format repeats expanding fields and writes the result to the VFS instead of stderr | Report rendering is capped by `ExecutionLimits::max_stderr_bytes` before either stderr emission or VFS write; invalid/over-limit reports do not replace an existing `-o` target — **MITIGATED** |
 | TM-DOS-100 | jq control-character normalization amplification | A jq JSON string consisting of literal controls expands sixfold when each byte becomes `\u00XX`; an unmetered compatibility copy can exhaust memory or CPU before strict parsing | The jq-only normalizer charges input-length work before its single pass, borrows unchanged input, and acquires/grows a shared live-intermediate lease before every allocation growth (`builtins/jq/input.rs`) — **MITIGATED** |
+| TM-DOS-101 | yq structured-data amplification | YAML/JSON nesting, multi-document floods, filters, and output format expansion are all attacker-controlled | Real parsers with recursion/depth caps, aggregate budgets, shared jaq work/deadline/output controls, and a final rendered-output cap; `yq_integration_tests` covers deep input and output growth — **MITIGATED** |
 
 ### Accepted (Low Priority)
 
@@ -1317,7 +1319,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | VFS copy/rename semantic bugs | TM-DOS-047, TM-DOS-048 | Fix limit check in copy(), type check in rename() | **MITIGATED** |
 | Date time info leak | TM-INF-018 | `fixed_epoch` + `epoch_offset` builder methods (opt-in) | **MITIGATED** |
 | Python BashTool.reset() drops limits | TM-PY-028 | `BashTool::reset` rebuilds via `replace_live_bash_with_builder` matching `PyBash::reset` | **MITIGATED** |
-| YAML parser depth limit | TM-DOS-051 | `depth` parameter on `parse_yaml_block`/`map`/`list` with `MAX_YAML_DEPTH = 100` | **MITIGATED** |
+| yq parser/evaluator/output limits | TM-DOS-101 | serde_yaml_ng depth 128, Bashkit depth 100, 4096 documents, aggregate budget, shared jaq controls, final rendered-output cap | **MITIGATED** |
 | Template engine depth limit | TM-DOS-052 | `depth` parameter on `render_template_inner` with `MAX_TEMPLATE_DEPTH = 100` | **MITIGATED** |
 | Unzip path traversal validation | TM-INJ-017 | `validate_extract_entry_path` rejects non-`Normal` components in `zip_cmd.rs` | **MITIGATED** |
 | Dotenv internal variable guard | TM-INJ-018 | `is_internal_variable()` check in `Dotenv::execute` (`builtins/dotenv.rs:138`) | **MITIGATED** |

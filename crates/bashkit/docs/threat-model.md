@@ -99,7 +99,7 @@ through configurable limits.
 | Compound assign overflow (TM-DOS-043) | `((x+=1))` with x=i64::MAX | `wrapping_*` ops | **MITIGATED** |
 | Lexer stack overflow (TM-DOS-044) | ~50 nested `$()` in quotes | Depth tracking | **MITIGATED** |
 | parse_word_string limits (TM-DOS-050) | Parameter expansion ignores limits | Propagate limits | **MITIGATED** |
-| YAML parser recursion (TM-DOS-051) | Deeply nested YAML stack overflow | Add depth limit | **MITIGATED** |
+| Removed YAML helper parser (TM-DOS-051) | Former custom parser recursed over indentation | Parser deleted; yq uses TM-DOS-101 controls | **REMOVED** |
 | Template engine recursion (TM-DOS-052) | Nested `{{#if}}`/`{{#each}}` overflow | Add depth limit | **MITIGATED** |
 | Template output explosion (TM-DOS-053) | `{{#each}}` on large array | Bounded by `max_file_size` | MITIGATED |
 | glob ExtGlob blowup (TM-DOS-054) | `glob --files "+(a\|aa)"` | Same as TM-DOS-031 | **MITIGATED** |
@@ -158,6 +158,7 @@ let bash = Bash::builder()
 | Suspended host-call retention (TM-DOS-098) | Script repeats event-backed calls or host never resumes one | Capacity-one channel, normal execution limits, and handle-owned session released on drop | MITIGATED |
 | `time` report amplification (TM-DOS-099) | Attacker-controlled `-f` format expands repeatedly or targets the VFS with `-o` | Incremental rendering is capped by the stderr limit before emission or file replacement | MITIGATED |
 | jq control normalization amplification (TM-DOS-100) | Literal controls expand sixfold as `\u00XX` | Charge single-pass work and lease live bytes before allocation growth | MITIGATED |
+| yq structured-data amplification (TM-DOS-101) | Deep/multi-document YAML or JSON, runaway filters, expanded output | Parser depth and 4096-document caps, aggregate budgets, shared jaq work/deadline/output limits, final render cap | MITIGATED |
 
 ### Sandbox Escape (TM-ESC-*)
 
@@ -846,6 +847,7 @@ read-only by default and gated by an allowlist.
 | Permissive RealFs mount (TM-FS-013) | `mount_real_readonly_at("/", …)` exposes the whole host | Allowlist-first: broad roots (`/`, `/etc`, `/root`, `/home`, …) and any path component matching `.ssh`, `.aws`, `.kube`, `.docker`, `.gnupg`, `.gcloud` are refused unless explicitly allowlisted | MITIGATED |
 | Partial filesystem mutation (TM-FS-014) | Failed write/copy or cross-mount move leaves corruption, duplication, or retained quota | Failure-atomic `FileSystem` contract; RealFs sibling staging; MountableFs destination rollback; NamespaceFs cross-device rejection; shared conformance + failpoint tests | MITIGATED |
 | Partial tar extraction (TM-FS-015) | A late unsafe or malformed entry leaves earlier files behind | Validate the complete archive and file limits before the first VFS mutation | MITIGATED |
+| yq in-place partial update (TM-FS-016) | A failed transform or write truncates the source file | Evaluate and serialize before writing; random sibling temporary file, mode preservation, and rename-on-success | MITIGATED |
 
 ### Unicode Security (TM-UNI-*)
 

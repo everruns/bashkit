@@ -647,11 +647,11 @@
     },
     {
       "feature": null,
-      "name": "yaml"
+      "name": "yes"
     },
     {
-      "feature": null,
-      "name": "yes"
+      "feature": "jq",
+      "name": "yq"
     },
     {
       "feature": null,

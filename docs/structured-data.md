@@ -1,16 +1,15 @@
 # Structured data
 
-Beyond `jq`, Bashkit ships small builtins for the formats scripts hit most often:
-CSV, JSON, YAML, and TOML. They cover the common "pull a field out, filter, count"
-operations without reaching for a full query language, and they all read from a
-file argument or from stdin so they pipe naturally.
+Bashkit ships structured-data builtins for the formats scripts hit most often.
+`jq` and `yq` share one jq-compatible transformation engine; narrower helpers
+cover common CSV, JSON, and TOML operations. All read files or stdin.
 
 | Builtin | Format | Reach for it when |
 |---------|--------|-------------------|
 | [`jq`](../crates/bashkit/docs/jq.md) | JSON | You need real JSON transformation — filters, construction, reduction. |
+| [`yq`](../crates/bashkit/docs/yq.md) | YAML / JSON | You want the same jq expressions over YAML, conversion, or safe in-place updates. |
 | `json` | JSON | You want a quick `get` / `set` / `keys` / `length` without jq syntax. |
 | `csv` | CSV | Selecting columns, filtering rows, counting, sorting tabular data. |
-| `yaml` | YAML | Reading a value out of a config file by dotted path. |
 | `tomlq` | TOML | Reading a value out of `Cargo.toml`, `pyproject.toml`, etc. |
 
 ## csv
@@ -40,14 +39,17 @@ echo '[1,2,3]'     | json length        # 3
 echo '{"a":1}'     | json format        # pretty-print
 ```
 
-## yaml
+## yq
 
-Query YAML by dot-separated path. Subcommands: `get`, `keys`, `length`, `type`.
+Use jq-style expressions over YAML or JSON. The `jq` Cargo feature enables it.
+YAML mapping keys are emitted in deterministic sorted order; source order,
+comments, styles, and anchors are not preserved.
 
 ```bash
-yaml get server.port config.yml
-yaml keys config.yml
-cat config.yml | yaml get server.port
+yq '.server.port' config.yml
+yq '.items[] | select(.enabled) | .name' config.yml
+yq -o=json -I=0 config.yml
+yq -i '.server.port = 8080' config.yml
 ```
 
 ## tomlq
@@ -70,7 +72,7 @@ tools:
 csv select name,price products.csv | csv sort price
 
 # Pull a value out of config, then use it
-port=$(yaml get server.port config.yml)
+port=$(yq '.server.port' config.yml)
 echo "starting on $port"
 ```
 
@@ -78,5 +80,6 @@ echo "starting on $port"
 
 - [jq builtin](../crates/bashkit/docs/jq.md) — the full JSON query engine, with its own compatibility
   reference.
+- [yq builtin](../crates/bashkit/docs/yq.md) — YAML/JSON flags, in-place behavior, and explicit gaps.
 - [Compatibility](../crates/bashkit/docs/compatibility.md) — the complete builtin coverage matrix.
 - [Browse all builtins](/builtins) — every registered command.

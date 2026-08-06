@@ -375,6 +375,35 @@ proptest! {
         }));
     }
 
+    /// yq with arbitrary YAML input must not panic or leak parser internals.
+    #[cfg(feature = "jq")]
+    #[test]
+    fn yq_arbitrary_yaml_no_leak(input in arbitrary_tool_arg()) {
+        thread_local! {
+            static RT: tokio::runtime::Runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+        }
+        RT.with(|rt| rt.block_on(async {
+            fuzz_init();
+            let limits = ExecutionLimits::new()
+                .max_commands(5)
+                .max_stdout_bytes(4096)
+                .max_stderr_bytes(4096)
+                .timeout(Duration::from_millis(200));
+            let mut bash = Bash::builder().limits(limits).build();
+            let escaped = input.replace('\'', "'\\''");
+            let script = format!("printf '%s' '{escaped}' | yq '.'");
+            let result = bash.exec(&script).await.unwrap_or_default();
+            assert_fuzz_invariants(
+                &result,
+                "yq_arbitrary_yaml",
+                &["serde_yaml_ng::", "Mapping {", "TaggedValue {"],
+            );
+        }));
+    }
+
     /// awk with arbitrary program input must not leak.
     #[test]
     fn awk_arbitrary_program_no_leak(program in arbitrary_tool_arg()) {

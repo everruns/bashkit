@@ -1783,6 +1783,10 @@ criteria = "safe-to-deploy"
 version = "1.0.151"
 criteria = "safe-to-deploy"
 
+[[exemptions.serde_yaml_ng]]
+version = "0.10.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.serdect]]
 version = "0.4.3"
 criteria = "safe-to-deploy"
@@ -2157,6 +2161,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.universal-hash]]
 version = "0.6.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.unsafe-libyaml]]
+version = "0.2.11"
 criteria = "safe-to-deploy"
 
 [[exemptions.untrusted]]

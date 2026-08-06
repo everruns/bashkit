@@ -108,8 +108,9 @@ mod vars;
 mod verify;
 mod wait;
 mod wc;
-mod yaml;
 mod yes;
+#[cfg(feature = "jq")]
+mod yq;
 mod zip_cmd;
 
 mod helpers;
@@ -218,8 +219,9 @@ pub use vars::{Eval, Local, Readonly, Set, Shift, Shopt, Times, Unset};
 pub use verify::Verify;
 pub use wait::Wait;
 pub use wc::Wc;
-pub use yaml::Yaml;
 pub use yes::Yes;
+#[cfg(feature = "jq")]
+pub use yq::Yq;
 pub use zip_cmd::{Unzip, Zip};
 
 #[cfg(feature = "git")]
@@ -1596,7 +1598,7 @@ mod tests {
             "tee",
             "csv",
             "json",
-            "yaml",
+            "yq",
             "tomlq",
             "jq",
             "semver",

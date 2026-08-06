@@ -196,7 +196,7 @@ fn logic_only_builtin_allowed(name: &str) -> bool {
             | "parallel"
             | "template"
             | "tomlq"
-            | "yaml"
+            | "yq"
             | "timeout"
             | "xargs"
             | "wait"
@@ -1443,12 +1443,13 @@ impl Interpreter {
             "rg" => Rg,
             "template" => Template,
             "tomlq" => Tomlq,
-            "yaml" => Yaml,
         );
 
         // jq builtin (requires jq feature)
         #[cfg(feature = "jq")]
         builtins.insert("jq".to_string(), Arc::new(builtins::Jq));
+        #[cfg(feature = "jq")]
+        builtins.insert("yq".to_string(), Arc::new(builtins::Yq));
 
         // Custom-construction builtins that need parameters
 
