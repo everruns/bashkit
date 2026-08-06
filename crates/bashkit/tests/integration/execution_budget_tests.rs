@@ -1,3 +1,5 @@
+#[cfg(feature = "jq")]
+use bashkit::ExecOptions;
 use bashkit::{
     Bash, Builtin, BuiltinContext, Error, ExecResult, ExecutionBudget, ExecutionLimits,
     LimitExceeded, async_trait,
@@ -144,6 +146,22 @@ async fn jq_generator_consumes_shared_work_budget() {
     let mut bash = Bash::builder().limits(limits).build();
 
     assert_budget_exhausted(bash.exec("jq -n 'range(0; 10000)'").await);
+}
+
+#[cfg(feature = "jq")]
+#[tokio::test]
+/// TM-DOS-100: jq must reserve normalized input before control expansion.
+async fn jq_control_normalization_respects_live_memory_budget() {
+    let limits = ExecutionLimits::new()
+        .max_work_units(10_000)
+        .max_aggregate_input_bytes(10_000)
+        .max_live_intermediate_bytes(8);
+    let mut bash = Bash::builder().limits(limits).build();
+
+    assert_budget_exhausted(
+        bash.exec_with_options("jq -c .", ExecOptions::new().stdin("\"a\n\""))
+            .await,
+    );
 }
 
 #[cfg(feature = "python")]

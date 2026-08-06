@@ -34,6 +34,7 @@ mod compat;
 mod convert;
 mod errors;
 mod format;
+mod input;
 mod regex_compat;
 
 #[cfg(test)]
@@ -128,7 +129,7 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
         }
         let value = match req.kind {
             FileVarKind::Raw => serde_json::Value::String(text),
-            FileVarKind::Slurp => match parse_json_stream(&text) {
+            FileVarKind::Slurp => match parse_jq_json_stream(&ctx, &text)? {
                 Ok(vals) => {
                     // Inner values are already depth-checked by parse_json_stream;
                     // the wrapping array adds one level which the recursive
@@ -305,7 +306,7 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
             })
             .collect()
     } else if parsed.slurp {
-        match parse_json_stream(input) {
+        match parse_jq_json_stream(&ctx, input)? {
             Ok(vals) => {
                 let arr: JqJson = JqJson::Array(vals);
                 vec![FilterInput {
@@ -317,7 +318,7 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
             Err(e) => return Ok(ExecResult::err(format!("{e}\n"), 5)),
         }
     } else {
-        match parse_json_stream(input) {
+        match parse_jq_json_stream(&ctx, input)? {
             Ok(jq_vals) => jq_vals
                 .iter()
                 .enumerate()
@@ -457,6 +458,18 @@ async fn run_jq(ctx: Context<'_>, parsed: JqArgs<'_>) -> Result<ExecResult> {
     }
 
     Ok(ExecResult::ok(output))
+}
+
+fn parse_jq_json_stream(
+    ctx: &Context<'_>,
+    input: &str,
+) -> Result<std::result::Result<Vec<JqJson>, String>> {
+    let normalized = match input::normalize(ctx.execution_budget(), input) {
+        Ok(normalized) => normalized,
+        Err(input::NormalizeError::InvalidJson(message)) => return Ok(Err(message)),
+        Err(input::NormalizeError::Resource(error)) => return Err(error),
+    };
+    Ok(parse_json_stream(normalized.as_str()))
 }
 
 fn file_binding_exceeds_limit(used: usize, next: u64) -> bool {

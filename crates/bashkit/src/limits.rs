@@ -956,6 +956,33 @@ pub struct ExecutionBudgetLease {
     bytes: u64,
 }
 
+impl ExecutionBudgetLease {
+    /// Increase this live-storage reservation before growing its buffer.
+    #[cfg(feature = "jq")]
+    pub(crate) fn grow(&mut self, additional: usize) -> Result<(), LimitExceeded> {
+        self.budget.check()?;
+        let additional = u64::try_from(additional).unwrap_or(u64::MAX);
+        let previous = self
+            .budget
+            .inner
+            .live_bytes
+            .fetch_add(additional, Ordering::Relaxed);
+        let used = previous.saturating_add(additional);
+        if used > self.budget.inner.max_live_bytes || previous.checked_add(additional).is_none() {
+            self.budget
+                .inner
+                .live_bytes
+                .fetch_sub(additional, Ordering::Relaxed);
+            return Err(self.budget.poison(ExecutionBudgetExceeded::LiveBytes {
+                used,
+                limit: self.budget.inner.max_live_bytes,
+            }));
+        }
+        self.bytes = self.bytes.saturating_add(additional);
+        Ok(())
+    }
+}
+
 /// RAII request terminator. Its drop path is intentionally infallible.
 pub(crate) struct ExecutionBudgetCompletionGuard {
     budget: ExecutionBudget,
