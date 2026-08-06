@@ -68,6 +68,13 @@ printf "%o\n" 8
 10
 ### end
 
+### printf_zero_integer_explicit_zero_precision
+# Explicit zero precision suppresses zero digits; alternate octal keeps one zero.
+printf '<%.0d>|<%.0u>|<%#.0x>|<%#.0o>\n' 0 0 0 0
+### expect
+<>|<>|<>|<0>
+### end
+
 ### printf_float
 # Printf float
 printf "%.2f\n" 3.14159
