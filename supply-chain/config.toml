@@ -255,6 +255,11 @@ criteria = "safe-to-deploy"
 version = "1.12.1"
 criteria = "safe-to-deploy"
 
+[[exemptions.bzip2]]
+version = "0.6.1"
+criteria = "safe-to-deploy"
+notes = "Reviewed the slice-to-FFI stream wrapper, buffer accounting, drop paths, and pure-Rust backend selection; no ambient capabilities."
+
 [[exemptions.cast]]
 version = "0.3.0"
 criteria = "safe-to-run"
@@ -1022,6 +1027,11 @@ criteria = "safe-to-deploy"
 [[exemptions.lexical-util]]
 version = "1.0.7"
 criteria = "safe-to-deploy"
+
+[[exemptions.libbz2-rs-sys]]
+version = "0.2.5"
+criteria = "safe-to-deploy"
+notes = "Reviewed the enabled no-stdio rust-allocator codec path, pointer bounds, allocation/deallocation, stream lifecycle, and CRC failure handling."
 
 [[exemptions.libc]]
 version = "0.2.186"

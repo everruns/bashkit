@@ -41,6 +41,7 @@ through configurable limits.
 | Large file (TM-DOS-005) | `dd if=/dev/zero bs=1G count=100` | `max_file_size` limit | MITIGATED |
 | Many files (TM-DOS-006) | Create 1M files | `max_file_count` | MITIGATED |
 | Zip bomb (TM-DOS-007) | `gunzip bomb.gz` | Decompression limit | MITIGATED |
+| Archive allocation-before-check (TM-DOS-102) | Tiny gzip/bzip2 input expands before quota accounting | Check size/ratio and lease live bytes before output-buffer growth | MITIGATED |
 | Tar bomb (TM-DOS-008) | `tar -xf bomb.tar` | FS limits | MITIGATED |
 | Recursive copy (TM-DOS-009) | `cp -r /tmp /tmp/copy` | FS limits | MITIGATED |
 | Append flood (TM-DOS-010) | `while true; do echo x >> f; done` | FS + loop limits | MITIGATED |
@@ -159,6 +160,7 @@ let bash = Bash::builder()
 | `time` report amplification (TM-DOS-099) | Attacker-controlled `-f` format expands repeatedly or targets the VFS with `-o` | Incremental rendering is capped by the stderr limit before emission or file replacement | MITIGATED |
 | jq control normalization amplification (TM-DOS-100) | Literal controls expand sixfold as `\u00XX` | Charge single-pass work and lease live bytes before allocation growth | MITIGATED |
 | yq structured-data amplification (TM-DOS-101) | Deep/multi-document YAML or JSON, runaway filters, expanded output | Parser depth and 4096-document caps, aggregate budgets, shared jaq work/deadline/output limits, final render cap | MITIGATED |
+| Archive decoder pre-allocation (TM-DOS-102) | Compressed output grows before memory checks | Validate and charge each decoder chunk before reserve/copy | MITIGATED |
 
 ### Sandbox Escape (TM-ESC-*)
 

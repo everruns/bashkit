@@ -64,8 +64,9 @@ jaq-core = { workspace = true, optional = true }
 jaq-std = { workspace = true, optional = true }
 jaq-json = { workspace = true, optional = true }
 
-# Compression (for gzip/gunzip)
+# Compression (for gzip/gunzip and bzip2/bunzip2)
 flate2 = { workspace = true }
+bzip2 = { workspace = true }
 
 # Base64 encoding (for base64 builtin and HTTP basic auth)
 base64 = { workspace = true }

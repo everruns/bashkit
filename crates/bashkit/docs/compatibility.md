@@ -106,9 +106,12 @@ for sandbox security reasons. See the compliance spec for details.
 | `file` | (none) | Detect file type via magic bytes |
 | `less` | (none) | View file (behaves like cat in virtual mode) |
 | `stat` | `-c FORMAT` | Display file metadata |
-| `tar` | `-c`, `-x`, `-t`, `-v`, `-f`, `-z` | Archive operations |
+| `tar` | `-c`, `-x`, `-t`, `-v`, `-f`, `-z`/`--gzip`, `-j`/`--bzip2` | Archive operations; auto-detects gzip/bzip2 while reading |
 | `gzip` | `-d`, `-k`, `-f` | Compress files |
 | `gunzip` | `-k`, `-f` | Decompress files |
+| `bzip2` | `-c`, `-d`, `-z`, `-k`, `-f` | Compress or decompress bzip2 streams/files |
+| `bunzip2` | `-c`, `-k`, `-f` | Decompress bzip2 streams/files |
+| `bzcat` | | Decompress bzip2 streams/files to stdout |
 | `env` | `[VAR=val]` | Print/modify environment |
 | `printenv` | `[VAR]` | Print environment variables |
 | `history` | (none) | Command history (limited in virtual mode) |

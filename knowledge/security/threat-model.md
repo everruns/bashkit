@@ -1212,6 +1212,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | TM-DOS-099 | `time -f/-o` report amplification bypasses output limits | A large attacker-controlled format repeats expanding fields and writes the result to the VFS instead of stderr | Report rendering is capped by `ExecutionLimits::max_stderr_bytes` before either stderr emission or VFS write; invalid/over-limit reports do not replace an existing `-o` target — **MITIGATED** |
 | TM-DOS-100 | jq control-character normalization amplification | A jq JSON string consisting of literal controls expands sixfold when each byte becomes `\u00XX`; an unmetered compatibility copy can exhaust memory or CPU before strict parsing | The jq-only normalizer charges input-length work before its single pass, borrows unchanged input, and acquires/grows a shared live-intermediate lease before every allocation growth (`builtins/jq/input.rs`) — **MITIGATED** |
 | TM-DOS-101 | yq structured-data amplification | YAML/JSON nesting, multi-document floods, filters, and output format expansion are all attacker-controlled | Real parsers with recursion/depth caps, aggregate budgets, shared jaq work/deadline/output controls, and a final rendered-output cap; `yq_integration_tests` covers deep input and output growth — **MITIGATED** |
+| TM-DOS-102 | Archive decoder allocation-before-check | A small gzip/bzip2 stream makes the decoder output buffer allocate beyond live-memory or filesystem quotas before the post-growth size check runs | Decoder chunks validate absolute/ratio bounds and acquire a shared execution-budget lease before `try_reserve_exact` and copy; corrupt, truncated, CRC-invalid, ratio-bomb, and live-budget tests fail closed — **MITIGATED** |
 
 ### Accepted (Low Priority)
 
@@ -1253,7 +1254,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 | Filename length limit (255) | TM-DOS-013 | `fs/limits.rs` | Yes |
 | Path length limit (4096) | TM-DOS-013 | `fs/limits.rs` | Yes |
 | Path char validation | TM-DOS-015 | `fs/limits.rs` | Yes |
-| Zip bomb protection | TM-DOS-007, TM-NET-013 | `builtins/archive.rs` | Yes |
+| Archive bomb protection | TM-DOS-007, TM-DOS-102, TM-NET-013 | `builtins/archive.rs` | Yes |
 | Path normalization | TM-ESC-001, TM-ESC-033, TM-INJ-005 | `fs/mod.rs`, `fs/realfs.rs` | Yes |
 | No symlink following | TM-ESC-002, TM-DOS-011 | `fs/memory.rs` | Yes |
 | Network allowlist | TM-INF-010, TM-NET-001 to TM-NET-007 | `network/allowlist.rs` | Yes |

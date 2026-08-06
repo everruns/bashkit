@@ -139,6 +139,8 @@ The jq input boundary alone accepts literal U+0000..U+001F controls inside JSON
 strings; controls outside strings and malformed quoting remain invalid. The
 `json` builtin, serde defaults, tool JSON contracts, `--argjson`, and
 `--jsonargs` stay strict. See [jq Input Compatibility](../foundations/jq.md).
+Archive compression is intentionally in-process and limited to gzip and bzip2;
+GNU tar selectors for xz, lzip, lzma, compress, and zstd remain unsupported.
 
 ## CLI
 

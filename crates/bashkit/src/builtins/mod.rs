@@ -137,7 +137,7 @@ mod typescript;
 mod sqlite;
 
 pub use alias::{Alias, Unalias};
-pub use archive::{Gunzip, Gzip, Tar};
+pub use archive::{Bunzip2, Bzcat, Bzip2, Gunzip, Gzip, Tar};
 pub use assert::Assert;
 pub use awk::Awk;
 pub use base64::Base64;
@@ -1595,6 +1595,9 @@ mod tests {
             "tar",
             "gzip",
             "gunzip",
+            "bzip2",
+            "bunzip2",
+            "bzcat",
             "zip",
             "unzip",
             "seq",

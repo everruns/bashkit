@@ -1,4 +1,4 @@
-//! Archive builtins - tar, gzip, gunzip
+//! Archive builtins - tar, gzip, gunzip, bzip2, bunzip2, bzcat
 //!
 //! # Zip Bomb Protection
 //!
@@ -9,11 +9,18 @@
 //! Design decision: tar's first bare argv is the historical option bundle;
 //! normalize it to the regular short-option path instead of maintaining a
 //! second parser.
+//!
+//! bzip2 0.6 uses the maintained pure-Rust libbz2-rs backend by default. Its
+//! fixed codec state plus bounded, pre-charged output avoids native-library
+//! deployment differences while retaining standard bzip2 CRC validation.
 
 // Uses expect() for verified safe unwraps (e.g., strip_suffix after ends_with check)
 #![allow(clippy::unwrap_used)]
 
 use async_trait::async_trait;
+use bzip2::Compression as BzCompression;
+use bzip2::read::BzDecoder;
+use bzip2::write::BzEncoder;
 use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
@@ -26,6 +33,26 @@ use super::{Builtin, Context, resolve_path};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum ArchiveCompression {
+    #[default]
+    None,
+    Gzip,
+    Bzip2,
+}
+
+impl ArchiveCompression {
+    fn detect(data: &[u8]) -> Self {
+        if data.starts_with(b"BZh") {
+            Self::Bzip2
+        } else if data.starts_with(&[0x1f, 0x8b]) {
+            Self::Gzip
+        } else {
+            Self::None
+        }
+    }
+}
+
 /// Read from a decoder with size limits to prevent zip bombs.
 ///
 /// Returns an error if the decompressed size exceeds the limit or
@@ -35,8 +62,18 @@ fn read_with_limit<R: Read>(
     compressed_size: usize,
     max_size: u64,
 ) -> std::io::Result<Vec<u8>> {
+    read_with_limit_budgeted(&mut reader, compressed_size, max_size, None)
+}
+
+fn read_with_limit_budgeted<R: Read>(
+    mut reader: R,
+    compressed_size: usize,
+    max_size: u64,
+    budget: Option<&crate::limits::ExecutionBudget>,
+) -> std::io::Result<Vec<u8>> {
     let mut output = Vec::new();
     let mut buffer = [0u8; 8192];
+    let mut leases = Vec::new();
 
     loop {
         let n = reader.read(&mut buffer)?;
@@ -44,10 +81,12 @@ fn read_with_limit<R: Read>(
             break;
         }
 
-        output.extend_from_slice(&buffer[..n]);
-
-        // Check absolute size limit
-        if output.len() as u64 > max_size {
+        // THREAT[TM-DOS-102]: Reject decoder growth before reserving or
+        // copying attacker-controlled expansion into the output buffer.
+        let next_len = output.len().checked_add(n).ok_or_else(|| {
+            std::io::Error::other("decompressed size overflow (zip bomb protection)")
+        })?;
+        if u64::try_from(next_len).unwrap_or(u64::MAX) > max_size {
             return Err(std::io::Error::other(format!(
                 "decompressed size exceeds {} byte limit (zip bomb protection)",
                 max_size
@@ -55,15 +94,71 @@ fn read_with_limit<R: Read>(
         }
 
         // Check decompression ratio (zip bomb detection)
-        if compressed_size > 0 && output.len() > compressed_size * MAX_DECOMPRESSION_RATIO {
+        let ratio_limit = compressed_size.saturating_mul(MAX_DECOMPRESSION_RATIO);
+        if compressed_size > 0 && next_len > ratio_limit {
             return Err(std::io::Error::other(format!(
                 "decompression ratio exceeds {}:1 (zip bomb protection)",
                 MAX_DECOMPRESSION_RATIO
             )));
         }
+
+        if let Some(budget) = budget {
+            leases.push(budget.lease_bytes(n).map_err(std::io::Error::other)?);
+        }
+        output.try_reserve_exact(n).map_err(|_| {
+            std::io::Error::other("decompression allocation failed (zip bomb protection)")
+        })?;
+        output.extend_from_slice(&buffer[..n]);
     }
 
     Ok(output)
+}
+
+fn compress_bytes(compression: ArchiveCompression, input: &[u8], command: &str) -> Result<Vec<u8>> {
+    match compression {
+        ArchiveCompression::None => Ok(input.to_vec()),
+        ArchiveCompression::Gzip => {
+            let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+            encoder.write_all(input).map_err(|err| {
+                crate::error::Error::Execution(format!("{command}: gzip compression failed: {err}"))
+            })?;
+            encoder.finish().map_err(|err| {
+                crate::error::Error::Execution(format!("{command}: gzip compression failed: {err}"))
+            })
+        }
+        ArchiveCompression::Bzip2 => {
+            let mut encoder = BzEncoder::new(Vec::new(), BzCompression::best());
+            encoder.write_all(input).map_err(|err| {
+                crate::error::Error::Execution(format!(
+                    "{command}: bzip2 compression failed: {err}"
+                ))
+            })?;
+            encoder.finish().map_err(|err| {
+                crate::error::Error::Execution(format!(
+                    "{command}: bzip2 compression failed: {err}"
+                ))
+            })
+        }
+    }
+}
+
+fn decompress_bytes(
+    compression: ArchiveCompression,
+    input: &[u8],
+    max_size: u64,
+    command: &str,
+    budget: Option<&crate::limits::ExecutionBudget>,
+) -> Result<Vec<u8>> {
+    let decoded = match compression {
+        ArchiveCompression::None => return Ok(input.to_vec()),
+        ArchiveCompression::Gzip => {
+            read_with_limit_budgeted(GzDecoder::new(input), input.len(), max_size, budget)
+        }
+        ArchiveCompression::Bzip2 => {
+            read_with_limit_budgeted(BzDecoder::new(input), input.len(), max_size, budget)
+        }
+    };
+    decoded.map_err(|err| crate::error::Error::Execution(format!("{command}: {err}")))
 }
 
 /// The tar builtin - create and extract tar archives.
@@ -84,7 +179,7 @@ impl Builtin for Tar {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
         if let Some(r) = super::check_help_version(
             ctx.args,
-            "Usage: tar [OPTION]... [FILE]...\nCreate, extract, or list tar archives.\n\n  -c\tcreate archive\n  -x\textract archive\n  -t\tlist archive contents\n  -v\tverbose output\n  -f ARCHIVE\tarchive file name\n  -z\tfilter through gzip\n  -C DIR\tchange to directory DIR\n  -O\textract files to stdout\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
+            "Usage: tar [OPTION]... [FILE]...\nCreate, extract, or list tar archives.\n\n  -c\tcreate archive\n  -x\textract archive\n  -t\tlist archive contents\n  -v\tverbose output\n  -f ARCHIVE\tarchive file name\n  -z, --gzip\tfilter through gzip\n  -j, --bzip2\tfilter through bzip2\n  -C DIR\tchange to directory DIR\n  -O\textract files to stdout\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n",
             Some("tar (bashkit) 0.1"),
         ) {
             return Ok(r);
@@ -93,7 +188,7 @@ impl Builtin for Tar {
         let mut extract = false;
         let mut list = false;
         let mut verbose = false;
-        let mut gzip = false;
+        let mut compression = ArchiveCompression::None;
         let mut to_stdout = false;
         let mut archive_file: Option<String> = None;
         let mut change_dir: Option<String> = None;
@@ -119,7 +214,13 @@ impl Builtin for Tar {
         // Parse arguments
         let mut p = super::arg_parser::ArgParser::new(args);
         while !p.is_done() {
-            if let Some(val) = p.flag_value_opt("-f") {
+            if p.current() == Some("--bzip2") {
+                compression = ArchiveCompression::Bzip2;
+                p.advance();
+            } else if p.current() == Some("--gzip") {
+                compression = ArchiveCompression::Gzip;
+                p.advance();
+            } else if let Some(val) = p.flag_value_opt("-f") {
                 archive_file = Some(val.to_string());
             } else if let Some(val) = p.flag_value_opt("-C") {
                 change_dir = Some(val.to_string());
@@ -134,7 +235,8 @@ impl Builtin for Tar {
                         'x' => extract = true,
                         't' => list = true,
                         'v' => verbose = true,
-                        'z' => gzip = true,
+                        'z' => compression = ArchiveCompression::Gzip,
+                        'j' => compression = ArchiveCompression::Bzip2,
                         'O' => to_stdout = true,
                         'f' => match p.positional() {
                             Some(val) => archive_file = Some(val.to_string()),
@@ -196,7 +298,7 @@ impl Builtin for Tar {
                 &archive_name,
                 &files,
                 verbose,
-                gzip,
+                compression,
                 change_dir.as_deref(),
             )
             .await
@@ -205,13 +307,13 @@ impl Builtin for Tar {
                 &ctx,
                 &archive_name,
                 verbose,
-                gzip,
+                compression,
                 change_dir.as_deref(),
                 to_stdout,
             )
             .await
         } else {
-            list_tar(&ctx, &archive_name, verbose, gzip).await
+            list_tar(&ctx, &archive_name, verbose, compression).await
         }
     }
 }
@@ -225,7 +327,7 @@ async fn create_tar(
     archive_name: &str,
     files: &[String],
     verbose: bool,
-    gzip: bool,
+    compression: ArchiveCompression,
     change_dir: Option<&str>,
 ) -> Result<ExecResult> {
     let mut output_data: Vec<u8> = Vec::new();
@@ -278,19 +380,12 @@ async fn create_tar(
     output_data.extend_from_slice(&[0u8; TAR_BLOCK_SIZE * 2]);
     let _tar_lease = ctx.lease_budget_bytes(output_data.len())?;
 
-    // Compress if -z
-    let final_data = if gzip {
-        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-        encoder.write_all(&output_data).map_err(|e| {
-            crate::error::Error::Execution(format!("tar: gzip compression failed: {}", e))
-        })?;
-        encoder.finish().map_err(|e| {
-            crate::error::Error::Execution(format!("tar: gzip compression failed: {}", e))
-        })?
-    } else {
+    let final_data = if compression == ArchiveCompression::None {
         output_data
+    } else {
+        compress_bytes(compression, &output_data, "tar")?
     };
-    let _compressed_lease = if gzip {
+    let _compressed_lease = if compression != ArchiveCompression::None {
         ctx.lease_budget_bytes(final_data.len())?
     } else {
         None
@@ -576,7 +671,7 @@ async fn extract_tar(
     ctx: &Context<'_>,
     archive_name: &str,
     verbose: bool,
-    gzip: bool,
+    compression: ArchiveCompression,
     change_dir: Option<&str>,
     to_stdout: bool,
 ) -> Result<ExecResult> {
@@ -587,7 +682,7 @@ async fn extract_tar(
         ctx.cwd.clone()
     };
     let data = if archive_name == "-" {
-        ctx.stdin.map(|s| s.as_bytes().to_vec()).unwrap_or_default()
+        ctx.stdin_bytes().unwrap_or_default().to_vec()
     } else {
         let archive_path = resolve_path(ctx.cwd, archive_name);
         if !ctx.fs.exists(&archive_path).await.unwrap_or(false) {
@@ -608,15 +703,17 @@ async fn extract_tar(
     let limits = ctx.fs.limits();
     let max_size = limits.max_total_bytes;
 
-    // Decompress if -z, with size limits
-    let tar_data = if gzip {
-        let compressed_size = data.len();
-        let decoder = GzDecoder::new(data.as_slice());
-        read_with_limit(decoder, compressed_size, max_size)
-            .map_err(|e| crate::error::Error::Execution(format!("tar: {}", e)))?
+    let detected = ArchiveCompression::detect(&data);
+    let compression = if compression == ArchiveCompression::None {
+        detected
     } else {
-        data
+        compression
     };
+    let tar_data =
+        match decompress_bytes(compression, &data, max_size, "tar", ctx.execution_budget()) {
+            Ok(data) => data,
+            Err(err) => return Ok(ExecResult::err(format!("{err}\n"), 2)),
+        };
     ctx.consume_budget_input(tar_data.len())?;
     ctx.consume_budget_work(u64::try_from(tar_data.len().div_ceil(64)).unwrap_or(u64::MAX))?;
     let _tar_lease = ctx.lease_budget_bytes(tar_data.len())?;
@@ -812,10 +909,10 @@ async fn list_tar(
     ctx: &Context<'_>,
     archive_name: &str,
     verbose: bool,
-    gzip: bool,
+    compression: ArchiveCompression,
 ) -> Result<ExecResult> {
     let data = if archive_name == "-" {
-        ctx.stdin.map(|s| s.as_bytes().to_vec()).unwrap_or_default()
+        ctx.stdin_bytes().unwrap_or_default().to_vec()
     } else {
         let archive_path = resolve_path(ctx.cwd, archive_name);
         if !ctx.fs.exists(&archive_path).await.unwrap_or(false) {
@@ -834,15 +931,22 @@ async fn list_tar(
     let limits = ctx.fs.limits();
     let max_size = limits.max_total_bytes;
 
-    // Decompress if -z, with size limits
-    let tar_data = if gzip {
-        let compressed_size = data.len();
-        let decoder = GzDecoder::new(data.as_slice());
-        read_with_limit(decoder, compressed_size, max_size)
-            .map_err(|e| crate::error::Error::Execution(format!("tar: {}", e)))?
+    ctx.consume_budget_input(data.len())?;
+    let _compressed_lease = ctx.lease_budget_bytes(data.len())?;
+    let detected = ArchiveCompression::detect(&data);
+    let compression = if compression == ArchiveCompression::None {
+        detected
     } else {
-        data
+        compression
     };
+    let tar_data =
+        match decompress_bytes(compression, &data, max_size, "tar", ctx.execution_budget()) {
+            Ok(data) => data,
+            Err(err) => return Ok(ExecResult::err(format!("{err}\n"), 2)),
+        };
+    ctx.consume_budget_input(tar_data.len())?;
+    ctx.consume_budget_work(u64::try_from(tar_data.len().div_ceil(64)).unwrap_or(u64::MAX))?;
+    let _tar_lease = ctx.lease_budget_bytes(tar_data.len())?;
 
     let mut output = String::new();
     let mut offset = 0;
@@ -1178,6 +1282,227 @@ impl Builtin for Gunzip {
     }
 }
 
+/// The bzip2 family shares one bounded codec implementation.
+pub struct Bzip2;
+pub struct Bunzip2;
+pub struct Bzcat;
+
+#[derive(Clone, Copy)]
+enum Bzip2Invocation {
+    Compress,
+    Decompress,
+    DecompressStdout,
+}
+
+#[async_trait]
+impl Builtin for Bzip2 {
+    async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        execute_bzip2(ctx, Bzip2Invocation::Compress, "bzip2").await
+    }
+}
+
+#[async_trait]
+impl Builtin for Bunzip2 {
+    async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        execute_bzip2(ctx, Bzip2Invocation::Decompress, "bunzip2").await
+    }
+}
+
+#[async_trait]
+impl Builtin for Bzcat {
+    async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
+        execute_bzip2(ctx, Bzip2Invocation::DecompressStdout, "bzcat").await
+    }
+}
+
+async fn execute_bzip2(
+    ctx: Context<'_>,
+    invocation: Bzip2Invocation,
+    command: &str,
+) -> Result<ExecResult> {
+    if let Some(result) = super::check_help_version(
+        ctx.args,
+        &format!(
+            "Usage: {command} [OPTION]... [FILE]...\nCompress or decompress files with bzip2.\n\n  -c, --stdout\twrite to standard output\n  -d, --decompress\tdecompress\n  -z, --compress\tcompress\n  -k, --keep\tkeep input files\n  -f, --force\toverwrite output files\n  --help\tdisplay this help and exit\n  --version\toutput version information and exit\n"
+        ),
+        Some(&format!("{command} (bashkit) 0.1")),
+    ) {
+        return Ok(result);
+    }
+
+    let mut decompress = !matches!(invocation, Bzip2Invocation::Compress);
+    let mut stdout = matches!(invocation, Bzip2Invocation::DecompressStdout);
+    let mut keep = stdout;
+    let mut force = false;
+    let mut files = Vec::new();
+    let mut parse_options = true;
+
+    for arg in ctx.args {
+        if parse_options && arg == "--" {
+            parse_options = false;
+        } else if parse_options && arg.starts_with("--") {
+            match arg.as_str() {
+                "--stdout" => stdout = true,
+                "--decompress" => decompress = true,
+                "--compress" => decompress = false,
+                "--keep" => keep = true,
+                "--force" => force = true,
+                _ => {
+                    return Ok(ExecResult::err(
+                        format!("{command}: unrecognized option '{arg}'\n"),
+                        1,
+                    ));
+                }
+            }
+        } else if parse_options && arg.starts_with('-') && arg != "-" {
+            for flag in arg[1..].chars() {
+                match flag {
+                    'c' => stdout = true,
+                    'd' => decompress = true,
+                    'z' => decompress = false,
+                    'k' => keep = true,
+                    'f' => force = true,
+                    _ => {
+                        return Ok(ExecResult::err(
+                            format!("{command}: invalid option -- '{flag}'\n"),
+                            1,
+                        ));
+                    }
+                }
+            }
+        } else {
+            files.push(arg.clone());
+        }
+    }
+
+    if files.is_empty() {
+        let input = ctx.stdin_bytes().unwrap_or_default();
+        ctx.consume_budget_input(input.len())?;
+        let _input_lease = ctx.lease_budget_bytes(input.len())?;
+        let output = if decompress {
+            match decompress_bytes(
+                ArchiveCompression::Bzip2,
+                input,
+                ctx.fs.limits().max_file_size,
+                command,
+                ctx.execution_budget(),
+            ) {
+                Ok(output) => output,
+                Err(err) => return Ok(ExecResult::err(format!("{err}\n"), 1)),
+            }
+        } else {
+            compress_bytes(ArchiveCompression::Bzip2, input, command)?
+        };
+        ctx.consume_budget_input(output.len())?;
+        ctx.consume_budget_work(u64::try_from(output.len().div_ceil(64)).unwrap_or(u64::MAX))?;
+        let _output_lease = ctx.lease_budget_bytes(output.len())?;
+        return Ok(ExecResult {
+            stdout: output.into(),
+            ..ExecResult::default()
+        });
+    }
+
+    let mut stdout_data = Vec::new();
+    let mut stdout_leases = Vec::new();
+    for file in files {
+        let input_path = resolve_path(ctx.cwd, &file);
+        if !ctx.fs.exists(&input_path).await.unwrap_or(false) {
+            return Ok(ExecResult::err(
+                format!("{command}: {file}: No such file or directory\n"),
+                1,
+            ));
+        }
+        if ctx.fs.stat(&input_path).await?.file_type.is_dir() {
+            return Ok(ExecResult::err(
+                format!("{command}: {file}: Is a directory\n"),
+                1,
+            ));
+        }
+
+        let input = ctx.fs.read_file(&input_path).await?;
+        ctx.consume_budget_input(input.len())?;
+        let _input_lease = ctx.lease_budget_bytes(input.len())?;
+        let output = if decompress {
+            match decompress_bytes(
+                ArchiveCompression::Bzip2,
+                &input,
+                ctx.fs.limits().max_file_size,
+                command,
+                ctx.execution_budget(),
+            ) {
+                Ok(output) => output,
+                Err(err) => return Ok(ExecResult::err(format!("{err}\n"), 1)),
+            }
+        } else {
+            if file.ends_with(".bz2") {
+                return Ok(ExecResult::err(
+                    format!("{command}: {file}: already has .bz2 suffix\n"),
+                    1,
+                ));
+            }
+            compress_bytes(ArchiveCompression::Bzip2, &input, command)?
+        };
+        ctx.consume_budget_input(output.len())?;
+        ctx.consume_budget_work(u64::try_from(output.len().div_ceil(64)).unwrap_or(u64::MAX))?;
+        let _output_lease = ctx.lease_budget_bytes(output.len())?;
+
+        if stdout {
+            let next_len = stdout_data.len().checked_add(output.len()).ok_or_else(|| {
+                crate::error::Error::Execution(format!("{command}: output size overflow"))
+            })?;
+            if let Err(err) = ctx.fs.limits().check_total_bytes(0, next_len as u64) {
+                return Ok(ExecResult::err(format!("{command}: {err}\n"), 1));
+            }
+            if let Some(budget) = ctx.execution_budget() {
+                stdout_leases.push(budget.lease_bytes(output.len())?);
+            }
+            stdout_data.try_reserve_exact(output.len()).map_err(|_| {
+                crate::error::Error::Execution(format!("{command}: output allocation failed"))
+            })?;
+            stdout_data.extend_from_slice(&output);
+            continue;
+        }
+
+        let output_name = if decompress {
+            let Some(output_name) = decompressed_bzip2_name(&file) else {
+                return Ok(ExecResult::err(
+                    format!("{command}: {file}: unknown suffix -- ignored\n"),
+                    1,
+                ));
+            };
+            output_name
+        } else {
+            format!("{file}.bz2")
+        };
+        let output_path = resolve_path(ctx.cwd, &output_name);
+        if ctx.fs.exists(&output_path).await.unwrap_or(false) && !force {
+            return Ok(ExecResult::err(
+                format!("{command}: {output_name}: already exists\n"),
+                1,
+            ));
+        }
+        ctx.fs.write_file(&output_path, &output).await?;
+        if !keep {
+            ctx.fs.remove(&input_path, false).await?;
+        }
+    }
+
+    Ok(ExecResult {
+        stdout: stdout_data.into(),
+        ..ExecResult::default()
+    })
+}
+
+fn decompressed_bzip2_name(file: &str) -> Option<String> {
+    if let Some(stem) = file.strip_suffix(".bz2") {
+        Some(stem.to_string())
+    } else if let Some(stem) = file.strip_suffix(".tbz2") {
+        Some(format!("{stem}.tar"))
+    } else {
+        file.strip_suffix(".tbz").map(|stem| format!("{stem}.tar"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1256,6 +1581,62 @@ mod tests {
         let result = Tar.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
         assert!(result.stdout.contains("test.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_tar_bzip2_old_style_create_list_extract_roundtrip() {
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+        fs.write_file(&cwd.join("payload.txt"), b"bzip2 archive payload")
+            .await
+            .unwrap();
+
+        let create_args = vec![
+            "cjf".to_string(),
+            "archive.tbz2".to_string(),
+            "payload.txt".to_string(),
+        ];
+        let create_ctx = Context::new_for_test(
+            &create_args,
+            &env,
+            &mut variables,
+            &mut cwd,
+            fs.clone(),
+            None,
+        );
+        let created = Tar.execute(create_ctx).await.unwrap();
+        assert_eq!(created.exit_code, 0, "{}", created.stderr);
+
+        let archive = fs.read_file(&cwd.join("archive.tbz2")).await.unwrap();
+        assert!(archive.starts_with(b"BZh"));
+
+        let list_args = vec![
+            "--bzip2".to_string(),
+            "-tf".to_string(),
+            "archive.tbz2".to_string(),
+        ];
+        let list_ctx =
+            Context::new_for_test(&list_args, &env, &mut variables, &mut cwd, fs.clone(), None);
+        let listed = Tar.execute(list_ctx).await.unwrap();
+        assert_eq!(listed.exit_code, 0, "{}", listed.stderr);
+        assert_eq!(listed.stdout, "payload.txt\n");
+
+        fs.remove(&cwd.join("payload.txt"), false).await.unwrap();
+        let extract_args = vec!["-xjf".to_string(), "archive.tbz2".to_string()];
+        let extract_ctx = Context::new_for_test(
+            &extract_args,
+            &env,
+            &mut variables,
+            &mut cwd,
+            fs.clone(),
+            None,
+        );
+        let extracted = Tar.execute(extract_ctx).await.unwrap();
+        assert_eq!(extracted.exit_code, 0, "{}", extracted.stderr);
+        assert_eq!(
+            fs.read_file(&cwd.join("payload.txt")).await.unwrap(),
+            b"bzip2 archive payload"
+        );
     }
 
     #[tokio::test]
@@ -1761,6 +2142,25 @@ mod tests {
         let result = Gunzip.execute(ctx).await.unwrap();
         assert_eq!(result.exit_code, 0);
         assert!(fs.exists(&cwd.join("test.txt")).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_bunzip2_invalid_stream_error_does_not_leak_debug_shapes() {
+        let (fs, mut cwd, mut variables) = create_test_ctx().await;
+        let env = HashMap::new();
+        let args = vec!["-c".to_string()];
+        let ctx = Context::new_for_test(
+            &args,
+            &env,
+            &mut variables,
+            &mut cwd,
+            fs,
+            Some("not a bzip2 stream"),
+        );
+
+        let result = Bunzip2.execute(ctx).await.unwrap();
+        assert_eq!(result.exit_code, 1);
+        crate::builtins::debug_leak_check::assert_no_leak(&result, "bunzip2_invalid_stream", &[]);
     }
 
     // ==================== zip bomb protection tests ====================

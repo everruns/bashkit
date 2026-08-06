@@ -254,7 +254,7 @@ const BUILTINS: &str = "\
 echo printf cat read \
 grep sed awk jq head tail sort uniq cut tr wc nl paste column comm diff strings tac rev \
 cd pwd ls find mkdir mktemp rm rmdir cp mv touch chmod chown ln \
-file stat less tar gzip gunzip du df \
+file stat less tar gzip gunzip bzip2 bunzip2 bzcat du df \
 test [ true false exit return break continue \
 export set unset local shift source eval declare typeset readonly shopt getopts \
 sleep date seq expr yes wait timeout xargs tee watch \
@@ -270,7 +270,7 @@ const BUILTINS: &str = "\
 echo printf cat read \
 grep sed awk head tail sort uniq cut tr wc nl paste column comm diff strings tac rev \
 cd pwd ls find mkdir mktemp rm rmdir cp mv touch chmod chown ln \
-file stat less tar gzip gunzip du df \
+file stat less tar gzip gunzip bzip2 bunzip2 bzcat du df \
 test [ true false exit return break continue \
 export set unset local shift source eval declare typeset readonly shopt getopts \
 sleep date seq expr yes wait timeout xargs tee watch \
