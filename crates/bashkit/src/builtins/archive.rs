@@ -17,8 +17,9 @@ use async_trait::async_trait;
 use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
+use std::collections::HashSet;
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::limits::ARCHIVE_MAX_DECOMPRESSION_RATIO as MAX_DECOMPRESSION_RATIO;
 use super::{Builtin, Context, resolve_path};
@@ -494,6 +495,82 @@ fn write_octal(buf: &mut [u8], value: u64, width: usize) {
     buf[len] = 0;
 }
 
+// THREAT[TM-FS-015]: Validate the complete archive before the first VFS
+// mutation. A late malformed or escaping entry must not leave earlier files
+// behind as a misleading partial extraction.
+fn validate_tar_for_extraction(
+    tar_data: &[u8],
+    extract_base: &Path,
+    to_stdout: bool,
+    limits: &crate::FsLimits,
+) -> std::result::Result<(u64, u64, u64), String> {
+    let mut offset = 0;
+    let mut output_bytes = 0u64;
+    let mut file_count = 0u64;
+    let mut directories = HashSet::<PathBuf>::new();
+    while offset + TAR_BLOCK_SIZE <= tar_data.len() {
+        let header = &tar_data[offset..offset + TAR_BLOCK_SIZE];
+        if header.iter().all(|&byte| byte == 0) {
+            return Ok((output_bytes, file_count, directories.len() as u64));
+        }
+
+        let name_end = header[..100]
+            .iter()
+            .position(|&byte| byte == 0)
+            .unwrap_or(100);
+        let name = String::from_utf8_lossy(&header[..name_end]);
+        if name.is_empty() {
+            return Ok((output_bytes, file_count, directories.len() as u64));
+        }
+        let size = parse_tar_size(&header[124..136])
+            .ok_or_else(|| format!("tar: {name}: invalid size field\n"))?;
+        offset += TAR_BLOCK_SIZE;
+        let content_end = tar_content_end(offset, size)
+            .filter(|end| *end <= tar_data.len())
+            .ok_or_else(|| format!("tar: {name}: Unexpected end of archive\n"))?;
+
+        if !to_stdout {
+            let entry = Path::new(name.as_ref());
+            if entry.is_absolute()
+                || entry
+                    .components()
+                    .any(|component| matches!(component, std::path::Component::ParentDir))
+                || !resolve_path(extract_base, name.as_ref()).starts_with(extract_base)
+            {
+                return Err(format!("tar: {name}: path traversal blocked\n"));
+            }
+            if matches!(header[156], b'0' | b'\0') && !name.ends_with('/') {
+                limits
+                    .check_file_size(size as u64)
+                    .map_err(|error| format!("tar: {name}: {error}\n"))?;
+                output_bytes = output_bytes.saturating_add(size as u64);
+                file_count = file_count.saturating_add(1);
+                let mut parent = entry.parent();
+                while let Some(path) = parent {
+                    if path.as_os_str().is_empty() {
+                        break;
+                    }
+                    directories.insert(path.to_path_buf());
+                    parent = path.parent();
+                }
+            } else if matches!(header[156], b'5' | b'\0') && name.ends_with('/') {
+                directories.insert(entry.to_path_buf());
+            }
+        } else if matches!(header[156], b'0' | b'\0') && !name.ends_with('/') {
+            limits
+                .check_file_size(size as u64)
+                .map_err(|error| format!("tar: {name}: {error}\n"))?;
+            limits
+                .check_total_bytes(output_bytes, size as u64)
+                .map_err(|error| format!("tar: {name}: {error}\n"))?;
+            output_bytes = output_bytes.saturating_add(size as u64);
+        }
+        offset = content_end;
+    }
+
+    Err("tar: Unexpected end of archive\n".to_string())
+}
+
 /// Extract a tar archive
 async fn extract_tar(
     ctx: &Context<'_>,
@@ -547,6 +624,33 @@ async fn extract_tar(
     let mut verbose_output = String::new();
     let mut stdout_output = String::new();
     let mut offset = 0;
+
+    let (planned_bytes, planned_files, planned_dirs) =
+        match validate_tar_for_extraction(&tar_data, &extract_base, to_stdout, &limits) {
+            Ok(planned) => planned,
+            Err(stderr) => return Ok(ExecResult::err(stderr, 2)),
+        };
+    if !to_stdout {
+        let usage = ctx.fs.usage();
+        if let Err(error) = limits.check_total_bytes(usage.total_bytes, planned_bytes) {
+            return Ok(ExecResult::err(format!("tar: {error}\n"), 2));
+        }
+        if let Err(error) =
+            limits.check_final_file_count(usage.file_count.saturating_add(planned_files))
+        {
+            return Ok(ExecResult::err(format!("tar: {error}\n"), 2));
+        }
+        if planned_dirs > 0
+            && let Err(error) = limits.check_dir_count(
+                usage
+                    .dir_count
+                    .saturating_add(planned_dirs)
+                    .saturating_sub(1),
+            )
+        {
+            return Ok(ExecResult::err(format!("tar: {error}\n"), 2));
+        }
+    }
 
     // Ensure extract_base directory exists when -C is used
     if change_dir.is_some() {

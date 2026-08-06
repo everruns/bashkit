@@ -841,6 +841,8 @@ read-only by default and gated by an allowlist.
 | Threat | Attack Example | Mitigation | Status |
 |--------|---------------|------------|--------|
 | Permissive RealFs mount (TM-FS-013) | `mount_real_readonly_at("/", …)` exposes the whole host | Allowlist-first: broad roots (`/`, `/etc`, `/root`, `/home`, …) and any path component matching `.ssh`, `.aws`, `.kube`, `.docker`, `.gnupg`, `.gcloud` are refused unless explicitly allowlisted | MITIGATED |
+| Partial filesystem mutation (TM-FS-014) | Failed write/copy or cross-mount move leaves corruption, duplication, or retained quota | Failure-atomic `FileSystem` contract; RealFs sibling staging; MountableFs destination rollback; NamespaceFs cross-device rejection; shared conformance + failpoint tests | MITIGATED |
+| Partial tar extraction (TM-FS-015) | A late unsafe or malformed entry leaves earlier files behind | Validate the complete archive and file limits before the first VFS mutation | MITIGATED |
 
 ### Unicode Security (TM-UNI-*)
 

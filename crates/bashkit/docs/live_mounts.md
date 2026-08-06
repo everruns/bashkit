@@ -130,6 +130,10 @@ denied.
 Both approaches can be combined: configure initial mounts with the builder, then
 add/remove mounts at runtime.
 
+Files and symlinks can be copied or moved across live mount boundaries. A move
+snapshots the previous destination and restores it if copying or source removal
+fails. Directories and FIFOs remain unsupported across mount boundaries.
+
 ## Examples
 
 ### Multiple Mounts

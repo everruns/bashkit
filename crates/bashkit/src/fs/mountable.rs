@@ -40,7 +40,7 @@ fn is_posix_absolute(path: &Path) -> bool {
 /// - **Multiple mount points**: Mount different filesystems at different paths
 /// - **Nested mounts**: Mount filesystems within other mounts (longest-prefix matching)
 /// - **Dynamic mounting**: Add/remove mounts at runtime
-/// - **Cross-mount operations**: Copy/move files between different mounted filesystems
+/// - **Cross-mount operations**: Copy and rollback-safe move files and symlinks
 ///
 /// # Use Cases
 ///
@@ -157,7 +157,116 @@ pub struct MountableFs {
     mounts: RwLock<BTreeMap<PathBuf, Arc<dyn FileSystem>>>,
 }
 
+enum CrossMountEntry {
+    File { content: Vec<u8>, mode: u32 },
+    Symlink { target: PathBuf },
+}
+
 impl MountableFs {
+    async fn capture_cross_mount_entry(
+        fs: &Arc<dyn FileSystem>,
+        path: &Path,
+    ) -> Result<Option<CrossMountEntry>> {
+        if !fs.exists(path).await? {
+            return Ok(None);
+        }
+
+        let metadata = fs.stat(path).await?;
+        match metadata.file_type {
+            FileType::File => Ok(Some(CrossMountEntry::File {
+                content: fs.read_file(path).await?,
+                mode: metadata.mode,
+            })),
+            FileType::Symlink => Ok(Some(CrossMountEntry::Symlink {
+                target: fs.read_link(path).await?,
+            })),
+            FileType::Directory | FileType::Fifo => Err(IoError::new(
+                ErrorKind::Unsupported,
+                "cross-mount rename supports files and symlinks only",
+            )
+            .into()),
+        }
+    }
+
+    async fn install_cross_mount_entry(
+        fs: &Arc<dyn FileSystem>,
+        path: &Path,
+        entry: &CrossMountEntry,
+    ) -> Result<()> {
+        match entry {
+            CrossMountEntry::File { content, mode } => {
+                fs.write_file(path, content).await?;
+                fs.chmod(path, *mode).await
+            }
+            CrossMountEntry::Symlink { target } => fs.symlink(target, path).await,
+        }
+    }
+
+    async fn restore_cross_mount_destination(
+        fs: &Arc<dyn FileSystem>,
+        path: &Path,
+        entry: Option<&CrossMountEntry>,
+    ) -> Result<()> {
+        if fs.exists(path).await? {
+            fs.remove(path, false).await?;
+        }
+        if let Some(entry) = entry {
+            Self::install_cross_mount_entry(fs, path, entry).await?;
+        }
+        Ok(())
+    }
+
+    async fn cross_mount_rename(
+        from_fs: &Arc<dyn FileSystem>,
+        from: &Path,
+        to_fs: &Arc<dyn FileSystem>,
+        to: &Path,
+    ) -> Result<()> {
+        let source = Self::capture_cross_mount_entry(from_fs, from)
+            .await?
+            .ok_or_else(|| IoError::new(ErrorKind::NotFound, "source not found"))?;
+        let destination = Self::capture_cross_mount_entry(to_fs, to).await?;
+
+        // THREAT[TM-FS-014]: Preserve the previous destination in memory so
+        // every failure before source deletion can roll the destination back.
+        if destination.is_some() {
+            to_fs.remove(to, false).await?;
+        }
+        if let Err(operation_error) = Self::install_cross_mount_entry(to_fs, to, &source).await {
+            return match Self::restore_cross_mount_destination(
+                to_fs,
+                to,
+                destination.as_ref(),
+            )
+            .await
+            {
+                Ok(()) => Err(operation_error),
+                Err(rollback_error) => Err(IoError::other(format!(
+                    "cross-mount rename failed: {operation_error}; destination rollback failed: {rollback_error}"
+                ))
+                .into()),
+            };
+        }
+
+        if let Err(operation_error) = from_fs.remove(from, false).await {
+            return match Self::restore_cross_mount_destination(
+                to_fs,
+                to,
+                destination.as_ref(),
+            )
+            .await
+            {
+                Ok(()) => Err(operation_error),
+                Err(rollback_error) => Err(IoError::other(format!(
+                    "cross-mount rename failed: {operation_error}; destination rollback failed: {rollback_error}"
+                ))
+                .into()),
+            };
+        }
+
+        Ok(())
+    }
+
     /// Create a new `MountableFs` with the given root filesystem.
     ///
     /// The root filesystem is used for all paths that don't match any mount point.
@@ -453,24 +562,10 @@ impl FileSystem for MountableFs {
         let (from_fs, from_resolved) = self.resolve(from);
         let (to_fs, to_resolved) = self.resolve(to);
 
-        // Check if both paths resolve to the same filesystem
-        // We can only do efficient rename within the same filesystem
-        // For cross-mount rename, we need to copy + delete
         if Arc::ptr_eq(&from_fs, &to_fs) {
             from_fs.rename(&from_resolved, &to_resolved).await
         } else {
-            // Cross-mount rename: handle symlinks specially since read_file
-            // intentionally doesn't follow them (THREAT[TM-ESC-002]).
-            let meta = from_fs.stat(&from_resolved).await?;
-            if meta.file_type == FileType::Symlink {
-                let target = from_fs.read_link(&from_resolved).await?;
-                to_fs.symlink(&target, &to_resolved).await?;
-                from_fs.remove(&from_resolved, false).await
-            } else {
-                let content = from_fs.read_file(&from_resolved).await?;
-                to_fs.write_file(&to_resolved, &content).await?;
-                from_fs.remove(&from_resolved, false).await
-            }
+            Self::cross_mount_rename(&from_fs, &from_resolved, &to_fs, &to_resolved).await
         }
     }
 
