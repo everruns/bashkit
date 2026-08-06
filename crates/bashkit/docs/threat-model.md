@@ -161,6 +161,7 @@ let bash = Bash::builder()
 | jq control normalization amplification (TM-DOS-100) | Literal controls expand sixfold as `\u00XX` | Charge single-pass work and lease live bytes before allocation growth | MITIGATED |
 | yq structured-data amplification (TM-DOS-101) | Deep/multi-document YAML or JSON, runaway filters, expanded output | Parser depth and 4096-document caps, aggregate budgets, shared jaq work/deadline/output limits, final render cap | MITIGATED |
 | Archive decoder pre-allocation (TM-DOS-102) | Compressed output grows before memory checks | Validate and charge each decoder chunk before reserve/copy | MITIGATED |
+| Post-allocation charging (TM-DOS-103) | Archive/compression buffers grow before their live-byte check | Owning budget-aware string/vector/byte builders charge before reserve, roll back errors, and release on drop | MITIGATED |
 
 ### Sandbox Escape (TM-ESC-*)
 
@@ -244,7 +245,7 @@ Scripts may attempt to leak sensitive information.
 | IP address (TM-INF-007) | `ip addr`, `ifconfig` | Not implemented | MITIGATED |
 | System info (TM-INF-008) | `uname -a` | Returns configurable virtual values | MITIGATED |
 | User ID (TM-INF-009) | `id` | Returns hardcoded uid=1000 | MITIGATED |
-| Date/time (TM-INF-018) | `date` | Returns real host time (fingerprinting risk) | **MITIGATED** (opt-in: `Bash::builder().fixed_epoch` / `.epoch_offset`) |
+| Date/time (TM-INF-018) | `date`, `touch -t` | Real time can correlate executions; host timezone could fingerprint the runtime | UTC is the closed default; only sandbox `TZ` selects a static IANA zone; invalid/unsupported values and naive touch stamps use UTC; `fixed_epoch` / `epoch_offset` virtualize the clock | **MITIGATED** |
 | Command timing (TM-INF-033) | `time` as a high-resolution oracle or source of host CPU/RSS data | Portable monotonic/virtual clock; Hardened profile floors to 100 ms; host-process fields are explicitly `unavailable` | **MITIGATED** |
 
 **Network Exfiltration:**

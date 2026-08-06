@@ -107,6 +107,14 @@ Python additionally meters Monty allocation/statement checkpoints. The
 reservation is not refunded, because refunding would recreate the reset path
 this layer exists to remove.
 
+Heap buffers grown from untrusted sizes use the budget-aware owning builders in
+`limits.rs`. `BudgetedVec` (including byte buffers) and `BudgetedString` acquire
+or grow the live-byte lease before reserving capacity, roll the charge back when
+the allocator or producer fails, and release it with the buffer. Archive and
+compression paths use these builders because their expansion ratios and nested
+buffers make post-hoc leasing unsafe. Atomic compare/exchange admission keeps
+concurrent descendants from wrapping or temporarily exceeding the shared cap.
+
 ### Design Principles
 
 1. **Async-first**: All filesystem and execution is async (tokio)

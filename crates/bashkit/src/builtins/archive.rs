@@ -32,6 +32,49 @@ use super::limits::ARCHIVE_MAX_DECOMPRESSION_RATIO as MAX_DECOMPRESSION_RATIO;
 use super::{Builtin, Context, resolve_path};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
+use crate::limits::{BudgetedBytes, BudgetedString, BudgetedVec, LimitExceeded};
+
+fn archive_io_error(context: &str, error: std::io::Error) -> crate::error::Error {
+    if let Some(limit) = error
+        .get_ref()
+        .and_then(|source| source.downcast_ref::<LimitExceeded>())
+    {
+        return crate::error::Error::ResourceLimit(limit.clone());
+    }
+    crate::error::Error::Execution(format!("{context}: {error}"))
+}
+
+fn with_execution_budget<T>(
+    ctx: &Context<'_>,
+    use_budget: impl FnOnce(Option<&crate::limits::ExecutionBudget>) -> Result<T>,
+) -> Result<T> {
+    match ctx.execution_budget() {
+        Some(budget) => budget
+            .try_with(|budget| use_budget(Some(budget)))
+            .map_err(|_| crate::error::Error::Cancelled)?,
+        None => use_budget(None),
+    }
+}
+
+fn budgeted_bytes(ctx: &Context<'_>) -> Result<BudgetedBytes> {
+    with_execution_budget(ctx, |budget| BudgetedBytes::new(budget).map_err(Into::into))
+}
+
+fn budgeted_bytes_with_capacity(ctx: &Context<'_>, capacity: usize) -> Result<BudgetedBytes> {
+    with_execution_budget(ctx, |budget| {
+        BudgetedBytes::try_with_capacity(budget, capacity).map_err(Into::into)
+    })
+}
+
+fn budgeted_string(ctx: &Context<'_>) -> Result<BudgetedString> {
+    with_execution_budget(ctx, |budget| {
+        BudgetedString::new(budget).map_err(Into::into)
+    })
+}
+
+fn budgeted_vec<T>(ctx: &Context<'_>) -> Result<BudgetedVec<T>> {
+    with_execution_budget(ctx, |budget| BudgetedVec::new(budget).map_err(Into::into))
+}
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum ArchiveCompression {
@@ -61,19 +104,10 @@ fn read_with_limit<R: Read>(
     mut reader: R,
     compressed_size: usize,
     max_size: u64,
-) -> std::io::Result<Vec<u8>> {
-    read_with_limit_budgeted(&mut reader, compressed_size, max_size, None)
-}
-
-fn read_with_limit_budgeted<R: Read>(
-    mut reader: R,
-    compressed_size: usize,
-    max_size: u64,
     budget: Option<&crate::limits::ExecutionBudget>,
-) -> std::io::Result<Vec<u8>> {
-    let mut output = Vec::new();
+) -> std::io::Result<BudgetedBytes> {
+    let mut output = BudgetedBytes::new(budget).map_err(std::io::Error::other)?;
     let mut buffer = [0u8; 8192];
-    let mut leases = Vec::new();
 
     loop {
         let n = reader.read(&mut buffer)?;
@@ -102,41 +136,44 @@ fn read_with_limit_budgeted<R: Read>(
             )));
         }
 
-        if let Some(budget) = budget {
-            leases.push(budget.lease_bytes(n).map_err(std::io::Error::other)?);
-        }
-        output.try_reserve_exact(n).map_err(|_| {
-            std::io::Error::other("decompression allocation failed (zip bomb protection)")
-        })?;
-        output.extend_from_slice(&buffer[..n]);
+        output
+            .try_extend_from_slice(&buffer[..n])
+            .map_err(std::io::Error::other)?;
     }
 
     Ok(output)
 }
 
-fn compress_bytes(compression: ArchiveCompression, input: &[u8], command: &str) -> Result<Vec<u8>> {
+fn compress_bytes(
+    compression: ArchiveCompression,
+    input: &[u8],
+    command: &str,
+    budget: Option<&crate::limits::ExecutionBudget>,
+) -> Result<BudgetedBytes> {
     match compression {
-        ArchiveCompression::None => Ok(input.to_vec()),
+        ArchiveCompression::None => {
+            let mut output = BudgetedBytes::try_with_capacity(budget, input.len())?;
+            output.try_extend_from_slice(input)?;
+            Ok(output)
+        }
         ArchiveCompression::Gzip => {
-            let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-            encoder.write_all(input).map_err(|err| {
-                crate::error::Error::Execution(format!("{command}: gzip compression failed: {err}"))
+            let sink = BudgetedBytes::new(budget)?;
+            let mut encoder = GzEncoder::new(sink, Compression::default());
+            encoder.write_all(input).map_err(|error| {
+                archive_io_error(&format!("{command}: gzip compression failed"), error)
             })?;
-            encoder.finish().map_err(|err| {
-                crate::error::Error::Execution(format!("{command}: gzip compression failed: {err}"))
+            encoder.finish().map_err(|error| {
+                archive_io_error(&format!("{command}: gzip compression failed"), error)
             })
         }
         ArchiveCompression::Bzip2 => {
-            let mut encoder = BzEncoder::new(Vec::new(), BzCompression::best());
-            encoder.write_all(input).map_err(|err| {
-                crate::error::Error::Execution(format!(
-                    "{command}: bzip2 compression failed: {err}"
-                ))
+            let sink = BudgetedBytes::new(budget)?;
+            let mut encoder = BzEncoder::new(sink, BzCompression::best());
+            encoder.write_all(input).map_err(|error| {
+                archive_io_error(&format!("{command}: bzip2 compression failed"), error)
             })?;
-            encoder.finish().map_err(|err| {
-                crate::error::Error::Execution(format!(
-                    "{command}: bzip2 compression failed: {err}"
-                ))
+            encoder.finish().map_err(|error| {
+                archive_io_error(&format!("{command}: bzip2 compression failed"), error)
             })
         }
     }
@@ -148,17 +185,17 @@ fn decompress_bytes(
     max_size: u64,
     command: &str,
     budget: Option<&crate::limits::ExecutionBudget>,
-) -> Result<Vec<u8>> {
+) -> Result<BudgetedBytes> {
     let decoded = match compression {
-        ArchiveCompression::None => return Ok(input.to_vec()),
+        ArchiveCompression::None => return compress_bytes(compression, input, command, budget),
         ArchiveCompression::Gzip => {
-            read_with_limit_budgeted(GzDecoder::new(input), input.len(), max_size, budget)
+            read_with_limit(GzDecoder::new(input), input.len(), max_size, budget)
         }
         ArchiveCompression::Bzip2 => {
-            read_with_limit_budgeted(BzDecoder::new(input), input.len(), max_size, budget)
+            read_with_limit(BzDecoder::new(input), input.len(), max_size, budget)
         }
     };
-    decoded.map_err(|err| crate::error::Error::Execution(format!("{command}: {err}")))
+    decoded.map_err(|error| archive_io_error(command, error))
 }
 
 /// The tar builtin - create and extract tar archives.
@@ -192,7 +229,7 @@ impl Builtin for Tar {
         let mut to_stdout = false;
         let mut archive_file: Option<String> = None;
         let mut change_dir: Option<String> = None;
-        let mut files: Vec<String> = Vec::new();
+        let mut files = budgeted_vec(&ctx)?;
 
         // GNU/bsdtar treat a bare first word as the historical option bundle.
         // Normalize only that argv position so the regular short-option parser
@@ -265,7 +302,7 @@ impl Builtin for Tar {
                     }
                 }
             } else if let Some(arg) = p.positional() {
-                files.push(arg.to_string());
+                files.try_push(arg)?;
             }
         }
 
@@ -325,13 +362,13 @@ const TAR_BLOCK_SIZE: usize = 512;
 async fn create_tar(
     ctx: &Context<'_>,
     archive_name: &str,
-    files: &[String],
+    files: &[&str],
     verbose: bool,
     compression: ArchiveCompression,
     change_dir: Option<&str>,
 ) -> Result<ExecResult> {
-    let mut output_data: Vec<u8> = Vec::new();
-    let mut verbose_output = String::new();
+    let mut output_data = budgeted_bytes(ctx)?;
+    let mut verbose_output = budgeted_string(ctx)?;
 
     let base_dir = if let Some(dir) = change_dir {
         resolve_path(ctx.cwd, dir)
@@ -377,19 +414,17 @@ async fn create_tar(
     }
 
     // Add two zero blocks at end
-    output_data.extend_from_slice(&[0u8; TAR_BLOCK_SIZE * 2]);
-    let _tar_lease = ctx.lease_budget_bytes(output_data.len())?;
+    output_data.try_extend_from_slice(&[0u8; TAR_BLOCK_SIZE * 2])?;
 
     let final_data = if compression == ArchiveCompression::None {
         output_data
     } else {
-        compress_bytes(compression, &output_data, "tar")?
+        with_execution_budget(ctx, |budget| {
+            compress_bytes(compression, &output_data, "tar", budget)
+        })?
     };
-    let _compressed_lease = if compression != ArchiveCompression::None {
-        ctx.lease_budget_bytes(final_data.len())?
-    } else {
-        None
-    };
+    let (final_data, _final_lease) = final_data.into_parts();
+    let (verbose_output, _verbose_lease) = verbose_output.into_parts();
 
     // Write to file or stdout
     if archive_name == "-" {
@@ -419,8 +454,8 @@ async fn add_file_to_tar(
     ctx: &Context<'_>,
     path: &Path,
     name: &str,
-    output: &mut Vec<u8>,
-    verbose_output: &mut String,
+    output: &mut BudgetedBytes,
+    verbose_output: &mut BudgetedString,
     verbose: bool,
 ) -> Result<()> {
     let metadata = ctx.fs.stat(path).await?;
@@ -429,8 +464,8 @@ async fn add_file_to_tar(
     ctx.consume_budget_work(u64::try_from(content.len().div_ceil(64)).unwrap_or(u64::MAX))?;
 
     if verbose {
-        verbose_output.push_str(name);
-        verbose_output.push('\n');
+        verbose_output.try_push_str(name)?;
+        verbose_output.try_push('\n')?;
     }
 
     // Create tar header
@@ -477,12 +512,12 @@ async fn add_file_to_tar(
     let checksum: u32 = header.iter().map(|&b| b as u32).sum();
     write_octal(&mut header[148..156], checksum as u64, 7);
 
-    output.extend_from_slice(&header);
+    output.try_extend_from_slice(&header)?;
 
     // Write file content with padding
-    output.extend_from_slice(&content);
+    output.try_extend_from_slice(&content)?;
     let padding = (TAR_BLOCK_SIZE - (content.len() % TAR_BLOCK_SIZE)) % TAR_BLOCK_SIZE;
-    output.extend(std::iter::repeat_n(0u8, padding));
+    output.try_extend_from_slice(&[0u8; TAR_BLOCK_SIZE][..padding])?;
 
     Ok(())
 }
@@ -492,15 +527,15 @@ fn add_directory_to_tar<'a>(
     ctx: &'a Context<'_>,
     path: &'a Path,
     name: &'a str,
-    output: &'a mut Vec<u8>,
-    verbose_output: &'a mut String,
+    output: &'a mut BudgetedBytes,
+    verbose_output: &'a mut BudgetedString,
     verbose: bool,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
     Box::pin(async move {
         // Add directory entry
         if verbose {
-            verbose_output.push_str(name);
-            verbose_output.push_str("/\n");
+            verbose_output.try_push_str(name)?;
+            verbose_output.try_push_str("/\n")?;
         }
 
         let metadata = ctx.fs.stat(path).await?;
@@ -546,7 +581,7 @@ fn add_directory_to_tar<'a>(
         let checksum: u32 = header.iter().map(|&b| b as u32).sum();
         write_octal(&mut header[148..156], checksum as u64, 7);
 
-        output.extend_from_slice(&header);
+        output.try_extend_from_slice(&header)?;
 
         // Add directory contents
         let entries = ctx.fs.read_dir(path).await?;
@@ -681,8 +716,11 @@ async fn extract_tar(
     } else {
         ctx.cwd.clone()
     };
-    let data = if archive_name == "-" {
-        ctx.stdin_bytes().unwrap_or_default().to_vec()
+    let (data, data_lease) = if archive_name == "-" {
+        let input = ctx.stdin_bytes().unwrap_or_default();
+        let mut data = budgeted_bytes_with_capacity(ctx, input.len())?;
+        data.try_extend_from_slice(input)?;
+        data.into_parts()
     } else {
         let archive_path = resolve_path(ctx.cwd, archive_name);
         if !ctx.fs.exists(&archive_path).await.unwrap_or(false) {
@@ -694,10 +732,11 @@ async fn extract_tar(
                 2,
             ));
         }
-        ctx.fs.read_file(&archive_path).await?
+        let data = ctx.fs.read_file(&archive_path).await?;
+        let lease = ctx.lease_budget_bytes(data.len())?;
+        (data, lease)
     };
     ctx.consume_budget_input(data.len())?;
-    let _compressed_lease = ctx.lease_budget_bytes(data.len())?;
 
     // Get filesystem limits for zip bomb protection
     let limits = ctx.fs.limits();
@@ -709,17 +748,21 @@ async fn extract_tar(
     } else {
         compression
     };
-    let tar_data =
-        match decompress_bytes(compression, &data, max_size, "tar", ctx.execution_budget()) {
-            Ok(data) => data,
+    let (tar_data, _tar_lease) = if compression == ArchiveCompression::None {
+        (data, data_lease)
+    } else {
+        match with_execution_budget(ctx, |budget| {
+            decompress_bytes(compression, &data, max_size, "tar", budget)
+        }) {
+            Ok(data) => data.into_parts(),
             Err(err) => return Ok(ExecResult::err(format!("{err}\n"), 2)),
-        };
+        }
+    };
     ctx.consume_budget_input(tar_data.len())?;
     ctx.consume_budget_work(u64::try_from(tar_data.len().div_ceil(64)).unwrap_or(u64::MAX))?;
-    let _tar_lease = ctx.lease_budget_bytes(tar_data.len())?;
 
-    let mut verbose_output = String::new();
-    let mut stdout_output = String::new();
+    let mut verbose_output = budgeted_string(ctx)?;
+    let mut stdout_output = budgeted_string(ctx)?;
     let mut offset = 0;
 
     let (planned_bytes, planned_files, planned_dirs) =
@@ -785,8 +828,8 @@ async fn extract_tar(
         let type_flag = header[156];
 
         if verbose {
-            verbose_output.push_str(&name);
-            verbose_output.push('\n');
+            verbose_output.try_push_str(&name)?;
+            verbose_output.try_push('\n')?;
         }
 
         offset += TAR_BLOCK_SIZE;
@@ -842,7 +885,7 @@ async fn extract_tar(
                     }
 
                     // -O: write content to stdout after applying VFS-sized quotas.
-                    stdout_output.push_str(&output);
+                    stdout_output.try_push_str(&output)?;
                 } else {
                     let file_path = resolve_path(&extract_base, &name);
 
@@ -857,9 +900,9 @@ async fn extract_tar(
             }
             b'1' => {
                 // Hard link — not supported in VFS
-                verbose_output.push_str(&format!(
+                verbose_output.try_push_str(&format!(
                     "tar: {name}: hard link skipped (not supported in VFS)\n"
-                ));
+                ))?;
                 let Some(content_end) = tar_content_end(offset, size) else {
                     return Ok(ExecResult::err(
                         format!("tar: {}: invalid size field\n", name),
@@ -870,9 +913,9 @@ async fn extract_tar(
             }
             b'2' => {
                 // Symbolic link — not supported in VFS
-                verbose_output.push_str(&format!(
+                verbose_output.try_push_str(&format!(
                     "tar: {name}: symbolic link skipped (not supported in VFS)\n"
-                ));
+                ))?;
                 let Some(content_end) = tar_content_end(offset, size) else {
                     return Ok(ExecResult::err(
                         format!("tar: {}: invalid size field\n", name),
@@ -883,7 +926,8 @@ async fn extract_tar(
             }
             _ => {
                 // Other unsupported types (char/block device, FIFO, contiguous, etc.)
-                verbose_output.push_str(&format!("tar: {name}: unsupported entry type skipped\n"));
+                verbose_output
+                    .try_push_str(&format!("tar: {name}: unsupported entry type skipped\n"))?;
                 let Some(content_end) = tar_content_end(offset, size) else {
                     return Ok(ExecResult::err(
                         format!("tar: {}: invalid size field\n", name),
@@ -895,6 +939,8 @@ async fn extract_tar(
         }
     }
 
+    let (stdout_output, _stdout_lease) = stdout_output.into_parts();
+    let (verbose_output, _verbose_lease) = verbose_output.into_parts();
     Ok(ExecResult {
         stdout: stdout_output.into(),
         stderr: verbose_output.into(),
@@ -911,8 +957,11 @@ async fn list_tar(
     verbose: bool,
     compression: ArchiveCompression,
 ) -> Result<ExecResult> {
-    let data = if archive_name == "-" {
-        ctx.stdin_bytes().unwrap_or_default().to_vec()
+    let (data, data_lease) = if archive_name == "-" {
+        let input = ctx.stdin_bytes().unwrap_or_default();
+        let mut data = budgeted_bytes_with_capacity(ctx, input.len())?;
+        data.try_extend_from_slice(input)?;
+        data.into_parts()
     } else {
         let archive_path = resolve_path(ctx.cwd, archive_name);
         if !ctx.fs.exists(&archive_path).await.unwrap_or(false) {
@@ -924,31 +973,36 @@ async fn list_tar(
                 2,
             ));
         }
-        ctx.fs.read_file(&archive_path).await?
+        let data = ctx.fs.read_file(&archive_path).await?;
+        let lease = ctx.lease_budget_bytes(data.len())?;
+        (data, lease)
     };
+    ctx.consume_budget_input(data.len())?;
 
     // Get filesystem limits for zip bomb protection
     let limits = ctx.fs.limits();
     let max_size = limits.max_total_bytes;
 
-    ctx.consume_budget_input(data.len())?;
-    let _compressed_lease = ctx.lease_budget_bytes(data.len())?;
     let detected = ArchiveCompression::detect(&data);
     let compression = if compression == ArchiveCompression::None {
         detected
     } else {
         compression
     };
-    let tar_data =
-        match decompress_bytes(compression, &data, max_size, "tar", ctx.execution_budget()) {
-            Ok(data) => data,
+    let (tar_data, _tar_lease) = if compression == ArchiveCompression::None {
+        (data, data_lease)
+    } else {
+        match with_execution_budget(ctx, |budget| {
+            decompress_bytes(compression, &data, max_size, "tar", budget)
+        }) {
+            Ok(data) => data.into_parts(),
             Err(err) => return Ok(ExecResult::err(format!("{err}\n"), 2)),
-        };
+        }
+    };
     ctx.consume_budget_input(tar_data.len())?;
     ctx.consume_budget_work(u64::try_from(tar_data.len().div_ceil(64)).unwrap_or(u64::MAX))?;
-    let _tar_lease = ctx.lease_budget_bytes(tar_data.len())?;
 
-    let mut output = String::new();
+    let mut output = budgeted_string(ctx)?;
     let mut offset = 0;
 
     while offset + TAR_BLOCK_SIZE <= tar_data.len() {
@@ -990,7 +1044,7 @@ async fn list_tar(
                 _ => '-',
             };
 
-            output.push_str(&format!(
+            output.try_push_str(&format!(
                 "{}{}{}{}{}{}{}{}{}{} {:>8} {}\n",
                 type_char,
                 if mode & 0o400 != 0 { 'r' } else { '-' },
@@ -1004,10 +1058,10 @@ async fn list_tar(
                 if mode & 0o001 != 0 { 'x' } else { '-' },
                 size_val,
                 name
-            ));
+            ))?;
         } else {
-            output.push_str(&name);
-            output.push('\n');
+            output.try_push_str(&name)?;
+            output.try_push('\n')?;
         }
 
         offset += TAR_BLOCK_SIZE;
@@ -1022,7 +1076,7 @@ async fn list_tar(
         offset = content_end;
     }
 
-    Ok(ExecResult::ok(output))
+    Ok(ExecResult::ok(output.into_inner()))
 }
 
 fn tar_content_end(offset: usize, size: usize) -> Option<usize> {
@@ -1081,7 +1135,7 @@ impl Builtin for Gzip {
         let mut decompress = false;
         let mut keep = false;
         let mut force = false;
-        let mut files: Vec<String> = Vec::new();
+        let mut files = budgeted_vec(&ctx)?;
 
         for arg in ctx.args {
             if arg.starts_with('-') && arg.len() > 1 {
@@ -1099,7 +1153,7 @@ impl Builtin for Gzip {
                     }
                 }
             } else {
-                files.push(arg.clone());
+                files.try_push(arg.as_str())?;
             }
         }
 
@@ -1113,7 +1167,10 @@ impl Builtin for Gzip {
                 if decompress {
                     let compressed_size = stdin.len();
                     let decoder = GzDecoder::new(stdin.as_bytes());
-                    match read_with_limit(decoder, compressed_size, max_size) {
+                    match with_execution_budget(&ctx, |budget| {
+                        read_with_limit(decoder, compressed_size, max_size, budget)
+                            .map_err(|error| archive_io_error("gzip: stdin", error))
+                    }) {
                         Ok(output) => {
                             return Ok(ExecResult::ok(
                                 String::from_utf8_lossy(&output).to_string(),
@@ -1122,13 +1179,14 @@ impl Builtin for Gzip {
                         Err(e) => return Ok(ExecResult::err(format!("gzip: stdin: {}\n", e), 1)),
                     }
                 } else {
-                    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-                    encoder.write_all(stdin.as_bytes()).map_err(|e| {
-                        crate::error::Error::Execution(format!("gzip: compression failed: {}", e))
-                    })?;
-                    let compressed = encoder.finish().map_err(|e| {
-                        crate::error::Error::Execution(format!("gzip: compression failed: {}", e))
-                    })?;
+                    let sink = budgeted_bytes(&ctx)?;
+                    let mut encoder = GzEncoder::new(sink, Compression::default());
+                    encoder
+                        .write_all(stdin.as_bytes())
+                        .map_err(|error| archive_io_error("gzip: compression failed", error))?;
+                    let compressed = encoder
+                        .finish()
+                        .map_err(|error| archive_io_error("gzip: compression failed", error))?;
                     return Ok(ExecResult::ok(
                         String::from_utf8_lossy(&compressed).to_string(),
                     ));
@@ -1137,7 +1195,7 @@ impl Builtin for Gzip {
             return Ok(ExecResult::ok(String::new()));
         }
 
-        for file in &files {
+        for file in files.iter() {
             let path = resolve_path(ctx.cwd, file);
 
             if !ctx.fs.exists(&path).await.unwrap_or(false) {
@@ -1179,14 +1237,14 @@ impl Builtin for Gzip {
                 let _input_lease = ctx.lease_budget_bytes(data.len())?;
                 let compressed_size = data.len();
                 let decoder = GzDecoder::new(data.as_slice());
-                let output = read_with_limit(decoder, compressed_size, max_size).map_err(|e| {
-                    crate::error::Error::Execution(format!("gzip: {}: {}", file, e))
+                let output = with_execution_budget(&ctx, |budget| {
+                    read_with_limit(decoder, compressed_size, max_size, budget)
+                        .map_err(|error| archive_io_error(&format!("gzip: {file}"), error))
                 })?;
                 ctx.consume_budget_input(output.len())?;
                 ctx.consume_budget_work(
                     u64::try_from(output.len().div_ceil(64)).unwrap_or(u64::MAX),
                 )?;
-                let _output_lease = ctx.lease_budget_bytes(output.len())?;
 
                 ctx.fs.write_file(&output_path, &output).await?;
 
@@ -1215,17 +1273,17 @@ impl Builtin for Gzip {
                 let data = ctx.fs.read_file(&path).await?;
                 ctx.consume_budget_input(data.len())?;
                 let _input_lease = ctx.lease_budget_bytes(data.len())?;
-                let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-                encoder.write_all(&data).map_err(|e| {
-                    crate::error::Error::Execution(format!("gzip: {}: {}", file, e))
-                })?;
-                let compressed = encoder.finish().map_err(|e| {
-                    crate::error::Error::Execution(format!("gzip: {}: {}", file, e))
-                })?;
+                let sink = budgeted_bytes(&ctx)?;
+                let mut encoder = GzEncoder::new(sink, Compression::default());
+                encoder
+                    .write_all(&data)
+                    .map_err(|error| archive_io_error(&format!("gzip: {file}"), error))?;
+                let compressed = encoder
+                    .finish()
+                    .map_err(|error| archive_io_error(&format!("gzip: {file}"), error))?;
                 ctx.consume_budget_work(
                     u64::try_from(data.len().div_ceil(64)).unwrap_or(u64::MAX),
                 )?;
-                let _output_lease = ctx.lease_budget_bytes(compressed.len())?;
 
                 ctx.fs.write_file(&output_path, &compressed).await?;
 
@@ -1334,7 +1392,7 @@ async fn execute_bzip2(
     let mut stdout = matches!(invocation, Bzip2Invocation::DecompressStdout);
     let mut keep = stdout;
     let mut force = false;
-    let mut files = Vec::new();
+    let mut files = budgeted_vec(&ctx)?;
     let mut parse_options = true;
 
     for arg in ctx.args {
@@ -1371,7 +1429,7 @@ async fn execute_bzip2(
                 }
             }
         } else {
-            files.push(arg.clone());
+            files.try_push(arg.as_str())?;
         }
     }
 
@@ -1380,32 +1438,35 @@ async fn execute_bzip2(
         ctx.consume_budget_input(input.len())?;
         let _input_lease = ctx.lease_budget_bytes(input.len())?;
         let output = if decompress {
-            match decompress_bytes(
-                ArchiveCompression::Bzip2,
-                input,
-                ctx.fs.limits().max_file_size,
-                command,
-                ctx.execution_budget(),
-            ) {
+            match with_execution_budget(&ctx, |budget| {
+                decompress_bytes(
+                    ArchiveCompression::Bzip2,
+                    input,
+                    ctx.fs.limits().max_file_size,
+                    command,
+                    budget,
+                )
+            }) {
                 Ok(output) => output,
                 Err(err) => return Ok(ExecResult::err(format!("{err}\n"), 1)),
             }
         } else {
-            compress_bytes(ArchiveCompression::Bzip2, input, command)?
+            with_execution_budget(&ctx, |budget| {
+                compress_bytes(ArchiveCompression::Bzip2, input, command, budget)
+            })?
         };
         ctx.consume_budget_input(output.len())?;
         ctx.consume_budget_work(u64::try_from(output.len().div_ceil(64)).unwrap_or(u64::MAX))?;
-        let _output_lease = ctx.lease_budget_bytes(output.len())?;
+        let (output, _output_lease) = output.into_parts();
         return Ok(ExecResult {
             stdout: output.into(),
             ..ExecResult::default()
         });
     }
 
-    let mut stdout_data = Vec::new();
-    let mut stdout_leases = Vec::new();
-    for file in files {
-        let input_path = resolve_path(ctx.cwd, &file);
+    let mut stdout_data = budgeted_bytes(&ctx)?;
+    for file in files.iter() {
+        let input_path = resolve_path(ctx.cwd, file);
         if !ctx.fs.exists(&input_path).await.unwrap_or(false) {
             return Ok(ExecResult::err(
                 format!("{command}: {file}: No such file or directory\n"),
@@ -1423,13 +1484,15 @@ async fn execute_bzip2(
         ctx.consume_budget_input(input.len())?;
         let _input_lease = ctx.lease_budget_bytes(input.len())?;
         let output = if decompress {
-            match decompress_bytes(
-                ArchiveCompression::Bzip2,
-                &input,
-                ctx.fs.limits().max_file_size,
-                command,
-                ctx.execution_budget(),
-            ) {
+            match with_execution_budget(&ctx, |budget| {
+                decompress_bytes(
+                    ArchiveCompression::Bzip2,
+                    &input,
+                    ctx.fs.limits().max_file_size,
+                    command,
+                    budget,
+                )
+            }) {
                 Ok(output) => output,
                 Err(err) => return Ok(ExecResult::err(format!("{err}\n"), 1)),
             }
@@ -1440,12 +1503,12 @@ async fn execute_bzip2(
                     1,
                 ));
             }
-            compress_bytes(ArchiveCompression::Bzip2, &input, command)?
+            with_execution_budget(&ctx, |budget| {
+                compress_bytes(ArchiveCompression::Bzip2, &input, command, budget)
+            })?
         };
         ctx.consume_budget_input(output.len())?;
         ctx.consume_budget_work(u64::try_from(output.len().div_ceil(64)).unwrap_or(u64::MAX))?;
-        let _output_lease = ctx.lease_budget_bytes(output.len())?;
-
         if stdout {
             let next_len = stdout_data.len().checked_add(output.len()).ok_or_else(|| {
                 crate::error::Error::Execution(format!("{command}: output size overflow"))
@@ -1453,18 +1516,12 @@ async fn execute_bzip2(
             if let Err(err) = ctx.fs.limits().check_total_bytes(0, next_len as u64) {
                 return Ok(ExecResult::err(format!("{command}: {err}\n"), 1));
             }
-            if let Some(budget) = ctx.execution_budget() {
-                stdout_leases.push(budget.lease_bytes(output.len())?);
-            }
-            stdout_data.try_reserve_exact(output.len()).map_err(|_| {
-                crate::error::Error::Execution(format!("{command}: output allocation failed"))
-            })?;
-            stdout_data.extend_from_slice(&output);
+            stdout_data.try_extend_from_slice(&output)?;
             continue;
         }
 
         let output_name = if decompress {
-            let Some(output_name) = decompressed_bzip2_name(&file) else {
+            let Some(output_name) = decompressed_bzip2_name(file) else {
                 return Ok(ExecResult::err(
                     format!("{command}: {file}: unknown suffix -- ignored\n"),
                     1,
@@ -1487,6 +1544,7 @@ async fn execute_bzip2(
         }
     }
 
+    let (stdout_data, _stdout_lease) = stdout_data.into_parts();
     Ok(ExecResult {
         stdout: stdout_data.into(),
         ..ExecResult::default()
@@ -2168,15 +2226,15 @@ mod tests {
     #[test]
     fn test_read_with_limit_normal() {
         let data = b"hello world";
-        let result = read_with_limit(data.as_slice(), data.len(), 1000);
+        let result = read_with_limit(data.as_slice(), data.len(), 1000, None);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), data);
+        assert_eq!(&*result.unwrap(), data);
     }
 
     #[test]
     fn test_read_with_limit_exceeds_max() {
         let data = vec![0u8; 1000];
-        let result = read_with_limit(data.as_slice(), data.len(), 500);
+        let result = read_with_limit(data.as_slice(), data.len(), 500, None);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("exceeds") || err.contains("limit"));
@@ -2187,10 +2245,74 @@ mod tests {
         // Simulate a high decompression ratio scenario
         // We can't easily create a real gzip bomb, but we test the ratio check
         let data = vec![0u8; 10100]; // 101x the "compressed" size
-        let result = read_with_limit(data.as_slice(), 100, u64::MAX);
+        let result = read_with_limit(data.as_slice(), 100, u64::MAX, None);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("ratio") || err.contains("bomb"));
+    }
+
+    #[test]
+    fn test_read_with_limit_releases_budget_after_reader_error() {
+        struct FailsAfterFirstRead(bool);
+
+        impl Read for FailsAfterFirstRead {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                if self.0 {
+                    return Err(std::io::Error::other("injected read failure"));
+                }
+                self.0 = true;
+                buffer[..4].copy_from_slice(b"data");
+                Ok(4)
+            }
+        }
+
+        let limits = crate::limits::ExecutionLimits::new().max_live_intermediate_bytes(8);
+        let budget = crate::limits::ExecutionBudget::new(
+            &limits,
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        );
+
+        let result = read_with_limit(FailsAfterFirstRead(false), 4, 8, Some(&budget));
+        assert!(result.is_err());
+        assert!(
+            budget.lease_bytes(8).is_ok(),
+            "reader errors must release buffer accounting"
+        );
+    }
+
+    #[test]
+    fn test_read_with_limit_aggregates_nested_live_work() {
+        let limits = crate::limits::ExecutionLimits::new().max_live_intermediate_bytes(8);
+        let budget = crate::limits::ExecutionBudget::new(
+            &limits,
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        );
+        let outer = budget.lease_bytes(4).unwrap();
+
+        let result = read_with_limit(&b"12345"[..], 5, 8, Some(&budget));
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("live intermediate bytes"), "{error}");
+        drop(outer);
+    }
+
+    #[test]
+    fn test_gzip_sink_preserves_resource_limit_error() {
+        let limits = crate::limits::ExecutionLimits::new().max_live_intermediate_bytes(0);
+        let budget = crate::limits::ExecutionBudget::new(
+            &limits,
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        );
+        let sink = BudgetedBytes::new(Some(&budget)).unwrap();
+        let mut encoder = GzEncoder::new(sink, Compression::default());
+
+        let io_error = match encoder.write_all(b"untrusted input") {
+            Err(error) => error,
+            Ok(()) => encoder.finish().unwrap_err(),
+        };
+        assert!(matches!(
+            archive_io_error("gzip", io_error),
+            crate::error::Error::ResourceLimit(crate::limits::LimitExceeded::ExecutionBudget(_))
+        ));
     }
 
     #[tokio::test]

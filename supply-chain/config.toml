@@ -296,6 +296,11 @@ criteria = "safe-to-deploy"
 version = "0.4.45"
 criteria = "safe-to-deploy"
 
+[[exemptions.chrono-tz]]
+version = "0.10.4"
+criteria = "safe-to-deploy"
+notes = "Static IANA TZDB tables; reviewed for host I/O, process execution, and unsafe code."
+
 [[exemptions.ciborium]]
 version = "0.2.2"
 criteria = "safe-to-run"
@@ -1354,6 +1359,11 @@ version = "0.11.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.phf]]
+version = "0.12.1"
+criteria = "safe-to-deploy"
+notes = "Compile-time perfect-hash runtime used by chrono-tz; no unsafe code."
+
+[[exemptions.phf]]
 version = "0.13.1"
 criteria = "safe-to-deploy"
 
@@ -1376,6 +1386,11 @@ criteria = "safe-to-deploy"
 [[exemptions.phf_shared]]
 version = "0.11.3"
 criteria = "safe-to-deploy"
+
+[[exemptions.phf_shared]]
+version = "0.12.1"
+criteria = "safe-to-deploy"
+notes = "Hash primitives used by phf; no unsafe code."
 
 [[exemptions.phf_shared]]
 version = "0.13.1"
