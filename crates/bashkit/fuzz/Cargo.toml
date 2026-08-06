@@ -17,6 +17,7 @@ tokio = { version = "1", features = ["rt"] }
 
 [dependencies.bashkit]
 path = ".."
+features = ["jq"]
 
 # Prevent this from interfering with workspaces
 [workspace]
@@ -110,8 +111,8 @@ doc = false
 bench = false
 
 [[bin]]
-name = "yaml_fuzz"
-path = "fuzz_targets/yaml_fuzz.rs"
+name = "yq_fuzz"
+path = "fuzz_targets/yq_fuzz.rs"
 test = false
 doc = false
 bench = false

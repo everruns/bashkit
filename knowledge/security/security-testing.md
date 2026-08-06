@@ -46,6 +46,18 @@ cargo test --features failpoints security_ -- --test-threads=1
 |------------|---------|----------------------|
 | `interp::execute_command` | `panic`, `error`, `exit_nonzero` | Test command execution failure handling |
 
+### yq atomic replacement (`builtins/yq.rs`)
+
+| Fail Point | Actions | Security Test Purpose |
+|------------|---------|----------------------|
+| `yq::temp_allocate` | `exhausted` | Source preservation when no sibling temporary can be allocated |
+| `yq::temp_chmod` | `error` | Temporary cleanup and source preservation on mode-copy failure |
+| `yq::temp_rename` | `error` | Temporary cleanup and source preservation before atomic replacement |
+
+The existing `fs::write_file` actions cover yq temporary-write failures,
+including the partial-write class. `security_yq_inplace_*` asserts original
+bytes and absence of `.bashkit-yq-*` files after every injected stage.
+
 ## Usage
 
 In tests: `fail::cfg("limits::tick_command", "return(skip_increment)")` before,

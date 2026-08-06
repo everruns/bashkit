@@ -473,8 +473,13 @@ fn yaml_to_json(value: serde_yaml_ng::Value, depth: usize) -> DataResult<serde_j
     Ok(match value {
         serde_yaml_ng::Value::Null => serde_json::Value::Null,
         serde_yaml_ng::Value::Bool(value) => serde_json::Value::Bool(value),
-        serde_yaml_ng::Value::Number(value) => serde_json::to_value(value)
-            .map_err(|_| anyhow::anyhow!("yq: YAML number cannot be represented as JSON"))?,
+        serde_yaml_ng::Value::Number(value) => {
+            if value.as_f64().is_some_and(|number| !number.is_finite()) {
+                anyhow::bail!("yq: non-finite YAML number cannot be represented as JSON");
+            }
+            serde_json::to_value(value)
+                .map_err(|_| anyhow::anyhow!("yq: YAML number cannot be represented as JSON"))?
+        }
         serde_yaml_ng::Value::String(value) => serde_json::Value::String(value),
         serde_yaml_ng::Value::Sequence(values) => serde_json::Value::Array(
             values
@@ -577,6 +582,10 @@ async fn atomic_replace(
     content: &[u8],
 ) -> std::result::Result<(), String> {
     let parent = target.parent().unwrap_or_else(|| Path::new("/"));
+    #[cfg(feature = "failpoints")]
+    if injected_failure("yq::temp_allocate", "exhausted") {
+        return Err("cannot allocate temporary file".to_string());
+    }
     let mut temp = None;
     for _ in 0..16 {
         let mut suffix = [0u8; 8];
@@ -601,17 +610,35 @@ async fn atomic_replace(
         let _ = fs.remove(&temp, false).await;
         return Err(format!("cannot write temporary file: {error}"));
     }
+    #[cfg(feature = "failpoints")]
+    if injected_failure("yq::temp_chmod", "error") {
+        let _ = fs.remove(&temp, false).await;
+        return Err("cannot preserve file mode: injected failure".to_string());
+    }
     if let Ok(metadata) = fs.stat(target).await
         && let Err(error) = fs.chmod(&temp, metadata.mode).await
     {
         let _ = fs.remove(&temp, false).await;
         return Err(format!("cannot preserve file mode: {error}"));
     }
+    #[cfg(feature = "failpoints")]
+    if injected_failure("yq::temp_rename", "error") {
+        let _ = fs.remove(&temp, false).await;
+        return Err(format!(
+            "cannot replace '{}': injected failure",
+            target.display()
+        ));
+    }
     if let Err(error) = fs.rename(&temp, target).await {
         let _ = fs.remove(&temp, false).await;
         return Err(format!("cannot replace '{}': {error}", target.display()));
     }
     Ok(())
+}
+
+#[cfg(feature = "failpoints")]
+fn injected_failure(name: &str, expected: &str) -> bool {
+    fail::eval(name, |action| action.as_deref() == Some(expected)).unwrap_or(false)
 }
 
 fn relabel_jq_error(mut result: ExecResult) -> ExecResult {

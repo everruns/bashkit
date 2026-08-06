@@ -90,3 +90,90 @@ printf 'a: [1,\n' | yq '.' 2>&1
 yq: invalid YAML: did not find expected node content at line 2 column 1, while parsing a flow node
 ### exit_code: 1
 ### end
+
+### yq_assignment
+printf 'count: 1\nname: bashkit\n' | yq '.count += 2 | .enabled = true'
+### expect
+count: 3
+enabled: true
+name: bashkit
+### end
+
+### yq_multiple_files
+printf 'id: 1\n' > /tmp/yq-first.yml
+printf 'id: 2\n' > /tmp/yq-second.yml
+yq -o=json -I=0 '.id' /tmp/yq-first.yml /tmp/yq-second.yml
+### expect
+1
+2
+### end
+
+### yq_mixed_file_and_stdin
+printf 'id: 1\n' > /tmp/yq-file.yml
+printf 'id: 2\n' | yq -o=json -I=0 '.id' /tmp/yq-file.yml -
+### expect
+1
+2
+### end
+
+### yq_json_stream
+printf '%s\n' '{"id":1}' '{"id":2}' | yq -p=json -o=json -I=0 '.id'
+### expect
+1
+2
+### end
+
+### yq_no_document_separators
+printf '%s\n' '---' 'id: 1' '---' 'id: 2' | yq -N '.id'
+### expect
+1
+2
+### end
+
+### yq_pretty_json_indent
+printf 'nested:\n  ok: true\n' | yq --output-format=json --indent=4
+### expect
+{
+    "nested": {
+        "ok": true
+    }
+}
+### end
+
+### yq_attached_short_value_flags
+printf '{"name":"bashkit"}\n' | yq -p=json -o=json -I=0 '.name'
+### expect
+"bashkit"
+### end
+
+### yq_expression_option
+printf 'name: bashkit\n' | yq --expression='.name'
+### expect
+bashkit
+### end
+
+### yq_exit_status_false
+printf 'enabled: false\n' | yq -e '.enabled'
+### expect
+false
+### exit_code: 1
+### end
+
+### yq_empty_input
+printf '' | yq '.'
+### expect
+null
+### end
+
+### yq_unicode_roundtrip
+printf 'message: "Привіт 🌍"\n' | yq -r '.message'
+### expect
+Привіт 🌍
+### end
+
+### yq_auto_json_filename
+printf '{"name":"bashkit"}\n' > /tmp/yq-auto.json
+yq '.name' /tmp/yq-auto.json
+### expect
+bashkit
+### end

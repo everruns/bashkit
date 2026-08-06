@@ -15,6 +15,7 @@ use bashkit::{
 };
 use serial_test::serial;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
 /// Helper to run a script and capture the result
@@ -260,6 +261,87 @@ async fn security_fs_failed_writes_are_atomic() {
         let after = fs.usage();
         assert_eq!(after.total_bytes, usage.total_bytes, "{action}");
         assert_eq!(after.file_count, usage.file_count, "{action}");
+    }
+}
+
+/// THREAT[TM-FS-016]: yq in-place replacement must retain the original bytes
+/// and remove sibling temporaries for every injectable atomic-replace stage.
+#[tokio::test]
+#[serial]
+async fn security_yq_inplace_stage_failures_are_atomic() {
+    for (failpoint, action) in [
+        ("yq::temp_allocate", "return(exhausted)"),
+        ("yq::temp_chmod", "return(error)"),
+        ("yq::temp_rename", "return(error)"),
+    ] {
+        let fs = Arc::new(InMemoryFs::new());
+        fs.write_file(Path::new("/tmp/data.yml"), b"name: original\n")
+            .await
+            .unwrap();
+        let mut bash = Bash::builder().fs(fs.clone()).build();
+
+        fail::cfg(failpoint, action).unwrap();
+        let result = bash
+            .exec("yq -i '.name = \"changed\"' /tmp/data.yml")
+            .await
+            .unwrap();
+        fail::cfg(failpoint, "off").unwrap();
+
+        assert_ne!(result.exit_code, 0, "{failpoint}");
+        assert_eq!(
+            fs.read_file(Path::new("/tmp/data.yml")).await.unwrap(),
+            b"name: original\n",
+            "{failpoint}"
+        );
+        assert!(
+            fs.read_dir(Path::new("/tmp"))
+                .await
+                .unwrap()
+                .iter()
+                .all(|entry| !entry.name.starts_with(".bashkit-yq-")),
+            "temporary leaked after {failpoint}"
+        );
+    }
+}
+
+/// THREAT[TM-FS-016]: backend write failures, including partial-write
+/// simulation, cannot damage the source or leave a yq temporary behind.
+#[tokio::test]
+#[serial]
+async fn security_yq_inplace_write_failures_are_atomic() {
+    for action in [
+        "io_error",
+        "disk_full",
+        "permission_denied",
+        "partial_write",
+    ] {
+        let fs = Arc::new(InMemoryFs::new());
+        fs.write_file(Path::new("/tmp/data.yml"), b"name: original\n")
+            .await
+            .unwrap();
+        let mut bash = Bash::builder().fs(fs.clone()).build();
+
+        fail::cfg("fs::write_file", &format!("return({action})")).unwrap();
+        let result = bash
+            .exec("yq -i '.name = \"changed\"' /tmp/data.yml")
+            .await
+            .unwrap();
+        fail::cfg("fs::write_file", "off").unwrap();
+
+        assert_ne!(result.exit_code, 0, "{action}");
+        assert_eq!(
+            fs.read_file(Path::new("/tmp/data.yml")).await.unwrap(),
+            b"name: original\n",
+            "{action}"
+        );
+        assert!(
+            fs.read_dir(Path::new("/tmp"))
+                .await
+                .unwrap()
+                .iter()
+                .all(|entry| !entry.name.starts_with(".bashkit-yq-")),
+            "temporary leaked after {action}"
+        );
     }
 }
 

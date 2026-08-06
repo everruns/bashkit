@@ -53,12 +53,12 @@ selection, iteration, `select`, `map`, construction, reduction, and assignment
 filters work. mikefarah/yq-only operators for comments, styles, anchors, tags,
 file metadata, and cross-file evaluation are not implemented.
 
-YAML custom tags and non-string mapping keys are rejected rather than silently
-losing information. Mapping keys are sorted deterministically at the JSON-value
-boundary. Comments, scalar style, and anchors are not retained after
-conversion. The parser follows YAML 1.1. TOML, CSV, and XML conversion are not
-part of this builtin; Bashkit's separate `tomlq` and `csv` helpers remain
-available for their existing narrow command surfaces.
+YAML custom tags, non-string mapping keys, and non-finite numbers are rejected
+rather than silently losing information at the JSON-value boundary. Mapping
+keys are sorted deterministically. Comments, scalar style, and anchors are not
+retained after conversion. The parser follows YAML 1.1. TOML, CSV, and XML
+conversion are not part of this builtin; Bashkit's separate `tomlq` and `csv`
+helpers remain available for their existing narrow command surfaces.
 
 ## See also
 
