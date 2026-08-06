@@ -440,6 +440,11 @@ impl Builtin for ToolBuiltinAdapter {
                         &ctx,
                     )
                     .await;
+                // A cancelled/closed request must not turn into a normal tool
+                // exit merely because the registry uses a script-level result.
+                if let Some(budget) = ctx.execution_budget() {
+                    budget.check()?;
+                }
                 ExecResult {
                     stdout: output.stdout.into(),
                     stderr: output.stderr.into(),

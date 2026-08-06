@@ -569,15 +569,17 @@ impl Builtin for Python {
             external_fns: self.external_fns.as_ref(),
             execution_budget: ctx.execution_budget().cloned(),
         };
+        let execution_budget = ctx.execution_budget().cloned();
         let future = run_python(&code, &filename, ctx.fs.clone(), ctx.cwd, ctx.env, policy);
         #[cfg(feature = "scripted_tool")]
-        return crate::tool_registry::scope_runtime_call(
+        let future = crate::tool_registry::scope_runtime_call(
             crate::tool_registry::ToolCallScope::from_context(&ctx),
             future,
-        )
-        .await;
-        #[cfg(not(feature = "scripted_tool"))]
-        future.await
+        );
+        match execution_budget {
+            Some(budget) => budget.run(future).await?,
+            None => future.await,
+        }
     }
 }
 

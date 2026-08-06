@@ -938,16 +938,16 @@ async fn execute_curl_request(
             verbose_output.push_str(">\r\n");
         }
 
-        let result = http_client
-            .request_with_timeouts(
+        let result = ctx
+            .run_budgeted(http_client.request_with_timeouts(
                 current_method,
                 &current_url,
                 current_body.as_deref(),
                 &current_headers,
                 max_time,
                 connect_timeout,
-            )
-            .await;
+            ))
+            .await?;
 
         match result {
             Ok(response) => {
@@ -1450,9 +1450,16 @@ async fn execute_wget_request(
         (Method::Get, None)
     };
 
-    let result = http_client
-        .request_with_timeouts(method, url, body, &header_pairs, timeout, connect_timeout)
-        .await;
+    let result = ctx
+        .run_budgeted(http_client.request_with_timeouts(
+            method,
+            url,
+            body,
+            &header_pairs,
+            timeout,
+            connect_timeout,
+        ))
+        .await?;
 
     match result {
         Ok(response) => {

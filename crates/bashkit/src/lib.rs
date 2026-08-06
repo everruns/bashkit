@@ -897,6 +897,9 @@ impl Bash {
             stdin,
         };
         self.interpreter.begin_execution_budget();
+        // THREAT[TM-ISO-027]: close every request-owned boundary on all exits,
+        // including timeout/cancellation and unwinding teardown paths.
+        let _budget_completion = self.interpreter.execution_budget().completion_guard();
         // Expose active execution limits and deadline to builtins that need to
         // honor per-execution sandbox settings inside synchronous VM sections.
         let active_limits = self.interpreter.limits().clone();

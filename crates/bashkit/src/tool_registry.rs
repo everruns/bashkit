@@ -87,6 +87,7 @@ impl ToolCallRequest {
 #[derive(Clone)]
 pub(crate) struct ToolCallScope {
     request: Option<ToolCallRequest>,
+    budget: Option<crate::limits::ExecutionBudget>,
     #[cfg(not(target_family = "wasm"))]
     deadline: Option<crate::time_compat::Instant>,
 }
@@ -95,6 +96,7 @@ impl ToolCallScope {
     pub(crate) fn from_context(ctx: &Context<'_>) -> Self {
         Self {
             request: ctx.execution_extension::<ToolCallRequest>().cloned(),
+            budget: ctx.execution_budget().cloned(),
             #[cfg(not(target_family = "wasm"))]
             deadline: ctx
                 .execution_extension::<ExecutionDeadline>()
@@ -134,6 +136,7 @@ fn runtime_scope() -> ToolCallScope {
         .try_with(Clone::clone)
         .unwrap_or(ToolCallScope {
             request: None,
+            budget: None,
             #[cfg(not(target_family = "wasm"))]
             deadline: None,
         })
@@ -355,17 +358,27 @@ impl ToolRegistry {
                 CallbackKind::Async(callback) => callback(args).await,
             }
         };
+        let callback = async {
+            match &scope.budget {
+                Some(budget) => budget
+                    .run(callback)
+                    .await
+                    .map_err(|_| InvokeError::Lifecycle)?
+                    .map_err(InvokeError::Callback),
+                None => callback.await.map_err(InvokeError::Callback),
+            }
+        };
         #[cfg(not(target_family = "wasm"))]
         let result = if let Some(remaining) = scope.remaining() {
             match tokio::time::timeout(remaining, callback).await {
-                Ok(result) => result.map_err(InvokeError::Callback),
+                Ok(result) => result,
                 Err(_) => Err(InvokeError::Timeout),
             }
         } else {
-            callback.await.map_err(InvokeError::Callback)
+            callback.await
         };
         #[cfg(target_family = "wasm")]
-        let result = callback.await.map_err(InvokeError::Callback);
+        let result = callback.await;
 
         let output = match result {
             Ok(stdout) => RegistryOutput {
@@ -384,6 +397,9 @@ impl ToolRegistry {
                 RegistryOutput::error(format!("{name}: callback failed\n"), 1)
             }
             Err(InvokeError::Callback(error)) => RegistryOutput::error(error, 1),
+            Err(InvokeError::Lifecycle) => {
+                RegistryOutput::error(format!("{name}: request cancelled\n"), 1)
+            }
         };
         trace.push(
             name,
@@ -578,6 +594,7 @@ impl RegistryOutput {
 
 enum InvokeError {
     Callback(String),
+    Lifecycle,
     #[cfg(not(target_family = "wasm"))]
     Timeout,
 }

@@ -730,6 +730,8 @@ pub enum ExecutionBudgetExceeded {
     Deadline { limit: Duration },
     #[error("cancelled")]
     Cancelled,
+    #[error("request closed")]
+    RequestClosed,
 }
 
 #[derive(Debug)]
@@ -744,6 +746,7 @@ struct ExecutionBudgetInner {
     deadline: Option<Instant>,
     cancelled: Arc<AtomicBool>,
     poisoned: Mutex<Option<ExecutionBudgetExceeded>>,
+    closed: AtomicBool,
 }
 
 // THREAT[TM-DOS-096]: Nested and mixed subsystems must not receive fresh fuel.
@@ -780,6 +783,7 @@ impl ExecutionBudget {
                     .and_then(|deadline| deadline.checked_add(Self::DEADLINE_GRACE)),
                 cancelled,
                 poisoned: Mutex::new(None),
+                closed: AtomicBool::new(false),
             }),
         }
     }
@@ -805,6 +809,11 @@ impl ExecutionBudget {
 
     /// Fail if cancellation, deadline, or an earlier ceiling exhausted the request.
     pub fn check(&self) -> Result<(), LimitExceeded> {
+        if self.inner.closed.load(Ordering::Acquire) {
+            return Err(LimitExceeded::ExecutionBudget(
+                ExecutionBudgetExceeded::RequestClosed,
+            ));
+        }
         if let Some(err) = self.failure() {
             return Err(err);
         }
@@ -821,6 +830,68 @@ impl ExecutionBudget {
             }));
         }
         Ok(())
+    }
+
+    /// Close this request on every return, cancellation, timeout, or unwind path.
+    pub(crate) fn completion_guard(&self) -> ExecutionBudgetCompletionGuard {
+        ExecutionBudgetCompletionGuard {
+            budget: self.clone(),
+        }
+    }
+
+    fn close(&self) {
+        self.inner.closed.store(true, Ordering::Release);
+    }
+
+    /// Await request-owned async work while polling cancellation and rejecting
+    /// results that arrive after the request boundary has closed.
+    #[cfg(all(
+        not(target_family = "wasm"),
+        any(
+            feature = "python",
+            feature = "typescript",
+            feature = "http_client",
+            feature = "scripted_tool"
+        )
+    ))]
+    pub(crate) async fn run<F>(&self, future: F) -> Result<F::Output, LimitExceeded>
+    where
+        F: std::future::Future,
+    {
+        self.check()?;
+        tokio::pin!(future);
+        let mut cancellation_poll = tokio::time::interval(Duration::from_millis(10));
+        cancellation_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tokio::select! {
+                output = &mut future => {
+                    self.check()?;
+                    return Ok(output);
+                }
+                _ = cancellation_poll.tick() => self.check()?,
+            }
+        }
+    }
+
+    /// wasm has no reliable timer driver; synchronous checkpoints still reject
+    /// closed/cancelled work before and after the awaited operation.
+    #[cfg(all(
+        target_family = "wasm",
+        any(
+            feature = "python",
+            feature = "typescript",
+            feature = "http_client",
+            feature = "scripted_tool"
+        )
+    ))]
+    pub(crate) async fn run<F>(&self, future: F) -> Result<F::Output, LimitExceeded>
+    where
+        F: std::future::Future,
+    {
+        self.check()?;
+        let output = future.await;
+        self.check()?;
+        Ok(output)
     }
 
     /// Consume aggregate work without wrapping or resetting.
@@ -877,6 +948,17 @@ impl ExecutionBudget {
 pub struct ExecutionBudgetLease {
     budget: ExecutionBudget,
     bytes: u64,
+}
+
+/// RAII request terminator. Its drop path is intentionally infallible.
+pub(crate) struct ExecutionBudgetCompletionGuard {
+    budget: ExecutionBudget,
+}
+
+impl Drop for ExecutionBudgetCompletionGuard {
+    fn drop(&mut self) {
+        self.budget.close();
+    }
 }
 
 impl Drop for ExecutionBudgetLease {
@@ -1541,5 +1623,33 @@ mod tests {
                 ExecutionBudgetExceeded::Cancelled
             ))
         ));
+    }
+
+    #[test]
+    fn request_completion_guard_closes_during_unwind() {
+        let budget =
+            ExecutionBudget::new(&ExecutionLimits::new(), Arc::new(AtomicBool::new(false)));
+        let unwind = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _completion = budget.completion_guard();
+            panic!("adversarial teardown");
+        }));
+
+        assert!(unwind.is_err());
+        assert!(matches!(
+            budget.check(),
+            Err(LimitExceeded::ExecutionBudget(
+                ExecutionBudgetExceeded::RequestClosed
+            ))
+        ));
+    }
+
+    #[test]
+    fn request_lease_releases_charge_on_drop() {
+        let limits = ExecutionLimits::new().max_live_intermediate_bytes(4);
+        let budget = ExecutionBudget::new(&limits, Arc::new(AtomicBool::new(false)));
+
+        drop(budget.lease_bytes(4).unwrap());
+        let replacement = budget.lease_bytes(4);
+        assert!(replacement.is_ok(), "released charge must be reusable");
     }
 }
