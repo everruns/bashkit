@@ -218,6 +218,11 @@ jobs:
       - name: Run realfs tests
         run: cargo test --features realfs -p bashkit --test realfs_tests -p bashkit-cli
 
+      # The third-party adoption and host-mount suites are `cfg(realfs)`, so
+      # the main "Run tests" step (no realfs) compiles them out entirely.
+      - name: Run realfs integration tests
+        run: cargo test -p bashkit --test integration --features realfs -- host_mounts_tests thirdparty_adoption_tests
+
       - name: Run fail-point tests (single-threaded)
         run: cargo test --features failpoints --test security_failpoint_tests -- --test-threads=1
 
@@ -246,6 +251,33 @@ jobs:
 
       - name: Test RealFS and overlay containment
         run: cargo test -p bashkit --test realfs_tests --features realfs windows_containment
+
+  # The adoption shape this covers — bashkit as an agent's shell, with commands
+  # bridged to host processes — exists to work on Windows without a real bash.
+  # Kept separate from `windows-containment`: that job pins path-containment
+  # semantics (TM-ESC-033), this one pins the embedding contract. Scoped to the
+  # adoption suites rather than the whole workspace.
+  test-windows:
+    name: Test (Windows adoption shape)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          shared-key: windows-adoption
+
+      - name: Run third-party adoption tests
+        run: cargo test -p bashkit --test integration --features realfs -- thirdparty_adoption_tests
+
+      - name: Run host mount mapping tests
+        run: cargo test -p bashkit --test integration --features realfs -- host_mounts_tests
+
+      - name: Run command resolver tests
+        run: cargo test -p bashkit --test integration -- command_resolver_tests
 
   examples:
     name: Examples
@@ -377,7 +409,7 @@ jobs:
   check:
     name: Check
     if: always()
-    needs: [lint, audit, test, examples, fuzz-check]
+    needs: [lint, audit, test, windows-containment, test-windows, examples, fuzz-check]
     runs-on: ubuntu-latest
     steps:
       - name: Verify all jobs passed
@@ -385,6 +417,8 @@ jobs:
           if [[ "${{ needs.lint.result }}" != "success" ]] || \
              [[ "${{ needs.audit.result }}" != "success" ]] || \
              [[ "${{ needs.test.result }}" != "success" ]] || \
+             [[ "${{ needs.windows-containment.result }}" != "success" ]] || \
+             [[ "${{ needs.test-windows.result }}" != "success" ]] || \
              [[ "${{ needs.examples.result }}" != "success" ]] || \
              [[ "${{ needs.fuzz-check.result }}" != "success" ]]; then
             echo "One or more required jobs failed"

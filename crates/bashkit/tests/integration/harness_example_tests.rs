@@ -1,3 +1,8 @@
+//! Unix-only: uses `std::os::unix` (file modes, symlinks). The integration
+//! binary is built on Windows by the `Test (Windows adoption shape)` job, so
+//! this module must gate itself out rather than break that compile.
+#![cfg(unix)]
+
 use std::fs;
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::Path;
