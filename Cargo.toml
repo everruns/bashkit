@@ -53,6 +53,7 @@ fancy-regex = "0.19"
 
 # Date/Time
 chrono = "0.4"
+chrono-tz = "0.10"
 
 # Compression
 flate2 = "1"

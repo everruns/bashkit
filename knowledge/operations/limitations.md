@@ -106,8 +106,12 @@ Target: IEEE 1003.1-2024 Shell Command Language.
 ## Builtins
 
 Inventory is generated — see [status/builtins.json](../status/builtins.json)
-and the [builtins spec](../foundations/builtins.md). No unimplemented builtins currently
-tracked.
+and the [builtins spec](../foundations/builtins.md). No wholly unimplemented
+builtins are currently tracked; partial boundaries follow.
+
+| ID | Tool | Limitation | Evidence |
+|----|------|------------|----------|
+| L-DATE-001 | date | `TZ` accepts bundled IANA identifiers/aliases only. POSIX rule strings and `:zoneinfo` paths are unsupported and intentionally resolve to UTC because the sandbox has no trusted host zoneinfo filesystem. GNU nanosecond formatting supports the useful `%N`/`%3N`/`%6N`/`%9N` forms, not other widths | `date_timezone_tests` |
 
 ## Text Processing
 

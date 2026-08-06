@@ -40,6 +40,8 @@ pub mod credential_injection_tests;
 pub mod curl_data_compat_tests;
 pub mod custom_builtins_tests;
 pub mod custom_fs_tests;
+pub mod date_timezone_differential_tests;
+pub mod date_timezone_tests;
 pub mod dev_null_tests;
 pub mod exec_options_tests;
 pub mod execution_budget_tests;
