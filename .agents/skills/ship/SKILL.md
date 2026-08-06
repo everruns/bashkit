@@ -130,7 +130,8 @@ gh pr view --json url 2>/dev/null
 If no PR exists, create one:
 
 - **Title**: conventional commit style from the branch commits
-- **Body**: summary of What, Why, How, and what tests were added/verified
+- **Body**: use `.github/pull_request_template.md`; center it on functional change and impact, not a code-location walkthrough
+- **Evidence**: attach a Before / After with proof — CLI output, differential-test results against real Bash, or a terminal recording (e.g. VHS/asciinema) for a CLI demo. Say so when there is no observable behavior change
 - Use `gh pr create`
 
 If a PR already exists, update it if needed and report its URL.
