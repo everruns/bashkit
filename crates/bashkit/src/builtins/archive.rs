@@ -147,16 +147,30 @@ fn decompress_bytes(
     input: &[u8],
     max_size: u64,
     command: &str,
-    budget: Option<&crate::limits::ExecutionBudget>,
+    budget: Option<crate::ExecutionCapability<crate::limits::ExecutionBudget>>,
 ) -> Result<Vec<u8>> {
-    let decoded = match compression {
-        ArchiveCompression::None => return Ok(input.to_vec()),
-        ArchiveCompression::Gzip => {
-            read_with_limit_budgeted(GzDecoder::new(input), input.len(), max_size, budget)
+    fn decode(
+        compression: ArchiveCompression,
+        input: &[u8],
+        max_size: u64,
+        budget: Option<&crate::limits::ExecutionBudget>,
+    ) -> std::io::Result<Vec<u8>> {
+        match compression {
+            ArchiveCompression::None => Ok(input.to_vec()),
+            ArchiveCompression::Gzip => {
+                read_with_limit_budgeted(GzDecoder::new(input), input.len(), max_size, budget)
+            }
+            ArchiveCompression::Bzip2 => {
+                read_with_limit_budgeted(BzDecoder::new(input), input.len(), max_size, budget)
+            }
         }
-        ArchiveCompression::Bzip2 => {
-            read_with_limit_budgeted(BzDecoder::new(input), input.len(), max_size, budget)
-        }
+    }
+
+    let decoded = match budget {
+        Some(budget) => budget
+            .try_with(|budget| decode(compression, input, max_size, Some(budget)))
+            .map_err(|_| crate::Error::Cancelled)?,
+        None => decode(compression, input, max_size, None),
     };
     decoded.map_err(|err| crate::error::Error::Execution(format!("{command}: {err}")))
 }
@@ -1453,8 +1467,8 @@ async fn execute_bzip2(
             if let Err(err) = ctx.fs.limits().check_total_bytes(0, next_len as u64) {
                 return Ok(ExecResult::err(format!("{command}: {err}\n"), 1));
             }
-            if let Some(budget) = ctx.execution_budget() {
-                stdout_leases.push(budget.lease_bytes(output.len())?);
+            if let Some(lease) = ctx.lease_budget_bytes(output.len())? {
+                stdout_leases.push(lease);
             }
             stdout_data.try_reserve_exact(output.len()).map_err(|_| {
                 crate::error::Error::Execution(format!("{command}: output allocation failed"))
