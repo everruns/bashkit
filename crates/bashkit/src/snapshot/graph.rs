@@ -21,39 +21,41 @@ use super::objects::{
     KIND_FILE, KIND_SHELL, KIND_TREE, ObjectId, TreeEntry, TreeEntryKind,
 };
 use super::{SNAPSHOT_VERSION, Snapshot, SnapshotOptions};
+use crate::FsLimits;
 use crate::interpreter::{ShellState, ShellStateOptions};
 
 /// Hard ceiling on commits walked by [`SnapshotGraph::ancestry`], so a cyclic
 /// or adversarial parent chain cannot spin forever (TM-SNAP-005).
 const MAX_ANCESTRY: usize = 1_000_000;
 
-/// Ceiling on total file bytes materialized by one checkout (TM-SNAP-004).
-///
-/// Filesystem limits are the real policy, but they are only checked once a
-/// complete `VfsSnapshot` exists. Assembly happens before that, so without a
-/// budget here a manifest declaring an enormous size — or a tree of many such
-/// files — could exhaust memory before any limit had a chance to reject it.
-/// Deliberately generous: this is a backstop against absurd input, not a
-/// substitute for `FsLimits`.
+/// Absolute ceiling on checkout materialization, including unlimited backends.
 const MAX_CHECKOUT_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 
 /// Running total of file bytes materialized during one checkout.
 struct CheckoutBudget {
     remaining: u64,
+    max_file_size: u64,
 }
 
 impl CheckoutBudget {
-    fn new() -> Self {
+    fn new(limits: &FsLimits) -> Self {
         Self {
-            remaining: MAX_CHECKOUT_BYTES,
+            remaining: limits.max_total_bytes.min(MAX_CHECKOUT_BYTES),
+            max_file_size: limits.max_file_size.min(MAX_CHECKOUT_BYTES),
         }
     }
 
-    fn spend(&mut self, bytes: u64) -> crate::Result<()> {
+    fn spend_file(&mut self, bytes: u64) -> crate::Result<()> {
+        if bytes > self.max_file_size {
+            return Err(crate::Error::Internal(format!(
+                "snapshot file size {bytes} exceeds the {} byte filesystem limit",
+                self.max_file_size
+            )));
+        }
         self.remaining = self.remaining.checked_sub(bytes).ok_or_else(|| {
-            crate::Error::Internal(format!(
-                "snapshot checkout exceeds the {MAX_CHECKOUT_BYTES} byte materialization limit"
-            ))
+            crate::Error::Internal(
+                "snapshot checkout exceeds the filesystem materialization limit".to_string(),
+            )
         })?;
         Ok(())
     }
@@ -378,6 +380,7 @@ impl SnapshotGraph {
     pub(crate) fn materialize(
         root: CommitId,
         source: &impl ObjectSource,
+        limits: &FsLimits,
     ) -> crate::Result<(Snapshot, CapabilityFingerprint)> {
         let commit = Self::read_commit(root, source)?;
 
@@ -393,7 +396,7 @@ impl SnapshotGraph {
                 let entries = objects::decode_tree(&load(tree_id, KIND_TREE, source)?)?;
                 // One budget for the whole tree: many small files must not add
                 // up to more than a single huge one is allowed to be.
-                let mut budget = CheckoutBudget::new();
+                let mut budget = CheckoutBudget::new(limits);
                 Some(objects::tree_to_vfs(&entries, |file_id| {
                     resolve_file(file_id, source, &mut budget)
                 })?)
@@ -439,13 +442,13 @@ fn resolve_file(
 ) -> crate::Result<Vec<u8>> {
     match objects::decode_file(&load(file_id, KIND_FILE, source)?)? {
         FileContent::Inline(bytes) => {
-            budget.spend(bytes.len() as u64)?;
+            budget.spend_file(bytes.len() as u64)?;
             Ok(bytes)
         }
         FileContent::Chunked { size, chunks } => {
             // Charge the *declared* size to the budget before allocating, so a
             // manifest cannot commit us to work the budget would refuse.
-            budget.spend(size)?;
+            budget.spend_file(size)?;
             let mut out =
                 Vec::with_capacity(usize::try_from(size).unwrap_or_default().min(1 << 24));
 
@@ -669,7 +672,7 @@ impl crate::Bash {
         source: &impl ObjectSource,
         policy: super::CheckoutPolicy,
     ) -> crate::Result<()> {
-        let (snapshot, caps) = SnapshotGraph::materialize(root, source)?;
+        let (snapshot, caps) = SnapshotGraph::materialize(root, source, &self.fs.limits())?;
         self.apply_checked(&snapshot, &caps, policy)
     }
 
@@ -730,7 +733,7 @@ mod tests {
         // the file is only 1 KiB. Assembly must stop at the declared size.
         let file_id = chunk_bomb(&mut store, 64, 1024);
 
-        let mut budget = CheckoutBudget::new();
+        let mut budget = CheckoutBudget::new(&FsLimits::unlimited());
         let err = resolve_file(file_id, &store, &mut budget).unwrap_err();
         assert!(
             err.to_string().contains("declared"),
@@ -746,22 +749,36 @@ mod tests {
         // allocating first is the failure mode.
         let file_id = chunk_bomb(&mut store, 4, u64::MAX / 2);
 
-        let mut budget = CheckoutBudget::new();
+        let mut budget = CheckoutBudget::new(&FsLimits::unlimited());
         let err = resolve_file(file_id, &store, &mut budget).unwrap_err();
         assert!(
-            err.to_string().contains("materialization limit"),
+            err.to_string().contains("filesystem limit"),
             "expected a budget rejection, got: {err}"
+        );
+    }
+
+    #[test]
+    fn configured_file_limit_is_refused_before_materializing_chunks() {
+        let mut store = HashMap::new();
+        let file_id = chunk_bomb(&mut store, 2, (chunker::MAX_CHUNK * 2) as u64);
+        let limits = crate::FsLimits::new().max_file_size(chunker::MAX_CHUNK as u64);
+
+        let mut budget = CheckoutBudget::new(&limits);
+        let err = resolve_file(file_id, &store, &mut budget).unwrap_err();
+        assert!(
+            err.to_string().contains("file size"),
+            "expected a configured file-size rejection, got: {err}"
         );
     }
 
     #[test]
     fn the_budget_is_shared_across_every_file_in_a_tree() {
         // Many individually-legal files must not add up past the ceiling.
-        let mut budget = CheckoutBudget::new();
-        assert!(budget.spend(MAX_CHECKOUT_BYTES / 2).is_ok());
-        assert!(budget.spend(MAX_CHECKOUT_BYTES / 2).is_ok());
+        let mut budget = CheckoutBudget::new(&FsLimits::unlimited());
+        assert!(budget.spend_file(MAX_CHECKOUT_BYTES / 2).is_ok());
+        assert!(budget.spend_file(MAX_CHECKOUT_BYTES / 2).is_ok());
         assert!(
-            budget.spend(1).is_err(),
+            budget.spend_file(1).is_err(),
             "the budget must be cumulative, not per-file"
         );
     }
@@ -779,7 +796,7 @@ mod tests {
         });
         let file_id = store_object(&mut store, &manifest);
 
-        let mut budget = CheckoutBudget::new();
+        let mut budget = CheckoutBudget::new(&FsLimits::unlimited());
         let err = resolve_file(file_id, &store, &mut budget).unwrap_err();
         assert!(
             err.to_string().contains("maximum"),
@@ -801,7 +818,7 @@ mod tests {
         });
         let file_id = store_object(&mut store, &manifest);
 
-        let mut budget = CheckoutBudget::new();
+        let mut budget = CheckoutBudget::new(&FsLimits::unlimited());
         let out = resolve_file(file_id, &store, &mut budget).unwrap();
         assert_eq!(out.len(), 1500);
         assert_eq!(&out[..1000], &vec![b'x'; 1000][..]);
@@ -831,7 +848,7 @@ mod tests {
         let tree = encode_tree(&entries);
         let entries = objects::decode_tree(&tree.payload).unwrap();
 
-        let mut budget = CheckoutBudget::new();
+        let mut budget = CheckoutBudget::new(&FsLimits::unlimited());
         let result = objects::tree_to_vfs(&entries, |file_id| {
             resolve_file(file_id, &store, &mut budget)
         });
