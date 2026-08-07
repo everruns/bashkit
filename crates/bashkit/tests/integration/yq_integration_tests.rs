@@ -91,6 +91,30 @@ async fn yaml_document_count_is_bounded() {
 }
 
 #[tokio::test]
+async fn yaml_aliases_are_rejected_before_expansion() {
+    let mut bash = Bash::new();
+    let result = bash
+        .exec("printf 'seed: &seed [x, x, x]\nexpanded: [*seed, *seed, *seed]\n' | yq '.'")
+        .await
+        .unwrap();
+
+    assert_eq!(result.exit_code, 1);
+    assert!(result.stderr.contains("YAML aliases are not supported"));
+
+    let scalars = bash
+        .exec("printf '%s\n' 'plain: a*b' 'quoted: \"*seed\"' \"single: 'it''s *seed'\" 'multiline: \"first' '  *seed\"' 'literal: |' '  *seed' | yq -r '.plain, .quoted, .single, .multiline, .literal'")
+        .await
+        .unwrap();
+    assert_eq!(scalars.exit_code, 0, "{}", scalars.stderr);
+    // Every literal `*` survives (none is an alias); multiple filter results are
+    // rendered as separate YAML documents (`---`), which is existing yq behavior.
+    assert_eq!(
+        scalars.stdout,
+        "a*b\n---\n*seed\n---\nit's *seed\n---\nfirst *seed\n---\n*seed\n\n"
+    );
+}
+
+#[tokio::test]
 async fn yaml_tags_and_non_string_keys_fail_closed() {
     let mut bash = Bash::new();
     let tagged = bash
@@ -106,18 +130,10 @@ async fn yaml_tags_and_non_string_keys_fail_closed() {
 }
 
 #[tokio::test]
-async fn yaml_aliases_are_resolved_and_lossy_numbers_fail_closed() {
+async fn yaml_duplicate_keys_and_lossy_numbers_fail_closed() {
+    // Alias resolution was replaced by fail-closed rejection (TM-DOS-101); see
+    // `yaml_aliases_are_rejected_before_expansion` for the alias-bomb coverage.
     let mut bash = Bash::new();
-    let alias = bash
-        .exec("printf 'base: &base\n  one: 1\ncopy: *base\n' | yq -o=json -I=0 '.'")
-        .await
-        .unwrap();
-    assert_eq!(alias.exit_code, 0, "{}", alias.stderr);
-    assert_eq!(
-        alias.stdout,
-        "{\"base\":{\"one\":1},\"copy\":{\"one\":1}}\n"
-    );
-
     let duplicate = bash
         .exec("printf 'key: 1\nkey: 2\n' | yq '.'")
         .await
