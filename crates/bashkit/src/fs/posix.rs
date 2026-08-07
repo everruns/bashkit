@@ -9,6 +9,7 @@
 //!
 //! | Check | Description |
 //! |-------|-------------|
+//! | Inert symlinks | `read_file` never delegates symlink paths to the backend |
 //! | Type-safe writes | `write_file` fails with "is a directory" if path is a directory |
 //! | Type-safe mkdir | `mkdir` fails with "file exists" if path is a file |
 //! | Parent directory | Write operations require parent directory to exist |
@@ -66,6 +67,7 @@ use crate::error::Result;
 ///
 /// | Operation | Check |
 /// |-----------|-------|
+/// | `read_file` | Fails if path is a directory or symlink |
 /// | `write_file` | Fails if path is a directory |
 /// | `append_file` | Fails if path is a directory |
 /// | `mkdir` | Fails if path exists as file (always) or dir (unless recursive) |
@@ -124,11 +126,15 @@ impl<B: FsBackend> PosixFs<B> {
 impl<B: FsBackend + 'static> FileSystem for PosixFs<B> {
     async fn read_file(&self, path: &Path) -> Result<Vec<u8>> {
         let path = Self::normalize(path);
-        // Check if it's a directory
-        if let Ok(meta) = self.backend.stat(&path).await
-            && meta.file_type.is_dir()
-        {
-            return Err(fs_errors::is_a_directory());
+        if let Ok(meta) = self.backend.stat(&path).await {
+            if meta.file_type.is_dir() {
+                return Err(fs_errors::is_a_directory());
+            }
+            // THREAT[TM-ESC-002]: Raw backends may follow symlinks when reading.
+            // Mitigation: keep symlinks inert by rejecting them before delegation.
+            if meta.file_type.is_symlink() {
+                return Err(IoError::new(std::io::ErrorKind::NotFound, "file not found").into());
+            }
         }
         self.backend.read(&path).await
     }
@@ -295,9 +301,12 @@ mod tests {
     use std::collections::HashSet;
     use std::path::{Path, PathBuf};
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct AppendCreatesFileBackend {
         files: Mutex<HashSet<PathBuf>>,
+        symlinks: Mutex<HashSet<PathBuf>>,
+        reads: AtomicUsize,
     }
 
     impl AppendCreatesFileBackend {
@@ -307,6 +316,8 @@ mod tests {
             files.insert(PathBuf::from("/tmp"));
             Self {
                 files: Mutex::new(files),
+                symlinks: Mutex::new(HashSet::new()),
+                reads: AtomicUsize::new(0),
             }
         }
     }
@@ -314,6 +325,7 @@ mod tests {
     #[async_trait]
     impl FsBackend for AppendCreatesFileBackend {
         async fn read(&self, _path: &Path) -> Result<Vec<u8>> {
+            self.reads.fetch_add(1, Ordering::Relaxed);
             Ok(Vec::new())
         }
 
@@ -342,6 +354,17 @@ mod tests {
         }
 
         async fn stat(&self, path: &Path) -> Result<Metadata> {
+            if self
+                .symlinks
+                .lock()
+                .expect("backend lock poisoned")
+                .contains(path)
+            {
+                return Ok(Metadata {
+                    file_type: FileType::Symlink,
+                    ..Metadata::default()
+                });
+            }
             if self
                 .files
                 .lock()
@@ -377,7 +400,11 @@ mod tests {
             Ok(())
         }
 
-        async fn symlink(&self, _target: &Path, _link: &Path) -> Result<()> {
+        async fn symlink(&self, _target: &Path, link: &Path) -> Result<()> {
+            self.symlinks
+                .lock()
+                .expect("backend lock poisoned")
+                .insert(link.to_path_buf());
             Ok(())
         }
 
@@ -480,6 +507,23 @@ mod tests {
         assert!(
             result.is_err(),
             "append should fail when parent doesn't exist"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_posix_read_does_not_delegate_symlink_to_backend() {
+        let fs = PosixFs::new(AppendCreatesFileBackend::new());
+        fs.symlink(Path::new("/outside-secret"), Path::new("/tmp/link"))
+            .await
+            .expect("symlink should succeed");
+
+        let result = fs.read_file(Path::new("/tmp/link")).await;
+
+        assert!(result.is_err(), "symlink reads must fail");
+        assert_eq!(
+            fs.backend().reads.load(Ordering::Relaxed),
+            0,
+            "raw backends may follow symlinks, so PosixFs must not delegate the read"
         );
     }
 }
