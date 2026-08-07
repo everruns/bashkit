@@ -1729,7 +1729,13 @@ impl HostMounts {
     /// mounted.
     pub fn new(mounts: impl IntoIterator<Item = HostMount>) -> Self {
         Self {
-            mounts: mounts.into_iter().collect(),
+            mounts: mounts
+                .into_iter()
+                .map(|mut mount| {
+                    mount.vfs_path = normalize_path(&mount.vfs_path);
+                    mount
+                })
+                .collect(),
         }
     }
 
@@ -1760,6 +1766,9 @@ impl HostMounts {
         if !vfs_path.has_root() {
             return None;
         }
+        // Match the VFS meaning of the path, not its spelling. Otherwise the
+        // stripped suffix can retain `..` and escape when the host joins it.
+        let vfs_path = normalize_path(vfs_path);
         self.mounts
             .iter()
             .filter_map(|mount| {

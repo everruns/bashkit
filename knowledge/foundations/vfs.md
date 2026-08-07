@@ -217,7 +217,10 @@ Symlinks are stored but intentionally not followed for security:
 
 `realfs` mounts are recorded as a `HostMounts` table on the `Bash` instance:
 `Bash::host_mounts()` lists them, `Bash::host_path_for(vfs)` maps a VFS path
-back to the host path backing it.
+back to the host path backing it. Mount points and lookup paths use the shared
+POSIX VFS normalizer before longest-prefix selection and host joining. Thus
+`.`/`..` cannot select a mount under their unnormalized spelling or survive in
+the suffix passed to the host OS (TM-ESC-034).
 
 Decision: published because embedders that bridge commands to host processes
 must map a VFS cwd to a host directory to spawn in, and hand-rolling it is a

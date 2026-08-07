@@ -181,6 +181,7 @@ Scripts may attempt to break out of the sandbox to access the host system.
 | Symlink overlay rename (TM-ESC-016) | `ln -s /etc/passwd x; mv x y` | Overlay rename/copy preserve symlinks | **FIXED** |
 | Namespace source-root or policy escape (TM-ESC-031) | `..` escapes a rebased or nested mount | Normalize before longest-prefix selection; join only the stripped suffix; enforce both mutation endpoints | MITIGATED |
 | Windows host-path namespace escape (TM-ESC-033) | Drive/UNC/device path or reparse point discards the RealFS root | Normalize into the POSIX VFS root; canonicalize existing ancestors; component-aware root check; Windows CI | MITIGATED |
+| Host mount resolver traversal (TM-ESC-034) | `/workspace/../secret` passed to `host_path_for` keeps an unnormalized suffix that escapes the selected host mount when joined | Normalize mount points and lookup paths with the shared POSIX VFS normalizer before longest-prefix selection and host joining | MITIGATED |
 
 **Process Escape:**
 

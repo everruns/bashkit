@@ -317,6 +317,7 @@ panicked. Resolved with `wrapping_*` ops, masked shift amounts, clamped exponent
 | TM-ESC-016 | Symlink escape via overlay rename | `ln -s /etc/passwd x; mv x y` | Overlay rename/copy preserve symlinks as symlinks | **FIXED** |
 | TM-ESC-031 | Namespace source-root or policy escape | `..` selects a shorter mount, escapes a rebased source root, or bypasses a nested read-only mount | Normalize before longest-prefix selection; join only the stripped suffix; independently enforce both mutation endpoints | **MITIGATED** |
 | TM-ESC-033 | Windows host-path namespace escape | A direct VFS/RealFs path preserves a drive-relative, drive-absolute, UNC, or device prefix; `root.join(path)` discards the configured root, or a symlink/junction redirects an existing prefix | Shared POSIX VFS normalization discards host prefixes before backend joins; RealFs canonicalizes existing paths or the nearest existing ancestor and performs component-aware root checks; drive-relative symlink targets are rejected; Windows CI exercises alternate separators, case behavior, root-prefix siblings, reparse points, and missing descendants | **MITIGATED** |
+| TM-ESC-034 | Host mount resolver traversal | An embedder passes `/workspace/../secret` to `host_path_for`, and an unnormalized suffix escapes the selected host mount when joined | Normalize mount points and lookup paths with the shared POSIX VFS normalizer before longest-prefix selection and host joining | **MITIGATED** |
 | TM-FS-013 | Permissive RealFs mount default | `mount_real_readonly_at("/", …)` exposes whole host without `allowed_mount_paths` | Allowlist-first: `/`, `/etc`, `/root`, `/Users`, `/home`, `/dev`, `/proc`, `/sys`, `/run`, `/var/run`, `/boot`, `/private`, and any path component matching `.ssh`, `.aws`, `.kube`, `.docker`, `.gnupg`, `.gcloud` are refused unless explicitly allowlisted | **MITIGATED** |
 | TM-FS-014 | Partial filesystem mutation | Failed write/copy or copy-delete move corrupts/replaces a destination, duplicates a source, or consumes retained quota | `FileSystem` failure-atomicity contract; locked in-memory rename; MountableFs restores cross-mount destinations while NamespaceFs rejects cross-mount rename; RealFs stages and flushes sibling files before rename; failpoint and conformance regressions | **MITIGATED** |
 | TM-FS-015 | Partial archive extraction | A late traversal, malformed header, or size failure leaves earlier attacker-controlled files behind | Tar validates the complete archive and per-file limits before its first VFS mutation; conformance regression uses a valid entry followed by traversal | **MITIGATED** |
@@ -361,6 +362,12 @@ its canonical root. Existing entries and nearest existing ancestors are then
 canonicalized, so symlink/junction targets, root-prefix siblings, and missing
 suffixes cannot escape. `windows_containment_*` tests run continuously on a
 Windows runner; drive roots are also sensitive mounts under TM-FS-013.
+
+**TM-ESC-034**: `HostMounts` normalizes both recorded VFS mount points and each
+absolute lookup path before matching. Parent components therefore affect mount
+selection exactly as they do for VFS operations and never reach the host-path
+join. Regression tests: `parent_components_are_normalized_before_mount_selection`
+and `mount_points_are_normalized_when_the_table_is_built`.
 
 #### 2.2 Process Escape
 

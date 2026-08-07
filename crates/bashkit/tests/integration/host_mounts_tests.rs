@@ -85,6 +85,37 @@ fn relative_paths_do_not_resolve() {
 }
 
 #[test]
+fn parent_components_are_normalized_before_mount_selection() {
+    assert_eq!(
+        mounts().resolve(Path::new("/workspace/../secrets/flag.txt")),
+        Some(PathBuf::from("/srv/root/secrets/flag.txt"))
+    );
+
+    let only_workspace = HostMounts::new([HostMount {
+        host_path: PathBuf::from("/home/user/proj"),
+        vfs_path: PathBuf::from("/workspace"),
+    }]);
+    assert_eq!(
+        only_workspace.resolve(Path::new("/workspace/../secrets/flag.txt")),
+        None
+    );
+}
+
+#[test]
+fn mount_points_are_normalized_when_the_table_is_built() {
+    let normalized = HostMounts::new([HostMount {
+        host_path: PathBuf::from("/home/user/proj"),
+        vfs_path: PathBuf::from("/staging/../workspace"),
+    }]);
+
+    assert_eq!(normalized.all()[0].vfs_path, Path::new("/workspace"));
+    assert_eq!(
+        normalized.resolve(Path::new("/workspace/src")),
+        Some(PathBuf::from("/home/user/proj/src"))
+    );
+}
+
+#[test]
 fn unmapped_path_is_none_when_nothing_is_mounted() {
     let empty = HostMounts::default();
     assert!(empty.is_empty());
