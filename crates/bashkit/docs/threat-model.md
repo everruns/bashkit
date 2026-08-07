@@ -853,7 +853,7 @@ an embedder-supplied JavaScript object.
 | Partial filesystem mutation (TM-FS-014) | Failed write/copy or cross-mount move leaves corruption, duplication, or retained quota | Failure-atomic `FileSystem` contract; RealFs sibling staging; MountableFs destination rollback; NamespaceFs cross-device rejection; shared conformance + failpoint tests | MITIGATED |
 | Partial tar extraction (TM-FS-015) | A late unsafe or malformed entry leaves earlier files behind | Validate the complete archive and file limits before the first VFS mutation | MITIGATED |
 | yq in-place partial update (TM-FS-016) | A failed transform or write truncates the source file | Evaluate and serialize before writing; random sibling temporary file, mode preservation, and rename-on-success | MITIGATED |
-| JS host filesystem widens the sandbox (TM-FS-017) | `new Bash({ fs })` gives a script whatever the embedder's object exposes | Paths are normalized by `PosixFs` before any host call, so traversal cannot select a path the embedder did not scope. The host object *is* the boundary and is the embedder's to scope; its bytes also live outside the VFS quotas, so the embedder owns the storage limit | ACCEPTED (opt-in, embedder-scoped) |
+| JS host filesystem widens the sandbox (TM-FS-017) | `new Bash({ fs })` gives a script whatever the embedder's object exposes | Paths are normalized by `PosixFs` before any host call, and reads of host-reported symlinks are rejected before reaching a potentially symlink-following host method. The host object *is* the boundary and is the embedder's to scope; its bytes also live outside the VFS quotas, so the embedder owns the storage limit | ACCEPTED (opt-in, embedder-scoped) |
 
 ### Unicode Security (TM-UNI-*)
 
