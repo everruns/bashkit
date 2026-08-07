@@ -453,6 +453,7 @@ fn parse_json_documents(input: &str) -> DataResult<Vec<serde_json::Value>> {
 // THREAT[TM-DOS-101]: serde_yaml_ng rejects nesting beyond 128 while this
 // conversion enforces Bashkit's lower shared structured-data depth of 100.
 fn parse_yaml_documents(input: &str) -> DataResult<Vec<serde_json::Value>> {
+    reject_yaml_aliases(input)?;
     let mut values = Vec::new();
     for document in serde_yaml_ng::Deserializer::from_str(input) {
         if values.len() >= MAX_DOCUMENTS {
@@ -464,6 +465,91 @@ fn parse_yaml_documents(input: &str) -> DataResult<Vec<serde_json::Value>> {
         values.push(json);
     }
     Ok(values)
+}
+
+// THREAT[TM-DOS-101]: serde_yaml_ng resolves aliases while deserializing, before
+// Bashkit can meter the expanded tree. Reject alias tokens with a bounded lexical
+// pass, while ignoring quoted and block scalar content, before invoking libyaml.
+fn reject_yaml_aliases(input: &str) -> DataResult<()> {
+    let mut block_scalar_indent = None;
+    let mut single_quoted = false;
+    let mut double_quoted = false;
+    for line in input.lines() {
+        let indent = line.bytes().take_while(|byte| *byte == b' ').count();
+        if !single_quoted
+            && !double_quoted
+            && let Some(parent_indent) = block_scalar_indent
+        {
+            if line.trim().is_empty() || indent > parent_indent {
+                continue;
+            }
+            block_scalar_indent = None;
+        }
+
+        let mut escaped = false;
+        let bytes = line.as_bytes();
+        let mut index = 0;
+        while index < bytes.len() {
+            let byte = bytes[index];
+            if double_quoted {
+                if escaped {
+                    escaped = false;
+                } else if byte == b'\\' {
+                    escaped = true;
+                } else if byte == b'"' {
+                    double_quoted = false;
+                }
+                index += 1;
+                continue;
+            }
+            if single_quoted {
+                if byte == b'\'' {
+                    if bytes.get(index + 1) == Some(&b'\'') {
+                        index += 2;
+                        continue;
+                    }
+                    single_quoted = false;
+                }
+                index += 1;
+                continue;
+            }
+            match byte {
+                b'"' => double_quoted = true,
+                b'\'' => single_quoted = true,
+                b'#' if index == 0 || bytes[index - 1].is_ascii_whitespace() => break,
+                b'|' | b'>' if is_block_scalar_header(bytes, index) => {
+                    block_scalar_indent = Some(indent);
+                    break;
+                }
+                b'*' if token_starts_at(bytes, index) => {
+                    anyhow::bail!("yq: YAML aliases are not supported");
+                }
+                _ => {}
+            }
+            index += 1;
+        }
+    }
+    Ok(())
+}
+
+fn token_starts_at(line: &[u8], index: usize) -> bool {
+    index == 0
+        || line[index - 1].is_ascii_whitespace()
+        || matches!(line[index - 1], b'[' | b'{' | b',' | b':' | b'?' | b'-')
+}
+
+fn is_block_scalar_header(line: &[u8], index: usize) -> bool {
+    if !token_starts_at(line, index) {
+        return false;
+    }
+    let mut suffix = &line[index + 1..];
+    while suffix
+        .first()
+        .is_some_and(|byte| matches!(byte, b'0'..=b'9' | b'+' | b'-'))
+    {
+        suffix = &suffix[1..];
+    }
+    suffix.is_empty() || suffix[0].is_ascii_whitespace() || suffix[0] == b'#'
 }
 
 fn yaml_to_json(value: serde_yaml_ng::Value, depth: usize) -> DataResult<serde_json::Value> {
