@@ -122,7 +122,7 @@ anything.
 | `redirects` | `AnalyzedRedirect[]` | File redirect targets, in source order |
 | `functions` | `string[]` | Function names defined by the script |
 | `has_dynamic_commands` | `bool` | Some command name is not statically known |
-| `has_command_substitution` | `bool` | Script contains `$(…)`, backticks, or process substitution |
+| `has_command_substitution` | `bool` | Script contains `$(…)`, including inside arithmetic expansion, backticks, or process substitution |
 | `has_interpreter_reentry` | `bool` | Script hands a script back to the interpreter: `eval`, `source`, `.`, or a nested `bash`/`sh` |
 | `truncated` | `bool` | Node budget hit; lists are incomplete |
 
@@ -158,7 +158,10 @@ are omitted. The parser does not support `<>`, so no read-write mode exists.
   API exists to remove.
 - **Substitutions are walked.** Commands inside `$(…)` and `<(…)` appear in
   `commands` with `context = Substitution`. `echo $(rm -rf /)` must not look
-  like a bare `echo`.
+  like a bare `echo`. The parser stores arithmetic expansion as an expression
+  string, so an embedded `$()` or backtick substitution cannot be walked from the AST; analysis instead
+  sets both `has_command_substitution` and `has_dynamic_commands`, making the
+  script opaque before runtime reparses and executes that substitution.
 - **Function bodies are walked** and tagged, not skipped: a host that only
   wants what runs now filters on `context`, and a host that wants "everything
   this script could do" does not have to re-walk.
