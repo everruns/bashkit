@@ -530,6 +530,16 @@ impl Walker {
                     self.out.has_command_substitution = true;
                     self.walk_commands(commands, nested);
                 }
+                WordPart::ArithmeticExpansion(expr)
+                    if expr.contains("$(") || expr.contains('`') =>
+                {
+                    // Runtime reparses `$(...)`/backtick substitutions from the
+                    // expression string. Conservatively mark them opaque because
+                    // this AST does not retain their nested commands. (A bare `$`
+                    // in arithmetic is a variable reference, not a dispatch.)
+                    self.out.has_command_substitution = true;
+                    self.out.has_dynamic_commands = true;
+                }
                 _ => {}
             }
         }
@@ -624,6 +634,25 @@ mod tests {
         let analysis = a("diff <(cat a) <(cat b)");
         assert!(analysis.has_command_substitution);
         assert_eq!(analysis.command_names(), ["cat", "diff"]);
+    }
+
+    #[test]
+    fn command_substitution_in_arithmetic_is_opaque() {
+        let analysis = a("echo $(( $(rm -rf /data; echo 1) + 2 ))");
+        assert!(analysis.has_command_substitution);
+        assert!(analysis.has_dynamic_commands);
+        assert!(analysis.is_opaque());
+
+        // Backtick command substitution inside arithmetic is the same bypass.
+        let backtick = a("echo $(( `rm -rf /data` + 2 ))");
+        assert!(backtick.has_command_substitution);
+        assert!(backtick.has_dynamic_commands);
+        assert!(backtick.is_opaque());
+
+        // A bare variable reference in arithmetic is not a command dispatch.
+        let plain = a("echo $(( x + 2 ))");
+        assert!(!plain.has_command_substitution);
+        assert!(!plain.is_opaque());
     }
 
     #[test]
