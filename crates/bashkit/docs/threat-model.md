@@ -826,7 +826,7 @@ serialization API both handle key material and integrity tags.
 | Snapshot forgery (TM-SNAP-001) | Forge a valid digest using the public `BKSNAP01` tag | Keyed HMAC API (`to_bytes_keyed`/`from_bytes_keyed`) for tamper-evident snapshots | MITIGATED |
 | Object store poisoning (TM-SNAP-002) | Substitute a different blob under a referenced object ID in the host's store | Every object is verified against its content hash on load; the graph is a Merkle tree, so a keyed commit authenticates everything it reaches | MITIGATED |
 | Hash agility (TM-SNAP-003) | A snapshot claims a hash algorithm the reader does not implement | Algorithm ID in the container header, rejected when unknown | MITIGATED |
-| Chunk or decompression bomb (TM-SNAP-004) | A small snapshot expands into an unbounded allocation during checkout | Per-object decompression capped; filesystem limits validated before any mutation | MITIGATED |
+| Chunk or decompression bomb (TM-SNAP-004) | A small snapshot expands into an unbounded allocation during checkout | Per-object decompression capped; live filesystem file-size and total-byte limits enforced before chunk materialization | MITIGATED |
 | Malformed object graph (TM-SNAP-005) | Cyclic parents, absurd declared entry counts, or a chunk served where a tree is expected | Kind tags checked against context, declared counts bounded before allocation, ancestry walks track visited commits | MITIGATED |
 | Capability mismatch on restore (TM-SNAP-006) | State captured with tools or features the restoring instance lacks is restored into it silently | Per-commit capability fingerprint with a `Superset` default policy, plus state-evidence checks that fire under every policy | MITIGATED |
 

@@ -182,7 +182,7 @@ impl Snapshot {
     /// Accepts both the current object-graph format and legacy v1 JSON
     /// payloads. Verifies integrity before decoding, and rejects tampering.
     pub fn from_bytes(data: &[u8]) -> crate::Result<Self> {
-        Ok(decode_sealed(data, None)?.0)
+        Ok(decode_sealed(data, None, &crate::FsLimits::default())?.0)
     }
 
     /// Serialize with a caller-provided secret key for tamper-proof integrity.
@@ -202,7 +202,7 @@ impl Snapshot {
     ///
     /// Rejects snapshots where the HMAC does not match, preventing forgery.
     pub fn from_bytes_keyed(data: &[u8], key: &[u8]) -> crate::Result<Self> {
-        Ok(decode_sealed(data, Some(key))?.0)
+        Ok(decode_sealed(data, Some(key), &crate::FsLimits::default())?.0)
     }
 
     /// Compute SHA-256 digest over `INTEGRITY_TAG || payload`.
@@ -283,12 +283,15 @@ fn unseal<'a>(data: &'a [u8], key: Option<&[u8]>) -> crate::Result<&'a [u8]> {
 fn decode_sealed(
     data: &[u8],
     key: Option<&[u8]>,
+    limits: &crate::FsLimits,
 ) -> crate::Result<(Snapshot, Option<CapabilityFingerprint>)> {
     let body = unseal(data, key)?;
 
     if container::is_v2(body) {
         let parsed = container::decode(body)?;
-        let (snapshot, caps) = SnapshotGraph::materialize(parsed.root, &parsed.objects)?;
+        // THREAT[TM-SNAP-004]: reject declared file sizes and totals against
+        // live VFS limits before expanding content-addressed chunks.
+        let (snapshot, caps) = SnapshotGraph::materialize(parsed.root, &parsed.objects, limits)?;
         return Ok((snapshot, Some(caps)));
     }
 
@@ -439,7 +442,7 @@ impl crate::Bash {
         data: &[u8],
         policy: CheckoutPolicy,
     ) -> crate::Result<()> {
-        let (snap, caps) = decode_sealed(data, None)?;
+        let (snap, caps) = decode_sealed(data, None, &self.fs.limits())?;
         self.apply_restore(&snap, caps.as_ref(), policy)
     }
 
@@ -517,7 +520,7 @@ impl crate::Bash {
         key: &[u8],
         policy: CheckoutPolicy,
     ) -> crate::Result<()> {
-        let (snap, caps) = decode_sealed(data, Some(key))?;
+        let (snap, caps) = decode_sealed(data, Some(key), &self.fs.limits())?;
         self.apply_restore(&snap, caps.as_ref(), policy)
     }
 }
