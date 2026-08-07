@@ -44,7 +44,7 @@ for sandbox security reasons. See the compliance spec for details.
 | Builtin | Flags/Features | Notes |
 |---------|----------------|-------|
 | `echo` | `-n`, `-e`, `-E` | Basic escape sequences |
-| `printf` | `%s`, `%d`, `%x`, `%o`, `%f` | Format specifiers, repeats format for multiple args |
+| `printf` | `%s`, `%d`, `%u`, `%x`, `%o`, `%f`, width/precision | GNU-style integer precision; repeats format for multiple args |
 | `cat` | (none) | Concatenate files/stdin |
 | `true` | - | Exit 0 |
 | `false` | - | Exit 1 |
