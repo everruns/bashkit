@@ -2,6 +2,96 @@
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-08-06
+
+### Highlights
+
+- **Browser WASM can run directly against host-owned storage.** The browser
+  bindings now accept asynchronous filesystem adapters for Durable Objects,
+  IndexedDB, OPFS, and similar stores, and add analysis, cancellation,
+  streaming, snapshots, and binary VFS APIs to reach native-binding parity
+  ([#2275](https://github.com/everruns/bashkit/pull/2275),
+  [#2255](https://github.com/everruns/bashkit/pull/2255)).
+- **Execution boundaries are typed, shared, and revocable.** New execution
+  profiles configure coherent limits across runtimes, one request budget
+  follows work across subsystem boundaries, and host capabilities stop working
+  when their execution ends. Hosts can also suspend a live shell for a
+  process-local callback and resume it with byte-exact input and output
+  ([#2254](https://github.com/everruns/bashkit/pull/2254),
+  [#2253](https://github.com/everruns/bashkit/pull/2253),
+  [#2264](https://github.com/everruns/bashkit/pull/2264),
+  [#2256](https://github.com/everruns/bashkit/pull/2256)).
+- **Shell streams preserve arbitrary bytes end to end.** Pipelines, redirects,
+  command results, callbacks, custom builtins, and Rust, C, Python, Node, and
+  browser bindings retain NUL, invalid UTF-8, and high bytes without lossy text
+  conversion ([#2252](https://github.com/everruns/bashkit/pull/2252)).
+- **`yq` replaces the narrow `yaml` helper.** The jq-backed builtin handles
+  YAML and JSON files, streams, selection, mapping, assignment, format
+  conversion, and atomic in-place updates under shared resource limits
+  ([#2266](https://github.com/everruns/bashkit/pull/2266),
+  [#2269](https://github.com/everruns/bashkit/pull/2269)).
+- **More common shell workflows run inside the sandbox.** GNU-compatible
+  bzip2 archives and standalone compression commands interoperate with system
+  tools, while `time` reports truthful elapsed time, status, and Bashkit-owned
+  work counters without fabricating host CPU or memory data
+  ([#2265](https://github.com/everruns/bashkit/pull/2265),
+  [#2263](https://github.com/everruns/bashkit/pull/2263)).
+
+### Breaking Changes
+
+- **Rust stream fields are now byte-native.** Public fields that previously
+  used `String` now use `StreamData`; callers constructing results or options
+  should pass bytes through `StreamData` and convert to text explicitly at
+  their application boundary. Language bindings retain their text views and
+  add raw-byte stdout/stderr fields.
+- **Execution-scoped host access expires with the request.** Extension and
+  callback consumers must use `ExecutionCapability::try_with` or `run`, and
+  handle revocation-aware `ToolArgs` context getters. Hosts that deliberately
+  need session-lived raw VFS access must register through
+  `BuiltinRegistry::insert_trusted`.
+- **The nonstandard `yaml` builtin is removed.** Enable the existing `jq`
+  feature and invoke `yq` with jq-style filters. YAML is converted through a
+  JSON value model, so comments, styles, anchors, and source key order are not
+  preserved; unsupported tags and non-string keys fail closed.
+
+### What's Changed
+
+* feat(wasm): host-backed filesystem for the wasm bindings ([#2275](https://github.com/everruns/bashkit/pull/2275)) by @chaliy
+* chore(ship): prompt for PR evidence in the ship skill ([#2274](https://github.com/everruns/bashkit/pull/2274)) by @chaliy
+* docs: keep dependency examples current ([#2271](https://github.com/everruns/bashkit/pull/2271)) by @chaliy
+* chore(ship): require public docs for user-facing features ([#2270](https://github.com/everruns/bashkit/pull/2270)) by @chaliy
+* fix(yq): reject lossy numbers and harden coverage ([#2269](https://github.com/everruns/bashkit/pull/2269)) by @chaliy
+* docs(fs): clarify adapter atomicity contract ([#2268](https://github.com/everruns/bashkit/pull/2268)) by @chaliy
+* feat(yq): add jq-backed YAML processor ([#2266](https://github.com/everruns/bashkit/pull/2266)) by @chaliy
+* feat(archives): add bzip2 interoperability ([#2265](https://github.com/everruns/bashkit/pull/2265)) by @chaliy
+* fix(security): revoke execution-scoped host capabilities ([#2264](https://github.com/everruns/bashkit/pull/2264)) by @chaliy
+* feat(shell): add truthful time reporting ([#2263](https://github.com/everruns/bashkit/pull/2263)) by @chaliy
+* fix(fs): certify filesystem security invariants ([#2262](https://github.com/everruns/bashkit/pull/2262)) by @chaliy
+* fix(jq): accept literal controls in input strings ([#2261](https://github.com/everruns/bashkit/pull/2261)) by @chaliy
+* fix(security): close request execution boundaries ([#2260](https://github.com/everruns/bashkit/pull/2260)) by @chaliy
+* fix(date): sandbox timezone handling ([#2259](https://github.com/everruns/bashkit/pull/2259)) by @chaliy
+* feat(security): charge buffer growth before allocation ([#2258](https://github.com/everruns/bashkit/pull/2258)) by @chaliy
+* fix(fs): harden Windows path containment ([#2257](https://github.com/everruns/bashkit/pull/2257)) by @chaliy
+* feat(execution): add process-local host-call suspension ([#2256](https://github.com/everruns/bashkit/pull/2256)) by @chaliy
+* feat(wasm): add browser binding parity ([#2255](https://github.com/everruns/bashkit/pull/2255)) by @chaliy
+* feat(config): add typed execution profiles ([#2254](https://github.com/everruns/bashkit/pull/2254)) by @chaliy
+* feat(security): share execution budget across request ([#2253](https://github.com/everruns/bashkit/pull/2253)) by @chaliy
+* feat(streams): preserve byte-native shell transport ([#2252](https://github.com/everruns/bashkit/pull/2252)) by @chaliy
+* perf(regex): cache runtime regex compilation ([#2251](https://github.com/everruns/bashkit/pull/2251)) by @chaliy
+* fix(compat): add competitor regression lane ([#2250](https://github.com/everruns/bashkit/pull/2250)) by @chaliy
+* test(adoption): cover the agent-bash-tool embedding shape, on Windows too ([#2249](https://github.com/everruns/bashkit/pull/2249)) by @chaliy
+* feat(fs): publish host mount table for VFS-to-host path mapping ([#2248](https://github.com/everruns/bashkit/pull/2248)) by @chaliy
+* feat(builtins): add CommandResolver for last-chance name resolution ([#2247](https://github.com/everruns/bashkit/pull/2247)) by @chaliy
+* test(api): centralize capability parity contract ([#2246](https://github.com/everruns/bashkit/pull/2246)) by @chaliy
+* feat(analysis): publish command-wrapper list for permission gating ([#2245](https://github.com/everruns/bashkit/pull/2245)) by @chaliy
+* feat(curl): support ordered data options ([#2242](https://github.com/everruns/bashkit/pull/2242)) by @chaliy
+* docs(readme): fix agent friendly badge link ([#2241](https://github.com/everruns/bashkit/pull/2241)) by @chaliy
+* fix(release): initialize MSVC for C API builds ([#2240](https://github.com/everruns/bashkit/pull/2240)) by @chaliy
+* chore(deps): bump the rust-dependencies group across 1 directory with 7 updates ([#2237](https://github.com/everruns/bashkit/pull/2237)) by @dependabot
+* chore(ci): bump taiki-e/install-action from 2.85.2 to 2.85.5 in the github-actions group ([#2230](https://github.com/everruns/bashkit/pull/2230)) by @dependabot
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.15.0...v0.16.0
+
 ## [0.15.0] - 2026-08-03
 
 ### Highlights
