@@ -558,6 +558,14 @@ mod tests {
     }
 
     #[test]
+    fn zero_integer_with_explicit_zero_precision_emits_no_digits() {
+        assert_eq!(render_printf("<%.0d>", &["0".into()]).unwrap(), "<>");
+        assert_eq!(render_printf("<%.0u>", &["0".into()]).unwrap(), "<>");
+        assert_eq!(render_printf("<%#.0x>", &["0".into()]).unwrap(), "<>");
+        assert_eq!(render_printf("<%#.0o>", &["0".into()]).unwrap(), "<0>");
+    }
+
+    #[test]
     fn rejects_asterisk_width_over_cap() {
         let err = render_printf("%*s", &["999999".into(), "x".into()]).unwrap_err();
         assert!(err.contains("width 999999 exceeds limit"));
