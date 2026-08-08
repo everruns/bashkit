@@ -7,7 +7,7 @@ settings:
 overrides:
   esbuild: '>=0.28.1'
   fast-uri: ^3.1.5
-  js-yaml: ^4.3.0
+  js-yaml: ^4.3.1
   postcss: '>=8.5.18'
   sharp: '>=0.35.0 <0.36.0'
   svgo: ^4.0.2
@@ -1334,8 +1334,8 @@ packages:
     resolution: {integrity: sha512-+Pgi+vMuUNkJyExiMBt5IlFoMyKnr5zhJ4Uspz58WOhBF5QoIZkFyNHIbBAtHwzVAgk5RtndVNsDRN61/mmDqg==}
     engines: {node: '>=12'}
 
-  js-yaml@4.3.0:
-    resolution: {integrity: sha512-1td788aAnnZ5qs7V2QIRl1owjtYpbKt749Y3xauqQgwIIGF/xXWz1wMTEBx5O3LK3lXLVuqXPdPxj2BoFHaW9Q==}
+  js-yaml@4.3.1:
+    resolution: {integrity: sha512-CY6crGq313MX8GkwvB7tzgp99vjQxY1++5y10/BKN/GUfHqWaOGQMNZkBvqSzsZKWk/ijwHlWzzkLulsGHhjWQ==}
     hasBin: true
 
   json-schema-traverse@1.0.0:
@@ -2323,7 +2323,7 @@ snapshots:
     dependencies:
       '@types/hast': 3.0.4
       '@types/mdast': 4.0.4
-      js-yaml: 4.3.0
+      js-yaml: 4.3.1
       picomatch: 4.0.4
       retext-smartypants: 6.2.0
       shiki: 4.1.0
@@ -3116,7 +3116,7 @@ snapshots:
       github-slugger: 2.0.0
       html-escaper: 3.0.3
       http-cache-semantics: 4.2.0
-      js-yaml: 4.3.0
+      js-yaml: 4.3.1
       jsonc-parser: 3.3.1
       magic-string: 0.30.21
       magicast: 0.5.3
@@ -3519,7 +3519,7 @@ snapshots:
 
   is-plain-obj@4.1.0: {}
 
-  js-yaml@4.3.0:
+  js-yaml@4.3.1:
     dependencies:
       argparse: 2.0.1
 
