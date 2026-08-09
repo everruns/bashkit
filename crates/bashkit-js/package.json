@@ -118,7 +118,7 @@
   },
   "pnpm": {
     "overrides": {
-      "brace-expansion": "^2.1.2",
+      "brace-expansion": "^2.1.4",
       "esbuild": ">=0.28.1",
       "js-yaml": "^4.3.1",
       "tar": "^7.5.18"
