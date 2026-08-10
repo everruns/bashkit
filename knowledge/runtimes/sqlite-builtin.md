@@ -202,8 +202,7 @@ Unit tests in `crates/bashkit/src/builtins/sqlite/tests.rs` (flags,
 dot-commands, output modes, opt-in gate, parser/policy/sanitizer, splitter
 proptest). Integration / security (TM-SQL regressions) / compat /
 differential (byte-equal vs host `sqlite3`; skips when absent, CI installs
-it; `recursive_cte_unsupported_in_turso` pins a known Turso 0.6.0
-divergence) / fuzz harnesses live in
+it) / fuzz harnesses live in
 `crates/bashkit/tests/integration/sqlite_{integration,security,compat,differential,fuzz}_tests.rs`.
 
 Run: `cargo test --features sqlite -p bashkit -- sqlite`
