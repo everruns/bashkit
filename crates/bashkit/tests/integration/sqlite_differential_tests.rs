@@ -290,42 +290,20 @@ async fn join_inner() {
 }
 
 // ---------------------------------------------------------------------------
-// Documented divergences — features the differential suite *expects* to
-// disagree on. Convert to `assert_matches` once Turso closes the gap.
+// Recursive CTEs
 //
-// Recursive CTEs: turso 0.6.0 returns
-//   "Parse error: Recursive CTEs are not yet supported"
-// while real sqlite3 emits 1..N. Track upstream:
-//   https://github.com/tursodatabase/turso (search "WITH RECURSIVE").
+// Turso rejected `WITH RECURSIVE` up to 0.8.0-pre.2 ("Parse error: Recursive
+// CTEs are not yet supported"), so this used to be a documented divergence.
+// 0.8.0-pre.3 closed the gap, so it is now a plain parity assertion.
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn recursive_cte_unsupported_in_turso() {
-    require_sqlite3!();
-    let sql = "WITH RECURSIVE r(n) AS ( \
-                SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < 5 \
-             ) SELECT n FROM r;";
-
-    // Real sqlite3 happily counts.
-    let host = run_real_sqlite3(&[], sql);
-    assert_eq!(host.trim(), "1\n2\n3\n4\n5".trim_end());
-
-    // Turso is expected to reject — drive bashkit directly so we don't
-    // panic in `run_bashkit_sqlite`'s exit-code assertion.
-    let mut bash = Bash::builder()
-        .sqlite()
-        .env("BASHKIT_ALLOW_INPROCESS_SQLITE", "1")
-        .build();
-    let cmd = format!("sqlite :memory: <<'__BASHKIT_EOF__'\n{sql}\n__BASHKIT_EOF__");
-    let r = bash.exec(&cmd).await.unwrap();
-    assert_ne!(
-        r.exit_code, 0,
-        "turso unexpectedly accepted a recursive CTE — rotate this test \
-         into `assert_matches` and remove the divergence note in the spec"
-    );
-    assert!(
-        r.stderr.contains("Recursive CTE") || r.stderr.to_lowercase().contains("recursive"),
-        "unexpected divergence reason: {:?}",
-        r.stderr,
-    );
+async fn recursive_cte_matches_host() {
+    assert_matches(
+        &[],
+        "WITH RECURSIVE r(n) AS ( \
+            SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < 5 \
+         ) SELECT n FROM r;",
+    )
+    .await;
 }
