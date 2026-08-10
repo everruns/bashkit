@@ -285,7 +285,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "fs"] }
 web-time = { workspace = true }
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
-gloo-timers = { version = "0.3", features = ["futures"] }
+gloo-timers = { version = "0.4", features = ["futures"] }
 send_wrapper = { version = "0.6", features = ["futures"] }
 
 # Vendored uucore modules (e.g. generated/format/human.rs) carry upstream
