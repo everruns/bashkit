@@ -141,6 +141,12 @@ jobs:
           tool: cargo-audit
 
       - name: Security audit (cargo-audit)
+        # RUSTSEC-2023-0071 (Marvin timing sidechannel in `rsa`) is an accepted
+        # risk tracked as TM-CRY-002 in knowledge/security/threat-model.md: the
+        # advisory covers every published `rsa` version so there is nothing to
+        # upgrade to, and the crate is reachable only through the opt-in `ssh`
+        # feature. Drop this flag once `rsa` ships a constant-time release.
+        # Keep in sync with the `[advisories] ignore` list in deny.toml.
         run: cargo audit --ignore RUSTSEC-2023-0071
 
       - name: License check (cargo-deny)
