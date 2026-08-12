@@ -1574,6 +1574,77 @@ struct SharedState {
     /// `addBuiltin()` calls insert into the live interpreter without rebuilding
     /// it (and without disturbing the VFS).
     host_registry: BuiltinRegistry,
+    /// Host mutations applied *after* construction — `setEnv()` and the
+    /// runtime `mount*()` APIs.
+    ///
+    /// THREAT[TM-ISO-025]: `reset()` must not silently drop host capabilities.
+    /// Constructor options are replayed from the fields above; recording the
+    /// runtime equivalents here puts them on the same rebuild path, so a bundle
+    /// of setup installed on a live instance (mount + env + builtins, the
+    /// extension shape from issue #2291) is whole after a reset instead of
+    /// half-applied. Script-set env is deliberately *not* recorded — only what
+    /// the host asked for survives.
+    runtime_env: RuntimeEnvLog,
+    runtime_mounts: RuntimeMountLog,
+}
+
+/// Ordered log of host `setEnv()` calls, replayed on rebuild.
+///
+/// A `Vec` rather than a map: replay order is the call order, so the last write
+/// to a key wins exactly as it did on the live instance.
+type RuntimeEnvLog = Arc<std::sync::Mutex<Vec<(String, String)>>>;
+
+/// Ordered log of host runtime mounts, replayed on rebuild.
+type RuntimeMountLog = Arc<std::sync::Mutex<Vec<RuntimeMount>>>;
+
+/// A mount applied to a live instance, retained so `reset()` can replay it.
+#[derive(Clone)]
+enum RuntimeMount {
+    /// Host directory mount (`mount(hostPath, vfsPath, writable)`). Replayed
+    /// through the builder, the same path constructor mounts take, so the
+    /// allowlist check applies identically on every rebuild.
+    Real {
+        host_path: String,
+        vfs_path: String,
+        writable: bool,
+    },
+    /// Filesystem-handle mount (`mount(vfsPath, fs)`). The `Arc` is retained,
+    /// so a replayed mount is the *same* filesystem, not a copy — writes made
+    /// through it before the reset are still there afterwards.
+    Fs {
+        vfs_path: String,
+        fs: Arc<dyn BashFileSystem>,
+    },
+}
+
+impl RuntimeMount {
+    fn vfs_path(&self) -> &str {
+        match self {
+            RuntimeMount::Real { vfs_path, .. } | RuntimeMount::Fs { vfs_path, .. } => vfs_path,
+        }
+    }
+}
+
+/// Record a host `setEnv()` call for replay on the next rebuild.
+fn record_runtime_env(log: &RuntimeEnvLog, key: &str, value: &str) {
+    let mut entries = log.lock().expect("runtime env log poisoned");
+    entries.push((key.to_string(), value.to_string()));
+}
+
+/// Record a host runtime mount for replay on the next rebuild.
+///
+/// A mount at an already-recorded path replaces that record: the live VFS keeps
+/// one filesystem per mount point, so the replay must too.
+fn record_runtime_mount(log: &RuntimeMountLog, mount: RuntimeMount) {
+    let mut mounts = log.lock().expect("runtime mount log poisoned");
+    mounts.retain(|existing| existing.vfs_path() != mount.vfs_path());
+    mounts.push(mount);
+}
+
+/// Retract a recorded mount so `reset()` does not resurrect it after `unmount()`.
+fn forget_runtime_mount(log: &RuntimeMountLog, vfs_path: &str) {
+    let mut mounts = log.lock().expect("runtime mount log poisoned");
+    mounts.retain(|existing| existing.vfs_path() != vfs_path);
 }
 
 /// Wrapper for the external handler that can be stored and cloned.
@@ -2325,6 +2396,11 @@ impl Bash {
             &host_path,
             "Bash.mount",
         )?;
+        let recorded = RuntimeMount::Real {
+            host_path: host_path.clone(),
+            vfs_path: vfs_path.clone(),
+            writable: is_writable,
+        };
         block_on_with(&self.state, |s| async move {
             let bash = s.inner.lock().await;
             let mode = if is_writable {
@@ -2337,7 +2413,9 @@ impl Bash {
                 .map_err(|e| napi::Error::from_reason(e.to_string()))?;
             let fs: Arc<dyn BashFileSystem> = Arc::new(PosixFs::new(real_backend));
             bash.mount(Path::new(&vfs_path), fs)
-                .map_err(|e| napi::Error::from_reason(e.to_string()))
+                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+            record_runtime_mount(&s.runtime_mounts, recorded);
+            Ok(())
         })
     }
 
@@ -2347,8 +2425,16 @@ impl Bash {
         let mounted_fs = import_external_file_system(fs)?;
         block_on_with(&self.state, |s| async move {
             let bash = s.inner.lock().await;
-            bash.mount(Path::new(&vfs_path), mounted_fs)
-                .map_err(|e| napi::Error::from_reason(e.to_string()))
+            bash.mount(Path::new(&vfs_path), Arc::clone(&mounted_fs))
+                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+            record_runtime_mount(
+                &s.runtime_mounts,
+                RuntimeMount::Fs {
+                    vfs_path,
+                    fs: mounted_fs,
+                },
+            );
+            Ok(())
         })
     }
 
@@ -2358,7 +2444,25 @@ impl Bash {
         block_on_with(&self.state, |s| async move {
             let bash = s.inner.lock().await;
             bash.unmount(Path::new(&vfs_path))
-                .map_err(|e| napi::Error::from_reason(e.to_string()))
+                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+            forget_runtime_mount(&s.runtime_mounts, &vfs_path);
+            Ok(())
+        })
+    }
+
+    /// Set an exported environment variable on the live interpreter.
+    ///
+    /// The env counterpart to runtime `mount()`: usable after construction, so
+    /// a reusable setup bundle can apply mounts, env, and builtins to an
+    /// existing instance instead of only through `BashOptions`. Survives
+    /// `reset()` — like `customBuiltins`, and unlike env a *script* exported.
+    #[napi]
+    pub fn set_env(&self, key: String, value: String) -> napi::Result<()> {
+        block_on_with(&self.state, |s| async move {
+            let mut bash = s.inner.lock().await;
+            bash.set_env(&key, &value);
+            record_runtime_env(&s.runtime_env, &key, &value);
+            Ok(())
         })
     }
 
@@ -2971,6 +3075,11 @@ impl BashTool {
             &host_path,
             "BashTool.mount",
         )?;
+        let recorded = RuntimeMount::Real {
+            host_path: host_path.clone(),
+            vfs_path: vfs_path.clone(),
+            writable: is_writable,
+        };
         block_on_with(&self.state, |s| async move {
             let bash = s.inner.lock().await;
             let mode = if is_writable {
@@ -2983,7 +3092,9 @@ impl BashTool {
                 .map_err(|e| napi::Error::from_reason(e.to_string()))?;
             let fs: Arc<dyn BashFileSystem> = Arc::new(PosixFs::new(real_backend));
             bash.mount(Path::new(&vfs_path), fs)
-                .map_err(|e| napi::Error::from_reason(e.to_string()))
+                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+            record_runtime_mount(&s.runtime_mounts, recorded);
+            Ok(())
         })
     }
 
@@ -2993,8 +3104,16 @@ impl BashTool {
         let mounted_fs = import_external_file_system(fs)?;
         block_on_with(&self.state, |s| async move {
             let bash = s.inner.lock().await;
-            bash.mount(Path::new(&vfs_path), mounted_fs)
-                .map_err(|e| napi::Error::from_reason(e.to_string()))
+            bash.mount(Path::new(&vfs_path), Arc::clone(&mounted_fs))
+                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+            record_runtime_mount(
+                &s.runtime_mounts,
+                RuntimeMount::Fs {
+                    vfs_path,
+                    fs: mounted_fs,
+                },
+            );
+            Ok(())
         })
     }
 
@@ -3004,7 +3123,22 @@ impl BashTool {
         block_on_with(&self.state, |s| async move {
             let bash = s.inner.lock().await;
             bash.unmount(Path::new(&vfs_path))
-                .map_err(|e| napi::Error::from_reason(e.to_string()))
+                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+            forget_runtime_mount(&s.runtime_mounts, &vfs_path);
+            Ok(())
+        })
+    }
+
+    /// Set an exported environment variable on the live interpreter.
+    ///
+    /// See [`Bash::set_env`]. Survives `reset()`.
+    #[napi]
+    pub fn set_env(&self, key: String, value: String) -> napi::Result<()> {
+        block_on_with(&self.state, |s| async move {
+            let mut bash = s.inner.lock().await;
+            bash.set_env(&key, &value);
+            record_runtime_env(&s.runtime_env, &key, &value);
+            Ok(())
         })
     }
 
@@ -3547,6 +3681,29 @@ fn build_bash_from_state(state: &SharedState) -> RustBash {
         }
     }
 
+    // Replay host directory mounts that were applied at runtime. They ride the
+    // builder alongside constructor mounts so the allowlist check and host-path
+    // bookkeeping are identical on every rebuild.
+    let runtime_mounts = state
+        .runtime_mounts
+        .lock()
+        .expect("runtime mount log poisoned")
+        .clone();
+    for mount in &runtime_mounts {
+        if let RuntimeMount::Real {
+            host_path,
+            vfs_path,
+            writable,
+        } = mount
+        {
+            builder = if *writable {
+                builder.mount_real_readwrite_at(host_path, vfs_path)
+            } else {
+                builder.mount_real_readonly_at(host_path, vfs_path)
+            };
+        }
+    }
+
     // Enable Python/Monty. Passing `python: true` from JS is the explicit
     // opt-in that must also flip the in-process Python env gate.
     if state.python {
@@ -3585,7 +3742,32 @@ fn build_bash_from_state(state: &SharedState) -> RustBash {
     // `addBuiltin()` are visible to the running interpreter without rebuilding.
     builder = builder.builtin_registry(state.host_registry.clone());
 
-    builder.build()
+    let mut bash = builder.build();
+
+    // Replay filesystem-handle mounts, which have no builder equivalent — they
+    // carry a live `Arc`, so they attach to the instance after build.
+    for mount in &runtime_mounts {
+        if let RuntimeMount::Fs { vfs_path, fs } = mount {
+            // A recorded mount was accepted once on a live instance; a failure
+            // here means the path is no longer mountable (e.g. shadowed by a
+            // constructor mount). Skipping keeps reset infallible, and the
+            // absent mount is observable, unlike a panic mid-rebuild.
+            let _ = bash.mount(Path::new(vfs_path), Arc::clone(fs));
+        }
+    }
+
+    // Replay host env last so it wins over constructor `env` for the same key,
+    // matching what happened on the live instance before the rebuild.
+    for (key, value) in state
+        .runtime_env
+        .lock()
+        .expect("runtime env log poisoned")
+        .iter()
+    {
+        bash.set_env(key, value);
+    }
+
+    bash
 }
 
 /// Build a `SharedState` from `BashOptions`, wiring up all config + interpreter.
@@ -3605,6 +3787,10 @@ fn shared_state_from_opts(
     // A single registry handle threaded through the tmp + final SharedState
     // *and* the built interpreter — all observe the same underlying storage.
     let host_registry = BuiltinRegistry::new();
+    // Same sharing rule for the runtime mutation logs: `reset()` rebuilds
+    // through the tmp-state path, so both handles must see the same entries.
+    let runtime_env: RuntimeEnvLog = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let runtime_mounts: RuntimeMountLog = Arc::new(std::sync::Mutex::new(Vec::new()));
 
     // Build a temporary SharedState to pass to build_bash_from_state
     let tmp = SharedState {
@@ -3646,6 +3832,8 @@ fn shared_state_from_opts(
         external_functions: ext_fns.clone(),
         external_handler: external_handler.clone(),
         host_registry: host_registry.clone(),
+        runtime_env: runtime_env.clone(),
+        runtime_mounts: runtime_mounts.clone(),
     };
 
     if let Some(ref mounts) = mounts {
@@ -3700,6 +3888,8 @@ fn shared_state_from_opts(
         external_functions: ext_fns,
         external_handler,
         host_registry,
+        runtime_env,
+        runtime_mounts,
     })
 }
 

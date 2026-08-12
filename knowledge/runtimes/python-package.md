@@ -77,11 +77,28 @@ safety. Constructor kwargs: `username`, `hostname`, `cwd` (initial working
 directory), `env` (initial environment variables), `max_commands`,
 `max_loop_iterations`, `readonly_filesystem`, `files` (initial files; values
 may be eager strings or lazy sync callables), `network`, `custom_builtins`,
-etc. Methods: `await execute(cmd)` / `execute_sync(cmd)` / `reset()`; direct
+etc. Methods: `await execute(cmd)` / `execute_sync(cmd)` / `reset()`;
+`set_env(key, value)` and `mount(vfs_path, fs)` / `unmount(vfs_path)` for
+host configuration applied *after* construction; direct
 text-oriented VFS helpers (`read_file`, `write_file`, `append_file`, `mkdir`,
 `exists`, `remove`, `stat`, `chmod`, `symlink`, `read_link`, `read_dir`,
 `ls`, `glob`); LLM metadata (`name`, `short_description`, `description()`,
 `help()`, `system_prompt()`, `input_schema()`, `output_schema()`, `version`).
+
+### Runtime host mutations
+
+`set_env()` and runtime `mount()` are recorded and replayed on every rebuild,
+so `reset()` keeps them the way it already keeps `custom_builtins` and
+constructor `files` (TM-ISO-025). This makes a reusable setup bundle —
+mount + env + builtin, the extension shape from #2291 — survive a reset whole
+rather than half-applied. `unmount()` retracts its record, so a rebuild does
+not resurrect a removed mount. Env a *script* exported is not recorded: `reset()`
+still discards it, and only host-set values come back.
+
+Same contract in the NAPI binding (`setEnv`), backed by `Bash::set_env()` in
+the core. Absent from the CLI, browser wasm, and C ABI, which expose no
+post-construction host API — see
+[Public Capability Parity](../status/capability-parity.md).
 
 Snapshot/restore on both `Bash` and `BashTool` (mirrors Node bindings):
 `snapshot()` / `snapshot(exclude_filesystem=True)` / `from_snapshot(blob)` /

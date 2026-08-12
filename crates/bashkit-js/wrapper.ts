@@ -901,6 +901,30 @@ export class Bash {
   }
 
   /**
+   * Set an exported environment variable on the live interpreter.
+   *
+   * The env counterpart to runtime {@link Bash.mount} — usable after
+   * construction, so a reusable setup bundle (mount + env + builtins) can be
+   * applied to an existing instance instead of only through
+   * {@link BashOptions}. Scripts see it as `$NAME`; child contexts see it in
+   * `env`. A later script assignment wins.
+   *
+   * Survives `reset()`, like `customBuiltins` and unlike env a *script*
+   * exported: only host-set values are replayed on rebuild.
+   *
+   * @example
+   * ```typescript
+   * const bash = new Bash();
+   * bash.mount("/skills/my-skill", skillFs);
+   * bash.setEnv("SKILL_PATH", "/skills/my-skill");
+   * await bash.execute('cat "$SKILL_PATH/SKILL.md"');
+   * ```
+   */
+  setEnv(key: string, value: string): void {
+    this.native.setEnv(key, value);
+  }
+
+  /**
    * Execute bash commands synchronously and return the result.
    *
    * If `signal` is provided, the execution will be cancelled when the signal
@@ -1407,6 +1431,11 @@ export class BashTool {
   /** Remove a previously registered custom builtin. */
   removeBuiltin(name: string): void {
     this.native.removeBuiltin(name);
+  }
+
+  /** Set an exported environment variable. See {@link Bash.setEnv}. */
+  setEnv(key: string, value: string): void {
+    this.native.setEnv(key, value);
   }
 
   /**

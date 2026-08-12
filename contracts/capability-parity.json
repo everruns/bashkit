@@ -7,6 +7,7 @@
     "output_caps": "Bounded stdout and stderr with truncation reporting",
     "cwd": "Initial virtual working directory",
     "env": "Initial virtual environment",
+    "runtime_env": "Host environment applied after construction",
     "stdin": "Host-provided stdin for an execution",
     "custom_builtins": "Host callbacks registered as shell builtins",
     "host_call_suspension": "Host-visible process-local builtin suspension and resume",
@@ -23,7 +24,7 @@
   "surfaces": {
     "rust_bash": {
       "label": "Rust BashBuilder",
-      "supported": ["execution_limits", "cancellation", "deadlines", "output_caps", "cwd", "env", "stdin", "custom_builtins", "host_call_suspension", "network_policy", "transport_hooks", "virtual_filesystem", "mounts", "snapshots", "runtime_python", "runtime_typescript", "runtime_sqlite"],
+      "supported": ["execution_limits", "cancellation", "deadlines", "output_caps", "cwd", "env", "runtime_env", "stdin", "custom_builtins", "host_call_suspension", "network_policy", "transport_hooks", "virtual_filesystem", "mounts", "snapshots", "runtime_python", "runtime_typescript", "runtime_sqlite"],
       "evidence": {
         "execution_limits": ["crates/bashkit/tests/integration/blackbox_security_tests.rs#max_commands_resets_per_exec"],
         "cancellation": ["crates/bashkit/tests/integration/cancellation_tests.rs#cancel_aborts_execution"],
@@ -31,6 +32,7 @@
         "output_caps": ["crates/bashkit/tests/integration/output_truncation_tests.rs#stdout_truncation"],
         "cwd": ["crates/bashkit/tests/integration/snapshot_tests.rs#snapshot_preserves_cwd"],
         "env": ["crates/bashkit/tests/integration/snapshot_tests.rs#snapshot_preserves_env"],
+        "runtime_env": ["crates/bashkit/tests/integration/runtime_env_tests.rs#set_env_is_visible_to_scripts"],
         "stdin": ["crates/bashkit/tests/integration/exec_options_tests.rs#stdin_feeds_cat"],
         "custom_builtins": ["crates/bashkit/tests/integration/custom_builtins_tests.rs#test_custom_builtin_simple"],
         "host_call_suspension": ["crates/bashkit/tests/integration/host_call_execution_tests.rs#host_call_suspends_and_resumes_the_live_execution"],
@@ -66,6 +68,7 @@
         "runtime_sqlite": ["crates/bashkit/src/tool.rs#test_configure_forwards_sqlite_runtime_opt_in"]
       },
       "unsupported": {
+        "runtime_env": "BashTool builds a fresh Bash per execution, so there is no live instance to mutate; env is configured on the builder.",
         "cancellation": "ToolExecution has no host cancellation handle; callers can drop the future or set a deadline.",
         "stdin": "ToolRequest accepts commands and timeout_ms only; scripts can still create internal pipelines.",
         "host_call_suspension": "BashTool drives each fresh Bash execution to completion and exposes no event handle.",
@@ -85,6 +88,7 @@
         "tool_callbacks": ["crates/bashkit/src/scripted_tool/mod.rs#test_execute_single_tool"]
       },
       "unsupported": {
+        "runtime_env": "Each execution uses a fresh logic-only shell; env is configured before the run.",
         "cancellation": "No cancellation handle is exposed; per-call timeout_ms is the abort boundary.",
         "cwd": "ScriptedTool intentionally uses a logic-only shell without filesystem-backed cwd configuration.",
         "custom_builtins": "Only registered ToolDef callbacks become commands; arbitrary Bash builtins are not accepted.",
@@ -114,6 +118,7 @@
         "runtime_sqlite": ["crates/bashkit-cli/tests/cli_oneshot.rs#sqlite_is_enabled_by_default"]
       },
       "unsupported": {
+        "runtime_env": "The CLI owns the shell lifecycle end to end and exposes no post-construction host API.",
         "cancellation": "No programmatic cancellation API exists at the process boundary.",
         "cwd": "The CLI exposes no initial virtual-cwd flag.",
         "env": "The CLI deliberately does not inherit or expose host environment injection flags.",
@@ -127,7 +132,7 @@
     },
     "python": {
       "label": "Python",
-      "supported": ["execution_limits", "cancellation", "deadlines", "output_caps", "cwd", "env", "custom_builtins", "tool_callbacks", "network_policy", "virtual_filesystem", "mounts", "snapshots", "runtime_python", "runtime_sqlite"],
+      "supported": ["execution_limits", "cancellation", "deadlines", "output_caps", "cwd", "env", "runtime_env", "custom_builtins", "tool_callbacks", "network_policy", "virtual_filesystem", "mounts", "snapshots", "runtime_python", "runtime_sqlite"],
       "evidence": {
         "execution_limits": ["crates/bashkit-python/tests/_bashkit_categories.py#test_max_commands_limits_execution"],
         "cancellation": ["crates/bashkit-python/tests/_bashkit_categories.py#test_bash_cancel_after_reset_still_works"],
@@ -135,6 +140,7 @@
         "output_caps": ["crates/bashkit-python/tests/_bashkit_categories.py#test_output_is_capped_and_reports_truncation"],
         "cwd": ["crates/bashkit-python/tests/_bashkit_categories.py#test_bash_cwd_option_sets_starting_directory"],
         "env": ["crates/bashkit-python/tests/_bashkit_categories.py#test_bash_env_option_exposes_variables"],
+        "runtime_env": ["crates/bashkit-python/tests/test_runtime_extension.py#test_set_env_is_visible_to_scripts"],
         "custom_builtins": ["crates/bashkit-python/tests/test_registered_tools.py#test_custom_builtins_persist_vfs_across_calls"],
         "tool_callbacks": ["crates/bashkit-python/tests/_bashkit_categories.py#test_scripted_tool_stdin_pipe"],
         "network_policy": ["crates/bashkit-python/tests/test_network_config.py#test_bash_from_snapshot_with_network"],
@@ -153,7 +159,7 @@
     },
     "napi": {
       "label": "NAPI JavaScript",
-      "supported": ["execution_limits", "cancellation", "deadlines", "output_caps", "cwd", "env", "custom_builtins", "tool_callbacks", "network_policy", "virtual_filesystem", "mounts", "snapshots", "runtime_python", "runtime_sqlite"],
+      "supported": ["execution_limits", "cancellation", "deadlines", "output_caps", "cwd", "env", "runtime_env", "custom_builtins", "tool_callbacks", "network_policy", "virtual_filesystem", "mounts", "snapshots", "runtime_python", "runtime_sqlite"],
       "evidence": {
         "execution_limits": ["crates/bashkit-js/__test__/security.spec.ts#WB: command limit is enforced"],
         "cancellation": ["crates/bashkit-js/__test__/basic.spec.ts#Bash: cancel works after reset"],
@@ -161,6 +167,7 @@
         "output_caps": ["crates/bashkit-js/__test__/security.spec.ts#WB: stdout truncation flag on large output"],
         "cwd": ["crates/bashkit-js/__test__/cwd-env-options.spec.ts#cwd option sets the starting working directory"],
         "env": ["crates/bashkit-js/__test__/cwd-env-options.spec.ts#env option exposes variables without an export prelude"],
+        "runtime_env": ["crates/bashkit-js/__test__/runtime-extension.spec.ts#Bash: setEnv is visible to scripts"],
         "custom_builtins": ["crates/bashkit-js/__test__/custom-builtins.spec.ts#reset() preserves host-registered builtins"],
         "tool_callbacks": ["crates/bashkit-js/__test__/integration.spec.ts#ScriptedTool"],
         "network_policy": ["crates/bashkit-js/__test__/network.spec.ts#curl to a URL outside the allowlist is denied"],
@@ -192,6 +199,7 @@
         "snapshots": ["crates/bashkit-wasm/__test__/bashkit-wasm.test.mjs#commit and checkout restore persistent state"]
       },
       "unsupported": {
+        "runtime_env": "The slim wasm package exposes no post-construction host mutation API; env is construction-only.",
         "stdin": "execute() accepts only a command string; pipelines still provide builtin stdin.",
         "host_call_suspension": "Browser custom builtins await JavaScript callbacks directly; no request and resume handle is exposed.",
         "tool_callbacks": "The slim browser package exposes custom builtins but no ScriptedTool class.",
@@ -215,6 +223,7 @@
         "virtual_filesystem": ["crates/bashkit-capi/tests/abi.rs#reads_and_writes_binary_vfs_content"]
       },
       "unsupported": {
+        "runtime_env": "The C ABI exposes no post-construction configuration surface.",
         "cancellation": "ABI v1 exposes synchronous execute with no cancellation handle.",
         "stdin": "ABI v1 execute accepts script bytes only.",
         "custom_builtins": "ABI v1 has no callback registration table.",
