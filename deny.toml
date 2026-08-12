@@ -30,8 +30,15 @@ exceptions = []
 # cargo-deny reports ambiguous licenses for any dependency.
 
 [advisories]
-# Ignore unmaintained transitive dependencies we can't control
+# Every entry needs a rationale and a removal condition; the same list is
+# mirrored in knowledge/security/threat-model.md ("Suppressed advisories") and,
+# for cargo-audit, in the `--ignore` flags in .github/workflows/ci.yml.
 ignore = [
+    # rsa: transitive via russh -> ssh-key, behind the optional `ssh` feature.
+    # Marvin Attack timing sidechannel (TM-CRY-002). Every published version of
+    # `rsa` is affected and no patched release exists, so this cannot be fixed
+    # by upgrading. Remove once `rsa` ships a constant-time implementation.
+    "RUSTSEC-2023-0071",
     # atomic-polyfill: transitive via monty -> postcard -> heapless
     # Unmaintained but no security vulnerability; upstream dep we can't control
     "RUSTSEC-2023-0089",

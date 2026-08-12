@@ -818,11 +818,13 @@ exit-code propagation cases, is also exercised by the `threat_ts_*` tests.
 ### Request Signing & Snapshot Integrity (TM-CRY-*, TM-SNAP-*)
 
 The `bot-auth` request signer (Ed25519, RFC 9421) and the snapshot
-serialization API both handle key material and integrity tags.
+serialization API both handle key material and integrity tags. The optional
+`ssh` feature also brings in third-party RSA code, covered below.
 
 | Threat | Attack Example | Mitigation | Status |
 |--------|---------------|------------|--------|
 | Private key recovery (TM-CRY-001) | Heap/core-dump inspection of the Ed25519 seed | `BotAuthConfig` zeroizes the seed in `Drop`; debug output redacts key material | MITIGATED |
+| RSA timing sidechannel (TM-CRY-002) | A peer times RSA private-key operations during SSH public-key auth to recover the key (Marvin Attack, RUSTSEC-2023-0071) | No upstream fix exists — every published `rsa` version is affected. The crate is reachable only through the opt-in `ssh` feature (via `russh`/`ssh-key`); prefer Ed25519 keys, which do not use the affected path | ACCEPTED |
 | Snapshot forgery (TM-SNAP-001) | Forge a valid digest using the public `BKSNAP01` tag | Keyed HMAC API (`to_bytes_keyed`/`from_bytes_keyed`) for tamper-evident snapshots | MITIGATED |
 | Object store poisoning (TM-SNAP-002) | Substitute a different blob under a referenced object ID in the host's store | Every object is verified against its content hash on load; the graph is a Merkle tree, so a keyed commit authenticates everything it reaches | MITIGATED |
 | Hash agility (TM-SNAP-003) | A snapshot claims a hash algorithm the reader does not implement | Algorithm ID in the container header, rejected when unknown | MITIGATED |

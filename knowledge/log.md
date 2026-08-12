@@ -1,5 +1,10 @@
 # Bashkit Knowledge Update Log
 
+## 2026-08-12
+
+* **Security**: Documented the previously unrecorded `cargo audit --ignore RUSTSEC-2023-0071` suppression as TM-CRY-002 — the Marvin timing sidechannel in `rsa`, reached transitively through `russh`/`ssh-key` behind the opt-in `ssh` feature. The advisory covers every published `rsa` version with no patched release, so it cannot be cleared by upgrading; it is an accepted risk until `rsa` ships a constant-time implementation, and callers enabling `ssh` over an attacker-observable network should prefer Ed25519 keys. Recorded in the [Threat Model](security/threat-model.md).
+* **Contract**: Advisory suppressions now require a rationale and a removal condition, listed in one place ("Suppressed advisories" in the [Threat Model](security/threat-model.md)) and mirrored between `deny.toml` and the `cargo audit` flags in CI. A bare `--ignore` with no recorded reasoning is no longer acceptable; the two existing unmaintained-crate ignores (RUSTSEC-2023-0089, RUSTSEC-2026-0173) were folded into the same table.
+
 ## 2026-08-05
 
 * **Testing**: Hardened `yq` with an always-running mikefarah-compatible locked corpus plus optional live differential, expanded flag/stream/file/JSON boundary specs, aggregate-input and parser-limit regressions, arbitrary YAML+filter proptest, and a replacement `yq_fuzz` target that exercises stdin and in-place conversion instead of the removed legacy `yaml` helper. TM-FS-016 now has failpoint proof for temporary allocation, every backend write-failure class, mode preservation, rename, source retention, and cleanup. Recorded in [Testing Strategy](operations/testing.md), [Security Testing](security/security-testing.md), and the [Threat Model](security/threat-model.md).

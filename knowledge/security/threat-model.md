@@ -712,8 +712,18 @@ redacted everywhere they could surface.
 | ID | Threat | Attack Vector | Mitigation | Status |
 |----|--------|--------------|------------|--------|
 | TM-CRY-001 | Bot-auth private key recovery from process memory | Core dump, heap inspection, `/proc/<pid>/mem` after key use | `BotAuthConfig` zeroizes Ed25519 seed in `Drop`; debug output redacts key material | **MITIGATED** |
+| TM-CRY-002 | RSA private key recovery via timing sidechannel (Marvin Attack, RUSTSEC-2023-0071) | Peer measures timing of RSA private-key operations during SSH public-key auth and recovers the key | No upstream fix exists — the advisory covers every published `rsa` version. Exposure is confined to the opt-in `ssh` feature (`rsa` enters only via `russh`/`ssh-key`); Ed25519 keys do not touch the affected code path | **ACCEPTED** |
 
 **Current Risk**: LOW - Key material remains process-resident while configured, but is now explicitly zeroized on drop.
+
+**TM-CRY-002 rationale**: `rsa` is pulled in transitively by `russh`, which is an
+optional dependency behind the `ssh` feature (`ssh = ["russh"]`); default builds
+never compile it. The advisory has no patched release (`introduced: 0.0.0-0`,
+no fixed version), so it cannot be resolved by upgrading — `cargo audit` is run
+with `--ignore RUSTSEC-2023-0071` in CI to keep the audit signal actionable.
+Callers who enable `ssh` and authenticate over an attacker-observable network
+should prefer Ed25519 keys. Re-evaluate whenever `rsa` publishes a
+constant-time release (upstream work is tracked in RustSec advisory-db).
 
 #### 5.6 curl/wget Security Model
 
@@ -1228,6 +1238,7 @@ This section maps former vulnerability IDs to the new threat ID scheme and track
 
 | Threat ID | Vulnerability | Impact | Rationale |
 |-----------|---------------|--------|-----------|
+| TM-CRY-002 | RSA timing sidechannel in `rsa` (RUSTSEC-2023-0071) | Private key recovery over the network | No upstream patch exists for any `rsa` version; reachable only via the opt-in `ssh` feature, and Ed25519 keys avoid the affected path |
 | TM-DOS-011 | Symlinks not followed | Functionality gap | By design - prevents symlink attacks |
 | TM-DOS-025 | Regex backtracking | CPU exhaustion | Linear-time `regex` engine by default; fancy-regex paths (`grep -P`, `sed`) capped by `FANCY_BACKTRACK_LIMIT` |
 | TM-DOS-033 | AWK unbounded loops | CPU exhaustion | 30s timeout backstop |
@@ -1466,6 +1477,20 @@ parser and interpreter; **Miri** (`cargo +nightly miri test --lib`) detects UB i
 | **cargo-audit** | Known CVE detection | ✅ Required |
 | **cargo-deny** | License compliance | ✅ Required |
 | **Dependabot** | Automated dependency updates | GitHub-native |
+
+#### Suppressed advisories
+
+Every advisory suppression must be listed here with a rationale and a condition
+for removal — a bare `--ignore` flag or `deny.toml` entry with no recorded
+reasoning is not acceptable. `cargo audit` suppressions live in the CI workflow
+(`.github/workflows/ci.yml`) and `cargo deny` suppressions in `deny.toml`; keep
+the two lists in sync so a local `cargo deny check advisories` matches CI.
+
+| Advisory | Crate | Why suppressed | Remove when |
+|----------|-------|----------------|-------------|
+| RUSTSEC-2023-0071 | `rsa` | Marvin timing sidechannel (TM-CRY-002). No patched version exists; reachable only via the opt-in `ssh` feature | `rsa` ships a constant-time release |
+| RUSTSEC-2023-0089 | `atomic-polyfill` | Unmaintained, no known vulnerability; transitive via `monty` → `postcard` → `heapless` | Upstream drops the dependency |
+| RUSTSEC-2026-0173 | `proc-macro-error2` | Unmaintained build-time proc-macro, bench harness only (not shipped library code); transitive via `tabled` | `tabled` releases a version without it |
 
 ### Fuzzing Targets
 
