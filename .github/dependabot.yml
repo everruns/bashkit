@@ -39,6 +39,22 @@ updates:
           - "version-update:semver-major"
           - "version-update:semver-minor"
 
+  # Fuzz targets are a separate cargo workspace with their own lockfile, so the
+  # "/" entry above never touches them. Without this the fuzz lockfile silently
+  # rots between releases (it drifted onto an unsound `anyhow` and two yanked
+  # crates before CI started auditing it). Grouped into one PR — these are
+  # build-time-only test dependencies, not shipped library code.
+  - package-ecosystem: "cargo"
+    directory: "/crates/bashkit/fuzz"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      fuzz-dependencies:
+        patterns:
+          - "*"
+
   # GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"

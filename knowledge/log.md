@@ -1,5 +1,10 @@
 # Bashkit Knowledge Update Log
 
+## 2026-08-13
+
+* **Security**: The fuzz workspace lockfile (`crates/bashkit/fuzz/Cargo.lock`) had drifted onto `anyhow` 1.0.102 (RUSTSEC-2026-0190, unsound `Error::downcast_mut()`, patched in 1.0.103) plus yanked `js-sys` 0.3.88 and `wasm-bindgen` 0.2.111. Refreshed to clear all three. Fuzz-only build dependencies, never shipped in the library, so exposure was limited to the nightly fuzz runners.
+* **Contract**: Bashkit has **two** cargo workspaces, and both root causes of the drift above were structural, not incidental. `cargo audit` in CI scanned only the root lockfile, and Dependabot's `cargo` entry only covered `directory: "/"` — so nothing watched the fuzz lockfile at all. CI now audits both lockfiles and Dependabot has a `/crates/bashkit/fuzz` entry. Adding a third workspace means adding it to both lists. Recorded in the [Threat Model](security/threat-model.md).
+
 ## 2026-08-12
 
 * **Decision**: Host configuration applied *after* construction is now first-class and rebuild-safe. `Bash::set_env()` in the core is the env counterpart to live `mount()`, surfaced as `setEnv` (NAPI) and `set_env` (Python). Both bindings record runtime `set_env`/`mount` calls and replay them on every rebuild, so `reset()` preserves them the way it already preserved custom builtins and constructor files; `unmount()` retracts its record. Script-set env stays transient. This makes the reusable mount+env+builtin bundle from issue #2291 installable on a live instance without a two-phase construct-then-apply dance. Recorded in [Public Capability Parity](status/capability-parity.md) (`runtime_env`), [Python Package](runtimes/python-package.md), and TM-ISO-025 in the [Threat Model](security/threat-model.md).
