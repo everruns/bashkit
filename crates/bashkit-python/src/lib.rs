@@ -4070,20 +4070,96 @@ fn capture_custom_builtin_session(
     .map(Some)
 }
 
+/// Ordered log of host `set_env()` calls, replayed on rebuild.
+///
+/// A `Vec` rather than a map so replay follows call order. One entry per key:
+/// re-setting a key replaces its entry, which keeps last-write-wins semantics
+/// and bounds the log by distinct key count — a host that calls `set_env()` per
+/// request must not accumulate an entry per call.
+type RuntimeEnvLog = Arc<StdMutex<Vec<(String, String)>>>;
+
+/// Ordered log of host runtime mounts (vfs path + live filesystem), replayed on
+/// rebuild. The `Arc` is retained, so a replayed mount is the *same* filesystem,
+/// not a copy — writes made through it before the reset are still there after.
+type RuntimeMountLog = Arc<StdMutex<Vec<(String, Arc<dyn bashkit::FileSystem>)>>>;
+
+/// Record a host `set_env()` call for replay on the next rebuild.
+///
+/// A poisoned log is surfaced rather than swallowed: silently skipping the
+/// record would leave the caller believing a value survives `reset()` when it
+/// would not.
+fn record_runtime_env(log: &RuntimeEnvLog, key: &str, value: &str) -> PyResult<()> {
+    let mut entries = log
+        .lock()
+        .map_err(|_| PyRuntimeError::new_err("runtime env log poisoned"))?;
+    entries.retain(|(existing, _)| existing != key);
+    entries.push((key.to_string(), value.to_string()));
+    Ok(())
+}
+
+/// Record a host runtime mount for replay on the next rebuild.
+///
+/// A mount at an already-recorded path replaces that record: the live VFS keeps
+/// one filesystem per mount point, so the replay must too.
+fn record_runtime_mount(
+    log: &RuntimeMountLog,
+    vfs_path: &str,
+    fs: Arc<dyn bashkit::FileSystem>,
+) -> PyResult<()> {
+    let mut mounts = log
+        .lock()
+        .map_err(|_| PyRuntimeError::new_err("runtime mount log poisoned"))?;
+    mounts.retain(|(path, _)| path != vfs_path);
+    mounts.push((vfs_path.to_string(), fs));
+    Ok(())
+}
+
+/// Retract a recorded mount so `reset()` does not resurrect it after `unmount()`.
+fn forget_runtime_mount(log: &RuntimeMountLog, vfs_path: &str) -> PyResult<()> {
+    let mut mounts = log
+        .lock()
+        .map_err(|_| PyRuntimeError::new_err("runtime mount log poisoned"))?;
+    mounts.retain(|(path, _)| path != vfs_path);
+    Ok(())
+}
+
 fn replace_live_bash_with_builder(
     py: Python<'_>,
     rt: &Arc<Runtime>,
     inner: &Arc<Mutex<Bash>>,
     cancelled: &Arc<RwLock<Arc<AtomicBool>>>,
     builder: bashkit::BashBuilder,
+    runtime_env: &RuntimeEnvLog,
+    runtime_mounts: &RuntimeMountLog,
 ) -> PyResult<()> {
     let rt = rt.clone();
     let inner = inner.clone();
     let cancelled = cancelled.clone();
+    let replay_env = runtime_env
+        .lock()
+        .map(|entries| entries.clone())
+        .unwrap_or_default();
+    let replay_mounts = runtime_mounts
+        .lock()
+        .map(|mounts| mounts.clone())
+        .unwrap_or_default();
     py.detach(|| {
         rt.block_on(async move {
             let mut bash = inner.lock().await;
-            let rebuilt = builder.build();
+            let mut rebuilt = builder.build();
+            // Replay host mounts. A recorded mount was accepted once on a live
+            // instance; a failure here means the path is no longer mountable
+            // (e.g. shadowed by a constructor mount). Skipping keeps reset
+            // infallible, and the absent mount is observable, unlike a panic
+            // mid-rebuild.
+            for (vfs_path, fs) in &replay_mounts {
+                let _ = rebuilt.mount(Path::new(vfs_path), Arc::clone(fs));
+            }
+            // Host env goes last so it wins over constructor `env` for the same
+            // key, matching what happened on the live instance.
+            for (key, value) in &replay_env {
+                rebuilt.set_env(key, value);
+            }
             let token = rebuilt.cancellation_token();
             *bash = rebuilt;
             if let Ok(mut current) = cancelled.write() {
@@ -4402,6 +4478,16 @@ pub struct PyBash {
     /// Wrapped in `Arc<StdMutex<_>>` so post-construction registration works
     /// through `&self` like the rest of `PyBash`'s API.
     custom_builtins: Arc<StdMutex<Vec<PyCustomBuiltinEntry>>>,
+    /// Host mutations applied *after* construction — `set_env()` and `mount()`.
+    ///
+    /// THREAT[TM-ISO-025]: `reset()` must not silently drop host capabilities.
+    /// Constructor options are replayed from the fields above; recording the
+    /// runtime equivalents puts them on the same rebuild path, so a bundle of
+    /// setup installed on a live instance (mount + env + builtins) is whole
+    /// after a reset instead of half-applied. Script-set env is deliberately
+    /// *not* recorded — only what the host asked for survives.
+    runtime_env: RuntimeEnvLog,
+    runtime_mounts: RuntimeMountLog,
     /// Host-owned live registry of custom builtins. Cloned into the bashkit
     /// builder and retained here so post-construction registrations take
     /// effect without rebuilding the interpreter (and without disturbing the
@@ -4682,6 +4768,8 @@ impl PyBash {
             external_handler,
             external_handler_reentry_depth,
             custom_builtins: Arc::new(StdMutex::new(custom_builtins)),
+            runtime_env: Arc::new(StdMutex::new(Vec::new())),
+            runtime_mounts: Arc::new(StdMutex::new(Vec::new())),
             host_registry,
             builtin_engine,
             files,
@@ -4909,6 +4997,8 @@ impl PyBash {
             &self.inner,
             &self.cancelled,
             self.build_live_builder(py)?,
+            &self.runtime_env,
+            &self.runtime_mounts,
         )
     }
 
@@ -5330,16 +5420,21 @@ impl PyBash {
     }
 
     /// Mount a filesystem at `vfs_path` without rebuilding the interpreter.
+    ///
+    /// Recorded, so `reset()` replays it — see `runtime_mounts`.
     fn mount(&self, py: Python<'_>, vfs_path: String, fs: PyRef<'_, PyFileSystem>) -> PyResult<()> {
         self.reject_external_handler_reentry()?;
         let inner = self.inner.clone();
         let source = fs.inner.clone();
+        let runtime_mounts = self.runtime_mounts.clone();
         py.detach(|| {
             self.rt.block_on(async move {
                 let mounted_fs = source.resolve().await?;
                 let bash = inner.lock().await;
-                bash.mount(Path::new(&vfs_path), mounted_fs)
-                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+                bash.mount(Path::new(&vfs_path), Arc::clone(&mounted_fs))
+                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+                record_runtime_mount(&runtime_mounts, &vfs_path, mounted_fs)?;
+                Ok(())
             })
         })
     }
@@ -5348,11 +5443,34 @@ impl PyBash {
     fn unmount(&self, py: Python<'_>, vfs_path: String) -> PyResult<()> {
         self.reject_external_handler_reentry()?;
         let inner = self.inner.clone();
+        let runtime_mounts = self.runtime_mounts.clone();
         py.detach(|| {
             self.rt.block_on(async move {
                 let bash = inner.lock().await;
                 bash.unmount(Path::new(&vfs_path))
-                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+                forget_runtime_mount(&runtime_mounts, &vfs_path)?;
+                Ok(())
+            })
+        })
+    }
+
+    /// Set an exported environment variable on the live interpreter.
+    ///
+    /// The env counterpart to runtime `mount()`: usable after construction, so
+    /// a reusable setup bundle can apply mounts, env, and builtins to an
+    /// existing instance instead of only through the constructor. Survives
+    /// `reset()` — like custom builtins, and unlike env a *script* exported.
+    fn set_env(&self, py: Python<'_>, key: String, value: String) -> PyResult<()> {
+        self.reject_external_handler_reentry()?;
+        let inner = self.inner.clone();
+        let runtime_env = self.runtime_env.clone();
+        py.detach(|| {
+            self.rt.block_on(async move {
+                let mut bash = inner.lock().await;
+                bash.set_env(&key, &value);
+                record_runtime_env(&runtime_env, &key, &value)?;
+                Ok(())
             })
         })
     }
@@ -5417,6 +5535,16 @@ pub struct BashTool {
     /// Wrapped in `Arc<StdMutex<_>>` so post-construction registration works
     /// through `&self` like the rest of `BashTool`'s API.
     custom_builtins: Arc<StdMutex<Vec<PyCustomBuiltinEntry>>>,
+    /// Host mutations applied *after* construction — `set_env()` and `mount()`.
+    ///
+    /// THREAT[TM-ISO-025]: `reset()` must not silently drop host capabilities.
+    /// Constructor options are replayed from the fields above; recording the
+    /// runtime equivalents puts them on the same rebuild path, so a bundle of
+    /// setup installed on a live instance (mount + env + builtins) is whole
+    /// after a reset instead of half-applied. Script-set env is deliberately
+    /// *not* recorded — only what the host asked for survives.
+    runtime_env: RuntimeEnvLog,
+    runtime_mounts: RuntimeMountLog,
     /// Host-owned live registry of custom builtins; see [`PyBash::host_registry`].
     host_registry: BuiltinRegistry,
     builtin_engine: Arc<PyCallbackEngine>,
@@ -5656,6 +5784,8 @@ impl BashTool {
             cwd,
             env,
             custom_builtins: Arc::new(StdMutex::new(custom_builtins)),
+            runtime_env: Arc::new(StdMutex::new(Vec::new())),
+            runtime_mounts: Arc::new(StdMutex::new(Vec::new())),
             host_registry,
             builtin_engine,
             files,
@@ -5847,6 +5977,8 @@ impl BashTool {
             &self.inner,
             &self.cancelled,
             self.build_live_builder(py)?,
+            &self.runtime_env,
+            &self.runtime_mounts,
         )
     }
 
@@ -6144,15 +6276,35 @@ impl BashTool {
     }
 
     /// Mount a filesystem at `vfs_path` without rebuilding the interpreter.
+    ///
+    /// Recorded, so `reset()` replays it — see `runtime_mounts`.
     fn mount(&self, py: Python<'_>, vfs_path: String, fs: PyRef<'_, PyFileSystem>) -> PyResult<()> {
         let inner = self.inner.clone();
         let source = fs.inner.clone();
+        let runtime_mounts = self.runtime_mounts.clone();
         py.detach(|| {
             self.rt.block_on(async move {
                 let mounted_fs = source.resolve().await?;
                 let bash = inner.lock().await;
-                bash.mount(Path::new(&vfs_path), mounted_fs)
+                bash.mount(Path::new(&vfs_path), Arc::clone(&mounted_fs))
                     .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+                record_runtime_mount(&runtime_mounts, &vfs_path, mounted_fs)?;
+                Ok(())
+            })
+        })
+    }
+
+    /// Set an exported environment variable on the live interpreter.
+    ///
+    /// See `Bash.set_env`. Survives `reset()`.
+    fn set_env(&self, py: Python<'_>, key: String, value: String) -> PyResult<()> {
+        let inner = self.inner.clone();
+        let runtime_env = self.runtime_env.clone();
+        py.detach(|| {
+            self.rt.block_on(async move {
+                let mut bash = inner.lock().await;
+                bash.set_env(&key, &value);
+                record_runtime_env(&runtime_env, &key, &value)?;
                 Ok(())
             })
         })
@@ -6161,11 +6313,13 @@ impl BashTool {
     /// Unmount a live filesystem without rebuilding the interpreter.
     fn unmount(&self, py: Python<'_>, vfs_path: String) -> PyResult<()> {
         let inner = self.inner.clone();
+        let runtime_mounts = self.runtime_mounts.clone();
         py.detach(|| {
             self.rt.block_on(async move {
                 let bash = inner.lock().await;
                 bash.unmount(Path::new(&vfs_path))
                     .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+                forget_runtime_mount(&runtime_mounts, &vfs_path)?;
                 Ok(())
             })
         })

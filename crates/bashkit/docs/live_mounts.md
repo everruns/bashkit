@@ -130,6 +130,43 @@ denied.
 Both approaches can be combined: configure initial mounts with the builder, then
 add/remove mounts at runtime.
 
+## Live Environment
+
+[`Bash::set_env`] is the environment counterpart to a live mount: it applies an
+exported variable to a running interpreter, preserving shell state the same way.
+Together they let a host apply a *bundle* of setup — mount, env, and builtins —
+to an existing instance, rather than only through the builder:
+
+```rust
+# use bashkit::{Bash, FileSystem, InMemoryFs};
+# use std::path::Path;
+# use std::sync::Arc;
+# #[tokio::main]
+# async fn main() -> bashkit::Result<()> {
+let mut bash = Bash::new();
+
+let skill_fs = Arc::new(InMemoryFs::new());
+skill_fs.write_file(Path::new("/SKILL.md"), b"# my-skill\n").await?;
+
+bash.mount("/skills/my-skill", skill_fs)?;
+bash.set_env("SKILL_PATH", "/skills/my-skill");
+
+let result = bash.exec(r#"cat "$SKILL_PATH/SKILL.md""#).await?;
+assert_eq!(result.stdout, "# my-skill\n");
+# Ok(())
+# }
+```
+
+The variable is exported, so scripts read it as `$NAME` and child contexts see it
+in `env`. A later script assignment wins; call `set_env` again to reassert the
+host value.
+
+In the JavaScript and Python bindings the equivalents are `setEnv` and
+`set_env`, and both bindings additionally *replay* host `setEnv`/`mount` calls
+across `reset()` — a rebuilt instance keeps the setup the host applied, while
+env a script exported is still discarded. The Rust core has no `reset()`;
+rebuilding is the embedder's own `BashBuilder` call.
+
 Files and symlinks can be copied or moved across live mount boundaries. A move
 snapshots the previous destination and restores it if copying or source removal
 fails. Directories and FIFOs remain unsupported across mount boundaries.
@@ -204,4 +241,5 @@ assert_eq!(result.stdout, "2.0");
 - [`BashBuilder::readonly_filesystem`] — deny all VFS mutations after setup
 - [`BashBuilder::fs`] — custom filesystem injection
 - [`Bash::fs`] — direct filesystem access
+- [`Bash::set_env`] — live environment on a running instance
 - [VFS specification](https://github.com/everruns/bashkit/blob/main/knowledge/foundations/vfs.md)

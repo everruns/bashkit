@@ -308,6 +308,30 @@ bash.restoreSnapshotKeyed(data: Uint8Array, key: Uint8Array): void
 
 Restore interpreter state from a HMAC-protected snapshot.
 
+### `setEnv`
+
+```typescript
+bash.setEnv(key: string, value: string): void
+```
+
+Set an exported environment variable on the live interpreter.
+
+The env counterpart to runtime `Bash.mount` — usable after
+construction, so a reusable setup bundle (mount + env + builtins) can be
+applied to an existing instance instead of only through
+`BashOptions`. Scripts see it as `$NAME`; child contexts see it in
+`env`. A later script assignment wins.
+
+Survives `reset()`, like `customBuiltins` and unlike env a *script*
+exported: only host-set values are replayed on rebuild.
+
+```typescript
+const bash = new Bash();
+bash.mount("/skills/my-skill", skillFs);
+bash.setEnv("SKILL_PATH", "/skills/my-skill");
+await bash.execute('cat "$SKILL_PATH/SKILL.md"');
+```
+
 ### `shellState`
 
 ```typescript
@@ -720,6 +744,14 @@ bashTool.restoreSnapshotKeyed(data: Uint8Array, key: Uint8Array): void
 ```
 
 Restore interpreter state from a HMAC-protected snapshot.
+
+### `setEnv`
+
+```typescript
+bashTool.setEnv(key: string, value: string): void
+```
+
+Set an exported environment variable. See `Bash.setEnv`.
 
 ### `shellState`
 

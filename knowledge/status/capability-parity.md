@@ -27,6 +27,7 @@ A dash means the feature is intentionally unsupported and has a recorded reason 
 | Bounded stdout and stderr with truncation reporting | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Initial virtual working directory | ✅ | ✅ | — | — | ✅ | ✅ | ✅ | ✅ |
 | Initial virtual environment | ✅ | ✅ | ✅ | — | ✅ | ✅ | ✅ | ✅ |
+| Host environment applied after construction | ✅ | — | — | — | ✅ | ✅ | — | — |
 | Host-provided stdin for an execution | ✅ | — | ✅ | ✅ | — | — | — | — |
 | Host callbacks registered as shell builtins | ✅ | ✅ | — | — | ✅ | ✅ | ✅ | — |
 | Host-visible process-local builtin suspension and resume | ✅ | — | — | — | — | — | — | — |
@@ -48,6 +49,7 @@ A dash means the feature is intentionally unsupported and has a recorded reason 
 
 ### Rust BashTool
 
+- `runtime_env`: BashTool builds a fresh Bash per execution, so there is no live instance to mutate; env is configured on the builder.
 - `cancellation`: ToolExecution has no host cancellation handle; callers can drop the future or set a deadline.
 - `stdin`: ToolRequest accepts commands and timeout_ms only; scripts can still create internal pipelines.
 - `host_call_suspension`: BashTool drives each fresh Bash execution to completion and exposes no event handle.
@@ -56,6 +58,7 @@ A dash means the feature is intentionally unsupported and has a recorded reason 
 
 ### Rust ScriptedTool
 
+- `runtime_env`: Each execution uses a fresh logic-only shell; env is configured before the run.
 - `cancellation`: No cancellation handle is exposed; per-call timeout_ms is the abort boundary.
 - `cwd`: ScriptedTool intentionally uses a logic-only shell without filesystem-backed cwd configuration.
 - `custom_builtins`: Only registered ToolDef callbacks become commands; arbitrary Bash builtins are not accepted.
@@ -71,6 +74,7 @@ A dash means the feature is intentionally unsupported and has a recorded reason 
 
 ### CLI
 
+- `runtime_env`: The CLI owns the shell lifecycle end to end and exposes no post-construction host API.
 - `cancellation`: No programmatic cancellation API exists at the process boundary.
 - `cwd`: The CLI exposes no initial virtual-cwd flag.
 - `env`: The CLI deliberately does not inherit or expose host environment injection flags.
@@ -97,6 +101,7 @@ A dash means the feature is intentionally unsupported and has a recorded reason 
 
 ### Browser WASM
 
+- `runtime_env`: The slim wasm package exposes no post-construction host mutation API; env is construction-only.
 - `stdin`: execute() accepts only a command string; pipelines still provide builtin stdin.
 - `host_call_suspension`: Browser custom builtins await JavaScript callbacks directly; no request and resume handle is exposed.
 - `tool_callbacks`: The slim browser package exposes custom builtins but no ScriptedTool class.
@@ -109,6 +114,7 @@ A dash means the feature is intentionally unsupported and has a recorded reason 
 
 ### C ABI
 
+- `runtime_env`: The C ABI exposes no post-construction configuration surface.
 - `cancellation`: ABI v1 exposes synchronous execute with no cancellation handle.
 - `stdin`: ABI v1 execute accepts script bytes only.
 - `custom_builtins`: ABI v1 has no callback registration table.
