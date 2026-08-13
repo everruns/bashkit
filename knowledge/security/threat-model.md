@@ -1450,6 +1450,12 @@ This section documents the security tools used to detect and prevent vulnerabili
 **cargo-audit** scans `Cargo.lock` against the RustSec Advisory Database; **cargo-geiger**
 (`--all-features`) tracks unsafe code usage to keep it minimal and audited.
 
+The repository holds **two** cargo lockfiles: the workspace root and
+`crates/bashkit/fuzz/Cargo.lock`, which is a separate workspace. CI audits both
+explicitly — a root-only scan leaves the fuzz lockfile unscanned, and Dependabot
+needs its own `directory: /crates/bashkit/fuzz` entry to keep it current. Adding
+a third workspace means adding it to both lists.
+
 ### Dynamic Analysis Tools
 
 | Tool | Purpose | CI Integration | Frequency |
@@ -1476,7 +1482,7 @@ parser and interpreter; **Miri** (`cargo +nightly miri test --lib`) detects UB i
 |------|---------|----------------|
 | **cargo-audit** | Known CVE detection | ✅ Required |
 | **cargo-deny** | License compliance | ✅ Required |
-| **Dependabot** | Automated dependency updates | GitHub-native |
+| **Dependabot** | Automated dependency updates | GitHub-native (one entry per workspace: `/` and `/crates/bashkit/fuzz`) |
 
 #### Suppressed advisories
 
