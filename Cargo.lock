@@ -413,7 +413,7 @@ dependencies = [
  "jaq-std",
  "md-5",
  "monty",
- "monty-types",
+ "monty-types 0.0.21",
  "num-traits",
  "os_display",
  "pretty_assertions",
@@ -961,7 +961,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1525,7 +1525,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2928,8 +2928,8 @@ dependencies = [
  "itoa",
  "jiter",
  "libm",
- "monty-macros",
- "monty-types",
+ "monty-macros 0.0.19",
+ "monty-types 0.0.19",
  "num-bigint",
  "num-integer",
  "num-traits",
@@ -2959,13 +2959,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "monty-macros"
+version = "0.0.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "40ed428288161f63d2bec7929438563fe31390f08e014e58ce20be96d7ef82ee"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "monty-types"
 version = "0.0.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a8988fa8d9902432d5e685a7bb97c84844022dd9560e796c00b119a4c27519b"
 dependencies = [
  "chrono",
- "monty-macros",
+ "monty-macros 0.0.19",
+ "num-bigint",
+ "num-traits",
+ "serde",
+ "strum 0.27.2",
+ "unicode-general-category",
+ "web-time",
+]
+
+[[package]]
+name = "monty-types"
+version = "0.0.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "00b4b3318107fee36c5eee05c52f16f6565a63aa29d04f8608ebc221e3fe5dd8"
+dependencies = [
+ "chrono",
+ "monty-macros 0.0.21",
  "num-bigint",
  "num-traits",
  "serde",
@@ -4521,7 +4548,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4578,7 +4605,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5314,7 +5341,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6125,7 +6152,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
