@@ -106,7 +106,7 @@ os_display = "0.1.3"
 # Registry dep since monty 0.0.19 — the first version published to crates.io.
 # Keeps `python` usable for downstream crates and lets the publish workflow
 # ship the feature instead of stripping it.
-monty = { version = "0.0.19", optional = true }
+monty = { version = "0.0.21", optional = true }
 monty-types = { version = "0.0.19", optional = true }
 
 # Embedded TypeScript interpreter (optional)
