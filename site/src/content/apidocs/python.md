@@ -532,6 +532,37 @@ Example:
 >>> bash.unmount("/mnt/ext")
 ```
 
+### `set_env`
+
+```python
+Bash.set_env(key: str, value: str) -> None
+```
+
+Set an exported environment variable on the live interpreter.
+
+The env counterpart to :meth:`mount` — usable after construction, so a
+reusable setup bundle (mount + env + builtins) can be applied to an
+existing instance instead of only through the constructor. Scripts see
+it as ``$NAME``; child contexts see it in ``env``. A later script
+assignment wins.
+
+Survives :meth:`reset`, like custom builtins and unlike env a *script*
+exported: only host-set values are replayed on rebuild.
+
+**Parameters:**
+
+- **`key`** — Variable name.
+- **`value`** — Variable value.
+
+Example:
+
+```python
+>>> bash = Bash()
+>>> bash.set_env("SKILL_PATH", "/skills/my-skill")
+>>> bash.execute_sync("echo $SKILL_PATH").stdout
+'/skills/my-skill\n'
+```
+
 ## BashTool
 
 Sandboxed bash interpreter for AI agents.
@@ -1074,6 +1105,25 @@ Example:
 >>> ext = FileSystem()
 >>> tool.mount("/mnt/ext", ext)
 >>> tool.unmount("/mnt/ext")
+```
+
+### `set_env`
+
+```python
+BashTool.set_env(key: str, value: str) -> None
+```
+
+Set an exported environment variable. See :meth:`Bash.set_env`.
+
+Survives :meth:`reset`.
+
+Example:
+
+```python
+>>> tool = BashTool()
+>>> tool.set_env("SKILL_PATH", "/skills/my-skill")
+>>> tool.execute_sync("echo $SKILL_PATH").stdout
+'/skills/my-skill\n'
 ```
 
 ## ScriptedTool
