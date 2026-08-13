@@ -1590,8 +1590,10 @@ struct SharedState {
 
 /// Ordered log of host `setEnv()` calls, replayed on rebuild.
 ///
-/// A `Vec` rather than a map: replay order is the call order, so the last write
-/// to a key wins exactly as it did on the live instance.
+/// A `Vec` rather than a map so replay follows call order. One entry per key:
+/// re-setting a key replaces its entry, which keeps last-write-wins semantics
+/// and bounds the log by distinct key count — a host that calls `setEnv()` per
+/// request must not accumulate an entry per call.
 type RuntimeEnvLog = Arc<std::sync::Mutex<Vec<(String, String)>>>;
 
 /// Ordered log of host runtime mounts, replayed on rebuild.
@@ -1628,6 +1630,7 @@ impl RuntimeMount {
 /// Record a host `setEnv()` call for replay on the next rebuild.
 fn record_runtime_env(log: &RuntimeEnvLog, key: &str, value: &str) {
     let mut entries = log.lock().expect("runtime env log poisoned");
+    entries.retain(|(existing, _)| existing != key);
     entries.push((key.to_string(), value.to_string()));
 }
 

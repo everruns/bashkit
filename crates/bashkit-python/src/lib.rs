@@ -4072,8 +4072,10 @@ fn capture_custom_builtin_session(
 
 /// Ordered log of host `set_env()` calls, replayed on rebuild.
 ///
-/// A `Vec` rather than a map: replay order is the call order, so the last write
-/// to a key wins exactly as it did on the live instance.
+/// A `Vec` rather than a map so replay follows call order. One entry per key:
+/// re-setting a key replaces its entry, which keeps last-write-wins semantics
+/// and bounds the log by distinct key count — a host that calls `set_env()` per
+/// request must not accumulate an entry per call.
 type RuntimeEnvLog = Arc<StdMutex<Vec<(String, String)>>>;
 
 /// Ordered log of host runtime mounts (vfs path + live filesystem), replayed on
@@ -4082,28 +4084,43 @@ type RuntimeEnvLog = Arc<StdMutex<Vec<(String, String)>>>;
 type RuntimeMountLog = Arc<StdMutex<Vec<(String, Arc<dyn bashkit::FileSystem>)>>>;
 
 /// Record a host `set_env()` call for replay on the next rebuild.
-fn record_runtime_env(log: &RuntimeEnvLog, key: &str, value: &str) {
-    if let Ok(mut entries) = log.lock() {
-        entries.push((key.to_string(), value.to_string()));
-    }
+///
+/// A poisoned log is surfaced rather than swallowed: silently skipping the
+/// record would leave the caller believing a value survives `reset()` when it
+/// would not.
+fn record_runtime_env(log: &RuntimeEnvLog, key: &str, value: &str) -> PyResult<()> {
+    let mut entries = log
+        .lock()
+        .map_err(|_| PyRuntimeError::new_err("runtime env log poisoned"))?;
+    entries.retain(|(existing, _)| existing != key);
+    entries.push((key.to_string(), value.to_string()));
+    Ok(())
 }
 
 /// Record a host runtime mount for replay on the next rebuild.
 ///
 /// A mount at an already-recorded path replaces that record: the live VFS keeps
 /// one filesystem per mount point, so the replay must too.
-fn record_runtime_mount(log: &RuntimeMountLog, vfs_path: &str, fs: Arc<dyn bashkit::FileSystem>) {
-    if let Ok(mut mounts) = log.lock() {
-        mounts.retain(|(path, _)| path != vfs_path);
-        mounts.push((vfs_path.to_string(), fs));
-    }
+fn record_runtime_mount(
+    log: &RuntimeMountLog,
+    vfs_path: &str,
+    fs: Arc<dyn bashkit::FileSystem>,
+) -> PyResult<()> {
+    let mut mounts = log
+        .lock()
+        .map_err(|_| PyRuntimeError::new_err("runtime mount log poisoned"))?;
+    mounts.retain(|(path, _)| path != vfs_path);
+    mounts.push((vfs_path.to_string(), fs));
+    Ok(())
 }
 
 /// Retract a recorded mount so `reset()` does not resurrect it after `unmount()`.
-fn forget_runtime_mount(log: &RuntimeMountLog, vfs_path: &str) {
-    if let Ok(mut mounts) = log.lock() {
-        mounts.retain(|(path, _)| path != vfs_path);
-    }
+fn forget_runtime_mount(log: &RuntimeMountLog, vfs_path: &str) -> PyResult<()> {
+    let mut mounts = log
+        .lock()
+        .map_err(|_| PyRuntimeError::new_err("runtime mount log poisoned"))?;
+    mounts.retain(|(path, _)| path != vfs_path);
+    Ok(())
 }
 
 fn replace_live_bash_with_builder(
@@ -5416,7 +5433,7 @@ impl PyBash {
                 let bash = inner.lock().await;
                 bash.mount(Path::new(&vfs_path), Arc::clone(&mounted_fs))
                     .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-                record_runtime_mount(&runtime_mounts, &vfs_path, mounted_fs);
+                record_runtime_mount(&runtime_mounts, &vfs_path, mounted_fs)?;
                 Ok(())
             })
         })
@@ -5432,7 +5449,7 @@ impl PyBash {
                 let bash = inner.lock().await;
                 bash.unmount(Path::new(&vfs_path))
                     .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-                forget_runtime_mount(&runtime_mounts, &vfs_path);
+                forget_runtime_mount(&runtime_mounts, &vfs_path)?;
                 Ok(())
             })
         })
@@ -5452,7 +5469,7 @@ impl PyBash {
             self.rt.block_on(async move {
                 let mut bash = inner.lock().await;
                 bash.set_env(&key, &value);
-                record_runtime_env(&runtime_env, &key, &value);
+                record_runtime_env(&runtime_env, &key, &value)?;
                 Ok(())
             })
         })
@@ -6271,7 +6288,7 @@ impl BashTool {
                 let bash = inner.lock().await;
                 bash.mount(Path::new(&vfs_path), Arc::clone(&mounted_fs))
                     .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-                record_runtime_mount(&runtime_mounts, &vfs_path, mounted_fs);
+                record_runtime_mount(&runtime_mounts, &vfs_path, mounted_fs)?;
                 Ok(())
             })
         })
@@ -6287,7 +6304,7 @@ impl BashTool {
             self.rt.block_on(async move {
                 let mut bash = inner.lock().await;
                 bash.set_env(&key, &value);
-                record_runtime_env(&runtime_env, &key, &value);
+                record_runtime_env(&runtime_env, &key, &value)?;
                 Ok(())
             })
         })
@@ -6302,7 +6319,7 @@ impl BashTool {
                 let bash = inner.lock().await;
                 bash.unmount(Path::new(&vfs_path))
                     .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-                forget_runtime_mount(&runtime_mounts, &vfs_path);
+                forget_runtime_mount(&runtime_mounts, &vfs_path)?;
                 Ok(())
             })
         })
