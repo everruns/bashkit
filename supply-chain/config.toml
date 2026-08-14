@@ -1143,15 +1143,15 @@ version = "0.2.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.monty]]
-version = "0.0.19"
+version = "0.0.21"
 criteria = "safe-to-deploy"
 
 [[exemptions.monty-macros]]
-version = "0.0.19"
+version = "0.0.21"
 criteria = "safe-to-deploy"
 
 [[exemptions.monty-types]]
-version = "0.0.19"
+version = "0.0.21"
 criteria = "safe-to-deploy"
 
 [[exemptions.napi]]

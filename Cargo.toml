@@ -164,22 +164,18 @@ inherits = "release"
 lto = "fat"
 codegen-units = 1
 
-# Important decision (security): pin `jiter` to upstream main so the whole
-# workspace can run pyo3 0.29, which fixes GHSA-36hh-v3qg-5jq4 (high, OOB read
-# in PyList/PyTuple iterators) and GHSA-chgr-c6px-7xpp (missing `Sync` bound)
-# in the bashkit-python extension.
+# Important decision (security): the workspace runs pyo3 0.29, which fixes
+# GHSA-36hh-v3qg-5jq4 (high, OOB read in PyList/PyTuple iterators) and
+# GHSA-chgr-c6px-7xpp (missing `Sync` bound) in the bashkit-python extension.
 #
-# Blocker: `monty 0.0.19` -> `jiter ^0.15.0` and jiter 0.15.0 declares an
-# optional `pyo3 = "^0.28.2"` (jiter 0.16.0 moved to pyo3 0.29 but is outside
-# monty's range).
-# Although jiter's `python` feature is never activated here (monty only enables
-# `num-bigint`), the weak `pyo3?/num-bigint` reference plus pyo3-ffi's
-# `links = "python"` global uniqueness force the resolver to honour jiter's
-# 0.28 constraint, pinning the whole graph below pyo3 0.29.
+# This used to require a `[patch.crates-io]` pin of `jiter` to upstream main:
+# `monty 0.0.19` -> `jiter ^0.15.0`, and jiter 0.15.0 declared an optional
+# `pyo3 = "^0.28.2"` that dragged the whole graph below pyo3 0.29 (the weak
+# `pyo3?/num-bigint` reference plus pyo3-ffi's `links = "python"` global
+# uniqueness force the resolver to honour it even though jiter's `python`
+# feature is never activated here).
 #
-# jiter `main` is still version 0.15.0 (semver-compatible with monty's
-# `^0.15.0`) but already bumped its pyo3 dependency to 0.29, so this patch
-# unblocks the upgrade without a fork. Drop it once monty ships a release that
-# tracks a published jiter with pyo3 0.29.
-[patch.crates-io]
-jiter = { git = "https://github.com/pydantic/jiter", rev = "6d57715e01ec78859c62fc5447073c0b5902de39" }
+# `monty 0.0.21` tracks the published `jiter 0.16.0`, which is already on
+# pyo3 0.29, so the patch is no longer needed and has been dropped. Keep
+# monty and monty-types on the same version — a split leaves two
+# `monty-types` in the graph and its result types stop unifying.

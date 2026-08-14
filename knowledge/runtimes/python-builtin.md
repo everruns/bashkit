@@ -72,11 +72,25 @@ allocation-count knob — Monty removed `max_allocations` in 0.0.19.
 
 Each Python entry also consumes the request-scoped `ExecutionBudget`: source
 bytes are charged as aggregate input, configured memory contributes a
-conservative non-refundable admission reservation, and Monty's time/allocation
-checkpoints consume shared work units. VFS pauses and external host calls keep
-the same budget clone. Re-entering Python from a later command, substitution,
-or pipeline stage therefore cannot obtain fresh aggregate fuel; Monty's limits
+conservative non-refundable admission reservation, and each host round-trip in
+the start/resume loop consumes shared work units (one per VFS pause, 100 per
+external function call). VFS pauses and external host calls keep the same
+budget clone. Re-entering Python from a later command, substitution, or
+pipeline stage therefore cannot obtain fresh aggregate fuel; Monty's limits
 remain independently enforced.
+
+Monty 0.0.21 replaced the host-implementable `ResourceTracker` trait (and the
+`LimitedTracker` impl) with a concrete struct, so Bashkit can no longer charge
+the shared budget from *inside* the VM's allocation/statement checkpoints; the
+former `BudgetTracker` wrapper is gone and no replacement hook exists upstream.
+This matches how the TypeScript builtin has always driven the budget. Nothing
+that bounds a runaway script changed: before the VM starts, Monty's
+`max_duration` is clamped to the caller's remaining execution deadline, and
+Monty's own tracker still enforces that duration plus `max_memory` and the
+recursion ceiling synchronously. A CPU-bound script that never re-enters the
+host loop is therefore still stopped by the clamped deadline — only the
+finer-grained work-unit accounting for such a script is lost, and the up-front
+memory-proportional reservation approximates it.
 
 Since Monty 0.0.4 the parser also enforces a nesting-depth limit (200
 release / 35 debug) against stack overflow from deeply nested expressions.

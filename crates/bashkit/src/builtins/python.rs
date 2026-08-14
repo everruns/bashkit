@@ -23,11 +23,10 @@ use async_trait::async_trait;
 use chrono::{Datelike, Timelike};
 use monty::{MontyRun, RunProgress};
 use monty_types::{
-    CompileOptions, ExcType, ExtFunctionResult, FileMode, LimitedTracker, MontyDate, MontyDateTime,
-    MontyException, MontyFileHandle, MontyObject, NameLookupResult, OsFunctionCall, PrintWriter,
-    ResourceError, ResourceLimits, ResourceTracker, dir_stat, file_stat, symlink_stat,
+    CompileOptions, ExcType, ExtFunctionResult, FileMode, MontyDate, MontyDateTime, MontyException,
+    MontyFileHandle, MontyObject, NameLookupResult, OsFunctionCall, PrintWriter, ResourceLimits,
+    ResourceTracker, dir_stat, file_stat, symlink_stat,
 };
-use std::cell::Cell;
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -50,85 +49,28 @@ const DISABLED_STDLIB_MODULES: &[&str] = &["re"];
 // sandboxed code cannot fingerprint host clock/timezone state.
 const VIRTUAL_NOW_UNIX_SECS: i64 = 1_704_067_200; // 2024-01-01T00:00:00Z
 
-/// Bridges Monty's statement/allocation checkpoints into the shared request
-/// budget while retaining Monty's own memory/time/recursion ceilings.
-#[derive(Debug)]
-struct BudgetTracker {
-    runtime: LimitedTracker,
-    execution: Option<crate::limits::ExecutionBudget>,
-    vm_checkpoints: Cell<u64>,
-}
-
-impl BudgetTracker {
-    fn budget_error(err: crate::limits::LimitExceeded) -> ResourceError {
-        // Monty's tracker error type has no host-defined variant. The shared
-        // budget retains the precise poisoned reason; use an uncatchable
-        // memory error only to stop the VM at this checkpoint.
-        let _ = err;
-        ResourceError::Memory { limit: 0, used: 1 }
-    }
-
-    fn consume_work(&self) -> std::result::Result<(), ResourceError> {
-        if let Some(budget) = &self.execution {
-            budget.consume_work(1).map_err(Self::budget_error)?;
-        }
-        Ok(())
-    }
-
-    fn check_vm(&self) -> std::result::Result<(), ResourceError> {
-        if let Some(budget) = &self.execution {
-            budget.check().map_err(Self::budget_error)?;
-            let checkpoints = self.vm_checkpoints.get().wrapping_add(1);
-            self.vm_checkpoints.set(checkpoints);
-            if checkpoints.is_multiple_of(64) {
-                budget.consume_work(1).map_err(Self::budget_error)?;
-            }
-        }
-        Ok(())
-    }
-}
-
-impl ResourceTracker for BudgetTracker {
-    fn on_free(&self, get_size: impl FnOnce() -> usize) {
-        self.runtime.on_free(get_size);
-    }
-
-    fn check_time(&self) -> std::result::Result<(), ResourceError> {
-        self.check_vm()?;
-        self.runtime.check_time()
-    }
-
-    fn check_recursion_depth(
-        &self,
-        current_depth: usize,
-    ) -> std::result::Result<(), ResourceError> {
-        self.runtime.check_recursion_depth(current_depth)
-    }
-
-    fn check_large_result(&self, estimated_bytes: usize) -> std::result::Result<(), ResourceError> {
-        self.runtime.check_large_result(estimated_bytes)
-    }
-
-    fn on_grow(
-        &self,
-        additional_bytes: impl FnOnce() -> usize,
-    ) -> std::result::Result<(), ResourceError> {
-        self.consume_work()?;
-        self.runtime.on_grow(additional_bytes)
-    }
-
-    fn gc_interval(&self) -> Option<usize> {
-        self.runtime.gc_interval()
-    }
-
-    fn on_execution_start(&self) {
-        self.runtime.on_execution_start();
-    }
-
-    fn on_execution_stop(&self) {
-        self.runtime.on_execution_stop();
-    }
-}
+// Important decision (security): Monty 0.0.21 turned `ResourceTracker` from a
+// host-implementable trait into a concrete struct, deleting `LimitedTracker`.
+// Bashkit used to wrap it in a `BudgetTracker` that charged the shared
+// `ExecutionBudget` from inside the VM's own allocation/statement checkpoints.
+// There is no replacement hook in 0.0.21, so that per-checkpoint charging is
+// gone and the shared budget is now driven the same way the TypeScript builtin
+// (which never had an in-VM hook) drives it:
+//
+//   * up front, before the VM starts — input bytes, code size, and a reserve
+//     proportional to the VM's independent memory ceiling, so repeated
+//     invocations cannot each claim a fresh full allowance;
+//   * per host round-trip in the start/resume loop — one unit per OS call,
+//     100 per external function call.
+//
+// The containment properties that matter are unchanged, because they were
+// never the tracker's job: `max_duration` is clamped to the caller's remaining
+// execution deadline before the VM starts (see `Builtin::execute` below), and
+// Monty's own `ResourceTracker` still enforces that duration plus `max_memory`
+// and the recursion ceiling synchronously. A CPU-bound script that never
+// re-enters the host loop is therefore still stopped by the clamped deadline;
+// what is lost is only the finer-grained *work-unit* accounting for such a
+// script, which the up-front reserve approximates.
 const VIRTUAL_NOW_NANOS: u32 = 123_456_000; // 123456 µs for deterministic microseconds
 
 const PYTHON_INPROCESS_OPT_IN_ENV: &str = "BASHKIT_ALLOW_INPROCESS_PYTHON";
@@ -625,16 +567,15 @@ async fn run_python(
         Err(e) => return Ok(format_exception(e)),
     };
 
-    let limits = ResourceLimits::new()
+    let limits = ResourceLimits::default()
         .max_duration(py_limits.common.max_duration)
         .max_memory(py_limits.common.max_memory)
-        .max_recursion_depth(Some(py_limits.common.max_call_depth));
+        .max_recursion_depth(py_limits.common.max_call_depth);
 
-    let tracker = BudgetTracker {
-        runtime: LimitedTracker::new(limits),
-        execution: execution_budget.clone(),
-        vm_checkpoints: Cell::new(0),
-    };
+    // See the decision note at the top of this file: Monty 0.0.21 dropped the
+    // host-implementable tracker trait, so the shared budget is charged up
+    // front and per host round-trip instead of per VM checkpoint.
+    let tracker = ResourceTracker::new(limits);
     // Important security decision: cap collected print output at the same
     // memory budget as the VM heap. Monty 0.0.19 added a byte cap on
     // `PrintWriter::CollectString` because a `while True: print(...)` loop

@@ -185,6 +185,33 @@ async fn repeated_python_entries_share_runtime_admission_budget() {
     );
 }
 
+#[cfg(feature = "python")]
+#[tokio::test]
+/// TM-DOS-096: a VFS-heavy Python loop must still exhaust shared work units.
+///
+/// Monty 0.0.21 removed the host-implementable `ResourceTracker` trait, so
+/// Bashkit no longer charges the budget from inside the VM's own allocation
+/// checkpoints; the start/resume loop's per-round-trip charging is what
+/// remains. Each `open()` suspends the VM into an OsCall, so a loop of them
+/// must still drain the budget — this fails if that charging is ever dropped.
+async fn python_vfs_round_trips_consume_shared_work_budget() {
+    let limits = ExecutionLimits::new()
+        .max_work_units(2_000_000)
+        .max_aggregate_input_bytes(100_000);
+    let mut bash = Bash::builder()
+        .limits(limits)
+        .python()
+        .env("BASHKIT_ALLOW_INPROCESS_PYTHON", "1")
+        .build();
+
+    assert_budget_exhausted(
+        bash.exec(
+            "python -c '\nfor i in range(100000):\n    f = open(\"/tmp/x\", \"w\")\n    f.write(\"a\")\n    f.close()\n'",
+        )
+        .await,
+    );
+}
+
 #[cfg(feature = "typescript")]
 #[tokio::test]
 /// TM-DOS-096: separate TypeScript entries cannot refresh allocation fuel.
