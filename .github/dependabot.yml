@@ -38,6 +38,18 @@ updates:
         update-types:
           - "version-update:semver-major"
           - "version-update:semver-minor"
+      # monty/monty-types are held at 0.0.19 for a security reason, not just an
+      # API-churn one. 0.0.21 replaced host-side memory accounting with a probe
+      # of globals that only the `monty-alloc` global allocator writes, so an
+      # embedder that cannot install a process-wide allocator — which bashkit,
+      # as a library and a CPython extension module, cannot — silently loses the
+      # Python sandbox's `max_memory` ceiling. Four threat-model regression
+      # tests fail on the bump. Without these entries dependabot reopens the
+      # same broken PR every week (#2296, #2297).
+      # Drop the ignores once monty exposes an embedder-usable memory bound;
+      # see knowledge/runtimes/python-builtin.md § Upgrade blocker.
+      - dependency-name: "monty"
+      - dependency-name: "monty-types"
 
   # Fuzz targets are a separate cargo workspace with their own lockfile, so the
   # "/" entry above never touches them. Without this the fuzz lockfile silently
