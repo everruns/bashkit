@@ -106,6 +106,20 @@ os_display = "0.1.3"
 # Registry dep since monty 0.0.19 — the first version published to crates.io.
 # Keeps `python` usable for downstream crates and lets the publish workflow
 # ship the feature instead of stripping it.
+#
+# Important decision (security): held at 0.0.19. Cargo treats `0.0.z` as its own
+# compatibility range (`^0.0.19` == `>=0.0.19, <0.0.20`), so this is already an
+# exact pin; the matching `ignore` entries in .github/dependabot.yml stop the
+# bump PRs from being regenerated.
+#
+# 0.0.21 moves `max_memory` enforcement from host-side accounting to a probe of
+# the `LIVE_MEMORY`/`BASELINE_MEMORY` globals, which only the separate
+# `monty-alloc` crate writes — and only when installed as the process-wide
+# global allocator. Bashkit is an embeddable library (and bashkit-python is a
+# CPython extension module), so it cannot impose a global allocator on its
+# hosts. Without one, `probe_memory()` is `0.saturating_sub(usize::MAX)` == 0
+# and the Python sandbox's memory ceiling silently stops being enforced.
+# See knowledge/runtimes/python-builtin.md § Upgrade blocker.
 monty = { version = "0.0.19", optional = true }
 monty-types = { version = "0.0.19", optional = true }
 

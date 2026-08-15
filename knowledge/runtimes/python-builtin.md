@@ -81,6 +81,62 @@ remain independently enforced.
 Since Monty 0.0.4 the parser also enforces a nesting-depth limit (200
 release / 35 debug) against stack overflow from deeply nested expressions.
 
+### Upgrade blocker: Monty is held at 0.0.19
+
+`monty` and `monty-types` are pinned to 0.0.19 and ignored in
+`.github/dependabot.yml`. This is a security hold, not API-churn convenience.
+
+Monty 0.0.21 changed how `max_memory` is enforced:
+
+| | 0.0.19 | 0.0.21 |
+|---|---|---|
+| Enforcement | `LimitedTracker::on_grow` accounts VM heap growth in-process | `probe_memory()` reads the `LIVE_MEMORY` / `BASELINE_MEMORY` statics |
+| Who populates it | the tracker itself | only `monty-alloc`, installed as the **process-wide global allocator** |
+| Embedder needs | nothing | to own the host's global allocator |
+
+Neither `monty` nor `monty-types` depends on `monty-alloc`. When it is absent
+the statics keep their initial values and `probe_memory()` evaluates to
+`0.saturating_sub(usize::MAX)` == 0, so `check_allocation` — and therefore both
+`max_memory` and `check_large_result` — can never trip. The ceiling is not
+merely weakened; it is silently unenforced, with no error or warning.
+
+Bashkit cannot supply the missing allocator. It is an embeddable library, so
+the global allocator belongs to the downstream binary, and `bashkit-python` is a
+CPython extension module where the allocator is CPython's. `monty-alloc` is
+built for Monty's own out-of-process worker model ("a Monty *worker's* hard
+memory ceiling"), which bashkit does not use.
+
+Four existing threat-model regression tests fail on the bump and are the
+standing guard for this — they need no new test to be added:
+
+- `python_security_tests::whitebox_resource_limits::nested_list_bomb`
+- `python_security_tests::whitebox_resource_limits::successive_allocations_accumulate`
+- `python_security_tests::whitebox_resource_limits::tight_memory_blocks_many_small_objects`
+- `threat_model_tests::python_security_regressions::threat_python_pow_exhaustion`
+
+The duration, recursion, and print-collect-cap limits are unaffected and still
+pass, which localises the regression to allocator-backed memory.
+
+Two further changes land in the same bump and must be handled when the hold is
+lifted; neither is a blocker on its own:
+
+- `ResourceTracker` became a concrete struct (upstream pydantic/monty#613), so
+  the host can no longer wrap VM checkpoints. `BudgetTracker`'s bridge into the
+  shared `ExecutionBudget` has to move outside the VM — charging work around
+  each synchronous `start`/`resume` section instead of inside it. The
+  per-entry admission reservation that enforces TM-DOS-096 is independent of
+  the tracker and survives either way.
+- `ResourceLimits::new()` is replaced by `Default`, and its builders take plain
+  values rather than `Option`s.
+
+Lifting the hold also **removes** a `[patch.crates-io]` git pin: the patch in
+the root `Cargo.toml` exists only because `monty 0.0.19` requires
+`jiter ^0.15.0`, whose published release holds the graph below pyo3 0.29.
+Monty 0.0.21 depends on the published `jiter 0.16.0`, which already tracks
+pyo3 0.29, so the workspace would build from crates.io alone with no git
+dependency in the release graph. That is a real supply-chain win waiting on the
+memory fix — it is not a reason to take the bump early.
+
 ### Python Feature Support
 
 Monty implements a subset of Python 3.12. Supported: functions (incl.
