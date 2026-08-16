@@ -128,6 +128,12 @@ criteria = "safe-to-deploy"
 delta = "0.62.4 -> 0.62.5"
 notes = "Reviewed delta: rejects channel-scoped messages unless the SSH channel is confirmed, and bounds queued application output when channel windows are exhausted; no unsafe code or new ambient capabilities, with regression and backpressure coverage."
 
+[[audits.russh]]
+who = "Mykhailo Chalyi <mike@chaliy.name>"
+criteria = "safe-to-deploy"
+delta = "0.62.5 -> 0.62.6"
+notes = 'Reviewed delta: routes channel-open replies through a dedicated priority queue drained ahead of the bounded receivers, so a confirmation can no longer be silently dropped by a full queue or be overtaken by data for a channel that is not registered yet; enforces the server-side max_auth_attempts cap with a DISCONNECT while keeping publickey probes uncounted; and tolerates exactly one trailing comma in name-lists for OpenSSH interop, still rejecting "," and "a,,". No new unsafe code (unchanged single occurrence), no new dependencies, and no ambient capability changes; each behaviour change lands with test coverage.'
+
 [[audits.rustls-webpki]]
 who = "Mykhailo Chalyi <mike@chaliy.name>"
 criteria = "safe-to-deploy"
