@@ -217,7 +217,7 @@ jobs:
           echo "---"
           echo "Total files: $(ls -1 dist/ | wc -l)"
 
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d # v10.0.0
       - run: uvx twine check dist/*
 
   # Smoke-test the single cp39-abi3 wheel on every targeted Python version.
@@ -281,7 +281,7 @@ jobs:
       - name: List dist files
         run: ls -lhR dist/
 
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d # v10.0.0
 
       - name: Publish to PyPI
         run: uv publish --trusted-publishing always dist/*
