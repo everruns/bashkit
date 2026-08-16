@@ -231,11 +231,23 @@ impl SqliteEngine {
                 StepResult::Done => break,
                 // `IO` means the VDBE is blocked on outstanding completions;
                 // `Yield` (added in turso 0.7) means it voluntarily paused to let
-                // the program state machines advance. In both cases the caller
-                // drives pending completions and re-steps. Our backends are
-                // synchronous, so `io_step` returns immediately when nothing is
-                // pending, and the deadline check above bounds the loop.
-                StepResult::IO | StepResult::Yield => {
+                // the program state machines advance. `Sleep` (added in turso
+                // 0.8.0-pre.4) asks us to back off for a duration before
+                // re-stepping, e.g. after a busy handler chose to retry. In all
+                // three cases the caller drives pending completions and re-steps.
+                // Our backends are synchronous, so `io_step` returns immediately
+                // when nothing is pending, and the deadline check above bounds
+                // the loop.
+                //
+                // We deliberately do not honour `Sleep`'s duration. Blocking the
+                // thread would be wrong here: the engine is single-threaded and
+                // driven synchronously, so nothing else can make the progress the
+                // sleep is waiting for, and `std::thread::sleep` is unavailable on
+                // the wasm targets this builtin also ships to. Upstream documents
+                // that callers which don't track time may treat `Sleep` exactly
+                // like `IO`. Spinning is bounded by both the wall-clock deadline
+                // (TM-SQL-005a) and the per-iteration execution budget above.
+                StepResult::IO | StepResult::Yield | StepResult::Sleep { .. } => {
                     self.io_step()?;
                 }
                 StepResult::Busy | StepResult::Interrupt => {

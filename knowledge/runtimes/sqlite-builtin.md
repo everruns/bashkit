@@ -57,6 +57,31 @@ cached file-backed engines, dot-commands, and query materialisation receive
 clones of the same budget rather than new counters. SQLite-specific size,
 statement, row, result, and duration ceilings remain independently enforced.
 
+### Step-loop pacing signals
+
+`Statement::step()` returns three non-terminal "come back later" results, and
+the engine treats all of them the same way: drive pending completions via
+`io_step()` and re-step.
+
+| Result   | Meaning                                                   |
+| -------- | --------------------------------------------------------- |
+| `IO`     | Blocked on outstanding completions                         |
+| `Yield`  | Voluntarily paused so program state machines can advance (turso 0.7) |
+| `Sleep`  | Asks the caller to back off for a duration, e.g. a busy-handler retry (turso 0.8.0-pre.4) |
+
+`Sleep`'s duration is deliberately **not** honoured. The engine is
+single-threaded and driven synchronously, so nothing else can produce the
+progress the sleep waits for, and `std::thread::sleep` is unavailable on the
+wasm targets this builtin ships to. Upstream documents that callers which do
+not track time may treat `Sleep` exactly like `IO`. Spinning stays bounded by
+the wall-clock deadline (TM-SQL-005a) and by the `ExecutionBudget` work unit
+consumed on every loop iteration.
+
+The match over `StepResult` is kept **exhaustive on purpose**: a new upstream
+variant must break the build so its pacing semantics get reviewed rather than
+silently falling into a catch-all. `Sleep` was caught exactly this way when
+turso 0.8.0-pre.4 introduced it.
+
 ### Phase 1 — `Backend::Memory` (default)
 
 Read entire DB file from VFS into memory → fresh `MemoryIO`-backed turso
