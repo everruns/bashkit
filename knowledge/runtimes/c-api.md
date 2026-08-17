@@ -67,7 +67,7 @@ programs against the built shared library.
 
 ## See also
 
-- [Architecture](../foundations/architecture.md) — crate boundaries and async-first core.
-- [Virtual Filesystem](../foundations/vfs.md) — the separate cross-addon filesystem ABI.
-- [Testing Strategy](../operations/testing.md) — repository test organization.
-- [Release Process](../operations/release-process.md) — native artifact publication.
+- [Architecture](../foundations/architecture.md), crate boundaries and async-first core.
+- [Virtual Filesystem](../foundations/vfs.md), the separate cross-addon filesystem ABI.
+- [Testing Strategy](../operations/testing.md), repository test organization.
+- [Release Process](../operations/release-process.md), native artifact publication.

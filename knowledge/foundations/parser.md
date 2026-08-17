@@ -63,23 +63,23 @@ Errors carry line/column, expected vs. found token, and parse context.
 
 A nested parse must never silently vanish. `parse_word` is infallible (the
 interpreter also calls it for lazy parameter expansion), so a `$(...)` body that
-fails to parse still pushes its `CommandSubstitution` part — with empty commands
-— and stashes the inner error in `Parser::deferred_error`, which `parse_script`
+fails to parse still pushes its `CommandSubstitution` part, with empty commands
+, and stashes the inner error in `Parser::deferred_error`, which `parse_script`
 turns into a hard parse error. Both halves matter: the retained part keeps the
 word non-literal so surrounding literals cannot splice (`a$(|)b` must not become
-the command `ab`, which `analysis` would report to a host permission gate — see
+the command `ab`, which `analysis` would report to a host permission gate, see
 TM-ESC-032), and the deferred error rejects the script the way bash does.
 Process substitution keeps its part for the same reason, and hard-errors on
 budget failures (TM-DOS-021).
 
 ## Alternatives Considered
 
-- PEG (pest, pom): rejected — bash grammar is context-sensitive, here-docs awkward, manual parser gives better errors.
-- Tree-sitter: rejected — incremental parsing overkill, large dep, harder to customize.
+- PEG (pest, pom): rejected, bash grammar is context-sensitive, here-docs awkward, manual parser gives better errors.
+- Tree-sitter: rejected, incremental parsing overkill, large dep, harder to customize.
 
 ## See also
 
-- [Bashkit Architecture](architecture.md) — where the parser sits in the execution flow
-- [Known Limitations](../operations/limitations.md) — unsupported syntax, recorded as L-* entries
-- [Script Analysis](../integrations/script-analysis.md) — static introspection built on the AST
-- [Testing Strategy](../operations/testing.md) — differential testing against real Bash
+- [Bashkit Architecture](architecture.md), where the parser sits in the execution flow
+- [Known Limitations](../operations/limitations.md), unsupported syntax, recorded as L-* entries
+- [Script Analysis](../integrations/script-analysis.md), static introspection built on the AST
+- [Testing Strategy](../operations/testing.md), differential testing against real Bash

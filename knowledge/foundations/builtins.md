@@ -21,7 +21,7 @@ the generated [`builtins.json`](../status/builtins.json); for known gaps, [Known
 ### Standard Flags
 
 All external-style builtins support `--help` and `--version` flags via the
-`check_help_version()` helper in `builtins/mod.rs` (long flags only — short
+`check_help_version()` helper in `builtins/mod.rs` (long flags only, short
 flags `-h`/`-V` have different meanings in many tools). Tools where `-h`/`-V`
 genuinely mean help/version handle them directly in `execute()`.
 
@@ -38,7 +38,7 @@ as bash. Exit 127: not found; Exit 126: not executable or is a directory.
 
 `Builtin` trait (`execute(ctx)` + optional `execution_plan(ctx)`, default
 `Ok(None)`) and `Context` (args, env, variables, cwd, fs, stdin,
-feature-gated borrowed http/git clients, `pub(crate) shell: Option<ShellRef>` — None
+feature-gated borrowed http/git clients, `pub(crate) shell: Option<ShellRef>`, None
 for custom builtins, and public lease-backed `execution_extension::<T>()`): see
 `crates/bashkit/src/builtins/mod.rs` / rustdoc.
 
@@ -48,7 +48,7 @@ Custom Rust builtins can implement `ClapBuiltin` instead of `Builtin` when
 their arguments are better represented as a `#[derive(clap::Parser)]` struct
 (see `builtins/mod.rs` / rustdoc for the trait and an example). `clap` is an
 unconditional dependency of `bashkit` (also used by ported coreutils argument
-surfaces — see [Coreutils Argument Port](../runtimes/coreutils-args-port.md)), so this trait is always
+surfaces, see [Coreutils Argument Port](../runtimes/coreutils-args-port.md)), so this trait is always
 available. Bashkit parses `Context::args` through clap, passes parsed args
 plus a mutable `BashkitContext` to the handler, maps `--help`/`--version` to
 successful stdout results, and maps clap parse failures to stderr with clap's
@@ -74,7 +74,7 @@ Rules:
 Current extension: `TypeScriptExtension` registers `ts`/`typescript` and, when
 enabled by `TypeScriptConfig`, `node`/`deno`/`bun`.
 
-### BuiltinRegistry — Host-Owned Mutable Builtins
+### BuiltinRegistry, Host-Owned Mutable Builtins
 
 `BashBuilder::builtin(name, ...)` and `Extension::builtins()` are both
 *build-time* registration: the set of builtins is frozen once the `Bash`
@@ -98,7 +98,7 @@ Command-resolution order (see `Interpreter::dispatch_command`):
 6. `CommandResolver::resolve` (last chance, see below)
 
 So registry entries can override baked-in commands (e.g. wrap `cat` with
-tracing) but shell functions still win — matching standard bash
+tracing) but shell functions still win, matching standard bash
 precedence. `command -v` / `command -V` / `command name args…` consult
 the registry too.
 
@@ -116,7 +116,7 @@ Implementation notes:
   serialize it. Restoring from a snapshot requires re-attaching the
   registry handle.
 
-### CommandResolver — Last-Chance Name Resolution
+### CommandResolver, Last-Chance Name Resolution
 
 `BuiltinRegistry` answers "which names are registered" from a map fixed before
 the name is known. `CommandResolver` is asked *about a specific name*, after
@@ -131,8 +131,8 @@ pub trait CommandResolver: Send + Sync {
 ```
 
 Decision: resolvers return a `Builtin` rather than executing directly. The
-resolved builtin runs through `execute_builtin_arc` — the same path as every
-other builtin — so `before_tool` fires with the resolved name and can veto it,
+resolved builtin runs through `execute_builtin_arc`, the same path as every
+other builtin, so `before_tool` fires with the resolved name and can veto it,
 `catch_unwind` still contains panics, and stdin/redirects behave identically. A
 bespoke execution path would have to re-earn all of that.
 
@@ -148,7 +148,7 @@ Consequences to keep in mind:
 - Resolver-provided builtins receive the same execution-scoped VFS lease as
   builder and ordinary registry builtins.
 - The `$PATH` search consumes the pipeline stdin, so the interpreter clones it
-  for the resolver **only when a resolver is installed** — the common path does
+  for the resolver **only when a resolver is installed**: the common path does
   not pay for the clone.
 
 ### Execution Extensions
@@ -179,34 +179,34 @@ Rules:
 Internal builtins that need interpreter state receive it via `Context.shell`:
 
 **Design rationale:**
-- **Direct mutation** for aliases/traps — simple HashMaps with no invariants
+- **Direct mutation** for aliases/traps, simple HashMaps with no invariants
 - **Side effects** for arrays (budget checks), positional params (call stack),
-  history (VFS persistence) — state with invariants the interpreter must enforce
+  history (VFS persistence), state with invariants the interpreter must enforce
 - **Read-only methods** for introspection (functions, builtins, keywords,
-  call stack, history, jobs) — builtins shouldn't mutate these
+  call stack, history, jobs), builtins shouldn't mutate these
 - `pub(crate)` keeps ShellRef out of the public API; custom builtins use
   public `execution_extension()` instead of direct shell access
-- No dynamic dispatch — concrete struct, not trait
+- No dynamic dispatch, concrete struct, not trait
 
 **Builtins using ShellRef:**
-- `type`, `which` — read-only: check builtin/function/keyword names
-- `alias`, `unalias` — direct mutation of `shell.aliases`
-- `trap` — direct mutation of `shell.traps`
-- `caller` — read call stack depth/frame names
-- `history` — read history entries, clear via `ClearHistory` side effect
-- `wait` — read job table, set exit code via `SetLastExitCode` side effect
-- `mapfile`/`readarray` — set arrays via `SetIndexedArray` side effect
+- `type`, `which`, read-only: check builtin/function/keyword names
+- `alias`, `unalias`, direct mutation of `shell.aliases`
+- `trap`, direct mutation of `shell.traps`
+- `caller`, read call stack depth/frame names
+- `history`, read history entries, clear via `ClearHistory` side effect
+- `wait`, read job table, set exit code via `SetLastExitCode` side effect
+- `mapfile`/`readarray`, set arrays via `SetIndexedArray` side effect
 
 **Builtins still in interpreter dispatch chain** (fundamentally need interpreter):
-- `exec` — redirect management, VFS I/O
-- `local` — call frame locals mutation
-- `source`/`.`, `eval` — parse and execute in current context
-- `bash`/`sh` — script execution
-- `command` — dispatch to builtins/functions
-- `declare`/`typeset` — arrays, assoc arrays, variable attributes
-- `unset` — functions, arrays, namerefs, call stack locals
-- `let` — arithmetic evaluation with assignment
-- `getopts` — complex variable + call stack interaction
+- `exec`, redirect management, VFS I/O
+- `local`, call frame locals mutation
+- `source`/`.`, `eval`, parse and execute in current context
+- `bash`/`sh`, script execution
+- `command`, dispatch to builtins/functions
+- `declare`/`typeset`, arrays, assoc arrays, variable attributes
+- `unset`, functions, arrays, namerefs, call stack locals
+- `let`, arithmetic evaluation with assignment
+- `getopts`, complex variable + call stack interaction
 
 `time` is deliberately absent from the builtin registry. Bash grammar makes it
 a reserved-word wrapper around a complete pipeline, so the interpreter measures
@@ -218,7 +218,7 @@ errexit, cancellation, and the shared request budget.
 Builtins cannot access the interpreter directly. When a builtin needs to run
 other commands (e.g. `timeout`, `xargs`, `find -exec`), it returns a declarative
 `ExecutionPlan` from `execution_plan()`. The interpreter checks this method
-before `execute()` — when it returns `Some(plan)`, the interpreter fulfills the
+before `execute()`, when it returns `Some(plan)`, the interpreter fulfills the
 plan instead of using the `execute()` result.
 
 Variants: `Timeout { duration, preserve_status, command }`,
@@ -233,7 +233,7 @@ per-invocation parallel-slot index.
 
 #### `xargs -P` / `--process-slot-var` (parallelism)
 
-bashkit runs a single `Bash` interpreter sequentially — even background `&`
+bashkit runs a single `Bash` interpreter sequentially, even background `&`
 jobs run synchronously for deterministic output (see
 [Parallel Execution](parallel-execution.md)). So `xargs -P N` / `--max-procs=N` does **not**
 spawn N OS processes for wall-clock speedup. Instead it allocates N

@@ -3,7 +3,7 @@
 Bashkit includes an embedded TypeScript interpreter powered by
 [ZapCode](https://github.com/TheUncharted/zapcode), a pure-Rust TypeScript
 runtime with ~2µs cold start and zero V8 dependency. TypeScript runs entirely
-in-memory alongside bash — files written by bash are readable from TypeScript
+in-memory alongside bash, files written by bash are readable from TypeScript
 and vice versa.
 
 ## Getting started

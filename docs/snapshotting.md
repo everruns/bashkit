@@ -119,7 +119,7 @@ turn: each blob re-encodes the whole workspace, so unchanged files are stored
 again and again, and a branch cannot share anything with its parent.
 
 For that, use commits. A commit captures the same state as a content-addressed
-object graph — file chunks, a tree, shell state — and hands you the objects to
+object graph, file chunks, a tree, shell state, and hands you the objects to
 persist plus a `CommitId` to remember. Unchanged content is a 32-byte hash
 reference, not a copy.
 
@@ -166,7 +166,7 @@ assert_eq!(history, vec![second_id, first_id]);
 # }
 ```
 
-A fork is simply a commit whose parent is not the branch tip — there is no
+A fork is simply a commit whose parent is not the branch tip, there is no
 separate fork operation. Truncating a session is pointing at an older
 `CommitId`. Objects no commit reaches are yours to collect;
 `SnapshotGraph::reachable` lists what a commit needs.
@@ -211,8 +211,8 @@ assert diff.files_modified == ["/log.txt"]
 ```
 
 Object ids are hex strings and stores are plain `dict[str, bytes]`, so both drop
-straight into a database column with no marshalling. A full runnable example —
-including lazy fetching and garbage collection — is in
+straight into a database column with no marshalling. A full runnable example,
+including lazy fetching and garbage collection, is in
 `crates/bashkit-python/examples/session_history.py`.
 
 ### Node.js / TypeScript
@@ -242,7 +242,7 @@ const diff = snapshotDiff(first.id, second.id, store);
 const history = snapshotAncestry(second.id, store);
 ```
 
-`commit()` returns `packed` — self-contained bytes equivalent to `snapshot()` —
+`commit()` returns `packed`, self-contained bytes equivalent to `snapshot()`,
 or `null` when `have` made the commit incremental, since packing one would
 produce bytes that cannot be restored.
 
@@ -284,7 +284,7 @@ backend. On restore that fingerprint is compared against the live instance.
 The default is `Superset` because the dangerous direction is asymmetric:
 restoring into an environment missing a tool the session used can produce a
 broken session, while extra tools cannot. It also means snapshots keep
-restoring after a bashkit upgrade adds builtins — under `Strict` they would
+restoring after a bashkit upgrade adds builtins, under `Strict` they would
 not.
 
 The fingerprint proves the environments match; it cannot prove a restored
@@ -320,7 +320,7 @@ treat the snapshot bytes as trusted-only input.
 Within a commit graph, every object is named by the hash of its content and
 re-verified when loaded, so authenticating the root commit authenticates
 everything beneath it. Objects loaded from a store you do not control are still
-checked — a substituted or truncated object fails before any state is applied.
+checked, a substituted or truncated object fails before any state is applied.
 
 ## See also
 

@@ -12,7 +12,7 @@ tags:
 # WebAssembly Package (`@everruns/bashkit-wasm`)
 
 > Naming: the crate is `bashkit-wasm` and the npm package is
-> `@everruns/bashkit-wasm` — the `wasm` stem is deliberate. This is a
+> `@everruns/bashkit-wasm`, the `wasm` stem is deliberate. This is a
 > `wasm-bindgen` module that runs in **any JavaScript host**, not just the
 > browser (edge/serverless workers, Node, Deno, Bun), so the earlier `-web`
 > name under-described its reach. It does **not** run in a non-JS/WASI wasm
@@ -30,12 +30,12 @@ npm publish wired via `publish-wasm.yml`.
 Bashkit ships a slim, **single-threaded** WebAssembly package built with
 `wasm-bindgen` for `wasm32-unknown-unknown`. The browser is the primary target,
 but because it's a plain wasm-bindgen module it also runs in other JavaScript
-runtimes — edge/serverless workers (Cloudflare Workers, Vercel Edge, Deno
+runtimes, edge/serverless workers (Cloudflare Workers, Vercel Edge, Deno
 Deploy), Node, Deno, and Bun. Unlike the WASI-threads example
 (`examples/browser`, napi + `wasm32-wasip1-threads`), it needs **no
 `SharedArrayBuffer` and no cross-origin isolation** (`COOP`/`COEP`) headers, so
-it drops into any web app — including embedded and third-party iframe contexts
-where those headers cannot be set — and into the constrained edge runtimes that
+it drops into any web app, including embedded and third-party iframe contexts
+where those headers cannot be set, and into the constrained edge runtimes that
 can't use threads either. This is the distribution answer to issue \#2172.
 
 ## Why a separate package (not the napi `bashkit-js`)
@@ -87,7 +87,7 @@ Decisions:
   `Unsupported` because they cannot be faked.
 - **Async only.** Host methods may return a `Promise`, so filesystem access
   suspends the interpreter. `executeSync` and the synchronous `bash.readFile(...)`
-  helpers report the suspension instead of blocking — a host filesystem implies
+  helpers report the suspension instead of blocking, a host filesystem implies
   `execute()`.
 - **`files` + `fs` is rejected.** Seeding writes through `now_or_never`, which a
   promise-returning host can never satisfy. Rejecting at construction beats
@@ -111,7 +111,7 @@ a later microtask so the suspend/resume path is the one under test.
 `wasm32-unknown-unknown` is single-threaded; the whole future chain runs on the
 browser's one event loop. Two entry points:
 
-- **`executeSync(cmd)`** drives `Bash::exec` with `now_or_never` — a single
+- **`executeSync(cmd)`** drives `Bash::exec` with `now_or_never`, a single
   poll. Correct for scripts that never suspend (plain bash + `jq`; background
   jobs still run inline). If a script does
   suspend (e.g. an async JS custom builtin) it throws, directing the caller to
@@ -133,7 +133,7 @@ deadlines, and tool-level `timeoutMs` without a tokio reactor or wasm threads.
 
 `bashkit::Builtin` is `Send + Sync` (via `#[async_trait]`), but `js_sys::Function`
 and `JsFuture` are `!Send`. On single-threaded wasm we wrap both in
-`send_wrapper::SendWrapper`, which only ever dereferences on its origin thread —
+`send_wrapper::SendWrapper`, which only ever dereferences on its origin thread,
 sound because there is exactly one thread. The `now_or_never` sync path and the
 `future_to_promise` async path both avoid tokio's timer/thread-pool, which the
 core already gates off under `cfg(target_family = "wasm")` (see
@@ -143,21 +143,21 @@ core already gates off under `cfg(target_family = "wasm")` (see
 
 `crates/bashkit-wasm/`:
 
-- `src/lib.rs` — wasm-bindgen bindings (`Bash`, `ExecResult`, `JsBuiltin`).
-- `js/index.js`, `js/index.d.ts` — hand-authored ESM wrapper + TS types. The
+- `src/lib.rs`, wasm-bindgen bindings (`Bash`, `ExecResult`, `JsBuiltin`).
+- `js/index.js`, `js/index.d.ts`, hand-authored ESM wrapper + TS types. The
   wrapper resolves the `.wasm` relative to itself (`import.meta.url`), so it
   loads from a CDN, a bundler, or a plain `<script type="module">`.
-- `package.json` — the published `@everruns/bashkit-wasm` manifest (copied into
+- `package.json`, the published `@everruns/bashkit-wasm` manifest (copied into
   `pkg/` at build time).
-- `scripts/build.sh` — `cargo build` → `wasm-bindgen --target web` → optional
+- `scripts/build.sh`, `cargo build` → `wasm-bindgen --target web` → optional
   `wasm-opt -Oz`, emitting `pkg/`.
-- `src/hostfs.rs` — the `FsBackend` bridge behind the `fs` option.
-- `__test__/host-fs.test.mjs` — host-filesystem suite (async fake host).
-- `__test__/bashkit-wasm.test.mjs` — headless Node integration suite
+- `src/hostfs.rs`, the `FsBackend` bridge behind the `fs` option.
+- `__test__/host-fs.test.mjs`, host-filesystem suite (async fake host).
+- `__test__/bashkit-wasm.test.mjs`, headless Node integration suite
   (`node --test`) that feeds the `.wasm` bytes to init (no fetch, no headers),
   proving the no-configuration contract and covering sync/async execution, the
   VFS, custom builtins, and `ctx.fs`.
-- `example/` — self-contained browser demos served by any static file server.
+- `example/`, self-contained browser demos served by any static file server.
 
 ## Build
 
@@ -176,7 +176,7 @@ node --test "crates/bashkit-wasm/__test__/*.test.mjs"                # verify
 Version tracks the workspace `Cargo.toml` (currently synced by the release
 prepare step, same as the other packages). `publish-wasm.yml` triggers on release
 published, builds `pkg/`, runs the smoke test, and `npm publish`es
-`@everruns/bashkit-wasm` with provenance (`NPM_TOKEN`, `id-token: write`) — same
+`@everruns/bashkit-wasm` with provenance (`NPM_TOKEN`, `id-token: write`), same
 pattern as `publish-js.yml`. Browser example smoke testing writes a file under
 `/home/user`, reloads the page, and verifies `browserLocal` restores it from
 `localStorage`.
@@ -190,7 +190,7 @@ pattern as `publish-js.yml`. Browser example smoke testing writes a file under
   for that work.
 - Single-threaded: no OS threads (`std::thread::spawn` is unsupported) and no
   `tokio::spawn` reactor. Paths that hop to a thread or a background task on
-  native run **inline** on wasm instead — background jobs (`cmd &`) execute
+  native run **inline** on wasm instead, background jobs (`cmd &`) execute
   synchronously (they already did for output ordering), and `awk` file
   redirects (`print > f`, `getline < f`) drive the VFS future to completion with
   `now_or_never` rather than a writer thread. Correct because the browser build

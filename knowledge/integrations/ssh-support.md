@@ -13,7 +13,7 @@ tags:
 
 ## Status
 
-Phase 1: Implemented — Handler trait, allowlist, ssh/scp/sftp builtins
+Phase 1: Implemented, Handler trait, allowlist, ssh/scp/sftp builtins
 
 ## Decision
 
@@ -82,7 +82,7 @@ ssh/scp/sftp builtins (parse args, validate host, delegate)
 
 ## See also
 
-- [Virtual Filesystem](../foundations/vfs.md) — filesystem the transfers read and write
-- [Git Support](git-support.md) — the other sandboxed network integration
-- [Threat Model](../security/threat-model.md) — network and credential threats for this surface
-- [Builtin Commands](../foundations/builtins.md) — builtin trait these commands implement
+- [Virtual Filesystem](../foundations/vfs.md), filesystem the transfers read and write
+- [Git Support](git-support.md), the other sandboxed network integration
+- [Threat Model](../security/threat-model.md), network and credential threats for this surface
+- [Builtin Commands](../foundations/builtins.md), builtin trait these commands implement

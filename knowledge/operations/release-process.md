@@ -33,19 +33,19 @@ silently failed.
 ### Human Steps
 
 1. Ask the agent to create a release ("Create release v0.2.0").
-2. Review the PR — including the agent's publish-readiness report.
-3. Merge to main — CI creates the GitHub Release and publishes.
+2. Review the PR, including the agent's publish-readiness report.
+3. Merge to main, CI creates the GitHub Release and publishes.
 4. Ask the agent to monitor publishing until all registries show the new version.
 
 ### Agent Steps (automated)
 
-0. **Ensure full git history** — cloud sandboxes are commonly shallow-cloned
+0. **Ensure full git history**: cloud sandboxes are commonly shallow-cloned
    (depth ≈ 50), silently hiding commits and yielding a wrong changelog. Run
    `git fetch --unshallow origin main 2>/dev/null || git fetch origin main`
    and cross-check with the GitHub compare API
    (`/repos/everruns/bashkit/compare/v<prev>...main` → `total_commits`); if
    local `git log v<prev>..HEAD | wc -l` disagrees, the clone is still shallow.
-1. **Determine version** — human-specified, or suggest from changes.
+1. **Determine version**: human-specified, or suggest from changes.
 2. **Update CHANGELOG.md** (format below).
 3. **Update version across all manifests** (must match the workspace version):
    workspace `Cargo.toml`, `crates/bashkit-cli/Cargo.toml` path-dep pin on
@@ -56,9 +56,9 @@ silently failed.
      changes. The `apidocs-drift` workflow only checks TypeScript weekly (its
      regen needs a Rust build), so a release is the reliable point to catch TS
      drift. See [Documentation Architecture](documentation.md) ("API reference hosting").
-4. **Run local verification** — `cargo fmt --check`, `cargo clippy
+4. **Run local verification**: `cargo fmt --check`, `cargo clippy
    --all-targets --all-features -- -D warnings`, `cargo test`.
-5. **Verify publish-readiness** (catches what local tests don't — the
+5. **Verify publish-readiness** (catches what local tests don't, the
    `cargo publish` packaging step, missing files, version drift):
    - `cargo publish --dry-run -p bashkit` must succeed. Package
      `bashkit-cli` in a disposable copy against the latest published
@@ -78,11 +78,11 @@ silently failed.
      bashkit`, `pip index versions bashkit`, `npm view @everruns/bashkit
      version`, `npm view @everruns/bashkit-wasm version`). A missing registry
      entry is valid only for a package's first release.
-   - On any failure, fix root cause and re-run before opening the PR — do
+   - On any failure, fix root cause and re-run before opening the PR, do
      **not** merge a release PR with a known-broken publish path.
-6. **Commit and push** — `chore(release): prepare vX.Y.Z` on a feature branch.
-7. **Create PR** — same title, changelog excerpt + publish-readiness report in description.
-8. **Monitor post-merge publishing** — watch `release.yml` create the
+6. **Commit and push**: `chore(release): prepare vX.Y.Z` on a feature branch.
+7. **Create PR**: same title, changelog excerpt + publish-readiness report in description.
+8. **Monitor post-merge publishing**: watch `release.yml` create the
    Release + tag, watch `publish.yml`, `publish-python.yml`, `publish-js.yml`,
    `publish-wasm.yml`, `cli-binaries.yml`, and `c-api-binaries.yml` to
    completion, run the
@@ -121,7 +121,7 @@ Confirm each target (workflow → check):
 - C ABI (`c-api-binaries.yml`): five target archives and SHA-256 files attached
 
 If a workflow fails: `gh run view <run-id> --log-failed`, identify root
-cause, re-run (transient) or open a hotfix PR (code/packaging bug — see
+cause, re-run (transient) or open a hotfix PR (code/packaging bug, see
 v0.4.0 → v0.4.1 for a worked example).
 
 ## Changelog Format
@@ -129,9 +129,9 @@ v0.4.0 → v0.4.1 for a worked example).
 Use the latest entries in `CHANGELOG.md` as the template. Rules:
 
 - `## [X.Y.Z] - YYYY-MM-DD` header.
-- `### Highlights` — 2-5 most impactful, user-facing bullets.
+- `### Highlights`, 2-5 most impactful, user-facing bullets.
 - `### Breaking Changes` for MINOR/MAJOR with bold summary + before/after migration guide.
-- `### What's Changed` (not separate Added/Changed/Fixed) — PRs in descending PR-number order, format `* type(scope): description ([#N](URL)) by @author`.
+- `### What's Changed` (not separate Added/Changed/Fixed), PRs in descending PR-number order, format `* type(scope): description ([#N](URL)) by @author`.
 - End with `**Full Changelog**: URL`.
 
 ## Package Names and Registries
@@ -147,7 +147,7 @@ Use the latest entries in `CHANGELOG.md` as the template. Rules:
 
 Crates publish in dependency order: `bashkit` (no internal deps) then
 `bashkit-cli` (depends on bashkit). Python wheels (native matrix + the
-reduced-feature Pyodide/Emscripten wheel — see [Emscripten Wheels](../runtimes/emscripten-wheels.md))
+reduced-feature Pyodide/Emscripten wheel, see [Emscripten Wheels](../runtimes/emscripten-wheels.md))
 and both npm packages publish independently (no crates.io dependency). CI
 workflows handle ordering automatically on GitHub Release.
 
@@ -238,7 +238,7 @@ Ask the agent for a patch release ("Create patch release v0.1.1 for the security
 
 ## Rollback Procedure
 
-`cargo yank --version X.Y.Z bashkit` (and `bashkit-cli`) — use sparingly;
+`cargo yank --version X.Y.Z bashkit` (and `bashkit-cli`), use sparingly;
 yanked versions still resolve for existing `Cargo.lock` files but aren't
 selected for new projects.
 

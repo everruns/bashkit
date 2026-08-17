@@ -1,8 +1,8 @@
 # Request signing
 
 Bot identity on the web has historically been an honor system. A `User-Agent`
-string is trivially spoofable — nothing stops a scraper from claiming to be
-Googlebot — and IP allowlists fall apart the moment your agent runs on ephemeral
+string is trivially spoofable, nothing stops a scraper from claiming to be
+Googlebot, and IP allowlists fall apart the moment your agent runs on ephemeral
 cloud addresses. Servers are left inferring identity from traffic patterns
 instead of verifying it.
 
@@ -10,10 +10,10 @@ Request signing replaces that guesswork with cryptography. Behind the `bot-auth`
 feature, Bashkit transparently signs **every** outbound HTTP request with an
 Ed25519 signature per [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421)
 (web-bot-auth profile). A server that trusts your agent's public key can verify,
-not assume, who is calling — unlocking per-key rate limits, selective API access,
+not assume, who is calling, unlocking per-key rate limits, selective API access,
 and real audit trails.
 
-> Background: [Request Signing — Cryptographic Identity for AI Agents](https://medium.com/everruns/request-signing-cryptographic-identity-for-ai-agents-0e5fc1b52aa3).
+> Background: [Request Signing, Cryptographic Identity for AI Agents](https://medium.com/everruns/request-signing-cryptographic-identity-for-ai-agents-0e5fc1b52aa3).
 
 <svg viewBox="0 0 720 188" role="img" aria-label="Request signing flow: agent signs request with private key, server verifies via public key directory" xmlns="http://www.w3.org/2000/svg" style="max-width:100%;height:auto;margin:1rem 0;">
   <rect x="0.5" y="0.5" width="719" height="187" fill="#ffffff" stroke="#0a1636" stroke-opacity="0.12"/>
@@ -49,13 +49,13 @@ and real audit trails.
 ## How it works
 
 Signing happens inside `HttpClient`, at the same layer as the
-[network allowlist](networking.md) check — so it covers `curl`, `wget`, `http`,
+[network allowlist](networking.md) check, so it covers `curl`, `wget`, `http`,
 per-request timeouts, custom handlers, and each hop of a manually-followed
 redirect. No script can bypass it, and there are no CLI flags or script changes
 to make: it is transparent.
 
 It is also **non-blocking**. If signing ever fails (clock skew, key issue), the
-request is sent unsigned rather than dropped — tool availability is never
+request is sent unsigned rather than dropped, tool availability is never
 sacrificed for signing (TM-AVAIL-001).
 
 ## Configuration
@@ -114,8 +114,8 @@ The nonce defends against replay; the expiry window bounds signature validity.
 
 ## See also
 
-- [Networking & HTTP](networking.md) — the allowlist that gates every request.
-- [Credential injection](../crates/bashkit/docs/credential-injection.md) — attach bearer tokens without
+- [Networking & HTTP](networking.md), the allowlist that gates every request.
+- [Credential injection](../crates/bashkit/docs/credential-injection.md), attach bearer tokens without
   exposing them to scripts.
 - Spec: [`knowledge/security/request-signing.md`](https://github.com/everruns/bashkit/blob/main/knowledge/security/request-signing.md).
 - [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421) ·

@@ -1,7 +1,7 @@
 # Credential Injection
 
 Bashkit supports transparent credential injection for outbound HTTP requests.
-Secrets are injected at the transport layer — sandboxed scripts never see the
+Secrets are injected at the transport layer, sandboxed scripts never see the
 real credentials, preventing exfiltration.
 
 **See also:**

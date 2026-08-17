@@ -24,7 +24,7 @@ Sandboxed TypeScript/JavaScript execution via `typescript`, `ts`, `node`,
 `deno`, and `bun` builtins, powered by the
 [ZapCode](https://github.com/TheUncharted/zapcode) embedded TypeScript
 interpreter written in Rust (`zapcode-core` on crates.io). Runs directly in
-the host process — no subprocess, no IPC.
+the host process, no subprocess, no IPC.
 
 ### Registration (Opt-in)
 
@@ -74,7 +74,7 @@ remain in force.
 
 ### Language Support
 
-ZapCode implements a TypeScript/JavaScript (ES2024) subset — see ZapCode docs
+ZapCode implements a TypeScript/JavaScript (ES2024) subset, see ZapCode docs
 for details. Type annotations parsed but not enforced. Not supported by
 design: `import`/`require` (no module system), `eval()`/`Function()`,
 filesystem access (use bridged functions), network access,
@@ -117,7 +117,7 @@ See [Threat Model](../security/threat-model.md) section "TypeScript / ZapCode Se
 for the full threat analysis.
 
 - **Code injection via bash variable expansion**: variables expand before
-  reaching the builtin — by-design consistent with all builtins. Use single
+  reaching the builtin, by-design consistent with all builtins. Use single
   quotes to prevent expansion.
 - **Resource exhaustion**: ZapCode enforces independent time/memory/stack caps
   even if shell limits are generous.

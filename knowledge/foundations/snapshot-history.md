@@ -26,18 +26,18 @@ parse error naming neither the version nor the format.
 
 | Release | Reads v2 | Writes v2 | Public API |
 |---|---|---|---|
-| 0.14.5 (patch) | yes | no | unchanged — object-graph types `pub(crate)` |
+| 0.14.5 (patch) | yes | no | unchanged, object-graph types `pub(crate)` |
 | 0.15.0 (minor) | yes | yes | `commit`/`checkout`, `SnapshotGraph`, `CheckoutPolicy`, bindings |
 
 0.14.5 exists so a deployment can become able to *read* v2 before anything
 writes it, making it a safe rollback target for 0.15.0. It could ship as a patch
-only because it added no public API — hence `pub(crate)` on the new types and
+only because it added no public API, hence `pub(crate)` on the new types and
 `Error::Internal` in place of the typed variants, since `Error` is not
 `#[non_exhaustive]`. 0.15.0 lifts both, along with the `allow(dead_code)` that
 covered the then-unreachable encoder.
 
 Rolling back past 0.14.5 strands any v2 snapshot, and no code change can
-retrofit that — the failing readers already shipped.
+retrofit that, the failing readers already shipped.
 
 Driver: [#2221](https://github.com/everruns/bashkit/issues/2221), which needs one
 snapshot per conversation message with session truncation and branching.
@@ -89,7 +89,7 @@ optimizes writes and penalizes exactly those reads, and every fork forces a
 replay or a new baseline. Here, unchanged content costs one hash reference, any
 commit materializes directly, and forks share storage automatically.
 
-A fork is a commit whose parent is not the branch tip — there is no fork
+A fork is a commit whose parent is not the branch tip, there is no fork
 operation. Truncation is pointing at an older `CommitId`.
 
 **Structural objects are binary, descriptive objects are canonical JSON.** File
@@ -106,7 +106,7 @@ for the same reason.
 
 ### Hashing
 
-SHA-256. Already a direct dependency, wasm-safe, and — the deciding argument —
+SHA-256. Already a direct dependency, wasm-safe, and, the deciding argument,
 content addressing puts the hash in the host's database, where SHA-256 is
 stdlib in Python and built into Postgres while BLAKE3 is a third-party
 dependency in both. Measured throughput on an AVX2 host without SHA-NI was
@@ -128,8 +128,8 @@ store.extend(packed.into_objects());
 bash.checkout(commit_id, &store, CheckoutPolicy::default())?;
 ```
 
-A store trait would have to cross PyO3 and wasm-bindgen as an async callback —
-the hardest part of the design to build, bind, and test — in exchange for
+A store trait would have to cross PyO3 and wasm-bindgen as an async callback,
+the hardest part of the design to build, bind, and test, in exchange for
 nothing the pull model cannot express. Tests use a `HashMap` as the store.
 
 `CommitOptions::have` is what makes commits incremental; without it every
@@ -191,13 +191,13 @@ Three independent numbers in the container header.
 - Unknown metadata fields are ignored. Metadata structs use `#[serde(default)]`
   and must not use `deny_unknown_fields`.
 - `min_reader > READER_VERSION` yields `Error::SnapshotTooNew { required,
-  supported }` — a typed error, never a panic, never a partial restore.
+  supported }`, a typed error, never a panic, never a partial restore.
 - v1 JSON payloads stay readable. `decode_sealed` dispatches on the body
   prefix: `BKSNAP` magic means v2, anything else is parsed as v1 JSON.
 
 **Golden corpus.** `crates/bashkit/tests/fixtures/snapshots/` holds one snapshot
 per released format version, restored by every CI run
-(`snapshot_fixture_tests`). Fixtures are never regenerated — that would defeat
+(`snapshot_fixture_tests`). Fixtures are never regenerated, that would defeat
 their purpose. A new format version adds a file via
 `cargo run -p bashkit --example generate_snapshot_fixtures`, and a test asserts
 the corpus listing matches the tests, so a fixture cannot be added without one.
@@ -209,7 +209,7 @@ policy is tested separately.
 
 **The one break `min_reader` cannot prevent is its own introduction.** Readers
 older than 0.14.5 parse the sealed body as JSON and fail at column 1 on a v2
-container. That is why the reader shipped a release ahead of the writer — see
+container. That is why the reader shipped a release ahead of the writer, see
 Status.
 
 ## Decision: capability fingerprint
@@ -221,7 +221,7 @@ scripted tools), semantics-changing cargo features, the filesystem backend kind
 compared).
 
 The fingerprint is its own object rather than being inlined in the commit,
-because a session's environment is identical across every commit it produces —
+because a session's environment is identical across every commit it produces,
 so content addressing stores the ~2 KB builtin list once per session instead of
 once per message. It records names, not a hash of them, because `Superset` has
 to compute which names are missing in order to report them.
@@ -237,7 +237,7 @@ dangerous direction is asymmetric: restoring into an environment lacking a tool
 the session used can produce a session that cannot run, while extra tools
 cannot. And because the fingerprint records the whole builtin set, `Strict` as
 the default would mean every stored snapshot stops restoring the moment bashkit
-ships a new builtin — pushing long-lived callers straight to `Force` and losing
+ships a new builtin, pushing long-lived callers straight to `Force` and losing
 the check entirely.
 
 Two limits, stated because they are easy to over-read:
@@ -273,7 +273,7 @@ content. `ancestry` walks only what the supplied store contains and stops
 cleanly at a pruned ancestor rather than failing; it tracks visited commits so a
 hostile store serving a cycle cannot make it loop.
 
-Bashkit does not own the DAG index. Hosts store the `CommitId` per message —
+Bashkit does not own the DAG index. Hosts store the `CommitId` per message,
 for the driving consumer, a foreign key from their message table.
 
 `reachable` deliberately does **not** traverse parents: checking out a commit
@@ -295,7 +295,7 @@ owning storage; a host that wants to avoid loading a whole session uses
 the common path and an unknown value fails with a named error.
 
 `PackedCommit.packed` (JS) / `PackedCommit.to_bytes()` (Python) is `null` /
-raises for an incremental commit — packing one would produce bytes that cannot
+raises for an incremental commit, packing one would produce bytes that cannot
 be restored, so the binding refuses rather than returning a broken blob.
 
 Python: `crates/bashkit-python/tests/test_snapshot_history.py`, runnable
@@ -305,7 +305,7 @@ JS: `crates/bashkit-js/__test__/snapshot-history.spec.ts` (AVA, Node) **and**
 duplicated effort: AVA runs only under Node, while the object store crosses as
 `Record<string, Buffer>`, and Buffer semantics differ between Node, Bun, and
 Deno. The runtime-compat file covers the cases where that difference would show
-— binary round trips, byte-level mutation, and hex id stability.
+, binary round trips, byte-level mutation, and hex id stability.
 
 ## Security
 
@@ -326,14 +326,14 @@ bomb), TM-SNAP-005 (malformed graph), TM-SNAP-006 (capability mismatch).
 
 Decoder hardening: declared counts are bounded before allocation, per-object
 decompression is capped at 256 MiB, object kinds are checked against the kind
-expected from context, and commit parent lists are capped at 64 — on **encode**
+expected from context, and commit parent lists are capped at 64, on **encode**
 as well as decode, so `commit` cannot hand back a commit that no checkout would
 accept.
 
 Materialization is separately bounded, because per-object caps do not bound the
 *assembled* result. A file manifest is small even when it names millions of
 chunks, so repeating one chunk id would otherwise grow a file without limit
-before `FsLimits` — which only runs on a finished `VfsSnapshot` — could reject
+before `FsLimits`, which only runs on a finished `VfsSnapshot`, could reject
 it. Three checks, all in `resolve_file`:
 
 - the declared file size is charged to a per-checkout budget **before**
@@ -353,7 +353,7 @@ panic where it must return an error.
 **A forged tree names paths directly, bypassing every bash command that would
 normally create them.** Probed rather than assumed: traversal (`/../../etc/passwd`),
 non-normalized (`/a/../b.txt`), relative, and empty paths are all *accepted into
-the map but unreachable* — path resolution never produces those keys, so they are
+the map but unreachable*, path resolution never produces those keys, so they are
 inert rather than an escape. A NUL byte in a component is rejected outright by
 `FsLimits::validate_path`, atomically. Duplicate paths are last-wins, which is
 deterministic because tree entries are sorted.
@@ -404,7 +404,7 @@ in `crates/bashkit/benches/results/`.
 ## Known gaps
 
 - Reading *through* a symlink does not dereference in the VFS. Pre-existing and
-  unrelated to snapshots — links round-trip correctly as links.
+  unrelated to snapshots, links round-trip correctly as links.
 - No per-path content-hash cache in the VFS, so every commit rehashes the whole
   tree. Steady-state commit latency, not correctness; an mtime-based shortcut
   is not a safe substitute because restore stamps `modified = now` on every
@@ -430,7 +430,7 @@ in `crates/bashkit/benches/results/`.
 
 ## See also
 
-- [Virtual Filesystem](vfs.md) — `VfsSnapshot`, limits, restore semantics
-- [Threat Model](../security/threat-model.md) — TM-SNAP-001 through TM-SNAP-006
-- [Testing](../operations/testing.md) — test layout and binary-splitting criteria
-- [Limitations](../operations/limitations.md) — negative spec
+- [Virtual Filesystem](vfs.md), `VfsSnapshot`, limits, restore semantics
+- [Threat Model](../security/threat-model.md), TM-SNAP-001 through TM-SNAP-006
+- [Testing](../operations/testing.md), test layout and binary-splitting criteria
+- [Limitations](../operations/limitations.md), negative spec

@@ -190,21 +190,21 @@ component, not just the trailing one, so mounted trees are fully addressable:
 does in bash.
 
 Rules that fall out of the per-component walk:
-- Non-final components only match directories — a regular file sharing the
+- Non-final components only match directories, a regular file sharing the
   prefix is never descended into.
 - The dotfile rule is applied per component: a component matches names starting
   with `.` only when `dotglob` is set or that component literally starts with `.`.
 - Lookup uses the normalized absolute path while the emitted word is rebuilt
   from the caller's spelling, so `./` and `../` prefixes survive expansion.
 - No match anywhere in the walk falls back to the literal pattern, or to nothing
-  under `nullglob` — same as a trailing-component miss.
+  under `nullglob`, same as a trailing-component miss.
 - `**` with `globstar` is handled separately by `expand_glob_recursive`.
 - THREAT[TM-DOS-095]: the candidate set multiplies per component, so patterns
   deeper than `FsLimits::max_path_depth` are rejected and the live candidate set
   is capped at `FsLimits::max_file_count`.
 
 Known gap: backslash-escaped metacharacters (`echo /skills/\*`) still expand
-instead of staying literal — the backslash is dropped before pathname expansion
+instead of staying literal, the backslash is dropped before pathname expansion
 runs. Pre-dates per-component expansion and affects trailing components too.
 
 ### Symlink Handling
@@ -224,7 +224,7 @@ the suffix passed to the host OS (TM-ESC-034).
 
 Decision: published because embedders that bridge commands to host processes
 must map a VFS cwd to a host directory to spawn in, and hand-rolling it is a
-trap — a naive string prefix match puts `/workspace2` inside `/workspace`.
+trap, a naive string prefix match puts `/workspace2` inside `/workspace`.
 `HostMounts::resolve` matches whole path components and prefers the longest
 match, so a specific mount beats a root overlay.
 
@@ -287,13 +287,13 @@ Safety: real mounts are **read-only by default**. Text files are writable
 
 ## Alternatives Considered
 
-- Real filesystem with chroot: rejected — requires root, not portable, no WASM.
-- tokio::fs wrapper: rejected — always hits real FS, can't isolate or virtualize.
+- Real filesystem with chroot: rejected, requires root, not portable, no WASM.
+- tokio::fs wrapper: rejected, always hits real FS, can't isolate or virtualize.
 
 ## See also
 
-- [Bashkit Architecture](architecture.md) — how the VFS is owned and shared
-- [Threat Model](../security/threat-model.md) — path-escape threats the sandbox invariants answer
-- [Git Support](../integrations/git-support.md) — Git operations layered on the VFS
-- [SQLite Builtin](../runtimes/sqlite-builtin.md) — VfsIO backend bridging SQLite onto the VFS
-- [Python Package](../runtimes/python-package.md) — binding-side mount API parity
+- [Bashkit Architecture](architecture.md), how the VFS is owned and shared
+- [Threat Model](../security/threat-model.md), path-escape threats the sandbox invariants answer
+- [Git Support](../integrations/git-support.md), Git operations layered on the VFS
+- [SQLite Builtin](../runtimes/sqlite-builtin.md), VfsIO backend bridging SQLite onto the VFS
+- [Python Package](../runtimes/python-package.md), binding-side mount API parity

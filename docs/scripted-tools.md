@@ -1,6 +1,6 @@
 # Scripted tool orchestration
 
-Give an LLM ten tools and a ten-step task, and you pay for ten round-trips —
+Give an LLM ten tools and a ten-step task, and you pay for ten round-trips,
 each call is a separate turn, with the model re-reading context every time.
 `ScriptedTool` collapses that into one call: the model writes a single bash
 script that invokes your tools, pipes their output through `jq`, loops, branches,
@@ -8,7 +8,7 @@ and returns one composed result.
 
 Each tool you register becomes a **builtin command** inside a locked-down bash
 interpreter. The LLM orchestrates them with the full shell grammar it already
-knows — variables, pipelines, `for`, `if` — instead of a sequence of isolated
+knows, variables, pipelines, `for`, `if`, instead of a sequence of isolated
 tool calls.
 
 <svg viewBox="0 0 720 196" role="img" aria-label="One LLM call runs a bash script that invokes multiple registered tools" xmlns="http://www.w3.org/2000/svg" style="max-width:100%;height:auto;margin:1rem 0;">
@@ -83,7 +83,7 @@ assert_eq!(out.result["stdout"], "Ada\n");
 ```
 
 Flags parse from the schema: `--id 1` becomes `{"id": 1}` (coerced per the
-schema's property types). Use `.async_tool_fn(def, cb)` for async callbacks —
+schema's property types). Use `.async_tool_fn(def, cb)` for async callbacks,
 sync and async tools mix freely in one `ScriptedTool`. The full e-commerce demo
 lives in
 [`examples/scripted_tool.rs`](https://github.com/everruns/bashkit/blob/main/crates/bashkit/examples/scripted_tool.rs).
@@ -110,9 +110,9 @@ the task.
 The LLM doesn't need every schema in its context up front. Two built-in commands
 let it explore at runtime:
 
-- `help --list`, `help <tool>`, `help <tool> --json` — names, usage, and
+- `help --list`, `help <tool>`, `help <tool> --json`, names, usage, and
   machine-readable schemas (enum values, required fields).
-- `discover --categories | --category X | --tag Y | --search text` — filter by
+- `discover --categories | --category X | --tag Y | --search text`, filter by
   the `tags` / `category` you set on each `ToolDef`.
 
 For large tool sets, `ScriptedToolBuilder::compact_prompt(true)` shrinks the
@@ -120,7 +120,7 @@ system prompt to names + one-liners and defers full schemas to `help`.
 
 `ScriptingToolSet` formalises this: in `WithDiscovery` mode it exposes a compact
 script tool **plus** a companion discover tool, so the model browses schemas
-before writing a script — ideal alongside other tools or for 50+ tool sets.
+before writing a script, ideal alongside other tools or for 50+ tool sets.
 
 ## Safety
 
@@ -133,6 +133,6 @@ stack traces never reach script-visible stderr.
 
 ## See also
 
-- [Bashkit as an LLM tool](llm-tools.md) — the filesystem-backed `BashTool`.
-- [Virtual filesystem](filesystem.md) — why logic mode disables file access.
+- [Bashkit as an LLM tool](llm-tools.md), the filesystem-backed `BashTool`.
+- [Virtual filesystem](filesystem.md), why logic mode disables file access.
 - Spec: [`knowledge/integrations/scripted-tool-orchestration.md`](https://github.com/everruns/bashkit/blob/main/knowledge/integrations/scripted-tool-orchestration.md).

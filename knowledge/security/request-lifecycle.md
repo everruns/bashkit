@@ -22,8 +22,8 @@ budget/lease or retain usable request authority after the call returns.
 
 `ExecutionBudget` has two externally relevant states:
 
-1. **Active** — initialization and execution may check or charge the shared budget.
-2. **Closed** — all checks and charges fail with the fixed `request closed` reason.
+1. **Active**: initialization and execution may check or charge the shared budget.
+2. **Closed**: all checks and charges fail with the fixed `request closed` reason.
 
 While active, cancellation, deadline, or quota exhaustion poisons the request. The
 first poison remains authoritative for active descendants. Infallible RAII guards
@@ -84,6 +84,6 @@ timeout wording and interrupt behavior.
 
 ## See also
 
-- [Threat Model](threat-model.md) — TM-ISO-027 records stale request authority
-- [Security Testing](security-testing.md) — layered adversarial testing strategy
-- [HTTP Transport](http-transport.md) — host transport trust boundary
+- [Threat Model](threat-model.md), TM-ISO-027 records stale request authority
+- [Security Testing](security-testing.md), layered adversarial testing strategy
+- [HTTP Transport](http-transport.md), host transport trust boundary

@@ -5,12 +5,12 @@ commands it invokes, with which arguments, which files it redirects to, and
 which functions it defines. It parses; it does not execute.
 
 It exists for one question hosts keep having to answer: **"the model wants to
-run this — do I need to ask the user first?"**
+run this, do I need to ask the user first?"**
 
 **See also:**
-- [Hooks](./hooks.md) — runtime interception, the enforcement counterpart
-- [Threat Model](./threat-model.md) — what analysis can and cannot see
-- [Custom Builtins](./custom_builtins.md) — the commands you expose to a model
+- [Hooks](./hooks.md), runtime interception, the enforcement counterpart
+- [Threat Model](./threat-model.md), what analysis can and cannot see
+- [Custom Builtins](./custom_builtins.md), the commands you expose to a model
 
 ## Quick Start
 
@@ -33,7 +33,7 @@ assert!(!analysis.is_opaque());
 
 Static analysis cannot see through dynamic dispatch, interpreter re-entry
 (`eval`, `source`, `bash -c`), functions, or aliases. This API never reports
-those as safe — it reports them as *unknown*:
+those as safe, it reports them as *unknown*:
 
 ```rust
 use bashkit::Bash;
@@ -145,7 +145,7 @@ assert_eq!(
 
 ### 3. Audit log before execution
 
-Record intent, not just outcome — useful when a script fails halfway and you
+Record intent, not just outcome, useful when a script fails halfway and you
 need to know what it was going to do.
 
 ```rust
@@ -244,7 +244,7 @@ Partial reconstruction is deliberately not offered: `"/tmp/$name.txt"` reports
 
 ## Contexts
 
-Commands inside substitutions and function bodies are walked, not skipped —
+Commands inside substitutions and function bodies are walked, not skipped,
 `echo $(rm -rf /)` must never look like a bare `echo`. Each command carries a
 [`CommandContext`](crate::CommandContext) so you can tell them apart:
 
@@ -264,9 +264,9 @@ assert_eq!(analysis.commands[2].context, CommandContext::Direct);       // echo
 # }
 ```
 
-- `Direct` — runs when the script runs (possibly inside an `if` or loop)
-- `Substitution` — inside `$(…)`, backticks, or `<(…)`
-- `FunctionBody` — runs only if the function is called
+- `Direct`, runs when the script runs (possibly inside an `if` or loop)
+- `Substitution`, inside `$(…)`, backticks, or `<(…)`
+- `FunctionBody`, runs only if the function is called
 
 A host that wants "what happens now" filters to `Direct`; one that wants
 "anything this script could do" uses all of them. Note that a function body can
@@ -274,7 +274,7 @@ rebind a name you consider safe, which is one more reason `is_opaque()` and the
 `before_tool` backstop matter.
 
 One gap to own: wrapper commands that run *other* commands named in their
-arguments — `xargs`, `env`, `timeout`, `find -exec` — are not flagged. They
+arguments, `xargs`, `env`, `timeout`, `find -exec`, are not flagged. They
 analyze as ordinary commands, so if you allowlist one, treat its arguments as
 commands yourself.
 
@@ -299,7 +299,7 @@ assert!(analysis.redirects[1].mode.is_write());
 ## Errors and limits
 
 A script that does not parse returns an error. Do not treat that as an empty
-analysis — an unparseable script is not a script with no commands:
+analysis, an unparseable script is not a script with no commands:
 
 ```rust
 use bashkit::Bash;

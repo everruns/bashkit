@@ -103,11 +103,11 @@ Give your coding agent Bashkit-specific context with the published skill:
 npx skills add everruns/bashkit
 ```
 
-[View skill contents](https://github.com/everruns/bashkit/tree/main/skills/bashkit) — the `SKILL.md` and reference files (CLI, Rust/Python/TS APIs, builtins, LLM tools, examples) the skill installs.
+[View skill contents](https://github.com/everruns/bashkit/tree/main/skills/bashkit), the `SKILL.md` and reference files (CLI, Rust/Python/TS APIs, builtins, LLM tools, examples) the skill installs.
 
 ## Next steps
 
-- [Hooks](../crates/bashkit/docs/hooks.md) — observe, rewrite, or cancel tool calls and HTTP requests.
-- [Security](security.md) — the sandbox boundaries every tool call runs inside.
+- [Hooks](../crates/bashkit/docs/hooks.md), observe, rewrite, or cancel tool calls and HTTP requests.
+- [Security](security.md), the sandbox boundaries every tool call runs inside.
 - Examples: [agent and tool flows](https://github.com/everruns/bashkit/tree/main/examples).
 - Full API reference: [docs.rs/bashkit](https://docs.rs/bashkit/latest/bashkit/).

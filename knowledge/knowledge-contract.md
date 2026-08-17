@@ -36,7 +36,7 @@ The bundle targets OKF v0.2, declared as `okf_version: "0.2"` in the bundle-root
 - `log.md` bodies are date-grouped entries (`## YYYY-MM-DD`), newest first.
 - Prose that is not a directory listing belongs in a concept document, not in an `index.md`.
 - Links between concepts are relative and must resolve; links inside code spans and fenced blocks are text, not links.
-- Every concept links to at least one other concept — a `## See also` section at the end is the conventional place. The bundle is a graph an agent traverses, not a pile of files.
+- Every concept links to at least one other concept, a `## See also` section at the end is the conventional place. The bundle is a graph an agent traverses, not a pile of files.
 - Bundle documents are referenced as relative markdown links, never as repository paths. A `knowledge/<doc>.md` inside a code span is not a link, so no checker sees it rot; the 2026-07-26 restructure left ~30 of those dangling for five days.
 
 ## Trust and lifecycle metadata
@@ -44,9 +44,9 @@ The bundle targets OKF v0.2, declared as `okf_version: "0.2"` in the bundle-root
 OKF's provenance, trust, and lifecycle families are optional, and this bundle
 uses one of them deliberately.
 
-- A concept whose content is produced by a tool carries `type: Generated Inventory`, `resource` (the artifact it describes, bundle-relative), and `generated.by` (the producing actor, OKF actor syntax: `<producer>/<version>`, `human:<id>`, or `process:<id>`). That triple is what lets a reader decide whether to trust the document or go read the source — the distinction hand-written concepts do not need to make.
+- A concept whose content is produced by a tool carries `type: Generated Inventory`, `resource` (the artifact it describes, bundle-relative), and `generated.by` (the producing actor, OKF actor syntax: `<producer>/<version>`, `human:<id>`, or `process:<id>`). That triple is what lets a reader decide whether to trust the document or go read the source, the distinction hand-written concepts do not need to make.
 - `generated.at` is deliberately unused: it would go stale on the first regeneration that forgets to bump it, and the drift workflows already prove freshness against the source of truth.
-- `status`, `stale_after`, `verified`, `sources`, and `usage_window` are unused. Staleness here is defended by the rule that a behavior change updates its knowledge in the same pull request, plus the drift workflows — a calendar date would train people to bump the date rather than re-read the doc. If any of these are adopted later, `check_okf.py` already rejects malformed `status` and `stale_after` values.
+- `status`, `stale_after`, `verified`, `sources`, and `usage_window` are unused. Staleness here is defended by the rule that a behavior change updates its knowledge in the same pull request, plus the drift workflows, a calendar date would train people to bump the date rather than re-read the doc. If any of these are adopted later, `check_okf.py` already rejects malformed `status` and `stale_after` values.
 
 ## Layout
 
@@ -62,7 +62,7 @@ Concepts are grouped into domain subdirectories, each with its own `index.md`:
 | [`status/`](status/) | Machine-generated inventories |
 
 Only this contract and `log.md` sit at the bundle root. A doc's directory conveys
-its domain; its `type` conveys its kind — the two are independent, so a
+its domain; its `type` conveys its kind, the two are independent, so a
 `Subsystem Design` in `security/` and one in `runtimes/` share a type and differ
 in placement. When adding a concept, put it in the matching domain, add it to that
 directory's `index.md`, and prefer moving over duplicating if the domain changes.
@@ -103,9 +103,9 @@ Regression coverage (fail = caught, pass = slipped through):
 | Frontmatter on `index.md` | pass | pass | fail | fail |
 | Concept absent from `index.md` | pass | pass | pass | fail |
 | `log.md` heading not `YYYY-MM-DD` | pass | pass | fail | fail |
-| Bundle doc referenced as `knowledge/<doc>.md` | — | — | pass | fail |
-| Concept links to no other concept | — | — | pass | fail |
-| `Generated Inventory` without `generated.by` / `resource` | — | — | pass | fail |
+| Bundle doc referenced as `knowledge/<doc>.md` |, |, | pass | fail |
+| Concept links to no other concept |, |, | pass | fail |
+| `Generated Inventory` without `generated.by` / `resource` |, |, | pass | fail |
 
 The last three rows were added 2026-07-31 and measured against `okf-lint` only;
 `okf` and `okftool` were not re-run, hence `—`.
@@ -131,12 +131,12 @@ adopting it means maintaining the rule set anyway, and it requires Python 3.12+
 against this repository's 3.9 floor.
 
 `okftool lint` and `okf graph` remain useful ad hoc for advisory graph checks.
-Their 2026-07-26 finding — that most concepts had no cross-links to each other —
+Their 2026-07-26 finding, that most concepts had no cross-links to each other,
 was acted on 2026-07-31: every concept now links to at least one other, and
 `check_okf.py` keeps it that way.
 
 ## See also
 
-- [Builtin Inventory](status/builtin-inventory.md) — the bundle's Generated Inventory concept
-- [Maintenance](operations/maintenance.md) — release-time checks that keep knowledge in sync
-- [Documentation Architecture](operations/documentation.md) — the doc trees this bundle is not
+- [Builtin Inventory](status/builtin-inventory.md), the bundle's Generated Inventory concept
+- [Maintenance](operations/maintenance.md), release-time checks that keep knowledge in sync
+- [Documentation Architecture](operations/documentation.md), the doc trees this bundle is not

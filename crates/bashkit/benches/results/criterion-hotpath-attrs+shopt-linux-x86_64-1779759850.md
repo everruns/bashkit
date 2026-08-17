@@ -23,7 +23,7 @@ release + lto=fat + codegen-units=1.
 
 | Case | Time (median) | vs `plain_1k_loop` |
 |---|---:|---|
-| `plain_1k_loop` (existing) | 2.65 ms | — |
+| `plain_1k_loop` (existing) | 2.65 ms |, |
 | `strict_mode_1k_loop` (existing) | 2.63 ms | flat |
 | `xtrace_1k_loop` | 2.72 ms | +2.7% (bit-test on hot path is cheap) |
 | `pipefail_pipeline_200` | 474 µs | n/a (different shape) |

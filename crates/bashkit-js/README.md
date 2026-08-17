@@ -297,7 +297,7 @@ console.log(result.stdout); // Alice
 ## Custom Builtins
 
 Register JS callbacks as bash builtins that share the `Bash` / `BashTool`
-instance's VFS — files created in one call persist across `execute()` calls.
+instance's VFS, files created in one call persist across `execute()` calls.
 
 ```typescript
 import { Bash } from "@everruns/bashkit";
@@ -342,12 +342,12 @@ const bash = new Bash({
 
 The callback receives a `BuiltinContext`:
 
-- `name: string` — command name as invoked
-- `argv: string[]` — arguments (not including the command name)
-- `stdin: string | null` — piped input, or `null` if no pipe
-- `env: Record<string, string>` — environment variables (only exported names)
-- `cwd: string` — current working directory
-- `fs: FileSystem` — live handle to the instance's virtual filesystem
+- `name: string`, command name as invoked
+- `argv: string[]`, arguments (not including the command name)
+- `stdin: string | null`, piped input, or `null` if no pipe
+- `env: Record<string, string>`, environment variables (only exported names)
+- `cwd: string`, current working directory
+- `fs: FileSystem`, live handle to the instance's virtual filesystem
 
 `ctx.fs` is the same VFS the executing script sees: reads observe earlier
 script writes, and writes are visible to subsequent commands. It inherits
@@ -369,19 +369,19 @@ Override precedence: shell function > POSIX special builtin > custom builtin
 > (e.g. wrap `cat`), but shell functions defined in the script still win.
 
 Custom builtins survive `reset()`. They are host-side configuration and are
-**not** preserved by `snapshot()` / `restoreSnapshot()` — pass
+**not** preserved by `snapshot()` / `restoreSnapshot()`, pass
 `customBuiltins` again or call `addBuiltin` after restoring.
 
 Use `execute()` (async). If the script invokes a custom builtin under
 `executeSync()` the builtin fails fast with exit code 1 and stderr
 `"<name>: custom builtins require execute() (async). ..."` instead of
-deadlocking — the JS event loop is blocked while the synchronous call is
+deadlocking, the JS event loop is blocked while the synchronous call is
 in flight, so the underlying `Promise<string>` callback could never run.
 
 ## Script Analysis
 
-`analyze()` reports what a script statically refers to — commands, arguments,
-redirect targets, function definitions — without running it. Use it to decide
+`analyze()` reports what a script statically refers to, commands, arguments,
+redirect targets, function definitions, without running it. Use it to decide
 whether a model-produced command needs user approval.
 
 ```typescript
@@ -394,7 +394,7 @@ analysis.redirects[0].isWrite;  // true
 analysis.isOpaque;              // false
 ```
 
-Words that are not fully literal report `null` — never a partial string:
+Words that are not fully literal report `null`, never a partial string:
 
 ```typescript
 const a = bash.analyze('rm "$target" /tmp/fixed');
@@ -403,7 +403,7 @@ a.commands[0].args; // [null, "/tmp/fixed"]
 
 **Advisory only.** Static analysis cannot see through dynamic dispatch, `eval`,
 functions, or aliases. Those set `isOpaque`, and an allowlist check must consult
-it — `c=rm; $c -rf /data` contains no disallowed command name:
+it, `c=rm; $c -rf /data` contains no disallowed command name:
 
 ```typescript
 const READ_ONLY = new Set(["ls", "cat", "head", "grep", "wc", "echo"]);
@@ -584,13 +584,13 @@ import {
 - `cancel()`
 - `clearCancel()`
 - `reset()`
-- `addBuiltin(name, callback)` / `removeBuiltin(name)` — register/unregister persistent JS builtins
+- `addBuiltin(name, callback)` / `removeBuiltin(name)`, register/unregister persistent JS builtins
 - `snapshot(options?)` / `snapshotKeyed(key, options?)`
 - `restoreSnapshot(data, options?)` / `restoreSnapshotKeyed(data, key)`
 - `Bash.fromSnapshot(data, options?)` / `Bash.fromSnapshotKeyed(data, key)`
 - Direct VFS helpers: `readFile`, `writeFile`, `appendFile`, `mkdir`, `remove`, `exists`, `stat`, `readDir`, `ls`, `glob`, `mount`, `unmount`, `fs`
-- `shellState()` — lightweight inspection snapshot (variables, env, cwd, arrays, aliases, traps)
-- `analyze(script)` — static, pre-execution introspection (see [Script Analysis](#script-analysis))
+- `shellState()`, lightweight inspection snapshot (variables, env, cwd, arrays, aliases, traps)
+- `analyze(script)`, static, pre-execution introspection (see [Script Analysis](#script-analysis))
 
 ### BashTool
 
@@ -620,8 +620,8 @@ import {
 
 - `username?: string`
 - `hostname?: string`
-- `cwd?: string` — initial working directory (avoids a leading `cd`)
-- `env?: Record<string, string>` — initial environment variables (avoids an `export` prelude)
+- `cwd?: string`, initial working directory (avoids a leading `cd`)
+- `env?: Record<string, string>`, initial environment variables (avoids an `export` prelude)
 - `maxCommands?: number`
 - `maxLoopIterations?: number`
 - `maxMemory?: number`
@@ -631,30 +631,30 @@ import {
 - `mounts?: Array<{ path: string; root: string; writable?: boolean }>`
 - `python?: boolean`
 - `externalFunctions?: string[]`
-- `customBuiltins?: Record<string, (ctx: BuiltinContext) => string | Promise<string>>` — JS callbacks registered as bash builtins (see [Custom Builtins](#custom-builtins))
-- `network?: NetworkOptions` — outbound HTTP configuration (see [Network](#network))
+- `customBuiltins?: Record<string, (ctx: BuiltinContext) => string | Promise<string>>`, JS callbacks registered as bash builtins (see [Custom Builtins](#custom-builtins))
+- `network?: NetworkOptions`, outbound HTTP configuration (see [Network](#network))
 
 ### ScriptAnalysis
 
 Returned by `analyze(script)`.
 
-- `commands: AnalyzedCommand[]` — every simple command, in source order
-- `redirects: AnalyzedRedirect[]` — `{ path: string | null, mode: "read" | "write" | "append", isWrite: boolean }`
-- `functions: string[]` — function names the script defines
-- `commandNames: string[]` — distinct statically known names, first-seen order
+- `commands: AnalyzedCommand[]`, every simple command, in source order
+- `redirects: AnalyzedRedirect[]`, `{ path: string | null, mode: "read" | "write" | "append", isWrite: boolean }`
+- `functions: string[]`, function names the script defines
+- `commandNames: string[]`, distinct statically known names, first-seen order
 - `hasDynamicCommands: boolean` / `hasInterpreterReentry: boolean` / `hasCommandSubstitution: boolean` / `truncated: boolean`
-- `isOpaque: boolean` — the script hides work; allowlist checks must treat this as "ask"
+- `isOpaque: boolean`, the script hides work; allowlist checks must treat this as "ask"
 
 `AnalyzedCommand`: `{ name: string | null, args: Array<string | null>, context: "direct" | "substitution" | "function_body", assignments: string[], isAssignmentOnly: boolean }`
 
 ### BuiltinContext
 
-- `name: string` — command name as invoked
-- `argv: string[]` — arguments (not including the command name)
-- `stdin: string | null` — piped input, `null` if no pipe
-- `env: Record<string, string>` — exported environment variables
-- `cwd: string` — current working directory
-- `fs: FileSystem` — live handle to the instance's virtual filesystem
+- `name: string`, command name as invoked
+- `argv: string[]`, arguments (not including the command name)
+- `stdin: string | null`, piped input, `null` if no pipe
+- `env: Record<string, string>`, exported environment variables
+- `cwd: string`, current working directory
+- `fs: FileSystem`, live handle to the instance's virtual filesystem
 
 ### ExecuteOptions
 

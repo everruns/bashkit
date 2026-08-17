@@ -68,7 +68,7 @@ configurable via `PythonLimits`:
 `max_memory` does double duty: Monty caps the host-side buffer that collects
 `print` output at the same value, so a print loop cannot outgrow the declared
 budget even though it allocates nothing on the VM heap. There is no
-allocation-count knob — Monty removed `max_allocations` in 0.0.19.
+allocation-count knob, Monty removed `max_allocations` in 0.0.19.
 
 Each Python entry also consumes the request-scoped `ExecutionBudget`: source
 bytes are charged as aggregate input, configured memory contributes a
@@ -96,8 +96,8 @@ Monty 0.0.21 changed how `max_memory` is enforced:
 
 Neither `monty` nor `monty-types` depends on `monty-alloc`. When it is absent
 the statics keep their initial values and `probe_memory()` evaluates to
-`0.saturating_sub(usize::MAX)` == 0, so `check_allocation` — and therefore both
-`max_memory` and `check_large_result` — can never trip. The ceiling is not
+`0.saturating_sub(usize::MAX)` == 0, so `check_allocation`, and therefore both
+`max_memory` and `check_large_result`, can never trip. The ceiling is not
 merely weakened; it is silently unenforced, with no error or warning.
 
 Bashkit cannot supply the missing allocator. It is an embeddable library, so
@@ -107,7 +107,7 @@ built for Monty's own out-of-process worker model ("a Monty *worker's* hard
 memory ceiling"), which bashkit does not use.
 
 Four existing threat-model regression tests fail on the bump and are the
-standing guard for this — they need no new test to be added:
+standing guard for this, they need no new test to be added:
 
 - `python_security_tests::whitebox_resource_limits::nested_list_bomb`
 - `python_security_tests::whitebox_resource_limits::successive_allocations_accumulate`
@@ -122,7 +122,7 @@ lifted; neither is a blocker on its own:
 
 - `ResourceTracker` became a concrete struct (upstream pydantic/monty#613), so
   the host can no longer wrap VM checkpoints. `BudgetTracker`'s bridge into the
-  shared `ExecutionBudget` has to move outside the VM — charging work around
+  shared `ExecutionBudget` has to move outside the VM, charging work around
   each synchronous `start`/`resume` section instead of inside it. The
   per-entry admission reservation that enforces TM-DOS-096 is independent of
   the tracker and survives either way.
@@ -135,7 +135,7 @@ the root `Cargo.toml` exists only because `monty 0.0.19` requires
 Monty 0.0.21 depends on the published `jiter 0.16.0`, which already tracks
 pyo3 0.29, so the workspace would build from crates.io alone with no git
 dependency in the release graph. That is a real supply-chain win waiting on the
-memory fix — it is not a reason to take the bump early.
+memory fix, it is not a reason to take the bump early.
 
 ### Python Feature Support
 
@@ -149,7 +149,7 @@ pathlib, os (getenv/environ), json, datetime (incl. `date.today()`,
 `datetime.now(tz)`).
 
 Not supported (Monty limitations): classes (planned upstream), match
-statements, third-party imports, most stdlib modules, and HTTP/network I/O —
+statements, third-party imports, most stdlib modules, and HTTP/network I/O,
 no `socket`/`urllib`/`requests`/`http.client`; Monty has no OsCall variants
 for network operations, so there is no way to bridge these.
 
@@ -179,7 +179,7 @@ is_symlink/mkdir/unlink/rmdir/iterdir/stat/rename/resolve/absolute`,
 ### External Functions
 
 Host applications can register async external function handlers that Python
-code calls by name — host capabilities (tool calls, lookups) without
+code calls by name, host capabilities (tool calls, lookups) without
 serialization overhead; arguments arrive as raw `MontyObject` values.
 
 ```rust
@@ -195,7 +195,7 @@ let bash = Bash::builder()
 - Returns `ExtFunctionResult::Return(MontyObject)` (value to Python) or `ExtFunctionResult::Error(MontyException)` (raises).
 - **Dispatch:** one handler receives all registered names; dispatch on `function_name` inside it.
 - **Timeouts:** Each awaited handler call is wrapped in the remaining `PythonLimits::max_duration` wall-clock budget for the current Python invocation. If the budget expires while a handler is pending, Bashkit resumes Python with a `RuntimeError` instead of waiting for the handler indefinitely.
-- **Trust model:** same as `BashBuilder::builtin()` and `ScriptedTool` callbacks — host registers trusted Rust code, untrusted scripts invoke by name. Handlers are trusted host code and should still enforce independent limits for outbound I/O, remote services, and other resources they consume.
+- **Trust model:** same as `BashBuilder::builtin()` and `ScriptedTool` callbacks, host registers trusted Rust code, untrusted scripts invoke by name. Handlers are trusted host code and should still enforce independent limits for outbound I/O, remote services, and other resources they consume.
 - **Unstable re-exports:** `MontyObject`, `ExtFunctionResult`, `MontyException`, `ExcType` re-exported from the `monty` crate (pre-1.0, tracked at `0.0.x`); may break between bashkit releases.
 
 ### Security
@@ -211,7 +211,7 @@ analysis. Summary:
 ### Error Handling
 
 Exit code 1: syntax/runtime errors (Python traceback on stderr; stdout
-produced before a runtime error is preserved). Exit code 2: usage errors —
+produced before a runtime error is preserved). Exit code 2: usage errors,
 file not found, missing `-c` argument, unknown option.
 
 ### LLM Hints
@@ -227,7 +227,7 @@ catastrophic-backtracking DoS risk in untrusted code execution.
 ### Integration with Bashkit
 
 `python`/`python3` map to the same builtin; works in pipelines (stdin
-provides *code*, not data — matches real python's no-arg behavior), command
+provides *code*, not data, matches real python's no-arg behavior), command
 substitution, and conditionals.
 
 With the `scripted_tool` feature, `BashBuilder::tool_registry` generates an

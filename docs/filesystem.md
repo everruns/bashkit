@@ -1,7 +1,7 @@
 # Virtual filesystem
 
 Every Bashkit script runs against an in-memory **virtual filesystem** (VFS), not
-the host disk. `cat`, `ls`, `cp`, redirections, `mkdir` — they all work exactly
+the host disk. `cat`, `ls`, `cp`, redirections, `mkdir`, they all work exactly
 as a script expects, but the bytes live in memory and disappear when the
 interpreter is dropped. Path traversal like `../../../etc/passwd` is normalised
 away, and symlinks are stored but never followed. The host is invisible by
@@ -14,7 +14,7 @@ filesystem to escape to unless you mount one.
 
 A `Bash` instance composes its filesystem from layers. Each layer wraps the one
 below it, so you can stack read-only enforcement, text mounts, and host mounts
-over an in-memory base — and swap mounts at runtime.
+over an in-memory base, and swap mounts at runtime.
 
 <svg viewBox="0 0 560 320" role="img" aria-label="Filesystem layering stack from MountableFs at the top down to the base filesystem" xmlns="http://www.w3.org/2000/svg" style="max-width:100%;height:auto;margin:1rem 0;">
   <g font-family="ui-monospace,monospace" font-size="13">
@@ -55,7 +55,7 @@ Internally the VFS splits raw storage from POSIX semantics:
 | POSIX | `FileSystem` / `PosixFs` | POSIX-like validation (no duplicate names, type-safe ops, parent-dir rules) |
 
 If you want a custom backend (a database, object store, key-value store),
-implement the small `FsBackend` and wrap it in `PosixFs` — the POSIX checks come
+implement the small `FsBackend` and wrap it in `PosixFs`, the POSIX checks come
 for free. Implement `FileSystem` directly only when you need full control over
 semantics.
 
@@ -81,7 +81,7 @@ adapter tests remain responsible for those invariants.
 | **OverlayFs** | Copy-on-write over another filesystem, with whiteout tracking for deletes. |
 | **MountableFs** | Mount multiple filesystems at different paths (longest-prefix match). Always the outermost layer, enabling [live mounts](../crates/bashkit/docs/live_mounts.md). |
 | **NamespaceFs** | Compose a static visible tree from rebased filesystem subtrees, with per-mount access and synthetic ancestors. |
-| **ReadOnlyFs** | Delegates reads, denies every mutation with `PermissionDenied` — even writes to `/tmp`, `cp`, `mv`, `rm`, `chmod`. For inspection-only sessions. |
+| **ReadOnlyFs** | Delegates reads, denies every mutation with `PermissionDenied`, even writes to `/tmp`, `cp`, `mv`, `rm`, `chmod`. For inspection-only sessions. |
 | **RealFs** (`realfs` feature) | Direct access to a host directory. Read-only (safe) or read-write (dangerous); path traversal blocked by canonicalisation + root-prefix checks. |
 
 ## Mounting host directories
@@ -106,7 +106,7 @@ bashkit --mount-ro /host/data:/data -c 'ls /data'   # read-only
 bashkit --mount-rw /host/out:/out  -c 'echo hi > /out/f'  # writable (dangerous)
 ```
 
-To freeze a session — including in-memory writes — wrap it with
+To freeze a session, including in-memory writes, wrap it with
 `readonly_filesystem()`.
 
 ## Composing a static namespace
@@ -145,7 +145,7 @@ atomic.
 ## Host-backed filesystem (JS)
 
 The wasm bindings accept an `fs` object, so scripts run directly against storage
-you own — a Durable Object, an OPFS handle, IndexedDB — instead of the in-memory
+you own, a Durable Object, an OPFS handle, IndexedDB, instead of the in-memory
 VFS. Nothing is copied in or diffed back out: every read and write during the run
 is a call into your object.
 
@@ -154,8 +154,8 @@ const bash = new Bash({ cwd: "/workspace", fs: myHost });
 const r = await bash.execute("grep -rl TODO . | head -5");
 ```
 
-Seven methods are required — `read`, `write`, `mkdir`, `remove`, `stat`,
-`readDir`, `exists` — and each may return its value directly or as a `Promise`.
+Seven methods are required, `read`, `write`, `mkdir`, `remove`, `stat`,
+`readDir`, `exists`, and each may return its value directly or as a `Promise`.
 `append`, `copy`, `rename`, and `chmod` are optional and synthesized from the
 required primitives when omitted. Your host implements raw storage only; POSIX
 semantics (parent-directory checks, "is a directory", symlink resolution) are
@@ -165,7 +165,7 @@ enforced above it. Throw an `Error` carrying a `code` (`ENOENT`, `EEXIST`,
 Two contract notes:
 
 - **`execute()` only.** A host call can suspend the interpreter, and
-  `executeSync` cannot await — it reports the suspension instead of blocking.
+  `executeSync` cannot await, it reports the suspension instead of blocking.
 - **`files` is rejected alongside `fs`.** Seeding writes through the VFS
   synchronously, which a promise-returning host can never satisfy.
 
@@ -181,7 +181,7 @@ for the full method table and error-code list.
 - **`/dev/null`** is handled at the interpreter level (not the filesystem), so a
   custom backend can't intercept it. **`/dev/urandom`** / **`/dev/random`**
   return bounded random data.
-- **Symlinks** are stored but never followed — this closes symlink-escape
+- **Symlinks** are stored but never followed, this closes symlink-escape
   (TM-ESC-002) and symlink-loop DoS (TM-DOS-011).
 
 ## Binding parity
@@ -195,14 +195,14 @@ mounts: [{ host_path, vfs_path?, writable? }]  # real FS (read-only by default)
 readonly_filesystem: bool                       # deny all VFS mutations after setup
 ```
 
-The wasm bindings additionally accept `fs` — an embedder-supplied filesystem
+The wasm bindings additionally accept `fs`, an embedder-supplied filesystem
 that replaces the in-memory VFS entirely. See
 [Host-backed filesystem (JS)](#host-backed-filesystem-js) above.
 
 ## See also
 
-- [Security](security.md) — the boundaries built on top of the VFS.
-- [Live mounts](../crates/bashkit/docs/live_mounts.md) — attach and detach filesystems at runtime.
-- [Filesystem namespaces](https://docs.rs/bashkit/latest/bashkit/namespace_filesystems_guide/) — compose and rebase static mount trees.
-- [Snapshotting](snapshotting.md) — serialise and restore VFS + shell state.
+- [Security](security.md), the boundaries built on top of the VFS.
+- [Live mounts](../crates/bashkit/docs/live_mounts.md), attach and detach filesystems at runtime.
+- [Filesystem namespaces](https://docs.rs/bashkit/latest/bashkit/namespace_filesystems_guide/), compose and rebase static mount trees.
+- [Snapshotting](snapshotting.md), serialise and restore VFS + shell state.
 - Spec: [`knowledge/foundations/vfs.md`](https://github.com/everruns/bashkit/blob/main/knowledge/foundations/vfs.md).

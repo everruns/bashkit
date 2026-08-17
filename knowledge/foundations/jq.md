@@ -52,6 +52,6 @@ the exception does not cross into the strict `json` builtin.
 
 ## See also
 
-- [Builtin Commands](builtins.md) — builtin execution and request-budget context
-- [Known Limitations](../operations/limitations.md) — jq divergences and strict-boundary stance
-- [Threat Model](../security/threat-model.md) — TM-DOS-100 resource-exhaustion mitigation
+- [Builtin Commands](builtins.md), builtin execution and request-budget context
+- [Known Limitations](../operations/limitations.md), jq divergences and strict-boundary stance
+- [Threat Model](../security/threat-model.md), TM-DOS-100 resource-exhaustion mitigation

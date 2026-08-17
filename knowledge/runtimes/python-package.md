@@ -18,7 +18,7 @@ Implemented
 ## Abstract
 
 Bashkit ships a Python package as pre-built binary wheels on PyPI. Users install with
-`pip install bashkit` and get a native extension — no Rust toolchain needed.
+`pip install bashkit` and get a native extension, no Rust toolchain needed.
 
 ## Package Layout
 
@@ -37,7 +37,7 @@ re-exports, `_bashkit.pyi` PEP 561 type stubs + `py.typed`, `langchain.py` /
 ## Versioning
 
 Python package version is read dynamically from workspace `Cargo.toml` via maturin
-(`dynamic = ["version"]` in pyproject.toml) — no manual sync. Chain:
+(`dynamic = ["version"]` in pyproject.toml), no manual sync. Chain:
 workspace `Cargo.toml` → `bashkit-python` `Cargo.toml` (inherits) → maturin → wheel metadata.
 
 ## Supported Platforms
@@ -51,7 +51,7 @@ Thanks to abi3 (below) this is **7 native wheels per release** (one
 `{Python minor × platform}` combination.
 
 In addition, a **reduced-feature Pyodide/Emscripten wheel**
-(`wasm32-unknown-emscripten`) ships for browser / JupyterLite use — built and
+(`wasm32-unknown-emscripten`) ships for browser / JupyterLite use, built and
 published separately (different toolchain, single Python version, no
 async/network/sqlite/realfs). See [Emscripten Wheels](emscripten-wheels.md).
 
@@ -61,7 +61,7 @@ async/network/sqlite/realfs). See [Emscripten Wheels](emscripten-wheels.md).
 platform wheels → `twine check` → per-platform smoke test
 (`BashTool().execute_sync('echo hello')`) → `uv publish` to PyPI.
 
-Auth: PyPI trusted publishing (OIDC) — no API tokens. Prerequisites: GitHub
+Auth: PyPI trusted publishing (OIDC), no API tokens. Prerequisites: GitHub
 environment `release-python` exists; PyPI trusted publisher configured for
 `everruns/bashkit`, workflow `publish-python.yml`, environment `release-python`.
 
@@ -89,15 +89,15 @@ text-oriented VFS helpers (`read_file`, `write_file`, `append_file`, `mkdir`,
 
 `set_env()` and runtime `mount()` are recorded and replayed on every rebuild,
 so `reset()` keeps them the way it already keeps `custom_builtins` and
-constructor `files` (TM-ISO-025). This makes a reusable setup bundle —
-mount + env + builtin, the extension shape from #2291 — survive a reset whole
+constructor `files` (TM-ISO-025). This makes a reusable setup bundle,
+mount + env + builtin, the extension shape from #2291, survive a reset whole
 rather than half-applied. `unmount()` retracts its record, so a rebuild does
 not resurrect a removed mount. Env a *script* exported is not recorded: `reset()`
 still discards it, and only host-set values come back.
 
 Same contract in the NAPI binding (`setEnv`), backed by `Bash::set_env()` in
 the core. Absent from the CLI, browser wasm, and C ABI, which expose no
-post-construction host API — see
+post-construction host API, see
 [Public Capability Parity](../status/capability-parity.md).
 
 Snapshot/restore on both `Bash` and `BashTool` (mirrors Node bindings):
@@ -118,14 +118,14 @@ and `BashTool(...)`: a dict with `allow` (URL patterns) **or**
 Omitting `network=` leaves the network disabled (secure default).
 
 The `bashkit-python` crate compiles the core with `http_client`, so `reqwest`
-is available unconditionally — gating happens at the Python API layer.
+is available unconditionally, gating happens at the Python API layer.
 Configuration is persisted on the wrapper struct so `reset()` and
 `from_snapshot(...)` rebuild with the same allowlist.
 
 Phase 2 (#1348) adds per-host credential injection via two optional keys on
 the same dict:
 
-- `credentials`: injection rules — `pattern`, `kind` (`"bearer"`, `"header"`,
+- `credentials`: injection rules, `pattern`, `kind` (`"bearer"`, `"header"`,
   `"headers"`), and payload (`token`, `name`/`value`, or `(name, value)`
   pairs). The script never sees the secret; the runtime adds headers
   transparently after the allowlist check.
@@ -164,7 +164,7 @@ Returns dict with `name`, `description`, `args_schema` for LangChain.
 `Callable[[BuiltinContext], str | BuiltinResult | Awaitable[str | BuiltinResult]]`.
 `BuiltinResult` carries explicit `stdout`, `stderr`, `exit_code`.
 
-`BuiltinContext` exposes `name`, `argv`, `stdin`, `env`, `cwd`, and `fs` — a
+`BuiltinContext` exposes `name`, `argv`, `stdin`, `env`, `cwd`, and `fs`, a
 `FileSystem` handle to the interpreter's *live* VFS (same API as
 `Bash.fs()`): reads see files created by earlier commands, writes are visible
 to later ones. It wraps the same `Arc<dyn FileSystem>` the interpreter uses
@@ -174,14 +174,14 @@ operates without the interpreter lock. Because a custom builtin runs inside
 the active runtime (`Handle::try_current`) and dispatches `ctx.fs` ops on a
 throwaway worker thread to avoid a nested-runtime panic; each op spawns a
 short-lived thread + runtime, so batching fs work in a callback beats many
-small ops in a tight loop. This is distinct from — and safe unlike — calling
+small ops in a tight loop. This is distinct from, and safe unlike, calling
 back into the owning instance's `Bash.fs()` / `Bash.read_file()`, which is
 unsupported re-entrancy: it re-enters the interpreter's runtime and panics
 with a nested-runtime error (not a deadlock, and not caught by the
 `external_handler` reentry guard, which does not fire for custom builtins).
 A callback may retain `ctx.fs` beyond the invocation: the handle stays valid
 after the `Bash` drops and keeps the underlying VFS and its tokio runtime
-alive until released — stashing it extends resource lifetime past `del bash`
+alive until released, stashing it extends resource lifetime past `del bash`
 (see teardown determinism below).
 
 **Sync callbacks** are called directly under the session's captured
@@ -192,8 +192,8 @@ alive until released — stashing it extends resource lifetime past `del bash`
 | Calling context | Mechanism |
 |---|---|
 | `await execute()` | Callback scheduled as a `Task` on the **caller's running loop** |
-| `execute_sync()` — no running loop | **Private event loop** shared across calls on the same `Bash` instance |
-| `execute_sync()` — running loop present (e.g. Jupyter / IPython) | **Background daemon thread** with its own fresh event loop |
+| `execute_sync()`, no running loop | **Private event loop** shared across calls on the same `Bash` instance |
+| `execute_sync()`, running loop present (e.g. Jupyter / IPython) | **Background daemon thread** with its own fresh event loop |
 
 The background-thread path is selected via `asyncio.get_running_loop()`
 succeeding; the awaitable's `run_until_complete` is wrapped in
@@ -203,7 +203,7 @@ compilation.
 
 **Teardown determinism** (TM-PY-030): while the interpreter is alive,
 dropping the last reference to a `Bash`/`BashTool`/`ScriptedTool`
-deterministically releases everything it owns *before* the drop returns —
+deterministically releases everything it owns *before* the drop returns,
 in-flight private-loop callbacks are cancelled cooperatively (each runs as an
 `asyncio.Task`; cancellation raises `asyncio.CancelledError` at the next
 await point), the private-loop worker thread is joined and closes its event
@@ -213,7 +213,7 @@ that need to attach. Callbacks that block without awaiting (e.g. `time.sleep`
 inside `async def`) cannot be cancelled mid-section; teardown waits for the
 current section to reach an await point or return. At interpreter exit
 (boundary: an `atexit` handler registered at module import), teardown goes
-hands-off — native threads must not touch a finalizing CPython — and the OS
+hands-off, native threads must not touch a finalizing CPython, and the OS
 reclaims resources. The same hands-off path applies when the last runtime
 handle is dropped *inside* a tokio context (a `Bash` dropped while
 `await execute()` is in flight finishes on a runtime worker thread): a
@@ -225,7 +225,7 @@ thread count. tokio reaps idle blocking-pool threads on a 10 s timer, so a test
 session that ran async work earlier sheds an unrelated thread mid-loop
 (measured: 6 threads holding, dropping to 5 at exactly t=10.0 s). Exact
 equality read that shrink as a failure though nothing had leaked. Do not
-re-tighten it — the process-wide count is not a single tool's to own, and a
+re-tighten it, the process-wide count is not a single tool's to own, and a
 genuine leak compounds across the churn iterations and still trips the check.
 
 **ContextVar propagation**: ContextVars set before `execute()` /
@@ -239,7 +239,7 @@ invocation regardless of mechanism.
 
 ## CI
 
-`.github/workflows/python.yml` — on push to main and PRs (path-filtered).
+`.github/workflows/python.yml`, on push to main and PRs (path-filtered).
 Jobs: lint (ruff check + format), test (installs the single abi3 wheel from
 build-wheel + pytest on 3.9–3.14; only the non-abi3 random-fs fixture is built
 per version), examples (wheel + `crates/bashkit-python/examples/` +
@@ -266,7 +266,7 @@ The extension is built against CPython's [limited API / stable
 ABI](https://docs.python.org/3/c-api/stable.html) via PyO3's `abi3-py39`
 feature (in the workspace `pyo3` dependency). One `cp39-abi3` wheel per
 platform runs on **every Python ≥ 3.9**, including versions released after the
-wheel was built — no per-minor-version rebuild.
+wheel was built, no per-minor-version rebuild.
 
 Why: PyPI keeps every historical release forever, and each native wheel is a
 ~12 MB static binary (embedded jq / Monty / SQLite / SSH / TLS). Building one
@@ -278,7 +278,7 @@ API is negligible here because hot paths are in Rust, not Python dispatch.
 
 Because the build now emits one wheel instead of one-per-version, the
 `test-builds` job in `publish-python.yml` installs and smoke-tests that single
-wheel across the full 3.9–3.14 range on every OS (3 × 6 = 18 jobs) — the check
+wheel across the full 3.9–3.14 range on every OS (3 × 6 = 18 jobs), the check
 that the abi3 wheel really runs everywhere it claims, not just on the build
 interpreter.
 
@@ -290,13 +290,13 @@ Limited-API constraints observed in `crates/bashkit-python/src/lib.rs`:
 - **No `PyString::to_str`** on the `&self`-only path (needs the non-limited API
   below 3.10). Lazy file providers use `to_cow()`, which is in the stable ABI.
 
-The emscripten/Pyodide wheel is unaffected — it already ships a single Python
+The emscripten/Pyodide wheel is unaffected, it already ships a single Python
 version on a separate toolchain (see [Emscripten Wheels](emscripten-wheels.md)).
 
 ## Design Decisions
 
 - **No PGO**: Profile-guided optimization adds build complexity for minimal gain.
-  Bashkit is a thin PyO3 extension — hot paths are in Rust, not Python dispatch.
+  Bashkit is a thin PyO3 extension, hot paths are in Rust, not Python dispatch.
   Can revisit if profiling shows benefit.
 - **No exotic architectures**: armv7, ppc64le, s390x, i686 omitted. Target audience
   is AI agent developers on standard server/desktop platforms.

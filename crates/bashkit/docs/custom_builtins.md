@@ -150,8 +150,8 @@ TypeScript/JavaScript builtins.
 
 ## Process-Local Host Calls
 
-Use an event-backed builtin when the host—not a `Builtin::execute`
-implementation—must receive a request and later supply its shell result. The
+Use an event-backed builtin when the host, not a `Builtin::execute`
+implementation, must receive a request and later supply its shell result. The
 execution remains parked in memory while the host performs the work.
 
 ```rust
@@ -195,7 +195,7 @@ serializable. Execution limits, including wall-clock timeout, remain active
 while the host call is parked. Calling an event-backed command through ordinary
 `exec()` fails immediately because no execution driver is present.
 
-## BuiltinRegistry — Runtime-Mutable Builtins
+## BuiltinRegistry, Runtime-Mutable Builtins
 
 `BashBuilder::builtin` and `Extension` are both *build-time*: the set of
 builtins is frozen when `Bash::builder().build()` returns. For embedders
@@ -242,7 +242,7 @@ interpreter that owns one).
 **Resolution order**: shell function → POSIX special builtin → registry
 entry → baked-in builtin → `$PATH`. Registry entries can override
 baked-in commands (e.g. wrap `cat` with tracing) but shell functions
-still win — matching standard bash precedence.
+still win, matching standard bash precedence.
 
 The registry is host-owned: not part of interpreter state, so it survives
 `exec()` calls automatically and is not serialized by `Bash::snapshot()`.
@@ -462,7 +462,7 @@ impl Builtin for Counter {
 
 ## Integration with Scripts
 
-Custom builtins integrate seamlessly with bash scripting:
+Custom builtins integrate smoothly with bash scripting:
 
 ```bash
 # Variables work

@@ -31,16 +31,16 @@ assert_eq!(result.stdout, "hello\n");
 
 ## How Hooks Work
 
-Every hook is an **interceptor** — a closure that receives owned data and must
+Every hook is an **interceptor**: a closure that receives owned data and must
 return a [`HookAction`]:
 
-- **`HookAction::Continue(value)`** — proceed with the (possibly modified) value
-- **`HookAction::Cancel(reason)`** — abort the operation
+- **`HookAction::Continue(value)`**: proceed with the (possibly modified) value
+- **`HookAction::Cancel(reason)`**: abort the operation
 
 Multiple hooks of the same type run in registration order. If any hook returns
 `Cancel`, later hooks are skipped and the operation is aborted.
 
-Hooks have **zero overhead** when none are registered — the interpreter checks
+Hooks have **zero overhead** when none are registered, the interpreter checks
 `Vec::is_empty()` and skips the hook path entirely.
 
 ## Hook Types
@@ -61,7 +61,7 @@ already-completed operation is a no-op in practice.
 
 ## Execution Hooks
 
-### `before_exec` — Modify or Block Scripts
+### `before_exec`, Modify or Block Scripts
 
 Fires before each `bash.exec()` call. The hook receives an [`ExecInput`] with
 the script text and can rewrite or cancel it.
@@ -93,7 +93,7 @@ assert_eq!(result.exit_code, 1);
 # }
 ```
 
-### `after_exec` — Observe Results
+### `after_exec`, Observe Results
 
 Fires after script execution completes. Useful for logging, metrics, or
 post-processing.
@@ -134,7 +134,7 @@ Tool hooks fire around **registered builtin commands** (e.g. `echo`, `cat`,
 `grep`). They do not fire for shell-level special builtins like `declare`,
 `local`, or `export`.
 
-### `before_tool` — Intercept Commands
+### `before_tool`, Intercept Commands
 
 ```rust
 use bashkit::{Bash, hooks::{HookAction, ToolEvent}};
@@ -157,7 +157,7 @@ assert_eq!(result.exit_code, 0);
 # }
 ```
 
-### `after_tool` — Audit Command Results
+### `after_tool`, Audit Command Results
 
 ```rust
 use bashkit::{Bash, hooks::{HookAction, ToolResult}};
@@ -189,7 +189,7 @@ assert_eq!(captured[0].1, 0);
 
 ## Lifecycle Hooks
 
-### `on_exit` — Handle Script Exit
+### `on_exit`, Handle Script Exit
 
 Fires when the `exit` builtin is called. Can modify the exit code or prevent
 the exit entirely.
@@ -212,7 +212,7 @@ let bash = Bash::builder()
 # }
 ```
 
-### `on_error` — Handle Errors
+### `on_error`, Handle Errors
 
 Fires when the interpreter encounters an error (parse errors, runtime errors).
 
@@ -239,9 +239,9 @@ HTTP hooks require the `http_client` feature (enabled by default). They fire
 around HTTP requests made by `curl`, `wget`, and `http` builtins.
 
 HTTP hooks fire **after** the [`NetworkAllowlist`] check, so the security
-boundary stays in bashkit — hooks cannot bypass the allowlist.
+boundary stays in bashkit, hooks cannot bypass the allowlist.
 
-### `before_http` — Filter or Modify Requests
+### `before_http`, Filter or Modify Requests
 
 ```rust,ignore
 use bashkit::{Bash, NetworkAllowlist, hooks::{HookAction, HttpRequestEvent}};
@@ -264,7 +264,7 @@ let bash = Bash::builder()
 # }
 ```
 
-### `after_http` — Observe Responses
+### `after_http`, Observe Responses
 
 ```rust,ignore
 use bashkit::{Bash, NetworkAllowlist, hooks::{HookAction, HttpResponseEvent}};

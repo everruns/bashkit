@@ -11,7 +11,7 @@ filesystem. One binary, three modes.
 | `bashkit script.sh` | Execute script file |
 | `bashkit` | Interactive shell (REPL) |
 
-Mode is detected from arguments — `-c` wins, then positional script,
+Mode is detected from arguments, `-c` wins, then positional script,
 otherwise REPL.
 
 ## Script arguments and stdin
@@ -74,13 +74,13 @@ cargo build -p bashkit-cli --no-default-features
 
 Builtins enabled out of the box:
 
-- **Git** (`git`) — local VFS operations (init, add, commit, log, …)
-- **Python** (`python`, `python3`) — embedded via [Monty](https://github.com/pydantic/monty) (requires `python` feature)
-- **SQLite** (`sqlite`, `sqlite3`) — embedded via [Turso](https://github.com/tursodatabase/turso) (requires `sqlite` feature). The CLI auto-injects `BASHKIT_ALLOW_INPROCESS_SQLITE=1` so the runtime opt-in is satisfied transparently.
+- **Git** (`git`), local VFS operations (init, add, commit, log, …)
+- **Python** (`python`, `python3`), embedded via [Monty](https://github.com/pydantic/monty) (requires `python` feature)
+- **SQLite** (`sqlite`, `sqlite3`), embedded via [Turso](https://github.com/tursodatabase/turso) (requires `sqlite` feature). The CLI auto-injects `BASHKIT_ALLOW_INPROCESS_SQLITE=1` so the runtime opt-in is satisfied transparently.
 
 Disabled by default (security):
 
-- **HTTP** (`curl`, `wget`) — network access stays blocked unless explicitly enabled
+- **HTTP** (`curl`, `wget`), network access stays blocked unless explicitly enabled
 
 Disable per-run:
 
@@ -115,7 +115,7 @@ Override with:
 
 ## Host filesystem mounts (`realfs` feature)
 
-By default the VFS is in-memory — scripts cannot reach the host. With
+By default the VFS is in-memory, scripts cannot reach the host. With
 `realfs`:
 
 | Flag | Effect |
@@ -131,7 +131,7 @@ bashkit --mount-ro /data:/mnt/data -c 'wc -l /mnt/data/*.csv'
 bashkit --mount-rw /tmp/out:/mnt/out script.sh
 ```
 
-**Warning.** `--mount-rw` breaks the sandbox boundary — scripts can modify
+**Warning.** `--mount-rw` breaks the sandbox boundary, scripts can modify
 host files. Prefer `--mount-ro` unless writes are required.
 
 ## Interactive shell
@@ -143,16 +143,16 @@ crossterm.
 ### Features
 
 - Emacs / vi line editing, in-memory history (1 000 entries)
-- Multiline input — unterminated quotes, `if`/`for`/`while`/`case`/functions
+- Multiline input, unterminated quotes, `if`/`for`/`while`/`case`/functions
   reprompt with PS2 until closed
 - Ctrl-C cancels the running command (propagates via the cancellation token);
   at an empty prompt it clears the line
 - Ctrl-D exits the shell
 - `exit [N]` exits via an `on_exit` hook (works from pipelines and
   conditionals: `echo bye; exit 1`)
-- Streaming output — stdout/stderr flushed as produced
+- Streaming output, stdout/stderr flushed as produced
 - TTY detection: `[ -t 0 ]`, `[ -t 1 ]`, `[ -t 2 ]` all return true
-- Tab completion — builtins, aliases, `$VAR`, VFS paths (directories get
+- Tab completion, builtins, aliases, `$VAR`, VFS paths (directories get
   trailing `/`)
 - Fish-style history hints inline (dim gray); accept with right arrow
 - `COLUMNS`, `LINES` exported from the real terminal size; `SHLVL`
@@ -185,10 +185,10 @@ read-only rc). Typical contents: aliases, `PS1`, environment.
 
 ### Not implemented (by design)
 
-- Job control (`bg`/`fg`/`jobs`) — no real processes
-- History expansion (`!!`, `!N`) — complexity vs. value
-- Persistent history file — would leak across sessions, breaks isolation
-- `exec` — excluded for security
+- Job control (`bg`/`fg`/`jobs`), no real processes
+- History expansion (`!!`, `!N`), complexity vs. value
+- Persistent history file, would leak across sessions, breaks isolation
+- `exec`, excluded for security
 
 ## Examples
 
@@ -280,10 +280,10 @@ bashkit --max-commands 1000 --timeout 5 untrusted.sh
 ## Error handling
 
 Stack backtraces are suppressed. Panics emit a single sanitized line
-(`bashkit: internal error: …`) — no paths, line numbers, or dependency
+(`bashkit: internal error: …`), no paths, line numbers, or dependency
 versions.
 
 ## See also
 
-- [`docs/security.md`](security.md) — threat model and mitigations
-- [`README.md`](../README.md) — library usage and features
+- [`docs/security.md`](security.md), threat model and mitigations
+- [`README.md`](../README.md), library usage and features

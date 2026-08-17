@@ -228,11 +228,11 @@ untrusted code execution.
 
 All Python execution runs in a virtual environment:
 
-- **No host filesystem access** — all paths resolve through the VFS
-- **No network access** — no sockets, HTTP, or DNS
-- **No process spawning** — no `os.system()`, `subprocess`, or `__import__('os')`
-- **Resource limited** — time, memory (including collected output), and recursion caps
-- **Path traversal safe** — `../..` is resolved by VFS path normalization
+- **No host filesystem access**: all paths resolve through the VFS
+- **No network access**: no sockets, HTTP, or DNS
+- **No process spawning**: no `os.system()`, `subprocess`, or `__import__('os')`
+- **Resource limited**: time, memory (including collected output), and recursion caps
+- **Path traversal safe**: `../..` is resolved by VFS path normalization
 
 See threat IDs TM-PY-001 through TM-PY-029 in the [threat model](./threat-model.md).
 

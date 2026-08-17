@@ -2,7 +2,7 @@
 
 Every Bashkit binding runs scripts inside the same sandbox: an in-memory virtual
 filesystem, no `fork`/`exec`, no host access, and hard resource ceilings. This
-page covers the knobs that shape that sandbox — resource limits, the filesystem,
+page covers the knobs that shape that sandbox, resource limits, the filesystem,
 identity, and the network allowlist. The Rust builder is the reference API; the
 Python and JavaScript bindings expose the same options through constructor
 arguments (see the notes at the end).
@@ -29,10 +29,10 @@ let mut bash = Bash::builder().profile(profile).build();
 
 The closed names are:
 
-- `Standard` — current secure library defaults; the default profile.
-- `Hardened` — tighter limits across every resource family. The isolated VFS
+- `Standard`, current secure library defaults; the default profile.
+- `Hardened`, tighter limits across every resource family. The isolated VFS
   stays writable under tighter quotas.
-- `Interactive` — current REPL intent: relaxed execution/session counters,
+- `Interactive`, current REPL intent: relaxed execution/session counters,
   with secure memory, VFS, network, and runtime defaults unchanged.
 
 Profiles never enable network access. Apply a network allowlist explicitly.
@@ -40,7 +40,7 @@ Call `profile(...)` before fine-grained builder methods; later calls are
 intentional overrides. A custom `FileSystem` owns its own quota contract and
 replaces the profile's managed-VFS limits.
 
-Limits are enforced while the script runs — a script that exceeds one is
+Limits are enforced while the script runs, a script that exceeds one is
 terminated, not allowed to exhaust the host. Set them with `ExecutionLimits`:
 
 ```rust
@@ -87,7 +87,7 @@ let mut bash = Bash::builder()
 ## Network allowlist
 
 HTTP for `curl`/`wget` requires the `http_client` feature and an explicit
-allowlist — outbound requests are denied by default:
+allowlist, outbound requests are denied by default:
 
 ```rust
 use bashkit::{Bash, NetworkAllowlist};
@@ -139,7 +139,7 @@ per-language constructor options.
 
 ## See also
 
-- [Get started](start.md) — pick your target and run a first script.
-- [Virtual filesystem](filesystem.md) — the VFS backends and layering.
-- [Networking](networking.md) — the HTTP allowlist in depth.
-- [Security](security.md) — sandbox boundaries and threat model.
+- [Get started](start.md), pick your target and run a first script.
+- [Virtual filesystem](filesystem.md), the VFS backends and layering.
+- [Networking](networking.md), the HTTP allowlist in depth.
+- [Security](security.md), sandbox boundaries and threat model.

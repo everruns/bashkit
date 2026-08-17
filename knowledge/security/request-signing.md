@@ -22,10 +22,10 @@ The [toolkit library contract](https://github.com/everruns/everruns/blob/main/sp
 
 ## Design Decisions
 
-1. **Transparent** — signing happens inside `HttpClient`, before every outbound request. No CLI flags, no script changes.
-2. **Feature-gated** — `bot-auth` cargo feature; implies `http_client`. Disabled = zero crypto deps compiled in.
-3. **Non-blocking** — signing failures (clock errors, key issues) never block the request; it is sent unsigned. Preserves tool availability.
-4. **Follows fetchkit** — same `BotAuthConfig` shape, signing algorithm, header format. Reference: `everruns/fetchkit/crates/fetchkit/src/bot_auth.rs`.
+1. **Transparent**: signing happens inside `HttpClient`, before every outbound request. No CLI flags, no script changes.
+2. **Feature-gated**: `bot-auth` cargo feature; implies `http_client`. Disabled = zero crypto deps compiled in.
+3. **Non-blocking**: signing failures (clock errors, key issues) never block the request; it is sent unsigned. Preserves tool availability.
+4. **Follows fetchkit**: same `BotAuthConfig` shape, signing algorithm, header format. Reference: `everruns/fetchkit/crates/fetchkit/src/bot_auth.rs`.
 
 ## Architecture
 
@@ -42,7 +42,7 @@ Signing happens in `HttpClient` at the same layer as the allowlist check. **All*
 | Custom `HttpTransport` | Yes | Signing headers merged into `HttpTransportRequest.headers` before dispatch (see [HTTP Transport](http-transport.md)) |
 | Redirects (manual follow in curl/wget) | Yes | Each redirect is a new `HttpClient` request, re-signed with the new authority |
 
-Every HTTP builtin — `curl`, `wget`, `http` — goes through `HttpClient`, so no builtin can bypass signing.
+Every HTTP builtin, `curl`, `wget`, `http`, goes through `HttpClient`, so no builtin can bypass signing.
 
 ## API
 
@@ -88,7 +88,7 @@ Feature `bot-auth` adds: `ed25519-dalek` 2.x, `rand` 0.10 (nonce), `zeroize`
 
 ## Security
 
-- Signing key never leaves `BotAuthConfig` — only the public key is derivable
+- Signing key never leaves `BotAuthConfig`, only the public key is derivable
 - `Drop` explicitly calls `zeroize()` on seed bytes before deallocation (TM-CRY-001)
 - JWK Thumbprint uses SHA-256 with canonical JSON member ordering (RFC 7638)
 - Nonce prevents replay attacks
@@ -97,8 +97,8 @@ Feature `bot-auth` adds: `ed25519-dalek` 2.x, `rand` 0.10 (nonce), `zeroize`
 
 ## References
 
-- [RFC 9421 — HTTP Message Signatures](https://www.rfc-editor.org/rfc/rfc9421)
+- [RFC 9421, HTTP Message Signatures](https://www.rfc-editor.org/rfc/rfc9421)
 - [draft-meunier-web-bot-auth-architecture](https://datatracker.ietf.org/doc/html/draft-meunier-web-bot-auth-architecture)
-- [RFC 7638 — JSON Web Key Thumbprint](https://www.rfc-editor.org/rfc/rfc7638)
+- [RFC 7638, JSON Web Key Thumbprint](https://www.rfc-editor.org/rfc/rfc7638)
 - [Toolkit library contract section 9](https://github.com/everruns/everruns/blob/main/specs/toolkit-library-contract.md)
 - [fetchkit bot-auth implementation](https://github.com/everruns/fetchkit/blob/main/crates/fetchkit/src/bot_auth.rs)

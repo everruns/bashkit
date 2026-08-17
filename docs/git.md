@@ -1,7 +1,7 @@
 # Git
 
 Bashkit ships a sandboxed `git` builtin behind the `git` feature flag. Every
-operation runs against the in-memory [virtual filesystem](filesystem.md) — there
+operation runs against the in-memory [virtual filesystem](filesystem.md), there
 is no host `~/.gitconfig`, no host credentials, and no network unless you
 explicitly allow a remote. Scripts get a familiar `git` workflow; the host stays
 isolated.
@@ -26,7 +26,7 @@ bash.exec("git log -n 1").await?;
 # }
 ```
 
-The commit identity comes from `GitConfig`, not from the host — see
+The commit identity comes from `GitConfig`, not from the host, see
 [TM-GIT-002](security.md). With no author configured, Bashkit uses a neutral
 virtual identity rather than reading any host config.
 
@@ -37,7 +37,7 @@ virtual identity rather than reading any host config.
 | **Local** | `init`, `config`, `add`, `commit -m`, `status`, `log [-n N]` |
 | **Branching** | `branch [-d]`, `checkout [-b]`, `diff` (simplified), `reset [--soft\|--mixed\|--hard]` |
 | **Remotes** | `remote [-v]`, `remote add/remove` (fully functional) |
-| **Remote transfer** | `clone`, `push`, `pull`, `fetch` — validate the URL against the allowlist, then return virtual-mode messages (no network in VFS-only mode) |
+| **Remote transfer** | `clone`, `push`, `pull`, `fetch`, validate the URL against the allowlist, then return virtual-mode messages (no network in VFS-only mode) |
 
 `merge`, `rebase`, and `stash` are not yet implemented.
 
@@ -56,7 +56,7 @@ git log -n 5
 
 Remote transfer commands operate in **virtual mode**: the URL is validated, but
 no bytes cross the network. Remotes must be allowlisted explicitly, and only
-HTTPS is accepted — no SSH and no `git://`.
+HTTPS is accepted, no SSH and no `git://`.
 
 ```rust,no_run
 use bashkit::GitConfig;
@@ -79,12 +79,12 @@ networked remotes.
 
 ## Security
 
-- **No host config or credentials** — identity is virtual and configurable
+- **No host config or credentials**: identity is virtual and configurable
   (TM-GIT-002, TM-GIT-004).
-- **No repository escape** — every path stays inside the VFS (TM-GIT-005).
-- **Remote allowlist** — HTTPS-only, explicit patterns, no implicit network
+- **No repository escape**: every path stays inside the VFS (TM-GIT-005).
+- **Remote allowlist**: HTTPS-only, explicit patterns, no implicit network
   (TM-GIT-003).
-- **DoS caps** — object count, history depth, and pack size are bounded by the
+- **DoS caps**: object count, history depth, and pack size are bounded by the
   filesystem and `log` limits (TM-GIT-007/008/009).
 
 See the [security model](security.md) for the sandbox boundaries that apply to
@@ -92,6 +92,6 @@ every builtin.
 
 ## See also
 
-- [Virtual filesystem](filesystem.md) — where the repository lives.
-- [Security](security.md) — sandbox boundaries and the `TM-GIT-*` threats.
+- [Virtual filesystem](filesystem.md), where the repository lives.
+- [Security](security.md), sandbox boundaries and the `TM-GIT-*` threats.
 - Spec: [`knowledge/integrations/git-support.md`](https://github.com/everruns/bashkit/blob/main/knowledge/integrations/git-support.md).

@@ -1,11 +1,11 @@
 # Analyzing a script before running it
 
-`analyze()` parses a script and reports what it *statically* refers to — the
+`analyze()` parses a script and reports what it *statically* refers to, the
 commands it invokes, their arguments, the files it redirects to, and the
 functions it defines. It never executes anything.
 
 It exists for the question every agent host has to answer: **the model produced
-this command — do I run it, or ask the user first?**
+this command, do I run it, or ask the user first?**
 
 Available in all three packages:
 
@@ -47,8 +47,8 @@ Partial reconstruction is deliberately not offered: `"/tmp/$name.txt"` reports
 A script's real behavior is only knowable at runtime. Static analysis cannot see
 through:
 
-- dynamic dispatch — `$cmd`, `${arr[0]}`, `$(echo rm) -rf /`
-- interpreter re-entry — `eval`, `source`, `.`, and any nested `bash`/`sh`
+- dynamic dispatch, `$cmd`, `${arr[0]}`, `$(echo rm) -rf /`
+- interpreter re-entry, `eval`, `source`, `.`, and any nested `bash`/`sh`
 - functions and aliases that rebind a name
 - arguments built from variables
 
@@ -63,7 +63,7 @@ bash.analyze("echo x;".repeat(5000)).isOpaque;  // true (walk truncated)
 
 **If you gate on an allowlist, you must check `isOpaque`.** "Nothing outside my
 allowlist appeared in `commands`" plus "not opaque" is a decision. Without the
-second half it is a bypass — `c=rm; $c -rf /data` contains no disallowed
+second half it is a bypass, `c=rm; $c -rf /data` contains no disallowed
 command name.
 
 A script that does not parse raises/throws. Treat that as *deny or prompt*, not
@@ -149,7 +149,7 @@ permissionKey("cat x | mydata doc write 7"); // "mydata:doc:write"
 ```
 
 Custom builtins are ordinary command names to the parser, so they analyze like
-anything else — no registration step.
+anything else, no registration step.
 
 ## Contexts
 
@@ -173,13 +173,13 @@ script could do".
 
 `>`, `>|`, and `&>` report `write`; `>>` reports `append`; `<` reports `read`.
 Fd duplications (`2>&1`), here-documents, and here-strings name no file and are
-omitted. `path` is `null` when the target is computed (`> $out`) — which, for a
+omitted. `path` is `null` when the target is computed (`> $out`), which, for a
 mount-boundary check, means "ask".
 
 ## Known gap: wrapper commands
 
-Commands that run *other* commands named in their arguments — `xargs`, `env`,
-`timeout`, `find -exec`, `awk 'system(…)'` — analyze as ordinary commands and
+Commands that run *other* commands named in their arguments, `xargs`, `env`,
+`timeout`, `find -exec`, `awk 'system(…)'`, analyze as ordinary commands and
 are not flagged. If you allowlist one of them, treat its arguments as commands
 yourself. Nested shells (`bash`/`sh`, with `-c` text or a script file) *are*
 flagged, via `hasInterpreterReentry` / `has_interpreter_reentry`.
@@ -201,13 +201,13 @@ result = bash.execute_sync(script)
 
 ## Limits
 
-`analyze()` uses the instance's configured parser limits and input-size limit —
+`analyze()` uses the instance's configured parser limits and input-size limit,
 a script too large or too deep to execute is also too large or too deep to
 analyze. The walk records at most 4096 commands plus redirects; past that,
 `truncated` is set and `isOpaque` becomes true.
 
 ## See also
 
-- [LLM tools](./llm-tools.md) — exposing the sandbox to an agent framework
-- [Custom builtins (JS)](./custom_builtins_js.md) — the commands you expose
-- [Security](./security.md) — sandbox boundaries and the threat model
+- [LLM tools](./llm-tools.md), exposing the sandbox to an agent framework
+- [Custom builtins (JS)](./custom_builtins_js.md), the commands you expose
+- [Security](./security.md), sandbox boundaries and the threat model

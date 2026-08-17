@@ -143,8 +143,8 @@ chunks, locale-aware metadata.
 
 ## See also
 
-- [Scripted Tool Orchestration](scripted-tool-orchestration.md) — composing tool definitions into scripted orchestrators
-- [Script Analysis](script-analysis.md) — pre-execution introspection for host permission gating
-- [Bashkit Architecture](../foundations/architecture.md) — interpreter this contract exposes
-- [HTTP Transport](../security/http-transport.md) — host-controlled egress reachable from tool scripts
-- [Known Limitations](../operations/limitations.md) — behavior the contract deliberately does not promise
+- [Scripted Tool Orchestration](scripted-tool-orchestration.md), composing tool definitions into scripted orchestrators
+- [Script Analysis](script-analysis.md), pre-execution introspection for host permission gating
+- [Bashkit Architecture](../foundations/architecture.md), interpreter this contract exposes
+- [HTTP Transport](../security/http-transport.md), host-controlled egress reachable from tool scripts
+- [Known Limitations](../operations/limitations.md), behavior the contract deliberately does not promise

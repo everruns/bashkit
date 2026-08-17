@@ -6,7 +6,7 @@ cover common CSV, JSON, and TOML operations. All read files or stdin.
 
 | Builtin | Format | Reach for it when |
 |---------|--------|-------------------|
-| [`jq`](../crates/bashkit/docs/jq.md) | JSON | You need real JSON transformation — filters, construction, reduction. |
+| [`jq`](../crates/bashkit/docs/jq.md) | JSON | You need real JSON transformation, filters, construction, reduction. |
 | [`yq`](../crates/bashkit/docs/yq.md) | YAML / JSON | You want the same jq expressions over YAML, conversion, or safe in-place updates. |
 | `json` | JSON | You want a quick `get` / `set` / `keys` / `length` without jq syntax. |
 | `csv` | CSV | Selecting columns, filtering rows, counting, sorting tabular data. |
@@ -79,8 +79,8 @@ echo "starting on $port"
 
 ## See also
 
-- [jq builtin](../crates/bashkit/docs/jq.md) — the full JSON query engine, with its own compatibility
+- [jq builtin](../crates/bashkit/docs/jq.md), the full JSON query engine, with its own compatibility
   reference.
-- [yq builtin](../crates/bashkit/docs/yq.md) — YAML/JSON flags, in-place behavior, and explicit gaps.
-- [Compatibility](../crates/bashkit/docs/compatibility.md) — the complete builtin coverage matrix.
-- [Browse all builtins](/builtins) — every registered command.
+- [yq builtin](../crates/bashkit/docs/yq.md), YAML/JSON flags, in-place behavior, and explicit gaps.
+- [Compatibility](../crates/bashkit/docs/compatibility.md), the complete builtin coverage matrix.
+- [Browse all builtins](/builtins), every registered command.

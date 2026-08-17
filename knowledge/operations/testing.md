@@ -63,19 +63,19 @@ With ~80 such files the link step alone exceeded the CI runner's disk
 (`rustc-LLVM ERROR: IO failure on output stream: No space left on
 device`). Bashkit consolidates those into one binary:
 
-- `tests/integration/main.rs` — declares every default integration test
+- `tests/integration/main.rs`, declares every default integration test
   as a `mod`. Built once, linked once. New behavioral tests go here.
-- `tests/integration/<name>.rs` — one module per concern area.
-- `tests/<name>.rs` — **only** for tests that genuinely need their own
+- `tests/integration/<name>.rs`, one module per concern area.
+- `tests/<name>.rs`, **only** for tests that genuinely need their own
   binary. Today that list is:
-  - `realfs_tests.rs` — `realfs` feature, runs in a dedicated CI job.
-  - `security_failpoint_tests.rs` — `failpoints` global state, requires
+  - `realfs_tests.rs`, `realfs` feature, runs in a dedicated CI job.
+  - `security_failpoint_tests.rs`, `failpoints` global state, requires
     `--test-threads=1`.
-  - `proptest_security.rs` — `--test-threads=1` and custom
+  - `proptest_security.rs`, `--test-threads=1` and custom
     `PROPTEST_CASES` env.
-  - `ssh_builtin_tests.rs`, `ssh_supabase_tests.rs` — feature-isolation
+  - `ssh_builtin_tests.rs`, `ssh_supabase_tests.rs`, feature-isolation
     sweeps that build bashkit with `--features ssh` only.
-  - `logging_security_tests.rs` — mutates `BASHKIT_UNSAFE_LOGGING` in
+  - `logging_security_tests.rs`, mutates `BASHKIT_UNSAFE_LOGGING` in
     the process env; cannot share a binary with other tests.
 
 When adding a new test file, default to placing it under
@@ -123,7 +123,7 @@ read-write, a `CommandResolver` bridging unresolved names to host processes,
 and `HostMounts` mapping the VFS cwd back to a host directory.
 
 Decision: this shape was only ever validated downstream, and the first adopter
-(crabot) shipped two defects bashkit's own tests could not see — a harness that
+(crabot) shipped two defects bashkit's own tests could not see, a harness that
 emptied `PATH`, and a stdin pipe to a host process that never reached EOF and
 hung the suite. Both are properties of the *composition*, not of any one API,
 so they need a test that composes.
@@ -135,7 +135,7 @@ Rules for this file:
   the test.
 - **Use names bashkit does not implement** (`host-cat`, `host-echo`, …). The
   resolver runs last, so a test using `cat` or `echo` silently asserts on
-  builtins and never reaches the bridge — verified by injecting a defect and
+  builtins and never reaches the bridge, verified by injecting a defect and
   confirming the test fails.
 - **Never let a defect become a hang.** The bridge bounds its wait and drains
   pipes only after a clean exit; after a timeout kill a grandchild can still
@@ -167,11 +167,11 @@ Their credentials come from Doppler, so they only run on pushes to `main`.
 Every such step must set `continue-on-error: true`. An upstream outage, quota
 exhaustion, or billing lapse is not a bashkit regression, and letting it fail
 the `Check` gate makes main red for a cause no commit can fix. The steps stay
-in CI as smoke signals — read their logs when they fail rather than trusting
+in CI as smoke signals, read their logs when they fail rather than trusting
 the job conclusion.
 
 Corollary: these steps do not protect against a broken model id. Pin only model
-ids that are current, and re-check them when a model is retired — a retired id
+ids that are current, and re-check them when a model is retired, a retired id
 surfaces as a 404 in an already-green job.
 
 ## Adding New Tests
@@ -213,7 +213,7 @@ the locked cases always run, so CI does not silently lose all compatibility
 coverage when the external tool is absent.
 
 `yq_fuzz` varies YAML/JSON input, output format, jq expressions, and stdin versus
-in-place execution. It must invoke `yq` directly—the removed legacy `yaml`
+in-place execution. It must invoke `yq` directly, the removed legacy `yaml`
 helper is not a valid fuzz oracle. The proptest layer pairs arbitrary YAML and
 arbitrary filter text to enforce panic, diagnostic, host-path, and Debug-shape
 invariants at the parser/evaluator boundary.
@@ -278,4 +278,4 @@ cross-runtime compatibility.
 1. New ava tests covering new API surface → add runtime-compat counterpart
 2. runtime-compat tests use only `node:test`, `node:assert`, `node:module`
 3. Files are plain `.mjs` (no TypeScript)
-4. Keep files focused — one file per concern area
+4. Keep files focused, one file per concern area

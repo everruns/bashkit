@@ -49,7 +49,7 @@ Results are written by mira under `./results/<run_id>/`.
 
 Targets (model matrix) are defined in `src/mira_study.rs` and gated on
 `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`; offline runs skip them all. Select a
-subset with `--targets <label>` — **exact** labels, comma-separated (globs are
+subset with `--targets <label>`, **exact** labels, comma-separated (globs are
 not supported), e.g. `--targets anthropic/claude-opus-4-8,openai/gpt-5.5`.
 
 ## Dataset
@@ -64,7 +64,7 @@ Smoke test dataset (`data/smoke-test.jsonl`) has 3 tasks for quick verification.
 > `results/mira/<run_id>/`). Earlier entries were produced by the original
 > (pre-mira) harness and are retained as a record.
 
-### 2026-06-27 — mira harness, 5-model lineup (58 tasks, latest)
+### 2026-06-27, mira harness, 5-model lineup (58 tasks, latest)
 
 First full run on the [mira](https://github.com/everruns/mira) framework, model
 lineup refreshed to `claude-opus-4-8` and `claude-haiku-4-5`. Anthropic and
@@ -80,28 +80,28 @@ OpenAI targets were run separately (two run folders under `results/mira/`).
 
 #### Highlights
 
-1. **Opus 4.8 and Haiku 4.5 tie at 55/58 (95%)** — Haiku matches Opus in ~⅗ the
+1. **Opus 4.8 and Haiku 4.5 tie at 55/58 (95%)**: Haiku matches Opus in ~⅗ the
    wall-clock time and ~⅓-fewer reasoning tokens out; the value pick.
-2. **GPT-5.3-Codex at 54/58 (93%)** — strongest OpenAI model, but the lowest
+2. **GPT-5.3-Codex at 54/58 (93%)**: strongest OpenAI model, but the lowest
    tool-call success (85%); GPT-5.5 trails at 51/58 (88%).
-3. **Sonnet 4.6 at 49/58 (84%)** — consistent with prior runs, trips on a wider
+3. **Sonnet 4.6 at 49/58 (84%)**: consistent with prior runs, trips on a wider
    spread of categories than the flagships.
-4. **Two tasks fail across every model** — `file_path_organizer` and
-   `script_getopts_parser` — plus `script_array_stats` for all three non-Anthropic
+4. **Two tasks fail across every model**: `file_path_organizer` and
+   `script_getopts_parser`, plus `script_array_stats` for all three non-Anthropic
    runs. These also exposed real bashkit gaps (see the filed issues): `ls -d`
    unimplemented, the awk parser rejecting bracket/pipe constructs, and writes to
    `$HOME` failing because the user's home directory isn't created.
 
-### 2026-05-26 — Opus 4.7 + GPT-5.5 Lineup (58 tasks, pre-mira)
+### 2026-05-26, Opus 4.7 + GPT-5.5 Lineup (58 tasks, pre-mira)
 
 Refreshed model lineup: upgraded flagships to `claude-opus-4-7` (from 4.6) and
 `gpt-5.5` (from 5.2). Haiku 4.5, Sonnet 4.6, and GPT-5.3-Codex kept as
-continuity anchors (5.3-codex is still the newest codex variant — no
+continuity anchors (5.3-codex is still the newest codex variant, no
 `gpt-5.5-codex` exists).
 
 **Opus 4.7 takes the top spot at 56/58 (98%)**, a +6 task improvement over Opus
 4.6's 50/58. Haiku 4.5 holds steady at 54/58 (98%). GPT-5.5 jumps to 50/58
-(93%) — a +9 task gain over GPT-5.2's 41/58 (77%) on the same dataset.
+(93%), a +9 task gain over GPT-5.2's 41/58 (77%) on the same dataset.
 
 | Metric | Haiku 4.5 | Sonnet 4.6 | **Opus 4.7** | GPT-5.5 | GPT-5.3-Codex |
 |--------|-----------|------------|--------------|---------|---------------|
@@ -114,20 +114,20 @@ continuity anchors (5.3-codex is still the newest codex variant — no
 
 #### Highlights
 
-1. **Opus 4.7 is the new leader** — 56/58 (98%), +6 tasks over Opus 4.6.
+1. **Opus 4.7 is the new leader**: 56/58 (98%), +6 tasks over Opus 4.6.
    First model to hit 100% on `scripting` (7/7); only fails the two
    persistently-hard tasks (`file_path_organizer`, `config_ini_merge`).
-2. **GPT-5.5 is a big jump** — +9 tasks over GPT-5.2 (41→50), matching
+2. **GPT-5.5 is a big jump**: +9 tasks over GPT-5.2 (41→50), matching
    GPT-5.3-Codex's score (93%) via Chat Completions instead of Responses.
    Highest tool-call success rate (92%) tied with Haiku.
-3. **Haiku 4.5 is still the value play** — same 54/58 (98%) as Opus 4.7,
+3. **Haiku 4.5 is still the value play**: same 54/58 (98%) as Opus 4.7,
    in **8 min vs 22 min** wall clock and ~⅙ the tokens. If you don't
    need Opus-level reasoning headroom, Haiku is hard to beat.
-4. **Sonnet 4.6 looks worse than it is** — its 9 failures cluster in a
+4. **Sonnet 4.6 looks worse than it is**: its 9 failures cluster in a
    few odd categories (`system_info` 50%, `code_search` 85%, `pipelines`
    85%) where every other model passes. Looks like model-specific
    quirks rather than bashkit gaps.
-5. **`config_ini_merge` resolved for GPT models** — previously all 5
+5. **`config_ini_merge` resolved for GPT models**: previously all 5
    failed; now both GPT-5.5 and GPT-5.3-Codex pass. Opus and Sonnet
    still struggle with section-aware awk.
 
@@ -185,21 +185,21 @@ continuity anchors (5.3-codex is still the newest codex variant — no
 
 #### Model Behavior
 
-- **Opus 4.7** new leader at 56/58 (98%) — perfect on scripting (100%), only
+- **Opus 4.7** new leader at 56/58 (98%), perfect on scripting (100%), only
   fails on file_path_organizer and config_ini_merge. Biggest jump vs Opus 4.6.
-- **Haiku 4.5** holds tie at 54/58 (98%) — still the fastest run (8 min) and
+- **Haiku 4.5** holds tie at 54/58 (98%), still the fastest run (8 min) and
   most economical, perfect across 11 of 15 categories.
-- **GPT-5.3-Codex** at 54/58 (93%) — strong on complex tasks, weakest on
+- **GPT-5.3-Codex** at 54/58 (93%), strong on complex tasks, weakest on
   scripting (69%) and system_info (50%). Lowest token usage (91K in).
-- **GPT-5.5** at 50/58 (93%) — major jump from GPT-5.2 (+9 tasks), highest
+- **GPT-5.5** at 50/58 (93%), major jump from GPT-5.2 (+9 tasks), highest
   tool-call success (92%) tied with Haiku. Weakest on file_operations (67%).
-- **Sonnet 4.6** at 49/58 (94%) — unchanged behavioral pattern vs prior eval,
+- **Sonnet 4.6** at 49/58 (94%), unchanged behavioral pattern vs prior eval,
   still trips on system_info (50%) and code_search (85%).
 
 ### Previous Results
 
 <details>
-<summary>2026-02-28 — Post v0.1.7 Interpreter Fixes (58 tasks)</summary>
+<summary>2026-02-28, Post v0.1.7 Interpreter Fixes (58 tasks)</summary>
 
 Dataset expanded from 52 to 58 tasks with 3 new categories (database_operations, config_management,
 build_simulation). 20+ interpreter fixes since v0.1.7 release: heredoc redirects (#370), xargs
@@ -229,7 +229,7 @@ models.
 | Opus 4.6 | 33/37 (93%) | 34/37 (96%) | +3pp | script_function_lib, script_health_check |
 | GPT-5.2 | 27/37 (86%) | 30/37 (86%) | +0pp | archive_create_extract, complex_todo_app, data_log_summarize, pipe_dedup_merge |
 | Sonnet 4→4.6 | 34/37 (97%) | 33/37 (95%) | -2pp | json_to_csv_export, script_health_check |
-| GPT-5.3-Codex | — | 35/37 (97%) | NEW | — |
+| GPT-5.3-Codex |, | 35/37 (97%) | NEW |, |
 
 Note: Sonnet upgraded from 4 to 4.6 between releases; delta reflects both interpreter and model changes.
 GPT-5.2 gained 3 more tasks despite unchanged percentage due to rounding.
@@ -258,7 +258,7 @@ GPT-5.2 gained 3 more tasks despite unchanged percentage due to rounding.
 
 | Task | Haiku 4.5 | Sonnet 4.6 | Opus 4.6 | GPT-5.3-Codex | GPT-5.2 | Root Cause |
 |------|-----------|------------|----------|---------------|---------|------------|
-| config_ini_merge | FAIL | FAIL | FAIL | FAIL | FAIL | INI merging requires complex awk — models struggle with section-aware logic |
+| config_ini_merge | FAIL | FAIL | FAIL | FAIL | FAIL | INI merging requires complex awk, models struggle with section-aware logic |
 | file_path_organizer | FAIL | FAIL | FAIL | FAIL | FAIL | Models burn turns on edge cases, delete own work |
 | build_script_generator | PASS | FAIL | FAIL | FAIL | FAIL | Complex Makefile-like dependency graph generation |
 | script_getopts_parser | FAIL | FAIL | FAIL | PASS | FAIL | getopts/wc interaction produces wrong output |
@@ -274,20 +274,20 @@ GPT-5.2 gained 3 more tasks despite unchanged percentage due to rounding.
 
 #### Model Behavior
 
-- **Haiku 4.5** leads at 54/58 (97%) — perfect 37/37 on the v0.1.7 task subset, strong across all categories
-- **GPT-5.3-Codex** impressive 51/58 (91%) — matches Opus despite using fewer tool calls; excels at complex tasks and JSON
-- **Opus 4.6** solid 50/58 (91%) — highest tool call success rate tied with Haiku; struggles with turn-budget-intensive tasks
-- **Sonnet 4.6** at 48/58 (93%) — weakest on scripting (57%) and system_info (50%); triggers bashkit awk Unicode panic on some tasks
-- **GPT-5.2** at 41/58 (77%) — lowest tool call success (67%), weakest on build_simulation (0%), config_management (0%), scripting (43%)
+- **Haiku 4.5** leads at 54/58 (97%), perfect 37/37 on the v0.1.7 task subset, strong across all categories
+- **GPT-5.3-Codex** impressive 51/58 (91%), matches Opus despite using fewer tool calls; excels at complex tasks and JSON
+- **Opus 4.6** solid 50/58 (91%), highest tool call success rate tied with Haiku; struggles with turn-budget-intensive tasks
+- **Sonnet 4.6** at 48/58 (93%), weakest on scripting (57%) and system_info (50%); triggers bashkit awk Unicode panic on some tasks
+- **GPT-5.2** at 41/58 (77%), lowest tool call success (67%), weakest on build_simulation (0%), config_management (0%), scripting (43%)
 
 </details>
 
 <details>
-<summary>2026-02-27 — Expanded Dataset (52 tasks)</summary>
+<summary>2026-02-27, Expanded Dataset (52 tasks)</summary>
 
 Dataset expanded from 37 to 52 tasks with 2 new categories (code_search, environment) and new
 tasks in existing categories (heredoc, getopts, associative arrays, process substitution, xargs,
-comm, trap). Format-sensitive expectations relaxed to use `stdout_regex` — focus on job done, not
+comm, trap). Format-sensitive expectations relaxed to use `stdout_regex`, focus on job done, not
 exact output format.
 
 Haiku 4.5 and GPT-5.2 ran on full 52-task dataset. Sonnet 4.6 and Opus 4.6 ran partial datasets
@@ -302,15 +302,15 @@ Haiku 4.5 and GPT-5.2 ran on full 52-task dataset. Sonnet 4.6 and Opus 4.6 ran p
 | Tokens | 397K in / 46K out | 211K in / 27K out | 143K in / 16K out | 123K in / 20K out |
 | Duration | 7.3 min | 6.5 min | 6.1 min | 5.9 min |
 
-† Partial run — API credits exhausted. Covers original 37-task core subset.
+† Partial run, API credits exhausted. Covers original 37-task core subset.
 
 </details>
 
 <details>
-<summary>2026-02-27 — GPT-5.3-Codex via Responses API (37 tasks)</summary>
+<summary>2026-02-27, GPT-5.3-Codex via Responses API (37 tasks)</summary>
 
 First eval using the OpenAI Responses API (`--provider openresponses`). GPT-5.3-Codex scores
-30/37 (93%) — a significant jump over GPT-5.2's 27/37 (86%) via Chat Completions. Notably
+30/37 (93%), a significant jump over GPT-5.2's 27/37 (86%) via Chat Completions. Notably
 fixes `json_to_csv_export` and `script_function_lib` which blocked all previous models.
 
 | Metric | Haiku 4.5 | Sonnet 4 | Opus 4.6 | GPT-5.2 | GPT-5.3-Codex |
@@ -330,12 +330,12 @@ issue and avoids jq `@csv` quoting. However, it introduces new failures on tasks
 </details>
 
 <details>
-<summary>2026-02-25 — Post-Interpreter Fixes (37 tasks)</summary>
+<summary>2026-02-25, Post-Interpreter Fixes (37 tasks)</summary>
 
 Major interpreter improvements since last eval: awk arithmetic accumulation, pipe-to-while-loop
 variable scoping, tail -n +N, sed capture groups, grep BRE/ERE mode, script execution via path,
 plus new features (declare -n/-l/-u, set -x, shopt, select, let, trap -p, FUNCNAME). All four
-models show significant gains — Haiku leads at 35/37 (98%), Sonnet close behind at 34/37 (97%).
+models show significant gains, Haiku leads at 35/37 (98%), Sonnet close behind at 34/37 (97%).
 
 | Metric | Haiku 4.5 | Sonnet 4 | Opus 4.6 | GPT-5.2 |
 |--------|-----------|----------|----------|---------|
@@ -349,7 +349,7 @@ models show significant gains — Haiku leads at 35/37 (98%), Sonnet close behin
 </details>
 
 <details>
-<summary>2026-02-17 — Sonnet 4 Baseline (37 tasks)</summary>
+<summary>2026-02-17, Sonnet 4 Baseline (37 tasks)</summary>
 
 First eval run with Claude Sonnet 4. Sonnet matches Haiku's pass rate (32/37) while achieving
 the highest tool call success rate (89%) of any model tested.
@@ -366,7 +366,7 @@ the highest tool call success rate (89%) of any model tested.
 </details>
 
 <details>
-<summary>2026-02-09 — Expanded Dataset (37 tasks)</summary>
+<summary>2026-02-09, Expanded Dataset (37 tasks)</summary>
 
 | Metric | Haiku 4.5 | Opus 4.6 | GPT-5.2 |
 |--------|-----------|----------|---------|
@@ -380,7 +380,7 @@ the highest tool call success rate (89%) of any model tested.
 </details>
 
 <details>
-<summary>2026-02-08 — Multi-Model Comparison (25 tasks)</summary>
+<summary>2026-02-08, Multi-Model Comparison (25 tasks)</summary>
 
 | Metric | Haiku 4.5 | Opus 4.6 | GPT-5.2 |
 |--------|-----------|----------|---------|
@@ -394,7 +394,7 @@ the highest tool call success rate (89%) of any model tested.
 </details>
 
 <details>
-<summary>2026-02-07 — Baseline (pre-interpreter fixes)</summary>
+<summary>2026-02-07, Baseline (pre-interpreter fixes)</summary>
 
 | Metric | Opus 4.6 | Haiku 4.5 | GPT-5.2 |
 |--------|----------|-----------|---------|

@@ -1,7 +1,7 @@
 # Get started in Pyodide & JupyterLite
 
 For **Python running in the browser** (Pyodide, JupyterLite), Bashkit ships an
-Emscripten (`wasm32-unknown-emscripten`) wheel — a reduced-feature variant of
+Emscripten (`wasm32-unknown-emscripten`) wheel, a reduced-feature variant of
 the native PyPI package that needs no native toolchain.
 
 ## Install
@@ -34,12 +34,12 @@ callbacks.
 
 **Absent on wasm:** the async `execute()` / `execute_or_throw()` methods,
 `FileSystem.real()`, and capsule `to/from_capsule`. Gated-off configuration
-kwargs — `network=`, `sqlite=True`, `mounts=`, `external_handler=` — **fail
+kwargs, `network=`, `sqlite=True`, `mounts=`, `external_handler=`, **fail
 loudly** with `RuntimeError` at construction rather than silently no-op, so you
 learn immediately that the WASM build can't do it.
 
 ## Next steps
 
-- [Get started in Python](start-python.md) — the full-featured native PyPI wheel.
-- [Get started in the browser](start-browser.md) — the JavaScript WASM package.
-- [Python builtin](../crates/bashkit/docs/python.md) — the embedded Monty runtime in depth.
+- [Get started in Python](start-python.md), the full-featured native PyPI wheel.
+- [Get started in the browser](start-browser.md), the JavaScript WASM package.
+- [Python builtin](../crates/bashkit/docs/python.md), the embedded Monty runtime in depth.
