@@ -14,7 +14,7 @@ bash examples/realfs_mount.sh
 
 Run the [wedow/ticket](https://github.com/wedow/ticket) issue tracker inside
 bashkit. Exercises plugin discovery via PATH, awk-heavy scripts, YAML
-frontmatter parsing, dependency trees, and filtered listing — all interpreted.
+frontmatter parsing, dependency trees, and filtered listing, all interpreted.
 
 ```bash
 cargo build -p bashkit-cli --features realfs
@@ -27,7 +27,7 @@ reproducibility/supply-chain safety. Override with `TICKET_REF=<commit>`.
 ## Python
 
 Python examples use [PEP 723](https://peps.python.org/pep-0723/) inline script metadata.
-`uv run` resolves dependencies automatically — bashkit installs from PyPI as a pre-built wheel (no Rust toolchain needed).
+`uv run` resolves dependencies automatically, bashkit installs from PyPI as a pre-built wheel (no Rust toolchain needed).
 
 ### bash_basics.py / k8s_orchestrator.py
 
@@ -146,7 +146,7 @@ node examples/langchain_agent.mjs
 ### browser/
 
 Bashkit running in the browser via WebAssembly. A minimal terminal UI that
-lets you type bash commands and see output — all executed client-side in a
+lets you type bash commands and see output, all executed client-side in a
 sandboxed WASM interpreter.
 
 Requires `Cross-Origin-Opener-Policy` and `Cross-Origin-Embedder-Policy`

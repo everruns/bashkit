@@ -116,8 +116,8 @@ assert_eq!(output.result["stdout"], "hello\nworld\n");
 
 ## Script Analysis
 
-`analyze()` reports what a script statically refers to — commands, arguments,
-redirect targets, functions — without running it. Hosts use it to decide whether
+`analyze()` reports what a script statically refers to, commands, arguments,
+redirect targets, functions, without running it. Hosts use it to decide whether
 a model-produced command needs user approval.
 
 ```rust
@@ -136,7 +136,7 @@ assert!(!analysis.is_opaque());
 ```
 
 Advisory only: names built at runtime (`$cmd`, `$(echo rm)`), `eval`/`source`,
-and truncated walks report as *unknown* and set `is_opaque()` — an allowlist
+and truncated walks report as *unknown* and set `is_opaque()`, an allowlist
 check must consult it. Available in Rust, Node (`bash.analyze()`), and Python
 (`bash.analyze()`). See [docs/script-analysis.md](docs/script-analysis.md).
 
@@ -319,7 +319,7 @@ bash.removeBuiltin("greet");
 ```
 
 Resolution order: shell function → POSIX special builtin → custom builtin →
-baked-in builtin → `$PATH` — so custom builtins can override baked-ins
+baked-in builtin → `$PATH`, so custom builtins can override baked-ins
 (e.g. wrap `cat` with tracing) but a shell function defined in the script
 still wins.
 
@@ -330,7 +330,7 @@ Working example: [`examples/custom_builtins.mjs`](examples/custom_builtins.mjs).
 ## Experimental: Git Support
 
 Enable the `git` feature for virtual git operations on the virtual filesystem.
-All git data lives in the VFS — no host filesystem access.
+All git data lives in the VFS, no host filesystem access.
 
 ```bash
 cargo add bashkit --features git
@@ -354,7 +354,7 @@ See [knowledge/integrations/git-support.md](knowledge/integrations/git-support.m
 ## Experimental: Python Support
 
 Enable the `python` feature to embed the [Monty](https://github.com/pydantic/monty) Python interpreter (pure Rust, Python 3.12).
-Python code runs in-memory with configurable resource limits and VFS bridging — files created
+Python code runs in-memory with configurable resource limits and VFS bridging, files created
 by bash are readable from Python and vice versa.
 
 ```bash
@@ -427,7 +427,7 @@ See [crates/bashkit/docs/typescript.md](crates/bashkit/docs/typescript.md) for t
 
 ## Experimental: SQLite Support
 
-Enable the `sqlite` feature to embed [Turso](https://github.com/tursodatabase/turso) — a pure-Rust, SQLite-compatible engine — backed by the bashkit virtual filesystem. Turso is BETA upstream, so the builtin is opt-in at both the cargo and runtime layer.
+Enable the `sqlite` feature to embed [Turso](https://github.com/tursodatabase/turso), a pure-Rust, SQLite-compatible engine, backed by the bashkit virtual filesystem. Turso is BETA upstream, so the builtin is opt-in at both the cargo and runtime layer.
 
 ```toml
 [dependencies]
@@ -453,7 +453,7 @@ bash.exec(r#"sqlite /tmp/notes.sqlite '
 bash.exec("sqlite -header /tmp/notes.sqlite 'SELECT * FROM notes'").await?;
 ```
 
-Sqlite3-shell-compatible flags (`-csv`, `-json`, `-markdown`, `-header`, `-separator`, `-nullvalue`, `-cmd`) and dot-commands (`.tables`, `.schema`, `.dump`, `.read`, `.headers`, `.mode`) are supported. Two IO backends are available: `Memory` (default — load/flush against the VFS at command boundaries) and `Vfs` (custom turso `IO` impl).
+Sqlite3-shell-compatible flags (`-csv`, `-json`, `-markdown`, `-header`, `-separator`, `-nullvalue`, `-cmd`) and dot-commands (`.tables`, `.schema`, `.dump`, `.read`, `.headers`, `.mode`) are supported. Two IO backends are available: `Memory` (default, load/flush against the VFS at command boundaries) and `Vfs` (custom turso `IO` impl).
 
 Limits via [`SqliteLimits`](crates/bashkit/src/builtins/sqlite/mod.rs) cap script size, result-set rows, DB file size, wall-clock duration, and statement count. See [crates/bashkit/docs/sqlite.md](crates/bashkit/docs/sqlite.md) for the full guide.
 
@@ -498,7 +498,7 @@ just pre-pr       # Pre-PR checks
 
 ## LLM Eval Results
 
-Bashkit includes a [mira eval study](crates/bashkit-eval/) that measures how well LLMs use bashkit as a bash tool in agentic workloads — 58 tasks across 15 categories.
+Bashkit includes a [mira eval study](crates/bashkit-eval/) that measures how well LLMs use bashkit as a bash tool in agentic workloads, 58 tasks across 15 categories.
 
 _Latest run: 2026-06-27, on the mira eval framework (58 tasks)._
 
@@ -510,7 +510,7 @@ _Latest run: 2026-06-27, on the mira eval framework (58 tasks)._
 | GPT-5.5 | 88% | 51/58 | 90% | 8.2 min |
 | Claude Sonnet 4.6 | 84% | 49/58 | 93% | 19.9 min |
 
-Opus 4.8 and Haiku 4.5 lead at 55/58 — Haiku matches Opus in ~⅗ the wall-clock
+Opus 4.8 and Haiku 4.5 lead at 55/58, Haiku matches Opus in ~⅗ the wall-clock
 time. Two tasks trip every model (`file_path_organizer`, `script_getopts_parser`).
 See the [detailed analysis](crates/bashkit-eval/README.md#results).
 
@@ -579,7 +579,7 @@ See [crates/bashkit-js](crates/bashkit-js/) for details.
 ### Browser / edge (WebAssembly)
 
 A slim, single-threaded WebAssembly build for the browser and any other
-JavaScript runtime — edge/serverless workers (Cloudflare Workers, Vercel Edge,
+JavaScript runtime, edge/serverless workers (Cloudflare Workers, Vercel Edge,
 Deno Deploy), Node, Deno, and Bun. Available as `@everruns/bashkit-wasm` on npm.
 It needs **no `SharedArrayBuffer` and no `COOP`/`COEP` headers**, so it drops
 into any web app (including iframes) and into thread-less edge runtimes.
@@ -604,42 +604,42 @@ Bashkit is built for running untrusted scripts from AI agents and users. Securit
 
 | Layer | Protection |
 |-------|------------|
-| **No process spawning** | All 164 commands are reimplemented in Rust — no `fork`, `exec`, or shell escape |
+| **No process spawning** | All 164 commands are reimplemented in Rust, no `fork`, `exec`, or shell escape |
 | **Virtual filesystem** | Scripts see an in-memory FS by default; no host filesystem access unless explicitly mounted |
 | **Network allowlist** | HTTP access is denied by default; each domain must be explicitly allowed |
 | **Resource limits** | Configurable caps on commands (10K), loop iterations (100K), function depth (100), output (10MB), input (10MB) |
-| **Filesystem limits** | Max total bytes (100MB), max file size (10MB), max file count (10K) — prevents zip bombs, tar bombs, and append floods |
-| **Parser limits** | Timeout (5s), fuel budget (100K ops), AST depth (100) — prevents pathological input from hanging the interpreter |
-| **Multi-tenant isolation** | Each `Bash` instance is fully isolated — no shared state between tenants |
-| **Panic recovery** | All builtins wrapped in `catch_unwind` — a panic in one command doesn't crash the host |
+| **Filesystem limits** | Max total bytes (100MB), max file size (10MB), max file count (10K), prevents zip bombs, tar bombs, and append floods |
+| **Parser limits** | Timeout (5s), fuel budget (100K ops), AST depth (100), prevents pathological input from hanging the interpreter |
+| **Multi-tenant isolation** | Each `Bash` instance is fully isolated, no shared state between tenants |
+| **Panic recovery** | All builtins wrapped in `catch_unwind`, a panic in one command doesn't crash the host |
 | **Path traversal prevention** | RealFs backend canonicalizes paths to prevent `../../etc/passwd` escapes |
 | **Unicode security** | 68 byte-boundary tests across builtins; zero-width character rejection in VFS paths |
 
 ### Threat Model
 
-280+ identified threats across 17 categories (DoS, sandbox escape, info disclosure, injection, network, isolation, internal errors, git, SSH, logging, crypto, Python, TypeScript, SQLite, Unicode, filesystem, snapshots) — each with a stable ID, mitigation status, and test coverage.
+280+ identified threats across 17 categories (DoS, sandbox escape, info disclosure, injection, network, isolation, internal errors, git, SSH, logging, crypto, Python, TypeScript, SQLite, Unicode, filesystem, snapshots), each with a stable ID, mitigation status, and test coverage.
 
 See the [threat model](knowledge/security/threat-model.md) for the full analysis and [security policy](SECURITY.md) for reporting vulnerabilities.
 
 ## Other Virtual Bash Implementations
 
-- **[just-bash](https://github.com/vercel-labs/just-bash)** (TypeScript, Apache-2.0) — Virtual bash interpreter for AI agents by Vercel Labs. Custom recursive descent parser, 75+ reimplemented commands (including full awk/sed/jq), in-memory VFS, defense-in-depth sandboxing, AST transform plugins. Runs in Node.js and browser.
-- **[gbash](https://github.com/ewhauser/gbash)** (Go, Apache-2.0) — Deterministic, sandbox-only bash runtime for AI agents. Delegates parsing to `mvdan/sh`. Registry-backed commands, policy enforcement, structured tracing, JSON-RPC server mode.
+- **[just-bash](https://github.com/vercel-labs/just-bash)** (TypeScript, Apache-2.0), Virtual bash interpreter for AI agents by Vercel Labs. Custom recursive descent parser, 75+ reimplemented commands (including full awk/sed/jq), in-memory VFS, defense-in-depth sandboxing, AST transform plugins. Runs in Node.js and browser.
+- **[gbash](https://github.com/ewhauser/gbash)** (Go, Apache-2.0), Deterministic, sandbox-only bash runtime for AI agents. Delegates parsing to `mvdan/sh`. Registry-backed commands, policy enforcement, structured tracing, JSON-RPC server mode.
 
 ## Acknowledgments
 
 Bashkit is an independent implementation that draws design inspiration from several open source projects:
 
-- **[just-bash](https://github.com/vercel-labs/just-bash)** (Vercel Labs, Apache-2.0) — Pioneered the idea of a virtual bash interpreter for AI-powered environments. Bashkit's sandboxing architecture and multi-tenant design was inspired by their approach.
-- **[Oils](https://github.com/oilshell/oil)** (Andy Chu, Apache-2.0) — Comprehensive bash compatibility testing approach inspired our spec test methodology.
-- **[One True AWK](https://github.com/onetrueawk/awk)** (Lucent Technologies) — AWK language semantics reference for our awk builtin.
-- **[jq](https://github.com/jqlang/jq)** (Stephen Dolan, MIT) — jq query syntax and behavior reference. Our implementation uses the [jaq](https://github.com/01mf02/jaq) Rust crates.
+- **[just-bash](https://github.com/vercel-labs/just-bash)** (Vercel Labs, Apache-2.0), Pioneered the idea of a virtual bash interpreter for AI-powered environments. Bashkit's sandboxing architecture and multi-tenant design was inspired by their approach.
+- **[Oils](https://github.com/oilshell/oil)** (Andy Chu, Apache-2.0), Comprehensive bash compatibility testing approach inspired our spec test methodology.
+- **[One True AWK](https://github.com/onetrueawk/awk)** (Lucent Technologies), AWK language semantics reference for our awk builtin.
+- **[jq](https://github.com/jqlang/jq)** (Stephen Dolan, MIT), jq query syntax and behavior reference. Our implementation uses the [jaq](https://github.com/01mf02/jaq) Rust crates.
 
 No code was copied from any of these projects. See [NOTICE](NOTICE) for full details.
 
 ## Contributing
 
-The best way to contribute is to [open an issue](https://github.com/everruns/bashkit/issues) — bug reports, feature requests, and questions all help improve bashkit. If you'd like to contribute code, see [CONTRIBUTING.md](CONTRIBUTING.md) for setup and workflow details.
+The best way to contribute is to [open an issue](https://github.com/everruns/bashkit/issues), bug reports, feature requests, and questions all help improve bashkit. If you'd like to contribute code, see [CONTRIBUTING.md](CONTRIBUTING.md) for setup and workflow details.
 
 ## Ecosystem
 

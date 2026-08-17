@@ -103,17 +103,17 @@ pnpm test`). White-box and black-box scenarios across 18 categories:
 1. Resource limit enforcement (TM-DOS)
 2. Output truncation (TM-DOS)
 3. Sandbox escape prevention (TM-ESC)
-4. VFS security — path traversal, file count, nesting, filename limits (TM-DOS, TM-INJ)
+4. VFS security, path traversal, file count, nesting, filename limits (TM-DOS, TM-INJ)
 5. Instance isolation (TM-ISO)
 6. Error message safety (TM-INT)
 7. TypeScript wrapper injection prevention (TM-INJ)
-8. Adversarial script inputs — null bytes, deep nesting, expansion bombs
+8. Adversarial script inputs, null bytes, deep nesting, expansion bombs
 9. Unicode & encoding attacks (TM-UNI)
 10. Injection via constructor options (TM-INJ)
 11. Concurrency & cancellation (TM-DOS)
 12. Async API security
 13. BashTool metadata safety
-14. Bash feature abuse — traps, special variables, /dev/tcp
+14. Bash feature abuse, traps, special variables, /dev/tcp
 15. Mounted files security
 16. Rapid instance creation/destruction
 17. Edge case inputs

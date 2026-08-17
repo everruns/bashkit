@@ -1,7 +1,7 @@
 # Security in Bashkit
 
 Bashkit is a virtual Bash interpreter designed for safe, sandboxed script
-execution. Security is a first-class concern — every design decision considers
+execution. Security is a first-class concern, every design decision considers
 what an untrusted script could do and how to prevent it.
 
 This article gives a high-level overview. For the full threat model with
@@ -37,7 +37,7 @@ with stable threat IDs across these categories:
 | Python Sandbox | `TM-PY` | Monty resource limits, VFS bridge escapes |
 | Unicode | `TM-UNI` | Byte-boundary panics, homoglyph attacks |
 
-The full threat model — including mitigation status for each threat — is
+The full threat model, including mitigation status for each threat, is
 published in the rustdoc:
 [**bashkit::threat_model**](https://docs.rs/bashkit/latest/bashkit/threat_model/index.html).
 
@@ -46,9 +46,9 @@ published in the rustdoc:
 Bashkit intentionally deviates from POSIX where compliance would compromise
 the sandbox. Key exclusions:
 
-- **`exec`** — would break sandbox containment (`TM-ESC-005`)
-- **`trap`** — conflicts with the stateless execution model
-- **Real process spawning** — all subprocess commands stay within the virtual interpreter (`TM-ESC-015`)
+- **`exec`**: would break sandbox containment (`TM-ESC-005`)
+- **`trap`**: conflicts with the stateless execution model
+- **Real process spawning**: all subprocess commands stay within the virtual interpreter (`TM-ESC-015`)
 
 These decisions are documented in [`knowledge/operations/limitations.md`](../knowledge/operations/limitations.md).
 
@@ -56,34 +56,34 @@ These decisions are documented in [`knowledge/operations/limitations.md`](../kno
 
 Bashkit uses multiple layers of security testing:
 
-**Threat model tests** — 232 tests in `threat_model_tests.rs` that directly
+**Threat model tests**: 232 tests in `threat_model_tests.rs` that directly
 validate mitigations against documented threat IDs. Each test maps to a specific
 `TM-*` threat.
 
-**Fail-point injection** — A framework defined in [`knowledge/security/security-testing.md`](../knowledge/security/security-testing.md)
+**Fail-point injection**: A framework defined in [`knowledge/security/security-testing.md`](../knowledge/security/security-testing.md)
 that injects failures at specific points to verify the interpreter handles them
 safely. 14+ tests in `security_failpoint_tests.rs`.
 
-**Network security tests** — 68 tests covering allowlist enforcement, URL
+**Network security tests**: 68 tests covering allowlist enforcement, URL
 validation, timeout behaviour, and response limits.
 
-**Error handling tests** — 39 tests verifying that builtins wrapped with
+**Error handling tests**: 39 tests verifying that builtins wrapped with
 `catch_unwind` never leak panic messages, stack traces, or memory addresses.
 
-**Logging security tests** — 26 tests confirming that sensitive data (passwords,
+**Logging security tests**: 26 tests confirming that sensitive data (passwords,
 tokens, API keys, JWTs) is redacted in logs and that log injection is prevented.
 
-**Fuzz testing** — Parser and lexer fuzzing to catch panics and unexpected
+**Fuzz testing**: Parser and lexer fuzzing to catch panics and unexpected
 behaviour on malformed input.
 
-**Differential tests** — Compare Bashkit output against real Bash to ensure
+**Differential tests**: Compare Bashkit output against real Bash to ensure
 behaviour parity where expected, and confirm intentional divergences where
 security requires it.
 
 ## Panic safety
 
 All builtin commands are wrapped with `catch_unwind`. If a builtin panics, the
-error is caught and converted to a sanitised error message — no stack traces, no
+error is caught and converted to a sanitised error message, no stack traces, no
 memory addresses, no real filesystem paths leak to the caller (`TM-INT-001`,
 `TM-INT-002`).
 

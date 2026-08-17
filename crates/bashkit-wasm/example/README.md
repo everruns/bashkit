@@ -2,7 +2,7 @@
 
 Self-contained demos of `@everruns/bashkit-wasm`. They load the package as a
 plain ES module and need **no bundler and no cross-origin isolation** (no
-`COOP`/`COEP` headers) — any static file server works.
+`COOP`/`COEP` headers), any static file server works.
 
 ## Run
 
@@ -27,6 +27,6 @@ directory must exist (build it first).
 
 ## Using a bundler instead
 
-The same imports work under Vite/webpack/esbuild — the `.wasm` is resolved via
+The same imports work under Vite/webpack/esbuild, the `.wasm` is resolved via
 `import.meta.url`, which bundlers understand. Install the published package
 (`npm install @everruns/bashkit-wasm`) and import from `@everruns/bashkit-wasm`.

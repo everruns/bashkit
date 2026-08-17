@@ -12,7 +12,7 @@ tags:
 
 > **Experimental.** Backed by [Turso](https://github.com/tursodatabase/turso)
 > (`turso_core`), a pure-Rust SQLite-compatible engine that is **BETA**
-> upstream. Treat it as you would `python` — sandbox-safe by design but
+> upstream. Treat it as you would `python`, sandbox-safe by design but
 > not yet hardened for arbitrary untrusted SQL workloads.
 
 ## Status
@@ -32,8 +32,8 @@ sqlite db.sqlite '.tables' '.schema users' '.dump'
 
 ### Why Turso
 
-- Pure Rust — no `libsqlite3-sys` C dependency, no toolchain coupling.
-- Familiar API — Database / Connection / Statement, broadly SQLite-compatible.
+- Pure Rust, no `libsqlite3-sys` C dependency, no toolchain coupling.
+- Familiar API, Database / Connection / Statement, broadly SQLite-compatible.
 - Plug-in IO via the `IO` / `File` traits, so we choose in-memory or
   VFS-backed storage without forking the engine.
 - MIT licensed.
@@ -82,7 +82,7 @@ variant must break the build so its pacing semantics get reviewed rather than
 silently falling into a catch-all. `Sleep` was caught exactly this way when
 turso 0.8.0-pre.4 introduced it.
 
-### Phase 1 — `Backend::Memory` (default)
+### Phase 1, `Backend::Memory` (default)
 
 Read entire DB file from VFS into memory → fresh `MemoryIO`-backed turso
 `Database` → run all SQL + dot-commands → checkpoint WAL, write bytes back
@@ -90,10 +90,10 @@ to VFS (on success or error).
 
 Pros: simple, isolates BETA risk to the in-memory engine, matches the
 "command-as-transaction-boundary" shell mental model. Cons: loads + saves the
-whole file per invocation — practical for the KB–MB DBs bashkit users care
+whole file per invocation, practical for the KB–MB DBs bashkit users care
 about; `SqliteLimits::max_db_bytes` (256 MB default) keeps it predictable.
 
-### Phase 2 — `Backend::Vfs`
+### Phase 2, `Backend::Vfs`
 
 `vfs_io::BashkitVfsIO` implements `turso_core::IO`, holding a
 `HashMap<String, Arc<VfsFile>>` of open files. `open_file` reads bytes from
@@ -116,7 +116,7 @@ queries.
 
 ### Dot-commands
 
-Standard sqlite3 dot-command subset — run `.help` for the list (`.tables`,
+Standard sqlite3 dot-command subset, run `.help` for the list (`.tables`,
 `.schema`, `.indexes`, `.headers`, `.mode`, `.separator`, `.nullvalue`,
 `.dump`, `.read`, `.quit`/`.exit`). Bashkit-specific deviations:
 
@@ -143,10 +143,10 @@ independently.
 Consequences:
 
 - **Transactions span shell commands.** `BEGIN` in one
-  `bash.exec("sqlite DB ...")` and `COMMIT` in the next work — the connection
+  `bash.exec("sqlite DB ...")` and `COMMIT` in the next work, the connection
   lives between calls. Tested by
   `cached_engine_keeps_in_flight_transaction_across_exec_calls`.
-- **`:memory:` is intentionally NOT cached** — fresh ephemeral engine per
+- **`:memory:` is intentionally NOT cached**: fresh ephemeral engine per
   invocation; use a VFS path for persistence within one `Bash` lifecycle.
   Tested by `memory_target_does_not_persist_across_exec_calls`.
 - **Per-call flush is preserved.** After every successful or failing call,
@@ -181,7 +181,7 @@ leading SQL keyword via the parser's lightweight tokeniser
   isolation.
 - `VACUUM` (with or without `INTO`) is unconditionally rejected. Turso's
   `VACUUM INTO` opens the destination via `PlatformIO`, writing to the host
-  filesystem rather than the configured `MemoryIO`/`BashkitVfsIO` — a
+  filesystem rather than the configured `MemoryIO`/`BashkitVfsIO`, a
   sandbox escape. Plain `VACUUM` is denied for symmetry; there is no
   sandbox-safe way to express it today.
 - `PRAGMA <name>` is checked against `SqliteLimits::pragma_deny`
@@ -261,7 +261,7 @@ registered (usage, dot-commands, `:memory:`, no ATTACH/DETACH).
 
 ATTACH/DETACH support; page-streaming Phase 3 backend (real positional reads
 against the VFS; needs `FsBackend::pread`); encryption key management
-(turso supports it); track upstream turso — remove BETA caveat at 1.0.
+(turso supports it); track upstream turso, remove BETA caveat at 1.0.
 
 ## Alternatives Considered
 
@@ -274,7 +274,7 @@ against the VFS; needs `FsBackend::pread`); encryption key management
 
 ## See also
 
-- [Virtual Filesystem](../foundations/vfs.md) — VFS the VfsIO backend writes through
-- [Builtin Commands](../foundations/builtins.md) — builtin trait and dispatch
-- [Threat Model](../security/threat-model.md) — TM-SQL threats and their mitigations
-- [Performance Results](../operations/performance-results.md) — where `just bench-sqlite` results are kept
+- [Virtual Filesystem](../foundations/vfs.md), VFS the VfsIO backend writes through
+- [Builtin Commands](../foundations/builtins.md), builtin trait and dispatch
+- [Threat Model](../security/threat-model.md), TM-SQL threats and their mitigations
+- [Performance Results](../operations/performance-results.md), where `just bench-sqlite` results are kept

@@ -17,7 +17,7 @@ Implemented
 
 Bashkit provides an interactive REPL via `bashkit` (no arguments); add
 `--mount-rw /path` for real filesystem access. Uses `rustyline` for line
-editing — lightweight, MIT-licensed, no heavy transitive deps (no SQLite, no
+editing, lightweight, MIT-licensed, no heavy transitive deps (no SQLite, no
 crossterm). Fits bashkit's isolation-first design.
 
 ### Feature Flag
@@ -92,7 +92,7 @@ dimmed text right of cursor; accept with right arrow.
 The `exit` builtin fires an `on_exit` hook registered via
 `BashBuilder::on_exit()`. The REPL registers a hook at build time that sets an
 atomic flag, checked after each `exec()`. Works through the normal execution
-pipeline — `echo bye; exit 1`, conditionals, and scripts all terminate the
+pipeline, `echo bye; exit 1`, conditionals, and scripts all terminate the
 session correctly.
 
 #### Multiline Detection
@@ -100,11 +100,11 @@ session correctly.
 When a command fails to parse with known incomplete-input errors,
 the REPL shows PS2 and appends the next line. Detected patterns:
 
-- `"unterminated"` — open quotes, command substitution
-- `"unexpected end of input"` — incomplete constructs
-- `"syntax error: empty"` — empty body/clause
-- `"expected 'fi'"` / `"expected 'done'"` / `"expected 'esac'"` — missing closers
-- `"expected '}' to close brace group"` — open functions
+- `"unterminated"`, open quotes, command substitution
+- `"unexpected end of input"`, incomplete constructs
+- `"syntax error: empty"`, empty body/clause
+- `"expected 'fi'"` / `"expected 'done'"` / `"expected 'esac'"`, missing closers
+- `"expected '}' to close brace group"`, open functions
 
 #### Startup File
 
@@ -118,7 +118,7 @@ Sets `COLUMNS`/`LINES` from the `terminal_size` crate (no hardcoded 80) and
 
 ### Dependencies
 
-`rustyline` 18, `terminal_size` 0.4, `signal-hook` 0.4 — all optional, gated
+`rustyline` 18, `terminal_size` 0.4, `signal-hook` 0.4, all optional, gated
 by `interactive`, all MIT-licensed, all in `deny.toml` allowlist.
 
 ### Security
@@ -134,7 +134,7 @@ Reuses the existing sandbox. No new attack surface:
 
 | Feature | Rationale |
 |---------|-----------|
-| Job control (`bg`/`fg`/`jobs`) | No real processes — by design |
+| Job control (`bg`/`fg`/`jobs`) | No real processes, by design |
 | History expansion (`!!`, `!N`) | Complexity vs value tradeoff |
 | Persistent history file | Leaks info across sessions, breaks isolation |
 | `exec` builtin | Excluded for security |

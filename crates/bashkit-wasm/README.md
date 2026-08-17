@@ -1,25 +1,25 @@
 # @everruns/bashkit-wasm
 
 Sandboxed bash interpreter compiled to WebAssembly, for the **browser and any
-other JavaScript runtime** — edge/serverless workers (Cloudflare Workers, Vercel
+other JavaScript runtime**: edge/serverless workers (Cloudflare Workers, Vercel
 Edge, Deno Deploy), Node, Deno, and Bun.
 
 Unlike a WASI-threads build, this package is **single-threaded**: it needs no
 `SharedArrayBuffer` and **no cross-origin isolation** (`COOP`/`COEP`) headers.
-That makes it a drop-in for any web app — including embedded and third-party
-iframe contexts where those headers can't be set — and for the constrained edge
+That makes it a drop-in for any web app, including embedded and third-party
+iframe contexts where those headers can't be set, and for the constrained edge
 runtimes that can't use threads either.
 
 It's a `wasm-bindgen` module, so it runs in any JS host but **not** a
 non-JS/WASI wasm runtime (`wasmtime`, `wasmer`). For a native Node.js / Bun /
 Deno addon (faster, no wasm), use
 [`@everruns/bashkit`](https://www.npmjs.com/package/@everruns/bashkit) instead;
-reach for this package when a native addon can't load — browsers and edge
+reach for this package when a native addon can't load, browsers and edge
 runtimes.
 
 ## Live demo
 
-A full interactive terminal built on this package —
+A full interactive terminal built on this package,
 [**`examples/browser`**](https://github.com/everruns/bashkit/tree/main/examples/browser).
 It's a single `index.html` on Vite: `pnpm install && pnpm start`, no build step
 and no special headers.
@@ -59,7 +59,7 @@ console.log(result.stdout); // HELLO, BROWSER!
 ## Async custom builtins
 
 Register JS callbacks as bash commands. Async callbacks (e.g. issuing a
-`fetch` / GraphQL request) are awaited by `execute()` — the async API:
+`fetch` / GraphQL request) are awaited by `execute()`, the async API:
 
 ```js
 const bash = new Bash({
@@ -100,17 +100,17 @@ await bash.execute("uppercase-file /in.txt && cat /out.txt"); // -> HELLO
 ```
 
 `ctx.fs` has `readFile`, `writeFile`, `appendFile`, their binary-safe
-`*FileBytes` variants, `exists`, `mkdir`, `remove`, and `ls` — the same surface
+`*FileBytes` variants, `exists`, `mkdir`, `remove`, and `ls`, the same surface
 as the `Bash` VFS helpers below.
 
 ## Sync vs async
 
-- `executeSync(cmd)` — for plain bash and `jq`. Fast, returns an `ExecResult`
-  directly. Throws if the script suspends — for example `sleep` or an async
+- `executeSync(cmd)`, for plain bash and `jq`. Fast, returns an `ExecResult`
+  directly. Throws if the script suspends, for example `sleep` or an async
   custom builtin.
-- `execute(cmd)` — returns `Promise<ExecResult>`. Required whenever an async
+- `execute(cmd)`, returns `Promise<ExecResult>`. Required whenever an async
   custom builtin or wall-clock operation may run.
-- `executeWithOutput(cmd, callback)` — async execution plus incremental
+- `executeWithOutput(cmd, callback)`, async execution plus incremental
   `(stdout, stderr)` chunks. The returned `ExecResult` remains authoritative.
 
 ## Options
@@ -170,8 +170,8 @@ resumed.checkout(saved.id, saved.objects); // policy defaults to "superset"
 
 ## Host-backed filesystem
 
-Pass `fs` to run scripts directly against storage you own — a Durable Object, an
-OPFS handle, IndexedDB — instead of the in-memory VFS. Nothing is copied in or
+Pass `fs` to run scripts directly against storage you own, a Durable Object, an
+OPFS handle, IndexedDB, instead of the in-memory VFS. Nothing is copied in or
 diffed back out: every read and write during the run is a call into your object.
 
 ```js
@@ -197,7 +197,7 @@ synthesized from the required primitives (`chmod` is accepted and ignored, so
 `chmod +x` still works). `symlink` and `readLink` are optional too, but scripts
 that reach for them fail with `ENOSYS` when the host omits them.
 
-Your host implements raw storage only — POSIX semantics (parent-directory
+Your host implements raw storage only, POSIX semantics (parent-directory
 checks, "is a directory", symlink resolution) are enforced above it. Throw an
 `Error` carrying a `code` (`ENOENT`, `EEXIST`, `EACCES`, `EPERM`, `EISDIR`,
 `ENOTDIR`, `ENOTEMPTY`, `EXDEV`, `ENOSYS`) so bash reports the failure the way a
@@ -206,7 +206,7 @@ real shell does.
 Two contract notes:
 
 - **`execute()` only.** A host call can suspend the interpreter, and
-  `executeSync` cannot await — it reports the suspension instead of blocking.
+  `executeSync` cannot await, it reports the suspension instead of blocking.
   The synchronous `bash.readFile(...)` helpers behave the same way.
 - **`files` is rejected alongside `fs`.** Seeding writes through the VFS
   synchronously, which a promise-returning host can never satisfy. Write seed
@@ -219,7 +219,7 @@ filesystem there is no built-in VFS underneath to supply it.
 
 Plain bash plus the built-in text tooling (`grep`, `sed`, `awk`, `jq`, `find`,
 …) and `jq`. Not included in the browser build: outbound HTTP (`curl`/`wget`),
-`ssh`, `sqlite`, and embedded `python` — these need sockets, threads, or a host
+`ssh`, `sqlite`, and embedded `python`, these need sockets, threads, or a host
 filesystem the browser sandbox doesn't provide. Bridge to the network through a
 custom builtin (see above) so requests go through your app's own `fetch`.
 
@@ -236,8 +236,8 @@ custom builtin (see above) so requests go through your app's own `fetch`.
 ## Examples
 
 - [**`examples/browser`**](https://github.com/everruns/bashkit/tree/main/examples/browser)
-  — the full interactive terminal shown above, on Vite (no build step, no headers).
-- Minimal, dependency-free demos in [`example/`](./example) — an interactive
+, the full interactive terminal shown above, on Vite (no build step, no headers).
+- Minimal, dependency-free demos in [`example/`](./example), an interactive
   terminal and an async-builtin/`ctx.fs` demo, served by any static file server.
   See [`example/README.md`](./example/README.md).
 
@@ -253,4 +253,4 @@ just build-wasm
 
 ## License
 
-MIT — part of the [Bashkit](https://github.com/everruns/bashkit) project.
+MIT, part of the [Bashkit](https://github.com/everruns/bashkit) project.

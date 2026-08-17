@@ -4,8 +4,8 @@ Run the Bashkit sandbox in the browser, at the edge, or in any JavaScript
 runtime that can't load a native addon. `@everruns/bashkit-wasm` is a slim,
 **single-threaded** `wasm-bindgen` module: unlike a WASI-threads build it needs
 **no `SharedArrayBuffer` and no cross-origin isolation** (`COOP`/`COEP`)
-headers, so it drops into any web app — including embedded and third-party
-iframe contexts where those headers can't be set — and into edge/serverless
+headers, so it drops into any web app, including embedded and third-party
+iframe contexts where those headers can't be set, and into edge/serverless
 runtimes (Cloudflare Workers, Vercel Edge, Deno Deploy) that can't use threads.
 
 For server-side Node, Bun, or Deno where a native addon loads, prefer the faster
@@ -33,7 +33,7 @@ console.log(result.stdout); // HELLO, BROWSER!
 
 ## Try it live
 
-This is the exact package above, running in your browser — no server, nothing
+This is the exact package above, running in your browser, no server, nothing
 you type leaves this page. Launch it and run some bash:
 
 <div data-bashkit-terminal></div>
@@ -87,6 +87,6 @@ A full interactive terminal built on this package lives in
 
 ## Next steps
 
-- [Get started in Pyodide](start-pyodide.md) — for Python running in the browser.
-- [Sandbox configuration & limits](configuration.md) — resource limits and sandbox options.
-- [Security](security.md) — sandbox boundaries and what scripts cannot do.
+- [Get started in Pyodide](start-pyodide.md), for Python running in the browser.
+- [Sandbox configuration & limits](configuration.md), resource limits and sandbox options.
+- [Security](security.md), sandbox boundaries and what scripts cannot do.

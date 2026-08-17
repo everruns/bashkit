@@ -44,13 +44,13 @@ is confined to `crates/bashkit-python`.
 
 Present on both: `Bash`/`BashTool`/`ScriptedTool`, `execute_sync()` /
 `execute_sync_or_throw()`, Monty `python=True`, `jq`, sync custom-builtin
-callbacks, async custom-builtin callbacks (wasm: private-loop fallback only —
+callbacks, async custom-builtin callbacks (wasm: private-loop fallback only,
 no caller-loop).
 
 Absent on wasm: async `execute()` / `execute_or_throw()` (methods absent),
 `FileSystem.real()` / capsule `to/from_capsule` (methods absent). Gated-off
-*configuration* kwargs — `network=`, `sqlite=True`, `mounts=`,
-`external_handler=` — **fail loudly** with `RuntimeError` at construction
+*configuration* kwargs, `network=`, `sqlite=True`, `mounts=`,
+`external_handler=`, **fail loudly** with `RuntimeError` at construction
 rather than silently no-op, so callers learn immediately the WASM build
 can't do it.
 
@@ -93,7 +93,7 @@ Decision comments are inline at each gate; this spec is the index.
 
 Versions are pinned in CI via job-level `RUST_NIGHTLY` /
 `PYODIDE_BUILD_VERSION` env vars in `.github/workflows/python.yml` (`wasm`
-job) and `.github/workflows/publish-python.yml` (`build-emscripten` job) —
+job) and `.github/workflows/publish-python.yml` (`build-emscripten` job),
 those are the source of truth. Host Python **3.13** selects pyodide-build's
 modern config (pyodide-build → Pyodide 0.29.x / Emscripten 4.0.9 ABI;
 Emscripten is managed by pyodide-build). Nightly Rust is required because
@@ -101,8 +101,8 @@ Pyodide injects `-Z link-native-libraries=no`, and the nightly must satisfy
 monty's MSRV + edition 2024.
 
 **Invariant: bump the trio (host Python / pyodide-build / Rust nightly)
-together** — they must agree on the wasm feature set and
-exception-handling ABI (version triangle below) — and re-verify the wheel
+together**: they must agree on the wasm feature set and
+exception-handling ABI (version triangle below), and re-verify the wheel
 *imports* (not just builds) after any bump. Python 3.11/3.12 pin
 pyodide-build ≤0.25.1 → Emscripten 3.1.x, which fails against modern Rust;
 use 3.13.
@@ -131,7 +131,7 @@ bashkit-python --target wasm32-unknown-emscripten`.
 
 CI's `pyodide venv` smoke test installs via `pip`; the actual end-user flow
 installs via `micropip` into freshly loaded Pyodide. Verifying that path is
-a deliberate one-off manual check, **not** a CI job — it pulls `micropip`
+a deliberate one-off manual check, **not** a CI job, it pulls `micropip`
 from the jsdelivr CDN (network flakiness), and the venv test already
 exercises the wasm runtime + EH ABI. Recipe: `npm install pyodide@<ABI
 version>`, then a Node script doing `loadPyodide()` →
@@ -172,5 +172,5 @@ the native wheels.
 
 ## See also
 
-- [Python Package](python-package.md) — native wheel matrix, PyPI publishing, public API.
-- [Bashkit Architecture](../foundations/architecture.md) — core interpreter, wasm-aware tokio gating.
+- [Python Package](python-package.md), native wheel matrix, PyPI publishing, public API.
+- [Bashkit Architecture](../foundations/architecture.md), core interpreter, wasm-aware tokio gating.

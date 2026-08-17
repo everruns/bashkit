@@ -16,7 +16,7 @@ Implemented
 
 ## Summary
 
-`analyze()` parses a script and reports what it *statically* refers to —
+`analyze()` parses a script and reports what it *statically* refers to,
 command names, arguments, redirect targets, function definitions, and whether
 the script hides work behind expansions. Hosts use it to decide, **before
 executing anything**, whether a script needs user approval.
@@ -27,7 +27,7 @@ Available as `Bash::analyze` (Rust), `bash.analyze()` (Node), and
 ## Motivation
 
 Embedders that put bashkit behind an LLM need a permission prompt: "the agent
-wants to run `rm -rf /data` — allow?". Answering that requires knowing which
+wants to run `rm -rf /data`, allow?". Answering that requires knowing which
 commands a script invokes before it runs. Without a first-class API, hosts
 either regex the script text (wrong on quoting, pipelines, substitutions) or
 depend on parser internals.
@@ -48,20 +48,20 @@ narrow, stable projection of it.
 A script's effective behavior is only knowable at runtime. Static analysis
 cannot see through:
 
-- dynamic dispatch — `$cmd foo`, `${arr[0]} foo`, `$(echo rm) -rf /`
-- interpreter re-entry — `eval`, `source`, `.`, and any nested `bash`/`sh` (inline `-c` text, a script file, or stdin)
+- dynamic dispatch, `$cmd foo`, `${arr[0]} foo`, `$(echo rm) -rf /`
+- interpreter re-entry, `eval`, `source`, `.`, and any nested `bash`/`sh` (inline `-c` text, a script file, or stdin)
 - shell functions and aliases that rebind a name
-- wrapper commands that run other commands named in their arguments —
+- wrapper commands that run other commands named in their arguments,
   `xargs`, `env`, `timeout`, `find -exec`, `awk 'system(…)'`. These are **not**
   flagged opaque: they analyze as ordinary commands, so a host that allowlists
   one must treat its arguments as commands itself. `ScriptAnalysis::command_wrappers()`
   reports which prefix-style wrappers a script uses, and `analysis::COMMAND_WRAPPERS` /
   `is_command_wrapper()` publish the list, so hosts do not hardcode a private
   copy that drifts from ours. `find -exec` and language payloads
-  (`awk 'system(…)'`) are outside that list — they need per-tool argument
+  (`awk 'system(…)'`) are outside that list, they need per-tool argument
   knowledge. `time` is absent by design: it is a keyword, so the timed command
   is already the reported command name
-- arguments built from variables — `rm "$target"`
+- arguments built from variables, `rm "$target"`
 
 The API reports these as *unknown*, never as *safe*: a command whose name is
 not statically determined has `name == null`, and the script-level
@@ -70,7 +70,7 @@ recognized dangerous command" as "safe" without checking those flags builds a
 bypassable gate.
 
 Enforcement primitives remain: the builtin registry (a command that does not
-exist cannot run — unless a `CommandResolver` is installed, see below),
+exist cannot run, unless a `CommandResolver` is installed, see below),
 `NetworkAllowlist`, the filesystem mount policy, and the `before_tool` hook,
 which fires with the **resolved** command name at execution time. Recommended
 pattern: `analyze()` for the pre-execution UX decision, `before_tool` for the
@@ -80,7 +80,7 @@ enforcement backstop.
 
 `BashBuilder::command_resolver` installs a last-chance resolver, consulted only
 after every other dispatch route misses and immediately before the 127 path. It
-grants no new capability — a resolver is embedder-supplied host code exactly
+grants no new capability, a resolver is embedder-supplied host code exactly
 like a builtin passed to `BashBuilder::builtin`, which could already spawn
 processes. What it changes is narrower and worth stating plainly:
 
@@ -110,7 +110,7 @@ Recorded as TM-ESC-032 in [Threat Model](../security/threat-model.md).
 | Python | `bash.analyze(script)` | `ScriptAnalysis` (raises `BashError` on parse error) |
 
 `Bash::analyze` uses the instance's configured parser limits; the free
-functions use defaults. Analysis is pure — no VFS, network, environment, or
+functions use defaults. Analysis is pure, no VFS, network, environment, or
 shell-state access, no mutation of the instance, and it never executes
 anything.
 
@@ -168,7 +168,7 @@ are omitted. The parser does not support `<>`, so no read-write mode exists.
 - **Flat list, source order.** No tree. Every consumer seen so far wants "the
   set of commands"; a tree would leak AST shape back into the public API.
 - **Assignment-only commands** (`FOO=1`) report `name == null` with a
-  non-empty `assignments` list and do **not** set `has_dynamic_commands` —
+  non-empty `assignments` list and do **not** set `has_dynamic_commands`,
   nothing is hidden. `AnalyzedCommand::is_assignment_only()` (Rust) /
   `isAssignmentOnly` (Node) / `is_assignment_only` (Python) tells them apart
   from a genuinely unknown name.
@@ -182,26 +182,26 @@ are omitted. The parser does not support `<>`, so no read-write mode exists.
 
 ## Verification
 
-- `crates/bashkit/src/analysis.rs` — unit tests for word extraction, each AST
+- `crates/bashkit/src/analysis.rs`, unit tests for word extraction, each AST
   node kind, contexts, redirect modes, and budget truncation.
-- `crates/bashkit/tests/integration/script_analysis.rs` — end-to-end behavior,
+- `crates/bashkit/tests/integration/script_analysis.rs`, end-to-end behavior,
   evasion cases (dynamic dispatch, eval, nested shells, nested substitution,
   function rebinding), reserved-control-byte and malformed literal-boundary
   analysis rejection, and the
   `before_tool` backstop pairing.
-- `crates/bashkit/tests/proptest_security.rs` — invariants: never panics,
+- `crates/bashkit/tests/proptest_security.rs`, invariants: never panics,
   command-name characters come from the source in order, respects the node
   budget, every dispatched command is reported for a transparent script, and
   runtime-resolved scripts are opaque. Quote removal, backtick syntax, and
   escapes can legitimately join multiple source spans; ANSI-C `$'...'` can
   decode characters absent from the source and is explicitly exempt.
-- `crates/bashkit/fuzz/fuzz_targets/analyze_fuzz.rs` — libFuzzer target (in the
+- `crates/bashkit/fuzz/fuzz_targets/analyze_fuzz.rs`, libFuzzer target (in the
   `fuzz.yml` matrix) asserting the same ordered-name and budget invariants;
   malformed normalization syntax has deterministic parser regressions.
 - `crates/bashkit-js/__test__/analyze.spec.ts` and
-  `__test__/runtime-compat/analyze.mjs` — Node/Bun/Deno surface.
-- `crates/bashkit-python/tests/test_analyze.py` — Python surface.
-- `crates/bashkit/docs/script-analysis.md` — rustdoc guide, doctested.
+  `__test__/runtime-compat/analyze.mjs`, Node/Bun/Deno surface.
+- `crates/bashkit-python/tests/test_analyze.py`, Python surface.
+- `crates/bashkit/docs/script-analysis.md`, rustdoc guide, doctested.
 
 ## See also
 

@@ -24,7 +24,7 @@ Benchmark tool for comparing bashkit against bash and just-bash across multiple 
 
 ### In-process / persistent-child lineup (vm, 4 CPUs, 2026-05-26)
 
-96 cases, 10 iterations. Apples-to-apples — interpreter cost only, no
+96 cases, 10 iterations. Apples-to-apples, interpreter cost only, no
 per-call process spawn (except `bash`, kept as the cold-start reference).
 
 | Runner | Avg/Case (ms) | Total (ms) | vs bashkit | Errors | Output Match |
@@ -40,10 +40,10 @@ Bashkit speedup (geometric mean / median across 96 cases):
 |----|---------:|-------:|
 | bash | 24.7x | 31.1x |
 | just-bash-inproc | 25.4x | 34.2x |
-| gbash-server | 17.6x | 18.8x (N=83 — gbash failed 13 awk/jq cases with exit 127) |
+| gbash-server | 17.6x | 18.8x (N=83, gbash failed 13 awk/jq cases with exit 127) |
 
 Subprocess-mode lineup (`just-bash` CLI 380 ms/case, `gbash` CLI 12.6 ms/case)
-is dominated by per-call Node/Go startup, not interpreter cost — see commit
+is dominated by per-call Node/Go startup, not interpreter cost, see commit
 `2223a72` for the raw numbers if you need the subprocess view. The in-process
 runners above are the fair comparison for steady-state workloads.
 
@@ -51,7 +51,7 @@ runners above are the fair comparison for steady-state workloads.
 
 96 cases, 10 iterations, **107.2x faster** overall. 0 errors, 100% output match.
 (Higher headline number than the vm run above because runsc + 16 CPUs makes
-host `bash`'s per-process spawn much more expensive — bashkit avoids spawn
+host `bash`'s per-process spawn much more expensive, bashkit avoids spawn
 entirely, so its lead widens.)
 
 | Benchmark | bashkit | bash | Speedup | Description |
@@ -151,7 +151,7 @@ contract.
 - Each benchmark: warmup iterations (not timed) → timed iterations → statistics (mean, stddev, min, max)
 - Prewarm phase runs first 3 cases to warm up JIT/compilation before actual benchmarks
 - Output compared against bash reference output; mismatches flagged but don't affect timing
-- Benchmarks run sequentially — no parallel execution competing for resources
+- Benchmarks run sequentially, no parallel execution competing for resources
 - Execution failures count as errors with 1000ms penalty time
 
 ## Output Files

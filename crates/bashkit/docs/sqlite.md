@@ -3,7 +3,7 @@
 Bashkit can embed a SQLite-compatible engine inside a sandbox by enabling
 the `sqlite` feature. The engine is [Turso](https://github.com/tursodatabase/turso)
 (`turso_core`), a pure-Rust rewrite of SQLite that exposes a pluggable
-`IO` trait — letting us bind it to bashkit's virtual filesystem.
+`IO` trait, letting us bind it to bashkit's virtual filesystem.
 
 > ⚠️ Turso is **BETA** upstream. The feature is opt-in at the cargo
 > level *and* at runtime via `BASHKIT_ALLOW_INPROCESS_SQLITE=1`. Enable it
@@ -162,8 +162,8 @@ parity tests live in `tests/sqlite_compat_tests.rs`. Notable differences:
 
 See also:
 
-- [`python_guide`](crate::python_guide) — the embedded Python builtin,
+- [`python_guide`](crate::python_guide), the embedded Python builtin,
   same opt-in pattern.
-- [`live_mounts_guide`](crate::live_mounts_guide) — mount points the
+- [`live_mounts_guide`](crate::live_mounts_guide), mount points the
   sqlite builtin reads from / writes to.
-- [`threat_model`](crate::threat_model) — overall security model.
+- [`threat_model`](crate::threat_model), overall security model.

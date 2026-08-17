@@ -1,6 +1,6 @@
 # VFS / File-Ops Bench: Initial Baseline
 
-Criterion micro-benchmarks (`cargo bench --bench file_ops`) — first
+Criterion micro-benchmarks (`cargo bench --bench file_ops`), first
 coverage for the VFS read path, tree traversal, glob expansion, `rg`,
 and `grep -r` vs `rg` parity.
 

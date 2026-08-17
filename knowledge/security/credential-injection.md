@@ -23,19 +23,19 @@ vars lets the script read and exfiltrate them. The industry has converged on
 **outbound proxy credential injection**: a trusted layer between sandbox and
 network injects credentials per-host, so the agent never sees the raw secret.
 Bashkit already controls the HTTP client in-process via `HttpClient` and the
-`before_http` hook (#1255), so injection happens at the `HttpClient` layer —
+`before_http` hook (#1255), so injection happens at the `HttpClient` layer,
 no external proxy infrastructure needed.
 
 ## Design Decisions
 
-1. **Two modes** — *injection* (script has no knowledge of credentials) and *placeholder* (script uses opaque placeholder strings replaced on the wire). Both are common in the industry; both have valid use cases.
-2. **Built on `before_http` hooks** — `CredentialPolicy` internally registers a `before_http` interceptor. No new hook types or interception points.
-3. **Header-only for v1** — no URL query parameter or request body mutation (reduces attack surface).
-4. **Overwrite semantics** — injected headers **replace** same-name headers set by the script (Vercel's approach; prevents `Authorization` spoofing).
-5. **Non-blocking** — injection failures (missing placeholder, callback error) do not block the request; it is sent without credentials. Follows bot-auth precedent (TM-AVAIL-001).
-6. **Scoped to allowlist patterns** — same `scheme+host+port+path-prefix` matching as `NetworkAllowlist`. No wildcards, no subdomain matching. Credentials only go to pre-approved destinations.
-7. **Redacted in traces** — injected credential values never logged; placeholder tokens logged as `[CREDENTIAL_PLACEHOLDER]`.
-8. **No feature gate** — available whenever `http_client` is enabled. No additional dependencies.
+1. **Two modes**: *injection* (script has no knowledge of credentials) and *placeholder* (script uses opaque placeholder strings replaced on the wire). Both are common in the industry; both have valid use cases.
+2. **Built on `before_http` hooks**: `CredentialPolicy` internally registers a `before_http` interceptor. No new hook types or interception points.
+3. **Header-only for v1**: no URL query parameter or request body mutation (reduces attack surface).
+4. **Overwrite semantics**: injected headers **replace** same-name headers set by the script (Vercel's approach; prevents `Authorization` spoofing).
+5. **Non-blocking**: injection failures (missing placeholder, callback error) do not block the request; it is sent without credentials. Follows bot-auth precedent (TM-AVAIL-001).
+6. **Scoped to allowlist patterns**: same `scheme+host+port+path-prefix` matching as `NetworkAllowlist`. No wildcards, no subdomain matching. Credentials only go to pre-approved destinations.
+7. **Redacted in traces**: injected credential values never logged; placeholder tokens logged as `[CREDENTIAL_PLACEHOLDER]`.
+8. **No feature gate**: available whenever `http_client` is enabled. No additional dependencies.
 
 ## Architecture
 
@@ -83,9 +83,9 @@ Sandboxed script uses `$OPENAI_API_KEY` (contains `bk_placeholder_...`) in an
 `Authorization` header; the placeholder is replaced on the wire.
 
 The placeholder is:
-- **Not sensitive** — cannot be reversed to the real credential
-- **Useless outside bashkit** — only replaced for approved hosts
-- **SDK-compatible** — looks like a non-empty string, passes most client-side validation
+- **Not sensitive**: cannot be reversed to the real credential
+- **Useless outside bashkit**: only replaced for approved hosts
+- **SDK-compatible**: looks like a non-empty string, passes most client-side validation
 
 ## API
 
@@ -107,10 +107,10 @@ Generated at `BashBuilder::build()` time:
 `bk_placeholder_<32 hex chars from random bytes>`.
 
 Properties:
-- 128 bits of randomness — collision-resistant across sessions
-- Prefix `bk_placeholder_` — recognizable for debugging but not a real credential format
+- 128 bits of randomness, collision-resistant across sessions
+- Prefix `bk_placeholder_`, recognizable for debugging but not a real credential format
 - Passes most SDK non-empty checks
-- Not a valid JWT, API key, or Bearer token format — reduces echo attack risk
+- Not a valid JWT, API key, or Bearer token format, reduces echo attack risk
 
 ## Security
 
@@ -123,7 +123,7 @@ Properties:
 | Credential appears in traces | Trace output shows `[CREDENTIAL]` instead of real values |
 | Echo attack: approved host reflects Authorization header in response body | Accepted risk for v1. Mitigation: limit approved hosts to trusted APIs. Future: `after_http` response scrubbing |
 | Placeholder format recognized by attacker | Placeholder reveals credential *exists*, not its value. Acceptable metadata leakage |
-| Client-side token validation rejects placeholder | Placeholder is 48+ chars of hex — passes most non-empty/length checks. Known limitation with strict format validators (e.g., GitHub Copilot CLI) |
+| Client-side token validation rejects placeholder | Placeholder is 48+ chars of hex, passes most non-empty/length checks. Known limitation with strict format validators (e.g., GitHub Copilot CLI) |
 
 ## Files
 
@@ -148,7 +148,7 @@ Properties:
 
 ## See also
 
-- [HTTP Transport](http-transport.md) — transport that dispatches the injected request
-- [Request Signing](request-signing.md) — signing stage that follows injection in the pipeline
-- [Threat Model](threat-model.md) — credential-exposure threats this design answers
-- [Tool Contract](../integrations/tool-contract.md) — host surface that configures the policy
+- [HTTP Transport](http-transport.md), transport that dispatches the injected request
+- [Request Signing](request-signing.md), signing stage that follows injection in the pipeline
+- [Threat Model](threat-model.md), credential-exposure threats this design answers
+- [Tool Contract](../integrations/tool-contract.md), host surface that configures the policy

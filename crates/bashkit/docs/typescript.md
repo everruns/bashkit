@@ -143,7 +143,7 @@ ZapCode suspends at external function calls, Bashkit bridges them to the VFS,
 then resumes execution with the return value.
 
 **Note:** `console.log()` output produced *after* a VFS call is not captured
-due to a `zapcode-core` API limitation. Use the return-value pattern instead —
+due to a `zapcode-core` API limitation. Use the return-value pattern instead,
 the last expression's value is printed automatically.
 
 ## Resource Limits
@@ -265,12 +265,12 @@ last expression the value you want printed.
 
 All TypeScript execution runs in a virtual environment:
 
-- **No host filesystem access** — all paths resolve through the VFS
-- **No network access** — no sockets, HTTP, or DNS
-- **No dynamic code execution** — `eval()`, `Function()`, `import` blocked
-- **Resource limited** — time, memory, stack depth, and allocation caps
-- **Path traversal safe** — `../..` is resolved by VFS path normalization
-- **Opt-in only** — requires both `typescript` feature AND `.typescript()` builder call
+- **No host filesystem access**: all paths resolve through the VFS
+- **No network access**: no sockets, HTTP, or DNS
+- **No dynamic code execution**: `eval()`, `Function()`, `import` blocked
+- **Resource limited**: time, memory, stack depth, and allocation caps
+- **Path traversal safe**: `../..` is resolved by VFS path normalization
+- **Opt-in only**: requires both `typescript` feature AND `.typescript()` builder call
 
 See threat IDs TM-TS-001 through TM-TS-023 in the [threat model](./threat-model.md).
 

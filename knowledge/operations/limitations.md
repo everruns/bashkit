@@ -36,7 +36,7 @@ resolve to functions in `limitations_evidence_tests.rs` (also linted).
 
 ## Intentional Limitations
 
-By design — these conflict with the sandboxed, virtual, stateless
+By design, these conflict with the sandboxed, virtual, stateless
 execution model. Evidence is a threat-model ID, a test, or `stance`
 (untestable position).
 
@@ -53,7 +53,7 @@ execution model. Evidence is a threat-model ID, a test, or `stance`
 | L-SIG-001 | `trap` stores INT/TERM handlers but no signal delivery in virtual mode (EXIT, ERR fire) | No host signals exist inside the sandbox | `l_sig_001_signal_traps_not_delivered` |
 | L-WASM-001 | **Removed:** JS-host timers now drive `sleep`, builtin `timeout`, execution limits, and tool `timeoutMs` | `gloo-timers` bridges the host event-loop clock without threads or cross-origin isolation | [Browser Package](../runtimes/browser-package.md) |
 | L-WASM-002 | Browser build: `executeSync()` cannot run async custom builtins (fails with a clear message); use `execute()` | Single-threaded event loop can't settle a JS `Promise` without yielding | `crates/bashkit-wasm/__test__/bashkit-wasm.test.mjs` |
-| L-WASM-003 | Browser build: background jobs (`cmd &`) run synchronously and `awk` file redirects drive the VFS inline; no work runs on a separate thread | `wasm32-unknown-unknown` is single-threaded — `std::thread::spawn`/`tokio::spawn` are unavailable; safe because the in-memory VFS never suspends | `crates/bashkit-wasm/__test__/bashkit-wasm.test.mjs` |
+| L-WASM-003 | Browser build: background jobs (`cmd &`) run synchronously and `awk` file redirects drive the VFS inline; no work runs on a separate thread | `wasm32-unknown-unknown` is single-threaded, `std::thread::spawn`/`tokio::spawn` are unavailable; safe because the in-memory VFS never suspends | `crates/bashkit-wasm/__test__/bashkit-wasm.test.mjs` |
 | L-CAPI-001 | C ABI v1 excludes callbacks, custom builtins, streaming, async cancellation, host mounts, transport hooks, snapshots, scripted tools, and external filesystem providers | These require explicit reentrancy, callback lifetime, and dynamic-library unload contracts | [C API](../runtimes/c-api.md), stance |
 | L-STREAM-001 | Shell words, variables, command substitution, script source, text-oriented builtins, and JSON tool responses cannot represent arbitrary bytes. Command substitution removes NUL; other text boundaries decode invalid UTF-8 with replacement. Use `StreamData`, binding byte fields, redirects, or byte-oriented builtins for exact data | Bash variables and the parser are text domains; JSON strings are Unicode | `byte_stream_tests`, [Architecture](../foundations/architecture.md) |
 
@@ -66,7 +66,7 @@ agent runs deterministic. (`&` background execution + `wait` are
 supported within an exec call.)
 
 **bash/sh as virtual re-invocation**: `bash script.sh` / `bash -c` /
-`bash -n` re-enter the Bashkit interpreter — same virtual environment,
+`bash -n` re-enter the Bashkit interpreter, same virtual environment,
 shared state and limits, never an external process. `bash --version`
 reports Bashkit. Security analysis: TM-ESC-015 in
 [threat-model.md](../security/threat-model.md).
@@ -105,7 +105,7 @@ Target: IEEE 1003.1-2024 Shell Command Language.
 
 ## Builtins
 
-Inventory is generated — see [status/builtins.json](../status/builtins.json)
+Inventory is generated, see [status/builtins.json](../status/builtins.json)
 and the [builtins spec](../foundations/builtins.md). No wholly unimplemented
 builtins are currently tracked; partial boundaries follow.
 
@@ -167,6 +167,6 @@ what remains is how stdin is obtained.
 
 1. Add a spec test demonstrating it, marked `### skip: reason`
    (or an expected-fail differential test)
-2. Add a row here — with an `L-*` ID if it's an intentional decision
+2. Add a row here, with an `L-*` ID if it's an intentional decision
 3. When lifting: un-skip the test, delete the row, update referencing
    code comments in the same PR

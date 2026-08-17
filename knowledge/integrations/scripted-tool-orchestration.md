@@ -18,23 +18,23 @@ Implemented
 
 Compose tool definitions (`ToolDef`) + execution callbacks into a single `ScriptedTool` that accepts bash scripts. Each sub-tool becomes a builtin command, letting LLMs orchestrate N tools in one call using pipes, variables, loops, and conditionals.
 
-`ScriptedTool` always runs in code/logic mode: bash is the control-flow and data-transformation language, not a VFS shell — filesystem primitives, path script execution, file redirection, and process substitution are unavailable.
+`ScriptedTool` always runs in code/logic mode: bash is the control-flow and data-transformation language, not a VFS shell, filesystem primitives, path script execution, file redirection, and process substitution are unavailable.
 
 `ScriptedToolBuilder` and `ScriptingToolSetBuilder` also implement the shared toolkit-library contract from [the tool contract](tool-contract.md): locale-aware metadata, `build_service()`, `build_tool_definition()`, `build_input_schema()`, `build_output_schema()`, single-use `ToolExecution`.
 
 ## Feature flag
 
-`scripted_tool` — entire module gated behind `#[cfg(feature = "scripted_tool")]`.
+`scripted_tool`, entire module gated behind `#[cfg(feature = "scripted_tool")]`.
 
 ## Motivation
 
-With many tools, each LLM tool call is a separate round-trip; a 5-tool data-gathering task costs 5+ turns. `ScriptedTool` lets the LLM write one bash script that calls all tools, pipes results through `jq`, and returns composed output — reducing latency and token cost.
+With many tools, each LLM tool call is a separate round-trip; a 5-tool data-gathering task costs 5+ turns. `ScriptedTool` lets the LLM write one bash script that calls all tools, pipes results through `jq`, and returns composed output, reducing latency and token cost.
 
 Intended use is "code mode" only. Not for project/file manipulation; use `Bash` / `BashTool` when a virtual filesystem is part of the task.
 
 ## Design
 
-### ToolDef — OpenAPI-style tool definition
+### ToolDef, OpenAPI-style tool definition
 
 ```rust
 pub struct ToolDef {
@@ -48,7 +48,7 @@ pub struct ToolDef {
 
 Builder: `new(name, description)`, `with_schema`, `with_tags`, `with_category`. Tags are free-form labels (e.g. `["admin", "billing"]`); category is a grouping key (e.g. `"payments"`) for progressive discovery.
 
-### ToolArgs — parsed arguments passed to callbacks
+### ToolArgs, parsed arguments passed to callbacks
 
 ```rust
 pub struct ToolArgs {
@@ -68,9 +68,9 @@ pub type AsyncToolCallback = Arc<
 >;
 ```
 
-Return stdout string on success, error message on failure. Async takes owned `ToolArgs` (future may outlive the borrow); register via `.async_tool_fn(def, cb)`. Sync and async mix freely in one `ScriptedTool` — internally `CallbackKind::Async`, `.await`-ed inside `ToolBuiltinAdapter::execute()` (already `async fn`).
+Return stdout string on success, error message on failure. Async takes owned `ToolArgs` (future may outlive the borrow); register via `.async_tool_fn(def, cb)`. Sync and async mix freely in one `ScriptedTool`, internally `CallbackKind::Async`, `.await`-ed inside `ToolBuiltinAdapter::execute()` (already `async fn`).
 
-### ToolImpl — unified tool unit
+### ToolImpl, unified tool unit
 
 ```rust
 pub struct ToolImpl {
@@ -83,17 +83,17 @@ pub struct ToolImpl {
 
 Combines metadata with optional sync + async exec fns (`with_exec`, `with_exec_sync`). Implements `Builtin`, so registrable in both `Bash` (`.builtin()`) and `ScriptedTool`/`ScriptingToolSet` (`.tool()`). Async path prefers `exec`, falls back to `exec_sync`; sync path the reverse (blocking on `exec`).
 
-When used directly as a `Builtin`, callback `Err(String)` values are sanitized by default to `"<tool>: callback failed\n"` before reaching script-visible stderr — matches `ScriptedTool`'s safe default and prevents leaking host-side secrets, paths, connection strings, or stack traces. Trusted deployments opt out with `.sanitize_errors(false)`.
+When used directly as a `Builtin`, callback `Err(String)` values are sanitized by default to `"<tool>: callback failed\n"` before reaching script-visible stderr, matches `ScriptedTool`'s safe default and prevents leaking host-side secrets, paths, connection strings, or stack traces. Trusted deployments opt out with `.sanitize_errors(false)`.
 
 Backward-compat aliases: `ToolCallback = SyncToolExec`, `AsyncToolCallback = AsyncToolExec`.
 
-### ToolDefExtension — Bash extension for ToolDef-backed commands
+### ToolDefExtension, Bash extension for ToolDef-backed commands
 
 Implements the shared `Extension` trait; registers a group of `ToolDef`/callback pairs into any `Bash` instance. Contributes: one builtin per tool, `help`, `discover`, plus `--help`, `--dry-run`, callback error sanitization, and invocation tracing shared with `ScriptedTool`. `ScriptedTool` builds its per-call logic-only shell by installing this extension, so plain `Bash` and `ScriptedTool` use one command adapter path.
 
 Invocation tracing is isolated by default: every `ToolDefExtensionBuilder::build()` mints a fresh bounded trace log, and `Clone` copies command configuration into a new empty log rather than sharing trace state. Hosts that need traces after moving an extension into a `Bash` must call `ToolDefExtension::invocation_trace()` first and retain the returned `ToolDefInvocationTrace` handle. Do not share one trace handle across tenants.
 
-### ToolRegistry — one dispatcher across runtimes
+### ToolRegistry, one dispatcher across runtimes
 
 `ToolRegistry` owns each `ToolDef`, callback `Arc`, approval/policy hook, schema
 validation, callback-error sanitization, deadline enforcement, and trace dispatch.
@@ -165,15 +165,15 @@ Wraps a callback as a `Builtin`: parses `--key value` flags from `ctx.args` usin
 
 ### ScriptedTool
 
-Implements the `Tool` trait. Each `execute()`: fresh logic-only `Bash`, callbacks registered via `Arc::clone`, run script, return `ToolResponse { stdout, stderr, exit_code }`. Reusable — multiple `execute()` calls share the same `Arc` callback instances.
+Implements the `Tool` trait. Each `execute()`: fresh logic-only `Bash`, callbacks registered via `Arc::clone`, run script, return `ToolResponse { stdout, stderr, exit_code }`. Reusable, multiple `execute()` calls share the same `Arc` callback instances.
 
 The logic-only shell keeps: variables, arrays, functions, arithmetic, command substitution; `if`/`case`/`for`/`while`; pipelines, heredocs, here-strings; callback commands plus `help` and `discover`; stdin transforms (`jq`, `grep`, `sed`, `awk`, `sort`, `cut`, `tr`, `wc`, `head`, `tail`, `seq`, `expr`).
 
-Rejected filesystem surfaces: file commands (`cat`, `ls`, `find`, `mkdir`, `rm`, `cp`, `mv`, `touch`, `chmod`, `ln`, `stat`, `source`, `.`); path execution (`/tmp/script.sh`, `$PATH` lookup); file redirection (`<`, `>`, `>>`, `&>`) except `/dev/null`; process substitution; file operands to dual-use tools — the internal filesystem rejects all real operations with `filesystem access disabled`.
+Rejected filesystem surfaces: file commands (`cat`, `ls`, `find`, `mkdir`, `rm`, `cp`, `mv`, `touch`, `chmod`, `ln`, `stat`, `source`, `.`); path execution (`/tmp/script.sh`, `$PATH` lookup); file redirection (`<`, `>`, `>>`, `&>`) except `/dev/null`; process substitution; file operands to dual-use tools, the internal filesystem rejects all real operations with `filesystem access disabled`.
 
 ### Built-in `help` command
 
-`help --list` (names + descriptions), `help <tool>` (usage), `help <tool> --json` (machine-readable: `name`, `description`, `input_schema`) — lets LLMs discover enum values, required fields, etc. at runtime without loading all schemas into context.
+`help --list` (names + descriptions), `help <tool>` (usage), `help <tool> --json` (machine-readable: `name`, `description`, `input_schema`), lets LLMs discover enum values, required fields, etc. at runtime without loading all schemas into context.
 
 ### Compact prompt mode
 
@@ -185,7 +185,7 @@ Rejected filesystem surfaces: file commands (`cat`, `ls`, `find`, `mkdir`, `rm`,
 
 ### LLM integration
 
-`system_prompt()` generates markdown with available tool commands, input schemas (when present), and usage tips — see the `Tool` impl in `crates/bashkit/src/scripted_tool/execute.rs`.
+`system_prompt()` generates markdown with available tool commands, input schemas (when present), and usage tips, see the `Tool` impl in `crates/bashkit/src/scripted_tool/execute.rs`.
 
 ### Shared context across callbacks
 
@@ -197,9 +197,9 @@ Each `execute()` creates a fresh Bash interpreter (security: clean sandbox per c
 
 ### Execution trace access
 
-`take_last_execution_trace()` returns inner command invocations from the most recent `execute()` — observability/eval telemetry, not scoring. Entries record command name, kind (`tool` / `help` / `discover`), raw argv tokens, exit code.
+`take_last_execution_trace()` returns inner command invocations from the most recent `execute()`, observability/eval telemetry, not scoring. Entries record command name, kind (`tool` / `help` / `discover`), raw argv tokens, exit code.
 
-### ScriptingToolSet — mode-controlled multi-tool wrapper
+### ScriptingToolSet, mode-controlled multi-tool wrapper
 
 Wraps `ScriptedTool`; `tools()` returns one or two tools by `DiscoveryMode`:
 
@@ -208,7 +208,7 @@ Wraps `ScriptedTool`; `tools()` returns one or two tools by `DiscoveryMode`:
 | `Exclusive` (default) | 1 tool: `ScriptedTool` with full schemas | Only tool the LLM has |
 | `WithDiscovery` | 2 tools: `ScriptedTool` (compact) + `DiscoverTool` (`{name}_discover`) | Alongside other tools, or large tool sets |
 
-`ScriptingToolSet` does **not** implement `Tool` itself — call `tools()` for `Vec<Box<dyn Tool>>` and register each. In discovery mode the script tool gets a compact prompt (names only) and all builtins; the discover tool's prompt focuses on `discover`/`help` and shares the same inner `ScriptedTool`, so the LLM can explore schemas before writing scripts. Builder mirrors `ScriptedToolBuilder` plus `.with_discovery()`.
+`ScriptingToolSet` does **not** implement `Tool` itself, call `tools()` for `Vec<Box<dyn Tool>>` and register each. In discovery mode the script tool gets a compact prompt (names only) and all builtins; the discover tool's prompt focuses on `discover`/`help` and shares the same inner `ScriptedTool`, so the LLM can explore schemas before writing scripts. Builder mirrors `ScriptedToolBuilder` plus `.with_discovery()`.
 
 ## Module location
 
@@ -216,7 +216,7 @@ Wraps `ScriptedTool`; `tools()` returns one or two tools by `DiscoveryMode`:
 
 ## Example
 
-`crates/bashkit/examples/scripted_tool.rs` — e-commerce API demo using `ToolDef` + closures (no trait impls). Run: `cargo run --example scripted_tool --features scripted_tool`.
+`crates/bashkit/examples/scripted_tool.rs`, e-commerce API demo using `ToolDef` + closures (no trait impls). Run: `cargo run --example scripted_tool --features scripted_tool`.
 
 ## Test coverage
 

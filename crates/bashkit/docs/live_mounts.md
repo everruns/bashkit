@@ -1,8 +1,8 @@
 # Live Mount/Unmount Guide
 
 Bashkit supports attaching and detaching filesystems on a **running** interpreter
-without rebuilding it. Shell state — environment variables, working directory,
-history, aliases — is fully preserved across mount operations.
+without rebuilding it. Shell state, environment variables, working directory,
+history, aliases, is fully preserved across mount operations.
 
 ## Motivation
 
@@ -49,7 +49,7 @@ bash.unmount("/mnt/data")?;
 
 ### `Bash::mount(vfs_path, fs)`
 
-Mounts `fs` at `vfs_path`. The mount takes effect immediately — subsequent
+Mounts `fs` at `vfs_path`. The mount takes effect immediately, subsequent
 `exec()` calls see files from the mounted filesystem. If a mount already exists
 at `vfs_path`, it is replaced (hot-swap).
 
@@ -110,7 +110,7 @@ operations to the correct mounted filesystem:
 
 Because the interpreter holds an `Arc<dyn FileSystem>` pointing to the
 outermost `MountableFs`, any mount/unmount operation is visible to the
-interpreter immediately — no rebuild or state transfer required.
+interpreter immediately, no rebuild or state transfer required.
 
 When `BashBuilder::readonly_filesystem(true)` is used, the configured mounts
 and text files are installed first, then the final filesystem is wrapped so
@@ -134,7 +134,7 @@ add/remove mounts at runtime.
 
 [`Bash::set_env`] is the environment counterpart to a live mount: it applies an
 exported variable to a running interpreter, preserving shell state the same way.
-Together they let a host apply a *bundle* of setup — mount, env, and builtins —
+Together they let a host apply a *bundle* of setup, mount, env, and builtins,
 to an existing instance, rather than only through the builder:
 
 ```rust
@@ -163,7 +163,7 @@ host value.
 
 In the JavaScript and Python bindings the equivalents are `setEnv` and
 `set_env`, and both bindings additionally *replay* host `setEnv`/`mount` calls
-across `reset()` — a rebuilt instance keeps the setup the host applied, while
+across `reset()`, a rebuilt instance keeps the setup the host applied, while
 env a script exported is still discarded. The Rust core has no `reset()`;
 rebuilding is the embedder's own `BashBuilder` call.
 
@@ -235,11 +235,11 @@ assert_eq!(result.stdout, "2.0");
 
 ## See Also
 
-- [`MountableFs`] — the underlying mount infrastructure
-- [`NamespaceFs`] — static bounded namespaces with source-root rebasing and per-mount access
-- [`BashBuilder::mount_text`] — pre-build text file mounts
-- [`BashBuilder::readonly_filesystem`] — deny all VFS mutations after setup
-- [`BashBuilder::fs`] — custom filesystem injection
-- [`Bash::fs`] — direct filesystem access
-- [`Bash::set_env`] — live environment on a running instance
+- [`MountableFs`], the underlying mount infrastructure
+- [`NamespaceFs`], static bounded namespaces with source-root rebasing and per-mount access
+- [`BashBuilder::mount_text`], pre-build text file mounts
+- [`BashBuilder::readonly_filesystem`], deny all VFS mutations after setup
+- [`BashBuilder::fs`], custom filesystem injection
+- [`Bash::fs`], direct filesystem access
+- [`Bash::set_env`], live environment on a running instance
 - [VFS specification](https://github.com/everruns/bashkit/blob/main/knowledge/foundations/vfs.md)

@@ -63,5 +63,5 @@ narrow command surfaces.
 
 ## See also
 
-- [`jq_guide`](crate::jq_guide) — the shared expression engine and its jq compatibility notes.
-- [`threat_model`](crate::threat_model) — structured-input resource and information-disclosure controls.
+- [`jq_guide`](crate::jq_guide), the shared expression engine and its jq compatibility notes.
+- [`threat_model`](crate::threat_model), structured-input resource and information-disclosure controls.

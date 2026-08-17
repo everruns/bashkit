@@ -37,7 +37,7 @@ Implemented:
 
 | Variable | Behaviour |
 |----------|-----------|
-| `$ENV` | Bound to the shell environment as an object — same map as the `env` filter. (#1486) |
+| `$ENV` | Bound to the shell environment as an object, same map as the `env` filter. (#1486) |
 | `$name` | Variables defined with `--arg` / `--argjson` are passed through. |
 
 ## Notable filters
@@ -56,14 +56,14 @@ shim adds or overrides:
 | `scan(re; flags)` / `scan(re)` | Overridden so `scan` defaults to global ("g") matching, matching jq. |
 | `input_filename` | Stub returning `null` (#1486). Bashkit reads inputs as a single concatenated stream via shell redirection, so per-input filenames are not tracked. |
 | `input_line_number` | Stub returning `0` (#1486). Per-line input tracking is not implemented. |
-| `input` / `inputs` | Real jaq implementations — pull from the shared input iterator. |
+| `input` / `inputs` | Real jaq implementations, pull from the shared input iterator. |
 | Most other 1.7/1.8 stdlib filters | Forwarded from `jaq-std` (`getpath`, `paths`, `to_entries`, `group_by`, `ltrimstr`/`rtrimstr`, `splits`, `test`, `now`, `debug`, `limit`, etc.). |
 
 ## Errors
 
 Filter parse failures and runtime errors return exit code `3` and `5`
 respectively, matching jq. Long error operands are summarised so failures
-do not blow up an LLM context window — see
+do not blow up an LLM context window, see
 [#1485](https://github.com/everruns/bashkit/issues/1485).
 
 ## Known gaps
@@ -80,7 +80,7 @@ If you hit a missing builtin, please open an issue with the failing filter.
 
 ## See also
 
-- [`compatibility_scorecard`](crate::compatibility_scorecard) — overall
+- [`compatibility_scorecard`](crate::compatibility_scorecard), overall
   builtin coverage table.
-- [`threat_model`](crate::threat_model) — security model for `jq` against
+- [`threat_model`](crate::threat_model), security model for `jq` against
   malicious input.

@@ -1,6 +1,6 @@
 # Networking & HTTP
 
-Bashkit's HTTP builtins — `curl`, `wget`, and `http` — are the only way a script
+Bashkit's HTTP builtins, `curl`, `wget`, and `http`, are the only way a script
 can reach the network, and they are **default-deny**. With no configuration, every
 outbound request is blocked. You opt in host by host with a `NetworkAllowlist`.
 
@@ -62,10 +62,10 @@ bash.exec("curl https://api.example.com/v1/users").await?;
 
 A request matches an allowlist entry when:
 
-- **Scheme** matches exactly — `https` is not `http`.
-- **Host** matches exactly — no wildcards, no implicit subdomains.
-- **Port** matches — defaults applied (443 for https, 80 for http).
-- **Path** is a prefix — the entry's path must be a prefix of the request path.
+- **Scheme** matches exactly, `https` is not `http`.
+- **Host** matches exactly, no wildcards, no implicit subdomains.
+- **Port** matches, defaults applied (443 for https, 80 for http).
+- **Path** is a prefix, the entry's path must be a prefix of the request path.
 
 This is literal-string matching by design: there is no DNS resolution at check
 time, which closes the DNS-spoofing and rebinding classes of attack
@@ -127,12 +127,12 @@ exposes the coarse `--http-allow-all` switch for trusted use.
 
 HTTP requests flow through the same [hooks](../crates/bashkit/docs/hooks.md) pipeline as the rest of the
 interpreter, so a host can observe, rewrite, or cancel an outbound request before
-it leaves — useful for logging, header injection, or policy enforcement.
+it leaves, useful for logging, header injection, or policy enforcement.
 
 ## See also
 
-- [Credential injection](../crates/bashkit/docs/credential-injection.md) — attach secrets to outbound
+- [Credential injection](../crates/bashkit/docs/credential-injection.md), attach secrets to outbound
   requests without exposing them to the script.
-- [Request signing](request-signing.md) — cryptographic bot identity for signed
+- [Request signing](request-signing.md), cryptographic bot identity for signed
   outbound requests.
-- [Security](security.md) — the full sandbox boundary model.
+- [Security](security.md), the full sandbox boundary model.

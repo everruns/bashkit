@@ -31,8 +31,8 @@ dependency rot, or security gaps ship in a release.
 - All direct dependencies at latest versions, including major/breaking upgrades
 - Upgrade procedure for each outdated dependency:
   1. Bump version constraint in `Cargo.toml` (workspace or crate-level)
-  2. Run `cargo build` — fix any compilation errors from API changes
-  3. Run `cargo test` — fix any test failures
+  2. Run `cargo build`, fix any compilation errors from API changes
+  3. Run `cargo test`, fix any test failures
   4. If upgrade requires non-trivial refactoring (>50 lines changed), defer to a
      tracked GitHub issue instead of blocking the maintenance pass
 - `cargo update` run after all version bumps to lock latest patch versions
@@ -43,7 +43,7 @@ dependency rot, or security gaps ship in a release.
   - No unused/dead dependencies in workspace or crate Cargo.toml files
   - Single-builtin deps behind feature flags (not always-on)
   - No full crates where a sub-crate suffices (e.g. `futures-util` vs `futures`)
-  - Duplicate transitive versions reviewed — fix or document why unfixable
+  - Duplicate transitive versions reviewed, fix or document why unfixable
 
 ### Security
 
@@ -66,8 +66,8 @@ dependency rot, or security gaps ship in a release.
 - All tests pass
 - No test gaps for recently added features
 - `builtins-drift` workflow green (generated [`builtins.json`](../status/builtins.json) in sync)
-- Bash compatibility — no new regressions against real bash
-- Coverage reviewed — no major uncovered paths
+- Bash compatibility, no new regressions against real bash
+- Coverage reviewed, no major uncovered paths
 
 ### Documentation
 
@@ -82,7 +82,7 @@ dependency rot, or security gaps ship in a release.
   site rewrites link targets by *basename* (`DOC_LINKS` in
   `site/astro.config.mjs`), so a cross-tree link written as a bare `jq.md`
   renders correctly on bashkit.sh while 404-ing for anyone reading the markdown
-  on GitHub — `site/scripts/verify-doc-*.mjs` check the built routes and cannot
+  on GitHub, `site/scripts/verify-doc-*.mjs` check the built routes and cannot
   see it. Write cross-tree links source-relative
   (`../crates/bashkit/docs/jq.md`); the site rewriter accepts that form too.
   Do **not** add YAML frontmatter to `docs/` or `crates/bashkit/docs/` to carry
@@ -103,7 +103,7 @@ dependency rot, or security gaps ship in a release.
   run `pnpm install --frozen-lockfile && pnpm start`, load
   the page, and confirm it runs a plain command, a pipe through `jq`, **and a
   subshell** (`bash /home/user/demo.sh`). The subshell path exercises the wasm
-  child-shell parse that a top-level command does not — the smoke suite in
+  child-shell parse that a top-level command does not, the smoke suite in
   `crates/bashkit-wasm/__test__/` covers the same ground headlessly. If the
   published package lags a fix the example depends on, hold the example until
   the next `bashkit-wasm` release, then review and update both the dependency
@@ -126,19 +126,19 @@ See [Coreutils Argument Port](../runtimes/coreutils-args-port.md).
   mode) and vendored uucore modules (module mode):
   - **Args mode review**: confirm new flags are wired into the
     consuming builtin or explicitly rejected (matching the existing
-    `tac -b/-r/-s` "not yet implemented" pattern — no silent no-ops).
+    `tac -b/-r/-s` "not yet implemented" pattern, no silent no-ops).
     Confirm removed/renamed flags don't break downstream scripts;
     migrate or document.
   - **Module mode review**: for every entry in
     `crates/bashkit-coreutils-port/vendored.toml`, scan the diff for
-    body changes in the vendored sources — this is verbatim copy, so
+    body changes in the vendored sources, this is verbatim copy, so
     upstream behaviour changes land directly. Validate that
     `vendored.toml` substitutions still cover every internal `use`
     (the port aborts loudly if not, but check that the rationale of
     any `error` actions still reflects intent).
   - Squash-merge as a human (PR's intermediate commits are bot-authored).
   - Confirm the `coreutils_differential_tests` step in the auto-PR is
-    green — body drift (semantic divergence vs GNU/uutils) surfaces here
+    green, body drift (semantic divergence vs GNU/uutils) surfaces here
     even when args parity holds.
 - Run `just regen-coreutils-args` locally if no drift PR exists; commit any
   diff yourself rather than letting it accumulate. Module-mode regen is
@@ -161,7 +161,7 @@ See [Coreutils Argument Port](../runtimes/coreutils-args-port.md).
 - Complex nested logic simplified (deep nesting, long match arms)
 - Dead code removed (unused functions, unreachable branches, commented-out code)
 - Names are clear and descriptive (functions, variables, types)
-- No premature generalizations — code serves current needs, not hypothetical future ones
+- No premature generalizations, code serves current needs, not hypothetical future ones
 
 ### Binding Parity
 
@@ -187,7 +187,7 @@ See [Coreutils Argument Port](../runtimes/coreutils-args-port.md).
 
 ### CI Health
 
-- **CI on main is green** — the latest CI run on `main` must pass. Any failure
+- **CI on main is green**: the latest CI run on `main` must pass. Any failure
   (audit, test, lint, examples) is a blocker that must be fixed before
   proceeding with the rest of the maintenance pass.
 - Nightly and fuzz workflows green for past week
@@ -215,7 +215,7 @@ multi-file refactors, cross-cutting changes), the pass must:
 1. Create a GitHub issue for each deferred item with clear scope and reproduction steps
 2. Record the issue numbers in the summary below so they are tracked
 
-Deferred items are **not** failures — they are expected for large-scope
+Deferred items are **not** failures, they are expected for large-scope
 improvements. The requirement is that they are **tracked**, not silently skipped.
 
 ### Deferred items
@@ -224,7 +224,7 @@ Standing transitive limitation:
 
 - **RustCrypto 0.10/0.11 split** (was tracked as #1634, now closed). Our
   directly-declared hashes (`md-5`/`sha1`/`sha2`) are on the 0.11 line, but the
-  dependency tree still pulls in the 0.10 line transitively — `aes-gcm 0.10.3`
+  dependency tree still pulls in the 0.10 line transitively, `aes-gcm 0.10.3`
   (and its `digest 0.10` / `sha2 0.10` / `aead 0.5` / `cipher 0.4` chain) via
   `turso_core`, plus the `russh` / `argon2` crypto stack. Resolution remains
   blocked on those upstreams releasing on the 0.11 line; no in-tree action
@@ -248,6 +248,6 @@ Use `/maintain` skill to execute this checklist interactively.
 
 ## References
 
-- [Release Process](release-process.md) — release workflow
-- [Known Limitations](limitations.md) — negative spec (intentional gaps, partial features)
-- [Threat Model](../security/threat-model.md) — threat model
+- [Release Process](release-process.md), release workflow
+- [Known Limitations](limitations.md), negative spec (intentional gaps, partial features)
+- [Threat Model](../security/threat-model.md), threat model

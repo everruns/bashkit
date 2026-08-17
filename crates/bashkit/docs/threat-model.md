@@ -201,7 +201,7 @@ Scripts may attempt to break out of the sandbox to access the host system.
 | setuid (TM-ESC-010) | Permission changes | Virtual FS, no real perms | MITIGATED |
 | Capability abuse (TM-ESC-011) | Linux capabilities | Runs in-process | MITIGATED |
 | Mount-rw exposure to untrusted automation (TM-ESC-030) | Running untrusted scripts with `--mount-rw /` | CLI docs mark `--mount-rw` sandbox-breaking; recommend `--mount-ro` when host access is needed | MITIGATED |
-| Permission gate built on static analysis (TM-ESC-032) | `c=rm; $c -rf /data` passes an allowlist check that only reads `analysis.commands` | `analyze()` reports unresolved names as `null` and sets `is_opaque()`; pair it with the `before_tool` hook, which sees the resolved name — see the [script analysis guide](./script-analysis.md) | MITIGATED (advisory API) |
+| Permission gate built on static analysis (TM-ESC-032) | `c=rm; $c -rf /data` passes an allowlist check that only reads `analysis.commands` | `analyze()` reports unresolved names as `null` and sets `is_opaque()`; pair it with the `before_tool` hook, which sees the resolved name, see the [script analysis guide](./script-analysis.md) | MITIGATED (advisory API) |
 
 **Virtual Filesystem:**
 
@@ -273,7 +273,7 @@ Scripts may attempt to leak sensitive information.
 
 | Threat | Attack Example | Mitigation | Status |
 |--------|---------------|------------|--------|
-| Fork-PR secret exfil (TM-INF-026) | Fork PR edits `examples/*.rs` or `build.rs` to read `$DOPPLER_TOKEN` / `$ANTHROPIC_API_KEY` from the runner env and exfiltrate; first-time-contributor approval gate runs the workflow from PR head, and `DOPPLER_TOKEN` is the master key to every other secret in the Doppler config | Three-layer fix in `.github/workflows/{ci,js,publish-js}.yml`: (1) fork-guard gates secret-using steps on `head.repo.fork != true`, (2) job-level secrets removed — each step sets only the tokens it needs, (3) `doppler run --only-secrets <KEY>` limits each invocation to the single secret the script reads. `ANTHROPIC_API_KEY` migrated off GH Actions secrets onto Doppler so `DOPPLER_TOKEN` is the only secret CI needs from GitHub | **FIXED** |
+| Fork-PR secret exfil (TM-INF-026) | Fork PR edits `examples/*.rs` or `build.rs` to read `$DOPPLER_TOKEN` / `$ANTHROPIC_API_KEY` from the runner env and exfiltrate; first-time-contributor approval gate runs the workflow from PR head, and `DOPPLER_TOKEN` is the master key to every other secret in the Doppler config | Three-layer fix in `.github/workflows/{ci,js,publish-js}.yml`: (1) fork-guard gates secret-using steps on `head.repo.fork != true`, (2) job-level secrets removed, each step sets only the tokens it needs, (3) `doppler run --only-secrets <KEY>` limits each invocation to the single secret the script reads. `ANTHROPIC_API_KEY` migrated off GH Actions secrets onto Doppler so `DOPPLER_TOKEN` is the only secret CI needs from GitHub | **FIXED** |
 
 **Additional information-disclosure hardening:**
 
@@ -370,15 +370,15 @@ secret to the script (see `knowledge/security/credential-injection.md`).
 |--------|---------------|------------|--------|
 | Real credential exposed to script (TM-NET-024) | Script reads env var for the secret | Injection mode keeps the secret out of the script env; placeholder mode exposes only a random placeholder replaced on the wire | MITIGATED |
 | Credential exfiltrated to unapproved host (TM-NET-025) | Send credential to attacker host | Injection scoped to allowlist patterns; substitution only for matching destinations | MITIGATED |
-| `Authorization` spoofing (TM-NET-026) | Script sets competing same-name header | Overwrite semantics — injected headers replace script-set headers | MITIGATED |
+| `Authorization` spoofing (TM-NET-026) | Script sets competing same-name header | Overwrite semantics, injected headers replace script-set headers | MITIGATED |
 | Credential leak in errors/traces (TM-NET-027) | Value surfaces in error or trace log | Redacted on all error paths; traces show `[CREDENTIAL]`; `Credential` `Debug` redacts values | MITIGATED |
 
-**Availability — Fail-Open Auth (TM-AVAIL-001):**
+**Availability, Fail-Open Auth (TM-AVAIL-001):**
 
 Bot-auth signing and credential injection fail **open**: a transient signing or
 injection failure sends the request unsigned / without the credential rather
 than aborting it. Security enforcement (allowlist, SSRF precheck) still runs;
-only the optional auth augmentation is skipped. Accepted trade-off — the
+only the optional auth augmentation is skipped. Accepted trade-off, the
 destination enforces its own authentication.
 
 **Network Allowlist:**
@@ -404,7 +404,7 @@ let bash = Bash::builder()
 
 For simpler domain-level control, `allow_domain()` permits all traffic to a domain
 regardless of scheme, port, or path. This is the virtual equivalent of SNI-based
-egress filtering — the same approach used by production sandbox environments.
+egress filtering, the same approach used by production sandbox environments.
 
 ```rust,ignore
 use bashkit::{Bash, NetworkAllowlist};
@@ -665,7 +665,7 @@ Python `pathlib.Path` and `open()` operations are bridged to Bashkit's virtual f
 | Shell escape via `eval`/`exec` (TM-PY-012) | `eval("os.system(...)")` | Monty has no `os.system`/`subprocess`; eval'd code stays in the interpreter | MITIGATED |
 | Unknown CLI options smuggle behavior (TM-PY-013) | Unknown `python` flag | Rejected with exit 2 | MITIGATED |
 | Escapes Bashkit resource limits (TM-PY-014) | Bypass caps via Python | `ExecutionLimits` apply like any builtin | MITIGATED |
-| Host clock disclosure (TM-PY-029) | `datetime.now()` exposes host time/timezone | Intentional — required for correct datetime semantics | ACCEPTED |
+| Host clock disclosure (TM-PY-029) | `datetime.now()` exposes host time/timezone | Intentional, required for correct datetime semantics | ACCEPTED |
 | GIL deadlock/exit crash via async callback (TM-PY-030) | Private-loop dispatch holds the GIL during teardown | Deterministic teardown: detach around dispatch, cancel in-flight callbacks, no attach at finalization | FIXED |
 | ContextVar capture may include sensitive state (TM-PY-031) | `copy_context()` snapshots all caller ContextVars | Accepted: same semantics as `asyncio.Task` inheritance; caller controls what is set | ACCEPTED |
 
@@ -677,7 +677,7 @@ Python code → Monty VM → OsCall pause → Bashkit VFS bridge → resume
 
 Monty runs directly in the host process. Resource limits (memory, time,
 recursion) are enforced by Monty's own runtime. All VFS operations are
-bridged through the host process — Python code never touches the real filesystem.
+bridged through the host process, Python code never touches the real filesystem.
 
 ### SQLite Security (TM-SQL-*)
 
@@ -766,7 +766,7 @@ let bash = Bash::builder()
 
 The `ssh`/`scp`/`sftp` builtins (opt-in `ssh` feature) connect to remote hosts
 through a sandboxed client. Connections are default-deny: callers must allowlist
-each host via `SshConfig::allow(...)`, and credentials come only from the VFS —
+each host via `SshConfig::allow(...)`, and credentials come only from the VFS,
 never the host `~/.ssh/`.
 
 | Threat | Attack Example | Mitigation | Status |
@@ -784,7 +784,7 @@ never the host `~/.ssh/`.
 
 The `typescript` feature embeds the ZapCode runtime. Scripts run under
 wall-clock, memory, allocation, and stack-depth limits, and all filesystem
-access is bridged through Bashkit's VFS — never the host filesystem.
+access is bridged through Bashkit's VFS, never the host filesystem.
 
 | Threat | Attack Example | Mitigation | Status |
 |--------|---------------|------------|--------|
@@ -824,7 +824,7 @@ serialization API both handle key material and integrity tags. The optional
 | Threat | Attack Example | Mitigation | Status |
 |--------|---------------|------------|--------|
 | Private key recovery (TM-CRY-001) | Heap/core-dump inspection of the Ed25519 seed | `BotAuthConfig` zeroizes the seed in `Drop`; debug output redacts key material | MITIGATED |
-| RSA timing sidechannel (TM-CRY-002) | A peer times RSA private-key operations during SSH public-key auth to recover the key (Marvin Attack, RUSTSEC-2023-0071) | No upstream fix exists — every published `rsa` version is affected. The crate is reachable only through the opt-in `ssh` feature (via `russh`/`ssh-key`); prefer Ed25519 keys, which do not use the affected path | ACCEPTED |
+| RSA timing sidechannel (TM-CRY-002) | A peer times RSA private-key operations during SSH public-key auth to recover the key (Marvin Attack, RUSTSEC-2023-0071) | No upstream fix exists, every published `rsa` version is affected. The crate is reachable only through the opt-in `ssh` feature (via `russh`/`ssh-key`); prefer Ed25519 keys, which do not use the affected path | ACCEPTED |
 | Snapshot forgery (TM-SNAP-001) | Forge a valid digest using the public `BKSNAP01` tag | Keyed HMAC API (`to_bytes_keyed`/`from_bytes_keyed`) for tamper-evident snapshots | MITIGATED |
 | Object store poisoning (TM-SNAP-002) | Substitute a different blob under a referenced object ID in the host's store | Every object is verified against its content hash on load; the graph is a Merkle tree, so a keyed commit authenticates everything it reaches | MITIGATED |
 | Hash agility (TM-SNAP-003) | A snapshot claims a hash algorithm the reader does not implement | Algorithm ID in the container header, rejected when unknown | MITIGATED |
@@ -876,7 +876,7 @@ builtin silently fails.
 | Sed byte-boundary panic (TM-UNI-002) | Box-drawing chars in sed pattern | `catch_unwind` catches panic | PARTIAL |
 | Expr substr panic (TM-UNI-015) | `expr substr "café" 4 1` | `catch_unwind` catches panic | PARTIAL |
 | Printf precision panic (TM-UNI-016) | `printf "%.1s" "é"` | `catch_unwind` catches panic | PARTIAL |
-| Cut/tr byte-level parsing (TM-UNI-017) | `tr 'é' 'e'` — multi-byte in char set | `catch_unwind` catches; silent data loss | PARTIAL |
+| Cut/tr byte-level parsing (TM-UNI-017) | `tr 'é' 'e'`, multi-byte in char set | `catch_unwind` catches; silent data loss | PARTIAL |
 
 **Additional Byte/Char Confusion:**
 
@@ -918,9 +918,9 @@ builtin silently fails.
 - grep/jq: Delegate to Unicode-aware regex/jaq crates
 - sort/uniq: String comparison, no byte indexing
 - logging: Uses `is_char_boundary()` correctly
-- python: Shebang strip via `find('\n')` — ASCII delimiter, safe
+- python: Shebang strip via `find('\n')`, ASCII delimiter, safe
 - Python bindings (bashkit-python): PyO3 `String` extraction, no manual byte/char ops
-- eval harness: `chars().take()`, `from_utf8_lossy()` — all safe patterns
+- eval harness: `chars().take()`, `from_utf8_lossy()`, all safe patterns
 - curl/bc/export/date/comm/echo/archive/base64: All `.find()` use ASCII delimiters only
 - scripted_tool: No byte/char patterns
 

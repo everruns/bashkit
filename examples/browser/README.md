@@ -11,7 +11,7 @@ pnpm install --frozen-lockfile
 pnpm start
 ```
 
-Open http://localhost:5173. No Rust toolchain, no build step — pnpm verifies and
+Open http://localhost:5173. No Rust toolchain, no build step, pnpm verifies and
 installs the lockfile-pinned prebuilt wasm package.
 
 ## How It Works
@@ -22,11 +22,11 @@ a slim, **single-threaded** WebAssembly build (`wasm32-unknown-unknown` via
 nothing to compile locally.
 
 Because it is single-threaded, it needs **no `SharedArrayBuffer` and no
-cross-origin isolation** — there are no `COOP`/`COEP` headers in
+cross-origin isolation**: there are no `COOP`/`COEP` headers in
 `vite.config.js`, and it drops into any static host or bundler (including
 embedded / third-party iframe contexts where those headers cannot be set).
 
-The terminal UI is a single `index.html` — no framework. The `browserLocal`
+The terminal UI is a single `index.html`, no framework. The `browserLocal`
 storage backend snapshots files under `/home/user` to `localStorage` after each
 command and restores them on the next page load.
 

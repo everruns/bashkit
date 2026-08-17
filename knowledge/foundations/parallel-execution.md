@@ -54,7 +54,7 @@ Must not degrade. Compare before/after.
 
 ## See also
 
-- [Bashkit Architecture](architecture.md) — shared-ownership decisions this builds on
-- [Builtin Commands](builtins.md) — builtin execution under concurrency
-- [Performance Results](../operations/performance-results.md) — where benchmark results are kept
-- [Testing Strategy](../operations/testing.md) — concurrency test expectations
+- [Bashkit Architecture](architecture.md), shared-ownership decisions this builds on
+- [Builtin Commands](builtins.md), builtin execution under concurrency
+- [Performance Results](../operations/performance-results.md), where benchmark results are kept
+- [Testing Strategy](../operations/testing.md), concurrency test expectations

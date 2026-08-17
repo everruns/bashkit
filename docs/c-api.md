@@ -171,6 +171,6 @@ major.
 
 ## See also
 
-- [Get started](start.md) — choose another Bashkit package or runtime.
-- [Sandbox configuration and limits](configuration.md) — common sandbox controls.
-- [Security](security.md) — trust boundaries and resource protections.
+- [Get started](start.md), choose another Bashkit package or runtime.
+- [Sandbox configuration and limits](configuration.md), common sandbox controls.
+- [Security](security.md), trust boundaries and resource protections.

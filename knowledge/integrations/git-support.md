@@ -11,7 +11,7 @@ tags:
 # Git Support
 
 ## Status
-Phases 1-3 implemented (Phase 2 remote ops: virtual mode — URL validation only)
+Phases 1-3 implemented (Phase 2 remote ops: virtual mode, URL validation only)
 
 ## Decision
 

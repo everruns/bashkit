@@ -309,7 +309,7 @@ bash.clear_cancel()  # clear the sticky flag so subsequent executions work
 
 `cancel()` sets a sticky flag that causes every future `execute()` to fail
 immediately with `"execution cancelled"`. Call `clear_cancel()` after the
-cancelled execution finishes to restore the instance for reuse — this
+cancelled execution finishes to restore the instance for reuse, this
 preserves all VFS state. Use `reset()` only when you want to discard VFS
 and shell state entirely.
 
@@ -344,8 +344,8 @@ the new command.
 
 ## Script Analysis
 
-`analyze()` reports what a script statically refers to — commands, arguments,
-redirect targets, function definitions — without running it. Use it to decide
+`analyze()` reports what a script statically refers to, commands, arguments,
+redirect targets, function definitions, without running it. Use it to decide
 whether a model-produced command needs user approval.
 
 ```python
@@ -361,7 +361,7 @@ analysis.redirects[0].is_write  # True
 analysis.is_opaque  # False
 ```
 
-Words that are not fully literal report `None` — never a partial string:
+Words that are not fully literal report `None`, never a partial string:
 
 ```python
 bash.analyze('rm "$target" /tmp/fixed').commands[0].args  # [None, "/tmp/fixed"]
@@ -369,7 +369,7 @@ bash.analyze('rm "$target" /tmp/fixed').commands[0].args  # [None, "/tmp/fixed"]
 
 **Advisory only.** Static analysis cannot see through dynamic dispatch, `eval`,
 functions, or aliases. Those set `is_opaque`, and an allowlist check must
-consult it — `c=rm; $c -rf /data` contains no disallowed command name:
+consult it, `c=rm; $c -rf /data` contains no disallowed command name:
 
 ```python
 READ_ONLY = {"ls", "cat", "head", "grep", "wc", "echo"}
@@ -588,7 +588,7 @@ from bashkit.deepagents import BashkitBackend, BashkitMiddleware
 - `mount(vfs_path: str, fs: FileSystem)`
 - `unmount(vfs_path: str)`
 - Direct VFS helpers: `read_file`, `write_file`, `append_file`, `mkdir`, `remove`, `exists`, `stat`, `read_dir`, `ls`, `glob`, `copy`, `rename`, `symlink`, `chmod`, `read_link`
-- `analyze(script: str) -> ScriptAnalysis` — static, pre-execution introspection (see [Script Analysis](#script-analysis))
+- `analyze(script: str) -> ScriptAnalysis`, static, pre-execution introspection (see [Script Analysis](#script-analysis))
 
 ### BashTool
 
@@ -605,12 +605,12 @@ from bashkit.deepagents import BashkitBackend, BashkitMiddleware
 
 Returned by `analyze(script)`.
 
-- `commands: list[AnalyzedCommand]` — every simple command, in source order
-- `redirects: list[AnalyzedRedirect]` — `path: str | None`, `mode: "read" | "write" | "append"`, `is_write: bool`
-- `functions: list[str]` — function names the script defines
-- `command_names: list[str]` — distinct statically known names, first-seen order
+- `commands: list[AnalyzedCommand]`, every simple command, in source order
+- `redirects: list[AnalyzedRedirect]`, `path: str | None`, `mode: "read" | "write" | "append"`, `is_write: bool`
+- `functions: list[str]`, function names the script defines
+- `command_names: list[str]`, distinct statically known names, first-seen order
 - `has_dynamic_commands` / `has_interpreter_reentry` / `has_command_substitution` / `truncated`
-- `is_opaque: bool` — the script hides work; allowlist checks must treat this as "ask"
+- `is_opaque: bool`, the script hides work; allowlist checks must treat this as "ask"
 - `commands_named(name) -> list[AnalyzedCommand]`, `to_dict() -> dict`
 
 `AnalyzedCommand`: `name: str | None`, `args: list[str | None]`, `context: str`, `assignments: list[str]`, `is_assignment_only: bool`

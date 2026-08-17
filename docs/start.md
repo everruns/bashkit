@@ -1,7 +1,7 @@
 # Get started
 
-Bashkit is a single Rust core — a sandboxed bash interpreter with a virtual
-filesystem, no `fork`/`exec`, and no host access — shipped as a package for
+Bashkit is a single Rust core, a sandboxed bash interpreter with a virtual
+filesystem, no `fork`/`exec`, and no host access, shipped as a package for
 every major runtime. Pick the one that matches where your code runs, and follow
 its quickstart to a first script in a couple of minutes.
 
@@ -33,7 +33,7 @@ its quickstart to a first script in a couple of minutes.
 
 Whichever target you choose, the shell semantics are identical: the same
 builtins, the same virtual filesystem, the same sandbox. What differs is the
-host API surface (async vs sync, available features) and packaging — each
+host API surface (async vs sync, available features) and packaging, each
 quickstart calls out its specifics.
 
 Once you have a first script running, [Sandbox configuration &
@@ -42,6 +42,6 @@ resource limits, filesystem backends, identity, and the network allowlist.
 
 ## Next steps
 
-- [LLM tools](llm-tools.md) — expose Bashkit as a sandboxed tool for agent frameworks.
-- [Sandbox configuration & limits](configuration.md) — resource limits and sandbox options.
-- [Security](security.md) — sandbox boundaries and what scripts cannot do.
+- [LLM tools](llm-tools.md), expose Bashkit as a sandboxed tool for agent frameworks.
+- [Sandbox configuration & limits](configuration.md), resource limits and sandbox options.
+- [Security](security.md), sandbox boundaries and what scripts cannot do.

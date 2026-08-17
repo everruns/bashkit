@@ -29,7 +29,7 @@ Bashkit uses a Cargo workspace with multiple crates:
 | `crates/bashkit-eval/` | LLM eval study (mira framework) |
 
 Core library modules: `parser/`, `interpreter/`, `fs/`, `builtins/`,
-`network/`, `git/`, `ssh/`, `scripted_tool/`. See source — structure evolves.
+`network/`, `git/`, `ssh/`, `scripted_tool/`. See source, structure evolves.
 
 ### Public API
 
@@ -45,12 +45,12 @@ call: streaming callback, builtin extensions, `arg0`, `positional`, and
 - Positional parameters exist only inside a call frame, so the host
   boundary pushes a synthetic top-level frame before
   `Interpreter::execute` and truncates the call stack back to its
-  baseline afterwards — including on error paths, so `$#` is 0 again on
+  baseline afterwards, including on error paths, so `$#` is 0 again on
   the next exec. `$0` defaults to `bash` when no `arg0` is supplied;
   `set --` at top level uses the same synthetic frame and must not
   change `$0`.
 - `stdin` seeds `pipeline_stdin`, which `reset_transient_state` clears at
-  the start of every exec — so it is installed *after* that reset and
+  the start of every exec, so it is installed *after* that reset and
   immediately before execution. A pipe or redirect inside the script
   still wins for the command it applies to.
 
@@ -87,7 +87,7 @@ executions. See [Builtin Commands](builtins.md) and
 ### Shared execution budget
 
 Each `exec_with_options` creates exactly one `ExecutionBudget` before hooks or
-parsing. Its `Arc`-backed counters are cloned—not recreated—by nested parsers,
+parsing. Its `Arc`-backed counters are cloned, not recreated, by nested parsers,
 command/process substitutions, pipelines, builtin execution plans, embedded
 Python/TypeScript/SQLite, traversal/search, archive/compression work, and host
 callbacks. It meters three distinct resources: monotonic work units, monotonic
@@ -124,15 +124,15 @@ concurrent descendants from wrapping or temporarily exceeding the shared cap.
 
 ## Alternatives Considered
 
-- Single crate: rejected — CLI bloats library; Python/JS packages need separate crates.
-- Sync filesystem: rejected — network ops need async; tokio already a dep.
+- Single crate: rejected, CLI bloats library; Python/JS packages need separate crates.
+- Sync filesystem: rejected, network ops need async; tokio already a dep.
 
 ## See also
 
-- [Parser](parser.md) — script text to AST, ahead of the interpreter
-- [Virtual Filesystem](vfs.md) — filesystem abstraction the interpreter executes against
-- [Builtin Commands](builtins.md) — command layer the interpreter dispatches into
-- [Parallel Execution](parallel-execution.md) — threading model and shared-ownership rules
-- [Threat Model](../security/threat-model.md) — trust boundaries these module boundaries enforce
-- [Known Limitations](../operations/limitations.md) — what this architecture intentionally does not do
-- [Public Capability Parity](../status/capability-parity.md) — generated wrapper support and explicit exclusions
+- [Parser](parser.md), script text to AST, ahead of the interpreter
+- [Virtual Filesystem](vfs.md), filesystem abstraction the interpreter executes against
+- [Builtin Commands](builtins.md), command layer the interpreter dispatches into
+- [Parallel Execution](parallel-execution.md), threading model and shared-ownership rules
+- [Threat Model](../security/threat-model.md), trust boundaries these module boundaries enforce
+- [Known Limitations](../operations/limitations.md), what this architecture intentionally does not do
+- [Public Capability Parity](../status/capability-parity.md), generated wrapper support and explicit exclusions

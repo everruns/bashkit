@@ -2,7 +2,7 @@
 
 Measures the `sqlite` builtin (Turso embedded engine) end-to-end through
 the bashkit interpreter. Per-invocation overhead (interpreter setup, script
-parse, engine open, VFS flush) is included in every number — these are
+parse, engine open, VFS flush) is included in every number, these are
 "what a script author observes", not isolated engine micro-benchmarks.
 
 ## System Information

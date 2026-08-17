@@ -37,15 +37,15 @@ Two ways to register:
 | API | When | Notes |
 |-----|------|-------|
 | `new Bash({ customBuiltins: {...} })` | At construction | Convenient for a fixed set of builtins. |
-| `bash.addBuiltin(name, callback)` | Any time after | Safe to call after `execute()` has accumulated state — the interpreter is **not** rebuilt and the VFS stays intact. |
+| `bash.addBuiltin(name, callback)` | Any time after | Safe to call after `execute()` has accumulated state, the interpreter is **not** rebuilt and the VFS stays intact. |
 | `bash.removeBuiltin(name)` | Any time after | Subsequent invocations fall through to baked-in builtins / `$PATH`. |
 
 Same API on `BashTool`.
 
 ## The callback contract
 
-A callback receives one argument — a `BuiltinContext` snapshot of shell
-state at invocation time — and returns the stdout to emit:
+A callback receives one argument, a `BuiltinContext` snapshot of shell
+state at invocation time, and returns the stdout to emit:
 
 ```typescript
 import type { BuiltinContext, BuiltinCallback } from "@everruns/bashkit";
@@ -66,7 +66,7 @@ Internally, every return is wrapped with `Promise.resolve(...)` so the Rust
 adapter handles them uniformly.
 
 The return value is treated as stdout. To emit a specific exit code or
-stderr, throw — exceptions become stderr with exit code 1, like a real
+stderr, throw, exceptions become stderr with exit code 1, like a real
 failing command:
 
 ```typescript
@@ -82,7 +82,7 @@ const bash = new Bash({
 });
 ```
 
-## Sync vs async — and why you can't use `executeSync()`
+## Sync vs async, and why you can't use `executeSync()`
 
 Custom builtins are dispatched over NAPI's threadsafe-function bridge, which
 schedules callbacks on the JS event loop. That means **the JS event loop
@@ -90,7 +90,7 @@ must be free to dispatch them**.
 
 `bash.executeSync()` blocks the JS event loop synchronously while the
 interpreter runs. If the script invokes a custom builtin, the dispatch
-never gets a chance to fire — the call deadlocks.
+never gets a chance to fire, the call deadlocks.
 
 > **Always use `await bash.execute(...)`** when custom builtins are
 > registered. This matches `ScriptedTool`'s constraint.
@@ -166,7 +166,7 @@ console.log(r.stdout);                                       // from-function
 
 ## `BashTool`
 
-`BashTool` has the same API — useful when exposing a sandboxed shell to an
+`BashTool` has the same API, useful when exposing a sandboxed shell to an
 LLM as a tool. Custom builtins augment the tool's command surface:
 
 ```typescript
@@ -212,7 +212,7 @@ await bash.execute(
 
 ### Stage-based pipelines
 
-Custom builtins can read piped stdin and emit transformed output — chain
+Custom builtins can read piped stdin and emit transformed output, chain
 them like any other bash command:
 
 ```typescript
@@ -230,7 +230,7 @@ await bash.execute("cat /in/req.json | parse | sign > /out/signed.txt");
 
 Wrap a baked-in builtin to log every invocation while preserving original
 behavior (call into the bashkit interpreter via the parent if you need the
-original result — for full override+passthrough see the Rust API):
+original result, for full override+passthrough see the Rust API):
 
 ```typescript
 const calls: string[] = [];
@@ -249,8 +249,8 @@ const bash = new Bash({
 
 ## See also
 
-- Example script: [`examples/custom_builtins.mjs`](https://github.com/everruns/bashkit/blob/main/examples/custom_builtins.mjs) — runnable, asserts at every step, exercised in CI.
-- API reference: [`@everruns/bashkit` README](https://github.com/everruns/bashkit/blob/main/crates/bashkit-js/README.md) — option/method signatures.
+- Example script: [`examples/custom_builtins.mjs`](https://github.com/everruns/bashkit/blob/main/examples/custom_builtins.mjs), runnable, asserts at every step, exercised in CI.
+- API reference: [`@everruns/bashkit` README](https://github.com/everruns/bashkit/blob/main/crates/bashkit-js/README.md), option/method signatures.
 - Rust core: [`bashkit::BuiltinRegistry`](https://docs.rs/bashkit/latest/bashkit/struct.BuiltinRegistry.html), [`BashBuilder::builtin_registry`](https://docs.rs/bashkit/latest/bashkit/struct.BashBuilder.html#method.builtin_registry).
 - Design rationale: PR [#1721](https://github.com/everruns/bashkit/pull/1721).
 - Python parity: tracked in [#1724](https://github.com/everruns/bashkit/issues/1724).
