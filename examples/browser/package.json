@@ -10,10 +10,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@everruns/bashkit-wasm": "0.14.3"
+    "@everruns/bashkit-wasm": "0.16.0"
   },
   "devDependencies": {
-    "vite": "6.4.3"
+    "vite": "^6.4.3"
   },
   "pnpm": {
     "overrides": {
