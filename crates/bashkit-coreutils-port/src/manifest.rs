@@ -32,6 +32,11 @@
 //! prefix = "uucore::error::UError"
 //! action = "replace_with"           # rewrite the import to a bashkit-side type
 //! target = "crate::error::Error"
+//!
+//! [[modules.substitutions]]
+//! prefix = "uucore::translate"
+//! action = "fluent"                 # resolve translate!() at port time
+//! ftl_sources = ["src/uucore/locales/en-US.ftl"]
 //! ```
 //!
 //! Action support, current implementation:
@@ -49,6 +54,14 @@
 //!   `super::<leaf>::…` so the vendored module compiles. The
 //!   inlined file goes through the same enforce + rewrite pipeline
 //!   so transitive uucore references either substitute or surface.
+//! - `fluent` — fully implemented. Opts one uucore i18n macro
+//!   (`translate!` / `translate_text!`) into port-time resolution
+//!   against the `ftl_sources` message files: the `use` item is
+//!   dropped and every invocation folds to a `String` literal (or a
+//!   `format!` when the message carries `{ $placeable }` slots).
+//!   Keeps Fluent out of bashkit's runtime while letting modules that
+//!   only use flat messages stay vendorable. Missing keys, selectors,
+//!   and non-literal keys abort the port rather than emit wrong text.
 
 use serde::Deserialize;
 
@@ -67,10 +80,6 @@ pub struct Module {
     pub substitutions: Vec<Substitution>,
 }
 
-// `target` and `inline_source` are read by the future syn-based import
-// rewriter (#1534). Kept on the struct now so the manifest schema is
-// stable across the rewriter landing — otherwise existing manifest
-// stanzas would have to change shape on first use.
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 pub struct Substitution {
@@ -83,6 +92,12 @@ pub struct Substitution {
     /// that defines the substituted type.
     #[serde(default)]
     pub inline_source: Option<String>,
+    /// `fluent`: message files (relative to uutils dir) searched, in
+    /// order, for the keys this macro resolves. Merged across every
+    /// `fluent` substitution in the module, matching uucore's runtime
+    /// behaviour of resolving against one bundle.
+    #[serde(default)]
+    pub ftl_sources: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
@@ -91,6 +106,7 @@ pub enum Action {
     Inline,
     ReplaceWith,
     Error,
+    Fluent,
 }
 
 impl Action {
@@ -100,6 +116,7 @@ impl Action {
             Action::Inline => "inline",
             Action::ReplaceWith => "replace_with",
             Action::Error => "error",
+            Action::Fluent => "fluent",
         }
     }
 }
@@ -154,6 +171,25 @@ target = "crate::error::Other"
         assert_eq!(entry.substitutions[0].action, Action::Error);
         assert_eq!(entry.substitutions[1].action, Action::Inline);
         assert_eq!(entry.substitutions[2].action, Action::ReplaceWith);
+    }
+
+    #[test]
+    fn parses_fluent_action_with_sources() {
+        let toml = r#"
+[[modules]]
+name = "format"
+source = "src/uucore/src/lib/features/format"
+out = "format"
+
+[[modules.substitutions]]
+prefix = "crate::translate"
+action = "fluent"
+ftl_sources = ["src/uucore/locales/en-US.ftl", "src/uucore/locales/errors/en-US.ftl"]
+"#;
+        let m = Manifest::parse(toml).unwrap();
+        let sub = &m.find("format").unwrap().substitutions[0];
+        assert_eq!(sub.action, Action::Fluent);
+        assert_eq!(sub.ftl_sources.len(), 2);
     }
 
     #[test]

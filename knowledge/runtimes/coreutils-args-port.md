@@ -187,8 +187,10 @@ nested groups (`use a::{b, c}`), and classifies each path:
   through, `std`, `bigdecimal`, etc. resolve at bashkit compile time;
   `self::`/`super::` stay inside the vendored tree.
 - **Fluent boundary**: `use fluent::*;`, `use uucore::translate;`,
-  `uucore::i18n::*` are hard errors regardless of manifest: the module is
-  not safely vendorable without code changes.
+  `uucore::i18n::*` are hard errors *unless* a `fluent` substitution opts
+  that specific macro into port-time resolution (below). Importing the
+  Fluent crate itself is always rejected: that is a runtime dependency,
+  not a message lookup, and no manifest stanza can permit it.
 - **uucore-internal** must match a `[[modules.substitutions]]` prefix.
   Unmatched internal references abort the port, silent emission of a broken
   `use uucore::...` is rejected since it would not compile against bashkit's
@@ -201,6 +203,39 @@ Substitution `action`s (all implemented):
 | `error` | Abort the port at this import (uucore type that should not be vendored). |
 | `replace_with` | Rewrite the matched prefix in every `use` path to `target`; if the final segment changes, insert `as <orig>` so call sites compile unchanged. |
 | `inline` | Vendor the file at `inline_source` next to the module's output dir (`<out_base>/<leaf>.rs`, `<leaf>` = prefix's final segment) and rewrite matching `use` paths to `crate::builtins::generated::<leaf>::…` so imports work from any nesting depth. The inlined file goes through the same enforce + rewrite pipeline, so transitive uucore references either substitute or surface explicitly. |
+| `fluent` | Resolve one uucore i18n macro (named by the prefix's leaf, e.g. `translate` / `translate_text`) at port time against the `ftl_sources` message files. The `use` item is dropped and every invocation folds to a literal. See below. |
+
+### Port-time Fluent resolution (`fluent` action)
+
+Args mode has always folded `translate!("k")` into a string literal from
+the utility's `en-US.ftl`. Module mode does the same for vendored uucore
+libraries, so a module that only reads *flat* messages stays vendorable
+without dragging Fluent into bashkit's runtime.
+
+Given `ftl_sources` (merged in declaration order, mirroring uucore
+resolving every key against one bundle), each invocation folds to:
+
+- `String::from("…")` when the message has no placeables;
+- `format!("…", …)` when it has `{ $var }` slots, with arguments bound
+  **by name**, since a message may interpolate its slots in a different
+  order than the call lists them.
+
+`translate!` and `translate_text!` fold identically. Upstream splits them
+only so Fluent can wrap interpolated user text in Unicode bidi isolate
+characters; rendering literally at port time skips that and yields the
+plain byte-for-byte GNU text the differential harness compares against.
+
+Hard errors (never silently-wrong generated text): a key absent from
+every `ftl_sources` file; a message slot with no matching call argument;
+a call argument the message does not interpolate (the text would drop
+it); a non-literal key; and any construct whose rendering depends on
+runtime locale data, meaning selectors, plurals, and term references.
+The rewriter also rejects a `translate*!` invocation that no stanza opted
+in, so a fully-qualified call cannot side-step the import-level gate.
+
+`.ftl` parsing (flat `key = value` + indented continuations) and pattern
+splitting live in `crates/bashkit-coreutils-port/src/ftl.rs`, shared by
+both modes. It is deliberately not a Fluent implementation.
 
 Output goes through `prettyplease::unparse` whenever any `replace_with` or
 `inline` substitution is in scope, so use-groups may flatten into individual
@@ -214,7 +249,7 @@ original uucore topology.
 
 | Module | uutils source | Output | Substitution decisions |
 |---|---|---|---|
-| `format` | `src/uucore/src/lib/features/format` | `crates/bashkit/src/builtins/generated/format/` plus `extendedbigdecimal.rs` and `num_parser.rs` siblings | `crate::format` self-refs rewrite to `crate::builtins::generated::format`; `extendedbigdecimal` and `parser::num_parser` are inlined; `NonUtf8OsStrError`, `os_str_as_bytes`, `UError`, `set_exit_code`, `quoting_style`, `show_error`, and `show_warning` rewrite to bashkit-local `format_support` shims. |
+| `format` | `src/uucore/src/lib/features/format` | `crates/bashkit/src/builtins/generated/format/` plus `extendedbigdecimal.rs` and `num_parser.rs` siblings | `crate::format` self-refs rewrite to `crate::builtins::generated::format`; `extendedbigdecimal` and `parser::num_parser` are inlined; `NonUtf8OsStrError`, `os_str_as_bytes`, `UError`, `set_exit_code`, `strip_errno`, `quoting_style`, `show_error`, and `show_warning` rewrite to bashkit-local `format_support` shims; `translate` / `translate_text` resolve at port time from `src/uucore/locales/{,errors/}en-US.ftl`. |
 
 ### Output banner
 

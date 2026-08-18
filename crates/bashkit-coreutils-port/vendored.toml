@@ -69,6 +69,34 @@ prefix = "crate::error::set_exit_code"
 action = "replace_with"
 target = "crate::builtins::generated::format_support::set_exit_code"
 
+# Strips uucore's " (os error N)" suffix off io::Error text so printf's
+# write-error diagnostic matches GNU. Pure string work, reimplemented in
+# format_support rather than dragging in uucore's error module.
+[[modules.substitutions]]
+prefix = "crate::error::strip_errno"
+action = "replace_with"
+target = "crate::builtins::generated::format_support::strip_errno"
+
+# uucore routes FormatError's Display through Fluent. bashkit resolves
+# those messages at port time instead (see the `fluent` action in
+# manifest.rs): the generated code carries plain en-US literals and
+# bashkit links no Fluent and ships no locale bundle.
+[[modules.substitutions]]
+prefix = "crate::translate"
+action = "fluent"
+ftl_sources = [
+    "src/uucore/locales/en-US.ftl",
+    "src/uucore/locales/errors/en-US.ftl",
+]
+
+[[modules.substitutions]]
+prefix = "crate::translate_text"
+action = "fluent"
+ftl_sources = [
+    "src/uucore/locales/en-US.ftl",
+    "src/uucore/locales/errors/en-US.ftl",
+]
+
 [[modules.substitutions]]
 prefix = "crate::quoting_style"
 action = "replace_with"
