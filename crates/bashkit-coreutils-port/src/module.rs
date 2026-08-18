@@ -9,9 +9,13 @@
 //!    tests and documents the integrated generated module.
 //! 4. For each file, parse with syn and walk top-level `use` items:
 //!    - `use fluent::*;` (or any `fluent::...`) → hard error: the
-//!      module is not safely vendorable without code changes.
+//!      module is not safely vendorable without code changes. No
+//!      manifest stanza can permit it — it is a runtime dependency.
 //!    - `use uucore::translate;` / `translate::*` → same hard error
-//!      class (Fluent is the i18n boundary).
+//!      class (Fluent is the i18n boundary), *unless* a `fluent`
+//!      substitution opts that macro into port-time resolution, in
+//!      which case the import is dropped and every invocation folds
+//!      to a literal (see [`FluentResolver`]).
 //!    - any uucore-crate path (`uucore::`, `crate::`) must match a
 //!      manifest substitution prefix. Unmatched paths abort the port so
 //!      unexpected uucore runtime references surface explicitly. Relative
@@ -25,23 +29,26 @@
 //!      next to the module's output dir and rewrite the use-path to
 //!      `crate::builtins::generated::<leaf>::…` so the vendored module
 //!      compiles from any nested depth.
-//! 5. If any `replace_with` or `inline` substitutions are in scope,
-//!    the rewritten AST is emitted via `prettyplease::unparse` (use
-//!    groups become individual `use` items as a side effect).
-//!    Otherwise the source is written verbatim. A banner is prepended
-//!    either way.
+//! 5. Fold opted-in i18n macros (step 4's `fluent` action), then, if any
+//!    `replace_with` / `inline` / `fluent` substitution is in scope, emit
+//!    the rewritten AST via `prettyplease::unparse` (use groups become
+//!    individual `use` items as a side effect). Otherwise the source is
+//!    written verbatim. A banner is prepended either way.
 //! 6. After the primary tree, every `inline` substitution drives a
 //!    second port pass on its `inline_source`, with the same enforce
 //!    plus rewrite policy applied so transitive uucore references still
 //!    surface explicitly.
 
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow, bail};
 use proc_macro2::Span;
 use quote::ToTokens;
-use syn::{Ident, Item, ItemUse, UseTree};
+use syn::visit_mut::{self, VisitMut};
+use syn::{Expr, ExprMacro, Ident, Item, ItemUse, LitStr, UseTree, parse_quote};
 
+use crate::ftl::{Segment, parse_ftl, parse_pattern};
 use crate::manifest::{Action, Manifest, Module, Substitution};
 
 pub fn run(
@@ -76,10 +83,11 @@ pub fn run(
         );
     }
     let out_root = out_base.join(&module.out);
+    let fluent = FluentResolver::build(uutils_dir, module)?;
 
     let mut written = Vec::new();
     if src_root.is_file() {
-        port_file(&src_root, &out_root, module, rev, &module.source)?;
+        port_file(&src_root, &out_root, module, rev, &module.source, &fluent)?;
         written.push(out_root);
     } else {
         port_dir(
@@ -88,6 +96,7 @@ pub fn run(
             module,
             rev,
             &module.source,
+            &fluent,
             &mut written,
         )?;
     }
@@ -95,7 +104,7 @@ pub fn run(
     // Inline-vendor any `action = "inline"` substitutions alongside the
     // module. The inlined files land next to the module's `out` dir so
     // rewritten paths can resolve them as siblings.
-    port_inlined(uutils_dir, module, rev, out_base, &mut written)?;
+    port_inlined(uutils_dir, module, rev, out_base, &fluent, &mut written)?;
 
     Ok(written)
 }
@@ -106,6 +115,7 @@ fn port_dir(
     module: &Module,
     rev: &str,
     rel_root: &str,
+    fluent: &FluentResolver,
     written: &mut Vec<PathBuf>,
 ) -> Result<()> {
     std::fs::create_dir_all(out_dir)
@@ -119,28 +129,40 @@ fn port_dir(
         if path.is_dir() {
             let sub_out = out_dir.join(&name);
             let sub_rel = format!("{rel_root}/{}", name.to_string_lossy());
-            port_dir(&path, &sub_out, module, rev, &sub_rel, written)?;
+            port_dir(&path, &sub_out, module, rev, &sub_rel, fluent, written)?;
         } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
             let sub_out = out_dir.join(&name);
             let sub_rel = format!("{rel_root}/{}", name.to_string_lossy());
-            port_file(&path, &sub_out, module, rev, &sub_rel)?;
+            port_file(&path, &sub_out, module, rev, &sub_rel, fluent)?;
             written.push(sub_out);
         }
     }
     Ok(())
 }
 
-fn port_file(src: &Path, out: &Path, module: &Module, rev: &str, rel_path: &str) -> Result<()> {
+fn port_file(
+    src: &Path,
+    out: &Path,
+    module: &Module,
+    rev: &str,
+    rel_path: &str,
+    fluent: &FluentResolver,
+) -> Result<()> {
     let text =
         std::fs::read_to_string(src).with_context(|| format!("read source {}", src.display()))?;
     let mut parsed =
         syn::parse_file(&text).with_context(|| format!("parse {} as rust", src.display()))?;
     let stripped_test_items = strip_cfg_test_items(&mut parsed);
     let stripped_doc_attrs = strip_doc_attrs(&mut parsed);
-    enforce_use_policy(&parsed, module, rel_path)?;
+    enforce_use_policy(&parsed, module, rel_path, fluent)?;
 
-    let body_text = if needs_rewrite(module) || stripped_test_items || stripped_doc_attrs {
-        apply_substitutions(&mut parsed, module)?;
+    // Fold i18n macros before the import rewrite so a resolved message
+    // no longer needs its `use`, which apply_substitutions then drops.
+    let folded = fluent.fold_file(&mut parsed, rel_path)?;
+
+    let body_text = if needs_rewrite(module) || stripped_test_items || stripped_doc_attrs || folded
+    {
+        apply_substitutions(&mut parsed, module, fluent)?;
         prettyplease::unparse(&parsed)
     } else {
         text
@@ -236,6 +258,7 @@ fn port_inlined(
     module: &Module,
     rev: &str,
     out_base: &Path,
+    fluent: &FluentResolver,
     written: &mut Vec<PathBuf>,
 ) -> Result<()> {
     for sub in &module.substitutions {
@@ -262,7 +285,7 @@ fn port_inlined(
         // Each inlined file gets the same enforce + rewrite treatment as
         // the primary module so transitive uucore references either
         // substitute or surface explicitly.
-        port_file(&src, &out, module, rev, inline_source)?;
+        port_file(&src, &out, module, rev, inline_source, fluent)?;
         written.push(out);
     }
     Ok(())
@@ -302,7 +325,12 @@ fn banner(rev: &str, module_name: &str, rel_path: &str) -> String {
 /// and enforce the manifest's substitution policy on every internal
 /// reference. Returns Err with a human-readable message at the first
 /// violation.
-fn enforce_use_policy(file: &syn::File, module: &Module, rel_path: &str) -> Result<()> {
+fn enforce_use_policy(
+    file: &syn::File,
+    module: &Module,
+    rel_path: &str,
+    fluent: &FluentResolver,
+) -> Result<()> {
     let mut paths = Vec::new();
     for item in &file.items {
         if let Item::Use(u) = item {
@@ -311,6 +339,14 @@ fn enforce_use_policy(file: &syn::File, module: &Module, rel_path: &str) -> Resu
     }
 
     for path in &paths {
+        // An explicit `action = "fluent"` stanza opts one i18n macro into
+        // port-time resolution, so it clears the blanket i18n rejection
+        // below. Importing the Fluent crate itself never does: that is a
+        // runtime dependency, not a message lookup.
+        if fluent.owns_path(path, module) {
+            continue;
+        }
+
         // Fluent boundary: any direct fluent:: import, or uucore::translate
         // (Fluent is uucore's i18n surface). Hard error: vendoring i18n is
         // not safely doable without code changes.
@@ -369,6 +405,10 @@ fn enforce_use_policy(file: &syn::File, module: &Module, rel_path: &str) -> Resu
                         );
                     }
                 }
+                // Reached only when the resolver declined the path (an
+                // `is_enabled()` resolver claims it above). Field
+                // validation lives in `FluentResolver::build`.
+                Action::Fluent => {}
             },
         }
     }
@@ -394,7 +434,11 @@ fn enforce_use_policy(file: &syn::File, module: &Module, rel_path: &str) -> Resu
 ///   so the path is rewritten to point at it via
 ///   `crate::builtins::generated::<leaf>`. The leaf identifier in the
 ///   use is preserved.
-fn apply_substitutions(file: &mut syn::File, module: &Module) -> Result<()> {
+fn apply_substitutions(
+    file: &mut syn::File,
+    module: &Module,
+    fluent: &FluentResolver,
+) -> Result<()> {
     let mut new_items: Vec<Item> = Vec::with_capacity(file.items.len());
     for item in file.items.drain(..) {
         match item {
@@ -406,6 +450,12 @@ fn apply_substitutions(file: &mut syn::File, module: &Module) -> Result<()> {
                     continue;
                 }
                 for leaf in leaves {
+                    // A folded i18n macro has no runtime existence, so its
+                    // import must go too — keeping it would emit a `use`
+                    // of a uucore macro bashkit does not have.
+                    if fluent.owns_path(&leaf_full_path(&leaf), module) {
+                        continue;
+                    }
                     let rewritten = rewrite_leaf(leaf, &module.substitutions)?;
                     new_items.push(Item::Use(build_item_use(&u, rewritten)));
                 }
@@ -475,16 +525,20 @@ fn collect_leaves(tree: &UseTree, prefix: &mut Vec<String>, out: &mut Vec<UseLea
     }
 }
 
-fn rewrite_leaf(leaf: UseLeaf, subs: &[Substitution]) -> Result<UseLeaf> {
-    // Build the full path representing this leaf's import target. For
-    // `Name { name }` the full path is `path + [name]`; for `Glob`
-    // it's just `path`.
+/// The import path a leaf denotes: `path + [name]` for a named import,
+/// bare `path` for a glob or a `self` re-export.
+fn leaf_full_path(leaf: &UseLeaf) -> Vec<String> {
     let mut full = leaf.path.clone();
     if let LeafTail::Name { ref name, .. } = leaf.tail
         && name != "self"
     {
         full.push(name.clone());
     }
+    full
+}
+
+fn rewrite_leaf(leaf: UseLeaf, subs: &[Substitution]) -> Result<UseLeaf> {
+    let full = leaf_full_path(&leaf);
 
     let Some(sub) = find_rewriting_match(&full, subs) else {
         return Ok(leaf);
@@ -523,6 +577,7 @@ fn rewrite_leaf(leaf: UseLeaf, subs: &[Substitution]) -> Result<UseLeaf> {
             ]
         }
         Action::Error => unreachable!("error action does not reach the rewriter"),
+        Action::Fluent => unreachable!("fluent-owned imports are dropped before rewriting"),
     };
 
     // Replace the matched prefix with the target. The unmatched suffix
@@ -637,6 +692,279 @@ fn build_use_tree(leaf: &UseLeaf) -> UseTree {
             tree: Box::new(acc),
         })
     })
+}
+
+/// Port-time resolver for uucore's `translate!()` family.
+///
+/// Decision: bashkit resolves Fluent at *port* time, never at runtime.
+/// uucore looks messages up in a locale bundle; bashkit ships no bundle
+/// and links no Fluent, so every opted-in macro invocation folds to a
+/// `String` literal (or a `format!` when the message has `{ $var }`
+/// slots) against the `en-US` message files named by the manifest.
+///
+/// `translate!` and `translate_text!` fold identically. Upstream splits
+/// them only so Fluent can wrap interpolated user text in Unicode bidi
+/// isolate characters; rendering literally at port time skips that and
+/// yields the plain byte-for-byte GNU text bashkit's differential tests
+/// compare against.
+///
+/// Anything whose rendering depends on runtime locale data (selectors,
+/// plurals, term references) or whose key is not a literal aborts the
+/// port. Wrong user-visible text baked into generated code is worse than
+/// a failed regeneration.
+struct FluentResolver {
+    /// Macro leaf idents opted in via `action = "fluent"` stanzas.
+    macros: BTreeSet<String>,
+    messages: HashMap<String, String>,
+}
+
+/// One file's folding pass. Borrows the resolver's message tables and
+/// accumulates per-file diagnostics so every problem in a file surfaces
+/// together instead of one regeneration round-trip at a time.
+struct FluentPass<'a> {
+    resolver: &'a FluentResolver,
+    errors: Vec<String>,
+}
+
+impl FluentResolver {
+    /// Build from the module's `fluent` substitutions. Message files are
+    /// merged in declaration order, mirroring uucore resolving every key
+    /// against one bundle.
+    fn build(uutils_dir: &Path, module: &Module) -> Result<Self> {
+        let mut macros = BTreeSet::new();
+        let mut messages = HashMap::new();
+
+        for sub in &module.substitutions {
+            if sub.action != Action::Fluent {
+                continue;
+            }
+            let leaf = sub
+                .prefix
+                .rsplit("::")
+                .next()
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| {
+                    anyhow!(
+                        "manifest substitution prefix '{}' has action 'fluent' but no leaf segment \
+                         to name the macro",
+                        sub.prefix
+                    )
+                })?;
+            if sub.ftl_sources.is_empty() {
+                bail!(
+                    "manifest substitution prefix '{}' has action 'fluent' but no 'ftl_sources' field",
+                    sub.prefix
+                );
+            }
+            macros.insert(leaf.to_string());
+
+            for rel in &sub.ftl_sources {
+                let path = uutils_dir.join(rel);
+                let text = std::fs::read_to_string(&path).with_context(|| {
+                    format!(
+                        "read ftl source {} for substitution prefix '{}'",
+                        path.display(),
+                        sub.prefix
+                    )
+                })?;
+                messages.extend(parse_ftl(&text));
+            }
+        }
+
+        Ok(Self { macros, messages })
+    }
+
+    fn is_enabled(&self) -> bool {
+        !self.macros.is_empty()
+    }
+
+    /// True when this use-path names an opted-in i18n macro, so
+    /// [`enforce_use_policy`] lets it through and [`apply_substitutions`]
+    /// drops the now-unused `use` item.
+    fn owns_path(&self, path: &[String], module: &Module) -> bool {
+        self.is_enabled()
+            && find_match(path, &module.substitutions).is_some_and(|s| s.action == Action::Fluent)
+    }
+
+    /// Fold every opted-in macro invocation in `file`. Returns whether
+    /// the AST changed (which forces re-emission through prettyplease).
+    fn fold_file(&self, file: &mut syn::File, rel_path: &str) -> Result<bool> {
+        if !self.is_enabled() {
+            return Ok(false);
+        }
+        let mut pass = FluentPass {
+            resolver: self,
+            errors: Vec::new(),
+        };
+        pass.visit_file_mut(file);
+        if !pass.errors.is_empty() {
+            bail!(
+                "unresolved i18n in {}:\n  - {}",
+                rel_path,
+                pass.errors.join("\n  - ")
+            );
+        }
+        Ok(true)
+    }
+}
+
+impl FluentPass<'_> {
+    /// Fold one macro invocation. Returns `None` for macros this
+    /// resolver does not own (left untouched), recording an error when a
+    /// known i18n macro is reached that no stanza opted in.
+    fn rewrite_macro(&mut self, m: &ExprMacro) -> Option<Expr> {
+        let leaf = m.mac.path.segments.last()?.ident.to_string();
+
+        if !self.resolver.macros.contains(&leaf) {
+            // Catch fully-qualified `uucore::translate!(…)` calls that no
+            // `use` item declared, so enforce_use_policy's import-level
+            // gate cannot be side-stepped.
+            if leaf.starts_with("translate") {
+                self.errors.push(format!(
+                    "i18n macro '{leaf}!' is invoked but no [[modules.substitutions]] stanza with \
+                     action 'fluent' opts it in"
+                ));
+            }
+            return None;
+        }
+
+        let call: TranslateCall = match syn::parse2(m.mac.tokens.clone()) {
+            Ok(c) => c,
+            Err(e) => {
+                self.errors.push(format!(
+                    "'{leaf}!' invocation is not the supported \
+                     `\"key\"[, \"var\" => expr]*` shape: {e}"
+                ));
+                return None;
+            }
+        };
+
+        let key = call.key.value();
+        let Some(body) = self.resolver.messages.get(&key) else {
+            self.errors.push(format!(
+                "no message for '{leaf}!(\"{key}\")' in any ftl_sources file"
+            ));
+            return None;
+        };
+
+        let segments = match parse_pattern(body) {
+            Ok(s) => s,
+            Err(e) => {
+                self.errors.push(format!("message '{key}': {e}"));
+                return None;
+            }
+        };
+
+        match self.render(&key, &segments, &call) {
+            Ok(expr) => Some(expr),
+            Err(msg) => {
+                self.errors.push(msg);
+                None
+            }
+        }
+    }
+
+    /// Turn resolved segments plus the call's arguments into either a
+    /// `String::from("…")` or a `format!("…", …)`.
+    fn render(
+        &self,
+        key: &str,
+        segments: &[Segment],
+        call: &TranslateCall,
+    ) -> Result<Expr, String> {
+        // Two renderings of the same message: `plain` is the literal text
+        // (correct for `String::from`), `fmt` escapes braces because
+        // `format!` reads them as its own syntax. Escaping unconditionally
+        // would turn a brace-bearing message with no slots into `{{`.
+        let mut plain = String::new();
+        let mut fmt = String::new();
+        let mut exprs: Vec<&Expr> = Vec::new();
+        let mut used: BTreeSet<&str> = BTreeSet::new();
+
+        for segment in segments {
+            match segment {
+                Segment::Text(t) => {
+                    plain.push_str(t);
+                    fmt.push_str(&t.replace('{', "{{").replace('}', "}}"));
+                }
+                Segment::Placeable(name) => {
+                    let Some(expr) = call.arg(name) else {
+                        return Err(format!(
+                            "message '{key}' interpolates '{{ ${name} }}' but the invocation \
+                             passes no '{name}' argument"
+                        ));
+                    };
+                    used.insert(name.as_str());
+                    exprs.push(expr);
+                    fmt.push_str("{}");
+                }
+            }
+        }
+
+        let unused: Vec<&str> = call
+            .args
+            .iter()
+            .map(|(n, _)| n.as_str())
+            .filter(|n| !used.contains(n))
+            .collect();
+        if !unused.is_empty() {
+            return Err(format!(
+                "invocation for message '{key}' passes argument(s) {unused:?} that the message \
+                 does not interpolate — the ported text would silently drop them"
+            ));
+        }
+
+        if exprs.is_empty() {
+            let lit = LitStr::new(&plain, Span::call_site());
+            Ok(parse_quote!(::std::string::String::from(#lit)))
+        } else {
+            let lit = LitStr::new(&fmt, Span::call_site());
+            Ok(parse_quote!(::std::format!(#lit, #(#exprs),*)))
+        }
+    }
+}
+
+/// `"key"` or `"key", "var" => expr, "var2" => expr2`.
+struct TranslateCall {
+    key: LitStr,
+    args: Vec<(String, Expr)>,
+}
+
+impl TranslateCall {
+    fn arg(&self, name: &str) -> Option<&Expr> {
+        self.args.iter().find(|(n, _)| n == name).map(|(_, e)| e)
+    }
+}
+
+impl syn::parse::Parse for TranslateCall {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let key: LitStr = input.parse()?;
+        let mut args = Vec::new();
+        while !input.is_empty() {
+            input.parse::<syn::Token![,]>()?;
+            if input.is_empty() {
+                break; // trailing comma
+            }
+            let name: LitStr = input.parse()?;
+            input.parse::<syn::Token![=>]>()?;
+            let value: Expr = input.parse()?;
+            args.push((name.value(), value));
+        }
+        Ok(Self { key, args })
+    }
+}
+
+impl VisitMut for FluentPass<'_> {
+    fn visit_expr_mut(&mut self, node: &mut Expr) {
+        // Recurse first so nested invocations (an argument that is itself
+        // a translate!) resolve before the outer one reads it.
+        visit_mut::visit_expr_mut(self, node);
+        if let Expr::Macro(m) = node
+            && let Some(replacement) = self.rewrite_macro(m)
+        {
+            *node = replacement;
+        }
+    }
 }
 
 fn is_internal(path: &[String]) -> bool {
@@ -935,6 +1263,202 @@ action = "replace_with"
         let err = run(&uutils, "absent", "x", &manifest, &out).unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("not declared"), "got: {msg}");
+    }
+
+    /// Manifest + sources for the `fluent` action tests: one opted-in
+    /// `translate!` macro backed by two merged message files.
+    const FLUENT_MANIFEST: &str = r#"
+[[modules]]
+name = "demo"
+source = "lib/demo.rs"
+out = "demo.rs"
+
+[[modules.substitutions]]
+prefix = "crate::translate"
+action = "fluent"
+ftl_sources = ["locales/en-US.ftl", "locales/errors/en-US.ftl"]
+"#;
+
+    const FLUENT_FILES: &[(&str, &str)] = &[
+        ("locales/en-US.ftl", "demo-plain = no more arguments\n"),
+        (
+            "locales/errors/en-US.ftl",
+            "demo-args = format '{ $format }' has no % directive\n\
+             demo-escape = invalid universal character name \\{ $escape }{ $digits }\n\
+             demo-brace = unmatched } brace\n\
+             demo-brace-arg = unmatched } brace for { $who }\n\
+             demo-select = { $n ->\n    [one] a\n   *[other] b\n  }\n",
+        ),
+    ];
+
+    fn fluent_fixture(body: &str) -> (TempDir, PathBuf, PathBuf, PathBuf) {
+        let mut files: Vec<(&str, &str)> = FLUENT_FILES.to_vec();
+        files.push(("lib/demo.rs", body));
+        fixture(FLUENT_MANIFEST, &files)
+    }
+
+    #[test]
+    fn fluent_folds_keyed_message_to_literal() {
+        let (_tmp, uutils, manifest, out) = fluent_fixture(
+            "use crate::translate;\npub fn m() -> String { translate!(\"demo-plain\") }\n",
+        );
+        let written = run(&uutils, "demo", "x", &manifest, &out).unwrap();
+        let body = fs::read_to_string(&written[0]).unwrap();
+        assert!(
+            body.contains("String::from(\"no more arguments\")"),
+            "got: {body}"
+        );
+        // The macro no longer exists at runtime, so its import must go.
+        assert!(!body.contains("use crate::translate"), "got: {body}");
+        assert!(!body.contains("translate!"), "got: {body}");
+    }
+
+    #[test]
+    fn fluent_folds_placeables_into_format_call() {
+        let (_tmp, uutils, manifest, out) = fluent_fixture(
+            "use crate::translate;\n\
+             pub fn m(f: &str) -> String { translate!(\"demo-args\", \"format\" => f) }\n",
+        );
+        let written = run(&uutils, "demo", "x", &manifest, &out).unwrap();
+        let body = fs::read_to_string(&written[0]).unwrap();
+        assert!(
+            body.contains("format!(\"format '{}' has no % directive\", f)"),
+            "got: {body}"
+        );
+    }
+
+    /// Arguments bind by name, not by position — a message may interpolate
+    /// its slots in a different order than the call lists them.
+    #[test]
+    fn fluent_binds_arguments_by_name_not_position() {
+        let (_tmp, uutils, manifest, out) = fluent_fixture(
+            "use crate::translate;\n\
+             pub fn m(a: char, b: &str) -> String {\n\
+             translate!(\"demo-escape\", \"digits\" => b, \"escape\" => a) }\n",
+        );
+        let written = run(&uutils, "demo", "x", &manifest, &out).unwrap();
+        let body = fs::read_to_string(&written[0]).unwrap();
+        assert!(
+            body.contains("format!(\"invalid universal character name \\\\{}{}\", a, b)"),
+            "got: {body}"
+        );
+    }
+
+    /// A slot-free message renders as literal text, so a brace in it must
+    /// NOT pick up `format!`'s `{{` escaping.
+    #[test]
+    fn fluent_literal_message_keeps_braces_unescaped() {
+        let (_tmp, uutils, manifest, out) = fluent_fixture(
+            "use crate::translate;\npub fn m() -> String { translate!(\"demo-brace\") }\n",
+        );
+        let written = run(&uutils, "demo", "x", &manifest, &out).unwrap();
+        let body = fs::read_to_string(&written[0]).unwrap();
+        assert!(
+            body.contains(r#"String::from("unmatched } brace")"#),
+            "got: {body}"
+        );
+    }
+
+    /// ...whereas the same brace inside a `format!` string must be escaped.
+    #[test]
+    fn fluent_format_message_escapes_braces() {
+        let (_tmp, uutils, manifest, out) = fluent_fixture(
+            "use crate::translate;\n\
+             pub fn m(w: &str) -> String { translate!(\"demo-brace-arg\", \"who\" => w) }\n",
+        );
+        let written = run(&uutils, "demo", "x", &manifest, &out).unwrap();
+        let body = fs::read_to_string(&written[0]).unwrap();
+        assert!(
+            body.contains(r#"format!("unmatched }} brace for {}", w)"#),
+            "got: {body}"
+        );
+    }
+
+    #[test]
+    fn fluent_missing_key_aborts_port() {
+        let (_tmp, uutils, manifest, out) = fluent_fixture(
+            "use crate::translate;\npub fn m() -> String { translate!(\"demo-absent\") }\n",
+        );
+        let err = run(&uutils, "demo", "x", &manifest, &out).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("no message for"), "got: {msg}");
+    }
+
+    #[test]
+    fn fluent_missing_argument_aborts_port() {
+        let (_tmp, uutils, manifest, out) = fluent_fixture(
+            "use crate::translate;\npub fn m() -> String { translate!(\"demo-args\") }\n",
+        );
+        let err = run(&uutils, "demo", "x", &manifest, &out).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("passes no 'format' argument"), "got: {msg}");
+    }
+
+    #[test]
+    fn fluent_extra_argument_aborts_port() {
+        let (_tmp, uutils, manifest, out) = fluent_fixture(
+            "use crate::translate;\n\
+             pub fn m() -> String { translate!(\"demo-plain\", \"x\" => 1) }\n",
+        );
+        let err = run(&uutils, "demo", "x", &manifest, &out).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("does not interpolate"), "got: {msg}");
+    }
+
+    /// Selectors render differently per locale, so folding one at port
+    /// time would bake in text that is simply wrong for other inputs.
+    #[test]
+    fn fluent_selector_message_aborts_port() {
+        let (_tmp, uutils, manifest, out) = fluent_fixture(
+            "use crate::translate;\n\
+             pub fn m(n: usize) -> String { translate!(\"demo-select\", \"n\" => n) }\n",
+        );
+        let err = run(&uutils, "demo", "x", &manifest, &out).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("unsupported Fluent placeable"), "got: {msg}");
+    }
+
+    /// The import-level gate can be bypassed by a fully-qualified call, so
+    /// the rewriter enforces opt-in too.
+    #[test]
+    fn fluent_macro_without_opt_in_aborts_port() {
+        let (_tmp, uutils, manifest, out) = fluent_fixture(
+            "use crate::translate;\n\
+             pub fn m() -> String { translate_text!(\"demo-plain\") }\n",
+        );
+        let err = run(&uutils, "demo", "x", &manifest, &out).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("no [[modules.substitutions]]"), "got: {msg}");
+    }
+
+    #[test]
+    fn fluent_action_without_ftl_sources_fails() {
+        let (_tmp, uutils, manifest, out) = fixture(
+            r#"
+[[modules]]
+name = "demo"
+source = "lib/demo.rs"
+out = "demo.rs"
+
+[[modules.substitutions]]
+prefix = "crate::translate"
+action = "fluent"
+"#,
+            &[("lib/demo.rs", "use crate::translate;\n")],
+        );
+        let err = run(&uutils, "demo", "x", &manifest, &out).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("ftl_sources"), "got: {msg}");
+    }
+
+    /// Opting one macro in must not open the door to linking Fluent.
+    #[test]
+    fn fluent_action_does_not_permit_fluent_crate_import() {
+        let (_tmp, uutils, manifest, out) =
+            fluent_fixture("use crate::translate;\nuse fluent::FluentBundle;\n");
+        let err = run(&uutils, "demo", "x", &manifest, &out).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("not safely vendorable"), "got: {msg}");
     }
 
     #[test]

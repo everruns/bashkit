@@ -52,6 +52,21 @@ pub fn os_str_as_bytes(os_string: &OsStr) -> Result<&[u8], NonUtf8OsStrError> {
 #[allow(clippy::needless_pass_by_value)]
 pub fn set_exit_code(_code: i32) {}
 
+/// Render an [`std::io::Error`] the way GNU coreutils does: message only,
+/// without Rust's ` (os error N)` suffix.
+///
+/// Mirrors `uucore::error::strip_errno`. Reimplemented here rather than
+/// substituted onto some bashkit error type because the vendored
+/// `format` module calls it purely to build a `Display` string, and
+/// pulling in uucore's error module would drag its whole runtime.
+pub fn strip_errno(err: &std::io::Error) -> String {
+    let mut msg = err.to_string();
+    if let Some(pos) = msg.find(" (os error ") {
+        msg.truncate(pos);
+    }
+    msg
+}
+
 #[allow(non_camel_case_types)]
 #[derive(Clone, Copy, Debug)]
 pub enum QuotingStyle {

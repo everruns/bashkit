@@ -33,6 +33,8 @@ use syn::{
     Expr, ExprCall, ExprMacro, Item, ItemFn, ItemImpl, ItemMod, LitStr, Stmt, Type, parse_quote,
 };
 
+use crate::ftl::parse_ftl;
+
 pub fn run(uutils_dir: &Path, util: &str, rev: &str) -> Result<String> {
     let src_path = uutils_dir
         .join("src/uu")
@@ -264,51 +266,6 @@ pub fn run(uutils_dir: &Path, util: &str, rev: &str) -> Result<String> {
     let parsed: syn::File = syn::parse2(body).context("synthesize generated file")?;
     let pretty = prettyplease::unparse(&parsed);
     Ok(format!("{header_comment}{pretty}"))
-}
-
-/// Parse a Fluent file restricted to the `key = value` and continuation
-/// subset that uutils uses for help/about strings.
-///
-/// Supported:
-///   `key = value`
-///   `key = value`
-///   `  continuation line`
-///
-/// Rejected (silently skipped, not used by argument help):
-///   message references `{ -brand }`, selectors, plurals.
-fn parse_ftl(src: &str) -> HashMap<String, String> {
-    let mut out: HashMap<String, String> = HashMap::new();
-    let mut current_key: Option<String> = None;
-    let mut current_val: String = String::new();
-
-    let flush = |out: &mut HashMap<String, String>, key: &mut Option<String>, val: &mut String| {
-        if let Some(k) = key.take() {
-            out.insert(k, std::mem::take(val).trim_end().to_string());
-        }
-    };
-
-    for raw_line in src.lines() {
-        let line = raw_line;
-        if line.trim().is_empty() || line.trim_start().starts_with('#') {
-            flush(&mut out, &mut current_key, &mut current_val);
-            continue;
-        }
-        if line.starts_with(char::is_whitespace) {
-            // continuation
-            if current_key.is_some() {
-                current_val.push('\n');
-                current_val.push_str(line.trim_start());
-            }
-            continue;
-        }
-        if let Some((k, v)) = line.split_once('=') {
-            flush(&mut out, &mut current_key, &mut current_val);
-            current_key = Some(k.trim().to_string());
-            current_val = v.trim().to_string();
-        }
-    }
-    flush(&mut out, &mut current_key, &mut current_val);
-    out
 }
 
 /// One row in the codegen's harvest of `Arg::env(...)` annotations.

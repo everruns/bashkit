@@ -39,6 +39,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 mod args;
+mod ftl;
 mod manifest;
 mod module;
 

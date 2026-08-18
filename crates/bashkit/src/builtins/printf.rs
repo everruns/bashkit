@@ -592,7 +592,11 @@ mod tests {
     #[test]
     fn no_leak_all_format_error_variants() {
         let variants = vec![
-            FormatError::SpecError(vec![b'?']),
+            // The `Range`/`Option<Range>` payloads are upstream's source
+            // spans; TM-INF-022 requires the rendered diagnostic never
+            // expose them, so the leak check covers both spanned and
+            // unspanned constructions.
+            FormatError::SpecError(vec![b'?'], 0..2),
             FormatError::IoError(std::io::Error::other("io failed")),
             FormatError::NoMoreArguments,
             FormatError::InvalidArgument(FormatArgument::String("x".into())),
@@ -601,8 +605,10 @@ mod tests {
             FormatError::WrongSpecType,
             FormatError::InvalidPrecision("bad".into()),
             FormatError::EndsWithPercent(b"%".to_vec()),
-            FormatError::MissingHex,
-            FormatError::InvalidCharacter('u', b"d800".to_vec()),
+            FormatError::MissingHex(None),
+            FormatError::MissingHex(Some(0..2)),
+            FormatError::InvalidCharacter('u', b"d800".to_vec(), None),
+            FormatError::InvalidCharacter('u', b"d800".to_vec(), Some(0..6)),
             FormatError::InvalidEncoding(
                 super::super::generated::format_support::NonUtf8OsStrError::new_for_test("x"),
             ),
