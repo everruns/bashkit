@@ -143,6 +143,18 @@ Deliberately not covered, and why:
   the next `bashkit-wasm` release, then review and update both the dependency
   pin and lockfile.
 
+  The exact-version half of that is now enforced by CI rather than left to this
+  checklist: `examples/browser/dependency-security.test.js` asserts every
+  dependency matches `MAJOR.MINOR.PATCH` with a committed lockfile, and the
+  `Examples` job in `ci.yml` runs the suite. Important decision: it runs there,
+  not in `js.yml`, because the suite is plain `node --test` with no install
+  step, while `js.yml` builds the napi binding and filters on paths that
+  exclude `examples/browser` — the guard would not fire on the `package.json`
+  edits it exists to catch. The test existed before but nothing ran it, so
+  `vite` sat on a caret range (`^6.4.3`) through a two-major dependabot bump
+  (\#2313) without anyone noticing. Dependabot preserves whatever range style
+  it finds, so an exact pin keeps future bumps exact.
+
 ### Specs
 
 - Each spec status reflects reality
