@@ -107,6 +107,11 @@ jobs:
     # wasm-bindgen version in Cargo.lock.
     name: WASM web package
     runs-on: ubuntu-latest
+    # A hung install step here took `main` red twice by burning the 6-hour job
+    # ceiling (see scripts/install-binaryen.sh). This job's slowest healthy run
+    # is well under 10 minutes, so anything past 30 is stuck, not slow — fail
+    # fast and leave a re-runnable red instead of a cancelled run.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -121,7 +126,7 @@ jobs:
         run: cargo install wasm-bindgen-cli --version 0.2.126 --locked
 
       - name: Install binaryen (wasm-opt)
-        run: sudo apt-get update && sudo apt-get install -y binaryen
+        run: sudo ./scripts/install-binaryen.sh
 
       - name: Build web bundle
         run: bash crates/bashkit-wasm/scripts/build.sh release
