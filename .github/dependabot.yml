@@ -67,6 +67,74 @@ updates:
         patterns:
           - "*"
 
+  # npm / pnpm.
+  #
+  # Important decision: the five pnpm lockfiles in this repo had no
+  # `updates:` entry, so nothing kept them fresh — only the dependency graph
+  # (which drives Dependabot *alerts* and security updates) saw them, and that
+  # reacts to published advisories rather than to age. The practical cost is a
+  # tree that drifts far enough behind that the eventual security bump is a
+  # multi-major jump nobody can land quickly. One entry per lockfile below;
+  # each is grouped so a week of bumps arrives as a single reviewable PR, the
+  # same shape as the cargo entries above.
+  #
+  # `@everruns/*` is ignored everywhere: those are this repo's own published
+  # packages, pinned to the workspace version (0.16.0) and bumped by the
+  # release process (see knowledge/operations/release-process.md). Letting
+  # dependabot move them independently races that process and produces PRs
+  # that are wrong the moment a release lands.
+
+  # The docs site — a deployed Cloudflare Worker, so its tree is the only npm
+  # surface here that is reachable from the public internet at runtime.
+  - package-ecosystem: "npm"
+    directory: "/site"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      site-npm:
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: "@everruns/*"
+
+  # Build and test toolchain for the published `@everruns/bashkit` napi
+  # package. All devDependencies, but they run in CI and produce the artifact
+  # that ships to npm, so they are supply chain, not just developer comfort.
+  - package-ecosystem: "npm"
+    directory: "/crates/bashkit-js"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      js-npm:
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: "@everruns/*"
+
+  # Example apps. Private (never published) but built by the Examples CI job,
+  # so a rotted lockfile breaks CI rather than users. One entry covers all
+  # three via `directories`, and they share a group so the weekly churn from
+  # the fast-moving AI SDKs stays in a single PR.
+  - package-ecosystem: "npm"
+    directories:
+      - "/examples"
+      - "/examples/browser"
+      - "/examples/bashkit-pi"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      examples-npm:
+        patterns:
+          - "*"
+    ignore:
+      - dependency-name: "@everruns/*"
+
   # GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"
