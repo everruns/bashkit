@@ -116,15 +116,19 @@ it is a product decision, not a build-configuration one.
 
 ### Rejected, and why
 
-Do not re-propose these without new information.
+Every row carries the size it would actually return, measured by
+`cargo bsize --what-if` (2026-08-19, against the 31.5 MiB baseline). The
+rejections are about cost, not about the saving being small — do not
+re-propose these without new information.
 
-| Lever | Why not |
-|---|---|
-| `panic = "abort"` | The interpreter contains builtin panics inside `catch_unwind`; aborting turns a contained builtin failure into a process kill. The 8% spent on unwind tables is the price of that containment. See [Threat Model](../security/threat-model.md). |
-| `opt-level = "s"` / `"z"` | Bashkit's pitch is being faster than spawning `bash`; the interpreter, parser, and builtin hot paths are exactly what these levers deoptimise. Not worth trading throughput for a static binary that is downloaded once. |
-| `-Zfmt-debug=none`, `-Zlocation-detail=none`, `build-std` | Nightly-only. The toolchain is pinned to stable in `rust-toolchain.toml`. |
-| Linker ICF (`--icf=all`) | `cargo bsize` measures only 68.7 KiB of byte-identical function bodies and 11.0 KiB of duplicate constants — 0.25% for a non-default linker in the release path. |
-| Dropping turso's `fs` feature | `turso_core` 0.8.0-pre.4 does not compile without it: the no-`fs` path drops `Database::open_file_with_flags`, which `vdbe/vacuum.rs`, `vdbe/execute.rs`, `database.rs`, and `connection.rs` (ATTACH) still call unconditionally. Bashkit never uses turso's host-filesystem `IO`, so re-check this on every turso bump — it is a size win *and* removes a host-filesystem path from the sandbox. |
+| Lever | Would save | Why not |
+|---|---:|---|
+| `opt-level = "z"` | **-7.3 MiB (23.3%)** | The largest lever available, and still the wrong trade. Bashkit's pitch is being faster than spawning `bash`; the functions that shrink most under it are the interpreter's sorts and `monty`'s VM loop, i.e. the hot paths [Performance Results](performance-results.md) is measured on. A static binary is downloaded once and run continuously. |
+| `panic = "abort"` | **-3.2 MiB (10.1%)** | The interpreter relies on `catch_unwind` around builtins; aborting turns a contained builtin panic into a process kill for the whole host. The 8% spent on unwind tables buys that containment. See [Threat Model](../security/threat-model.md). |
+| `-Zfmt-debug=none` | **-1.3 MiB (4.1%)** | Nightly-only, and the toolchain is pinned to stable in `rust-toolchain.toml`. Worth re-checking if it ever stabilises: `Debug` impls are 962 KiB (3.0%) and builtins are already forbidden from emitting `{:?}` (TM-INF-022). |
+| `-Zlocation-detail=none`, `build-std` | not measured | Nightly-only, same reason. |
+| Linker ICF (`--icf=all`) | ~68.7 KiB (0.2%) | Only 68.7 KiB of byte-identical function bodies and 11.0 KiB of duplicate constants — not worth a non-default linker in the release path. |
+| Dropping turso's `fs` feature | unknown | `turso_core` 0.8.0-pre.4 does not compile without it: the no-`fs` path drops `Database::open_file_with_flags`, which `vdbe/vacuum.rs`, `vdbe/execute.rs`, `database.rs`, and `connection.rs` (ATTACH) still call unconditionally. Bashkit never uses turso's host-filesystem `IO`, so re-check this on every turso bump — it is a size win *and* removes a host-filesystem path from the sandbox. |
 
 ### Blocked upstream
 
