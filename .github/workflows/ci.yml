@@ -72,7 +72,7 @@ jobs:
     # compiling for browser/wasm-bindgen consumers; the feature list is the
     # supported wasm32-unknown-unknown surface (python is excluded: monty pulls
     # getrandom 0.3 without its wasm_js feature).
-    name: WASM (wasm32-unknown-unknown)
+    name: WASM (wasm32-unknown-unknown, wasm32-wasip2)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -80,7 +80,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
         with:
-          targets: wasm32-unknown-unknown
+          targets: wasm32-unknown-unknown, wasm32-wasip2
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
@@ -89,6 +89,15 @@ jobs:
         env:
           # getrandom needs an explicit JS backend opt-in on this target.
           RUSTFLAGS: --cfg getrandom_backend="wasm_js" -D warnings
+
+      # WASI keeps the crate usable in non-JS wasm runtimes (wasmtime, and the
+      # wasmtime-in-a-micro-VM guest of hyperlight-wasm). Same feature surface
+      # as the browser package; no getrandom cfg here (wasip2 has a native
+      # backend). Check-only: there is no WASI entry-point crate yet.
+      - name: Check bashkit for wasm32-wasip2
+        run: cargo check -p bashkit --target wasm32-wasip2 --features scripted_tool,jq
+        env:
+          RUSTFLAGS: -D warnings
 
   wasm-web:
     # Build the browser package (@everruns/bashkit-wasm) and run its headless

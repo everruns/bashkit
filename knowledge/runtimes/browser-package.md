@@ -199,3 +199,31 @@ pattern as `publish-js.yml`. Browser example smoke testing writes a file under
   any host filesystem.
 - Custom-builtin `ctx` exposes `{ name, argv, stdin, env, cwd, fs }`, where `fs`
   is a live handle to the same VFS the script sees (mirrors the napi bindings).
+
+## Non-JS wasm: WASI targets (`wasm32-wasip1`, `wasm32-wasip2`)
+
+The `bashkit-wasm` crate is JS-host-only (wasm-bindgen glue). The **library**
+itself, however, compiles for the WASI targets with the same reduced feature
+surface (`scripted_tool,jq`), which is what a non-JS wasm runtime
+(`wasmtime`/`wasmer`, or the wasmtime-in-a-micro-VM guest of
+[hyperlight-wasm](https://github.com/hyperlight-dev/hyperlight-wasm)) needs.
+CI's `wasm` job checks `wasm32-wasip2` alongside `wasm32-unknown-unknown`.
+
+Decisions and constraints:
+
+- **Check-only, no entry point.** There is no WASI crate exporting a
+  `exec(script) -> {stdout, stderr, code}` interface (WIT component or `_start`
+  binary) yet. The CI job exists to keep the library from regressing off the
+  target, not to ship an artifact.
+- **`OsStr` bytes.** `builtins/generated/format_support.rs` uses
+  `OsStrExt::as_bytes` on unix and stable `as_encoded_bytes()` on
+  `target_os = "wasi"`. `std::os::wasi::ffi::OsStrExt` must not be used: it does
+  not exist on `wasm32-wasip1` and is unstable on `wasm32-wasip2`.
+- **No getrandom cfg.** Unlike `wasm32-unknown-unknown`, WASI targets have a
+  native `getrandom` backend, so `--cfg getrandom_backend="wasm_js"` must not be
+  set there.
+- **Feature surface matches the browser package**, and for the same reasons:
+  no sockets (`http_client`, `ssh`), no host FS (`realfs`), no `python`.
+  `sqlite` additionally fails to build on WASI (tokio feature selection), so it
+  stays out until that is resolved.
+- **Single-threaded**, same inline-execution consequences as the browser build.
