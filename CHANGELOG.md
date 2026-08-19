@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- The rustls crypto backend used by `http_client` is now selectable: `ring`
+  (enabled by default, unchanged behavior) or `aws-lc-rs` for consumers that
+  need a FIPS-capable backend or already link aws-lc-rs. `http_client` no
+  longer implies a backend; building it with neither is a compile error.
+  Consumers on `--no-default-features` must name one alongside `http_client`.
+
 ## [0.16.0] - 2026-08-06
 
 ### Highlights

@@ -420,6 +420,17 @@
 #![warn(clippy::unwrap_used)]
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
+// The rustls-backed HTTP client installs its own crypto provider (reqwest is
+// built with `rustls-no-provider`), so a backend must be selected. Fail here
+// instead of at the first TLS handshake.
+#[cfg(all(
+    feature = "http_client",
+    not(any(feature = "ring", feature = "aws-lc-rs"))
+))]
+compile_error!(
+    "bashkit's `http_client` needs a crypto backend: enable `ring` (default) or `aws-lc-rs`"
+);
+
 /// Static, pre-execution introspection of a script.
 pub mod analysis;
 mod builtins;

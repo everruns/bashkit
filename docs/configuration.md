@@ -87,7 +87,8 @@ let mut bash = Bash::builder()
 ## Network allowlist
 
 HTTP for `curl`/`wget` requires the `http_client` feature and an explicit
-allowlist, outbound requests are denied by default:
+allowlist, outbound requests are denied by default. `http_client` also needs a
+rustls crypto backend, `ring` (default) or `aws-lc-rs`:
 
 ```rust
 use bashkit::{Bash, NetworkAllowlist};

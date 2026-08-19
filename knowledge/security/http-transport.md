@@ -32,6 +32,14 @@ Embedding hosts (reference consumer: [everruns](https://github.com/everruns/ever
 8. **Disabled by default, unchanged.** The transport does not widen network access: without the `http_client` feature *and* a `BashBuilder::network(allowlist)` call, HTTP builtins cannot make requests and the transport is never invoked.
 9. **`HttpHandler` removed, not deprecated.** Per repo policy (no compatibility shims), the legacy `HttpHandler`/`set_handler`/`http_handler` surface is deleted in the same release; `HttpTransport` is the single extension point. Migration is mechanical: wrap the old `(method, url, body, headers)` logic in `execute(HttpTransportRequest)` and return typed errors.
 10. **`Arc`, not `Box`.** Hosts that build one `Bash` per execution share a single transport across instances.
+11. **The rustls crypto backend is a feature, not a hard-coded choice.** reqwest is taken with `rustls-no-provider` and bashkit installs the provider itself, so the backend is selected by the `ring` (default) / `aws-lc-rs` features rather than pinned in the dependency. `ring` stays the default because it keeps the tree free of C-compiled crypto, which is what keeps cross-compiled aarch64 manylinux wheel builds green (`aws-lc-sys` trips over the missing `AT_HWCAP2` in that cross sysroot). `aws-lc-rs` exists for consumers who need a FIPS-capable backend, or who already link aws-lc-rs elsewhere and do not want two crypto libraries in one binary.
+
+## Crypto Backend Selection
+
+- `default = ["bash_tool", "ring"]`; `http_client` implies no backend, and the backend features are `rustls?/ring` / `rustls?/aws-lc-rs`, so enabling `ring` without `http_client` pulls nothing.
+- `http_client` with neither backend is a `compile_error!` in `lib.rs`, so the failure lands at build time instead of at the first TLS handshake.
+- `ring` wins when both are enabled. Cargo features are additive: a consumer selecting `aws-lc-rs` while another crate in the graph re-enables `ring` must still compile and must still install exactly one provider.
+- Consumers on `default-features = false` that want `http_client` must name a backend. In-tree: `bashkit-cli` names `ring`; `bashkit-eval` names `ring` on its own direct `rustls` dep (the workspace dep selects no backend).
 
 ## Request Pipeline
 
@@ -51,6 +59,7 @@ Embedding hosts (reference consumer: [everruns](https://github.com/everruns/ever
 
 ## Testing
 
+- Backend selection (`network/client.rs`): `test_build_client_installs_crypto_provider` and `test_install_default_crypto_provider_is_idempotent` are per-backend, run under both the default set and `--no-default-features --features http_client,aws-lc-rs`.
 - Unit (`network/client.rs`, `network/transport.rs`): merged signing headers reach the transport, pinned addrs for IP literals, timeout/cap forwarding, deadline + size enforcement around misbehaving transports; error Display ↔ exit-code contract.
 - Integration (`tests/integration/network_security_tests.rs`, `custom_transport` module): curl/wget end-to-end through a mock transport, allowlist still enforced ahead of the transport, `Denied`→7 / `Timeout`→28 / `TooLarge`→63 / `Transport`→1 exit codes.
 
