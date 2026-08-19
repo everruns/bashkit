@@ -171,6 +171,16 @@ node --test "crates/bashkit-wasm/__test__/*.test.mjs"                # verify
 `--target web` output is a bundler-agnostic ES module; the consumer calls
 `initBashkit()` once before constructing `Bash`.
 
+`wasm-opt` is optional locally but required in CI, where it comes from a pinned
+binaryen release via `scripts/install-binaryen-ci.sh` (version + SHA-256 in the
+script, `BINARYEN_VERSION` in `ci.yml` and `publish-wasm.yml`). It is not
+installed from `apt`: `apt-get update` has no overall timeout, and on 2026-08-18
+a stalled Ubuntu mirror blocked the `wasm-web` job until GitHub's 6h hard limit
+cancelled it, turning `main` red with nothing actually broken. Pinning the
+archive also keeps CI's `wasm-opt` off unverified mirror content, matching the
+posture of `scripts/install-ripgrep-ci.sh`. Bump the version and all four
+platform digests together.
+
 ## Versioning & publish
 
 Version tracks the workspace `Cargo.toml` (currently synced by the release

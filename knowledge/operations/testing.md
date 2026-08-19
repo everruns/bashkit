@@ -174,6 +174,26 @@ Corollary: these steps do not protect against a broken model id. Pin only model
 ids that are current, and re-check them when a model is retired, a retired id
 surfaces as a 404 in an already-green job.
 
+## CI hang and gate invariants
+
+Two rules on `.github/workflows/ci.yml`, both enforced by
+`scripts/tests/test_release_workflow.py` (run in the `Lint` job under
+`Test repo scripts`):
+
+1. **Every job sets `timeout-minutes`.** Without one, GitHub's 6h job limit is
+   the only bound, so a hung step burns a runner for six hours and reports
+   `cancelled`. Budget roughly 2-3x the job's observed green run time.
+2. **The `Check` gate `needs` every other job and tests every result.** `Check`
+   is the branch-protection status, so a job missing from that list is a job
+   nobody is gating on. On 2026-08-18 `wasm` and `wasm-web` were absent, and a
+   `wasm-web` job cancelled at the 6h limit left the run red while `Check`
+   reported success minutes earlier.
+
+Corollary for CI tool installs: prefer a pinned, digest-verified download with a
+bounded timeout over `apt-get`, which has no overall timeout and stalls
+indefinitely on a bad mirror. See `scripts/install-binaryen-ci.sh` and
+`scripts/install-ripgrep-ci.sh`.
+
 ## Adding New Tests
 
 1. Create or edit `.test.sh` file in appropriate category, standard format

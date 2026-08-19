@@ -22,6 +22,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   WASM_BINDGEN_VERSION: "0.2.126"
+  BINARYEN_VERSION: "123"
 
 jobs:
   verify-source:
@@ -58,8 +59,10 @@ jobs:
       - name: Install wasm-bindgen-cli
         run: cargo install wasm-bindgen-cli --version "$WASM_BINDGEN_VERSION" --locked
 
+      # Pinned release rather than `apt-get`: an Ubuntu mirror stall once hung
+      # this step for 6h until GitHub cancelled the job. See the script header.
       - name: Install binaryen (wasm-opt)
-        run: sudo apt-get update && sudo apt-get install -y binaryen
+        run: scripts/install-binaryen-ci.sh "$BINARYEN_VERSION"
 
       - name: Build wasm bundle
         run: bash crates/bashkit-wasm/scripts/build.sh release
