@@ -6,7 +6,7 @@
 
 use std::ffi::{OsStr, OsString};
 
-#[cfg(any(unix, target_os = "wasi"))]
+#[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
 
 #[derive(Debug)]
@@ -37,8 +37,11 @@ pub trait UError: std::error::Error {}
 
 #[cfg_attr(any(unix, target_os = "wasi"), expect(clippy::unnecessary_wraps))]
 pub fn os_str_as_bytes(os_string: &OsStr) -> Result<&[u8], NonUtf8OsStrError> {
-    #[cfg(any(unix, target_os = "wasi"))]
+    #[cfg(unix)]
     return Ok(os_string.as_bytes());
+
+    #[cfg(target_os = "wasi")]
+    return Ok(os_string.as_encoded_bytes());
 
     #[cfg(not(any(unix, target_os = "wasi")))]
     os_string
