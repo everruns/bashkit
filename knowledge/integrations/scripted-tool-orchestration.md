@@ -225,3 +225,8 @@ Unit tests in the module cover builder configuration, help/discover introspectio
 ## Security
 
 Inherits all bashkit sandbox guarantees: virtual filesystem (no host access), resource limits, no network unless explicitly configured. `ScriptedTool` further uses a disabled filesystem backend and a reduced builtin surface so scripts cannot use VFS storage or path-based script execution. Sub-tool callback implementations control their own security boundaries.
+
+## See also
+
+- [Scripted Tool Extraction](scripted-tool-extraction.md) — plan to move this layer into a separate `bashkit-tools` crate.
+- [Tool Contract](tool-contract.md) — the shared toolkit-library contract these builders implement.
