@@ -138,6 +138,18 @@ default = ["bash_tool"]
 # embeddable `Bash` interpreter and drop the `tower` / `futures-core` deps.
 # Usage: cargo build --no-default-features [--features <others>]
 bash_tool = ["dep:tower", "dep:futures-core"]
+# Route getrandom at JS (`crypto.getRandomValues`) on wasm32-unknown-unknown.
+# Needed by JS hosts (browsers, workers, Node); must stay off for non-JS wasm
+# embedders, which supply their own getrandom backend via
+# `--cfg getrandom_backend="custom"`.
+# Usage: cargo build --target wasm32-unknown-unknown --features wasm_js
+wasm_js = [
+    "getrandom/wasm_js",
+    "chrono/wasmbind",
+    "dep:web-time",
+    "dep:gloo-timers",
+    "dep:send_wrapper",
+]
 # Enable jq builtin via embedded jaq interpreter
 # Usage: cargo build --features jq
 jq = ["dep:jaq-core", "dep:jaq-std", "dep:jaq-json", "dep:serde_yaml_ng"]
@@ -293,14 +305,19 @@ required-features = ["sqlite"]
 tokio = { version = "1", features = ["rt-multi-thread", "fs"] }
 
 # std::time::{Instant,SystemTime} panic on wasm32-unknown-unknown; see
-# time_compat.rs. Only pulled in for wasm32 — everywhere else time_compat
+# time_compat/mod.rs. Only pulled in for wasm32 — everywhere else time_compat
 # re-exports std::time directly with zero overhead.
+#
+# These three are JS-backed (wasm-bindgen imports), so they are optional and
+# pulled in by `wasm_js`. A non-JS wasm embedder gets time_compat::host_clock
+# instead and links none of them: their imports would be unresolvable in a
+# runtime with no JS engine.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-web-time = { workspace = true }
+web-time = { workspace = true, optional = true }
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
-gloo-timers = { version = "0.4", features = ["futures"] }
-send_wrapper = { version = "0.6", features = ["futures"] }
+gloo-timers = { version = "0.4", features = ["futures"], optional = true }
+send_wrapper = { version = "0.6", features = ["futures"], optional = true }
 
 # Vendored uucore modules (e.g. generated/format/human.rs) carry upstream
 # `#[cfg(feature = "i18n-decimal")]` gates. bashkit has no i18n surface —

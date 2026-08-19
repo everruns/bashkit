@@ -418,7 +418,7 @@ impl GitClient {
         }
 
         // Generate a commit hash (simplified - just use timestamp + random)
-        let timestamp = chrono::Utc::now().timestamp();
+        let timestamp = crate::time_compat::now_utc().timestamp();
         let hash = format!("{:08x}", timestamp as u32 ^ 0xdeadbeef);
 
         // Load existing commits

@@ -33,6 +33,8 @@ crate-type = ["cdylib", "rlib"]
 bashkit = { path = "../bashkit", default-features = false, features = [
     "scripted_tool",
     "jq",
+    # JS host: getrandom goes through crypto.getRandomValues.
+    "wasm_js",
 ] }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
@@ -46,9 +48,10 @@ send_wrapper = { version = "0.6", features = ["futures"] }
 # unify with `bashkit::time_compat::SystemTime` on wasm32.
 web-time = { workspace = true }
 console_error_panic_hook = "0.1"
-# getrandom's browser backend (matches the workspace pin). Enables `wasm_js`
-# so the credential-placeholder RNG links on wasm32-unknown-unknown.
-getrandom = { workspace = true }
+# getrandom's browser backend (matches the workspace pin). `wasm_js` here and
+# on the bashkit dep above is what makes the credential-placeholder RNG link on
+# wasm32-unknown-unknown.
+getrandom = { workspace = true, features = ["wasm_js"] }
 
 [package.metadata.wasm-pack.profile.release]
 # Keep the shipped .wasm small; the interpreter is large.

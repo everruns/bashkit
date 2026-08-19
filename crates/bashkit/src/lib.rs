@@ -1178,7 +1178,7 @@ impl Bash {
         // Record history entry for each line of the script
         if let Ok(ref exec_result) = result {
             let cwd = self.interpreter.cwd().to_string_lossy().to_string();
-            let timestamp = chrono::Utc::now().timestamp();
+            let timestamp = crate::time_compat::now_utc().timestamp();
             for line in script.lines() {
                 let trimmed = line.trim();
                 if !trimmed.is_empty() && !trimmed.starts_with('#') {

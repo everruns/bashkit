@@ -39,3 +39,7 @@ node_modules/
 
 # Pyodide / Emscripten cross-build environment (downloaded by `pyodide xbuildenv`)
 .pyodide-xbuildenv/
+
+# Nested example workspaces
+/examples/hyperlight/target/
+/examples/hyperlight/host/target/

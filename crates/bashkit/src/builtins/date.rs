@@ -139,12 +139,13 @@ impl Date {
         if let Some(t) = self.fixed_epoch {
             return t;
         }
+        let now = crate::time_compat::now_utc;
         if self.offset_seconds == 0 {
-            return Utc::now();
+            return now();
         }
-        Utc::now()
+        now()
             .checked_add_signed(chrono::Duration::seconds(self.offset_seconds))
-            .unwrap_or_else(Utc::now)
+            .unwrap_or_else(now)
     }
 }
 
