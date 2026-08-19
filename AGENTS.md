@@ -147,6 +147,10 @@ criteria live in `knowledge/operations/testing.md`.
   `.github/workflows/*` so CI can't be broken by a same-day rustc release)
 - `cargo fmt` and `cargo clippy -- -D warnings`
 - License checks: `cargo deny check` (see `deny.toml`)
+- `.cargo/config.toml` opts into `-Zembed-metadata=no` (smaller `target/`,
+  ~12% on `cargo +nightly build -p bashkit`). Nightly-only experiment, no-op on
+  stable; each nightly warns `unused config key` about the other flag spelling
+  (Cargo renamed it). Details in the file header
 
 ### Stderr from builtins must not leak internal Debug shapes
 

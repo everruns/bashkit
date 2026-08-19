@@ -1,0 +1,22 @@
+# Opt in to `-Zembed-metadata=no` (Cargo team experiment, nightly-only):
+# rustc stops copying crate metadata into `.rlib` files, where it duplicates the
+# `.rmeta` Cargo already emits for pipelined compilation. Shrinks `target/`.
+# https://blog.rust-lang.org/inside-rust/2026/08/18/reducing-target-dir-size-on-nightly/
+#
+# Measured here: `cargo +nightly build -p bashkit` (dev profile) 951 MiB -> 841 MiB, -11.6%.
+#
+# Notes:
+# - No-op on stable. `rust-toolchain.toml` pins 1.95.0, and stable Cargo ignores
+#   `[unstable]` silently, so the default build is unaffected. The saving lands on
+#   the nightly jobs (fuzz.yml, ci.yml fuzz-check, python.yml Pyodide wheel) and on
+#   anyone building with `+nightly` locally.
+# - Two spellings on purpose: Cargo renamed the flag. `no-embed-metadata` is what
+#   the pinned `nightly-2026-05-29` (Cargo 1.98) understands; `embed-metadata` is
+#   the current name (Cargo 1.100+). Each Cargo warns `unused config key` about the
+#   other spelling; drop `no-embed-metadata` once RUST_NIGHTLY moves past the rename.
+# - Safe for this repo: the caveat is manual `.rlib` linking, which needs the
+#   matching `.rmeta` passed via `--extern`. Nothing here links rlibs by hand.
+# - Opt out with `CARGO_UNSTABLE_EMBED_METADATA=true` (or `-Zembed-metadata=yes`).
+[unstable]
+embed-metadata = false
+no-embed-metadata = true
