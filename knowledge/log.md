@@ -1,5 +1,12 @@
 # Bashkit Knowledge Update Log
 
+## 2026-08-19
+
+* **Contract**: Binary size is now a tracked budget with a recorded baseline, not something noticed after a release. [Binary Size](operations/binary-size.md) holds the budget (34 MB for the stripped x86_64 CLI), the measured composition, and — the part worth keeping — the levers already rejected and why, so a future pass does not re-propose `panic = "abort"` (it breaks the `catch_unwind` containment the interpreter depends on) or `opt-level = "z"` (it deoptimises exactly the interpreter hot paths bashkit is benchmarked on). Measurement is `just bsize` / `just bsize-check` over [cargo-bsize](https://github.com/Boshen/cargo-bsize); [Maintenance](operations/maintenance.md) § Binary Size makes recording a measurement part of every pre-release pass.
+* **Decision**: `turso_core` moved to `default-features = false`, dropping `encryption`. The sqlite builtin never sets a key and the database lives in the in-memory VFS, so page-level ciphers protect nothing. The recovered size is small (~18 KB) because `aegis` and `aes-gcm` are unconditional turso dependencies whose C objects link regardless — that residue is recorded as an upstream blocker rather than re-investigated. Recorded in [SQLite Builtin](runtimes/sqlite-builtin.md).
+* **Constraint**: turso 0.8.0-pre.4 does not build without its `fs` feature — the no-`fs` path drops `Database::open_file_with_flags` while `vdbe/vacuum.rs`, `vdbe/execute.rs`, `database.rs`, and `connection.rs` still call it. Bashkit never uses turso's host-filesystem `IO` backends, so dropping `fs` would remove a host-filesystem path from the sandbox as well as code; re-test it on every turso bump.
+* **Measurement**: the embedded SQL engine is ~21% of the shipped CLI and the embedded Python interpreter ~9%, and `sqlite` is a `bashkit-cli` default feature while the library keeps it off by default. Recorded in [Binary Size](operations/binary-size.md) so the trade-off is a product decision made against a number.
+
 ## 2026-08-13
 
 * **Security**: The fuzz workspace lockfile (`crates/bashkit/fuzz/Cargo.lock`) had drifted onto `anyhow` 1.0.102 (RUSTSEC-2026-0190, unsound `Error::downcast_mut()`, patched in 1.0.103) plus yanked `js-sys` 0.3.88 and `wasm-bindgen` 0.2.111. Refreshed to clear all three. Fuzz-only build dependencies, never shipped in the library, so exposure was limited to the nightly fuzz runners.

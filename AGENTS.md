@@ -42,6 +42,7 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 | runtimes/python-builtin | Embedded Python via Monty, security, resource limits |
 | operations/eval | LLM eval study on the mira framework, dataset format, scoring |
 | operations/maintenance | Pre-release maintenance requirements |
+| operations/binary-size | Binary size budget, cargo-bsize measurement, adopted/rejected size levers |
 | runtimes/python-package | Python package, PyPI wheels, platform matrix |
 | integrations/scripted-tool-orchestration | Compose ToolDef+callback pairs into OrchestratorTool via bash scripts |
 | integrations/ssh-support | Sandboxed SSH/SCP/SFTP operations |

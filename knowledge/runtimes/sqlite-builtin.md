@@ -43,6 +43,29 @@ no public guarantee of file-format stability across turso releases. Feature
 is opt-in at the cargo level **and** at runtime via
 `BASHKIT_ALLOW_INPROCESS_SQLITE`.
 
+### Cargo features
+
+`turso_core` is declared with `default-features = false` in the workspace
+`Cargo.toml`, re-enabling only `fs`, `json`, `uuid`, `time`, `series`, and
+`percentile`.
+
+- `encryption` is dropped. It is page-level cipher support the builtin never
+  reaches: no key is ever set, and the database lives in the in-memory VFS, so
+  encrypting it protects nothing. With the feature off, `encrypt_page` /
+  `decrypt_page` return a clear error instead of linking the cipher paths.
+- `fs` is kept **only because turso does not build without it**. Its no-`fs`
+  path drops `Database::open_file_with_flags`, which `vdbe/vacuum.rs`,
+  `vdbe/execute.rs`, `database.rs`, and `connection.rs` (ATTACH) still call
+  unconditionally (upstream bug, 0.8.0-pre.4). Bashkit
+  never uses turso's host-filesystem `IO` backends — the engine always runs on
+  `MemoryIO` or `BashkitVfsIO` — so **re-test dropping `fs` on every turso
+  bump**: it removes a host-filesystem path from the sandbox as well as code.
+
+Turso is the largest single contributor to the shipped binary at roughly 21%;
+see [Binary Size](../operations/binary-size.md) for the accounting and for the
+cipher code that stays linked regardless (`aegis` / `aes-gcm` are unconditional
+turso dependencies).
+
 ## Architecture
 
 Layers: `Sqlite` (Builtin impl, args + opt-in gate) → `parser` (;-aware,
@@ -278,3 +301,4 @@ against the VFS; needs `FsBackend::pread`); encryption key management
 - [Builtin Commands](../foundations/builtins.md), builtin trait and dispatch
 - [Threat Model](../security/threat-model.md), TM-SQL threats and their mitigations
 - [Performance Results](../operations/performance-results.md), where `just bench-sqlite` results are kept
+- [Binary Size](../operations/binary-size.md), where turso's ~21% share of the binary is accounted for

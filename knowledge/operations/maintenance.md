@@ -162,6 +162,36 @@ Deliberately not covered, and why:
 - No orphaned TODOs in specs that are now resolved
 - New features have spec entries
 
+### Binary Size
+
+See [Binary Size](binary-size.md) for the budget, the measured baseline, and the
+levers already adopted or rejected.
+
+- `just bsize-check` reports the stripped release binary; it must be within the
+  budget recorded in [Binary Size](binary-size.md) (currently 34 MB for the
+  x86_64-unknown-linux-gnu CLI).
+- If it is over, run `just bsize` (cargo-bsize) and attribute the growth:
+  - **By crate, where the code is defined** names the crates that grew. A new
+    crate near the top that no feature flag guards is the usual cause.
+  - `just bsize --baseline=<path-to-previous-release-binary>` diffs directly
+    against the last release's artifact when one is available.
+  - Ignore the **Features** table for attribution: it resolves the whole
+    workspace graph (`pyo3`, `napi`, `tokio/test-util` show up there and are not
+    in the CLI).
+- Record the new measurement as a row in [Binary Size](binary-size.md) §
+  Measured baseline, whether it grew or shrank. The table is the history; a pass
+  that measures and does not record has not run this check.
+- Growth that is accepted rather than fixed needs a one-line justification in
+  the same document, next to the row.
+- Re-check the two upstream blockers on every dependency bump that touches them,
+  they are the largest recoverable amounts and both are one upstream release
+  away: turso's unconditional `aegis`/`aes-gcm` dependencies, and `monty`'s
+  `fancy-regex` 0.17 pin duplicating bashkit's 0.19.
+- Confirm no new always-on dependency has been added. A dependency that serves
+  one builtin belongs behind a feature flag, this is the same requirement the
+  dependency-tree analysis above states, and binary size is where violating it
+  shows up.
+
 ### Coreutils Argument-Surface and Module-Vendor Drift
 
 See [Coreutils Argument Port](../runtimes/coreutils-args-port.md).
@@ -281,8 +311,8 @@ propagation helper).
 
 ## Automation
 
-Sections dependencies, tests, examples, code quality, and nightly CI are fully
-automatable. Security, documentation, specs, simplification, and agent config
+Sections dependencies, tests, examples, binary size, code quality, and nightly
+CI are fully automatable. Security, documentation, specs, simplification, and agent config
 require human or agent review.
 
 CI health check enforced by `just check-nightly` (nightly + fuzz) and manual
@@ -295,5 +325,6 @@ Use `/maintain` skill to execute this checklist interactively.
 ## References
 
 - [Release Process](release-process.md), release workflow
+- [Binary Size](binary-size.md), size budget, measurement, and adopted/rejected levers
 - [Known Limitations](limitations.md), negative spec (intentional gaps, partial features)
 - [Threat Model](../security/threat-model.md), threat model

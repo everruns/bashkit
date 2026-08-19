@@ -114,7 +114,31 @@ tower = { version = "0.5", features = ["util"] }
 russh = "0.62"
 # Embedded SQLite engine (Turso, pure Rust). Upstream is BETA — gated behind
 # the `sqlite` feature and disabled by default; see knowledge/runtimes/sqlite-builtin.md.
-turso_core = "0.8.0-pre.1"
+# Important decision (binary size): opt out of turso's default feature set and
+# re-enable only what the sqlite builtin actually exposes. `encryption` is
+# page-level cipher support (AES-GCM plus the whole AEGIS 128L/256/x2/x4
+# aesni/avx2/avx512/soft matrix, ~1.5 MiB of code and constants). The builtin
+# never sets a key and the database lives in the in-memory VFS, so encrypting
+# it buys nothing; with the feature off `encrypt_page`/`decrypt_page` return a
+# clear error instead of linking the cipher matrix.
+#
+# `fs` is kept only because turso does not build without it: its no-`fs` path
+# drops `Database::open_file_with_flags`, which `vdbe/vacuum.rs`,
+# `vdbe/execute.rs`, `database.rs`, and `connection.rs` (ATTACH) still call
+# unconditionally (upstream bug, 0.8.0-pre.4). Bashkit
+# never uses turso's host-filesystem `IO` backends — the engine always runs on
+# `MemoryIO` or `BashkitVfsIO` (crates/bashkit/src/builtins/sqlite/) — so
+# re-check this on every turso bump; dropping `fs` is both a size win and one
+# less host-filesystem path linked into the sandbox.
+# Kept: json, uuid, time, series, percentile — user-visible SQL functions.
+turso_core = { version = "0.8.0-pre.1", default-features = false, features = [
+    "fs",
+    "json",
+    "uuid",
+    "time",
+    "series",
+    "percentile",
+] }
 
 # Serial test execution
 serial_test = "4"

@@ -247,6 +247,28 @@ bench-sqlite:
     ./scripts/bench-sqlite.sh
     pnpm --dir site run data:performance
 
+# === Binary size ===
+
+# Auto-install cargo-bsize if missing (idempotent). Internal helper.
+_ensure-bsize:
+    @command -v cargo-bsize >/dev/null 2>&1 || cargo install cargo-bsize --locked
+
+# First run is a full release build with debug info (~12 min, several GB in
+# target/bsize); reruns off that cache take seconds. See
+# knowledge/operations/binary-size.md.
+# Report what the release `bashkit` binary is made of (cargo-bsize)
+bsize *ARGS: _ensure-bsize
+    cargo bsize --bin bashkit {{ARGS}}
+
+# The budget in knowledge/operations/binary-size.md is stated against this number.
+# Print the stripped size of the shipped release binary
+bsize-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build --release -p bashkit-cli
+    bytes=$(stat -c%s target/release/bashkit 2>/dev/null || stat -f%z target/release/bashkit)
+    printf 'bashkit (release, stripped): %s bytes (%.2f MiB)\n' "$bytes" "$(echo "$bytes/1048576" | bc -l)"
+
 # === Eval (mira study) ===
 # Evals run on the mira framework (github.com/everruns/mira). The crate is a
 # study binary the `mira` host CLI spawns over stdio; mira owns the model
