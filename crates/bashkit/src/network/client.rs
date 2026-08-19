@@ -750,13 +750,18 @@ impl HttpClient {
     }
 }
 
-/// Install the rustls `ring` crypto provider as the process-wide default.
+/// Install the selected rustls crypto provider as the process-wide default.
 ///
-/// We pair reqwest's `rustls-no-provider` feature with an explicit `ring`
-/// install so the dep tree contains zero C-compiled crypto (no aws-lc-sys).
-/// That keeps cross-compiled wheel builds (notably aarch64 manylinux, where
-/// the cross sysroot is missing `AT_HWCAP2`) green and removes a class of
-/// toolchain-specific build failures.
+/// We pair reqwest's `rustls-no-provider` feature with an explicit provider
+/// install so the backend is bashkit's choice, not a transitive one. The
+/// backend comes from the `ring` (default) / `aws-lc-rs` features; `ring` wins
+/// when both are enabled, so feature unification can never leave two providers
+/// racing for the default slot.
+///
+/// The `ring` default keeps the dep tree free of C-compiled crypto (no
+/// aws-lc-sys). That keeps cross-compiled wheel builds (notably aarch64
+/// manylinux, where the cross sysroot is missing `AT_HWCAP2`) green and removes
+/// a class of toolchain-specific build failures.
 ///
 /// Idempotent: safe to call from multiple call sites and across crates.
 /// `install_default` errors if a provider is already installed (e.g. set by
@@ -766,7 +771,10 @@ fn install_default_crypto_provider() {
     use std::sync::Once;
     static INIT: Once = Once::new();
     INIT.call_once(|| {
+        #[cfg(feature = "ring")]
         let _ = rustls::crypto::ring::default_provider().install_default();
+        #[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     });
 }
 
@@ -988,18 +996,22 @@ mod tests {
     }
 
     #[test]
-    fn test_build_client_installs_ring_crypto_provider() {
+    fn test_build_client_installs_crypto_provider() {
         // Regression: with reqwest's `rustls-no-provider` feature, rustls panics
         // on first TLS handshake unless a default crypto provider is installed.
-        // build_client must install the ring provider via the `Once` guard so
-        // every code path (default client + per-request timeout client) is safe.
-        // The dep tree must NOT include aws-lc-sys/aws-lc-rs (verified by
-        // `cargo tree -i aws-lc-sys` returning no match).
+        // build_client must install the selected provider via the `Once` guard
+        // so every code path (default client + per-request timeout client) is
+        // safe. On the default (`ring`) backend the dep tree must NOT include
+        // aws-lc-sys/aws-lc-rs (verified by `cargo tree -i aws-lc-sys`
+        // returning no match).
         let _ = build_client(Duration::from_secs(30), None, true);
         // A provider is now installed process-wide. `install_default` returns
         // Err on the second call — that's our invariant: the first install
         // succeeded.
+        #[cfg(feature = "ring")]
         let second_install = rustls::crypto::ring::default_provider().install_default();
+        #[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
+        let second_install = rustls::crypto::aws_lc_rs::default_provider().install_default();
         assert!(
             second_install.is_err(),
             "build_client must install a default crypto provider before \

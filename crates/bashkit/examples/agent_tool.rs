@@ -264,7 +264,10 @@ impl Agent {
 async fn main() -> anyhow::Result<()> {
     // reqwest is built with `rustls-no-provider`, so a CryptoProvider must be
     // installed process-wide before `reqwest::Client::new()` is called.
+    #[cfg(feature = "ring")]
     let _ = rustls::crypto::ring::default_provider().install_default();
+    #[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     println!("=== Bashkit LLM Agent Example ===\n");
 

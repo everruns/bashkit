@@ -22,8 +22,16 @@ cargo add bashkit --features realfs
 cargo add bashkit --features scripted_tool
 ```
 
-`http_client` enables `curl`/`wget` and the network allowlist. `python`
-embeds the [Monty](https://github.com/pydantic/monty) interpreter, see the
+`http_client` enables `curl`/`wget` and the network allowlist; it uses rustls
+and needs a crypto backend, `ring` (enabled by default) or `aws-lc-rs`. With
+`--no-default-features`, name one explicitly:
+
+```bash
+cargo add bashkit --no-default-features --features http_client,ring
+cargo add bashkit --no-default-features --features http_client,aws-lc-rs
+```
+
+`python` embeds the [Monty](https://github.com/pydantic/monty) interpreter, see the
 [Python builtin](../crates/bashkit/docs/python.md) guide to run Python inside the shell, and [Get
 started in Python](start-python.md) to embed Bashkit *in* a Python app.
 
