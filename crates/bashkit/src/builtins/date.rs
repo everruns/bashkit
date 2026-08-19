@@ -621,9 +621,9 @@ mod tests {
     fn date_offset_seconds_shifts_real_clock() {
         let offset: i64 = 365 * 24 * 60 * 60; // +1 year
         let d = Date::with_offset_seconds(offset);
-        let before = Utc::now();
+        let before = Utc::now(); // std-time-ok: test-only, runs natively
         let observed = d.now();
-        let after = Utc::now();
+        let after = Utc::now(); // std-time-ok: test-only, runs natively
         let expected_low = before + chrono::Duration::seconds(offset);
         let expected_high = after + chrono::Duration::seconds(offset);
         assert!(
@@ -649,9 +649,9 @@ mod tests {
     #[test]
     fn date_zero_offset_uses_real_clock() {
         let d = Date::with_offset_seconds(0);
-        let before = Utc::now();
+        let before = Utc::now(); // std-time-ok: test-only, runs natively
         let observed = d.now();
-        let after = Utc::now();
+        let after = Utc::now(); // std-time-ok: test-only, runs natively
         assert!(observed >= before && observed <= after);
     }
 

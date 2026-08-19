@@ -28,6 +28,11 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// The shim itself — `src/time_compat/` — is what everything else goes through.
+fn is_time_compat(file: &Path) -> bool {
+    file.components().any(|c| c.as_os_str() == "time_compat")
+}
+
 /// Everything except the shim itself must use `crate::time_compat` for
 /// `Instant` / `SystemTime` / `UNIX_EPOCH`.
 #[test]
@@ -35,13 +40,13 @@ fn std_time_clock_types_only_used_via_time_compat() {
     let mut files = Vec::new();
     rust_files(&src_dir(), &mut files);
     assert!(
-        files.iter().any(|f| f.ends_with("time_compat.rs")),
-        "expected src/time_compat.rs to exist"
+        files.iter().any(|f| f.ends_with("time_compat/mod.rs")),
+        "expected src/time_compat/mod.rs to exist"
     );
 
     let mut violations = Vec::new();
     for file in &files {
-        if file.ends_with("time_compat.rs") {
+        if is_time_compat(file) {
             continue;
         }
         let content = std::fs::read_to_string(file)
@@ -77,6 +82,43 @@ fn std_time_clock_types_only_used_via_time_compat() {
         "std::time::{{Instant, SystemTime, UNIX_EPOCH}} panic on \
          wasm32-unknown-unknown; use crate::time_compat instead (or mark the \
          line `// std-time-ok: <reason>` if it can never be compiled for wasm32):\n{}",
+        violations.join("\n")
+    );
+}
+
+/// `chrono::Utc::now()` reads the clock through `std::time::SystemTime` (which
+/// panics on wasm32-unknown-unknown) or, with chrono's `wasmbind` feature,
+/// through the JS `Date` (which a non-JS wasm host cannot resolve). bashkit
+/// builds chrono without `wasmbind`, so the clock must come from
+/// `time_compat::now_utc()`.
+#[test]
+fn chrono_clock_only_read_via_time_compat() {
+    let mut files = Vec::new();
+    rust_files(&src_dir(), &mut files);
+
+    let mut violations = Vec::new();
+    for file in &files {
+        if is_time_compat(file) {
+            continue;
+        }
+        let content = std::fs::read_to_string(file)
+            .unwrap_or_else(|e| panic!("read {}: {e}", file.display()));
+        for (idx, line) in content.lines().enumerate() {
+            let code = line.trim_start();
+            if code.starts_with("//") || code.contains("// std-time-ok:") {
+                continue;
+            }
+            if code.contains("Utc::now()") || code.contains("Local::now()") {
+                violations.push(format!("{}:{}: {}", file.display(), idx + 1, code));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "chrono's own clock is unavailable on wasm32; use \
+         crate::time_compat::now_utc() instead (or mark the line \
+         `// std-time-ok: <reason>` if it can never be compiled for wasm32):\n{}",
         violations.join("\n")
     );
 }

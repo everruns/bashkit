@@ -468,7 +468,7 @@ fn parse_touch_timestamp(raw: &str) -> std::result::Result<SystemTime, String> {
     }
 
     let year = match main.len() {
-        8 => Utc::now().year(),
+        8 => crate::time_compat::now_utc().year(),
         10 => {
             let yy = main[0..2]
                 .parse::<i32>()
