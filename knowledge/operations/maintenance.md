@@ -45,6 +45,40 @@ dependency rot, or security gaps ship in a release.
   - No full crates where a sub-crate suffices (e.g. `futures-util` vs `futures`)
   - Duplicate transitive versions reviewed, fix or document why unfixable
 
+#### Automated coverage
+
+`.github/dependabot.yml` drives weekly *version* updates. It is separate from
+Dependabot **alerts** and **security updates**, which run off the repository
+dependency graph and need no config — an ecosystem missing from
+`dependabot.yml` still gets alerts, it just never gets routine freshness bumps,
+so it drifts until the eventual security fix is a multi-major jump.
+
+Covered, one grouped PR per entry per week:
+
+| Ecosystem | Directory |
+|---|---|
+| cargo | `/` (workspace) |
+| cargo | `/crates/bashkit/fuzz` (separate workspace + lockfile) |
+| npm | `/site` |
+| npm | `/crates/bashkit-js` |
+| npm | `/examples`, `/examples/browser`, `/examples/bashkit-pi` |
+| github-actions | `/` |
+
+Deliberately not covered, and why:
+
+- `@everruns/*` is ignored in every npm entry. Those are this repo's own
+  published packages, pinned to the workspace version by the release process
+  ([Release Process](release-process.md)); dependabot moving them independently
+  races that process.
+- `crates/bashkit-wasm` has a `package.json` with no dependencies and no
+  lockfile, so there is nothing to update.
+- `.deepsec/` is updated by hand during the security pass below
+  (`pnpm update deepsec@latest`), because the scan is run against whatever
+  version the pass pulls, not on dependabot's schedule.
+- Python: `crates/bashkit-python/pyproject.toml` declares only optional extras
+  with open lower bounds (`>=`) and ships no lockfile, so a pip entry would
+  have nothing to pin.
+
 ### Security
 
 - Threat model ([Threat Model](../security/threat-model.md)) covers all current features
