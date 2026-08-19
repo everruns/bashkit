@@ -1,0 +1,19 @@
+# Host runner for the Hyperlight-Wasm guest experiment.
+#
+# Runs the guest component under plain wasmtime. Hyperlight-Wasm's guest *is*
+# wasmtime (compiled no_std into the micro-VM), so this exercises the same
+# runtime and the same component; only the VM boot is missing, and that needs
+# KVM/WHP hardware.
+[workspace]
+
+[package]
+name = "bashkit-hyperlight-host"
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+wasmtime = { version = "38", default-features = false, features = ["component-model", "cranelift", "runtime", "std"] }
+anyhow = "1"
+getrandom = "0.4"

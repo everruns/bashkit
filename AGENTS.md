@@ -54,6 +54,7 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 | security/http-transport | Pluggable HTTP transport: route curl/wget via host egress boundary |
 | operations/performance-results | Benchmark/eval result locations and `/benches` site aggregation contract |
 | runtimes/emscripten-wheels | Reduced-feature Pyodide/Emscripten Python wheel |
+| runtimes/non-js-wasm | Wasm component with no JS engine and no WASI (Hyperlight micro-VM guest) |
 | runtimes/browser-package | Slim single-threaded wasm package (`@everruns/bashkit-wasm`) for browsers + JS runtimes, no COOP/COEP |
 | runtimes/c-api | Versioned native C ABI, ownership rules, packaging, and compatibility boundaries |
 

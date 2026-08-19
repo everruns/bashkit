@@ -1,0 +1,28 @@
+# Hyperlight-Wasm guest experiment.
+#
+# Own workspace on purpose: the root workspace is `crates/*` and this crate only
+# ever builds for wasm32-unknown-unknown (a cdylib with no JS and no WASI), so
+# it must not be pulled into host-target CI builds.
+[workspace]
+
+[package]
+name = "bashkit-hyperlight-guest"
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+bashkit = { path = "../../crates/bashkit", default-features = false, features = ["jq"] }
+wit-bindgen = "0.51"
+futures-util = { version = "0.3", default-features = false }
+getrandom = "0.4"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+panic = "abort"

@@ -85,7 +85,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       - name: Check bashkit for wasm32-unknown-unknown
-        run: cargo check -p bashkit --target wasm32-unknown-unknown --features scripted_tool,jq
+        run: cargo check -p bashkit --target wasm32-unknown-unknown --features scripted_tool,jq,wasm_js
         env:
           # getrandom needs an explicit JS backend opt-in on this target.
           RUSTFLAGS: --cfg getrandom_backend="wasm_js" -D warnings
@@ -98,6 +98,30 @@ jobs:
         run: cargo check -p bashkit --target wasm32-wasip2 --features scripted_tool,jq
         env:
           RUSTFLAGS: -D warnings
+
+  wasm-component:
+    # The non-JS wasm surface: build bashkit as a component with no JS and no
+    # WASI imports (the shape a Hyperlight micro-VM guest needs) and run a
+    # script through it under wasmtime. See knowledge/runtimes/non-js-wasm.md.
+    # Guards the `wasm_js`-off configuration, which no other job covers: a
+    # stray JS-backed dependency only shows up as an unresolvable import here.
+    name: WASM component (no JS, no WASI)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - name: Install wasm-tools
+        run: cargo install wasm-tools --version 1.256.0 --locked
+
+      - name: Build component and run a script through it
+        run: ./examples/hyperlight/build-and-run.sh
 
   wasm-web:
     # Build the browser package (@everruns/bashkit-wasm) and run its headless
