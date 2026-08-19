@@ -368,6 +368,26 @@ jobs:
           TICKET_REF: 194b71a8bbc3771da1ce9f579395937c976bbddc
         run: bash examples/ticket-cli.sh
 
+      # examples/browser ships its own suite: unit tests for the browser-local
+      # helper, plus a reproducibility guard asserting every dependency is
+      # pinned to an exact version alongside a committed lockfile.
+      #
+      # Important decision: it runs here rather than in js.yml. The suite is
+      # plain `node --test` with no install step (its fakes replace the wasm
+      # package), so it costs ~1s, while js.yml both builds the napi binding
+      # and filters on paths that exclude examples/browser — the guard would
+      # not fire on the package.json edits it exists to catch. Nothing ran this
+      # suite before, which is how `vite` drifted to a caret range unnoticed
+      # and stayed there across a two-major bump.
+      - name: Run browser example tests
+        working-directory: examples/browser
+        # `node --test` exits 0 when its argument matches no file, so a renamed
+        # or moved suite would report green having run nothing. Assert the
+        # files exist first.
+        run: |
+          ls *.test.js
+          node --test *.test.js
+
       # Detect whether DOPPLER_TOKEN is configured. Only set on push to
       # main (trusted code); PRs — including same-repo branches — must
       # never see the secret. Subsequent Doppler steps gate on
