@@ -45,6 +45,9 @@ jobs:
     name: Build web bundle
     needs: verify-source
     runs-on: ubuntu-latest
+    # Same reasoning as ci.yml's wasm-web job: a stalled install must not hold
+    # a release for six hours before anyone sees it.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -58,8 +61,10 @@ jobs:
       - name: Install wasm-bindgen-cli
         run: cargo install wasm-bindgen-cli --version "$WASM_BINDGEN_VERSION" --locked
 
+      # Pinned + checksummed, because this job's output is what ships to npm.
+      # See scripts/install-binaryen.sh.
       - name: Install binaryen (wasm-opt)
-        run: sudo apt-get update && sudo apt-get install -y binaryen
+        run: sudo ./scripts/install-binaryen.sh
 
       - name: Build wasm bundle
         run: bash crates/bashkit-wasm/scripts/build.sh release

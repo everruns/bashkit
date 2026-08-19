@@ -9,6 +9,10 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
+# Single source of truth for the pinned wasm-opt install, shared by CI and the
+# release workflow. See the script's header for why apt is not used.
+INSTALLER = "scripts/install-binaryen.sh"
+
 
 class ReleaseWorkflowTests(unittest.TestCase):
     def test_release_dispatches_every_publish_workflow(self) -> None:
@@ -64,7 +68,64 @@ class ReleaseWorkflowTests(unittest.TestCase):
         ):
             self.assertIn(stable_feature, build_script)
         self.assertNotIn("--all-features", build_script)
-        self.assertIn("apt-get install -y binaryen", ci_workflow)
+
+        # CI must install wasm-opt the same way the release does, so the -Oz
+        # pass that ships to npm is the one CI exercises. Both go through
+        # scripts/install-binaryen.sh rather than each carrying its own copy
+        # of an install command that can drift apart.
+        publish_workflow = (ROOT / ".github/workflows/publish-wasm.yml").read_text()
+        self.assertIn(INSTALLER, ci_workflow)
+        self.assertIn(INSTALLER, publish_workflow)
+
+    def test_binaryen_install_is_pinned_and_bounded(self) -> None:
+        """`apt-get install binaryen` stalled indefinitely on two separate main
+        runs (32170059933, 32218864077). With no step timeout each burned the
+        6-hour job ceiling and took the whole run down as `cancelled`, so main
+        went red twice for a mirror problem unrelated to any diff. Guard the
+        three properties that fix has to keep."""
+        installer = (ROOT / INSTALLER).read_text()
+
+        # No apt: that is the mechanism that hung. The step may still be
+        # *named* "Install binaryen"; what must not come back is installing it
+        # through a package manager.
+        for workflow in ("ci.yml", "publish-wasm.yml"):
+            contents = (ROOT / ".github/workflows" / workflow).read_text()
+            offenders = [
+                line
+                for line in contents.splitlines()
+                if "binaryen" in line and ("apt-get" in line or "apt " in line)
+            ]
+            with self.subTest(workflow=workflow):
+                self.assertEqual(offenders, [], f"{workflow} installs binaryen via apt")
+
+        # Bounded: a stalled download must fail in minutes, not hours.
+        self.assertIn("--max-time", installer)
+        self.assertIn("--connect-timeout", installer)
+
+        # Pinned version + checksum. The version keeps `-Oz` output
+        # reproducible instead of tracking the runner image's Ubuntu; the
+        # checksum is the only integrity check available, since binaryen
+        # publishes no signature or checksum file for its release assets.
+        self.assertRegex(installer, r'BINARYEN_VERSION:?="?\$\{BINARYEN_VERSION:-\d+\}')
+        self.assertRegex(installer, r"BINARYEN_SHA256.*[0-9a-f]{64}")
+        self.assertIn("sha256sum -c", installer)
+
+    def test_wasm_build_jobs_cannot_hang_past_the_job_ceiling(self) -> None:
+        """A job with no `timeout-minutes` inherits GitHub's 6-hour ceiling, so
+        a stuck step wastes a runner for six hours and reports `cancelled`
+        rather than a re-runnable failure. Both jobs that build the wasm bundle
+        must bound themselves."""
+        for workflow, job in (
+            (".github/workflows/ci.yml", "wasm-web"),
+            (".github/workflows/publish-wasm.yml", "build-wasm"),
+        ):
+            contents = (ROOT / workflow).read_text()
+            with self.subTest(workflow=workflow, job=job):
+                block = contents.split(f"\n  {job}:\n", 1)
+                self.assertEqual(len(block), 2, f"job {job} not found in {workflow}")
+                # Only the job's own header, up to its `steps:` key.
+                header = block[1].split("\n    steps:", 1)[0]
+                self.assertRegex(header, r"timeout-minutes: \d+")
 
 
 if __name__ == "__main__":

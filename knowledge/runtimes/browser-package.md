@@ -164,9 +164,25 @@ core already gates off under `cfg(target_family = "wasm")` (see
 ```bash
 rustup target add wasm32-unknown-unknown
 cargo install wasm-bindgen-cli
+sudo ./scripts/install-binaryen.sh                       # optional, -Oz pass
 bash crates/bashkit-wasm/scripts/build.sh                          # -> pkg/
 node --test "crates/bashkit-wasm/__test__/*.test.mjs"                # verify
 ```
+
+`wasm-opt` is optional locally — `build.sh` skips the `-Oz` pass when it is not
+on PATH — but both CI (`ci.yml` wasm-web) and the release (`publish-wasm.yml`
+build-wasm) install it through `scripts/install-binaryen.sh`, which pins the
+binaryen version and the archive's SHA-256.
+
+Important decision: that script replaced `apt-get install -y binaryen`. `apt`
+stalled indefinitely on two separate `main` runs and, with no step timeout,
+each burned the 6-hour job ceiling and took the whole run down as `cancelled` —
+`main` went red twice for a mirror problem unrelated to any diff. Both jobs now
+carry `timeout-minutes: 30`, so a future stall fails fast and re-runnable.
+Pinning the version also keeps the `-Oz` output reproducible rather than
+tracking whatever binaryen the runner image's Ubuntu carries, which matters
+because that artifact is what ships to npm. Bump the version and checksum
+together in `scripts/install-binaryen.sh`.
 
 `--target web` output is a bundler-agnostic ES module; the consumer calls
 `initBashkit()` once before constructing `Bash`.
