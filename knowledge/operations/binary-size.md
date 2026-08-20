@@ -142,7 +142,12 @@ re-propose these without new information.
 - **`unicode_names2` tables (666 KiB of constants, 2.1%).** Pulled by `monty`
   for `unicodedata.name()`. Not reachable from a downstream feature flag.
 - **Duplicate `fancy-regex` (0.17 from `monty`, 0.19 from `bashkit`) — 300 KiB
-  for two copies of the same engine.** Resolves when `monty` bumps.
+  for two copies of the same engine.** Not resolved by upgrading `monty`:
+  0.0.19, 0.0.20, and 0.0.21 all declare `fancy-regex ^0.17.0` (checked
+  2026-08-20). It needs `monty` to bump *fancy-regex*, which no published
+  release has done — and monty is held at 0.0.19 anyway for an unrelated
+  security reason, see [Python Builtin](../runtimes/python-builtin.md)
+  § Upgrade blocker.
 
 ## When to Run
 

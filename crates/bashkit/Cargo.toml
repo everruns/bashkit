@@ -112,7 +112,8 @@ os_display = "0.1.3"
 # exact pin; the matching `ignore` entries in .github/dependabot.yml stop the
 # bump PRs from being regenerated.
 #
-# 0.0.21 moves `max_memory` enforcement from host-side accounting to a probe of
+# 0.0.20 (and 0.0.21, which keeps it) moves `max_memory` enforcement from
+# host-side accounting to a probe of
 # the `LIVE_MEMORY`/`BASELINE_MEMORY` globals, which only the separate
 # `monty-alloc` crate writes — and only when installed as the process-wide
 # global allocator. Bashkit is an embeddable library (and bashkit-python is a

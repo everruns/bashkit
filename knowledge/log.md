@@ -1,5 +1,11 @@
 # Bashkit Knowledge Update Log
 
+## 2026-08-20
+
+* **Correction**: the monty upgrade blocker landed in **0.0.20**, not 0.0.21 as `Cargo.toml` and [Python Builtin](runtimes/python-builtin.md) both said. Verified against published sources: `LIVE_MEMORY`/`BASELINE_MEMORY` first appear in `monty-types-0.0.20/src/resource.rs:29-32`. The mis-attribution made 0.0.20 look like a safe intermediate hop off the 0.0.19 pin — it is not; both available upgrades silently stop enforcing the Python sandbox's memory ceiling. There is no safe version to move to.
+* **Correction**: bumping `monty` would **not** collapse the duplicate `fancy-regex` (0.17 via monty, 0.19 via bashkit, ~300 KiB). All three published versions declare `fancy-regex ^0.17.0`; the earlier note in [Binary Size](operations/binary-size.md) claiming it "resolves when monty bumps" was wrong. It needs monty to bump *fancy-regex* specifically.
+* **Constraint**: the `[patch.crates-io] jiter` git pin cannot be retired by upgrading monty either. monty 0.0.20+ moves to `jiter ^0.16.0`, which would remove the need for the patch, but those versions are blocked by the memory-enforcement regression above. The patch stays until monty ships a release that keeps in-process accounting.
+
 ## 2026-08-19
 
 * **Contract**: Binary size is now a tracked budget with a recorded baseline, not something noticed after a release. [Binary Size](operations/binary-size.md) holds the budget (34 MB for the stripped x86_64 CLI), the measured composition, and — the part worth keeping — the levers already rejected and why, so a future pass does not re-propose `panic = "abort"` (it breaks the `catch_unwind` containment the interpreter depends on) or `opt-level = "z"` (it deoptimises exactly the interpreter hot paths bashkit is benchmarked on). Measurement is `just bsize` / `just bsize-check` over [cargo-bsize](https://github.com/Boshen/cargo-bsize); [Maintenance](operations/maintenance.md) § Binary Size makes recording a measurement part of every pre-release pass.

@@ -86,9 +86,13 @@ release / 35 debug) against stack overflow from deeply nested expressions.
 `monty` and `monty-types` are pinned to 0.0.19 and ignored in
 `.github/dependabot.yml`. This is a security hold, not API-churn convenience.
 
-Monty 0.0.21 changed how `max_memory` is enforced:
+Monty **0.0.20** changed how `max_memory` is enforced, and 0.0.21 carries the
+same change. Verified 2026-08-20 against the published sources: the
+`LIVE_MEMORY` / `BASELINE_MEMORY` statics first appear in
+`monty-types-0.0.20/src/resource.rs:29-32`, with the probe at line 413. There is
+**no safe intermediate version** — 0.0.20 is not a stepping stone:
 
-| | 0.0.19 | 0.0.21 |
+| | 0.0.19 | 0.0.20 and 0.0.21 |
 |---|---|---|
 | Enforcement | `LimitedTracker::on_grow` accounts VM heap growth in-process | `probe_memory()` reads the `LIVE_MEMORY` / `BASELINE_MEMORY` statics |
 | Who populates it | the tracker itself | only `monty-alloc`, installed as the **process-wide global allocator** |
