@@ -79,6 +79,26 @@ Deliberately not covered, and why:
   with open lower bounds (`>=`) and ships no lockfile, so a pip entry would
   have nothing to pin.
 
+##### pnpm release cooldown
+
+Every npm directory carries `minimum-release-age=4320` in its `.npmrc`. The
+value mirrors the `--config.minimumReleaseAge=4320` (3 days) that Dependabot
+injects into the `pnpm update` it runs for npm entries.
+
+They have to agree. Dependabot re-resolves the whole tree for each update, and
+on a version younger than the cooldown pnpm **errors**
+(`ERR_PNPM_NO_MATURE_MATCHING_VERSION`) instead of falling back to an older
+mature release — so one freshly-published *transitive* dependency fails that
+directory's entire weekly run. The 2026-08-19 `/crates/bashkit-js` run died
+exactly this way: `es-toolkit@1.51.0` was 2 days old and reached the tree via
+`@napi-rs/cli`, so `ava` (6.4.1, two majors behind) never got its bump and the
+run reported `ava | unknown_error`.
+
+Resolving locally under the same cooldown makes locked versions mature by
+construction, so Dependabot's check can never reject one. `--frozen-lockfile`
+does not resolve, so CI is unaffected. If Dependabot's cooldown changes, change
+these files with it.
+
 ### Security
 
 - Threat model ([Threat Model](../security/threat-model.md)) covers all current features
