@@ -20,6 +20,7 @@ use crate::parser::{
     AssignmentValue, Command, CommandList, CompoundCommand, Redirect, RedirectKind, Script,
     SimpleCommand, Word, WordPart,
 };
+use std::collections::HashMap;
 
 /// Maximum number of recorded commands plus redirects.
 ///
@@ -269,19 +270,49 @@ fn validate_command_names(script: &str, analysis: &ScriptAnalysis) -> Result<()>
     if script.contains("$'") {
         return Ok(());
     }
+    let source = SourceCharacterIndex::new(script);
     for name in analysis
         .commands
         .iter()
         .filter_map(|command| command.name.as_deref())
     {
-        let mut source = script.chars();
-        if !name.chars().all(|wanted| source.any(|ch| ch == wanted)) {
+        if !source.contains_subsequence(name) {
             return Err(crate::Error::parse(
                 "analysis produced a command name not derived from the script",
             ));
         }
     }
     Ok(())
+}
+
+/// Index once so validating each command cannot repeatedly scan a large input.
+struct SourceCharacterIndex {
+    positions: HashMap<char, Vec<usize>>,
+}
+
+impl SourceCharacterIndex {
+    fn new(source: &str) -> Self {
+        let mut positions: HashMap<char, Vec<usize>> = HashMap::new();
+        for (position, character) in source.chars().enumerate() {
+            positions.entry(character).or_default().push(position);
+        }
+        Self { positions }
+    }
+
+    fn contains_subsequence(&self, value: &str) -> bool {
+        let mut next_position = 0;
+        for character in value.chars() {
+            let Some(positions) = self.positions.get(&character) else {
+                return false;
+            };
+            let index = positions.partition_point(|&position| position < next_position);
+            let Some(&position) = positions.get(index) else {
+                return false;
+            };
+            next_position = position + 1;
+        }
+        true
+    }
 }
 
 /// Analyze an already-parsed script.
@@ -917,6 +948,20 @@ mod tests {
     #[test]
     fn comments_only_is_empty_analysis() {
         assert!(a("# nothing here\n").commands.is_empty());
+    }
+
+    #[test]
+    fn command_name_validation_indexes_adversarial_prefix_once() {
+        let script = format!("#{}\n{}", "x".repeat(100_000), "a;".repeat(1_000));
+        let index = SourceCharacterIndex::new(&script);
+
+        for _ in 0..1_000 {
+            assert!(index.contains_subsequence("a"));
+        }
+        assert_eq!(
+            index.positions.values().map(Vec::len).sum::<usize>(),
+            script.chars().count()
+        );
     }
 
     #[test]
