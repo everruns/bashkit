@@ -155,6 +155,17 @@ fn is_real_shell_error_line(line: &str) -> bool {
         ": Permission denied",
         ": cannot execute: required file not found",
         ": cannot execute binary file",
+        // Remaining errno templates that `redirect_error_reason` can emit
+        // for `bash: <redirect target>: <strerror>`.
+        ": Not a directory",
+        ": File exists",
+        ": Operation not supported",
+        // Fixed bashkit redirection refusals. Like the errno templates they
+        // quote the user-supplied redirect target verbatim, so a target
+        // containing a banned shape is an echo, not an internal leak.
+        ": filesystem redirection disabled",
+        ": cannot overwrite existing file",
+        ": filesystem is read-only",
     ];
     if let Some(rest) = line.strip_prefix("bash: ") {
         if SHELL_ERROR_SUFFIXES.iter().any(|suf| rest.ends_with(suf)) {

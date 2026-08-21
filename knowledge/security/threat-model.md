@@ -474,6 +474,27 @@ the byte-length cap and host-canary check still run on the unfiltered stderr, so
 and TM-INF-013 regressions are still caught. The strict per-builtin path
 (`assert_no_leak`) is unchanged, non-fuzz tests must not produce shell echoes at all.
 
+The recognized-template list is the whole mechanism, so **any diagnostic that
+echoes a user-supplied path must use a real shell template**. Nightly `glob_fuzz`
+run 218 failed on input `</r\0ustc/`: the shell drops the NUL during expansion, so
+the redirect target became `/rustc/` *after* the target's own input pre-filter had
+run, and bashkit's redirection diagnostic rendered the Rust error-enum `Display`
+(`bash: /rustc/: io error: file not found`) — an unrecognized template, reported as
+a TM-INF-016 host-path leak. Fixed at the source by
+`interpreter::redirection::redirect_error_reason`, which drops the `io error: `
+enum prefix and replaces *errno-restating* messages with the `strerror` text real
+bash prints (`No such file or directory`, `Permission denied`, `Is a directory`, …).
+
+Deliberately narrow: only messages that add nothing to their `io::ErrorKind` are
+replaced — the VFS placeholders in `ERRNO_RESTATING_MESSAGES`, plus errors carrying
+a `raw_os_error` (whose `Display` appends a non-bash `(os error N)` suffix). Every
+other message survives verbatim, because a backend-specific reason tells an agent
+*why* in a way the bare errno cannot: `filesystem is read-only` must not collapse
+into `Permission denied`, and a custom `FileSystem` impl's own wording is the only
+diagnostic its embedder gets. Those specific reasons are instead covered by adding
+their fixed templates to the echo filter. Regression coverage:
+`tests/integration/glob_fuzz_scaffold_tests.rs`.
+
 **TM-INF-013**: The jq builtin previously called `std::env::set_var()` to expose
 shell variables to jaq's `env` function. This also made host process env vars (API keys, tokens)
 visible. Additionally, `set_var` is thread-unsafe (unsound in Rust 2024 edition). Fixed: a custom

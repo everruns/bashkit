@@ -4,8 +4,59 @@
 //! output-redirection / fd-routing core. The `FdTarget` enum and
 //! `route_fd_table_content` helper stay in the parent module (referenced
 //! by interpreter state fields).
+//!
+//! Redirection failures are reported as `bash: <path>: <reason>` via
+//! [`redirect_error_reason`] — never as the `Display` of a [`crate::Error`],
+//! whose `io error: ` prefix is a Rust enum shape no shell ever prints.
+//!
+//! The reason text matters beyond cosmetics: the fuzz/proptest leak detector
+//! in `bashkit::testing` suppresses shell echoes of user input only for lines
+//! matching a recognized real-shell template. Nightly `glob_fuzz` run 218
+//! failed on `</r\0ustc/` — the NUL is dropped during expansion, so the
+//! redirect target became `/rustc/` after the target's own input pre-filter
+//! had run, and `bash: /rustc/: io error: file not found` was reported as a
+//! TM-INF-016 host-path leak instead of an echo.
 
 use super::*;
+
+/// VFS messages that only restate their `io::ErrorKind`.
+///
+/// These carry nothing the errno does not, so redirection diagnostics swap
+/// them for the `strerror` text real bash prints. Every other message —
+/// `filesystem is read-only`, a custom [`crate::FileSystem`] backend's own
+/// wording — tells the caller *why* in a way the bare errno cannot, and is
+/// kept verbatim.
+const ERRNO_RESTATING_MESSAGES: &[&str] = &["file not found", "parent directory not found"];
+
+/// Render a filesystem error the way bash renders a redirection failure.
+///
+/// `ls < /nope` reports `bash: /nope: No such file or directory`, matching
+/// real bash, rather than the Rust error-enum `Display`
+/// (`bash: /nope: io error: file not found`).
+pub(super) fn redirect_error_reason(e: &crate::error::Error) -> String {
+    let io = match e {
+        crate::error::Error::Io(io) => io,
+        other => return other.to_string(),
+    };
+    let message = io.to_string();
+    // Errors straight from the OS stringify as `<strerror> (os error N)`;
+    // bash prints only the strerror half.
+    let restates_errno =
+        io.raw_os_error().is_some() || ERRNO_RESTATING_MESSAGES.contains(&message.as_str());
+    if !restates_errno {
+        return message;
+    }
+    match io.kind() {
+        std::io::ErrorKind::NotFound => "No such file or directory",
+        std::io::ErrorKind::PermissionDenied => "Permission denied",
+        std::io::ErrorKind::IsADirectory => "Is a directory",
+        std::io::ErrorKind::NotADirectory => "Not a directory",
+        std::io::ErrorKind::AlreadyExists => "File exists",
+        std::io::ErrorKind::Unsupported => "Operation not supported",
+        _ => return message,
+    }
+    .to_string()
+}
 
 impl Interpreter {
     /// Process input redirections (< file, <<< string)
@@ -44,7 +95,8 @@ impl Interpreter {
                             }
                             Err(e) => {
                                 return Err(crate::error::Error::CommandFailure(format!(
-                                    "bash: {target_path}: {e}\n"
+                                    "bash: {target_path}: {}\n",
+                                    redirect_error_reason(&e)
                                 )));
                             }
                         }
@@ -141,8 +193,12 @@ impl Interpreter {
                                 if let Err(e) =
                                     self.fs.write_file(&path, result.stderr.as_bytes()).await
                                 {
-                                    result.stderr =
-                                        format!("bash: {}: {}\n", target_path, e).into();
+                                    result.stderr = format!(
+                                        "bash: {}: {}\n",
+                                        target_path,
+                                        redirect_error_reason(&e)
+                                    )
+                                    .into();
                                     result.exit_code = 1;
                                     return Ok(result);
                                 }
@@ -153,8 +209,12 @@ impl Interpreter {
                                     self.fs.write_file(&path, result.stdout.as_bytes()).await
                                 {
                                     result.stdout = crate::StreamData::new();
-                                    result.stderr =
-                                        format!("bash: {}: {}\n", target_path, e).into();
+                                    result.stderr = format!(
+                                        "bash: {}: {}\n",
+                                        target_path,
+                                        redirect_error_reason(&e)
+                                    )
+                                    .into();
                                     result.exit_code = 1;
                                     return Ok(result);
                                 }
@@ -177,8 +237,12 @@ impl Interpreter {
                                 if let Err(e) =
                                     self.fs.append_file(&path, result.stderr.as_bytes()).await
                                 {
-                                    result.stderr =
-                                        format!("bash: {}: {}\n", target_path, e).into();
+                                    result.stderr = format!(
+                                        "bash: {}: {}\n",
+                                        target_path,
+                                        redirect_error_reason(&e)
+                                    )
+                                    .into();
                                     result.exit_code = 1;
                                     return Ok(result);
                                 }
@@ -189,8 +253,12 @@ impl Interpreter {
                                     self.fs.append_file(&path, result.stdout.as_bytes()).await
                                 {
                                     result.stdout = crate::StreamData::new();
-                                    result.stderr =
-                                        format!("bash: {}: {}\n", target_path, e).into();
+                                    result.stderr = format!(
+                                        "bash: {}: {}\n",
+                                        target_path,
+                                        redirect_error_reason(&e)
+                                    )
+                                    .into();
                                     result.exit_code = 1;
                                     return Ok(result);
                                 }
@@ -209,7 +277,9 @@ impl Interpreter {
                         let mut combined = result.stdout.as_bytes().to_vec();
                         combined.extend_from_slice(result.stderr.as_bytes());
                         if let Err(e) = self.fs.write_file(&path, &combined).await {
-                            result.stderr = format!("bash: {}: {}\n", target_path, e).into();
+                            result.stderr =
+                                format!("bash: {}: {}\n", target_path, redirect_error_reason(&e))
+                                    .into();
                             result.exit_code = 1;
                             return Ok(result);
                         }
@@ -429,7 +499,8 @@ impl Interpreter {
                 self.fs.write_file(path, content.as_bytes()).await
             };
             if let Err(e) = write_result {
-                new_stderr = format!("bash: {}: {}\n", display_path, e).into();
+                new_stderr =
+                    format!("bash: {}: {}\n", display_path, redirect_error_reason(&e)).into();
                 result.exit_code = 1;
                 result.stdout = new_stdout;
                 result.stderr = new_stderr;
