@@ -287,6 +287,7 @@ web-time = { workspace = true }
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 gloo-timers = { version = "0.3", features = ["futures"] }
 send_wrapper = { version = "0.6", features = ["futures"] }
+wasm-bindgen-futures = "0.4"
 
 # Vendored uucore modules (e.g. generated/format/human.rs) carry upstream
 # `#[cfg(feature = "i18n-decimal")]` gates. bashkit has no i18n surface —

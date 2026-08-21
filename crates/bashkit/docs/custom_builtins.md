@@ -191,8 +191,10 @@ This is live-future suspension only. `ExecutionHandle` owns its `Bash` while
 the execution is active; after completion, call `into_bash()` to recover the
 session. Dropping a suspended handle drops the session so partially unwound
 interpreter state cannot be reused. Neither the handle nor a pending request is
-serializable. Execution limits, including wall-clock timeout, remain active
-while the host call is parked. Calling an event-backed command through ordinary
+serializable. An independent driver keeps execution limits, including the
+wall-clock timeout, active while the host call is parked. Timeout drops the
+session even if the host never polls the handle again, so `into_bash()` cannot
+recover a timed-out execution. Calling an event-backed command through ordinary
 `exec()` fails immediately because no execution driver is present.
 
 ## BuiltinRegistry — Runtime-Mutable Builtins

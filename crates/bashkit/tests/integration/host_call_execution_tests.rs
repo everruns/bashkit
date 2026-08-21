@@ -127,14 +127,19 @@ async fn suspended_host_call_remains_inside_the_execution_timeout() {
     let mut execution =
         bash.start_execution_with_options("lookup alice", ExecOptions::new().stdin("unused"));
 
-    assert!(matches!(
-        execution.next_event().await.unwrap(),
-        ExecutionEvent::HostCall(_)
-    ));
+    let request = match execution.next_event().await.unwrap() {
+        ExecutionEvent::HostCall(request) => request,
+        ExecutionEvent::Complete(_) => panic!("execution completed before its host call"),
+    };
     tokio::time::advance(Duration::from_secs(3)).await;
+    tokio::task::yield_now().await;
+    let resume_error = execution
+        .resume(request.id(), ExecResult::ok("too late\n"))
+        .unwrap_err();
+    assert!(resume_error.to_string().contains("no longer active"));
     let error = execution.next_event().await.unwrap_err();
     assert!(error.to_string().contains("timeout"));
-    let _bash = execution.into_bash().unwrap();
+    assert!(execution.into_bash().is_err());
 }
 
 #[tokio::test]

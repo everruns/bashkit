@@ -439,6 +439,7 @@ dependencies = [
  "turso_core",
  "unit-prefix",
  "url",
+ "wasm-bindgen-futures",
  "web-time",
  "zapcode-core",
  "zeroize",

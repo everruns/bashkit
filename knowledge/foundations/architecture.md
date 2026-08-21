@@ -75,11 +75,12 @@ parse checks that can return early cannot leave state behind.
 ### Process-local execution suspension
 
 Event-backed host calls reuse the async-first execution model: an
-`ExecutionHandle` owns and polls the live execution future, yields an owned
-request to the host, then resolves a one-shot response when the host resumes
-it. The handle exclusively owns the interpreter and its timeout remains
-active. On completion, `into_bash` returns the reusable session; dropping a
-suspended handle drops the session. This is process-local scheduling, not a
+`ExecutionHandle` starts an independently driven live execution future, yields
+an owned request to the host, then resolves a one-shot response when the host
+resumes it. The driver keeps the interpreter timeout active while the host is
+parked and drops the session autonomously on timeout. On normal completion,
+`into_bash` returns the reusable session; dropping a suspended handle aborts
+the driver and drops the session. This is process-local scheduling, not a
 serializable continuation; snapshots still capture state only between
 executions. See [Builtin Commands](builtins.md) and
 [Snapshot History](snapshot-history.md).
