@@ -1,5 +1,9 @@
 # Bashkit Knowledge Update Log
 
+## 2026-08-22
+
+* **Security**: Added TM-DOS-104. Pipeline stderr aggregation is now bounded while each stage is collected, rather than only when the completed pipeline reaches the script output accumulator. Per-command truncation flags also propagate into the aggregate result.
+
 ## 2026-08-21
 
 * **Decision**: Trimmed the always-on dependency graph from 112 to 91 crates: `idna_adapter` pinned to 1.0.0 (a lockfile-only pin that drops the 21-crate ICU4X stack `url` pulled in via `idna`), and `clap` and `futures-util` built with `default-features = false`. Non-ASCII domain names are now rejected rather than normalised per UTS 46, which for a sandbox allowlist removes the homograph and punycode-confusion class from host matching. Recorded in [Dependency Policy](operations/dependencies.md).
