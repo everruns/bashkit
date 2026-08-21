@@ -658,8 +658,37 @@ fn valid_runtime_name(name: &str) -> bool {
 }
 
 fn validate_schema(value: &Value, schema: &Value, path: &str) -> Result<(), String> {
+    validate_schema_inner(value, schema, schema, path, &mut Vec::new())
+}
+
+fn validate_schema_inner<'a>(
+    value: &Value,
+    schema: &'a Value,
+    root: &'a Value,
+    path: &str,
+    ref_stack: &mut Vec<&'a str>,
+) -> Result<(), String> {
     if schema.as_object().is_none_or(serde_json::Map::is_empty) {
         return Ok(());
+    }
+    // THREAT[TM-INJ-024]: referenced constraints must gate callbacks too.
+    if let Some(reference) = schema.get("$ref") {
+        let reference = reference
+            .as_str()
+            .ok_or_else(|| format!("{path} schema has a non-string $ref"))?;
+        let pointer = reference
+            .strip_prefix('#')
+            .ok_or_else(|| format!("{path} schema uses unsupported external $ref '{reference}'"))?;
+        if ref_stack.contains(&reference) {
+            return Err(format!("{path} schema has cyclic $ref '{reference}'"));
+        }
+        let target = root
+            .pointer(pointer)
+            .ok_or_else(|| format!("{path} schema has unresolved $ref '{reference}'"))?;
+        ref_stack.push(reference);
+        let result = validate_schema_inner(value, target, root, path, ref_stack);
+        ref_stack.pop();
+        result?;
     }
     if let Some(expected) = schema.get("type") {
         let types = expected
@@ -681,14 +710,14 @@ fn validate_schema(value: &Value, schema: &Value, path: &str) -> Result<(), Stri
         if let Some(branches) = schema.get(keyword).and_then(Value::as_array)
             && !branches
                 .iter()
-                .any(|branch| validate_schema(value, branch, path).is_ok())
+                .any(|branch| validate_schema_inner(value, branch, root, path, ref_stack).is_ok())
         {
             return Err(format!("{path} does not match any {keyword} branch"));
         }
     }
     if let Some(branches) = schema.get("allOf").and_then(Value::as_array) {
         for branch in branches {
-            validate_schema(value, branch, path)?;
+            validate_schema_inner(value, branch, root, path, ref_stack)?;
         }
     }
     if let Some(allowed) = schema.get("enum").and_then(Value::as_array)
@@ -715,14 +744,20 @@ fn validate_schema(value: &Value, schema: &Value, path: &str) -> Result<(), Stri
         if let Some(properties) = properties {
             for (key, child) in object {
                 if let Some(child_schema) = properties.get(key) {
-                    validate_schema(child, child_schema, &format!("{path}.{key}"))?;
+                    validate_schema_inner(
+                        child,
+                        child_schema,
+                        root,
+                        &format!("{path}.{key}"),
+                        ref_stack,
+                    )?;
                 }
             }
         }
     }
     if let (Some(items), Some(values)) = (schema.get("items"), value.as_array()) {
         for (index, child) in values.iter().enumerate() {
-            validate_schema(child, items, &format!("{path}[{index}]"))?;
+            validate_schema_inner(child, items, root, &format!("{path}[{index}]"), ref_stack)?;
         }
     }
     Ok(())
