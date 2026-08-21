@@ -6058,7 +6058,13 @@ impl Interpreter {
                     let content = match self.fs.read_file(&path).await {
                         Ok(c) => c,
                         Err(e) => {
-                            return Ok(ExecResult::err(format!("bash: {target_path}: {e}\n"), 1));
+                            return Ok(ExecResult::err(
+                                format!(
+                                    "bash: {target_path}: {}\n",
+                                    redirection::redirect_error_reason(&e)
+                                ),
+                                1,
+                            ));
                         }
                     };
                     let text = decode_file_bytes_for_path(&path, &content);
