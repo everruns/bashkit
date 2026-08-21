@@ -32,6 +32,10 @@ layouts, allocators, traits, futures, and Tokio types never cross the boundary.
 Each exported Rust function contains panics; fallible functions report a capped
 error object rather than unwinding into the host.
 
+The handle retains its configured script-size limit so execution rejects an
+oversized byte view before dereferencing it or validating UTF-8. This preserves
+the core input resource limit at the untrusted native boundary.
+
 Execution is synchronous in v1. Each handle owns a current-thread Tokio runtime
 and mutex-protected `Bash`; same-handle calls serialize, while distinct handles
 can execute concurrently. Callers own lifetime synchronization and cannot race
@@ -61,9 +65,9 @@ library unload rules before becoming permanent ABI.
 ## Verification
 
 Rust contract tests cover success, shell failure, configuration, binary VFS
-content, invalid UTF-8, null outputs, and version rejection. The C example runner
-compiles the public header under C11 with warnings denied and executes two
-programs against the built shared library.
+content, invalid UTF-8, pre-validation script limits, null outputs, and version
+rejection. The C example runner compiles the public header under C11 with
+warnings denied and executes two programs against the built shared library.
 
 ## See also
 

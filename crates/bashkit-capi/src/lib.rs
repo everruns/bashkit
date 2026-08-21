@@ -5,7 +5,7 @@
 // boundary and reports a generic error so unwinding cannot enter the foreign
 // caller and the returned error does not include panic details.
 
-use bashkit::{Bash, Error as BashError, FileSystem};
+use bashkit::{Bash, Error as BashError, ExecutionLimits, FileSystem, LimitExceeded};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -67,6 +67,7 @@ impl BashkitBytes {
 struct State {
     runtime: Runtime,
     bash: Bash,
+    max_input_bytes: usize,
 }
 
 pub struct Bashkit {
@@ -190,7 +191,7 @@ fn make_runtime() -> Result<Runtime, ApiFailure> {
         })
 }
 
-fn build_from_config(config: ConfigV1) -> Result<Bash, ApiFailure> {
+fn build_from_config(config: ConfigV1) -> Result<(Bash, usize), ApiFailure> {
     if config.schema_version != 1 {
         return Err(ApiFailure::new(
             BashkitStatus::InvalidConfig,
@@ -221,6 +222,7 @@ fn build_from_config(config: ConfigV1) -> Result<Bash, ApiFailure> {
         limits.max_stderr_bytes = value;
     }
     limits.capture_final_env = config.capture_final_env;
+    let max_input_bytes = limits.max_input_bytes;
 
     let mut builder = Bash::builder()
         .profile(profile)
@@ -241,7 +243,7 @@ fn build_from_config(config: ConfigV1) -> Result<Bash, ApiFailure> {
     for (path, content) in config.files {
         builder = builder.mount_text(path, content);
     }
-    Ok(builder.build())
+    Ok((builder.build(), max_input_bytes))
 }
 
 fn truncate_error(message: String) -> Vec<u8> {
@@ -372,6 +374,7 @@ pub unsafe extern "C" fn bashkit_create_default(
                 state: Mutex::new(State {
                     runtime: make_runtime()?,
                     bash: Bash::new(),
+                    max_input_bytes: ExecutionLimits::default().max_input_bytes,
                 }),
             };
             *out_bash = Box::into_raw(Box::new(bash));
@@ -405,10 +408,12 @@ pub unsafe extern "C" fn bashkit_create_json(
                     format!("invalid configuration: {error}"),
                 )
             })?;
+            let (bash, max_input_bytes) = build_from_config(config)?;
             let bash = Bashkit {
                 state: Mutex::new(State {
                     runtime: make_runtime()?,
-                    bash: build_from_config(config)?,
+                    bash,
+                    max_input_bytes,
                 }),
             };
             *out_bash = Box::into_raw(Box::new(bash));
@@ -444,11 +449,16 @@ pub unsafe extern "C" fn bashkit_execute(
         ffi_boundary(out_error, || {
             let out_result = output_slot(out_result, "out_result")?;
             let bash = handle(bash)?;
-            let script = input_str(script, "script")?;
             let mut state = bash.state.lock().map_err(|_| {
                 ApiFailure::new(BashkitStatus::InternalError, "bash instance is unavailable")
             })?;
-            let State { runtime, bash } = &mut *state;
+            if script.len > state.max_input_bytes {
+                return Err(ApiFailure::from_bash(BashError::ResourceLimit(
+                    LimitExceeded::InputTooLarge(script.len, state.max_input_bytes),
+                )));
+            }
+            let script = input_str(script, "script")?;
+            let State { runtime, bash, .. } = &mut *state;
             let result = runtime
                 .block_on(bash.exec(script))
                 .map_err(ApiFailure::from_bash)?;
