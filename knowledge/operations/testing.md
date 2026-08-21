@@ -132,7 +132,9 @@ Rules for this file:
 
 - **The bridge in it is the reference.** If bridging a host command needs more
   code than what is there, that is a gap in bashkit's API, not a reason to grow
-  the test.
+  the test. It invokes concrete executables and passes parsed arguments as
+  separate argv values; never concatenate them into a `sh -c` or `cmd /C`
+  script. Constant shell builtins may be used only without caller arguments.
 - **Use names bashkit does not implement** (`host-cat`, `host-echo`, …). The
   resolver runs last, so a test using `cat` or `echo` silently asserts on
   builtins and never reaches the bridge, verified by injecting a defect and
