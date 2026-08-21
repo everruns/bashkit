@@ -143,11 +143,12 @@ default = ["bash_tool", "ring", "tzdata"]
 # builtins/date.rs. Builds that do not need named zones (the slim browser wasm
 # package) should not carry it.
 #
-# Turning it off does not open a hole: `SandboxTimezone` closes to UTC alone,
-# which is the resolution an unrecognised zone name already gets, so the
-# fail-closed-to-UTC contract of THREAT[TM-INF-018] is unchanged. `TZ=UTC`,
-# unset, empty, and `-u` all behave identically; a named zone stops being
-# honoured and reads as UTC.
+# Turning it off does not open a hole. `SandboxTimezone` closes to UTC alone and
+# `date` reports that it cannot honour a named zone, exiting 1 rather than
+# formatting in UTC and returning a plausible-looking wrong time. The
+# fail-closed direction of THREAT[TM-INF-018] is unchanged: host timezone state
+# is still never consulted. `TZ=UTC`, unset, empty, and path-style values are
+# unaffected.
 tzdata = ["dep:chrono-tz"]
 # Enable the LLM-facing `BashTool` wrapper: the `Tool` trait, `ToolExecution`,
 # OpenAI tool-definition/JSON-schema helpers, and the `tower::Service` bridge.

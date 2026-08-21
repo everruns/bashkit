@@ -121,11 +121,22 @@ reimplementation target, so it sits behind the **`tzdata`** feature, on by
 default and listed explicitly by `bashkit-cli` and `bashkit-capi`, and
 deliberately absent from `bashkit-wasm`.
 
-Turning it off narrows the closed timezone set of `TM-INF-018` to UTC alone. It
-does not open a hole: a named zone resolves the way an unrecognised one always
-has — to UTC — rather than to host-local state, so `date` stays fail-closed.
-The observable change is that `TZ=America/Chicago` reads as UTC instead of CST.
-`tests/integration/date_timezone_no_tzdata_tests.rs` pins that side; the
+Turning it off narrows the closed timezone set of `TM-INF-018` to UTC alone.
+`date` then **reports that it cannot honour a named zone and exits 1**, rather
+than formatting in UTC and returning a timestamp that looks right. Degrading
+silently is the tempting choice and the wrong one: the caller cannot tell a
+correct answer from a wrong one, and the failure surfaces later as bad data.
+Unset, empty, `TZ=UTC`, and path-style values are unaffected — path-style forms
+are a rejected request for a host zoneinfo file, not a request for a named
+zone, so they resolve to UTC in every build and must not diverge with the
+feature.
+
+The diagnostic never echoes the `TZ` value. A `TZ` can be path-shaped, and
+reflecting it back is exactly how host state leaks into output; the existing
+`invalid_timezone_fails_closed_without_echoing_host_state` guards the same
+property on the other side of the gate.
+
+`tests/integration/date_timezone_no_tzdata_tests.rs` pins the off side; the
 `tzdata`-on modules beside it pin the other, and `main.rs` selects between them
 so both configurations have coverage rather than one silently losing it.
 

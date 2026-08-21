@@ -31,9 +31,10 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 # `tzdata` is deliberately absent: chrono-tz's compiled IANA database is the
-# largest single artifact in the dependency tree and this package is explicitly
-# the slim build. `date` resolves named `TZ=` zones to UTC here; see the feature
-# comment in ../bashkit/Cargo.toml.
+# largest single artifact in the dependency tree (911 KB of this package's
+# binary) and this package is explicitly the slim build. `date` fails loudly on
+# a named `TZ=` zone here rather than silently formatting in UTC; see the
+# feature comment in ../bashkit/Cargo.toml.
 bashkit = { path = "../bashkit", default-features = false, features = [
     "scripted_tool",
     "jq",
