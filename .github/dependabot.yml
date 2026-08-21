@@ -51,6 +51,14 @@ updates:
       - dependency-name: "monty"
       - dependency-name: "monty-types"
 
+      # idna_adapter is deliberately held at 1.0.0. It is not a normal
+      # dependency: the crate exists so the top-level lockfile can choose
+      # `idna`'s Unicode back end, and 1.0.x is the "no back end" stream that
+      # keeps the 21-crate ICU4X stack out of the tree. Dependabot would read
+      # the pin as staleness and bump it straight back to 1.2.x. See the
+      # rationale comment above [patch.crates-io] in the root Cargo.toml.
+      - dependency-name: "idna_adapter"
+
   # Fuzz targets are a separate cargo workspace with their own lockfile, so the
   # "/" entry above never touches them. Without this the fuzz lockfile silently
   # rots between releases (it drifted onto an unsound `anyhow` and two yanked

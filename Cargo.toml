@@ -23,7 +23,11 @@ categories = ["command-line-utilities", "parser-implementations"]
 tokio = { version = "1", features = ["sync", "macros", "io-util", "rt", "time"] }
 async-trait = "0.1"
 futures-core = "0.3"
-futures-util = "0.3"
+# Important decision: `default-features = false`. bashkit uses only `StreamExt`,
+# `FutureExt` and `select`/`pin_mut!` (time_compat's wasm timeout). The default
+# feature set additionally pulls futures-channel / futures-io / futures-sink /
+# slab, none of which bashkit touches.
+futures-util = { version = "0.3", default-features = false, features = ["std", "async-await"] }
 
 # Error handling
 thiserror = "2"
@@ -94,7 +98,14 @@ web-time = "1"
 # the bashkit sandbox (TM-INF-023). The coreutils-args-port codegen strips
 # `.env(...)` chains from vendored Arg builders; dropping the feature here
 # is defence-in-depth so any re-introduction fails to compile.
-clap = { version = "4", features = ["derive"] }
+#
+# Important decision: `default-features = false`. Dropping clap's `color`
+# feature removes anstream / anstyle-query / colorchoice / is_terminal_polyfill,
+# and dropping `suggestions` removes strsim -- 7 crates that exist to detect and
+# paint a host TTY. Builtins write to the sandbox's virtual stdout, which is
+# never a terminal, so clap's colour and did-you-mean machinery is dead weight.
+# Consequence: `Command::color(...)` no longer exists; builtins must not call it.
+clap = { version = "4", default-features = false, features = ["derive", "std", "help", "usage", "error-context"] }
 
 # Testing
 tokio-test = "0.4"
@@ -183,5 +194,28 @@ codegen-units = 1
 # `^0.15.0`) but already bumped its pyo3 dependency to 0.29, so this patch
 # unblocks the upgrade without a fork. Drop it once monty ships a release that
 # tracks a published jiter with pyo3 0.29.
+# Important decision (supply chain): `idna_adapter` is pinned to 1.0.0 in
+# Cargo.lock -- a lockfile-only pin, since the crate exists purely so the top
+# level can pick `idna`'s Unicode back end (1.2.x = ICU4X, 1.1.x = unicode-rs,
+# 1.0.x = no back end). `url` is a mandatory dep (network allowlist matching,
+# curl redirect resolution, git remote parsing) and the ICU4X back end drags in
+# 21 crates -- icu_normalizer, icu_properties, icu_collections, zerovec, yoke,
+# tinystr and friends -- none of which bashkit's URL handling needs.
+#
+# Consequence: non-ASCII domain names are rejected rather than normalised per
+# UTS 46. For a sandbox allowlist that is a hardening win, not a regression: it
+# removes the homograph / punycode-confusion class from host matching, and
+# allowlist patterns are ASCII.
+#
+# NOT a binary-size change -- measured at 15 KB (0.16%) on the release
+# wasm32 browser build, because LTO already dead-strips the ICU tables. The
+# payoff is audit surface (21 fewer crates for `cargo deny` and dependabot),
+# ~10% off a cold `cargo check`, and ~70 MB less build output.
+#
+# Does NOT remove ICU from every configuration: `turso_core` pulls
+# `icu_collator`, so any build with the `sqlite` feature keeps the ICU stack.
+#
+# Restore after a `cargo update` that bumps it:
+#     cargo update -p idna_adapter --precise 1.0.0
 [patch.crates-io]
 jiter = { git = "https://github.com/pydantic/jiter", rev = "6d57715e01ec78859c62fc5447073c0b5902de39" }
