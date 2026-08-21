@@ -24,6 +24,7 @@ use std::path::{Component, Path, PathBuf};
 use super::{Builtin, Context, resolve_path};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
+use crate::limits::BudgetedBytes;
 
 const MAGIC: &[u8] = b"BKZIP\x01";
 const FOOTER: &[u8] = b"BKEND";
@@ -162,21 +163,36 @@ struct ArchiveEntry {
     data: Vec<u8>,
 }
 
+fn with_execution_budget<T>(
+    ctx: &Context<'_>,
+    use_budget: impl FnOnce(Option<&crate::limits::ExecutionBudget>) -> Result<T>,
+) -> Result<T> {
+    match ctx.execution_budget() {
+        Some(budget) => budget
+            .try_with(|budget| use_budget(Some(budget)))
+            .map_err(|_| crate::error::Error::Cancelled)?,
+        None => use_budget(None),
+    }
+}
+
 /// Encode entries into our archive format
-fn encode_archive(entries: &[ArchiveEntry]) -> Vec<u8> {
-    let mut buf = Vec::new();
-    buf.extend_from_slice(MAGIC);
+fn encode_archive(
+    entries: &[ArchiveEntry],
+    budget: Option<&crate::limits::ExecutionBudget>,
+) -> Result<BudgetedBytes> {
+    let mut buf = BudgetedBytes::new(budget)?;
+    buf.try_extend_from_slice(MAGIC)?;
 
     for entry in entries {
         let path_bytes = entry.path.as_bytes();
-        buf.extend_from_slice(&(path_bytes.len() as u32).to_le_bytes());
-        buf.extend_from_slice(path_bytes);
-        buf.extend_from_slice(&(entry.data.len() as u32).to_le_bytes());
-        buf.extend_from_slice(&entry.data);
+        buf.try_extend_from_slice(&(path_bytes.len() as u32).to_le_bytes())?;
+        buf.try_extend_from_slice(path_bytes)?;
+        buf.try_extend_from_slice(&(entry.data.len() as u32).to_le_bytes())?;
+        buf.try_extend_from_slice(&entry.data)?;
     }
 
-    buf.extend_from_slice(FOOTER);
-    buf
+    buf.try_extend_from_slice(FOOTER)?;
+    Ok(buf)
 }
 
 /// Decode entries from our archive format
@@ -243,7 +259,7 @@ async fn collect_files_recursive(
     fs: &std::sync::Arc<dyn crate::fs::FileSystem>,
     dir: &std::path::Path,
     prefix: &str,
-) -> Vec<(String, Vec<u8>)> {
+) -> Vec<(String, PathBuf)> {
     let mut result = Vec::new();
     let mut dirs = vec![(dir.to_path_buf(), prefix.to_string())];
 
@@ -258,10 +274,8 @@ async fn collect_files_recursive(
                 };
                 if entry.metadata.file_type.is_dir() {
                     dirs.push((path, entry_prefix));
-                } else if entry.metadata.file_type.is_file()
-                    && let Ok(data) = fs.read_file(&path).await
-                {
-                    result.push((entry_prefix, data));
+                } else if entry.metadata.file_type.is_file() {
+                    result.push((entry_prefix, path));
                 }
             }
         }
@@ -287,6 +301,7 @@ impl Builtin for Zip {
         };
 
         let mut entries = Vec::new();
+        let mut entry_leases = Vec::new();
         let mut output = String::new();
 
         for file_arg in &opts.files {
@@ -303,7 +318,13 @@ impl Builtin for Zip {
                     ));
                 }
                 let dir_files = collect_files_recursive(&ctx.fs, &path, file_arg).await;
-                for (rel_path, data) in dir_files {
+                for (rel_path, file_path) in dir_files {
+                    let metadata = ctx.fs.stat(&file_path).await?;
+                    // THREAT[TM-DOS-106]: Admit the VFS read before it creates
+                    // a file-sized Vec, and retain the lease with the bytes.
+                    let lease = ctx
+                        .lease_budget_bytes(usize::try_from(metadata.size).unwrap_or(usize::MAX))?;
+                    let data = ctx.fs.read_file(&file_path).await?;
                     ctx.consume_budget_input(data.len())?;
                     ctx.consume_budget_work(
                         u64::try_from(data.len().div_ceil(64)).unwrap_or(u64::MAX),
@@ -313,11 +334,21 @@ impl Builtin for Zip {
                         path: rel_path,
                         data,
                     });
+                    entry_leases.push(lease);
                 }
                 continue;
             }
 
-            // It's a file
+            // It's a file. Reserve its reported size before read_file clones
+            // the VFS contents into a new allocation.
+            let metadata = match ctx.fs.stat(&path).await {
+                Ok(metadata) => metadata,
+                Err(e) => {
+                    return Ok(ExecResult::err(format!("zip: {}: {}\n", file_arg, e), 1));
+                }
+            };
+            let lease =
+                ctx.lease_budget_bytes(usize::try_from(metadata.size).unwrap_or(usize::MAX))?;
             match ctx.fs.read_file(&path).await {
                 Ok(data) => {
                     ctx.consume_budget_input(data.len())?;
@@ -329,6 +360,7 @@ impl Builtin for Zip {
                         path: file_arg.clone(),
                         data,
                     });
+                    entry_leases.push(lease);
                 }
                 Err(e) => {
                     return Ok(ExecResult::err(format!("zip: {}: {}\n", file_arg, e), 1));
@@ -336,12 +368,7 @@ impl Builtin for Zip {
             }
         }
 
-        let entry_bytes = entries.iter().fold(0usize, |total, entry| {
-            total.saturating_add(entry.data.len())
-        });
-        let _entries_lease = ctx.lease_budget_bytes(entry_bytes)?;
-        let archive_data = encode_archive(&entries);
-        let _archive_lease = ctx.lease_budget_bytes(archive_data.len())?;
+        let archive_data = with_execution_budget(&ctx, |budget| encode_archive(&entries, budget))?;
         let archive_path = resolve_path(ctx.cwd, &opts.archive);
         ctx.fs.write_file(&archive_path, &archive_data).await?;
 
@@ -734,7 +761,7 @@ mod tests {
                 data: b"nested content".to_vec(),
             },
         ];
-        let encoded = encode_archive(&entries);
+        let encoded = encode_archive(&entries, None).unwrap();
         let decoded = decode_archive(&encoded).unwrap();
         assert_eq!(decoded.len(), 2);
         assert_eq!(decoded[0].path, "hello.txt");
@@ -789,10 +816,14 @@ mod tests {
     async fn test_unzip_rejects_path_traversal_entries() {
         let fs = Arc::new(InMemoryFs::new());
         let fs_trait = fs.clone() as Arc<dyn FileSystem>;
-        let archive = encode_archive(&[ArchiveEntry {
-            path: "../escape.txt".to_string(),
-            data: b"owned".to_vec(),
-        }]);
+        let archive = encode_archive(
+            &[ArchiveEntry {
+                path: "../escape.txt".to_string(),
+                data: b"owned".to_vec(),
+            }],
+            None,
+        )
+        .unwrap();
         fs_trait
             .write_file(Path::new("/bad.zip"), &archive)
             .await
