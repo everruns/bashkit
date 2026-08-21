@@ -43,6 +43,55 @@ Costs of leaving it in core:
   `builtins/typescript.rs` call `crate::tool_registry::scope_runtime_call`.
   That is a layering inversion, and it is the one real blocker to extraction.
 
+## Adoption evidence
+
+Surveyed 2026-08-21. Every traceable Rust consumer of `bashkit` compiles
+**without** the `scripted_tool` feature.
+
+crates.io reverse dependencies of `bashkit` (5 total, feature sets as
+published):
+
+| Crate | Features |
+|---|---|
+| `whipplescript-kernel` | `jq` |
+| `bashkit-cli` | `http_client`, `git`, `jq` |
+| `loa-core` | default (`bash_tool`) |
+| `crabot` | `http_client`, `realfs`, `python` |
+| `everruns-integrations-bashkit` | `jq`, `http_client`, `bot-auth` |
+
+`default = ["bash_tool"]`, so the default-features consumer does not pick it
+up either.
+
+GitHub's dependency graph lists 19 repositories and 6 packages. Tracing the
+third-party ones through their lockfiles:
+
+- `bionic-gpt/bionic-gpt` (2.4k stars) declares
+  `bashkit = { version = "0.14.5", features = ["python"] }` in its
+  `tool-runtime` crate. A tool-runtime built on bashkit that does not use the
+  scripted-tool layer.
+- `GaugeWright/gaugedesk` and `GaugeWright/whipplescript` reach bashkit only
+  transitively via `whipplescript-kernel`.
+- `wuwei-labs/antegen` reaches it only transitively via `loa-core`.
+- `alexkehayias/hq` has vendored its way off the dependency
+  ("previously transitive via bashkit").
+- `nobodywho-ooo/nobodywho` and `tuist/condukt` show no current bashkit
+  dependency in any manifest.
+
+The Python and TypeScript packages are the one place the layer is
+unconditionally present: `ScriptedTool` is a top-level export of the `bashkit`
+PyPI package (`bashkit/__init__.py` `__all__`) and of `@everruns/bashkit`, with
+no feature flag for consumers to decline. Public search surfaces only
+first-party documentation using it, so measured third-party adoption there is
+unknown rather than zero.
+
+Caveat on method: this session's proxy blocks global GitHub code search, so the
+survey is dependency-graph and manifest based, not a code-level search. It
+cannot see private consumers or public repos outside the dependency graph.
+
+Bearing on the plan: extraction removes a feature nobody in the Rust dependency
+graph enables, and costs nothing to the language bindings, which gain the crate
+as an ordinary dependency and keep `ScriptedTool` exported unchanged.
+
 ## Target shape
 
 New workspace member `crates/bashkit-tools`, depending on `bashkit`:
