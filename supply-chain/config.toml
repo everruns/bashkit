@@ -882,7 +882,7 @@ version = "1.1.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.idna_adapter]]
-version = "1.2.2"
+version = "1.0.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.indexmap]]
