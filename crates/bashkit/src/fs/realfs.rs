@@ -365,6 +365,44 @@ impl RealFs {
         result
     }
 
+    /// THREAT[TM-DOS-105]: Stream the existing file into sibling staging so
+    /// atomic append uses bounded memory even when the host file is large.
+    async fn append_atomically(&self, path: &Path, content: &[u8]) -> std::io::Result<()> {
+        use tokio::io::AsyncWriteExt;
+
+        if path == self.root {
+            return Err(IoError::new(ErrorKind::IsADirectory, "is a directory"));
+        }
+        let existing = match tokio::fs::File::open(path).await {
+            Ok(file) => Some(file),
+            Err(error) if error.kind() == ErrorKind::NotFound => None,
+            Err(error) => return Err(error),
+        };
+        let existing_permissions = tokio::fs::metadata(path)
+            .await
+            .ok()
+            .map(|metadata| metadata.permissions());
+        let (temporary, mut staged) = Self::temporary_sibling(path).await?;
+        let result = async {
+            if let Some(mut existing) = existing {
+                tokio::io::copy(&mut existing, &mut staged).await?;
+            }
+            staged.write_all(content).await?;
+            staged.flush().await?;
+            staged.sync_all().await?;
+            drop(staged);
+            if let Some(permissions) = existing_permissions {
+                tokio::fs::set_permissions(&temporary, permissions).await?;
+            }
+            tokio::fs::rename(&temporary, path).await
+        }
+        .await;
+        if result.is_err() {
+            let _ = tokio::fs::remove_file(&temporary).await;
+        }
+        result
+    }
+
     async fn copy_atomically(&self, from: &Path, to: &Path) -> std::io::Result<()> {
         if to == self.root {
             return Err(IoError::new(ErrorKind::IsADirectory, "is a directory"));
@@ -499,13 +537,7 @@ impl FsBackend for RealFs {
         self.check_writable()?;
         // Issue #1575: same leaf-symlink rejection as write().
         let real = self.resolve_for_create(path).await?;
-        let mut combined = match tokio::fs::read(&real).await {
-            Ok(existing) => existing,
-            Err(error) if error.kind() == ErrorKind::NotFound => Vec::new(),
-            Err(error) => return Err(error.into()),
-        };
-        combined.extend_from_slice(content);
-        self.write_atomically(&real, &combined).await?;
+        self.append_atomically(&real, content).await?;
         Ok(())
     }
 
@@ -862,6 +894,28 @@ mod tests {
             .unwrap();
         let data = fs.read(Path::new("/hello.txt")).await.unwrap();
         assert_eq!(data, b"hello world appended");
+    }
+
+    #[tokio::test]
+    async fn append_large_sparse_file_without_materializing_it() {
+        const LARGE_FILE_SIZE: u64 = 128 * 1024 * 1024;
+
+        let dir = setup();
+        let path = dir.path().join("large.bin");
+        std::fs::File::create(&path)
+            .unwrap()
+            .set_len(LARGE_FILE_SIZE)
+            .unwrap();
+        let fs = RealFs::new(dir.path(), RealFsMode::ReadWrite).unwrap();
+
+        fs.append(Path::new("/large.bin"), b"ok").await.unwrap();
+
+        let mut file = std::fs::File::open(path).unwrap();
+        use std::io::{Read, Seek, SeekFrom};
+        file.seek(SeekFrom::Start(LARGE_FILE_SIZE)).unwrap();
+        let mut suffix = Vec::new();
+        file.read_to_end(&mut suffix).unwrap();
+        assert_eq!(suffix, b"ok");
     }
 
     #[tokio::test]

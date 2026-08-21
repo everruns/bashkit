@@ -138,6 +138,7 @@ at subsystem or descendant boundaries; exhaustion poisons that request. Separate
 | TM-DOS-008 | Tar bomb | `tar -xf bomb.tar` (many files / large files) | FS limits | **MITIGATED** |
 | TM-DOS-009 | Recursive copy | `cp -r /tmp /tmp/copy` | FS limits | **MITIGATED** |
 | TM-DOS-010 | Append flood | `while true; do echo x >> file; done` | FS limits + loop limit | **MITIGATED** |
+| TM-DOS-105 | RealFs append memory exhaustion | A tiny append to a large writable host file buffers the full existing file | Stream existing bytes into atomic sibling staging with bounded memory | **MITIGATED** |
 | TM-DOS-034 | TOCTOU in append_file | Concurrent appends between read-lock and write-lock bypass size checks | Single write lock for entire read-check-write | **FIXED** |
 | TM-DOS-035 | OverlayFs limit check upper-only | `check_write_limits()` ignores lower layer usage, allowing combined usage to exceed limits | `OverlayFs::check_write_limits` now uses `compute_usage()` (combined upper + lower minus overrides); upper layer is type-fixed to `InMemoryFs` so its own limits are bypassable but irrelevant | **MITIGATED** |
 | TM-DOS-036 | OverlayFs usage double-count | `compute_usage()` double-counts overwritten/whited-out files | `compute_usage()` subtracts shadowed lower files when the upper layer carries an override or whiteout | **MITIGATED** |
