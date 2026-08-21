@@ -3308,8 +3308,11 @@ impl Interpreter {
                         break;
                     }
                     let data = ps.clone();
-                    if let Some(newline_pos) = data.find('\n') {
-                        let line = data[..newline_pos].to_string();
+                    if let Some(newline_pos) =
+                        data.as_bytes().iter().position(|&byte| byte == b'\n')
+                    {
+                        let line =
+                            String::from_utf8_lossy(&data.as_bytes()[..newline_pos]).into_owned();
                         self.pipeline_stdin = Some(data.as_bytes()[newline_pos + 1..].into());
                         line
                     } else {
@@ -5973,8 +5976,11 @@ impl Interpreter {
                     if name == "read" {
                         // Consume one line from pipeline stdin
                         let data = ps.clone();
-                        if let Some(newline_pos) = data.find('\n') {
-                            let line = data[..=newline_pos].to_string();
+                        if let Some(newline_pos) =
+                            data.as_bytes().iter().position(|&byte| byte == b'\n')
+                        {
+                            let line = String::from_utf8_lossy(&data.as_bytes()[..=newline_pos])
+                                .into_owned();
                             self.pipeline_stdin = Some(data.as_bytes()[newline_pos + 1..].into());
                             Some(line.into())
                         } else {

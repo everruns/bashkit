@@ -62,6 +62,8 @@ redirections, `BuiltinContext`, `ExecResult`, and streaming callbacks. Output
 limits truncate by bytes, including in live callbacks. Byte-oriented builtins
 and bindings use `as_bytes()`/`into_bytes()`; text-oriented consumers cross an
 explicit UTF-8 boundary with `text()` or `text_lossy()`.
+Line-oriented consumers locate delimiters and split the authoritative byte buffer
+before lossy decoding; offsets into the cached lossy view are never byte offsets.
 
 Shell words and variables remain text. Command substitution therefore removes
 NUL bytes, as Bash does because variables cannot contain NUL, then decodes the

@@ -128,3 +128,36 @@ async fn binary_pipeline_matches_real_bash_byte_for_byte() {
     assert_eq!(actual.stdout.as_bytes(), expected.stdout);
     assert_eq!(actual.exit_code, expected.status.code().unwrap());
 }
+
+#[tokio::test]
+async fn read_consumes_binary_pipeline_lines_by_raw_byte_offset() {
+    let mut bash = Bash::new();
+    let result = bash
+        .exec("printf '/wpB' | base64 -d | { read first; read second; printf '%s' \"$second\"; }")
+        .await
+        .unwrap();
+
+    assert_eq!(result.stdout.as_bytes(), b"A");
+    assert_eq!(result.exit_code, 0);
+}
+
+#[tokio::test]
+async fn select_consumes_binary_pipeline_lines_by_raw_byte_offset() {
+    let mut bash = Bash::new();
+    let result = bash
+        .exec_with_options(
+            "select choice in ok; do if [ -n \"$choice\" ]; then printf '%s' \"$choice\"; break; fi; done",
+            ExecOptions::new().stdin(vec![0xff, b'\n', b'1', b'\n']),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        result.stdout.as_bytes(),
+        b"ok",
+        "stderr: {}; exit: {}",
+        result.stderr,
+        result.exit_code
+    );
+    assert_eq!(result.exit_code, 0);
+}
