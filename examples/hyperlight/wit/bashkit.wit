@@ -1,0 +1,31 @@
+// WIT world for the Hyperlight-Wasm experiment.
+//
+// Deliberately imports nothing from WASI: hyperlight-wasm guests are built for
+// wasm32-unknown-unknown with no WASI imports (see its Justfile,
+// `build-rust-component-examples`). Everything the interpreter needs from the
+// outside world (clock, entropy) is an explicit host import in this world, so
+// the embedder can see and audit the whole boundary.
+package bashkit:sandbox;
+
+interface host {
+    // Microseconds since an arbitrary but monotonic epoch. Used for shell
+    // deadlines and for the wall clock (`date`, file mtimes).
+    now-micros: func() -> u64;
+    // Entropy for the credential-placeholder CSPRNG.
+    random-bytes: func(len: u32) -> list<u8>;
+}
+
+interface shell {
+    record exec-result {
+        stdout: string,
+        stderr: string,
+        exit-code: s32,
+    }
+
+    exec: func(script: string) -> exec-result;
+}
+
+world sandbox {
+    import host;
+    export shell;
+}

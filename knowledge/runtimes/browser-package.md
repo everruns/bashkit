@@ -229,10 +229,13 @@ pattern as `publish-js.yml`. Browser example smoke testing writes a file under
 
 The `bashkit-wasm` crate is JS-host-only (wasm-bindgen glue). The **library**
 itself, however, compiles for the WASI targets with the same reduced feature
-surface (`scripted_tool,jq`), which is what a non-JS wasm runtime
-(`wasmtime`/`wasmer`, or the wasmtime-in-a-micro-VM guest of
-[hyperlight-wasm](https://github.com/hyperlight-dev/hyperlight-wasm)) needs.
-CI's `wasm` job checks `wasm32-wasip2` alongside `wasm32-unknown-unknown`.
+surface (`scripted_tool,jq`), which is what a WASI runtime (`wasmtime`,
+`wasmer`) needs. CI's `wasm` job checks `wasm32-wasip2` alongside
+`wasm32-unknown-unknown`.
+
+For a wasm host with **no** WASI and no JS (including the Hyperlight micro-VM
+guest), see [Non-JS WebAssembly Embedding](non-js-wasm.md): that route is
+`wasm32-unknown-unknown` plus the component model, not WASI.
 
 Decisions and constraints:
 

@@ -58,7 +58,12 @@ regex = "1"
 fancy-regex = "0.19"
 
 # Date/Time
-chrono = "0.4"
+# Important decision: `default-features = false` drops chrono's `wasmbind`,
+# which routes `Utc::now()` at the JS `Date` on wasm32-unknown-unknown. bashkit
+# reads the clock through `time_compat` on every target instead, so the JS
+# binding is dead weight for JS hosts and an unresolvable import for non-JS wasm
+# embedders. Re-enabled by the bashkit `wasm_js` feature for the JS packages.
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 chrono-tz = "0.10"
 
 # Compression
@@ -79,11 +84,14 @@ rand = "0.10"
 zeroize = "1"
 
 # CSPRNG for placeholder token generation (security-grade randomness).
-# Important decision: enable `wasm_js` so the public `wasm32-unknown-unknown`
-# build gate stays green; bashkit targets JS-backed wasm for that triple.
 # Used by the credential placeholder generator; getrandom is the lowest-level
 # CSPRNG primitive and is already transitively in the dep tree via reqwest/rustls.
-getrandom = { version = "0.4", features = ["wasm_js"] }
+# Important decision: the JS backend is *not* enabled here. `wasm_js` is a
+# feature of the `bashkit` crate instead, because a wasm32-unknown-unknown host
+# is not necessarily a JS host: a non-JS embedder (a wasm component in a
+# runtime with no JS engine) must be able to supply a custom backend, which the
+# unconditional `wasm_js` feature made a compile error.
+getrandom = { version = "0.4" }
 
 # Drop-in std::time::{Instant,SystemTime} replacement for wasm32-unknown-unknown,
 # where std::time is a hard panic ("time not implemented on this platform" — no
