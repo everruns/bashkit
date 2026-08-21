@@ -492,8 +492,30 @@ other message survives verbatim, because a backend-specific reason tells an agen
 *why* in a way the bare errno cannot: `filesystem is read-only` must not collapse
 into `Permission denied`, and a custom `FileSystem` impl's own wording is the only
 diagnostic its embedder gets. Those specific reasons are instead covered by adding
-their fixed templates to the echo filter. Regression coverage:
-`tests/integration/glob_fuzz_scaffold_tests.rs`.
+their fixed templates to the echo filter.
+
+Run 219 (`\n \0{ code:<(])\n`) exposed the mechanism behind both failures and a
+second, independent gap:
+
+- **The pre-filter checked the raw bytes, but the shell transforms them.** NUL is
+  dropped during word expansion, so `\0{ code:` and `</r\0ustc/` slip past a
+  literal `contains` and reappear in stderr as ` { code:` and `/rustc/`. Targets
+  now call `testing::input_echo_would_trip`, which checks the input as the shell
+  will render it back. Quote and backslash removal can synthesize shapes the same
+  way, which is why the detector must not depend on the pre-filter alone.
+- **The echo filter was line-based, but the input slot can contain newlines.** A
+  command name ending in `\n` renders bash's one-line `command not found`
+  template across two lines, and neither half matched. Matching is now span-based:
+  an unclosed `bash: `/`ls: cannot access ` line extends to the *first* later line
+  ending in a template suffix. Closing on the earliest candidate keeps the span
+  minimal so a leak printed after a complete diagnostic still survives, and a leak
+  cannot be swallowed *inside* a span because each shell diagnostic is formatted
+  and written as one string with nothing interleaved.
+
+Regression coverage: `tests/integration/glob_fuzz_scaffold_tests.rs` replays both
+crash inputs through all three scripts the target builds, and the
+`strip_*`/`input_echo_would_trip` unit tests in `src/testing.rs` pin both the
+strip and keep directions.
 
 **TM-INF-013**: The jq builtin previously called `std::env::set_var()` to expose
 shell variables to jaq's `env` function. This also made host process env vars (API keys, tokens)

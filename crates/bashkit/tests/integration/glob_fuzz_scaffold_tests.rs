@@ -62,6 +62,41 @@ async fn glob_fuzz_crash_nul_stripped_redirect_target() {
     }
 }
 
+/// Regression: fuzz run 219 (`crash-2ac9af1dcb0bb66e7849b347828a8236e12fdda3`,
+/// bytes `[10, 32, 0, 123, 32, 99, 111, 100, 101, 58, 60, 40, 93, 41, 10]`
+/// = `\n \0{ code:<(])\n`).
+///
+/// Same NUL-stripping mechanism as run 218 — the raw bytes hide the banned
+/// ` { code:` behind a NUL — but a second gap too: the resulting command name
+/// ends in a newline, so bash's one-line `command not found` template renders
+/// across two lines and the echo filter must match it as one span.
+#[tokio::test]
+async fn glob_fuzz_crash_nul_stripped_newline_command_name() {
+    let input = "\n \0{ code:<(])\n";
+    // The target now skips this input outright, since the shell would echo a
+    // banned shape back. Assert that, then assert the harness would survive it
+    // anyway — the pre-filter and the echo filter are independent defenses.
+    assert!(bashkit::testing::input_echo_would_trip(input));
+
+    let mut bash = fuzz_bash();
+    for script in [
+        format!("ls /tmp/{}", input),
+        format!(
+            "case \"test.txt\" in {}) echo match;; *) echo no;; esac",
+            input
+        ),
+        format!("if [[ \"hello.world\" == {} ]]; then echo y; fi", input),
+    ] {
+        fuzz_exec(
+            &mut bash,
+            &script,
+            "glob_fuzz_crash_nul_stripped_newline_command_name",
+            &[],
+        )
+        .await;
+    }
+}
+
 /// The missing-input-redirect diagnostic must match real bash byte for byte:
 /// `bash: <path>: No such file or directory`.
 #[tokio::test]

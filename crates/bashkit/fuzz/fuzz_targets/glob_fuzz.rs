@@ -46,10 +46,12 @@ fuzz_target!(|data: &[u8]| {
         // containing e.g. "Span {" is not a TM-INF-022 leak. Filtering at
         // the fuzz-input layer keeps the harness's leak detector strict
         // for real internals while avoiding false positives.
-        for pat in bashkit::testing::UNIVERSAL_BANNED {
-            if input.contains(pat) {
-                return;
-            }
+        // Checks the input as the shell will render it back, not just the
+        // raw bytes: NUL is dropped during word expansion, so `\0{ code:`
+        // and `</r\0ustc/` slip past a literal `contains` and reappear in
+        // stderr as ` { code:` and `/rustc/` (runs 218 and 219).
+        if bashkit::testing::input_echo_would_trip(input) {
+            return;
         }
 
         let rt = tokio::runtime::Builder::new_current_thread()
