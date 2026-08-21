@@ -38,7 +38,7 @@ EXTERNAL = re.compile(r"\A(?:[a-z][a-z0-9+.-]*:|//|/|#)")
 # examples containing `](`) must not be read as links.
 CODE = re.compile(r"^```.*?^```|``.*?``|`[^`\n]*`", re.DOTALL | re.MULTILINE)
 BASHKIT_DEPENDENCY = re.compile(
-    r'^\s*(?://!\s*)?bashkit\s*=\s*\{[^}\n]*\bversion\s*=\s*"([^"]+)"',
+    r'^[ \t]*(?://![ \t]*)?bashkit[ \t]*=[ \t]*\{[^}\n]*\bversion[ \t]*=[ \t]*"([^"]+)"',
     re.MULTILINE,
 )
 WORKSPACE_PACKAGE = re.compile(r"(?ms)^\[workspace\.package]\s*$.*?(?=^\[|\Z)")

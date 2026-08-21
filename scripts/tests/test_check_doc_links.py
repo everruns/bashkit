@@ -118,6 +118,15 @@ class CheckDocLinksTest(unittest.TestCase):
             result.stderr,
         )
 
+    def test_dependency_scan_does_not_cross_line_boundaries(self) -> None:
+        self.write('\n\n\nbashkit = { version = "1.2.2" }\n')
+        result = self.check()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            'docs/page.md:4: stale bashkit dependency version 1.2.2; expected 1.2.3',
+            result.stderr,
+        )
+
     def test_current_bashkit_dependency_version_accepted(self) -> None:
         self.write('```toml\nbashkit = { version = "1.2.3", features = ["sqlite"] }\n```\n')
         self.assertEqual(self.check().returncode, 0)
