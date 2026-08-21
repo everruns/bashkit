@@ -196,11 +196,11 @@ run *args:
 
 # Run REPL
 repl:
-    cargo run -p bashkit-cli -- repl
+    cargo run -p bashkit-cli
 
 # Run a script file
-run-script file:
-    cargo run -p bashkit-cli -- run {{file}}
+run-script file *args:
+    cargo run -p bashkit-cli -- {{file}} {{args}}
 
 # === Benchmarks ===
 
