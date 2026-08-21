@@ -553,6 +553,7 @@ All unexpected errors are caught and converted to safe, human-readable messages.
 | C ABI unwind (TM-INT-008) | Rust panic enters a foreign runtime or leaks details | Catch every exported operation and return a generic error | **MITIGATED** |
 | Binary output bypasses resource limits (TM-INT-009) | Invalid UTF-8 exceeds configured caps when counted as text | Byte-native accumulation and callbacks truncate by exact byte length | **MITIGATED** |
 | Invalid UTF-8 line input panics (TM-INT-010) | `read`/`select` apply a lossy-text newline offset to raw pipeline bytes | Line consumers find and split newlines in the authoritative byte buffer | **MITIGATED** |
+| Command resolver panic (TM-INT-011) | Unresolved command name triggers a panic in embedder resolver code | `catch_unwind` wrapper and sanitized shell error | **MITIGATED** |
 
 **Panic Recovery:**
 

@@ -6631,11 +6631,23 @@ impl Interpreter {
             // Last-chance resolver. Dispatches through `execute_builtin_arc`
             // like every other builtin, so `before_tool` fires with the
             // resolved name and can veto it.
-            if let Some(builtin) = self
-                .command_resolver
-                .as_ref()
-                .and_then(|resolver| resolver.resolve(name))
-            {
+            // THREAT[TM-INT-011]: Resolver host code receives attacker-controlled names.
+            // Contain its panics before dispatching the builtin it returns.
+            let resolved = match self.command_resolver.as_ref() {
+                Some(resolver) => {
+                    match std::panic::catch_unwind(AssertUnwindSafe(|| resolver.resolve(name))) {
+                        Ok(builtin) => builtin,
+                        Err(_panic) => {
+                            return Ok(ExecResult::err(
+                                format!("bash: {}: resolver failed unexpectedly\n", name),
+                                1,
+                            ));
+                        }
+                    }
+                }
+                None => None,
+            };
+            if let Some(builtin) = resolved {
                 return self
                     .execute_builtin_arc(
                         name,

@@ -906,10 +906,13 @@ session's isolated VFS.
 | TM-INT-008 | Panic crosses the C ABI boundary | Rust unwind enters a foreign runtime or exposes panic details | Every exported C operation uses `catch_unwind`; fallible calls return a generic, capped `BASHKIT_INTERNAL_ERROR` | **MITIGATED** |
 | TM-INT-009 | Binary output bypasses resource limits | Byte-native output or callbacks count characters instead of bytes, allowing invalid UTF-8 to exceed configured caps | Accumulation and streaming callbacks truncate `StreamData` by exact byte length before delivery; regression tests assert binary output-limit behavior | **MITIGATED** |
 | TM-INT-010 | Invalid UTF-8 line input panics the interpreter | `read` or `select` finds a newline in lossy text, then applies that expanded replacement-character offset to raw pipeline bytes | Line consumers find and split newlines in the authoritative byte buffer, then lossily decode only the consumed shell-text line; binary regressions cover both paths | **MITIGATED** |
+| TM-INT-011 | Command resolver panic crash | Attacker-controlled unresolved command names trigger a panic in embedder resolver code | `catch_unwind` around `CommandResolver::resolve`; sanitized shell error | **MITIGATED** |
 
 **Current Risk**: LOW. Implementation: `interpreter/mod.rs` wraps every builtin call in
 `AssertUnwindSafe(..).catch_unwind()` (TM-INT-001) and converts panics to the sanitized
 `bash: <name>: builtin failed unexpectedly` error, never exposing panic details (TM-INT-002).
+Last-chance command resolution applies the same boundary around embedder resolver code
+before builtin dispatch (TM-INT-011).
 
 **Date Format Validation** (TM-INT-003): `builtins/date.rs::validate_format()` pre-validates
 strftime formats via `StrftimeItems`, rejecting `Item::Error` before `chrono::format()` can panic.

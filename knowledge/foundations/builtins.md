@@ -133,8 +133,10 @@ pub trait CommandResolver: Send + Sync {
 Decision: resolvers return a `Builtin` rather than executing directly. The
 resolved builtin runs through `execute_builtin_arc`, the same path as every
 other builtin, so `before_tool` fires with the resolved name and can veto it,
-`catch_unwind` still contains panics, and stdin/redirects behave identically. A
-bespoke execution path would have to re-earn all of that.
+`catch_unwind` contains panics from both resolution and execution, and
+stdin/redirects behave identically. Resolver panic details are discarded and
+the command returns a sanitized non-zero shell result. A bespoke execution path
+would have to re-earn all of that.
 
 Consequences to keep in mind:
 

@@ -148,6 +148,29 @@ async fn no_resolver_keeps_command_not_found() {
     assert_eq!(result.exit_code, 127);
 }
 
+#[tokio::test]
+async fn resolver_panic_becomes_a_sanitized_shell_error() {
+    struct PanickingResolver;
+
+    impl CommandResolver for PanickingResolver {
+        fn resolve(&self, _name: &str) -> Option<Arc<dyn Builtin>> {
+            panic!("sensitive host resolver detail")
+        }
+    }
+
+    let mut bash = Bash::builder()
+        .command_resolver(Arc::new(PanickingResolver))
+        .build();
+    let result = bash.exec("attacker-controlled-name").await.unwrap();
+
+    assert_eq!(result.exit_code, 1);
+    assert_eq!(
+        result.stderr,
+        "bash: attacker-controlled-name: resolver failed unexpectedly\n"
+    );
+    assert!(!result.stderr.contains("sensitive host resolver detail"));
+}
+
 /// The security contract from `knowledge/integrations/script-analysis.md`:
 /// `before_tool` is the enforcement backstop, and it must keep working for
 /// names that only exist because a resolver produced them.
