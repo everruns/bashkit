@@ -53,6 +53,9 @@ lives there, next to the pin, so it cannot drift away from what it explains.
   sandbox's virtual stdout, which is never a terminal.
 - **`futures-util` with `default-features = false`.** Bashkit uses `StreamExt`,
   `FutureExt`, and `select`/`pin_mut!` only.
+- **`chrono-tz` behind the `tzdata` feature** (on by default). Worth 911 KB of
+  the browser wasm binary. See
+  [Gate rather than reimplement](#gate-rather-than-reimplement).
 
 ## Measure size and audit surface separately
 
@@ -101,10 +104,35 @@ worth keeping so the question does not get re-litigated from scratch.
 ## Gate rather than reimplement
 
 Where a dependency is large but its domain is not something to reimplement, the
-lever is a feature gate. `chrono-tz` is the open example: three lines of use in
-`builtins/date.rs` for `TZ=` parsing, and the largest single artifact in the
-tree (an 18.6 MB rlib of IANA tables). Timezone rules are not a reimplementation
-target; a `tzdata` feature, off for the browser build, is.
+lever is a feature gate rather than an in-house rewrite.
+
+`chrono-tz` is the worked example. It backs three lines of `builtins/date.rs`
+(`TZ=` parsing) and is the largest single artifact in the tree — an 18.6 MB
+rlib of compiled IANA tables that costs **911 KB (9.7%)** of the release
+`wasm32-unknown-unknown` browser binary, 9,361,014 → 8,450,035 bytes.
+
+That number is the contrast with the `idna_adapter` pin above, and the reason
+the two are justified differently: ICU's tables are reachable only through code
+paths LTO can prove dead, so they cost 15 KB; chrono-tz's are reached from a
+`FromStr` over the whole zone table, so the linker must keep them. Whether a
+large data dependency actually ships depends on how it is reached, which is why
+the rule is to measure rather than reason from source size. Timezone rules are emphatically not a
+reimplementation target, so it sits behind the **`tzdata`** feature, on by
+default and listed explicitly by `bashkit-cli` and `bashkit-capi`, and
+deliberately absent from `bashkit-wasm`.
+
+Turning it off narrows the closed timezone set of `TM-INF-018` to UTC alone. It
+does not open a hole: a named zone resolves the way an unrecognised one always
+has — to UTC — rather than to host-local state, so `date` stays fail-closed.
+The observable change is that `TZ=America/Chicago` reads as UTC instead of CST.
+`tests/integration/date_timezone_no_tzdata_tests.rs` pins that side; the
+`tzdata`-on modules beside it pin the other, and `main.rs` selects between them
+so both configurations have coverage rather than one silently losing it.
+
+The generalisable rule: when a dependency is large, narrow in use, and wraps a
+domain with real correctness stakes (timezones, compression, crypto, Unicode),
+gate it and give both sides of the gate tests. Do not reimplement it, and do not
+leave the gated-off configuration untested.
 
 ## See also
 

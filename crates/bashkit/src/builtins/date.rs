@@ -10,6 +10,7 @@
 use async_trait::async_trait;
 use chrono::format::{Item, StrftimeItems};
 use chrono::{DateTime, Duration, LocalResult, NaiveDate, NaiveDateTime, TimeZone, Utc};
+#[cfg(feature = "tzdata")]
 use chrono_tz::Tz;
 
 use super::{Builtin, Context, resolve_path};
@@ -59,9 +60,16 @@ pub struct Date {
 }
 
 /// THREAT[TM-INF-018]: A closed timezone set prevents host-local fallback.
+///
+/// Without the `tzdata` feature there is no IANA database to resolve against,
+/// so the set closes to UTC alone. That is the same resolution an unrecognised
+/// zone name already gets, so the fail-closed-to-UTC contract documented at the
+/// top of this module holds either way -- `TZ=Europe/Kyiv` simply joins the
+/// unrecognised case instead of being honoured.
 #[derive(Clone, Copy)]
 enum SandboxTimezone {
     Utc,
+    #[cfg(feature = "tzdata")]
     Iana(Tz),
 }
 
@@ -77,7 +85,15 @@ impl SandboxTimezone {
             return Self::Utc;
         }
 
-        value.parse::<Tz>().map(Self::Iana).unwrap_or(Self::Utc)
+        #[cfg(feature = "tzdata")]
+        {
+            value.parse::<Tz>().map(Self::Iana).unwrap_or(Self::Utc)
+        }
+        #[cfg(not(feature = "tzdata"))]
+        {
+            let _ = value;
+            Self::Utc
+        }
     }
 
     fn local_to_utc(
@@ -87,6 +103,7 @@ impl SandboxTimezone {
     ) -> std::result::Result<DateTime<Utc>, String> {
         let local = match self {
             Self::Utc => Utc.from_local_datetime(&dt),
+            #[cfg(feature = "tzdata")]
             Self::Iana(tz) => tz
                 .from_local_datetime(&dt)
                 .map(|value| value.with_timezone(&Utc)),
@@ -104,6 +121,7 @@ impl SandboxTimezone {
     fn format(self, dt: &DateTime<Utc>, format: &str) -> String {
         match self {
             Self::Utc => dt.format(format).to_string(),
+            #[cfg(feature = "tzdata")]
             Self::Iana(tz) => dt.with_timezone(&tz).format(format).to_string(),
         }
     }

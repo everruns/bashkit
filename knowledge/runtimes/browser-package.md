@@ -66,6 +66,14 @@ Absent (need sockets, threads, or a host FS the browser sandbox lacks):
 mounts, and native `interop`. Reach the network from a custom builtin that calls
 the app's own `fetch` instead.
 
+Absent for size rather than capability: `tzdata`. chrono-tz's compiled IANA
+database is the largest single artifact in the dependency tree, so this package
+omits it and `date` resolves named `TZ=` zones to UTC — the same result an
+unrecognised zone gets, so the fail-closed contract is unchanged. `TZ=UTC`,
+unset, empty, and `date -u` are unaffected. Embedders who need named zones
+should build their own wasm target with the `tzdata` feature on. See
+[Dependency Policy](../operations/dependencies.md).
+
 ## Host-backed filesystem (`new Bash({ fs })`)
 
 Embedders can replace the in-memory VFS with their own store by passing `fs`.
