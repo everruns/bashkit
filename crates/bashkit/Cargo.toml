@@ -38,7 +38,7 @@ fancy-regex = { workspace = true }
 
 # Date/Time
 chrono = { workspace = true }
-chrono-tz = { workspace = true }
+chrono-tz = { workspace = true, optional = true }
 
 # HTTP client (for curl/wget) - optional, enabled with http_client feature
 reqwest = { workspace = true, optional = true }
@@ -133,7 +133,23 @@ zapcode-core = { version = "1.5.1", optional = true }
 turso_core = { workspace = true, optional = true }
 
 [features]
-default = ["bash_tool", "ring"]
+default = ["bash_tool", "ring", "tzdata"]
+# Named IANA timezone support for the `date` builtin's `TZ=` handling, via the
+# chrono-tz database. On by default.
+#
+# Important decision: this is a feature, not an unconditional dep, because
+# chrono-tz compiles the whole IANA database in -- by far the largest single
+# artifact in the tree (an 18.6 MB rlib) -- to serve three lines of use in
+# builtins/date.rs. Builds that do not need named zones (the slim browser wasm
+# package) should not carry it.
+#
+# Turning it off does not open a hole. `SandboxTimezone` closes to UTC alone and
+# `date` reports that it cannot honour a named zone, exiting 1 rather than
+# formatting in UTC and returning a plausible-looking wrong time. The
+# fail-closed direction of THREAT[TM-INF-018] is unchanged: host timezone state
+# is still never consulted. `TZ=UTC`, unset, empty, and path-style values are
+# unaffected.
+tzdata = ["dep:chrono-tz"]
 # Enable the LLM-facing `BashTool` wrapper: the `Tool` trait, `ToolExecution`,
 # OpenAI tool-definition/JSON-schema helpers, and the `tower::Service` bridge.
 # On by default. Disable with `--no-default-features` to compile just the

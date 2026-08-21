@@ -1112,7 +1112,10 @@ where
     T: ClapBuiltin,
 {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        let mut command = <T::Args as CommandFactory>::command().color(clap::ColorChoice::Never);
+        // No `.color(ColorChoice::Never)` here: the workspace builds clap with
+        // `default-features = false`, so the `color` feature is absent and clap
+        // is unconditionally colourless. See the clap pin in the root Cargo.toml.
+        let mut command = <T::Args as CommandFactory>::command();
         let command_name = command.get_name().to_string();
         let argv = std::iter::once(command_name).chain(ctx.args.iter().cloned());
 

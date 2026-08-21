@@ -10,6 +10,7 @@
 use async_trait::async_trait;
 use chrono::format::{Item, StrftimeItems};
 use chrono::{DateTime, Duration, LocalResult, NaiveDate, NaiveDateTime, TimeZone, Utc};
+#[cfg(feature = "tzdata")]
 use chrono_tz::Tz;
 
 use super::{Builtin, Context, resolve_path};
@@ -59,25 +60,59 @@ pub struct Date {
 }
 
 /// THREAT[TM-INF-018]: A closed timezone set prevents host-local fallback.
+///
+/// Without the `tzdata` feature there is no IANA database to resolve against,
+/// so the set closes to UTC alone. Rather than silently treating a named zone
+/// as UTC -- which would give a wrong answer that looks like a right one --
+/// this build reports that it cannot honour the request and `date` exits 1.
+/// The fail-closed direction is unchanged: host timezone state is still never
+/// consulted, and nothing resolves to a host-local zone.
 #[derive(Clone, Copy)]
 enum SandboxTimezone {
     Utc,
+    #[cfg(feature = "tzdata")]
     Iana(Tz),
 }
 
 impl SandboxTimezone {
-    fn from_env(value: Option<&String>) -> Self {
+    /// Resolve the sandbox's `TZ`.
+    ///
+    /// `Err` carries a message for stderr. It deliberately does NOT include the
+    /// `TZ` value: a `TZ` can be a path-shaped string, and echoing it back is
+    /// how host state leaks into output. See
+    /// `invalid_timezone_fails_closed_without_echoing_host_state`.
+    fn from_env(value: Option<&String>) -> std::result::Result<Self, String> {
         let Some(value) = value.map(String::as_str).filter(|value| !value.is_empty()) else {
-            return Self::Utc;
+            return Ok(Self::Utc);
         };
 
         // POSIX permits `:path` and implementation-defined timezone files.
         // The VFS has no trusted zoneinfo filesystem, so those forms fail closed.
+        // They resolve to UTC in every build: this is a rejected request for a
+        // host file, not a request for a named zone the build cannot serve.
         if value.starts_with(':') || value.contains("..") {
-            return Self::Utc;
+            return Ok(Self::Utc);
         }
 
-        value.parse::<Tz>().map(Self::Iana).unwrap_or(Self::Utc)
+        #[cfg(feature = "tzdata")]
+        {
+            // An unrecognised name still resolves to UTC rather than erroring:
+            // GNU `date` accepts anything here, and that leniency predates the
+            // feature split.
+            Ok(value.parse::<Tz>().map(Self::Iana).unwrap_or(Self::Utc))
+        }
+        #[cfg(not(feature = "tzdata"))]
+        {
+            // No database, so a real zone and a typo are indistinguishable.
+            // `UTC` needs no database and stays silent so `TZ=UTC` keeps working.
+            if value == "UTC" {
+                return Ok(Self::Utc);
+            }
+            Err(
+                "date: named timezones are unavailable: built without the 'tzdata' feature"
+                    .to_string(),
+            )
+        }
     }
 
     fn local_to_utc(
@@ -87,6 +122,7 @@ impl SandboxTimezone {
     ) -> std::result::Result<DateTime<Utc>, String> {
         let local = match self {
             Self::Utc => Utc.from_local_datetime(&dt),
+            #[cfg(feature = "tzdata")]
             Self::Iana(tz) => tz
                 .from_local_datetime(&dt)
                 .map(|value| value.with_timezone(&Utc)),
@@ -104,6 +140,7 @@ impl SandboxTimezone {
     fn format(self, dt: &DateTime<Utc>, format: &str) -> String {
         match self {
             Self::Utc => dt.format(format).to_string(),
+            #[cfg(feature = "tzdata")]
             Self::Iana(tz) => dt.with_timezone(&tz).format(format).to_string(),
         }
     }
@@ -474,7 +511,10 @@ impl Builtin for Date {
         }
 
         // THREAT[TM-INF-018]: Resolve only the virtual environment's TZ.
-        let selected_timezone = SandboxTimezone::from_env(ctx.env.get("TZ"));
+        let selected_timezone = match SandboxTimezone::from_env(ctx.env.get("TZ")) {
+            Ok(timezone) => timezone,
+            Err(message) => return Ok(ExecResult::err(format!("{message}\n"), 1)),
+        };
         let display_timezone = if utc {
             SandboxTimezone::Utc
         } else {

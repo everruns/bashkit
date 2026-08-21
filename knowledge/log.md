@@ -1,5 +1,13 @@
 # Bashkit Knowledge Update Log
 
+## 2026-08-21
+
+* **Decision**: Trimmed the always-on dependency graph from 112 to 91 crates: `idna_adapter` pinned to 1.0.0 (a lockfile-only pin that drops the 21-crate ICU4X stack `url` pulled in via `idna`), and `clap` and `futures-util` built with `default-features = false`. Non-ASCII domain names are now rejected rather than normalised per UTS 46, which for a sandbox allowlist removes the homograph and punycode-confusion class from host matching. Recorded in [Dependency Policy](operations/dependencies.md).
+* **Constraint**: Measure a dependency trim's binary cost, never infer it from source size. The `idna_adapter` pin removes 21 crates but only 15 KB (0.16%) of the release wasm build, because LTO already dead-strips ICU's tables — they sit behind lazy statics the linker proves unreachable. Gating `chrono-tz` removes 4 crates and 911 KB (9.7%), because its tables are reached from a `FromStr` over the whole zone table and must be kept. How a data dependency is *reached* decides whether it ships.
+* **Decision**: `chrono-tz` now sits behind a `tzdata` feature, on by default and listed explicitly by `bashkit-cli` and `bashkit-capi`, deliberately absent from `bashkit-wasm`. Timezone rules are not a reimplementation target; gating is the lever for a large dependency wrapping a domain with real correctness stakes.
+* **Security**: With `tzdata` off, `date` reports that it cannot honour a named `TZ=` zone and exits 1 rather than silently formatting in UTC — a wrong timestamp that looks right is worse than a refusal. The diagnostic omits the `TZ` value, which may itself be path-shaped; path-style values still resolve to UTC silently in every build, since those are a rejected request for a host zoneinfo file rather than a request for a named zone. Both sides of the gate carry tests. Recorded in TM-INF-018 in the [Threat Model](security/threat-model.md).
+* **Contract**: `url`, `flate2`/`bzip2`, `clap`, `bigdecimal`, and the RustCrypto hashes are deliberately *not* reimplemented in-house, with reasons recorded so the question is not re-litigated. `url` is the notable one: `reqwest` depends on it regardless, so a hand-rolled parser would not leave the tree and would introduce a parser differential between the URL validated against the allowlist and the URL actually fetched.
+
 ## 2026-08-13
 
 * **Security**: The fuzz workspace lockfile (`crates/bashkit/fuzz/Cargo.lock`) had drifted onto `anyhow` 1.0.102 (RUSTSEC-2026-0190, unsound `Error::downcast_mut()`, patched in 1.0.103) plus yanked `js-sys` 0.3.88 and `wasm-bindgen` 0.2.111. Refreshed to clear all three. Fuzz-only build dependencies, never shipped in the library, so exposure was limited to the nightly fuzz runners.

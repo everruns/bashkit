@@ -6,4 +6,5 @@
 * [Maintenance](maintenance.md) - Pre-release dependency, security, compatibility, and artifact maintenance requirements.
 * [Release Process](release-process.md) - Versioning, validation, tagging, and publication to crates.io, PyPI, and npm.
 * [Performance Results](performance-results.md) - Benchmark harnesses, result locations, naming, and publication contract.
+* [Dependency Policy](dependencies.md) - Which third-party crates Bashkit keeps, which it trims, and which are deliberately not reimplemented in-house.
 * [Evaluation Framework](eval.md) - LLM evaluation study design, dataset format, execution, and scoring.

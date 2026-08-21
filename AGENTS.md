@@ -53,6 +53,7 @@ Fix root cause. Unsure: read more code; if stuck, ask w/ short options. Unrecogn
 | security/credential-injection | Per-host HTTP credential injection without exposing secrets |
 | security/http-transport | Pluggable HTTP transport: route curl/wget via host egress boundary |
 | operations/performance-results | Benchmark/eval result locations and `/benches` site aggregation contract |
+| operations/dependencies | Dependency policy: trims in effect, and what is deliberately not reimplemented |
 | runtimes/emscripten-wheels | Reduced-feature Pyodide/Emscripten Python wheel |
 | runtimes/browser-package | Slim single-threaded wasm package (`@everruns/bashkit-wasm`) for browsers + JS runtimes, no COOP/COEP |
 | runtimes/c-api | Versioned native C ABI, ownership rules, packaging, and compatibility boundaries |
