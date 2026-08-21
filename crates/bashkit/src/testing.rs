@@ -136,37 +136,94 @@ pub fn assert_no_leak(result: &ExecResult, ctx: &str, tool_banned: &[&str]) {
 /// error template before the banned-shape check; the byte-length cap
 /// and the host-canary check still run on the unfiltered stderr so
 /// flood and TM-INF-013 regressions are still caught.
+///
+/// The user-input slot can itself contain newlines, in which case a
+/// one-line template renders across several lines — `glob_fuzz` run 219
+/// produced `bash: { code:<(])\n: command not found` from a command name
+/// ending in `\n`. So matching is span-based, not line-based: a `bash: `
+/// or `ls: ` line that does not close on its own extends to the *first*
+/// later line ending in a template suffix. Closing on the earliest
+/// candidate keeps the span minimal, so a leak printed after a complete
+/// diagnostic still survives; and a real leak cannot be swallowed
+/// *inside* a span, because each shell diagnostic is formatted and
+/// written as one string with nothing interleaved.
 fn strip_real_shell_error_lines(stderr: &str) -> String {
-    let lines: Vec<&str> = stderr
-        .lines()
-        .filter(|line| !is_real_shell_error_line(line))
-        .collect();
-    lines.join("\n")
+    let lines: Vec<&str> = stderr.lines().collect();
+    let mut kept: Vec<&str> = Vec::with_capacity(lines.len());
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        if is_real_shell_error_line(line) {
+            i += 1;
+            continue;
+        }
+        if starts_shell_error_template(line)
+            && let Some(close) = lines[i + 1..]
+                .iter()
+                .position(|l| ends_shell_error_template(l))
+        {
+            i += close + 2;
+            continue;
+        }
+        kept.push(line);
+        i += 1;
+    }
+    kept.join("\n")
 }
+
+/// A stderr line that opens a real-shell diagnostic but does not close it,
+/// so the user-input slot must run on into the following lines.
+fn starts_shell_error_template(line: &str) -> bool {
+    line.starts_with("bash: ") || line.starts_with("ls: cannot access ")
+}
+
+/// A stderr line that closes a real-shell diagnostic opened earlier.
+fn ends_shell_error_template(line: &str) -> bool {
+    SHELL_ERROR_SUFFIXES.iter().any(|suf| line.ends_with(suf))
+}
+
+/// True when the shell would echo `input` back into a diagnostic
+/// containing a [`UNIVERSAL_BANNED`] shape.
+///
+/// Fuzz targets that inline raw bytes into scripts use this to skip such
+/// inputs, keeping the leak detector strict for real internals. Checking
+/// the raw bytes is not enough: the shell drops NUL bytes during word
+/// expansion, so `\0{ code:` reaches stderr as ` { code:` and `</r\0ustc/`
+/// as `/rustc/`. That transformation is what defeated `glob_fuzz`'s
+/// original pre-filter in runs 218 and 219.
+pub fn input_echo_would_trip(input: &str) -> bool {
+    let without_nul = input.replace('\0', "");
+    UNIVERSAL_BANNED
+        .iter()
+        .any(|pat| input.contains(pat) || without_nul.contains(pat))
+}
+
+/// Trailing halves of the real-shell diagnostic templates that quote user
+/// input. A line ending in one of these closes such a diagnostic.
+const SHELL_ERROR_SUFFIXES: &[&str] = &[
+    ": command not found",
+    ": No such file or directory",
+    ": Is a directory",
+    ": Permission denied",
+    ": cannot execute: required file not found",
+    ": cannot execute binary file",
+    // Remaining errno templates that `redirect_error_reason` can emit
+    // for `bash: <redirect target>: <strerror>`.
+    ": Not a directory",
+    ": File exists",
+    ": Operation not supported",
+    // Fixed bashkit redirection refusals. Like the errno templates they
+    // quote the user-supplied redirect target verbatim, so a target
+    // containing a banned shape is an echo, not an internal leak.
+    ": filesystem redirection disabled",
+    ": cannot overwrite existing file",
+    ": filesystem is read-only",
+];
 
 /// Recognize stderr lines that bash, ls, or a uutils clap CLI produces
 /// verbatim from user input. Conservative: each branch matches a fixed
 /// real-shell error template that quotes input.
 fn is_real_shell_error_line(line: &str) -> bool {
-    const SHELL_ERROR_SUFFIXES: &[&str] = &[
-        ": command not found",
-        ": No such file or directory",
-        ": Is a directory",
-        ": Permission denied",
-        ": cannot execute: required file not found",
-        ": cannot execute binary file",
-        // Remaining errno templates that `redirect_error_reason` can emit
-        // for `bash: <redirect target>: <strerror>`.
-        ": Not a directory",
-        ": File exists",
-        ": Operation not supported",
-        // Fixed bashkit redirection refusals. Like the errno templates they
-        // quote the user-supplied redirect target verbatim, so a target
-        // containing a banned shape is an echo, not an internal leak.
-        ": filesystem redirection disabled",
-        ": cannot overwrite existing file",
-        ": filesystem is read-only",
-    ];
     if let Some(rest) = line.strip_prefix("bash: ") {
         if SHELL_ERROR_SUFFIXES.iter().any(|suf| rest.ends_with(suf)) {
             return true;
@@ -367,6 +424,47 @@ mod tests {
         assert!(!stripped.contains("/tmp/Span {"));
         assert!(!stripped.contains("cannot access"));
         assert!(stripped.contains("thread panicked"));
+    }
+
+    #[test]
+    fn strip_removes_command_not_found_split_across_lines() {
+        // Regression, glob_fuzz run 219 (crash-2ac9af1dcb0bb66e7849b347828a8236e12fdda3,
+        // bytes `\n \0{ code:<(])\n`). The command name itself contains a
+        // newline, so bash's one-line `bash: %s: command not found` template
+        // renders across two lines and the line-based matcher saw neither
+        // half as a template.
+        let s = "bash: { code:<(])\n: command not found\n";
+        assert_eq!(strip_real_shell_error_lines(s), "");
+    }
+
+    #[test]
+    fn strip_span_stops_at_the_first_closing_line() {
+        // The span must close on the earliest line ending in a template
+        // suffix, so a real leak printed afterwards still survives.
+        let s = "bash: foo: command not found\nFile { code: 1 }\n";
+        let stripped = strip_real_shell_error_lines(s);
+        assert!(stripped.contains("File {"), "stripped: {stripped:?}");
+    }
+
+    #[test]
+    fn strip_keeps_unclosed_bash_prefix_span() {
+        // A `bash: ` line with no closing template anywhere after it is not
+        // a diagnostic — it must not swallow the rest of stderr.
+        let s = "bash: partial Span {\nTok::Ident\n";
+        let stripped = strip_real_shell_error_lines(s);
+        assert!(stripped.contains("Span {"), "stripped: {stripped:?}");
+        assert!(stripped.contains("Tok::"), "stripped: {stripped:?}");
+    }
+
+    #[test]
+    fn input_echo_would_trip_sees_through_nul_stripping() {
+        // Both glob_fuzz crashes hinged on this: the raw bytes carry a NUL
+        // that hides the banned shape from a literal `contains` check, and
+        // the shell drops it during expansion.
+        assert!(input_echo_would_trip("\n \0{ code:<(])\n"));
+        assert!(input_echo_would_trip("</r\0ustc/"));
+        assert!(input_echo_would_trip("plain /rustc/ path"));
+        assert!(!input_echo_would_trip("ls -la /tmp/*.txt"));
     }
 
     #[test]
