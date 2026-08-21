@@ -17,6 +17,8 @@
 
 use std::io::Write;
 use std::process::{Command, Output, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 const BIN: &str = env!("CARGO_BIN_EXE_bashkit");
 
@@ -538,8 +540,7 @@ fn an_inline_pipe_still_wins_over_host_stdin() {
 #[test]
 fn stdin_is_consumed_even_when_the_script_ignores_it() {
     // L-CLI-002: stdin is read to EOF before execution rather than lazily, so
-    // a script that never reads still drains the pipe. Harmless for a writer
-    // that finishes; a writer that never closes would block the run.
+    // a script that never reads still drains a writer that finishes.
     let out = run_with_stdin(&["-c", "echo hi"], "unread\n");
     assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
     assert_eq!(stdout(&out), "hi\n");
@@ -550,6 +551,39 @@ fn empty_stdin_is_harmless() {
     let out = run_with_stdin(&["-c", "cat; echo done"], "");
     assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
     assert_eq!(stdout(&out), "done\n");
+}
+
+#[test]
+fn timeout_bounds_an_idle_open_stdin_pipe() {
+    let mut child = cli()
+        .args(["--timeout", "1", "-c", "echo unreachable"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn bashkit");
+    let open_stdin = child.stdin.take().expect("stdin piped");
+    let deadline = Instant::now() + Duration::from_secs(3);
+
+    while child.try_wait().expect("poll bashkit").is_none() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(20));
+    }
+    if child.try_wait().expect("final poll bashkit").is_none() {
+        child.kill().expect("kill hung bashkit");
+        drop(open_stdin);
+        let _ = child.wait();
+        panic!("bashkit did not apply --timeout to the pre-execution stdin read");
+    }
+
+    drop(open_stdin);
+    let out = child.wait_with_output().expect("collect bashkit output");
+    assert_ne!(code(&out), 0);
+    assert_eq!(stdout(&out), "");
+    assert!(
+        stderr(&out).contains("stdin read timed out"),
+        "stderr: {}",
+        stderr(&out)
+    );
 }
 
 // ---------------------------------------------------------------------------

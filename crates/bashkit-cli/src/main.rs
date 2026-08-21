@@ -125,7 +125,7 @@ struct Args {
     /// Do not forward the host's stdin to the script
     ///
     /// One-shot mode reads stdin to EOF before execution when it is not a
-    /// terminal. Use this when stdin is an inherited pipe that stays open.
+    /// terminal. The selected execution timeout also bounds this read.
     #[arg(long)]
     no_stdin: bool,
 }
@@ -158,15 +158,19 @@ fn build_bash(args: &Args, mode: CliMode) -> bashkit::Bash {
     configure_bash(args, mode).build()
 }
 
-fn configure_bash(args: &Args, mode: CliMode) -> bashkit::BashBuilder {
-    let profile_name = args.profile.map(Into::into).unwrap_or_else(|| {
+fn execution_profile(args: &Args, mode: CliMode) -> bashkit::ExecutionProfile {
+    let name = args.profile.map(Into::into).unwrap_or_else(|| {
         if mode == CliMode::Interactive {
             bashkit::ExecutionProfileName::Interactive
         } else {
             bashkit::ExecutionProfileName::Standard
         }
     });
-    let profile = bashkit::ExecutionProfile::named(profile_name);
+    bashkit::ExecutionProfile::named(name)
+}
+
+fn configure_bash(args: &Args, mode: CliMode) -> bashkit::BashBuilder {
+    let profile = execution_profile(args, mode);
     let mut limits = profile.execution_limits().clone();
     let mut builder = bashkit::Bash::builder().profile(profile);
 
@@ -358,11 +362,32 @@ fn run_interactive(args: Args, mode: CliMode) -> Result<i32> {
 /// `bashkit -c 'echo hi'` never blocks waiting for input. Bash reads stdin
 /// lazily, when a command asks for it; the interpreter takes its stdin up
 /// front, so this reads to EOF before execution starts (L-CLI-002).
-/// `--no-stdin` opts out for callers that inherit a pipe nobody will close.
+/// The selected execution timeout bounds the read so an idle or trickling
+/// producer cannot stall a worker indefinitely (TM-DOS-108).
 ///
-// THREAT[TM-DOS-095]: bounded read; an unbounded producer cannot grow the
-// buffer past MAX_STDIN_BYTES.
-fn read_host_stdin() -> Result<Vec<u8>> {
+// THREAT[TM-DOS-108]: bound both bytes and wall-clock time. The reader thread
+// may remain blocked after timeout, but returning from the CLI terminates it.
+fn read_host_stdin(timeout: std::time::Duration) -> Result<Vec<u8>> {
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    std::thread::Builder::new()
+        .name("bashkit-stdin".into())
+        .spawn(move || {
+            let _ = sender.send(read_host_stdin_blocking());
+        })
+        .context("Failed to start stdin reader")?;
+
+    match receiver.recv_timeout(timeout) {
+        Ok(result) => result,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => bail!(
+            "stdin read timed out after {timeout:?}; close stdin, increase --timeout, or use --no-stdin"
+        ),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            bail!("stdin reader stopped unexpectedly")
+        }
+    }
+}
+
+fn read_host_stdin_blocking() -> Result<Vec<u8>> {
     use std::io::Read;
 
     let mut buf = Vec::new();
@@ -396,7 +421,7 @@ fn split_invocation_args(args: &Args) -> (Option<String>, Vec<String>) {
 }
 
 /// Build the per-execution options: positional parameters, `$0`, and stdin.
-fn exec_options(args: &Args) -> Result<bashkit::ExecOptions> {
+fn exec_options(args: &Args, timeout: std::time::Duration) -> Result<bashkit::ExecOptions> {
     let mut options = bashkit::ExecOptions::new().streaming(Box::new(|stdout, stderr| {
         // Write through as chunks arrive so long scripts are observable and a
         // run aborted by a resource limit keeps what it already produced.
@@ -423,7 +448,7 @@ fn exec_options(args: &Args) -> Result<bashkit::ExecOptions> {
     }
 
     if !args.no_stdin && !std::io::stdin().is_terminal() {
-        options = options.stdin(read_host_stdin()?);
+        options = options.stdin(read_host_stdin(timeout)?);
     }
 
     Ok(options)
@@ -435,8 +460,12 @@ fn run_oneshot(args: Args, mode: CliMode) -> Result<i32> {
         .build()
         .context("Failed to build CLI runtime")?
         .block_on(async move {
+            let stdin_timeout = args
+                .timeout
+                .map(std::time::Duration::from_secs)
+                .unwrap_or_else(|| execution_profile(&args, mode).execution_limits().timeout);
             let mut bash = build_bash(&args, mode);
-            let options = exec_options(&args)?;
+            let options = exec_options(&args, stdin_timeout)?;
 
             let (script, context) = match (&args.command, &args.script) {
                 (Some(cmd), _) => (cmd.clone(), "Failed to execute command"),

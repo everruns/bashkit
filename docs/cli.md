@@ -34,8 +34,8 @@ echo 'one line' | bashkit -c 'grep -c line'
 
 One-shot mode reads stdin to EOF *before* execution (capped at 10 MiB),
 rather than lazily when a command asks for it, and only when stdin is not
-a terminal. Pass `--no-stdin` when stdin is an inherited pipe that nobody
-will close.
+a terminal. The selected execution timeout bounds this read; pass
+`--no-stdin` to skip forwarding an inherited pipe.
 
 Output streams as it is produced, so a long script is observable while it
 runs and a run stopped by a resource limit keeps what it already printed.
