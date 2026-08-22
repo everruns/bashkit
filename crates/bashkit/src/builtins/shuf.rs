@@ -9,6 +9,7 @@
 //! reject outputs that exceed ExecutionLimits before allocation and must never
 //! materialize numeric ranges only to apply `-n` afterward.
 
+use super::clap_cache::cached_command;
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -22,6 +23,10 @@ use crate::limits::ExecutionLimits;
 
 pub struct Shuf;
 
+// Cached `shuf` arg surface: pre-built once, cloned per invocation.
+// See `builtins::clap_cache` for why it is built, not just constructed.
+cached_command!(shuf_cmd, super::generated::shuf_args::shuf_command());
+
 #[async_trait]
 impl Builtin for Shuf {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
@@ -29,8 +34,7 @@ impl Builtin for Shuf {
             .chain(ctx.args.iter().map(OsString::from))
             .collect();
 
-        let cmd = shuf_cmd();
-        let matches = match cmd.try_get_matches_from(argv) {
+        let matches = match shuf_cmd().try_get_matches_from(argv) {
             Ok(m) => m,
             Err(e) => {
                 let kind = e.kind();
@@ -416,12 +420,6 @@ impl SmallRng {
         }
     }
 }
-
-use super::clap_cache::cached_command;
-
-// Cached `shuf` arg surface — see `builtins::clap_cache`.
-cached_command!(shuf_cmd, super::generated::shuf_args::shuf_command());
-
 #[cfg(test)]
 mod tests {
     use super::*;

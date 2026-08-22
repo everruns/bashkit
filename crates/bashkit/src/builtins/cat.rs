@@ -5,6 +5,7 @@
 //! `crates/bashkit-coreutils-port/`. Behaviour is implemented locally
 //! against the bashkit VFS.
 
+use super::clap_cache::cached_command;
 use async_trait::async_trait;
 use std::ffi::OsString;
 use std::path::Path;
@@ -15,6 +16,10 @@ use crate::interpreter::ExecResult;
 
 pub struct Cat;
 
+// Cached `cat` arg surface: pre-built once, cloned per invocation.
+// See `builtins::clap_cache` for why it is built, not just constructed.
+cached_command!(cat_cmd, super::generated::cat_args::cat_command());
+
 #[async_trait]
 impl Builtin for Cat {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
@@ -23,12 +28,7 @@ impl Builtin for Cat {
             .chain(ctx.args.iter().map(OsString::from))
             .collect();
 
-        // GNU coreutils' help layout opens with the usage line; clap's
-        // default template leads with the `about`. uutils handles this via
-        // uucore's `localized_help_template`, which we drop during codegen
-        // because it pulls in Fluent. Re-apply a GNU-equivalent template.
-        let cmd = cat_cmd();
-        let matches = match cmd.try_get_matches_from(argv) {
+        let matches = match cat_cmd().try_get_matches_from(argv) {
             Ok(m) => m,
             Err(e) => {
                 let kind = e.kind();
@@ -192,8 +192,3 @@ fn emit_byte(out: &mut Vec<u8>, b: u8, show_tabs: bool, show_nonprinting: bool) 
         _ => out.push(b),
     }
 }
-
-use super::clap_cache::cached_command;
-
-// Cached `cat` arg surface — see `builtins::clap_cache`.
-cached_command!(cat_cmd, super::generated::cat_args::cat_command());

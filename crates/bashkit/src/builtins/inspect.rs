@@ -1,5 +1,6 @@
 //! File inspection builtins - less, file, stat
 
+use super::clap_cache::cached_command;
 use async_trait::async_trait;
 
 use super::{Builtin, Context, resolve_path};
@@ -253,6 +254,10 @@ fn determine_file_content_type(content: &[u8]) -> String {
 /// unsupported tokens are echoed verbatim.
 pub struct Stat;
 
+// Cached `stat` arg surface: pre-built once, cloned per invocation.
+// See `builtins::clap_cache` for why it is built, not just constructed.
+cached_command!(stat_cmd, super::generated::stat_args::stat_command());
+
 #[async_trait]
 impl Builtin for Stat {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
@@ -262,8 +267,7 @@ impl Builtin for Stat {
             .chain(ctx.args.iter().map(OsString::from))
             .collect();
 
-        let cmd = stat_cmd();
-        let matches = match cmd.try_get_matches_from(argv) {
+        let matches = match stat_cmd().try_get_matches_from(argv) {
             Ok(m) => m,
             Err(e) => {
                 let kind = e.kind();
@@ -436,12 +440,6 @@ fn default_stat_format(name: &str, metadata: &crate::fs::Metadata) -> String {
         modified,
     )
 }
-
-use super::clap_cache::cached_command;
-
-// Cached `stat` arg surface — see `builtins::clap_cache`.
-cached_command!(stat_cmd, super::generated::stat_args::stat_command());
-
 #[cfg(test)]
 mod tests {
     use super::*;

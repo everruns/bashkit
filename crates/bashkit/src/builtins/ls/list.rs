@@ -3,6 +3,7 @@
 // Uses unwrap() for validated single-char strings.
 #![allow(clippy::unwrap_used)]
 
+use crate::builtins::clap_cache::cached_command;
 use async_trait::async_trait;
 use std::ffi::OsString;
 use std::path::Path;
@@ -63,6 +64,10 @@ pub(super) struct LsOptions {
 ///   -d   List directories themselves, not their contents
 pub struct Ls;
 
+// Cached `ls` arg surface: pre-built once, cloned per invocation.
+// See `builtins::clap_cache` for why it is built, not just constructed.
+cached_command!(ls_cmd, super::super::generated::ls_args::ls_command());
+
 #[async_trait]
 impl Builtin for Ls {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
@@ -76,12 +81,7 @@ impl Builtin for Ls {
         // see TM-INF-024 and `builtins/clap_env.rs`.
         let argv = apply_env_defaults(argv, LS_ENV_DEFAULTS, ctx.env);
 
-        // GNU coreutils' help layout opens with the usage line; clap's
-        // default template leads with the `about`. uutils handles this via
-        // uucore's `localized_help_template`, which we drop during codegen
-        // because it pulls in Fluent. Re-apply a GNU-equivalent template.
-        let cmd = ls_cmd();
-        let matches = match cmd.try_get_matches_from(argv) {
+        let matches = match ls_cmd().try_get_matches_from(argv) {
             Ok(m) => m,
             Err(e) => {
                 let kind = e.kind();
@@ -469,8 +469,3 @@ fn human_readable_size(size: u64) -> String {
         format!("{:>6}", size)
     }
 }
-
-use super::super::clap_cache::cached_command;
-
-// Cached `ls` arg surface — see `builtins::clap_cache`.
-cached_command!(ls_cmd, super::super::generated::ls_args::ls_command());

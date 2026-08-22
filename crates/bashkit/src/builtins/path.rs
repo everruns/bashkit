@@ -1,5 +1,6 @@
 //! Path manipulation builtins - basename, dirname
 
+use super::clap_cache::cached_command;
 use async_trait::async_trait;
 use std::path::Path;
 
@@ -145,6 +146,13 @@ impl Builtin for Dirname {
 /// `-L`/`-P`/`--strip` collapse to the same lexical canonicalisation.
 pub struct Realpath;
 
+// Cached `realpath` arg surface: pre-built once, cloned per invocation.
+// See `builtins::clap_cache` for why it is built, not just constructed.
+cached_command!(
+    realpath_cmd,
+    super::generated::realpath_args::realpath_command()
+);
+
 #[async_trait]
 impl Builtin for Realpath {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
@@ -154,8 +162,7 @@ impl Builtin for Realpath {
             .chain(ctx.args.iter().map(OsString::from))
             .collect();
 
-        let cmd = realpath_cmd();
-        let matches = match cmd.try_get_matches_from(argv) {
+        let matches = match realpath_cmd().try_get_matches_from(argv) {
             Ok(m) => m,
             Err(e) => {
                 let kind = e.kind();
@@ -254,6 +261,13 @@ impl Builtin for Realpath {
 ///   (no flag) print symlink target without canonicalization
 pub struct Readlink;
 
+// Cached `readlink` arg surface: pre-built once, cloned per invocation.
+// See `builtins::clap_cache` for why it is built, not just constructed.
+cached_command!(
+    readlink_cmd,
+    super::generated::readlink_args::readlink_command()
+);
+
 #[async_trait]
 impl Builtin for Readlink {
     #[allow(clippy::collapsible_if)]
@@ -262,8 +276,7 @@ impl Builtin for Readlink {
             .chain(ctx.args.iter().map(std::ffi::OsString::from))
             .collect();
 
-        let cmd = readlink_cmd();
-        let matches = match cmd.try_get_matches_from(argv) {
+        let matches = match readlink_cmd().try_get_matches_from(argv) {
             Ok(m) => m,
             Err(e) => {
                 let kind = e.kind();
@@ -478,21 +491,6 @@ async fn follow_readlink_symlinks(
         }
     }
 }
-
-use super::clap_cache::cached_command;
-
-// Cached `realpath` arg surface — see `builtins::clap_cache`.
-cached_command!(
-    realpath_cmd,
-    super::generated::realpath_args::realpath_command()
-);
-
-// Cached `readlink` arg surface — see `builtins::clap_cache`.
-cached_command!(
-    readlink_cmd,
-    super::generated::readlink_args::readlink_command()
-);
-
 #[cfg(test)]
 mod tests {
     use super::*;

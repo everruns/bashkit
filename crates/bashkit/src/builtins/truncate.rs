@@ -10,6 +10,7 @@
 //! configured limits before resizing buffers. `write_file` enforces those
 //! limits too late to guard this built-in's in-memory zero-fill path.
 
+use super::clap_cache::cached_command;
 use async_trait::async_trait;
 use std::ffi::OsString;
 
@@ -19,6 +20,13 @@ use crate::interpreter::ExecResult;
 
 pub struct Truncate;
 
+// Cached `truncate` arg surface: pre-built once, cloned per invocation.
+// See `builtins::clap_cache` for why it is built, not just constructed.
+cached_command!(
+    truncate_cmd,
+    super::generated::truncate_args::truncate_command()
+);
+
 #[async_trait]
 impl Builtin for Truncate {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
@@ -26,8 +34,7 @@ impl Builtin for Truncate {
             .chain(ctx.args.iter().map(OsString::from))
             .collect();
 
-        let cmd = truncate_cmd();
-        let matches = match cmd.try_get_matches_from(argv) {
+        let matches = match truncate_cmd().try_get_matches_from(argv) {
             Ok(m) => m,
             Err(e) => {
                 let kind = e.kind();
@@ -265,15 +272,6 @@ fn parse_size_number(raw: &str) -> Option<u64> {
     };
     n.checked_mul(mul)
 }
-
-use super::clap_cache::cached_command;
-
-// Cached `truncate` arg surface — see `builtins::clap_cache`.
-cached_command!(
-    truncate_cmd,
-    super::generated::truncate_args::truncate_command()
-);
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,5 +1,6 @@
 //! Pipeline control builtins - xargs, tee, watch
 
+use super::clap_cache::cached_command;
 use async_trait::async_trait;
 
 use super::{Builtin, Context, ExecutionPlan, SubCommand, resolve_path};
@@ -285,6 +286,10 @@ impl Builtin for Xargs {
 /// the bashkit VFS.
 pub struct Tee;
 
+// Cached `tee` arg surface: pre-built once, cloned per invocation.
+// See `builtins::clap_cache` for why it is built, not just constructed.
+cached_command!(tee_cmd, super::generated::tee_args::tee_command());
+
 #[async_trait]
 impl Builtin for Tee {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
@@ -294,8 +299,7 @@ impl Builtin for Tee {
             .chain(ctx.args.iter().map(OsString::from))
             .collect();
 
-        let cmd = tee_cmd();
-        let matches = match cmd.try_get_matches_from(argv) {
+        let matches = match tee_cmd().try_get_matches_from(argv) {
             Ok(m) => m,
             Err(e) => {
                 let kind = e.kind();
@@ -418,12 +422,6 @@ impl Builtin for Watch {
         Ok(ExecResult::ok(output))
     }
 }
-
-use super::clap_cache::cached_command;
-
-// Cached `tee` arg surface — see `builtins::clap_cache`.
-cached_command!(tee_cmd, super::generated::tee_args::tee_command());
-
 #[cfg(test)]
 mod tests {
     use super::*;
