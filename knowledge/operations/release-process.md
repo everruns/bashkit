@@ -108,8 +108,31 @@ silently failed.
 
 `AGENTS.md` Pre-PR Checklist applies, plus: CI green on main, CHANGELOG.md
 has entries since last release, version consistent across all manifests
-(step 3), the core publish dry-run and CLI package check succeed, and new
-version > latest published on each registry.
+(step 3), the core publish dry-run and CLI package check succeed, `just
+check-workflow-parity` passes, and new version > latest published on each
+registry.
+
+## Release and CI Parity
+
+Release workflows must never test what CI does not. A release-only runtime
+version or an ungated suite stays invisible until the tag exists, and by then
+part of the release has already shipped: v0.17.0 reached crates.io, PyPI, and
+`@everruns/bashkit-wasm` while the native npm package stalled because
+`publish-js.yml` still ran ava on Node 20 after `js.yml` had gated it to Node
+22+ (ava >= 8 requirement).
+
+`scripts/check_workflow_parity.py` (`just check-workflow-parity`, part of `just
+check` and of the `scripts/tests` suite CI runs) compares each release workflow
+against its CI counterpart and fails on:
+
+- a runtime version tested at release time that CI does not test,
+- a suite both workflows run, gated to more versions in the release workflow
+  than in CI,
+- `dtolnay/rust-toolchain` pins that disagree between workflows or with
+  `rust-toolchain.toml`.
+
+Lanes are declared in that script's `LANES`; add one whenever a new
+publish workflow gains a runtime or version matrix.
 
 ## Post-Merge Monitoring
 
@@ -193,7 +216,9 @@ dynamically from `Cargo.toml` via maturin (`dynamic = ["version"]`).
 
 Trigger: Release published (parallel). Builds native NAPI-RS bindings
 (macOS x86_64/aarch64, Linux x86_64/aarch64, Windows x86_64,
-wasm32-wasip1-threads), tests on Node 20/22/24, publishes to npm. Secret:
+wasm32-wasip1-threads), tests on Node 20/22/24 (Node 20 runs the
+runtime-compat suite, not the ava suites, since ava >= 8 needs Node 22.20+),
+publishes to npm. Secret:
 `NPM_TOKEN` (Automation token); provenance via `id-token: write` OIDC +
 `--provenance`, same pattern as everruns/sdk. JS package version is synced
 from the workspace `Cargo.toml` by `build.rs` updating `package.json`.

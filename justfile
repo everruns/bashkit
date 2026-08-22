@@ -47,6 +47,7 @@ check:
     just check-capability-parity
     just check-okf
     just check-doc-links
+    just check-workflow-parity
 
 # Validate the canonical public-surface capability matrix and generated inventory.
 check-capability-parity:
@@ -55,6 +56,13 @@ check-capability-parity:
 # Regenerate the public-surface capability inventory from its canonical manifest.
 regen-capability-parity:
     python3 scripts/capability_parity.py
+
+# A release workflow that tests a runtime version CI does not is invisible
+# until the tag exists (v0.17.0 published to crates.io and PyPI while npm
+# stalled on ava running under Node 20). This compares the matrices.
+# Validate release workflows against their CI counterparts
+check-workflow-parity:
+    python3 scripts/check_workflow_parity.py
 
 # The site rewrites doc links by basename, so a cross-tree link written as a
 # bare `jq.md` renders fine on bashkit.sh while 404-ing on GitHub. This checks

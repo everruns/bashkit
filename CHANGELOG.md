@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- The npm native package publishes again: `publish-js.yml` no longer runs the
+  ava suites on Node 20, which ava 8 dropped support for. Node 20 keeps running
+  the runtime-compat suite against the shipped binding, matching how `js.yml`
+  already split them.
+
+### Added
+
+- `just check-workflow-parity` fails when a release workflow tests a runtime
+  version CI does not, when a shared test suite is gated to more versions at
+  release time than in CI, or when `dtolnay/rust-toolchain` pins disagree
+  across workflows. This class of drift is otherwise invisible until a tag
+  exists and part of the release has already published.
+
 ## [0.17.0] - 2026-08-22
 
 ### Highlights
