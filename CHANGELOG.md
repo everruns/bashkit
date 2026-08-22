@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-08-22
+
+### Highlights
+
+- **The native npm package ships again.** `@everruns/bashkit` stalled at 0.16.0
+  during the v0.17.0 release because the publish workflow tested Node 20 in
+  ways CI no longer did; the release path and CI now agree, and a check fails
+  when they drift apart again.
+
 ### Fixed
 
 - The npm native package publishes again: `publish-js.yml` no longer runs the
@@ -20,6 +29,21 @@
   release time than in CI, or when `dtolnay/rust-toolchain` pins disagree
   across workflows. This class of drift is otherwise invisible until a tag
   exists and part of the release has already published.
+
+### Performance
+
+- Ported coreutils builtins reuse pre-built clap `Command` definitions instead
+  of rebuilding them per invocation
+  ([#2347](https://github.com/everruns/bashkit/pull/2347)).
+
+### What's Changed
+
+* perf(builtins): cache pre-built clap Commands for ported coreutils builtins ([#2347](https://github.com/everruns/bashkit/pull/2347)) by @chaliy
+* fix(test): mount a real temp dir in the JS runtime-compat suite ([#2346](https://github.com/everruns/bashkit/pull/2346)) by @chaliy
+* fix(release): run the Node 20 compat suite under bash on Windows ([#2345](https://github.com/everruns/bashkit/pull/2345)) by @chaliy
+* fix(release): unblock the npm native publish and catch release/CI matrix drift ([#2344](https://github.com/everruns/bashkit/pull/2344)) by @chaliy
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.17.0...v0.17.1
 
 ## [0.17.0] - 2026-08-22
 
