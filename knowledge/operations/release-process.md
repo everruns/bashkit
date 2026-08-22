@@ -228,6 +228,13 @@ publishes to npm. Secret:
 `--provenance`, same pattern as everruns/sdk. JS package version is synced
 from the workspace `Cargo.toml` by `build.rs` updating `package.json`.
 
+Only a run whose ref is the release tag (`refs/tags/vX.Y.Z`, version matching
+`package.json`) publishes as npm `latest`; every other ref, including a manual
+dispatch from `main`, publishes under `next`. So a failed npm publish cannot be
+recovered by re-dispatching from `main`: fix the cause and cut a patch release,
+whose tag then publishes `latest`. v0.17.0 landed on `next` this way, and
+v0.17.1 is what put the native package back on `latest`.
+
 ### publish-wasm.yml
 
 Dispatched by `release.yml` from the verified release tag. Builds the

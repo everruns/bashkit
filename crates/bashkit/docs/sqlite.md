@@ -13,7 +13,7 @@ the `sqlite` feature. The engine is [Turso](https://github.com/tursodatabase/tur
 
 ```toml
 # Cargo.toml
-bashkit = { version = "0.17.0", features = ["sqlite"] }
+bashkit = { version = "0.17.1", features = ["sqlite"] }
 ```
 
 ```rust,ignore

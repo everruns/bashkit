@@ -37,7 +37,7 @@ interactive = ["dep:rustyline", "dep:terminal_size", "dep:signal-hook"]
 # `tzdata` is listed explicitly: an interactive shell must keep honouring
 # named `TZ=` zones in `date`, which stopped being implied when chrono-tz
 # moved behind a feature.
-bashkit = { path = "../bashkit", version = "0.17.0", default-features = false, features = ["http_client", "ring", "git", "jq", "tzdata"] }
+bashkit = { path = "../bashkit", version = "0.17.1", default-features = false, features = ["http_client", "ring", "git", "jq", "tzdata"] }
 tokio = { workspace = true, features = ["macros", "net", "rt", "rt-multi-thread", "time"] }
 clap.workspace = true
 anyhow.workspace = true
