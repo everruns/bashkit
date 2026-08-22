@@ -211,8 +211,12 @@ jobs:
         run: pnpm test
         working-directory: crates/bashkit-js
 
+      # `shell: bash` because Node 20 cannot expand a glob in `--test` itself
+      # and PowerShell, the default shell on the Windows runner, passes the
+      # pattern through literally.
       - name: Test bindings - runtime compat (Node 20)
         if: matrix.node == '20'
+        shell: bash
         run: node --test __test__/runtime-compat/*.test.mjs
         working-directory: crates/bashkit-js
 
