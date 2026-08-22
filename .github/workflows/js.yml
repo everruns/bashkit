@@ -157,13 +157,17 @@ jobs:
         run: pnpm run build
         working-directory: crates/bashkit-js
 
-      - name: Run ava tests (Node only)
-        if: matrix.runtime == 'node'
+      # ava >= 8 requires Node 22.20+, but the package still declares
+      # `engines: node >= 18`. Node 20 therefore keeps running the
+      # runtime-compat tests and the examples below — those exercise the
+      # shipped binding — and only skips the ava-hosted suites.
+      - name: Run ava tests (Node 22+ only)
+        if: matrix.runtime == 'node' && matrix.version != '20'
         run: pnpm test
         working-directory: crates/bashkit-js
 
-      - name: Run native filesystem interop fixture test (Node only)
-        if: matrix.runtime == 'node'
+      - name: Run native filesystem interop fixture test (Node 22+ only)
+        if: matrix.runtime == 'node' && matrix.version != '20'
         run: pnpm run test:interop
         working-directory: crates/bashkit-js
 

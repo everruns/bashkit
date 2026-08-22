@@ -79,7 +79,7 @@
     "build:ts": "tsc",
     "artifacts": "napi artifacts",
     "test": "ava",
-    "test:interop": "pnpm run build:test-fixtures && ava test-fixtures/random-fs/interop.spec.ts",
+    "test:interop": "pnpm run build:test-fixtures && ava test-fixtures/random-fs/interop.spec.mts",
     "lint": "oxlint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -105,7 +105,7 @@
     "@langchain/core": "^1.2.8",
     "@napi-rs/cli": "^3.8.6",
     "@types/node": "^26.2.0",
-    "ava": "^6.4.1",
+    "ava": "^8.0.1",
     "oxlint": "^1.78.0",
     "prettier": "^3.9.6",
     "tsx": "^4.23.12",
@@ -134,9 +134,10 @@
     "files": [
       "__test__/**/*.spec.ts"
     ],
-    "extensions": {
-      "ts": "module"
-    },
+    "extensions": [
+      "ts",
+      "mts"
+    ],
     "timeout": "2m",
     "workerThreads": false,
     "nodeArguments": [
