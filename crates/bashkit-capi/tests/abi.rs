@@ -201,6 +201,28 @@ fn rejects_bad_inputs_with_owned_errors() {
 }
 
 #[test]
+fn rejects_oversized_script_before_utf8_validation() {
+    unsafe {
+        let config = br#"{"schema_version":1,"limits":{"max_input_bytes":1}}"#;
+        let mut bash = ptr::null_mut();
+        let mut error = ptr::null_mut();
+        assert_eq!(
+            bashkit_create_json(bytes(config), &mut bash, &mut error),
+            BashkitStatus::Ok
+        );
+
+        let mut result = ptr::null_mut();
+        assert_eq!(
+            bashkit_execute(bash, bytes(&[b':', 0xff]), &mut result, &mut error),
+            BashkitStatus::ExecutionError
+        );
+        assert!(result.is_null());
+        assert!(error_message(error).contains("input too large"));
+        bashkit_free(bash);
+    }
+}
+
+#[test]
 fn rejects_unknown_config_fields_and_versions() {
     unsafe {
         for (config, expected) in [
