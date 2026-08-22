@@ -12,7 +12,7 @@ Add the `typescript` feature to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-bashkit = { version = "0.16.0", features = ["typescript"] }
+bashkit = { version = "0.17.0", features = ["typescript"] }
 ```
 
 Enable TypeScript in the builder:

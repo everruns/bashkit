@@ -378,11 +378,10 @@ release-check:
     # verifies the matching core before publishing the CLI.
     CLI_VERIFY_ROOT=$(mktemp -d)
     trap 'rm -rf "$CLI_VERIFY_ROOT"' EXIT
-    rsync -a \
-        --exclude .git \
-        --exclude node_modules \
-        --exclude target \
-        ./ "$CLI_VERIFY_ROOT/workspace/"
+    # tar, not rsync: rsync is absent from some cloud release sandboxes.
+    mkdir -p "$CLI_VERIFY_ROOT/workspace"
+    tar -c --exclude .git --exclude node_modules --exclude target . \
+        | tar -x -C "$CLI_VERIFY_ROOT/workspace"
     LATEST_CORE=$(cargo search bashkit --limit 1 | sed -n 's/^bashkit = "\([^"]*\)".*/\1/p')
     if [ -z "$LATEST_CORE" ]; then
         echo "Error: could not determine latest published bashkit version"
@@ -394,14 +393,12 @@ release-check:
         "s/version = \"$WORKSPACE_VERSION\"/version = \"$LATEST_CORE\"/" \
         "$CLI_TOML"
     rm "$CLI_TOML.bak"
-    # The latest published core predates Monty's crates.io publication and
-    # therefore lacks the Python feature. The exact new core package dry-run
-    # above validates that feature. Resolve the proxy from crates.io rather
-    # than the copied path crate, and omit Python only in this disposable copy.
-    perl -0pi.bak -e \
-        's/path = "\.\.\/bashkit", //; s/^python = \["bashkit\/python"\]\n//m; s/"python", //g; s/, "python"//g' \
-        "$CLI_TOML"
-    rm "$CLI_TOML.bak"
+    # The proxy resolves the core from crates.io, so it can only request
+    # features the published core already has. Features added in this release
+    # cycle (and Python, which the published core predates) are dropped in the
+    # disposable copy only; the exact new core package dry-run above validates
+    # them. Failing here means real packaging drift, not a missing feature.
+    python3 scripts/cli_publish_proxy.py "$CLI_TOML" "$LATEST_CORE"
     cargo publish \
         --manifest-path "$CLI_VERIFY_ROOT/workspace/Cargo.toml" \
         -p bashkit-cli \

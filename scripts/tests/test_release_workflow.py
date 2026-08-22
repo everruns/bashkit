@@ -55,7 +55,12 @@ class ReleaseWorkflowTests(unittest.TestCase):
     def test_cli_publish_proxy_uses_the_published_core(self) -> None:
         justfile = (ROOT / "justfile").read_text()
 
-        self.assertIn(r's/path = "\.\.\/bashkit", //', justfile)
+        # The proxy manifest rewrite lives in scripts/cli_publish_proxy.py so it
+        # can be unit tested; release-check must still call it.
+        self.assertIn(
+            'python3 scripts/cli_publish_proxy.py "$CLI_TOML" "$LATEST_CORE"', justfile
+        )
+        self.assertTrue((ROOT / "scripts/cli_publish_proxy.py").is_file())
 
     def test_web_ci_exercises_release_wasm_optimization(self) -> None:
         build_script = (ROOT / "crates/bashkit-wasm/scripts/build.sh").read_text()

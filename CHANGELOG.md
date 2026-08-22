@@ -2,13 +2,141 @@
 
 ## [Unreleased]
 
-### Added
+## [0.17.0] - 2026-08-22
 
-- The rustls crypto backend used by `http_client` is now selectable: `ring`
-  (enabled by default, unchanged behavior) or `aws-lc-rs` for consumers that
-  need a FIPS-capable backend or already link aws-lc-rs. `http_client` no
-  longer implies a backend; building it with neither is a compile error.
-  Consumers on `--no-default-features` must name one alongside `http_client`.
+### Highlights
+
+- **Bashkit runs as a plain wasm component, with no JS engine and no WASI.**
+  A component-model guest exposes shell execution over WIT, so hosts such as
+  Hyperlight micro-VMs can embed the interpreter without shipping a JavaScript
+  runtime or a WASI implementation, and `bashkit` now builds cleanly for WASI
+  targets under CI coverage
+  ([#2311](https://github.com/everruns/bashkit/pull/2311),
+  [#2310](https://github.com/everruns/bashkit/pull/2310)).
+- **Untrusted input costs bounded work everywhere it is parsed.** Script
+  analysis, zip archive buffers, pipeline stderr aggregation, real-filesystem
+  appends, snapshot chunk expansion, C ABI script intake, and CLI host stdin
+  reads now charge or cap resources before allocating or blocking
+  ([#2333](https://github.com/everruns/bashkit/pull/2333),
+  [#2330](https://github.com/everruns/bashkit/pull/2330),
+  [#2326](https://github.com/everruns/bashkit/pull/2326),
+  [#2327](https://github.com/everruns/bashkit/pull/2327),
+  [#2282](https://github.com/everruns/bashkit/pull/2282),
+  [#2334](https://github.com/everruns/bashkit/pull/2334),
+  [#2335](https://github.com/everruns/bashkit/pull/2335)).
+- **Sandbox escapes closed at the host boundary.** The host bridge no longer
+  interpolates into a shell, `HostMounts` normalizes VFS paths before mapping,
+  backend symlink reads are refused, YAML aliases are rejected before parsing,
+  and arithmetic command substitutions are flagged by static analysis
+  ([#2337](https://github.com/everruns/bashkit/pull/2337),
+  [#2281](https://github.com/everruns/bashkit/pull/2281),
+  [#2279](https://github.com/everruns/bashkit/pull/2279),
+  [#2280](https://github.com/everruns/bashkit/pull/2280),
+  [#2283](https://github.com/everruns/bashkit/pull/2283)).
+- **The always-on dependency graph is 21 crates smaller and the browser wasm
+  bundle 911 KB lighter.** Timezone data moved behind a default-on `tzdata`
+  feature, the ICU4X stack pulled in by `url` is gone, and `date` fails loudly
+  instead of silently formatting a named zone as UTC when `tzdata` is off
+  ([#2321](https://github.com/everruns/bashkit/pull/2321)).
+- **Every cargo lockfile in the tree is audited, clearing 16 wasmtime
+  advisories plus the fuzz lockfile gap** and the outstanding npm advisories in
+  the example and site lockfiles
+  ([#2340](https://github.com/everruns/bashkit/pull/2340),
+  [#2293](https://github.com/everruns/bashkit/pull/2293),
+  [#2285](https://github.com/everruns/bashkit/pull/2285),
+  [#2284](https://github.com/everruns/bashkit/pull/2284)).
+
+### Breaking Changes
+
+- **`http_client` no longer implies a rustls crypto backend.** Pick `ring`
+  (previous behavior, enabled by default) or `aws-lc-rs` for a FIPS-capable
+  backend. Enabling `http_client` with neither is a compile error. Only
+  consumers building with `--no-default-features` need to act.
+
+  Before:
+
+  ```toml
+  bashkit = { default-features = false, features = ["http_client"] }
+  ```
+
+  After:
+
+  ```toml
+  bashkit = { default-features = false, features = ["http_client", "ring"] }
+  ```
+
+- **Timezone data is behind the `tzdata` feature.** It is on by default, so
+  default builds are unchanged. Builds with `--no-default-features` that use
+  `TZ=<named zone>` must add `tzdata`; without it `date` reports that it cannot
+  honour the zone and exits 1 rather than returning a plausible-looking UTC
+  time.
+
+- **Non-ASCII domain names are rejected rather than normalized.** Pinning
+  `idna_adapter` drops UTS 46 normalization, which removes the homograph and
+  punycode-confusion class from allowlist matching. Hosts that relied on
+  internationalized domain names in HTTP allowlists must supply their punycode
+  form.
+
+### What's Changed
+
+* chore(deps): bump wit-bindgen from 0.51.0 to 0.60.0 in /examples/hyperlight in the example-cargo group across 1 directory ([#2342](https://github.com/everruns/bashkit/pull/2342)) by @dependabot
+* chore(deps): bump the examples-npm group across 1 directory with 2 updates ([#2341](https://github.com/everruns/bashkit/pull/2341)) by @dependabot
+* fix(deps): clear 16 wasmtime advisories and audit every cargo lockfile ([#2340](https://github.com/everruns/bashkit/pull/2340)) by @chaliy
+* chore(deps): bump ava to 8.0.1 and oxlint to 1.79.0 in bashkit-js ([#2339](https://github.com/everruns/bashkit/pull/2339)) by @chaliy
+* fix(justfile): invoke bashkit-cli the way the CLI parses args ([#2338](https://github.com/everruns/bashkit/pull/2338)) by @chaliy
+* fix(security): prevent host bridge shell injection ([#2337](https://github.com/everruns/bashkit/pull/2337)) by @chaliy
+* fix(docs): keep dependency scan line-local ([#2336](https://github.com/everruns/bashkit/pull/2336)) by @chaliy
+* fix(cli): bound host stdin reads by execution timeout ([#2335](https://github.com/everruns/bashkit/pull/2335)) by @chaliy
+* fix(c-api): reject oversized scripts before UTF-8 validation ([#2334](https://github.com/everruns/bashkit/pull/2334)) by @chaliy
+* fix(analysis): bound command validation work to prevent CPU amplification ([#2333](https://github.com/everruns/bashkit/pull/2333)) by @chaliy
+* fix(tools): enforce referenced input schemas ([#2332](https://github.com/everruns/bashkit/pull/2332)) by @chaliy
+* fix(streams): consume binary lines by byte offset ([#2331](https://github.com/everruns/bashkit/pull/2331)) by @chaliy
+* fix(zip): budget archive buffers before allocation ([#2330](https://github.com/everruns/bashkit/pull/2330)) by @chaliy
+* fix(interpreter): contain CommandResolver panics ([#2328](https://github.com/everruns/bashkit/pull/2328)) by @chaliy
+* fix(realfs): bound append memory usage by streaming into staging ([#2327](https://github.com/everruns/bashkit/pull/2327)) by @chaliy
+* fix(interpreter): bound pipeline stderr aggregation ([#2326](https://github.com/everruns/bashkit/pull/2326)) by @chaliy
+* chore(ci): bump taiki-e/install-action from 2.86.1 to 2.86.3 in the github-actions group ([#2325](https://github.com/everruns/bashkit/pull/2325)) by @dependabot
+* chore(deps): bump ai from 7.0.66 to 7.0.67 in /examples in the examples-npm group across 1 directory ([#2324](https://github.com/everruns/bashkit/pull/2324)) by @dependabot
+* chore(deps): bump the site-npm group in /site with 3 updates ([#2323](https://github.com/everruns/bashkit/pull/2323)) by @dependabot
+* chore(deps): trim always-on dependency graph, gate chrono-tz behind tzdata ([#2321](https://github.com/everruns/bashkit/pull/2321)) by @chaliy
+* fix(testing): match shell echoes the shell actually produces ([#2320](https://github.com/everruns/bashkit/pull/2320)) by @chaliy
+* fix(redirect): report redirection failures with bash's strerror wording ([#2319](https://github.com/everruns/bashkit/pull/2319)) by @chaliy
+* fix(deps): pin a pnpm release cooldown so dependabot npm runs stop failing ([#2318](https://github.com/everruns/bashkit/pull/2318)) by @chaliy
+* feat(http): make the rustls crypto backend a feature ([#2317](https://github.com/everruns/bashkit/pull/2317)) by @chaliy
+* fix(examples): pin vite exactly and run the browser example's tests in CI ([#2316](https://github.com/everruns/bashkit/pull/2316)) by @chaliy
+* chore(ci): bump taiki-e/install-action from 2.85.13 to 2.86.1 ([#2315](https://github.com/everruns/bashkit/pull/2315)) by @dependabot
+* fix(ci): install a pinned wasm-opt instead of apt, and bound the wasm jobs ([#2314](https://github.com/everruns/bashkit/pull/2314)) by @chaliy
+* chore(deps): bump vite from 6.4.3 to 8.2.1 in /examples/browser ([#2313](https://github.com/everruns/bashkit/pull/2313)) by @dependabot
+* chore(deps): add dependabot version updates for the five npm lockfiles ([#2312](https://github.com/everruns/bashkit/pull/2312)) by @chaliy
+* feat(wasm): run bashkit as a wasm component with no JS and no WASI ([#2311](https://github.com/everruns/bashkit/pull/2311)) by @chaliy
+* fix(builtins): compile bashkit for WASI targets + CI check for wasm32-wasip2 ([#2310](https://github.com/everruns/bashkit/pull/2310)) by @chaliy
+* feat(coreutils-port): resolve uucore Fluent messages at port time ([#2309](https://github.com/everruns/bashkit/pull/2309)) by @chaliy
+* chore(deps): update dependencies ([#2308](https://github.com/everruns/bashkit/pull/2308)) by @chaliy
+* chore(ci): bump the github-actions group with 2 updates ([#2307](https://github.com/everruns/bashkit/pull/2307)) by @dependabot
+* fix(sqlite): handle turso StepResult::Sleep and bump to 0.8.0-pre.4 ([#2306](https://github.com/everruns/bashkit/pull/2306)) by @chaliy
+* chore(deps): bump russh to 0.62.6 ([#2305](https://github.com/everruns/bashkit/pull/2305)) by @chaliy
+* docs: remove em-dashes and AI-tell wording from markdown prose ([#2304](https://github.com/everruns/bashkit/pull/2304)) by @chaliy
+* chore(ci): bump the github-actions group with 2 updates ([#2303](https://github.com/everruns/bashkit/pull/2303)) by @dependabot
+* chore(deps): hold monty at 0.0.19 — 0.0.21 silently disables max_memory ([#2300](https://github.com/everruns/bashkit/pull/2300)) by @chaliy
+* chore(deps): bump the rust-dependencies group with 5 updates ([#2299](https://github.com/everruns/bashkit/pull/2299)) by @chaliy
+* chore(ci): bump taiki-e/install-action from 2.85.10 to 2.85.11 in the github-actions group ([#2295](https://github.com/everruns/bashkit/pull/2295)) by @dependabot
+* fix(security): clear fuzz lockfile advisories and close the audit gap ([#2293](https://github.com/everruns/bashkit/pull/2293)) by @chaliy
+* feat(bindings): host env and mounts applied after construction survive reset ([#2292](https://github.com/everruns/bashkit/pull/2292)) by @chaliy
+* docs(security): record RUSTSEC-2023-0071 as TM-CRY-002; bump futures-util ([#2290](https://github.com/everruns/bashkit/pull/2290)) by @chaliy
+* chore(deps): bump turso_core from 0.8.0-pre.2 to 0.8.0-pre.3 ([#2289](https://github.com/everruns/bashkit/pull/2289)) by @dependabot
+* chore(deps): bump the rust-dependencies group with 6 updates ([#2288](https://github.com/everruns/bashkit/pull/2288)) by @dependabot
+* chore(ci): bump the github-actions group with 4 updates ([#2287](https://github.com/everruns/bashkit/pull/2287)) by @dependabot
+* fix(deps): bump spin to 0.9.9 to clear yanked-crate warning ([#2286](https://github.com/everruns/bashkit/pull/2286)) by @chaliy
+* fix(deps): patch nanoid and brace-expansion advisories ([#2285](https://github.com/everruns/bashkit/pull/2285)) by @chaliy
+* fix(deps): bump js-yaml override to ^4.3.1 for CVE-2026-59870 ([#2284](https://github.com/everruns/bashkit/pull/2284)) by @chaliy
+* fix(analysis): flag arithmetic command substitutions ([#2283](https://github.com/everruns/bashkit/pull/2283)) by @chaliy
+* fix(snapshot): enforce fs limits before expanding v2 snapshot chunks ([#2282](https://github.com/everruns/bashkit/pull/2282)) by @chaliy
+* fix(fs): normalize VFS paths in HostMounts to prevent host traversal ([#2281](https://github.com/everruns/bashkit/pull/2281)) by @chaliy
+* fix(yq): reject YAML aliases before parsing ([#2280](https://github.com/everruns/bashkit/pull/2280)) by @chaliy
+* fix(fs): reject backend symlink reads ([#2279](https://github.com/everruns/bashkit/pull/2279)) by @chaliy
+* fix(printf): sync uutils 0.10 formatting ([#2278](https://github.com/everruns/bashkit/pull/2278)) by @chaliy
+
+**Full Changelog**: https://github.com/everruns/bashkit/compare/v0.16.0...v0.17.0
 
 ## [0.16.0] - 2026-08-06
 
