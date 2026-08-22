@@ -8,7 +8,7 @@ use std::ffi::OsString;
 use std::path::Path;
 
 use crate::builtins::clap_env::apply_env_defaults;
-use crate::builtins::generated::ls_args::{LS_ENV_DEFAULTS, ls_command};
+use crate::builtins::generated::ls_args::LS_ENV_DEFAULTS;
 use crate::builtins::{Builtin, Context, resolve_path};
 use crate::error::Result;
 use crate::fs::FileType;
@@ -80,7 +80,7 @@ impl Builtin for Ls {
         // default template leads with the `about`. uutils handles this via
         // uucore's `localized_help_template`, which we drop during codegen
         // because it pulls in Fluent. Re-apply a GNU-equivalent template.
-        let cmd = ls_command().help_template("Usage: {usage}\n{about}\n\n{all-args}\n");
+        let cmd = ls_cmd();
         let matches = match cmd.try_get_matches_from(argv) {
             Ok(m) => m,
             Err(e) => {
@@ -469,3 +469,8 @@ fn human_readable_size(size: u64) -> String {
         format!("{:>6}", size)
     }
 }
+
+use super::super::clap_cache::cached_command;
+
+// Cached `ls` arg surface — see `builtins::clap_cache`.
+cached_command!(ls_cmd, super::super::generated::ls_args::ls_command());

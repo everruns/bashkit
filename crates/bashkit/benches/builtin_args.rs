@@ -18,15 +18,24 @@
 //!     `printf` (hand-parsed) and `:` (no args at all). The `:` row is the
 //!     loop-and-dispatch floor; everything above it is arg handling plus body.
 //!   - `arg_surface_size`: `cat` (12 args) against `ls` (~60 args) on inputs
-//!     sized so the bodies do near-identical work. Command construction scales
-//!     with the number of `.arg(...)` calls while the body does not, so this
-//!     delta is the sharpest available signal for build cost specifically.
-//!   - `flag_count`: same builtin, more flags on the command line. Isolates
-//!     match/parse cost from construction cost (construction is constant here).
+//!     sized so the bodies do near-identical work. clap's per-parse cost scales
+//!     with the number of declared args while the body does not, so this delta
+//!     tracks arg-surface cost.
+//!   - `flag_count`: same builtin, more flags on the command line. Costs ~0.45
+//!     µs per extra flag — note this measures only the *matching* of additional
+//!     argv entries, NOT the fixed per-parse cost, which dominates (see below).
 //!
 //! Each bench runs `INVOCATIONS` calls inside one script and declares
 //! `Throughput::Elements(INVOCATIONS)`, so criterion reports per-invocation
 //! time directly and the one-time `Bash::new()` cost amortizes away.
+//!
+//! What this measured, and what came of it: clap costs ~10 µs per `cat`
+//! invocation and ~73% of an `ls` invocation. The expensive part is *parsing*,
+//! not constructing the `Command` (construction is ~1.1 µs of `cat`'s 7.3 µs
+//! round trip) — but most of that parse cost is clap's one-time `_build_self`,
+//! which `builtins::clap_cache` now hoists into a cached pre-built `Command`.
+//! Worth −15% on `ls` end-to-end, −2% on `cat`. Keep this bench as the guard:
+//! a regression here means the cache stopped being hit.
 //!
 //! Run with: `cargo bench --bench builtin_args`
 //! Save baseline: `cargo bench --bench builtin_args -- --save-baseline before`

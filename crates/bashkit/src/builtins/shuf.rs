@@ -15,7 +15,6 @@ use std::ffi::OsString;
 use std::ops::RangeInclusive;
 use std::path::Path;
 
-use super::generated::shuf_args::shuf_command;
 use super::{Builtin, Context, read_text_file};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
@@ -30,7 +29,7 @@ impl Builtin for Shuf {
             .chain(ctx.args.iter().map(OsString::from))
             .collect();
 
-        let cmd = shuf_command().help_template("Usage: {usage}\n{about}\n\n{all-args}\n");
+        let cmd = shuf_cmd();
         let matches = match cmd.try_get_matches_from(argv) {
             Ok(m) => m,
             Err(e) => {
@@ -417,6 +416,11 @@ impl SmallRng {
         }
     }
 }
+
+use super::clap_cache::cached_command;
+
+// Cached `shuf` arg surface — see `builtins::clap_cache`.
+cached_command!(shuf_cmd, super::generated::shuf_args::shuf_command());
 
 #[cfg(test)]
 mod tests {

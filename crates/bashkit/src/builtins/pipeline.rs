@@ -288,14 +288,13 @@ pub struct Tee;
 #[async_trait]
 impl Builtin for Tee {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        use super::generated::tee_args::tee_command;
         use std::ffi::OsString;
 
         let argv: Vec<OsString> = std::iter::once(OsString::from("tee"))
             .chain(ctx.args.iter().map(OsString::from))
             .collect();
 
-        let cmd = tee_command().help_template("Usage: {usage}\n{about}\n\n{all-args}\n");
+        let cmd = tee_cmd();
         let matches = match cmd.try_get_matches_from(argv) {
             Ok(m) => m,
             Err(e) => {
@@ -419,6 +418,11 @@ impl Builtin for Watch {
         Ok(ExecResult::ok(output))
     }
 }
+
+use super::clap_cache::cached_command;
+
+// Cached `tee` arg surface — see `builtins::clap_cache`.
+cached_command!(tee_cmd, super::generated::tee_args::tee_command());
 
 #[cfg(test)]
 mod tests {

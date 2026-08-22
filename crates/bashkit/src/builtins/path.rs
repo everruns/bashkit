@@ -148,14 +148,13 @@ pub struct Realpath;
 #[async_trait]
 impl Builtin for Realpath {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        use super::generated::realpath_args::realpath_command;
         use std::ffi::OsString;
 
         let argv: Vec<OsString> = std::iter::once(OsString::from("realpath"))
             .chain(ctx.args.iter().map(OsString::from))
             .collect();
 
-        let cmd = realpath_command().help_template("Usage: {usage}\n{about}\n\n{all-args}\n");
+        let cmd = realpath_cmd();
         let matches = match cmd.try_get_matches_from(argv) {
             Ok(m) => m,
             Err(e) => {
@@ -263,8 +262,7 @@ impl Builtin for Readlink {
             .chain(ctx.args.iter().map(std::ffi::OsString::from))
             .collect();
 
-        let cmd = super::generated::readlink_args::readlink_command()
-            .help_template("Usage: {usage}\n{about}\n\n{all-args}\n");
+        let cmd = readlink_cmd();
         let matches = match cmd.try_get_matches_from(argv) {
             Ok(m) => m,
             Err(e) => {
@@ -480,6 +478,20 @@ async fn follow_readlink_symlinks(
         }
     }
 }
+
+use super::clap_cache::cached_command;
+
+// Cached `realpath` arg surface — see `builtins::clap_cache`.
+cached_command!(
+    realpath_cmd,
+    super::generated::realpath_args::realpath_command()
+);
+
+// Cached `readlink` arg surface — see `builtins::clap_cache`.
+cached_command!(
+    readlink_cmd,
+    super::generated::readlink_args::readlink_command()
+);
 
 #[cfg(test)]
 mod tests {

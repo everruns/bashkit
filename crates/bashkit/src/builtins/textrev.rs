@@ -8,7 +8,6 @@ use async_trait::async_trait;
 use std::ffi::OsString;
 use std::path::Path;
 
-use super::generated::tac_args::tac_command;
 use super::{Builtin, Context, read_text_file};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
@@ -60,7 +59,7 @@ impl Builtin for Tac {
             .chain(ctx.args.iter().map(OsString::from))
             .collect();
 
-        let cmd = tac_command().help_template("Usage: {usage}\n{about}\n\n{all-args}\n");
+        let cmd = tac_cmd();
         let matches = match cmd.try_get_matches_from(argv) {
             Ok(m) => m,
             Err(e) => {
@@ -203,6 +202,11 @@ impl Builtin for Rev {
         Ok(ExecResult::ok(output))
     }
 }
+
+use super::clap_cache::cached_command;
+
+// Cached `tac` arg surface — see `builtins::clap_cache`.
+cached_command!(tac_cmd, super::generated::tac_args::tac_command());
 
 #[cfg(test)]
 mod tests {

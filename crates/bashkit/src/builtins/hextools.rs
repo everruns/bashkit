@@ -224,14 +224,13 @@ fn od_dump(data: &[u8], opts: &OdOptions) -> String {
 #[async_trait]
 impl Builtin for Od {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        use super::generated::od_args::od_command;
         use std::ffi::OsString;
 
         let argv: Vec<OsString> = std::iter::once(OsString::from("od"))
             .chain(ctx.args.iter().map(OsString::from))
             .collect();
 
-        let cmd = od_command().help_template("Usage: {usage}\n{about}\n\n{all-args}\n");
+        let cmd = od_cmd();
         let matches = match cmd.try_get_matches_from(argv) {
             Ok(m) => m,
             Err(e) => {
@@ -662,6 +661,11 @@ async fn collect_input(
 
     Ok(data)
 }
+
+use super::clap_cache::cached_command;
+
+// Cached `od` arg surface — see `builtins::clap_cache`.
+cached_command!(od_cmd, super::generated::od_args::od_command());
 
 #[cfg(test)]
 mod tests {

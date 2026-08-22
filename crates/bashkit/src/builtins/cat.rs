@@ -9,7 +9,6 @@ use async_trait::async_trait;
 use std::ffi::OsString;
 use std::path::Path;
 
-use super::generated::cat_args::cat_command;
 use super::{Builtin, Context};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
@@ -28,7 +27,7 @@ impl Builtin for Cat {
         // default template leads with the `about`. uutils handles this via
         // uucore's `localized_help_template`, which we drop during codegen
         // because it pulls in Fluent. Re-apply a GNU-equivalent template.
-        let cmd = cat_command().help_template("Usage: {usage}\n{about}\n\n{all-args}\n");
+        let cmd = cat_cmd();
         let matches = match cmd.try_get_matches_from(argv) {
             Ok(m) => m,
             Err(e) => {
@@ -193,3 +192,8 @@ fn emit_byte(out: &mut Vec<u8>, b: u8, show_tabs: bool, show_nonprinting: bool) 
         _ => out.push(b),
     }
 }
+
+use super::clap_cache::cached_command;
+
+// Cached `cat` arg surface — see `builtins::clap_cache`.
+cached_command!(cat_cmd, super::generated::cat_args::cat_command());

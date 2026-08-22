@@ -1018,7 +1018,6 @@ fn mktemp_name(template: Option<&str>, suffix: &str) -> String {
 #[async_trait]
 impl Builtin for Mktemp {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        use super::generated::mktemp_args::mktemp_command;
         use std::ffi::OsString;
         use std::path::PathBuf;
 
@@ -1026,7 +1025,7 @@ impl Builtin for Mktemp {
             .chain(ctx.args.iter().map(OsString::from))
             .collect();
 
-        let cmd = mktemp_command().help_template("Usage: {usage}\n{about}\n\n{all-args}\n");
+        let cmd = mktemp_cmd();
         let matches = match cmd.try_get_matches_from(argv) {
             Ok(m) => m,
             Err(e) => {
@@ -1134,6 +1133,11 @@ impl Builtin for Mktemp {
         Ok(ExecResult::err(msg, 1))
     }
 }
+
+use super::clap_cache::cached_command;
+
+// Cached `mktemp` arg surface — see `builtins::clap_cache`.
+cached_command!(mktemp_cmd, super::generated::mktemp_args::mktemp_command());
 
 #[cfg(test)]
 mod tests {

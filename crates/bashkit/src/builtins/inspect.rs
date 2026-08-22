@@ -256,14 +256,13 @@ pub struct Stat;
 #[async_trait]
 impl Builtin for Stat {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        use super::generated::stat_args::stat_command;
         use std::ffi::OsString;
 
         let argv: Vec<OsString> = std::iter::once(OsString::from("stat"))
             .chain(ctx.args.iter().map(OsString::from))
             .collect();
 
-        let cmd = stat_command().help_template("Usage: {usage}\n{about}\n\n{all-args}\n");
+        let cmd = stat_cmd();
         let matches = match cmd.try_get_matches_from(argv) {
             Ok(m) => m,
             Err(e) => {
@@ -437,6 +436,11 @@ fn default_stat_format(name: &str, metadata: &crate::fs::Metadata) -> String {
         modified,
     )
 }
+
+use super::clap_cache::cached_command;
+
+// Cached `stat` arg surface — see `builtins::clap_cache`.
+cached_command!(stat_cmd, super::generated::stat_args::stat_command());
 
 #[cfg(test)]
 mod tests {
