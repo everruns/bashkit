@@ -42,6 +42,8 @@ Repo-root `docs/` is for user-facing site articles.
   built routes and cannot see this class of breakage. The same check also
   validates `bashkit = { version = "..." }` dependency snippets in the
   prose trees and crate-level Rustdoc against `[workspace.package].version`.
+  Its multiline dependency matcher keeps horizontal whitespace line-local;
+  newline-matching whitespace can make blank-line-heavy input quadratic.
 - Page titles and descriptions live in `DOC_META`
   (`site/src/pages/docs/_meta.ts`), never in markdown frontmatter: the canonical
   files must stay frontmatter-free so `crates/bashkit/docs/*.md` embed cleanly
