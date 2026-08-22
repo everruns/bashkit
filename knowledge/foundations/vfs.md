@@ -111,7 +111,8 @@ Do you need a custom filesystem?
   empty file after applying target-containment validation. Pre-existing host
   symlinks and junctions are supported and containment-checked.
 - Replacement write, append, and copy stage a sibling file and rename it only
-  after a complete flush, so partial host I/O retains the prior destination
+  after a complete flush, so partial host I/O retains the prior destination;
+  append streams existing bytes into staging instead of buffering the host file
 - Copy and rename act on a symlink entry itself instead of dereferencing it
 - Builder: `mount_real_readonly[_at]()`, `mount_real_readwrite()`; CLI:
   `--mount-ro` / `--mount-rw` (`host:vfs` syntax for mount point)
