@@ -64,7 +64,12 @@ silently failed.
      `bashkit-cli` in a disposable copy against the latest published
      registry core version (remove the local path in the copy) as a structural
      proxy; Cargo cannot resolve the CLI's new
-     registry dependency until the core crate is live. Normal workspace checks
+     registry dependency until the core crate is live. The proxy may only ask
+     the published core for features it already exposes, so
+     `scripts/cli_publish_proxy.py` reads that crate's feature set from
+     crates.io and drops the ones added in the current cycle (plus `python`,
+     which predates Monty's crates.io publication) from the disposable copy
+     only. A failure there is real packaging drift, not a missing feature. Normal workspace checks
      still compile the CLI against the new local core, and `publish.yml` waits
      for the core registry version before publishing the CLI. Packaging caught
      the v0.4.0 → v0.4.1 incident: the rustdoc guide lived outside the crate

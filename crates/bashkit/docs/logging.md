@@ -14,7 +14,7 @@ Add the `logging` feature to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-bashkit = { version = "0.16.0", features = ["logging"] }
+bashkit = { version = "0.17.0", features = ["logging"] }
 tracing-subscriber = "0.3"  # or your preferred subscriber
 ```
 
