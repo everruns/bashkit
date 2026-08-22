@@ -186,12 +186,21 @@ jobs:
         # feature. Drop this flag once `rsa` ships a constant-time release.
         # Keep in sync with the `[advisories] ignore` list in deny.toml.
         #
-        # `crates/bashkit/fuzz` is a separate workspace with its own lockfile, so
-        # the workspace scan above never reaches it. Audit it explicitly —
-        # otherwise fuzz-only dependencies rot unnoticed between releases.
+        # This repo has more than one cargo workspace, and a `cargo audit` at
+        # the root only ever sees the root lockfile. Listing the others by hand
+        # has now failed twice: the fuzz lockfile rotted onto an unsound
+        # `anyhow` before it was added, and `examples/hyperlight/host` shipped
+        # wasmtime 38.0.4 with 16 advisories (two of them critical) because
+        # nothing audited it either. So discover every lockfile instead of
+        # naming them — a new workspace is covered the day it lands.
         run: |
-          cargo audit --ignore RUSTSEC-2023-0071
-          cargo audit --ignore RUSTSEC-2023-0071 -f crates/bashkit/fuzz/Cargo.lock
+          status=0
+          while IFS= read -r lock; do
+            echo "::group::cargo audit $lock"
+            cargo audit --ignore RUSTSEC-2023-0071 -f "$lock" || status=1
+            echo "::endgroup::"
+          done < <(find . -name Cargo.lock -not -path './target/*' -not -path '*/node_modules/*' | sort)
+          exit $status
 
       - name: License check (cargo-deny)
         # Held at v2.0.20: v2.1.0 (6f99e34) bundles cargo-deny 0.20.2, whose

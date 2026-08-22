@@ -75,6 +75,32 @@ updates:
         patterns:
           - "*"
 
+  # The remaining cargo workspaces. Each has its own lockfile, so neither the
+  # "/" entry nor the fuzz entry above reaches them.
+  #
+  # `examples/hyperlight/host` is why this entry exists: it went in with
+  # wasmtime 38.0.4 and accumulated 16 advisories — two of them critical
+  # sandbox-escape issues — while nothing watched it. It is an example runner
+  # rather than shipped code, but it is still a wasm runtime executing
+  # untrusted guest modules in CI, and a whole 38.x line with no fixed release
+  # is not something to find out about by accident.
+  #
+  # Grouped per directory: these are example and fixture builds, so a week of
+  # bumps should arrive as one reviewable PR each.
+  - package-ecosystem: "cargo"
+    directories:
+      - "/examples/hyperlight"
+      - "/examples/hyperlight/host"
+      - "/crates/bashkit-js/test-fixtures/random-fs"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      example-cargo:
+        patterns:
+          - "*"
+
   # npm / pnpm.
   #
   # Important decision: the five pnpm lockfiles in this repo had no

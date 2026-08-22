@@ -2,6 +2,8 @@
 
 ## 2026-08-22
 
+* **Security**: `examples/hyperlight/host` was pinned to `wasmtime = "38"` and carried 16 open advisories, two of them critical (RUSTSEC-2026-0095 and RUSTSEC-2026-0096, sandbox-escaping memory access via the Winch backend). No release in the 38.x line fixes them, so the pin itself was the problem. Moved to wasmtime 47; `wasmtime::Error` stopped implementing `std::error::Error` in 47, so the host runner uses `wasmtime::Result` instead of `anyhow::Result` and no longer depends on `anyhow`.
+* **Contract**: The 2026-08-13 entry below said "adding a third workspace means adding it to both lists", and that is exactly what did not happen — three cargo workspaces (`examples/hyperlight`, `examples/hyperlight/host`, `crates/bashkit-js/test-fixtures/random-fs`) landed afterwards with no `cargo audit` coverage and no Dependabot entry. Listing lockfiles by hand has now failed twice, so CI no longer keeps a list: it discovers every `Cargo.lock` in the tree and audits each. Dependabot still needs explicit directories, and the three missing ones were added. A new workspace is now audited the day it lands.
 * **Security**: Added TM-DOS-104. Pipeline stderr aggregation is now bounded while each stage is collected, rather than only when the completed pipeline reaches the script output accumulator. Per-command truncation flags also propagate into the aggregate result.
 
 ## 2026-08-21

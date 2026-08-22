@@ -1499,11 +1499,20 @@ This section documents the security tools used to detect and prevent vulnerabili
 **cargo-audit** scans `Cargo.lock` against the RustSec Advisory Database; **cargo-geiger**
 (`--all-features`) tracks unsafe code usage to keep it minimal and audited.
 
-The repository holds **two** cargo lockfiles: the workspace root and
-`crates/bashkit/fuzz/Cargo.lock`, which is a separate workspace. CI audits both
-explicitly, a root-only scan leaves the fuzz lockfile unscanned, and Dependabot
-needs its own `directory: /crates/bashkit/fuzz` entry to keep it current. Adding
-a third workspace means adding it to both lists.
+The repository holds **five** cargo lockfiles: the workspace root plus
+`crates/bashkit/fuzz`, `examples/hyperlight`, `examples/hyperlight/host`, and
+`crates/bashkit-js/test-fixtures/random-fs`. A root-only scan sees only the
+first, so CI **discovers** every `Cargo.lock` in the tree and audits each one
+rather than keeping a list.
+
+That is deliberate. The hand-maintained list failed twice: the fuzz lockfile
+drifted onto an unsound `anyhow` before it was added, and
+`examples/hyperlight/host` accumulated 16 advisories — including two critical
+sandbox-escape issues in `wasmtime` 38.x — because nothing audited it either.
+Discovery removes the step a new workspace can forget.
+
+Dependabot still needs explicit directories (it cannot glob), so **that** list
+does have to grow with each new workspace. All five are currently covered.
 
 ### Dynamic Analysis Tools
 
