@@ -179,11 +179,16 @@ are omitted. The parser does not support `<>`, so no read-write mode exists.
   parser (`HARD_MAX_AST_DEPTH` = 500) and total work by parser fuel.
   `truncated` means "incomplete" and hosts must treat it like a dynamic
   command.
+- **Linear source validation.** The command-name provenance check indexes source
+  character positions in one pass, then performs binary searches for each
+  analyzed name. It never rescans a large source prefix per command
+  (TM-DOS-107).
 
 ## Verification
 
 - `crates/bashkit/src/analysis.rs`, unit tests for word extraction, each AST
-  node kind, contexts, redirect modes, and budget truncation.
+  node kind, contexts, redirect modes, budget truncation, and single-pass
+  source indexing for command-name validation.
 - `crates/bashkit/tests/integration/script_analysis.rs`, end-to-end behavior,
   evasion cases (dynamic dispatch, eval, nested shells, nested substitution,
   function rebinding), reserved-control-byte and malformed literal-boundary

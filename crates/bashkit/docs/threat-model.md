@@ -165,6 +165,7 @@ let bash = Bash::builder()
 | Post-allocation charging (TM-DOS-103) | Archive/compression buffers grow before their live-byte check | Owning budget-aware string/vector/byte builders charge before reserve, roll back errors, and release on drop | MITIGATED |
 | Pipeline stderr aggregation (TM-DOS-104) | Many stderr-producing pipeline stages accumulate past the output cap | Stop appending at `max_stderr_bytes` and propagate the truncation flag to the result | MITIGATED |
 | Zip creation pre-allocation (TM-DOS-106) | Recursive inputs and encoded output allocate before live-memory checks | Collect paths only, lease file sizes before VFS reads, and encode through a budget-aware byte buffer | MITIGATED |
+| Analysis command-name validation (TM-DOS-107) | A huge comment before thousands of commands makes validation rescan the source per command | Index source character positions once, then binary-search each name | MITIGATED |
 ### Sandbox Escape (TM-ESC-*)
 
 Scripts may attempt to break out of the sandbox to access the host system.
