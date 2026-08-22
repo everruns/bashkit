@@ -33,16 +33,9 @@ use std::time::{Duration, Instant};
 /// named failure.
 const HOST_TIMEOUT: Duration = Duration::from_secs(20);
 
-/// Run a script through the host shell.
-///
-/// `sh`/`cmd` rather than a bare binary because the set of standalone
-/// executables shared by Linux, macOS, and Windows is effectively empty.
-fn shell_out(script: &str) -> (String, Vec<String>) {
-    if cfg!(windows) {
-        ("cmd".into(), vec!["/C".into(), script.into()])
-    } else {
-        ("sh".into(), vec!["-c".into(), script.into()])
-    }
+struct HostProgram {
+    executable: &'static str,
+    fixed_args: &'static [&'static str],
 }
 
 /// Map a bridged name to the host program it runs.
@@ -51,31 +44,54 @@ fn shell_out(script: &str) -> (String, Vec<String>) {
 /// `false` itself, so a test using those names would never reach the bridge —
 /// it would silently assert on builtins instead. Returning `None` for
 /// unprefixed names also keeps the normal 127 path observable.
-fn host_program(name: &str) -> Option<&'static str> {
+fn host_program(name: &str) -> Option<HostProgram> {
     Some(match name.strip_prefix("host-")? {
         // Reads stdin to EOF on every platform.
         "cat" => {
             if cfg!(windows) {
-                "sort"
+                HostProgram {
+                    executable: "sort",
+                    fixed_args: &[],
+                }
             } else {
-                "cat"
+                HostProgram {
+                    executable: "cat",
+                    fixed_args: &[],
+                }
             }
         }
         "pwd" => {
             if cfg!(windows) {
-                "cd"
+                HostProgram {
+                    executable: "cmd",
+                    fixed_args: &["/D", "/C", "cd"],
+                }
             } else {
-                "pwd"
+                HostProgram {
+                    executable: "pwd",
+                    fixed_args: &[],
+                }
             }
         }
         "false" => {
             if cfg!(windows) {
-                "exit 1"
+                HostProgram {
+                    executable: "cmd",
+                    fixed_args: &["/D", "/C", "exit /B 1"],
+                }
             } else {
-                "false"
+                HostProgram {
+                    executable: "false",
+                    fixed_args: &[],
+                }
             }
         }
-        "echo" => "echo",
+        // Windows has no standalone `echo`; `where` still exercises direct
+        // argument passing without putting untrusted data after `cmd /C`.
+        "echo" => HostProgram {
+            executable: if cfg!(windows) { "where" } else { "echo" },
+            fixed_args: &[],
+        },
         _ => return None,
     })
 }
@@ -87,7 +103,7 @@ fn host_program(name: &str) -> Option<&'static str> {
 /// through a pipe that must reach EOF, and the exit code is passed through.
 struct HostCommand {
     name: String,
-    program: &'static str,
+    program: HostProgram,
     mounts: Arc<HostMounts>,
 }
 
@@ -103,17 +119,18 @@ impl Builtin for HostCommand {
             ));
         };
 
-        let script = std::iter::once(self.program.to_string())
-            .chain(ctx.args.iter().cloned())
-            .collect::<Vec<_>>()
-            .join(" ");
-        let (program, args) = shell_out(&script);
+        let program = self.program.executable;
+        let fixed_args = self.program.fixed_args;
+        let args = ctx.args.to_vec();
 
         // Bytes, not text: a host command's stdin may not be valid UTF-8.
         let stdin_data = ctx.stdin.map(|s| s.as_bytes().to_vec());
         let output = tokio::task::spawn_blocking(move || {
             let mut cmd = std::process::Command::new(program);
-            cmd.args(args)
+            // Never re-parse Bashkit's already-parsed arguments with a host
+            // shell: each value crosses the process boundary as one argv item.
+            cmd.args(fixed_args)
+                .args(args)
                 .current_dir(dir)
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -245,12 +262,29 @@ fn fixture() -> Fixture {
 #[tokio::test]
 async fn bridged_host_command_runs_and_returns_output() {
     let mut f = fixture();
-    let result = f.bash.exec("host-echo hello from host").await.unwrap();
+    let command = if cfg!(windows) {
+        "host-echo cmd"
+    } else {
+        "host-echo hello from host"
+    };
+    let result = f.bash.exec(command).await.unwrap();
     assert_eq!(result.exit_code, 0, "unexpected: {result:?}");
-    assert!(
-        result.stdout.contains("hello from host"),
-        "unexpected: {result:?}"
-    );
+    assert!(!result.stdout.is_empty(), "unexpected: {result:?}");
+}
+
+/// Parsed arguments must remain data at the host-process boundary. Re-parsing
+/// them with a host shell would let the first command create `injected`.
+#[tokio::test]
+async fn bridged_arguments_cannot_inject_host_shell_commands() {
+    let mut f = fixture();
+    let command = if cfg!(windows) {
+        "host-echo cmd '&' type nul '>' injected '&' rem"
+    } else {
+        "host-echo safe ';' touch injected '#' '&&' '|' '$()' '`' '>' $'\\n'"
+    };
+    let _result = f.bash.exec(command).await.unwrap();
+
+    assert!(!f.workspace.join("injected").exists(), "host command ran");
 }
 
 /// A builtin bashkit implements must win over the bridge — the resolver runs
@@ -351,15 +385,12 @@ async fn bashkit_syntax_composes_with_bridged_commands() {
     let mut f = fixture();
     let result = f
         .bash
-        .exec("cat <<'EOF'\nheredoc line\nEOF\necho \"host says: $(host-echo ok)\"")
+        .exec("cat <<'EOF'\nheredoc line\nEOF\necho piped-ok | host-cat")
         .await
         .unwrap();
     assert!(
         result.stdout.contains("heredoc line"),
         "unexpected: {result:?}"
     );
-    assert!(
-        result.stdout.contains("host says: ok"),
-        "unexpected: {result:?}"
-    );
+    assert!(result.stdout.contains("piped-ok"), "unexpected: {result:?}");
 }

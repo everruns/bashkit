@@ -585,6 +585,7 @@ Bash::builder()
 | TM-INJ-001 | Variable injection | `$user_input` containing `; rm -rf /` | Variables not re-parsed | **MITIGATED** |
 | TM-INJ-002 | Backtick injection | `` `$malicious` `` | Parsed as command sub | **MITIGATED** |
 | TM-INJ-003 | eval bypass | `eval $user_input` | eval sandboxed (builtins only) | **MITIGATED** |
+| TM-INJ-025 | Reference host-command bridge re-parses arguments | Joining parsed arguments into `sh -c` / `cmd /C` turns quoted metacharacters back into host-shell syntax | The adoption bridge launches a concrete executable and passes every caller argument as a separate argv value; regression covers Unix and Windows shell metacharacters | **MITIGATED** |
 
 **Current Risk**: MEDIUM - Internal variable namespace injection (TM-INJ-009) needs remediation
 
