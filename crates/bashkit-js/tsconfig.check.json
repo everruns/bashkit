@@ -13,7 +13,7 @@
     "openai.ts",
     "ai.ts",
     "__test__/**/*.spec.ts",
-    "test-fixtures/**/*.spec.ts"
+    "test-fixtures/**/*.spec.mts"
   ],
   "exclude": ["node_modules"]
 }

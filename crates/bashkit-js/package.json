@@ -79,7 +79,7 @@
     "build:ts": "tsc",
     "artifacts": "napi artifacts",
     "test": "ava",
-    "test:interop": "pnpm run build:test-fixtures && ava test-fixtures/random-fs/interop.spec.ts",
+    "test:interop": "pnpm run build:test-fixtures && ava test-fixtures/random-fs/interop.spec.mts",
     "lint": "oxlint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -135,7 +135,8 @@
       "__test__/**/*.spec.ts"
     ],
     "extensions": [
-      "ts"
+      "ts",
+      "mts"
     ],
     "timeout": "2m",
     "workerThreads": false,
