@@ -7,7 +7,8 @@
 - The npm native package publishes again: `publish-js.yml` no longer runs the
   ava suites on Node 20, which ava 8 dropped support for. Node 20 keeps running
   the runtime-compat suite against the shipped binding, matching how `js.yml`
-  already split them.
+  already split them; that suite runs under `bash` so the Windows runner
+  expands its glob, which Node 20 cannot do itself.
 
 ### Added
 
