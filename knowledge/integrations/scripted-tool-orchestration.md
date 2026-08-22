@@ -110,8 +110,10 @@ Dot-separated tool names become runtime namespaces. A definition named
 Inputs from every surface are normalized to JSON and checked against the same
 schema before policy or callback execution. The validator covers object/array
 shape, required and unknown properties, scalar types, enums, and recursive
-properties/items. Callback output containing JSON returns structured runtime
-values; other output remains a string.
+properties/items. Local JSON Pointer `$ref` targets are resolved from the root
+schema at every level; unresolved, external, non-string, and cyclic references
+fail closed. Callback output containing JSON returns structured runtime values;
+other output remains a string.
 
 `ToolCallRequest`, carried through `ExecOptions::extensions`, supplies tenant
 identity and a request-local `ToolDefInvocationTrace`. The request scope crosses

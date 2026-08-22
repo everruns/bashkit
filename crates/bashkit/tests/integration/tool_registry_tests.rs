@@ -165,6 +165,36 @@ async fn registry_enforces_schema_denial_sanitization_discovery_and_request_trac
 }
 
 #[tokio::test]
+async fn registry_resolves_local_schema_references_before_callback() {
+    let called = Arc::new(AtomicBool::new(false));
+    let callback_called = called.clone();
+    let definition = ToolDef::new("customers.get", "Get a customer").with_schema(json!({
+        "$ref": "#/$defs/Input",
+        "$defs": {
+            "Input": {
+                "type": "object",
+                "required": ["customer"],
+                "additionalProperties": false,
+                "properties": { "customer": { "type": "string" } }
+            }
+        }
+    }));
+    let registry = ToolRegistry::builder()
+        .tool_fn(definition, move |_args| {
+            callback_called.store(true, Ordering::SeqCst);
+            Ok("unexpected".into())
+        })
+        .build();
+    let mut bash = Bash::builder().tool_registry(registry).build();
+
+    let result = bash.exec("customers.get --unknown attacker").await.unwrap();
+
+    assert_eq!(result.exit_code, 2);
+    assert!(result.stderr.contains("required property 'customer'"));
+    assert!(!called.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
 async fn registry_deadline_cancels_callback_and_tenants_do_not_share_context_or_traces() {
     struct CancelOnDrop(Arc<AtomicBool>);
     impl Drop for CancelOnDrop {
