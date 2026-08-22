@@ -21,6 +21,11 @@ workflow and a release workflow:
   must match `rust-toolchain.toml`. A release workflow left behind on an older
   rustc is the same class of drift.
 
+Platforms are deliberately *not* compared: release workflows test macOS and
+Windows that CI does not, and that breadth is the point (it is what caught a
+runtime-compat test mounting a hardcoded `/tmp`). Only runtime versions and
+suite gating are held to parity.
+
 `if:` expressions are read only for comparisons against the job's matrix
 version key (`matrix.node == '20'`, `matrix.version != '20'`). A version is
 considered covered by a step when every such comparison holds; conditions on

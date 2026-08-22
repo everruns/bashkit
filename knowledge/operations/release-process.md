@@ -134,6 +134,11 @@ against its CI counterpart and fails on:
 Lanes are declared in that script's `LANES`; add one whenever a new
 publish workflow gains a runtime or version matrix.
 
+Platforms are deliberately outside the check. Release workflows test macOS and
+Windows that CI does not, and that extra breadth is worth keeping: it is what
+caught a runtime-compat test mounting a hardcoded `/tmp`, which cannot exist on
+a Windows runner.
+
 ## Post-Merge Monitoring
 
 Confirm each target (workflow → check):

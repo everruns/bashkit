@@ -2,6 +2,9 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { Bash } from "./_setup.mjs";
 
 describe("VFS API", () => {
@@ -123,15 +126,22 @@ describe("VFS API", () => {
   });
 
   it("mount and unmount", () => {
-    const bash = new Bash({ allowedMountPaths: ["/tmp"] });
-    // Mount /tmp as a real filesystem at /host-tmp (read-only by default)
-    bash.mount("/tmp", "/host-tmp");
-    // The mount should be accessible
-    const r = bash.executeSync("ls /host-tmp 2>/dev/null; echo status=$?");
-    assert.ok(r.stdout.includes("status=0"));
-    // Unmount
-    bash.unmount("/host-tmp");
-    const r2 = bash.executeSync("ls /host-tmp 2>/dev/null; echo status=$?");
-    assert.ok(r2.stdout.includes("status="));
+    // A real host directory, not a hardcoded "/tmp": this suite runs on
+    // Windows too, where that path does not exist and mount() fails.
+    const hostDir = mkdtempSync(path.join(tmpdir(), "bashkit-mount-"));
+    try {
+      const bash = new Bash({ allowedMountPaths: [hostDir] });
+      // Mount the host directory at /host-tmp (read-only by default)
+      bash.mount(hostDir, "/host-tmp");
+      // The mount should be accessible
+      const r = bash.executeSync("ls /host-tmp 2>/dev/null; echo status=$?");
+      assert.ok(r.stdout.includes("status=0"));
+      // Unmount
+      bash.unmount("/host-tmp");
+      const r2 = bash.executeSync("ls /host-tmp 2>/dev/null; echo status=$?");
+      assert.ok(r2.stdout.includes("status="));
+    } finally {
+      rmSync(hostDir, { recursive: true, force: true });
+    }
   });
 });
