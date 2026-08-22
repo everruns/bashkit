@@ -17,7 +17,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 bashkit = { path = "../../crates/bashkit", default-features = false, features = ["jq"] }
-wit-bindgen = "0.51"
+wit-bindgen = "0.60"
 futures-util = { version = "0.3", default-features = false }
 getrandom = "0.4"
 
