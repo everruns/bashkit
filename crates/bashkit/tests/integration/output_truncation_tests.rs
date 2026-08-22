@@ -94,6 +94,19 @@ async fn stderr_truncation_applies_to_exact_bytes() {
     assert!(result.stderr_truncated);
 }
 
+#[tokio::test]
+async fn pipeline_stderr_aggregation_respects_limit() {
+    let result = run_with_limits(
+        "printf 12345 >&2 | printf 67890 >&2 | printf abcde >&2",
+        1_048_576,
+        8,
+    )
+    .await;
+
+    assert_eq!(result.stderr.as_bytes(), b"12345678");
+    assert!(result.stderr_truncated);
+}
+
 // --- Execution continues after truncation ---
 
 #[tokio::test]

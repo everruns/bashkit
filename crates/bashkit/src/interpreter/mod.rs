@@ -2688,6 +2688,7 @@ impl Interpreter {
                     stderr_truncated = true;
                 }
             }
+            stderr_truncated |= result.stderr_truncated;
 
             exit_code = result.exit_code;
             self.last_exit_code = exit_code;
@@ -5082,6 +5083,7 @@ impl Interpreter {
         let mut stdin_data: Option<crate::StreamData> = None;
         let mut last_result = ExecResult::ok(String::new());
         let mut pipeline_stderr = crate::StreamData::new();
+        let mut pipeline_stderr_truncated = false;
         let mut pipe_statuses = Vec::new();
 
         for (i, command) in pipeline.commands.iter().enumerate() {
@@ -5106,7 +5108,19 @@ impl Interpreter {
             };
 
             pipe_statuses.push(result.exit_code);
-            pipeline_stderr.append(&result.stderr);
+            if !pipeline_stderr_truncated {
+                let remaining = self
+                    .limits
+                    .max_stderr_bytes
+                    .saturating_sub(pipeline_stderr.len());
+                if result.stderr.len() <= remaining {
+                    pipeline_stderr.append(&result.stderr);
+                    pipeline_stderr_truncated = result.stderr_truncated;
+                } else {
+                    pipeline_stderr.append(&result.stderr.prefix(remaining));
+                    pipeline_stderr_truncated = true;
+                }
+            }
 
             if is_last {
                 last_result = result;
@@ -5115,6 +5129,7 @@ impl Interpreter {
             }
         }
         last_result.stderr = pipeline_stderr;
+        last_result.stderr_truncated |= pipeline_stderr_truncated;
 
         // Store PIPESTATUS array
         self.pipestatus = pipe_statuses.clone();

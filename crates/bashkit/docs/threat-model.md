@@ -162,6 +162,7 @@ let bash = Bash::builder()
 | yq structured-data amplification (TM-DOS-101) | Deep/multi-document YAML or JSON, runaway filters, expanded output | Parser depth and 4096-document caps, aggregate budgets, shared jaq work/deadline/output limits, final render cap | MITIGATED |
 | Archive decoder pre-allocation (TM-DOS-102) | Compressed output grows before memory checks | Validate and charge each decoder chunk before reserve/copy | MITIGATED |
 | Post-allocation charging (TM-DOS-103) | Archive/compression buffers grow before their live-byte check | Owning budget-aware string/vector/byte builders charge before reserve, roll back errors, and release on drop | MITIGATED |
+| Pipeline stderr aggregation (TM-DOS-104) | Many stderr-producing pipeline stages accumulate past the output cap | Stop appending at `max_stderr_bytes` and propagate the truncation flag to the result | MITIGATED |
 
 ### Sandbox Escape (TM-ESC-*)
 
