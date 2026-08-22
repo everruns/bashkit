@@ -9,6 +9,9 @@
   the runtime-compat suite against the shipped binding, matching how `js.yml`
   already split them; that suite runs under `bash` so the Windows runner
   expands its glob, which Node 20 cannot do itself.
+- The JS runtime-compat `mount and unmount` test mounts a real temporary
+  directory instead of a hardcoded `/tmp`, so it passes on the Windows runners
+  the release workflow tests on.
 
 ### Added
 
