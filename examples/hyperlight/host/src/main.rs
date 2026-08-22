@@ -4,7 +4,10 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::Result;
+// wasmtime 47 stopped implementing `std::error::Error` for `wasmtime::Error`,
+// so `?` no longer converts it into `anyhow::Error`. Every fallible call here
+// is a wasmtime call, so use wasmtime's own Result alias directly.
+use wasmtime::Result;
 use wasmtime::component::{Component, Linker, ResourceTable};
 use wasmtime::{Config, Engine, Store};
 
