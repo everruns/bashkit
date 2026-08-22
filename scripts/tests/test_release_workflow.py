@@ -52,6 +52,29 @@ class ReleaseWorkflowTests(unittest.TestCase):
             with self.subTest(package_manifest=package_manifest):
                 self.assertIn(f'"version": "{workspace_version}"', manifest)
 
+    def test_publish_js_skips_ava_on_node_20(self) -> None:
+        """ava >= 8 needs Node 22.20+; publish-js must split like ci's js.yml.
+
+        The release path is the only place this gap shows up, and it shows up
+        after the tag exists (v0.17.0 shipped to crates.io and PyPI while npm
+        stalled on it).
+        """
+        publish = (ROOT / ".github/workflows/publish-js.yml").read_text()
+
+        active = "\n".join(
+            line for line in publish.splitlines() if not line.lstrip().startswith("#")
+        )
+        ava_steps = re.findall(
+            r"^      - name: Test bindings[^\n]*\n(?:(?:        .*)?\n)*",
+            active,
+            re.MULTILINE,
+        )
+        self.assertTrue(ava_steps)
+        for step in ava_steps:
+            with self.subTest(step=step.splitlines()[0]):
+                if "ava" in step or "pnpm test" in step:
+                    self.assertIn("matrix.node != '20'", step)
+
     def test_cli_publish_proxy_uses_the_published_core(self) -> None:
         justfile = (ROOT / "justfile").read_text()
 

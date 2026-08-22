@@ -202,8 +202,18 @@ jobs:
           name: js-stubs
           path: crates/bashkit-js
 
-      - name: Test bindings
+      # ava >= 8 requires Node 22.20+, but the package still declares
+      # `engines: node >= 18`. Node 20 therefore runs the runtime-compat
+      # suite against the shipped binding instead of the ava-hosted suites,
+      # matching the same split in ci's js.yml.
+      - name: Test bindings (Node 22+ only)
+        if: matrix.node != '20'
         run: pnpm test
+        working-directory: crates/bashkit-js
+
+      - name: Test bindings - runtime compat (Node 20)
+        if: matrix.node == '20'
+        run: node --test __test__/runtime-compat/*.test.mjs
         working-directory: crates/bashkit-js
 
       - name: Run examples
@@ -323,13 +333,25 @@ jobs:
           name: js-stubs
           path: crates/bashkit-js
 
-      - name: Test bindings
+      # See the Node 20 note in test-js-macos-windows: ava >= 8 needs Node
+      # 22.20+, so Node 20 runs the runtime-compat suite instead.
+      - name: Test bindings (Node 22+ only)
+        if: matrix.node != '20'
         run: >
           docker run --rm -v ${{ github.workspace }}:${{ github.workspace }}
           -w ${{ github.workspace }}/crates/bashkit-js
           --platform ${{ steps.docker.outputs.PLATFORM }}
           ${{ steps.docker.outputs.IMAGE }}
           ./node_modules/.bin/ava
+
+      - name: Test bindings - runtime compat (Node 20)
+        if: matrix.node == '20'
+        run: >
+          docker run --rm -v ${{ github.workspace }}:${{ github.workspace }}
+          -w ${{ github.workspace }}/crates/bashkit-js
+          --platform ${{ steps.docker.outputs.PLATFORM }}
+          ${{ steps.docker.outputs.IMAGE }}
+          sh -c "node --test __test__/runtime-compat/*.test.mjs"
 
       - name: Link package for examples
         run: |
