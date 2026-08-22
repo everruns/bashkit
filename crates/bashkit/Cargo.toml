@@ -265,6 +265,10 @@ name = "hotpath"
 harness = false
 
 [[bench]]
+name = "builtin_args"
+harness = false
+
+[[bench]]
 name = "file_ops"
 harness = false
 

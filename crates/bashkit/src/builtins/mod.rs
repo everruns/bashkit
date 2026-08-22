@@ -32,6 +32,7 @@ mod bc;
 mod caller;
 mod cat;
 mod checksum;
+mod clap_cache;
 mod clap_env;
 mod clear;
 mod column;

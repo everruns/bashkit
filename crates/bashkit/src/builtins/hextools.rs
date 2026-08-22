@@ -1,5 +1,6 @@
 //! od, xxd, and hexdump builtins - byte-level inspection tools
 
+use super::clap_cache::cached_command;
 use async_trait::async_trait;
 
 use super::{Builtin, Context};
@@ -221,18 +222,20 @@ fn od_dump(data: &[u8], opts: &OdOptions) -> String {
     output
 }
 
+// Cached `od` arg surface: pre-built once, cloned per invocation.
+// See `builtins::clap_cache` for why it is built, not just constructed.
+cached_command!(od_cmd, super::generated::od_args::od_command());
+
 #[async_trait]
 impl Builtin for Od {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        use super::generated::od_args::od_command;
         use std::ffi::OsString;
 
         let argv: Vec<OsString> = std::iter::once(OsString::from("od"))
             .chain(ctx.args.iter().map(OsString::from))
             .collect();
 
-        let cmd = od_command().help_template("Usage: {usage}\n{about}\n\n{all-args}\n");
-        let matches = match cmd.try_get_matches_from(argv) {
+        let matches = match od_cmd().try_get_matches_from(argv) {
             Ok(m) => m,
             Err(e) => {
                 let kind = e.kind();
@@ -662,7 +665,6 @@ async fn collect_input(
 
     Ok(data)
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

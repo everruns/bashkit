@@ -68,6 +68,41 @@ codegen**, not by depending on `uu_*` crates at runtime.
 5. Emits `crates/bashkit/src/builtins/generated/<util>_args.rs` with a clean
    `pub fn <util>_command() -> clap::Command`.
 
+## Per-invocation cost: cache a *built* `Command`
+
+`<util>_command()` is codegen output, so calling it per invocation rebuilt the
+whole arg tree on every `cat`/`ls`/`stat` in a script loop. Benchmarked
+(`cargo bench --bench builtin_args`, results under
+`crates/bashkit/benches/results/`): clap accounts for ~10 µs of a 14 µs `cat`
+invocation and ~73% of a 60 µs `ls` invocation.
+
+The naive fix does not work. Construction is only ~1.1 µs of `cat`'s 7.3 µs
+clap round trip, and `Command::clone()` (0.83 µs) is not meaningfully cheaper
+than rebuilding — a `LazyLock<Command>` + clone prototype measured as a
+regression. **Parsing dominates**, and most of it is clap's `_build_self`
+(group resolution, setting propagation, arg indexing), which clap skips when
+the `Built` flag is already set.
+
+So `builtins::clap_cache::cached_command!` caches a `Command` that has had
+`GNU_HELP_TEMPLATE` applied and `Command::build()` called on it, and hands out
+clones. Clones inherit `Built`, so each invocation pays only matching: −11% for
+`cat`, −20% for `ls` on the clap portion; −15% end-to-end for `ls`.
+
+Constraints this encodes:
+
+- `help_template` must be applied **before** `build()`, so the macro owns both
+  steps rather than leaving the template to callers. `GNU_HELP_TEMPLATE` is
+  therefore defined once in `clap_cache`, not repeated per builtin.
+- The gain scales with arg-surface size. Small surfaces (`cat`, `tac`) gain
+  little; the cache is uniform across all 11 ports for consistency, not because
+  each one needs it.
+- `apply_env_defaults` (TM-INF-024) rewrites argv, never the `Command`, so it
+  composes with the cache unchanged.
+
+`builtins::clap_cache::tests` guards the shortcut: a cached command must parse
+identically to a fresh one, stay reusable after a parse error, and still render
+the GNU help layout. `benches/builtin_args.rs` is the perf guard.
+
 bashkit's `Builtin::execute` calls `<util>_command().try_get_matches_from(...)`
 and implements behaviour against the VFS. `clap` is an unconditional
 dependency, no feature flag for the ported path or the `ClapBuiltin` trait.

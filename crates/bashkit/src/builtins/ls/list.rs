@@ -3,12 +3,13 @@
 // Uses unwrap() for validated single-char strings.
 #![allow(clippy::unwrap_used)]
 
+use crate::builtins::clap_cache::cached_command;
 use async_trait::async_trait;
 use std::ffi::OsString;
 use std::path::Path;
 
 use crate::builtins::clap_env::apply_env_defaults;
-use crate::builtins::generated::ls_args::{LS_ENV_DEFAULTS, ls_command};
+use crate::builtins::generated::ls_args::LS_ENV_DEFAULTS;
 use crate::builtins::{Builtin, Context, resolve_path};
 use crate::error::Result;
 use crate::fs::FileType;
@@ -63,6 +64,10 @@ pub(super) struct LsOptions {
 ///   -d   List directories themselves, not their contents
 pub struct Ls;
 
+// Cached `ls` arg surface: pre-built once, cloned per invocation.
+// See `builtins::clap_cache` for why it is built, not just constructed.
+cached_command!(ls_cmd, super::super::generated::ls_args::ls_command());
+
 #[async_trait]
 impl Builtin for Ls {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
@@ -76,12 +81,7 @@ impl Builtin for Ls {
         // see TM-INF-024 and `builtins/clap_env.rs`.
         let argv = apply_env_defaults(argv, LS_ENV_DEFAULTS, ctx.env);
 
-        // GNU coreutils' help layout opens with the usage line; clap's
-        // default template leads with the `about`. uutils handles this via
-        // uucore's `localized_help_template`, which we drop during codegen
-        // because it pulls in Fluent. Re-apply a GNU-equivalent template.
-        let cmd = ls_command().help_template("Usage: {usage}\n{about}\n\n{all-args}\n");
-        let matches = match cmd.try_get_matches_from(argv) {
+        let matches = match ls_cmd().try_get_matches_from(argv) {
             Ok(m) => m,
             Err(e) => {
                 let kind = e.kind();

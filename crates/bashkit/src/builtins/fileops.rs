@@ -4,6 +4,7 @@
 // THREAT[TM-INF-018]: timezone-naive `touch -t` stamps are UTC; host-local
 // conversion would leak process timezone through a later `date -r`.
 
+use super::clap_cache::cached_command;
 use crate::time_compat::SystemTime;
 use async_trait::async_trait;
 use chrono::{DateTime, Datelike, NaiveDate, Utc};
@@ -1015,10 +1016,13 @@ fn mktemp_name(template: Option<&str>, suffix: &str) -> String {
     }
 }
 
+// Cached `mktemp` arg surface: pre-built once, cloned per invocation.
+// See `builtins::clap_cache` for why it is built, not just constructed.
+cached_command!(mktemp_cmd, super::generated::mktemp_args::mktemp_command());
+
 #[async_trait]
 impl Builtin for Mktemp {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
-        use super::generated::mktemp_args::mktemp_command;
         use std::ffi::OsString;
         use std::path::PathBuf;
 
@@ -1026,8 +1030,7 @@ impl Builtin for Mktemp {
             .chain(ctx.args.iter().map(OsString::from))
             .collect();
 
-        let cmd = mktemp_command().help_template("Usage: {usage}\n{about}\n\n{all-args}\n");
-        let matches = match cmd.try_get_matches_from(argv) {
+        let matches = match mktemp_cmd().try_get_matches_from(argv) {
             Ok(m) => m,
             Err(e) => {
                 let kind = e.kind();
@@ -1134,7 +1137,6 @@ impl Builtin for Mktemp {
         Ok(ExecResult::err(msg, 1))
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -4,11 +4,11 @@
 //! `bashkit-coreutils-port` — see `generated/tac_args.rs`. `rev` keeps a
 //! handwritten parser because uutils does not ship a `rev` (BSD-only).
 
+use super::clap_cache::cached_command;
 use async_trait::async_trait;
 use std::ffi::OsString;
 use std::path::Path;
 
-use super::generated::tac_args::tac_command;
 use super::{Builtin, Context, read_text_file};
 use crate::error::Result;
 use crate::interpreter::ExecResult;
@@ -53,6 +53,10 @@ async fn read_input(ctx: &Context<'_>) -> std::result::Result<String, ExecResult
 /// The tac builtin — concatenate and print files in reverse (line order).
 pub struct Tac;
 
+// Cached `tac` arg surface: pre-built once, cloned per invocation.
+// See `builtins::clap_cache` for why it is built, not just constructed.
+cached_command!(tac_cmd, super::generated::tac_args::tac_command());
+
 #[async_trait]
 impl Builtin for Tac {
     async fn execute(&self, ctx: Context<'_>) -> Result<ExecResult> {
@@ -60,8 +64,7 @@ impl Builtin for Tac {
             .chain(ctx.args.iter().map(OsString::from))
             .collect();
 
-        let cmd = tac_command().help_template("Usage: {usage}\n{about}\n\n{all-args}\n");
-        let matches = match cmd.try_get_matches_from(argv) {
+        let matches = match tac_cmd().try_get_matches_from(argv) {
             Ok(m) => m,
             Err(e) => {
                 let kind = e.kind();
@@ -203,7 +206,6 @@ impl Builtin for Rev {
         Ok(ExecResult::ok(output))
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
