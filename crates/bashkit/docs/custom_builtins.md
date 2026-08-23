@@ -187,13 +187,21 @@ working directory, and exact pipeline stdin. Resume with `ExecResult` to supply
 stdout, stderr, and exit status. `start_execution_with_options` preserves the
 normal streaming callback, extensions, positional parameters, and stdin.
 
-This is live-future suspension only. `ExecutionHandle` owns its `Bash` while
-the execution is active; after completion, call `into_bash()` to recover the
-session. Dropping a suspended handle drops the session so partially unwound
-interpreter state cannot be reused. Neither the handle nor a pending request is
-serializable. Execution limits, including wall-clock timeout, remain active
-while the host call is parked. Calling an event-backed command through ordinary
+This is live-future suspension only. `ExecutionHandle` controls its `Bash`
+while the execution is active; after normal completion, call `into_bash()` to
+recover the session. Dropping a suspended handle drops the session so partially
+unwound interpreter state cannot be reused. Neither the handle nor a pending
+request is serializable. Calling an event-backed command through ordinary
 `exec()` fails immediately because no execution driver is present.
+
+Execution limits, including the wall-clock timeout, stay in force while a host
+call is parked. Where the target has a task spawner — any async runtime on
+native, `spawn_local` on JS-backed wasm — the execution runs on an independent
+task, so the deadline fires even if the host never polls the handle again.
+A non-JS wasm embedder has no executor to spawn onto, so there the handle keeps
+driving the future itself and the deadline is enforced on the host's next poll.
+Either way a timed-out execution drops its session: `into_bash()` recovers a
+completed run, never a timed-out one.
 
 ## BuiltinRegistry, Runtime-Mutable Builtins
 

@@ -167,6 +167,7 @@ wasm_js = [
     "dep:web-time",
     "dep:gloo-timers",
     "dep:send_wrapper",
+    "dep:wasm-bindgen-futures",
 ]
 # Enable jq builtin via embedded jaq interpreter
 # Usage: cargo build --features jq
@@ -355,6 +356,10 @@ web-time = { workspace = true, optional = true }
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 gloo-timers = { version = "0.4", features = ["futures"], optional = true }
 send_wrapper = { version = "0.6", features = ["futures"], optional = true }
+# Task spawner for the host-call execution driver (see host_call.rs). JS-backed
+# like the three above — a non-JS wasm embedder links none of it and drives the
+# execution future from `next_event` instead.
+wasm-bindgen-futures = { version = "0.4", optional = true }
 
 # Vendored uucore modules (e.g. generated/format/human.rs) carry upstream
 # `#[cfg(feature = "i18n-decimal")]` gates. bashkit has no i18n surface —

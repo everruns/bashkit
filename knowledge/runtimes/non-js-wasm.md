@@ -42,6 +42,7 @@ path. It is enabled by the JS packages (`bashkit-wasm`) and by the
 | Timers (`sleep`, `timeout`) | `gloo-timers` (`setTimeout`) | spin on the host clock |
 | Entropy | `getrandom/wasm_js` (`crypto.getRandomValues`) | `getrandom` custom backend, embedder's |
 | `chrono::Utc::now` | `chrono/wasmbind` (JS `Date`) | `time_compat::now_utc` |
+| Host-call driver | `wasm-bindgen-futures::spawn_local` | none, `next_event` polls inline |
 
 Two consequences worth stating plainly:
 
@@ -88,6 +89,17 @@ correct choice here, not a compromise: these embedders drive execution with a
 single poll (`now_or_never`), so a pending timer future could never be woken.
 A guest that burns VM cycles during `sleep 1` is the price of having no timer
 hardware.
+
+The same "no other thread" fact decides who drives a parked host-call
+execution. `host_call::spawn_execution` hands the execution future to a task
+spawner on every target that has one, so the wall-clock deadline keeps running
+while the host sits on a `HostCallRequest`. There is nothing to spawn onto
+here, so the function hands the future back and `ExecutionHandle::next_event`
+polls it inline — the deadline is enforced on the host's next poll instead of
+autonomously. The observable API contract does not change: a timed-out
+execution still drops its session and still fails `into_bash()`. Because CI
+only *builds* this target, the inline path is covered by native unit tests in
+`host_call.rs` that force `Driver::Inline`.
 
 ## Hyperlight specifics
 

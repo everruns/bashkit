@@ -127,14 +127,60 @@ async fn suspended_host_call_remains_inside_the_execution_timeout() {
     let mut execution =
         bash.start_execution_with_options("lookup alice", ExecOptions::new().stdin("unused"));
 
+    let request = match execution.next_event().await.unwrap() {
+        ExecutionEvent::HostCall(request) => request,
+        ExecutionEvent::Complete(_) => panic!("execution completed before its host call"),
+    };
+
+    // The host never polls the handle across the deadline: the driver has to
+    // notice on its own. THREAT[TM-DOS-098].
+    tokio::time::advance(Duration::from_secs(3)).await;
+    tokio::task::yield_now().await;
+
+    let resume_error = execution
+        .resume(request.id(), ExecResult::ok("too late\n"))
+        .unwrap_err();
+    assert!(
+        resume_error.to_string().contains("no longer active"),
+        "unexpected resume error: {resume_error}"
+    );
+
+    let error = execution.next_event().await.unwrap_err();
+    assert!(error.to_string().contains("timeout"), "unexpected: {error}");
+    // A timed-out run drops its session rather than parking it in the handle.
+    assert!(execution.into_bash().is_err());
+}
+
+#[tokio::test]
+async fn dropping_a_parked_handle_stops_the_execution() {
+    let bash = Bash::builder().host_call_builtin("lookup").build();
+    let mut execution = bash.start_execution("lookup alice; echo after");
+    let request = match execution.next_event().await.unwrap() {
+        ExecutionEvent::HostCall(request) => request,
+        ExecutionEvent::Complete(_) => panic!("execution completed before its host call"),
+    };
+    assert_eq!(request.args(), &["alice"]);
+
+    drop(execution);
+    // Give an aborted driver every chance to keep running the script.
+    for _ in 0..8 {
+        tokio::task::yield_now().await;
+    }
+}
+
+#[tokio::test]
+async fn a_second_event_after_completion_is_rejected() {
+    let bash = Bash::builder().host_call_builtin("lookup").build();
+    let mut execution = bash.start_execution("echo done");
     assert!(matches!(
         execution.next_event().await.unwrap(),
-        ExecutionEvent::HostCall(_)
+        ExecutionEvent::Complete(_)
     ));
-    tokio::time::advance(Duration::from_secs(3)).await;
     let error = execution.next_event().await.unwrap_err();
-    assert!(error.to_string().contains("timeout"));
-    let _bash = execution.into_bash().unwrap();
+    assert!(
+        error.to_string().contains("already completed"),
+        "unexpected: {error}"
+    );
 }
 
 #[tokio::test]
