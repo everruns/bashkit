@@ -251,19 +251,31 @@ in the interpreter's plan fulfillment code (`interpreter/mod.rs`).
 ### Process-Local Host-Call Suspension
 
 `BashBuilder::host_call_builtin(name)` registers a command fulfilled by the
-host through `Bash::start_execution`. `ExecutionHandle::next_event()` polls the
-ordinary interpreter future until it completes or the builtin sends a
-`HostCallRequest`; `resume(id, ExecResult)` resolves the one-shot response and
-lets the same future continue. The bounded request channel applies
-backpressure, request IDs prevent mismatched responses, ordinary `exec()`
-fails the builtin promptly, and the normal execution timeout remains armed
-while a request is pending.
+host through `Bash::start_execution`. The first
+`ExecutionHandle::next_event()` starts the ordinary interpreter future and
+waits until it completes or the builtin sends a `HostCallRequest`;
+`resume(id, ExecResult)` resolves the one-shot response and lets the same
+future continue. The bounded request channel applies backpressure, request IDs
+prevent mismatched responses, ordinary `exec()` fails the builtin promptly, and
+the normal execution timeout remains armed while a request is pending.
+
+`spawn_execution` (`host_call.rs`) decides who drives that future. Native
+targets hand it to the ambient async runtime and JS-backed wasm to
+`spawn_local`, so the deadline can fire while the host is parked and no further
+handle poll is needed. A non-JS wasm embedder has no executor at all
+([Non-JS WebAssembly Embedding](../runtimes/non-js-wasm.md)), so
+`spawn_execution` hands the future
+back and `next_event` polls it inline; the deadline is then enforced on the
+host's next poll. The API contract does not vary by target: a timed-out
+execution drops its session and cannot be recovered with `into_bash`. The
+inline path is covered by native unit tests in `host_call.rs`, since CI only
+compiles the non-JS wasm target.
 
 This mechanism intentionally does not change interpreter control flow into a
-serializable state machine. The handle owns both a pinned Rust future and the
-`Bash` instance; completion makes the session recoverable through `into_bash`,
-while dropping a suspended handle drops the session so partially unwound state
-cannot be reused. Pending calls cannot be included in snapshots or resumed in
+serializable state machine. The driver owns both a pinned Rust future and the
+`Bash` instance; normal completion makes the session recoverable through
+`into_bash`, while a timeout or dropping a suspended handle drops the session
+so partially unwound state cannot be reused. Pending calls cannot be included in snapshots or resumed in
 another process. Portable mid-execution resume would require explicit
 continuation frames for shell control flow, pipelines, substitutions,
 redirects, accumulated output, and budgets; see

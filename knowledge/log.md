@@ -1,5 +1,11 @@
 # Bashkit Knowledge Update Log
 
+## 2026-08-23
+
+* **Security**: TM-DOS-098 tightened. A parked host-call execution stored an unpolled future, so its wall-clock deadline could only fire the next time the host called `next_event()` — a host that took a `HostCallRequest` and never came back retained the whole interpreter. `host_call::spawn_execution` now hands the execution future to a task spawner, so the deadline fires autonomously and the timed-out session is dropped. Dropping the handle aborts the driver, and `into_bash()` no longer recovers a timed-out execution on any target.
+* **Constraint**: `wasm32-unknown-unknown` is not "has an executor" any more than it is "has JS". A non-JS wasm embedder drives execution with a single `now_or_never` poll, so there is nothing to spawn onto; `spawn_execution` hands the future back and `next_event` polls it inline there. Target-dependent *timing*, target-independent *contract* — the timed-out session is dropped either way. Recorded in [Non-JS WebAssembly Embedding](runtimes/non-js-wasm.md) and [Builtin Commands](foundations/builtins.md).
+* **Decision**: Paths that only a build-only CI target exercises get native unit tests that force them. The inline driver is covered by `host_call.rs` tests that construct `Driver::Inline` directly, because the wasm-component job compiles the guest and never runs a host call through it.
+
 ## 2026-08-22
 
 * **Security**: `examples/hyperlight/host` was pinned to `wasmtime = "38"` and carried 16 open advisories, two of them critical (RUSTSEC-2026-0095 and RUSTSEC-2026-0096, sandbox-escaping memory access via the Winch backend). No release in the 38.x line fixes them, so the pin itself was the problem. Moved to wasmtime 47; `wasmtime::Error` stopped implementing `std::error::Error` in 47, so the host runner uses `wasmtime::Result` instead of `anyhow::Result` and no longer depends on `anyhow`.
