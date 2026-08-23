@@ -203,6 +203,12 @@ driving the future itself and the deadline is enforced on the host's next poll.
 Either way a timed-out execution drops its session: `into_bash()` recovers a
 completed run, never a timed-out one.
 
+One consequence of the spawned driver: a streaming callback passed through
+`start_execution_with_options` is invoked from the driver's task, not from the
+thread that calls `next_event()`. `OutputCallback` was always `Send + Sync`, so
+this is a thread-affinity change rather than a signature one — relevant only to
+a callback that assumed it ran on the caller's thread.
+
 ## BuiltinRegistry, Runtime-Mutable Builtins
 
 `BashBuilder::builtin` and `Extension` are both *build-time*: the set of
