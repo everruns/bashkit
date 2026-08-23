@@ -1,3 +1,5 @@
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use bashkit::{Bash, ExecOptions, ExecResult, ExecutionEvent, ExecutionLimits};
@@ -151,21 +153,54 @@ async fn suspended_host_call_remains_inside_the_execution_timeout() {
     assert!(execution.into_bash().is_err());
 }
 
-#[tokio::test]
-async fn dropping_a_parked_handle_stops_the_execution() {
+/// The driver runs the script while the host is off doing something else, and
+/// stops for good when the host walks away. Both halves of THREAT[TM-DOS-098].
+#[tokio::test(start_paused = true)]
+async fn the_driver_runs_while_the_host_is_away_and_stops_when_it_leaves() {
+    let ticks = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&ticks);
     let bash = Bash::builder().host_call_builtin("lookup").build();
-    let mut execution = bash.start_execution("lookup alice; echo after");
+    let mut execution = bash.start_execution_with_options(
+        "lookup alice; for i in 1 2 3 4 5 6; do echo tick; sleep 5; done",
+        ExecOptions::new().streaming(Box::new(move |stdout, _stderr| {
+            counter.fetch_add(
+                stdout.text_lossy().matches("tick").count(),
+                Ordering::SeqCst,
+            );
+        })),
+    );
+
     let request = match execution.next_event().await.unwrap() {
         ExecutionEvent::HostCall(request) => request,
         ExecutionEvent::Complete(_) => panic!("execution completed before its host call"),
     };
     assert_eq!(request.args(), &["alice"]);
+    execution
+        .resume(request.id(), ExecResult::ok("ok\n"))
+        .unwrap();
 
-    drop(execution);
-    // Give an aborted driver every chance to keep running the script.
-    for _ in 0..8 {
+    // The host does not poll the handle again; only an independent driver can
+    // move the loop forward.
+    for _ in 0..3 {
+        tokio::time::advance(Duration::from_secs(5)).await;
         tokio::task::yield_now().await;
     }
+    let before = ticks.load(Ordering::SeqCst);
+    assert!(
+        before > 0,
+        "execution did not advance while the host was away"
+    );
+
+    drop(execution);
+    for _ in 0..8 {
+        tokio::time::advance(Duration::from_secs(5)).await;
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(
+        ticks.load(Ordering::SeqCst),
+        before,
+        "dropped handle left the script running in the background"
+    );
 }
 
 #[tokio::test]
