@@ -14,5 +14,5 @@ license = "MIT"
 publish = false
 
 [dependencies]
-wasmtime = { version = "47", default-features = false, features = ["component-model", "cranelift", "runtime", "std"] }
+wasmtime = { version = "48", default-features = false, features = ["component-model", "cranelift", "runtime", "std"] }
 getrandom = "0.4"
