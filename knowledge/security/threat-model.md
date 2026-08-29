@@ -1559,6 +1559,15 @@ the two lists in sync so a local `cargo deny check advisories` matches CI.
 | RUSTSEC-2023-0089 | `atomic-polyfill` | Unmaintained, no known vulnerability; transitive via `monty` → `postcard` → `heapless` | Upstream drops the dependency |
 | RUSTSEC-2026-0173 | `proc-macro-error2` | Unmaintained build-time proc-macro, bench harness only (not shipped library code); transitive via `tabled` | `tabled` releases a version without it |
 
+A suppression that stops matching is not evidence that it can be dropped.
+`cargo deny check advisories` currently warns `advisory-not-detected` for
+RUSTSEC-2023-0071, because `ssh-key` resolves `rsa` to a pre-release
+(0.10.0-rc.18) and RustSec version ranges do not match pre-release versions.
+The advisory still carries `patched = []`, so the exposure is unchanged and
+matching resumes as soon as `rsa` ships a stable release. Before removing any
+entry above, check the advisory's own `patched` list rather than the scanner's
+silence.
+
 ### Fuzzing Targets
 
 The following components are fuzz-tested for robustness:
