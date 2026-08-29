@@ -186,6 +186,11 @@ jobs:
         # feature. Drop this flag once `rsa` ships a constant-time release.
         # Keep in sync with the `[advisories] ignore` list in deny.toml.
         #
+        # The flag currently matches nothing: `ssh-key` resolves `rsa` to a
+        # pre-release (0.10.0-rc.18) and RustSec ranges skip pre-releases. That
+        # is not a fix (the advisory still has `patched = []`), so keep the
+        # flag -- matching resumes when `rsa` ships a stable release.
+        #
         # This repo has more than one cargo workspace, and a `cargo audit` at
         # the root only ever sees the root lockfile. Listing the others by hand
         # has now failed twice: the fuzz lockfile rotted onto an unsound

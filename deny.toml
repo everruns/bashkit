@@ -38,6 +38,14 @@ ignore = [
     # Marvin Attack timing sidechannel (TM-CRY-002). Every published version of
     # `rsa` is affected and no patched release exists, so this cannot be fixed
     # by upgrading. Remove once `rsa` ships a constant-time implementation.
+    #
+    # Do NOT remove this entry just because cargo-deny reports
+    # `advisory-not-detected` ("no crate matched advisory criteria"). The
+    # advisory still carries `patched = []`, so nothing is fixed. It stops
+    # matching only because `ssh-key` currently resolves `rsa` to a
+    # pre-release (0.10.0-rc.18) and RustSec version ranges do not match
+    # pre-release versions. Matching resumes the moment `rsa` ships a stable
+    # release, so dropping the entry now would silently un-accept TM-CRY-002.
     "RUSTSEC-2023-0071",
     # atomic-polyfill: transitive via monty -> postcard -> heapless
     # Unmaintained but no security vulnerability; upstream dep we can't control
