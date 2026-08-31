@@ -184,6 +184,10 @@ leading SQL keyword via the parser's lightweight tokeniser
   filesystem rather than the configured `MemoryIO`/`BashkitVfsIO`, a
   sandbox escape. Plain `VACUUM` is denied for symmetry; there is no
   sandbox-safe way to express it today.
+- `WITH RECURSIVE` is unconditionally rejected. Turso does not expose a
+  progress-handler callback, so a recursive program can perform unbounded work
+  inside one `Statement::step()` call before Bashkit can check its deadline or
+  execution budget. Ordinary, non-recursive CTEs remain supported.
 - `PRAGMA <name>` is checked against `SqliteLimits::pragma_deny`
   (case-insensitive, schema-prefix-aware so `PRAGMA main.cache_size`
   matches). Defaults block resource/FS-shaped knobs: `cache_size`,
@@ -210,7 +214,7 @@ rows → `[]\n`), `markdown`. Empty column list → empty string; empty row set
 | TM-SQL-003    | DoS via large SQL input                              | `SqliteLimits::max_script_bytes` (4 MiB default)                        |
 | TM-SQL-004    | DoS via huge result set                              | `SqliteLimits::max_rows_per_query` (1M default), checked before materialising each row |
 | TM-SQL-005    | DoS via huge DB file                                 | `SqliteLimits::max_db_bytes` (256 MiB default) at load time and while growing DBs |
-| TM-SQL-005a   | DoS via wall-clock burn (regex-style queries, CTEs)  | `SqliteLimits::max_duration` enforced via per-step deadline + `Statement::interrupt()` |
+| TM-SQL-005a   | DoS via wall-clock burn (regex-style queries)        | `SqliteLimits::max_duration` enforced via per-step deadline + `Statement::interrupt()` |
 | TM-SQL-005b   | DoS via statement-flood (millions of `;`)            | `SqliteLimits::max_statements` checked after splitting                  |
 | TM-SQL-006    | Binary corruption / truncation in BLOB round-trip    | Backed by `Vec<u8>`; tested via `tm_sql_006`                            |
 | TM-SQL-007    | CSV escape failure with separator-bearing blobs      | Per-RFC-4180 quoting; tested via `tm_sql_007`                           |
@@ -220,6 +224,7 @@ rows → `[]\n`), `markdown`. Empty column list → empty string; empty row set
 | TM-SQL-011    | Information leakage via host-side error strings      | `sanitize()` strips ` at /…:N:M` annotations from turso errors          |
 | TM-SQL-012    | Sandbox escape via `VACUUM INTO` writing host files  | Policy rejects `VACUUM` (with/without `INTO`) at the keyword sniffer; tested via `vacuum_into_blocked`/`vacuum_plain_blocked`/`vacuum_blocked_with_leading_comment` |
 | TM-SQL-013    | DoS via `.dump` cumulative output bypass            | `.dump` previously built the full string before `max_output_bytes` was applied; `bounded_append()` enforces the cap after each schema/row chunk with the remaining budget passed from `run_statements`; `THREAT[TM-DOS-091]`; tested via `dump_respects_output_cap` and `dump_output_cap_enforced_across_multiple_tables` |
+| TM-SQL-014    | DoS via recursive CTE work inside one engine step    | Policy rejects `WITH RECURSIVE` until turso exposes an in-flight progress callback; comment- and case-aware; tested via `tm_sql_014_recursive_ctes_are_rejected` |
 
 ## Test Plan
 

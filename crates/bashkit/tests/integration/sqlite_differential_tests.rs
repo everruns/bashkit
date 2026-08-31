@@ -290,20 +290,18 @@ async fn join_inner() {
 }
 
 // ---------------------------------------------------------------------------
-// Recursive CTEs
+// Non-recursive CTEs
 //
-// Turso rejected `WITH RECURSIVE` up to 0.8.0-pre.2 ("Parse error: Recursive
-// CTEs are not yet supported"), so this used to be a documented divergence.
-// 0.8.0-pre.3 closed the gap, so it is now a plain parity assertion.
+// Recursive CTEs are denied by sandbox policy because turso does not expose a
+// progress callback that can interrupt work performed inside one step.
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn recursive_cte_matches_host() {
+async fn non_recursive_cte_matches_host() {
     assert_matches(
         &[],
-        "WITH RECURSIVE r(n) AS ( \
-            SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < 5 \
-         ) SELECT n FROM r;",
+        "WITH values_(n) AS (VALUES (1), (2), (3), (4), (5)) \
+         SELECT n FROM values_;",
     )
     .await;
 }

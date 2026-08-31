@@ -20,6 +20,7 @@
 //! | TM-SQL-008    | Recursive `.read` does not unbounded-recurse             |
 //! | TM-SQL-009    | ATTACH/DETACH blocked by policy                          |
 //! | TM-SQL-010    | PRAGMA deny list blocks resource/FS knobs                |
+//! | TM-SQL-014    | Recursive CTEs cannot bypass cooperative query limits    |
 
 #![cfg(feature = "sqlite")]
 
@@ -118,6 +119,25 @@ async fn tm_sql_005_oversize_db_file_rejected() {
         "stdout={:?} stderr={:?}",
         r.stdout,
         r.stderr,
+    );
+}
+
+#[tokio::test]
+async fn tm_sql_014_recursive_ctes_are_rejected() {
+    let mut bash = make_bash_default();
+    let r = bash
+        .exec(
+            r#"sqlite :memory: 'WITH /* policy noise */ RECURSIVE r(n) AS (
+                SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < 5
+            ) SELECT n FROM r;'"#,
+        )
+        .await
+        .unwrap();
+    assert_eq!(r.exit_code, 1);
+    assert!(
+        r.stderr.contains("recursive CTEs are not supported"),
+        "stderr={:?}",
+        r.stderr
     );
 }
 

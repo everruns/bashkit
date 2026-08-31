@@ -189,6 +189,32 @@ pub(super) fn leading_keyword(sql: &str) -> Option<String> {
     Some(s[..end].to_ascii_uppercase())
 }
 
+/// Return whether `sql` starts a recursive common-table expression.
+///
+/// Recursive CTE execution is denied until turso exposes an in-flight progress
+/// callback: checking limits only between `step()` calls cannot bound work done
+/// inside one step.
+pub(super) fn is_recursive_cte(sql: &str) -> bool {
+    let s = strip_leading_noise(sql);
+    let Some(rest) = strip_keyword(s, "WITH") else {
+        return false;
+    };
+    let rest = strip_leading_noise(rest);
+    strip_keyword(rest, "RECURSIVE").is_some()
+}
+
+fn strip_keyword<'a>(sql: &'a str, keyword: &str) -> Option<&'a str> {
+    let (candidate, rest) = sql.as_bytes().split_at_checked(keyword.len())?;
+    if !candidate.eq_ignore_ascii_case(keyword.as_bytes()) {
+        return None;
+    }
+    let next = rest.first();
+    if next.is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_') {
+        return None;
+    }
+    Some(std::str::from_utf8(rest).expect("keyword ends on an ASCII boundary"))
+}
+
 /// Return the PRAGMA name (lowercased ASCII) when `sql` is a PRAGMA
 /// statement, else `None`. The name is the identifier following `PRAGMA `,
 /// before any `=`, `(`, or whitespace.

@@ -923,6 +923,12 @@ fn push_stdout_bounded(
 }
 
 fn check_sql_policy(sql: &str, limits: &SqliteLimits) -> std::result::Result<(), String> {
+    if parser::is_recursive_cte(sql) {
+        return Err(
+            "recursive CTEs are not supported in the bashkit sandbox; query work cannot be bounded"
+                .to_string(),
+        );
+    }
     match parser::leading_keyword(sql).as_deref() {
         Some("ATTACH") | Some("DETACH") => {
             return Err("ATTACH/DETACH is not supported in the bashkit sandbox; \
