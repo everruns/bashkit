@@ -115,6 +115,14 @@ def test_unmount_retracts_replay():
     assert bash.execute_sync("cat /skills/my-skill/SKILL.md 2>&1").exit_code != 0
 
 
+def test_unmount_retracts_equivalent_normalized_mount_path():
+    bash = Bash()
+    bash.mount("/skills/staging/../my-skill", skill_filesystem())
+    bash.unmount("/skills/my-skill")
+    bash.reset()
+    assert bash.execute_sync("cat /skills/my-skill/SKILL.md 2>&1").exit_code != 0
+
+
 def test_tool_reset_preserves_runtime_mount():
     tool = BashTool()
     tool.mount("/skills/my-skill", skill_filesystem())

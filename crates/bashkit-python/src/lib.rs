@@ -4106,20 +4106,24 @@ fn record_runtime_mount(
     vfs_path: &str,
     fs: Arc<dyn bashkit::FileSystem>,
 ) -> PyResult<()> {
+    let vfs_path = bashkit::normalize_path(Path::new(vfs_path))
+        .to_string_lossy()
+        .into_owned();
     let mut mounts = log
         .lock()
         .map_err(|_| PyRuntimeError::new_err("runtime mount log poisoned"))?;
-    mounts.retain(|(path, _)| path != vfs_path);
-    mounts.push((vfs_path.to_string(), fs));
+    mounts.retain(|(path, _)| path != &vfs_path);
+    mounts.push((vfs_path, fs));
     Ok(())
 }
 
 /// Retract a recorded mount so `reset()` does not resurrect it after `unmount()`.
 fn forget_runtime_mount(log: &RuntimeMountLog, vfs_path: &str) -> PyResult<()> {
+    let vfs_path = bashkit::normalize_path(Path::new(vfs_path));
     let mut mounts = log
         .lock()
         .map_err(|_| PyRuntimeError::new_err("runtime mount log poisoned"))?;
-    mounts.retain(|(path, _)| path != vfs_path);
+    mounts.retain(|(path, _)| Path::new(path) != vfs_path);
     Ok(())
 }
 
