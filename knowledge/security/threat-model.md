@@ -1001,6 +1001,15 @@ is built from configurable `self.config` values, never read from host `~/.gitcon
 `SshConfig::trusted_host_key()`. When `strict_host_key_checking` is enabled (default), connections
 to hosts without a matching trusted key are rejected. When disabled, a warning is emitted to stderr.
 
+Since russh 0.63 the `check_server_key` callback receives a `PublicKeyOrCertificate`, so a server
+may present a CA-signed host *certificate* rather than a raw key. Bashkit has no CA trust store,
+so in strict mode a certificate is always rejected — including when the public key it wraps is
+itself a configured trusted key. Matching the embedded key would extend trust on the strength of a
+signature chain that was never validated and would ignore the certificate's validity window,
+principals and critical options. Configuring the host's public key directly stays the supported
+path (see L-SSH-001 in [limitations.md](../operations/limitations.md)). Non-strict mode is unchanged: it
+accepts anything, certificates included, after warning.
+
 ---
 
 ### 9. Logging Security

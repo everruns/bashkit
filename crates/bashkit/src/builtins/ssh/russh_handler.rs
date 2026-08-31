@@ -36,7 +36,7 @@ impl russh::client::Handler for ClientHandler {
 
     async fn check_server_key(
         &mut self,
-        server_public_key: &russh::keys::PublicKey,
+        server_public_key: &russh::keys::PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
         if !self.strict {
             // THREAT[TM-SSH-006]: Warn when accepting unverified host keys.
@@ -47,6 +47,27 @@ impl russh::client::Handler for ClientHandler {
             );
             return Ok(true);
         }
+
+        // THREAT[TM-SSH-006]: russh 0.63 widened this callback to also deliver
+        // CA-signed host *certificates*, not just raw host keys. We have no CA
+        // trust store, so a certificate can never be verified here. Reject it
+        // rather than fall back to matching the key embedded in the
+        // certificate: that would extend trust on the strength of a signature
+        // chain we never validated, and would silently ignore the validity
+        // window, principals and critical options the certificate carries.
+        // Configuring the host key directly stays the supported path.
+        let server_public_key = match server_public_key {
+            russh::keys::PublicKeyOrCertificate::PublicKey { key, .. } => key,
+            russh::keys::PublicKeyOrCertificate::Certificate(_) => {
+                eprintln!(
+                    "WARNING: ssh: rejecting host certificate for '{}' \
+                     (certificate host keys are not supported; \
+                     configure the host's public key as a trusted key instead)",
+                    self.host
+                );
+                return Ok(false);
+            }
+        };
 
         // Serialize the server key for comparison.
         let server_key_str = server_public_key.to_string();
@@ -473,6 +494,104 @@ mod tests {
         let server = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKtQ";
         let trusted = "ssh-rsa AAAAC3NzaC1lZDI1NTE5AAAAIKtQ";
         assert!(!keys_match(server, trusted));
+    }
+
+    /// An ed25519 host certificate and the public key it certifies. Lifted from
+    /// the `ssh-key` crate's test vectors so the blob is a real, parseable
+    /// OpenSSH certificate rather than a hand-rolled one.
+    const TEST_CERT: &str = "ssh-ed25519-cert-v01@openssh.com AAAAIHNzaC1lZDI1NTE5LWNlcnQtdjAxQG9wZW5zc2guY29tAAAAIAYkJPGaYen7NK8MwZwWmNAyRaFNsc86AU9NObU2cM2uAAAAILM+rvN+ot98qgEN796jTiQfZfG1KaT0PtFDJ/XFSqtiAAAAAAAAAAAAAAACAAAAB2VkMjU1MTkAAAAUAAAAEGhvc3QuZXhhbXBsZS5jb20AAAAAYkx3NwAAAAB8DuY3AAAAAAAAAAAAAAAAAAAAMwAAAAtzc2gtZWQyNTUxOQAAACCzPq7zfqLffKoBDe/eo04kH2XxtSmk9D7RQyf1xUqrYgAAAFMAAAALc3NoLWVkMjU1MTkAAABApVXBNiYPlPoa1BYH5G4NP9XtjTMZlm7HO5GdbLSvvAw5Vdob7Ka+23hB7isJKHYtzFGGSKXAqxp/Zi8REbCaAw== user@example.com";
+    const TEST_CERT_INNER_KEY: &str =
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILM+rvN+ot98qgEN796jTiQfZfG1KaT0PtFDJ/XFSqti";
+    /// A second, different key. Only ever used as a *configured trusted key*,
+    /// which `keys_match` compares as text, so it is never parsed.
+    const OTHER_KEY: &str =
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIF3W9vLTBqRDvJmUZeTxJ7pQPqiVLXAiDVTHnDgQqDLm";
+
+    fn handler_trusting(keys: &[&str], strict: bool) -> ClientHandler {
+        ClientHandler {
+            host: "host.example.com".to_string(),
+            strict,
+            trusted_keys: keys
+                .iter()
+                .map(|k| TrustedHostKey {
+                    host: "host.example.com".to_string(),
+                    public_key: (*k).to_string(),
+                })
+                .collect(),
+        }
+    }
+
+    fn as_public_key(openssh: &str) -> russh::keys::PublicKeyOrCertificate {
+        russh::keys::PublicKeyOrCertificate::PublicKey {
+            key: russh::keys::PublicKey::from_openssh(openssh).expect("valid test key"),
+            hash_alg: None,
+        }
+    }
+
+    fn as_certificate() -> russh::keys::PublicKeyOrCertificate {
+        russh::keys::PublicKeyOrCertificate::Certificate(
+            russh::keys::Certificate::from_openssh(TEST_CERT).expect("valid test certificate"),
+        )
+    }
+
+    /// THREAT[TM-SSH-006]: a plain host key matching a trusted entry is accepted.
+    #[tokio::test]
+    async fn test_strict_accepts_matching_public_key() {
+        use russh::client::Handler;
+        let mut h = handler_trusting(&[TEST_CERT_INNER_KEY], true);
+        assert!(
+            h.check_server_key(&as_public_key(TEST_CERT_INNER_KEY))
+                .await
+                .unwrap()
+        );
+    }
+
+    /// THREAT[TM-SSH-006]: a plain host key with no trusted entry is rejected.
+    #[tokio::test]
+    async fn test_strict_rejects_unmatched_public_key() {
+        use russh::client::Handler;
+        let mut h = handler_trusting(&[OTHER_KEY], true);
+        assert!(
+            !h.check_server_key(&as_public_key(TEST_CERT_INNER_KEY))
+                .await
+                .unwrap()
+        );
+    }
+
+    /// THREAT[TM-SSH-006]: russh 0.63 can deliver a CA-signed host certificate
+    /// here. We have no CA trust store, so it must be rejected in strict mode —
+    /// *even when the key the certificate wraps is itself trusted*. Matching the
+    /// embedded key would grant trust on the strength of a signature chain that
+    /// was never validated, ignoring the certificate's validity window,
+    /// principals and critical options.
+    #[tokio::test]
+    async fn test_strict_rejects_certificate_even_when_inner_key_is_trusted() {
+        use russh::client::Handler;
+        let mut h = handler_trusting(&[TEST_CERT_INNER_KEY], true);
+        assert!(!h.check_server_key(&as_certificate()).await.unwrap());
+    }
+
+    /// A wildcard trusted entry must not open the certificate path either.
+    #[tokio::test]
+    async fn test_strict_rejects_certificate_with_wildcard_host() {
+        use russh::client::Handler;
+        let mut h = ClientHandler {
+            host: "host.example.com".to_string(),
+            strict: true,
+            trusted_keys: vec![TrustedHostKey {
+                host: "*".to_string(),
+                public_key: TEST_CERT_INNER_KEY.to_string(),
+            }],
+        };
+        assert!(!h.check_server_key(&as_certificate()).await.unwrap());
+    }
+
+    /// Non-strict mode is documented as accepting anything, certificates included.
+    #[tokio::test]
+    async fn test_non_strict_accepts_certificate() {
+        use russh::client::Handler;
+        let mut h = handler_trusting(&[], false);
+        assert!(h.check_server_key(&as_certificate()).await.unwrap());
     }
 
     /// THREAT[TM-SSH-006]: Default strict mode rejects connections with unknown keys.
