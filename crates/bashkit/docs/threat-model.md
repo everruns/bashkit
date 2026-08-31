@@ -784,7 +784,7 @@ never the host `~/.ssh/`.
 | Session exhaustion (TM-SSH-003) | Open many concurrent sessions | Max concurrent sessions limit | MITIGATED |
 | OOM via large response (TM-SSH-004) | Server sends huge output | Streaming size limit | MITIGATED |
 | Connection hang (TM-SSH-005) | Server never responds | Configurable timeout | MITIGATED |
-| MITM via unverified host key (TM-SSH-006) | Attacker intercepts connection | Strict host key checking (default: on) | MITIGATED |
+| MITM via unverified host key (TM-SSH-006) | Attacker intercepts connection | Strict host key checking (default: on); CA-signed host certificates are always rejected in strict mode — configure the host's public key directly | MITIGATED |
 | Non-standard port access (TM-SSH-007) | Connect to services on unexpected ports | Port allowlist | MITIGATED |
 | Remote command injection (TM-SSH-008) | Inject via remote path in SCP | Shell-escape remote paths | MITIGATED |
 

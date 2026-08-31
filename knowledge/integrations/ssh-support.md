@@ -62,7 +62,7 @@ ssh/scp/sftp builtins (parse args, validate host, delegate)
 | TM-SSH-003 | Session exhaustion | Max concurrent sessions limit |
 | TM-SSH-004 | Response size bomb | Max response bytes limit |
 | TM-SSH-005 | Connection hang | Connect + read timeouts |
-| TM-SSH-006 | Host key MITM | Configurable host key verification |
+| TM-SSH-006 | Host key MITM | Configurable host key verification; CA-signed host certificates always rejected in strict mode (L-SSH-001) |
 | TM-SSH-007 | Port scanning | Port allowlist |
 | TM-SSH-008 | Command injection via args | Shell-escape remote commands |
 
